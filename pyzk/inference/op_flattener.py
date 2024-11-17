@@ -215,6 +215,14 @@ class OperatorFlattener:
             result = NDArrayHelper((len(info_args), ), [arg.value for arg in info_args])
         return OperatorFlattenInfo(DataTypeName.NDARRAY, result)
 
+    def flatten_len(self, stmt: IRStatement, args: List[IRStatement], info_args: List[OperatorFlattenInfo]) -> OperatorFlattenInfo:
+        assert len(args) == len(info_args) == 1
+        return OperatorFlattenInfo(DataTypeName.NUMBER, info_args[0].get().shape[0])
+
+    def flatten_NDArray_shape(self, stmt: IRStatement, args: List[IRStatement], info_args: List[OperatorFlattenInfo]) -> OperatorFlattenInfo:
+        assert len(args) == len(info_args) == 1
+        return OperatorFlattenInfo(DataTypeName.NDARRAY, NDArrayHelper((len(info_args[0].get().shape), ), list(info_args[0].get().shape)))
+
     def flatten_range(self, stmt: IRStatement, args: List[IRStatement], info_args: List[OperatorFlattenInfo]) -> OperatorFlattenInfo:
         assert len(args) == len(info_args) == 0
         assert 0 < len(stmt.constant_args) <= 3

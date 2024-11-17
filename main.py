@@ -10,6 +10,8 @@ def foo(
     y: Private[NDArray[5, 5]]
 ):
     x = [100, 200][1]
+    assert len(z) == 5
+    assert z.shape[1] == 5
     mat = NDArray.identity(5)
     for i in list(range(x)):
         mat = mat @ y + 1

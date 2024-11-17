@@ -232,6 +232,17 @@ class PyZKASTTransformer(ast.NodeTransformer):
             return ASTOperator(source_pos_info, node.func.id, [self.visit_expr(arg) for arg in node.args])
         raise UnsupportedOperatorException(source_pos_info, f"Invalid call function {type(node.func)}. Only a static specified function name is supported here.")
 
+    def visit_Attribute(self, node):
+        source_pos_info = _get_source_pos_info(node)
+        if isinstance(node.value, ast.Name):
+            method = node.attr
+            before_name = node.value.id
+            operator_name = OpName.NDArray_method_to_op_name(method)
+            return ASTOperator(source_pos_info, operator_name, [ASTLoad(source_pos_info, before_name)])
+        method = node.func.attr
+        operator_name = OpName.NDArray_method_to_op_name(method)
+        return ASTOperator(source_pos_info, operator_name, [self.visit_expr(node.func.value)])
+
     def visit_Name(self, node):
         source_pos_info = _get_source_pos_info(node)
         return ASTLoad(source_pos_info, node.id)
@@ -321,6 +332,8 @@ class PyZKASTTransformer(ast.NodeTransformer):
             return self.visit_UnaryOp(node)
         elif isinstance(node, ast.Call):
             return self.visit_Call(node)
+        elif isinstance(node, ast.Attribute):
+            return self.visit_Attribute(node)
         elif isinstance(node, ast.Name):
             return self.visit_Name(node)
         elif isinstance(node, ast.Constant):
