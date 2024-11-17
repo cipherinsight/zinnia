@@ -1,6 +1,6 @@
-from ..ir_builder import IRGraph, IRStatement
-from ..ir_pass.abstract_pass import AbstractIRPass
-from ...util.op_name import OpName
+from pyzk.ir.ir_builder import IRGraph, IRStatement
+from pyzk.ir.ir_pass.abstract_pass import AbstractIRPass
+from pyzk.util.op_name import OpName
 
 
 class DeadCodeEliminationIRPass(AbstractIRPass):

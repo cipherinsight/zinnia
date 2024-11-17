@@ -1,6 +1,6 @@
-from ..ir_builder import IRGraph, IRBuilder
-from ..ir_pass.abstract_pass import AbstractIRPass
-from ...util.op_name import OpName
+from pyzk.ir.ir_builder import IRGraph, IRBuilder
+from pyzk.ir.ir_pass.abstract_pass import AbstractIRPass
+from pyzk.util.op_name import OpName
 
 
 class ExposePublicInserterIRPass(AbstractIRPass):

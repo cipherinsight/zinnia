@@ -41,7 +41,7 @@ class OpName:
         EXPOSE_PUBLIC = 'expose_public'
 
     @staticmethod
-    def NDArray_method_to_op_name(method: str):
+    def NDArray_method_to_op_name(method: str) -> str:
         lookup = {
             'all_zeros': OpName.NDArray.ALL_ZEROS,
             'all_ones': OpName.NDArray.ALL_ONES,
@@ -55,7 +55,7 @@ class OpName:
         raise NotImplementedError(f'Operator for `NDArray.{method}` not defined.')
 
     @staticmethod
-    def is_supported_operator_name(op_name: str):
+    def is_supported_operator_name(op_name: str) -> bool:
         return op_name in [
             OpName.Binary.ADD, OpName.Binary.SUB, OpName.Binary.MUL, OpName.Binary.DIV, OpName.Binary.AND,
             OpName.Binary.OR, OpName.Binary.MAT_MUL, OpName.Binary.EQ, OpName.Binary.NE, OpName.Binary.GT, OpName.Binary.LT,

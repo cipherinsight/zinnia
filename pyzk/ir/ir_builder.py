@@ -1,12 +1,12 @@
 from typing import Tuple, List
 
-from .ir_ctx import IRContext
-from .ir_graph import IRGraph, IRGraphMetadata
-from .ir_stmt import IRStatement
-from ..inference.ir_inference import IRInferenceDescriptor, IRInference
-from ..util.annotation import Annotation
-from ..util.op_name import OpName
-from ..util.source_pos_info import SourcePosInfo
+from pyzk.ir.ir_ctx import IRContext
+from pyzk.ir.ir_graph import IRGraph, IRGraphMetadata
+from pyzk.ir.ir_stmt import IRStatement
+from pyzk.inference.ir_inference import IRInferenceDescriptor, IRInference
+from pyzk.util.annotation import Annotation
+from pyzk.util.op_name import OpName
+from pyzk.util.source_pos_info import SourcePosInfo
 
 
 def _check_annotation_and_raise(lhs: Annotation | None, rhs: Annotation | None):

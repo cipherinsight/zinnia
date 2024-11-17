@@ -9,8 +9,8 @@ class ProgramInputMetadata:
 
 
 class ProgramMetadata:
-    def __init__(self):
+    def __init__(self) -> None:
         self.inputs = []
 
-    def set_program_inputs(self, inputs: List[ProgramInputMetadata]):
+    def set_program_inputs(self, inputs: List[ProgramInputMetadata]) -> None:
         self.inputs = inputs

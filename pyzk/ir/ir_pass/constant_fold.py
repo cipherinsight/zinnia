@@ -1,8 +1,7 @@
-from ..ir_builder import IRGraph, IRStatement, IRBuilder
-from ..ir_pass.abstract_pass import AbstractIRPass
-from ...inference.constant_fold import ConstantFold
-from ...util.op_name import OpName
-
+from pyzk.ir.ir_builder import IRGraph, IRStatement, IRBuilder
+from pyzk.ir.ir_pass.abstract_pass import AbstractIRPass
+from pyzk.inference.constant_fold import ConstantFold
+from pyzk.util.op_name import OpName
 
 class ConstantFoldIRPass(AbstractIRPass):
     def __init__(self):

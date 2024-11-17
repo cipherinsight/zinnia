@@ -1,10 +1,10 @@
 from typing import Dict
 
-from ..ir_builder import IRBuilder, IRGraph
-from ..ir_pass.abstract_pass import AbstractIRPass
+from pyzk.ir.ir_builder import IRBuilder, IRGraph
+from pyzk.ir.ir_pass.abstract_pass import AbstractIRPass
 from pyzk.util.prog_meta_data import ProgramMetadata
-from ...inference.op_flattener import OperatorFlattener, OperatorFlattenInfo
-from ...util.op_name import OpName
+from pyzk.inference.op_flattener import OperatorFlattener, OperatorFlattenInfo
+from pyzk.util.op_name import OpName
 
 
 class NDArrayFlattenerIRPass(AbstractIRPass):

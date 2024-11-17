@@ -1,23 +1,23 @@
 from typing import List, Tuple
 
-from .ir_pass.constant_fold import ConstantFoldIRPass
-from .ir_pass.dead_code_elimination import DeadCodeEliminationIRPass
-from .ir_pass.expose_public_inserter import ExposePublicInserterIRPass
-from .ir_pass.input_metadata_extractor import InputMetadataExtractorIRPass
-from .ir_pass.ndarray_flattener import NDArrayFlattenerIRPass
-from .ir_stmt import IRStatement
-from ..ast.zk_ast import ASTComponent, ASTProgram, ASTAssignStatement, ASTPassStatement, ASTSlicingAssignStatement, \
+from pyzk.ir.ir_pass.constant_fold import ConstantFoldIRPass
+from pyzk.ir.ir_pass.dead_code_elimination import DeadCodeEliminationIRPass
+from pyzk.ir.ir_pass.expose_public_inserter import ExposePublicInserterIRPass
+from pyzk.ir.ir_pass.input_metadata_extractor import InputMetadataExtractorIRPass
+from pyzk.ir.ir_pass.ndarray_flattener import NDArrayFlattenerIRPass
+from pyzk.ir.ir_stmt import IRStatement
+from pyzk.ast.zk_ast import ASTComponent, ASTProgram, ASTAssignStatement, ASTPassStatement, ASTSlicingAssignStatement, \
     ASTExpression, ASTForInStatement, ASTCondStatement, ASTOperator, ASTConstant, \
     ASTSlicing, ASTLoad, ASTAssertStatement, ASTSlicingData, ASTCreateNDArray, ASTBreakStatement, ASTContinueStatement
-from .ir_builder import IRBuilder
-from .ir_ctx import IRContext
-from ..exception.contextual import VariableNotFoundError, ConstantInferenceError, NoForElementsError, NotInLoopError, \
+from pyzk.ir.ir_builder import IRBuilder
+from pyzk.ir.ir_ctx import IRContext
+from pyzk.exception.contextual import VariableNotFoundError, ConstantInferenceError, NoForElementsError, NotInLoopError, \
     InterScopeError
 from pyzk.util.prog_meta_data import ProgramMetadata
-from ..util.annotation import Annotation
-from ..util.ndarray_helper import NDArrayHelper
-from ..util.op_name import OpName
-from ..util.source_pos_info import SourcePosInfo
+from pyzk.util.annotation import Annotation
+from pyzk.util.ndarray_helper import NDArrayHelper
+from pyzk.util.op_name import OpName
+from pyzk.util.source_pos_info import SourcePosInfo
 
 
 class IRGenerator:

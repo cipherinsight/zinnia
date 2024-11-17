@@ -1,7 +1,6 @@
 from typing import List, Tuple, Optional
 
-from ..util.source_pos_info import SourcePosInfo
-
+from pyzk.util.source_pos_info import SourcePosInfo
 
 class ASTComponent:
     def __init__(self, source_pos_info: SourcePosInfo):

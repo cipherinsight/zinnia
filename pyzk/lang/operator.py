@@ -1,5 +1,5 @@
 from typing import Union
-from .type import *
+from pyzk.lang.type import *
 
 def add(
     lhs: Number | NDArray,
