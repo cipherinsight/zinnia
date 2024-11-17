@@ -34,6 +34,7 @@ class OpName:
         SLICING = 'slicing'
         INPUT = 'input'
         LIST = 'list'
+        NEW_LIST = 'new_list'
         RANGE = 'range'
         CONCAT = 'concat'
         CONSTANT = 'constant'
@@ -63,7 +64,7 @@ class OpName:
             OpName.Unary.NOT, OpName.Unary.USUB, OpName.NDArray.ALL_ZEROS, OpName.Special.LIST, OpName.Special.RANGE,
             OpName.NDArray.ALL_ONES, OpName.NDArray.IDENTITY, OpName.NDArray.SUM, OpName.Special.ASSERT, OpName.Special.CONCAT,
             OpName.Special.SLICING_ASSIGN, OpName.Special.INPUT, OpName.Special.CONSTANT, OpName.Special.READ_INT,
-            OpName.Special.EXPOSE_PUBLIC, OpName.NDArray.ANY, OpName.NDArray.ALL
+            OpName.Special.EXPOSE_PUBLIC, OpName.NDArray.ANY, OpName.NDArray.ALL, OpName.Special.NEW_LIST
         ]
 
     @staticmethod

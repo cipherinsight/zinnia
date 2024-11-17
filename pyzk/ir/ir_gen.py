@@ -166,7 +166,7 @@ class IRGenerator:
 
     def visit_ASTCreateNDArray(self, n: ASTCreateNDArray):
         values = [self.visit(val) for val in n.values]
-        return self._ir_builder.create_concat(values, source_pos_info=n.source_pos_info)
+        return self._ir_builder.create_new_list(values, source_pos_info=n.source_pos_info)
 
     def _create_assignment_with_condition(self, orig_val_ptr, new_val_ptr, source_pos_info: SourcePosInfo = None, annotation: Annotation | None = None):
         cond_stack = self._ir_ctx.get_condition_variables()

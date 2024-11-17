@@ -160,6 +160,16 @@ class IRBuilder:
         self._next_id += 1
         return self._next_id - 1
 
+    def create_new_list(
+            self, values: List[int],
+            source_pos_info: SourcePosInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, OpName.Special.NEW_LIST, values, source_pos_info=source_pos_info)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
     def create_assert(
             self, value: int,
             source_pos_info: SourcePosInfo = None, annotation: Annotation | None = None

@@ -9,9 +9,9 @@ def foo(
     z: Private[NDArray[5, 5, 10]],
     y: Private[NDArray[5, 5]]
 ):
-    x = 100
+    x = [100, 200][1]
     mat = NDArray.identity(5)
-    for i in range(x):
+    for i in list(range(x)):
         mat = mat @ y + 1
         if i > 10:
             break
