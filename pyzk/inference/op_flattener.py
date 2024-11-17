@@ -12,6 +12,7 @@ class OperatorFlattenInfo:
     def __init__(self, typename: str, value: NDArrayHelper | int):
         self.typename = typename
         self.value = value
+        assert value is not None
 
     def get(self) -> NDArrayHelper | int:
         return self.value
@@ -304,13 +305,14 @@ class OperatorFlattener:
 
     def _flatten_NDArray_binary_operator_over_axis(self, stmt: IRStatement, args: List[IRStatement], info_args: List[OperatorFlattenInfo], op_name: str, initial_value: int) -> OperatorFlattenInfo:
         assert len(args) == len(info_args) == 1
-        assert len(stmt.constant_args) in [0, 1]
+        assert 0 <= len(stmt.constant_args) <= 1
         info = info_args[0]
         assert info.typename == DataTypeName.NDARRAY and len(info.value.shape) > 0
         if len(stmt.constant_args) == 0:
             result = info.value.accumulate(-1, lambda x, y: self._ir_builder.create_op(op_name, [x, y]), lambda: self._ir_builder.create_constant(initial_value))
+            assert result is not None
             return OperatorFlattenInfo(DataTypeName.NUMBER, result)
         elif len(stmt.constant_args) == 1:
-            result = info.value.accumulate(-1, lambda x, y: self._ir_builder.create_op(op_name, [x, y]), lambda: self._ir_builder.create_constant(initial_value))
+            result = info.value.accumulate(stmt.constant_args[0], lambda x, y: self._ir_builder.create_op(op_name, [x, y]), lambda: self._ir_builder.create_constant(initial_value))
             return OperatorFlattenInfo(DataTypeName.NDARRAY, result)
         raise NotImplementedError('Oops! Something not implemented. Please check the transpiler design.')

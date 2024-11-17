@@ -72,7 +72,7 @@ class ASTLoad(ASTExpression):
 
 
 class ASTSlicingData(ASTComponent):
-    def __init__(self, source_pos_info: SourcePosInfo, data: List[ASTExpression | Tuple[ASTExpression, ASTExpression]]):
+    def __init__(self, source_pos_info: SourcePosInfo, data: List[ASTExpression | Tuple[ASTExpression, ASTExpression, ASTExpression]]):
         super().__init__(source_pos_info)
         self.data = data
 

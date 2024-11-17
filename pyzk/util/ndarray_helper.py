@@ -26,7 +26,7 @@ class NDArrayHelper:
             if isinstance(_slice, int):
                 return _internal_helper(_depth + 1, _slicing, _values[_slice])
             _values = _values[_slice[0]:_slice[1]:_slice[2]]
-            return [_internal_helper(_depth + 1, _slice, x) for x in _values]
+            return [_internal_helper(_depth + 1, _slicing, x) for x in _values]
         new_values = _internal_helper(0, padded_slicing, self.values)
         if not isinstance(new_values, List):
             return new_values
@@ -62,7 +62,7 @@ class NDArrayHelper:
         return numbered_ndarray.unary(_decode)
 
 
-    def check_slicing_assign(self, slicing_data: List[List[Tuple[int, int] | int]], other: Any) -> str | None:
+    def check_slicing_assign(self, slicing_data: List[List[Tuple[int, int, int] | int]], other: Any) -> str | None:
         assignee = self
         for slicing in slicing_data:
             if not isinstance(assignee, NDArrayHelper):
@@ -75,7 +75,7 @@ class NDArrayHelper:
             return None
         return f"Invalid slicing assignment: shape on the lhs {assignee.shape if isinstance(assignee, NDArrayHelper) else '(1,)'} is not equal to shape on the rhs {other.shape if isinstance(other, NDArrayHelper) else '(1,)'}"
 
-    def check_slicing(self, slicing: List[Tuple[int, int] | int]) -> str | None:
+    def check_slicing(self, slicing: List[Tuple[int, int, int] | int]) -> str | None:
         if len(self.shape) < len(slicing):
             return f"Too many slicing dimensions: {len(slicing)} dimensions requested but there is only {len(self.shape)} dimensions on the target"
         for i, s in enumerate(slicing):
@@ -155,6 +155,7 @@ class NDArrayHelper:
                     for x in _operand:
                         result = accumulator(result, _internal_helper(_shape[1:], x))
                     return result
+            return _internal_helper(self.shape, self.values)
         else:
             def _generate_initial_by_shape(_shape: Tuple[int, ...]):
                 if len(_shape) == 1:

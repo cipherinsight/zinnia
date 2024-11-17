@@ -18,6 +18,7 @@ def foo(
         if i > 10:
             break
     assert mat[2][4] == 2
+    assert mat[0::].sum() == 2
 
 
 

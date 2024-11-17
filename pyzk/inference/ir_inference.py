@@ -66,8 +66,8 @@ class IRInference:
         op_name: str,
         args: List[IRInferenceDescriptor],
         constant_args: List[int] | None = None,
-        slicing_args: List[int | Tuple[int, int]] = None,
-        slicing_assign_args: List[List[int | Tuple[int, int]]] = None,
+        slicing_args: List[int | Tuple[int, int, int]] = None,
+        slicing_assign_args: List[List[int | Tuple[int, int, int]]] = None,
         source_pos_info: SourcePosInfo | None = None,
         constant_value: int | None = None
     ) -> IRInferenceDescriptor | None:
@@ -510,7 +510,7 @@ class IRInference:
         return IRInferenceDescriptor(DataTypeName.NDARRAY, value=NDArrayHelper((len(operand.value.shape), ), list(operand.value.shape)))
 
     @staticmethod
-    def infer_slicing(operand: IRInferenceDescriptor, slicing_args: List[int | Tuple[int, int]], source_pos_info: SourcePosInfo | None = None) -> IRInferenceDescriptor:
+    def infer_slicing(operand: IRInferenceDescriptor, slicing_args: List[int | Tuple[int, int, int]], source_pos_info: SourcePosInfo | None = None) -> IRInferenceDescriptor:
         slicing_args = slicing_args.copy()
         if not operand.is_ndarray():
             raise TypeInferenceError(source_pos_info, f'`slicing` operator can only be carried on `NDArray` variables')
@@ -523,7 +523,7 @@ class IRInference:
         return IRInferenceDescriptor(DataTypeName.NDARRAY, value=sliced_value)
 
     @staticmethod
-    def infer_slicing_assign(assignee: IRInferenceDescriptor, value: IRInferenceDescriptor, slicing_assign_args: List[List[int | Tuple[int, int]]], source_pos_info: SourcePosInfo | None = None) -> IRInferenceDescriptor:
+    def infer_slicing_assign(assignee: IRInferenceDescriptor, value: IRInferenceDescriptor, slicing_assign_args: List[List[int | Tuple[int, int, int]]], source_pos_info: SourcePosInfo | None = None) -> IRInferenceDescriptor:
         slicing_args = slicing_assign_args.copy()
         if not assignee.is_ndarray():
             raise TypeInferenceError(source_pos_info, f'`slicing` operator can only be carried on `NDArray` variables')
