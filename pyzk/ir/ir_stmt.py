@@ -12,8 +12,8 @@ class IRStatement:
         op_name: str,
         op_args: List[int],
         constant_value: int | None = None,
-        slicing_args: List[int | Tuple[int, int]] = None,
-        slicing_assign_args: List[List[int | Tuple[int, int]]] = None,
+        slicing_args: List[int | Tuple[int, int, int]] = None,
+        slicing_assign_args: List[List[int | Tuple[int, int, int]]] = None,
         constant_args: List[int] | None = None,
         annotation: Annotation | None = None,
         source_pos_info: SourcePosInfo | None = None,
@@ -27,6 +27,7 @@ class IRStatement:
         self.constant_args = constant_args
         self.annotation = annotation
         self.source_pos_info = source_pos_info
+        assert all([arg is not None for arg in op_args])
         assert (op_name == OpName.Special.CONSTANT and self.constant_value is not None) or self.constant_value is None
         assert (op_name == OpName.Special.SLICING_ASSIGN and len(self.slicing_assign_args) > 0) or self.slicing_assign_args is None
         assert (op_name == OpName.Special.SLICING and len(self.slicing_args) > 0) or self.slicing_args is None

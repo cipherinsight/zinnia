@@ -232,6 +232,17 @@ class PyZKASTTransformer(ast.NodeTransformer):
             return ASTOperator(source_pos_info, node.func.id, [self.visit_expr(arg) for arg in node.args])
         raise UnsupportedOperatorException(source_pos_info, f"Invalid call function {type(node.func)}. Only a static specified function name is supported here.")
 
+    def visit_Attribute(self, node):
+        source_pos_info = _get_source_pos_info(node)
+        if isinstance(node.value, ast.Name):
+            method = node.attr
+            before_name = node.value.id
+            operator_name = OpName.NDArray_method_to_op_name(method)
+            return ASTOperator(source_pos_info, operator_name, [ASTLoad(source_pos_info, before_name)])
+        method = node.func.attr
+        operator_name = OpName.NDArray_method_to_op_name(method)
+        return ASTOperator(source_pos_info, operator_name, [self.visit_expr(node.func.value)])
+
     def visit_Name(self, node):
         source_pos_info = _get_source_pos_info(node)
         return ASTLoad(source_pos_info, node.id)
@@ -257,22 +268,26 @@ class PyZKASTTransformer(ast.NodeTransformer):
         source_pos_info = _get_source_pos_info(node)
         value = self.visit_expr(node.value)
         if isinstance(node.slice, ast.Slice):
-            lo, hi = None, None
+            lo, hi, step = None, None, None
             if node.slice.lower is not None:
                 lo = self.visit_expr(node.slice.lower)
             if node.slice.upper is not None:
                 hi = self.visit_expr(node.slice.upper)
-            return ASTSlicing(source_pos_info, value, ASTSlicingData(source_pos_info, [(lo, hi)]))
+            if node.slice.step is not None:
+                step = self.visit_expr(node.slice.step)
+            return ASTSlicing(source_pos_info, value, ASTSlicingData(source_pos_info, [(lo, hi, step)]))
         elif isinstance(node.slice, ast.Tuple):
             slicing_data = []
             for elt in node.slice.elts:
                 if isinstance(elt, ast.Slice):
-                    lo, hi = None, None
+                    lo, hi, step = None, None, None
                     if elt.lower is not None:
                         lo = self.visit_expr(elt.lower)
                     if elt.upper is not None:
                         hi = self.visit_expr(elt.upper)
-                    slicing_data.append((lo, hi))
+                    if elt.step is not None:
+                        step = self.visit_expr(elt.step)
+                    slicing_data.append((lo, hi, step))
                 else:
                     slicing_data.append(self.visit_expr(elt))
             return ASTSlicing(source_pos_info, value, ASTSlicingData(source_pos_info, slicing_data))
@@ -321,6 +336,8 @@ class PyZKASTTransformer(ast.NodeTransformer):
             return self.visit_UnaryOp(node)
         elif isinstance(node, ast.Call):
             return self.visit_Call(node)
+        elif isinstance(node, ast.Attribute):
+            return self.visit_Attribute(node)
         elif isinstance(node, ast.Name):
             return self.visit_Name(node)
         elif isinstance(node, ast.Constant):
@@ -390,22 +407,26 @@ class PyZKASTTransformer(ast.NodeTransformer):
             else:
                 raise InvalidSlicingException(source_pos_info, "This slicing assign format is not supported.")
             if isinstance(subscript_node.slice, ast.Slice):
-                lo, hi = None, None
+                lo, hi, step = None, None, None
                 if subscript_node.slice.lower is not None:
                     lo = self.visit_expr(subscript_node.slice.lower)
                 if subscript_node.slice.upper is not None:
                     hi = self.visit_expr(subscript_node.slice.upper)
-                return _assignee_name, ans + [ASTSlicingData(source_pos_info, [(lo, hi)])]
+                if subscript_node.slice.step is not None:
+                    step = self.visit_expr(subscript_node.slice.step)
+                return _assignee_name, ans + [ASTSlicingData(source_pos_info, [(lo, hi, step)])]
             elif isinstance(subscript_node.slice, ast.Tuple):
                 _slicing_data = []
                 for elt in subscript_node.slice.elts:
                     if isinstance(elt, ast.Slice):
-                        lo, hi = None, None
+                        lo, hi, step = None, None, None
                         if elt.lower is not None:
                             lo = self.visit_expr(elt.lower)
                         if elt.upper is not None:
                             hi = self.visit_expr(elt.upper)
-                        _slicing_data.append((lo, hi))
+                        if elt.step is not None:
+                            step = self.visit_expr(elt.step)
+                        _slicing_data.append((lo, hi, step))
                     else:
                         _slicing_data.append(self.visit_expr(elt))
                 return _assignee_name, ans + [ASTSlicingData(source_pos_info, _slicing_data)]

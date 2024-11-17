@@ -131,7 +131,7 @@ class IRBuilder:
         return self._next_id - 1
 
     def create_slicing(
-            self, value: int, slicing: List[int | Tuple[int, int]],
+            self, value: int, slicing: List[int | Tuple[int, int, int]],
             source_pos_info: SourcePosInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, OpName.Special.SLICING, [value], slicing_args=slicing, source_pos_info=source_pos_info)
@@ -141,7 +141,7 @@ class IRBuilder:
         return self._next_id - 1
 
     def create_slicing_assign(
-            self, slicing: List[List[int | Tuple[int, int]]], orig_value: int, value: int,
+            self, slicing: List[List[int | Tuple[int, int, int]]], orig_value: int, value: int,
             source_pos_info: SourcePosInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, OpName.Special.SLICING_ASSIGN, [orig_value, value], slicing_assign_args=slicing, source_pos_info=source_pos_info)
@@ -155,6 +155,16 @@ class IRBuilder:
             source_pos_info: SourcePosInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, OpName.Special.CONCAT, values, source_pos_info=source_pos_info)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_new_list(
+            self, values: List[int],
+            source_pos_info: SourcePosInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, OpName.Special.NEW_LIST, values, source_pos_info=source_pos_info)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1

@@ -166,7 +166,7 @@ class IRGenerator:
 
     def visit_ASTCreateNDArray(self, n: ASTCreateNDArray):
         values = [self.visit(val) for val in n.values]
-        return self._ir_builder.create_concat(values, source_pos_info=n.source_pos_info)
+        return self._ir_builder.create_new_list(values, source_pos_info=n.source_pos_info)
 
     def _create_assignment_with_condition(self, orig_val_ptr, new_val_ptr, source_pos_info: SourcePosInfo = None, annotation: Annotation | None = None):
         cond_stack = self._ir_ctx.get_condition_variables()
@@ -209,7 +209,7 @@ class IRGenerator:
             raise ConstantInferenceError(n.source_pos_info, "This is expression inferred as a constant scalar number. Please make sure that here should be a constant ndarray.")
         return result.values
 
-    def _as_constant_slicing(self, n: ASTSlicingData) -> List[Tuple[int, int] | int]:
+    def _as_constant_slicing(self, n: ASTSlicingData) -> List[Tuple[int, int, int] | int]:
         results = []
         for data in n.data:
             if isinstance(data, ASTExpression):
@@ -224,5 +224,9 @@ class IRGenerator:
                     val_r = self._as_constant_integer(data[1])
                 else:
                     val_r = None
-                results.append((val_l, val_r))
+                if data[2] is not None:
+                    val_s = self._as_constant_integer(data[2])
+                else:
+                    val_s = None
+                results.append((val_l, val_r, val_s))
         return results
