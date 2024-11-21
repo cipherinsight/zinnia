@@ -1,5 +1,6 @@
 import inspect
 import ast
+import json
 
 import astpretty
 
@@ -24,6 +25,8 @@ def pyzk_circuit(method):
             ir_stmts, prog_ctx = generator.generate(ir_comp_tree)
             with open('./ir-stmts.txt', 'w') as f:
                 f.write(prettify_ir_stmts(ir_stmts))
+            with open('./prog-ctx.txt', 'w') as f:
+                json.dump(prog_ctx.export(), f)
         except InternalPyzkException as e:
             raise prettify_exception(e, method.__name__, source_code)
     return __inner

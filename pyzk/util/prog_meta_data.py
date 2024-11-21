@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
 
 class ProgramInputMetadata:
@@ -14,3 +14,12 @@ class ProgramMetadata:
 
     def set_program_inputs(self, inputs: List[ProgramInputMetadata]) -> None:
         self.inputs = inputs
+
+    def export(self) -> Dict:
+        return {
+            "inputs": [{
+                "typename": inp.typename,
+                "shape": inp.shape,
+                "public": inp.public,
+            } for inp in self.inputs],
+        }
