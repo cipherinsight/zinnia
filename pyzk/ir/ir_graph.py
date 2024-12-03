@@ -29,14 +29,16 @@ class IRGraph:
         out_d = [0 for _ in range(len(self.stmts))]
         being_referred_bys: List[List[int]] = [[] for _ in range(len(self.stmts))]
         for i, stmt in enumerate(self.stmts):
-            referring_tos = stmt.args
+            referring_tos = stmt.arguments.values()
             for t in referring_tos:
+                if t is None:
+                    continue
                 out_d[t] += 1
                 in_d[i] += 1
                 being_referred_bys[t].append(i)
         self.in_d = in_d
         self.out_d = out_d
-        self.in_links = list([stmt.args for stmt in self.stmts])
+        self.in_links = list([stmt.arguments.values() for stmt in self.stmts])
         self.out_links = being_referred_bys
 
     def get_io_degrees(self):

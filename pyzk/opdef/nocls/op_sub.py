@@ -1,0 +1,18 @@
+from typing import Callable, Any
+
+from pyzk.opdef.abstract_arithemetic import AbstractArithemetic
+
+
+class SubOp(AbstractArithemetic):
+    def __init__(self):
+        super().__init__()
+
+    def get_signature(self) -> str:
+        return "sub"
+
+    @classmethod
+    def get_name(cls) -> str:
+        return "sub"
+
+    def get_inference_op_lambda(self) -> Callable[[Any, Any], Any]:
+        return lambda x, y: x - y if x is not None and y is not None else None

@@ -5,12 +5,13 @@ from pyzk.exception.transforming import InvalidCircuitInputException, InvalidCir
     UnsupportedOperatorException, UnsupportedConstantLiteralException, \
     UnsupportedLangFeatureException, InvalidForStatementException
 from pyzk.ast.zk_ast import ASTProgramInput, ASTAnnotation, ASTProgram, ASTAssignStatement, \
-    ASTLoad, ASTOperator, ASTConstant, ASTSlicingData, ASTSlicingAssignStatement, \
+    ASTLoad, ASTConstant, ASTSlicingData, ASTSlicingAssignStatement, \
     ASTForInStatement, ASTPassStatement, ASTAssertStatement, ASTCondStatement, ASTSlicing, ASTCreateNDArray, \
-    ASTSlicingAssignData, ASTBreakStatement, ASTContinueStatement
+    ASTSlicingAssignData, ASTBreakStatement, ASTContinueStatement, ASTBinaryOperator, ASTUnaryOperator, ASTNamedAttribute, \
+    ASTExprAttribute
 from pyzk.util.datatype_name import DataTypeName
 from pyzk.util.input_anno_name import InputAnnoName
-from pyzk.util.op_name import OpName
+from pyzk.util.operator_factory import Operators
 from pyzk.util.source_pos_info import SourcePosInfo
 
 
@@ -86,34 +87,32 @@ class PyZKASTTransformer(ast.NodeTransformer):
     def visit_AugAssign(self, node):
         source_pos_info = _get_source_pos_info(node)
         if isinstance(node.op, ast.Add):
-            op_name = OpName.Binary.ADD
+            op_cls = Operators.NoCls.ADD
         elif isinstance(node.op, ast.Sub):
-            op_name = OpName.Binary.SUB
+            op_cls = Operators.NoCls.SUB
         elif isinstance(node.op, ast.Div):
-            op_name = OpName.Binary.DIV
+            op_cls = Operators.NoCls.DIV
         elif isinstance(node.op, ast.Mult):
-            op_name = OpName.Binary.MUL
+            op_cls = Operators.NoCls.MUL
         elif isinstance(node.op, ast.MatMult):
-            op_name = OpName.Binary.MAT_MUL
+            op_cls = Operators.NoCls.MAT_MUL
         else:
             raise InvalidAssignStatementException(source_pos_info, f"Invalid augmented assignment operator {type(node.op)}")
         if isinstance(node.target, ast.Name):
             identifier_name = node.target.id
             expr = self.visit_expr(node.value)
             return ASTAssignStatement(
-                source_pos_info, identifier_name, ASTOperator(
-                    source_pos_info, op_name, [
-                        ASTLoad(_get_source_pos_info(node.target), identifier_name), expr
-                    ]
+                source_pos_info, identifier_name, ASTBinaryOperator(
+                    source_pos_info, op_cls, ASTLoad(_get_source_pos_info(node.target), identifier_name), expr
                 ), None)
         elif isinstance(node.target, ast.Subscript):
             name, slicing_datas = self.visit_slicing_assignee(node.target)
             origin_val = self.visit_expr(node.target)
             expr = self.visit_expr(node.value)
             return ASTSlicingAssignStatement(
-                source_pos_info, name, slicing_datas, ASTOperator(
-                    _get_source_pos_info(node.value), op_name, [origin_val, expr])
-                , None)
+                source_pos_info, name, slicing_datas, ASTBinaryOperator(
+                    _get_source_pos_info(node.value), op_cls, origin_val, expr
+                ), None)
         raise InvalidAssignStatementException(source_pos_info, "The value to be assigned must be an identifier name or name with slicing.")
 
     def visit_AnnAssign(self, node):
@@ -137,15 +136,15 @@ class PyZKASTTransformer(ast.NodeTransformer):
         left = self.visit_expr(node.left)
         right = self.visit_expr(node.right)
         if isinstance(node.op, ast.Add):
-            return ASTOperator(source_pos_info, OpName.Binary.ADD, [left, right])
+            return ASTBinaryOperator(source_pos_info, Operators.NoCls.ADD, left, right)
         elif isinstance(node.op, ast.Mult):
-            return ASTOperator(source_pos_info, OpName.Binary.MUL, [left, right])
+            return ASTBinaryOperator(source_pos_info, Operators.NoCls.MUL, left, right)
         elif isinstance(node.op, ast.MatMult):
-            return ASTOperator(source_pos_info, OpName.Binary.MAT_MUL, [left, right])
+            return ASTBinaryOperator(source_pos_info, Operators.NoCls.MAT_MUL, left, right)
         elif isinstance(node.op, ast.Div):
-            return ASTOperator(source_pos_info, OpName.Binary.DIV, [left, right])
+            return ASTBinaryOperator(source_pos_info, Operators.NoCls.DIV, left, right)
         elif isinstance(node.op, ast.Sub):
-            return ASTOperator(source_pos_info, OpName.Binary.SUB, [left, right])
+            return ASTBinaryOperator(source_pos_info, Operators.NoCls.SUB, left, right)
         else:
             raise UnsupportedOperatorException(source_pos_info, f"Invalid binary operator {type(node.op).__name__} in circuit.")
 
@@ -160,22 +159,22 @@ class PyZKASTTransformer(ast.NodeTransformer):
         compare_expr_list = []
         for i, op in enumerate(node.ops):
             if isinstance(op, ast.GtE):
-                compare_expr_list.append(ASTOperator(source_pos_info, OpName.Binary.GTE, [comparators[i], comparators[i + 1]]))
+                compare_expr_list.append(ASTBinaryOperator(source_pos_info, Operators.NoCls.GTE, comparators[i], comparators[i + 1]))
             elif isinstance(op, ast.LtE):
-                compare_expr_list.append(ASTOperator(source_pos_info, OpName.Binary.LTE, [comparators[i], comparators[i + 1]]))
+                compare_expr_list.append(ASTBinaryOperator(source_pos_info, Operators.NoCls.LTE, comparators[i], comparators[i + 1]))
             elif isinstance(op, ast.Gt):
-                compare_expr_list.append(ASTOperator(source_pos_info, OpName.Binary.GT, [comparators[i], comparators[i + 1]]))
+                compare_expr_list.append(ASTBinaryOperator(source_pos_info, Operators.NoCls.GT, comparators[i], comparators[i + 1]))
             elif isinstance(op, ast.Lt):
-                compare_expr_list.append(ASTOperator(source_pos_info, OpName.Binary.LT, [comparators[i], comparators[i + 1]]))
+                compare_expr_list.append(ASTBinaryOperator(source_pos_info, Operators.NoCls.LT, comparators[i], comparators[i + 1]))
             elif isinstance(op, ast.Eq):
-                compare_expr_list.append(ASTOperator(source_pos_info, OpName.Binary.EQ, [comparators[i], comparators[i + 1]]))
+                compare_expr_list.append(ASTBinaryOperator(source_pos_info, Operators.NoCls.EQ, comparators[i], comparators[i + 1]))
             elif isinstance(op, ast.NotEq):
-                compare_expr_list.append(ASTOperator(source_pos_info, OpName.Binary.NE, [comparators[i], comparators[i + 1]]))
+                compare_expr_list.append(ASTBinaryOperator(source_pos_info, Operators.NoCls.NE, comparators[i], comparators[i + 1]))
             else:
                 raise UnsupportedOperatorException(source_pos_info, f"Invalid compare operator {type(op).__name__} in circuit.")
         finalized = compare_expr_list[0]
         for expr in compare_expr_list[1:]:
-            finalized = ASTOperator(source_pos_info, OpName.Binary.AND, [finalized, expr])
+            finalized = ASTBinaryOperator(source_pos_info, Operators.NoCls.AND, finalized, expr)
         return finalized
 
     def visit_BoolOp(self, node):
@@ -187,12 +186,12 @@ class PyZKASTTransformer(ast.NodeTransformer):
         if isinstance(node.op, ast.And):
             base_node = values[0]
             for val in values[1:]:
-                base_node = ASTOperator(source_pos_info, OpName.Binary.AND, [base_node, val])
+                base_node = ASTBinaryOperator(source_pos_info, Operators.NoCls.AND, base_node, val)
             return base_node
         elif isinstance(node.op, ast.Or):
             base_node = values[0]
             for val in values[1:]:
-                base_node = ASTOperator(source_pos_info, OpName.Binary.OR, [base_node, val])
+                base_node = ASTBinaryOperator(source_pos_info, Operators.NoCls.OR, base_node, val)
             return base_node
         else:
             raise UnsupportedOperatorException(source_pos_info, f"Invalid boolean operator {type(node.op).__name__} in circuit.")
@@ -201,9 +200,9 @@ class PyZKASTTransformer(ast.NodeTransformer):
         source_pos_info = _get_source_pos_info(node)
         value = self.visit_expr(node.operand)
         if isinstance(node.op, ast.Not):
-            return ASTOperator(source_pos_info, OpName.Unary.NOT, [value])
+            return ASTUnaryOperator(source_pos_info, Operators.NoCls.NOT, value)
         elif isinstance(node.op, ast.USub):
-            return ASTOperator(source_pos_info, OpName.Unary.USUB, [value])
+            return ASTUnaryOperator(source_pos_info, Operators.NoCls.USUB, value)
         elif isinstance(node.op, ast.UAdd):
             return value
         else:
@@ -214,34 +213,23 @@ class PyZKASTTransformer(ast.NodeTransformer):
         if isinstance(node.func, ast.Attribute):
             if isinstance(node.func.value, ast.Name):
                 before_name = node.func.value.id
-                if before_name == DataTypeName.NDARRAY:
-                    method = node.func.attr
-                    operator_name = OpName.NDArray_method_to_op_name(method)
-                    return ASTOperator(source_pos_info, operator_name, [self.visit_expr(arg) for arg in node.args])
-                else:
-                    method = node.func.attr
-                    operator_name = OpName.NDArray_method_to_op_name(method)
-                    return ASTOperator(source_pos_info, operator_name, [ASTLoad(source_pos_info, before_name)] + [self.visit_expr(arg) for arg in node.args])
+                after_name = node.func.attr
+                return ASTNamedAttribute(source_pos_info, before_name, after_name, [self.visit_expr(arg) for arg in node.args], {})
             else:
-                method = node.func.attr
-                operator_name = OpName.NDArray_method_to_op_name(method)
-                return ASTOperator(source_pos_info, operator_name, [self.visit_expr(node.func.value)] + [self.visit_expr(arg) for arg in node.args])
+                after_name = node.func.attr
+                return ASTExprAttribute(source_pos_info, self.visit_expr(node.func.value), after_name, [self.visit_expr(arg) for arg in node.args], {})
         elif isinstance(node.func, ast.Name):
-            if not OpName.is_supported_operator_name(node.func.id):
-                raise UnsupportedOperatorException(source_pos_info, f"Invalid operator name {node.func.id}")
-            return ASTOperator(source_pos_info, node.func.id, [self.visit_expr(arg) for arg in node.args])
+            return ASTNamedAttribute(source_pos_info, None, node.func.id, [self.visit_expr(arg) for arg in node.args], {})
         raise UnsupportedOperatorException(source_pos_info, f"Invalid call function {type(node.func)}. Only a static specified function name is supported here.")
 
     def visit_Attribute(self, node):
         source_pos_info = _get_source_pos_info(node)
         if isinstance(node.value, ast.Name):
-            method = node.attr
+            after_name = node.attr
             before_name = node.value.id
-            operator_name = OpName.NDArray_method_to_op_name(method)
-            return ASTOperator(source_pos_info, operator_name, [ASTLoad(source_pos_info, before_name)])
-        method = node.func.attr
-        operator_name = OpName.NDArray_method_to_op_name(method)
-        return ASTOperator(source_pos_info, operator_name, [self.visit_expr(node.func.value)])
+            return ASTNamedAttribute(source_pos_info, before_name, after_name, [], {})
+        after_name = node.func.attr
+        return ASTNamedAttribute(source_pos_info, None, after_name, [self.visit_expr(node.func.value)], {})
 
     def visit_Name(self, node):
         source_pos_info = _get_source_pos_info(node)

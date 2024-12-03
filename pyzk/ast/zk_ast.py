@@ -1,5 +1,6 @@
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 
+from pyzk.opdef.abstract_op import AbstractOp
 from pyzk.util.source_pos_info import SourcePosInfo
 
 class ASTComponent:
@@ -51,11 +52,37 @@ class ASTExpression(ASTComponent):
         super().__init__(source_pos_info)
 
 
-class ASTOperator(ASTExpression):
-    def __init__(self, source_pos_info: SourcePosInfo, op: str, args: List[ASTExpression]):
+class ASTAbstractOperator(ASTExpression):
+    def __init__(self, source_pos_info: SourcePosInfo, args: List[ASTExpression], kwargs: Dict[str, ASTExpression]):
         super().__init__(source_pos_info)
-        self.op = op
         self.args = args
+        self.kwargs = kwargs
+
+
+class ASTBinaryOperator(ASTAbstractOperator):
+    def __init__(self, source_pos_info: SourcePosInfo, op_cls: type, lhs: ASTExpression, rhs: ASTExpression):
+        super().__init__(source_pos_info, [lhs, rhs], {})
+        self.operator = op_cls()
+
+
+class ASTUnaryOperator(ASTAbstractOperator):
+    def __init__(self, source_pos_info: SourcePosInfo, op_cls: type, operand: ASTExpression):
+        super().__init__(source_pos_info, [operand], {})
+        self.operator = op_cls()
+
+
+class ASTNamedAttribute(ASTAbstractOperator):
+    def __init__(self, source_pos_info: SourcePosInfo, target: Optional[str], member: str, args: List[ASTExpression], kwargs: Dict[str, ASTExpression]):
+        super().__init__(source_pos_info, args, kwargs)
+        self.target = target
+        self.member = member
+
+
+class ASTExprAttribute(ASTAbstractOperator):
+    def __init__(self, source_pos_info: SourcePosInfo, target: ASTExpression, member: str, args: List[ASTExpression], kwargs: Dict[str, ASTExpression]):
+        super().__init__(source_pos_info, args, kwargs)
+        self.target = target
+        self.member = member
 
 
 class ASTConstant(ASTExpression):

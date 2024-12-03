@@ -1,6 +1,7 @@
 from typing import Dict, List
 
-from pyzk.inference.ir_inference import IRInferenceDescriptor
+from pyzk.util.dt_descriptor import DTDescriptor
+from pyzk.util.inference_descriptor import InferenceDescriptor
 
 
 class IRContext:
@@ -9,7 +10,7 @@ class IRContext:
         self.var_table = {}
         self.if_condition_stack = []
         self.for_condition_stack = []
-        self.inference_table: Dict[int, IRInferenceDescriptor] = {}
+        self.inference_table: Dict[int, InferenceDescriptor] = {}
 
     def block_enter(self):
         self.name_to_ptr_stack.append({})
@@ -35,10 +36,10 @@ class IRContext:
         assert self.lookup_ptr_by_name(name) is not None
         return name in self.name_to_ptr_stack[-1]
 
-    def set_inference_descriptor(self, ptr: int, descriptor: IRInferenceDescriptor):
+    def set_inference_descriptor(self, ptr: int, descriptor: InferenceDescriptor):
         self.inference_table[ptr] = descriptor
 
-    def get_inference_descriptor(self, ptr: int) -> IRInferenceDescriptor:
+    def get_inference_descriptor(self, ptr: int) -> InferenceDescriptor:
         return self.inference_table.get(ptr, None)
 
     def is_inferred_datatype_equal(self, lhs: int, rhs: int) -> bool:
@@ -46,18 +47,23 @@ class IRContext:
         rhs_descriptor = self.inference_table.get(rhs, None)
         if lhs_descriptor is None or rhs_descriptor is None:
             return False
-        return lhs_descriptor.datatype_matches(rhs_descriptor)
+        return lhs_descriptor.type() == rhs_descriptor.type()
 
     def get_inferred_datatype_name(self, ptr: int) -> str:
         descriptor = self.inference_table.get(ptr, None)
         assert descriptor is not None
-        return descriptor.pretty_typename()
+        return str(descriptor.type())
+
+    def get_inferred_datatype(self, ptr: int) -> DTDescriptor:
+        descriptor = self.inference_table.get(ptr, None)
+        assert descriptor is not None
+        return descriptor.type()
 
     def get_inferred_constant_value(self, ptr: int) -> int | List | None:
-        descriptor: IRInferenceDescriptor = self.inference_table.get(ptr, None)
+        descriptor: InferenceDescriptor = self.inference_table.get(ptr, None)
         if descriptor is None:
             return None
-        inferred_value = descriptor.value
+        inferred_value = descriptor.get()
         if inferred_value is None:
             return None
         return inferred_value

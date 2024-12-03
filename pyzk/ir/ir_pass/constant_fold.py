@@ -1,4 +1,4 @@
-from pyzk.ir.ir_builder import IRGraph, IRStatement, IRBuilder
+from pyzk.ir.ir_builder import IRGraph, IRBuilder
 from pyzk.ir.ir_pass.abstract_pass import AbstractIRPass
 from pyzk.inference.constant_fold import ConstantFold
 from pyzk.util.op_name import OpName

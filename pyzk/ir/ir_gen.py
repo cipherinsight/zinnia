@@ -7,16 +7,18 @@ from pyzk.ir.ir_pass.input_metadata_extractor import InputMetadataExtractorIRPas
 from pyzk.ir.ir_pass.ndarray_flattener import NDArrayFlattenerIRPass
 from pyzk.ir.ir_stmt import IRStatement
 from pyzk.ast.zk_ast import ASTComponent, ASTProgram, ASTAssignStatement, ASTPassStatement, ASTSlicingAssignStatement, \
-    ASTExpression, ASTForInStatement, ASTCondStatement, ASTOperator, ASTConstant, \
-    ASTSlicing, ASTLoad, ASTAssertStatement, ASTSlicingData, ASTCreateNDArray, ASTBreakStatement, ASTContinueStatement
+    ASTExpression, ASTForInStatement, ASTCondStatement, ASTConstant, \
+    ASTSlicing, ASTLoad, ASTAssertStatement, ASTSlicingData, ASTCreateNDArray, ASTBreakStatement, ASTContinueStatement, \
+    ASTBinaryOperator, ASTNamedAttribute, ASTExprAttribute
 from pyzk.ir.ir_builder import IRBuilder
 from pyzk.ir.ir_ctx import IRContext
 from pyzk.exception.contextual import VariableNotFoundError, ConstantInferenceError, NoForElementsError, NotInLoopError, \
     InterScopeError
+from pyzk.util.datatype_name import DataTypeName
+from pyzk.util.operator_factory import Operators
 from pyzk.util.prog_meta_data import ProgramMetadata
 from pyzk.util.annotation import Annotation
 from pyzk.util.ndarray_helper import NDArrayHelper
-from pyzk.util.op_name import OpName
 from pyzk.util.source_pos_info import SourcePosInfo
 
 
@@ -91,7 +93,7 @@ class IRGenerator:
             raise NoForElementsError(n.source_pos_info, "No iterable elements found in the for statement.")
         self._ir_ctx.for_block_enter(self._ir_builder.create_constant(1), self._ir_builder.create_constant(0))
         for i in range(len(iter_elts)):
-            loop_index_ptr = self._ir_builder.create_slicing(iter_expr_ptr, [i], source_pos_info=n.source_pos_info)
+            loop_index_ptr = self._ir_builder.create_slicing(iter_expr_ptr, [(i, )], source_pos_info=n.source_pos_info)
             self._ir_ctx.assign_name_to_ptr(n.assignee, loop_index_ptr)
             self._ir_ctx.block_enter()
             self._ir_ctx.for_block_reiter()
@@ -117,8 +119,8 @@ class IRGenerator:
 
     def visit_ASTCondStatement(self, n: ASTCondStatement):
         cond_ptr = self.visit(n.cond)
-        true_cond_ptr = self._ir_builder.create_is_true(cond_ptr, source_pos_info=n.source_pos_info)
-        false_cond_ptr = self._ir_builder.create_is_false(cond_ptr, source_pos_info=n.source_pos_info)
+        true_cond_ptr = self._ir_builder.create_bool_cast(cond_ptr, source_pos_info=n.source_pos_info)
+        false_cond_ptr = self._ir_builder.create_logical_not(true_cond_ptr, source_pos_info=n.source_pos_info)
         self._ir_ctx.if_block_enter(true_cond_ptr)
         self._ir_ctx.block_enter()
         for _, stmt in enumerate(n.t_block):
@@ -138,18 +140,50 @@ class IRGenerator:
         test_wrt_conditions = self._create_assert_with_condition(test, n.source_pos_info)
         return self._ir_builder.create_assert(test_wrt_conditions, source_pos_info=n.source_pos_info)
 
-    def visit_ASTOperator(self, n: ASTOperator):
-        op_name = n.op
-        args = []
-        constant_args = None
-        if OpName.is_constant_operator(op_name):
-            constant_args = list([self._as_constant_integer(arg) for arg in n.args])
-        elif OpName.is_constant_arg_operator(op_name):
-            args = [self.visit(n.args[0])]
-            constant_args = list([self._as_constant_integer(arg) for arg in n.args[1:]])
+    def visit_ASTBinaryOperator(self, n: ASTBinaryOperator):
+        kwargs = n.operator.params_parse(
+            n.source_pos_info,
+            [self.visit(arg) for arg in n.args],
+            {k: self.visit(arg) for k, arg in n.kwargs.items()}
+        )
+        return self._ir_builder.create_op(n.operator, kwargs, source_pos_info=n.source_pos_info)
+
+    def visit_ASTUnaryOperator(self, n: ASTBinaryOperator):
+        kwargs = n.operator.params_parse(
+            n.source_pos_info,
+            [self.visit(arg) for arg in n.args],
+            {k: self.visit(arg) for k, arg in n.kwargs.items()}
+        )
+        return self._ir_builder.create_op(n.operator, kwargs, source_pos_info=n.source_pos_info)
+
+    def visit_ASTNamedAttribute(self, n: ASTNamedAttribute):
+        self_arg = []
+        if n.target is None or DataTypeName.is_datatype_name(n.target):
+            operator = Operators.instantiate_operator(n.member, n.target)
         else:
-            args = [self.visit(arg) for arg in n.args]
-        return self._ir_builder.create_op(op_name, args, constant_args, source_pos_info=n.source_pos_info)
+            target_ptr = self._ir_ctx.lookup_ptr_by_name(n.target)
+            if target_ptr is None:
+                raise VariableNotFoundError(n.source_pos_info, f'Variable {n.target} referenced but not defined.')
+            dt = self._ir_ctx.get_inferred_datatype(target_ptr)
+            operator = Operators.instantiate_operator(n.member, dt.typename)
+            self_arg = [target_ptr]
+        kwargs = operator.params_parse(
+            n.source_pos_info,
+            self_arg + [self.visit(arg) for arg in n.args],
+            {k: self.visit(arg) for k, arg in n.kwargs.items()}
+        )
+        return self._ir_builder.create_op(operator, kwargs, source_pos_info=n.source_pos_info)
+
+    def visit_ASTExprAttribute(self, n: ASTExprAttribute):
+        target_ptr = self.visit(n.target)
+        dt = self._ir_ctx.get_inferred_datatype(target_ptr)
+        operator = Operators.instantiate_operator(n.member, dt.typename)
+        kwargs = operator.params_parse(
+            n.source_pos_info,
+            [target_ptr] + [self.visit(arg) for arg in n.args],
+            {k: self.visit(arg) for k, arg in n.kwargs.items()}
+        )
+        return self._ir_builder.create_op(operator, kwargs, source_pos_info=n.source_pos_info)
 
     def visit_ASTConstant(self, n: ASTConstant):
         return self._ir_builder.create_constant(n.value, source_pos_info=n.source_pos_info)
@@ -166,7 +200,7 @@ class IRGenerator:
 
     def visit_ASTCreateNDArray(self, n: ASTCreateNDArray):
         values = [self.visit(val) for val in n.values]
-        return self._ir_builder.create_new_list(values, source_pos_info=n.source_pos_info)
+        return self._ir_builder.create_square_brackets(values, source_pos_info=n.source_pos_info)
 
     def _create_assignment_with_condition(self, orig_val_ptr, new_val_ptr, source_pos_info: SourcePosInfo = None, annotation: Annotation | None = None):
         cond_stack = self._ir_ctx.get_condition_variables()
@@ -209,12 +243,12 @@ class IRGenerator:
             raise ConstantInferenceError(n.source_pos_info, "This is expression inferred as a constant scalar number. Please make sure that here should be a constant ndarray.")
         return result.values
 
-    def _as_constant_slicing(self, n: ASTSlicingData) -> List[Tuple[int, int, int] | int]:
+    def _as_constant_slicing(self, n: ASTSlicingData) -> List[Tuple[int, int, int]]:
         results = []
         for data in n.data:
             if isinstance(data, ASTExpression):
                 val = self._as_constant_integer(data)
-                results.append(val)
+                results.append((val, ))
             else:
                 if data[0] is not None:
                     val_l = self._as_constant_integer(data[0])

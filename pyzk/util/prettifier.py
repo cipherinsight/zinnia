@@ -1,7 +1,8 @@
 from typing import List
 
 from pyzk.ast.zk_ast import ASTComponent, ASTAssignStatement, ASTSlicingAssignStatement, \
-    ASTAssertStatement, ASTOperator, ASTConstant, ASTSlicing, ASTLoad, ASTSlicingData, ASTPassStatement, \
+    ASTAssertStatement, ASTBinaryOperator, ASTUnaryOperator, ASTExprAttribute, ASTNamedAttribute, ASTConstant, \
+    ASTSlicing, ASTLoad, ASTSlicingData, ASTPassStatement, \
     ASTProgram, ASTProgramInput, ASTAnnotation, ASTForInStatement, ASTCondStatement, \
     ASTExpression, ASTCreateNDArray, ASTSlicingAssignData, ASTContinueStatement, ASTBreakStatement
 from pyzk.exception.base import InternalPyzkException, PyZKException
@@ -38,8 +39,24 @@ def prettify_zk_ast(node: ASTComponent) -> str:
             res = [prefix]
             res += _inner(depth + 1, n.expr, 'expr')
             return res
-        elif isinstance(n, ASTOperator):
-            res = [prefix + f' &{n.op}']
+        elif isinstance(n, ASTBinaryOperator):
+            res = [prefix + f' &{n.operator.get_signature()}']
+            for i, arg in enumerate(n.args):
+                res += _inner(depth + 1, arg, f'arg_{i + 1}')
+            return res
+        elif isinstance(n, ASTUnaryOperator):
+            res = [prefix + f' &{n.operator.get_signature()}']
+            for i, arg in enumerate(n.args):
+                res += _inner(depth + 1, arg, f'arg_{i + 1}')
+            return res
+        elif isinstance(n, ASTNamedAttribute):
+            res = [prefix + f' &{n.target}.{n.member}']
+            for i, arg in enumerate(n.args):
+                res += _inner(depth + 1, arg, f'arg_{i + 1}')
+            return res
+        elif isinstance(n, ASTExprAttribute):
+            res = [prefix + f' &<expr>.{n.member}']
+            res += _inner(depth + 1, n.target, f'<expr>')
             for i, arg in enumerate(n.args):
                 res += _inner(depth + 1, arg, f'arg_{i + 1}')
             return res
@@ -121,26 +138,8 @@ def prettify_zk_ast(node: ASTComponent) -> str:
 def prettify_ir_stmts(stmts: List[IRStatement]):
     results = []
     for i, stmt in enumerate(stmts):
-        s = f'#{stmt.stmt_id}\t{stmt.op}\t'
-        if stmt.op == OpName.Special.CONSTANT:
-            s += f'<= {stmt.constant_value}'
-        elif stmt.op == OpName.Special.INPUT:
-            s += f'<= {stmt.constant_args[0]}'
-        elif stmt.op == OpName.Special.READ_INT:
-            s += f'<= {stmt.constant_args[0]}, {stmt.constant_args[1]}'
-        else:
-            s += f'({", ".join(["%" + str(arg) for arg in stmt.args])})'
-            if (OpName.is_constant_arg_operator(stmt.op) or OpName.is_constant_operator(stmt.op)) and stmt.constant_args is not None:
-                s += f'<{", ".join([str(arg) for arg in stmt.constant_args])}>'
-        if stmt.slicing_args:
-            s += f'[{", ".join([str(x) if isinstance(x, int) else (str(x[0]) + ":" + str(x[1])) for x in stmt.slicing_args])}]'
-        if stmt.slicing_assign_args:
-            s += '['
-            items = []
-            for sli in stmt.slicing_assign_args:
-                items.append(f'[{", ".join([str(x) if isinstance(x, int) else (str(x[0]) + ":" + str(x[1])) for x in sli])}]')
-            s += ', '.join(items)
-            s += ']'
+        s = f'#{stmt.stmt_id}\t{stmt.operator.get_signature()}\t'
+        s += f'({", ".join([f"{k}=%{arg}" for k, arg in stmt.arguments.items()])})'
         if stmt.annotation is not None:
             s += ' {'
             items = []

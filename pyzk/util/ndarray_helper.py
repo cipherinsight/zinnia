@@ -1,5 +1,5 @@
-from types import new_class
-from typing import Tuple, List, Callable, AnyStr, Any
+import copy
+from typing import Tuple, List, Callable, Any
 
 
 class NDArrayHelper:
@@ -11,20 +11,24 @@ class NDArrayHelper:
         self.values = values
         assert NDArrayHelper._assert_shape_matches_value(shape, values)
 
+    def __deepcopy__(self) -> "NDArrayHelper":
+        return NDArrayHelper(shape=self.shape, values=copy.deepcopy(self.values))
+
     def shape_matches(self, other: 'NDArrayHelper') -> bool:
         return NDArrayHelper._shape_matches(self.shape, other.shape)
 
-    def slice(self, slicing: List[Tuple[int, int, int] | int]) -> Any:
+    def slice(self, slicing: List[Tuple[int, ...]]) -> Any:
         assert self.check_slicing(slicing) is None
         padded_slicing = slicing + [(None, None, None) for _ in range(len(self.shape) - len(slicing))]
+        padded_slicing = [(x + (None, ) if len(x) == 2 else x) for x in padded_slicing]
         def _internal_helper(_depth: int, _slicing: List, _values: List):
             _slice = _slicing[_depth]
             if _depth == len(self.shape) - 1:
-                if isinstance(_slice, int):
-                    return _values[_slice]
+                if len(_slice) == 1:
+                    return _values[_slice[0]]
                 return _values[_slice[0]:_slice[1]:_slice[2]]
-            if isinstance(_slice, int):
-                return _internal_helper(_depth + 1, _slicing, _values[_slice])
+            if len(_slice) == 1:
+                return _internal_helper(_depth + 1, _slicing, _values[_slice[0]])
             _values = _values[_slice[0]:_slice[1]:_slice[2]]
             return [_internal_helper(_depth + 1, _slicing, x) for x in _values]
         new_values = _internal_helper(0, padded_slicing, self.values)
@@ -32,7 +36,7 @@ class NDArrayHelper:
             return new_values
         return NDArrayHelper(shape=NDArrayHelper._get_shape_of(new_values), values=new_values)
 
-    def slice_assign(self, slicing_data: List[List[Tuple[int, int, int] | int]], other: Any) -> 'NDArrayHelper':
+    def slice_assign(self, slicing_data: List[List[Tuple[int, ...]]], other: Any) -> 'NDArrayHelper':
         assert self.check_slicing_assign(slicing_data, other) is None
         id_value_mapping = dict()
         encoder_next_id = 0
@@ -62,7 +66,7 @@ class NDArrayHelper:
         return numbered_ndarray.unary(_decode)
 
 
-    def check_slicing_assign(self, slicing_data: List[List[Tuple[int, int, int] | int]], other: Any) -> str | None:
+    def check_slicing_assign(self, slicing_data: List[List[Tuple[int, ...]]], other: Any) -> str | None:
         assignee = self
         for slicing in slicing_data:
             if not isinstance(assignee, NDArrayHelper):
@@ -75,17 +79,16 @@ class NDArrayHelper:
             return None
         return f"Invalid slicing assignment: shape on the lhs {assignee.shape if isinstance(assignee, NDArrayHelper) else '(1,)'} is not equal to shape on the rhs {other.shape if isinstance(other, NDArrayHelper) else '(1,)'}"
 
-    def check_slicing(self, slicing: List[Tuple[int, int, int] | int]) -> str | None:
+    def check_slicing(self, slicing: List[Tuple[int, ...]]) -> str | None:
         if len(self.shape) < len(slicing):
             return f"Too many slicing dimensions: {len(slicing)} dimensions requested but there is only {len(self.shape)} dimensions on the target"
         for i, s in enumerate(slicing):
-            if not isinstance(s, tuple):
-                if s is None:
-                    return f"Invalid {i}-th slicing `None`"
-                if s >= self.shape[i]:
-                    return f"The {i}-th slicing index out of range: {s} out of range {self.shape[i]}"
-                if s < 0 and s + self.shape[i] < 0:
-                    return f"The {i}-th slicing index out of range: {s} out of range {self.shape[i]}"
+            if len(s) == 1 and s[0] is None:
+                return f"Invalid {i}-th slicing `None`"
+            if len(s) == 1 and s[0] >= self.shape[i]:
+                return f"The {i}-th slicing index out of range: {s} out of range {self.shape[i]}"
+            if len(s) == 1 and s[0] < 0 and s[0] + self.shape[i] < 0:
+                return f"The {i}-th slicing index out of range: {s} out of range {self.shape[i]}"
         return None
 
     @staticmethod
@@ -115,6 +118,17 @@ class NDArrayHelper:
         new_values_lhs = _internal_helper(broadcast_shape, shape_lhs, _pad_values(lhs.values, len(rhs.shape) - len(lhs.shape)))
         new_values_rhs = _internal_helper(broadcast_shape, shape_rhs, _pad_values(rhs.values, len(lhs.shape) - len(rhs.shape)))
         return NDArrayHelper(broadcast_shape, new_values_lhs), NDArrayHelper(broadcast_shape, new_values_rhs)
+
+    @staticmethod
+    def broadcast_shape(lhs: Tuple[int, ...], rhs: Tuple[int, ...]) -> Tuple[int, ...]:
+        shape_lhs, shape_rhs = lhs, rhs
+        if len(shape_lhs) < len(shape_rhs):
+            shape_lhs = tuple(1 for _ in range(len(shape_rhs) - len(shape_lhs))) + shape_lhs
+        if len(shape_rhs) < len(shape_lhs):
+            shape_rhs = tuple(1 for _ in range(len(shape_lhs) - len(shape_rhs))) + shape_rhs
+        assert all([a == 1 or b == 1 or a == b for a, b in zip(shape_lhs, shape_rhs)])
+        broadcast_shape = tuple(max(a, b) for a, b in zip(shape_lhs, shape_rhs))
+        return broadcast_shape
 
     @staticmethod
     def broadcast_compatible(shape_lhs: Tuple[int, ...], shape_rhs: Tuple[int, ...]) -> bool:
@@ -184,6 +198,14 @@ class NDArrayHelper:
                 return new_values
             return NDArrayHelper(shape=new_shape, values=new_values)
 
+    def for_each(self, func: Callable[[Tuple[int, ...], Any], Any]) -> 'NDArrayHelper':
+        def _internal_helper(_indices: Tuple[int, ...], _depth: int, _operand: List):
+            if _depth == len(self.shape):
+                return func(_indices, _operand)
+            return [_internal_helper(_indices + (i, ), _depth + 1, val) for i, val in enumerate(_operand)]
+        new_values = _internal_helper(tuple(), 0, self.values)
+        return NDArrayHelper(shape=self.shape, values=new_values)
+
     @staticmethod
     def fill(shape: Tuple[int, ...], fill_value: Callable[[], Any]) -> 'NDArrayHelper':
         def _internal_helper(_shape: Tuple[int, ...]):
@@ -211,6 +233,15 @@ class NDArrayHelper:
         return shape_lhs[1] == shape_rhs[0]
 
     @staticmethod
+    def matmul_shape(shape_lhs: Tuple[int, ...], shape_rhs: Tuple[int, ...]) -> Tuple[int, ...]:
+        assert NDArrayHelper.matmul_shape_matches(shape_lhs, shape_rhs)
+        if len(shape_lhs) == 1:
+            return (shape_rhs[0], )
+        if len(shape_rhs) == 1:
+            return (shape_lhs[1], )
+        return shape_lhs[0], shape_rhs[1]
+
+    @staticmethod
     def matmul(
             lhs: 'NDArrayHelper', rhs: 'NDArrayHelper',
             adder: Callable[[Any, Any], Any], multiplier: Callable[[Any, Any], Any],
@@ -232,8 +263,10 @@ class NDArrayHelper:
                     new_values[i][j] = adder(new_values[i][j], multiplier(lhs_values[i][k], rhs_values[k][j]))
         if len(lhs.shape) == 1:
             new_values = new_values[0]
+            return NDArrayHelper((len(new_values), ), new_values)
         if len(rhs.shape) == 1:
             new_values = [x[0] for x in new_values]
+            return NDArrayHelper((len(new_values), ), new_values)
         return NDArrayHelper((lhs_shape[0], rhs_shape[1]), new_values)
 
     @staticmethod
