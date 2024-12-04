@@ -7,13 +7,12 @@ from pyzk.util.inference_descriptor import InferenceDescriptor
 from pyzk.util.source_pos_info import SourcePosInfo
 
 
-class _ParamEntry:
-    def __init__(self, name: str, default: bool = False):
-        self.name = name
-        self.default = default
-
-
 class AbstractOp:
+    class _ParamEntry:
+        def __init__(self, name: str, default: bool = False):
+            self.name = name
+            self.default = default
+
     def __init__(self):
         pass
 

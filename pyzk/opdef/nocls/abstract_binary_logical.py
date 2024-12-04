@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Optional
 
 from pyzk.exception.contextual import TypeInferenceError
-from pyzk.opdef.nocls.abstract_op import AbstractOp, _ParamEntry
+from pyzk.opdef.nocls.abstract_op import AbstractOp
 from pyzk.util.dt_descriptor import DTDescriptor, NumberDTDescriptor
 from pyzk.util.flatten_descriptor import FlattenDescriptor, NumberFlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor
@@ -15,10 +15,10 @@ class AbstractBinaryLogical(AbstractOp):
     def get_signature(self) -> str:
         raise NotImplementedError()
 
-    def get_param_entries(self) -> List[_ParamEntry]:
+    def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return [
-            _ParamEntry("lhs"),
-            _ParamEntry("rhs"),
+            AbstractOp._ParamEntry("lhs"),
+            AbstractOp._ParamEntry("rhs"),
         ]
 
     def perform_inference(self, lhs: Any, rhs: Any) -> Any:

@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Optional
 
 from pyzk.exception.contextual import TypeInferenceError
-from pyzk.opdef.nocls.abstract_op import AbstractOp, _ParamEntry
+from pyzk.opdef.nocls.abstract_op import AbstractOp
 from pyzk.util.dt_descriptor import DTDescriptor, NumberDTDescriptor
 from pyzk.util.flatten_descriptor import FlattenDescriptor, NumberFlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor
@@ -19,9 +19,9 @@ class BoolCastOp(AbstractOp):
     def get_name(cls) -> str:
         return "bool_cast"
 
-    def get_param_entries(self) -> List[_ParamEntry]:
+    def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return [
-            _ParamEntry("x")
+            AbstractOp._ParamEntry("x")
         ]
 
     def perform_inference(self, lhs: Any, rhs: Any) -> Any:

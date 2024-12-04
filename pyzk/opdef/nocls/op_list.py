@@ -1,7 +1,7 @@
 from typing import List, Dict, Optional
 
 from pyzk.exception.contextual import TypeInferenceError
-from pyzk.opdef.nocls.abstract_op import AbstractOp, _ParamEntry
+from pyzk.opdef.nocls.abstract_op import AbstractOp
 from pyzk.util.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor
 from pyzk.util.flatten_descriptor import NDArrayFlattenDescriptor, TupleFlattenDescriptor, FlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor, NDArrayInferenceDescriptor, TupleInferenceDescriptor
@@ -20,9 +20,9 @@ class ListOp(AbstractOp):
     def get_name(cls) -> str:
         return "list"
 
-    def get_param_entries(self) -> List[_ParamEntry]:
+    def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return [
-            _ParamEntry("x")
+            AbstractOp._ParamEntry("x")
         ]
 
     def type_check(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:

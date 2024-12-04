@@ -1,7 +1,7 @@
 from typing import List, Dict, Optional
 
 from pyzk.exception.contextual import TypeInferenceError
-from pyzk.opdef.nocls.abstract_op import AbstractOp, _ParamEntry
+from pyzk.opdef.nocls.abstract_op import AbstractOp
 from pyzk.util.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor
 from pyzk.util.flatten_descriptor import FlattenDescriptor, TupleFlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor, TupleInferenceDescriptor
@@ -19,9 +19,9 @@ class NDArray_ShapeOp(AbstractOp):
     def get_name(cls) -> str:
         return "NDArray::shape"
 
-    def get_param_entries(self) -> List[_ParamEntry]:
+    def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return [
-            _ParamEntry("self")
+            AbstractOp._ParamEntry("self")
         ]
 
     def type_check(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:

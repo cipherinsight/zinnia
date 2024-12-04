@@ -16,8 +16,8 @@ def foo(
     mat = NDArray.zeros((5, 5))
     mat[2][3] += add(len(mat), len(z))
     for i in list(range(22, 200, 2)):
-        mat = mat @ y + 1
-        if y[0][1] > 123 or mat.sum() > 123:
+        mat = mat @ y + x
+        if y[0][1] > 123 or mat.sum() > 233:
             break
     assert mat[2][4] == 2
     assert mat[0::].sum() == 2

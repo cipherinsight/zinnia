@@ -1,7 +1,7 @@
 from typing import Dict, List, Any, Optional
 
 from pyzk.exception.contextual import TypeInferenceError, StaticInferenceError
-from pyzk.opdef.nocls.abstract_op import AbstractOp, _ParamEntry
+from pyzk.opdef.nocls.abstract_op import AbstractOp
 from pyzk.util.dt_descriptor import DTDescriptor, NumberDTDescriptor, NDArrayDTDescriptor
 from pyzk.util.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor, NumberFlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor, NDArrayInferenceDescriptor, NumberInferenceDescriptor
@@ -13,10 +13,10 @@ class AbstractAggregator(AbstractOp):
     def __init__(self):
         super().__init__()
 
-    def get_param_entries(self) -> List[_ParamEntry]:
+    def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return [
-            _ParamEntry("self"),
-            _ParamEntry("axis", default=True),
+            AbstractOp._ParamEntry("self"),
+            AbstractOp._ParamEntry("axis", default=True),
         ]
 
     def aggregator_func(self, lhs: Any, rhs: Any) -> Any:

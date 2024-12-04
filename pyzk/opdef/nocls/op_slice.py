@@ -1,7 +1,7 @@
 from typing import Dict, List, Tuple, Optional
 
 from pyzk.exception.contextual import TypeInferenceError
-from pyzk.opdef.nocls.abstract_op import AbstractOp, _ParamEntry
+from pyzk.opdef.nocls.abstract_op import AbstractOp
 from pyzk.util.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, NumberDTDescriptor, TupleDTDescriptor
 from pyzk.util.flatten_descriptor import FlattenDescriptor, TupleFlattenDescriptor, NumberFlattenDescriptor, \
     NDArrayFlattenDescriptor
@@ -23,9 +23,9 @@ class SliceOp(AbstractOp):
     def get_name(cls) -> str:
         return "slice"
 
-    def get_param_entries(self) -> List[_ParamEntry]:
+    def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return [
-            _ParamEntry("self")
+            AbstractOp._ParamEntry("self")
         ]
 
     def type_check(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
