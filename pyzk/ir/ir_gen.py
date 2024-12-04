@@ -57,7 +57,7 @@ class IRGenerator:
                 raise NotImplementedError(inp.annotation.typename)
             ptr = self._ir_builder.create_input(
                 i, dt, inp.annotation.public,
-                source_pos_info=n.source_pos_info, annotation=Annotation(inp.annotation.typename, inp.annotation.shape, inp.public)
+                spi=n.spi, annotation=Annotation(inp.annotation.typename, inp.annotation.shape, inp.public)
             )
             self._ir_ctx.assign_name_to_ptr(inp.name, ptr)
         for i, stmt in enumerate(n.block):
@@ -77,10 +77,10 @@ class IRGenerator:
             if self._ir_ctx.is_name_in_stack_scope_top(n.assignee):
                 pass
             elif not self._ir_ctx.is_inferred_datatype_equal(val_ptr, orig_val_ptr):
-                raise InterScopeError(n.source_pos_info, f"Cannot assign to `{n.assignee}`: this variable is declared at the outer scope. Attempting to change its datatype in the inner scope from {self._ir_ctx.get_inferred_datatype_name(orig_val_ptr)} to {self._ir_ctx.get_inferred_datatype_name(val_ptr)} is not allowed. Assigning to variables from outer scope must keep its datatype and shape.")
+                raise InterScopeError(n.spi, f"Cannot assign to `{n.assignee}`: this variable is declared at the outer scope. Attempting to change its datatype in the inner scope from {self._ir_ctx.get_inferred_datatype_name(orig_val_ptr)} to {self._ir_ctx.get_inferred_datatype_name(val_ptr)} is not allowed. Assigning to variables from outer scope must keep its datatype and shape.")
             else:
                 val_ptr = self._create_assignment_with_condition(
-                    orig_val_ptr, val_ptr, source_pos_info=n.source_pos_info, annotation=annotation)
+                    orig_val_ptr, val_ptr, spi=n.spi, annotation=annotation)
         self._ir_ctx.assign_name_to_ptr(n.assignee, val_ptr)
         return val_ptr
 
@@ -89,8 +89,8 @@ class IRGenerator:
         orig_val_ptr = self._ir_ctx.lookup_ptr_by_name(n.assignee)
         assert orig_val_ptr is not None
         assert n.annotation is None
-        val_ptr = self._create_assignment_with_condition(orig_val_ptr, val_ptr, source_pos_info=n.source_pos_info, annotation=None)
-        val_ptr = self._ir_builder.create_slicing_assign([self._as_constant_slicing(sli) for sli in n.slicing.data], orig_val_ptr, val_ptr, source_pos_info=n.source_pos_info, annotation=None)
+        val_ptr = self._create_assignment_with_condition(orig_val_ptr, val_ptr, spi=n.spi, annotation=None)
+        val_ptr = self._ir_builder.create_slicing_assign([self._as_constant_slicing(sli) for sli in n.slicing.data], orig_val_ptr, val_ptr, spi=n.spi, annotation=None)
         self._ir_ctx.assign_name_to_ptr(n.assignee, val_ptr)
         return val_ptr
 
@@ -99,10 +99,10 @@ class IRGenerator:
         iter_elts = self._as_constant_ndarray(n.iter_expr)
         backup_ptr = self._ir_ctx.lookup_ptr_by_name(n.assignee)
         if len(iter_elts) == 0:
-            raise NoForElementsError(n.source_pos_info, "No iterable elements found in the for statement.")
+            raise NoForElementsError(n.spi, "No iterable elements found in the for statement.")
         self._ir_ctx.for_block_enter(self._ir_builder.create_constant(1), self._ir_builder.create_constant(0))
         for i in range(len(iter_elts)):
-            loop_index_ptr = self._ir_builder.create_slicing(iter_expr_ptr, [(i, )], source_pos_info=n.source_pos_info)
+            loop_index_ptr = self._ir_builder.create_slicing(iter_expr_ptr, [(i, )], spi=n.spi)
             self._ir_ctx.assign_name_to_ptr(n.assignee, loop_index_ptr)
             self._ir_ctx.block_enter()
             self._ir_ctx.for_block_reiter()
@@ -116,20 +116,20 @@ class IRGenerator:
 
     def visit_ASTBreakStatement(self, n: ASTBreakStatement):
         if not self._ir_ctx.for_block_exists():
-            raise NotInLoopError(n.source_pos_info, "Invalid break statement here outside the loop.")
+            raise NotInLoopError(n.spi, "Invalid break statement here outside the loop.")
         self._ir_ctx.for_block_break()
         return None
 
     def visit_ASTContinueStatement(self, n: ASTContinueStatement):
         if not self._ir_ctx.for_block_exists():
-            raise NotInLoopError(n.source_pos_info, "Invalid continue statement here outside the loop.")
+            raise NotInLoopError(n.spi, "Invalid continue statement here outside the loop.")
         self._ir_ctx.for_block_continue()
         return None
 
     def visit_ASTCondStatement(self, n: ASTCondStatement):
         cond_ptr = self.visit(n.cond)
-        true_cond_ptr = self._ir_builder.create_bool_cast(cond_ptr, source_pos_info=n.source_pos_info)
-        false_cond_ptr = self._ir_builder.create_logical_not(true_cond_ptr, source_pos_info=n.source_pos_info)
+        true_cond_ptr = self._ir_builder.create_bool_cast(cond_ptr, spi=n.spi)
+        false_cond_ptr = self._ir_builder.create_logical_not(true_cond_ptr, spi=n.spi)
         self._ir_ctx.if_block_enter(true_cond_ptr)
         self._ir_ctx.block_enter()
         for _, stmt in enumerate(n.t_block):
@@ -146,24 +146,24 @@ class IRGenerator:
 
     def visit_ASTAssertStatement(self, n: ASTAssertStatement):
         test = self.visit(n.expr)
-        test_wrt_conditions = self._create_assert_with_condition(test, n.source_pos_info)
-        return self._ir_builder.create_assert(test_wrt_conditions, source_pos_info=n.source_pos_info)
+        test_wrt_conditions = self._create_assert_with_condition(test, n.spi)
+        return self._ir_builder.create_assert(test_wrt_conditions, spi=n.spi)
 
     def visit_ASTBinaryOperator(self, n: ASTBinaryOperator):
         kwargs = n.operator.params_parse(
-            n.source_pos_info,
+            n.spi,
             [self.visit(arg) for arg in n.args],
             {k: self.visit(arg) for k, arg in n.kwargs.items()}
         )
-        return self._ir_builder.create_op(n.operator, kwargs, source_pos_info=n.source_pos_info)
+        return self._ir_builder.create_op(n.operator, kwargs, spi=n.spi)
 
     def visit_ASTUnaryOperator(self, n: ASTBinaryOperator):
         kwargs = n.operator.params_parse(
-            n.source_pos_info,
+            n.spi,
             [self.visit(arg) for arg in n.args],
             {k: self.visit(arg) for k, arg in n.kwargs.items()}
         )
-        return self._ir_builder.create_op(n.operator, kwargs, source_pos_info=n.source_pos_info)
+        return self._ir_builder.create_op(n.operator, kwargs, spi=n.spi)
 
     def visit_ASTNamedAttribute(self, n: ASTNamedAttribute):
         self_arg = []
@@ -172,84 +172,84 @@ class IRGenerator:
         else:
             target_ptr = self._ir_ctx.lookup_ptr_by_name(n.target)
             if target_ptr is None:
-                raise VariableNotFoundError(n.source_pos_info, f'Variable {n.target} referenced but not defined.')
+                raise VariableNotFoundError(n.spi, f'Variable {n.target} referenced but not defined.')
             dt = self._ir_ctx.get_inferred_datatype(target_ptr)
             operator = Operators.instantiate_operator(n.member, dt.typename)
             self_arg = [target_ptr]
         kwargs = operator.params_parse(
-            n.source_pos_info,
+            n.spi,
             self_arg + [self.visit(arg) for arg in n.args],
             {k: self.visit(arg) for k, arg in n.kwargs.items()}
         )
-        return self._ir_builder.create_op(operator, kwargs, source_pos_info=n.source_pos_info)
+        return self._ir_builder.create_op(operator, kwargs, spi=n.spi)
 
     def visit_ASTExprAttribute(self, n: ASTExprAttribute):
         target_ptr = self.visit(n.target)
         dt = self._ir_ctx.get_inferred_datatype(target_ptr)
         operator = Operators.instantiate_operator(n.member, dt.typename)
         kwargs = operator.params_parse(
-            n.source_pos_info,
+            n.spi,
             [target_ptr] + [self.visit(arg) for arg in n.args],
             {k: self.visit(arg) for k, arg in n.kwargs.items()}
         )
-        return self._ir_builder.create_op(operator, kwargs, source_pos_info=n.source_pos_info)
+        return self._ir_builder.create_op(operator, kwargs, spi=n.spi)
 
     def visit_ASTConstant(self, n: ASTConstant):
-        return self._ir_builder.create_constant(n.value, source_pos_info=n.source_pos_info)
+        return self._ir_builder.create_constant(n.value, spi=n.spi)
 
     def visit_ASTSlicing(self, n: ASTSlicing):
         val_ptr = self.visit(n.val)
-        return self._ir_builder.create_slicing(val_ptr, self._as_constant_slicing(n.slicing), source_pos_info=n.source_pos_info)
+        return self._ir_builder.create_slicing(val_ptr, self._as_constant_slicing(n.slicing), spi=n.spi)
 
     def visit_ASTLoad(self, n: ASTLoad):
         val_ptr = self._ir_ctx.lookup_ptr_by_name(n.name)
         if val_ptr is None:
-            raise VariableNotFoundError(n.source_pos_info, f'Variable {n.name} referenced but not defined.')
+            raise VariableNotFoundError(n.spi, f'Variable {n.name} referenced but not defined.')
         return val_ptr
 
     def visit_ASTCreateNDArray(self, n: ASTCreateNDArray):
         values = [self.visit(val) for val in n.values]
-        return self._ir_builder.create_square_brackets(values, source_pos_info=n.source_pos_info)
+        return self._ir_builder.create_square_brackets(values, spi=n.spi)
 
-    def _create_assignment_with_condition(self, orig_val_ptr, new_val_ptr, source_pos_info: SourcePosInfo = None, annotation: Annotation | None = None):
+    def _create_assignment_with_condition(self, orig_val_ptr, new_val_ptr, spi: SourcePosInfo = None, annotation: Annotation | None = None):
         cond_stack = self._ir_ctx.get_condition_variables()
         if len(cond_stack) == 0:
             return new_val_ptr
         cond_val_ptr = cond_stack[0]
         for cond in cond_stack[1:]:
-            cond_val_ptr = self._ir_builder.create_logical_and(cond_val_ptr, cond, source_pos_info=source_pos_info)
-        orelse_cond_val_ptr = self._ir_builder.create_logical_not(cond_val_ptr, source_pos_info=source_pos_info)
-        val_1 = self._ir_builder.create_mul(cond_val_ptr, new_val_ptr, source_pos_info=source_pos_info)
-        val_2 = self._ir_builder.create_mul(orelse_cond_val_ptr, orig_val_ptr, source_pos_info=source_pos_info)
-        return self._ir_builder.create_add(val_1, val_2, source_pos_info=source_pos_info, annotation=annotation)
+            cond_val_ptr = self._ir_builder.create_logical_and(cond_val_ptr, cond, spi=spi)
+        orelse_cond_val_ptr = self._ir_builder.create_logical_not(cond_val_ptr, spi=spi)
+        val_1 = self._ir_builder.create_mul(cond_val_ptr, new_val_ptr, spi=spi)
+        val_2 = self._ir_builder.create_mul(orelse_cond_val_ptr, orig_val_ptr, spi=spi)
+        return self._ir_builder.create_add(val_1, val_2, spi=spi, annotation=annotation)
 
-    def _create_assert_with_condition(self, expr_val_ptr, source_pos_info: SourcePosInfo = None, annotation: Annotation | None = None):
+    def _create_assert_with_condition(self, expr_val_ptr, spi: SourcePosInfo = None, annotation: Annotation | None = None):
         cond_stack = self._ir_ctx.get_condition_variables()
         if len(cond_stack) == 0:
             return expr_val_ptr
         cond_val_ptr = cond_stack[0]
         for cond in cond_stack[1:]:
-            cond_val_ptr = self._ir_builder.create_logical_and(cond_val_ptr, cond, source_pos_info=source_pos_info)
-        orelse_cond_val_ptr = self._ir_builder.create_logical_not(cond_val_ptr, source_pos_info=source_pos_info)
-        val_1 = self._ir_builder.create_mul(cond_val_ptr, expr_val_ptr, source_pos_info=source_pos_info)
-        return self._ir_builder.create_add(val_1, orelse_cond_val_ptr, source_pos_info=source_pos_info, annotation=annotation)
+            cond_val_ptr = self._ir_builder.create_logical_and(cond_val_ptr, cond, spi=spi)
+        orelse_cond_val_ptr = self._ir_builder.create_logical_not(cond_val_ptr, spi=spi)
+        val_1 = self._ir_builder.create_mul(cond_val_ptr, expr_val_ptr, spi=spi)
+        return self._ir_builder.create_add(val_1, orelse_cond_val_ptr, spi=spi, annotation=annotation)
 
     def _as_constant_integer(self, n: ASTExpression) -> int:
         ptr = self.visit(n)
         result = self._ir_ctx.get_inferred_constant_value(ptr)
         if result is None:
-            raise ConstantInferenceError(n.source_pos_info, "Cannot infer the corresponding constant value for this expression. Please make sure that here should be a constant scalar number.")
+            raise ConstantInferenceError(n.spi, "Cannot infer the corresponding constant value for this expression. Please make sure that here should be a constant scalar number.")
         if not isinstance(result, int):
-            raise ConstantInferenceError(n.source_pos_info, "This is expression inferred as a constant ndarray. Please make sure that here should be a constant scalar number.")
+            raise ConstantInferenceError(n.spi, "This is expression inferred as a constant ndarray. Please make sure that here should be a constant scalar number.")
         return result
 
     def _as_constant_ndarray(self, n: ASTExpression) -> List:
         ptr = self.visit(n)
         result = self._ir_ctx.get_inferred_constant_value(ptr)
         if result is None:
-            raise ConstantInferenceError(n.source_pos_info, "Cannot infer the corresponding constant value for this expression. Please make sure that here should be a constant ndarray.")
+            raise ConstantInferenceError(n.spi, "Cannot infer the corresponding constant value for this expression. Please make sure that here should be a constant ndarray.")
         if not isinstance(result, NDArrayHelper):
-            raise ConstantInferenceError(n.source_pos_info, "This is expression inferred as a constant scalar number. Please make sure that here should be a constant ndarray.")
+            raise ConstantInferenceError(n.spi, "This is expression inferred as a constant scalar number. Please make sure that here should be a constant ndarray.")
         return result.values
 
     def _as_constant_slicing(self, n: ASTSlicingData) -> List[Tuple[int, int, int]]:
