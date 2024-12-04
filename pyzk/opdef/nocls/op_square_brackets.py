@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional, List
 from pyzk.exception.contextual import TypeInferenceError
 from pyzk.opdef.abstract_op import AbstractOp
 from pyzk.util.dt_descriptor import DTDescriptor, NumberDTDescriptor, NDArrayDTDescriptor
+from pyzk.util.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor, NDArrayInferenceDescriptor
 from pyzk.util.ndarray_helper import NDArrayHelper
 from pyzk.util.source_pos_info import SourcePosInfo
@@ -43,3 +44,10 @@ class SquareBracketsOp(AbstractOp):
             return NDArrayInferenceDescriptor((len(args), ), NDArrayHelper((len(args), ), [arg.get() for arg in args]))
         new_shape = (len(args), ) + args[0].shape()
         return NDArrayInferenceDescriptor(new_shape, NDArrayHelper.concat([arg.get() for arg in args]))
+
+    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
+        args = list(kwargs.values())
+        if all([isinstance(arg.type(), NumberDTDescriptor) for arg in args]):
+            return NDArrayFlattenDescriptor((len(args), ), NDArrayHelper((len(args), ), [arg.ptr() for arg in args]))
+        new_shape = (len(args), ) + args[0].shape()
+        return NDArrayFlattenDescriptor(new_shape, NDArrayHelper.concat([arg.ptr() for arg in args]))

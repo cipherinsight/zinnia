@@ -2,6 +2,7 @@ from typing import List, Dict, Any, Optional
 
 from pyzk.opdef.abstract_op import AbstractOp, _ParamEntry
 from pyzk.util.dt_descriptor import DTDescriptor, NumberDTDescriptor, NDArrayDTDescriptor
+from pyzk.util.flatten_descriptor import FlattenDescriptor, NumberFlattenDescriptor, NDArrayFlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor, NDArrayInferenceDescriptor
 from pyzk.util.source_pos_info import SourcePosInfo
 
@@ -41,4 +42,17 @@ class USubOp(AbstractOp):
             return NumberInferenceDescriptor(x.get() * -1)
         elif isinstance(x, NDArrayInferenceDescriptor):
             return NDArrayInferenceDescriptor(x.shape(), x.get().unary(lambda a: -a if a is not None else None))
+        raise NotImplementedError()
+
+    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
+        x = kwargs["x"]
+        minus_one = ir_builder.create_constant(-1)
+        if isinstance(x, NumberFlattenDescriptor):
+            return NumberFlattenDescriptor(ir_builder.create_mul(
+                minus_one, x.ptr()
+            ))
+        elif isinstance(x, NDArrayFlattenDescriptor):
+            return NDArrayFlattenDescriptor(x.shape(), x.ptr().unary(lambda a: ir_builder.create_mul(
+                minus_one, a
+            )))
         raise NotImplementedError()

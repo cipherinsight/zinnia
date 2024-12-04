@@ -1,6 +1,5 @@
 from pyzk.ir.ir_builder import IRGraph, IRBuilder
 from pyzk.ir.ir_pass.abstract_pass import AbstractIRPass
-from pyzk.util.op_name import OpName
 
 
 class ExposePublicInserterIRPass(AbstractIRPass):
@@ -15,11 +14,15 @@ class ExposePublicInserterIRPass(AbstractIRPass):
         old_ptr_to_new_ptr = {}
         for stmt in topological_order:
             referring_tos = in_links[stmt.stmt_id]
-            args = []
-            for referring_to in referring_tos:
-                args.append(old_ptr_to_new_ptr[referring_to])
+            args = {}
+            for key, referring_to in referring_tos:
+                args[key] = None
+                if referring_to is not None:
+                    args[key] = old_ptr_to_new_ptr[referring_to]
             old_ptr_to_new_ptr[stmt.stmt_id] = new_ptr = ir_builder.create_similar(stmt, args)
             if stmt.annotation is not None and stmt.annotation.public:
-                ir_builder.create_expose_public(new_ptr)
+                # TODO:
+                # ir_builder.create_expose_public(new_ptr)
+                pass
         ir_graph = ir_builder.export_ir_graph()
         return ir_graph

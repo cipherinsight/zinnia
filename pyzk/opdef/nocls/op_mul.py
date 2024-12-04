@@ -16,3 +16,6 @@ class MulOp(AbstractArithemetic):
 
     def get_inference_op_lambda(self) -> Callable[[Any, Any], Any]:
         return lambda x, y: x * y if x is not None and y is not None else None
+
+    def get_flatten_op_lambda(self, ir_builder) -> Callable[[int, int], int]:
+        return lambda x, y: ir_builder.create_mul(x, y)

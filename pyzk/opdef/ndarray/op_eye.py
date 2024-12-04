@@ -3,6 +3,7 @@ from typing import List, Dict, Optional
 from pyzk.exception.contextual import TypeInferenceError, StaticInferenceError
 from pyzk.opdef.abstract_op import AbstractOp, _ParamEntry
 from pyzk.util.dt_descriptor import DTDescriptor, NumberDTDescriptor, NDArrayDTDescriptor
+from pyzk.util.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor, NDArrayInferenceDescriptor
 from pyzk.util.ndarray_helper import NDArrayHelper
 from pyzk.util.source_pos_info import SourcePosInfo
@@ -46,3 +47,11 @@ class NDArray_EyeOp(AbstractOp):
         ndarray = NDArrayHelper.fill((n, m), lambda: 0)
         ndarray = ndarray.for_each(lambda pos, val: 1 if pos[0] == pos[1] else 0)
         return NDArrayInferenceDescriptor((n, m), ndarray)
+
+    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
+        n, m = kwargs["n"], kwargs["m"]
+        constant_0 = ir_builder.create_constant(0)
+        constant_1 = ir_builder.create_constant(1)
+        ndarray = NDArrayHelper.fill((n.val(), m.val()), lambda: constant_0)
+        ndarray = ndarray.for_each(lambda pos, val: constant_1 if pos[0] == pos[1] else constant_0)
+        return NDArrayFlattenDescriptor((n.val(), m.val()), ndarray)

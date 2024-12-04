@@ -3,6 +3,7 @@ from typing import List, Dict, Optional
 from pyzk.exception.contextual import TypeInferenceError
 from pyzk.opdef.abstract_op import AbstractOp, _ParamEntry
 from pyzk.util.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor
+from pyzk.util.flatten_descriptor import FlattenDescriptor, TupleFlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor, TupleInferenceDescriptor
 from pyzk.util.source_pos_info import SourcePosInfo
 
@@ -33,3 +34,8 @@ class NDArray_ShapeOp(AbstractOp):
         the_self = kwargs["self"]
         shape = the_self.shape()
         return TupleInferenceDescriptor(len(shape), shape)
+
+    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
+        the_self = kwargs["self"]
+        shape = the_self.shape()
+        return TupleFlattenDescriptor(len(shape), tuple(ir_builder.create_constant(x) for x in shape))

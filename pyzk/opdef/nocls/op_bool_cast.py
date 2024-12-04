@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional
 from pyzk.exception.contextual import TypeInferenceError
 from pyzk.opdef.abstract_op import AbstractOp, _ParamEntry
 from pyzk.util.dt_descriptor import DTDescriptor, NumberDTDescriptor
+from pyzk.util.flatten_descriptor import FlattenDescriptor, NumberFlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor
 from pyzk.util.source_pos_info import SourcePosInfo
 
@@ -39,3 +40,7 @@ class BoolCastOp(AbstractOp):
                 return NumberInferenceDescriptor(None)
             return NumberInferenceDescriptor(1 if x != 0 else 0)
         raise NotImplementedError()
+
+    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
+        x = kwargs["x"]
+        return NumberFlattenDescriptor(ir_builder.create_not_equal(x.ptr(), ir_builder.create_constant(0)))

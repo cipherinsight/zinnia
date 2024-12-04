@@ -1,6 +1,5 @@
 from typing import List, Tuple, Optional, Dict
 
-from pyzk.opdef.abstract_op import AbstractOp
 from pyzk.util.source_pos_info import SourcePosInfo
 
 class ASTComponent:

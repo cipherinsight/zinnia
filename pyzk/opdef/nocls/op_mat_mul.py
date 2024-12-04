@@ -3,6 +3,7 @@ from typing import List, Dict, Optional
 from pyzk.exception.contextual import TypeInferenceError
 from pyzk.opdef.abstract_op import AbstractOp, _ParamEntry
 from pyzk.util.dt_descriptor import DTDescriptor, NDArrayDTDescriptor
+from pyzk.util.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor
 from pyzk.util.inference_descriptor import NDArrayInferenceDescriptor, InferenceDescriptor
 from pyzk.util.ndarray_helper import NDArrayHelper
 from pyzk.util.source_pos_info import SourcePosInfo
@@ -39,4 +40,17 @@ class MatMulOp(AbstractOp):
             matmul_shape = NDArrayHelper.matmul_shape(lhs.shape(), rhs.shape())
             return NDArrayInferenceDescriptor(matmul_shape, NDArrayHelper.matmul(
                 lhs.get(), rhs.get(), lambda x, y: x + y if x is not None and y is not None else None, lambda x, y: x * y if x is not None and y is not None else None, lambda: 0))
-        raise NotImplementedError
+        raise NotImplementedError()
+
+    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
+        lhs, rhs = kwargs["lhs"], kwargs["rhs"]
+        if isinstance(lhs, NDArrayFlattenDescriptor) and isinstance(rhs, NDArrayFlattenDescriptor):
+            matmul_shape = NDArrayHelper.matmul_shape(lhs.shape(), rhs.shape())
+            constant_0 = ir_builder.create_constant(0)
+            return NDArrayFlattenDescriptor(matmul_shape, NDArrayHelper.matmul(
+                lhs.ptr(), rhs.ptr(),
+                lambda x, y: ir_builder.create_add(x, y),
+                lambda x, y: ir_builder.create_mul(x, y),
+                lambda: constant_0
+            ))
+        raise NotImplementedError()

@@ -2,6 +2,7 @@ from typing import Dict, Any, List, Optional
 
 from pyzk.exception.contextual import OperatorCallError
 from pyzk.util.dt_descriptor import DTDescriptor
+from pyzk.util.flatten_descriptor import FlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor
 from pyzk.util.source_pos_info import SourcePosInfo
 
@@ -17,14 +18,17 @@ class AbstractOp:
         pass
 
     def get_signature(self) -> str:
-        raise NotImplementedError
+        raise NotImplementedError()
 
     @classmethod
     def get_name(cls) -> str:
-        raise NotImplementedError
+        raise NotImplementedError()
+
+    def dce_keep(self) -> bool:
+        return False
 
     def get_param_entries(self) -> List[_ParamEntry]:
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def params_parse(self, spi: Optional[SourcePosInfo], args: List[Any], kwargs: Dict[str, Any]) -> Dict[str, Any]:
         params = self.get_param_entries()
@@ -56,7 +60,10 @@ class AbstractOp:
         return mapping
 
     def type_check(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def static_infer(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
-        raise NotImplementedError
+        raise NotImplementedError()
+
+    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
+        raise NotImplementedError()

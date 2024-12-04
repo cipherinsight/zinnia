@@ -3,6 +3,7 @@ from typing import List, Dict, Optional
 from pyzk.exception.contextual import TypeInferenceError
 from pyzk.opdef.abstract_op import AbstractOp, _ParamEntry
 from pyzk.util.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor
+from pyzk.util.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor, TupleFlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor, NDArrayInferenceDescriptor, TupleInferenceDescriptor
 from pyzk.util.source_pos_info import SourcePosInfo
 
@@ -29,7 +30,7 @@ class TupleOp(AbstractOp):
             if len(x.shape) != 1:
                 raise TypeInferenceError(spi, "Cannot cast this `NDArray` to `Tuple`, as its number of dimensions is greater than 1")
             return TupleDTDescriptor(x.shape[0])
-        if isinstance(x, TupleDTDescriptor):
+        elif isinstance(x, TupleDTDescriptor):
             return TupleDTDescriptor(x.length)
         raise TypeInferenceError(spi, "`tuple` operator, which aims converts the param into Tuple, can only be used on `Tuple` or `NDArray`")
 
@@ -37,6 +38,14 @@ class TupleOp(AbstractOp):
         x = kwargs["x"]
         if isinstance(x, NDArrayInferenceDescriptor):
             return TupleInferenceDescriptor(x.shape()[0], tuple(x.get().values))
-        if isinstance(x, TupleInferenceDescriptor):
+        elif isinstance(x, TupleInferenceDescriptor):
             return TupleInferenceDescriptor(x.length(), x.get())
-        raise TypeInferenceError(spi, "")
+        raise NotImplementedError()
+
+    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
+        x = kwargs["x"]
+        if isinstance(x, NDArrayFlattenDescriptor):
+            return TupleFlattenDescriptor(x.shape()[0], tuple(x.ptr().values))
+        elif isinstance(x, TupleFlattenDescriptor):
+            return TupleFlattenDescriptor(x.length(), x.ptr())
+        raise NotImplementedError()

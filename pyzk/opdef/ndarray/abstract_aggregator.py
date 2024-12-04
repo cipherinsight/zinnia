@@ -3,6 +3,7 @@ from typing import Dict, List, Any, Optional
 from pyzk.exception.contextual import TypeInferenceError, StaticInferenceError
 from pyzk.opdef.abstract_op import AbstractOp, _ParamEntry
 from pyzk.util.dt_descriptor import DTDescriptor, NumberDTDescriptor, NDArrayDTDescriptor
+from pyzk.util.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor, NumberFlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor, NDArrayInferenceDescriptor, NumberInferenceDescriptor
 from pyzk.util.ndarray_helper import NDArrayHelper
 from pyzk.util.source_pos_info import SourcePosInfo
@@ -22,6 +23,12 @@ class AbstractAggregator(AbstractOp):
         raise NotImplementedError()
 
     def initial_func(self) -> Any:
+        raise NotImplementedError()
+
+    def aggregator_build_ir(self, ir_builder, lhs: int, rhs: int) -> int:
+        raise NotImplementedError()
+
+    def initial_build_ir(self, ir_builder) -> int:
         raise NotImplementedError()
 
     def type_check(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
@@ -56,3 +63,15 @@ class AbstractAggregator(AbstractOp):
         if not isinstance(inferred_value, NDArrayHelper):
             return NumberInferenceDescriptor(inferred_value)
         return NDArrayInferenceDescriptor(inferred_value.shape, inferred_value)
+
+    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
+        the_self = kwargs["self"]
+        the_axis = kwargs["axis"]
+        inferred_value = the_self.ptr().accumulate(
+            the_axis.val() if the_axis is not None else -1,
+            lambda x, y: self.aggregator_build_ir(ir_builder, x, y),
+            lambda: self.initial_build_ir(ir_builder)
+        )
+        if not isinstance(inferred_value, NDArrayHelper):
+            return NumberFlattenDescriptor(inferred_value)
+        return NDArrayFlattenDescriptor(inferred_value.shape, inferred_value)

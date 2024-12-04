@@ -27,3 +27,9 @@ class NDArray_AllOp(AbstractAggregator):
 
     def initial_func(self) -> Any:
         return 1
+
+    def aggregator_build_ir(self, ir_builder, lhs: int, rhs: int) -> int:
+        return ir_builder.create_logical_and(lhs, rhs)
+
+    def initial_build_ir(self, ir_builder) -> int:
+        return ir_builder.create_constant(1)

@@ -4,6 +4,7 @@ from pyzk.exception.contextual import TypeInferenceError, StaticInferenceError
 from pyzk.opdef.abstract_op import AbstractOp, _ParamEntry
 from pyzk.util.dt_descriptor import DTDescriptor, NumberDTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor, \
     NoneDTDescriptor
+from pyzk.util.flatten_descriptor import FlattenDescriptor, NoneFlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor, NoneInferenceDescriptor
 from pyzk.util.source_pos_info import SourcePosInfo
 
@@ -18,6 +19,9 @@ class AssertOp(AbstractOp):
     @classmethod
     def get_name(cls) -> str:
         return "assert"
+
+    def dce_keep(self) -> bool:
+        return True
 
     def get_param_entries(self) -> List[_ParamEntry]:
         return [
@@ -35,3 +39,8 @@ class AssertOp(AbstractOp):
         if operand.get() is not None and operand.get() == 0:
             raise StaticInferenceError(spi, "Assertion is always unsatisfiable")
         return NoneInferenceDescriptor()
+
+    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
+        operand = kwargs["test"]
+        ir_builder.create_assert(operand.ptr())
+        return NoneFlattenDescriptor()

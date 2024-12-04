@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional, List
 from pyzk.exception.contextual import TypeInferenceError
 from pyzk.opdef.abstract_op import AbstractOp
 from pyzk.util.dt_descriptor import DTDescriptor, NumberDTDescriptor, NDArrayDTDescriptor
+from pyzk.util.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor, NDArrayInferenceDescriptor
 from pyzk.util.ndarray_helper import NDArrayHelper
 from pyzk.util.source_pos_info import SourcePosInfo
@@ -63,15 +64,16 @@ class RangeOp(AbstractOp):
 
     def static_infer(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         start, stop, step = kwargs["start"], kwargs["stop"], kwargs["step"]
-        _start, _stop, _step = None, None, None
-        if start is None:
-            _start = 0
-        else:
-            _start = start.get()
+        _start = 0 if start is None else start.get()
         _stop = stop.get()
-        if step is None:
-            _step = 1
-        else:
-            _step = step.get()
+        _step = 1 if step is None else step.get()
         result = list(range(_start, _stop, _step))
         return NDArrayInferenceDescriptor((len(result), ), NDArrayHelper((len(result), ), result))
+
+    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
+        start, stop, step = kwargs["start"], kwargs["stop"], kwargs["step"]
+        _start = 0 if start is None else start.val()
+        _stop = stop.val()
+        _step = 1 if step is None else step.val()
+        result = [ir_builder.create_constant(x) for x in range(_start, _stop, _step)]
+        return NDArrayFlattenDescriptor((len(result), ), NDArrayHelper((len(result), ), result))

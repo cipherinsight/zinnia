@@ -19,3 +19,9 @@ class NDArray_SumOp(AbstractAggregator):
 
     def initial_func(self) -> Any:
         return 0
+
+    def aggregator_build_ir(self, ir_builder, lhs: int, rhs: int) -> int:
+        return ir_builder.create_add(lhs, rhs)
+
+    def initial_build_ir(self, ir_builder) -> int:
+        return ir_builder.create_constant(0)

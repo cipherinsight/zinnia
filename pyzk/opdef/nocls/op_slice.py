@@ -3,6 +3,8 @@ from typing import Dict, List, Tuple, Optional
 from pyzk.exception.contextual import TypeInferenceError
 from pyzk.opdef.abstract_op import AbstractOp, _ParamEntry
 from pyzk.util.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, NumberDTDescriptor, TupleDTDescriptor
+from pyzk.util.flatten_descriptor import FlattenDescriptor, TupleFlattenDescriptor, NumberFlattenDescriptor, \
+    NDArrayFlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor, TupleInferenceDescriptor, NDArrayInferenceDescriptor, \
     NumberInferenceDescriptor
 from pyzk.util.ndarray_helper import NDArrayHelper
@@ -73,4 +75,23 @@ class SliceOp(AbstractOp):
             if not isinstance(sliced_result, NDArrayHelper):
                 return NumberInferenceDescriptor(sliced_result)
             return NDArrayInferenceDescriptor(sliced_result.shape, sliced_result)
+        raise NotImplementedError()
+
+    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
+        the_self = kwargs['self']
+        if isinstance(the_self, TupleFlattenDescriptor):
+            slicing = self.slicing_params[0]
+            if len(slicing) == 1:
+                return NumberFlattenDescriptor(the_self.ptr()[slicing[0]])
+            elif len(slicing) == 2:
+                the_result = the_self.ptr()[slicing[0]:slicing[1]]
+                return TupleFlattenDescriptor(len(the_result), the_result)
+            elif len(slicing) == 3:
+                the_result = the_self.ptr()[slicing[0]:slicing[1]:slicing[2]]
+                return TupleFlattenDescriptor(len(the_result), the_result)
+        elif isinstance(the_self, NDArrayFlattenDescriptor):
+            sliced_result = the_self.ptr().slice(self.slicing_params)
+            if not isinstance(sliced_result, NDArrayHelper):
+                return NumberFlattenDescriptor(sliced_result)
+            return NDArrayFlattenDescriptor(sliced_result.shape, sliced_result)
         raise NotImplementedError()

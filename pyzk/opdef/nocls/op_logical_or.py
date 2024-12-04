@@ -26,3 +26,6 @@ class LogicalOrOp(AbstractArithemetic):
                 return None if lhs == 0 else 1
             raise NotImplementedError()
         return _inner
+
+    def get_flatten_op_lambda(self, ir_builder) -> Callable[[int, int], int]:
+        return lambda x, y: ir_builder.create_logical_or(x, y)

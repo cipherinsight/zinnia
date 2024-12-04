@@ -3,6 +3,7 @@ from typing import List, Dict, Optional
 from pyzk.exception.contextual import StaticInferenceError
 from pyzk.opdef.abstract_op import AbstractOp, _ParamEntry
 from pyzk.util.dt_descriptor import DTDescriptor, NumberDTDescriptor
+from pyzk.util.flatten_descriptor import FlattenDescriptor, NumberFlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor
 from pyzk.util.source_pos_info import SourcePosInfo
 
@@ -36,3 +37,7 @@ class ConstantCastOp(AbstractOp):
         if isinstance(x, NumberInferenceDescriptor):
             return NumberInferenceDescriptor(x.get())
         raise NotImplementedError()
+
+    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
+        x = kwargs["x"]
+        return NumberFlattenDescriptor(x.ptr())

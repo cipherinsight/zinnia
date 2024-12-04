@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional
 from pyzk.exception.contextual import TypeInferenceError
 from pyzk.opdef.abstract_op import AbstractOp
 from pyzk.util.dt_descriptor import DTDescriptor, NumberDTDescriptor, TupleDTDescriptor
+from pyzk.util.flatten_descriptor import FlattenDescriptor, TupleFlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor, TupleInferenceDescriptor
 from pyzk.util.source_pos_info import SourcePosInfo
 
@@ -32,3 +33,7 @@ class ParenthesisOp(AbstractOp):
     def static_infer(self, spi: Optional[SourcePosInfo], **kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         args = kwargs.values()
         return TupleInferenceDescriptor(len(args), tuple(arg.get() for arg in args))
+
+    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
+        args = kwargs.values()
+        return TupleFlattenDescriptor(len(args), tuple(arg.ptr() for arg in args))

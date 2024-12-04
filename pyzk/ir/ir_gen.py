@@ -15,6 +15,7 @@ from pyzk.ir.ir_ctx import IRContext
 from pyzk.exception.contextual import VariableNotFoundError, ConstantInferenceError, NoForElementsError, NotInLoopError, \
     InterScopeError
 from pyzk.util.datatype_name import DataTypeName
+from pyzk.util.dt_descriptor import NDArrayDTDescriptor, NumberDTDescriptor
 from pyzk.util.operator_factory import Operators
 from pyzk.util.prog_meta_data import ProgramMetadata
 from pyzk.util.annotation import Annotation
@@ -33,7 +34,7 @@ class IRGenerator:
         ir_graph = self._ir_builder.export_ir_graph()
         ir_graph = InputMetadataExtractorIRPass(prog_meta_data).exec(ir_graph)
         ir_graph = ExposePublicInserterIRPass().exec(ir_graph)
-        ir_graph = NDArrayFlattenerIRPass(prog_meta_data).exec(ir_graph)
+        ir_graph = NDArrayFlattenerIRPass().exec(ir_graph)
         ir_graph = ConstantFoldIRPass().exec(ir_graph)
         ir_graph = DeadCodeEliminationIRPass().exec(ir_graph)
         return ir_graph.export_stmts(), prog_meta_data
@@ -48,8 +49,16 @@ class IRGenerator:
 
     def visit_ASTProgram(self, n: ASTProgram):
         for i, inp in enumerate(n.inputs):
-            ptr = self._ir_builder.create_input(i, source_pos_info=n.source_pos_info, annotation=Annotation(
-                inp.annotation.typename, inp.annotation.shape, inp.public))
+            if inp.annotation.typename == DataTypeName.NDARRAY:
+                dt = NDArrayDTDescriptor(shape=inp.annotation.shape)
+            elif inp.annotation.typename == DataTypeName.NUMBER:
+                dt = NumberDTDescriptor()
+            else:
+                raise NotImplementedError(inp.annotation.typename)
+            ptr = self._ir_builder.create_input(
+                i, dt, inp.annotation.public,
+                source_pos_info=n.source_pos_info, annotation=Annotation(inp.annotation.typename, inp.annotation.shape, inp.public)
+            )
             self._ir_ctx.assign_name_to_ptr(inp.name, ptr)
         for i, stmt in enumerate(n.block):
             self.visit(stmt)

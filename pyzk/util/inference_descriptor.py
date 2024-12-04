@@ -6,6 +6,12 @@ from pyzk.util.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, NumberDTD
 from pyzk.util.ndarray_helper import NDArrayHelper
 
 
+NumberInferenceValue = int | None
+NDArrayInferenceValue = NDArrayHelper
+TupleInferenceValue = tuple
+NoneInferenceValue = type(None)
+
+
 class InferenceDescriptor:
     def __init__(self, dt: DTDescriptor):
         self.dt = dt
@@ -26,14 +32,14 @@ class InferenceDescriptor:
 
 
 class NDArrayInferenceDescriptor(InferenceDescriptor):
-    def __init__(self, shape: Tuple[int, ...], value: NDArrayHelper):
+    def __init__(self, shape: Tuple[int, ...], value: NDArrayInferenceValue):
         super().__init__(NDArrayDTDescriptor(shape))
         self.value = value
 
-    def get(self) -> NDArrayHelper:
+    def get(self) -> NDArrayInferenceValue:
         return self.value
 
-    def set(self, value: NDArrayHelper) -> 'NDArrayInferenceDescriptor':
+    def set(self, value: NDArrayInferenceValue) -> 'NDArrayInferenceDescriptor':
         self.value = value
         return self
 
@@ -47,14 +53,14 @@ class NDArrayInferenceDescriptor(InferenceDescriptor):
 
 
 class NumberInferenceDescriptor(InferenceDescriptor):
-    def __init__(self, value: int | None = None):
+    def __init__(self, value: NumberInferenceValue):
         super().__init__(NumberDTDescriptor())
         self.value = value
 
-    def get(self) -> int | None:
+    def get(self) -> NumberInferenceValue:
         return self.value
 
-    def set(self, value: int | None) -> 'NumberInferenceDescriptor':
+    def set(self, value: NumberInferenceValue) -> 'NumberInferenceDescriptor':
         self.value = value
         return self
 
@@ -63,15 +69,16 @@ class NoneInferenceDescriptor(InferenceDescriptor):
     def __init__(self):
         super().__init__(NoneDTDescriptor())
 
-    def get(self) -> int | None:
-        raise NotImplementedError()
+    def get(self) -> NoneInferenceValue:
+        return None
 
-    def set(self, value: int | None) -> 'NoneInferenceDescriptor':
-        raise NotImplementedError()
+    def set(self, value: NoneInferenceValue) -> 'NoneInferenceDescriptor':
+        assert value is None
+        return self
 
 
 class TupleInferenceDescriptor(InferenceDescriptor):
-    def __init__(self, length: int, value: Tuple):
+    def __init__(self, length: int, value: TupleInferenceValue):
         super().__init__(TupleDTDescriptor(length))
         assert len(value) == length
         self.value = value
@@ -80,9 +87,9 @@ class TupleInferenceDescriptor(InferenceDescriptor):
         assert isinstance(self.dt, TupleDTDescriptor)
         return self.dt.length
 
-    def get(self) -> Tuple:
+    def get(self) -> TupleInferenceValue:
         return self.value
 
-    def set(self, value: Tuple) -> 'TupleInferenceDescriptor':
+    def set(self, value: TupleInferenceValue) -> 'TupleInferenceDescriptor':
         self.value = value
         return self

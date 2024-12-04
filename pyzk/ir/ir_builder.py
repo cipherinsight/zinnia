@@ -5,6 +5,7 @@ from pyzk.ir.ir_graph import IRGraph, IRGraphMetadata
 from pyzk.ir.ir_stmt import IRStatement
 from pyzk.opdef.abstract_op import AbstractOp
 from pyzk.util.annotation import Annotation
+from pyzk.util.dt_descriptor import DTDescriptor
 from pyzk.util.operator_factory import Operators
 from pyzk.util.source_pos_info import SourcePosInfo
 
@@ -108,6 +109,72 @@ class IRBuilder:
         self._next_id += 1
         return self._next_id - 1
 
+    def create_not_equal(
+            self, lhs: int, rhs: int,
+            source_pos_info: SourcePosInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.NE(),
+                           {"lhs": lhs, "rhs": rhs}, source_pos_info=source_pos_info, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_equal(
+            self, lhs: int, rhs: int,
+            source_pos_info: SourcePosInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.EQ(),
+                           {"lhs": lhs, "rhs": rhs}, source_pos_info=source_pos_info, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_less_than(
+            self, lhs: int, rhs: int,
+            source_pos_info: SourcePosInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.LT(),
+                           {"lhs": lhs, "rhs": rhs}, source_pos_info=source_pos_info, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_less_than_or_equal(
+            self, lhs: int, rhs: int,
+            source_pos_info: SourcePosInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.LTE(),
+                           {"lhs": lhs, "rhs": rhs}, source_pos_info=source_pos_info, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_greater_than(
+            self, lhs: int, rhs: int,
+            source_pos_info: SourcePosInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.GT(),
+                           {"lhs": lhs, "rhs": rhs}, source_pos_info=source_pos_info, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_greater_than_or_equal(
+            self, lhs: int, rhs: int,
+            source_pos_info: SourcePosInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.GTE(),
+                           {"lhs": lhs, "rhs": rhs}, source_pos_info=source_pos_info, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
     def create_bool_cast(
             self, value: int,
             source_pos_info: SourcePosInfo = None, annotation: Annotation | None = None
@@ -199,11 +266,10 @@ class IRBuilder:
         return self._next_id - 1
 
     def create_input(
-            self, input_id: int,
+            self, input_id: int, dt: DTDescriptor, public: bool,
             source_pos_info: SourcePosInfo = None, annotation: Annotation | None = None
     ) -> int:
-        assert annotation is not None, "You must specify an annotation for `input` operator."
-        stmt = IRStatement(self._next_id, Operators.NoCls.INPUT(input_id, annotation.typename, annotation.shape, annotation.public),
+        stmt = IRStatement(self._next_id, Operators.NoCls.INPUT(input_id, dt, public),
                            {}, source_pos_info=source_pos_info, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         self._next_id += 1

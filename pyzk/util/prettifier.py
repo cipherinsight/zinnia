@@ -7,7 +7,6 @@ from pyzk.ast.zk_ast import ASTComponent, ASTAssignStatement, ASTSlicingAssignSt
     ASTExpression, ASTCreateNDArray, ASTSlicingAssignData, ASTContinueStatement, ASTBreakStatement
 from pyzk.exception.base import InternalPyzkException, PyZKException
 from pyzk.ir.ir_builder import IRStatement
-from pyzk.util.op_name import OpName
 
 
 def prettify_zk_ast(node: ASTComponent) -> str:

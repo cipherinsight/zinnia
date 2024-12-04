@@ -3,6 +3,7 @@ from typing import List, Dict, Optional
 from pyzk.exception.contextual import TypeInferenceError, StaticInferenceError
 from pyzk.opdef.abstract_op import AbstractOp, _ParamEntry
 from pyzk.util.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor
+from pyzk.util.flatten_descriptor import NDArrayFlattenDescriptor, FlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor, NDArrayInferenceDescriptor
 from pyzk.util.ndarray_helper import NDArrayHelper
 from pyzk.util.source_pos_info import SourcePosInfo
@@ -39,3 +40,9 @@ class NDArray_ZerosOp(AbstractOp):
         shape = kwargs["shape"].get()
         ndarray = NDArrayHelper.fill(shape, lambda: 0)
         return NDArrayInferenceDescriptor(shape, ndarray)
+
+    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
+        shape = kwargs["shape"]
+        constant_0 = ir_builder.create_constant(0)
+        ndarray = NDArrayHelper.fill(shape.val(), lambda: constant_0)
+        return NDArrayFlattenDescriptor(shape.val(), ndarray)

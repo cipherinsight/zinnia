@@ -24,3 +24,6 @@ class OrOp(AbstractBinaryLogical):
         elif lhs is not None and rhs is None:
             return None if lhs == 0 else 1
         raise NotImplementedError()
+
+    def perform_flatten(self, ir_builder, lhs: Any, rhs: Any) -> Any:
+        return ir_builder.create_logical_or(lhs, rhs)

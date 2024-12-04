@@ -3,6 +3,7 @@ from typing import Dict, List, Tuple, Optional
 from pyzk.exception.contextual import TypeInferenceError
 from pyzk.opdef.abstract_op import AbstractOp, _ParamEntry
 from pyzk.util.dt_descriptor import DTDescriptor, NDArrayDTDescriptor
+from pyzk.util.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor, TupleInferenceDescriptor, NDArrayInferenceDescriptor, \
     NumberInferenceDescriptor
 from pyzk.util.source_pos_info import SourcePosInfo
@@ -55,4 +56,12 @@ class AssignSliceOp(AbstractOp):
         if isinstance(the_self, NDArrayInferenceDescriptor):
             sliced_result = the_self.get().slice_assign(self.slicing_params_list, the_value.get())
             return NDArrayInferenceDescriptor(sliced_result.shape, sliced_result)
+        raise NotImplementedError()
+
+    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
+        the_self = kwargs['self']
+        the_value = kwargs['value']
+        if isinstance(the_self, NDArrayFlattenDescriptor):
+            sliced_result = the_self.ptr().slice_assign(self.slicing_params_list, the_value.ptr())
+            return NDArrayFlattenDescriptor(sliced_result.shape, sliced_result)
         raise NotImplementedError()
