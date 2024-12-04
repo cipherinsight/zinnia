@@ -100,7 +100,7 @@ class IRGenerator:
         backup_ptr = self._ir_ctx.lookup_ptr_by_name(n.assignee)
         if len(iter_elts) == 0:
             raise NoForElementsError(n.spi, "No iterable elements found in the for statement.")
-        self._ir_ctx.for_block_enter(self._ir_builder.create_constant(1), self._ir_builder.create_constant(0))
+        self._ir_ctx.for_block_enter()
         for i in range(len(iter_elts)):
             loop_index_ptr = self._ir_builder.create_slicing(iter_expr_ptr, [(i, )], spi=n.spi)
             self._ir_ctx.assign_name_to_ptr(n.assignee, loop_index_ptr)
@@ -117,13 +117,23 @@ class IRGenerator:
     def visit_ASTBreakStatement(self, n: ASTBreakStatement):
         if not self._ir_ctx.for_block_exists():
             raise NotInLoopError(n.spi, "Invalid break statement here outside the loop.")
-        self._ir_ctx.for_block_break()
+        condition_vars = self._ir_ctx.get_condition_variables()
+        condition_result = self._ir_builder.create_constant(1)
+        for var in condition_vars:
+            condition_result = self._ir_builder.create_logical_and(condition_result, var)
+        condition_result = self._ir_builder.create_logical_not(condition_result)
+        self._ir_ctx.for_block_break(condition_result)
         return None
 
     def visit_ASTContinueStatement(self, n: ASTContinueStatement):
         if not self._ir_ctx.for_block_exists():
             raise NotInLoopError(n.spi, "Invalid continue statement here outside the loop.")
-        self._ir_ctx.for_block_continue()
+        condition_vars = self._ir_ctx.get_condition_variables()
+        condition_result = self._ir_builder.create_constant(1)
+        for var in condition_vars:
+            condition_result = self._ir_builder.create_logical_and(condition_result, var)
+        condition_result = self._ir_builder.create_logical_not(condition_result)
+        self._ir_ctx.for_block_continue(condition_result)
         return None
 
     def visit_ASTCondStatement(self, n: ASTCondStatement):

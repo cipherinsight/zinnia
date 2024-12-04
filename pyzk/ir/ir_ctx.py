@@ -74,20 +74,20 @@ class IRContext:
     def if_block_leave(self):
         self.if_condition_stack.pop()
 
-    def for_block_enter(self, constant_true: int, constant_false: int):
-        self.for_condition_stack.append([True, True, constant_true, constant_false])
+    def for_block_enter(self):
+        self.for_condition_stack.append(([], []))
 
-    def for_block_continue(self):
+    def for_block_continue(self, continue_conditions_not: int):
         assert len(self.for_condition_stack) > 0
-        self.for_condition_stack[-1][0] = False
+        self.for_condition_stack[-1][0].append(continue_conditions_not)
 
-    def for_block_break(self):
+    def for_block_break(self, break_conditions_not: int):
         assert len(self.for_condition_stack) > 0
-        self.for_condition_stack[-1][1] = False
+        self.for_condition_stack[-1][1].append(break_conditions_not)
 
     def for_block_reiter(self):
         assert len(self.for_condition_stack) > 0
-        self.for_condition_stack[-1][0] = True
+        self.for_condition_stack[-1] = [], self.for_condition_stack[-1][1]
 
     def for_block_exists(self):
         return len(self.for_condition_stack) > 0
@@ -95,11 +95,8 @@ class IRContext:
     def for_block_leave(self):
         self.for_condition_stack.pop()
 
-    def get_condition_variables(self):
+    def get_condition_variables(self) -> List[int]:
         variables = self.if_condition_stack.copy()
         for for_block in self.for_condition_stack:
-            if for_block[0] and for_block[1]:
-                variables.append(for_block[2])
-            else:
-                variables.append(for_block[3])
+            variables += for_block[0] + for_block[1]
         return variables
