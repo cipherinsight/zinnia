@@ -215,12 +215,24 @@ class PyZKASTTransformer(ast.NodeTransformer):
             if isinstance(node.func.value, ast.Name):
                 before_name = node.func.value.id
                 after_name = node.func.attr
-                return ASTNamedAttribute(source_pos_info, before_name, after_name, [self.visit_expr(arg) for arg in node.args], {})
+                return ASTNamedAttribute(
+                    source_pos_info, before_name, after_name,
+                    [self.visit_expr(arg) for arg in node.args],
+                    {kwarg.arg: self.visit_expr(kwarg.value) for kwarg in node.keywords}
+                )
             else:
                 after_name = node.func.attr
-                return ASTExprAttribute(source_pos_info, self.visit_expr(node.func.value), after_name, [self.visit_expr(arg) for arg in node.args], {})
+                return ASTExprAttribute(
+                    source_pos_info, self.visit_expr(node.func.value), after_name,
+                    [self.visit_expr(arg) for arg in node.args],
+                    {kwarg.arg: self.visit_expr(kwarg.value) for kwarg in node.keywords}
+                )
         elif isinstance(node.func, ast.Name):
-            return ASTNamedAttribute(source_pos_info, None, node.func.id, [self.visit_expr(arg) for arg in node.args], {})
+            return ASTNamedAttribute(
+                source_pos_info, None, node.func.id,
+                [self.visit_expr(arg) for arg in node.args],
+                {kwarg.arg: self.visit_expr(kwarg.value) for kwarg in node.keywords}
+            )
         raise UnsupportedOperatorException(source_pos_info, f"Invalid call function {type(node.func)}. Only a static specified function name is supported here.")
 
     def visit_Attribute(self, node):

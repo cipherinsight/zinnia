@@ -14,12 +14,12 @@ def foo(
     assert z.shape[1] == 5
     mat = NDArray.zeros((5, 5))
     mat[2][3] += len(mat)
-    for i in list(range(x)):
+    for i in list(range(22)):
         mat = mat @ y + 1
         if i > 10:
             break
     assert mat[2][4] == 2
-    assert mat[0::].sum() == 2
+    assert mat[0::].sum(axis=-1) == 2
 
 
 
