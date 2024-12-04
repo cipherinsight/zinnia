@@ -1,6 +1,6 @@
 from typing import List, Dict, Optional
 
-from pyzk.opdef.abstract_op import AbstractOp, _ParamEntry
+from pyzk.opdef.nocls.abstract_op import AbstractOp, _ParamEntry
 from pyzk.util.dt_descriptor import DTDescriptor, NumberDTDescriptor, NDArrayDTDescriptor
 from pyzk.util.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor, NumberFlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor, NDArrayInferenceDescriptor

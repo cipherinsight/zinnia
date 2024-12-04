@@ -1,6 +1,6 @@
 from typing import Dict
 
-from pyzk.opdef.abstract_op import AbstractOp
+from pyzk.opdef.nocls.abstract_op import AbstractOp
 from pyzk.util.annotation import Annotation
 from pyzk.util.source_pos_info import SourcePosInfo
 

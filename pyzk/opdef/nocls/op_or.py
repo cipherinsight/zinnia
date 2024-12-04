@@ -1,6 +1,6 @@
 from typing import Any
 
-from pyzk.opdef.abstract_binary_logical import AbstractBinaryLogical
+from pyzk.opdef.nocls.abstract_binary_logical import AbstractBinaryLogical
 
 
 class OrOp(AbstractBinaryLogical):

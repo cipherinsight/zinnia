@@ -3,10 +3,10 @@ from typing import Tuple, List, Dict
 from pyzk.ir.ir_ctx import IRContext
 from pyzk.ir.ir_graph import IRGraph, IRGraphMetadata
 from pyzk.ir.ir_stmt import IRStatement
-from pyzk.opdef.abstract_op import AbstractOp
+from pyzk.opdef.nocls.abstract_op import AbstractOp
 from pyzk.util.annotation import Annotation
 from pyzk.util.dt_descriptor import DTDescriptor
-from pyzk.util.operator_factory import Operators
+from pyzk.opdef.operator_factory import Operators
 from pyzk.util.source_pos_info import SourcePosInfo
 
 

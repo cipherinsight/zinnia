@@ -16,7 +16,7 @@ from pyzk.exception.contextual import VariableNotFoundError, ConstantInferenceEr
     InterScopeError
 from pyzk.util.datatype_name import DataTypeName
 from pyzk.util.dt_descriptor import NDArrayDTDescriptor, NumberDTDescriptor
-from pyzk.util.operator_factory import Operators
+from pyzk.opdef.operator_factory import Operators
 from pyzk.util.prog_meta_data import ProgramMetadata
 from pyzk.util.annotation import Annotation
 from pyzk.util.ndarray_helper import NDArrayHelper

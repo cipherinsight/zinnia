@@ -1,4 +1,4 @@
-from pyzk.opdef.abstract_arithemetic import AbstractArithemetic
+from pyzk.opdef.nocls.abstract_arithemetic import AbstractArithemetic
 
 
 class AbstractCompare(AbstractArithemetic):

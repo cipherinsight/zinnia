@@ -1,6 +1,6 @@
 from typing import Callable, Any, Dict, Optional
 
-from pyzk.opdef.abstract_arithemetic import AbstractArithemetic
+from pyzk.opdef.nocls.abstract_arithemetic import AbstractArithemetic
 from pyzk.util.dt_descriptor import DTDescriptor, TupleDTDescriptor
 from pyzk.util.flatten_descriptor import FlattenDescriptor, TupleFlattenDescriptor
 from pyzk.util.inference_descriptor import InferenceDescriptor, TupleInferenceDescriptor

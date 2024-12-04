@@ -11,7 +11,7 @@ from pyzk.ast.zk_ast import ASTProgramInput, ASTAnnotation, ASTProgram, ASTAssig
     ASTExprAttribute
 from pyzk.util.datatype_name import DataTypeName
 from pyzk.util.input_anno_name import InputAnnoName
-from pyzk.util.operator_factory import Operators
+from pyzk.opdef.operator_factory import Operators
 from pyzk.util.source_pos_info import SourcePosInfo
 
 

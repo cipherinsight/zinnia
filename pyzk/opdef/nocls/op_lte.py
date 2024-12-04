@@ -1,6 +1,6 @@
 from typing import Callable, Any
 
-from pyzk.opdef.abstract_compare import AbstractCompare
+from pyzk.opdef.nocls.abstract_compare import AbstractCompare
 
 
 class LessThanOrEqualOp(AbstractCompare):

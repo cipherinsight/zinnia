@@ -1,7 +1,7 @@
 from inspect import isclass
 from typing import Optional
 
-from pyzk.opdef.abstract_op import AbstractOp
+from pyzk.opdef.nocls.abstract_op import AbstractOp
 from pyzk.opdef.ndarray.op_all import NDArray_AllOp
 from pyzk.opdef.ndarray.op_any import NDArray_AnyOp
 from pyzk.opdef.ndarray.op_eye import NDArray_EyeOp

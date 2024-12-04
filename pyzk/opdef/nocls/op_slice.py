@@ -1,7 +1,7 @@
 from typing import Dict, List, Tuple, Optional
 
 from pyzk.exception.contextual import TypeInferenceError
-from pyzk.opdef.abstract_op import AbstractOp, _ParamEntry
+from pyzk.opdef.nocls.abstract_op import AbstractOp, _ParamEntry
 from pyzk.util.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, NumberDTDescriptor, TupleDTDescriptor
 from pyzk.util.flatten_descriptor import FlattenDescriptor, TupleFlattenDescriptor, NumberFlattenDescriptor, \
     NDArrayFlattenDescriptor
