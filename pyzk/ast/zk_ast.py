@@ -115,7 +115,14 @@ class ASTSlicing(ASTExpression):
         self.slicing = slicing
 
 
-class ASTCreateNDArray(ASTExpression):
+class ASTSquareBrackets(ASTExpression):
+    def __init__(self, spi: SourcePosInfo, dim_size: int, values: List[ASTExpression]):
+        super().__init__(spi)
+        self.dim_size = dim_size
+        self.values = values
+
+
+class ASTParenthesis(ASTExpression):
     def __init__(self, spi: SourcePosInfo, dim_size: int, values: List[ASTExpression]):
         super().__init__(spi)
         self.dim_size = dim_size

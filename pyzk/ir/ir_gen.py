@@ -8,8 +8,8 @@ from pyzk.ir.ir_pass.ndarray_flattener import NDArrayFlattenerIRPass
 from pyzk.ir.ir_stmt import IRStatement
 from pyzk.ast.zk_ast import ASTComponent, ASTProgram, ASTAssignStatement, ASTPassStatement, ASTSlicingAssignStatement, \
     ASTExpression, ASTForInStatement, ASTCondStatement, ASTConstant, \
-    ASTSlicing, ASTLoad, ASTAssertStatement, ASTSlicingData, ASTCreateNDArray, ASTBreakStatement, ASTContinueStatement, \
-    ASTBinaryOperator, ASTNamedAttribute, ASTExprAttribute
+    ASTSlicing, ASTLoad, ASTAssertStatement, ASTSlicingData, ASTSquareBrackets, ASTBreakStatement, ASTContinueStatement, \
+    ASTBinaryOperator, ASTNamedAttribute, ASTExprAttribute, ASTParenthesis
 from pyzk.ir.ir_builder import IRBuilder
 from pyzk.ir.ir_ctx import IRContext
 from pyzk.exception.contextual import VariableNotFoundError, ConstantInferenceError, NoForElementsError, NotInLoopError, \
@@ -207,9 +207,13 @@ class IRGenerator:
             raise VariableNotFoundError(n.spi, f'Variable {n.name} referenced but not defined.')
         return val_ptr
 
-    def visit_ASTCreateNDArray(self, n: ASTCreateNDArray):
+    def visit_ASTSquareBrackets(self, n: ASTSquareBrackets):
         values = [self.visit(val) for val in n.values]
         return self._ir_builder.create_square_brackets(values, spi=n.spi)
+
+    def visit_ASTParenthesis(self, n: ASTParenthesis):
+        values = [self.visit(val) for val in n.values]
+        return self._ir_builder.create_parenthesis(values, spi=n.spi)
 
     def _create_assignment_with_condition(self, orig_val_ptr, new_val_ptr, spi: SourcePosInfo = None, annotation: Annotation | None = None):
         cond_stack = self._ir_ctx.get_condition_variables()

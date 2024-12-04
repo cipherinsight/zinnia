@@ -41,7 +41,7 @@ class AssignSliceOp(AbstractOp):
                 for slicing in slicing_params:
                     if not 1 <= len(slicing) <= 3:
                         raise ValueError(f'Internal Error: unexpected slicing found: {slicing}')
-            if not isinstance(the_value, NDArrayInferenceDescriptor) or not isinstance(the_value, NumberInferenceDescriptor):
+            if not isinstance(the_value, NDArrayInferenceDescriptor) and not isinstance(the_value, NumberInferenceDescriptor):
                 raise TypeInferenceError(spi, "In assign by slice, the value should be either `NDArray` or `Number`")
             check_result = the_self.get().check_slicing_assign(self.slicing_params_list, the_value.get())
             if check_result is not None:

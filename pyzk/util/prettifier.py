@@ -4,7 +4,7 @@ from pyzk.ast.zk_ast import ASTComponent, ASTAssignStatement, ASTSlicingAssignSt
     ASTAssertStatement, ASTBinaryOperator, ASTUnaryOperator, ASTExprAttribute, ASTNamedAttribute, ASTConstant, \
     ASTSlicing, ASTLoad, ASTSlicingData, ASTPassStatement, \
     ASTProgram, ASTProgramInput, ASTAnnotation, ASTForInStatement, ASTCondStatement, \
-    ASTExpression, ASTCreateNDArray, ASTSlicingAssignData, ASTContinueStatement, ASTBreakStatement
+    ASTExpression, ASTSquareBrackets, ASTSlicingAssignData, ASTContinueStatement, ASTBreakStatement, ASTParenthesis
 from pyzk.exception.base import InternalPyzkException, PyZKException
 from pyzk.ir.ir_builder import IRStatement
 
@@ -124,7 +124,12 @@ def prettify_zk_ast(node: ASTComponent) -> str:
             for stmt in n.f_block:
                 res += _inner(depth + 1, stmt)
             return res
-        elif isinstance(n, ASTCreateNDArray):
+        elif isinstance(n, ASTSquareBrackets):
+            res = [prefix]
+            for i, expr in enumerate(n.values):
+                res += _inner(depth + 1, expr, f'val_{i + 1}')
+            return res
+        elif isinstance(n, ASTParenthesis):
             res = [prefix]
             for i, expr in enumerate(n.values):
                 res += _inner(depth + 1, expr, f'val_{i + 1}')

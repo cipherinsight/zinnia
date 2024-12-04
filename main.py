@@ -12,7 +12,8 @@ def foo(
     x = [100, 200][1]
     assert len(z) == 5
     assert z.shape[1] == 5
-    mat = NDArray.identity(5)
+    mat = NDArray.zeros((5, 5))
+    mat[2][3] += len(mat)
     for i in list(range(x)):
         mat = mat @ y + 1
         if i > 10:

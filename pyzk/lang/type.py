@@ -1,22 +1,37 @@
+from dataclasses import field
+from typing import Tuple
+
 from pyzk.lang.metatype import NDArrayMeta
 
 Number = int
 
 class NDArray(metaclass=NDArrayMeta):
-    def __init__(self, *args):
-        self.size = list(args)
+    shape: int
+
+    def __init__(self):
+        pass
 
     @staticmethod
-    def all_zeros(*args) -> 'NDArray':
-        return NDArray(*args)
+    def zeros(shape: Tuple[int, ...]) -> 'NDArray':
+        return NDArray()
 
     @staticmethod
-    def all_ones(*args) -> 'NDArray':
-        return NDArray(*args)
+    def ones(shape: Tuple[int, ...]) -> 'NDArray':
+        return NDArray()
 
     @staticmethod
-    def identity(size: int) -> 'NDArray':
-        return NDArray(size, size)
+    def identity(n: int) -> 'NDArray':
+        return NDArray()
+
+    @staticmethod
+    def eye(n: int, m: int) -> 'NDArray':
+        return NDArray()
 
     def sum(self, axis: int = None) -> Number:
+        raise NotImplementedError("Cannot perform action outside circuit method.")
+
+    def all(self, axis: int = None) -> Number:
+        raise NotImplementedError("Cannot perform action outside circuit method.")
+
+    def any(self, axis: int = None) -> Number:
         raise NotImplementedError("Cannot perform action outside circuit method.")

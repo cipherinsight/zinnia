@@ -6,9 +6,10 @@ from pyzk.exception.transforming import InvalidCircuitInputException, InvalidCir
     UnsupportedLangFeatureException, InvalidForStatementException
 from pyzk.ast.zk_ast import ASTProgramInput, ASTAnnotation, ASTProgram, ASTAssignStatement, \
     ASTLoad, ASTConstant, ASTSlicingData, ASTSlicingAssignStatement, \
-    ASTForInStatement, ASTPassStatement, ASTAssertStatement, ASTCondStatement, ASTSlicing, ASTCreateNDArray, \
-    ASTSlicingAssignData, ASTBreakStatement, ASTContinueStatement, ASTBinaryOperator, ASTUnaryOperator, ASTNamedAttribute, \
-    ASTExprAttribute
+    ASTForInStatement, ASTPassStatement, ASTAssertStatement, ASTCondStatement, ASTSlicing, ASTSquareBrackets, \
+    ASTSlicingAssignData, ASTBreakStatement, ASTContinueStatement, ASTBinaryOperator, ASTUnaryOperator, \
+    ASTNamedAttribute, \
+    ASTExprAttribute, ASTParenthesis
 from pyzk.util.datatype_name import DataTypeName
 from pyzk.util.input_anno_name import InputAnnoName
 from pyzk.opdef.operator_factory import Operators
@@ -250,7 +251,16 @@ class PyZKASTTransformer(ast.NodeTransformer):
         parsed_elts = []
         for elt in node.elts:
             parsed_elts.append(self.visit_expr(elt))
-        return ASTCreateNDArray(source_pos_info, len(parsed_elts), parsed_elts)
+        return ASTSquareBrackets(source_pos_info, len(parsed_elts), parsed_elts)
+
+    def visit_Tuple(self, node):
+        source_pos_info = _get_source_pos_info(node)
+        if len(node.elts) == 0:
+            raise UnsupportedLangFeatureException(source_pos_info, "Cannot create an empty tuple in circuit.")
+        parsed_elts = []
+        for elt in node.elts:
+            parsed_elts.append(self.visit_expr(elt))
+        return ASTParenthesis(source_pos_info, len(parsed_elts), parsed_elts)
 
     def visit_Subscript(self, node):
         source_pos_info = _get_source_pos_info(node)
@@ -339,8 +349,7 @@ class PyZKASTTransformer(ast.NodeTransformer):
         elif isinstance(node, ast.List):
             return self.visit_List(node)
         elif isinstance(node, ast.Tuple):
-            source_pos_info = _get_source_pos_info(node)
-            raise UnsupportedLangFeatureException(source_pos_info, f"Tuple is not allowed here. In this Zero Knowledge DSL, tuple is not allowed as a value.")
+            return self.visit_Tuple(node)
         else:
             source_pos_info = _get_source_pos_info(node)
             raise UnsupportedLangFeatureException(source_pos_info, f"Expression transformation rule for {type(node)} is not implemented.")
