@@ -266,7 +266,7 @@ class IRGenerator:
             raise ConstantInferenceError(n.spi, "This is expression inferred as a constant scalar number. Please make sure that here should be a constant ndarray.")
         return result.values
 
-    def _as_constant_slicing(self, n: ASTSlicingData) -> List[Tuple[int, int, int]]:
+    def _as_constant_slicing(self, n: ASTSlicingData) -> List[Tuple[int, ...]]:
         results = []
         for data in n.data:
             if isinstance(data, ASTExpression):
