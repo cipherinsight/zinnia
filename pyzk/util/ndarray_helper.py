@@ -91,6 +91,29 @@ class NDArrayHelper:
                 return f"The {i}-th slicing index out of range: {s} out of range {self.shape[i]}"
         return None
 
+    def flatten(self) -> List[Any]:
+        def _internal_helper(_depth: int, _values: List):
+            if _depth == len(self.shape):
+                return [_values]
+            _result = []
+            for _val in _values:
+                _result += _internal_helper(_depth + 1, _val)
+            return _result
+        return _internal_helper(0, self.values)
+
+    @staticmethod
+    def from_1d_values_and_shape(values_1dim: List[Any], shape: Tuple[int, ...]) -> 'NDArrayHelper':
+        def _internal_helper(_shape: Tuple[int, ...], _values: List):
+            if len(_shape) == 1:
+                return _values
+            _partition_len = len(_values) // _shape[0]
+            _results = []
+            for i in range(_shape[0]):
+                _results.append(_internal_helper(_shape[1:], _values[i * _partition_len:(i + 1) * _partition_len]))
+            return _results
+        parsed_values = _internal_helper(shape, values_1dim)
+        return NDArrayHelper(shape=shape, values=parsed_values)
+
     @staticmethod
     def broadcast(lhs: 'NDArrayHelper', rhs: 'NDArrayHelper') -> Tuple['NDArrayHelper', 'NDArrayHelper']:
         shape_lhs, shape_rhs = lhs.shape, rhs.shape

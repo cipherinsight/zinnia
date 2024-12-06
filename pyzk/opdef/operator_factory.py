@@ -1,6 +1,8 @@
 from inspect import isclass
 from typing import Optional
 
+from pyzk.opdef.ndarray.op_T import NDArray_TOp
+from pyzk.opdef.ndarray.op_transpose import NDArray_TransposeOp
 from pyzk.opdef.nocls.abstract_op import AbstractOp
 from pyzk.opdef.ndarray.op_all import NDArray_AllOp
 from pyzk.opdef.ndarray.op_any import NDArray_AnyOp
@@ -86,6 +88,8 @@ class Operators:
         SHAPE = NDArray_ShapeOp
         SUM = NDArray_SumOp
         ZEROS = NDArray_ZerosOp
+        T = NDArray_TOp
+        TRANSPOSE = NDArray_TransposeOp
 
     class Tuple:
         pass

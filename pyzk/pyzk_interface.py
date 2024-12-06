@@ -30,3 +30,7 @@ def pyzk_circuit(method):
         except InternalPyzkException as e:
             raise prettify_exception(e, method.__name__, source_code)
     return __inner
+
+
+def pyzk_chip(method):
+    pass

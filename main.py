@@ -1,26 +1,41 @@
 from pyzk import add
 from pyzk.lang.typing import Public, Private
 from pyzk.lang.type import Number, NDArray
-from pyzk.pyzk_interface import pyzk_circuit
+from pyzk.pyzk_interface import pyzk_circuit, pyzk_chip
+
+
+# @pyzk_circuit
+# def foo(
+#     x: Public[Number],
+#     z: Private[NDArray[5, 5, 10]],
+#     y: Private[NDArray[5, 5]]
+# ):
+#     mat = NDArray.zeros((5, 5))
+#     for i in range(100):
+#         mat = mat @ y + x
+#         if i > 55:
+#             break
+#     assert mat.sum(axis=-1) == 2
+#
+#
+# foo()
 
 
 @pyzk_circuit
 def foo(
     x: Public[Number],
-    z: Private[NDArray[5, 5, 10]],
-    y: Private[NDArray[5, 5]]
+    y: Private[NDArray[5, 4]]
 ):
-    x = [100, 200][1]
-    assert len(z) == 5
-    assert z.shape[1] == 5
-    mat = NDArray.zeros((5, 5))
-    mat[2][3] += add(len(mat), len(z))
-    for i in list(range(22, 200, 2)):
-        mat = mat @ y + x
-        if y[0][1] > 123 or mat.sum() > 233:
-            break
-    assert mat[2][4] == 2
-    assert mat[0::].sum() == 2
+    z = y @ y.transpose(axes=(1, 0))
+    # func(1)
+    assert (z + NDArray.ones((5, 5))).sum() == 0
 
 
 foo()
+
+
+@pyzk_chip
+def func(a: Number) -> NDArray[4, 5]:
+    pass
+
+
