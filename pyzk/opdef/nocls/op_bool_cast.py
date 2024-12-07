@@ -38,7 +38,7 @@ class BoolCastOp(AbstractOp):
         if isinstance(x, NumberInferenceDescriptor):
             if x.get() is None:
                 return NumberInferenceDescriptor(None)
-            return NumberInferenceDescriptor(1 if x != 0 else 0)
+            return NumberInferenceDescriptor(1 if x.get() != 0 else 0)
         raise NotImplementedError()
 
     def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:

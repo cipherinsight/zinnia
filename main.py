@@ -21,6 +21,11 @@ def my_chip(a: Number) -> Number:
             return another_chip(1, a)
 
 
+@pyzk_chip
+def returns_none(a: Number):
+    assert a != 0
+
+
 @pyzk_circuit
 def foo(
     x: Public[Number],
@@ -28,6 +33,7 @@ def foo(
 ):
     z = y @ y.transpose(axes=(1, 0))
     assert my_chip(x) == 0
+    returns_none(x)
     assert (z + NDArray.ones((5, 5))).sum() == 0
 
 

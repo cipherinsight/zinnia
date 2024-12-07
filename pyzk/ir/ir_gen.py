@@ -193,20 +193,23 @@ class IRGenerator:
         cond_ptr = self.visit(n.cond)
         true_cond_ptr = self._ir_builder.create_bool_cast(cond_ptr, dbg_i=n.dbg_i)
         false_cond_ptr = self._ir_builder.create_logical_not(true_cond_ptr, dbg_i=n.dbg_i)
-        self._ir_ctx.if_block_enter(true_cond_ptr)
-        self._ir_ctx.block_enter()
-        for _, stmt in enumerate(n.t_block):
-            self.visit(stmt)
-        self._ir_ctx.block_leave()
-        has_default_return_t_block = self._ir_ctx.get_branch_has_default_return()
-        self._ir_ctx.if_block_leave()
-        self._ir_ctx.if_block_enter(false_cond_ptr)
-        self._ir_ctx.block_enter()
-        for _, stmt in enumerate(n.f_block):
-            self.visit(stmt)
-        self._ir_ctx.block_leave()
-        has_default_return_f_block = self._ir_ctx.get_branch_has_default_return()
-        self._ir_ctx.if_block_leave()
+        has_default_return_t_block = has_default_return_f_block = False
+        if self._ir_ctx.get_inferred_constant_value(true_cond_ptr) != 0:
+            self._ir_ctx.if_block_enter(true_cond_ptr)
+            self._ir_ctx.block_enter()
+            for _, stmt in enumerate(n.t_block):
+                self.visit(stmt)
+            self._ir_ctx.block_leave()
+            has_default_return_t_block = self._ir_ctx.get_branch_has_default_return()
+            self._ir_ctx.if_block_leave()
+        if self._ir_ctx.get_inferred_constant_value(false_cond_ptr) != 0:
+            self._ir_ctx.if_block_enter(false_cond_ptr)
+            self._ir_ctx.block_enter()
+            for _, stmt in enumerate(n.f_block):
+                self.visit(stmt)
+            self._ir_ctx.block_leave()
+            has_default_return_f_block = self._ir_ctx.get_branch_has_default_return()
+            self._ir_ctx.if_block_leave()
         if has_default_return_t_block and has_default_return_f_block:
             assert not self._ir_ctx.get_branch_has_default_return()
             self._ir_ctx.set_branch_has_default_return()
