@@ -1,14 +1,14 @@
 from typing import Dict, List, Tuple, Optional
 
-from pyzk.exception.contextual import TypeInferenceError
+from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.util.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, NumberDTDescriptor, TupleDTDescriptor
-from pyzk.util.flatten_descriptor import FlattenDescriptor, TupleFlattenDescriptor, NumberFlattenDescriptor, \
+from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, NumberDTDescriptor, TupleDTDescriptor
+from pyzk.internal.flatten_descriptor import FlattenDescriptor, TupleFlattenDescriptor, NumberFlattenDescriptor, \
     NDArrayFlattenDescriptor
-from pyzk.util.inference_descriptor import InferenceDescriptor, TupleInferenceDescriptor, NDArrayInferenceDescriptor, \
+from pyzk.internal.inference_descriptor import InferenceDescriptor, TupleInferenceDescriptor, NDArrayInferenceDescriptor, \
     NumberInferenceDescriptor
-from pyzk.util.ndarray_helper import NDArrayHelper
-from pyzk.util.source_pos_info import SourcePosInfo
+from pyzk.algo.ndarray_helper import NDArrayHelper
+from pyzk.debug.dbg_info import DebugInfo
 
 
 class SliceOp(AbstractOp):
@@ -28,16 +28,16 @@ class SliceOp(AbstractOp):
             AbstractOp._ParamEntry("self")
         ]
 
-    def type_check(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
+    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
         the_self = kwargs['self']
         if isinstance(the_self, TupleInferenceDescriptor):
             if len(self.slicing_params) != 1:
-                raise TypeInferenceError(spi, f"Only 1-dimensional slicing is supported by using `slice` on `Tuple`")
+                raise TypeInferenceError(dbg_i, f"Only 1-dimensional slicing is supported by using `slice` on `Tuple`")
             if not 1 <= len(self.slicing_params[0]) <= 3:
                 raise ValueError(f"Internal Error: Unexpected tuple length {len(self.slicing_params[0])}")
             if len(self.slicing_params[0]) == 1:
                 if self.slicing_params[0][0] >= the_self.length():
-                    raise TypeInferenceError(spi, f"Tuple index {self.slicing_params[0][0]} out of range. The length of this tuple is {the_self.length()}")
+                    raise TypeInferenceError(dbg_i, f"Tuple index {self.slicing_params[0][0]} out of range. The length of this tuple is {the_self.length()}")
                 return NumberDTDescriptor()
             else:
                 _start, _stop = self.slicing_params[0][0], self.slicing_params[0][1]
@@ -51,14 +51,14 @@ class SliceOp(AbstractOp):
                     raise ValueError(f"Internal Error: Unexpected tuple length {len(param)}")
             check_result = the_self.get().check_slicing(self.slicing_params)
             if check_result is not None:
-                raise TypeInferenceError(spi, f'Cannot perform slicing: {check_result}')
+                raise TypeInferenceError(dbg_i, f'Cannot perform slicing: {check_result}')
             sliced_result = the_self.get().slice(self.slicing_params)
             if not isinstance(sliced_result, NDArrayHelper):
                 return NumberDTDescriptor()
             return NDArrayDTDescriptor(sliced_result.shape)
-        raise TypeInferenceError(spi,"Operator `slice` can only be used on `Tuple` or `NDArray`")
+        raise TypeInferenceError(dbg_i,"Operator `slice` can only be used on `Tuple` or `NDArray`")
 
-    def static_infer(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         the_self = kwargs['self']
         if isinstance(the_self, TupleInferenceDescriptor):
             slicing = self.slicing_params[0]

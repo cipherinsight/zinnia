@@ -1,10 +1,10 @@
 from typing import List, Dict, Any, Optional
 
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.util.dt_descriptor import DTDescriptor, NumberDTDescriptor, NDArrayDTDescriptor
-from pyzk.util.flatten_descriptor import FlattenDescriptor, NumberFlattenDescriptor, NDArrayFlattenDescriptor
-from pyzk.util.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor, NDArrayInferenceDescriptor
-from pyzk.util.source_pos_info import SourcePosInfo
+from pyzk.internal.dt_descriptor import DTDescriptor, NumberDTDescriptor, NDArrayDTDescriptor
+from pyzk.internal.flatten_descriptor import FlattenDescriptor, NumberFlattenDescriptor, NDArrayFlattenDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor, NDArrayInferenceDescriptor
+from pyzk.debug.dbg_info import DebugInfo
 
 
 class USubOp(AbstractOp):
@@ -26,7 +26,7 @@ class USubOp(AbstractOp):
     def perform_inference(self, lhs: Any, rhs: Any) -> Any:
         raise NotImplementedError()
 
-    def type_check(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
+    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
         x = kwargs["x"].type()
         if isinstance(x, NumberDTDescriptor):
             return NumberDTDescriptor()
@@ -34,7 +34,7 @@ class USubOp(AbstractOp):
             return NDArrayDTDescriptor(x.shape)
         raise NotImplementedError()
 
-    def static_infer(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         x = kwargs["x"]
         if isinstance(x, NumberInferenceDescriptor):
             if x.get() is None:

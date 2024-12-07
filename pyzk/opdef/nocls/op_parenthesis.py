@@ -1,11 +1,11 @@
 from typing import Dict, Any, Optional, List
 
-from pyzk.exception.contextual import TypeInferenceError
+from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.util.dt_descriptor import DTDescriptor, NumberDTDescriptor, TupleDTDescriptor
-from pyzk.util.flatten_descriptor import FlattenDescriptor, TupleFlattenDescriptor
-from pyzk.util.inference_descriptor import InferenceDescriptor, TupleInferenceDescriptor, NumberInferenceDescriptor
-from pyzk.util.source_pos_info import SourcePosInfo
+from pyzk.internal.dt_descriptor import DTDescriptor, TupleDTDescriptor
+from pyzk.internal.flatten_descriptor import FlattenDescriptor, TupleFlattenDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor, TupleInferenceDescriptor, NumberInferenceDescriptor
+from pyzk.debug.dbg_info import DebugInfo
 
 
 class ParenthesisOp(AbstractOp):
@@ -19,18 +19,18 @@ class ParenthesisOp(AbstractOp):
     def get_name(cls) -> str:
         return "parenthesis"
 
-    def params_parse(self, spi: Optional[SourcePosInfo], args: List[InferenceDescriptor], kwargs: Dict[str, InferenceDescriptor]) -> Dict[str, Any]:
+    def params_parse(self, dbg_i: Optional[DebugInfo], args: List[InferenceDescriptor], kwargs: Dict[str, InferenceDescriptor]) -> Dict[str, Any]:
         if len(kwargs.items()) != 0:
             raise ValueError("Internal Error: `kwargs` Should be empty here")
         return {f'_{i}': arg for i, arg in enumerate(args)}
 
-    def type_check(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
+    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
         args = kwargs.values()
         if all([isinstance(arg, NumberInferenceDescriptor) for arg in args]):
             return TupleDTDescriptor(len(args))
-        raise TypeInferenceError(spi,"Create Tuple using parenthesis failed: only `Number` can be accepted as elements")
+        raise TypeInferenceError(dbg_i,"Create Tuple using parenthesis failed: only `Number` can be accepted as elements")
 
-    def static_infer(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         args = kwargs.values()
         return TupleInferenceDescriptor(len(args), tuple(arg.get() for arg in args))
 

@@ -1,11 +1,11 @@
 from typing import List, Dict, Any, Optional
 
-from pyzk.exception.contextual import TypeInferenceError
+from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.util.dt_descriptor import DTDescriptor, NumberDTDescriptor
-from pyzk.util.flatten_descriptor import FlattenDescriptor, NumberFlattenDescriptor
-from pyzk.util.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor
-from pyzk.util.source_pos_info import SourcePosInfo
+from pyzk.internal.dt_descriptor import DTDescriptor, NumberDTDescriptor
+from pyzk.internal.flatten_descriptor import FlattenDescriptor, NumberFlattenDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor
+from pyzk.debug.dbg_info import DebugInfo
 
 
 class NotOp(AbstractOp):
@@ -24,16 +24,13 @@ class NotOp(AbstractOp):
             AbstractOp._ParamEntry("x")
         ]
 
-    def perform_inference(self, lhs: Any, rhs: Any) -> Any:
-        raise NotImplementedError()
-
-    def type_check(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
+    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
         x = kwargs["x"].type()
         if isinstance(x, NumberDTDescriptor):
             return NumberDTDescriptor()
-        raise TypeInferenceError(spi, f'Invalid logical operator `{self.get_signature()}` on operand {x}, as it must be a number')
+        raise TypeInferenceError(dbg_i, f'Invalid logical operator `{self.get_signature()}` on operand {x}, as it must be a number')
 
-    def static_infer(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         x = kwargs["x"]
         if isinstance(x, NumberInferenceDescriptor):
             if x.get() is None:

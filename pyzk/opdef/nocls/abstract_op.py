@@ -1,10 +1,10 @@
 from typing import Dict, Any, List, Optional
 
-from pyzk.exception.contextual import OperatorCallError
-from pyzk.util.dt_descriptor import DTDescriptor
-from pyzk.util.flatten_descriptor import FlattenDescriptor
-from pyzk.util.inference_descriptor import InferenceDescriptor
-from pyzk.util.source_pos_info import SourcePosInfo
+from pyzk.debug.exception import OperatorCallError
+from pyzk.internal.dt_descriptor import DTDescriptor
+from pyzk.internal.flatten_descriptor import FlattenDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor
+from pyzk.debug.dbg_info import DebugInfo
 
 
 class AbstractOp:
@@ -29,7 +29,7 @@ class AbstractOp:
     def get_param_entries(self) -> List[_ParamEntry]:
         raise NotImplementedError()
 
-    def params_parse(self, spi: Optional[SourcePosInfo], args: List[Any], kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    def params_parse(self, dbg_i: Optional[DebugInfo], args: List[Any], kwargs: Dict[str, Any]) -> Dict[str, Any]:
         params = self.get_param_entries()
         should_have_default = False
         for entry in params:
@@ -43,25 +43,25 @@ class AbstractOp:
             mapping[param.name] = None
         for i, arg in enumerate(args):
             if i >= len(params):
-                raise OperatorCallError(spi, f"Too many arguments for operator `{self.get_signature()}`")
+                raise OperatorCallError(dbg_i, f"Too many arguments for operator `{self.get_signature()}`")
             mapping[params[i].name] = arg
             filled.append(params[i].name)
         for k, v in kwargs.items():
             if k in filled:
-                raise OperatorCallError(spi, f"Operator `{self.get_signature()}` got multiple values for argument `{k}`")
+                raise OperatorCallError(dbg_i, f"Operator `{self.get_signature()}` got multiple values for argument `{k}`")
             if k not in mapping.keys():
-                raise OperatorCallError(spi, f"Operator `{self.get_signature()}` got an unexpected keyword argument `{k}`")
+                raise OperatorCallError(dbg_i, f"Operator `{self.get_signature()}` got an unexpected keyword argument `{k}`")
             mapping[k] = v
             filled.append(k)
         for param in params:
             if param.name not in filled and not param.default:
-                raise OperatorCallError(spi, f"Operator `{self.get_signature()}` missing required argument `{param.name}`")
+                raise OperatorCallError(dbg_i, f"Operator `{self.get_signature()}` missing required argument `{param.name}`")
         return mapping
 
-    def type_check(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
+    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
         raise NotImplementedError()
 
-    def static_infer(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         raise NotImplementedError()
 
     def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:

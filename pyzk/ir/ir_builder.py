@@ -4,10 +4,10 @@ from pyzk.ir.ir_ctx import IRContext
 from pyzk.ir.ir_graph import IRGraph, IRGraphMetadata
 from pyzk.ir.ir_stmt import IRStatement
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.util.annotation import Annotation
-from pyzk.util.dt_descriptor import DTDescriptor
+from pyzk.internal.annotation import Annotation
+from pyzk.internal.dt_descriptor import DTDescriptor
 from pyzk.opdef.operator_factory import Operators
-from pyzk.util.source_pos_info import SourcePosInfo
+from pyzk.debug.dbg_info import DebugInfo
 
 
 def _check_annotation_and_raise(lhs: Annotation | None, rhs: Annotation | None):
@@ -24,9 +24,9 @@ class IRBuilder:
 
     def create_op(
             self, op: AbstractOp, arguments: Dict[str, int],
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
-        stmt = IRStatement(self._next_id, op, arguments, spi=spi, annotation=annotation)
+        stmt = IRStatement(self._next_id, op, arguments, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -34,10 +34,10 @@ class IRBuilder:
 
     def create_add(
             self, lhs: int, rhs: int,
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.ADD(),
-                           {"lhs": lhs, "rhs": rhs}, spi=spi, annotation=annotation)
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -45,10 +45,10 @@ class IRBuilder:
 
     def create_sub(
             self, lhs: int, rhs: int,
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.SUB(),
-                           {"lhs": lhs, "rhs": rhs}, spi=spi, annotation=annotation)
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -56,10 +56,10 @@ class IRBuilder:
 
     def create_mul(
             self, lhs: int, rhs: int,
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.MUL(),
-                           {"lhs": lhs, "rhs": rhs}, spi=spi, annotation=annotation)
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -67,10 +67,10 @@ class IRBuilder:
 
     def create_div(
             self, lhs: int, rhs: int,
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.DIV(),
-                           {"lhs": lhs, "rhs": rhs}, spi=spi, annotation=annotation)
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -78,10 +78,10 @@ class IRBuilder:
 
     def create_logical_and(
             self, lhs: int, rhs: int,
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.AND(),
-                           {"lhs": lhs, "rhs": rhs}, spi=spi, annotation=annotation)
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -89,10 +89,10 @@ class IRBuilder:
 
     def create_logical_or(
             self, lhs: int, rhs: int,
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.OR(),
-                           {"lhs": lhs, "rhs": rhs}, spi=spi, annotation=annotation)
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -100,10 +100,10 @@ class IRBuilder:
 
     def create_logical_not(
             self, val: int,
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.NOT(),
-                           {"x": val}, spi=spi, annotation=annotation)
+                           {"x": val}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -111,10 +111,10 @@ class IRBuilder:
 
     def create_not_equal(
             self, lhs: int, rhs: int,
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.NE(),
-                           {"lhs": lhs, "rhs": rhs}, spi=spi, annotation=annotation)
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -122,10 +122,10 @@ class IRBuilder:
 
     def create_equal(
             self, lhs: int, rhs: int,
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.EQ(),
-                           {"lhs": lhs, "rhs": rhs}, spi=spi, annotation=annotation)
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -133,10 +133,10 @@ class IRBuilder:
 
     def create_less_than(
             self, lhs: int, rhs: int,
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.LT(),
-                           {"lhs": lhs, "rhs": rhs}, spi=spi, annotation=annotation)
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -144,10 +144,10 @@ class IRBuilder:
 
     def create_less_than_or_equal(
             self, lhs: int, rhs: int,
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.LTE(),
-                           {"lhs": lhs, "rhs": rhs}, spi=spi, annotation=annotation)
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -155,10 +155,10 @@ class IRBuilder:
 
     def create_greater_than(
             self, lhs: int, rhs: int,
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.GT(),
-                           {"lhs": lhs, "rhs": rhs}, spi=spi, annotation=annotation)
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -166,10 +166,10 @@ class IRBuilder:
 
     def create_greater_than_or_equal(
             self, lhs: int, rhs: int,
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.GTE(),
-                           {"lhs": lhs, "rhs": rhs}, spi=spi, annotation=annotation)
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -177,10 +177,21 @@ class IRBuilder:
 
     def create_bool_cast(
             self, value: int,
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.BOOL_CAST(),
-                           {"x": value}, spi=spi, annotation=annotation)
+                           {"x": value}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_select(
+            self, condition: int, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.SELECT(),
+                           {"cond": condition, "tv": lhs, "fv": rhs}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -188,10 +199,21 @@ class IRBuilder:
 
     def create_constant(
             self, value: int,
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.CONSTANT(value),
-                           {}, spi=spi, annotation=annotation)
+                           {}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_constant_none(
+            self,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.CONSTANT_NONE(),
+                           {}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -199,10 +221,10 @@ class IRBuilder:
 
     def create_constant_cast(
             self, value: int,
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.CONSTANT_CAST(),
-                           {"x": value}, spi=spi, annotation=annotation)
+                           {"x": value}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -210,10 +232,10 @@ class IRBuilder:
 
     def create_slicing(
             self, value: int, slicing_params: List[Tuple[int, ...]],
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.SLICE(slicing_params),
-                           {"self": value}, spi=spi, annotation=annotation)
+                           {"self": value}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -221,10 +243,10 @@ class IRBuilder:
 
     def create_slicing_assign(
             self, slicing_params_list: List[List[Tuple[int, ...]]], orig_value: int, value: int,
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.ASSIGN_SLICE(slicing_params_list),
-                           {"self": orig_value, "value": value}, spi=spi, annotation=annotation)
+                           {"self": orig_value, "value": value}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -232,11 +254,11 @@ class IRBuilder:
 
     def create_square_brackets(
             self, values: List[int],
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
-        operator = Operators.instantiate_operator("square_brackets", None)
-        params = operator.params_parse(spi, values, {})
-        stmt = IRStatement(self._next_id, operator, params, spi=spi, annotation=annotation)
+        operator = Operators.NoCls.SQUARE_BRACKETS()
+        params = operator.params_parse(dbg_i, values, {})
+        stmt = IRStatement(self._next_id, operator, params, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -244,11 +266,11 @@ class IRBuilder:
 
     def create_parenthesis(
             self, values: List[int],
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         operator = Operators.NoCls.PARENTHESIS()
-        params = operator.params_parse(spi, values, {})
-        stmt = IRStatement(self._next_id, operator, params, spi=spi, annotation=annotation)
+        params = operator.params_parse(dbg_i, values, {})
+        stmt = IRStatement(self._next_id, operator, params, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -256,10 +278,10 @@ class IRBuilder:
 
     def create_assert(
             self, value: int,
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.ASSERT(),
-                           {"test": value}, spi=spi, annotation=annotation)
+                           {"test": value}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -267,20 +289,20 @@ class IRBuilder:
 
     def create_input(
             self, input_id: int, dt: DTDescriptor, public: bool,
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.INPUT(input_id, dt, public),
-                           {}, spi=spi, annotation=annotation)
+                           {}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         self._next_id += 1
         return self._next_id - 1
 
     def create_read_number(
             self, major: int, minor: int,
-            spi: SourcePosInfo = None, annotation: Annotation | None = None
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.READ_NUMBER(major, minor),
-                           {}, spi=spi, annotation=annotation)
+                           {}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
         self._next_id += 1
@@ -288,14 +310,14 @@ class IRBuilder:
 
     def create_similar(
             self, ir_stmt: IRStatement, args: Dict[str, int],
-            spi: SourcePosInfo = None
+            dbg_i: DebugInfo = None
     ) -> int:
         new_stmt = IRStatement(
             self._next_id,
             operator=ir_stmt.operator,
             arguments=args,
             annotation=None,
-            spi=spi
+            dbg_i=dbg_i
         )
         new_stmt = self._do_ir_inference(new_stmt)
         _check_annotation_and_raise(new_stmt.annotation, ir_stmt.annotation)
@@ -309,8 +331,8 @@ class IRBuilder:
         if self.ir_ctx is None:
             return stmt
         descriptors = {name: self.ir_ctx.get_inference_descriptor(ptr) for name, ptr in stmt.arguments.items()}
-        dt_descriptor = stmt.operator.type_check(stmt.spi, descriptors)
-        inference_descriptor = stmt.operator.static_infer(stmt.spi, descriptors)
+        dt_descriptor = stmt.operator.type_check(stmt.dbg_i, descriptors)
+        inference_descriptor = stmt.operator.static_infer(stmt.dbg_i, descriptors)
         self.ir_ctx.set_inference_descriptor(stmt.stmt_id, inference_descriptor)
         # TODO
         # if dt_descriptor is not None:

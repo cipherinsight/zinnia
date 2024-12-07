@@ -1,11 +1,11 @@
 from typing import List, Dict, Optional
 
-from pyzk.exception.contextual import TypeInferenceError
+from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.util.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor
-from pyzk.util.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor, TupleFlattenDescriptor
-from pyzk.util.inference_descriptor import InferenceDescriptor, NDArrayInferenceDescriptor, TupleInferenceDescriptor
-from pyzk.util.source_pos_info import SourcePosInfo
+from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor
+from pyzk.internal.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor, TupleFlattenDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor, NDArrayInferenceDescriptor, TupleInferenceDescriptor
+from pyzk.debug.dbg_info import DebugInfo
 
 
 class TupleOp(AbstractOp):
@@ -24,17 +24,17 @@ class TupleOp(AbstractOp):
             AbstractOp._ParamEntry("x")
         ]
 
-    def type_check(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
+    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
         x = kwargs["x"].type()
         if isinstance(x, NDArrayDTDescriptor):
             if len(x.shape) != 1:
-                raise TypeInferenceError(spi, "Cannot cast this `NDArray` to `Tuple`, as its number of dimensions is greater than 1")
+                raise TypeInferenceError(dbg_i, "Cannot cast this `NDArray` to `Tuple`, as its number of dimensions is greater than 1")
             return TupleDTDescriptor(x.shape[0])
         elif isinstance(x, TupleDTDescriptor):
             return TupleDTDescriptor(x.length)
-        raise TypeInferenceError(spi, "`tuple` operator, which aims converts the param into Tuple, can only be used on `Tuple` or `NDArray`")
+        raise TypeInferenceError(dbg_i, "`tuple` operator, which aims converts the param into Tuple, can only be used on `Tuple` or `NDArray`")
 
-    def static_infer(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         x = kwargs["x"]
         if isinstance(x, NDArrayInferenceDescriptor):
             return TupleInferenceDescriptor(x.shape()[0], tuple(x.get().values))

@@ -1,10 +1,11 @@
-from typing import List, Tuple, Dict
+from typing import List, Dict
+
+from pyzk.internal.dt_descriptor import DTDescriptor
 
 
 class ProgramInputMetadata:
-    def __init__(self, typename: str, shape: Tuple[int, ...], public: bool):
-        self.typename = typename
-        self.shape = shape
+    def __init__(self, dt: DTDescriptor, public: bool):
+        self.dt = dt
         self.public = public
 
 
@@ -18,8 +19,7 @@ class ProgramMetadata:
     def export(self) -> Dict:
         return {
             "inputs": [{
-                "typename": inp.typename,
-                "shape": inp.shape,
+                "dt": inp.dt.export(),
                 "public": inp.public,
             } for inp in self.inputs],
         }

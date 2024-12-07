@@ -1,12 +1,12 @@
 from typing import Dict, List, Tuple, Optional
 
-from pyzk.exception.contextual import TypeInferenceError
+from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.util.dt_descriptor import DTDescriptor, NDArrayDTDescriptor
-from pyzk.util.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor
-from pyzk.util.inference_descriptor import InferenceDescriptor, TupleInferenceDescriptor, NDArrayInferenceDescriptor, \
+from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor
+from pyzk.internal.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor, TupleInferenceDescriptor, NDArrayInferenceDescriptor, \
     NumberInferenceDescriptor
-from pyzk.util.source_pos_info import SourcePosInfo
+from pyzk.debug.dbg_info import DebugInfo
 
 
 class AssignSliceOp(AbstractOp):
@@ -27,11 +27,11 @@ class AssignSliceOp(AbstractOp):
             AbstractOp._ParamEntry("value")
         ]
 
-    def type_check(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
+    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
         the_self = kwargs['self']
         the_value = kwargs['value']
         if isinstance(the_self, TupleInferenceDescriptor):
-            raise TypeInferenceError(spi, f"`{self.get_name()}` on `Tuple` is not allowed")
+            raise TypeInferenceError(dbg_i, f"`{self.get_name()}` on `Tuple` is not allowed")
         elif isinstance(the_self, NDArrayInferenceDescriptor):
             if len(self.slicing_params_list) == 0:
                 raise ValueError(f"Internal Error: `slice` on `NDArray` should have the number of slicing params greater than 0")
@@ -42,15 +42,15 @@ class AssignSliceOp(AbstractOp):
                     if not 1 <= len(slicing) <= 3:
                         raise ValueError(f'Internal Error: unexpected slicing found: {slicing}')
             if not isinstance(the_value, NDArrayInferenceDescriptor) and not isinstance(the_value, NumberInferenceDescriptor):
-                raise TypeInferenceError(spi, "In assign by slice, the value should be either `NDArray` or `Number`")
+                raise TypeInferenceError(dbg_i, "In assign by slice, the value should be either `NDArray` or `Number`")
             check_result = the_self.get().check_slicing_assign(self.slicing_params_list, the_value.get())
             if check_result is not None:
-                raise TypeInferenceError(spi, f'Cannot assign by slice: {check_result}')
+                raise TypeInferenceError(dbg_i, f'Cannot assign by slice: {check_result}')
             sliced_result = the_self.get().slice_assign(self.slicing_params_list, the_value.get())
             return NDArrayDTDescriptor(sliced_result.shape)
-        raise TypeInferenceError(spi,f"Operator `{self.get_signature()}` can only be used on `Tuple` or `NDArray`")
+        raise TypeInferenceError(dbg_i,f"Operator `{self.get_signature()}` can only be used on `Tuple` or `NDArray`")
 
-    def static_infer(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         the_self = kwargs['self']
         the_value = kwargs['value']
         if isinstance(the_self, NDArrayInferenceDescriptor):

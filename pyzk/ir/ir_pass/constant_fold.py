@@ -1,6 +1,6 @@
 from pyzk.ir.ir_builder import IRGraph, IRBuilder
 from pyzk.ir.ir_pass.abstract_pass import AbstractIRPass
-from pyzk.util.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor
 
 
 class ConstantFoldIRPass(AbstractIRPass):

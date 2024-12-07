@@ -1,11 +1,11 @@
 from typing import List, Dict, Any, Optional
 
-from pyzk.exception.contextual import TypeInferenceError
+from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.util.dt_descriptor import DTDescriptor, NumberDTDescriptor
-from pyzk.util.flatten_descriptor import FlattenDescriptor, NumberFlattenDescriptor
-from pyzk.util.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor
-from pyzk.util.source_pos_info import SourcePosInfo
+from pyzk.internal.dt_descriptor import DTDescriptor, NumberDTDescriptor
+from pyzk.internal.flatten_descriptor import FlattenDescriptor, NumberFlattenDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor
+from pyzk.debug.dbg_info import DebugInfo
 
 
 class AbstractBinaryLogical(AbstractOp):
@@ -27,13 +27,13 @@ class AbstractBinaryLogical(AbstractOp):
     def perform_flatten(self, ir_builder, lhs: Any, rhs: Any) -> Any:
         raise NotImplementedError()
 
-    def type_check(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
+    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
         lhs, rhs = kwargs["lhs"].type(), kwargs["rhs"].type()
         if isinstance(lhs, NumberDTDescriptor) and isinstance(rhs, NumberDTDescriptor):
             return NumberDTDescriptor()
-        raise TypeInferenceError(spi, f'Invalid binary logical operator `{self.get_signature()}` on operands {lhs} and {rhs}, as they must be boolean values')
+        raise TypeInferenceError(dbg_i, f'Invalid binary logical operator `{self.get_signature()}` on operands {lhs} and {rhs}, as they must be boolean values')
 
-    def static_infer(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         lhs, rhs = kwargs["lhs"], kwargs["rhs"]
         if isinstance(lhs, NumberInferenceDescriptor) and isinstance(rhs, NumberInferenceDescriptor):
             if lhs.get() is None or rhs.get() is None:

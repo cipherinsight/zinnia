@@ -1,9 +1,9 @@
 import copy
 from typing import Tuple, Any
 
-from pyzk.util.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, NumberDTDescriptor, TupleDTDescriptor, \
+from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, NumberDTDescriptor, TupleDTDescriptor, \
     NoneDTDescriptor
-from pyzk.util.ndarray_helper import NDArrayHelper
+from pyzk.algo.ndarray_helper import NDArrayHelper
 
 
 NumberInferenceValue = int | None
@@ -30,6 +30,9 @@ class InferenceDescriptor:
     def set(self, value: Any) -> 'InferenceDescriptor':
         raise NotImplementedError()
 
+    def copy_reset(self) -> 'InferenceDescriptor':
+        raise NotImplementedError()
+
 
 class NDArrayInferenceDescriptor(InferenceDescriptor):
     def __init__(self, shape: Tuple[int, ...], value: NDArrayInferenceValue):
@@ -47,9 +50,8 @@ class NDArrayInferenceDescriptor(InferenceDescriptor):
         assert isinstance(self.dt, NDArrayDTDescriptor)
         return self.dt.shape
 
-    @staticmethod
-    def new_instance(src: 'NDArrayInferenceDescriptor', value: NDArrayHelper) -> 'NDArrayInferenceDescriptor':
-        return copy.copy(src).set(value)
+    def copy_reset(self) -> 'NDArrayInferenceDescriptor':
+        return NDArrayInferenceDescriptor(self.shape(), NDArrayInferenceValue.fill(self.shape(), lambda: None))
 
 
 class NumberInferenceDescriptor(InferenceDescriptor):
@@ -64,6 +66,9 @@ class NumberInferenceDescriptor(InferenceDescriptor):
         self.value = value
         return self
 
+    def copy_reset(self) -> 'NumberInferenceDescriptor':
+        return NumberInferenceDescriptor(None)
+
 
 class NoneInferenceDescriptor(InferenceDescriptor):
     def __init__(self):
@@ -75,6 +80,9 @@ class NoneInferenceDescriptor(InferenceDescriptor):
     def set(self, value: NoneInferenceValue) -> 'NoneInferenceDescriptor':
         assert value is None
         return self
+
+    def copy_reset(self) -> 'NoneInferenceDescriptor':
+        return NoneInferenceDescriptor()
 
 
 class TupleInferenceDescriptor(InferenceDescriptor):
@@ -93,3 +101,6 @@ class TupleInferenceDescriptor(InferenceDescriptor):
     def set(self, value: TupleInferenceValue) -> 'TupleInferenceDescriptor':
         self.value = value
         return self
+
+    def copy_reset(self) -> 'TupleInferenceDescriptor':
+        return TupleInferenceDescriptor(self.length(), tuple(None for _ in range(self.length())))

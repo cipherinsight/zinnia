@@ -1,12 +1,12 @@
 from typing import List, Dict, Callable, Any, Optional
 
-from pyzk.exception.contextual import TypeInferenceError
+from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.util.dt_descriptor import DTDescriptor, NumberDTDescriptor, NDArrayDTDescriptor
-from pyzk.util.flatten_descriptor import FlattenDescriptor, NumberFlattenDescriptor, NDArrayFlattenDescriptor
-from pyzk.util.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor, NDArrayInferenceDescriptor
-from pyzk.util.ndarray_helper import NDArrayHelper
-from pyzk.util.source_pos_info import SourcePosInfo
+from pyzk.internal.dt_descriptor import DTDescriptor, NumberDTDescriptor, NDArrayDTDescriptor
+from pyzk.internal.flatten_descriptor import FlattenDescriptor, NumberFlattenDescriptor, NDArrayFlattenDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor, NDArrayInferenceDescriptor
+from pyzk.algo.ndarray_helper import NDArrayHelper
+from pyzk.debug.dbg_info import DebugInfo
 
 
 class AbstractArithemetic(AbstractOp):
@@ -28,7 +28,7 @@ class AbstractArithemetic(AbstractOp):
     def get_flatten_op_lambda(self, ir_builder) -> Callable[[int, int], int]:
         raise NotImplementedError()
 
-    def type_check(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
+    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
         lhs, rhs = kwargs["lhs"].type(), kwargs["rhs"].type()
         if isinstance(lhs, NumberDTDescriptor) and isinstance(rhs, NumberDTDescriptor):
             return NumberDTDescriptor()
@@ -38,11 +38,11 @@ class AbstractArithemetic(AbstractOp):
             return NDArrayDTDescriptor(shape=lhs.shape)
         elif isinstance(lhs, NDArrayDTDescriptor) and isinstance(rhs, NDArrayDTDescriptor):
             if not NDArrayHelper.broadcast_compatible(lhs.shape, rhs.shape):
-                raise TypeInferenceError(spi, f'Invalid binary operator `{self.get_signature()}` on operands {lhs} and {rhs}, as their shapes must be broadcast compatible')
+                raise TypeInferenceError(dbg_i, f'Invalid binary operator `{self.get_signature()}` on operands {lhs} and {rhs}, as their shapes must be broadcast compatible')
             return NDArrayDTDescriptor(shape=NDArrayHelper.broadcast_shape(lhs.shape, rhs.shape))
         raise NotImplementedError()
 
-    def static_infer(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         lhs, rhs = kwargs["lhs"], kwargs["rhs"]
         if isinstance(lhs, NumberInferenceDescriptor) and isinstance(rhs, NumberInferenceDescriptor):
             if lhs.get() is None or rhs.get() is None:
@@ -50,16 +50,16 @@ class AbstractArithemetic(AbstractOp):
             return NumberInferenceDescriptor(self.get_inference_op_lambda()(lhs.get(), rhs.get()))
         elif isinstance(lhs, NumberInferenceDescriptor) and isinstance(rhs, NDArrayInferenceDescriptor):
             if lhs.get() is None:
-                return NDArrayInferenceDescriptor.new_instance(rhs, rhs.get().unary(lambda x: None))
+                return NDArrayInferenceDescriptor(rhs.shape(), rhs.get().unary(lambda x: None))
             ndarray = rhs.get()
             val = lhs.get()
-            return NDArrayInferenceDescriptor.new_instance(rhs, ndarray.unary(lambda x: self.get_inference_op_lambda()(val, x)))
+            return NDArrayInferenceDescriptor(rhs.shape(), ndarray.unary(lambda x: self.get_inference_op_lambda()(val, x)))
         elif isinstance(lhs, NDArrayInferenceDescriptor) and isinstance(rhs, NumberInferenceDescriptor):
             if rhs.get() is None:
-                return NDArrayInferenceDescriptor.new_instance(lhs, lhs.get().unary(lambda x: None))
+                return NDArrayInferenceDescriptor(lhs.shape(), lhs.get().unary(lambda x: None))
             ndarray = lhs.get()
             val = rhs.get()
-            return NDArrayInferenceDescriptor.new_instance(lhs, ndarray.unary(lambda x: self.get_inference_op_lambda()(x, val)))
+            return NDArrayInferenceDescriptor(lhs.shape(), ndarray.unary(lambda x: self.get_inference_op_lambda()(x, val)))
         elif isinstance(lhs, NDArrayInferenceDescriptor) and isinstance(rhs, NDArrayInferenceDescriptor):
             broadcast_shape = NDArrayHelper.broadcast_shape(lhs.shape(), rhs.shape())
             _lhs, _rhs = NDArrayHelper.broadcast(lhs.get(), rhs.get())

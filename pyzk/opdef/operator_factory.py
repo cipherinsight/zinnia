@@ -19,6 +19,7 @@ from pyzk.opdef.nocls.op_assign_slice import AssignSliceOp
 from pyzk.opdef.nocls.op_bool_cast import BoolCastOp
 from pyzk.opdef.nocls.op_constant_cast import ConstantCastOp
 from pyzk.opdef.nocls.op_constant import ConstantOp
+from pyzk.opdef.nocls.op_constant_none import ConstantNoneOp
 from pyzk.opdef.nocls.op_div import DivOp
 from pyzk.opdef.nocls.op_eq import EqualOp
 from pyzk.opdef.nocls.op_gt import GreaterThanOp
@@ -38,6 +39,7 @@ from pyzk.opdef.nocls.op_or import OrOp
 from pyzk.opdef.nocls.op_parenthesis import ParenthesisOp
 from pyzk.opdef.nocls.op_range import RangeOp
 from pyzk.opdef.nocls.op_read_number import ReadNumberOp
+from pyzk.opdef.nocls.op_select import SelectOp
 from pyzk.opdef.nocls.op_slice import SliceOp
 from pyzk.opdef.nocls.op_square_brackets import SquareBracketsOp
 from pyzk.opdef.nocls.op_sub import SubOp
@@ -78,6 +80,8 @@ class Operators:
         CONSTANT_CAST = ConstantCastOp
         INPUT = InputOp
         NOT = NotOp
+        CONSTANT_NONE = ConstantNoneOp
+        SELECT = SelectOp
 
     class NDArray:
         ALL = NDArray_AllOp
@@ -109,9 +113,11 @@ class Operators:
                 return op
             elif f"{class_name}::{operator_name}" == op.get_name() and class_name is not None:
                 return op
-        raise NotImplementedError(f'Operator {class_name if class_name is not None else ""}::{operator_name} not found')
+        return None
 
     @staticmethod
     def instantiate_operator(operator_name: str, class_name: Optional[str], *args, **kwargs):
         op = Operators.get_operator(operator_name, class_name)
+        if op is None:
+            return None
         return op(*args, **kwargs)

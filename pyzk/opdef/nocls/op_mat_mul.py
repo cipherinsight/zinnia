@@ -1,12 +1,12 @@
 from typing import List, Dict, Optional
 
-from pyzk.exception.contextual import TypeInferenceError
+from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.util.dt_descriptor import DTDescriptor, NDArrayDTDescriptor
-from pyzk.util.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor
-from pyzk.util.inference_descriptor import NDArrayInferenceDescriptor, InferenceDescriptor
-from pyzk.util.ndarray_helper import NDArrayHelper
-from pyzk.util.source_pos_info import SourcePosInfo
+from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor
+from pyzk.internal.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor
+from pyzk.internal.inference_descriptor import NDArrayInferenceDescriptor, InferenceDescriptor
+from pyzk.algo.ndarray_helper import NDArrayHelper
+from pyzk.debug.dbg_info import DebugInfo
 
 
 class MatMulOp(AbstractOp):
@@ -26,15 +26,15 @@ class MatMulOp(AbstractOp):
             AbstractOp._ParamEntry("rhs"),
         ]
 
-    def type_check(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
+    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
         lhs, rhs = kwargs["lhs"].type(), kwargs["rhs"].type()
         if isinstance(lhs, NDArrayDTDescriptor) and isinstance(rhs, NDArrayDTDescriptor):
             if not NDArrayHelper.matmul_shape_matches(lhs.shape, rhs.shape):
-                raise TypeInferenceError(spi, f'Invalid binary operator `{self.get_signature()}` on operands {lhs} and {rhs}, as their shapes are not multiply compatible')
+                raise TypeInferenceError(dbg_i, f'Invalid binary operator `{self.get_signature()}` on operands {lhs} and {rhs}, as their shapes are not multiply compatible')
             return NDArrayDTDescriptor(shape=NDArrayHelper.matmul_shape(lhs.shape, rhs.shape))
-        raise TypeInferenceError(spi, f'Invalid binary operator `{self.get_signature()}` on operands {lhs} and {rhs}. Only ndarray can be passed to `{self.get_signature()}`')
+        raise TypeInferenceError(dbg_i, f'Invalid binary operator `{self.get_signature()}` on operands {lhs} and {rhs}. Only ndarray can be passed to `{self.get_signature()}`')
 
-    def static_infer(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         lhs, rhs = kwargs["lhs"], kwargs["rhs"]
         if isinstance(lhs, NDArrayInferenceDescriptor) and isinstance(rhs, NDArrayInferenceDescriptor):
             matmul_shape = NDArrayHelper.matmul_shape(lhs.shape(), rhs.shape())

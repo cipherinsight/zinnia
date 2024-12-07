@@ -1,8 +1,8 @@
 from typing import Dict
 
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.util.annotation import Annotation
-from pyzk.util.source_pos_info import SourcePosInfo
+from pyzk.internal.annotation import Annotation
+from pyzk.debug.dbg_info import DebugInfo
 
 
 class IRStatement:
@@ -12,11 +12,11 @@ class IRStatement:
         operator: AbstractOp,
         arguments: Dict[str, int],
         annotation: Annotation | None = None,
-        spi: SourcePosInfo | None = None,
+        dbg_i: DebugInfo | None = None,
     ):
         self.stmt_id = stmt_id
         self.operator = operator
         self.arguments = arguments
         self.annotation = annotation
-        self.spi = spi
+        self.dbg_i = dbg_i
         assert all([arg is not None for arg in arguments])

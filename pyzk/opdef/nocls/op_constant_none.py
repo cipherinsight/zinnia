@@ -1,33 +1,31 @@
 from typing import List, Dict, Optional
 
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, NumberDTDescriptor
-from pyzk.internal.flatten_descriptor import FlattenDescriptor, NumberFlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor
+from pyzk.internal.dt_descriptor import DTDescriptor, NoneDTDescriptor
+from pyzk.internal.flatten_descriptor import FlattenDescriptor, NoneFlattenDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor, NoneInferenceDescriptor
 from pyzk.debug.dbg_info import DebugInfo
 
 
-class ConstantOp(AbstractOp):
-    def __init__(self, value: int):
+class ConstantNoneOp(AbstractOp):
+    def __init__(self):
         super().__init__()
-        assert value is not None
-        self.value = value
 
     def get_signature(self) -> str:
-        return f"constant[{self.value}]"
+        return f"constant_none"
 
     @classmethod
     def get_name(cls) -> str:
-        return "constant"
+        return "constant_none"
 
     def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return []
 
     def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
-        return NumberDTDescriptor()
+        return NoneDTDescriptor()
 
     def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
-        return NumberInferenceDescriptor(self.value)
+        return NoneInferenceDescriptor()
 
     def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
-        return NumberFlattenDescriptor(ir_builder.create_constant(self.value))
+        return NoneFlattenDescriptor()

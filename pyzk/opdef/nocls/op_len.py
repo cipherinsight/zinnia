@@ -1,13 +1,13 @@
 from typing import List, Dict, Optional
 
-from pyzk.exception.contextual import TypeInferenceError
+from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.util.dt_descriptor import DTDescriptor, NumberDTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor
-from pyzk.util.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor, TupleFlattenDescriptor, \
+from pyzk.internal.dt_descriptor import DTDescriptor, NumberDTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor
+from pyzk.internal.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor, TupleFlattenDescriptor, \
     NumberFlattenDescriptor
-from pyzk.util.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor, NDArrayInferenceDescriptor, \
+from pyzk.internal.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor, NDArrayInferenceDescriptor, \
     TupleInferenceDescriptor
-from pyzk.util.source_pos_info import SourcePosInfo
+from pyzk.debug.dbg_info import DebugInfo
 
 
 class LenOp(AbstractOp):
@@ -26,15 +26,15 @@ class LenOp(AbstractOp):
             AbstractOp._ParamEntry("operand")
         ]
 
-    def type_check(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
+    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
         operand = kwargs["operand"].type()
         if isinstance(operand, NDArrayDTDescriptor):
             return NumberDTDescriptor()
         elif isinstance(operand, TupleDTDescriptor):
             return NumberDTDescriptor()
-        raise TypeInferenceError(spi, f"Type `{operand}` is not supported on operator `{self.get_signature()}`")
+        raise TypeInferenceError(dbg_i, f"Type `{operand}` is not supported on operator `{self.get_signature()}`")
 
-    def static_infer(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         operand = kwargs["operand"]
         if isinstance(operand, NDArrayInferenceDescriptor):
             return NumberInferenceDescriptor(operand.shape()[0])

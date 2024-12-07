@@ -4,8 +4,9 @@ from pyzk.ast.zk_ast import ASTComponent, ASTAssignStatement, ASTSlicingAssignSt
     ASTAssertStatement, ASTBinaryOperator, ASTUnaryOperator, ASTExprAttribute, ASTNamedAttribute, ASTConstant, \
     ASTSlicing, ASTLoad, ASTSlicingData, ASTPassStatement, \
     ASTProgram, ASTProgramInput, ASTAnnotation, ASTForInStatement, ASTCondStatement, \
-    ASTExpression, ASTSquareBrackets, ASTSlicingAssignData, ASTContinueStatement, ASTBreakStatement, ASTParenthesis
-from pyzk.exception.base import InternalPyzkException, PyZKException
+    ASTExpression, ASTSquareBrackets, ASTSlicingAssignData, ASTContinueStatement, ASTBreakStatement, ASTParenthesis, \
+    ASTReturnStatement, ASTCallStatement
+from pyzk.debug.exception import InternalPyzkException, PyZKException
 from pyzk.ir.ir_builder import IRStatement
 
 
@@ -107,7 +108,7 @@ def prettify_zk_ast(node: ASTComponent) -> str:
                 res += _inner(depth + 1, n.annotation, 'annotation')
             return res
         elif isinstance(n, ASTAnnotation):
-            res = [prefix + f' {n.typename}[{", ".join([str(x) for x in n.shape])}] ({"public" if n.public else "private"})']
+            res = [prefix + f' {n.dt} ({"public" if n.public else "private"})']
             return res
         elif isinstance(n, ASTForInStatement):
             res = [prefix]
@@ -134,6 +135,18 @@ def prettify_zk_ast(node: ASTComponent) -> str:
             for i, expr in enumerate(n.values):
                 res += _inner(depth + 1, expr, f'val_{i + 1}')
             return res
+        elif isinstance(n, ASTReturnStatement):
+            res = [prefix]
+            if n.expr is not None:
+                res += _inner(depth + 1, n.expr, f'value')
+            return res
+        elif isinstance(n, ASTCallStatement):
+            res = [prefix]
+            for i, arg in enumerate(n.args):
+                res += _inner(depth + 1, arg, f'arg_{i + 1}')
+            for k, arg in n.kwargs.items():
+                res += _inner(depth + 1, arg, f'arg: {k}')
+            return res
         else:
             raise NotImplementedError(type(n))
     return '\n'.join(_inner(0, node))
@@ -159,39 +172,39 @@ def prettify_ir_stmts(stmts: List[IRStatement]):
     return "\n".join(results)
 
 
-def prettify_exception(exception: InternalPyzkException, method_name: str, source_code: str) -> PyZKException:
+def prettify_exception(exception: InternalPyzkException) -> PyZKException:
     if isinstance(exception, InternalPyzkException):
-        if exception.source_pos is None:
+        if exception.dbg_i is None:
             return PyZKException(f'{type(exception).__name__}: {exception.msg}')
-        source_lines = source_code.splitlines()
-        error_report_msg = f'  In method "{method_name}", line {exception.source_pos.lineno}'
-        if exception.source_pos.end_lineno != exception.source_pos.lineno:
-            error_report_msg += f' to {exception.source_pos.end_lineno}'
+        source_lines = exception.dbg_i.source_code.splitlines()
+        error_report_msg = f'  In method "{exception.dbg_i.method_name}", line {exception.dbg_i.lineno}'
+        if exception.dbg_i.end_lineno != exception.dbg_i.lineno:
+            error_report_msg += f' to {exception.dbg_i.end_lineno}'
         error_report_msg += '\n'
-        if exception.source_pos.end_lineno != exception.source_pos.lineno:
+        if exception.dbg_i.end_lineno != exception.dbg_i.lineno:
             for i, line in enumerate(source_lines):
                 line_no = i + 1
-                if line_no == exception.source_pos.lineno:
+                if line_no == exception.dbg_i.lineno:
                     error_report_msg += f'    {line}'
                     error_report_msg += '\n'
-                    error_report_msg += ' ' * (4 + exception.source_pos.col_offset)
-                    error_report_msg += '^' * (len(line) - exception.source_pos.col_offset)
+                    error_report_msg += ' ' * (4 + exception.dbg_i.col_offset)
+                    error_report_msg += '^' * (len(line) - exception.dbg_i.col_offset)
                     error_report_msg += '\n'
-                elif line_no == exception.source_pos.end_lineno:
+                elif line_no == exception.dbg_i.end_lineno:
                     error_report_msg += f'    {line}'
                     error_report_msg += '\n'
-                    error_report_msg += '    ' + '^' * (len(line) - exception.source_pos.end_col_offset)
+                    error_report_msg += '    ' + '^' * (len(line) - exception.dbg_i.end_col_offset)
                     error_report_msg += '\n'
-                elif exception.source_pos.lineno < line_no < exception.source_pos.end_lineno:
+                elif exception.dbg_i.lineno < line_no < exception.dbg_i.end_lineno:
                     error_report_msg += f'    {line}'
                     error_report_msg += '\n'
                     error_report_msg += '    ' + '^' * len(line)
                     error_report_msg += '\n'
         else:
-            error_report_msg += f'    {source_lines[exception.source_pos.lineno - 1]}'
+            error_report_msg += f'    {source_lines[exception.dbg_i.lineno - 1]}'
             error_report_msg += '\n'
-            error_report_msg += ' ' * (4 + exception.source_pos.col_offset)
-            error_report_msg += '^' * (exception.source_pos.end_col_offset - exception.source_pos.col_offset)
+            error_report_msg += ' ' * (4 + exception.dbg_i.col_offset)
+            error_report_msg += '^' * (exception.dbg_i.end_col_offset - exception.dbg_i.col_offset)
             error_report_msg += '\n'
         error_report_msg += type(exception).__name__ + ': ' + exception.msg
         return PyZKException(error_report_msg)

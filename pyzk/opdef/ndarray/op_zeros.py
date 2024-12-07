@@ -1,12 +1,12 @@
 from typing import List, Dict, Optional
 
-from pyzk.exception.contextual import TypeInferenceError, StaticInferenceError
+from pyzk.debug.exception import TypeInferenceError, StaticInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.util.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor
-from pyzk.util.flatten_descriptor import NDArrayFlattenDescriptor, FlattenDescriptor
-from pyzk.util.inference_descriptor import InferenceDescriptor, NDArrayInferenceDescriptor
-from pyzk.util.ndarray_helper import NDArrayHelper
-from pyzk.util.source_pos_info import SourcePosInfo
+from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor
+from pyzk.internal.flatten_descriptor import NDArrayFlattenDescriptor, FlattenDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor, NDArrayInferenceDescriptor
+from pyzk.algo.ndarray_helper import NDArrayHelper
+from pyzk.debug.dbg_info import DebugInfo
 
 
 class NDArray_ZerosOp(AbstractOp):
@@ -25,18 +25,18 @@ class NDArray_ZerosOp(AbstractOp):
             AbstractOp._ParamEntry("shape")
         ]
 
-    def type_check(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
+    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
         shape = kwargs["shape"]
         if not isinstance(shape.type(), TupleDTDescriptor):
-            raise TypeInferenceError(spi, "Param `shape` must be of type `Tuple`")
+            raise TypeInferenceError(dbg_i, "Param `shape` must be of type `Tuple`")
         for ele in shape.get():
             if ele is None:
-                raise StaticInferenceError(spi, "Every number element in `shape` must be statically inferrable")
+                raise StaticInferenceError(dbg_i, "Every number element in `shape` must be statically inferrable")
             if ele <= 0:
-                raise TypeInferenceError(spi, "Every number element in `shape` must be greater than 0")
+                raise TypeInferenceError(dbg_i, "Every number element in `shape` must be greater than 0")
         return NDArrayDTDescriptor(shape.get())
 
-    def static_infer(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         shape = kwargs["shape"].get()
         ndarray = NDArrayHelper.fill(shape, lambda: 0)
         return NDArrayInferenceDescriptor(shape, ndarray)

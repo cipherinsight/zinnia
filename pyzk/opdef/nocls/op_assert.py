@@ -1,11 +1,11 @@
 from typing import List, Dict, Optional
 
-from pyzk.exception.contextual import TypeInferenceError, StaticInferenceError
+from pyzk.debug.exception import TypeInferenceError, StaticInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.util.dt_descriptor import DTDescriptor, NumberDTDescriptor, NoneDTDescriptor
-from pyzk.util.flatten_descriptor import FlattenDescriptor, NoneFlattenDescriptor
-from pyzk.util.inference_descriptor import InferenceDescriptor, NoneInferenceDescriptor
-from pyzk.util.source_pos_info import SourcePosInfo
+from pyzk.internal.dt_descriptor import DTDescriptor, NumberDTDescriptor, NoneDTDescriptor
+from pyzk.internal.flatten_descriptor import FlattenDescriptor, NoneFlattenDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor, NoneInferenceDescriptor
+from pyzk.debug.dbg_info import DebugInfo
 
 
 class AssertOp(AbstractOp):
@@ -27,16 +27,16 @@ class AssertOp(AbstractOp):
             AbstractOp._ParamEntry("test")
         ]
 
-    def type_check(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
+    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
         operand = kwargs["test"].type()
         if isinstance(operand, NumberDTDescriptor):
             return NoneDTDescriptor()
-        raise TypeInferenceError(spi, f"Type `{operand}` is not supported on operator `{self.get_signature()}`")
+        raise TypeInferenceError(dbg_i, f"Type `{operand}` is not supported on operator `{self.get_signature()}`")
 
-    def static_infer(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         operand = kwargs["test"]
         if operand.get() is not None and operand.get() == 0:
-            raise StaticInferenceError(spi, "Assertion is always unsatisfiable")
+            raise StaticInferenceError(dbg_i, "Assertion is always unsatisfiable")
         return NoneInferenceDescriptor()
 
     def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:

@@ -1,10 +1,10 @@
 from typing import Tuple, Any, Optional
 
-from pyzk.util.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, NumberDTDescriptor, TupleDTDescriptor, \
+from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, NumberDTDescriptor, TupleDTDescriptor, \
     NoneDTDescriptor
-from pyzk.util.inference_descriptor import NDArrayInferenceValue, NumberInferenceValue, NoneInferenceValue, \
+from pyzk.internal.inference_descriptor import NDArrayInferenceValue, NumberInferenceValue, NoneInferenceValue, \
     TupleInferenceValue
-from pyzk.util.ndarray_helper import NDArrayHelper
+from pyzk.algo.ndarray_helper import NDArrayHelper
 
 
 NumberFlattenValue = int

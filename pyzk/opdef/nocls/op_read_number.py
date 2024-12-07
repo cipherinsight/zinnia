@@ -1,10 +1,10 @@
 from typing import List, Dict, Optional
 
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.util.dt_descriptor import DTDescriptor, NumberDTDescriptor
-from pyzk.util.flatten_descriptor import FlattenDescriptor, NumberFlattenDescriptor
-from pyzk.util.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor
-from pyzk.util.source_pos_info import SourcePosInfo
+from pyzk.internal.dt_descriptor import DTDescriptor, NumberDTDescriptor
+from pyzk.internal.flatten_descriptor import FlattenDescriptor, NumberFlattenDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor
+from pyzk.debug.dbg_info import DebugInfo
 
 
 class ReadNumberOp(AbstractOp):
@@ -26,10 +26,10 @@ class ReadNumberOp(AbstractOp):
     def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return []
 
-    def type_check(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
+    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
         return NumberDTDescriptor()
 
-    def static_infer(self, spi: Optional[SourcePosInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         return NumberInferenceDescriptor(None)
 
     def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:

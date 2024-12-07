@@ -2,8 +2,8 @@ from typing import Dict
 
 from pyzk.ir.ir_builder import IRBuilder, IRGraph
 from pyzk.ir.ir_pass.abstract_pass import AbstractIRPass
-from pyzk.util.flatten_descriptor import FlattenDescriptor
-from pyzk.util.inference_descriptor import InferenceDescriptor
+from pyzk.internal.flatten_descriptor import FlattenDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor
 
 
 class NDArrayFlattenerIRPass(AbstractIRPass):
