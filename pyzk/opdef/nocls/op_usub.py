@@ -1,9 +1,9 @@
 from typing import List, Dict, Any, Optional
 
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, NumberDTDescriptor, NDArrayDTDescriptor
-from pyzk.internal.flatten_descriptor import FlattenDescriptor, NumberFlattenDescriptor, NDArrayFlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor, NDArrayInferenceDescriptor
+from pyzk.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor, NDArrayDTDescriptor
+from pyzk.internal.flatten_descriptor import FlattenDescriptor, IntegerFlattenDescriptor, NDArrayFlattenDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor, IntegerInferenceDescriptor, NDArrayInferenceDescriptor
 from pyzk.debug.dbg_info import DebugInfo
 
 
@@ -28,18 +28,18 @@ class USubOp(AbstractOp):
 
     def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
         x = kwargs["x"].type()
-        if isinstance(x, NumberDTDescriptor):
-            return NumberDTDescriptor()
+        if isinstance(x, IntegerDTDescriptor):
+            return IntegerDTDescriptor()
         elif isinstance(x, NDArrayDTDescriptor):
             return NDArrayDTDescriptor(x.shape)
         raise NotImplementedError()
 
     def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         x = kwargs["x"]
-        if isinstance(x, NumberInferenceDescriptor):
+        if isinstance(x, IntegerInferenceDescriptor):
             if x.get() is None:
-                return NumberInferenceDescriptor(None)
-            return NumberInferenceDescriptor(x.get() * -1)
+                return IntegerInferenceDescriptor(None)
+            return IntegerInferenceDescriptor(x.get() * -1)
         elif isinstance(x, NDArrayInferenceDescriptor):
             return NDArrayInferenceDescriptor(x.shape(), x.get().unary(lambda a: -a if a is not None else None))
         raise NotImplementedError()
@@ -47,8 +47,8 @@ class USubOp(AbstractOp):
     def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
         x = kwargs["x"]
         minus_one = ir_builder.create_constant(-1)
-        if isinstance(x, NumberFlattenDescriptor):
-            return NumberFlattenDescriptor(ir_builder.create_mul(
+        if isinstance(x, IntegerFlattenDescriptor):
+            return IntegerFlattenDescriptor(ir_builder.create_mul(
                 minus_one, x.ptr()
             ))
         elif isinstance(x, NDArrayFlattenDescriptor):

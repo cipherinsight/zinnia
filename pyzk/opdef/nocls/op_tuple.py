@@ -2,7 +2,7 @@ from typing import List, Dict, Optional
 
 from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor
+from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor, IntegerDTDescriptor
 from pyzk.internal.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor, TupleFlattenDescriptor
 from pyzk.internal.inference_descriptor import InferenceDescriptor, NDArrayInferenceDescriptor, TupleInferenceDescriptor
 from pyzk.debug.dbg_info import DebugInfo
@@ -29,6 +29,8 @@ class TupleOp(AbstractOp):
         if isinstance(x, NDArrayDTDescriptor):
             if len(x.shape) != 1:
                 raise TypeInferenceError(dbg_i, "Cannot cast this `NDArray` to `Tuple`, as its number of dimensions is greater than 1")
+            if not isinstance(x.dtype, IntegerDTDescriptor):
+                raise TypeInferenceError(dbg_i, "Cannot cast this `NDArray` to `Tuple`, as its dtype must be `Integer`")
             return TupleDTDescriptor(x.shape[0])
         elif isinstance(x, TupleDTDescriptor):
             return TupleDTDescriptor(x.length)

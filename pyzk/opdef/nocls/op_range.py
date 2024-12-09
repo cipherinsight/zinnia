@@ -2,7 +2,7 @@ from typing import Dict, Any, Optional, List
 
 from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, NumberDTDescriptor, NDArrayDTDescriptor
+from pyzk.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor, NDArrayDTDescriptor
 from pyzk.internal.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor
 from pyzk.internal.inference_descriptor import InferenceDescriptor, NDArrayInferenceDescriptor
 from pyzk.algo.ndarray_helper import NDArrayHelper
@@ -40,13 +40,13 @@ class RangeOp(AbstractOp):
         _start, _stop, _step = None, None, None
         if start is None:
             _start = 0
-        elif not isinstance(start.type(), NumberDTDescriptor):
+        elif not isinstance(start.type(), IntegerDTDescriptor):
             raise TypeInferenceError(dbg_i, "`range` param must be of type `Number`")
         elif start.get() is None:
             raise TypeInferenceError(dbg_i, "`range` param must can be statically inferred")
         else:
             _start = start.get()
-        if not isinstance(stop.type(), NumberDTDescriptor):
+        if not isinstance(stop.type(), IntegerDTDescriptor):
             raise TypeInferenceError(dbg_i, "`range` param must be of type `Number`")
         elif stop.get() is None:
             raise TypeInferenceError(dbg_i, "`range` param must can be statically inferred")
@@ -54,13 +54,13 @@ class RangeOp(AbstractOp):
             _stop = stop.get()
         if step is None:
             _step = 1
-        elif not isinstance(step.type(), NumberDTDescriptor):
+        elif not isinstance(step.type(), IntegerDTDescriptor):
             raise TypeInferenceError(dbg_i, "`range` param must be of type `Number`")
         elif step.get() is None:
             raise TypeInferenceError(dbg_i, "`range` param must can be statically inferred")
         else:
             _step = step.get()
-        return NDArrayDTDescriptor((len(list(range(_start, _stop, _step))), ))
+        return NDArrayDTDescriptor((len(list(range(_start, _stop, _step))), ), IntegerDTDescriptor())
 
     def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         start, stop, step = kwargs["start"], kwargs["stop"], kwargs["step"]
@@ -68,7 +68,7 @@ class RangeOp(AbstractOp):
         _stop = stop.get()
         _step = 1 if step is None else step.get()
         result = list(range(_start, _stop, _step))
-        return NDArrayInferenceDescriptor((len(result), ), NDArrayHelper((len(result), ), result))
+        return NDArrayInferenceDescriptor((len(result), ), IntegerDTDescriptor(), NDArrayHelper((len(result), ), result))
 
     def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
         start, stop, step = kwargs["start"], kwargs["stop"], kwargs["step"]
@@ -76,4 +76,4 @@ class RangeOp(AbstractOp):
         _stop = stop.val()
         _step = 1 if step is None else step.val()
         result = [ir_builder.create_constant(x) for x in range(_start, _stop, _step)]
-        return NDArrayFlattenDescriptor((len(result), ), NDArrayHelper((len(result), ), result))
+        return NDArrayFlattenDescriptor((len(result), ), IntegerDTDescriptor(), NDArrayHelper((len(result), ), result))

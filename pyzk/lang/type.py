@@ -3,7 +3,8 @@ from typing import Tuple
 
 from pyzk.lang.metatype import NDArrayMeta
 
-Number = int
+Integer = int
+Float = float
 
 class NDArray(metaclass=NDArrayMeta):
     shape: int
@@ -12,11 +13,11 @@ class NDArray(metaclass=NDArrayMeta):
         pass
 
     @staticmethod
-    def zeros(shape: Tuple[int, ...]) -> 'NDArray':
+    def zeros(shape: Tuple[int, ...], dtype: type = None) -> 'NDArray':
         return NDArray()
 
     @staticmethod
-    def ones(shape: Tuple[int, ...]) -> 'NDArray':
+    def ones(shape: Tuple[int, ...], dtype: type = None) -> 'NDArray':
         return NDArray()
 
     @staticmethod
@@ -27,11 +28,11 @@ class NDArray(metaclass=NDArrayMeta):
     def eye(n: int, m: int) -> 'NDArray':
         return NDArray()
 
-    def sum(self, axis: int = None) -> Number:
+    def sum(self, axis: int = None) -> Integer | Float:
         raise NotImplementedError("Cannot perform action outside circuit method.")
 
-    def all(self, axis: int = None) -> Number:
+    def all(self, axis: int = None) -> Integer | Float:
         raise NotImplementedError("Cannot perform action outside circuit method.")
 
-    def any(self, axis: int = None) -> Number:
+    def any(self, axis: int = None) -> Integer | Float:
         raise NotImplementedError("Cannot perform action outside circuit method.")

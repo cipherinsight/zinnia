@@ -1,15 +1,17 @@
 from typing import Tuple, Any, Optional
 
-from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, NumberDTDescriptor, TupleDTDescriptor, \
-    NoneDTDescriptor
-from pyzk.internal.inference_descriptor import NDArrayInferenceValue, NumberInferenceValue, NoneInferenceValue, \
-    TupleInferenceValue
+from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, IntegerDTDescriptor, TupleDTDescriptor, \
+    NoneDTDescriptor, FloatDTDescriptor
+from pyzk.internal.inference_descriptor import NDArrayInferenceValue, IntegerInferenceValue, NoneInferenceValue, \
+    TupleInferenceValue, FloatInferenceValue, ClassInferenceValue
 from pyzk.algo.ndarray_helper import NDArrayHelper
 
 
-NumberFlattenValue = int
+IntegerFlattenValue = int
+FloatFlattenValue = int
 NDArrayFlattenValue = NDArrayHelper
 TupleFlattenValue = tuple
+ClassFlattenValue = None
 NoneFlattenValue = type(None)
 
 
@@ -39,8 +41,9 @@ class FlattenDescriptor:
 
 
 class NDArrayFlattenDescriptor(FlattenDescriptor):
-    def __init__(self, shape: Tuple[int, ...], ptrs: NDArrayFlattenValue, value: Optional[NDArrayInferenceValue] = None):
-        super().__init__(NDArrayDTDescriptor(shape))
+    def __init__(self, shape: Tuple[int, ...], dtype: DTDescriptor, ptrs: NDArrayFlattenValue, value: Optional[NDArrayInferenceValue] = None):
+        super().__init__(NDArrayDTDescriptor(shape, dtype))
+        assert dtype is not None
         self.value = value
         self._ptrs = ptrs
 
@@ -62,24 +65,59 @@ class NDArrayFlattenDescriptor(FlattenDescriptor):
         assert isinstance(self.dt, NDArrayDTDescriptor)
         return self.dt.shape
 
+    def dtype(self):
+        assert isinstance(self.dt, NDArrayDTDescriptor)
+        return self.dt.dtype
+
 
 class NumberFlattenDescriptor(FlattenDescriptor):
-    def __init__(self, ptr: NumberFlattenValue, value: Optional[NumberInferenceValue] = None):
-        super().__init__(NumberDTDescriptor())
+    def __init__(self, dt: DTDescriptor):
+        super().__init__(dt)
+
+    def __new__(cls, *args, **kwargs):
+        if cls is FlattenDescriptor:
+            raise TypeError(f"<NumberFlattenDescriptor> must be subclassed.")
+        return object.__new__(cls)
+
+
+class IntegerFlattenDescriptor(NumberFlattenDescriptor):
+    def __init__(self, ptr: IntegerFlattenValue, value: Optional[IntegerInferenceValue] = None):
+        super().__init__(IntegerDTDescriptor())
         self.value = value
         self._ptr = ptr
 
-    def val(self) -> NumberInferenceValue:
+    def val(self) -> IntegerInferenceValue:
         return self.value
 
-    def ptr(self) -> NumberFlattenValue:
+    def ptr(self) -> IntegerFlattenValue:
         return self._ptr
 
-    def set_val(self, value: Optional[NumberInferenceValue] = None) -> 'NumberFlattenDescriptor':
+    def set_val(self, value: Optional[IntegerInferenceValue] = None) -> 'IntegerFlattenDescriptor':
         self.value = value
         return self
 
-    def set_ptr(self, ptr: NumberFlattenValue) -> 'NumberFlattenDescriptor':
+    def set_ptr(self, ptr: IntegerFlattenValue) -> 'IntegerFlattenDescriptor':
+        self._ptr = ptr
+        return self
+
+
+class FloatFlattenDescriptor(NumberFlattenDescriptor):
+    def __init__(self, ptr: FloatFlattenValue, value: Optional[FloatInferenceValue] = None):
+        super().__init__(FloatDTDescriptor())
+        self.value = value
+        self._ptr = ptr
+
+    def val(self) -> FloatInferenceValue:
+        return self.value
+
+    def ptr(self) -> FloatFlattenValue:
+        return self._ptr
+
+    def set_val(self, value: Optional[FloatInferenceValue] = None) -> 'FloatFlattenDescriptor':
+        self.value = value
+        return self
+
+    def set_ptr(self, ptr: FloatFlattenValue) -> 'FloatFlattenDescriptor':
         self._ptr = ptr
         return self
 
@@ -99,6 +137,26 @@ class NoneFlattenDescriptor(FlattenDescriptor):
         return self
 
     def set_ptr(self, ptr: NoneFlattenValue) -> 'NoneFlattenDescriptor':
+        raise NotImplementedError()
+
+
+class ClassFlattenDescriptor(FlattenDescriptor):
+    def __init__(self, value: Optional[ClassInferenceValue] = None):
+        super().__init__(NoneDTDescriptor())
+        self.value = value
+
+    def val(self) -> ClassInferenceValue:
+        return self.value
+
+    def ptr(self) -> ClassFlattenValue:
+        raise NotImplementedError()
+
+    def set_val(self, value: ClassInferenceValue) -> 'ClassFlattenDescriptor':
+        assert isinstance(value, ClassInferenceValue)
+        self.value = value
+        return self
+
+    def set_ptr(self, ptr: ClassFlattenValue) -> 'ClassFlattenDescriptor':
         raise NotImplementedError()
 
 

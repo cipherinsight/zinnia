@@ -13,36 +13,61 @@ from pyzk.opdef.ndarray.op_shape import NDArray_ShapeOp
 from pyzk.opdef.ndarray.op_sum import NDArray_SumOp
 from pyzk.opdef.ndarray.op_zeros import NDArray_ZerosOp
 from pyzk.opdef.nocls.op_add import AddOp
+from pyzk.opdef.nocls.op_add_f import AddFOp
+from pyzk.opdef.nocls.op_add_i import AddIOp
 from pyzk.opdef.nocls.op_and import AndOp
 from pyzk.opdef.nocls.op_assert import AssertOp
 from pyzk.opdef.nocls.op_assign_slice import AssignSliceOp
 from pyzk.opdef.nocls.op_bool_cast import BoolCastOp
 from pyzk.opdef.nocls.op_constant_cast import ConstantCastOp
 from pyzk.opdef.nocls.op_constant import ConstantOp
+from pyzk.opdef.nocls.op_constant_class import ConstantClassOp
+from pyzk.opdef.nocls.op_constant_float import ConstantFloatOp
 from pyzk.opdef.nocls.op_constant_none import ConstantNoneOp
 from pyzk.opdef.nocls.op_div import DivOp
+from pyzk.opdef.nocls.op_div_f import DivFOp
+from pyzk.opdef.nocls.op_div_i import DivIOp
 from pyzk.opdef.nocls.op_eq import EqualOp
+from pyzk.opdef.nocls.op_eq_f import EqualFOp
+from pyzk.opdef.nocls.op_eq_i import EqualIOp
+from pyzk.opdef.nocls.op_float import FloatOp
 from pyzk.opdef.nocls.op_gt import GreaterThanOp
+from pyzk.opdef.nocls.op_gt_f import GreaterThanFOp
+from pyzk.opdef.nocls.op_gt_i import GreaterThanIOp
 from pyzk.opdef.nocls.op_gte import GreaterThanOrEqualOp
+from pyzk.opdef.nocls.op_gte_f import GreaterThanOrEqualFOp
+from pyzk.opdef.nocls.op_gte_i import GreaterThanOrEqualIOp
 from pyzk.opdef.nocls.op_input import InputOp
+from pyzk.opdef.nocls.op_int import IntOp
 from pyzk.opdef.nocls.op_len import LenOp
 from pyzk.opdef.nocls.op_list import ListOp
 from pyzk.opdef.nocls.op_logical_and import LogicalAndOp
 from pyzk.opdef.nocls.op_logical_or import LogicalOrOp
 from pyzk.opdef.nocls.op_lt import LessThanOp
+from pyzk.opdef.nocls.op_lt_f import LessThanFOp
+from pyzk.opdef.nocls.op_lt_i import LessThanIOp
 from pyzk.opdef.nocls.op_lte import LessThanOrEqualOp
+from pyzk.opdef.nocls.op_lte_f import LessThanOrEqualFOp
+from pyzk.opdef.nocls.op_lte_i import LessThanOrEqualIOp
 from pyzk.opdef.nocls.op_mat_mul import MatMulOp
 from pyzk.opdef.nocls.op_mul import MulOp
+from pyzk.opdef.nocls.op_mul_f import MulFOp
+from pyzk.opdef.nocls.op_mul_i import MulIOp
 from pyzk.opdef.nocls.op_ne import NotEqualOp
+from pyzk.opdef.nocls.op_ne_f import NotEqualFOp
+from pyzk.opdef.nocls.op_ne_i import NotEqualIOp
 from pyzk.opdef.nocls.op_not import NotOp
 from pyzk.opdef.nocls.op_or import OrOp
 from pyzk.opdef.nocls.op_parenthesis import ParenthesisOp
 from pyzk.opdef.nocls.op_range import RangeOp
-from pyzk.opdef.nocls.op_read_number import ReadNumberOp
+from pyzk.opdef.nocls.op_read_float import ReadFloatOp
+from pyzk.opdef.nocls.op_read_integer import ReadIntegerOp
 from pyzk.opdef.nocls.op_select import SelectOp
 from pyzk.opdef.nocls.op_slice import SliceOp
 from pyzk.opdef.nocls.op_square_brackets import SquareBracketsOp
 from pyzk.opdef.nocls.op_sub import SubOp
+from pyzk.opdef.nocls.op_sub_f import SubFOp
+from pyzk.opdef.nocls.op_sub_i import SubIOp
 from pyzk.opdef.nocls.op_tuple import TupleOp
 from pyzk.opdef.nocls.op_usub import USubOp
 
@@ -56,22 +81,35 @@ class Operators:
         BOOL_CAST = BoolCastOp
         CONSTANT = ConstantOp
         DIV = DivOp
-        EQ = EqualOp
-        GT = GreaterThanOp
-        GTE = GreaterThanOrEqualOp
         LEN = LenOp
         LIST = ListOp
         LOGICAL_AND = LogicalAndOp
         LOGICAL_OR = LogicalOrOp
+        EQ = EqualOp
+        NE = NotEqualOp
         LT = LessThanOp
         LTE = LessThanOrEqualOp
+        GT = GreaterThanOp
+        GTE = GreaterThanOrEqualOp
+        EQ_I = EqualIOp
+        NE_I = NotEqualIOp
+        LT_I = LessThanIOp
+        LTE_I = LessThanOrEqualIOp
+        GT_I = GreaterThanIOp
+        GTE_I = GreaterThanOrEqualIOp
+        EQ_F = EqualFOp
+        NE_F = NotEqualFOp
+        LT_F = LessThanFOp
+        LTE_F = LessThanOrEqualFOp
+        GT_F = GreaterThanFOp
+        GTE_F = GreaterThanOrEqualFOp
         MAT_MUL = MatMulOp
         MUL = MulOp
-        NE = NotEqualOp
         OR = OrOp
         PARENTHESIS = ParenthesisOp
         RANGE = RangeOp
-        READ_NUMBER = ReadNumberOp
+        READ_INTEGER = ReadIntegerOp
+        READ_FLOAT = ReadFloatOp
         SLICE = SliceOp
         SQUARE_BRACKETS = SquareBracketsOp
         SUB = SubOp
@@ -81,7 +119,19 @@ class Operators:
         INPUT = InputOp
         NOT = NotOp
         CONSTANT_NONE = ConstantNoneOp
+        CONSTANT_CLASS = ConstantClassOp
         SELECT = SelectOp
+        ADD_I = AddIOp
+        ADD_F = AddFOp
+        SUB_I = SubIOp
+        SUB_F = SubFOp
+        MUL_I = MulIOp
+        MUL_F = MulFOp
+        DIV_I = DivIOp
+        DIV_F = DivFOp
+        FLOAT_CAST = FloatOp
+        INT_CAST = IntOp
+        CONSTANT_FLOAT = ConstantFloatOp
 
     class NDArray:
         ALL = NDArray_AllOp

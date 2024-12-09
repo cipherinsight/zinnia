@@ -112,8 +112,14 @@ class ASTExprAttribute(ASTAbstractOperator):
         self.member = member
 
 
-class ASTConstant(ASTExpression):
+class ASTConstantInteger(ASTExpression):
     def __init__(self, dbg_i: DebugInfo, value: int):
+        super().__init__(dbg_i)
+        self.value = value
+
+
+class ASTConstantFloat(ASTExpression):
+    def __init__(self, dbg_i: DebugInfo, value: float):
         super().__init__(dbg_i)
         self.value = value
 

@@ -6,11 +6,12 @@ from pyzk.debug.exception import InvalidCircuitInputException, InvalidCircuitSta
     UnsupportedOperatorException, UnsupportedConstantLiteralException, \
     UnsupportedLangFeatureException, InvalidForStatementException, InvalidChipInputException
 from pyzk.ast.zk_ast import ASTProgramInput, ASTAnnotation, ASTProgram, ASTAssignStatement, \
-    ASTLoad, ASTConstant, ASTSlicingData, ASTSlicingAssignStatement, \
+    ASTLoad, ASTSlicingData, ASTSlicingAssignStatement, \
     ASTForInStatement, ASTPassStatement, ASTAssertStatement, ASTCondStatement, ASTSlicing, ASTSquareBrackets, \
     ASTSlicingAssignData, ASTBreakStatement, ASTContinueStatement, ASTBinaryOperator, ASTUnaryOperator, \
     ASTNamedAttribute, \
-    ASTExprAttribute, ASTParenthesis, ASTChip, ASTChipInput, ASTReturnStatement, ASTCallStatement
+    ASTExprAttribute, ASTParenthesis, ASTChip, ASTChipInput, ASTReturnStatement, ASTCallStatement, ASTConstantInteger, \
+    ASTConstantFloat
 from pyzk.internal.chip_object import ChipObject
 from pyzk.internal.dt_descriptor import DTDescriptorFactory, NoneDTDescriptor
 from pyzk.internal.input_anno_name import InputAnnoName
@@ -245,9 +246,11 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
         dbg_info = self.get_debug_info(node)
         if node.value is None:
             raise UnsupportedConstantLiteralException(dbg_info, "Invalid constant `None` in circuit.")
+        if isinstance(node.value, int):
+            return ASTConstantInteger(dbg_info, node.value)
         elif isinstance(node.value, float):
-            raise UnsupportedConstantLiteralException(dbg_info, f"Invalid float constant `{node.value}` in circuit. ZK circuits only accept scalar numbers.")
-        return ASTConstant(dbg_info, node.value)
+            return ASTConstantFloat(dbg_info, node.value)
+        raise UnsupportedConstantLiteralException(dbg_info, f"Invalid constant value `{node.value}` in circuit")
 
     def visit_List(self, node):
         dbg_info = self.get_debug_info(node)

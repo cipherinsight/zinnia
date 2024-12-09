@@ -1,9 +1,9 @@
 from typing import Callable, Any
 
-from pyzk.opdef.nocls.abstract_arithemetic import AbstractArithemetic
+from pyzk.opdef.nocls.abstract_integer_arithemetic import AbstractIntegerArithemetic
 
 
-class LogicalAndOp(AbstractArithemetic):
+class LogicalAndOp(AbstractIntegerArithemetic):
     def __init__(self):
         super().__init__()
 

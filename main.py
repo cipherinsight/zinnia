@@ -1,40 +1,27 @@
 from pyzk.lang.typing import Public, Private
-from pyzk.lang.type import Number, NDArray
+from pyzk.lang.type import Integer, Float, NDArray
 from pyzk.pyzk_interface import pyzk_circuit, pyzk_chip
 
 
 @pyzk_chip
-def another_chip(a: Number, b: Number) -> Number:
-    if a != 0:
-        return another_chip(0, b)
-    return a + 123 * b
-
-
-@pyzk_chip
-def my_chip(a: Number) -> Number:
+def multi(a: Integer) -> NDArray[Float, 2, 3]:
     if a == 0:
-        return 1
+        return NDArray.ones((2, 1)) @ NDArray.ones((1, 3))
     else:
         if a == 1:
-            return 2
+            return NDArray.ones((2, 3), Float)
         else:
-            return another_chip(1, a)
-
-
-@pyzk_chip
-def returns_none(a: Number):
-    assert a != 0
+            return NDArray.zeros((2, 3))
 
 
 @pyzk_circuit
 def foo(
-    x: Public[Number],
-    y: Private[NDArray[5, 4]]
+    x: Public[Integer],
+    y: Private[NDArray[Float, 5, 4]]
 ):
     z = y @ y.transpose(axes=(1, 0))
-    assert my_chip(x) == 0
-    returns_none(x)
-    assert (z + NDArray.ones((5, 5))).sum() == 0
+    multi(x)
+    assert (z + NDArray.ones((5, 5))).sum() == 0.
 
 
 foo()

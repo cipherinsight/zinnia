@@ -4,7 +4,7 @@ from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
 from pyzk.internal.dt_descriptor import DTDescriptor, TupleDTDescriptor
 from pyzk.internal.flatten_descriptor import FlattenDescriptor, TupleFlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, TupleInferenceDescriptor, NumberInferenceDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor, TupleInferenceDescriptor, IntegerInferenceDescriptor
 from pyzk.debug.dbg_info import DebugInfo
 
 
@@ -26,9 +26,9 @@ class ParenthesisOp(AbstractOp):
 
     def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
         args = kwargs.values()
-        if all([isinstance(arg, NumberInferenceDescriptor) for arg in args]):
+        if all([isinstance(arg, IntegerInferenceDescriptor) for arg in args]):
             return TupleDTDescriptor(len(args))
-        raise TypeInferenceError(dbg_i,"Create Tuple using parenthesis failed: only `Number` can be accepted as elements")
+        raise TypeInferenceError(dbg_i,"Create Tuple using parenthesis failed: only `Integer` can be accepted as elements")
 
     def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         args = kwargs.values()

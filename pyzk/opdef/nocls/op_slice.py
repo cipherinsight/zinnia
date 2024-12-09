@@ -2,11 +2,13 @@ from typing import Dict, List, Tuple, Optional
 
 from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, NumberDTDescriptor, TupleDTDescriptor
-from pyzk.internal.flatten_descriptor import FlattenDescriptor, TupleFlattenDescriptor, NumberFlattenDescriptor, \
-    NDArrayFlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, TupleInferenceDescriptor, NDArrayInferenceDescriptor, \
-    NumberInferenceDescriptor
+from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, IntegerDTDescriptor, TupleDTDescriptor, \
+    FloatDTDescriptor
+from pyzk.internal.flatten_descriptor import FlattenDescriptor, TupleFlattenDescriptor, IntegerFlattenDescriptor, \
+    NDArrayFlattenDescriptor, FloatFlattenDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor, TupleInferenceDescriptor, \
+    NDArrayInferenceDescriptor, \
+    IntegerInferenceDescriptor, FloatInferenceDescriptor
 from pyzk.algo.ndarray_helper import NDArrayHelper
 from pyzk.debug.dbg_info import DebugInfo
 
@@ -38,7 +40,7 @@ class SliceOp(AbstractOp):
             if len(self.slicing_params[0]) == 1:
                 if self.slicing_params[0][0] >= the_self.length():
                     raise TypeInferenceError(dbg_i, f"Tuple index {self.slicing_params[0][0]} out of range. The length of this tuple is {the_self.length()}")
-                return NumberDTDescriptor()
+                return IntegerDTDescriptor()
             else:
                 _start, _stop = self.slicing_params[0][0], self.slicing_params[0][1]
                 _step = self.slicing_params[0][2] if len(self.slicing_params[0]) > 2 else 1
@@ -54,8 +56,8 @@ class SliceOp(AbstractOp):
                 raise TypeInferenceError(dbg_i, f'Cannot perform slicing: {check_result}')
             sliced_result = the_self.get().slice(self.slicing_params)
             if not isinstance(sliced_result, NDArrayHelper):
-                return NumberDTDescriptor()
-            return NDArrayDTDescriptor(sliced_result.shape)
+                return the_self.dtype()
+            return NDArrayDTDescriptor(sliced_result.shape, the_self.dtype())
         raise TypeInferenceError(dbg_i,"Operator `slice` can only be used on `Tuple` or `NDArray`")
 
     def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
@@ -63,7 +65,7 @@ class SliceOp(AbstractOp):
         if isinstance(the_self, TupleInferenceDescriptor):
             slicing = self.slicing_params[0]
             if len(slicing) == 1:
-                return NumberInferenceDescriptor(the_self.get()[slicing[0]])
+                return IntegerInferenceDescriptor(the_self.get()[slicing[0]])
             elif len(slicing) == 2:
                 the_result = the_self.get()[slicing[0]:slicing[1]]
                 return TupleInferenceDescriptor(len(the_result), the_result)
@@ -73,8 +75,11 @@ class SliceOp(AbstractOp):
         elif isinstance(the_self, NDArrayInferenceDescriptor):
             sliced_result = the_self.get().slice(self.slicing_params)
             if not isinstance(sliced_result, NDArrayHelper):
-                return NumberInferenceDescriptor(sliced_result)
-            return NDArrayInferenceDescriptor(sliced_result.shape, sliced_result)
+                if isinstance(the_self.dtype(), IntegerDTDescriptor):
+                    return IntegerInferenceDescriptor(sliced_result)
+                elif isinstance(the_self.dtype(), FloatDTDescriptor):
+                    return FloatInferenceDescriptor(sliced_result)
+            return NDArrayInferenceDescriptor(sliced_result.shape, the_self.dtype(), sliced_result)
         raise NotImplementedError()
 
     def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
@@ -82,7 +87,7 @@ class SliceOp(AbstractOp):
         if isinstance(the_self, TupleFlattenDescriptor):
             slicing = self.slicing_params[0]
             if len(slicing) == 1:
-                return NumberFlattenDescriptor(the_self.ptr()[slicing[0]])
+                return IntegerFlattenDescriptor(the_self.ptr()[slicing[0]])
             elif len(slicing) == 2:
                 the_result = the_self.ptr()[slicing[0]:slicing[1]]
                 return TupleFlattenDescriptor(len(the_result), the_result)
@@ -92,6 +97,9 @@ class SliceOp(AbstractOp):
         elif isinstance(the_self, NDArrayFlattenDescriptor):
             sliced_result = the_self.ptr().slice(self.slicing_params)
             if not isinstance(sliced_result, NDArrayHelper):
-                return NumberFlattenDescriptor(sliced_result)
-            return NDArrayFlattenDescriptor(sliced_result.shape, sliced_result)
+                if isinstance(the_self.dtype(), IntegerDTDescriptor):
+                    return IntegerFlattenDescriptor(sliced_result)
+                elif isinstance(the_self.dtype(), FloatDTDescriptor):
+                    return FloatFlattenDescriptor(sliced_result)
+            return NDArrayFlattenDescriptor(sliced_result.shape, sliced_result, the_self.dtype())
         raise NotImplementedError()

@@ -31,6 +31,7 @@ class NDArray_TransposeOp(AbstractOp):
         axes = kwargs["axes"]
         if not isinstance(the_self, NDArrayInferenceDescriptor):
             raise TypeInferenceError(dbg_i, f"`{self.get_name()}` can only be used on `NDArray`")
+        dtype = the_self.dtype()
         if axes is None:
             axes_vals = reversed([x for x in range(len(the_self.shape()))])
         elif isinstance(axes, TupleInferenceDescriptor):
@@ -56,11 +57,12 @@ class NDArray_TransposeOp(AbstractOp):
             if permutation[axe] is None:
                 raise TypeInferenceError(dbg_i, f"`axes` should be a permutation of 0 to {len(the_self.shape()) - 1}")
             permutation[axe] = None
-        return NDArrayDTDescriptor(tuple(the_self.shape()[x] for x in axes_vals))
+        return NDArrayDTDescriptor(tuple(the_self.shape()[x] for x in axes_vals), dtype)
 
     def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         the_self = kwargs["self"]
         axes = kwargs["axes"]
+        dtype = the_self.dtype()
         if axes is None:
             axes_vals = reversed([x for x in range(len(the_self.shape()))])
         elif isinstance(axes, TupleInferenceDescriptor):
@@ -71,11 +73,12 @@ class NDArray_TransposeOp(AbstractOp):
             raise NotImplementedError()
         flattened_values = the_self.get().flatten()
         new_shape = tuple(the_self.shape()[x] for x in axes_vals)
-        return NDArrayInferenceDescriptor(new_shape, NDArrayInferenceValue.from_1d_values_and_shape(flattened_values, new_shape))
+        return NDArrayInferenceDescriptor(new_shape, dtype, NDArrayInferenceValue.from_1d_values_and_shape(flattened_values, new_shape))
 
     def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
         the_self = kwargs["self"]
         axes = kwargs["axes"]
+        dtype = the_self.dtype()
         if axes is None:
             axes_vals = reversed([x for x in range(len(the_self.shape()))])
         elif isinstance(axes, TupleFlattenDescriptor):
@@ -86,4 +89,4 @@ class NDArray_TransposeOp(AbstractOp):
             raise NotImplementedError()
         flattened_values = the_self.ptr().flatten()
         new_shape = tuple(the_self.shape()[x] for x in axes_vals)
-        return NDArrayFlattenDescriptor(new_shape, NDArrayInferenceValue.from_1d_values_and_shape(flattened_values, new_shape))
+        return NDArrayFlattenDescriptor(new_shape, dtype, NDArrayInferenceValue.from_1d_values_and_shape(flattened_values, new_shape))

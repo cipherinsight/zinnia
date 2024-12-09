@@ -7,7 +7,7 @@ from pyzk.ir.ir_pass.input_metadata_extractor import InputMetadataExtractorIRPas
 from pyzk.ir.ir_pass.ndarray_flattener import NDArrayFlattenerIRPass
 from pyzk.ir.ir_stmt import IRStatement
 from pyzk.ast.zk_ast import ASTComponent, ASTProgram, ASTAssignStatement, ASTPassStatement, ASTSlicingAssignStatement, \
-    ASTExpression, ASTForInStatement, ASTCondStatement, ASTConstant, \
+    ASTExpression, ASTForInStatement, ASTCondStatement, ASTConstantFloat, ASTConstantInteger, \
     ASTSlicing, ASTLoad, ASTAssertStatement, ASTSlicingData, ASTSquareBrackets, ASTBreakStatement, ASTContinueStatement, \
     ASTBinaryOperator, ASTNamedAttribute, ASTExprAttribute, ASTParenthesis, ASTChip, ASTReturnStatement, \
     ASTCallStatement
@@ -18,7 +18,7 @@ from pyzk.debug.exception import VariableNotFoundError, ConstantInferenceError, 
     StatementNoEffectException, ControlEndWithoutReturnError, ReturnDatatypeMismatchError, \
     ChipArgumentsError
 from pyzk.opdef.operator_factory import Operators
-from pyzk.internal.dt_descriptor import DTDescriptorFactory, NoneDTDescriptor
+from pyzk.internal.dt_descriptor import DTDescriptorFactory, NoneDTDescriptor, FloatDTDescriptor, IntegerDTDescriptor
 from pyzk.internal.prog_meta_data import ProgramMetadata
 from pyzk.internal.annotation import Annotation
 from pyzk.algo.ndarray_helper import NDArrayHelper
@@ -75,6 +75,7 @@ class IRGenerator:
             if chip_filled_args[i] is None:
                 raise ChipArgumentsError(chip.dbg_i, f"Chip argument for `{name}` not filled")
         self._ir_ctx.chip_enter(chip)
+        self._register_global_datatypes()
         for i, (name, dt) in enumerate(chip_declared_args):
             self._ir_ctx.assign_name_to_ptr(name, chip_filled_args[i])
         for i, stmt in enumerate(chip.block):
@@ -99,6 +100,7 @@ class IRGenerator:
             self._ir_ctx.assign_name_to_ptr(inp.name, ptr)
         for key, ast in n.chips.items():
             self._ir_ctx.register_chip(key, ast)
+        self._register_global_datatypes()
         for i, stmt in enumerate(n.block):
             self.visit(stmt)
         return None
@@ -307,7 +309,10 @@ class IRGenerator:
         )
         return self._ir_builder.create_op(operator, kwargs, dbg_i=n.dbg_i)
 
-    def visit_ASTConstant(self, n: ASTConstant):
+    def visit_ASTConstantFloat(self, n: ASTConstantFloat):
+        return self._ir_builder.create_constant_float(n.value, dbg_i=n.dbg_i)
+
+    def visit_ASTConstantInteger(self, n: ASTConstantInteger):
         return self._ir_builder.create_constant(n.value, dbg_i=n.dbg_i)
 
     def visit_ASTSlicing(self, n: ASTSlicing):
@@ -327,6 +332,12 @@ class IRGenerator:
     def visit_ASTParenthesis(self, n: ASTParenthesis):
         values = [self.visit(val) for val in n.values]
         return self._ir_builder.create_parenthesis(values, dbg_i=n.dbg_i)
+
+    def _register_global_datatypes(self):
+        float_class = self._ir_builder.create_constant_datatype(FloatDTDescriptor())
+        integer_class = self._ir_builder.create_constant_datatype(IntegerDTDescriptor())
+        self._ir_ctx.assign_name_to_ptr("Float", float_class)
+        self._ir_ctx.assign_name_to_ptr("Integer", integer_class)
 
     def _create_assignment_with_condition(self, orig_val_ptr, new_val_ptr, dbg_i: DebugInfo = None, annotation: Annotation | None = None):
         cond_stack = self._ir_ctx.get_condition_variables()

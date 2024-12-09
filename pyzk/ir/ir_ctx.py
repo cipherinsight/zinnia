@@ -1,7 +1,7 @@
 from typing import Dict, List, Any, Tuple
 
 from pyzk.internal.dt_descriptor import DTDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, NumberInferenceValue, NDArrayInferenceValue, \
+from pyzk.internal.inference_descriptor import InferenceDescriptor, IntegerInferenceValue, NDArrayInferenceValue, \
     TupleInferenceValue
 
 
@@ -103,7 +103,7 @@ class IRContext:
         assert descriptor is not None
         return descriptor.type()
 
-    def get_inferred_constant_value(self, ptr: int) -> NumberInferenceValue | NDArrayInferenceValue | TupleInferenceValue:
+    def get_inferred_constant_value(self, ptr: int) -> IntegerInferenceValue | NDArrayInferenceValue | TupleInferenceValue:
         descriptor: InferenceDescriptor = self.inference_table.get(ptr, None)
         if descriptor is None:
             return None

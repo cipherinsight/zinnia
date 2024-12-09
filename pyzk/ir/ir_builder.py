@@ -32,6 +32,94 @@ class IRBuilder:
         self._next_id += 1
         return self._next_id - 1
 
+    def create_add_i(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.ADD_I(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_add_f(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.ADD_F(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_mul_i(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.MUL_I(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_mul_f(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.MUL_F(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_sub_i(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.SUB_I(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_sub_f(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.SUB_F(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_div_i(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.DIV_I(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_div_f(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.DIV_F(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
     def create_add(
             self, lhs: int, rhs: int,
             dbg_i: DebugInfo = None, annotation: Annotation | None = None
@@ -120,11 +208,55 @@ class IRBuilder:
         self._next_id += 1
         return self._next_id - 1
 
+    def create_not_equal_i(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.NE_I(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_not_equal_f(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.NE_F(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
     def create_equal(
             self, lhs: int, rhs: int,
             dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.EQ(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_equal_i(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.EQ_I(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_equal_f(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.EQ_F(),
                            {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
@@ -142,11 +274,55 @@ class IRBuilder:
         self._next_id += 1
         return self._next_id - 1
 
+    def create_less_than_i(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.LT_I(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_less_than_f(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.LT_F(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
     def create_less_than_or_equal(
             self, lhs: int, rhs: int,
             dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.LTE(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_less_than_or_equal_i(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.LTE_I(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_less_than_or_equal_f(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.LTE_F(),
                            {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
@@ -164,6 +340,28 @@ class IRBuilder:
         self._next_id += 1
         return self._next_id - 1
 
+    def create_greater_than_i(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.GT_I(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_greater_than_f(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.GT_F(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
     def create_greater_than_or_equal(
             self, lhs: int, rhs: int,
             dbg_i: DebugInfo = None, annotation: Annotation | None = None
@@ -175,11 +373,55 @@ class IRBuilder:
         self._next_id += 1
         return self._next_id - 1
 
+    def create_greater_than_or_equal_i(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.GTE_I(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_greater_than_or_equal_f(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.GTE_F(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
     def create_bool_cast(
             self, value: int,
             dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.BOOL_CAST(),
+                           {"x": value}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_float_cast(
+            self, value: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.FLOAT_CAST(),
+                           {"x": value}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_int_cast(
+            self, value: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.INT_CAST(),
                            {"x": value}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
@@ -208,11 +450,33 @@ class IRBuilder:
         self._next_id += 1
         return self._next_id - 1
 
+    def create_constant_float(
+            self, value: float,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.CONSTANT_FLOAT(value),
+                           {}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
     def create_constant_none(
             self,
             dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
         stmt = IRStatement(self._next_id, Operators.NoCls.CONSTANT_NONE(),
+                           {}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_constant_datatype(
+            self, dt: DTDescriptor,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.CONSTANT_CLASS(dt),
                            {}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)
@@ -297,11 +561,22 @@ class IRBuilder:
         self._next_id += 1
         return self._next_id - 1
 
-    def create_read_number(
+    def create_read_integer(
             self, major: int, minor: int,
             dbg_i: DebugInfo = None, annotation: Annotation | None = None
     ) -> int:
-        stmt = IRStatement(self._next_id, Operators.NoCls.READ_NUMBER(major, minor),
+        stmt = IRStatement(self._next_id, Operators.NoCls.READ_INTEGER(major, minor),
+                           {}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_read_float(
+            self, major: int, minor: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.READ_FLOAT(major, minor),
                            {}, dbg_i=dbg_i, annotation=annotation)
         self.stmts.append(self._do_ir_inference(stmt))
         _check_annotation_and_raise(stmt.annotation, annotation)

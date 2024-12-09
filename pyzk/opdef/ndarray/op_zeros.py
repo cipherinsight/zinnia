@@ -2,9 +2,10 @@ from typing import List, Dict, Optional
 
 from pyzk.debug.exception import TypeInferenceError, StaticInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor
+from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor, FloatDTDescriptor, \
+    IntegerDTDescriptor
 from pyzk.internal.flatten_descriptor import NDArrayFlattenDescriptor, FlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, NDArrayInferenceDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor, NDArrayInferenceDescriptor, ClassInferenceDescriptor
 from pyzk.algo.ndarray_helper import NDArrayHelper
 from pyzk.debug.dbg_info import DebugInfo
 
@@ -22,11 +23,13 @@ class NDArray_ZerosOp(AbstractOp):
 
     def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return [
-            AbstractOp._ParamEntry("shape")
+            AbstractOp._ParamEntry("shape"),
+            AbstractOp._ParamEntry("dtype", True)
         ]
 
     def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
         shape = kwargs["shape"]
+        dtype = kwargs["dtype"]
         if not isinstance(shape.type(), TupleDTDescriptor):
             raise TypeInferenceError(dbg_i, "Param `shape` must be of type `Tuple`")
         for ele in shape.get():
@@ -34,15 +37,37 @@ class NDArray_ZerosOp(AbstractOp):
                 raise StaticInferenceError(dbg_i, "Every number element in `shape` must be statically inferrable")
             if ele <= 0:
                 raise TypeInferenceError(dbg_i, "Every number element in `shape` must be greater than 0")
-        return NDArrayDTDescriptor(shape.get())
+        parsed_dtype = FloatDTDescriptor()
+        if dtype is not None and isinstance(dtype, ClassInferenceDescriptor):
+            parsed_dtype = dtype.get()
+        elif dtype is not None and not isinstance(dtype, ClassInferenceDescriptor):
+            raise TypeInferenceError(dbg_i, f"Invalid argument dtype, it must be a datatype")
+        if not isinstance(parsed_dtype, FloatDTDescriptor) and not isinstance(parsed_dtype, IntegerDTDescriptor):
+            raise TypeInferenceError(dbg_i, f"Unsupported NDArray dtype {parsed_dtype}")
+        return NDArrayDTDescriptor(shape.get(), parsed_dtype)
 
     def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         shape = kwargs["shape"].get()
-        ndarray = NDArrayHelper.fill(shape, lambda: 0)
-        return NDArrayInferenceDescriptor(shape, ndarray)
+        dtype = kwargs["dtype"]
+        parsed_dtype = FloatDTDescriptor()
+        if dtype is not None:
+            parsed_dtype = dtype.get()
+        if isinstance(parsed_dtype, FloatDTDescriptor):
+            ndarray = NDArrayHelper.fill(shape, lambda: 0.0)
+        else:
+            ndarray = NDArrayHelper.fill(shape, lambda: 0)
+        return NDArrayInferenceDescriptor(shape, parsed_dtype, ndarray)
 
     def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
         shape = kwargs["shape"]
-        constant_0 = ir_builder.create_constant(0)
-        ndarray = NDArrayHelper.fill(shape.val(), lambda: constant_0)
-        return NDArrayFlattenDescriptor(shape.val(), ndarray)
+        dtype = kwargs["dtype"]
+        constant_0_i = ir_builder.create_constant(0)
+        constant_0_f = ir_builder.create_float_cast(constant_0_i)
+        parsed_dtype = FloatDTDescriptor()
+        if dtype is not None:
+            parsed_dtype = dtype.val()
+        if isinstance(parsed_dtype, FloatDTDescriptor):
+            ndarray = NDArrayHelper.fill(shape.val(), lambda: constant_0_f)
+        else:
+            ndarray = NDArrayHelper.fill(shape.val(), lambda: constant_0_i)
+        return NDArrayFlattenDescriptor(shape.val(), parsed_dtype, ndarray)

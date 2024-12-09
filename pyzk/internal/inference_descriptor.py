@@ -1,15 +1,16 @@
-import copy
 from typing import Tuple, Any
 
-from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, NumberDTDescriptor, TupleDTDescriptor, \
-    NoneDTDescriptor
+from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, IntegerDTDescriptor, TupleDTDescriptor, \
+    NoneDTDescriptor, ClassDTDescriptor, FloatDTDescriptor, NumberDTDescriptor
 from pyzk.algo.ndarray_helper import NDArrayHelper
 
 
-NumberInferenceValue = int | None
+IntegerInferenceValue = int | None
+FloatInferenceValue = float | None
 NDArrayInferenceValue = NDArrayHelper
 TupleInferenceValue = tuple
 NoneInferenceValue = type(None)
+ClassInferenceValue = DTDescriptor
 
 
 class InferenceDescriptor:
@@ -35,8 +36,8 @@ class InferenceDescriptor:
 
 
 class NDArrayInferenceDescriptor(InferenceDescriptor):
-    def __init__(self, shape: Tuple[int, ...], value: NDArrayInferenceValue):
-        super().__init__(NDArrayDTDescriptor(shape))
+    def __init__(self, shape: Tuple[int, ...], dtype: DTDescriptor, value: NDArrayInferenceValue):
+        super().__init__(NDArrayDTDescriptor(shape, dtype))
         self.value = value
 
     def get(self) -> NDArrayInferenceValue:
@@ -50,24 +51,57 @@ class NDArrayInferenceDescriptor(InferenceDescriptor):
         assert isinstance(self.dt, NDArrayDTDescriptor)
         return self.dt.shape
 
+    def dtype(self):
+        assert isinstance(self.dt, NDArrayDTDescriptor)
+        return self.dt.dtype
+
     def copy_reset(self) -> 'NDArrayInferenceDescriptor':
-        return NDArrayInferenceDescriptor(self.shape(), NDArrayInferenceValue.fill(self.shape(), lambda: None))
+        return NDArrayInferenceDescriptor(self.shape(), self.dtype(), NDArrayInferenceValue.fill(self.shape(), lambda: None))
 
 
 class NumberInferenceDescriptor(InferenceDescriptor):
-    def __init__(self, value: NumberInferenceValue):
-        super().__init__(NumberDTDescriptor())
+    def __init__(self, dt: DTDescriptor):
+        super().__init__(dt)
+
+    def __new__(cls, *args, **kwargs):
+        if cls is InferenceDescriptor:
+            raise TypeError(f"<NumberInferenceDescriptor> must be subclassed.")
+        return object.__new__(cls)
+
+    def copy_reset(self) -> 'NumberInferenceDescriptor':
+        raise NotImplementedError()
+
+
+class IntegerInferenceDescriptor(NumberInferenceDescriptor):
+    def __init__(self, value: IntegerInferenceValue):
+        super().__init__(IntegerDTDescriptor())
         self.value = value
 
-    def get(self) -> NumberInferenceValue:
+    def get(self) -> IntegerInferenceValue:
         return self.value
 
-    def set(self, value: NumberInferenceValue) -> 'NumberInferenceDescriptor':
+    def set(self, value: IntegerInferenceValue) -> 'IntegerInferenceDescriptor':
         self.value = value
         return self
 
-    def copy_reset(self) -> 'NumberInferenceDescriptor':
-        return NumberInferenceDescriptor(None)
+    def copy_reset(self) -> 'IntegerInferenceDescriptor':
+        return IntegerInferenceDescriptor(None)
+
+
+class FloatInferenceDescriptor(NumberInferenceDescriptor):
+    def __init__(self, value: FloatInferenceValue):
+        super().__init__(FloatDTDescriptor())
+        self.value = value
+
+    def get(self) -> FloatInferenceValue:
+        return self.value
+
+    def set(self, value: FloatInferenceValue) -> 'FloatInferenceDescriptor':
+        self.value = value
+        return self
+
+    def copy_reset(self) -> 'FloatInferenceDescriptor':
+        return FloatInferenceDescriptor(None)
 
 
 class NoneInferenceDescriptor(InferenceDescriptor):
@@ -83,6 +117,22 @@ class NoneInferenceDescriptor(InferenceDescriptor):
 
     def copy_reset(self) -> 'NoneInferenceDescriptor':
         return NoneInferenceDescriptor()
+
+
+class ClassInferenceDescriptor(InferenceDescriptor):
+    def __init__(self, cls: DTDescriptor):
+        super().__init__(ClassDTDescriptor())
+        self.cls = cls
+
+    def get(self) -> ClassInferenceValue:
+        return self.cls
+
+    def set(self, value: ClassInferenceValue) -> 'ClassInferenceDescriptor':
+        assert isinstance(value, ClassInferenceValue)
+        return self
+
+    def copy_reset(self) -> 'ClassInferenceDescriptor':
+        raise NotImplementedError()
 
 
 class TupleInferenceDescriptor(InferenceDescriptor):

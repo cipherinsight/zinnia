@@ -4,8 +4,8 @@ from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
 from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor
 from pyzk.internal.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, TupleInferenceDescriptor, NDArrayInferenceDescriptor, \
-    NumberInferenceDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor, TupleInferenceDescriptor, \
+    NDArrayInferenceDescriptor, NumberInferenceDescriptor
 from pyzk.debug.dbg_info import DebugInfo
 
 
@@ -42,12 +42,16 @@ class AssignSliceOp(AbstractOp):
                     if not 1 <= len(slicing) <= 3:
                         raise ValueError(f'Internal Error: unexpected slicing found: {slicing}')
             if not isinstance(the_value, NDArrayInferenceDescriptor) and not isinstance(the_value, NumberInferenceDescriptor):
-                raise TypeInferenceError(dbg_i, "In assign by slice, the value should be either `NDArray` or `Number`")
+                raise TypeInferenceError(dbg_i, "In assign by slice, the value should be either `NDArray`, `Integer` or `Number`")
             check_result = the_self.get().check_slicing_assign(self.slicing_params_list, the_value.get())
             if check_result is not None:
                 raise TypeInferenceError(dbg_i, f'Cannot assign by slice: {check_result}')
+            if isinstance(the_value, NDArrayInferenceDescriptor) and the_self.dtype() != the_value.dtype():
+                raise TypeInferenceError(dbg_i, f"Cannot assign by slice: the dtype of left NDArray ({the_self.dtype()}) is not equal to the dtype of right NDArray ({the_value.dtype()})")
+            if isinstance(the_value, NumberInferenceDescriptor) and the_self.dtype() != the_value.dt:
+                raise TypeInferenceError(dbg_i, f"Cannot assign by slice: the dtype of left NDArray ({the_self.dtype()}) is not equal to the datatype of the right ({the_value.dt})")
             sliced_result = the_self.get().slice_assign(self.slicing_params_list, the_value.get())
-            return NDArrayDTDescriptor(sliced_result.shape)
+            return NDArrayDTDescriptor(sliced_result.shape, the_self.dtype())
         raise TypeInferenceError(dbg_i,f"Operator `{self.get_signature()}` can only be used on `Tuple` or `NDArray`")
 
     def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
@@ -55,7 +59,7 @@ class AssignSliceOp(AbstractOp):
         the_value = kwargs['value']
         if isinstance(the_self, NDArrayInferenceDescriptor):
             sliced_result = the_self.get().slice_assign(self.slicing_params_list, the_value.get())
-            return NDArrayInferenceDescriptor(sliced_result.shape, sliced_result)
+            return NDArrayInferenceDescriptor(sliced_result.shape, the_self.dtype(), sliced_result)
         raise NotImplementedError()
 
     def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
@@ -63,5 +67,5 @@ class AssignSliceOp(AbstractOp):
         the_value = kwargs['value']
         if isinstance(the_self, NDArrayFlattenDescriptor):
             sliced_result = the_self.ptr().slice_assign(self.slicing_params_list, the_value.ptr())
-            return NDArrayFlattenDescriptor(sliced_result.shape, sliced_result)
+            return NDArrayFlattenDescriptor(sliced_result.shape, the_self.dtype(), sliced_result)
         raise NotImplementedError()

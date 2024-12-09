@@ -29,16 +29,17 @@ class NDArray_TOp(AbstractOp):
         the_self = kwargs["self"]
         if not isinstance(the_self, NDArrayInferenceDescriptor):
             raise TypeInferenceError(dbg_i, f"`{self.get_name()}` can only be used on `NDArray`")
-        return NDArrayDTDescriptor(the_self.shape()[::-1])
+        return NDArrayDTDescriptor(the_self.shape()[::-1], the_self.shape())
 
     def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         the_self = kwargs["self"]
+        dtype = the_self.shape()
         new_shape = the_self.shape()[::-1]
         flattened_values = the_self.get().flatten()
-        return NDArrayInferenceDescriptor(new_shape, NDArrayInferenceValue.from_1d_values_and_shape(flattened_values, new_shape))
+        return NDArrayInferenceDescriptor(new_shape, dtype, NDArrayInferenceValue.from_1d_values_and_shape(flattened_values, new_shape))
 
     def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
         the_self = kwargs["self"]
         new_shape = the_self.shape()[::-1]
         flattened_values = the_self.ptr().flatten()
-        return NDArrayFlattenDescriptor(new_shape, NDArrayInferenceValue.from_1d_values_and_shape(flattened_values, new_shape))
+        return NDArrayFlattenDescriptor(new_shape, dtype, NDArrayInferenceValue.from_1d_values_and_shape(flattened_values, new_shape))

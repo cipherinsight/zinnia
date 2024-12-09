@@ -1,6 +1,6 @@
 from pyzk.ir.ir_builder import IRGraph, IRBuilder
 from pyzk.ir.ir_pass.abstract_pass import AbstractIRPass
-from pyzk.internal.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor, IntegerInferenceDescriptor
 
 
 class ConstantFoldIRPass(AbstractIRPass):
@@ -28,7 +28,7 @@ class ConstantFoldIRPass(AbstractIRPass):
             for key, arg in in_links[stmt.stmt_id]:
                 args_as_new_ptrs[key] = old_ptr_to_new_ptr[arg]
                 inference_d: InferenceDescriptor = inference_descriptors[arg]
-                if isinstance(inference_d, NumberInferenceDescriptor) and inference_d.get() is not None:
+                if isinstance(inference_d, IntegerInferenceDescriptor) and inference_d.get() is not None:
                     constant_val = inference_d.get()
                     if constant_number_to_new_ptr.get(constant_val, None) is None:
                         constant_number_to_new_ptr[constant_val] = ir_builder.create_constant(constant_val)

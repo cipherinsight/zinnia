@@ -2,7 +2,7 @@ from typing import List, Dict, Optional
 
 from pyzk.debug.exception import TypeInferenceError, StaticInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, NumberDTDescriptor, NoneDTDescriptor
+from pyzk.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor, NoneDTDescriptor
 from pyzk.internal.flatten_descriptor import FlattenDescriptor, NoneFlattenDescriptor
 from pyzk.internal.inference_descriptor import InferenceDescriptor, NoneInferenceDescriptor
 from pyzk.debug.dbg_info import DebugInfo
@@ -29,7 +29,7 @@ class AssertOp(AbstractOp):
 
     def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
         operand = kwargs["test"].type()
-        if isinstance(operand, NumberDTDescriptor):
+        if isinstance(operand, IntegerDTDescriptor):
             return NoneDTDescriptor()
         raise TypeInferenceError(dbg_i, f"Type `{operand}` is not supported on operator `{self.get_signature()}`")
 

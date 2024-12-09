@@ -1,7 +1,7 @@
 from typing import List
 
 from pyzk.ast.zk_ast import ASTComponent, ASTAssignStatement, ASTSlicingAssignStatement, \
-    ASTAssertStatement, ASTBinaryOperator, ASTUnaryOperator, ASTExprAttribute, ASTNamedAttribute, ASTConstant, \
+    ASTAssertStatement, ASTBinaryOperator, ASTUnaryOperator, ASTExprAttribute, ASTNamedAttribute, ASTConstantFloat, ASTConstantInteger, \
     ASTSlicing, ASTLoad, ASTSlicingData, ASTPassStatement, \
     ASTProgram, ASTProgramInput, ASTAnnotation, ASTForInStatement, ASTCondStatement, \
     ASTExpression, ASTSquareBrackets, ASTSlicingAssignData, ASTContinueStatement, ASTBreakStatement, ASTParenthesis, \
@@ -60,7 +60,10 @@ def prettify_zk_ast(node: ASTComponent) -> str:
             for i, arg in enumerate(n.args):
                 res += _inner(depth + 1, arg, f'arg_{i + 1}')
             return res
-        elif isinstance(n, ASTConstant):
+        elif isinstance(n, ASTConstantFloat):
+            res = [prefix + f' = {n.value}']
+            return res
+        elif isinstance(n, ASTConstantInteger):
             res = [prefix + f' = {n.value}']
             return res
         elif isinstance(n, ASTSlicing):

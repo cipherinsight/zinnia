@@ -1,9 +1,9 @@
 from typing import List, Dict, Optional
 
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, NumberDTDescriptor, NDArrayDTDescriptor
-from pyzk.internal.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor, NumberFlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, NumberInferenceDescriptor, NDArrayInferenceDescriptor
+from pyzk.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor, NDArrayDTDescriptor, FloatDTDescriptor
+from pyzk.internal.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor, IntegerFlattenDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor, IntegerInferenceDescriptor, NDArrayInferenceDescriptor
 from pyzk.algo.ndarray_helper import NDArrayHelper
 from pyzk.debug.dbg_info import DebugInfo
 
@@ -30,28 +30,35 @@ class InputOp(AbstractOp):
 
     def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
         if isinstance(self.dt, NDArrayDTDescriptor):
-            return NDArrayDTDescriptor(self.dt.shape)
-        elif isinstance(self.dt, NumberDTDescriptor):
-                return NumberDTDescriptor()
+            return NDArrayDTDescriptor(self.dt.shape, self.dt.dtype)
+        elif isinstance(self.dt, IntegerDTDescriptor):
+            return IntegerDTDescriptor()
         raise NotImplementedError()
 
     def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         if isinstance(self.dt, NDArrayDTDescriptor):
-            return NDArrayInferenceDescriptor(self.dt.shape, NDArrayHelper.fill(self.dt.shape, lambda: None))
-        elif isinstance(self.dt, NumberDTDescriptor):
-            return NumberInferenceDescriptor(None)
+            return NDArrayInferenceDescriptor(self.dt.shape, self.dt.dtype, NDArrayHelper.fill(self.dt.shape, lambda: None))
+        elif isinstance(self.dt, IntegerDTDescriptor):
+            return IntegerInferenceDescriptor(None)
         raise NotImplementedError()
 
     def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
         if isinstance(self.dt, NDArrayDTDescriptor):
             the_idx = 0
+            dtype = self.dt.dtype
             def _id_yield():
                 nonlocal the_idx
                 the_idx += 1
-                return ir_builder.create_read_number(self.input_id, the_idx - 1)
-            return NDArrayFlattenDescriptor(self.dt.shape, NDArrayHelper.fill(
+                if isinstance(dtype, IntegerDTDescriptor):
+                    return ir_builder.create_read_integer(self.input_id, the_idx - 1)
+                elif isinstance(dtype, FloatDTDescriptor):
+                    return ir_builder.create_read_float(self.input_id, the_idx - 1)
+                raise NotImplementedError()
+            return NDArrayFlattenDescriptor(self.dt.shape, dtype, NDArrayHelper.fill(
                 self.dt.shape, _id_yield
             ))
-        elif isinstance(self.dt, NumberDTDescriptor):
-            return NumberFlattenDescriptor(ir_builder.create_read_number(self.input_id, 0))
+        elif isinstance(self.dt, IntegerDTDescriptor):
+            return IntegerFlattenDescriptor(ir_builder.create_read_integer(self.input_id, 0))
+        elif isinstance(self.dt, FloatDTDescriptor):
+            return IntegerFlattenDescriptor(ir_builder.create_read_float(self.input_id, 0))
         raise NotImplementedError()

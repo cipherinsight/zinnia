@@ -2,25 +2,25 @@ from typing import Union
 from pyzk.lang.type import *
 
 def add(
-    lhs: Number | NDArray,
-    rhs: Number | NDArray
-) -> Union[Number, NDArray]:
+    lhs: Integer | Float | NDArray,
+    rhs: Integer | Float | NDArray
+) -> Union[Integer | Float, NDArray]:
     pass
 
 def sub(
-    lhs: Number | NDArray,
-    rhs: Number | NDArray
-) -> Union[Number, NDArray]:
+    lhs: Integer | Float | NDArray,
+    rhs: Integer | Float | NDArray
+) -> Union[Integer | Float, NDArray]:
     pass
 
 def mul(
-    lhs: Number | NDArray,
-    rhs: Number | NDArray
-) -> Union[Number, NDArray]:
+    lhs: Integer | Float | NDArray,
+    rhs: Integer | Float | NDArray
+) -> Union[Integer | Float, NDArray]:
     pass
 
 def div(
-    lhs: Number | NDArray,
-    rhs: Number | NDArray
-) -> Union[Number, NDArray]:
+    lhs: Integer | Float | NDArray,
+    rhs: Integer | Float | NDArray
+) -> Union[Integer | Float, NDArray]:
     pass
