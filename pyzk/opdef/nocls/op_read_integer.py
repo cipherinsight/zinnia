@@ -20,6 +20,9 @@ class ReadIntegerOp(AbstractOp):
     def get_name(cls) -> str:
         return "read_integer"
 
+    def __eq__(self, other):
+        return super().__eq__(other) and self.major == other.major and self.minor == other.minor
+
     def dce_keep(self) -> bool:
         return True
 

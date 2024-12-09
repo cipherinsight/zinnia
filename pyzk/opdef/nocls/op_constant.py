@@ -20,6 +20,9 @@ class ConstantOp(AbstractOp):
     def get_name(cls) -> str:
         return "constant"
 
+    def __eq__(self, other):
+        return super().__eq__(other) and self.value == other.value
+
     def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return []
 

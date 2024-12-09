@@ -21,6 +21,19 @@ class AssignSliceOp(AbstractOp):
     def get_name(cls) -> str:
         return "assign_slice"
 
+    def __eq__(self, other):
+        def _compare_slicing_params_list(l1, l2) -> bool:
+            if len(l1) != len(l2):
+                return False
+            for e1, e2 in zip(l1, l2):
+                if len(e1) != len(e2):
+                    return False
+                for t1, t2 in zip(e1, e2):
+                    if t1 != t2:
+                        return False
+            return True
+        return super().__eq__(other) and _compare_slicing_params_list(self.slicing_params_list, other.slicing_params_list)
+
     def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return [
             AbstractOp._ParamEntry("self"),

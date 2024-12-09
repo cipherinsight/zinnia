@@ -2,6 +2,7 @@ from typing import List, Tuple, Dict
 
 from pyzk.ir.ir_pass.constant_fold import ConstantFoldIRPass
 from pyzk.ir.ir_pass.dead_code_elimination import DeadCodeEliminationIRPass
+from pyzk.ir.ir_pass.duplicate_code_elimination import DuplicateCodeEliminationIRPass
 from pyzk.ir.ir_pass.expose_public_inserter import ExposePublicInserterIRPass
 from pyzk.ir.ir_pass.input_metadata_extractor import InputMetadataExtractorIRPass
 from pyzk.ir.ir_pass.ndarray_flattener import NDArrayFlattenerIRPass
@@ -39,6 +40,7 @@ class IRGenerator:
         ir_graph = NDArrayFlattenerIRPass().exec(ir_graph)
         ir_graph = ConstantFoldIRPass().exec(ir_graph)
         ir_graph = DeadCodeEliminationIRPass().exec(ir_graph)
+        ir_graph = DuplicateCodeEliminationIRPass().exec(ir_graph)
         return ir_graph.export_stmts(), prog_meta_data
 
     def visit(self, component: ASTComponent):

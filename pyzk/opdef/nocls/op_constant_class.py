@@ -19,6 +19,9 @@ class ConstantClassOp(AbstractOp):
     def get_name(cls) -> str:
         return "constant_class"
 
+    def __eq__(self, other):
+        return super().__eq__(other) and self.dt == other.dt
+
     def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return []
 

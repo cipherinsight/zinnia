@@ -1,4 +1,4 @@
-from pyzk.ir.ir_builder import IRGraph, IRStatement
+from pyzk.ir.ir_builder import IRGraph
 from pyzk.ir.ir_pass.abstract_pass import AbstractIRPass
 
 

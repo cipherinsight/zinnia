@@ -23,6 +23,9 @@ class AbstractOp:
     def get_name(cls) -> str:
         raise NotImplementedError()
 
+    def __eq__(self, other):
+        return self.__class__ == other.__class__
+
     def dce_keep(self) -> bool:
         return False
 
