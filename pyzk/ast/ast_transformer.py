@@ -405,6 +405,9 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
                     return DTDescriptorFactory.create(dbg_info, _n.value.id, tuple(args))
                 elif isinstance(_n.slice, ast.Constant):
                     return DTDescriptorFactory.create(dbg_info, _n.value.id, (_n.slice.value, ))
+            elif isinstance(_n, ast.Constant):
+                if _n.value is None:
+                    return NoneDTDescriptor()
             raise InvalidAnnotationException(dbg_info, f"Invalid annotation for `{name}`")
         return ASTAnnotation(dbg_info, _inner_parser(node), public)
 

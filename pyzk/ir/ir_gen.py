@@ -198,7 +198,7 @@ class IRGenerator:
         true_cond_ptr = self._ir_builder.create_bool_cast(cond_ptr, dbg_i=n.dbg_i)
         false_cond_ptr = self._ir_builder.create_logical_not(true_cond_ptr, dbg_i=n.dbg_i)
         has_default_return_t_block = has_default_return_f_block = False
-        if self._ir_ctx.get_inferred_constant_value(true_cond_ptr) != 0:
+        if self._ir_ctx.get_inferred_constant_value(true_cond_ptr) is None:
             self._ir_ctx.if_block_enter(true_cond_ptr)
             self._ir_ctx.block_enter()
             for _, stmt in enumerate(n.t_block):
@@ -206,7 +206,12 @@ class IRGenerator:
             self._ir_ctx.block_leave()
             has_default_return_t_block = self._ir_ctx.get_branch_has_default_return()
             self._ir_ctx.if_block_leave()
-        if self._ir_ctx.get_inferred_constant_value(false_cond_ptr) != 0:
+        elif self._ir_ctx.get_inferred_constant_value(true_cond_ptr) != 0:
+            self._ir_ctx.block_enter()
+            for _, stmt in enumerate(n.t_block):
+                self.visit(stmt)
+            self._ir_ctx.block_leave()
+        if self._ir_ctx.get_inferred_constant_value(false_cond_ptr) is None:
             self._ir_ctx.if_block_enter(false_cond_ptr)
             self._ir_ctx.block_enter()
             for _, stmt in enumerate(n.f_block):
@@ -214,6 +219,11 @@ class IRGenerator:
             self._ir_ctx.block_leave()
             has_default_return_f_block = self._ir_ctx.get_branch_has_default_return()
             self._ir_ctx.if_block_leave()
+        elif self._ir_ctx.get_inferred_constant_value(false_cond_ptr) != 0:
+            self._ir_ctx.block_enter()
+            for _, stmt in enumerate(n.f_block):
+                self.visit(stmt)
+            self._ir_ctx.block_leave()
         if has_default_return_t_block and has_default_return_f_block:
             assert not self._ir_ctx.get_branch_has_default_return()
             self._ir_ctx.set_branch_has_default_return()
@@ -231,10 +241,12 @@ class IRGenerator:
             raise UnreachableStatementError(n.dbg_i, "Unreachable return statement")
         if self._ir_ctx.get_chip_depth() == 0:
             raise UnsupportedLangFeatureException(n.dbg_i, "Return statements in circuits is not supported")
-        val = self.visit(n.expr)
-        if val is None:
+        if n.expr is not None:
             val = self.visit(n.expr)
-        return_dt = self._ir_ctx.get_inferred_datatype(val)
+            return_dt = self._ir_ctx.get_inferred_datatype(val)
+        else:
+            val = self._ir_builder.create_constant_none()
+            return_dt = NoneDTDescriptor()
         expected_return_dt = self._ir_ctx.get_current_chip().return_anno.dt
         if return_dt != expected_return_dt:
             raise ReturnDatatypeMismatchError(n.dbg_i, "Return datatype mismatch annotated return datatype")
