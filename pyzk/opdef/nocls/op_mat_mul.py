@@ -97,13 +97,13 @@ class MatMulOp(AbstractOp):
         return 0
 
     def _flatten_add(self, ir_builder, x: int, y: int, x_dt: DTDescriptor, y_dt: DTDescriptor):
-        if isinstance(x_dt, FloatDTDescriptor) and isinstance(y_dt, FloatDTDescriptor):
+        # Notes:
+        #   1. the lhs var "x" is always the datatype yielded by `initializer`
+        #   2. the rhs var "y" is always the datatype yielded by `mul`
+        actual_dt = FloatDTDescriptor() if isinstance(x_dt, FloatDTDescriptor) or isinstance(y_dt, FloatDTDescriptor) else IntegerDTDescriptor()
+        if isinstance(actual_dt, FloatDTDescriptor):
             return ir_builder.create_add_f(x, y)
-        elif isinstance(x_dt, IntegerDTDescriptor) and isinstance(y_dt, FloatDTDescriptor):
-            return ir_builder.create_add_f(ir_builder.create_float_cast(x), y)
-        elif isinstance(x_dt, FloatDTDescriptor) and isinstance(y_dt, IntegerDTDescriptor):
-            return ir_builder.create_add_f(x, ir_builder.create_float_cast(y))
-        elif isinstance(x_dt, IntegerDTDescriptor) and isinstance(y_dt, IntegerDTDescriptor):
+        elif isinstance(actual_dt, IntegerDTDescriptor):
             return ir_builder.create_add_i(x, y)
         raise NotImplementedError()
 

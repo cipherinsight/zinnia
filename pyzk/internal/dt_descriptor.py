@@ -71,6 +71,12 @@ class NDArrayDTDescriptor(DTDescriptor):
             raise InvalidAnnotationException(dbg_i, "Annotation `NDArray` only accepts integers as dimension sizes")
         return NDArrayDTDescriptor(tuple(arg for arg in args), dtype)
 
+    def get_number_of_elements(self) -> int:
+        result = 1
+        for dim in self.shape:
+            result *= dim
+        return result
+
 
 class TupleDTDescriptor(DTDescriptor):
     def __init__(self, length: int):

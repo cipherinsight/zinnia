@@ -1,11 +1,11 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
 
 from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, FloatDTDescriptor, NumberDTDescriptor
+from pyzk.internal.dt_descriptor import DTDescriptor, FloatDTDescriptor, IntegerDTDescriptor
 from pyzk.internal.flatten_descriptor import FlattenDescriptor, FloatFlattenDescriptor
 from pyzk.internal.inference_descriptor import InferenceDescriptor, \
-    FloatInferenceDescriptor, NumberInferenceDescriptor
+    FloatInferenceDescriptor, IntegerInferenceDescriptor
 from pyzk.debug.dbg_info import DebugInfo
 
 
@@ -27,13 +27,13 @@ class FloatOp(AbstractOp):
 
     def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
         x = kwargs["x"].type()
-        if isinstance(x, NumberDTDescriptor):
+        if isinstance(x, IntegerDTDescriptor):
             return FloatDTDescriptor()
-        raise TypeInferenceError(dbg_i, f'Invalid float cast on `{x}`, as it must be a number')
+        raise TypeInferenceError(dbg_i, f'Invalid float cast on `{x}`, as it must be an Integer')
 
     def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         x = kwargs["x"]
-        if isinstance(x, NumberInferenceDescriptor):
+        if isinstance(x, IntegerInferenceDescriptor):
             if x.get() is None:
                 return FloatInferenceDescriptor(None)
             return FloatInferenceDescriptor(float(x.get()))

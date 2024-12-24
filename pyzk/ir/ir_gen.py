@@ -1,10 +1,10 @@
 from typing import List, Tuple, Dict
 
+from pyzk.ir.ir_pass.always_satisfied_elimination import AlwaysSatisfiedEliminationIRPass
 from pyzk.ir.ir_pass.constant_fold import ConstantFoldIRPass
 from pyzk.ir.ir_pass.dead_code_elimination import DeadCodeEliminationIRPass
 from pyzk.ir.ir_pass.duplicate_code_elimination import DuplicateCodeEliminationIRPass
 from pyzk.ir.ir_pass.expose_public_inserter import ExposePublicInserterIRPass
-from pyzk.ir.ir_pass.input_metadata_extractor import InputMetadataExtractorIRPass
 from pyzk.ir.ir_pass.ndarray_flattener import NDArrayFlattenerIRPass
 from pyzk.ir.ir_stmt import IRStatement
 from pyzk.ast.zk_ast import ASTComponent, ASTProgram, ASTAssignStatement, ASTPassStatement, ASTSlicingAssignStatement, \
@@ -20,7 +20,7 @@ from pyzk.debug.exception import VariableNotFoundError, ConstantInferenceError, 
     ChipArgumentsError
 from pyzk.opdef.operator_factory import Operators
 from pyzk.internal.dt_descriptor import DTDescriptorFactory, NoneDTDescriptor, FloatDTDescriptor, IntegerDTDescriptor
-from pyzk.internal.prog_meta_data import ProgramMetadata
+from pyzk.internal.prog_meta_data import ProgramMetadata, ProgramInputMetadata
 from pyzk.internal.annotation import Annotation
 from pyzk.algo.ndarray_helper import NDArrayHelper
 from pyzk.debug.dbg_info import DebugInfo
@@ -30,18 +30,19 @@ class IRGenerator:
     def __init__(self):
         self._ir_ctx = IRContext()
         self._ir_builder = IRBuilder(self._ir_ctx)
+        self.prog_meta_data = None
 
     def generate(self, component: ASTComponent) -> Tuple[List[IRStatement], ProgramMetadata]:
-        prog_meta_data = ProgramMetadata()
+        self.prog_meta_data = ProgramMetadata()
         self.visit(component)
         ir_graph = self._ir_builder.export_ir_graph()
-        ir_graph = InputMetadataExtractorIRPass(prog_meta_data).exec(ir_graph)
         ir_graph = ExposePublicInserterIRPass().exec(ir_graph)
         ir_graph = NDArrayFlattenerIRPass().exec(ir_graph)
         ir_graph = ConstantFoldIRPass().exec(ir_graph)
         ir_graph = DeadCodeEliminationIRPass().exec(ir_graph)
+        ir_graph = AlwaysSatisfiedEliminationIRPass().exec(ir_graph)
         ir_graph = DuplicateCodeEliminationIRPass().exec(ir_graph)
-        return ir_graph.export_stmts(), prog_meta_data
+        return ir_graph.export_stmts(), self.prog_meta_data
 
     def visit(self, component: ASTComponent):
         typename = type(component).__name__
@@ -100,6 +101,7 @@ class IRGenerator:
                 dbg_i=n.dbg_i, annotation=Annotation(inp.annotation.dt, inp.annotation.public)
             )
             self._ir_ctx.assign_name_to_ptr(inp.name, ptr)
+            self.prog_meta_data.inputs.append(ProgramInputMetadata(inp.annotation.dt, inp.name, inp.annotation.public))
         for key, ast in n.chips.items():
             self._ir_ctx.register_chip(key, ast)
         self._register_global_datatypes()

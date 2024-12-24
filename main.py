@@ -39,9 +39,13 @@ def foo(
     multi(x * 4)
     assert fibonacci(10) == 55
     is_thirteen(13)
-    assert (z + NDArray.ones((5, 5))).sum() == 0.
+    assert (z + NDArray.ones((5, 5))).sum() > 0.
 
 
-foo()
-
-
+foo(8, [
+    [1., 2, 3, 4],
+    [5., 213, 123, 124],
+    [65., 64, 234, 5342],
+    [72., 7., 4, 2555],
+    [123., 24, 631, 924]
+])
