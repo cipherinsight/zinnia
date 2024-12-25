@@ -2,8 +2,10 @@ from typing import List, Dict, Optional
 
 from pyzk.opdef.nocls.abstract_op import AbstractOp
 from pyzk.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor, NDArrayDTDescriptor, FloatDTDescriptor
-from pyzk.internal.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor, IntegerFlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, IntegerInferenceDescriptor, NDArrayInferenceDescriptor
+from pyzk.internal.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor, IntegerFlattenDescriptor, \
+    FloatFlattenDescriptor
+from pyzk.internal.inference_descriptor import InferenceDescriptor, IntegerInferenceDescriptor, \
+    NDArrayInferenceDescriptor, FloatInferenceDescriptor
 from pyzk.algo.ndarray_helper import NDArrayHelper
 from pyzk.debug.dbg_info import DebugInfo
 
@@ -33,6 +35,8 @@ class InputOp(AbstractOp):
             return NDArrayDTDescriptor(self.dt.shape, self.dt.dtype)
         elif isinstance(self.dt, IntegerDTDescriptor):
             return IntegerDTDescriptor()
+        elif isinstance(self.dt, FloatDTDescriptor):
+            return FloatDTDescriptor()
         raise NotImplementedError()
 
     def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
@@ -40,6 +44,8 @@ class InputOp(AbstractOp):
             return NDArrayInferenceDescriptor(self.dt.shape, self.dt.dtype, NDArrayHelper.fill(self.dt.shape, lambda: None))
         elif isinstance(self.dt, IntegerDTDescriptor):
             return IntegerInferenceDescriptor(None)
+        elif isinstance(self.dt, FloatDTDescriptor):
+            return FloatInferenceDescriptor(None)
         raise NotImplementedError()
 
     def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
@@ -60,5 +66,5 @@ class InputOp(AbstractOp):
         elif isinstance(self.dt, IntegerDTDescriptor):
             return IntegerFlattenDescriptor(ir_builder.create_read_integer(self.input_id, 0))
         elif isinstance(self.dt, FloatDTDescriptor):
-            return IntegerFlattenDescriptor(ir_builder.create_read_float(self.input_id, 0))
+            return FloatFlattenDescriptor(ir_builder.create_read_float(self.input_id, 0))
         raise NotImplementedError()

@@ -34,9 +34,12 @@ class ExecutionContext:
                     raise ZKCircuitParameterException(None, f'Expected integer for argument {inp.name}')
                 parsed_result_dict[(i, 0)] = arg_dict[inp.name]
             elif isinstance(inp.dt, FloatDTDescriptor):
-                if not isinstance(arg_dict[inp.name], float):
+                if isinstance(arg_dict[inp.name], int):
+                    parsed_result_dict[(i, 0)] = float(arg_dict[inp.name])
+                elif not isinstance(arg_dict[inp.name], float):
                     raise ZKCircuitParameterException(None, f'Expected float for argument {inp.name}')
-                parsed_result_dict[(i, 0)] = arg_dict[inp.name]
+                else:
+                    parsed_result_dict[(i, 0)] = arg_dict[inp.name]
             elif isinstance(inp.dt, NDArrayDTDescriptor):
                 if not isinstance(arg_dict[inp.name], List):
                     raise ZKCircuitParameterException(None, f'Expected pure Python list for argument {inp.name}')

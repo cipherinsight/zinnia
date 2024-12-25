@@ -150,9 +150,11 @@ class _Halo2StatementBuilder:
             f"let tmp_1 = {x}.value().get_lower_128();",
             f"let tmp_2 = gate.neg(ctx, {x});"
             f"let tmp_3 = tmp_2.value().get_lower_128();",
-            f"let tmp_4 = range_chip.is_less_than(ctx, {x}, Constant(F::from(0), 128);",
+            f"let tmp_4 = range_chip.is_less_than(ctx, {x}, Constant(F::from(0)), 128);",
             f"let tmp_5 = tmp_4.value().get_lower_128() != 0;",
             f"let tmp_6 = if tmp_5 {{ctx.load_witness(fixed_point_chip.quantization(-(tmp_3 as f64)))}} else {{ctx.load_witness(fixed_point_chip.quantization(tmp_1 as f64))}};",
+            f"let tmp_7 = if tmp_5 {{gate.is_equal(ctx, Constant(F::from_u128(tmp_3)), tmp_2)}} else {{gate.is_equal(ctx, Constant(F::from_u128(tmp_1)), {x})}};",
+            f"gate.assert_is_const(ctx, &tmp_7, &F::ONE);",
             f"let {self._get_var_name(stmt.stmt_id)} = tmp_6;"
         ]
 
