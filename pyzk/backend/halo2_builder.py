@@ -59,14 +59,6 @@ class _Halo2StatementBuilder:
         self.id_var_lookup[_id] = var_name
         return var_name
 
-    def _get_val_name(self, _id: int) -> str:
-        var_name = self.id_val_lookup.get(_id, None)
-        if var_name is not None:
-            return var_name
-        var_name = f"v_{_id}"
-        self.id_val_lookup[_id] = var_name
-        return var_name
-
     def _build_AddFOp(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.operator, AddFOp)
         lhs = self._get_var_name(stmt.arguments["lhs"])
@@ -95,45 +87,25 @@ class _Halo2StatementBuilder:
         assert isinstance(stmt.operator, AddIOp)
         lhs = self._get_var_name(stmt.arguments["lhs"])
         rhs = self._get_var_name(stmt.arguments["rhs"])
-        lhs_v = self._get_val_name(stmt.arguments["lhs"])
-        rhs_v = self._get_val_name(stmt.arguments["rhs"])
-        return [
-            f"let {self._get_val_name(stmt.stmt_id)}: i128 = {lhs_v} + {rhs_v};",
-            f"let {self._get_var_name(stmt.stmt_id)} = gate.add(ctx, {lhs}, {rhs});"
-        ]
+        return [f"let {self._get_var_name(stmt.stmt_id)} = gate.add(ctx, {lhs}, {rhs});"]
 
     def _build_SubIOp(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.operator, SubIOp)
         lhs = self._get_var_name(stmt.arguments["lhs"])
         rhs = self._get_var_name(stmt.arguments["rhs"])
-        lhs_v = self._get_val_name(stmt.arguments["lhs"])
-        rhs_v = self._get_val_name(stmt.arguments["rhs"])
-        return [
-            f"let {self._get_val_name(stmt.stmt_id)}: i128 = {lhs_v} - {rhs_v};",
-            f"let {self._get_var_name(stmt.stmt_id)} = gate.sub(ctx, {lhs}, {rhs});"
-        ]
+        return [f"let {self._get_var_name(stmt.stmt_id)} = gate.sub(ctx, {lhs}, {rhs});"]
 
     def _build_MulIOp(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.operator, MulIOp)
         lhs = self._get_var_name(stmt.arguments["lhs"])
         rhs = self._get_var_name(stmt.arguments["rhs"])
-        lhs_v = self._get_val_name(stmt.arguments["lhs"])
-        rhs_v = self._get_val_name(stmt.arguments["rhs"])
-        return [
-            f"let {self._get_val_name(stmt.stmt_id)}: i128 = {lhs_v} * {rhs_v};",
-            f"let {self._get_var_name(stmt.stmt_id)} = gate.mul(ctx, {lhs}, {rhs});"
-        ]
+        return [f"let {self._get_var_name(stmt.stmt_id)} = gate.mul(ctx, {lhs}, {rhs});"]
 
     def _build_DivIOp(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.operator, DivIOp)
         lhs = self._get_var_name(stmt.arguments["lhs"])
         rhs = self._get_var_name(stmt.arguments["rhs"])
-        lhs_v = self._get_val_name(stmt.arguments["lhs"])
-        rhs_v = self._get_val_name(stmt.arguments["rhs"])
-        return [
-            f"let {self._get_val_name(stmt.stmt_id)}: i128 = {lhs_v} / {rhs_v};",
-            f"let {self._get_var_name(stmt.stmt_id)} = gate.div_unsafe(ctx, {lhs}, {rhs});"
-        ]
+        return [f"let {self._get_var_name(stmt.stmt_id)} = gate.div_unsafe(ctx, {lhs}, {rhs});"]
 
     def _build_AssertOp(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.operator, AssertOp)
@@ -145,7 +117,6 @@ class _Halo2StatementBuilder:
         major: int = stmt.operator.major
         minor: int = stmt.operator.minor
         return [
-            f"let {self._get_val_name(stmt.stmt_id)}: i128 = input.x_{major}_{minor};",
             f"let tmp_1 = ctx.load_witness(F::from((input.x_{major}_{minor}).abs() as u64));",
             f"let {self._get_var_name(stmt.stmt_id)} = if input.x_{major}_{minor} >= 0 {{tmp_1}} else {{gate.neg(ctx, tmp_1)}};"
         ]
@@ -162,7 +133,6 @@ class _Halo2StatementBuilder:
         assert isinstance(stmt.operator, ConstantOp)
         constant_val = stmt.operator.value
         return [
-            f"let {self._get_val_name(stmt.stmt_id)}: i128 = {constant_val};",
             f"let {self._get_var_name(stmt.stmt_id)} = Constant(F::from({constant_val}));" if constant_val >= 0 else f"{{gate.neg(ctx, Constant(F::from({constant_val})))}};"
         ]
 
@@ -176,13 +146,14 @@ class _Halo2StatementBuilder:
     def _build_FloatOp(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.operator, FloatOp)
         x = self._get_var_name(stmt.arguments['x'])
-        x_v = self._get_val_name(stmt.arguments['x'])
         return [
-            f"let tmp_1 = Constant(F::from({x_v}.abs() as u64));",
-            f"let tmp_2 = if {x_v} >= 0 {{tmp_1}} else {{Existing(gate.neg(ctx, tmp_1))}};",
-            f"let tmp_3 = gate.is_equal(ctx, {x}, tmp_2);",
-            f"gate.assert_is_const(ctx, &tmp_3, &F::ONE);",
-            f"let {self._get_var_name(stmt.stmt_id)} = ctx.load_witness(fixed_point_chip.quantization({x_v} as f64));"
+            f"let tmp_1 = {x}.value().get_lower_128();",
+            f"let tmp_2 = gate.neg(ctx, {x});"
+            f"let tmp_3 = tmp_2.value().get_lower_128();",
+            f"let tmp_4 = range_chip.is_less_than(ctx, {x}, Constant(F::from(0), 128);",
+            f"let tmp_5 = tmp_4.value().get_lower_128() != 0;",
+            f"let tmp_6 = if tmp_5 {{ctx.load_witness(fixed_point_chip.quantization(-(tmp_3 as f64)))}} else {{ctx.load_witness(fixed_point_chip.quantization(tmp_1 as f64))}};",
+            f"let {self._get_var_name(stmt.stmt_id)} = tmp_6;"
         ]
 
     def _build_IntOp(self, stmt: IRStatement) -> List[str]:
@@ -253,21 +224,13 @@ class _Halo2StatementBuilder:
         assert isinstance(stmt.operator, EqualIOp)
         lhs = self._get_var_name(stmt.arguments['lhs'])
         rhs = self._get_var_name(stmt.arguments['rhs'])
-        lhs_v = self._get_val_name(stmt.arguments['lhs'])
-        rhs_v = self._get_val_name(stmt.arguments['rhs'])
-        return [
-            f"let {self._get_val_name(stmt.stmt_id)}: i128 = if {lhs_v} == {rhs_v} {{1}} else {{0}};",
-            f"let {self._get_var_name(stmt.stmt_id)} = gate.is_equal(ctx, {lhs}, {rhs});"
-        ]
+        return [f"let {self._get_var_name(stmt.stmt_id)} = gate.is_equal(ctx, {lhs}, {rhs});"]
 
     def _build_NotEqualIOp(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.operator, NotEqualIOp)
         lhs = self._get_var_name(stmt.arguments['lhs'])
         rhs = self._get_var_name(stmt.arguments['rhs'])
-        lhs_v = self._get_val_name(stmt.arguments['lhs'])
-        rhs_v = self._get_val_name(stmt.arguments['rhs'])
         return [
-            f"let {self._get_val_name(stmt.stmt_id)}: i128 = if {lhs_v} == {rhs_v} {{0}} else {{1}};",
             f"let tmp_1 = gate.is_equal(ctx, {lhs}, {rhs});",
             f"let {self._get_var_name(stmt.stmt_id)} = gate.not(ctx, tmp_1);"
         ]
@@ -276,21 +239,13 @@ class _Halo2StatementBuilder:
         assert isinstance(stmt.operator, LessThanIOp)
         lhs = self._get_var_name(stmt.arguments['lhs'])
         rhs = self._get_var_name(stmt.arguments['rhs'])
-        lhs_v = self._get_val_name(stmt.arguments['lhs'])
-        rhs_v = self._get_val_name(stmt.arguments['rhs'])
-        return [
-            f"let {self._get_val_name(stmt.stmt_id)}: i128 = if {lhs_v} < {rhs_v} {{1}} else {{0}};",
-            f"let {self._get_var_name(stmt.stmt_id)} = range_chip.is_less_than(ctx, {lhs}, {rhs}, 128);"
-        ]
+        return [f"let {self._get_var_name(stmt.stmt_id)} = range_chip.is_less_than(ctx, {lhs}, {rhs}, 128);"]
 
     def _build_LessThanOrEqualIOp(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.operator, LessThanOrEqualIOp)
         lhs = self._get_var_name(stmt.arguments['lhs'])
         rhs = self._get_var_name(stmt.arguments['rhs'])
-        lhs_v = self._get_val_name(stmt.arguments['lhs'])
-        rhs_v = self._get_val_name(stmt.arguments['rhs'])
         return [
-            f"let {self._get_val_name(stmt.stmt_id)}: i128 = if {lhs_v} <= {rhs_v} {{1}} else {{0}};",
             f"let tmp_1 = range_chip.is_less_than(ctx, {lhs}, {rhs}, 128);",
             f"let tmp_2 = gate.is_equal(ctx, {lhs}, {rhs});",
             f"let {self._get_var_name(stmt.stmt_id)} = gate.or(ctx, tmp_1, tmp_2);"
@@ -300,10 +255,7 @@ class _Halo2StatementBuilder:
         assert isinstance(stmt.operator, GreaterThanIOp)
         lhs = self._get_var_name(stmt.arguments['lhs'])
         rhs = self._get_var_name(stmt.arguments['rhs'])
-        lhs_v = self._get_val_name(stmt.arguments['lhs'])
-        rhs_v = self._get_val_name(stmt.arguments['rhs'])
         return [
-            f"let {self._get_val_name(stmt.stmt_id)}: i128 = if {lhs_v} > {rhs_v} {{1}} else {{0}};",
             f"let tmp_1 = range_chip.is_less_than(ctx, {lhs}, {rhs}, 128);",
             f"let tmp_2 = gate.not(ctx, tmp_1);",
             f"let tmp_3 = gate.is_equal(ctx, {lhs}, {rhs});",
@@ -315,10 +267,7 @@ class _Halo2StatementBuilder:
         assert isinstance(stmt.operator, GreaterThanOrEqualIOp)
         lhs = self._get_var_name(stmt.arguments['lhs'])
         rhs = self._get_var_name(stmt.arguments['rhs'])
-        lhs_v = self._get_val_name(stmt.arguments['lhs'])
-        rhs_v = self._get_val_name(stmt.arguments['rhs'])
         return [
-            f"let {self._get_val_name(stmt.stmt_id)}: i128 = if {lhs_v} >= {rhs_v} {{1}} else {{0}};",
             f"let tmp_1 = range_chip.is_less_than(ctx, {lhs}, {rhs}, 128);",
             f"let {self._get_var_name(stmt.stmt_id)} = gate.not(ctx, tmp_1);"
         ]
@@ -326,9 +275,7 @@ class _Halo2StatementBuilder:
     def _build_BoolCastOp(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.operator, BoolCastOp)
         x = self._get_var_name(stmt.arguments['x'])
-        x_v = self._get_val_name(stmt.arguments['x'])
         return [
-            f"let {self._get_val_name(stmt.stmt_id)}: i128 = if {x_v} != 0 {{1}} else {{0}};",
             f"let tmp_1 = gate.is_equal(ctx, {x}, Constant(F::ZERO)));",
             f"let {self._get_var_name(stmt.stmt_id)} = gate.not(ctx, tmp_1);"
         ]
@@ -336,9 +283,7 @@ class _Halo2StatementBuilder:
     def _build_NotOp(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.operator, NotOp)
         x = self._get_var_name(stmt.arguments['x'])
-        x_v = self._get_val_name(stmt.arguments['x'])
         return [
-            f"let {self._get_val_name(stmt.stmt_id)}: i128 = if {x_v} != 0 {{0}} else {{1}};",
             f"let {self._get_var_name(stmt.stmt_id)} = gate.not(ctx, {x});"
         ]
 
@@ -346,10 +291,7 @@ class _Halo2StatementBuilder:
         assert isinstance(stmt.operator, AndOp)
         lhs = self._get_var_name(stmt.arguments['lhs'])
         rhs = self._get_var_name(stmt.arguments['rhs'])
-        lhs_v = self._get_val_name(stmt.arguments['lhs'])
-        rhs_v = self._get_val_name(stmt.arguments['rhs'])
         return [
-            f"let {self._get_val_name(stmt.stmt_id)}: i128 = if {lhs_v} != 0 and {rhs_v} != 0 {{1}} else {{0}};",
             f"let {self._get_var_name(stmt.stmt_id)} = gate.and(ctx, {lhs}, {rhs});"
         ]
 
@@ -357,10 +299,7 @@ class _Halo2StatementBuilder:
         assert isinstance(stmt.operator, OrOp)
         lhs = self._get_var_name(stmt.arguments['lhs'])
         rhs = self._get_var_name(stmt.arguments['rhs'])
-        lhs_v = self._get_val_name(stmt.arguments['lhs'])
-        rhs_v = self._get_val_name(stmt.arguments['rhs'])
         return [
-            f"let {self._get_val_name(stmt.stmt_id)}: i128 = if {lhs_v} != 0 or {rhs_v} != 0 {{1}} else {{0}};",
             f"let {self._get_var_name(stmt.stmt_id)} = gate.or(ctx, {lhs}, {rhs});"
         ]
 

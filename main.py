@@ -33,19 +33,17 @@ def is_thirteen(x: Integer):
 @pyzk_circuit
 def foo(
     x: Public[Integer],
-    y: Private[NDArray[Float, 5, 4]]
+    y: Private[NDArray[Integer, 5, 5]],
 ):
-    z = y @ y.transpose(axes=(1, 0))
-    multi(x * 4)
-    assert fibonacci(10) == 55
-    is_thirteen(13)
-    assert (z + NDArray.ones((5, 5))).sum() > 0.
+    for i in range(12):
+        y = y @ (y + 1)
+    assert y.sum() != 0
 
 
-foo(8, [
-    [1., 2, 3, 4],
-    [5., 213, 123, 124],
-    [65., 64, 234, 5342],
-    [72., 7., 4, 2555],
-    [123., 24, 631, 924]
+foo(7, [
+    [1, 2, 3, 4, -5],
+    [-5, 213, 13, 14, 123],
+    [65, 64, -24, 52, -12],
+    [72, 7, -4, 25, 44],
+    [3, 24, 1, 94, -123]
 ])
