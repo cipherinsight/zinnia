@@ -36,7 +36,7 @@ class GreaterThanIOp(AbstractOp):
         if isinstance(lhs, IntegerInferenceDescriptor) and isinstance(rhs, IntegerInferenceDescriptor):
             if lhs.get() is None or rhs.get() is None:
                 return IntegerInferenceDescriptor(None)
-            return IntegerInferenceDescriptor(lhs.get() > rhs.get())
+            return IntegerInferenceDescriptor(1 if lhs.get() > rhs.get() else 0)
         raise NotImplementedError()
 
     def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:

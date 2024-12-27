@@ -1,4 +1,4 @@
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 
 from pyzk.debug.exception import TypeInferenceError, StaticInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
@@ -21,17 +21,23 @@ class AbstractAggregator(AbstractOp):
             AbstractOp._ParamEntry("axis", default=True),
         ]
 
-    def aggregator_func(self, lhs: Any, rhs: Any, dt: DTDescriptor) -> Any:
+    def aggregator_func(self, lhs: Any, lhs_i: int, rhs: Any, rhs_i: int, dt: DTDescriptor) -> Tuple[Any, int | None]:
         raise NotImplementedError()
 
-    def initial_func(self, dt: DTDescriptor) -> Any:
+    def initial_func(self, dt: DTDescriptor, first_ele: Any) -> Tuple[Any, int | None]:
         raise NotImplementedError()
 
-    def aggregator_build_ir(self, ir_builder, lhs: int, rhs: int, dt: DTDescriptor) -> int:
+    def parsing_func(self, lhs: Any, rhs: Any) -> Any:
+        return lhs
+
+    def aggregator_build_ir(self, ir_builder, lhs: int, lhs_i: int, rhs: int, rhs_i: int, dt: DTDescriptor) -> Tuple[int, int | None]:
         raise NotImplementedError()
 
-    def initial_build_ir(self, ir_builder, dt: DTDescriptor) -> int:
+    def initial_build_ir(self, ir_builder, dt: DTDescriptor, first_ele: int) -> Tuple[int, int | None]:
         raise NotImplementedError()
+
+    def parsing_select_ir(self, ir_builder, lhs: int, rhs: int) -> int:
+        return lhs
 
     def get_result_dtype(self, element_dt: DTDescriptor):
         return element_dt
@@ -69,8 +75,9 @@ class AbstractAggregator(AbstractOp):
         dtype = the_self.dtype()
         inferred_value = the_self.get().accumulate(
             the_axis.get() if the_axis is not None else -1,
-            lambda x, y: self.aggregator_func(x, y, dtype),
-            lambda: self.initial_func(dtype)
+            lambda x, x_i, y, y_i: self.aggregator_func(x, x_i, y, y_i, dtype),
+            lambda first_ele: self.initial_func(dtype, first_ele),
+            lambda x, y: self.parsing_func(x, y)
         )
         if not isinstance(inferred_value, NDArrayHelper):
             if isinstance(self.get_result_dtype(dtype), IntegerDTDescriptor):
@@ -86,8 +93,9 @@ class AbstractAggregator(AbstractOp):
         dtype = the_self.dtype()
         inferred_value = the_self.ptr().accumulate(
             the_axis.val() if the_axis is not None else -1,
-            lambda x, y: self.aggregator_build_ir(ir_builder, x, y, dtype),
-            lambda: self.initial_build_ir(ir_builder, dtype)
+            lambda x, x_i, y, y_i: self.aggregator_build_ir(ir_builder, x, x_i, y, y_i, dtype),
+            lambda first_ele: self.initial_build_ir(ir_builder, dtype, first_ele),
+            lambda x, y: self.parsing_select_ir(ir_builder, x, y)
         )
         if not isinstance(inferred_value, NDArrayHelper):
             if isinstance(self.get_result_dtype(dtype), IntegerDTDescriptor):

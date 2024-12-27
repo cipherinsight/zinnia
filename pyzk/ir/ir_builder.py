@@ -120,6 +120,193 @@ class IRBuilder:
         self._next_id += 1
         return self._next_id - 1
 
+    def create_sign_i(
+            self, x: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.SIGN_I(),
+                           {"x": x}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_sign_f(
+            self, x: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.SIGN_F(),
+                           {"x": x}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_abs_i(
+            self, x: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.ABS_I(),
+                           {"x": x}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_abs_f(
+            self, x: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.ABS_F(),
+                           {"x": x}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_pow_i(
+            self, x: int, exponent: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.POW_I(),
+                           {"x": x, "exponent": exponent}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_pow_f(
+            self, x: int, exponent: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.POW_F(),
+                           {"x": x, "exponent": exponent}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_mod_i(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.MOD_I(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_mod_f(
+            self, lhs: int, rhs: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.MOD_F(),
+                           {"lhs": lhs, "rhs": rhs}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_sin(
+            self, x: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.SIN(),
+                           {"x": x}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_cos(
+            self, x: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.COS(),
+                           {"x": x}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_tan(
+            self, x: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.TAN(),
+                           {"x": x}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_sinh(
+            self, x: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.SINH(),
+                           {"x": x}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_cosh(
+            self, x: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.COSH(),
+                           {"x": x}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_tanh(
+            self, x: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.TANH(),
+                           {"x": x}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_sqrt(
+            self, x: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.SQRT(),
+                           {"x": x}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_exp(
+            self, x: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.EXP(),
+                           {"x": x}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
+    def create_log(
+            self, x: int,
+            dbg_i: DebugInfo = None, annotation: Annotation | None = None
+    ) -> int:
+        stmt = IRStatement(self._next_id, Operators.NoCls.LOG(),
+                           {"x": x}, dbg_i=dbg_i, annotation=annotation)
+        self.stmts.append(self._do_ir_inference(stmt))
+        _check_annotation_and_raise(stmt.annotation, annotation)
+        self._next_id += 1
+        return self._next_id - 1
+
     def create_add(
             self, lhs: int, rhs: int,
             dbg_i: DebugInfo = None, annotation: Annotation | None = None

@@ -46,19 +46,19 @@ class AbstractOp:
             mapping[param.name] = None
         for i, arg in enumerate(args):
             if i >= len(params):
-                raise OperatorCallError(dbg_i, f"Too many arguments for operator `{self.get_signature()}`")
+                raise OperatorCallError(dbg_i, f"Too many arguments for operator `{self.get_name()}`")
             mapping[params[i].name] = arg
             filled.append(params[i].name)
         for k, v in kwargs.items():
             if k in filled:
-                raise OperatorCallError(dbg_i, f"Operator `{self.get_signature()}` got multiple values for argument `{k}`")
+                raise OperatorCallError(dbg_i, f"Operator `{self.get_name()}` got multiple values for argument `{k}`")
             if k not in mapping.keys():
-                raise OperatorCallError(dbg_i, f"Operator `{self.get_signature()}` got an unexpected keyword argument `{k}`")
+                raise OperatorCallError(dbg_i, f"Operator `{self.get_name()}` got an unexpected keyword argument `{k}`")
             mapping[k] = v
             filled.append(k)
         for param in params:
             if param.name not in filled and not param.default:
-                raise OperatorCallError(dbg_i, f"Operator `{self.get_signature()}` missing required argument `{param.name}`")
+                raise OperatorCallError(dbg_i, f"Operator `{self.get_name()}` missing required argument `{param.name}`")
         return mapping
 
     def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:

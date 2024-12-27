@@ -130,6 +130,12 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
             return ASTBinaryOperator(dbg_info, Operators.NoCls.DIV, left, right)
         elif isinstance(node.op, ast.Sub):
             return ASTBinaryOperator(dbg_info, Operators.NoCls.SUB, left, right)
+        elif isinstance(node.op, ast.Pow):
+            return ASTBinaryOperator(dbg_info, Operators.NoCls.POW, left, right)
+        elif isinstance(node.op, ast.FloorDiv):
+            return ASTBinaryOperator(dbg_info, Operators.NoCls.FLOOR_DIV, left, right)
+        elif isinstance(node.op, ast.Mod):
+            return ASTBinaryOperator(dbg_info, Operators.NoCls.MOD, left, right)
         else:
             raise UnsupportedOperatorException(dbg_info, f"Invalid binary operator {type(node.op).__name__} in circuit.")
 

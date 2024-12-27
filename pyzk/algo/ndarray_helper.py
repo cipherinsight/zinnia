@@ -178,47 +178,59 @@ class NDArrayHelper:
         new_values = _internal_helper(self.shape, self.values)
         return NDArrayHelper(shape=self.shape, values=new_values)
 
-    def accumulate(self, axis: int, accumulator: Callable[[Any, Any], Any], initial_generator: Callable[[], Any]) -> Any:
+    def accumulate(
+            self,
+            axis: int,
+            accumulator: Callable[[Any, int, Any, int], Tuple[Any, int]],
+            initial_generator: Callable[[Any], Tuple[Any, int]],
+            result_parser: Callable[[Any, int], Any] = lambda x, _: x
+    ) -> Any:
         assert 0 <= axis < len(self.shape) or axis == -1
         if axis == -1:
             def _internal_helper(_shape: Tuple[int, ...], _operand: List):
                 if len(_shape) == 1:
-                    result = initial_generator()
-                    for x in _operand:
-                        result = accumulator(result, x)
-                    return result
+                    result, result_idx = initial_generator(_operand[0])
+                    for i, x in enumerate(_operand):
+                        result, result_idx = accumulator(result, result_idx, x, i)
+                    return result, result_idx
                 else:
-                    result = initial_generator()
-                    for x in _operand:
-                        result = accumulator(result, _internal_helper(_shape[1:], x))
-                    return result
-            return _internal_helper(self.shape, self.values)
+                    result, result_idx = initial_generator(_operand[0])
+                    for i, x in enumerate(_operand):
+                        result, result_idx = accumulator(result, result_idx, _internal_helper(_shape[1:], x)[0], i)
+                    return result, result_idx
+            ans, ans_i = _internal_helper(self.shape, self.values)
+            return result_parser(ans, ans_i)
         else:
-            def _generate_initial_by_shape(_shape: Tuple[int, ...]):
+            def _generate_initial_by_shape(_shape: Tuple[int, ...], _operand: List):
                 if len(_shape) == 1:
-                    return [initial_generator() for _ in range(_shape[0])]
-                return [_generate_initial_by_shape(_shape[1:]) for _ in range(_shape[0])]
+                    return [initial_generator(_operand[i]) for i in range(_shape[0])]
+                return [_generate_initial_by_shape(_shape[1:], _operand[i]) for i in range(_shape[0])]
 
-            def _binary_accumulate(_shape: Tuple[int, ...], _lhs, _rhs):
+            def _binary_accumulate(_shape: Tuple[int, ...], _lhs, _rhs, _rhs_i):
                 if len(_shape) == 0:
-                    return accumulator(_lhs, _rhs)
-                elif len(_shape) == 1:
-                    return [accumulator(a, b) for a, b in zip(_lhs, _rhs)]
-                return [_binary_accumulate(_shape[1:], a, b) for a, b in zip(_lhs, _rhs)]
+                    return accumulator(_lhs[0], _lhs[1], _rhs, _rhs_i)
+                return [_binary_accumulate(_shape[1:], a, b, _rhs_i) for a, b in zip(_lhs, _rhs)]
 
             def _internal_helper(_shape: Tuple[int, ...], depth: int, _operand: List):
                 if depth < axis:
                     return [_internal_helper(_shape[1:], depth + 1, x) for x in _operand]
                 elif depth == axis:
-                    result = _generate_initial_by_shape(_shape[1:])
-                    for x in _operand:
-                        result = _binary_accumulate(_shape[1:], result, x)
+                    result = _generate_initial_by_shape(_shape[1:], _operand[0])
+                    for i, x in enumerate(_operand):
+                        result = _binary_accumulate(_shape[1:], result, x, i)
                     return result
+
+            def _parsing_helper(_shape: Tuple[int, ...], _operand: List):
+                if len(_shape) == 0:
+                    return result_parser(_operand[0], _operand[1])
+                return [_parsing_helper(_shape[1:], _operand[i]) for i in range(_shape[0])]
 
             new_values = _internal_helper(self.shape, 0, self.values)
             new_shape = tuple(x for i, x in enumerate(self.shape) if i != axis)
             if len(new_shape) == 0:
-                return new_values
+                val, idx = new_values
+                return _parsing_helper(val, idx)
+            new_values = _parsing_helper(new_shape, new_values)
             return NDArrayHelper(shape=new_shape, values=new_values)
 
     def for_each(self, func: Callable[[Tuple[int, ...], Any], Any]) -> 'NDArrayHelper':

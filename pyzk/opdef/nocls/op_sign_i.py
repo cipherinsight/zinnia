@@ -8,39 +8,38 @@ from pyzk.internal.inference_descriptor import InferenceDescriptor, IntegerInfer
 from pyzk.debug.dbg_info import DebugInfo
 
 
-class EqualIOp(AbstractOp):
+class SignIOp(AbstractOp):
     def __init__(self):
         super().__init__()
 
     def get_signature(self) -> str:
-        return "eq_i"
+        return "sign_i"
 
     @classmethod
     def get_name(cls) -> str:
-        return "eq_i"
+        return "sign_i"
 
     def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return [
-            AbstractOp._ParamEntry("lhs"),
-            AbstractOp._ParamEntry("rhs"),
+            AbstractOp._ParamEntry("x")
         ]
 
     def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
-        lhs, rhs = kwargs["lhs"].type(), kwargs["rhs"].type()
-        if isinstance(lhs, IntegerDTDescriptor) and isinstance(rhs, IntegerDTDescriptor):
+        x = kwargs["x"].type()
+        if isinstance(x, IntegerDTDescriptor):
             return IntegerDTDescriptor()
-        raise TypeInferenceError(dbg_i, f"Operator `{self.get_name()}` only accepts `Integer`")
+        raise TypeInferenceError(dbg_i, f'Invalid logical operator `{self.get_signature()}` on operand {x}, as it must be an integer')
 
     def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
-        lhs, rhs = kwargs["lhs"], kwargs["rhs"]
-        if isinstance(lhs, IntegerInferenceDescriptor) and isinstance(rhs, IntegerInferenceDescriptor):
-            if lhs.get() is None or rhs.get() is None:
+        x = kwargs["x"]
+        if isinstance(x, IntegerInferenceDescriptor):
+            if x.get() is None:
                 return IntegerInferenceDescriptor(None)
-            return IntegerInferenceDescriptor(1 if lhs.get() == rhs.get() else 0)
+            return IntegerInferenceDescriptor((1 if x.get() > 0 else (0 if x.get() == 0 else -1)) if x is not None else None)
         raise NotImplementedError()
 
     def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
-        lhs, rhs = kwargs["lhs"], kwargs["rhs"]
-        if isinstance(lhs, IntegerFlattenDescriptor) and isinstance(rhs, IntegerFlattenDescriptor):
-            return IntegerFlattenDescriptor(ir_builder.create_equal_i(lhs.ptr(), rhs.ptr()))
+        x = kwargs["x"]
+        if isinstance(x, IntegerFlattenDescriptor):
+            return IntegerFlattenDescriptor(ir_builder.create_sign_i(x.ptr()))
         raise NotImplementedError()

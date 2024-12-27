@@ -5,6 +5,8 @@ from pyzk.backend.zk_program import Halo2ZKProgram
 from pyzk.internal.dt_descriptor import IntegerDTDescriptor, FloatDTDescriptor, NDArrayDTDescriptor
 from pyzk.internal.prog_meta_data import ProgramMetadata
 from pyzk.ir.ir_stmt import IRStatement
+from pyzk.opdef.nocls.op_abs_f import AbsFOp
+from pyzk.opdef.nocls.op_abs_i import AbsIOp
 from pyzk.opdef.nocls.op_add_f import AddFOp
 from pyzk.opdef.nocls.op_add_i import AddIOp
 from pyzk.opdef.nocls.op_and import AndOp
@@ -12,30 +14,44 @@ from pyzk.opdef.nocls.op_assert import AssertOp
 from pyzk.opdef.nocls.op_bool_cast import BoolCastOp
 from pyzk.opdef.nocls.op_constant import ConstantOp
 from pyzk.opdef.nocls.op_constant_float import ConstantFloatOp
+from pyzk.opdef.nocls.op_cos import CosOp
+from pyzk.opdef.nocls.op_cosh import CosHOp
 from pyzk.opdef.nocls.op_div_f import DivFOp
 from pyzk.opdef.nocls.op_div_i import DivIOp
 from pyzk.opdef.nocls.op_eq_f import EqualFOp
 from pyzk.opdef.nocls.op_eq_i import EqualIOp
+from pyzk.opdef.nocls.op_exp import ExpOp
 from pyzk.opdef.nocls.op_float import FloatOp
 from pyzk.opdef.nocls.op_gt_f import GreaterThanFOp
 from pyzk.opdef.nocls.op_gt_i import GreaterThanIOp
 from pyzk.opdef.nocls.op_gte_f import GreaterThanOrEqualFOp
 from pyzk.opdef.nocls.op_gte_i import GreaterThanOrEqualIOp
 from pyzk.opdef.nocls.op_int import IntOp
+from pyzk.opdef.nocls.op_log import LogOp
 from pyzk.opdef.nocls.op_lt_f import LessThanFOp
 from pyzk.opdef.nocls.op_lt_i import LessThanIOp
 from pyzk.opdef.nocls.op_lte_f import LessThanOrEqualFOp
 from pyzk.opdef.nocls.op_lte_i import LessThanOrEqualIOp
+from pyzk.opdef.nocls.op_mod_f import ModFOp
+from pyzk.opdef.nocls.op_mod_i import ModIOp
 from pyzk.opdef.nocls.op_mul_f import MulFOp
 from pyzk.opdef.nocls.op_mul_i import MulIOp
 from pyzk.opdef.nocls.op_ne_f import NotEqualFOp
 from pyzk.opdef.nocls.op_ne_i import NotEqualIOp
 from pyzk.opdef.nocls.op_not import NotOp
 from pyzk.opdef.nocls.op_or import OrOp
+from pyzk.opdef.nocls.op_pow_f import PowFOp
+from pyzk.opdef.nocls.op_pow_i import PowIOp
 from pyzk.opdef.nocls.op_read_float import ReadFloatOp
 from pyzk.opdef.nocls.op_read_integer import ReadIntegerOp
+from pyzk.opdef.nocls.op_sign_f import SignFOp
+from pyzk.opdef.nocls.op_sign_i import SignIOp
+from pyzk.opdef.nocls.op_sin import SinOp
+from pyzk.opdef.nocls.op_sinh import SinHOp
 from pyzk.opdef.nocls.op_sub_f import SubFOp
 from pyzk.opdef.nocls.op_sub_i import SubIOp
+from pyzk.opdef.nocls.op_tan import TanOp
+from pyzk.opdef.nocls.op_tanh import TanHOp
 
 
 class _Halo2StatementBuilder:
@@ -303,6 +319,129 @@ class _Halo2StatementBuilder:
         rhs = self._get_var_name(stmt.arguments['rhs'])
         return [
             f"let {self._get_var_name(stmt.stmt_id)} = gate.or(ctx, {lhs}, {rhs});"
+        ]
+
+    def _build_SinOp(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, SinOp)
+        x = self._get_var_name(stmt.arguments['x'])
+        return [
+            f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qsin(ctx, {x});"
+        ]
+
+    def _build_ExpOp(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, ExpOp)
+        x = self._get_var_name(stmt.arguments['x'])
+        return [
+            f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qexp(ctx, {x});"
+        ]
+
+    def _build_LogOp(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, LogOp)
+        x = self._get_var_name(stmt.arguments['x'])
+        return [
+            f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qlog(ctx, {x});"
+        ]
+
+    def _build_CosOp(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, CosOp)
+        x = self._get_var_name(stmt.arguments['x'])
+        return [
+            f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qcos(ctx, {x});"
+        ]
+
+    def _build_TanOp(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, TanOp)
+        x = self._get_var_name(stmt.arguments['x'])
+        return [
+            f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qtan(ctx, {x});"
+        ]
+
+    def _build_SinHOp(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, SinHOp)
+        x = self._get_var_name(stmt.arguments['x'])
+        return [
+            f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qsinh(ctx, {x});"
+        ]
+
+    def _build_CosHOp(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, CosHOp)
+        x = self._get_var_name(stmt.arguments['x'])
+        return [
+            f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qcosh(ctx, {x});"
+        ]
+
+    def _build_TanHOp(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, TanHOp)
+        x = self._get_var_name(stmt.arguments['x'])
+        return [
+            f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qtanh(ctx, {x});"
+        ]
+
+    def _build_PowFOp(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, PowFOp)
+        x = self._get_var_name(stmt.arguments['x'])
+        exponent = self._get_var_name(stmt.arguments['exponent'])
+        return [
+            f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qpow(ctx, {x}, {exponent});"
+        ]
+
+    def _build_PowIOp(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, PowIOp)
+        x = self._get_var_name(stmt.arguments['x'])
+        exponent = self._get_var_name(stmt.arguments['exponent'])
+        return [
+            f"let {self._get_var_name(stmt.stmt_id)} = gate.pow_var(ctx, {x}, {exponent}, 128);"
+        ]
+
+    def _build_ModFOp(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, ModFOp)
+        lhs = self._get_var_name(stmt.arguments['lhs'])
+        rhs = self._get_var_name(stmt.arguments['rhs'])
+        return [
+            f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qmod(ctx, {lhs}, {rhs});"
+        ]
+
+    def _build_ModIOp(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, ModIOp)
+        lhs = self._get_var_name(stmt.arguments['lhs'])
+        rhs = self._get_var_name(stmt.arguments['rhs'])
+        return [
+            f"let (tmp_1, tmp_2) = range_chip.div_mod_var(ctx, {lhs}, {rhs}, 128, 128);",
+            f"let {self._get_var_name(stmt.stmt_id)} = tmp_2;"
+        ]
+
+    def _build_SignFOp(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, SignFOp)
+        x = self._get_var_name(stmt.arguments['x'])
+        return [
+            f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.sign(ctx, {x});"
+        ]
+
+    def _build_SignIOp(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, SignIOp)
+        x = self._get_var_name(stmt.arguments['x'])
+        return [
+            f"let tmp_1 = range_chip.is_less_than(ctx, {x}, Constant(F::from(0)), 128);"
+            f"let tmp_2 = gate.is_equal(ctx, {x}, Constant(F::from(0)), 128);"
+            f"let tmp_3 = gate.select(ctx, Constant(F::from(0)), Constant(F::from(1)), tmp_2);"
+            f"let tmp_4 = gate.neg(ctx, Constant(F::from(1)));"
+            f"let {self._get_var_name(stmt.stmt_id)} = gate.select(ctx, tmp_4, tmp_3, tmp_1);"
+        ]
+
+    def _build_AbsFOp(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, AbsFOp)
+        x = self._get_var_name(stmt.arguments['x'])
+        return [
+            f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qabs(ctx, {x});"
+        ]
+
+    def _build_AbsIOp(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, AbsIOp)
+        x = self._get_var_name(stmt.arguments['x'])
+        return [
+            f"let tmp_1 = range_chip.is_less_than(ctx, {x}, Constant(F::from(0)), 128);"
+            f"let tmp_2 = gate.neg(ctx, {x});"
+            f"let {self._get_var_name(stmt.stmt_id)} = gate.select(ctx, tmp_2, {x}, tmp_1);"
         ]
 
 

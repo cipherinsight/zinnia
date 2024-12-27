@@ -2,6 +2,10 @@ from inspect import isclass
 from typing import Optional
 
 from pyzk.opdef.ndarray.op_T import NDArray_TOp
+from pyzk.opdef.ndarray.op_argmax import NDArray_ArgMaxOp
+from pyzk.opdef.ndarray.op_argmin import NDArray_ArgMinOp
+from pyzk.opdef.ndarray.op_max import NDArray_MaxOp
+from pyzk.opdef.ndarray.op_min import NDArray_MinOp
 from pyzk.opdef.ndarray.op_transpose import NDArray_TransposeOp
 from pyzk.opdef.nocls.abstract_op import AbstractOp
 from pyzk.opdef.ndarray.op_all import NDArray_AllOp
@@ -12,6 +16,9 @@ from pyzk.opdef.ndarray.op_ones import NDArray_OnesOp
 from pyzk.opdef.ndarray.op_shape import NDArray_ShapeOp
 from pyzk.opdef.ndarray.op_sum import NDArray_SumOp
 from pyzk.opdef.ndarray.op_zeros import NDArray_ZerosOp
+from pyzk.opdef.nocls.op_abs import AbsOp
+from pyzk.opdef.nocls.op_abs_f import AbsFOp
+from pyzk.opdef.nocls.op_abs_i import AbsIOp
 from pyzk.opdef.nocls.op_add import AddOp
 from pyzk.opdef.nocls.op_add_f import AddFOp
 from pyzk.opdef.nocls.op_add_i import AddIOp
@@ -24,13 +31,17 @@ from pyzk.opdef.nocls.op_constant import ConstantOp
 from pyzk.opdef.nocls.op_constant_class import ConstantClassOp
 from pyzk.opdef.nocls.op_constant_float import ConstantFloatOp
 from pyzk.opdef.nocls.op_constant_none import ConstantNoneOp
+from pyzk.opdef.nocls.op_cos import CosOp
+from pyzk.opdef.nocls.op_cosh import CosHOp
 from pyzk.opdef.nocls.op_div import DivOp
 from pyzk.opdef.nocls.op_div_f import DivFOp
 from pyzk.opdef.nocls.op_div_i import DivIOp
 from pyzk.opdef.nocls.op_eq import EqualOp
 from pyzk.opdef.nocls.op_eq_f import EqualFOp
 from pyzk.opdef.nocls.op_eq_i import EqualIOp
+from pyzk.opdef.nocls.op_exp import ExpOp
 from pyzk.opdef.nocls.op_float import FloatOp
+from pyzk.opdef.nocls.op_floor_divide import FloorDivideOp
 from pyzk.opdef.nocls.op_gt import GreaterThanOp
 from pyzk.opdef.nocls.op_gt_f import GreaterThanFOp
 from pyzk.opdef.nocls.op_gt_i import GreaterThanIOp
@@ -41,6 +52,7 @@ from pyzk.opdef.nocls.op_input import InputOp
 from pyzk.opdef.nocls.op_int import IntOp
 from pyzk.opdef.nocls.op_len import LenOp
 from pyzk.opdef.nocls.op_list import ListOp
+from pyzk.opdef.nocls.op_log import LogOp
 from pyzk.opdef.nocls.op_logical_and import LogicalAndOp
 from pyzk.opdef.nocls.op_logical_or import LogicalOrOp
 from pyzk.opdef.nocls.op_lt import LessThanOp
@@ -50,6 +62,11 @@ from pyzk.opdef.nocls.op_lte import LessThanOrEqualOp
 from pyzk.opdef.nocls.op_lte_f import LessThanOrEqualFOp
 from pyzk.opdef.nocls.op_lte_i import LessThanOrEqualIOp
 from pyzk.opdef.nocls.op_mat_mul import MatMulOp
+from pyzk.opdef.nocls.op_maximum import MaximumOp
+from pyzk.opdef.nocls.op_minimum import MinimumOp
+from pyzk.opdef.nocls.op_mod import ModOp
+from pyzk.opdef.nocls.op_mod_f import ModFOp
+from pyzk.opdef.nocls.op_mod_i import ModIOp
 from pyzk.opdef.nocls.op_mul import MulOp
 from pyzk.opdef.nocls.op_mul_f import MulFOp
 from pyzk.opdef.nocls.op_mul_i import MulIOp
@@ -59,15 +76,26 @@ from pyzk.opdef.nocls.op_ne_i import NotEqualIOp
 from pyzk.opdef.nocls.op_not import NotOp
 from pyzk.opdef.nocls.op_or import OrOp
 from pyzk.opdef.nocls.op_parenthesis import ParenthesisOp
+from pyzk.opdef.nocls.op_pow import PowOp
+from pyzk.opdef.nocls.op_pow_f import PowFOp
+from pyzk.opdef.nocls.op_pow_i import PowIOp
 from pyzk.opdef.nocls.op_range import RangeOp
 from pyzk.opdef.nocls.op_read_float import ReadFloatOp
 from pyzk.opdef.nocls.op_read_integer import ReadIntegerOp
 from pyzk.opdef.nocls.op_select import SelectOp
+from pyzk.opdef.nocls.op_sign import SignOp
+from pyzk.opdef.nocls.op_sign_f import SignFOp
+from pyzk.opdef.nocls.op_sign_i import SignIOp
+from pyzk.opdef.nocls.op_sin import SinOp
+from pyzk.opdef.nocls.op_sinh import SinHOp
 from pyzk.opdef.nocls.op_slice import SliceOp
+from pyzk.opdef.nocls.op_sqrt import SqrtOp
 from pyzk.opdef.nocls.op_square_brackets import SquareBracketsOp
 from pyzk.opdef.nocls.op_sub import SubOp
 from pyzk.opdef.nocls.op_sub_f import SubFOp
 from pyzk.opdef.nocls.op_sub_i import SubIOp
+from pyzk.opdef.nocls.op_tan import TanOp
+from pyzk.opdef.nocls.op_tanh import TanHOp
 from pyzk.opdef.nocls.op_tuple import TupleOp
 from pyzk.opdef.nocls.op_usub import USubOp
 
@@ -132,6 +160,30 @@ class Operators:
         FLOAT_CAST = FloatOp
         INT_CAST = IntOp
         CONSTANT_FLOAT = ConstantFloatOp
+        SIN = SinOp
+        COS = CosOp
+        TAN = TanOp
+        SINH = SinHOp
+        COSH = CosHOp
+        TANH = TanHOp
+        LOG = LogOp
+        EXP = ExpOp
+        SQRT = SqrtOp
+        POW = PowOp
+        POW_I = PowIOp
+        POW_F = PowFOp
+        MOD = ModOp
+        MOD_I = ModIOp
+        MOD_F = ModFOp
+        MAXIMUM = MaximumOp
+        MINIMUM = MinimumOp
+        FLOOR_DIV = FloorDivideOp
+        ABS = AbsOp
+        ABS_I = AbsIOp
+        ABS_F = AbsFOp
+        SIGN = SignOp
+        SIGN_I = SignIOp
+        SIGN_F = SignFOp
 
     class NDArray:
         ALL = NDArray_AllOp
@@ -144,6 +196,10 @@ class Operators:
         ZEROS = NDArray_ZerosOp
         T = NDArray_TOp
         TRANSPOSE = NDArray_TransposeOp
+        MIN = NDArray_MinOp
+        MAX = NDArray_MaxOp
+        ARGMIN = NDArray_ArgMinOp
+        ARGMAX = NDArray_ArgMaxOp
 
     class Tuple:
         pass
