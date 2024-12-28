@@ -7,6 +7,7 @@ from pyzk.opdef.ndarray.op_argmin import NDArray_ArgMinOp
 from pyzk.opdef.ndarray.op_flat import NDArray_FlatOp
 from pyzk.opdef.ndarray.op_max import NDArray_MaxOp
 from pyzk.opdef.ndarray.op_min import NDArray_MinOp
+from pyzk.opdef.ndarray.op_reshape import NDArray_ReshapeOp
 from pyzk.opdef.ndarray.op_transpose import NDArray_TransposeOp
 from pyzk.opdef.nocls.abstract_op import AbstractOp
 from pyzk.opdef.ndarray.op_all import NDArray_AllOp
@@ -206,6 +207,7 @@ class Operators:
         ARGMIN = NDArray_ArgMinOp
         ARGMAX = NDArray_ArgMaxOp
         FLAT = NDArray_FlatOp
+        RESHAPE = NDArray_ReshapeOp
 
     class Tuple:
         pass

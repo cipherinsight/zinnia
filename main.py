@@ -13,7 +13,7 @@ def foo(
     z: Private[NDArray[Integer, 2, 2]],
 ):
     b = [1, -1, 1, -1, 1, -1]
-    b = tan(math.pi)
-    assert b.sum() == 0
+    b = b.reshape((3, 2))
+    assert b.shape == (3, 2)
 
 foo(100, 100 - 12 * math.pi, [[1, 2], [9, 4]])
