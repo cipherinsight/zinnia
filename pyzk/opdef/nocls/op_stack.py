@@ -9,16 +9,16 @@ from pyzk.internal.inference_descriptor import InferenceDescriptor, NDArrayInfer
 from pyzk.opdef.nocls.abstract_op import AbstractOp
 
 
-class ConcatenateOp(AbstractOp):
+class StackOp(AbstractOp):
     def __init__(self):
         super().__init__()
 
     def get_signature(self) -> str:
-        return "concatenate"
+        return "stack"
 
     @classmethod
     def get_name(cls) -> str:
-        return "concatenate"
+        return "stack"
 
     def params_parse(self, dbg_i: Optional[DebugInfo], args: List[Any], kwargs: Dict[str, Any]) -> Dict[str, Any]:
         for key, value in kwargs.items():
@@ -46,10 +46,10 @@ class ConcatenateOp(AbstractOp):
         for arg in args:
             if not isinstance(arg, NDArrayInferenceDescriptor):
                 raise TypeInferenceError(dbg_i, f"Expected all arguments to be NDArray, but got {arg}")
-        check_concatenate = NDArrayHelper.check_concatenate([arg.get() for arg in args], axis_value)
-        if check_concatenate is not None:
-            raise TypeInferenceError(dbg_i, check_concatenate)
-        return NDArrayDTDescriptor(NDArrayHelper.concatenate_shape([arg.get() for arg in args], axis_value), args[0].dtype())
+        check_stack = NDArrayHelper.check_stack([arg.get() for arg in args], axis_value)
+        if check_stack is not None:
+            raise TypeInferenceError(dbg_i, check_stack)
+        return NDArrayDTDescriptor(NDArrayHelper.stack_shape([arg.get() for arg in args], axis_value), args[0].dtype())
 
     def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
         axis = kwargs.get("axis", None)
@@ -58,7 +58,7 @@ class ConcatenateOp(AbstractOp):
         if axis is not None:
             axis_value = axis.get()
         assert axis_value is not None
-        result = NDArrayHelper.concatenate([arg.get() for arg in args], axis_value)
+        result = NDArrayHelper.stack([arg.get() for arg in args], axis_value)
         return NDArrayInferenceDescriptor(result.shape, args[0].dtype(), result)
 
     def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
@@ -68,5 +68,5 @@ class ConcatenateOp(AbstractOp):
         if axis is not None:
             axis_value = axis.val()
         assert axis_value is not None
-        result = NDArrayHelper.concatenate([arg.ptr() for arg in args], axis_value)
+        result = NDArrayHelper.stack([arg.ptr() for arg in args], axis_value)
         return NDArrayFlattenDescriptor(result.shape, args[0].dtype(), result)

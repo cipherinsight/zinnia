@@ -47,7 +47,7 @@ class SquareBracketsOp(AbstractOp):
         if all([isinstance(arg.type(), FloatDTDescriptor) for arg in args]):
             return NDArrayInferenceDescriptor((len(args), ), FloatDTDescriptor(), NDArrayHelper((len(args), ), [arg.get() for arg in args]))
         new_shape = (len(args), ) + args[0].shape()
-        return NDArrayInferenceDescriptor(new_shape, args[0].dtype(), NDArrayHelper.concat([arg.get() for arg in args]))
+        return NDArrayInferenceDescriptor(new_shape, args[0].dtype(), NDArrayHelper.stack([arg.get() for arg in args]))
 
     def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
         args = list(kwargs.values())
@@ -56,4 +56,4 @@ class SquareBracketsOp(AbstractOp):
         if all([isinstance(arg.type(), FloatDTDescriptor) for arg in args]):
             return NDArrayFlattenDescriptor((len(args), ), FloatDTDescriptor(), NDArrayHelper((len(args), ), [arg.ptr() for arg in args]))
         new_shape = (len(args), ) + args[0].shape()
-        return NDArrayFlattenDescriptor(new_shape, args[0].dtype(), NDArrayHelper.concat([arg.ptr() for arg in args]))
+        return NDArrayFlattenDescriptor(new_shape, args[0].dtype(), NDArrayHelper.stack([arg.ptr() for arg in args]))

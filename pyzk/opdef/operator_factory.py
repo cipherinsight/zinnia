@@ -4,6 +4,7 @@ from typing import Optional
 from pyzk.opdef.ndarray.op_T import NDArray_TOp
 from pyzk.opdef.ndarray.op_argmax import NDArray_ArgMaxOp
 from pyzk.opdef.ndarray.op_argmin import NDArray_ArgMinOp
+from pyzk.opdef.ndarray.op_flat import NDArray_FlatOp
 from pyzk.opdef.ndarray.op_max import NDArray_MaxOp
 from pyzk.opdef.ndarray.op_min import NDArray_MinOp
 from pyzk.opdef.ndarray.op_transpose import NDArray_TransposeOp
@@ -26,6 +27,7 @@ from pyzk.opdef.nocls.op_and import AndOp
 from pyzk.opdef.nocls.op_assert import AssertOp
 from pyzk.opdef.nocls.op_assign_slice import AssignSliceOp
 from pyzk.opdef.nocls.op_bool_cast import BoolCastOp
+from pyzk.opdef.nocls.op_concatenate import ConcatenateOp
 from pyzk.opdef.nocls.op_constant_cast import ConstantCastOp
 from pyzk.opdef.nocls.op_constant import ConstantOp
 from pyzk.opdef.nocls.op_constant_class import ConstantClassOp
@@ -91,6 +93,7 @@ from pyzk.opdef.nocls.op_sinh import SinHOp
 from pyzk.opdef.nocls.op_slice import SliceOp
 from pyzk.opdef.nocls.op_sqrt import SqrtOp
 from pyzk.opdef.nocls.op_square_brackets import SquareBracketsOp
+from pyzk.opdef.nocls.op_stack import StackOp
 from pyzk.opdef.nocls.op_sub import SubOp
 from pyzk.opdef.nocls.op_sub_f import SubFOp
 from pyzk.opdef.nocls.op_sub_i import SubIOp
@@ -184,6 +187,8 @@ class Operators:
         SIGN = SignOp
         SIGN_I = SignIOp
         SIGN_F = SignFOp
+        CONCATENATE = ConcatenateOp
+        STACK = StackOp
 
     class NDArray:
         ALL = NDArray_AllOp
@@ -200,6 +205,7 @@ class Operators:
         MAX = NDArray_MaxOp
         ARGMIN = NDArray_ArgMinOp
         ARGMAX = NDArray_ArgMaxOp
+        FLAT = NDArray_FlatOp
 
     class Tuple:
         pass

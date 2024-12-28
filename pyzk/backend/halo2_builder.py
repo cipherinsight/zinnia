@@ -149,7 +149,7 @@ class _Halo2StatementBuilder:
         assert isinstance(stmt.operator, ConstantOp)
         constant_val = stmt.operator.value
         return [
-            f"let {self._get_var_name(stmt.stmt_id)} = Constant(F::from({constant_val}));" if constant_val >= 0 else f"{{gate.neg(ctx, Constant(F::from({constant_val})))}};"
+            f"let {self._get_var_name(stmt.stmt_id)} = " + (f"Constant(F::from({constant_val}));" if constant_val >= 0 else f"{{gate.neg(ctx, Constant(F::from({-constant_val})))}};")
         ]
 
     def _build_ConstantFloatOp(self, stmt: IRStatement) -> List[str]:

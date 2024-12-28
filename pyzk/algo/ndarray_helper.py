@@ -187,19 +187,11 @@ class NDArrayHelper:
     ) -> Any:
         assert 0 <= axis < len(self.shape) or axis == -1
         if axis == -1:
-            def _internal_helper(_shape: Tuple[int, ...], _operand: List):
-                if len(_shape) == 1:
-                    result, result_idx = initial_generator(_operand[0])
-                    for i, x in enumerate(_operand):
-                        result, result_idx = accumulator(result, result_idx, x, i)
-                    return result, result_idx
-                else:
-                    result, result_idx = initial_generator(_operand[0])
-                    for i, x in enumerate(_operand):
-                        result, result_idx = accumulator(result, result_idx, _internal_helper(_shape[1:], x)[0], i)
-                    return result, result_idx
-            ans, ans_i = _internal_helper(self.shape, self.values)
-            return result_parser(ans, ans_i)
+            flatten_values = self.flatten()
+            result, result_i = initial_generator(flatten_values[0])
+            for i, x in enumerate(flatten_values):
+                result, result_i = accumulator(result, result_i, x, i)
+            return result_parser(result, result_i)
         else:
             def _generate_initial_by_shape(_shape: Tuple[int, ...], _operand: List):
                 if len(_shape) == 1:
@@ -251,11 +243,85 @@ class NDArrayHelper:
         return NDArrayHelper(shape=shape, values=new_values)
 
     @staticmethod
-    def concat(*args) -> 'NDArrayHelper':
+    def check_concatenate(args: List['NDArrayHelper'], axis=0) -> str | None:
         assert all([isinstance(arg, NDArrayHelper) for arg in args])
         for i, arg in enumerate(args):
-            assert i == 0 or arg == args[i - 1]
-        return NDArrayHelper((len(args),) + args[0].shape, [x.values.copy() for x in args])
+            if i != 0:
+                lhs_shape = arg.shape
+                rhs_shape = args[i - 1].shape
+                if not len(lhs_shape) == len(rhs_shape):
+                    return "Cannot perform concatenate: elements shape number of dimensions mismatch"
+                if len(lhs_shape) <= axis:
+                    return "Cannot perform concatenate: axis out of range"
+                if not all([a == b or j == axis for j, (a, b) in enumerate(zip(lhs_shape, rhs_shape))]):
+                    return "Cannot perform concatenate: all the input array dimensions except for the concatenation axis must match exactly"
+        return None
+
+    @staticmethod
+    def concatenate_shape(args: List['NDArrayHelper'], axis=0) -> Tuple[int, ...]:
+        assert NDArrayHelper.check_concatenate(args, axis) is None
+        if axis == -1:
+            flatten_values = []
+            for arg in args:
+                flatten_values += arg.flatten()
+            return (len(flatten_values), )
+        new_shape_value = 0
+        for arg in args:
+            new_shape_value += arg.shape[axis]
+        new_shape = tuple(x if i != axis else new_shape_value for i, x in enumerate(args[0].shape))
+        return new_shape
+
+    @staticmethod
+    def concatenate(args: List['NDArrayHelper'], axis=0) -> 'NDArrayHelper':
+        assert NDArrayHelper.check_concatenate(args, axis) is None
+        if axis == -1:
+            flatten_values = []
+            for arg in args:
+                flatten_values += arg.flatten()
+            return NDArrayHelper((len(flatten_values),), flatten_values)
+        new_shape_value = 0
+        for arg in args:
+            new_shape_value += arg.shape[axis]
+        new_shape = tuple(x if i != axis else new_shape_value for i, x in enumerate(args[0].shape))
+        def _internal_helper(_axis: int, _values_lhs: List, _values_rhs: List):
+            if _axis == axis:
+                return _values_lhs + _values_rhs
+            assert len(_values_lhs) == len(_values_rhs)
+            return [_internal_helper(_axis + 1, x, y) for x, y in zip(_values_lhs, _values_rhs)]
+        result = args[0].values
+        for arg in args[1:]:
+            result = _internal_helper(0, result, arg.values)
+        return NDArrayHelper(new_shape, result)
+
+    @staticmethod
+    def check_stack(args: List['NDArrayHelper'], axis=0) -> str | None:
+        assert all([isinstance(arg, NDArrayHelper) for arg in args])
+        for i, arg in enumerate(args):
+            if not (i == 0 or arg.shape == args[i - 1].shape):
+                return "Cannot perform stack: all input arrays must have the same shape"
+            if axis < 0 or axis > len(arg.shape):
+                return "Cannot perform stack: axis out of range"
+        return None
+
+    @staticmethod
+    def stack_shape(args: List['NDArrayHelper'], axis=0) -> Tuple[int, ...]:
+        assert NDArrayHelper.check_stack(args, axis) is None
+        new_shape = list(args[0].shape)
+        new_shape.insert(axis, len(args))
+        return tuple(new_shape)
+
+    @staticmethod
+    def stack(args: List['NDArrayHelper'], axis=0) -> 'NDArrayHelper':
+        assert NDArrayHelper.check_stack(args, axis) is None
+        new_shape = list(args[0].shape)
+        new_shape.insert(axis, len(args))
+        new_shape = tuple(new_shape)
+        def _internal_helper(_axis: int, _values: List[List]):
+            if _axis == axis:
+                return _values
+            return [_internal_helper(_axis + 1, [x[i] for x in _values]) for i in range(len(_values[0]))]
+        new_values = _internal_helper(0, [arg.values for arg in args])
+        return NDArrayHelper(new_shape, new_values)
 
     @staticmethod
     def matmul_shape_matches(shape_lhs: Tuple[int, ...], shape_rhs: Tuple[int, ...]) -> bool:
