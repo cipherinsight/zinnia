@@ -1,6 +1,6 @@
 from typing import Dict, Tuple, List
 
-from zenopy.algo.ndarray_helper import NDArrayValueWrapper
+from zenopy.internal.internal_ndarray import InternalNDArray
 from zenopy.debug.exception.execution import ZKCircuitParameterException
 from zenopy.internal.dt_descriptor import IntegerDTDescriptor, NDArrayDTDescriptor, FloatDTDescriptor
 from zenopy.internal.prog_meta_data import ProgramMetadata
@@ -44,7 +44,7 @@ class ExecutionContext:
                 if not isinstance(arg_dict[inp.name], List):
                     raise ZKCircuitParameterException(None, f'Expected pure Python list for argument {inp.name}')
                 try:
-                    ndarray = NDArrayValueWrapper(inp.dt.shape, arg_dict[inp.name])
+                    ndarray = InternalNDArray(inp.dt.shape, arg_dict[inp.name])
                 except AssertionError:
                     raise ZKCircuitParameterException(None, f'NDArray shape mismatch for {inp.name}')
                 def _dt_verifier(indices, v):

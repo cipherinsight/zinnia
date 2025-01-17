@@ -3,7 +3,6 @@ from typing import List, Dict, Optional
 from zenopy.debug.exception import TypeInferenceError
 from zenopy.opdef.nocls.abstract_op import AbstractOp
 from zenopy.internal.dt_descriptor import DTDescriptor, FloatDTDescriptor, FloatType, IntegerType
-from zenopy.algo.ndarray_helper import NDArrayValueWrapper
 from zenopy.debug.dbg_info import DebugInfo
 from zenopy.builder.abstract_ir_builder import AbsIRBuilderInterface
 from zenopy.builder.value import Value, NDArrayValue
@@ -39,18 +38,14 @@ class MatMulOp(AbstractOp):
     def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         lhs, rhs = kwargs["lhs"], kwargs["rhs"]
         if isinstance(lhs, NDArrayValue) and isinstance(rhs, NDArrayValue):
-            if not NDArrayValueWrapper.matmul_shape_matches(lhs.shape(), rhs.shape()):
+            if not NDArrayValue.matmul_compatible(lhs.shape(), rhs.shape()):
                 raise TypeInferenceError(dbg, f'Invalid binary operator `{self.get_name()}` on operands {lhs.type()} and {rhs.type()}, as their shapes are not multiply compatible')
-            matmul_shape = NDArrayValueWrapper.matmul_shape(lhs.shape(), rhs.shape())
             expected_dtype = self._get_expected_result_dt(lhs.dtype(), rhs.dtype())
-            return NDArrayValue(
-                matmul_shape,
+            return NDArrayValue.matmul(
+                lhs, rhs,
                 expected_dtype,
-                NDArrayValueWrapper.matmul(
-                    lhs.get(), rhs.get(),
-                    lambda x, y: reducer.op_add(x, y),
-                    lambda x, y: reducer.op_multiply(x, y),
-                    lambda: self._reduce_constant_zero(reducer, expected_dtype)
-                )
+                lambda x, y: reducer.op_add(x, y),
+                lambda x, y: reducer.op_multiply(x, y),
+                lambda: self._reduce_constant_zero(reducer, expected_dtype)
             )
         raise TypeInferenceError(dbg, f'Invalid binary operator `{self.get_name()}` on operands {lhs.type()} and {rhs.type()}. Only ndarray can be passed to `{self.get_name()}`')

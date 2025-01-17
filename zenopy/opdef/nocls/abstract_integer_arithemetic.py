@@ -1,6 +1,5 @@
 from typing import Callable, Optional, Dict, List
 
-from zenopy.algo.ndarray_helper import NDArrayValueWrapper
 from zenopy.debug.dbg_info import DebugInfo
 from zenopy.debug.exception import TypeInferenceError
 from zenopy.internal.dt_descriptor import DTDescriptor, IntegerType
@@ -32,20 +31,20 @@ class AbstractIntegerArithemetic(AbstractOp):
 
     def reduce_number_and_ndarray(self, reducer: AbsIRBuilderInterface, lhs: IntegerValue, rhs: NDArrayValue) -> Value:
         lhs_ndarray = NDArrayValue.from_number(lhs)
-        lhs_ndarray, rhs_ndarray = NDArrayValue.broadcast(lhs_ndarray, rhs)
+        lhs_ndarray, rhs_ndarray = NDArrayValue.binary_broadcast(lhs_ndarray, rhs)
         result = NDArrayValue.binary(lhs_ndarray, rhs_ndarray, IntegerType, self.get_reduce_op_lambda(reducer))
         return result
 
     def reduce_ndarray_and_number(self, reducer: AbsIRBuilderInterface, lhs: NDArrayValue, rhs: IntegerValue) -> Value:
         rhs_ndarray = NDArrayValue.from_number(rhs)
-        lhs_ndarray, rhs_ndarray = NDArrayValue.broadcast(lhs, rhs_ndarray)
+        lhs_ndarray, rhs_ndarray = NDArrayValue.binary_broadcast(lhs, rhs_ndarray)
         result = NDArrayValue.binary(lhs_ndarray, rhs_ndarray, IntegerType, self.get_reduce_op_lambda(reducer))
         return result
 
     def reduce_ndarray_and_ndarray(self, reducer: AbsIRBuilderInterface, lhs: NDArrayValue, rhs: NDArrayValue) -> NDArrayValue:
-        if not NDArrayValueWrapper.binary_broadcast_compatible(lhs.shape(), rhs.shape()):
+        if not NDArrayValue.binary_broadcast_compatible(lhs.shape(), rhs.shape()):
             raise TypeInferenceError(None, f"Cannot broadcast two NDArray with shapes {lhs.shape()} and {rhs.shape()}")
-        lhs, rhs = NDArrayValue.broadcast(lhs, rhs)
+        lhs, rhs = NDArrayValue.binary_broadcast(lhs, rhs)
         result = NDArrayValue.binary(lhs, rhs, IntegerType, self.get_reduce_op_lambda(reducer))
         return result
 

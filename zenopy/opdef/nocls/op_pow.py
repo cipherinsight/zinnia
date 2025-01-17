@@ -1,6 +1,5 @@
 from typing import List, Dict, Optional
 
-from zenopy.algo.ndarray_helper import NDArrayValueWrapper
 from zenopy.debug.exception import TypeInferenceError, StaticInferenceError
 from zenopy.opdef.nocls.abstract_op import AbstractOp
 from zenopy.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor, FloatDTDescriptor, IntegerType, FloatType, \
@@ -86,10 +85,8 @@ class PowOp(AbstractOp):
         result_dtype = self._get_result_dtype(x_dtype, exponent_dtype)
         if not self._check_mod_allowed(x_dtype, exponent_dtype, mod_dtype):
             raise TypeInferenceError(dbg, f'pow() 3rd argument not allowed unless all arguments are integers')
-        if not NDArrayValueWrapper.binary_broadcast_compatible(x.shape(), exponent.shape()):
+        if not NDArrayValue.binary_broadcast_compatible(x.shape(), exponent.shape()):
             raise TypeInferenceError(dbg, f'Failed to broadcast on operand x and exponent')
-        if not NDArrayValueWrapper.binary_broadcast_compatible(NDArrayValueWrapper.binary_broadcast_shape(x_shape, exponent_shape), mod_shape):
-            raise TypeInferenceError(dbg, f'Failed to broadcast on operand x, exponent and mod')
         result_is_ndarray = isinstance(x, NDArrayValue) or isinstance(exponent, NDArrayValue) or (mod is not None and isinstance(mod, NDArrayValue))
         x_ndarray = x.get() if isinstance(x, NDArrayValue) else NDArrayValue.from_number(x)
         exponent_ndarray = exponent.get() if isinstance(exponent, NDArrayValue) else NDArrayValue.from_number(exponent)
@@ -98,11 +95,13 @@ class PowOp(AbstractOp):
             raise StaticInferenceError(dbg, f'pow() 2nd argument must be non-negative if 3rd argument is present')
         if result_dtype == IntegerType and not self._check_ndarray_no_negative(exponent_ndarray):
             raise StaticInferenceError(dbg, f'pow() 2nd argument must be non-negative if all arguments are Integer')
-        x_ndarray, exponent_ndarray = NDArrayValue.broadcast(x_ndarray, exponent_ndarray)
+        x_ndarray, exponent_ndarray = NDArrayValue.binary_broadcast(x_ndarray, exponent_ndarray)
         result = NDArrayValue.binary(x_ndarray, exponent_ndarray, self._get_expected_result_dtype(x_dtype, exponent_dtype), lambda u, v: self._reduce_pow(reducer, u, v))
         if mod is not None:
+            if not NDArrayValue.binary_broadcast_compatible(x_ndarray.shape(), mod_shape):
+                raise TypeInferenceError(dbg, f'Failed to broadcast on operand x, exponent and mod')
             assert result.dtype() == IntegerType
-            result, mod_ndarray = NDArrayValue.broadcast(result, mod_ndarray)
+            result, mod_ndarray = NDArrayValue.binary_broadcast(result, mod_ndarray)
             result = NDArrayValue.binary(result, mod_ndarray, IntegerType, lambda u, v: reducer.op_modulo(u, v))
         if not result_is_ndarray:
             result = result.flattened_values()

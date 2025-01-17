@@ -3,7 +3,6 @@ from typing import Dict, List, Optional, Tuple
 from zenopy.debug.exception import TypeInferenceError, StaticInferenceError
 from zenopy.opdef.nocls.abstract_op import AbstractOp
 from zenopy.internal.dt_descriptor import DTDescriptor
-from zenopy.algo.ndarray_helper import NDArrayValueWrapper
 from zenopy.debug.dbg_info import DebugInfo
 from zenopy.builder.abstract_ir_builder import AbsIRBuilderInterface
 from zenopy.builder.value import Value, NDArrayValue, IntegerValue, NumberValue
@@ -55,14 +54,11 @@ class AbstractAggregator(AbstractOp):
         if _axis >= len(the_self.shape()):
             raise TypeInferenceError(dbg, f"Invalid `axis` value for `{self.get_signature()}`. The axis number exceeds total number of dimensions of the ndarray")
         dtype = self.get_result_dtype(dtype)
-        result_value = the_self.get().accumulate(
+        result_value = the_self.accumulate(
             _axis,
             lambda x, x_i, y, y_i: self.aggregator_func(reducer, x, x_i, y, y_i, dtype),
             lambda first_ele: self.initial_func(reducer, dtype, first_ele),
             lambda x, y: self.enpair_func(reducer, x, y),
             lambda x, y: self.depair_func(reducer, x, y)
         )
-        if isinstance(result_value, NDArrayValueWrapper):
-            return NDArrayValue(result_value.shape, dtype, result_value)
-        else:
-            return result_value
+        return result_value

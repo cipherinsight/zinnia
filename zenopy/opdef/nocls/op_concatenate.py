@@ -1,6 +1,5 @@
 from typing import Optional, List, Dict
 
-from zenopy.algo.ndarray_helper import NDArrayValueWrapper
 from zenopy.debug.dbg_info import DebugInfo
 from zenopy.debug.exception import TypeInferenceError, StaticInferenceError
 from zenopy.internal.dt_descriptor import IntegerType, FloatType
@@ -50,8 +49,15 @@ class ConcatenateOp(AbstractOp):
         sources: List[NDArrayValue] = []
         for arg in args.values():
             sources.append(reducer.op_float_cast(arg) if expected_float and arg.dtype() != FloatType else arg)
-        check_result = NDArrayValueWrapper.check_concatenate([source.get() for source in sources])
-        if check_result is not None:
-            raise TypeInferenceError(dbg, check_result)
-        result = NDArrayValueWrapper.concatenate([source.get() for source in sources], axis_value)
-        return NDArrayValue(result.shape, FloatType if expected_float else IntegerType, result)
+        for i, src in enumerate(sources):
+            if i == 0:
+                continue
+            lhs_shape = src.shape()
+            rhs_shape = sources[i - 1].shape()
+            if not len(lhs_shape) == len(rhs_shape):
+                raise TypeInferenceError(dbg, "Cannot perform concatenate: elements shape number of dimensions mismatch")
+            if len(lhs_shape) <= axis_value or axis_value < 0:
+                raise TypeInferenceError(dbg, f"Cannot perform concatenate: axis ({axis_value}) out of bounds for array with {len(lhs_shape)} dimensions")
+            if not all([a == b or j == axis_value for j, (a, b) in enumerate(zip(lhs_shape, rhs_shape))]):
+                raise TypeInferenceError(dbg, "Cannot perform concatenate: all the input array dimensions except for the concatenation axis must match exactly")
+        return NDArrayValue.concatenate(FloatType if expected_float else IntegerType, axis_value, sources)

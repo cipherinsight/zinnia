@@ -1,6 +1,5 @@
 from typing import List, Dict, Optional
 
-from zenopy.algo.ndarray_helper import NDArrayValueWrapper
 from zenopy.debug.exception import TypeInferenceError, StaticInferenceError
 from zenopy.internal.dt_descriptor import IntegerType
 from zenopy.opdef.nocls.abstract_op import AbstractOp
@@ -45,6 +44,5 @@ class NDArray_ReshapeOp(AbstractOp):
         if num_elements != num_elements_self:
             raise TypeInferenceError(dbg, f"Number of elements in `shape` must be equal to the number of elements in the original `NDArray`")
         flattened_values = the_self.get().flatten()
-        new_shape = tuple(x.get() for x in the_shape.values())
-        new_values = NDArrayValueWrapper.from_1d_values_and_shape(flattened_values, new_shape)
-        return NDArrayValue(new_shape, the_self.dtype(), new_values)
+        new_shape = tuple(x.val() for x in the_shape.values())
+        return NDArrayValue.from_shape_and_vector(new_shape, the_self.dtype(), flattened_values)

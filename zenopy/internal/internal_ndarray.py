@@ -2,26 +2,26 @@ import copy
 from typing import Tuple, List, Callable, Any, Union
 
 
-class NDArrayValueWrapper:
+class InternalNDArray:
     shape: Tuple[int, ...]
     values: List
 
     def __init__(self, shape: Tuple[int, ...], values: List):
         self.shape = shape
         self.values = values
-        assert NDArrayValueWrapper._assert_shape_matches_value(shape, values)
+        assert InternalNDArray._assert_shape_matches_value(shape, values)
 
-    def __copy__(self) -> "NDArrayValueWrapper":
-        return NDArrayValueWrapper(shape=self.shape, values=copy.copy(self.values))
+    def __copy__(self) -> "InternalNDArray":
+        return InternalNDArray(shape=self.shape, values=copy.copy(self.values))
 
-    def __deepcopy__(self, memo) -> "NDArrayValueWrapper":
-        new_instance = NDArrayValueWrapper(shape=self.shape, values=copy.copy(self.values))
+    def __deepcopy__(self, memo) -> "InternalNDArray":
+        new_instance = InternalNDArray(shape=self.shape, values=copy.copy(self.values))
         memo[id(self)] = new_instance
         new_instance.values = copy.deepcopy(self.values, memo)
         return new_instance
 
-    def shape_matches(self, other: 'NDArrayValueWrapper') -> bool:
-        return NDArrayValueWrapper._shape_matches(self.shape, other.shape)
+    def shape_matches(self, other: 'InternalNDArray') -> bool:
+        return InternalNDArray._shape_matches(self.shape, other.shape)
 
     def slice(self, slicing: List[int | Tuple[int, int, int]]) -> Any:
         padded_slicing = slicing + [(None, None, None) for _ in range(len(self.shape) - len(slicing))]
@@ -39,14 +39,14 @@ class NDArrayValueWrapper:
         number_of_singles = sum(1 for x in padded_slicing if isinstance(x, int))
         if number_of_singles == len(self.shape):
             return new_values
-        return NDArrayValueWrapper(shape=NDArrayValueWrapper._get_shape_of(new_values), values=new_values)
+        return InternalNDArray(shape=InternalNDArray._get_shape_of(new_values), values=new_values)
 
     def slice_assign(
         self,
         slicing_data: List[int | Tuple[int, int, int]],
-        other: Union['NDArrayValueWrapper', Any],
+        other: Union['InternalNDArray', Any],
         assign_func: Callable[[Any, Any], Any]
-    ) -> 'NDArrayValueWrapper':
+    ) -> 'InternalNDArray':
         id_value_mapping = dict()
         encoder_next_id = 0
         def _encode(x):
@@ -65,7 +65,7 @@ class NDArrayValueWrapper:
             if old_value_new_value_mapping.get(x, None) is not None:
                 return assign_func(id_value_mapping[x], old_value_new_value_mapping[x])
             return id_value_mapping[x]
-        if isinstance(sliced_numbered_ndarray, NDArrayValueWrapper):
+        if isinstance(sliced_numbered_ndarray, InternalNDArray):
             assert sliced_numbered_ndarray.shape_matches(other)
             sliced_numbered_ndarray.binary(other, _create_mapping)
         else:
@@ -83,7 +83,7 @@ class NDArrayValueWrapper:
         return _internal_helper(0, self.values)
 
     @staticmethod
-    def from_1d_values_and_shape(values_1dim: List[Any], shape: Tuple[int, ...]) -> 'NDArrayValueWrapper':
+    def from_1d_values_and_shape(values_1dim: List[Any], shape: Tuple[int, ...]) -> 'InternalNDArray':
         def _internal_helper(_shape: Tuple[int, ...], _values: List):
             if len(_shape) == 1:
                 return _values
@@ -93,10 +93,10 @@ class NDArrayValueWrapper:
                 _results.append(_internal_helper(_shape[1:], _values[i * _partition_len:(i + 1) * _partition_len]))
             return _results
         parsed_values = _internal_helper(shape, values_1dim)
-        return NDArrayValueWrapper(shape=shape, values=parsed_values)
+        return InternalNDArray(shape=shape, values=parsed_values)
 
     @staticmethod
-    def binary_broadcast(lhs: 'NDArrayValueWrapper', rhs: 'NDArrayValueWrapper') -> Tuple['NDArrayValueWrapper', 'NDArrayValueWrapper']:
+    def binary_broadcast(lhs: 'InternalNDArray', rhs: 'InternalNDArray') -> Tuple['InternalNDArray', 'InternalNDArray']:
         shape_lhs, shape_rhs = lhs.shape, rhs.shape
         if len(shape_lhs) < len(shape_rhs):
             shape_lhs = tuple(1 for _ in range(len(shape_rhs) - len(shape_lhs))) + shape_lhs
@@ -121,18 +121,7 @@ class NDArrayValueWrapper:
             return [_pad_values(values, depth - 1)]
         new_values_lhs = _internal_helper(broadcast_shape, shape_lhs, _pad_values(lhs.values, len(rhs.shape) - len(lhs.shape)))
         new_values_rhs = _internal_helper(broadcast_shape, shape_rhs, _pad_values(rhs.values, len(lhs.shape) - len(rhs.shape)))
-        return NDArrayValueWrapper(broadcast_shape, new_values_lhs), NDArrayValueWrapper(broadcast_shape, new_values_rhs)
-
-    @staticmethod
-    def binary_broadcast_shape(lhs: Tuple[int, ...], rhs: Tuple[int, ...]) -> Tuple[int, ...]:
-        shape_lhs, shape_rhs = lhs, rhs
-        if len(shape_lhs) < len(shape_rhs):
-            shape_lhs = tuple(1 for _ in range(len(shape_rhs) - len(shape_lhs))) + shape_lhs
-        if len(shape_rhs) < len(shape_lhs):
-            shape_rhs = tuple(1 for _ in range(len(shape_lhs) - len(shape_rhs))) + shape_rhs
-        assert all([a == 1 or b == 1 or a == b for a, b in zip(shape_lhs, shape_rhs)])
-        broadcast_shape = tuple(max(a, b) for a, b in zip(shape_lhs, shape_rhs))
-        return broadcast_shape
+        return InternalNDArray(broadcast_shape, new_values_lhs), InternalNDArray(broadcast_shape, new_values_rhs)
 
     @staticmethod
     def binary_broadcast_compatible(shape_lhs: Tuple[int, ...], shape_rhs: Tuple[int, ...]) -> bool:
@@ -143,13 +132,13 @@ class NDArrayValueWrapper:
         return all([a == 1 or b == 1 or a == b for a, b in zip(shape_lhs, shape_rhs)])
 
     @staticmethod
-    def directed_broadcast(src: 'NDArrayValueWrapper', dst: Tuple[int, ...]) -> 'NDArrayValueWrapper':
+    def directed_broadcast(src: 'InternalNDArray', dst: Tuple[int, ...]) -> 'InternalNDArray':
         def _internal_helper(_shape: Tuple[int, ...], _values: List):
             if len(_shape) == 1:
                 return _values[0]
             return [_internal_helper(_shape[1:], _values) for _ in range(_shape[0])]
         new_values = _internal_helper(dst, src.values)
-        return NDArrayValueWrapper(dst, new_values)
+        return InternalNDArray(dst, new_values)
 
     @staticmethod
     def directed_broadcast_compatible(src: Tuple[int, ...], dst: Tuple[int, ...]) -> bool:
@@ -159,22 +148,22 @@ class NDArrayValueWrapper:
             return False
         return all([a == 1 or a == b for a, b in zip(src, dst)])
 
-    def binary(self, other: 'NDArrayValueWrapper', op: Callable[[Any, Any], Any]) -> 'NDArrayValueWrapper':
-        assert NDArrayValueWrapper._shape_matches(self.shape, other.shape)
+    def binary(self, other: 'InternalNDArray', op: Callable[[Any, Any], Any]) -> 'InternalNDArray':
+        assert InternalNDArray._shape_matches(self.shape, other.shape)
         def _internal_helper(_shape: Tuple[int, ...], _lhs: List, _rhs: List):
             if len(_shape) == 1:
                 return [op(a, b) for a, b in zip(_lhs, _rhs)]
             return [_internal_helper(_shape[1:], a, b) for a, b in zip(_lhs, _rhs)]
         new_values = _internal_helper(self.shape, self.values, other.values)
-        return NDArrayValueWrapper(shape=self.shape, values=new_values)
+        return InternalNDArray(shape=self.shape, values=new_values)
 
-    def unary(self, op: Callable[[Any], Any]) -> 'NDArrayValueWrapper':
+    def unary(self, op: Callable[[Any], Any]) -> 'InternalNDArray':
         def _internal_helper(_shape: Tuple[int, ...], _operand: List):
             if len(_shape) == 1:
                 return [op(x) for x in _operand]
             return [_internal_helper(_shape[1:], x) for x in _operand]
         new_values = _internal_helper(self.shape, self.values)
-        return NDArrayValueWrapper(shape=self.shape, values=new_values)
+        return InternalNDArray(shape=self.shape, values=new_values)
 
     def accumulate(
             self,
@@ -224,66 +213,32 @@ class NDArrayValueWrapper:
                 val, idx = new_values
                 return _parsing_helper(val, idx)
             new_values = _parsing_helper(new_shape, new_values)
-            return NDArrayValueWrapper(shape=new_shape, values=new_values)
+            return InternalNDArray(shape=new_shape, values=new_values)
 
-    def for_each(self, func: Callable[[Tuple[int, ...], Any], Any]) -> 'NDArrayValueWrapper':
+    def for_each(self, func: Callable[[Tuple[int, ...], Any], Any]) -> 'InternalNDArray':
         def _internal_helper(_indices: Tuple[int, ...], _depth: int, _operand: List):
             if _depth == len(self.shape):
                 return func(_indices, _operand)
             return [_internal_helper(_indices + (i, ), _depth + 1, val) for i, val in enumerate(_operand)]
         new_values = _internal_helper(tuple(), 0, self.values)
-        return NDArrayValueWrapper(shape=self.shape, values=new_values)
+        return InternalNDArray(shape=self.shape, values=new_values)
 
     @staticmethod
-    def fill(shape: Tuple[int, ...], fill_value: Callable[[], Any]) -> 'NDArrayValueWrapper':
+    def fill(shape: Tuple[int, ...], fill_value: Callable[[], Any]) -> 'InternalNDArray':
         def _internal_helper(_shape: Tuple[int, ...]):
             if len(_shape) == 1:
                 return [fill_value() for _ in range(_shape[0])]
             return [_internal_helper(_shape[1:]) for _ in range(_shape[0])]
         new_values = _internal_helper(shape)
-        return NDArrayValueWrapper(shape=shape, values=new_values)
+        return InternalNDArray(shape=shape, values=new_values)
 
     @staticmethod
-    def nones(shape: Tuple[int, ...]):
-        return NDArrayValueWrapper.fill(shape, lambda: None)
-
-    @staticmethod
-    def check_concatenate(args: List['NDArrayValueWrapper'], axis=0) -> str | None:
-        assert all([isinstance(arg, NDArrayValueWrapper) for arg in args])
-        for i, arg in enumerate(args):
-            if i != 0:
-                lhs_shape = arg.shape
-                rhs_shape = args[i - 1].shape
-                if not len(lhs_shape) == len(rhs_shape):
-                    return "Cannot perform concatenate: elements shape number of dimensions mismatch"
-                if len(lhs_shape) <= axis:
-                    return "Cannot perform concatenate: axis out of range"
-                if not all([a == b or j == axis for j, (a, b) in enumerate(zip(lhs_shape, rhs_shape))]):
-                    return "Cannot perform concatenate: all the input array dimensions except for the concatenation axis must match exactly"
-        return None
-
-    @staticmethod
-    def concatenate_shape(args: List['NDArrayValueWrapper'], axis=0) -> Tuple[int, ...]:
-        assert NDArrayValueWrapper.check_concatenate(args, axis) is None
+    def concatenate(args: List['InternalNDArray'], axis=0) -> 'InternalNDArray':
         if axis == -1:
             flatten_values = []
             for arg in args:
                 flatten_values += arg.flatten()
-            return (len(flatten_values), )
-        new_shape_value = 0
-        for arg in args:
-            new_shape_value += arg.shape[axis]
-        new_shape = tuple(x if i != axis else new_shape_value for i, x in enumerate(args[0].shape))
-        return new_shape
-
-    @staticmethod
-    def concatenate(args: List['NDArrayValueWrapper'], axis=0) -> 'NDArrayValueWrapper':
-        assert NDArrayValueWrapper.check_concatenate(args, axis) is None
-        if axis == -1:
-            flatten_values = []
-            for arg in args:
-                flatten_values += arg.flatten()
-            return NDArrayValueWrapper((len(flatten_values),), flatten_values)
+            return InternalNDArray((len(flatten_values),), flatten_values)
         new_shape_value = 0
         for arg in args:
             new_shape_value += arg.shape[axis]
@@ -296,28 +251,10 @@ class NDArrayValueWrapper:
         result = args[0].values
         for arg in args[1:]:
             result = _internal_helper(0, result, arg.values)
-        return NDArrayValueWrapper(new_shape, result)
+        return InternalNDArray(new_shape, result)
 
     @staticmethod
-    def check_stack(args: List['NDArrayValueWrapper'], axis=0) -> str | None:
-        assert all([isinstance(arg, NDArrayValueWrapper) for arg in args])
-        for i, arg in enumerate(args):
-            if not (i == 0 or arg.shape == args[i - 1].shape):
-                return "Cannot perform stack: all input arrays must have the same shape"
-            if axis < 0 or axis > len(arg.shape):
-                return "Cannot perform stack: axis out of range"
-        return None
-
-    @staticmethod
-    def stack_shape(args: List['NDArrayValueWrapper'], axis=0) -> Tuple[int, ...]:
-        assert NDArrayValueWrapper.check_stack(args, axis) is None
-        new_shape = list(args[0].shape)
-        new_shape.insert(axis, len(args))
-        return tuple(new_shape)
-
-    @staticmethod
-    def stack(args: List['NDArrayValueWrapper'], axis=0) -> 'NDArrayValueWrapper':
-        assert NDArrayValueWrapper.check_stack(args, axis) is None
+    def stack(args: List['InternalNDArray'], axis=0) -> 'InternalNDArray':
         new_shape = list(args[0].shape)
         new_shape.insert(axis, len(args))
         new_shape = tuple(new_shape)
@@ -326,7 +263,7 @@ class NDArrayValueWrapper:
                 return _values
             return [_internal_helper(_axis + 1, [x[i] for x in _values]) for i in range(len(_values[0]))]
         new_values = _internal_helper(0, [arg.values for arg in args])
-        return NDArrayValueWrapper(new_shape, new_values)
+        return InternalNDArray(new_shape, new_values)
 
     @staticmethod
     def matmul_shape_matches(shape_lhs: Tuple[int, ...], shape_rhs: Tuple[int, ...]) -> bool:
@@ -339,21 +276,12 @@ class NDArrayValueWrapper:
         return shape_lhs[1] == shape_rhs[0]
 
     @staticmethod
-    def matmul_shape(shape_lhs: Tuple[int, ...], shape_rhs: Tuple[int, ...]) -> Tuple[int, ...]:
-        assert NDArrayValueWrapper.matmul_shape_matches(shape_lhs, shape_rhs)
-        if len(shape_lhs) == 1:
-            return (shape_rhs[0], )
-        if len(shape_rhs) == 1:
-            return (shape_lhs[1], )
-        return shape_lhs[0], shape_rhs[1]
-
-    @staticmethod
     def matmul(
-            lhs: 'NDArrayValueWrapper', rhs: 'NDArrayValueWrapper',
+            lhs: 'InternalNDArray', rhs: 'InternalNDArray',
             adder: Callable[[Any, Any], Any], multiplier: Callable[[Any, Any], Any],
             initializer: Callable[[], Any]
-    ) -> 'NDArrayValueWrapper':
-        assert NDArrayValueWrapper.matmul_shape_matches(lhs.shape, rhs.shape)
+    ) -> 'InternalNDArray':
+        assert InternalNDArray.matmul_shape_matches(lhs.shape, rhs.shape)
         lhs_values, rhs_values = lhs.values, rhs.values
         lhs_shape, rhs_shape = lhs.shape, rhs.shape
         if len(lhs_shape) == 1:
@@ -369,11 +297,11 @@ class NDArrayValueWrapper:
                     new_values[i][j] = adder(new_values[i][j], multiplier(lhs_values[i][k], rhs_values[k][j]))
         if len(lhs.shape) == 1:
             new_values = new_values[0]
-            return NDArrayValueWrapper((len(new_values),), new_values)
+            return InternalNDArray((len(new_values),), new_values)
         if len(rhs.shape) == 1:
             new_values = [x[0] for x in new_values]
-            return NDArrayValueWrapper((len(new_values),), new_values)
-        return NDArrayValueWrapper((lhs_shape[0], rhs_shape[1]), new_values)
+            return InternalNDArray((len(new_values),), new_values)
+        return InternalNDArray((lhs_shape[0], rhs_shape[1]), new_values)
 
     @staticmethod
     def _assert_shape_matches_value(shape: Tuple[int, ...], values: List) -> bool:
@@ -386,7 +314,7 @@ class NDArrayValueWrapper:
         if shape[0] != len(values):
             return False
         for i in range(shape[0]):
-            if not NDArrayValueWrapper._assert_shape_matches_value(shape[1:], values[i]):
+            if not InternalNDArray._assert_shape_matches_value(shape[1:], values[i]):
                 return False
         return True
 

@@ -1,6 +1,5 @@
 from typing import List, Optional, Dict
 
-from zenopy.algo.ndarray_helper import NDArrayValueWrapper
 from zenopy.debug.dbg_info import DebugInfo
 from zenopy.debug.exception import TypeInferenceError
 from zenopy.opdef.ndarray.abstract_ndarray_item_slice import AbstractNDArrayItemSlice
@@ -48,12 +47,11 @@ class NDArray_SetItemOp(AbstractNDArrayItemSlice):
                     _value_ary = NDArrayValue.from_number(the_value)
                 if not isinstance(_value_ary, NDArrayValue):
                     raise TypeInferenceError(dbg, f"Expected NDArray or a number, got {the_value.type()}")
-                if not NDArrayValueWrapper.directed_broadcast_compatible(_value_ary.shape(), original_value.shape()):
+                if not _value_ary.broadcast_to_compatible(original_value.shape()):
                     raise TypeInferenceError(dbg, f"Cannot broadcast input array from {_value_ary.shape()} to {original_value.shape}")
                 if _value_ary.dtype() != original_value.dtype():
                     raise TypeInferenceError(dbg, f"Cannot assign {the_value.type()} to {original_value.type()}")
-                _value_ary = NDArrayValue(original_value.shape(), original_value.dtype(), NDArrayValueWrapper.directed_broadcast(_value_ary.get(), original_value.shape()))
+                _value_ary = original_value.broadcast_to(original_value.shape())
                 new_value = reducer.op_select(condition, _value_ary, original_value)
                 new_ndarray = new_ndarray.set_item(candidate, new_value)
-        the_self.deep_assign(new_ndarray)
         return the_value

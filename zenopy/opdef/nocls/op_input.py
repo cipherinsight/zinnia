@@ -2,7 +2,6 @@ from typing import List, Dict, Optional
 
 from zenopy.opdef.nocls.abstract_op import AbstractOp
 from zenopy.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor, NDArrayDTDescriptor, FloatDTDescriptor
-from zenopy.algo.ndarray_helper import NDArrayValueWrapper
 from zenopy.debug.dbg_info import DebugInfo
 from zenopy.builder.abstract_ir_builder import AbsIRBuilderInterface
 from zenopy.builder.value import Value, NDArrayValue
@@ -37,9 +36,9 @@ class InputOp(AbstractOp):
                 elif isinstance(dtype, FloatDTDescriptor):
                     return reducer.ir_read_float(self.input_id, the_idx - 1)
                 raise NotImplementedError()
-            return NDArrayValue(self.dt.shape, dtype, NDArrayValueWrapper.fill(
-                self.dt.shape, _id_yield
-            ))
+            return NDArrayValue.fill(
+                self.dt.shape, dtype, _id_yield
+            )
         elif isinstance(self.dt, IntegerDTDescriptor):
             return reducer.ir_read_integer(self.input_id, 0)
         elif isinstance(self.dt, FloatDTDescriptor):

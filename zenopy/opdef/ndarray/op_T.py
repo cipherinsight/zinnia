@@ -1,6 +1,5 @@
 from typing import List, Dict, Optional
 
-from zenopy.algo.ndarray_helper import NDArrayValueWrapper
 from zenopy.opdef.nocls.abstract_op import AbstractOp
 from zenopy.debug.dbg_info import DebugInfo
 from zenopy.builder.abstract_ir_builder import AbsIRBuilderInterface
@@ -28,5 +27,4 @@ class NDArray_TOp(AbstractOp):
         assert isinstance(the_self, NDArrayValue)
         new_shape = the_self.shape()[::-1]
         flattened_values = the_self.get().flatten()
-        new_values = NDArrayValueWrapper.from_1d_values_and_shape(flattened_values, new_shape)
-        return NDArrayValue(new_shape, the_self.dtype(), new_values)
+        return NDArrayValue.from_shape_and_vector(new_shape, the_self.dtype(), flattened_values)

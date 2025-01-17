@@ -3,7 +3,6 @@ from typing import List, Dict, Optional
 from zenopy.debug.exception import TypeInferenceError, StaticInferenceError
 from zenopy.opdef.nocls.abstract_op import AbstractOp
 from zenopy.internal.dt_descriptor import FloatType, IntegerType
-from zenopy.algo.ndarray_helper import NDArrayValueWrapper
 from zenopy.debug.dbg_info import DebugInfo
 from zenopy.builder.abstract_ir_builder import AbsIRBuilderInterface
 from zenopy.builder.value import Value, IntegerValue, ClassValue, NDArrayValue
@@ -42,11 +41,11 @@ class NDArray_IdentityOp(AbstractOp):
                 raise TypeInferenceError(dbg, f"Invalid argument dtype, it must be a datatype")
         result_shape = (n.val(), n.val())
         if parsed_dtype == FloatType:
-            ndarray = NDArrayValueWrapper.fill(result_shape, lambda: reducer.ir_constant_float(0.0))
+            ndarray = NDArrayValue.fill(result_shape, FloatType, lambda: reducer.ir_constant_float(0.0))
             ndarray = ndarray.for_each(lambda pos, val: reducer.ir_constant_float(1.0) if pos[0] == pos[1] else reducer.ir_constant_float(0.0))
         elif parsed_dtype == IntegerType:
-            ndarray = NDArrayValueWrapper.fill(result_shape, lambda: reducer.ir_constant_int(0))
+            ndarray = NDArrayValue.fill(result_shape, IntegerType, lambda: reducer.ir_constant_int(0))
             ndarray = ndarray.for_each(lambda pos, val: reducer.ir_constant_int(1) if pos[0] == pos[1] else reducer.ir_constant_int(0))
         else:
             raise TypeInferenceError(dbg, f"Unsupported NDArray dtype {parsed_dtype}")
-        return NDArrayValue(result_shape, parsed_dtype, ndarray)
+        return ndarray

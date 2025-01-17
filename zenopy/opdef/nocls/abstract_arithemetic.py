@@ -3,7 +3,6 @@ from typing import List, Dict, Callable, Optional
 from zenopy.debug.exception import TypeInferenceError
 from zenopy.opdef.nocls.abstract_op import AbstractOp
 from zenopy.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor, FloatDTDescriptor, FloatType, IntegerType
-from zenopy.algo.ndarray_helper import NDArrayValueWrapper
 from zenopy.debug.dbg_info import DebugInfo
 from zenopy.builder.abstract_ir_builder import AbsIRBuilderInterface
 from zenopy.builder.value import NDArrayValue, NumberValue, Value
@@ -44,20 +43,20 @@ class AbstractArithemetic(AbstractOp):
 
     def reduce_number_and_ndarray(self, reducer: AbsIRBuilderInterface, lhs: NumberValue, rhs: NDArrayValue) -> Value:
         lhs_ndarray = NDArrayValue.from_number(lhs)
-        lhs_ndarray, rhs_ndarray = NDArrayValue.broadcast(lhs_ndarray, rhs)
+        lhs_ndarray, rhs_ndarray = NDArrayValue.binary_broadcast(lhs_ndarray, rhs)
         result = NDArrayValue.binary(lhs_ndarray, rhs_ndarray, self.get_expected_result_dt(lhs.type(), rhs.dtype()), self.get_reduce_op_lambda(reducer))
         return result
 
     def reduce_ndarray_and_number(self, reducer: AbsIRBuilderInterface, lhs: NDArrayValue, rhs: NumberValue) -> Value:
         rhs_ndarray = NDArrayValue.from_number(rhs)
-        lhs_ndarray, rhs_ndarray = NDArrayValue.broadcast(lhs, rhs_ndarray)
+        lhs_ndarray, rhs_ndarray = NDArrayValue.binary_broadcast(lhs, rhs_ndarray)
         result = NDArrayValue.binary(lhs_ndarray, rhs_ndarray, self.get_expected_result_dt(lhs.dtype(), rhs.type()), self.get_reduce_op_lambda(reducer))
         return result
 
     def reduce_ndarray_and_ndarray(self, reducer: AbsIRBuilderInterface, lhs: NDArrayValue, rhs: NDArrayValue) -> NDArrayValue:
-        if not NDArrayValueWrapper.binary_broadcast_compatible(lhs.shape(), rhs.shape()):
+        if not NDArrayValue.binary_broadcast_compatible(lhs.shape(), rhs.shape()):
             raise TypeInferenceError(None, f"Cannot broadcast two NDArray with shapes {lhs.shape()} and {rhs.shape()}")
-        lhs, rhs = NDArrayValue.broadcast(lhs, rhs)
+        lhs, rhs = NDArrayValue.binary_broadcast(lhs, rhs)
         result = NDArrayValue.binary(lhs, rhs, self.get_expected_result_dt(lhs.dtype(), rhs.dtype()), self.get_reduce_op_lambda(reducer))
         return result
 

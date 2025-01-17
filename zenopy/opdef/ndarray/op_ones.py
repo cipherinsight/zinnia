@@ -3,7 +3,6 @@ from typing import List, Dict, Optional
 from zenopy.debug.exception import TypeInferenceError, StaticInferenceError
 from zenopy.opdef.nocls.abstract_op import AbstractOp
 from zenopy.internal.dt_descriptor import IntegerType, FloatType
-from zenopy.algo.ndarray_helper import NDArrayValueWrapper
 from zenopy.debug.dbg_info import DebugInfo
 from zenopy.builder.abstract_ir_builder import AbsIRBuilderInterface
 from zenopy.builder.value import Value, TupleValue, IntegerValue, ClassValue, NDArrayValue
@@ -47,8 +46,8 @@ class NDArray_OnesOp(AbstractOp):
                 raise TypeInferenceError(dbg, f"Invalid type for argument `dtype`: {dtype.type()}, it must be a datatype")
         parsed_shape = tuple(v.val() for v in shape.values())
         if parsed_dtype == FloatType:
-            return NDArrayValue(parsed_shape, parsed_dtype, NDArrayValueWrapper.fill(parsed_shape, lambda: reducer.ir_constant_float(1.0)))
+            return NDArrayValue.fill(parsed_shape, FloatType, lambda: reducer.ir_constant_float(1.0))
         elif parsed_dtype == IntegerType:
-            return NDArrayValue(parsed_shape, parsed_dtype, NDArrayValueWrapper.fill(parsed_shape, lambda: reducer.ir_constant_int(1)))
+            return NDArrayValue.fill(parsed_shape, IntegerType, lambda: reducer.ir_constant_int(1))
         else:
             raise TypeInferenceError(dbg, f"Unsupported NDArray dtype {parsed_dtype}")
