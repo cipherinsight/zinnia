@@ -34,10 +34,10 @@ class IRGenerator:
         self.prog_meta_data = ProgramMetadata()
         self.visit(component)
         ir_graph = self._ir_builder.export_ir_graph()
-        # ir_graph = ConstantFoldIRPass().exec(ir_graph)
-        # ir_graph = DeadCodeEliminationIRPass().exec(ir_graph)
-        # ir_graph = AlwaysSatisfiedEliminationIRPass().exec(ir_graph)
-        # ir_graph = DuplicateCodeEliminationIRPass().exec(ir_graph)
+        ir_graph = ConstantFoldIRPass().exec(ir_graph)
+        ir_graph = DeadCodeEliminationIRPass().exec(ir_graph)
+        ir_graph = AlwaysSatisfiedEliminationIRPass().exec(ir_graph)
+        ir_graph = DuplicateCodeEliminationIRPass().exec(ir_graph)
         return ir_graph.export_stmts(), self.prog_meta_data
 
     def visit(self, component: ASTComponent):

@@ -1,5 +1,7 @@
+from typing import List
+
 from pyzk.builder.builder_impl import IRBuilderImpl
-from pyzk.builder.value import IntegerValue, FloatValue
+from pyzk.builder.value import IntegerValue, FloatValue, Value
 from pyzk.ir.ir_graph import IRGraph
 from pyzk.ir.ir_pass.abstract_pass import AbstractIRPass
 
@@ -15,7 +17,7 @@ class ConstantFoldIRPass(AbstractIRPass):
         value_lookup_by_ptr = {}
         constant_int_ir, constant_float_ir = {}, {}
         for stmt in topological_order:
-            ir_args = [None for _ in in_links[stmt.stmt_id]]
+            ir_args: List[Value] = [None for _ in in_links[stmt.stmt_id]]
             for i, old_ptr in enumerate(in_links[stmt.stmt_id]):
                 value = ir_args[i] = value_lookup_by_ptr[old_ptr]
                 if isinstance(value, IntegerValue) and value.val() is not None:

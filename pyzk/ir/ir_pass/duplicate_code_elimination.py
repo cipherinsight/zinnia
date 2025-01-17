@@ -1,3 +1,4 @@
+from pyzk.builder.builder_impl import IRBuilderImpl
 from pyzk.ir.ir_graph import IRGraph
 from pyzk.ir.ir_pass.abstract_pass import AbstractIRPass
 
@@ -22,19 +23,18 @@ class DuplicateCodeEliminationIRPass(AbstractIRPass):
                 to_be_replaced[stmt.stmt_id] = existing_stmt_id
         topological_order = ir_graph.get_topological_order(False)
         in_links, out_links = ir_graph.get_io_links()
-        old_ptr_to_new_ptr = {}
-        ir_builder = IRBuilder()
+        values_lookup = {}
+        ir_builder = IRBuilderImpl()
         for stmt in topological_order:
             if stmt.stmt_id in to_be_replaced.keys():
-                old_ptr_to_new_ptr[stmt.stmt_id] = to_be_replaced[stmt.stmt_id]
+                values_lookup[stmt.stmt_id] = to_be_replaced[stmt.stmt_id]
                 continue
-            args_as_new_ptrs = {}
-            for key, arg in in_links[stmt.stmt_id]:
+            ir_args = [None for _ in in_links[stmt.stmt_id]]
+            for i, arg in enumerate(in_links[stmt.stmt_id]):
                 replacement = to_be_replaced.get(arg, None)
                 if replacement is None:
-                    args_as_new_ptrs[key] = old_ptr_to_new_ptr[arg]
+                    ir_args[i] = values_lookup[arg]
                 else:
-                    args_as_new_ptrs[key] = old_ptr_to_new_ptr[replacement]
-            old_ptr_to_new_ptr[stmt.stmt_id] = ir_builder.create_similar(stmt, args_as_new_ptrs)
+                    ir_args[i] = values_lookup[replacement]
+            values_lookup[stmt.stmt_id] = ir_builder.invoke_ir(stmt.operator, ir_args, {}, None)
         return ir_builder.export_ir_graph()
-

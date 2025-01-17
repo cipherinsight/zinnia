@@ -8,7 +8,7 @@ class DeadCodeEliminationIRPass(AbstractIRPass):
 
     def exec(self, ir_graph: IRGraph) -> IRGraph:
         stmts = ir_graph.export_stmts()
-        ensuring_keep_stmts = [stmt.operator.dce_keep() for stmt in stmts]
+        ensuring_keep_stmts = [stmt.operator.is_fixed_ir() for stmt in stmts]
         in_d, out_d = ir_graph.get_io_degrees()
         killing_queue = []
         to_be_eliminated = []
@@ -19,7 +19,7 @@ class DeadCodeEliminationIRPass(AbstractIRPass):
             to_be_killed = killing_queue.pop()
             to_be_eliminated.append(to_be_killed)
             referring_tos = stmts[to_be_killed].arguments
-            for k, t in referring_tos.items():
+            for t in referring_tos:
                 if t is None:
                     continue
                 in_d[to_be_killed] -= 1
@@ -28,4 +28,3 @@ class DeadCodeEliminationIRPass(AbstractIRPass):
                     killing_queue.append(t)
         ir_graph.remove_stmt_bunch(to_be_eliminated)
         return ir_graph
-
