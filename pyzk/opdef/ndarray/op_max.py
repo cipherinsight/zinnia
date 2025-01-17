@@ -1,7 +1,9 @@
-from typing import Any, Tuple
+from typing import Tuple
 
-from pyzk.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor, FloatDTDescriptor
+from pyzk.internal.dt_descriptor import DTDescriptor
 from pyzk.opdef.ndarray.abstract_aggregator import AbstractAggregator
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import NumberValue
 
 
 class NDArray_MaxOp(AbstractAggregator):
@@ -15,32 +17,9 @@ class NDArray_MaxOp(AbstractAggregator):
     def get_name(cls) -> str:
         return "NDArray::max"
 
-    def aggregator_func(self, lhs: Any, lhs_i: int, rhs: Any, rhs_i: int, dt: DTDescriptor) -> Tuple[Any, int | None]:
-        if isinstance(dt, IntegerDTDescriptor):
-            return max(lhs, rhs) if lhs is not None and rhs is not None else None, None
-        return None, None
+    def aggregator_func(self, reducer: AbsIRBuilderInterface, lhs: NumberValue, lhs_i: NumberValue, rhs: NumberValue, rhs_i: NumberValue, dt: DTDescriptor) -> Tuple[NumberValue, NumberValue | None]:
+        cond = reducer.op_bool_scalar(reducer.op_less_than(lhs, rhs))
+        return reducer.op_select(cond, rhs, lhs), None
 
-    def initial_func(self, dt: DTDescriptor, first_ele: Any) -> Tuple[Any, int | None]:
-        return first_ele, None
-
-    def aggregator_build_ir(self, ir_builder, lhs: int, lhs_i: int, rhs: int, rhs_i: int, dt: DTDescriptor) -> Tuple[int, int | None]:
-        if isinstance(dt, IntegerDTDescriptor):
-            cond = ir_builder.create_less_than_i(lhs, rhs)
-            not_cond = ir_builder.create_logical_not(cond)
-            candidate = ir_builder.create_add_i(
-                ir_builder.create_mul_i(cond, rhs),
-                ir_builder.create_mul_i(not_cond, lhs)
-            )
-            return candidate
-        elif isinstance(dt, FloatDTDescriptor):
-            cond = ir_builder.create_less_than_f(lhs, rhs)
-            not_cond = ir_builder.create_logical_not(cond)
-            candidate = ir_builder.create_add_f(
-                ir_builder.create_mul_f(ir_builder.create_float_cast(cond), rhs),
-                ir_builder.create_mul_f(ir_builder.create_float_cast(not_cond), lhs)
-            )
-            return candidate
-        raise NotImplementedError()
-
-    def initial_build_ir(self, ir_builder, dt: DTDescriptor, first_ele: int) -> Tuple[int, int | None]:
+    def initial_func(self, reducer: AbsIRBuilderInterface, dt: DTDescriptor, first_ele: NumberValue) -> Tuple[NumberValue, NumberValue | None]:
         return first_ele, None

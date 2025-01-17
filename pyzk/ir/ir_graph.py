@@ -29,7 +29,7 @@ class IRGraph:
         out_d = [0 for _ in range(len(self.stmts))]
         being_referred_bys: List[List[int]] = [[] for _ in range(len(self.stmts))]
         for i, stmt in enumerate(self.stmts):
-            referring_tos = stmt.arguments.values()
+            referring_tos = stmt.arguments
             for t in referring_tos:
                 if t is None:
                     continue
@@ -38,7 +38,7 @@ class IRGraph:
                 being_referred_bys[t].append(i)
         self.in_d = in_d
         self.out_d = out_d
-        self.in_links = [[(k, v) for k, v in stmt.arguments.items()] for stmt in self.stmts]
+        self.in_links = [stmt.arguments for stmt in self.stmts]
         self.out_links = being_referred_bys
 
     def get_io_degrees(self):
@@ -97,8 +97,8 @@ class IRGraph:
             id_mapping[old_id] = new_id
         for stmt in self.stmts:
             stmt.stmt_id = id_mapping[stmt.stmt_id]
-            for key, arg in stmt.arguments.items():
-                stmt.arguments[key] = id_mapping[arg]
+            for i, arg in enumerate(stmt.arguments):
+                stmt.arguments[i] = id_mapping[arg]
         self.update_graph(self.stmts)
         return self
 
@@ -109,8 +109,8 @@ class IRGraph:
             id_mapping[stmt.stmt_id] = new_id
         for stmt in self.stmts:
             stmt.stmt_id = id_mapping[stmt.stmt_id]
-            for key, arg in stmt.arguments.items():
-                stmt.arguments[key] = id_mapping[arg]
+            for i, arg in enumerate(stmt.arguments):
+                stmt.arguments[i] = id_mapping[arg]
         self.update_graph(self.stmts)
 
     def remove_stmt_bunch(self, indices: List[int]):
@@ -120,8 +120,8 @@ class IRGraph:
             id_mapping[stmt.stmt_id] = new_id
         for stmt in self.stmts:
             stmt.stmt_id = id_mapping[stmt.stmt_id]
-            for key, arg in stmt.arguments.items():
-                stmt.arguments[key] = id_mapping[arg]
+            for i, arg in enumerate(stmt.arguments):
+                stmt.arguments[i] = id_mapping[arg]
         self.update_graph(self.stmts)
 
     def export_stmts(self) -> List[IRStatement]:

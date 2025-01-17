@@ -1,12 +1,11 @@
 from typing import Dict, Any, Optional, List
 
 from pyzk.debug.exception import TypeInferenceError
+from pyzk.internal.dt_descriptor import IntegerType
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor, NDArrayDTDescriptor
-from pyzk.internal.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, NDArrayInferenceDescriptor
-from pyzk.algo.ndarray_helper import NDArrayHelper
 from pyzk.debug.dbg_info import DebugInfo
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import Value, ListValue, IntegerValue
 
 
 class RangeOp(AbstractOp):
@@ -20,7 +19,7 @@ class RangeOp(AbstractOp):
     def get_name(cls) -> str:
         return "range"
 
-    def params_parse(self, dbg_i: Optional[DebugInfo], args: List[Any], kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    def argparse(self, dbg_i: Optional[DebugInfo], args: List[Any], kwargs: Dict[str, Any]) -> Dict[str, Any]:
         if len(kwargs.items()) > 0:
             raise TypeInferenceError(dbg_i, "`range` takes no keyword arguments")
         if len(args) == 0:
@@ -35,45 +34,31 @@ class RangeOp(AbstractOp):
             return {"start": args[0], "stop": args[1], "step": args[2]}
         raise NotImplementedError()
 
-    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
+    def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         start, stop, step = kwargs["start"], kwargs["stop"], kwargs["step"]
         _start, _stop, _step = None, None, None
         if start is None:
             _start = 0
-        elif not isinstance(start.type(), IntegerDTDescriptor):
-            raise TypeInferenceError(dbg_i, "`range` param must be of type `Number`")
-        elif start.get() is None:
-            raise TypeInferenceError(dbg_i, "`range` param must can be statically inferred")
+        elif not isinstance(start, IntegerValue):
+            raise TypeInferenceError(dbg, "`range` arguments must be of type `Integer`")
+        elif start.val() is None:
+            raise TypeInferenceError(dbg, "`range` arguments must can be statically inferred")
         else:
-            _start = start.get()
-        if not isinstance(stop.type(), IntegerDTDescriptor):
-            raise TypeInferenceError(dbg_i, "`range` param must be of type `Number`")
-        elif stop.get() is None:
-            raise TypeInferenceError(dbg_i, "`range` param must can be statically inferred")
+            _start = start.val()
+        if not isinstance(stop, IntegerValue):
+            raise TypeInferenceError(dbg, "`range` arguments must be of type `Integer`")
+        elif stop.val() is None:
+            raise TypeInferenceError(dbg, "`range` arguments must can be statically inferred")
         else:
-            _stop = stop.get()
+            _stop = stop.val()
         if step is None:
             _step = 1
-        elif not isinstance(step.type(), IntegerDTDescriptor):
-            raise TypeInferenceError(dbg_i, "`range` param must be of type `Number`")
-        elif step.get() is None:
-            raise TypeInferenceError(dbg_i, "`range` param must can be statically inferred")
+        elif not isinstance(step, IntegerValue):
+            raise TypeInferenceError(dbg, "`range` arguments must be of type `Integer`")
+        elif step.val() is None:
+            raise TypeInferenceError(dbg, "`range` arguments must can be statically inferred")
         else:
-            _step = step.get()
-        return NDArrayDTDescriptor((len(list(range(_start, _stop, _step))), ), IntegerDTDescriptor())
-
-    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
-        start, stop, step = kwargs["start"], kwargs["stop"], kwargs["step"]
-        _start = 0 if start is None else start.get()
-        _stop = stop.get()
-        _step = 1 if step is None else step.get()
-        result = list(range(_start, _stop, _step))
-        return NDArrayInferenceDescriptor((len(result), ), IntegerDTDescriptor(), NDArrayHelper((len(result), ), result))
-
-    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
-        start, stop, step = kwargs["start"], kwargs["stop"], kwargs["step"]
-        _start = 0 if start is None else start.val()
-        _stop = stop.val()
-        _step = 1 if step is None else step.val()
-        result = [ir_builder.create_constant(x) for x in range(_start, _stop, _step)]
-        return NDArrayFlattenDescriptor((len(result), ), IntegerDTDescriptor(), NDArrayHelper((len(result), ), result))
+            _step = step.val()
+        values = list(range(_start, _stop, _step))
+        values = [reducer.ir_constant_int(v) for v in values]
+        return ListValue([IntegerType for _ in values], values)

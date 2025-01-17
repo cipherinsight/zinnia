@@ -3,6 +3,7 @@ from typing import List, Tuple, Optional, Dict
 from pyzk.internal.dt_descriptor import DTDescriptor
 from pyzk.debug.dbg_info import DebugInfo
 
+
 class ASTComponent:
     def __init__(self, dbg_i: DebugInfo):
         self.dbg_i = dbg_i
@@ -87,15 +88,40 @@ class ASTAbstractOperator(ASTExpression):
 
 
 class ASTBinaryOperator(ASTAbstractOperator):
-    def __init__(self, dbg_i: DebugInfo, op_cls: type, lhs: ASTExpression, rhs: ASTExpression):
+    class Op:
+        ADD = "add"
+        SUB = "sub"
+        MUL = "mul"
+        DIV = "div"
+        MOD = "mod"
+        POW = "pow"
+        FLOOR_DIV = "floor_div"
+        MAT_MUL = "mat_mul"
+        EQ = "eq"
+        NE = "ne"
+        LT = "lt"
+        LTE = "lte"
+        GT = "gt"
+        GTE = "gte"
+        AND = "and"
+        OR = "or"
+
+    def __init__(self, dbg_i: DebugInfo, op_type: str, lhs: ASTExpression, rhs: ASTExpression):
         super().__init__(dbg_i, [lhs, rhs], {})
-        self.operator = op_cls()
+        self.operator = op_type
+        self.lhs = lhs
+        self.rhs = rhs
 
 
 class ASTUnaryOperator(ASTAbstractOperator):
-    def __init__(self, dbg_i: DebugInfo, op_cls: type, operand: ASTExpression):
+    class Op:
+        USUB = "usub"
+        NOT = "not"
+
+    def __init__(self, dbg_i: DebugInfo, op_type: str, operand: ASTExpression):
         super().__init__(dbg_i, [operand], {})
-        self.operator = op_cls()
+        self.operator = op_type
+        self.operand = operand
 
 
 class ASTNamedAttribute(ASTAbstractOperator):
@@ -124,26 +150,25 @@ class ASTConstantFloat(ASTExpression):
         self.value = value
 
 
+class ASTConstantNone(ASTExpression):
+    def __init__(self, dbg_i: DebugInfo):
+        super().__init__(dbg_i)
+
+
 class ASTLoad(ASTExpression):
     def __init__(self, dbg_i: DebugInfo, name: str):
         super().__init__(dbg_i)
         self.name = name
 
 
-class ASTSlicingData(ASTComponent):
+class ASTSlice(ASTComponent):
     def __init__(self, dbg_i: DebugInfo, data: List[ASTExpression | Tuple[ASTExpression, ASTExpression, ASTExpression]]):
         super().__init__(dbg_i)
         self.data = data
 
 
-class ASTSlicingAssignData(ASTComponent):
-    def __init__(self, dbg_i: DebugInfo, data: List[ASTSlicingData]):
-        super().__init__(dbg_i)
-        self.data = data
-
-
 class ASTSlicing(ASTExpression):
-    def __init__(self, dbg_i: DebugInfo, val: ASTExpression, slicing: ASTSlicingData):
+    def __init__(self, dbg_i: DebugInfo, val: ASTExpression, slicing: ASTSlice):
         super().__init__(dbg_i)
         self.val = val
         self.slicing = slicing
@@ -186,9 +211,11 @@ class ASTContinueStatement(ASTStatement):
         super().__init__(dbg_i)
 
 
-class ASTSlicingAssignStatement(ASTAssignStatement):
-    def __init__(self, dbg_i: DebugInfo, assignee: str, slicing: ASTSlicingAssignData, value: ASTExpression, annotation: Optional[ASTAnnotation]):
-        super().__init__(dbg_i, assignee, value, annotation)
+class ASTSlicingAssignStatement(ASTStatement):
+    def __init__(self, dbg_i: DebugInfo, assignee: ASTExpression, slicing: ASTSlice, value: ASTExpression):
+        super().__init__(dbg_i)
+        self.assignee = assignee
+        self.value = value
         self.slicing = slicing
 
 

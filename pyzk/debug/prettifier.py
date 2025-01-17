@@ -2,12 +2,12 @@ from typing import List
 
 from pyzk.ast.zk_ast import ASTComponent, ASTAssignStatement, ASTSlicingAssignStatement, \
     ASTAssertStatement, ASTBinaryOperator, ASTUnaryOperator, ASTExprAttribute, ASTNamedAttribute, ASTConstantFloat, ASTConstantInteger, \
-    ASTSlicing, ASTLoad, ASTSlicingData, ASTPassStatement, \
+    ASTSlicing, ASTLoad, ASTPassStatement, \
     ASTProgram, ASTProgramInput, ASTAnnotation, ASTForInStatement, ASTCondStatement, \
-    ASTExpression, ASTSquareBrackets, ASTSlicingAssignData, ASTContinueStatement, ASTBreakStatement, ASTParenthesis, \
+    ASTExpression, ASTSquareBrackets, ASTSlice, ASTContinueStatement, ASTBreakStatement, ASTParenthesis, \
     ASTReturnStatement, ASTCallStatement
 from pyzk.debug.exception import InternalPyzkException, PyZKException
-from pyzk.ir.ir_builder import IRStatement
+from pyzk.ir.ir_stmt import IRStatement
 
 
 def prettify_zk_ast(node: ASTComponent) -> str:
@@ -25,8 +25,6 @@ def prettify_zk_ast(node: ASTComponent) -> str:
         elif isinstance(n, ASTSlicingAssignStatement):
             res = [prefix + f' -> {n.assignee}']
             res += _inner(depth + 1, n.slicing, 'slicing')
-            if n.annotation is not None:
-                res += _inner(depth + 1, n.annotation, 'annotation')
             res += _inner(depth + 1, n.value, 'value')
             return res
         elif isinstance(n, ASTAssignStatement):
@@ -40,12 +38,12 @@ def prettify_zk_ast(node: ASTComponent) -> str:
             res += _inner(depth + 1, n.expr, 'expr')
             return res
         elif isinstance(n, ASTBinaryOperator):
-            res = [prefix + f' &{n.operator.get_signature()}']
+            res = [prefix + f' &{n.operator}']
             for i, arg in enumerate(n.args):
                 res += _inner(depth + 1, arg, f'arg_{i + 1}')
             return res
         elif isinstance(n, ASTUnaryOperator):
-            res = [prefix + f' &{n.operator.get_signature()}']
+            res = [prefix + f' &{n.operator}']
             for i, arg in enumerate(n.args):
                 res += _inner(depth + 1, arg, f'arg_{i + 1}')
             return res
@@ -74,20 +72,15 @@ def prettify_zk_ast(node: ASTComponent) -> str:
         elif isinstance(n, ASTLoad):
             res = [prefix + f' <- {n.name}']
             return res
-        elif isinstance(n, ASTSlicingData):
+        elif isinstance(n, ASTSlice):
             res = [prefix]
             for i, slicing_data in enumerate(n.data):
                 if isinstance(slicing_data, ASTExpression):
                     res += _inner(depth + 1, slicing_data, f'slicing_integer')
                 else:
-                    res += _inner(depth + 1, slicing_data[0], f'slicing_{i + 1}_l')
-                    res += _inner(depth + 1, slicing_data[1], f'slicing_{i + 1}_r')
-            return res
-        elif isinstance(n, ASTSlicingAssignData):
-            res = [prefix]
-            assert n.data is not None
-            for i, sli in enumerate(n.data):
-                res += _inner(depth + 1, sli, f'slicing_{i + 1}')
+                    res += _inner(depth + 1, slicing_data[0], f'slicing_{i + 1}_start')
+                    res += _inner(depth + 1, slicing_data[1], f'slicing_{i + 1}_end')
+                    res += _inner(depth + 1, slicing_data[1], f'slicing_{i + 1}_step')
             return res
         elif isinstance(n, ASTPassStatement):
             res = [prefix]
@@ -159,18 +152,7 @@ def prettify_ir_stmts(stmts: List[IRStatement]):
     results = []
     for i, stmt in enumerate(stmts):
         s = f'#{stmt.stmt_id}\t{stmt.operator.get_signature()}\t'
-        s += f'({", ".join([f"{k}=%{arg}" for k, arg in stmt.arguments.items()])})'
-        if stmt.annotation is not None:
-            s += ' {'
-            items = []
-            if stmt.annotation.typename is not None:
-                items.append(f'{stmt.annotation.typename}')
-            if stmt.annotation.shape is not None:
-                items.append(f'{stmt.annotation.shape}')
-            if stmt.annotation.public is not None:
-                items.append("Public" if stmt.annotation.public else "Private")
-            s += '-'.join(items)
-            s += '}'
+        s += f'({", ".join([f"%{arg}" for arg in stmt.arguments])})'
         results.append(s)
     return "\n".join(results)
 

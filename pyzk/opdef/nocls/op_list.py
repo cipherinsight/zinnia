@@ -1,12 +1,11 @@
 from typing import List, Dict, Optional
 
 from pyzk.debug.exception import TypeInferenceError
+from pyzk.internal.dt_descriptor import NDArrayDTDescriptor
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor, IntegerDTDescriptor
-from pyzk.internal.flatten_descriptor import NDArrayFlattenDescriptor, TupleFlattenDescriptor, FlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, NDArrayInferenceDescriptor, TupleInferenceDescriptor
-from pyzk.algo.ndarray_helper import NDArrayHelper
 from pyzk.debug.dbg_info import DebugInfo
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import Value, ListValue, TupleValue, NDArrayValue
 
 
 class ListOp(AbstractOp):
@@ -25,26 +24,17 @@ class ListOp(AbstractOp):
             AbstractOp._ParamEntry("x")
         ]
 
-    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
-        x = kwargs["x"].type()
-        if isinstance(x, NDArrayDTDescriptor):
-            return NDArrayDTDescriptor(x.shape, x.dtype)
-        elif isinstance(x, TupleDTDescriptor):
-            return NDArrayDTDescriptor((x.length, ), IntegerDTDescriptor())
-        raise TypeInferenceError(dbg_i, "`list` operator, which aims converts the param into NDArray, can only be used on `Tuple` or `NDArray`")
-
-    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         x = kwargs["x"]
-        if isinstance(x, NDArrayInferenceDescriptor):
-            return NDArrayInferenceDescriptor(x.shape(), x.dtype(), x.get())
-        elif isinstance(x, TupleInferenceDescriptor):
-            return NDArrayInferenceDescriptor((x.length(), ), IntegerDTDescriptor(), NDArrayHelper((x.length(), ), list(x.get())))
-        raise NotImplementedError()
-
-    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
-        x = kwargs["x"]
-        if isinstance(x, NDArrayFlattenDescriptor):
-            return NDArrayFlattenDescriptor(x.shape(), x.dtype(), x.ptr())
-        elif isinstance(x, TupleFlattenDescriptor):
-            return NDArrayFlattenDescriptor((x.length(), ), IntegerDTDescriptor(), NDArrayHelper((x.length(), ), list(x.ptr())))
-        raise NotImplementedError()
+        if isinstance(x, ListValue):
+            return ListValue(list(x.types()), list(x.values()))
+        elif isinstance(x, TupleValue):
+            return ListValue(list(x.types()), list(x.values()))
+        elif isinstance(x, NDArrayValue):
+            sub_element_shape = x.shape()[1:]
+            sub_element_type = NDArrayDTDescriptor(sub_element_shape, x.dtype())
+            return ListValue(
+                list(sub_element_type for _ in range(x.shape()[0])),
+                list(reducer.op_get_item(x, reducer.op_square_brackets([reducer.ir_constant_int(i)])) for i in range(x.shape()[0]))
+            )
+        raise TypeInferenceError(dbg, f"`list` operator is not defined on {x.type()}")

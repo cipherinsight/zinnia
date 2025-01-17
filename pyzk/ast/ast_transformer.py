@@ -6,16 +6,13 @@ from pyzk.debug.exception import InvalidCircuitInputException, InvalidCircuitSta
     UnsupportedOperatorException, UnsupportedConstantLiteralException, \
     UnsupportedLangFeatureException, InvalidForStatementException, InvalidChipInputException
 from pyzk.ast.zk_ast import ASTProgramInput, ASTAnnotation, ASTProgram, ASTAssignStatement, \
-    ASTLoad, ASTSlicingData, ASTSlicingAssignStatement, \
-    ASTForInStatement, ASTPassStatement, ASTAssertStatement, ASTCondStatement, ASTSlicing, ASTSquareBrackets, \
-    ASTSlicingAssignData, ASTBreakStatement, ASTContinueStatement, ASTBinaryOperator, ASTUnaryOperator, \
-    ASTNamedAttribute, \
-    ASTExprAttribute, ASTParenthesis, ASTChip, ASTChipInput, ASTReturnStatement, ASTCallStatement, ASTConstantInteger, \
-    ASTConstantFloat
+    ASTLoad, ASTSlicingAssignStatement, ASTForInStatement, ASTPassStatement, ASTAssertStatement, ASTCondStatement, \
+    ASTSlicing, ASTSquareBrackets, ASTBreakStatement, ASTContinueStatement, ASTBinaryOperator, ASTUnaryOperator, \
+    ASTNamedAttribute, ASTExprAttribute, ASTParenthesis, ASTChip, ASTChipInput, ASTReturnStatement, ASTCallStatement, \
+    ASTConstantInteger, ASTConstantFloat, ASTSlice, ASTConstantNone
 from pyzk.internal.chip_object import ChipObject
 from pyzk.internal.dt_descriptor import DTDescriptorFactory, NoneDTDescriptor
 from pyzk.internal.input_anno_name import InputAnnoName
-from pyzk.opdef.operator_factory import Operators
 from pyzk.debug.dbg_info import DebugInfo
 
 
@@ -64,23 +61,27 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
             expr = self.visit_expr(node.value)
             return ASTAssignStatement(dbg_info, identifier_name, expr, None)
         elif isinstance(node.targets[0], ast.Subscript):
-            name, slicing_datas = self.visit_slicing_assignee(node.targets[0])
+            assignee = self.visit_expr(node.targets[0].value)
             expr = self.visit_expr(node.value)
-            return ASTSlicingAssignStatement(dbg_info, name, slicing_datas, expr, None)
+            return ASTSlicingAssignStatement(dbg_info, assignee, self.visit_slice_key(node.targets[0].slice), expr)
         raise InvalidAssignStatementException(dbg_info, "The value to be assigned must be an identifier name or name with slicing.")
 
     def visit_AugAssign(self, node):
         dbg_info = self.get_debug_info(node)
         if isinstance(node.op, ast.Add):
-            op_cls = Operators.NoCls.ADD
+            op_type = ASTBinaryOperator.Op.ADD
         elif isinstance(node.op, ast.Sub):
-            op_cls = Operators.NoCls.SUB
+            op_type = ASTBinaryOperator.Op.SUB
         elif isinstance(node.op, ast.Div):
-            op_cls = Operators.NoCls.DIV
+            op_type = ASTBinaryOperator.Op.DIV
         elif isinstance(node.op, ast.Mult):
-            op_cls = Operators.NoCls.MUL
+            op_type = ASTBinaryOperator.Op.MUL
         elif isinstance(node.op, ast.MatMult):
-            op_cls = Operators.NoCls.MAT_MUL
+            op_type = ASTBinaryOperator.Op.MAT_MUL
+        elif isinstance(node.op, ast.FloorDiv):
+            op_type = ASTBinaryOperator.Op.FLOOR_DIV
+        elif isinstance(node.op, ast.Mod):
+            op_type = ASTBinaryOperator.Op.MOD
         else:
             raise InvalidAssignStatementException(dbg_info, f"Invalid augmented assignment operator {type(node.op)}")
         if isinstance(node.target, ast.Name):
@@ -88,16 +89,13 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
             expr = self.visit_expr(node.value)
             return ASTAssignStatement(
                 dbg_info, identifier_name, ASTBinaryOperator(
-                    dbg_info, op_cls, ASTLoad(self.get_debug_info(node.target), identifier_name), expr
+                    dbg_info, op_type, ASTLoad(self.get_debug_info(node.target), identifier_name), expr
                 ), None)
         elif isinstance(node.target, ast.Subscript):
-            name, slicing_datas = self.visit_slicing_assignee(node.target)
-            origin_val = self.visit_expr(node.target)
+            assignee = self.visit_expr(node.target.value)
             expr = self.visit_expr(node.value)
-            return ASTSlicingAssignStatement(
-                dbg_info, name, slicing_datas, ASTBinaryOperator(
-                    self.get_debug_info(node.value), op_cls, origin_val, expr
-                ), None)
+            return ASTSlicingAssignStatement(dbg_info, assignee, self.visit_slice_key(node.target.slice), ASTBinaryOperator(
+                    self.get_debug_info(node.value), op_type, assignee, expr))
         raise InvalidAssignStatementException(dbg_info, "The value to be assigned must be an identifier name or name with slicing.")
 
     def visit_AnnAssign(self, node):
@@ -110,10 +108,9 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
             annotation = self.visit_annotation(node.annotation, identifier_name)
             return ASTAssignStatement(dbg_info, identifier_name, expr, annotation)
         elif isinstance(node.target, ast.Subscript):
-            name, slicing_datas = self.visit_slicing_assignee(node.target)
+            assignee = self.visit_expr(node.target.value)
             expr = self.visit_expr(node.value)
-            annotation = self.visit_annotation(node.annotation, name)
-            return ASTSlicingAssignStatement(dbg_info, name, slicing_datas, expr, annotation)
+            return ASTSlicingAssignStatement(dbg_info, assignee, self.visit_slice_key(node.target.slice), expr)
         raise InvalidAssignStatementException(dbg_info, "The value to be assigned must be an identifier name or name with slicing.")
 
     def visit_BinOp(self, node):
@@ -121,21 +118,21 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
         left = self.visit_expr(node.left)
         right = self.visit_expr(node.right)
         if isinstance(node.op, ast.Add):
-            return ASTBinaryOperator(dbg_info, Operators.NoCls.ADD, left, right)
+            return ASTBinaryOperator(dbg_info, ASTBinaryOperator.Op.ADD, left, right)
         elif isinstance(node.op, ast.Mult):
-            return ASTBinaryOperator(dbg_info, Operators.NoCls.MUL, left, right)
+            return ASTBinaryOperator(dbg_info, ASTBinaryOperator.Op.MUL, left, right)
         elif isinstance(node.op, ast.MatMult):
-            return ASTBinaryOperator(dbg_info, Operators.NoCls.MAT_MUL, left, right)
+            return ASTBinaryOperator(dbg_info, ASTBinaryOperator.Op.MAT_MUL, left, right)
         elif isinstance(node.op, ast.Div):
-            return ASTBinaryOperator(dbg_info, Operators.NoCls.DIV, left, right)
+            return ASTBinaryOperator(dbg_info, ASTBinaryOperator.Op.DIV, left, right)
         elif isinstance(node.op, ast.Sub):
-            return ASTBinaryOperator(dbg_info, Operators.NoCls.SUB, left, right)
+            return ASTBinaryOperator(dbg_info, ASTBinaryOperator.Op.SUB, left, right)
         elif isinstance(node.op, ast.Pow):
-            return ASTBinaryOperator(dbg_info, Operators.NoCls.POW, left, right)
+            return ASTBinaryOperator(dbg_info, ASTBinaryOperator.Op.POW, left, right)
         elif isinstance(node.op, ast.FloorDiv):
-            return ASTBinaryOperator(dbg_info, Operators.NoCls.FLOOR_DIV, left, right)
+            return ASTBinaryOperator(dbg_info, ASTBinaryOperator.Op.FLOOR_DIV, left, right)
         elif isinstance(node.op, ast.Mod):
-            return ASTBinaryOperator(dbg_info, Operators.NoCls.MOD, left, right)
+            return ASTBinaryOperator(dbg_info, ASTBinaryOperator.Op.MOD, left, right)
         else:
             raise UnsupportedOperatorException(dbg_info, f"Invalid binary operator {type(node.op).__name__} in circuit.")
 
@@ -150,22 +147,22 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
         compare_expr_list = []
         for i, op in enumerate(node.ops):
             if isinstance(op, ast.GtE):
-                compare_expr_list.append(ASTBinaryOperator(dbg_info, Operators.NoCls.GTE, comparators[i], comparators[i + 1]))
+                compare_expr_list.append(ASTBinaryOperator(dbg_info, ASTBinaryOperator.Op.GTE, comparators[i], comparators[i + 1]))
             elif isinstance(op, ast.LtE):
-                compare_expr_list.append(ASTBinaryOperator(dbg_info, Operators.NoCls.LTE, comparators[i], comparators[i + 1]))
+                compare_expr_list.append(ASTBinaryOperator(dbg_info, ASTBinaryOperator.Op.LTE, comparators[i], comparators[i + 1]))
             elif isinstance(op, ast.Gt):
-                compare_expr_list.append(ASTBinaryOperator(dbg_info, Operators.NoCls.GT, comparators[i], comparators[i + 1]))
+                compare_expr_list.append(ASTBinaryOperator(dbg_info, ASTBinaryOperator.Op.GT, comparators[i], comparators[i + 1]))
             elif isinstance(op, ast.Lt):
-                compare_expr_list.append(ASTBinaryOperator(dbg_info, Operators.NoCls.LT, comparators[i], comparators[i + 1]))
+                compare_expr_list.append(ASTBinaryOperator(dbg_info, ASTBinaryOperator.Op.LT, comparators[i], comparators[i + 1]))
             elif isinstance(op, ast.Eq):
-                compare_expr_list.append(ASTBinaryOperator(dbg_info, Operators.NoCls.EQ, comparators[i], comparators[i + 1]))
+                compare_expr_list.append(ASTBinaryOperator(dbg_info, ASTBinaryOperator.Op.EQ, comparators[i], comparators[i + 1]))
             elif isinstance(op, ast.NotEq):
-                compare_expr_list.append(ASTBinaryOperator(dbg_info, Operators.NoCls.NE, comparators[i], comparators[i + 1]))
+                compare_expr_list.append(ASTBinaryOperator(dbg_info, ASTBinaryOperator.Op.NE, comparators[i], comparators[i + 1]))
             else:
                 raise UnsupportedOperatorException(dbg_info, f"Invalid compare operator {type(op).__name__} in circuit.")
         finalized = compare_expr_list[0]
         for expr in compare_expr_list[1:]:
-            finalized = ASTBinaryOperator(dbg_info, Operators.NoCls.AND, finalized, expr)
+            finalized = ASTBinaryOperator(dbg_info, ASTBinaryOperator.Op.AND, finalized, expr)
         return finalized
 
     def visit_BoolOp(self, node):
@@ -177,12 +174,12 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
         if isinstance(node.op, ast.And):
             base_node = values[0]
             for val in values[1:]:
-                base_node = ASTBinaryOperator(dbg_info, Operators.NoCls.AND, base_node, val)
+                base_node = ASTBinaryOperator(dbg_info, ASTBinaryOperator.Op.AND, base_node, val)
             return base_node
         elif isinstance(node.op, ast.Or):
             base_node = values[0]
             for val in values[1:]:
-                base_node = ASTBinaryOperator(dbg_info, Operators.NoCls.OR, base_node, val)
+                base_node = ASTBinaryOperator(dbg_info, ASTBinaryOperator.Op.OR, base_node, val)
             return base_node
         else:
             raise UnsupportedOperatorException(dbg_info, f"Invalid boolean operator {type(node.op).__name__} in circuit.")
@@ -191,9 +188,9 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
         dbg_info = self.get_debug_info(node)
         value = self.visit_expr(node.operand)
         if isinstance(node.op, ast.Not):
-            return ASTUnaryOperator(dbg_info, Operators.NoCls.NOT, value)
+            return ASTUnaryOperator(dbg_info, ASTUnaryOperator.Op.NOT, value)
         elif isinstance(node.op, ast.USub):
-            return ASTUnaryOperator(dbg_info, Operators.NoCls.USUB, value)
+            return ASTUnaryOperator(dbg_info, ASTUnaryOperator.Op.USUB, value)
         elif isinstance(node.op, ast.UAdd):
             return value
         else:
@@ -235,14 +232,14 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
             )
         raise UnsupportedOperatorException(dbg_info, f"Invalid call function {type(node.func)}. Only a static specified function name is supported here.")
 
-    def visit_Attribute(self, node):
+    def visit_Attribute(self, node: ast.Attribute):
         dbg_info = self.get_debug_info(node)
         if isinstance(node.value, ast.Name):
             after_name = node.attr
             before_name = node.value.id
             return ASTNamedAttribute(dbg_info, before_name, after_name, [], {})
-        after_name = node.func.attr
-        return ASTNamedAttribute(dbg_info, None, after_name, [self.visit_expr(node.func.value)], {})
+        after_name = node.attr
+        return ASTNamedAttribute(dbg_info, None, after_name, [self.visit_expr(node.value)], {})
 
     def visit_Name(self, node):
         dbg_info = self.get_debug_info(node)
@@ -279,32 +276,7 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
     def visit_Subscript(self, node):
         dbg_info = self.get_debug_info(node)
         value = self.visit_expr(node.value)
-        if isinstance(node.slice, ast.Slice):
-            lo, hi, step = None, None, None
-            if node.slice.lower is not None:
-                lo = self.visit_expr(node.slice.lower)
-            if node.slice.upper is not None:
-                hi = self.visit_expr(node.slice.upper)
-            if node.slice.step is not None:
-                step = self.visit_expr(node.slice.step)
-            return ASTSlicing(dbg_info, value, ASTSlicingData(dbg_info, [(lo, hi, step)]))
-        elif isinstance(node.slice, ast.Tuple):
-            slicing_data = []
-            for elt in node.slice.elts:
-                if isinstance(elt, ast.Slice):
-                    lo, hi, step = None, None, None
-                    if elt.lower is not None:
-                        lo = self.visit_expr(elt.lower)
-                    if elt.upper is not None:
-                        hi = self.visit_expr(elt.upper)
-                    if elt.step is not None:
-                        step = self.visit_expr(elt.step)
-                    slicing_data.append((lo, hi, step))
-                else:
-                    slicing_data.append(self.visit_expr(elt))
-            return ASTSlicing(dbg_info, value, ASTSlicingData(dbg_info, slicing_data))
-        else:
-            return ASTSlicing(dbg_info, value, ASTSlicingData(dbg_info, [self.visit_expr(node.slice)]))
+        return ASTSlicing(dbg_info, value, self.visit_slice_key(node.slice))
 
     def visit_Break(self, node):
         dbg_info = self.get_debug_info(node)
@@ -417,46 +389,34 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
             raise InvalidAnnotationException(dbg_info, f"Invalid annotation for `{name}`")
         return ASTAnnotation(dbg_info, _inner_parser(node), public)
 
-    def visit_slicing_assignee(self, node):
-        dbg_info = self.get_debug_info(node)
-        assert isinstance(node, ast.Subscript)
-        def _visit_slicing_assignee_helper(subscript_node):
-            _assignee_name = None
-            ans = []
-            if isinstance(subscript_node.value, ast.Name):
-                _assignee_name = subscript_node.value.id
-            elif isinstance(subscript_node.value, ast.Subscript):
-                _assignee_name, ans = _visit_slicing_assignee_helper(subscript_node.value)
-            else:
-                raise InvalidSlicingException(dbg_info, "This slicing assign format is not supported.")
-            if isinstance(subscript_node.slice, ast.Slice):
-                lo, hi, step = None, None, None
-                if subscript_node.slice.lower is not None:
-                    lo = self.visit_expr(subscript_node.slice.lower)
-                if subscript_node.slice.upper is not None:
-                    hi = self.visit_expr(subscript_node.slice.upper)
-                if subscript_node.slice.step is not None:
-                    step = self.visit_expr(subscript_node.slice.step)
-                return _assignee_name, ans + [ASTSlicingData(dbg_info, [(lo, hi, step)])]
-            elif isinstance(subscript_node.slice, ast.Tuple):
-                _slicing_data = []
-                for elt in subscript_node.slice.elts:
-                    if isinstance(elt, ast.Slice):
-                        lo, hi, step = None, None, None
-                        if elt.lower is not None:
-                            lo = self.visit_expr(elt.lower)
-                        if elt.upper is not None:
-                            hi = self.visit_expr(elt.upper)
-                        if elt.step is not None:
-                            step = self.visit_expr(elt.step)
-                        _slicing_data.append((lo, hi, step))
-                    else:
-                        _slicing_data.append(self.visit_expr(elt))
-                return _assignee_name, ans + [ASTSlicingData(dbg_info, _slicing_data)]
-            return _assignee_name, ans + [ASTSlicingData(dbg_info, [self.visit_expr(subscript_node.slice)])]
-
-        name, slicing_data_list = _visit_slicing_assignee_helper(node)
-        return name, ASTSlicingAssignData(dbg_info, slicing_data_list)
+    def visit_slice_key(self, node):
+        dbg = self.get_debug_info(node)
+        constant_none = ASTConstantNone(dbg)
+        if isinstance(node, ast.Slice):
+            lo, hi, step = constant_none, constant_none, constant_none
+            if node.lower is not None:
+                lo = self.visit_expr(node.lower)
+            if node.upper is not None:
+                hi = self.visit_expr(node.upper)
+            if node.step is not None:
+                step = self.visit_expr(node.step)
+            return ASTSlice(self.get_debug_info(node), [(lo, hi, step)])
+        elif isinstance(node, ast.Tuple):
+            slicing_data = []
+            for elt in node.elts:
+                if isinstance(elt, ast.Slice):
+                    lo, hi, step = constant_none, constant_none, constant_none
+                    if elt.lower is not None:
+                        lo = self.visit_expr(elt.lower)
+                    if elt.upper is not None:
+                        hi = self.visit_expr(elt.upper)
+                    if elt.step is not None:
+                        step = self.visit_expr(elt.step)
+                    slicing_data.append((lo, hi, step))
+                else:
+                    slicing_data.append(self.visit_expr(elt))
+            return ASTSlice(dbg, slicing_data)
+        return ASTSlice(dbg, [self.visit_expr(node.slice)])
 
 
 class PyZKCircuitASTTransformer(PyZKBaseASTTransformer):
@@ -501,9 +461,10 @@ class PyZKChipASTTransformer(PyZKBaseASTTransformer):
     def visit_FunctionDef(self, node):
         dbg_info = self.get_debug_info(node)
         args = self.visit_arguments(node.args)
-        return_anno = ASTAnnotation(dbg_info, NoneDTDescriptor(), False)
         if node.returns is not None:
             return_anno = self.visit_annotation(node.returns, 'Return Value', False)
+        else:
+            raise InvalidAnnotationException(dbg_info, "Chip must have a return annotation.")
         return ASTChip(dbg_info, self.visit_block(node.body), args, return_anno)
 
     def visit_arguments(self, node):

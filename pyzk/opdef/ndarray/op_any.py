@@ -1,7 +1,9 @@
-from typing import Any, Tuple
+from typing import Tuple
 
-from pyzk.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor
+from pyzk.internal.dt_descriptor import DTDescriptor, IntegerType
 from pyzk.opdef.ndarray.abstract_aggregator import AbstractAggregator
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import NumberValue
 
 
 class NDArray_AnyOp(AbstractAggregator):
@@ -16,27 +18,13 @@ class NDArray_AnyOp(AbstractAggregator):
         return "NDArray::any"
 
     def get_result_dtype(self, element_dt: DTDescriptor):
-        return IntegerDTDescriptor()
+        return IntegerType
 
     def is_allowed_ndarray_dtype(self, element_dt: DTDescriptor) -> bool:
-        return isinstance(element_dt, IntegerDTDescriptor)
+        return element_dt == IntegerType
 
-    def aggregator_func(self, lhs: Any, lhs_i: int, rhs: Any, rhs_i: int, dt: DTDescriptor) -> Tuple[Any, int | None]:
-        if lhs is not None and rhs is not None:
-            return 1 if lhs != 0 or rhs != 0 else 0, None
-        elif lhs is None and rhs is None:
-            return None, None
-        elif lhs is None and rhs is not None:
-            return None if rhs == 0 else 1, None
-        elif lhs is not None and rhs is None:
-            return None if lhs == 0 else 1, None
-        raise NotImplementedError()
+    def aggregator_func(self, reducer: AbsIRBuilderInterface, lhs: NumberValue, lhs_i: NumberValue, rhs: NumberValue, rhs_i: NumberValue, dt: DTDescriptor) -> Tuple[NumberValue, NumberValue | None]:
+        return reducer.ir_logical_or(lhs, rhs), None
 
-    def initial_func(self, dt: DTDescriptor, first_ele: Any) -> Tuple[Any, int | None]:
-        return 0, None
-
-    def aggregator_build_ir(self, ir_builder, lhs: int, lhs_i: int, rhs: int, rhs_i: int, dt: DTDescriptor) -> Tuple[int, int | None]:
-        return ir_builder.create_logical_or(lhs, rhs), None
-
-    def initial_build_ir(self, ir_builder, dt: DTDescriptor, first_ele: int) -> Tuple[int, int | None]:
-        return ir_builder.create_constant(0), None
+    def initial_func(self, reducer: AbsIRBuilderInterface, dt: DTDescriptor, first_ele: NumberValue) -> Tuple[NumberValue, NumberValue | None]:
+        return reducer.ir_constant_int(1), None

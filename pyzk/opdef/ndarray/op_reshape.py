@@ -1,12 +1,12 @@
 from typing import List, Dict, Optional
 
+from pyzk.algo.ndarray_helper import NDArrayValueWrapper
 from pyzk.debug.exception import TypeInferenceError, StaticInferenceError
+from pyzk.internal.dt_descriptor import IntegerType
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor
-from pyzk.internal.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, NDArrayInferenceDescriptor, \
-    NDArrayInferenceValue, TupleInferenceDescriptor
 from pyzk.debug.dbg_info import DebugInfo
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import Value, NDArrayValue, TupleValue
 
 
 class NDArray_ReshapeOp(AbstractOp):
@@ -26,36 +26,25 @@ class NDArray_ReshapeOp(AbstractOp):
             AbstractOp._ParamEntry("shape"),
         ]
 
-    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
+    def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         the_self = kwargs["self"]
         the_shape = kwargs["shape"]
-        if not isinstance(the_self, NDArrayInferenceDescriptor):
-            raise TypeInferenceError(dbg_i, f"`{self.get_name()}` can only be used on `NDArray`")
-        if not isinstance(the_shape, TupleInferenceDescriptor):
-            raise TypeInferenceError(dbg_i, f"`shape` of `{self.get_name()}` must be a Tuple")
-        else:
-            num_elements = 1
-            for element in the_shape.get():
-                if element is None:
-                    raise StaticInferenceError(dbg_i, f"Cannot statically infer the value of the argument `shape`")
-                num_elements *= element
-            num_elements_self = 1
-            for element in the_self.shape():
-                num_elements_self *= element
-            if num_elements != num_elements_self:
-                raise TypeInferenceError(dbg_i, f"Number of elements in `shape` must be equal to the number of elements in the original `NDArray`")
-        return NDArrayDTDescriptor(the_shape.get(), the_self.dtype())
-
-    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
-        the_self = kwargs["self"]
-        the_shape = kwargs["shape"]
+        assert isinstance(the_self, NDArrayValue)
+        if not isinstance(the_shape, TupleValue):
+            raise TypeInferenceError(dbg, f"`shape` of `{self.get_name()}` must be a Tuple")
+        if not all(x == IntegerType for x in the_shape.types()):
+            raise TypeInferenceError(dbg, f"`shape` of `{self.get_name()}` must be a Tuple of Integer")
+        num_elements = 1
+        for element in the_shape.values():
+            if element is None:
+                raise StaticInferenceError(dbg, f"Cannot statically infer the value of the argument `shape`")
+            num_elements *= element
+        num_elements_self = 1
+        for element in the_self.shape():
+            num_elements_self *= element
+        if num_elements != num_elements_self:
+            raise TypeInferenceError(dbg, f"Number of elements in `shape` must be equal to the number of elements in the original `NDArray`")
         flattened_values = the_self.get().flatten()
-        new_values = NDArrayInferenceValue.from_1d_values_and_shape(flattened_values, the_shape.get())
-        return NDArrayInferenceDescriptor(new_values.shape, the_self.dtype(), new_values)
-
-    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
-        the_self = kwargs["self"]
-        the_shape = kwargs["shape"]
-        flattened_values = the_self.ptr().flatten()
-        new_values = NDArrayInferenceValue.from_1d_values_and_shape(flattened_values, the_shape.val())
-        return NDArrayFlattenDescriptor(new_values.shape, the_self.dtype(), new_values)
+        new_shape = tuple(x.get() for x in the_shape.values())
+        new_values = NDArrayValueWrapper.from_1d_values_and_shape(flattened_values, new_shape)
+        return NDArrayValue(new_shape, the_self.dtype(), new_values)

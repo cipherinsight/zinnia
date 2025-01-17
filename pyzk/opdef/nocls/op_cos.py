@@ -2,12 +2,10 @@ from typing import List, Dict, Optional
 
 from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor, FloatDTDescriptor, NDArrayDTDescriptor
-from pyzk.internal.flatten_descriptor import FlattenDescriptor, IntegerFlattenDescriptor, FloatFlattenDescriptor, \
-    NDArrayFlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, IntegerInferenceDescriptor, \
-    FloatInferenceDescriptor, NDArrayInferenceDescriptor, NDArrayInferenceValue
+from pyzk.internal.dt_descriptor import IntegerDTDescriptor, FloatDTDescriptor, FloatType
 from pyzk.debug.dbg_info import DebugInfo
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import Value, IntegerValue, FloatValue, NDArrayValue
 
 
 class CosOp(AbstractOp):
@@ -26,35 +24,14 @@ class CosOp(AbstractOp):
             AbstractOp._ParamEntry("x")
         ]
 
-    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
-        x = kwargs["x"].type()
-        if isinstance(x, IntegerDTDescriptor):
-            return FloatDTDescriptor()
-        elif isinstance(x, FloatDTDescriptor):
-            return FloatDTDescriptor()
-        elif isinstance(x, NDArrayDTDescriptor):
-            return NDArrayDTDescriptor(x.shape, FloatDTDescriptor())
-        raise TypeInferenceError(dbg_i, f'Operator `{self.get_signature()}` on operand {x} not supported')
-
-    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         x = kwargs["x"]
-        if isinstance(x, IntegerInferenceDescriptor):
-            return FloatInferenceDescriptor(None)
-        elif isinstance(x, FloatInferenceDescriptor):
-            return FloatInferenceDescriptor(None)
-        elif isinstance(x, NDArrayInferenceDescriptor):
-            return NDArrayInferenceDescriptor(x.shape(), FloatDTDescriptor(), NDArrayInferenceValue.fill(x.shape(), lambda: None))
-        raise NotImplementedError()
-
-    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
-        x = kwargs["x"]
-        if isinstance(x, IntegerFlattenDescriptor):
-            return FloatFlattenDescriptor(ir_builder.create_cos(ir_builder.create_float_cast(x.ptr())))
-        elif isinstance(x, FloatFlattenDescriptor):
-            return FloatFlattenDescriptor(ir_builder.create_cos(x.ptr()))
-        if isinstance(x, NDArrayFlattenDescriptor):
-            if isinstance(x.dtype(), IntegerDTDescriptor):
-                return NDArrayFlattenDescriptor(x.shape(), FloatDTDescriptor(), x.ptr().unary(lambda u: ir_builder.create_cos(ir_builder.create_float_cast(u))))
-            elif isinstance(x.dtype(), FloatDTDescriptor):
-                return NDArrayFlattenDescriptor(x.shape(), FloatDTDescriptor(), x.ptr().unary(lambda u: ir_builder.create_cos(u)))
-        raise NotImplementedError()
+        if isinstance(x, IntegerValue):
+            return reducer.ir_cos_f(reducer.ir_float_cast(x))
+        elif isinstance(x, FloatValue):
+            return reducer.ir_cos_f(x)
+        elif isinstance(x, NDArrayValue) and isinstance(x.dtype(), IntegerDTDescriptor):
+            return x.unary(FloatType, lambda u: reducer.ir_cos_f(reducer.ir_float_cast(u)))
+        elif isinstance(x, NDArrayValue) and isinstance(x.dtype(), FloatDTDescriptor):
+            return x.unary(FloatType, lambda u: reducer.ir_cos_f(u))
+        raise TypeInferenceError(dbg, f"Operator `{self.get_name()}` not defined for `{x.type()}`")

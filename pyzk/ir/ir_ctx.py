@@ -1,16 +1,14 @@
 from typing import Dict, List, Any, Tuple
 
-from pyzk.internal.dt_descriptor import DTDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, IntegerInferenceValue, NDArrayInferenceValue, \
-    TupleInferenceValue
+from pyzk.builder.value import Value, IntegerValue
 
 
 class IRContext:
     class _Scope:
         name_to_ptr_stack: List[Dict]
         var_table: Dict
-        return_cond_vals: List[Tuple[int, int]]
-        return_prevent_conditions = List[int]
+        return_cond_vals: List[Tuple[Value, IntegerValue]]
+        return_prevent_conditions = List[Value]
         branch_has_default_return_stack: List[bool]
 
         def __init__(self):
@@ -22,7 +20,6 @@ class IRContext:
 
     def __init__(self):
         self.scopes_stack = [IRContext._Scope()]
-        self.inference_table: Dict[int, InferenceDescriptor] = {}
         self.if_condition_stack = []
         self.for_condition_stack = []
         self.chip_registry = {}
@@ -59,7 +56,8 @@ class IRContext:
     def get_current_chip(self):
         return self.chip_recur_stack[-1]
 
-    def assign_name_to_ptr(self, name: str, ptr: int):
+    def assign_name_to_ptr(self, name: str, ptr: Value):
+        assert isinstance(ptr, Value)
         scope = self.scopes_stack[-1]
         scope.var_table[ptr] = name
         for i in reversed(range(len(scope.name_to_ptr_stack))):
@@ -68,7 +66,7 @@ class IRContext:
                 return
         scope.name_to_ptr_stack[-1][name] = ptr
 
-    def lookup_ptr_by_name(self, name: str) -> int | None:
+    def lookup_ptr_by_name(self, name: str) -> Value | None:
         scope = self.scopes_stack[-1]
         for i in reversed(range(len(scope.name_to_ptr_stack))):
             if name in scope.name_to_ptr_stack[i]:
@@ -80,39 +78,7 @@ class IRContext:
         scope = self.scopes_stack[-1]
         return name in scope.name_to_ptr_stack[-1]
 
-    def set_inference_descriptor(self, ptr: int, descriptor: InferenceDescriptor):
-        self.inference_table[ptr] = descriptor
-
-    def get_inference_descriptor(self, ptr: int) -> InferenceDescriptor:
-        return self.inference_table.get(ptr, None)
-
-    def is_inferred_datatype_equal(self, lhs: int, rhs: int) -> bool:
-        lhs_descriptor = self.inference_table.get(lhs, None)
-        rhs_descriptor = self.inference_table.get(rhs, None)
-        if lhs_descriptor is None or rhs_descriptor is None:
-            return False
-        return lhs_descriptor.type() == rhs_descriptor.type()
-
-    def get_inferred_datatype_name(self, ptr: int) -> str:
-        descriptor = self.inference_table.get(ptr, None)
-        assert descriptor is not None
-        return str(descriptor.type())
-
-    def get_inferred_datatype(self, ptr: int) -> DTDescriptor:
-        descriptor = self.inference_table.get(ptr, None)
-        assert descriptor is not None
-        return descriptor.type()
-
-    def get_inferred_constant_value(self, ptr: int) -> IntegerInferenceValue | NDArrayInferenceValue | TupleInferenceValue:
-        descriptor: InferenceDescriptor = self.inference_table.get(ptr, None)
-        if descriptor is None:
-            return None
-        inferred_value = descriptor.get()
-        if inferred_value is None:
-            return None
-        return inferred_value
-
-    def if_block_enter(self, cond_expr: int):
+    def if_block_enter(self, cond_expr: Value):
         self.if_condition_stack.append(cond_expr)
         scope = self.scopes_stack[-1]
         scope.branch_has_default_return_stack.append(False)
@@ -122,13 +88,13 @@ class IRContext:
         scope = self.scopes_stack[-1]
         scope.branch_has_default_return_stack.pop()
 
-    def add_return_value(self, return_value: int, return_condition: int, return_prevent_condition: int):
+    def add_return_value(self, return_value: Value, return_condition: IntegerValue, return_prevent_condition: IntegerValue):
         scope = self.scopes_stack[-1]
         scope.branch_has_default_return_stack[-1] = True
         scope.return_cond_vals.append((return_value, return_condition))
         scope.return_prevent_conditions.append(return_prevent_condition)
 
-    def get_return_values_and_conditions(self) -> List[Tuple[int, int]]:
+    def get_return_values_and_conditions(self) -> List[Tuple[Value, IntegerValue]]:
         scope = self.scopes_stack[-1]
         return scope.return_cond_vals
 
@@ -141,11 +107,11 @@ class IRContext:
     def for_block_enter(self):
         self.for_condition_stack.append(([], []))
 
-    def for_block_continue(self, continue_conditions_not: int):
+    def for_block_continue(self, continue_conditions_not: IntegerValue):
         assert len(self.for_condition_stack) > 0
         self.for_condition_stack[-1][0].append(continue_conditions_not)
 
-    def for_block_break(self, break_conditions_not: int):
+    def for_block_break(self, break_conditions_not: IntegerValue):
         assert len(self.for_condition_stack) > 0
         self.for_condition_stack[-1][1].append(break_conditions_not)
 
@@ -159,7 +125,7 @@ class IRContext:
     def for_block_leave(self):
         self.for_condition_stack.pop()
 
-    def get_condition_variables(self) -> List[int]:
+    def get_condition_variables(self) -> List[IntegerValue]:
         variables = self.if_condition_stack.copy()
         for for_block in self.for_condition_stack:
             variables += for_block[0] + for_block[1]

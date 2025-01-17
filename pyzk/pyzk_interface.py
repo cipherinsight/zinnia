@@ -91,7 +91,7 @@ class PyZKCircuit:
                 print(astpretty.pformat(tree.body[0], show_offsets=True), file=sys.stderr)
             transformer = PyZKCircuitASTTransformer(
                 self.source, self.name,
-                {key: (chip.get_chip() if isinstance(chip, PyZKChip) else chip) for key, chip in self.chips}
+                {key: (chip.get_chip() if isinstance(chip, PyZKChip) else chip) for key, chip in self.chips.items()}
             )
             ir_comp_tree = transformer.visit(tree.body[0])
             if self.debug:

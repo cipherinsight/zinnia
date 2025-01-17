@@ -1,10 +1,10 @@
 from typing import Dict, Any, List, Optional
 
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
 from pyzk.debug.exception import OperatorCallError
-from pyzk.internal.dt_descriptor import DTDescriptor
-from pyzk.internal.flatten_descriptor import FlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor
+from pyzk.internal.compiler_config import CompilerConfig
 from pyzk.debug.dbg_info import DebugInfo
+from pyzk.builder.value import Value
 
 
 class AbstractOp:
@@ -26,13 +26,10 @@ class AbstractOp:
     def __eq__(self, other):
         return self.__class__ == other.__class__
 
-    def dce_keep(self) -> bool:
-        return False
-
     def get_param_entries(self) -> List[_ParamEntry]:
         raise NotImplementedError()
 
-    def params_parse(self, dbg_i: Optional[DebugInfo], args: List[Any], kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    def argparse(self, dbg_i: Optional[DebugInfo], args: List[Any], kwargs: Dict[str, Any]) -> Dict[str, Any]:
         params = self.get_param_entries()
         should_have_default = False
         for entry in params:
@@ -61,11 +58,5 @@ class AbstractOp:
                 raise OperatorCallError(dbg_i, f"Operator `{self.get_name()}` missing required argument `{param.name}`")
         return mapping
 
-    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
-        raise NotImplementedError()
-
-    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
-        raise NotImplementedError()
-
-    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
+    def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()

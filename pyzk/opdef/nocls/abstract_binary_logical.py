@@ -1,11 +1,10 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
 
 from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor
-from pyzk.internal.flatten_descriptor import FlattenDescriptor, IntegerFlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, IntegerInferenceDescriptor
 from pyzk.debug.dbg_info import DebugInfo
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import Value, IntegerValue
 
 
 class AbstractBinaryLogical(AbstractOp):
@@ -21,28 +20,11 @@ class AbstractBinaryLogical(AbstractOp):
             AbstractOp._ParamEntry("rhs"),
         ]
 
-    def perform_inference(self, lhs: Any, rhs: Any) -> Any:
+    def perform_reduce(self, lhs: Value, rhs: Value) -> Value:
         raise NotImplementedError()
 
-    def perform_flatten(self, ir_builder, lhs: Any, rhs: Any) -> Any:
-        raise NotImplementedError()
-
-    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
-        lhs, rhs = kwargs["lhs"].type(), kwargs["rhs"].type()
-        if isinstance(lhs, IntegerDTDescriptor) and isinstance(rhs, IntegerDTDescriptor):
-            return IntegerDTDescriptor()
-        raise TypeInferenceError(dbg_i, f'Invalid binary logical operator `{self.get_signature()}` on operands {lhs} and {rhs}, as they must be integer values')
-
-    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         lhs, rhs = kwargs["lhs"], kwargs["rhs"]
-        if isinstance(lhs, IntegerInferenceDescriptor) and isinstance(rhs, IntegerInferenceDescriptor):
-            if lhs.get() is None or rhs.get() is None:
-                return IntegerInferenceDescriptor(None)
-            return IntegerInferenceDescriptor(self.perform_inference(lhs.get(), rhs.get()))
-        raise NotImplementedError()
-
-    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
-        lhs, rhs = kwargs["lhs"], kwargs["rhs"]
-        if isinstance(lhs, IntegerFlattenDescriptor) and isinstance(rhs, IntegerFlattenDescriptor):
-            return IntegerFlattenDescriptor(self.perform_flatten(ir_builder, lhs.ptr(), rhs.ptr()))
-        raise NotImplementedError()
+        if isinstance(lhs, IntegerValue) and isinstance(rhs, IntegerValue):
+            return self.perform_reduce(lhs, rhs)
+        raise TypeInferenceError(dbg, f'Invalid binary logical operator `{self.get_signature()}` on operands {lhs} and {rhs}, as they must be integer values')

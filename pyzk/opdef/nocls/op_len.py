@@ -2,12 +2,9 @@ from typing import List, Dict, Optional
 
 from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor
-from pyzk.internal.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor, TupleFlattenDescriptor, \
-    IntegerFlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, IntegerInferenceDescriptor, NDArrayInferenceDescriptor, \
-    TupleInferenceDescriptor
 from pyzk.debug.dbg_info import DebugInfo
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import Value, NDArrayValue, TupleValue, ListValue
 
 
 class LenOp(AbstractOp):
@@ -26,26 +23,12 @@ class LenOp(AbstractOp):
             AbstractOp._ParamEntry("operand")
         ]
 
-    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
-        operand = kwargs["operand"].type()
-        if isinstance(operand, NDArrayDTDescriptor):
-            return IntegerDTDescriptor()
-        elif isinstance(operand, TupleDTDescriptor):
-            return IntegerDTDescriptor()
-        raise TypeInferenceError(dbg_i, f"Type `{operand}` is not supported on operator `{self.get_signature()}`")
-
-    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         operand = kwargs["operand"]
-        if isinstance(operand, NDArrayInferenceDescriptor):
-            return IntegerInferenceDescriptor(operand.shape()[0])
-        elif isinstance(operand, TupleInferenceDescriptor):
-            return IntegerInferenceDescriptor(operand.length())
-        raise NotImplementedError()
-
-    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
-        operand = kwargs["operand"]
-        if isinstance(operand, NDArrayFlattenDescriptor):
-            return IntegerFlattenDescriptor(ir_builder.create_constant(operand.shape()[0]))
-        elif isinstance(operand, TupleFlattenDescriptor):
-            return IntegerFlattenDescriptor(ir_builder.create_constant(operand.length()))
-        raise NotImplementedError()
+        if isinstance(operand, NDArrayValue):
+            return reducer.ir_constant_int(len(operand.shape()))
+        elif isinstance(operand, TupleValue):
+            return reducer.ir_constant_int(len(operand.types()))
+        elif isinstance(operand, ListValue):
+            return reducer.ir_constant_int(len(operand.types()))
+        raise TypeInferenceError(dbg, f'`len` on `{operand.type()}` is not defined')

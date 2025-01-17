@@ -1,7 +1,9 @@
-from typing import Callable, Any
+from typing import Callable
 
-from pyzk.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor, FloatDTDescriptor
+from pyzk.internal.dt_descriptor import DTDescriptor, FloatDTDescriptor
 from pyzk.opdef.nocls.abstract_arithemetic import AbstractArithemetic
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import NumberValue, IntegerValue
 
 
 class DivOp(AbstractArithemetic):
@@ -15,19 +17,14 @@ class DivOp(AbstractArithemetic):
     def get_name(cls) -> str:
         return "div"
 
-    def get_inference_op_lambda(self, lhs_dt: DTDescriptor, rhs_dt: DTDescriptor) -> Callable[[Any, Any], Any]:
-        return lambda x, y: None
-
     def get_expected_result_dt(self, lhs_dt: DTDescriptor, rhs_dt: DTDescriptor):
         return FloatDTDescriptor()
 
-    def get_flatten_op_lambda(self, ir_builder, lhs_dt: DTDescriptor, rhs_dt: DTDescriptor) -> Callable[[int, int], int]:
-        if isinstance(lhs_dt, IntegerDTDescriptor) and isinstance(rhs_dt, IntegerDTDescriptor):
-            return lambda x, y: ir_builder.create_div_f(ir_builder.create_float_cast(x), ir_builder.create_float_cast(y))
-        elif isinstance(lhs_dt, FloatDTDescriptor) and isinstance(rhs_dt, IntegerDTDescriptor):
-            return lambda x, y: ir_builder.create_div_f(x, ir_builder.create_float_cast(y))
-        elif isinstance(lhs_dt, IntegerDTDescriptor) and isinstance(rhs_dt, FloatDTDescriptor):
-            return lambda x, y: ir_builder.create_div_f(ir_builder.create_float_cast(x), y)
-        elif isinstance(lhs_dt, FloatDTDescriptor) and isinstance(rhs_dt, FloatDTDescriptor):
-            return lambda x, y: ir_builder.create_div_f(x, y)
-        raise NotImplementedError()
+    def get_reduce_op_lambda(self, reducer: AbsIRBuilderInterface) -> Callable[[NumberValue, NumberValue], NumberValue]:
+        def _inner(lhs: NumberValue, rhs: NumberValue) -> NumberValue:
+            if isinstance(lhs, IntegerValue):
+                lhs = reducer.ir_float_cast(lhs)
+            if isinstance(rhs, IntegerValue):
+                rhs = reducer.ir_float_cast(rhs)
+            return reducer.ir_div_f(lhs, rhs)
+        return _inner

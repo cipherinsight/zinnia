@@ -1,11 +1,10 @@
 from typing import List, Dict, Optional
 
-from pyzk.debug.exception import StaticInferenceError
+from pyzk.debug.exception import StaticInferenceError, TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor
-from pyzk.internal.flatten_descriptor import FlattenDescriptor, IntegerFlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, IntegerInferenceDescriptor
 from pyzk.debug.dbg_info import DebugInfo
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import Value, IntegerValue, FloatValue
 
 
 class ConstantCastOp(AbstractOp):
@@ -24,20 +23,14 @@ class ConstantCastOp(AbstractOp):
             AbstractOp._ParamEntry("x")
         ]
 
-    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
+    def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         x = kwargs["x"]
-        if isinstance(x.type(), IntegerDTDescriptor):
-            if x.get() is None:
-                raise StaticInferenceError(dbg_i, 'Cannot statically infer the value')
-            return IntegerDTDescriptor()
-        raise NotImplementedError()
-
-    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
-        x = kwargs["x"]
-        if isinstance(x, IntegerInferenceDescriptor):
-            return IntegerInferenceDescriptor(x.get())
-        raise NotImplementedError()
-
-    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
-        x = kwargs["x"]
-        return IntegerFlattenDescriptor(x.ptr())
+        if isinstance(x, IntegerValue):
+            if x.val() is None:
+                raise StaticInferenceError(dbg, 'Cannot statically infer the corresponding value')
+            return x
+        elif isinstance(x, FloatValue):
+            if x.val() is None:
+                raise StaticInferenceError(dbg, 'Cannot statically infer the corresponding value')
+            return x
+        raise TypeInferenceError(dbg, f"Operator `{self.get_name()}` not defined on `{x.type()}`")

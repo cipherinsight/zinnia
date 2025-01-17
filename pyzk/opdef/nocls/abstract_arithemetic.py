@@ -1,15 +1,12 @@
-from typing import List, Dict, Callable, Any, Optional
+from typing import List, Dict, Callable, Optional
 
 from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor, NDArrayDTDescriptor, FloatDTDescriptor, \
-    NumberDTDescriptor
-from pyzk.internal.flatten_descriptor import FlattenDescriptor, IntegerFlattenDescriptor, NDArrayFlattenDescriptor, \
-    FloatFlattenDescriptor, NumberFlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, IntegerInferenceDescriptor, \
-    NDArrayInferenceDescriptor, FloatInferenceDescriptor, NumberInferenceDescriptor
-from pyzk.algo.ndarray_helper import NDArrayHelper
+from pyzk.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor, FloatDTDescriptor, FloatType, IntegerType
+from pyzk.algo.ndarray_helper import NDArrayValueWrapper
 from pyzk.debug.dbg_info import DebugInfo
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import NDArrayValue, NumberValue, Value
 
 
 class AbstractArithemetic(AbstractOp):
@@ -25,91 +22,53 @@ class AbstractArithemetic(AbstractOp):
             AbstractOp._ParamEntry("rhs"),
         ]
 
-    def get_inference_op_lambda(self, lhs_dt: DTDescriptor, rhs_dt: DTDescriptor) -> Callable[[Any, Any], Any]:
-        raise NotImplementedError()
-
-    def get_flatten_op_lambda(self, ir_builder, lhs_dt: DTDescriptor, rhs_dt: DTDescriptor) -> Callable[[int, int], int]:
+    def get_reduce_op_lambda(
+            self,
+            reducer: AbsIRBuilderInterface,
+    ) -> Callable[[NumberValue, NumberValue], NumberValue]:
         raise NotImplementedError()
 
     def get_expected_result_dt(self, lhs_dt: DTDescriptor, rhs_dt: DTDescriptor):
-        if isinstance(lhs_dt, FloatDTDescriptor) and isinstance(rhs_dt, FloatDTDescriptor):
+        if lhs_dt == FloatType and rhs_dt == FloatType:
             return FloatDTDescriptor()
-        elif isinstance(lhs_dt, IntegerDTDescriptor) and isinstance(rhs_dt, FloatDTDescriptor):
+        elif lhs_dt == FloatType and rhs_dt == IntegerType:
             return FloatDTDescriptor()
-        elif isinstance(lhs_dt, FloatDTDescriptor) and isinstance(rhs_dt, IntegerDTDescriptor):
+        elif lhs_dt == IntegerType and rhs_dt == FloatType:
             return FloatDTDescriptor()
-        elif isinstance(lhs_dt, IntegerDTDescriptor) and isinstance(rhs_dt, IntegerDTDescriptor):
+        elif lhs_dt == IntegerType and rhs_dt == IntegerType:
             return IntegerDTDescriptor()
         raise NotImplementedError()
 
-    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
-        lhs, rhs = kwargs["lhs"].type(), kwargs["rhs"].type()
-        if isinstance(lhs, NumberDTDescriptor) and isinstance(rhs, NumberDTDescriptor):
-            return self.get_expected_result_dt(lhs, rhs)
-        elif isinstance(lhs, NumberDTDescriptor) and isinstance(rhs, NDArrayDTDescriptor):
-            return NDArrayDTDescriptor(shape=rhs.shape, dtype=self.get_expected_result_dt(lhs, rhs.dtype))
-        elif isinstance(lhs, NDArrayDTDescriptor) and isinstance(rhs, NumberDTDescriptor):
-            return NDArrayDTDescriptor(shape=lhs.shape, dtype=self.get_expected_result_dt(lhs.dtype, rhs))
-        elif isinstance(lhs, NDArrayDTDescriptor) and isinstance(rhs, NDArrayDTDescriptor):
-            if not NDArrayHelper.broadcast_compatible(lhs.shape, rhs.shape):
-                raise TypeInferenceError(dbg_i, f'Invalid binary operator `{self.get_signature()}` on operands {lhs} and {rhs}, as their shapes must be broadcast compatible')
-            return NDArrayDTDescriptor(
-                shape=NDArrayHelper.broadcast_shape(lhs.shape, rhs.shape),
-                dtype=self.get_expected_result_dt(lhs.dtype, rhs.dtype)
-            )
-        raise NotImplementedError()
+    def reduce_number_and_number(self, reducer: AbsIRBuilderInterface, lhs: NumberValue, rhs: NumberValue) -> Value:
+        return self.get_reduce_op_lambda(reducer)(lhs, rhs)
 
-    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
-        lhs, rhs = kwargs["lhs"], kwargs["rhs"]
-        if isinstance(lhs, NumberInferenceDescriptor) and isinstance(rhs, NumberInferenceDescriptor):
-            inference_value = self.get_inference_op_lambda(lhs.dt, rhs.dt)(lhs.get(), rhs.get())
-            expected_dt = self.get_expected_result_dt(lhs.dt, rhs.dt)
-            if isinstance(expected_dt, FloatDTDescriptor):
-                return FloatInferenceDescriptor(inference_value)
-            elif isinstance(expected_dt, IntegerDTDescriptor):
-                return IntegerInferenceDescriptor(inference_value)
-            raise NotImplementedError()
-        elif isinstance(lhs, NumberInferenceDescriptor) and isinstance(rhs, NDArrayInferenceDescriptor):
-            val = lhs.get()
-            ndarray = rhs.get().unary(lambda x: self.get_inference_op_lambda(lhs.dt, rhs.dtype())(val, x))
-            return NDArrayInferenceDescriptor(rhs.shape(), self.get_expected_result_dt(lhs.dt, rhs.dtype()), ndarray)
-        elif isinstance(lhs, NDArrayInferenceDescriptor) and isinstance(rhs, NumberInferenceDescriptor):
-            val = rhs.get()
-            ndarray = lhs.get().unary(lambda x: self.get_inference_op_lambda(lhs.dtype(), rhs.dt)(val, x))
-            return NDArrayInferenceDescriptor(lhs.shape(), self.get_expected_result_dt(lhs.dtype(), rhs.dt), ndarray)
-        elif isinstance(lhs, NDArrayInferenceDescriptor) and isinstance(rhs, NDArrayInferenceDescriptor):
-            broadcast_shape = NDArrayHelper.broadcast_shape(lhs.shape(), rhs.shape())
-            _lhs, _rhs = NDArrayHelper.broadcast(lhs.get(), rhs.get())
-            return NDArrayInferenceDescriptor(
-                broadcast_shape,
-                self.get_expected_result_dt(lhs.dtype(), rhs.dtype()),
-                _lhs.binary(_rhs, self.get_inference_op_lambda(lhs.dtype(), rhs.dtype()))
-            )
-        raise NotImplementedError()
+    def reduce_number_and_ndarray(self, reducer: AbsIRBuilderInterface, lhs: NumberValue, rhs: NDArrayValue) -> Value:
+        lhs_ndarray = NDArrayValue.from_number(lhs)
+        lhs_ndarray, rhs_ndarray = NDArrayValue.broadcast(lhs_ndarray, rhs)
+        result = NDArrayValue.binary(lhs_ndarray, rhs_ndarray, self.get_expected_result_dt(lhs.type(), rhs.dtype()), self.get_reduce_op_lambda(reducer))
+        return result
 
-    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
+    def reduce_ndarray_and_number(self, reducer: AbsIRBuilderInterface, lhs: NDArrayValue, rhs: NumberValue) -> Value:
+        rhs_ndarray = NDArrayValue.from_number(rhs)
+        lhs_ndarray, rhs_ndarray = NDArrayValue.broadcast(lhs, rhs_ndarray)
+        result = NDArrayValue.binary(lhs_ndarray, rhs_ndarray, self.get_expected_result_dt(lhs.dtype(), rhs.type()), self.get_reduce_op_lambda(reducer))
+        return result
+
+    def reduce_ndarray_and_ndarray(self, reducer: AbsIRBuilderInterface, lhs: NDArrayValue, rhs: NDArrayValue) -> NDArrayValue:
+        if not NDArrayValueWrapper.binary_broadcast_compatible(lhs.shape(), rhs.shape()):
+            raise TypeInferenceError(None, f"Cannot broadcast two NDArray with shapes {lhs.shape()} and {rhs.shape()}")
+        lhs, rhs = NDArrayValue.broadcast(lhs, rhs)
+        result = NDArrayValue.binary(lhs, rhs, self.get_expected_result_dt(lhs.dtype(), rhs.dtype()), self.get_reduce_op_lambda(reducer))
+        return result
+
+    def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         lhs, rhs = kwargs["lhs"], kwargs["rhs"]
-        if isinstance(lhs, NumberFlattenDescriptor) and isinstance(rhs, NumberFlattenDescriptor):
-            ptr = self.get_flatten_op_lambda(ir_builder, lhs.dt, rhs.dt)(lhs.ptr(), rhs.ptr())
-            expected_dt = self.get_expected_result_dt(lhs.dt, rhs.dt)
-            if isinstance(expected_dt, FloatDTDescriptor):
-                return FloatFlattenDescriptor(ptr)
-            elif isinstance(expected_dt, IntegerDTDescriptor):
-                return IntegerFlattenDescriptor(ptr)
-            raise NotImplementedError()
-        elif isinstance(lhs, NumberFlattenDescriptor) and isinstance(rhs, NDArrayFlattenDescriptor):
-            assert NDArrayHelper.broadcast_compatible((1, ), rhs.ptr().shape)
-            lhs_ndarray, rhs_ndarray = NDArrayHelper.broadcast(NDArrayHelper((1, ), [lhs.ptr()]), rhs.ptr())
-            result = lhs_ndarray.binary(rhs_ndarray, self.get_flatten_op_lambda(ir_builder, lhs.dt, rhs.dtype()))
-            return NDArrayFlattenDescriptor(result.shape, rhs.dtype(), result)
-        elif isinstance(lhs, NDArrayFlattenDescriptor) and isinstance(rhs, NumberFlattenDescriptor):
-            assert NDArrayHelper.broadcast_compatible(lhs.ptr().shape, (1, ))
-            lhs_ndarray, rhs_ndarray = NDArrayHelper.broadcast(lhs.ptr(), NDArrayHelper((1, ), [rhs.ptr()]))
-            result = lhs_ndarray.binary(rhs_ndarray, self.get_flatten_op_lambda(ir_builder, lhs.dtype(), rhs.dt))
-            return NDArrayFlattenDescriptor(result.shape, lhs.dtype(), result)
-        elif isinstance(lhs, NDArrayFlattenDescriptor) and isinstance(rhs, NDArrayFlattenDescriptor):
-            assert NDArrayHelper.broadcast_compatible(lhs.ptr().shape, rhs.ptr().shape)
-            lhs_ndarray, rhs_ndarray = NDArrayHelper.broadcast(lhs.ptr(), rhs.ptr())
-            result = lhs_ndarray.binary(rhs_ndarray, self.get_flatten_op_lambda(ir_builder, lhs.dtype(), rhs.dtype()))
-            return NDArrayFlattenDescriptor(result.shape, self.get_expected_result_dt(lhs.dtype(), rhs.dtype()), result)
-        raise NotImplementedError()
+        if isinstance(lhs, NumberValue) and isinstance(rhs, NumberValue):
+            return self.reduce_number_and_number(reducer, lhs, rhs)
+        elif isinstance(lhs, NumberValue) and isinstance(rhs, NDArrayValue):
+            return self.reduce_number_and_ndarray(reducer, lhs, rhs)
+        elif isinstance(lhs, NDArrayValue) and isinstance(rhs, NumberValue):
+            return self.reduce_ndarray_and_number(reducer, lhs, rhs)
+        elif isinstance(lhs, NDArrayValue) and isinstance(rhs, NDArrayValue):
+            return self.reduce_ndarray_and_ndarray(reducer, lhs, rhs)
+        raise TypeInferenceError(dbg, f"Operator `{self.get_name()}` not defined on `{lhs.type()}` and `{rhs.type()}`")

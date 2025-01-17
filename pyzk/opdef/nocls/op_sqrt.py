@@ -1,13 +1,12 @@
-from typing import List, Dict, Optional
+import math
+from typing import List, Dict, Optional, Any
 
-from pyzk.debug.exception import TypeInferenceError
+from pyzk.debug.exception import TypeInferenceError, StaticInferenceError
+from pyzk.internal.dt_descriptor import IntegerType, FloatType
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor, FloatDTDescriptor, NDArrayDTDescriptor
-from pyzk.internal.flatten_descriptor import FlattenDescriptor, IntegerFlattenDescriptor, FloatFlattenDescriptor, \
-    NDArrayFlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, IntegerInferenceDescriptor, \
-    FloatInferenceDescriptor, NDArrayInferenceDescriptor, NDArrayInferenceValue
 from pyzk.debug.dbg_info import DebugInfo
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import Value, IntegerValue, FloatValue, NDArrayValue
 
 
 class SqrtOp(AbstractOp):
@@ -26,35 +25,14 @@ class SqrtOp(AbstractOp):
             AbstractOp._ParamEntry("x")
         ]
 
-    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
-        x = kwargs["x"].type()
-        if isinstance(x, IntegerDTDescriptor):
-            return FloatDTDescriptor()
-        elif isinstance(x, FloatDTDescriptor):
-            return FloatDTDescriptor()
-        elif isinstance(x, NDArrayDTDescriptor):
-            return NDArrayDTDescriptor(x.shape, FloatDTDescriptor())
-        raise TypeInferenceError(dbg_i, f'Operator `{self.get_signature()}` on operand {x} not supported')
-
-    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         x = kwargs["x"]
-        if isinstance(x, IntegerInferenceDescriptor):
-            return FloatInferenceDescriptor(None)
-        elif isinstance(x, FloatInferenceDescriptor):
-            return FloatInferenceDescriptor(None)
-        elif isinstance(x, NDArrayInferenceDescriptor):
-            return NDArrayInferenceDescriptor(x.shape(), FloatDTDescriptor(), NDArrayInferenceValue.fill(x.shape(), lambda: None))
-        raise NotImplementedError()
-
-    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
-        x = kwargs["x"]
-        if isinstance(x, IntegerFlattenDescriptor):
-            return FloatFlattenDescriptor(ir_builder.create_sqrt(ir_builder.create_float_cast(x.ptr())))
-        elif isinstance(x, FloatFlattenDescriptor):
-            return FloatFlattenDescriptor(ir_builder.create_sqrt(x.ptr()))
-        if isinstance(x, NDArrayFlattenDescriptor):
-            if isinstance(x.dtype(), IntegerDTDescriptor):
-                return NDArrayFlattenDescriptor(x.shape(), FloatDTDescriptor(), x.ptr().unary(lambda u: ir_builder.create_sqrt(ir_builder.create_float_cast(u))))
-            elif isinstance(x.dtype(), FloatDTDescriptor):
-                return NDArrayFlattenDescriptor(x.shape(), FloatDTDescriptor(), x.ptr().unary(lambda u: ir_builder.create_sqrt(u)))
-        raise NotImplementedError()
+        if isinstance(x, IntegerValue):
+            return reducer.ir_sqrt(reducer.ir_float_cast(x), dbg=dbg)
+        elif isinstance(x, FloatValue):
+            return reducer.ir_sqrt(x, dbg=dbg)
+        elif isinstance(x, NDArrayValue) and x.dtype() == IntegerType:
+            return x.unary(IntegerType, lambda v: reducer.ir_sqrt(reducer.ir_float_cast(v), dbg=dbg))
+        elif isinstance(x, NDArrayValue) and x.dtype() == FloatType:
+            return x.unary(IntegerType, lambda v: reducer.ir_sqrt(v, dbg=dbg))
+        raise TypeInferenceError(dbg, f"Unsupported argument type for `{self.get_name()}`: {x.type()}")

@@ -1,12 +1,13 @@
-from typing import Any, Optional, List, Dict
+from typing import Optional, List, Dict
 
-from pyzk.algo.ndarray_helper import NDArrayHelper
+from pyzk.algo.ndarray_helper import NDArrayValueWrapper
 from pyzk.debug.dbg_info import DebugInfo
-from pyzk.debug.exception import OperatorCallError, TypeInferenceError, StaticInferenceError
-from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor
-from pyzk.internal.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, NDArrayInferenceDescriptor, IntegerInferenceDescriptor
+from pyzk.debug.exception import TypeInferenceError, StaticInferenceError
+from pyzk.internal.compiler_config import CompilerConfig
+from pyzk.internal.dt_descriptor import IntegerType, FloatType
 from pyzk.opdef.nocls.abstract_op import AbstractOp
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import Value, IntegerValue, NDArrayValue, TupleValue
 
 
 class ConcatenateOp(AbstractOp):
@@ -20,53 +21,42 @@ class ConcatenateOp(AbstractOp):
     def get_name(cls) -> str:
         return "concatenate"
 
-    def params_parse(self, dbg_i: Optional[DebugInfo], args: List[Any], kwargs: Dict[str, Any]) -> Dict[str, Any]:
-        for key, value in kwargs.items():
-            if key != "axis":
-                raise OperatorCallError(dbg_i, f"Unexpected keyword argument {key}")
-        axis = kwargs.get("axis", None)
-        if len(args) == 0:
-            raise OperatorCallError(dbg_i, f"Operator `{self.get_name()}` requires at least one argument")
-        return_dict = {f"_n_{i}": arg for i, arg in enumerate(args)}
-        return_dict["axis"] = axis
-        return return_dict
+    @classmethod
+    def ir_reducible(cls, config: CompilerConfig) -> bool:
+        return True
 
-    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
-        axis = kwargs.get("axis", None)
-        args = [v for k, v in kwargs.items() if k.startswith("_n_")]
-        axis_value = 0
-        if len(args) == 0:
-            raise TypeInferenceError(dbg_i, f"At least one argument is required for {self.get_name()}")
-        if axis is not None and not isinstance(axis, IntegerInferenceDescriptor):
-            raise TypeInferenceError(dbg_i, f"Expected axis to be an integer, but got {axis}")
-        if axis is not None:
-            axis_value = axis.get()
-            if axis_value is None:
-                raise StaticInferenceError(dbg_i, f"Axis value is not statically inferable")
-        for arg in args:
-            if not isinstance(arg, NDArrayInferenceDescriptor):
-                raise TypeInferenceError(dbg_i, f"Expected all arguments to be NDArray, but got {arg}")
-        check_concatenate = NDArrayHelper.check_concatenate([arg.get() for arg in args], axis_value)
-        if check_concatenate is not None:
-            raise TypeInferenceError(dbg_i, check_concatenate)
-        return NDArrayDTDescriptor(NDArrayHelper.concatenate_shape([arg.get() for arg in args], axis_value), args[0].dtype())
+    def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
+        return [
+            AbstractOp._ParamEntry("args"),
+            AbstractOp._ParamEntry("axis", default=True),
+        ]
 
-    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         axis = kwargs.get("axis", None)
-        args = [v for k, v in kwargs.items() if k.startswith("_n_")]
+        args = kwargs["args"]
         axis_value = 0
         if axis is not None:
-            axis_value = axis.get()
-        assert axis_value is not None
-        result = NDArrayHelper.concatenate([arg.get() for arg in args], axis_value)
-        return NDArrayInferenceDescriptor(result.shape, args[0].dtype(), result)
-
-    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
-        axis = kwargs.get("axis", None)
-        args = [v for k, v in kwargs.items() if k.startswith("_n_")]
-        axis_value = 0
-        if axis is not None:
-            axis_value = axis.val()
-        assert axis_value is not None
-        result = NDArrayHelper.concatenate([arg.ptr() for arg in args], axis_value)
-        return NDArrayFlattenDescriptor(result.shape, args[0].dtype(), result)
+            if isinstance(axis, IntegerValue):
+                axis_value = axis.val()
+            else:
+                raise TypeInferenceError(dbg, f"Expected axis to be an integer, but got {axis.type()}")
+        if axis_value is None:
+            raise StaticInferenceError(dbg, f"`axis` value is not statically inferable")
+        if not isinstance(args, TupleValue):
+            raise TypeInferenceError(dbg, f"Expected args to be a tuple, but got {args.type()}")
+        if len(args.types()) == 0:
+            raise TypeInferenceError(dbg, f"At least one array is required for {self.get_name()}")
+        expected_float = False
+        for arg in args.values():
+            if not isinstance(arg, NDArrayValue):
+                raise TypeInferenceError(dbg, f"Expected all arguments to be NDArray, but got {arg.type()}")
+            if arg.dtype() == FloatType:
+                expected_float = True
+        sources: List[NDArrayValue] = []
+        for arg in args.values():
+            sources.append(reducer.op_float_cast(arg) if expected_float and arg.dtype() != FloatType else arg)
+        check_result = NDArrayValueWrapper.check_concatenate([source.get() for source in sources])
+        if check_result is not None:
+            raise TypeInferenceError(dbg, check_result)
+        result = NDArrayValueWrapper.concatenate([source.get() for source in sources], axis_value)
+        return NDArrayValue(result.shape, FloatType if expected_float else IntegerType, result)

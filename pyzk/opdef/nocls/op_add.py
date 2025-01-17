@@ -1,10 +1,9 @@
-from typing import Callable, Any, Dict, Optional
+from typing import Callable, Dict, Optional
 
-from pyzk.opdef.nocls.abstract_arithemetic import AbstractArithemetic
-from pyzk.internal.dt_descriptor import DTDescriptor, TupleDTDescriptor, IntegerDTDescriptor, FloatDTDescriptor
-from pyzk.internal.flatten_descriptor import FlattenDescriptor, TupleFlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, TupleInferenceDescriptor
 from pyzk.debug.dbg_info import DebugInfo
+from pyzk.opdef.nocls.abstract_arithemetic import AbstractArithemetic
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import NumberValue, IntegerValue, FloatValue, Value, TupleValue, ListValue
 
 
 class AddOp(AbstractArithemetic):
@@ -18,37 +17,29 @@ class AddOp(AbstractArithemetic):
     def get_name(cls) -> str:
         return "add"
 
-    def get_inference_op_lambda(self, lhs_dt: DTDescriptor, rhs_dt: DTDescriptor) -> Callable[[Any, Any], Any]:
-        if isinstance(lhs_dt, IntegerDTDescriptor) and isinstance(rhs_dt, IntegerDTDescriptor):
-            return lambda x, y: x + y if x is not None and y is not None else None
-        else:
-            return lambda x, y: None
+    def get_reduce_op_lambda(self, reducer: AbsIRBuilderInterface) -> Callable[[NumberValue, NumberValue], NumberValue]:
+        def _inner(lhs: NumberValue, rhs: NumberValue) -> NumberValue:
+            if isinstance(lhs, IntegerValue) and isinstance(rhs, IntegerValue):
+                return reducer.ir_add_i(lhs, rhs)
+            elif isinstance(lhs, FloatValue) and isinstance(rhs, FloatValue):
+                return reducer.ir_add_f(lhs, rhs)
+            elif isinstance(lhs, IntegerValue) and isinstance(rhs, FloatValue):
+                return reducer.ir_add_f(reducer.ir_float_cast(lhs), rhs)
+            elif isinstance(lhs, FloatValue) and isinstance(rhs, IntegerValue):
+                return reducer.ir_add_f(lhs, reducer.ir_float_cast(rhs))
+            raise NotImplementedError()
+        return _inner
 
-    def get_flatten_op_lambda(self, ir_builder, lhs_dt: DTDescriptor, rhs_dt: DTDescriptor) -> Callable[[int, int], int]:
-        if isinstance(lhs_dt, IntegerDTDescriptor) and isinstance(rhs_dt, IntegerDTDescriptor):
-            return lambda x, y: ir_builder.create_add_i(x, y)
-        elif isinstance(lhs_dt, FloatDTDescriptor) and isinstance(rhs_dt, IntegerDTDescriptor):
-            return lambda x, y: ir_builder.create_add_f(x, ir_builder.create_float_cast(y))
-        elif isinstance(lhs_dt, IntegerDTDescriptor) and isinstance(rhs_dt, FloatDTDescriptor):
-            return lambda x, y: ir_builder.create_add_f(ir_builder.create_float_cast(x), y)
-        elif isinstance(lhs_dt, FloatDTDescriptor) and isinstance(rhs_dt, FloatDTDescriptor):
-            return lambda x, y: ir_builder.create_add_f(x, y)
-        raise NotImplementedError()
-
-    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
-        lhs, rhs = kwargs["lhs"].type(), kwargs["rhs"].type()
-        if isinstance(lhs, TupleDTDescriptor) and isinstance(rhs, TupleDTDescriptor):
-            return TupleDTDescriptor(lhs.length + rhs.length)
-        return super().type_check(dbg_i, kwargs)
-
-    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         lhs, rhs = kwargs["lhs"], kwargs["rhs"]
-        if isinstance(lhs, TupleInferenceDescriptor) and isinstance(rhs, TupleInferenceDescriptor):
-            return TupleInferenceDescriptor(lhs.length() + rhs.length(), lhs.get() + rhs.get())
-        return super().static_infer(dbg_i, kwargs)
-
-    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
-        lhs, rhs = kwargs["lhs"], kwargs["rhs"]
-        if isinstance(lhs, TupleFlattenDescriptor) and isinstance(rhs, TupleFlattenDescriptor):
-            return TupleFlattenDescriptor(lhs.length() + rhs.length(), lhs.ptr() + rhs.ptr())
-        return super().ir_flatten(ir_builder, kwargs)
+        if isinstance(lhs, TupleValue) and isinstance(rhs, TupleValue):
+            return TupleValue(
+                lhs.types() + rhs.types(),
+                lhs.values() + rhs.values()
+            )
+        elif isinstance(lhs, ListValue) and isinstance(rhs, ListValue):
+            return ListValue(
+                lhs.types() + rhs.types(),
+                lhs.values() + rhs.values()
+            )
+        return super().build(reducer, kwargs, dbg)

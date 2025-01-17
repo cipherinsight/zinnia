@@ -1,0 +1,59 @@
+from typing import List, Optional, Dict
+
+from pyzk.algo.ndarray_helper import NDArrayValueWrapper
+from pyzk.debug.dbg_info import DebugInfo
+from pyzk.debug.exception import TypeInferenceError
+from pyzk.opdef.ndarray.abstract_ndarray_item_slice import AbstractNDArrayItemSlice
+from pyzk.opdef.nocls.abstract_op import AbstractOp
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import Value, NDArrayValue, NumberValue
+
+
+class NDArray_SetItemOp(AbstractNDArrayItemSlice):
+    def __init__(self):
+        super().__init__()
+
+    def get_signature(self) -> str:
+        return "NDArray::__set_item__"
+
+    @classmethod
+    def get_name(cls) -> str:
+        return "NDArray::__set_item__"
+
+    def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
+        return [
+            AbstractOp._ParamEntry("self"),
+            AbstractOp._ParamEntry("value"),
+            AbstractOp._ParamEntry("slicing_params")
+        ]
+
+    def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
+        the_self = kwargs['self']
+        the_value = kwargs['value']
+        slicing_params = self.check_slicing_params_datatype(kwargs['slicing_params'], dbg)
+        assert isinstance(the_self, NDArrayValue)
+        self.check_slicing_dimensions(slicing_params.values(), the_self.shape(), dbg)
+        candidates, conditions = self.find_all_candidates(reducer, slicing_params.values(), the_self.shape(), dbg)
+        new_ndarray = the_self
+        for candidate, condition in zip(candidates, conditions):
+            original_value = new_ndarray.get_item(candidate)
+            if isinstance(original_value, NumberValue):
+                if the_value.type() != original_value.type():
+                    raise TypeInferenceError(dbg, f"Cannot assign {the_value.type()} to {original_value.type()}")
+                new_value = reducer.op_select(condition, the_value, original_value)
+                new_ndarray = new_ndarray.set_item(candidate, new_value)
+            elif isinstance(original_value, NDArrayValue):
+                _value_ary = the_value
+                if isinstance(the_value, NumberValue):
+                    _value_ary = NDArrayValue.from_number(the_value)
+                if not isinstance(_value_ary, NDArrayValue):
+                    raise TypeInferenceError(dbg, f"Expected NDArray or a number, got {the_value.type()}")
+                if not NDArrayValueWrapper.directed_broadcast_compatible(_value_ary.shape(), original_value.shape()):
+                    raise TypeInferenceError(dbg, f"Cannot broadcast input array from {_value_ary.shape()} to {original_value.shape}")
+                if _value_ary.dtype() != original_value.dtype():
+                    raise TypeInferenceError(dbg, f"Cannot assign {the_value.type()} to {original_value.type()}")
+                _value_ary = NDArrayValue(original_value.shape(), original_value.dtype(), NDArrayValueWrapper.directed_broadcast(_value_ary.get(), original_value.shape()))
+                new_value = reducer.op_select(condition, _value_ary, original_value)
+                new_ndarray = new_ndarray.set_item(candidate, new_value)
+        the_self.deep_assign(new_ndarray)
+        return the_value

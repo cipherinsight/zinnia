@@ -1,11 +1,11 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 
 from pyzk.debug.exception import TypeInferenceError
+from pyzk.internal.dt_descriptor import NDArrayDTDescriptor
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor, IntegerDTDescriptor
-from pyzk.internal.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor, TupleFlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, NDArrayInferenceDescriptor, TupleInferenceDescriptor
 from pyzk.debug.dbg_info import DebugInfo
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import Value, NDArrayValue, TupleValue, ListValue
 
 
 class TupleOp(AbstractOp):
@@ -19,35 +19,28 @@ class TupleOp(AbstractOp):
     def get_name(cls) -> str:
         return "tuple"
 
-    def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
-        return [
-            AbstractOp._ParamEntry("x")
-        ]
+    def argparse(self, dbg_i: Optional[DebugInfo], args: List[Any], kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        if len(kwargs) != 0:
+            raise TypeInferenceError(dbg_i, "`tuple` operator does not support keyword arguments")
+        if len(args) > 1:
+            raise TypeInferenceError(dbg_i, f"`tuple` expected at most 1 argument, got {len(args)}")
+        if len(args) == 0:
+            return {}
+        return {"x": args[0]}
 
-    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
-        x = kwargs["x"].type()
-        if isinstance(x, NDArrayDTDescriptor):
-            if len(x.shape) != 1:
-                raise TypeInferenceError(dbg_i, "Cannot cast this `NDArray` to `Tuple`, as its number of dimensions is greater than 1")
-            if not isinstance(x.dtype, IntegerDTDescriptor):
-                raise TypeInferenceError(dbg_i, "Cannot cast this `NDArray` to `Tuple`, as its dtype must be `Integer`")
-            return TupleDTDescriptor(x.shape[0])
-        elif isinstance(x, TupleDTDescriptor):
-            return TupleDTDescriptor(x.length)
-        raise TypeInferenceError(dbg_i, "`tuple` operator, which aims converts the param into Tuple, can only be used on `Tuple` or `NDArray`")
-
-    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
+        if "x" not in kwargs:
+            return TupleValue(tuple(), tuple())
         x = kwargs["x"]
-        if isinstance(x, NDArrayInferenceDescriptor):
-            return TupleInferenceDescriptor(x.shape()[0], tuple(x.get().values))
-        elif isinstance(x, TupleInferenceDescriptor):
-            return TupleInferenceDescriptor(x.length(), x.get())
-        raise NotImplementedError()
-
-    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
-        x = kwargs["x"]
-        if isinstance(x, NDArrayFlattenDescriptor):
-            return TupleFlattenDescriptor(x.shape()[0], tuple(x.ptr().values))
-        elif isinstance(x, TupleFlattenDescriptor):
-            return TupleFlattenDescriptor(x.length(), x.ptr())
-        raise NotImplementedError()
+        if isinstance(x, NDArrayValue):
+            sub_element_shape = x.shape()[1:]
+            sub_element_type = NDArrayDTDescriptor(sub_element_shape, x.dtype())
+            return TupleValue(
+                tuple(sub_element_type for _ in range(x.shape()[0])),
+                tuple(reducer.op_get_item(x, reducer.op_square_brackets([reducer.ir_constant_int(i)])) for i in range(x.shape()[0]))
+            )
+        elif isinstance(x, TupleValue):
+            return TupleValue(tuple(x.types()), tuple(x.values()))
+        elif isinstance(x, ListValue):
+            return TupleValue(tuple(x.types()), tuple(x.values()))
+        raise TypeInferenceError(dbg, f"`tuple` operator is not defined on {x.type()}")

@@ -1,12 +1,12 @@
 from typing import List, Dict, Optional
 
-from pyzk.debug.exception import TypeInferenceError
+from pyzk.debug.exception import TypeInferenceError, StaticInferenceError
+from pyzk.internal.dt_descriptor import IntegerType, FloatType
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor, FloatDTDescriptor
-from pyzk.internal.flatten_descriptor import FlattenDescriptor, IntegerFlattenDescriptor, NDArrayFlattenDescriptor, \
-    TupleFlattenDescriptor, NoneFlattenDescriptor, FloatFlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, IntegerInferenceDescriptor
 from pyzk.debug.dbg_info import DebugInfo
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import Value, IntegerValue, FloatValue, NDArrayValue, ListValue, TupleValue, NoneValue, \
+    ClassValue
 
 
 class SelectOp(AbstractOp):
@@ -27,59 +27,32 @@ class SelectOp(AbstractOp):
             AbstractOp._ParamEntry("fv"),
         ]
 
-    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
-        cond = kwargs["cond"].type()
-        tv, fv = kwargs["tv"].type(), kwargs["fv"].type()
-        if not isinstance(cond, IntegerDTDescriptor):
-            raise TypeInferenceError(dbg_i, f'Param `cond` must be an integer')
-        if tv != fv:
-            raise TypeInferenceError(dbg_i, f'The datatypes of `tv` and `fv` must be exactly the same')
-        return tv
-
-    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         cond = kwargs["cond"]
         tv, fv = kwargs["tv"], kwargs["fv"]
-        assert isinstance(cond, IntegerInferenceDescriptor)
-        if cond.get() is None:
-            return tv.copy_reset()
-        if cond.get() != 0:
-            return tv
-        return fv
-
-    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
-        cond = kwargs["cond"]
-        tv, fv = kwargs["tv"], kwargs["fv"]
-        assert isinstance(cond, IntegerFlattenDescriptor)
-        neg_cond = ir_builder.create_logical_not(cond.ptr())
-        if isinstance(tv, NDArrayFlattenDescriptor) and isinstance(tv.dtype(), IntegerDTDescriptor):
-            cond_mul_tv = tv.ptr().unary(lambda x: ir_builder.create_mul_i(cond.ptr(), x))
-            cond_mul_fv = fv.ptr().unary(lambda x: ir_builder.create_mul_i(neg_cond, x))
-            result = cond_mul_tv.binary(cond_mul_fv, lambda x, y: ir_builder.create_add_i(x, y))
-            return NDArrayFlattenDescriptor(result.shape, tv.dtype(), result)
-        elif isinstance(tv, NDArrayFlattenDescriptor) and isinstance(tv.dtype(), FloatDTDescriptor):
-            cond_f = ir_builder.create_float_cast(cond.ptr())
-            neg_cond_f = ir_builder.create_float_cast(neg_cond)
-            cond_mul_tv = tv.ptr().unary(lambda x: ir_builder.create_mul_f(cond_f, x))
-            cond_mul_fv = fv.ptr().unary(lambda x: ir_builder.create_mul_f(neg_cond_f, x))
-            result = cond_mul_tv.binary(cond_mul_fv, lambda x, y: ir_builder.create_add_f(x, y))
-            return NDArrayFlattenDescriptor(result.shape, tv.dtype(), result)
-        elif isinstance(tv, TupleFlattenDescriptor):
-            cond_mul_tv = tuple(ir_builder.create_mul_i(cond.ptr(), x) for x in tv.ptr())
-            cond_mul_fv = tuple(ir_builder.create_mul_i(neg_cond, x) for x in fv.ptr())
-            result = tuple(ir_builder.create_add_i(x, y) for x, y in zip(cond_mul_tv, cond_mul_fv))
-            return TupleFlattenDescriptor(len(result), result)
-        elif isinstance(tv, NoneFlattenDescriptor):
-            return NoneFlattenDescriptor()
-        elif isinstance(tv, IntegerFlattenDescriptor):
-            cond_mul_tv = ir_builder.create_mul_i(cond.ptr(), tv.ptr())
-            cond_mul_fv = ir_builder.create_mul_i(neg_cond, fv.ptr())
-            result = ir_builder.create_add_i(cond_mul_tv, cond_mul_fv)
-            return IntegerFlattenDescriptor(result)
-        elif isinstance(tv, FloatFlattenDescriptor):
-            cond_f = ir_builder.create_float_cast(cond.ptr())
-            neg_cond_f = ir_builder.create_float_cast(neg_cond)
-            cond_mul_tv = ir_builder.create_mul_f(cond_f, tv.ptr())
-            cond_mul_fv = ir_builder.create_mul_f(neg_cond_f, fv.ptr())
-            result = ir_builder.create_add_f(cond_mul_tv, cond_mul_fv)
-            return FloatFlattenDescriptor(result)
-        raise NotImplementedError()
+        if not isinstance(cond, IntegerValue):
+            raise TypeInferenceError(dbg, f'In `{self.get_name()}`, argument `cond` must be an `Integer`')
+        if tv.type() != fv.type():
+            raise TypeInferenceError(dbg, f'In `{self.get_name()}`, arguments `tv` and `fv` must have the same type')
+        if isinstance(tv, IntegerValue) and isinstance(fv, IntegerValue):
+            return reducer.ir_select_i(cond, tv, fv)
+        elif isinstance(tv, FloatValue) and isinstance(fv, FloatValue):
+            return reducer.ir_select_f(cond, tv, fv)
+        elif isinstance(tv, NDArrayValue) and isinstance(fv, NDArrayValue):
+            if tv.dtype() == IntegerType:
+                return NDArrayValue.binary(tv, fv, IntegerType, lambda x, y: reducer.ir_select_i(cond, x, y))
+            elif tv.dtype() == FloatType:
+                return NDArrayValue.binary(tv, fv, FloatType, lambda x, y: reducer.ir_select_f(cond, x, y))
+        elif isinstance(tv, ListValue) and isinstance(fv, ListValue):
+            values = [reducer.op_select(cond, tvv, fvv) for tvv, fvv in zip(tv.values(), fv.values())]
+            return ListValue(tv.types(), values)
+        elif isinstance(tv, TupleValue) and isinstance(fv, TupleValue):
+            values = [reducer.op_select(cond, tvv, fvv) for tvv, fvv in zip(tv.values(), fv.values())]
+            return TupleValue(tv.types(), tuple(values))
+        elif isinstance(tv, NoneValue) and isinstance(fv, NoneValue):
+            return NoneValue()
+        elif isinstance(tv, ClassValue) and isinstance(fv, ClassValue):
+            if cond.val() is None:
+                raise StaticInferenceError(dbg, f'In `{self.get_name()}`, argument `cond` is not statically inferable, which is required for class selection')
+            return tv if cond.val() else fv
+        raise TypeInferenceError(dbg, f'In `{self.get_name()}`, unsupported types for `tv` and `fv`: {tv.type()} and {fv.type()}')

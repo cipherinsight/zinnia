@@ -1,6 +1,8 @@
-from typing import Callable, Any
+from typing import Callable
 
 from pyzk.opdef.nocls.abstract_integer_arithemetic import AbstractIntegerArithemetic
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import IntegerValue
 
 
 class LogicalAndOp(AbstractIntegerArithemetic):
@@ -14,18 +16,5 @@ class LogicalAndOp(AbstractIntegerArithemetic):
     def get_name(cls) -> str:
         return "logical_and"
 
-    def get_inference_op_lambda(self) -> Callable[[Any, Any], Any]:
-        def _inner(lhs: Any, rhs: Any) -> Any:
-            if lhs is not None and rhs is not None:
-                return 1 if lhs != 0 and rhs != 0 else 0
-            elif lhs is None and rhs is None:
-                return None
-            elif lhs is None and rhs is not None:
-                return None if rhs != 0 else 0
-            elif lhs is not None and rhs is None:
-                return None if lhs != 0 else 0
-            raise NotImplementedError()
-        return _inner
-
-    def get_flatten_op_lambda(self, ir_builder) -> Callable[[int, int], int]:
-        return lambda x, y: ir_builder.create_logical_and(x, y)
+    def get_reduce_op_lambda(self, reducer: AbsIRBuilderInterface) -> Callable[[IntegerValue, IntegerValue], IntegerValue]:
+        return lambda x, y: reducer.ir_logical_and(x, y)

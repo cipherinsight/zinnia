@@ -2,10 +2,10 @@ from typing import List, Dict, Optional
 
 from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor
-from pyzk.internal.flatten_descriptor import FlattenDescriptor, IntegerFlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, IntegerInferenceDescriptor
+from pyzk.internal.dt_descriptor import IntegerType
 from pyzk.debug.dbg_info import DebugInfo
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import Value, IntegerValue, NDArrayValue
 
 
 class NotOp(AbstractOp):
@@ -24,22 +24,10 @@ class NotOp(AbstractOp):
             AbstractOp._ParamEntry("x")
         ]
 
-    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
-        x = kwargs["x"].type()
-        if isinstance(x, IntegerDTDescriptor):
-            return IntegerDTDescriptor()
-        raise TypeInferenceError(dbg_i, f'Invalid logical operator `{self.get_signature()}` on operand {x}, as it must be an integer')
-
-    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         x = kwargs["x"]
-        if isinstance(x, IntegerInferenceDescriptor):
-            if x.get() is None:
-                return IntegerInferenceDescriptor(None)
-            return IntegerInferenceDescriptor(1 if x.get() == 0 else 0)
-        raise NotImplementedError()
-
-    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
-        x = kwargs["x"]
-        if isinstance(x, IntegerFlattenDescriptor):
-            return IntegerFlattenDescriptor(ir_builder.create_logical_not(x.ptr()))
-        raise NotImplementedError()
+        if isinstance(x, IntegerValue):
+            return reducer.ir_logical_not(x)
+        elif isinstance(x, NDArrayValue) and x.dtype() == IntegerType:
+            return x.unary(IntegerType, lambda v: reducer.ir_logical_not(v))
+        raise TypeInferenceError(dbg, f"Unsupported argument type for `{self.get_name()}`: {x.type()}")

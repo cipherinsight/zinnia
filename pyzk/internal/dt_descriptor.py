@@ -1,4 +1,4 @@
-from typing import Tuple, Optional, Any, Dict
+from typing import Tuple, Optional, Any, Dict, Type, List
 
 from pyzk.debug.exception.transforming import InvalidAnnotationException
 from pyzk.debug.dbg_info import DebugInfo
@@ -32,9 +32,30 @@ class DTDescriptor(object):
     def from_annotation(cls, dbg_i: Optional[DebugInfo], args: Tuple[Any, ...]) -> 'DTDescriptor':
         raise NotImplementedError()
 
+    def is_t(self, other: Type) -> bool:
+        return isinstance(self, other)
+
+
+class NumberDTDescriptor(DTDescriptor):
+    def __init__(self):
+        super().__init__()
+
+    def __new__(cls, *args, **kwargs):
+        if cls is DTDescriptor:
+            raise TypeError(f"<NumberDTDescriptor> must be subclassed.")
+        return object.__new__(cls)
+
+    @classmethod
+    def get_typename(cls):
+        return "Number"
+
+    @classmethod
+    def from_annotation(cls, dbg_i: Optional[DebugInfo], args: Tuple[DTDescriptor | int, ...]) -> 'NumberDTDescriptor':
+        raise NotImplementedError()
+
 
 class NDArrayDTDescriptor(DTDescriptor):
-    def __init__(self, shape: Tuple[int, ...], dtype: DTDescriptor):
+    def __init__(self, shape: Tuple[int, ...], dtype: NumberDTDescriptor):
         super().__init__()
         self.shape = shape
         self.dtype = dtype
@@ -79,19 +100,21 @@ class NDArrayDTDescriptor(DTDescriptor):
 
 
 class TupleDTDescriptor(DTDescriptor):
-    def __init__(self, length: int):
+    def __init__(self, elements_dtype: Tuple[DTDescriptor, ...]):
         super().__init__()
-        self.length = length
+        self.elements_dtype = elements_dtype
 
     def __str__(self) -> str:
-        return f'{self.get_typename()}[{self.length}]'
+        return f'{self.get_typename()}[{"".join([str(x) for x in self.elements_dtype])}]'
 
     def __eq__(self, other) -> bool:
-        return super().__eq__(other) and self.length == other.length
+        return super().__eq__(other) and self.elements_dtype == other.elements_dtype
 
     def export(self) -> Dict[str, Any]:
         result = super().export()
-        result['length'] = self.length
+        result['elements'] = [
+            x.export() for x in self.elements_dtype
+        ]
         return result
 
     @classmethod
@@ -100,29 +123,38 @@ class TupleDTDescriptor(DTDescriptor):
 
     @classmethod
     def from_annotation(cls, dbg_i: Optional[DebugInfo], args: Tuple[DTDescriptor | int, ...]) -> 'TupleDTDescriptor':
-        if len(args) != 1:
-            raise InvalidAnnotationException(dbg_i, "Annotation `Tuple` requires exactly 1 argument")
-        if not isinstance(args[0], int):
-            raise InvalidAnnotationException(dbg_i, "Annotation `Tuple` accepts only one integer as length")
-        return TupleDTDescriptor(args[0])
+        if len(args) == 0:
+            raise InvalidAnnotationException(dbg_i, "Annotation `Tuple` requires 1 or more arguments")
+        return TupleDTDescriptor(tuple(arg for arg in args))
 
 
-class NumberDTDescriptor(DTDescriptor):
-    def __init__(self):
+class ListDTDescriptor(DTDescriptor):
+    def __init__(self, elements_dtype: List[DTDescriptor]):
         super().__init__()
+        self.elements_dtype = elements_dtype
 
-    def __new__(cls, *args, **kwargs):
-        if cls is DTDescriptor:
-            raise TypeError(f"<NumberDTDescriptor> must be subclassed.")
-        return object.__new__(cls)
+    def __str__(self) -> str:
+        return f'{self.get_typename()}[{"".join([str(x) for x in self.elements_dtype])}]'
+
+    def __eq__(self, other) -> bool:
+        return super().__eq__(other) and self.elements_dtype == other.elements_dtype
+
+    def export(self) -> Dict[str, Any]:
+        result = super().export()
+        result['elements'] = [
+            x.export() for x in self.elements_dtype
+        ]
+        return result
 
     @classmethod
     def get_typename(cls):
-        return "Number"
+        return "List"
 
     @classmethod
-    def from_annotation(cls, dbg_i: Optional[DebugInfo], args: Tuple[DTDescriptor | int, ...]) -> 'NumberDTDescriptor':
-        raise NotImplementedError()
+    def from_annotation(cls, dbg_i: Optional[DebugInfo], args: List[DTDescriptor | int]) -> 'ListDTDescriptor':
+        if len(args) == 0:
+            raise InvalidAnnotationException(dbg_i, "Annotation `List` requires 1 or more arguments")
+        return ListDTDescriptor([arg for arg in args])
 
 
 class IntegerDTDescriptor(NumberDTDescriptor):
@@ -195,3 +227,9 @@ class DTDescriptorFactory:
             if datatype.get_typename() == typename:
                 return True
         return False
+
+
+FloatType = FloatDTDescriptor()
+IntegerType = IntegerDTDescriptor()
+NumberType = NumberDTDescriptor()
+NoneType = NoneDTDescriptor()

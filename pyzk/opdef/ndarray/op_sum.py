@@ -1,7 +1,9 @@
-from typing import Any, Tuple
+from typing import Tuple
 
 from pyzk.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor
 from pyzk.opdef.ndarray.abstract_aggregator import AbstractAggregator
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import NumberValue
 
 
 class NDArray_SumOp(AbstractAggregator):
@@ -15,22 +17,10 @@ class NDArray_SumOp(AbstractAggregator):
     def get_name(cls) -> str:
         return "NDArray::sum"
 
-    def aggregator_func(self, lhs: Any, lhs_i: int, rhs: Any, rhs_i: int, dt: DTDescriptor) -> Tuple[Any, int | None]:
-        if isinstance(dt, IntegerDTDescriptor):
-            return (lhs + rhs) if lhs is not None and rhs is not None else None, None
-        return None, None
+    def aggregator_func(self, reducer: AbsIRBuilderInterface, lhs: NumberValue, lhs_i: NumberValue, rhs: NumberValue, rhs_i: NumberValue, dt: DTDescriptor) -> Tuple[NumberValue, NumberValue | None]:
+        return reducer.op_add(lhs, rhs), None
 
-    def initial_func(self, dt: DTDescriptor, first_ele: Any) -> Tuple[Any, int | None]:
+    def initial_func(self, reducer: AbsIRBuilderInterface, dt: DTDescriptor, first_ele: NumberValue) -> Tuple[NumberValue, NumberValue | None]:
         if isinstance(dt, IntegerDTDescriptor):
-            return 0, None
-        return 0.0, None
-
-    def aggregator_build_ir(self, ir_builder, lhs: int, lhs_i: int, rhs: int, rhs_i: int, dt: DTDescriptor) -> Tuple[int, int | None]:
-        if isinstance(dt, IntegerDTDescriptor):
-            return ir_builder.create_add_i(lhs, rhs), None
-        return ir_builder.create_add_f(lhs, rhs), None
-
-    def initial_build_ir(self, ir_builder, dt: DTDescriptor, first_ele: int) -> Tuple[int, int | None]:
-        if isinstance(dt, IntegerDTDescriptor):
-            return ir_builder.create_constant(0), None
-        return ir_builder.create_float_cast(ir_builder.create_constant(0)), None
+            return reducer.ir_constant_int(0), None
+        return reducer.ir_constant_float(0.0), None

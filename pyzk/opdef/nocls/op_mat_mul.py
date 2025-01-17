@@ -2,11 +2,11 @@ from typing import List, Dict, Optional
 
 from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, NDArrayDTDescriptor, FloatDTDescriptor, IntegerDTDescriptor
-from pyzk.internal.flatten_descriptor import FlattenDescriptor, NDArrayFlattenDescriptor
-from pyzk.internal.inference_descriptor import NDArrayInferenceDescriptor, InferenceDescriptor
-from pyzk.algo.ndarray_helper import NDArrayHelper
+from pyzk.internal.dt_descriptor import DTDescriptor, FloatDTDescriptor, FloatType, IntegerType
+from pyzk.algo.ndarray_helper import NDArrayValueWrapper
 from pyzk.debug.dbg_info import DebugInfo
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import Value, NDArrayValue
 
 
 class MatMulOp(AbstractOp):
@@ -26,99 +26,31 @@ class MatMulOp(AbstractOp):
             AbstractOp._ParamEntry("rhs"),
         ]
 
-    def get_expected_result_dt(self, lhs_dt: DTDescriptor, rhs_dt: DTDescriptor):
-        if isinstance(lhs_dt, FloatDTDescriptor) and isinstance(rhs_dt, FloatDTDescriptor):
-            return FloatDTDescriptor()
-        elif isinstance(lhs_dt, IntegerDTDescriptor) and isinstance(rhs_dt, FloatDTDescriptor):
-            return FloatDTDescriptor()
-        elif isinstance(lhs_dt, FloatDTDescriptor) and isinstance(rhs_dt, IntegerDTDescriptor):
-            return FloatDTDescriptor()
-        elif isinstance(lhs_dt, IntegerDTDescriptor) and isinstance(rhs_dt, IntegerDTDescriptor):
-            return IntegerDTDescriptor()
-        raise NotImplementedError()
+    def _get_expected_result_dt(self, lhs_dt: DTDescriptor, rhs_dt: DTDescriptor):
+        if isinstance(lhs_dt, FloatDTDescriptor) or isinstance(rhs_dt, FloatDTDescriptor):
+            return FloatType
+        return IntegerType
 
-    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
-        lhs, rhs = kwargs["lhs"].type(), kwargs["rhs"].type()
-        if isinstance(lhs, NDArrayDTDescriptor) and isinstance(rhs, NDArrayDTDescriptor):
-            if not NDArrayHelper.matmul_shape_matches(lhs.shape, rhs.shape):
-                raise TypeInferenceError(dbg_i, f'Invalid binary operator `{self.get_signature()}` on operands {lhs} and {rhs}, as their shapes are not multiply compatible')
-            return NDArrayDTDescriptor(shape=NDArrayHelper.matmul_shape(lhs.shape, rhs.shape), dtype=self.get_expected_result_dt(lhs.dtype, rhs.dtype))
-        raise TypeInferenceError(dbg_i, f'Invalid binary operator `{self.get_signature()}` on operands {lhs} and {rhs}. Only ndarray can be passed to `{self.get_signature()}`')
+    def _reduce_constant_zero(self, reducer: AbsIRBuilderInterface, expected_dt: DTDescriptor):
+        if expected_dt == FloatType:
+            return reducer.ir_constant_float(0.0)
+        return reducer.ir_constant_int(0)
 
-    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         lhs, rhs = kwargs["lhs"], kwargs["rhs"]
-        if isinstance(lhs, NDArrayInferenceDescriptor) and isinstance(rhs, NDArrayInferenceDescriptor):
-            matmul_shape = NDArrayHelper.matmul_shape(lhs.shape(), rhs.shape())
-            return NDArrayInferenceDescriptor(
+        if isinstance(lhs, NDArrayValue) and isinstance(rhs, NDArrayValue):
+            if not NDArrayValueWrapper.matmul_shape_matches(lhs.shape(), rhs.shape()):
+                raise TypeInferenceError(dbg, f'Invalid binary operator `{self.get_name()}` on operands {lhs.type()} and {rhs.type()}, as their shapes are not multiply compatible')
+            matmul_shape = NDArrayValueWrapper.matmul_shape(lhs.shape(), rhs.shape())
+            expected_dtype = self._get_expected_result_dt(lhs.dtype(), rhs.dtype())
+            return NDArrayValue(
                 matmul_shape,
-                self.get_expected_result_dt(lhs.dtype(), rhs.dtype()),
-                NDArrayHelper.matmul(
+                expected_dtype,
+                NDArrayValueWrapper.matmul(
                     lhs.get(), rhs.get(),
-                    lambda x, y: self._infer_add(x, y, lhs.dtype(), rhs.dtype()),
-                    lambda x, y: self._infer_mul(x, y, lhs.dtype(), rhs.dtype()),
-                    lambda: self._infer_constant_zero(lhs.dtype(), rhs.dtype())
+                    lambda x, y: reducer.op_add(x, y),
+                    lambda x, y: reducer.op_multiply(x, y),
+                    lambda: self._reduce_constant_zero(reducer, expected_dtype)
                 )
             )
-        raise NotImplementedError()
-
-    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
-        lhs, rhs = kwargs["lhs"], kwargs["rhs"]
-        if isinstance(lhs, NDArrayFlattenDescriptor) and isinstance(rhs, NDArrayFlattenDescriptor):
-            matmul_shape = NDArrayHelper.matmul_shape(lhs.shape(), rhs.shape())
-            return NDArrayFlattenDescriptor(
-                matmul_shape,
-                self.get_expected_result_dt(lhs.dtype(), rhs.dtype()),
-                NDArrayHelper.matmul(
-                    lhs.ptr(), rhs.ptr(),
-                    lambda x, y: self._flatten_add(ir_builder, x, y, lhs.dtype(), rhs.dtype()),
-                    lambda x, y: self._flatten_mul(ir_builder, x, y, lhs.dtype(), rhs.dtype()),
-                    lambda: self._flatten_constant_zero(ir_builder, lhs.dtype(), rhs.dtype())
-                )
-            )
-        raise NotImplementedError()
-
-    def _infer_add(self, x: int | float, y: int | float, x_dt: DTDescriptor, y_dt: DTDescriptor):
-        if isinstance(x_dt, FloatDTDescriptor) or isinstance(y_dt, FloatDTDescriptor):
-            return None
-        if x is None or y is None:
-            return None
-        return x + y
-
-    def _infer_mul(self, x: int | float, y: int | float, x_dt: DTDescriptor, y_dt: DTDescriptor):
-        if isinstance(x_dt, FloatDTDescriptor) or isinstance(y_dt, FloatDTDescriptor):
-            return None
-        if x is None or y is None:
-            return None
-        return x * y
-
-    def _infer_constant_zero(self, x_dt: DTDescriptor, y_dt: DTDescriptor):
-        if isinstance(x_dt, FloatDTDescriptor) or isinstance(y_dt, FloatDTDescriptor):
-            return 0.0
-        return 0
-
-    def _flatten_add(self, ir_builder, x: int, y: int, x_dt: DTDescriptor, y_dt: DTDescriptor):
-        # Notes:
-        #   1. the lhs var "x" is always the datatype yielded by `initializer`
-        #   2. the rhs var "y" is always the datatype yielded by `mul`
-        actual_dt = FloatDTDescriptor() if isinstance(x_dt, FloatDTDescriptor) or isinstance(y_dt, FloatDTDescriptor) else IntegerDTDescriptor()
-        if isinstance(actual_dt, FloatDTDescriptor):
-            return ir_builder.create_add_f(x, y)
-        elif isinstance(actual_dt, IntegerDTDescriptor):
-            return ir_builder.create_add_i(x, y)
-        raise NotImplementedError()
-
-    def _flatten_mul(self, ir_builder, x: int, y: int, x_dt: DTDescriptor, y_dt: DTDescriptor):
-        if isinstance(x_dt, FloatDTDescriptor) and isinstance(y_dt, FloatDTDescriptor):
-            return ir_builder.create_mul_f(x, y)
-        elif isinstance(x_dt, IntegerDTDescriptor) and isinstance(y_dt, FloatDTDescriptor):
-            return ir_builder.create_mul_f(ir_builder.create_float_cast(x), y)
-        elif isinstance(x_dt, FloatDTDescriptor) and isinstance(y_dt, IntegerDTDescriptor):
-            return ir_builder.create_mul_f(x, ir_builder.create_float_cast(y))
-        elif isinstance(x_dt, IntegerDTDescriptor) and isinstance(y_dt, IntegerDTDescriptor):
-            return ir_builder.create_mul_i(x, y)
-        raise NotImplementedError()
-
-    def _flatten_constant_zero(self, ir_builder, x_dt: DTDescriptor, y_dt: DTDescriptor):
-        if isinstance(x_dt, FloatDTDescriptor) or isinstance(y_dt, FloatDTDescriptor):
-            return ir_builder.create_float_cast(ir_builder.create_constant(0))
-        return ir_builder.create_constant(0)
+        raise TypeInferenceError(dbg, f'Invalid binary operator `{self.get_name()}` on operands {lhs.type()} and {rhs.type()}. Only ndarray can be passed to `{self.get_name()}`')

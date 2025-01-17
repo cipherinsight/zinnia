@@ -1,11 +1,11 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
 
 from pyzk.debug.exception import TypeInferenceError
 from pyzk.opdef.nocls.abstract_op import AbstractOp
-from pyzk.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor
-from pyzk.internal.flatten_descriptor import FlattenDescriptor, IntegerFlattenDescriptor
-from pyzk.internal.inference_descriptor import InferenceDescriptor, IntegerInferenceDescriptor
+from pyzk.internal.dt_descriptor import IntegerType, FloatType
 from pyzk.debug.dbg_info import DebugInfo
+from pyzk.builder.abstract_ir_builder import AbsIRBuilderInterface
+from pyzk.builder.value import Value, IntegerValue, NDArrayValue, FloatValue
 
 
 class BoolCastOp(AbstractOp):
@@ -24,23 +24,15 @@ class BoolCastOp(AbstractOp):
             AbstractOp._ParamEntry("x")
         ]
 
-    def perform_inference(self, lhs: Any, rhs: Any) -> Any:
-        raise NotImplementedError()
-
-    def type_check(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> DTDescriptor:
-        x = kwargs["x"].type()
-        if isinstance(x, IntegerDTDescriptor):
-            return IntegerDTDescriptor()
-        raise TypeInferenceError(dbg_i, f'Invalid logical operator `{self.get_signature()}` on operand {x}, as it must be a number')
-
-    def static_infer(self, dbg_i: Optional[DebugInfo], kwargs: Dict[str, InferenceDescriptor]) -> InferenceDescriptor:
+    def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         x = kwargs["x"]
-        if isinstance(x, IntegerInferenceDescriptor):
-            if x.get() is None:
-                return IntegerInferenceDescriptor(None)
-            return IntegerInferenceDescriptor(1 if x.get() != 0 else 0)
-        raise NotImplementedError()
-
-    def ir_flatten(self, ir_builder, kwargs: Dict[str, FlattenDescriptor]) -> FlattenDescriptor:
-        x = kwargs["x"]
-        return IntegerFlattenDescriptor(ir_builder.create_not_equal_i(x.ptr(), ir_builder.create_constant(0)))
+        if isinstance(x, IntegerValue):
+            return reducer.ir_not_equal_i(x, reducer.ir_constant_int(0))
+        elif isinstance(x, FloatValue):
+            return reducer.ir_not_equal_f(x, reducer.ir_constant_float(0.0))
+        elif isinstance(x, NDArrayValue):
+            if x.dtype() == IntegerType:
+                return x.unary(IntegerType, lambda u: reducer.ir_bool_cast(u))
+            elif x.dtype() == FloatType:
+                return x.unary(FloatType, lambda u: reducer.ir_bool_cast(u))
+        raise TypeInferenceError(dbg, f'Invalid `{self.get_signature()}` on operand {x.type()}')
