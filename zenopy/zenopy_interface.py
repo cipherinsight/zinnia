@@ -5,6 +5,7 @@ import sys
 from typing import Dict, Tuple
 
 import astpretty
+import autopep8
 
 from zenopy.ast.ast_transformer import PyZKCircuitASTTransformer, PyZKChipASTTransformer
 from zenopy.backend.halo2_builder import Halo2ProgramBuilder
@@ -21,7 +22,7 @@ class ZKChip:
     def __init__(self, name: str, source: str):
         self.name = name
         self.source = source
-        tree = ast.parse(self.source)
+        tree = ast.parse(autopep8.fix_code(self.source))
         try:
             transformer = PyZKChipASTTransformer(self.source, self.name)
             ir_comp_tree = transformer.visit(tree.body[0])
@@ -84,7 +85,7 @@ class ZKCircuit:
         return ZKCircuit(method_name, source_code, chips, debug)
 
     def compile(self) -> ZKProgram:
-        tree = ast.parse(self.source)
+        tree = ast.parse(autopep8.fix_code(self.source))
         try:
             if self.debug:
                 print('*' * 20 + ' Original AST ' + '*' * 20, file=sys.stderr)
