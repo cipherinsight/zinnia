@@ -209,6 +209,19 @@ class NoneDTDescriptor(DTDescriptor):
         return NoneDTDescriptor()
 
 
+class StringDTDescriptor(DTDescriptor):
+    def __init__(self):
+        super().__init__()
+
+    @classmethod
+    def get_typename(cls):
+        return "String"
+
+    @classmethod
+    def from_annotation(cls, dbg_i: Optional[DebugInfo], args: Tuple[DTDescriptor | int, ...]) -> 'DTDescriptor':
+        return StringDTDescriptor()
+
+
 class DTDescriptorFactory:
     DATATYPE_REGISTRY = [NDArrayDTDescriptor, TupleDTDescriptor, IntegerDTDescriptor, FloatDTDescriptor, NoneDTDescriptor, ClassDTDescriptor]
 
@@ -233,3 +246,4 @@ FloatType = FloatDTDescriptor()
 IntegerType = IntegerDTDescriptor()
 NumberType = NumberDTDescriptor()
 NoneType = NoneDTDescriptor()
+StringType = StringDTDescriptor()

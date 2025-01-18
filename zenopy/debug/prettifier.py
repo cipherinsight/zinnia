@@ -1,12 +1,14 @@
 from typing import List
 
-from zenopy.ast.zk_ast import ASTComponent, ASTAssignStatement, ASTSlicingAssignStatement, \
-    ASTAssertStatement, ASTBinaryOperator, ASTUnaryOperator, ASTExprAttribute, ASTNamedAttribute, ASTConstantFloat, ASTConstantInteger, \
+from zenopy.ast.zk_ast import ASTComponent, ASTAssignStatement, \
+    ASTAssertStatement, ASTBinaryOperator, ASTUnaryOperator, ASTExprAttribute, ASTNamedAttribute, ASTConstantFloat, \
+    ASTConstantInteger, \
     ASTSlicing, ASTLoad, ASTPassStatement, \
     ASTProgram, ASTProgramInput, ASTAnnotation, ASTForInStatement, ASTCondStatement, \
     ASTExpression, ASTSquareBrackets, ASTSlice, ASTContinueStatement, ASTBreakStatement, ASTParenthesis, \
-    ASTReturnStatement, ASTCallStatement
-from zenopy.debug.exception import InternalPyzkException, PyZKException
+    ASTReturnStatement, ASTCallStatement, ASTExprStatement, ASTConstantString, ASTNameAssignTarget, \
+    ASTTupleAssignTarget, ASTListAssignTarget, ASTSubscriptAssignTarget
+from zenopy.debug.exception import InternalZenoPyException, ZenoPyException
 from zenopy.ir.ir_stmt import IRStatement
 
 
@@ -22,15 +24,10 @@ def prettify_zk_ast(node: ASTComponent) -> str:
         if n is None:
             res = [prefix]
             return res
-        elif isinstance(n, ASTSlicingAssignStatement):
-            res = [prefix + f' -> {n.assignee}']
-            res += _inner(depth + 1, n.slicing, 'slicing')
-            res += _inner(depth + 1, n.value, 'value')
-            return res
         elif isinstance(n, ASTAssignStatement):
-            res = [prefix + f' -> {n.assignee}']
-            if n.annotation is not None:
-                res += _inner(depth + 1, n.annotation, 'annotation')
+            res = [prefix]
+            for i, target in enumerate(n.targets):
+                res += _inner(depth + 1, target, f'target_{i + 1}')
             res += _inner(depth + 1, n.value, 'value')
             return res
         elif isinstance(n, ASTAssertStatement):
@@ -62,6 +59,9 @@ def prettify_zk_ast(node: ASTComponent) -> str:
             res = [prefix + f' = {n.value}']
             return res
         elif isinstance(n, ASTConstantInteger):
+            res = [prefix + f' = {n.value}']
+            return res
+        elif isinstance(n, ASTConstantString):
             res = [prefix + f' = {n.value}']
             return res
         elif isinstance(n, ASTSlicing):
@@ -121,6 +121,10 @@ def prettify_zk_ast(node: ASTComponent) -> str:
             for stmt in n.f_block:
                 res += _inner(depth + 1, stmt)
             return res
+        elif isinstance(n, ASTExprStatement):
+            res = [prefix]
+            res += _inner(depth + 1, n.expr, f'expr')
+            return res
         elif isinstance(n, ASTSquareBrackets):
             res = [prefix]
             for i, expr in enumerate(n.values):
@@ -143,6 +147,24 @@ def prettify_zk_ast(node: ASTComponent) -> str:
             for k, arg in n.kwargs.items():
                 res += _inner(depth + 1, arg, f'arg: {k}')
             return res
+        elif isinstance(n, ASTNameAssignTarget):
+            res = [prefix + f' <- {n.name}' + '(*)' if n.star else '']
+            return res
+        elif isinstance(n, ASTTupleAssignTarget):
+            res = [prefix + '(*)' if n.star else '']
+            for i, target in enumerate(n.targets):
+                res += _inner(depth + 1, target, f'target_{i + 1}')
+            return res
+        elif isinstance(n, ASTListAssignTarget):
+            res = [prefix + '(*)' if n.star else '']
+            for i, target in enumerate(n.targets):
+                res += _inner(depth + 1, target, f'target_{i + 1}')
+            return res
+        elif isinstance(n, ASTSubscriptAssignTarget):
+            res = [prefix + '(*)' if n.star else '']
+            res += _inner(depth + 1, n.target, 'target')
+            res += _inner(depth + 1, n.slicing, 'slicing')
+            return res
         else:
             raise NotImplementedError(type(n))
     return '\n'.join(_inner(0, node))
@@ -157,10 +179,10 @@ def prettify_ir_stmts(stmts: List[IRStatement]):
     return "\n".join(results)
 
 
-def prettify_exception(exception: InternalPyzkException) -> PyZKException:
-    if isinstance(exception, InternalPyzkException):
+def prettify_exception(exception: InternalZenoPyException) -> ZenoPyException:
+    if isinstance(exception, InternalZenoPyException):
         if exception.dbg_i is None:
-            return PyZKException(f'{type(exception).__name__}: {exception.msg}')
+            return ZenoPyException(f'{type(exception).__name__}: {exception.msg}')
         source_lines = exception.dbg_i.source_code.splitlines()
         error_report_msg = f'  In method "{exception.dbg_i.method_name}", line {exception.dbg_i.lineno}'
         if exception.dbg_i.end_lineno != exception.dbg_i.lineno:
@@ -192,5 +214,5 @@ def prettify_exception(exception: InternalPyzkException) -> PyZKException:
             error_report_msg += '^' * (exception.dbg_i.end_col_offset - exception.dbg_i.col_offset)
             error_report_msg += '\n'
         error_report_msg += type(exception).__name__ + ': ' + exception.msg
-        return PyZKException(error_report_msg)
+        return ZenoPyException(error_report_msg)
     raise NotImplementedError

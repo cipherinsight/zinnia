@@ -2,7 +2,7 @@ from typing import Optional, List, Dict
 
 from zenopy.debug.dbg_info import DebugInfo
 from zenopy.builder.value import Value, NumberValue, IntegerValue, FloatValue, ListValue, TupleValue, NDArrayValue, \
-    NoneValue, ClassValue
+    NoneValue, ClassValue, StringValue
 from zenopy.internal.dt_descriptor import DTDescriptor
 
 
@@ -125,6 +125,9 @@ class AbsIRBuilderInterface:
         raise NotImplementedError()
 
     def op_constant_none(self, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        raise NotImplementedError()
+
+    def op_constant_string(self, value: str, dbg: Optional[DebugInfo] = None) -> StringValue:
         raise NotImplementedError()
 
     def op_constant_class(self, dt: DTDescriptor, dbg: Optional[DebugInfo] = None) -> ClassValue:

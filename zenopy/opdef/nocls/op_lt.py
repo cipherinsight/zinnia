@@ -38,8 +38,8 @@ class LessThanOp(AbstractCompare):
             for l, r in zip(lhs.values(), rhs.values()):
                 lt_v = reducer.op_bool_scalar(reducer.op_less_than(l, r))
                 eq_v = reducer.op_bool_scalar(reducer.op_equal(l, r))
+                result = reducer.ir_logical_or(result, reducer.ir_logical_and(all_prev_eq, lt_v))
                 all_prev_eq = reducer.ir_logical_and(all_prev_eq, eq_v)
-                reducer.ir_logical_or(result, reducer.ir_logical_and(all_prev_eq, lt_v))
             if len(lhs.values()) < len(rhs.values()):
                 return reducer.ir_logical_or(result, all_prev_eq)
             return result
@@ -49,8 +49,8 @@ class LessThanOp(AbstractCompare):
             for l, r in zip(lhs.values(), rhs.values()):
                 lt_v = reducer.op_bool_scalar(reducer.op_less_than(l, r))
                 eq_v = reducer.op_bool_scalar(reducer.op_equal(l, r))
+                result = reducer.ir_logical_or(result, reducer.ir_logical_and(all_prev_eq, lt_v))
                 all_prev_eq = reducer.ir_logical_and(all_prev_eq, eq_v)
-                reducer.ir_logical_or(result, reducer.ir_logical_and(all_prev_eq, lt_v))
             if len(lhs.values()) < len(rhs.values()):
                 return reducer.ir_logical_or(result, all_prev_eq)
             return result

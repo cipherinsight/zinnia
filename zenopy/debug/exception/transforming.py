@@ -1,8 +1,8 @@
-from zenopy.debug.exception.base import InternalPyzkException
+from zenopy.debug.exception.base import InternalZenoPyException
 from zenopy.debug.dbg_info import DebugInfo
 
 
-class ASTTransformingException(InternalPyzkException):
+class ASTTransformingException(InternalZenoPyException):
     def __init__(self, dbg_i: DebugInfo | None, msg: str, *args):
         super().__init__(dbg_i, msg, *args)
 

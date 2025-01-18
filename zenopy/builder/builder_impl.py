@@ -2,7 +2,7 @@ from typing import List, Dict, Optional
 
 from zenopy.builder.ir_builder import IRBuilder
 from zenopy.builder.value import Value, ClassValue, TupleValue, ListValue, NoneValue, NDArrayValue, IntegerValue, \
-    FloatValue
+    FloatValue, StringValue
 from zenopy.debug.dbg_info import DebugInfo
 from zenopy.internal.dt_descriptor import DTDescriptor
 from zenopy.ir.ir_ctx import IRContext
@@ -308,6 +308,9 @@ class IRBuilderImpl(IRBuilder):
 
     def op_constant_none(self, dbg: Optional[DebugInfo] = None) -> NoneValue:
         return NoneValue()
+
+    def op_constant_string(self, value: str, dbg: Optional[DebugInfo] = None) -> StringValue:
+        return StringValue(value)
 
     def op_constant_class(self, dt: DTDescriptor, dbg: Optional[DebugInfo] = None) -> ClassValue:
         return ClassValue(dt)

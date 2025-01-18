@@ -5,12 +5,11 @@ import sys
 from typing import Dict, Tuple
 
 import astpretty
-import autopep8
 
 from zenopy.ast.ast_transformer import PyZKCircuitASTTransformer, PyZKChipASTTransformer
 from zenopy.backend.halo2_builder import Halo2ProgramBuilder
 from zenopy.backend.zk_program import ZKProgram
-from zenopy.debug.exception import InternalPyzkException
+from zenopy.debug.exception import InternalZenoPyException
 from zenopy.ir.ir_gen import IRGenerator
 from zenopy.internal.chip_object import ChipObject
 from zenopy.debug.prettifier import prettify_zk_ast, prettify_ir_stmts, prettify_exception
@@ -18,15 +17,25 @@ from zenopy.exec.exec_ctx import ExecutionContext
 from zenopy.exec.executor import Halo2ZKProgramExecutor
 
 
+def _fix_indentation(code: str) -> str:
+    lines = code.split('\n')
+    min_indent = float('inf')
+    for line in lines:
+        if line.strip():
+            indent = len(line) - len(line.lstrip())
+            min_indent = min(min_indent, indent)
+    return '\n'.join([line[min_indent:] for line in lines])
+
+
 class ZKChip:
     def __init__(self, name: str, source: str):
         self.name = name
         self.source = source
-        tree = ast.parse(autopep8.fix_code(self.source))
+        tree = ast.parse(_fix_indentation(self.source))
         try:
             transformer = PyZKChipASTTransformer(self.source, self.name)
             ir_comp_tree = transformer.visit(tree.body[0])
-        except InternalPyzkException as e:
+        except InternalZenoPyException as e:
             raise prettify_exception(e)
         self.chip = ChipObject(ir_comp_tree)
 
@@ -61,7 +70,7 @@ class ZKCircuit:
             raise NotImplementedError('Execution not supported yet. Please read the compiled program source instead.')
             # executor = Halo2ZKProgramExecutor(exec_ctx, self.zk_program)
             # executor.exec()
-        except InternalPyzkException as e:
+        except InternalZenoPyException as e:
             raise prettify_exception(e)
 
     @staticmethod
@@ -85,7 +94,7 @@ class ZKCircuit:
         return ZKCircuit(method_name, source_code, chips, debug)
 
     def compile(self) -> ZKProgram:
-        tree = ast.parse(autopep8.fix_code(self.source))
+        tree = ast.parse(_fix_indentation(self.source))
         try:
             if self.debug:
                 print('*' * 20 + ' Original AST ' + '*' * 20, file=sys.stderr)
@@ -111,7 +120,7 @@ class ZKCircuit:
             if self.debug:
                 print('*' * 20 + ' Program Source ' + '*' * 20, file=sys.stderr)
                 print(self.zk_program.source, file=sys.stderr)
-        except InternalPyzkException as e:
+        except InternalZenoPyException as e:
             raise prettify_exception(e)
         return self.zk_program
 

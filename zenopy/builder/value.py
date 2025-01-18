@@ -3,7 +3,7 @@ from typing import Any, Tuple, Callable, List, Union
 
 from zenopy.internal.internal_ndarray import InternalNDArray
 from zenopy.internal.dt_descriptor import DTDescriptor, NumberDTDescriptor, IntegerDTDescriptor, FloatDTDescriptor, \
-    NDArrayDTDescriptor, TupleDTDescriptor, ListDTDescriptor, NoneDTDescriptor, ClassDTDescriptor
+    NDArrayDTDescriptor, TupleDTDescriptor, ListDTDescriptor, NoneDTDescriptor, ClassDTDescriptor, StringDTDescriptor
 
 
 class Value:
@@ -310,6 +310,22 @@ class ClassValue(Value):
         return self._value
 
     def assign(self, value: 'ClassValue') -> 'ClassValue':
+        self._value = value._value
+        return self
+
+    def __copy__(self):
+        return self.__class__(self.val())
+
+
+class StringValue(Value):
+    def __init__(self, value: str):
+        super().__init__(StringDTDescriptor())
+        self._value = value
+
+    def val(self) -> str:
+        return self._value
+
+    def assign(self, value: 'StringValue') -> 'StringValue':
         self._value = value._value
         return self
 

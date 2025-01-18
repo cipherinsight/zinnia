@@ -7,16 +7,17 @@ from zenopy.ir.ir_pass.constant_fold import ConstantFoldIRPass
 from zenopy.ir.ir_pass.dead_code_elimination import DeadCodeEliminationIRPass
 from zenopy.ir.ir_pass.duplicate_code_elimination import DuplicateCodeEliminationIRPass
 from zenopy.ir.ir_stmt import IRStatement
-from zenopy.ast.zk_ast import ASTComponent, ASTProgram, ASTAssignStatement, ASTPassStatement, ASTSlicingAssignStatement, \
+from zenopy.ast.zk_ast import ASTComponent, ASTProgram, ASTAssignStatement, ASTPassStatement, \
     ASTExpression, ASTForInStatement, ASTCondStatement, ASTConstantFloat, ASTConstantInteger, \
     ASTSlicing, ASTLoad, ASTAssertStatement, ASTSquareBrackets, ASTBreakStatement, ASTContinueStatement, \
     ASTBinaryOperator, ASTNamedAttribute, ASTExprAttribute, ASTParenthesis, ASTChip, ASTReturnStatement, \
-    ASTCallStatement, ASTUnaryOperator, ASTConstantNone
+    ASTCallStatement, ASTUnaryOperator, ASTConstantNone, ASTNameAssignTarget, ASTSubscriptAssignTarget, \
+    ASTListAssignTarget, ASTTupleAssignTarget, ASTAssignTarget, ASTExprStatement, ASTConstantString
 from zenopy.ir.ir_ctx import IRContext
 from zenopy.debug.exception import VariableNotFoundError, NoForElementsError, NotInLoopError, \
     InterScopeError, UnsupportedLangFeatureException, UnreachableStatementError, OperatorOrChipNotFoundException, \
     StatementNoEffectException, ControlEndWithoutReturnError, ReturnDatatypeMismatchError, \
-    ChipArgumentsError
+    ChipArgumentsError, TupleUnpackingError
 from zenopy.opdef.operator_factory import Operators
 from zenopy.internal.dt_descriptor import DTDescriptorFactory, NoneDTDescriptor, FloatDTDescriptor, IntegerDTDescriptor
 from zenopy.internal.prog_meta_data import ProgramMetadata, ProgramInputMetadata
@@ -53,26 +54,26 @@ class IRGenerator:
         chip_filled_args = [None for x in range(len(chip_declared_args))]
         for i, arg in enumerate(args):
             if i >= len(chip_declared_args):
-                raise ChipArgumentsError(chip.dbg_i, "Too many chip arguments")
+                raise ChipArgumentsError(chip.dbg, "Too many chip arguments")
             if chip_declared_args[i][1] != arg.type():
-                raise ChipArgumentsError(chip.dbg_i, f"Chip argument datatype mismatch for `{chip_declared_args[i][0]}`")
+                raise ChipArgumentsError(chip.dbg, f"Chip argument datatype mismatch for `{chip_declared_args[i][0]}`")
             chip_filled_args[i] = arg
         for key, arg in kwargs.items():
             arg_assigned = False
             for i, (name, dt) in enumerate(chip_declared_args):
                 if name == key:
                     if chip_filled_args[i] is not None:
-                        raise ChipArgumentsError(chip.dbg_i, f"Chip argument `{name}` already assigned")
+                        raise ChipArgumentsError(chip.dbg, f"Chip argument `{name}` already assigned")
                     if dt != arg.type():
-                        raise ChipArgumentsError(chip.dbg_i, f"Chip argument datatype mismatch for `{name}`")
+                        raise ChipArgumentsError(chip.dbg, f"Chip argument datatype mismatch for `{name}`")
                     chip_filled_args[i] = arg
                     arg_assigned = True
                     break
             if not arg_assigned:
-                raise ChipArgumentsError(chip.dbg_i, f"No such argument `{key}`")
+                raise ChipArgumentsError(chip.dbg, f"No such argument `{key}`")
         for i, (name, dt) in enumerate(chip_declared_args):
             if chip_filled_args[i] is None:
-                raise ChipArgumentsError(chip.dbg_i, f"Chip argument for `{name}` not filled")
+                raise ChipArgumentsError(chip.dbg, f"Chip argument for `{name}` not filled")
         self._ir_ctx.chip_enter(chip)
         self._register_global_datatypes()
         for i, (name, dt) in enumerate(chip_declared_args):
@@ -81,7 +82,7 @@ class IRGenerator:
             self.visit(stmt)
         return_vals_cond = self._ir_ctx.get_return_values_and_conditions()
         if not self._ir_ctx.get_branch_has_default_return() and not isinstance(chip.return_anno.dt, NoneDTDescriptor):
-            raise ControlEndWithoutReturnError(chip.dbg_i, "Chip control ends without a return statement")
+            raise ControlEndWithoutReturnError(chip.dbg, "Chip control ends without a return statement")
         self._ir_ctx.chip_leave()
         if isinstance(chip.return_anno.dt, NoneDTDescriptor):
             return self._ir_builder.op_constant_none()
@@ -94,7 +95,7 @@ class IRGenerator:
         for i, inp in enumerate(n.inputs):
             ptr = self._ir_builder.op_input(
                 i, inp.annotation.dt, inp.annotation.public,
-                dbg=n.dbg_i
+                dbg=n.dbg
             )
             self._ir_ctx.assign_name_to_ptr(inp.name, ptr)
             self.prog_meta_data.inputs.append(ProgramInputMetadata(inp.annotation.dt, inp.name, inp.annotation.public))
@@ -107,71 +108,41 @@ class IRGenerator:
 
     def visit_ASTPassStatement(self, n: ASTPassStatement):
         if self._ir_ctx.get_branch_has_default_return():
-            raise UnreachableStatementError(n.dbg_i, "This code is unreachable")
+            raise UnreachableStatementError(n.dbg, "This code is unreachable")
         return None
 
     def visit_ASTAssignStatement(self, n: ASTAssignStatement):
         if self._ir_ctx.get_branch_has_default_return():
-            raise UnreachableStatementError(n.dbg_i, "This code is unreachable")
+            raise UnreachableStatementError(n.dbg, "This code is unreachable")
         val_ptr = self.visit(n.value)
-        orig_val_ptr = self._ir_ctx.lookup_ptr_by_name(n.assignee)
-        annotation = None
-        if n.annotation is not None:
-            annotation = Annotation(n.annotation.dt, n.annotation.public)
-        if orig_val_ptr is not None:
-            if self._ir_ctx.is_name_in_stack_scope_top(n.assignee):
-                pass
-            elif val_ptr.type() != orig_val_ptr.type():
-                raise InterScopeError(n.dbg_i, f"Cannot assign to `{n.assignee}`: this variable is declared at the outer scope. Attempting to change its datatype in the inner scope from {orig_val_ptr.type()} to {val_ptr.type()} is not allowed. Assigning to variables from outer scope must keep its datatype and shape.")
-            else:
-                val_ptr = self._create_assignment_with_condition(
-                    orig_val_ptr, val_ptr, dbg_i=n.dbg_i, annotation=annotation)
-        self._ir_ctx.assign_name_to_ptr(n.assignee, val_ptr)
-        return val_ptr
-
-    def visit_ASTSlicingAssignStatement(self, n: ASTSlicingAssignStatement):
-        if self._ir_ctx.get_branch_has_default_return():
-            raise UnreachableStatementError(n.dbg_i, "This code is unreachable")
-        val_ptr = self.visit(n.value)
-        orig_val_ptr = self.visit(n.assignee)
-        slicing_args = []
-        for s in n.slicing.data:
-            if isinstance(s, ASTExpression):
-                slicing_args.append(self.visit(s))
-            elif isinstance(s, Tuple):
-                slicing_args.append((self.visit(s[0]), self.visit(s[1]), self.visit(s[2])))
-        val_ptr = self._create_assignment_with_condition(orig_val_ptr, val_ptr, dbg_i=n.dbg_i, annotation=None)
-        val_ptr = self._ir_builder.op_set_item(orig_val_ptr,
-            self._ir_builder.op_square_brackets(slicing_args), val_ptr, dbg=n.dbg_i)
+        for target in n.targets:
+            self._do_recursive_assign(target, val_ptr)
         return val_ptr
 
     def visit_ASTForInStatement(self, n: ASTForInStatement):
         if self._ir_ctx.get_branch_has_default_return():
-            raise UnreachableStatementError(n.dbg_i, "This code is unreachable")
+            raise UnreachableStatementError(n.dbg, "This code is unreachable")
         iter_elts = self._ir_builder.op_iter(self.visit(n.iter_expr))
         if not all(x == iter_elts.types()[0] for x in iter_elts.types()):
-            raise NoForElementsError(n.dbg_i, "In for statement, all elements in the iterable must have the same type")
-        backup_ptr = self._ir_ctx.lookup_ptr_by_name(n.assignee)
+            raise NoForElementsError(n.dbg, "In for statement, all elements in the iterable must have the same type")
         if len(iter_elts.values()) == 0:
-            raise NoForElementsError(n.dbg_i, "No iterable elements found in the for statement.")
+            raise NoForElementsError(n.dbg, "No iterable elements found in the for statement.")
         self._ir_ctx.for_block_enter()
         for loop_index_ptr in iter_elts.values():
-            self._ir_ctx.assign_name_to_ptr(n.assignee, loop_index_ptr)
+            self._do_recursive_assign(n.target, loop_index_ptr)
             self._ir_ctx.block_enter()
             self._ir_ctx.for_block_reiter()
             for _, stmt in enumerate(n.block):
                 self.visit(stmt)
             self._ir_ctx.block_leave()
         self._ir_ctx.for_block_leave()
-        if backup_ptr is not None:
-            self._ir_ctx.assign_name_to_ptr(n.assignee, backup_ptr)
         return None
 
     def visit_ASTBreakStatement(self, n: ASTBreakStatement):
         if self._ir_ctx.get_branch_has_default_return():
-            raise UnreachableStatementError(n.dbg_i, "This code is unreachable")
+            raise UnreachableStatementError(n.dbg, "This code is unreachable")
         if not self._ir_ctx.for_block_exists():
-            raise NotInLoopError(n.dbg_i, "Invalid break statement here outside the loop.")
+            raise NotInLoopError(n.dbg, "Invalid break statement here outside the loop.")
         condition_vars = self._ir_ctx.get_condition_variables()
         condition_result = self._ir_builder.ir_constant_int(1)
         for var in condition_vars:
@@ -182,9 +153,9 @@ class IRGenerator:
 
     def visit_ASTContinueStatement(self, n: ASTContinueStatement):
         if self._ir_ctx.get_branch_has_default_return():
-            raise UnreachableStatementError(n.dbg_i, "This code is unreachable")
+            raise UnreachableStatementError(n.dbg, "This code is unreachable")
         if not self._ir_ctx.for_block_exists():
-            raise NotInLoopError(n.dbg_i, "Invalid continue statement here outside the loop.")
+            raise NotInLoopError(n.dbg, "Invalid continue statement here outside the loop.")
         condition_vars = self._ir_ctx.get_condition_variables()
         condition_result = self._ir_builder.ir_constant_int(1)
         for var in condition_vars:
@@ -195,10 +166,10 @@ class IRGenerator:
 
     def visit_ASTCondStatement(self, n: ASTCondStatement):
         if self._ir_ctx.get_branch_has_default_return():
-            raise UnreachableStatementError(n.dbg_i, "This code is unreachable")
+            raise UnreachableStatementError(n.dbg, "This code is unreachable")
         cond_ptr = self.visit(n.cond)
-        true_cond_ptr = self._ir_builder.op_bool_scalar(cond_ptr, dbg=n.dbg_i)
-        false_cond_ptr = self._ir_builder.ir_logical_not(true_cond_ptr, dbg=n.dbg_i)
+        true_cond_ptr = self._ir_builder.op_bool_scalar(cond_ptr, dbg=n.dbg)
+        false_cond_ptr = self._ir_builder.ir_logical_not(true_cond_ptr, dbg=n.dbg)
         has_default_return_t_block = has_default_return_f_block = False
         self._ir_ctx.if_block_enter(true_cond_ptr)
         self._ir_ctx.block_enter()
@@ -221,16 +192,16 @@ class IRGenerator:
 
     def visit_ASTAssertStatement(self, n: ASTAssertStatement):
         if self._ir_ctx.get_branch_has_default_return():
-            raise UnreachableStatementError(n.dbg_i, "This code is unreachable")
+            raise UnreachableStatementError(n.dbg, "This code is unreachable")
         test = self.visit(n.expr)
-        test_wrt_conditions = self._create_assert_with_condition(test, n.dbg_i)
-        return self._ir_builder.op_assert(test_wrt_conditions, dbg=n.dbg_i)
+        test_wrt_conditions = self._create_assert_with_condition(test, n.dbg)
+        return self._ir_builder.op_assert(test_wrt_conditions, dbg=n.dbg)
 
     def visit_ASTReturnStatement(self, n: ASTReturnStatement):
         if self._ir_ctx.get_branch_has_default_return():
-            raise UnreachableStatementError(n.dbg_i, "Unreachable return statement")
+            raise UnreachableStatementError(n.dbg, "Unreachable return statement")
         if self._ir_ctx.get_chip_depth() == 0:
-            raise UnsupportedLangFeatureException(n.dbg_i, "Return statements in circuits is not supported")
+            raise UnsupportedLangFeatureException(n.dbg, "Return statements in circuits is not supported")
         if n.expr is not None:
             val = self.visit(n.expr)
             return_dt = val.type()
@@ -239,7 +210,7 @@ class IRGenerator:
             return_dt = NoneDTDescriptor()
         expected_return_dt = self._ir_ctx.get_current_chip().return_anno.dt
         if return_dt != expected_return_dt:
-            raise ReturnDatatypeMismatchError(n.dbg_i, "Return datatype mismatch annotated return datatype")
+            raise ReturnDatatypeMismatchError(n.dbg, "Return datatype mismatch annotated return datatype")
         return_condition = self._ir_builder.ir_constant_int(1)
         for condition in self._ir_ctx.get_condition_variables():
             return_condition = self._ir_builder.ir_logical_and(return_condition, condition)
@@ -249,57 +220,62 @@ class IRGenerator:
 
     def visit_ASTCallStatement(self, n: ASTCallStatement):
         if self._ir_ctx.get_branch_has_default_return():
-            raise UnreachableStatementError(n.dbg_i, "This code is unreachable")
+            raise UnreachableStatementError(n.dbg, "This code is unreachable")
         visited_args = [self.visit(arg) for arg in n.args]
         visited_kwargs = {k: self.visit(arg) for k, arg in n.kwargs.items()}
         chip = self._ir_ctx.lookup_chip(n.name)
         if chip is not None:
             return self.visit_chip(chip, visited_args, visited_kwargs)
         if Operators.instantiate_operator(n.name, None) is not None:
-            raise StatementNoEffectException(n.dbg_i, f"Statement seems to have no effect")
-        raise OperatorOrChipNotFoundException(n.dbg_i, f"Chip {n.name} not found")
+            raise StatementNoEffectException(n.dbg, f"Statement seems to have no effect")
+        raise OperatorOrChipNotFoundException(n.dbg, f"Chip {n.name} not found")
+
+    def visit_ASTExprStatement(self, n: ASTExprStatement):
+        if self._ir_ctx.get_branch_has_default_return():
+            raise UnreachableStatementError(n.dbg, "This code is unreachable")
+        return self.visit(n.expr)
 
     def visit_ASTBinaryOperator(self, n: ASTBinaryOperator):
         lhs_expr = self.visit(n.lhs)
         rhs_expr = self.visit(n.rhs)
         if n.operator == n.Op.ADD:
-            return self._ir_builder.op_add(lhs_expr, rhs_expr, dbg=n.dbg_i)
+            return self._ir_builder.op_add(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.SUB:
-            return self._ir_builder.op_subtract(lhs_expr, rhs_expr, dbg=n.dbg_i)
+            return self._ir_builder.op_subtract(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.MUL:
-            return self._ir_builder.op_multiply(lhs_expr, rhs_expr, dbg=n.dbg_i)
+            return self._ir_builder.op_multiply(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.DIV:
-            return self._ir_builder.op_divide(lhs_expr, rhs_expr, dbg=n.dbg_i)
+            return self._ir_builder.op_divide(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.MOD:
-            return self._ir_builder.op_modulo(lhs_expr, rhs_expr, dbg=n.dbg_i)
+            return self._ir_builder.op_modulo(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.FLOOR_DIV:
-            return self._ir_builder.op_floor_divide(lhs_expr, rhs_expr, dbg=n.dbg_i)
+            return self._ir_builder.op_floor_divide(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.MAT_MUL:
-            return self._ir_builder.op_mat_mul(lhs_expr, rhs_expr, dbg=n.dbg_i)
+            return self._ir_builder.op_mat_mul(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.EQ:
-            return self._ir_builder.op_equal(lhs_expr, rhs_expr, dbg=n.dbg_i)
+            return self._ir_builder.op_equal(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.NE:
-            return self._ir_builder.op_not_equal(lhs_expr, rhs_expr, dbg=n.dbg_i)
+            return self._ir_builder.op_not_equal(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.LT:
-            return self._ir_builder.op_less_than(lhs_expr, rhs_expr, dbg=n.dbg_i)
+            return self._ir_builder.op_less_than(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.LTE:
-            return self._ir_builder.op_less_than_or_equal(lhs_expr, rhs_expr, dbg=n.dbg_i)
+            return self._ir_builder.op_less_than_or_equal(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.GT:
-            return self._ir_builder.op_greater_than(lhs_expr, rhs_expr, dbg=n.dbg_i)
+            return self._ir_builder.op_greater_than(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.GTE:
-            return self._ir_builder.op_greater_than_or_equal(lhs_expr, rhs_expr, dbg=n.dbg_i)
+            return self._ir_builder.op_greater_than_or_equal(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.AND:
-            return self._ir_builder.ir_logical_and(lhs_expr, rhs_expr, dbg=n.dbg_i)
+            return self._ir_builder.ir_logical_and(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.OR:
-            return self._ir_builder.ir_logical_or(lhs_expr, rhs_expr, dbg=n.dbg_i)
+            return self._ir_builder.ir_logical_or(lhs_expr, rhs_expr, dbg=n.dbg)
         raise NotImplementedError(f"Internal Error: Binary Operator {n.operator} not implemented")
 
     def visit_ASTUnaryOperator(self, n: ASTUnaryOperator):
         operand_expr = self.visit(n.operand)
         if n.operator == n.Op.NOT:
-            return self._ir_builder.op_unary_not(operand_expr, dbg=n.dbg_i)
+            return self._ir_builder.op_unary_not(operand_expr, dbg=n.dbg)
         if n.operator == n.Op.USUB:
-            return self._ir_builder.op_unary_sub(operand_expr, dbg=n.dbg_i)
+            return self._ir_builder.op_unary_sub(operand_expr, dbg=n.dbg)
         raise NotImplementedError(f"Internal Error: Unary Operator {n.operator} not implemented")
 
     def visit_ASTNamedAttribute(self, n: ASTNamedAttribute):
@@ -312,17 +288,17 @@ class IRGenerator:
                 return self.visit_chip(chip, visited_args, visited_kwargs)
             operator = Operators.instantiate_operator(n.member, n.target)
             if operator is None:
-                raise OperatorOrChipNotFoundException(n.dbg_i, f"Operator or Chip {n.member} not found")
+                raise OperatorOrChipNotFoundException(n.dbg, f"Operator or Chip {n.member} not found")
         else:
             target_ptr = self._ir_ctx.lookup_ptr_by_name(n.target)
             if target_ptr is None:
-                raise VariableNotFoundError(n.dbg_i, f'Variable {n.target} referenced but not defined.')
+                raise VariableNotFoundError(n.dbg, f'Variable {n.target} referenced but not defined.')
             dt = target_ptr.type()
             operator = Operators.instantiate_operator(n.member, dt.get_typename())
             self_arg = [target_ptr]
             if operator is None:
-                raise OperatorOrChipNotFoundException(n.dbg_i, f"Operator {n.target}::{n.member} not found")
-        return self._ir_builder.invoke_op(operator, self_arg + visited_args, visited_kwargs, dbg=n.dbg_i)
+                raise OperatorOrChipNotFoundException(n.dbg, f"Operator {n.target}::{n.member} not found")
+        return self._ir_builder.invoke_op(operator, self_arg + visited_args, visited_kwargs, dbg=n.dbg)
 
     def visit_ASTExprAttribute(self, n: ASTExprAttribute):
         target_ptr = self.visit(n.target)
@@ -332,17 +308,20 @@ class IRGenerator:
             operator,
             [target_ptr] + [self.visit(arg) for arg in n.args],
             {k: self.visit(arg) for k, arg in n.kwargs.items()},
-            dbg=n.dbg_i
+            dbg=n.dbg
         )
 
     def visit_ASTConstantFloat(self, n: ASTConstantFloat):
-        return self._ir_builder.ir_constant_float(n.value, dbg=n.dbg_i)
+        return self._ir_builder.ir_constant_float(n.value, dbg=n.dbg)
 
     def visit_ASTConstantInteger(self, n: ASTConstantInteger):
-        return self._ir_builder.ir_constant_int(n.value, dbg=n.dbg_i)
+        return self._ir_builder.ir_constant_int(n.value, dbg=n.dbg)
 
     def visit_ASTConstantNone(self, n: ASTConstantNone):
-        return self._ir_builder.op_constant_none(dbg=n.dbg_i)
+        return self._ir_builder.op_constant_none(dbg=n.dbg)
+
+    def visit_ASTConstantString(self, n: ASTConstantString):
+        return self._ir_builder.op_constant_string(n.value, dbg=n.dbg)
 
     def visit_ASTSlicing(self, n: ASTSlicing):
         val_ptr = self.visit(n.val)
@@ -352,21 +331,21 @@ class IRGenerator:
                 slicing_args.append(self.visit(s))
             elif isinstance(s, Tuple):
                 slicing_args.append(self._ir_builder.op_parenthesis([self.visit(s[0]), self.visit(s[1]), self.visit(s[2])]))
-        return self._ir_builder.op_get_item(val_ptr, self._ir_builder.op_square_brackets(slicing_args), dbg=n.dbg_i)
+        return self._ir_builder.op_get_item(val_ptr, self._ir_builder.op_square_brackets(slicing_args), dbg=n.dbg)
 
     def visit_ASTLoad(self, n: ASTLoad):
         val_ptr = self._ir_ctx.lookup_ptr_by_name(n.name)
         if val_ptr is None:
-            raise VariableNotFoundError(n.dbg_i, f'Variable {n.name} referenced but not defined.')
+            raise VariableNotFoundError(n.dbg, f'Variable {n.name} referenced but not defined.')
         return val_ptr
 
     def visit_ASTSquareBrackets(self, n: ASTSquareBrackets):
         values = [self.visit(val) for val in n.values]
-        return self._ir_builder.op_square_brackets(values, dbg=n.dbg_i)
+        return self._ir_builder.op_square_brackets(values, dbg=n.dbg)
 
     def visit_ASTParenthesis(self, n: ASTParenthesis):
         values = [self.visit(val) for val in n.values]
-        return self._ir_builder.op_parenthesis(values, dbg=n.dbg_i)
+        return self._ir_builder.op_parenthesis(values, dbg=n.dbg)
 
     def _register_global_datatypes(self):
         float_class = self._ir_builder.op_constant_class(FloatDTDescriptor())
@@ -374,21 +353,65 @@ class IRGenerator:
         self._ir_ctx.assign_name_to_ptr("Float", float_class)
         self._ir_ctx.assign_name_to_ptr("Integer", integer_class)
 
-    def _create_assignment_with_condition(self, orig_val_ptr, new_val_ptr, dbg_i: DebugInfo = None, annotation: Annotation | None = None):
+    def _create_assignment_with_condition(self, orig_val_ptr, new_val_ptr, dbg: DebugInfo = None):
         cond_stack = self._ir_ctx.get_condition_variables()
         if len(cond_stack) == 0:
             return new_val_ptr
         cond_val_ptr = cond_stack[0]
         for cond in cond_stack[1:]:
-            cond_val_ptr = self._ir_builder.ir_logical_and(cond_val_ptr, cond, dbg=dbg_i)
-        return self._ir_builder.op_select(cond_val_ptr, new_val_ptr, orig_val_ptr, dbg=dbg_i)
+            cond_val_ptr = self._ir_builder.ir_logical_and(cond_val_ptr, cond, dbg=dbg)
+        return self._ir_builder.op_select(cond_val_ptr, new_val_ptr, orig_val_ptr, dbg=dbg)
 
-    def _create_assert_with_condition(self, expr_val_ptr, dbg_i: DebugInfo = None, annotation: Annotation | None = None):
+    def _create_assert_with_condition(self, expr_val_ptr, dbg: DebugInfo = None):
         cond_stack = self._ir_ctx.get_condition_variables()
         if len(cond_stack) == 0:
             return expr_val_ptr
         cond_val_ptr = cond_stack[0]
         for cond in cond_stack[1:]:
-            cond_val_ptr = self._ir_builder.ir_logical_and(cond_val_ptr, cond, dbg=dbg_i)
+            cond_val_ptr = self._ir_builder.ir_logical_and(cond_val_ptr, cond, dbg=dbg)
         constant_1 = self._ir_builder.ir_constant_int(1)
-        return self._ir_builder.op_select(cond_val_ptr, expr_val_ptr, constant_1, dbg=dbg_i)
+        return self._ir_builder.op_select(cond_val_ptr, expr_val_ptr, constant_1, dbg=dbg)
+
+    def _do_recursive_assign(self, _target: ASTAssignTarget, _value: Value):
+        if isinstance(_target, ASTNameAssignTarget):
+            _orig_value = self._ir_ctx.lookup_ptr_by_name(_target.name)
+            if _orig_value is not None:
+                if self._ir_ctx.is_name_in_stack_scope_top(_target.name):
+                    pass
+                elif _value.type() != _orig_value.type():
+                    raise InterScopeError(_target.dbg, f"Cannot assign to `{_target.name}`: this variable is declared at the outer scope. Attempting to change its datatype in the inner scope from {_orig_value.type()} to {_value.type()} is not allowed. Assigning to variables from outer scope must keep its datatype and shape.")
+                else:
+                    _value = self._create_assignment_with_condition(_orig_value, _value, dbg=_target.dbg)
+            self._ir_ctx.assign_name_to_ptr(_target.name, _value)
+        elif isinstance(_target, ASTSubscriptAssignTarget):
+            _orig_value = self.visit(_target.target)
+            slicing_args = []
+            for s in _target.slicing.data:
+                if isinstance(s, ASTExpression):
+                    slicing_args.append(self.visit(s))
+                elif isinstance(s, Tuple):
+                    slicing_args.append(self._ir_builder.op_parenthesis([self.visit(s[0]), self.visit(s[1]), self.visit(s[2])]))
+            _value = self._create_assignment_with_condition(_orig_value, _value, dbg=_target.dbg)
+            _value = self._ir_builder.op_set_item(_orig_value, self._ir_builder.op_square_brackets(slicing_args), _value, dbg=_target.dbg)
+        elif isinstance(_target, ASTListAssignTarget) or isinstance(_target, ASTTupleAssignTarget):
+            assert sum([1 for x in _target.targets if x.star]) <= 1
+            has_star = any([x.star for x in _target.targets])
+            elements = self._ir_builder.op_iter(_value).values()
+            if len(elements) < len(_target.targets):
+                raise TupleUnpackingError(_target.dbg, f"Not enough elements to unpack, expected {len(_target.targets)} got {len(elements)}")
+            if len(elements) > len(_target.targets) and not has_star:
+                raise TupleUnpackingError(_target.dbg, f"Too many elements to unpack, expected {len(_target.targets)} got {len(elements)}")
+            if has_star:
+                star_idx = [i for i, x in enumerate(_target.targets) if x.star][0]
+                elements_for_star = elements[star_idx:len(elements) - (len(_target.targets) - star_idx - 1)]
+                for i, target in enumerate(_target.targets[:star_idx]):
+                    self._do_recursive_assign(target, elements[i])
+                for i, target in enumerate(_target.targets[star_idx + 1:]):
+                    self._do_recursive_assign(target, elements[star_idx + len(elements_for_star) + i])
+                if len(elements_for_star) == 1:
+                    self._do_recursive_assign(_target.targets[star_idx], elements_for_star[0])
+                else:
+                    self._do_recursive_assign(_target.targets[star_idx], self._ir_builder.op_square_brackets(list(elements_for_star)))
+            else:
+                for i, target in enumerate(_target.targets):
+                    self._do_recursive_assign(target, elements[i])
