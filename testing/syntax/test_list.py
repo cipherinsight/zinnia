@@ -24,6 +24,7 @@ def test_repeat_list():
 
     ZKCircuit.from_method(foo, {}).compile()
 
+
 def test_concatenate_list():
     """This test is to check if the list is concatenated correctly"""
     @zk_circuit
