@@ -196,6 +196,14 @@ class ASTGeneratorExp(ASTExpression):
         self.kind = kind
 
 
+class ASTCondExp(ASTExpression):
+    def __init__(self, dbg: DebugInfo, cond: ASTExpression, t_expr: ASTExpression, f_expr: ASTExpression):
+        super().__init__(dbg)
+        self.cond = cond
+        self.t_expr = t_expr
+        self.f_expr = f_expr
+
+
 class ASTConstantInteger(ASTExpression):
     def __init__(self, dbg: DebugInfo, value: int):
         super().__init__(dbg)

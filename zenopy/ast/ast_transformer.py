@@ -11,7 +11,7 @@ from zenopy.ast.zk_ast import ASTProgramInput, ASTAnnotation, ASTProgram, ASTAss
     ASTNamedAttribute, ASTExprAttribute, ASTParenthesis, ASTChip, ASTChipInput, ASTReturnStatement, ASTCallStatement, \
     ASTConstantInteger, ASTConstantFloat, ASTSlice, ASTConstantNone, ASTExprStatement, ASTConstantString, \
     ASTNameAssignTarget, ASTSubscriptAssignTarget, ASTTupleAssignTarget, ASTListAssignTarget, ASTGenerator, \
-    ASTGeneratorExp
+    ASTGeneratorExp, ASTCondExp
 from zenopy.internal.chip_object import ChipObject
 from zenopy.internal.dt_descriptor import DTDescriptorFactory, NoneDTDescriptor
 from zenopy.internal.input_anno_name import InputAnnoName
@@ -288,6 +288,13 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
             generators.append(ASTGenerator(dbg, target, iter_expr, ifs))
         return ASTGeneratorExp(dbg, elt, generators, ASTGeneratorExp.Kind.LIST)
 
+    def visit_IfExp(self, node):
+        dbg = self.get_dbg(node)
+        test = self.visit_expr(node.test)
+        body = self.visit_expr(node.body)
+        orelse = self.visit_expr(node.orelse)
+        return ASTCondExp(dbg, test, body, orelse)
+
     def visit_block(self, _stmts):
         stmts = []
         for stmt in _stmts:
@@ -348,6 +355,8 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
             return self.visit_GeneratorExp(node)
         elif isinstance(node, ast.ListComp):
             return self.visit_ListComp(node)
+        elif isinstance(node, ast.IfExp):
+            return self.visit_IfExp(node)
         else:
             dbg_info = self.get_dbg(node)
             raise UnsupportedLangFeatureException(dbg_info, f"Expression transformation rule for {type(node)} is not implemented.")

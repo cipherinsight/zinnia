@@ -13,7 +13,7 @@ from zenopy.ast.zk_ast import ASTComponent, ASTProgram, ASTAssignStatement, ASTP
     ASTBinaryOperator, ASTNamedAttribute, ASTExprAttribute, ASTParenthesis, ASTChip, ASTReturnStatement, \
     ASTCallStatement, ASTUnaryOperator, ASTConstantNone, ASTNameAssignTarget, ASTSubscriptAssignTarget, \
     ASTListAssignTarget, ASTTupleAssignTarget, ASTAssignTarget, ASTExprStatement, ASTConstantString, ASTGeneratorExp, \
-    ASTGenerator
+    ASTGenerator, ASTCondExp
 from zenopy.ir.ir_ctx import IRContext
 from zenopy.debug.exception import VariableNotFoundError, NoForElementsError, NotInLoopError, \
     InterScopeError, UnsupportedLangFeatureException, UnreachableStatementError, OperatorOrChipNotFoundException, \
@@ -372,6 +372,13 @@ class IRGenerator:
         if n.kind == ASTGeneratorExp.Kind.LIST:
             return self._ir_builder.op_square_brackets(generated_expressions, dbg=n.dbg)
         return self._ir_builder.op_parenthesis(generated_expressions, dbg=n.dbg)
+
+    def visit_ASTCondExp(self, n: ASTCondExp):
+        cond_ptr = self.visit(n.cond)
+        true_expr = self.visit(n.t_expr)
+        false_expr = self.visit(n.f_expr)
+        cond_ptr = self._ir_builder.op_bool_scalar(cond_ptr, dbg=n.dbg)
+        return self._ir_builder.op_select(cond_ptr, true_expr, false_expr)
 
     def _register_global_datatypes(self):
         float_class = self._ir_builder.op_constant_class(FloatDTDescriptor())
