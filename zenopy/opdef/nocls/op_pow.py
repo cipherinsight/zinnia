@@ -85,7 +85,7 @@ class PowOp(AbstractOp):
         result_dtype = self._get_result_dtype(x_dtype, exponent_dtype)
         if not self._check_mod_allowed(x_dtype, exponent_dtype, mod_dtype):
             raise TypeInferenceError(dbg, f'pow() 3rd argument not allowed unless all arguments are integers')
-        if not NDArrayValue.binary_broadcast_compatible(x.shape(), exponent.shape()):
+        if not NDArrayValue.binary_broadcast_compatible(x_shape, exponent_shape):
             raise TypeInferenceError(dbg, f'Failed to broadcast on operand x and exponent')
         result_is_ndarray = isinstance(x, NDArrayValue) or isinstance(exponent, NDArrayValue) or (mod is not None and isinstance(mod, NDArrayValue))
         x_ndarray = x.get() if isinstance(x, NDArrayValue) else NDArrayValue.from_number(x)

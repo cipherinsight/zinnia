@@ -10,7 +10,8 @@ from zenopy.ast.zk_ast import ASTProgramInput, ASTAnnotation, ASTProgram, ASTAss
     ASTSlicing, ASTSquareBrackets, ASTBreakStatement, ASTContinueStatement, ASTBinaryOperator, ASTUnaryOperator, \
     ASTNamedAttribute, ASTExprAttribute, ASTParenthesis, ASTChip, ASTChipInput, ASTReturnStatement, ASTCallStatement, \
     ASTConstantInteger, ASTConstantFloat, ASTSlice, ASTConstantNone, ASTExprStatement, ASTConstantString, \
-    ASTNameAssignTarget, ASTSubscriptAssignTarget, ASTTupleAssignTarget, ASTListAssignTarget
+    ASTNameAssignTarget, ASTSubscriptAssignTarget, ASTTupleAssignTarget, ASTListAssignTarget, ASTGenerator, \
+    ASTGeneratorExp
 from zenopy.internal.chip_object import ChipObject
 from zenopy.internal.dt_descriptor import DTDescriptorFactory, NoneDTDescriptor
 from zenopy.internal.input_anno_name import InputAnnoName
@@ -246,24 +247,46 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
         return ASTParenthesis(dbg_info, len(parsed_elts), parsed_elts)
 
     def visit_Subscript(self, node):
-        dbg_info = self.get_dbg(node)
         value = self.visit_expr(node.value)
-        return ASTSlicing(dbg_info, value, self.visit_slice_key(node.slice))
+        return ASTSlicing(self.get_dbg(node), value, self.visit_slice_key(node.slice))
 
     def visit_Break(self, node):
-        dbg_info = self.get_dbg(node)
-        return ASTBreakStatement(dbg_info)
+        return ASTBreakStatement(self.get_dbg(node))
 
     def visit_Continue(self, node):
-        dbg_info = self.get_dbg(node)
-        return ASTContinueStatement(dbg_info)
+        return ASTContinueStatement(self.get_dbg(node))
 
     def visit_Return(self, node):
-        dbg_info = self.get_dbg(node)
         result = node.value
         if result is not None:
             result = self.visit_expr(result)
-        return ASTReturnStatement(dbg_info, result)
+        return ASTReturnStatement(self.get_dbg(node), result)
+
+    def visit_GeneratorExp(self, node):
+        dbg = self.get_dbg(node)
+        elt = self.visit_expr(node.elt)
+        generators = []
+        for gen in node.generators:
+            target = self.visit_assign_target(gen.target)
+            iter_expr = self.visit_expr(gen.iter)
+            ifs = []
+            for if_expr in gen.ifs:
+                ifs.append(self.visit_expr(if_expr))
+            generators.append(ASTGenerator(dbg, target, iter_expr, ifs))
+        return ASTGeneratorExp(dbg, elt, generators, ASTGeneratorExp.Kind.TUPLE)
+
+    def visit_ListComp(self, node):
+        dbg = self.get_dbg(node)
+        elt = self.visit_expr(node.elt)
+        generators = []
+        for gen in node.generators:
+            target = self.visit_assign_target(gen.target)
+            iter_expr = self.visit_expr(gen.iter)
+            ifs = []
+            for if_expr in gen.ifs:
+                ifs.append(self.visit_expr(if_expr))
+            generators.append(ASTGenerator(dbg, target, iter_expr, ifs))
+        return ASTGeneratorExp(dbg, elt, generators, ASTGeneratorExp.Kind.LIST)
 
     def visit_block(self, _stmts):
         stmts = []
@@ -323,6 +346,8 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
             return self.visit_Tuple(node)
         elif isinstance(node, ast.GeneratorExp):
             return self.visit_GeneratorExp(node)
+        elif isinstance(node, ast.ListComp):
+            return self.visit_ListComp(node)
         else:
             dbg_info = self.get_dbg(node)
             raise UnsupportedLangFeatureException(dbg_info, f"Expression transformation rule for {type(node)} is not implemented.")
@@ -390,9 +415,7 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
                 else:
                     slicing_data.append(self.visit_expr(elt))
             return ASTSlice(dbg, slicing_data)
-        elif isinstance(node, ast.Constant):
-            return ASTSlice(dbg, [self.visit_expr(node)])
-        raise NotImplementedError()
+        return ASTSlice(dbg, [self.visit_expr(node)])
 
     def visit_assign_target(self, node, starred=False):
         if isinstance(node, ast.Name):

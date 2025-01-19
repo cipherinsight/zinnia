@@ -12,12 +12,13 @@ from zenopy.ast.zk_ast import ASTComponent, ASTProgram, ASTAssignStatement, ASTP
     ASTSlicing, ASTLoad, ASTAssertStatement, ASTSquareBrackets, ASTBreakStatement, ASTContinueStatement, \
     ASTBinaryOperator, ASTNamedAttribute, ASTExprAttribute, ASTParenthesis, ASTChip, ASTReturnStatement, \
     ASTCallStatement, ASTUnaryOperator, ASTConstantNone, ASTNameAssignTarget, ASTSubscriptAssignTarget, \
-    ASTListAssignTarget, ASTTupleAssignTarget, ASTAssignTarget, ASTExprStatement, ASTConstantString
+    ASTListAssignTarget, ASTTupleAssignTarget, ASTAssignTarget, ASTExprStatement, ASTConstantString, ASTGeneratorExp, \
+    ASTGenerator
 from zenopy.ir.ir_ctx import IRContext
 from zenopy.debug.exception import VariableNotFoundError, NoForElementsError, NotInLoopError, \
     InterScopeError, UnsupportedLangFeatureException, UnreachableStatementError, OperatorOrChipNotFoundException, \
     StatementNoEffectException, ControlEndWithoutReturnError, ReturnDatatypeMismatchError, \
-    ChipArgumentsError, TupleUnpackingError
+    ChipArgumentsError, TupleUnpackingError, StaticInferenceError
 from zenopy.opdef.operator_factory import Operators
 from zenopy.internal.dt_descriptor import DTDescriptorFactory, NoneDTDescriptor, FloatDTDescriptor, IntegerDTDescriptor
 from zenopy.internal.prog_meta_data import ProgramMetadata, ProgramInputMetadata
@@ -123,10 +124,6 @@ class IRGenerator:
         if self._ir_ctx.get_branch_has_default_return():
             raise UnreachableStatementError(n.dbg, "This code is unreachable")
         iter_elts = self._ir_builder.op_iter(self.visit(n.iter_expr))
-        if not all(x == iter_elts.types()[0] for x in iter_elts.types()):
-            raise NoForElementsError(n.dbg, "In for statement, all elements in the iterable must have the same type")
-        if len(iter_elts.values()) == 0:
-            raise NoForElementsError(n.dbg, "No iterable elements found in the for statement.")
         self._ir_ctx.for_block_enter()
         for loop_index_ptr in iter_elts.values():
             self._do_recursive_assign(n.target, loop_index_ptr)
@@ -268,6 +265,8 @@ class IRGenerator:
             return self._ir_builder.ir_logical_and(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.OR:
             return self._ir_builder.ir_logical_or(lhs_expr, rhs_expr, dbg=n.dbg)
+        elif n.operator == n.Op.POW:
+            return self._ir_builder.op_power(lhs_expr, rhs_expr, None, dbg=n.dbg)
         raise NotImplementedError(f"Internal Error: Binary Operator {n.operator} not implemented")
 
     def visit_ASTUnaryOperator(self, n: ASTUnaryOperator):
@@ -346,6 +345,33 @@ class IRGenerator:
     def visit_ASTParenthesis(self, n: ASTParenthesis):
         values = [self.visit(val) for val in n.values]
         return self._ir_builder.op_parenthesis(values, dbg=n.dbg)
+
+    def visit_ASTGeneratorExp(self, n: ASTGeneratorExp):
+        generated_expressions = []
+        def _for_each_generator(generators: List[ASTGenerator]):
+            gen = generators[0]
+            iter_exp = gen.iter
+            iter_elts = self._ir_builder.op_iter(self.visit(iter_exp))
+            for loop_index_ptr in iter_elts.values():
+                self._do_recursive_assign(gen.target, loop_index_ptr)
+                cond = self._ir_builder.ir_constant_int(1)
+                for _if in gen.ifs:
+                    cond = self._ir_builder.ir_logical_and(cond, self._ir_builder.op_bool_scalar(self.visit(_if)))
+                if cond.val() is None:
+                    raise StaticInferenceError(n.dbg, "Cannot statically infer the condition value in the generator expression. This is crucial to determine the datatype of the generated expression.")
+                if not cond.val():
+                    continue
+                if len(generators) == 1:
+                    generated_expressions.append(self.visit(n.elt))
+                else:
+                    _for_each_generator(generators[1:])
+
+        self._ir_ctx.generator_expr_enter()
+        _for_each_generator(n.generators)
+        self._ir_ctx.generator_expr_leave()
+        if n.kind == ASTGeneratorExp.Kind.LIST:
+            return self._ir_builder.op_square_brackets(generated_expressions, dbg=n.dbg)
+        return self._ir_builder.op_parenthesis(generated_expressions, dbg=n.dbg)
 
     def _register_global_datatypes(self):
         float_class = self._ir_builder.op_constant_class(FloatDTDescriptor())

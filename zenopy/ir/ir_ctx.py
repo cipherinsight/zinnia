@@ -88,6 +88,12 @@ class IRContext:
         scope = self.scopes_stack[-1]
         scope.branch_has_default_return_stack.pop()
 
+    def generator_expr_enter(self):
+        self.scopes_stack.append(IRContext._Scope())
+
+    def generator_expr_leave(self):
+        self.scopes_stack.pop()
+
     def add_return_value(self, return_value: Value, return_condition: IntegerValue, return_prevent_condition: IntegerValue):
         scope = self.scopes_stack[-1]
         scope.branch_has_default_return_stack[-1] = True

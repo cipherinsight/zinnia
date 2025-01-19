@@ -191,7 +191,7 @@ class IRBuilderImpl(IRBuilder):
 
     def op_power(self, a: Value, b: Value, m: Value | None, dbg: Optional[DebugInfo] = None) -> Value:
         op = PowOp()
-        kwargs = op.argparse(dbg, [a, b] + [m] if m is not None else [], {})
+        kwargs = op.argparse(dbg, [a, b] + ([m] if m is not None else []), {})
         return op.build(self, kwargs, dbg)
 
     def op_exp(self, x: Value, dbg: Optional[DebugInfo] = None) -> Value:

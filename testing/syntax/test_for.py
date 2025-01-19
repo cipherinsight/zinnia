@@ -167,8 +167,8 @@ def test_for_error_not_iterable():
     assert "is not iterable" in str(e.value)
 
 
-def test_for_error_type_mismatch():
-    """This test is to check if the error is raised when the for loop contains objects that are not the same type"""
+def test_for_type_mismatch():
+    """This test is to check when the for loop contains objects that are not the same type"""
     @zk_circuit
     def foo():
         the_sum = 0
@@ -176,6 +176,4 @@ def test_for_error_type_mismatch():
             the_sum += i[0]
         assert the_sum == 2
 
-    with pytest.raises(ZenoPyException) as e:
-        ZKCircuit.from_method(foo, {}).compile()
-    assert "In for statement, all elements in the iterable must have the same type" in str(e.value)
+    ZKCircuit.from_method(foo, {}).compile()

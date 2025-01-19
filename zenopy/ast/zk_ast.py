@@ -139,60 +139,10 @@ class ASTExprAttribute(ASTAbstractOperator):
         self.member = member
 
 
-class ASTConstantInteger(ASTExpression):
-    def __init__(self, dbg: DebugInfo, value: int):
-        super().__init__(dbg)
-        self.value = value
-
-
-class ASTConstantFloat(ASTExpression):
-    def __init__(self, dbg: DebugInfo, value: float):
-        super().__init__(dbg)
-        self.value = value
-
-
-class ASTConstantNone(ASTExpression):
-    def __init__(self, dbg: DebugInfo):
-        super().__init__(dbg)
-
-
-class ASTConstantString(ASTExpression):
-    def __init__(self, dbg: DebugInfo, value: str):
-        super().__init__(dbg)
-        self.value = value
-
-
-class ASTLoad(ASTExpression):
-    def __init__(self, dbg: DebugInfo, name: str):
-        super().__init__(dbg)
-        self.name = name
-
-
 class ASTSlice(ASTComponent):
     def __init__(self, dbg: DebugInfo, data: List[ASTExpression | Tuple[ASTExpression, ASTExpression, ASTExpression]]):
         super().__init__(dbg)
         self.data = data
-
-
-class ASTSlicing(ASTExpression):
-    def __init__(self, dbg: DebugInfo, val: ASTExpression, slicing: ASTSlice):
-        super().__init__(dbg)
-        self.val = val
-        self.slicing = slicing
-
-
-class ASTSquareBrackets(ASTExpression):
-    def __init__(self, dbg: DebugInfo, dim_size: int, values: List[ASTExpression]):
-        super().__init__(dbg)
-        self.dim_size = dim_size
-        self.values = values
-
-
-class ASTParenthesis(ASTExpression):
-    def __init__(self, dbg: DebugInfo, dim_size: int, values: List[ASTExpression]):
-        super().__init__(dbg)
-        self.dim_size = dim_size
-        self.values = values
 
 
 class ASTAssignTarget(ASTComponent):
@@ -224,6 +174,76 @@ class ASTListAssignTarget(ASTAssignTarget):
     def __init__(self, dbg: DebugInfo, targets: List[ASTAssignTarget], star: bool = False):
         super().__init__(dbg, star=star)
         self.targets = targets
+
+
+class ASTGenerator(ASTComponent):
+    def __init__(self, dbg: DebugInfo, target: ASTAssignTarget, _iter: ASTExpression, ifs: List[ASTExpression]):
+        super().__init__(dbg)
+        self.target = target
+        self.iter = _iter
+        self.ifs = ifs
+
+
+class ASTGeneratorExp(ASTExpression):
+    class Kind:
+        LIST = "list"
+        TUPLE = "tuple"
+
+    def __init__(self, dbg: DebugInfo, elt: ASTExpression, generators: List[ASTGenerator], kind: str):
+        super().__init__(dbg)
+        self.elt = elt
+        self.generators = generators
+        self.kind = kind
+
+
+class ASTConstantInteger(ASTExpression):
+    def __init__(self, dbg: DebugInfo, value: int):
+        super().__init__(dbg)
+        self.value = value
+
+
+class ASTConstantFloat(ASTExpression):
+    def __init__(self, dbg: DebugInfo, value: float):
+        super().__init__(dbg)
+        self.value = value
+
+
+class ASTConstantNone(ASTExpression):
+    def __init__(self, dbg: DebugInfo):
+        super().__init__(dbg)
+
+
+class ASTConstantString(ASTExpression):
+    def __init__(self, dbg: DebugInfo, value: str):
+        super().__init__(dbg)
+        self.value = value
+
+
+class ASTLoad(ASTExpression):
+    def __init__(self, dbg: DebugInfo, name: str):
+        super().__init__(dbg)
+        self.name = name
+
+
+class ASTSlicing(ASTExpression):
+    def __init__(self, dbg: DebugInfo, val: ASTExpression, slicing: ASTSlice):
+        super().__init__(dbg)
+        self.val = val
+        self.slicing = slicing
+
+
+class ASTSquareBrackets(ASTExpression):
+    def __init__(self, dbg: DebugInfo, dim_size: int, values: List[ASTExpression]):
+        super().__init__(dbg)
+        self.dim_size = dim_size
+        self.values = values
+
+
+class ASTParenthesis(ASTExpression):
+    def __init__(self, dbg: DebugInfo, dim_size: int, values: List[ASTExpression]):
+        super().__init__(dbg)
+        self.dim_size = dim_size
+        self.values = values
 
 
 class ASTAssignStatement(ASTStatement):

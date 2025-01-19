@@ -30,8 +30,9 @@ class SetItemOp(AbstractItemSliceOp):
         if isinstance(slicing_param, IntegerValue):
             if slicing_param.val() is not None:
                 self.check_single_slicing_number(slicing_param, len(the_self.values()), dbg)
-                new_types = the_self.types()[:slicing_param.val()] + [the_value.type()] + the_self.types()[slicing_param.val() + 1:]
-                new_values = the_self.values()[:slicing_param.val()] + [the_value] + the_self.values()[slicing_param.val() + 1:]
+                the_index = slicing_param.val() if slicing_param.val() >= 0 else len(the_self.values()) + slicing_param.val()
+                new_types = the_self.types()[:the_index] + [the_value.type()] + the_self.types()[the_index + 1:]
+                new_values = the_self.values()[:the_index] + [the_value] + the_self.values()[the_index + 1:]
                 the_self.assign(ListValue(new_types, new_values))
                 return the_value
             all_datatype_equal = all(x == the_self.types()[0] for x in the_self.types()[1:])

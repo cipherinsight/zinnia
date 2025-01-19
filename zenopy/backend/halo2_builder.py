@@ -317,7 +317,7 @@ class _Halo2StatementBuilder:
             f"let {self._get_var_name(stmt.stmt_id)} = gate.and(ctx, {lhs}, {rhs});"
         ]
 
-    def _build_LogicalOrOp(self, stmt: IRStatement) -> List[str]:
+    def _build_LogicalOrIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.operator, LogicalOrIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])

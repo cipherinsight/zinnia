@@ -105,7 +105,7 @@ class TupleDTDescriptor(DTDescriptor):
         self.elements_dtype = elements_dtype
 
     def __str__(self) -> str:
-        return f'{self.get_typename()}[{"".join([str(x) for x in self.elements_dtype])}]'
+        return f'{self.get_typename()}[{", ".join([str(x) for x in self.elements_dtype])}]'
 
     def __eq__(self, other) -> bool:
         return super().__eq__(other) and self.elements_dtype == other.elements_dtype
@@ -134,7 +134,7 @@ class ListDTDescriptor(DTDescriptor):
         self.elements_dtype = elements_dtype
 
     def __str__(self) -> str:
-        return f'{self.get_typename()}[{"".join([str(x) for x in self.elements_dtype])}]'
+        return f'{self.get_typename()}[{", ".join([str(x) for x in self.elements_dtype])}]'
 
     def __eq__(self, other) -> bool:
         return super().__eq__(other) and self.elements_dtype == other.elements_dtype

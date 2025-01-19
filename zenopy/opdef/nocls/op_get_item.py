@@ -44,9 +44,9 @@ class GetItemOp(AbstractItemSliceOp):
             stop = stop.val() if isinstance(stop, IntegerValue) else None
             step = step.val() if isinstance(step, IntegerValue) else None
             if isinstance(the_self, TupleValue):
-                return TupleValue(the_self.type()[start:stop:step], the_self.values()[start:stop:step])
+                return TupleValue(the_self.types()[start:stop:step], the_self.values()[start:stop:step])
             elif isinstance(the_self, ListValue):
-                return ListValue(the_self.type()[start:stop:step], the_self.values()[start:stop:step])
+                return ListValue(the_self.types()[start:stop:step], the_self.values()[start:stop:step])
             raise NotImplementedError()
 
     def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
