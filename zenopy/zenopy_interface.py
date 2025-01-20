@@ -14,7 +14,6 @@ from zenopy.ir.ir_gen import IRGenerator
 from zenopy.internal.chip_object import ChipObject
 from zenopy.debug.prettifier import prettify_zk_ast, prettify_ir_stmts, prettify_exception
 from zenopy.exec.exec_ctx import ExecutionContext
-from zenopy.exec.executor import Halo2ZKProgramExecutor
 
 
 def _fix_indentation(code: str) -> str:
@@ -29,6 +28,8 @@ def _fix_indentation(code: str) -> str:
 
 class ZKChip:
     def __init__(self, name: str, source: str):
+        if name == 'main':
+            raise ValueError('Chip name cannot be `main`, please use another name.')
         self.name = name
         self.source = source
         tree = ast.parse(_fix_indentation(self.source))
@@ -48,6 +49,8 @@ class ZKChip:
 
     @staticmethod
     def from_method(method) -> 'ZKChip':
+        if isinstance(method, ZKChip):
+            return method
         source_code = inspect.getsource(method)
         method_name = method.__name__
         return ZKChip(method_name, source_code)
@@ -55,6 +58,8 @@ class ZKChip:
 
 class ZKCircuit:
     def __init__(self, name: str, source: str, chips: Dict[str, ZKChip | ChipObject], debug=False):
+        if name == 'main':
+            raise ValueError('Circuit name cannot be `main`, please use another name.')
         self.name = name
         self.source = source
         self.chips = chips
@@ -135,8 +140,8 @@ def zk_circuit(method, debug=True):
         method_name = method.__name__
         defined_chips: Dict[str, ChipObject] = {}
         for key, val in inspect.currentframe().f_back.f_locals.items():
-            if isinstance(val, ChipObject):
-                defined_chips[key] = val
+            if isinstance(val, ZKChip):
+                defined_chips[key] = val.get_chip()
         circuit = ZKCircuit(method_name, source_code, defined_chips, debug)
         return circuit(*args, **kwargs)
     return __zk_circuit_annotator_inner
@@ -145,4 +150,4 @@ def zk_circuit(method, debug=True):
 def zk_chip(method):
     source_code = inspect.getsource(method)
     method_name = method.__name__
-    return ZKChip(method_name, source_code).get_chip()
+    return ZKChip(method_name, source_code)

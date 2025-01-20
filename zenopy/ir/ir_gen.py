@@ -1,7 +1,7 @@
 from typing import List, Tuple, Dict
 
 from zenopy.builder.builder_impl import IRBuilderImpl
-from zenopy.builder.value import Value
+from zenopy.builder.value import Value, HashedValue
 from zenopy.ir.ir_pass.always_satisfied_elimination import AlwaysSatisfiedEliminationIRPass
 from zenopy.ir.ir_pass.constant_fold import ConstantFoldIRPass
 from zenopy.ir.ir_pass.dead_code_elimination import DeadCodeEliminationIRPass
@@ -22,7 +22,6 @@ from zenopy.debug.exception import VariableNotFoundError, NoForElementsError, No
 from zenopy.opdef.operator_factory import Operators
 from zenopy.internal.dt_descriptor import DTDescriptorFactory, NoneDTDescriptor, FloatDTDescriptor, IntegerDTDescriptor
 from zenopy.internal.prog_meta_data import ProgramMetadata, ProgramInputMetadata
-from zenopy.internal.annotation import Annotation
 from zenopy.debug.dbg_info import DebugInfo
 
 
@@ -50,34 +49,35 @@ class IRGenerator:
             raise NotImplementedError(method_name)
         return method(component)
 
-    def visit_chip(self, chip: ASTChip, args: List[Value], kwargs: Dict[str, Value]):
-        chip_declared_args = [(x.name, x.annotation.dt) for x in chip.inputs]
-        chip_filled_args = [None for x in range(len(chip_declared_args))]
+    def visit_chip_call(self, chip: ASTChip, args: List[Value], kwargs: Dict[str, Value]):
+        chip_declared_args = [(x.name, x.annotation) for x in chip.inputs]
+        chip_filled_args = [None for _ in range(len(chip_declared_args))]
         for i, arg in enumerate(args):
             if i >= len(chip_declared_args):
                 raise ChipArgumentsError(chip.dbg, "Too many chip arguments")
-            if chip_declared_args[i][1] != arg.type():
-                raise ChipArgumentsError(chip.dbg, f"Chip argument datatype mismatch for `{chip_declared_args[i][0]}`")
+            arg_name, arg_anno = chip_declared_args[i]
+            if arg_anno is not None and arg_anno.dt != arg.type():
+                raise ChipArgumentsError(chip.dbg, f"Chip argument datatype mismatch for `{arg_name}`")
             chip_filled_args[i] = arg
         for key, arg in kwargs.items():
             arg_assigned = False
-            for i, (name, dt) in enumerate(chip_declared_args):
+            for i, (name, anno) in enumerate(chip_declared_args):
                 if name == key:
                     if chip_filled_args[i] is not None:
                         raise ChipArgumentsError(chip.dbg, f"Chip argument `{name}` already assigned")
-                    if dt != arg.type():
+                    if anno is not None and anno.dt != arg.type():
                         raise ChipArgumentsError(chip.dbg, f"Chip argument datatype mismatch for `{name}`")
                     chip_filled_args[i] = arg
                     arg_assigned = True
                     break
             if not arg_assigned:
                 raise ChipArgumentsError(chip.dbg, f"No such argument `{key}`")
-        for i, (name, dt) in enumerate(chip_declared_args):
+        for i, (name, anno) in enumerate(chip_declared_args):
             if chip_filled_args[i] is None:
                 raise ChipArgumentsError(chip.dbg, f"Chip argument for `{name}` not filled")
         self._ir_ctx.chip_enter(chip)
         self._register_global_datatypes()
-        for i, (name, dt) in enumerate(chip_declared_args):
+        for i, (name, anno) in enumerate(chip_declared_args):
             self._ir_ctx.assign_name_to_ptr(name, chip_filled_args[i])
         for i, stmt in enumerate(chip.block):
             self.visit(stmt)
@@ -94,12 +94,9 @@ class IRGenerator:
 
     def visit_ASTProgram(self, n: ASTProgram):
         for i, inp in enumerate(n.inputs):
-            ptr = self._ir_builder.op_input(
-                i, inp.annotation.dt, inp.annotation.public,
-                dbg=n.dbg
-            )
-            self._ir_ctx.assign_name_to_ptr(inp.name, ptr)
-            self.prog_meta_data.inputs.append(ProgramInputMetadata(inp.annotation.dt, inp.name, inp.annotation.public))
+            ptr = self._ir_builder.op_input(i, inp.annotation.dt, inp.annotation.kind, dbg=n.dbg)
+            self._ir_ctx.assign_name_to_ptr(inp.name, ptr.val() if isinstance(ptr, HashedValue) else ptr)
+            self.prog_meta_data.inputs.append(ProgramInputMetadata(inp.annotation.dt, inp.name, inp.annotation.kind))
         for key, ast in n.chips.items():
             self._ir_ctx.register_chip(key, ast)
         self._register_global_datatypes()
@@ -222,7 +219,7 @@ class IRGenerator:
         visited_kwargs = {k: self.visit(arg) for k, arg in n.kwargs.items()}
         chip = self._ir_ctx.lookup_chip(n.name)
         if chip is not None:
-            return self.visit_chip(chip, visited_args, visited_kwargs)
+            return self.visit_chip_call(chip, visited_args, visited_kwargs)
         if Operators.instantiate_operator(n.name, None) is not None:
             raise StatementNoEffectException(n.dbg, f"Statement seems to have no effect")
         raise OperatorOrChipNotFoundException(n.dbg, f"Chip {n.name} not found")
@@ -275,6 +272,8 @@ class IRGenerator:
             return self._ir_builder.op_unary_not(operand_expr, dbg=n.dbg)
         if n.operator == n.Op.USUB:
             return self._ir_builder.op_unary_sub(operand_expr, dbg=n.dbg)
+        if n.operator == n.Op.UADD:
+            return self._ir_builder.op_unary_add(operand_expr, dbg=n.dbg)
         raise NotImplementedError(f"Internal Error: Unary Operator {n.operator} not implemented")
 
     def visit_ASTNamedAttribute(self, n: ASTNamedAttribute):
@@ -284,7 +283,7 @@ class IRGenerator:
         if n.target is None or DTDescriptorFactory.is_typename(n.target):
             chip = self._ir_ctx.lookup_chip(n.member)
             if n.target is None and chip is not None:
-                return self.visit_chip(chip, visited_args, visited_kwargs)
+                return self.visit_chip_call(chip, visited_args, visited_kwargs)
             operator = Operators.instantiate_operator(n.member, n.target)
             if operator is None:
                 raise OperatorOrChipNotFoundException(n.dbg, f"Operator or Chip {n.member} not found")

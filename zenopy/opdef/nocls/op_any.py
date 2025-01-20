@@ -26,18 +26,18 @@ class AnyOp(AbstractOp):
     def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         x = kwargs["x"]
         if isinstance(x, NDArrayValue):
-            result = reducer.ir_constant_integer(0)
+            result = reducer.ir_constant_int(0)
             for v in x.flattened_values():
                 result = reducer.ir_logical_or(result, reducer.op_bool_scalar(v))
             return result
         elif isinstance(x, ListValue):
-            result = reducer.ir_constant_integer(0)
+            result = reducer.ir_constant_int(0)
             for v in x.values():
                 result = reducer.ir_logical_or(result, reducer.op_bool_scalar(v))
             return result
         elif isinstance(x, TupleValue):
-            result = reducer.ir_constant_integer(0)
+            result = reducer.ir_constant_int(0)
             for v in x.values():
                 result = reducer.ir_logical_or(result, reducer.op_bool_scalar(v))
             return result
-        raise TypeInferenceError(dbg, f"Operator `{self.get_name()}` on type `{type(x.type())}` is not defined")
+        raise TypeInferenceError(dbg, f"Operator `{self.get_name()}` on type `{x.type()}` is not defined")

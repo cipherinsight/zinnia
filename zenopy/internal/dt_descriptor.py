@@ -222,6 +222,27 @@ class StringDTDescriptor(DTDescriptor):
         return StringDTDescriptor()
 
 
+class HashedDTDescriptor(DTDescriptor):
+    def __init__(self, dtype: DTDescriptor):
+        super().__init__()
+        self.dtype = dtype
+
+    @classmethod
+    def get_typename(cls):
+        return f"Hashed"
+
+    def __str__(self) -> str:
+        return f'{self.get_typename()}[{self.dtype}]'
+
+    def __eq__(self, other) -> bool:
+        return super().__eq__(other) and self.dtype == other.dtype
+
+    def export(self) -> Dict[str, Any]:
+        result = super().export()
+        result['dtype'] = self.dtype.export()
+        return result
+
+
 class DTDescriptorFactory:
     DATATYPE_REGISTRY = [NDArrayDTDescriptor, TupleDTDescriptor, IntegerDTDescriptor, FloatDTDescriptor, NoneDTDescriptor, ClassDTDescriptor]
 

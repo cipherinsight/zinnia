@@ -1,6 +1,5 @@
 from typing import List, Dict, Optional, Tuple
 
-from zenopy.builder.abstract_ir_builder import AbsIRBuilderInterface
 from zenopy.builder.value import Value, FloatValue
 from zenopy.ir.ir_stmt import IRStatement
 from zenopy.opdef.ir_op.abstract_ir import AbstractIR

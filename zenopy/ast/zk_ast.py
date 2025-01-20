@@ -15,22 +15,25 @@ class ASTStatement(ASTComponent):
 
 
 class ASTAnnotation(ASTComponent):
-    def __init__(self, dbg: DebugInfo, dt: DTDescriptor, public: bool = False):
+    class Kind:
+        PUBLIC = "Public"
+        PRIVATE = "Private"
+        HASHED = "Hashed"
+
+    def __init__(self, dbg: DebugInfo, dt: DTDescriptor, kind: str | None):
         super().__init__(dbg)
         self.dt = dt
-        self.public = public
+        self.kind = kind
 
 
 class ASTProgramInput(ASTComponent):
     def __init__(
         self,
         dbg: DebugInfo,
-        public: bool,
         name: str,
         annotation: ASTAnnotation
     ):
         super().__init__(dbg)
-        self.public = public
         self.name = name
         self.annotation = annotation
 
@@ -40,7 +43,7 @@ class ASTChipInput(ASTComponent):
         self,
         dbg: DebugInfo,
         name: str,
-        annotation: ASTAnnotation
+        annotation: ASTAnnotation | None
     ):
         super().__init__(dbg)
         self.name = name

@@ -40,4 +40,4 @@ class AllOp(AbstractOp):
             for v in x.values():
                 result = reducer.ir_logical_and(result, reducer.op_bool_scalar(v))
             return result
-        raise TypeInferenceError(dbg, f"Operator `{self.get_name()}` on type `{type(x.type())}` is not defined")
+        raise TypeInferenceError(dbg, f"Operator `{self.get_name()}` on type `{x.type()}` is not defined")

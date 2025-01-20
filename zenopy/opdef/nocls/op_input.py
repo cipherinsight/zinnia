@@ -1,18 +1,19 @@
 from typing import List, Dict, Optional
 
+from zenopy.ast.zk_ast import ASTAnnotation
 from zenopy.opdef.nocls.abstract_op import AbstractOp
 from zenopy.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor, NDArrayDTDescriptor, FloatDTDescriptor
 from zenopy.debug.dbg_info import DebugInfo
 from zenopy.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zenopy.builder.value import Value, NDArrayValue
+from zenopy.builder.value import Value, NDArrayValue, HashedValue
 
 
 class InputOp(AbstractOp):
-    def __init__(self, input_id: int, dt: DTDescriptor, public: bool):
+    def __init__(self, input_id: int, dt: DTDescriptor, kind: str):
         super().__init__()
         self.input_id = input_id
         self.dt = dt
-        self.public = public
+        self.kind = kind
 
     def get_signature(self) -> str:
         return "input"
@@ -25,6 +26,12 @@ class InputOp(AbstractOp):
         return []
 
     def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
+        should_expose_public = False
+        should_return_hashed = False
+        if self.kind == ASTAnnotation.Kind.PUBLIC:
+            should_expose_public = True
+        if self.kind == ASTAnnotation.Kind.HASHED:
+            should_return_hashed = True
         if isinstance(self.dt, NDArrayDTDescriptor):
             the_idx = 0
             dtype = self.dt.dtype
@@ -32,15 +39,41 @@ class InputOp(AbstractOp):
                 nonlocal the_idx
                 the_idx += 1
                 if isinstance(dtype, IntegerDTDescriptor):
-                    return reducer.ir_read_integer(self.input_id, the_idx - 1)
+                    _val = reducer.ir_read_integer(self.input_id, the_idx - 1)
+                    if should_expose_public:
+                        reducer.ir_expose_public_i(_val)
+                    return _val
                 elif isinstance(dtype, FloatDTDescriptor):
-                    return reducer.ir_read_float(self.input_id, the_idx - 1)
+                    _val = reducer.ir_read_float(self.input_id, the_idx - 1)
+                    if should_expose_public:
+                        reducer.ir_expose_public_f(_val)
+                    return _val
                 raise NotImplementedError()
-            return NDArrayValue.fill(
-                self.dt.shape, dtype, _id_yield
-            )
+            result = NDArrayValue.fill(self.dt.shape, dtype, _id_yield)
+            if should_return_hashed:
+                provided_hash = reducer.ir_read_hash(self.input_id)
+                reducer.op_expose_public(provided_hash)
+                reducer.op_assert(reducer.ir_equal_i(reducer.op_hash(result), provided_hash))
+                return HashedValue(result, provided_hash)
+            return result
         elif isinstance(self.dt, IntegerDTDescriptor):
-            return reducer.ir_read_integer(self.input_id, 0)
+            val = reducer.ir_read_integer(self.input_id, 0)
+            if should_expose_public:
+                reducer.ir_expose_public_i(val)
+            if should_return_hashed:
+                provided_hash = reducer.ir_read_hash(self.input_id)
+                reducer.op_expose_public(provided_hash)
+                reducer.op_assert(reducer.ir_equal_i(reducer.op_hash(val), provided_hash))
+                return HashedValue(val, provided_hash)
+            return val
         elif isinstance(self.dt, FloatDTDescriptor):
-            return reducer.ir_read_float(self.input_id, 0)
+            val = reducer.ir_read_float(self.input_id, 0)
+            if should_expose_public:
+                reducer.ir_expose_public_f(val)
+            if should_return_hashed:
+                provided_hash = reducer.ir_read_hash(self.input_id)
+                reducer.op_expose_public(provided_hash)
+                reducer.op_assert(reducer.ir_equal_i(reducer.op_hash(val), provided_hash))
+                return HashedValue(val, provided_hash)
+            return val
         raise NotImplementedError()

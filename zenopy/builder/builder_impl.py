@@ -2,7 +2,7 @@ from typing import List, Dict, Optional
 
 from zenopy.builder.ir_builder import IRBuilder
 from zenopy.builder.value import Value, ClassValue, TupleValue, ListValue, NoneValue, NDArrayValue, IntegerValue, \
-    FloatValue, StringValue
+    FloatValue, StringValue, NumberValue
 from zenopy.debug.dbg_info import DebugInfo
 from zenopy.internal.dt_descriptor import DTDescriptor
 from zenopy.ir.ir_ctx import IRContext
@@ -22,6 +22,8 @@ from zenopy.opdef.ir_op.ir_div_i import DivIIR
 from zenopy.opdef.ir_op.ir_eq_f import EqualFIR
 from zenopy.opdef.ir_op.ir_eq_i import EqualIIR
 from zenopy.opdef.ir_op.ir_exp_f import ExpFIR
+from zenopy.opdef.ir_op.ir_expose_public_f import ExposePublicFIR
+from zenopy.opdef.ir_op.ir_expose_public_i import ExposePublicIIR
 from zenopy.opdef.ir_op.ir_float_cast import FloatCastIR
 from zenopy.opdef.ir_op.ir_floor_divide_f import FloorDivFIR
 from zenopy.opdef.ir_op.ir_floor_divide_i import FloorDivIIR
@@ -29,6 +31,7 @@ from zenopy.opdef.ir_op.ir_gt_f import GreaterThanFIR
 from zenopy.opdef.ir_op.ir_gt_i import GreaterThanIIR
 from zenopy.opdef.ir_op.ir_gte_f import GreaterThanOrEqualFIR
 from zenopy.opdef.ir_op.ir_gte_i import GreaterThanOrEqualIIR
+from zenopy.opdef.ir_op.ir_hash import HashIR
 from zenopy.opdef.ir_op.ir_int_cast import IntCastIR
 from zenopy.opdef.ir_op.ir_log_f import LogFIR
 from zenopy.opdef.ir_op.ir_logical_and import LogicalAndIR
@@ -47,6 +50,7 @@ from zenopy.opdef.ir_op.ir_ne_i import NotEqualIIR
 from zenopy.opdef.ir_op.ir_pow_f import PowFIR
 from zenopy.opdef.ir_op.ir_pow_i import PowIIR
 from zenopy.opdef.ir_op.ir_read_float import ReadFloatIR
+from zenopy.opdef.ir_op.ir_read_hash import ReadHashIR
 from zenopy.opdef.ir_op.ir_read_integer import ReadIntegerIR
 from zenopy.opdef.ir_op.ir_select_f import SelectFIR
 from zenopy.opdef.ir_op.ir_select_i import SelectIIR
@@ -70,11 +74,13 @@ from zenopy.opdef.nocls.op_bool_scalar import BoolScalarOp
 from zenopy.opdef.nocls.op_div import DivOp
 from zenopy.opdef.nocls.op_eq import EqualOp
 from zenopy.opdef.nocls.op_exp import ExpOp
+from zenopy.opdef.nocls.op_expose_public import ExposePublicOp
 from zenopy.opdef.nocls.op_float_cast import FloatCastOp
 from zenopy.opdef.nocls.op_float_scalar import FloatScalarOp
 from zenopy.opdef.nocls.op_floor_divide import FloorDivideOp
 from zenopy.opdef.nocls.op_gt import GreaterThanOp
 from zenopy.opdef.nocls.op_gte import GreaterThanOrEqualOp
+from zenopy.opdef.nocls.op_hash import HashOp
 from zenopy.opdef.nocls.op_input import InputOp
 from zenopy.opdef.nocls.op_int_cast import IntCastOp
 from zenopy.opdef.nocls.op_integer_scalar import IntegerScalarOp
@@ -98,6 +104,7 @@ from zenopy.opdef.nocls.op_sign import SignOp
 from zenopy.opdef.nocls.op_sqrt import SqrtOp
 from zenopy.opdef.nocls.op_sub import SubOp
 from zenopy.opdef.nocls.op_tuple import TupleOp
+from zenopy.opdef.nocls.op_uadd import UAddOp
 from zenopy.opdef.nocls.op_usub import USubOp
 
 
@@ -315,8 +322,8 @@ class IRBuilderImpl(IRBuilder):
     def op_constant_class(self, dt: DTDescriptor, dbg: Optional[DebugInfo] = None) -> ClassValue:
         return ClassValue(dt)
 
-    def op_input(self, id_major: int, dt: DTDescriptor, public: bool, dbg: Optional[DebugInfo] = None) -> Value:
-        op = InputOp(id_major, dt, public)
+    def op_input(self, id_major: int, dt: DTDescriptor, kind: str, dbg: Optional[DebugInfo] = None) -> Value:
+        op = InputOp(id_major, dt, kind)
         return op.build(self, {}, dbg)
 
     def op_parenthesis(self, args: List[Value], dbg: Optional[DebugInfo] = None) -> TupleValue:
@@ -335,13 +342,55 @@ class IRBuilderImpl(IRBuilder):
         kwargs = op.argparse(dbg, [x], {})
         return op.build(self, kwargs, dbg)
 
+    def op_unary_add(self, x: Value, dbg: Optional[DebugInfo] = None) -> Value:
+        op = UAddOp()
+        kwargs = op.argparse(dbg, [x], {})
+        return op.build(self, kwargs, dbg)
 
+    def op_expose_public(self, x: Value, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        op = ExposePublicOp()
+        kwargs = op.argparse(dbg, [x], {})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, NoneValue)
+        return result
 
+    def op_hash(self, value: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+        op = HashOp()
+        kwargs = op.argparse(dbg, [value], {})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, IntegerValue)
+        return result
 
+    def ir_hash(self, values: List[NumberValue], dbg: Optional[DebugInfo] = None) -> IntegerValue:
+        ir = HashIR()
+        val, stmt = ir.build_ir(len(self.stmts), ir.argparse(dbg, values, {}), dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, IntegerValue)
+        return val
 
+    def ir_expose_public_i(self, x: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        ir = ExposePublicIIR()
+        val, stmt = ir.build_ir(len(self.stmts), ir.argparse(dbg, [x], {}), dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, NoneValue)
+        return val
+
+    def ir_expose_public_f(self, x: FloatValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        ir = ExposePublicFIR()
+        val, stmt = ir.build_ir(len(self.stmts), ir.argparse(dbg, [x], {}), dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, NoneValue)
+        return val
 
     def ir_read_integer(self, input_id: int, idx: int, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         ir = ReadIntegerIR(input_id, idx)
+        val, stmt = ir.build_ir(len(self.stmts), {}, dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, IntegerValue)
+        return val
+
+    def ir_read_hash(self, input_id: int, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+        ir = ReadHashIR(input_id)
         val, stmt = ir.build_ir(len(self.stmts), {}, dbg)
         self.stmts.append(stmt)
         assert isinstance(val, IntegerValue)

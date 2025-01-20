@@ -4,10 +4,10 @@ from zenopy.internal.dt_descriptor import DTDescriptor
 
 
 class ProgramInputMetadata:
-    def __init__(self, dt: DTDescriptor, name: str, public: bool):
+    def __init__(self, dt: DTDescriptor, name: str, kind: str):
         self.dt = dt
         self.name = name
-        self.public = public
+        self.kind = kind
 
 
 class ProgramMetadata:
@@ -25,7 +25,7 @@ class ProgramMetadata:
         return {
             "inputs": [{
                 "dt": inp.dt.export(),
-                "public": inp.public,
+                "kind": inp.kind,
                 "name": inp.name,
             } for inp in self.inputs],
         }

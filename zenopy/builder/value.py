@@ -3,7 +3,8 @@ from typing import Any, Tuple, Callable, List, Union
 
 from zenopy.internal.internal_ndarray import InternalNDArray
 from zenopy.internal.dt_descriptor import DTDescriptor, NumberDTDescriptor, IntegerDTDescriptor, FloatDTDescriptor, \
-    NDArrayDTDescriptor, TupleDTDescriptor, ListDTDescriptor, NoneDTDescriptor, ClassDTDescriptor, StringDTDescriptor
+    NDArrayDTDescriptor, TupleDTDescriptor, ListDTDescriptor, NoneDTDescriptor, ClassDTDescriptor, StringDTDescriptor, \
+    HashedDTDescriptor
 
 
 class Value:
@@ -331,3 +332,30 @@ class StringValue(Value):
 
     def __copy__(self):
         return self.__class__(self.val())
+
+
+class HashedValue(Value):
+    def __init__(self, value: Value, hash_value: IntegerValue):
+        super().__init__(HashedDTDescriptor(value.type()))
+        self._value = value
+        self._hash = hash_value
+
+    def val(self) -> Value:
+        return self._value
+
+    def hash_val(self) -> IntegerValue:
+        return self._hash
+
+    def assign(self, value: 'HashedValue') -> 'HashedValue':
+        self._value = value._value
+        self._hash = value._hash
+        return self
+
+    def __copy__(self):
+        return self.__class__(self.val(), self.hash_val())
+
+    def __deepcopy__(self, memo):
+        new_instance = self.__class__(self.val(), self.hash_val())
+        memo[id(self)] = new_instance
+        new_instance._value = copy.deepcopy(self._value, memo)
+        return new_instance

@@ -20,6 +20,8 @@ from zenopy.opdef.ir_op.ir_div_i import DivIIR
 from zenopy.opdef.ir_op.ir_eq_f import EqualFIR
 from zenopy.opdef.ir_op.ir_eq_i import EqualIIR
 from zenopy.opdef.ir_op.ir_exp_f import ExpFIR
+from zenopy.opdef.ir_op.ir_expose_public_f import ExposePublicFIR
+from zenopy.opdef.ir_op.ir_expose_public_i import ExposePublicIIR
 from zenopy.opdef.ir_op.ir_float_cast import FloatCastIR
 from zenopy.opdef.ir_op.ir_floor_divide_f import FloorDivFIR
 from zenopy.opdef.ir_op.ir_floor_divide_i import FloorDivIIR
@@ -27,6 +29,7 @@ from zenopy.opdef.ir_op.ir_gt_f import GreaterThanFIR
 from zenopy.opdef.ir_op.ir_gt_i import GreaterThanIIR
 from zenopy.opdef.ir_op.ir_gte_f import GreaterThanOrEqualFIR
 from zenopy.opdef.ir_op.ir_gte_i import GreaterThanOrEqualIIR
+from zenopy.opdef.ir_op.ir_hash import HashIR
 from zenopy.opdef.ir_op.ir_int_cast import IntCastIR
 from zenopy.opdef.ir_op.ir_log_f import LogFIR
 from zenopy.opdef.ir_op.ir_logical_or import LogicalOrIR
@@ -45,6 +48,7 @@ from zenopy.opdef.ir_op.ir_logical_and import LogicalAndIR
 from zenopy.opdef.ir_op.ir_pow_f import PowFIR
 from zenopy.opdef.ir_op.ir_pow_i import PowIIR
 from zenopy.opdef.ir_op.ir_read_float import ReadFloatIR
+from zenopy.opdef.ir_op.ir_read_hash import ReadHashIR
 from zenopy.opdef.ir_op.ir_read_integer import ReadIntegerIR
 from zenopy.opdef.ir_op.ir_select_f import SelectFIR
 from zenopy.opdef.ir_op.ir_select_i import SelectIIR
@@ -141,6 +145,13 @@ class _Halo2StatementBuilder:
             f"let {self._get_var_name(stmt.stmt_id)} = if input.x_{major}_{minor} >= 0 {{tmp_1}} else {{gate.neg(ctx, tmp_1)}};"
         ]
 
+    def _build_ReadHashIR(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, ReadHashIR)
+        major: int = stmt.operator.major
+        return [
+            f"let {self._get_var_name(stmt.stmt_id)} = ctx.load_witness(F::from_u128(input.hash_{major}));"
+        ]
+
     def _build_ReadFloatIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.operator, ReadFloatIR)
         major: int = stmt.operator.major
@@ -148,6 +159,23 @@ class _Halo2StatementBuilder:
         return [
             f"let {self._get_var_name(stmt.stmt_id)} = ctx.load_witness(fixed_point_chip.quantization(input.x_{major}_{minor}));"
         ]
+
+    def _build_HashIR(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, HashIR)
+        args = [self._get_var_name(arg) for arg in stmt.arguments]
+        return [
+            f"let {self._get_var_name(stmt.stmt_id)} = poseidon.hash_fix_len_array(ctx, &gate, &[{', '.join(args)}]);"
+        ]
+
+    def _build_ExposePublicIIR(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, ExposePublicIIR)
+        x = self._get_var_name(stmt.arguments[0])
+        return [f"make_public.push({x});"]
+
+    def _build_ExposePublicFIR(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, ExposePublicFIR)
+        x = self._get_var_name(stmt.arguments[0])
+        return [f"make_public.push({x});"]
 
     def _build_ConstantIntIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.operator, ConstantIntIR)
@@ -533,6 +561,8 @@ use halo2_graph::scaffold::run;
                         raise NotImplementedError("Unsupported NDArray dtype")
             else:
                 raise NotImplementedError("Unsupported circuit input datatype")
+            if input_obj.kind == "Hashed":
+                inputs.append(f"pub hash_{i}: u128")
         return """\
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CircuitInput {
@@ -568,6 +598,8 @@ fn main() {{
     let gate = GateChip::<F>::default();
     let range_chip = builder.range_chip();
     let fixed_point_chip = FixedPointChip::<F, PRECISION>::default(builder);
+    let mut poseidon_hasher = PoseidonHasher::<F, T, RATE>::new(OptimizedPoseidonSpec::new::<R_F, R_P, 0>());
+    poseidon_hasher.initialize_consts(ctx, &gate);
     let ctx = builder.main(0);
 """
         for stmt in self.stmts:

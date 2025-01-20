@@ -133,7 +133,7 @@ class AbsIRBuilderInterface:
     def op_constant_class(self, dt: DTDescriptor, dbg: Optional[DebugInfo] = None) -> ClassValue:
         raise NotImplementedError()
 
-    def op_input(self, id_major: int, dt: DTDescriptor, public: bool, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_input(self, id_major: int, dt: DTDescriptor, kind: str, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
     def op_parenthesis(self, args: List[Value], dbg: Optional[DebugInfo] = None) -> TupleValue:
@@ -148,14 +148,28 @@ class AbsIRBuilderInterface:
     def op_unary_sub(self, x: Value, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
+    def op_unary_add(self, x: Value, dbg: Optional[DebugInfo] = None) -> Value:
+        raise NotImplementedError()
 
+    def op_expose_public(self, value: Value, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        raise NotImplementedError()
 
+    def op_hash(self, value: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+        raise NotImplementedError()
 
+    def ir_expose_public_i(self, value: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        raise NotImplementedError()
 
+    def ir_expose_public_f(self, value: FloatValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        raise NotImplementedError()
 
-
+    def ir_hash(self, values: List[NumberValue], dbg: Optional[DebugInfo] = None) -> IntegerValue:
+        raise NotImplementedError()
 
     def ir_read_integer(self, input_id: int, idx: int, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+        raise NotImplementedError()
+
+    def ir_read_hash(self, input_id: int, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         raise NotImplementedError()
 
     def ir_read_float(self, input_id: int, idx: int, dbg: Optional[DebugInfo] = None) -> FloatValue:

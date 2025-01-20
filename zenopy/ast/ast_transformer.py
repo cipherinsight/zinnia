@@ -14,7 +14,6 @@ from zenopy.ast.zk_ast import ASTProgramInput, ASTAnnotation, ASTProgram, ASTAss
     ASTGeneratorExp, ASTCondExp
 from zenopy.internal.chip_object import ChipObject
 from zenopy.internal.dt_descriptor import DTDescriptorFactory, NoneDTDescriptor
-from zenopy.internal.input_anno_name import InputAnnoName
 from zenopy.debug.dbg_info import DebugInfo
 
 
@@ -361,21 +360,25 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
             dbg_info = self.get_dbg(node)
             raise UnsupportedLangFeatureException(dbg_info, f"Expression transformation rule for {type(node)} is not implemented.")
 
-    def visit_annotation(self, node, name: str, allow_circuit_anno: bool = True):
-        dbg_info = self.get_dbg(node)
-        typename: str
-        public: bool = False
-        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id in [InputAnnoName.PUBLIC, InputAnnoName.PRIVATE]:
-            if not allow_circuit_anno:
-                raise InvalidAnnotationException(dbg_info, f"Invalid Public/Private annotation for `{name}`, it is only allowed in circuit")
-            public = node.value.id == InputAnnoName.PUBLIC
-            node = node.slice
+    def visit_annotation(self, node, name: str | None):
+        kind = None
+        error_msg = f"Invalid annotation for `{name}`." if name is not None else "Invalid annotation."
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            if node.value.id == ASTAnnotation.Kind.PUBLIC:
+                kind = ASTAnnotation.Kind.PUBLIC
+                node = node.slice
+            elif node.value.id == ASTAnnotation.Kind.PRIVATE:
+                kind = ASTAnnotation.Kind.PRIVATE
+                node = node.slice
+            elif node.value.id == ASTAnnotation.Kind.HASHED:
+                kind = ASTAnnotation.Kind.HASHED
+                node = node.slice
         def _inner_parser(_n: ast.Name | ast.Subscript):
             if isinstance(_n, ast.Name):
-                return DTDescriptorFactory.create(dbg_info, _n.id)
+                return DTDescriptorFactory.create(self.get_dbg(_n), _n.id)
             elif isinstance(_n, ast.Subscript):
                 if not isinstance(_n.value, ast.Name):
-                    raise InvalidAnnotationException(dbg_info, f"Invalid annotation for `{name}`")
+                    raise InvalidAnnotationException(self.get_dbg(_n), error_msg)
                 if isinstance(_n.slice, ast.Tuple):
                     args = []
                     for elt in _n.slice.elts:
@@ -385,17 +388,21 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
                             args.append(_inner_parser(elt))
                         elif isinstance(elt, ast.Constant):
                             args.append(elt.value)
+                        elif isinstance(elt, ast.Tuple):
+                            if not all(isinstance(e, ast.Constant) for e in elt.elts):
+                                raise InvalidAnnotationException(self.get_dbg(elt), error_msg + f" All tuple elements should be constant.")
+                            args.append(tuple(e.value for e in elt.elts))
                         else:
-                            raise InvalidAnnotationException(dbg_info,
-                                                             f"Invalid annotation for `{name}`")
-                    return DTDescriptorFactory.create(dbg_info, _n.value.id, tuple(args))
+                            raise InvalidAnnotationException(self.get_dbg(_n), error_msg)
+                    return DTDescriptorFactory.create(self.get_dbg(_n), _n.value.id, tuple(args))
                 elif isinstance(_n.slice, ast.Constant):
-                    return DTDescriptorFactory.create(dbg_info, _n.value.id, (_n.slice.value, ))
+                    return DTDescriptorFactory.create(self.get_dbg(_n), _n.value.id, (_n.slice.value, ))
             elif isinstance(_n, ast.Constant):
                 if _n.value is None:
                     return NoneDTDescriptor()
-            raise InvalidAnnotationException(dbg_info, f"Invalid annotation for `{name}`")
-        return ASTAnnotation(dbg_info, _inner_parser(node), public)
+                raise InvalidAnnotationException(self.get_dbg(_n), error_msg + f" Constant value {_n.value} is not supported as an annotation.")
+            raise InvalidAnnotationException(self.get_dbg(_n), error_msg)
+        return ASTAnnotation(self.get_dbg(node), _inner_parser(node), kind)
 
     def visit_slice_key(self, node):
         dbg = self.get_dbg(node)
@@ -453,24 +460,23 @@ class PyZKCircuitASTTransformer(PyZKBaseASTTransformer):
     def visit_FunctionDef(self, node):
         dbg_info = self.get_dbg(node)
         args = self.visit_arguments(node.args)
+        if node.returns is not None:
+            raise InvalidProgramException(dbg_info, "Circuit function must not have a return annotation. Note that circuits should not return anything.")
         return ASTProgram(dbg_info, self.visit_block(node.body), args, {name: val.chip_ast for name, val in self.chips.items()})
 
     def visit_arguments(self, node):
         results = []
         for arg in node.args:
-            dbg_info = self.get_dbg(arg)
+            dbg = self.get_dbg(arg)
             name: str = arg.arg
             if arg.annotation is None:
-                raise InvalidCircuitInputException(dbg_info, "Circuit input must be annotated, e.g. `x: Public[Number]`.")
+                raise InvalidCircuitInputException(dbg, "Circuit input must be annotated, e.g. `x: Public[Number]`.")
             if not isinstance(arg.annotation, ast.Subscript) or not isinstance(arg.annotation.value, ast.Name):
-                raise InvalidCircuitInputException(
-                    dbg_info, f"Invalid input annotation for `{name}`. A valid input annotation should be like `x: Public[Number]`.")
-            if arg.annotation.value.id not in [InputAnnoName.PUBLIC, InputAnnoName.PRIVATE]:
-                raise InvalidCircuitInputException(
-                    dbg_info, f"Invalid input annotation `{arg.annotation.value.id}` for `{name}`. It should be either `Public` or `Private`. E.g. `x: Public[Number]`.")
-            public = arg.annotation.value.id == InputAnnoName.PUBLIC
+                raise InvalidCircuitInputException(dbg, f"Invalid input annotation for `{name}`. A valid input annotation should be like `x: Public[Number]`.")
             annotation = self.visit_annotation(arg.annotation, name)
-            results.append(ASTProgramInput(dbg_info, public, name, annotation))
+            if annotation.kind is None:
+                raise InvalidCircuitInputException(dbg, f"Invalid input annotation `{arg.annotation.value.id}` for `{name}`. It should be either `Public`, `Private` or `Hashed`. E.g. `x: Public[Number]`.")
+            results.append(ASTProgramInput(dbg, name, annotation))
         return results
 
 
@@ -482,13 +488,15 @@ class PyZKChipASTTransformer(PyZKBaseASTTransformer):
         return DebugInfo(self.method_name, self.source_code, False, node.lineno, node.col_offset, node.end_lineno, node.end_col_offset)
 
     def visit_FunctionDef(self, node):
-        dbg_info = self.get_dbg(node)
+        dbg = self.get_dbg(node)
         args = self.visit_arguments(node.args)
         if node.returns is not None:
-            return_anno = self.visit_annotation(node.returns, 'Return Value', False)
+            return_anno = self.visit_annotation(node.returns, None)
         else:
-            raise InvalidAnnotationException(dbg_info, "Chip must have a return annotation.")
-        return ASTChip(dbg_info, self.visit_block(node.body), args, return_anno)
+            raise InvalidAnnotationException(dbg, "Chip must have a return annotation.")
+        if return_anno.kind is not None:
+            raise InvalidAnnotationException(self.get_dbg(node.returns), f"Invalid return annotation for chips. In chips, the return type should NOT be annotated by `Public`, `Private` or `Hashed` because chip returns are not inputs. Please remove these specifiers and leave the corresponding datatype only.")
+        return ASTChip(dbg, self.visit_block(node.body), args, return_anno)
 
     def visit_arguments(self, node):
         results = []
@@ -496,10 +504,8 @@ class PyZKChipASTTransformer(PyZKBaseASTTransformer):
             dbg_info = self.get_dbg(arg)
             name: str = arg.arg
             if arg.annotation is None:
-                raise InvalidChipInputException(dbg_info, "Chip input must be annotated, e.g. `x: Number`.")
-            if not isinstance(arg.annotation, ast.Subscript) and not isinstance(arg.annotation, ast.Name):
-                raise InvalidChipInputException(
-                    dbg_info, f"Invalid input annotation for `{name}`. A valid input annotation should be like `x: Number`.")
-            annotation = self.visit_annotation(arg.annotation, name, False)
+                annotation = None
+            else:
+                annotation = self.visit_annotation(arg.annotation, name)
             results.append(ASTChipInput(dbg_info, name, annotation))
         return results

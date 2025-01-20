@@ -8,21 +8,20 @@ from zenopy.opdef.nocls.abstract_op import AbstractOp
 from zenopy.debug.dbg_info import DebugInfo
 
 
-class ReadIntegerIR(AbstractIR):
-    def __init__(self, major: int, minor: int):
+class ReadHashIR(AbstractIR):
+    def __init__(self, major: int):
         super().__init__()
         self.major = major
-        self.minor = minor
 
     def get_signature(self) -> str:
-        return f"read_integer[{self.major}, {self.minor}]"
+        return f"read_hash[{self.major}]"
 
     @classmethod
     def get_name(cls) -> str:
-        return "read_integer"
+        return "read_hash"
 
     def __eq__(self, other):
-        return super().__eq__(other) and self.major == other.major and self.minor == other.minor
+        return super().__eq__(other) and self.major == other.major
 
     def is_fixed_ir(self) -> bool:
         return True
