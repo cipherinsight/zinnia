@@ -15,7 +15,8 @@ from zenopy.compile.ir_gen import IRGenerator
 from zenopy.internal.chip_object import ChipObject
 from zenopy.debug.prettifier import prettify_zk_ast, prettify_ir_stmts, prettify_exception
 from zenopy.exec.exec_ctx import ExecutionContext
-
+from zenopy.exec.mock_executor import MockProgramExecutor
+from zenopy.exec.exec_result import ZKExecResult
 
 def _fix_indentation(code: str) -> str:
     lines = code.split('\n')
@@ -56,6 +57,9 @@ class ZKChip:
         method_name = method.__name__
         return ZKChip(method_name, source_code)
 
+    def __call__(self, *args, **kwargs):
+        raise NotImplementedError('ZK Chip is not callable outside of a circuit.')
+
 
 class ZKCircuit:
     def __init__(self, name: str, source: str, chips: Dict[str, ZKChip | ChipObject], debug=False):
@@ -67,17 +71,10 @@ class ZKCircuit:
         self.debug = debug
         self.prog_metadata = None
         self.zk_program = None
+        self.ir_stmts = []
 
-    def __call__(self, *args, **kwargs):
-        try:
-            if self.zk_program is None or self.prog_metadata is None:
-                self.compile()
-            exec_ctx = ExecutionContext(self.prog_metadata, args, kwargs)
-            raise NotImplementedError('Execution not supported yet. Please read the compiled program source instead.')
-            # executor = Halo2ZKProgramExecutor(exec_ctx, self.zk_program)
-            # executor.exec()
-        except InternalZenoPyException as e:
-            raise prettify_exception(e)
+    def __call__(self, *args, **kwargs) -> ZKExecResult:
+        return self.mock(*args, **kwargs)
 
     @staticmethod
     def from_source(name: str, source: str, chips: Dict[str, ZKChip | ChipObject], debug=False) -> 'ZKCircuit':
@@ -111,17 +108,17 @@ class ZKCircuit:
                 print('*' * 20 + ' Transformed AST ' + '*' * 20, file=sys.stderr)
                 print(prettify_zk_ast(ir_comp_tree), file=sys.stderr)
             generator = IRGenerator()
-            ir_stmts, self.prog_metadata = generator.generate(ZKAbstractSyntaxTree(
+            self.ir_stmts, self.prog_metadata = generator.generate(ZKAbstractSyntaxTree(
                 ir_comp_tree,
                 {key: (chip.get_chip().chip_ast if isinstance(chip, ZKChip) else chip.chip_ast) for key, chip in self.chips.items()}
             ))
             if self.debug:
                 print('*' * 20 + ' IR Statements ' + '*' * 20, file=sys.stderr)
-                print(prettify_ir_stmts(ir_stmts), file=sys.stderr)
+                print(prettify_ir_stmts(self.ir_stmts), file=sys.stderr)
                 print('*' * 20 + ' Program Metadata ' + '*' * 20, file=sys.stderr)
                 print(json.dumps(self.prog_metadata.export()), file=sys.stderr)
             self.prog_metadata.set_circuit_name(self.name)
-            prog_builder = Halo2ProgramBuilder(ir_stmts, self.prog_metadata)
+            prog_builder = Halo2ProgramBuilder(self.ir_stmts, self.prog_metadata)
             self.zk_program = prog_builder.build()
             if self.debug:
                 print('*' * 20 + ' Program Source ' + '*' * 20, file=sys.stderr)
@@ -129,6 +126,16 @@ class ZKCircuit:
         except InternalZenoPyException as e:
             raise prettify_exception(e)
         return self.zk_program
+
+    def mock(self, *args, **kwargs) -> ZKExecResult:
+        if self.zk_program is None or self.prog_metadata is None:
+            self.compile()
+        try:
+            exec_ctx = ExecutionContext(self.prog_metadata, args, kwargs)
+            mock_executor = MockProgramExecutor(exec_ctx, self.zk_program, self.ir_stmts)
+            return mock_executor.exec()
+        except InternalZenoPyException as e:
+            raise prettify_exception(e)
 
     def argparse(self, *args, **kwargs) -> Dict[Tuple[int, int], float | int]:
         exec_ctx = ExecutionContext(self.prog_metadata, args, kwargs)

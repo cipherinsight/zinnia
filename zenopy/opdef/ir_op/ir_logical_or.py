@@ -3,6 +3,7 @@ from typing import List, Dict, Optional, Any, Tuple
 from zenopy.builder.value import Value, IntegerValue
 
 from zenopy.compile.ir_stmt import IRStatement
+from zenopy.config.mock_exec_config import MockExecConfig
 from zenopy.opdef.ir_op.abstract_ir import AbstractIR
 from zenopy.opdef.nocls.abstract_op import AbstractOp
 from zenopy.debug.dbg_info import DebugInfo
@@ -37,6 +38,9 @@ class LogicalOrIR(AbstractIR):
         elif lhs.val() is not None and rhs.val() is None:
             return None if lhs.val() == 0 else 1
         raise NotImplementedError()
+
+    def mock_exec(self, kwargs: Dict[str, Any], config: MockExecConfig) -> Any:
+        return 1 if kwargs["lhs"] != 0 or kwargs["rhs"] != 0 else 0
 
     def build_ir(self, ir_id: int, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Tuple[Value, IRStatement]:
         lhs, rhs = kwargs["lhs"], kwargs["rhs"]

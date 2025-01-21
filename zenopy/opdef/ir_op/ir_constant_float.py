@@ -1,6 +1,7 @@
 from typing import List, Dict, Optional, Any, Tuple
 
 from zenopy.compile.ir_stmt import IRStatement
+from zenopy.config.mock_exec_config import MockExecConfig
 from zenopy.opdef.ir_op.abstract_ir import AbstractIR
 from zenopy.opdef.nocls.abstract_op import AbstractOp
 from zenopy.debug.dbg_info import DebugInfo
@@ -30,8 +31,8 @@ class ConstantFloatIR(AbstractIR):
     def infer(self, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Any:
         return self.value
 
-    def build(self, reducer: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
-        return reducer.ir_constant_float(self.value)
+    def mock_exec(self, kwargs: Dict[str, Any], config: MockExecConfig) -> Any:
+        return float(self.value)
 
     def build_ir(self, ir_id: int, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Tuple[Value, IRStatement]:
         return FloatValue(self.value, ir_id), IRStatement(ir_id, self, [], dbg)

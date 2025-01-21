@@ -117,6 +117,6 @@ def test_subscript_list_with_variable_index():
         the_list = [1, 2, 3]
         assert the_list[idx] == 2
 
-    ZKCircuit.from_method(foo, {}).compile()
-    # TODO: mock execution this circuit
-
+    assert not ZKCircuit.from_method(foo, {}).mock(0).satisfied
+    assert ZKCircuit.from_method(foo, {}).mock(1).satisfied
+    assert not ZKCircuit.from_method(foo, {}).mock(2).satisfied

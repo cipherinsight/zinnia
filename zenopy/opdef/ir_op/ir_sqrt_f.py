@@ -3,6 +3,7 @@ from typing import List, Dict, Optional, Any, Tuple
 import math
 
 from zenopy.builder.value import Value, FloatValue
+from zenopy.config.mock_exec_config import MockExecConfig
 from zenopy.debug.exception import StaticInferenceError
 
 from zenopy.compile.ir_stmt import IRStatement
@@ -33,6 +34,9 @@ class SqrtFIR(AbstractIR):
         if x.val() is not None and x.val() < 0:
             raise StaticInferenceError(dbg, f"A negative value is inferred at compiler time on `sqrt`. Cannot take square root of negative number: {x.val()}")
         return math.sqrt(x.val()) if x.val() is not None else None
+
+    def mock_exec(self, kwargs: Dict[str, Any], config: MockExecConfig) -> Any:
+        return float(math.sqrt(kwargs["x"]))
 
     def build_ir(self, ir_id: int, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Tuple[Value, IRStatement]:
         x = kwargs["x"]

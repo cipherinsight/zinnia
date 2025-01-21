@@ -2,6 +2,7 @@ from typing import Dict, Optional, Tuple, Any
 
 from zenopy.builder.abstract_ir_builder import AbsIRBuilderInterface
 from zenopy.builder.value import Value
+from zenopy.config.mock_exec_config import MockExecConfig
 from zenopy.debug.dbg_info import DebugInfo
 from zenopy.compile.ir_stmt import IRStatement
 from zenopy.opdef.nocls.abstract_op import AbstractOp
@@ -21,4 +22,7 @@ class AbstractIR(AbstractOp):
         raise NotImplementedError("Internal Error: Unexpected call to `build` method in IR")
 
     def infer(self, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Any:
+        raise NotImplementedError()
+
+    def mock_exec(self, kwargs: Dict[str, Any], config: MockExecConfig) -> Any:
         raise NotImplementedError()

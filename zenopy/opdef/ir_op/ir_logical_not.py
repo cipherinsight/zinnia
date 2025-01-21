@@ -3,6 +3,7 @@ from typing import List, Dict, Optional, Any, Tuple
 from zenopy.builder.value import Value, IntegerValue
 
 from zenopy.compile.ir_stmt import IRStatement
+from zenopy.config.mock_exec_config import MockExecConfig
 from zenopy.opdef.ir_op.abstract_ir import AbstractIR
 from zenopy.opdef.nocls.abstract_op import AbstractOp
 from zenopy.debug.dbg_info import DebugInfo
@@ -28,6 +29,9 @@ class LogicalNotIR(AbstractIR):
         x = kwargs["x"]
         assert isinstance(x, IntegerValue)
         return (1 if x.val() == 0 else 0) if x.val() is not None else None
+
+    def mock_exec(self, kwargs: Dict[str, Any], config: MockExecConfig) -> Any:
+        return 1 if kwargs["x"] == 0 else 0
 
     def build_ir(self, ir_id: int, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Tuple[Value, IRStatement]:
         x = kwargs["x"]
