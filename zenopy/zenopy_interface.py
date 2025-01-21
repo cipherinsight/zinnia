@@ -7,10 +7,11 @@ from typing import Dict, Tuple
 import astpretty
 
 from zenopy.ast.ast_transformer import PyZKCircuitASTTransformer, PyZKChipASTTransformer
+from zenopy.ast.zk_ast_tree import ZKAbstractSyntaxTree
 from zenopy.backend.halo2_builder import Halo2ProgramBuilder
 from zenopy.backend.zk_program import ZKProgram
 from zenopy.debug.exception import InternalZenoPyException
-from zenopy.ir.ir_gen import IRGenerator
+from zenopy.compile.ir_gen import IRGenerator
 from zenopy.internal.chip_object import ChipObject
 from zenopy.debug.prettifier import prettify_zk_ast, prettify_ir_stmts, prettify_exception
 from zenopy.exec.exec_ctx import ExecutionContext
@@ -104,16 +105,16 @@ class ZKCircuit:
             if self.debug:
                 print('*' * 20 + ' Original AST ' + '*' * 20, file=sys.stderr)
                 print(astpretty.pformat(tree.body[0], show_offsets=True), file=sys.stderr)
-            transformer = PyZKCircuitASTTransformer(
-                self.source, self.name,
-                {key: (chip.get_chip() if isinstance(chip, ZKChip) else chip) for key, chip in self.chips.items()}
-            )
+            transformer = PyZKCircuitASTTransformer(self.source, self.name)
             ir_comp_tree = transformer.visit(tree.body[0])
             if self.debug:
                 print('*' * 20 + ' Transformed AST ' + '*' * 20, file=sys.stderr)
                 print(prettify_zk_ast(ir_comp_tree), file=sys.stderr)
             generator = IRGenerator()
-            ir_stmts, self.prog_metadata = generator.generate(ir_comp_tree)
+            ir_stmts, self.prog_metadata = generator.generate(ZKAbstractSyntaxTree(
+                ir_comp_tree,
+                {key: (chip.get_chip().chip_ast if isinstance(chip, ZKChip) else chip.chip_ast) for key, chip in self.chips.items()}
+            ))
             if self.debug:
                 print('*' * 20 + ' IR Statements ' + '*' * 20, file=sys.stderr)
                 print(prettify_ir_stmts(ir_stmts), file=sys.stderr)

@@ -450,10 +450,9 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
 
 
 class PyZKCircuitASTTransformer(PyZKBaseASTTransformer):
-    def __init__(self, source_code: str, method_name: str, chips: Dict[str, ChipObject]):
+    def __init__(self, source_code: str, method_name: str):
         super().__init__(source_code, method_name)
-        self.chips = chips
-    
+
     def get_dbg(self, node) -> DebugInfo:
         return DebugInfo(self.method_name, self.source_code, True, node.lineno, node.col_offset, node.end_lineno, node.end_col_offset)
 
@@ -462,7 +461,7 @@ class PyZKCircuitASTTransformer(PyZKBaseASTTransformer):
         args = self.visit_arguments(node.args)
         if node.returns is not None:
             raise InvalidProgramException(dbg_info, "Circuit function must not have a return annotation. Note that circuits should not return anything.")
-        return ASTProgram(dbg_info, self.visit_block(node.body), args, {name: val.chip_ast for name, val in self.chips.items()})
+        return ASTProgram(dbg_info, self.visit_block(node.body), args)
 
     def visit_arguments(self, node):
         results = []

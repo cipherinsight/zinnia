@@ -2,7 +2,7 @@ from typing import List
 
 from zenopy.backend.zk_program import ZKProgram
 from zenopy.internal.prog_meta_data import ProgramMetadata
-from zenopy.ir.ir_stmt import IRStatement
+from zenopy.compile.ir_stmt import IRStatement
 
 
 class AbstractProgramBuilder:

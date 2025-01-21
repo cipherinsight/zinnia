@@ -53,7 +53,7 @@ class InputOp(AbstractOp):
             if should_return_hashed:
                 provided_hash = reducer.ir_read_hash(self.input_id)
                 reducer.op_expose_public(provided_hash)
-                reducer.op_assert(reducer.ir_equal_i(reducer.op_hash(result), provided_hash))
+                reducer.op_assert(reducer.ir_equal_i(reducer.op_hash(result), provided_hash), None)
                 return HashedValue(result, provided_hash)
             return result
         elif isinstance(self.dt, IntegerDTDescriptor):
@@ -63,7 +63,7 @@ class InputOp(AbstractOp):
             if should_return_hashed:
                 provided_hash = reducer.ir_read_hash(self.input_id)
                 reducer.op_expose_public(provided_hash)
-                reducer.op_assert(reducer.ir_equal_i(reducer.op_hash(val), provided_hash))
+                reducer.op_assert(reducer.ir_equal_i(reducer.op_hash(val), provided_hash), None)
                 return HashedValue(val, provided_hash)
             return val
         elif isinstance(self.dt, FloatDTDescriptor):
@@ -73,7 +73,7 @@ class InputOp(AbstractOp):
             if should_return_hashed:
                 provided_hash = reducer.ir_read_hash(self.input_id)
                 reducer.op_expose_public(provided_hash)
-                reducer.op_assert(reducer.ir_equal_i(reducer.op_hash(val), provided_hash))
+                reducer.op_assert(reducer.ir_equal_i(reducer.op_hash(val), provided_hash), None)
                 return HashedValue(val, provided_hash)
             return val
         raise NotImplementedError()

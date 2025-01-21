@@ -69,13 +69,11 @@ class ASTProgram(ASTComponent):
         self,
         dbg: DebugInfo,
         block: List[ASTStatement],
-        inputs: List[ASTProgramInput],
-        chips: Dict[str, ASTChip]
+        inputs: List[ASTProgramInput]
     ):
         super().__init__(dbg)
         self.block = block
         self.inputs = inputs
-        self.chips = chips
 
 
 class ASTExpression(ASTComponent):

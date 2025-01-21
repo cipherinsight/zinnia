@@ -9,7 +9,7 @@ from zenopy.ast.zk_ast import ASTComponent, ASTAssignStatement, \
     ASTReturnStatement, ASTCallStatement, ASTExprStatement, ASTConstantString, ASTNameAssignTarget, \
     ASTTupleAssignTarget, ASTListAssignTarget, ASTSubscriptAssignTarget
 from zenopy.debug.exception import InternalZenoPyException, ZenoPyException
-from zenopy.ir.ir_stmt import IRStatement
+from zenopy.compile.ir_stmt import IRStatement
 
 
 def prettify_zk_ast(node: ASTComponent) -> str:

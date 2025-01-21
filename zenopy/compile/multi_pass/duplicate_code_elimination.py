@@ -1,6 +1,6 @@
 from zenopy.builder.builder_impl import IRBuilderImpl
-from zenopy.ir.ir_graph import IRGraph
-from zenopy.ir.ir_pass.abstract_pass import AbstractIRPass
+from zenopy.compile.ir_graph import IRGraph
+from zenopy.compile.multi_pass.abstract_pass import AbstractIRPass
 
 
 class DuplicateCodeEliminationIRPass(AbstractIRPass):

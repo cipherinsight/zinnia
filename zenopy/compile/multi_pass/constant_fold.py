@@ -2,8 +2,8 @@ from typing import List
 
 from zenopy.builder.builder_impl import IRBuilderImpl
 from zenopy.builder.value import IntegerValue, FloatValue, Value
-from zenopy.ir.ir_graph import IRGraph
-from zenopy.ir.ir_pass.abstract_pass import AbstractIRPass
+from zenopy.compile.ir_graph import IRGraph
+from zenopy.compile.multi_pass.abstract_pass import AbstractIRPass
 
 
 class ConstantFoldIRPass(AbstractIRPass):

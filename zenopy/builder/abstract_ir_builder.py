@@ -19,7 +19,7 @@ class AbsIRBuilderInterface:
     def op_select(self, condition: Value, a: Value, b: Value, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
-    def op_assert(self, test: Value, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_assert(self, test: Value, condition: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
     def op_less_than(self, a: Value, b: Value, dbg: Optional[DebugInfo] = None) -> Value:

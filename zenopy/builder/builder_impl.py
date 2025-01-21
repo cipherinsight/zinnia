@@ -5,7 +5,6 @@ from zenopy.builder.value import Value, ClassValue, TupleValue, ListValue, NoneV
     FloatValue, StringValue, NumberValue
 from zenopy.debug.dbg_info import DebugInfo
 from zenopy.internal.dt_descriptor import DTDescriptor
-from zenopy.ir.ir_ctx import IRContext
 from zenopy.opdef.ir_op.abstract_ir import AbstractIR
 from zenopy.opdef.ir_op.ir_abs_f import AbsFIR
 from zenopy.opdef.ir_op.ir_abs_i import AbsIIR
@@ -109,8 +108,8 @@ from zenopy.opdef.nocls.op_usub import USubOp
 
 
 class IRBuilderImpl(IRBuilder):
-    def __init__(self, ir_ctx: IRContext | None = None) -> None:
-        super().__init__(ir_ctx)
+    def __init__(self) -> None:
+        super().__init__()
 
     def invoke_op(self, operator: AbstractOp, args: List[Value], kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         kwargs = operator.argparse(dbg, args, kwargs)
@@ -126,9 +125,9 @@ class IRBuilderImpl(IRBuilder):
         kwargs = op.argparse(dbg, [condition, a, b], {})
         return op.build(self, kwargs, dbg)
 
-    def op_assert(self, test: Value, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_assert(self, test: Value, condition: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
         op = AssertOp()
-        kwargs = op.argparse(dbg, [test], {})
+        kwargs = op.argparse(dbg, [test] + ([condition] if condition is not None else []), {})
         return op.build(self, kwargs, dbg)
 
     def op_less_than(self, a: Value, b: Value, dbg: Optional[DebugInfo] = None) -> Value:

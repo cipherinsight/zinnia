@@ -1,4 +1,4 @@
-from zenopy.ir.ir_graph import IRGraph
+from zenopy.compile.ir_graph import IRGraph
 
 
 class AbstractIRPass:

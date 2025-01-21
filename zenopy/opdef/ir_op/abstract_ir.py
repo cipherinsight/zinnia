@@ -3,7 +3,7 @@ from typing import Dict, Optional, Tuple, Any
 from zenopy.builder.abstract_ir_builder import AbsIRBuilderInterface
 from zenopy.builder.value import Value
 from zenopy.debug.dbg_info import DebugInfo
-from zenopy.ir.ir_stmt import IRStatement
+from zenopy.compile.ir_stmt import IRStatement
 from zenopy.opdef.nocls.abstract_op import AbstractOp
 
 

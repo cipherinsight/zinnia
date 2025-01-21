@@ -4,7 +4,7 @@ from zenopy.backend.abstract_builder import AbstractProgramBuilder
 from zenopy.backend.zk_program import Halo2ZKProgram
 from zenopy.internal.dt_descriptor import IntegerDTDescriptor, FloatDTDescriptor, NDArrayDTDescriptor
 from zenopy.internal.prog_meta_data import ProgramMetadata
-from zenopy.ir.ir_stmt import IRStatement
+from zenopy.compile.ir_stmt import IRStatement
 from zenopy.opdef.ir_op.ir_abs_f import AbsFIR
 from zenopy.opdef.ir_op.ir_abs_i import AbsIIR
 from zenopy.opdef.ir_op.ir_add_f import AddFIR

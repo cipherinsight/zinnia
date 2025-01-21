@@ -2,7 +2,7 @@ from typing import List, Dict, Optional, Any, Tuple
 
 from zenopy.builder.value import Value, IntegerValue, FloatValue
 
-from zenopy.ir.ir_stmt import IRStatement
+from zenopy.compile.ir_stmt import IRStatement
 from zenopy.opdef.ir_op.abstract_ir import AbstractIR
 from zenopy.opdef.nocls.abstract_op import AbstractOp
 from zenopy.debug.dbg_info import DebugInfo
