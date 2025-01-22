@@ -46,6 +46,9 @@ class AbstractScope:
     def get_looping_condition(self) -> IntegerValue | None:
         raise NotImplementedError()
 
+    def get_breaking_condition(self) -> IntegerValue | None:
+        raise NotImplementedError()
+
     def get_returning_condition(self) -> IntegerValue | None:
         raise NotImplementedError()
 

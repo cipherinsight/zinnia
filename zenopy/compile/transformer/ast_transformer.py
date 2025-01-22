@@ -295,6 +295,8 @@ class ZenoPyBaseASTTransformer(ast.NodeTransformer):
                 parsed_stmt = self.visit_Assign(stmt)
             elif isinstance(stmt, ast.For):
                 parsed_stmt = self.visit_For(stmt)
+            elif isinstance(stmt, ast.While):
+                parsed_stmt = self.visit_While(stmt)
             elif isinstance(stmt, ast.Assert):
                 parsed_stmt = self.visit_Assert(stmt)
             elif isinstance(stmt, ast.Pass):

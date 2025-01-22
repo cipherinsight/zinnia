@@ -61,6 +61,9 @@ class LoopScope(AbstractScope):
     def get_looping_condition(self) -> IntegerValue | None:
         return self.calculated_looping_condition
 
+    def get_breaking_condition(self) -> IntegerValue | None:
+        return self.break_condition
+
     def get_returning_condition(self) -> IntegerValue | None:
         return self.super_scope.get_returning_condition()
 
@@ -107,3 +110,6 @@ class LoopScope(AbstractScope):
 
     def loop_reiterate(self):
         self.continue_condition = None
+        self.calculated_looping_condition = self.break_condition
+        if self.super_looping_condition is not None:
+            self.calculated_looping_condition = self.ir_builder.ir_logical_and(self.calculated_looping_condition, self.super_looping_condition)

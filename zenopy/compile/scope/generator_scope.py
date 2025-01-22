@@ -36,7 +36,3 @@ class GeneratorScope(AbstractScope):
 
     def is_in_loop(self) -> bool:
         return self.super_scope.is_in_loop()
-
-    def get_condition(self):
-        return self.super_scope.get_condition()
-

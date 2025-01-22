@@ -109,6 +109,18 @@ class IRContext:
             return self.ir_builder.ir_logical_and(conditions[0], self.ir_builder.ir_logical_and(conditions[1], conditions[2]))
         raise NotImplementedError()
 
+    def get_break_condition_value(self):
+        result = self.scopes[-1].get_breaking_condition()
+        if result is None:
+            return self.ir_builder.ir_constant_int(1)
+        return result
+
+    def get_return_condition_value(self):
+        result = self.scopes[-1].get_returning_condition()
+        if result is None:
+            return self.ir_builder.ir_constant_int(1)
+        return result
+
     def check_return_existence(self) -> bool:
         return self.scopes[-1].has_return_statement()
 

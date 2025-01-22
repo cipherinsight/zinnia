@@ -52,5 +52,8 @@ class MasterScope(AbstractScope):
     def get_returning_condition(self) -> IntegerValue | None:
         return None
 
+    def get_breaking_condition(self) -> IntegerValue | None:
+        return None
+
     def has_return_statement(self) -> bool:
         return False

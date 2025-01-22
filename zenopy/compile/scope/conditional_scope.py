@@ -57,6 +57,9 @@ class ConditionalScope(AbstractScope):
     def get_looping_condition(self) -> IntegerValue | None:
         return self.super_scope.get_looping_condition()
 
+    def get_breaking_condition(self) -> IntegerValue | None:
+        return self.super_scope.get_breaking_condition()
+
     def get_returning_condition(self) -> IntegerValue | None:
         return self.super_scope.get_returning_condition()
 

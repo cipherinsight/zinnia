@@ -95,7 +95,6 @@ def test_for_with_break():
     ZKCircuit.from_method(foo).compile()
 
 
-@pytest.mark.skip(reason="This is not supported yet")
 def test_for_with_else():
     """This test is to check if the for loop with else is executed correctly"""
     @zk_circuit
@@ -106,6 +105,22 @@ def test_for_with_else():
         else:
             the_sum += 10
         assert the_sum == 55
+
+    ZKCircuit.from_method(foo).compile()
+
+
+def test_for_with_else_and_break():
+    """This test is to check if the for loop with else is executed correctly"""
+    @zk_circuit
+    def foo():
+        the_sum = 0
+        for i in range(0, 10):
+            the_sum += i
+            if i == 5:
+                break
+        else:
+            the_sum += 10
+        assert the_sum == 15
 
     ZKCircuit.from_method(foo).compile()
 

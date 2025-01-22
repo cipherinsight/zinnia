@@ -10,7 +10,7 @@ from zenopy.compile.ast import ASTComponent, ASTCircuit, ASTAssignStatement, AST
     ASTBinaryOperator, ASTNamedAttribute, ASTExprAttribute, ASTParenthesis, ASTChip, ASTReturnStatement, \
     ASTUnaryOperator, ASTConstantNone, ASTNameAssignTarget, ASTSubscriptAssignTarget, \
     ASTListAssignTarget, ASTTupleAssignTarget, ASTAssignTarget, ASTExprStatement, ASTConstantString, ASTGeneratorExp, \
-    ASTGenerator, ASTCondExp
+    ASTGenerator, ASTCondExp, ASTWhileStatement
 from zenopy.compile.ir_ctx import IRContext
 from zenopy.compile.multi_pass.external_call_remover import ExternalCallRemoverIRPass
 from zenopy.debug.exception import VariableNotFoundError, NotInLoopError, \
@@ -105,7 +105,39 @@ class IRGenerator:
             self._ir_ctx.loop_reiter()
             for _, stmt in enumerate(n.block):
                 self.visit(stmt)
+        break_condition = self._ir_ctx.get_break_condition_value()
         self._ir_ctx.loop_leave()
+        self._ir_ctx.if_enter(break_condition)
+        for _, stmt in enumerate(n.orelse):
+            self.visit(stmt)
+        self._ir_ctx.if_leave()
+        return None
+
+    def visit_ASTWhileStatement(self, n: ASTWhileStatement):
+        if self._ir_ctx.check_return_existence():
+            raise UnreachableStatementError(n.dbg, "This code is unreachable")
+        self._ir_ctx.loop_enter()
+        while True:
+            self._ir_ctx.loop_reiter()
+            test_expr = self._ir_builder.op_bool_scalar(self.visit(n.test_expr), dbg=n.dbg)
+            if test_expr.val() is None:
+                raise StaticInferenceError(n.dbg, "Cannot statically infer the condition value in the while statement. This is crucial to determine number of loops at compile time.")
+            elif test_expr.val() == 0:
+                break
+            for _, stmt in enumerate(n.block):
+                self.visit(stmt)
+            break_condition = self._ir_ctx.get_break_condition_value()
+            if break_condition.val() is not None and break_condition.val() == 0:
+                break
+            return_condition = self._ir_ctx.get_return_condition_value()
+            if return_condition.val() is not None and return_condition.val() == 0:
+                break
+        break_condition = self._ir_ctx.get_break_condition_value()
+        self._ir_ctx.loop_leave()
+        self._ir_ctx.if_enter(break_condition)
+        for _, stmt in enumerate(n.orelse):
+            self.visit(stmt)
+        self._ir_ctx.if_leave()
         return None
 
     def visit_ASTBreakStatement(self, n: ASTBreakStatement):
@@ -356,7 +388,7 @@ class IRGenerator:
         for i, stmt in enumerate(chip.block):
             self.visit(stmt)
         return_vals_cond = self._ir_ctx.get_returns_with_conditions()
-        if not self._ir_ctx.check_return_existence() and not isinstance(chip.return_anno.dt, NoneDTDescriptor):
+        if not self._ir_ctx.check_return_existence() and not isinstance(chip.return_anno.dt, NoneDTDescriptor) and (self._ir_ctx.get_return_condition_value() is None or self._ir_ctx.get_return_condition_value().val() != 0):
             raise ControlEndWithoutReturnError(chip.dbg, "Chip control ends without a return statement")
         self._ir_ctx.chip_leave()
         if isinstance(chip.return_anno.dt, NoneDTDescriptor):

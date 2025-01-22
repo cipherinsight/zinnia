@@ -58,6 +58,9 @@ class ChipScope(AbstractScope):
     def get_looping_condition(self) -> IntegerValue | None:
         return None
 
+    def get_breaking_condition(self) -> IntegerValue | None:
+        return None
+
     def get_returning_condition(self) -> IntegerValue | None:
         return self.calculated_returning_condition
 
