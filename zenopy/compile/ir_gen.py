@@ -1,24 +1,19 @@
-import copy
 from typing import List, Tuple, Dict
 
-from zenopy.ast.zk_ast_tree import ZKAbstractSyntaxTree
+from zenopy.internal.zk_ast_tree import ZKAbstractSyntaxTree
 from zenopy.builder.builder_impl import IRBuilderImpl
 from zenopy.builder.value import Value, HashedValue
-from zenopy.compile.multi_pass.always_satisfied_elimination import AlwaysSatisfiedEliminationIRPass
-from zenopy.compile.multi_pass.constant_fold import ConstantFoldIRPass
-from zenopy.compile.multi_pass.dead_code_elimination import DeadCodeEliminationIRPass
-from zenopy.compile.multi_pass.duplicate_code_elimination import DuplicateCodeEliminationIRPass
 from zenopy.compile.ir_stmt import IRStatement
-from zenopy.ast.zk_ast import ASTComponent, ASTProgram, ASTAssignStatement, ASTPassStatement, \
+from zenopy.compile.ast import ASTComponent, ASTCircuit, ASTAssignStatement, ASTPassStatement, \
     ASTExpression, ASTForInStatement, ASTCondStatement, ASTConstantFloat, ASTConstantInteger, \
-    ASTSlicing, ASTLoad, ASTAssertStatement, ASTSquareBrackets, ASTBreakStatement, ASTContinueStatement, \
+    ASTSubscriptExp, ASTLoad, ASTAssertStatement, ASTSquareBrackets, ASTBreakStatement, ASTContinueStatement, \
     ASTBinaryOperator, ASTNamedAttribute, ASTExprAttribute, ASTParenthesis, ASTChip, ASTReturnStatement, \
-    ASTCallStatement, ASTUnaryOperator, ASTConstantNone, ASTNameAssignTarget, ASTSubscriptAssignTarget, \
+    ASTUnaryOperator, ASTConstantNone, ASTNameAssignTarget, ASTSubscriptAssignTarget, \
     ASTListAssignTarget, ASTTupleAssignTarget, ASTAssignTarget, ASTExprStatement, ASTConstantString, ASTGeneratorExp, \
-    ASTGenerator, ASTCondExp, ASTProgramInput
+    ASTGenerator, ASTCondExp
 from zenopy.compile.ir_ctx import IRContext
 from zenopy.compile.multi_pass.external_call_remover import ExternalCallRemoverIRPass
-from zenopy.debug.exception import VariableNotFoundError, NoForElementsError, NotInLoopError, \
+from zenopy.debug.exception import VariableNotFoundError, NotInLoopError, \
     InterScopeError, UnsupportedLangFeatureException, UnreachableStatementError, OperatorOrChipNotFoundException, \
     StatementNoEffectException, ControlEndWithoutReturnError, ReturnDatatypeMismatchError, \
     ChipArgumentsError, TupleUnpackingError, StaticInferenceError
@@ -30,7 +25,6 @@ from zenopy.opdef.operator_factory import Operators
 from zenopy.internal.dt_descriptor import DTDescriptorFactory, NoneDTDescriptor, FloatDTDescriptor, IntegerDTDescriptor, \
     IntegerType, FloatType
 from zenopy.internal.prog_meta_data import ProgramMetadata, ProgramInputMetadata, ProgramCompiledInputMetadata
-from zenopy.debug.dbg_info import DebugInfo
 
 
 class IRGenerator:
@@ -79,7 +73,7 @@ class IRGenerator:
             raise NotImplementedError(method_name)
         return method(component)
 
-    def visit_ASTProgram(self, n: ASTProgram):
+    def visit_ASTCircuit(self, n: ASTCircuit):
         for i, inp in enumerate(n.inputs):
             ptr = self._ir_builder.op_input((0, i), inp.annotation.dt, inp.annotation.kind, dbg=n.dbg)
             self._ir_ctx.set(inp.name, ptr.val() if isinstance(ptr, HashedValue) else ptr)
@@ -170,21 +164,6 @@ class IRGenerator:
             raise ReturnDatatypeMismatchError(n.dbg, "Return datatype mismatch annotated return datatype")
         self._ir_ctx.return_value(val)
         return None
-
-    def visit_ASTCallStatement(self, n: ASTCallStatement):
-        if self._ir_ctx.check_return_existence():
-            raise UnreachableStatementError(n.dbg, "This code is unreachable")
-        visited_args = [self.visit(arg) for arg in n.args]
-        visited_kwargs = {k: self.visit(arg) for k, arg in n.kwargs.items()}
-        chip = self._registered_chips.get(n.name, None)
-        if chip is not None:
-            return self.visit_chip_call(chip, visited_args, visited_kwargs)
-        external_func = self._registered_externals.get(n.name, None)
-        if external_func is not None:
-            return self.visit_external_call(external_func, visited_args, visited_kwargs)
-        if Operators.instantiate_operator(n.name, None) is not None:
-            raise StatementNoEffectException(n.dbg, f"Statement seems to have no effect")
-        raise OperatorOrChipNotFoundException(n.dbg, f"Chip {n.name} not found")
 
     def visit_ASTExprStatement(self, n: ASTExprStatement):
         if self._ir_ctx.check_return_existence():
@@ -286,7 +265,7 @@ class IRGenerator:
     def visit_ASTConstantString(self, n: ASTConstantString):
         return self._ir_builder.op_constant_string(n.value, dbg=n.dbg)
 
-    def visit_ASTSlicing(self, n: ASTSlicing):
+    def visit_ASTSubscriptExp(self, n: ASTSubscriptExp):
         val_ptr = self.visit(n.val)
         slicing_args = []
         for s in n.slicing.data:

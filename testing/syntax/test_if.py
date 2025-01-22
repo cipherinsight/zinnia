@@ -16,7 +16,7 @@ def test_if():
             the_sum += 1
         assert the_sum == 1
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_if_else():
@@ -35,7 +35,7 @@ def test_if_else():
             the_sum += 2
         assert the_sum == 3
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_elif():
@@ -66,7 +66,7 @@ def test_elif():
             the_sum += 3
         assert the_sum == 4
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_nested_if():
@@ -91,7 +91,7 @@ def test_nested_if():
                 the_sum += 1
         assert the_sum == 3
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_condition_with_list_and_tuple():
@@ -109,7 +109,7 @@ def test_condition_with_list_and_tuple():
         else:
             assert False
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_invalid_condition_with_ndarray():
@@ -121,7 +121,7 @@ def test_invalid_condition_with_ndarray():
             assert False
 
     with pytest.raises(ZenoPyException) as e:
-        ZKCircuit.from_method(foo, {}).compile()
+        ZKCircuit.from_method(foo).compile()
     assert "The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()" in str(e.value)
 
 
@@ -135,4 +135,4 @@ def test_valid_condition_with_ndarray():
         else:
             assert False
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()

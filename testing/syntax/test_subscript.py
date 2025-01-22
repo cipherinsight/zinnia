@@ -16,7 +16,7 @@ def test_subscript_in_tuple():
         assert the_tuple[-2] == 2
         assert the_tuple[-3] == 1
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_subscript_in_tuple_range():
@@ -31,7 +31,7 @@ def test_subscript_in_tuple_range():
         assert the_tuple[1:4:2] == (2, 4)
         assert the_tuple[1:-2:2] == (2, 4)
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_subscript_in_list():
@@ -46,7 +46,7 @@ def test_subscript_in_list():
         assert the_list[-2] == 2
         assert the_list[-3] == 1
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_subscript_in_list_range():
@@ -61,7 +61,7 @@ def test_subscript_in_list_range():
         assert the_list[1:4:2] == [2, 4]
         assert the_list[1:-2:2] == [2, 4]
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_subscript_assign_list():
@@ -83,7 +83,7 @@ def test_subscript_assign_list():
         assert the_list[-3] == 40
         assert the_list == [10, 20, 30, 40, 50, 60]
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_subscript_error_assign_tuple():
@@ -94,7 +94,7 @@ def test_subscript_error_assign_tuple():
         the_tuple[0] = 10
 
     with pytest.raises(ZenoPyException) as e:
-        ZKCircuit.from_method(foo, {}).compile()
+        ZKCircuit.from_method(foo).compile()
     assert "does not support item assignment" in str(e.value)
 
 
@@ -106,7 +106,7 @@ def test_subscript_error_assign_tuple_range():
         the_tuple[0:3] = (10, 20, 30)
 
     with pytest.raises(ZenoPyException) as e:
-        ZKCircuit.from_method(foo, {}).compile()
+        ZKCircuit.from_method(foo).compile()
     assert "does not support item assignment" in str(e.value)
 
 
@@ -117,6 +117,6 @@ def test_subscript_list_with_variable_index():
         the_list = [1, 2, 3]
         assert the_list[idx] == 2
 
-    assert not ZKCircuit.from_method(foo, {}).mock(0).satisfied
-    assert ZKCircuit.from_method(foo, {}).mock(1).satisfied
-    assert not ZKCircuit.from_method(foo, {}).mock(2).satisfied
+    assert not ZKCircuit.from_method(foo).mock(0).satisfied
+    assert ZKCircuit.from_method(foo).mock(1).satisfied
+    assert not ZKCircuit.from_method(foo).mock(2).satisfied

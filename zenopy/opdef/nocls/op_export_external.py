@@ -41,11 +41,11 @@ class ExportExternalOp(AbstractOp):
                 reducer.op_export_external(val, self.for_which, self.key, self.indices + (i, ))
             return NoneValue()
         elif isinstance(x, NDArrayValue) and x.dtype() == IntegerType:
-            for i, v in x.flattened_values():
-                reducer.ir_export_external_i(v, self.for_which, self.key, self.indices + i)
+            for i, v in enumerate(x.flattened_values()):
+                reducer.ir_export_external_i(v, self.for_which, self.key, self.indices + (i, ))
             return NoneValue()
         elif isinstance(x, NDArrayValue) and x.dtype() == FloatType:
-            for i, v in x.flattened_values():
-                reducer.ir_export_external_f(v, self.for_which, self.key, self.indices + i)
+            for i, v in enumerate(x.flattened_values()):
+                reducer.ir_export_external_f(v, self.for_which, self.key, self.indices + (i, ))
             return NoneValue()
         raise TypeInferenceError(dbg, f"Unsupported argument type for `{self.get_name()}`: {x.type()}")

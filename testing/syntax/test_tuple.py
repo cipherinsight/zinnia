@@ -10,7 +10,7 @@ def test_create_tuple():
         assert tup[1] == 2
         assert tup[2] == 3
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_repeat_tuple():
@@ -22,7 +22,7 @@ def test_repeat_tuple():
         assert tup[0] == tup[2] == tup[4] == tup[6] == 1
         assert tup[1] == tup[3] == tup[5] == tup[7] == 2
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_concatenate_tuple():
@@ -38,7 +38,7 @@ def test_concatenate_tuple():
         assert tup[2] == 3
         assert tup[3] == 4
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_tuple_comparison():
@@ -61,7 +61,7 @@ def test_tuple_comparison():
         assert tup1 != tup2
         assert tup1 < tup2 and tup1 <= tup2
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_tuple_comparison_with_inner():
@@ -84,4 +84,4 @@ def test_tuple_comparison_with_inner():
         assert tup1 != tup2
         assert tup1 < tup2
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()

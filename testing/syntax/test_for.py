@@ -13,7 +13,7 @@ def test_for_in_range_1():
             the_sum += i
         assert the_sum == 45
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_for_in_range_2():
@@ -25,7 +25,7 @@ def test_for_in_range_2():
             the_sum += i
         assert the_sum == 20
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_for_in_list():
@@ -37,7 +37,7 @@ def test_for_in_list():
             the_sum += i
         assert the_sum == 10
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_for_in_tuple():
@@ -49,7 +49,7 @@ def test_for_in_tuple():
             the_sum += i
         assert the_sum == 10
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_for_in_unpacking():
@@ -64,7 +64,7 @@ def test_for_in_unpacking():
         assert the_sum_a == 16
         assert the_sum_b == 20
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_for_with_continue():
@@ -78,7 +78,7 @@ def test_for_with_continue():
             the_sum += i
         assert the_sum == 25
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_for_with_break():
@@ -92,7 +92,7 @@ def test_for_with_break():
             the_sum += i
         assert the_sum == 10
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 @pytest.mark.skip(reason="This is not supported yet")
@@ -107,7 +107,7 @@ def test_for_with_else():
             the_sum += 10
         assert the_sum == 55
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_for_with_nested():
@@ -120,7 +120,7 @@ def test_for_with_nested():
                 the_sum += i + j
         assert the_sum == 900
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_for_with_nested_break():
@@ -135,7 +135,7 @@ def test_for_with_nested_break():
                 the_sum += i + j
         assert the_sum == 325
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_for_with_nested_continue():
@@ -150,7 +150,7 @@ def test_for_with_nested_continue():
                 the_sum += i + j
         assert the_sum == 475
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_for_error_not_iterable():
@@ -163,7 +163,7 @@ def test_for_error_not_iterable():
         assert the_sum == 10
 
     with pytest.raises(ZenoPyException) as e:
-        ZKCircuit.from_method(foo, {}).compile()
+        ZKCircuit.from_method(foo).compile()
     assert "is not iterable" in str(e.value)
 
 
@@ -176,4 +176,4 @@ def test_for_type_mismatch():
             the_sum += i[0]
         assert the_sum == 2
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()

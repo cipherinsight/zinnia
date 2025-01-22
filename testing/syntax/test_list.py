@@ -10,7 +10,7 @@ def test_create_list():
         assert _list[1] == 2
         assert _list[2] == 3
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_repeat_list():
@@ -22,7 +22,7 @@ def test_repeat_list():
         assert _list[0] == _list[2] == _list[4] == _list[6] == 1
         assert _list[1] == _list[3] == _list[5] == _list[7] == 2
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_concatenate_list():
@@ -38,7 +38,7 @@ def test_concatenate_list():
         assert tup[2] == 3
         assert tup[3] == 4
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_list_comparison():
@@ -61,7 +61,7 @@ def test_list_comparison():
         assert list_1 != list_2
         assert list_1 < list_2 and list_1 <= list_2
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_list_comparison_with_inner():
@@ -84,4 +84,4 @@ def test_list_comparison_with_inner():
         assert list_1 != list_2
         assert list_1 < list_2
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()

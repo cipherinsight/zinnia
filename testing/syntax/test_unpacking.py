@@ -14,7 +14,7 @@ def test_tuple_unpacking():
         assert b == 2
         assert c == 3
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_tuple_unpacking_with_star_1():
@@ -27,7 +27,7 @@ def test_tuple_unpacking_with_star_1():
         assert b == [2, 3]
         assert c == 4
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_tuple_unpacking_with_star_2():
@@ -38,7 +38,7 @@ def test_tuple_unpacking_with_star_2():
         *a, = tup
         assert a == [1, 2, 3, 4]
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_tuple_unpacking_with_star_3():
@@ -51,7 +51,7 @@ def test_tuple_unpacking_with_star_3():
         assert b == (2, 3)
         assert c == (4, )
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_tuple_unpacking_with_error_1():
@@ -62,7 +62,7 @@ def test_tuple_unpacking_with_error_1():
         a, b, c = tup
 
     with pytest.raises(ZenoPyException) as e:
-        ZKCircuit.from_method(foo, {}).compile()
+        ZKCircuit.from_method(foo).compile()
     assert "TupleUnpackingError" in str(e.value)
 
 
@@ -74,7 +74,7 @@ def test_tuple_unpacking_with_error_2():
         a, b, c, d, e = tup
 
     with pytest.raises(ZenoPyException) as e:
-        ZKCircuit.from_method(foo, {}).compile()
+        ZKCircuit.from_method(foo).compile()
     assert "TupleUnpackingError" in str(e.value)
 
 
@@ -91,7 +91,7 @@ def test_tuple_unpacking_with_error_3():
         assert e == 5
 
     with pytest.raises(ZenoPyException) as e:
-        ZKCircuit.from_method(foo, {}).compile()
+        ZKCircuit.from_method(foo).compile()
     assert "TypeInferenceError: Integer is not iterable" in str(e.value)
 
 
@@ -107,4 +107,4 @@ def test_tuple_unpacking_with_inner():
         assert d == 4
         assert e == 5
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()

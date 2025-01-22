@@ -244,7 +244,7 @@ class HashedDTDescriptor(DTDescriptor):
 
 
 class DTDescriptorFactory:
-    DATATYPE_REGISTRY = [NDArrayDTDescriptor, TupleDTDescriptor, IntegerDTDescriptor, FloatDTDescriptor, NoneDTDescriptor, ClassDTDescriptor]
+    DATATYPE_REGISTRY = [NDArrayDTDescriptor, TupleDTDescriptor, ListDTDescriptor, IntegerDTDescriptor, FloatDTDescriptor, NoneDTDescriptor, ClassDTDescriptor]
 
     @staticmethod
     def create(dbg_i: Optional[DebugInfo], typename: str, args: Tuple[DTDescriptor | int, ...] = None) -> DTDescriptor:

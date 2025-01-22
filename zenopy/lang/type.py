@@ -1,10 +1,11 @@
 from dataclasses import field
-from typing import Tuple
 
 from zenopy.lang.metatype import NDArrayMeta
 
 Integer = int
 Float = float
+Tuple = tuple
+List = list
 
 class NDArray(metaclass=NDArrayMeta):
     shape: int

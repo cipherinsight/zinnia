@@ -1,4 +1,4 @@
-from zenopy.ast.zk_ast import ASTChip
+from zenopy.compile.ast import ASTChip
 
 
 class ChipObject:

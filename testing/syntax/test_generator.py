@@ -10,7 +10,7 @@ def test_basic_generator_tuple():
         the_tuple = (i for i in range(5))
         assert the_tuple == (0, 1, 2, 3, 4)
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_basic_generator_list():
@@ -20,7 +20,7 @@ def test_basic_generator_list():
         the_list = [i for i in range(5)]
         assert the_list == [0, 1, 2, 3, 4]
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_generator_with_if():
@@ -30,7 +30,7 @@ def test_generator_with_if():
         the_list = [i for i in range(10) if i % 2 == 0]
         assert the_list == [0, 2, 4, 6, 8]
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_generator_with_many_if():
@@ -40,7 +40,7 @@ def test_generator_with_many_if():
         the_list = [i for i in range(10) if i % 2 == 0 if i % 3 == 0]
         assert the_list == [0, 6]
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_multiple_generators_1():
@@ -50,7 +50,7 @@ def test_multiple_generators_1():
         the_list = [i for i in range(10) if i % 2 == 0 for j in range(2)]
         assert the_list == [0, 0, 2, 2, 4, 4, 6, 6, 8, 8]
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_multiple_generators_2():
@@ -60,7 +60,7 @@ def test_multiple_generators_2():
         the_list = [i for i in range(10) if i % 2 == 0 for j in range(2) if j % 2 == 0]
         assert the_list == [0, 2, 4, 6, 8]
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_multiple_generators_3():
@@ -70,7 +70,7 @@ def test_multiple_generators_3():
         the_list = [i * j for i in range(10) if i % 2 == 0 for j in range(2) if j % 2 == 0]
         assert the_list == [0, 0, 0, 0, 0]
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_multiple_generators_with_same_target():
@@ -80,7 +80,7 @@ def test_multiple_generators_with_same_target():
         the_list = [i for i in range(10) for i in range(2)]
         assert the_list == [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1]
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_generator_with_different_datatype():
@@ -90,7 +90,7 @@ def test_generator_with_different_datatype():
         the_list = [elem * 2 for elem in [(1, ), (1, 2), (1, 2, 3)]]
         assert the_list == [(1, 1), (1, 2, 1, 2), (1, 2, 3, 1, 2, 3)]
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_generator_with_different_datatype_and_if():
@@ -100,4 +100,4 @@ def test_generator_with_different_datatype_and_if():
         the_list = [elem * 2 for elem in [(1, ), (1, 2), (1, 2, 3)] if len(elem) == 2]
         assert the_list == [(1, 2, 1, 2)]
 
-    ZKCircuit.from_method(foo, {}).compile()
+    ZKCircuit.from_method(foo).compile()

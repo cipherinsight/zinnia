@@ -1,6 +1,6 @@
 from typing import List, Dict, Optional, Tuple
 
-from zenopy.ast.zk_ast import ASTAnnotation
+from zenopy.compile.ast import ASTAnnotation
 from zenopy.opdef.nocls.abstract_op import AbstractOp
 from zenopy.internal.dt_descriptor import DTDescriptor, IntegerDTDescriptor, NDArrayDTDescriptor, FloatDTDescriptor, \
     TupleDTDescriptor, ListDTDescriptor

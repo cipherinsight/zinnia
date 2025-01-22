@@ -1,18 +1,15 @@
 import ast
-from typing import Dict
 
 from zenopy.debug.exception import InvalidCircuitInputException, InvalidCircuitStatementException, \
-    InvalidProgramException, InvalidAssignStatementException, InvalidAnnotationException, InvalidSlicingException, \
-    UnsupportedOperatorException, UnsupportedConstantLiteralException, \
-    UnsupportedLangFeatureException, InvalidForStatementException, InvalidChipInputException
-from zenopy.ast.zk_ast import ASTProgramInput, ASTAnnotation, ASTProgram, ASTAssignStatement, \
+    InvalidProgramException, InvalidAssignStatementException, InvalidAnnotationException, UnsupportedOperatorException, UnsupportedConstantLiteralException, \
+    UnsupportedLangFeatureException
+from zenopy.compile.ast import ASTCircuitInput, ASTAnnotation, ASTCircuit, ASTAssignStatement, \
     ASTLoad, ASTForInStatement, ASTPassStatement, ASTAssertStatement, ASTCondStatement, \
-    ASTSlicing, ASTSquareBrackets, ASTBreakStatement, ASTContinueStatement, ASTBinaryOperator, ASTUnaryOperator, \
-    ASTNamedAttribute, ASTExprAttribute, ASTParenthesis, ASTChip, ASTChipInput, ASTReturnStatement, ASTCallStatement, \
+    ASTSubscriptExp, ASTSquareBrackets, ASTBreakStatement, ASTContinueStatement, ASTBinaryOperator, ASTUnaryOperator, \
+    ASTNamedAttribute, ASTExprAttribute, ASTParenthesis, ASTChip, ASTChipInput, ASTReturnStatement, \
     ASTConstantInteger, ASTConstantFloat, ASTSlice, ASTConstantNone, ASTExprStatement, ASTConstantString, \
     ASTNameAssignTarget, ASTSubscriptAssignTarget, ASTTupleAssignTarget, ASTListAssignTarget, ASTGenerator, \
-    ASTGeneratorExp, ASTCondExp
-from zenopy.internal.chip_object import ChipObject
+    ASTGeneratorExp, ASTCondExp, ASTWhileStatement
 from zenopy.internal.dt_descriptor import DTDescriptorFactory, NoneDTDescriptor
 from zenopy.debug.dbg_info import DebugInfo
 
@@ -71,23 +68,27 @@ class ZenoPyBaseASTTransformer(ast.NodeTransformer):
             return self.visit_FunctionDef(node)
         raise InvalidProgramException(None, "Invalid code passed to the compiler! The program must be a function.")
 
-    def visit_For(self, node):
+    def visit_For(self, node: ast.For):
         target = self.visit_assign_target(node.target)
         iter_expr = self.visit_expr(node.iter)
-        return ASTForInStatement(self.get_dbg(node.iter), target, iter_expr, self.visit_block(node.body))
+        return ASTForInStatement(self.get_dbg(node.iter), target, iter_expr, self.visit_block(node.body), self.visit_block(node.orelse))
 
-    def visit_Assert(self, node):
+    def visit_While(self, node: ast.While):
+        test_expr = self.visit_expr(node.test)
+        return ASTWhileStatement(self.get_dbg(node.test), test_expr, self.visit_block(node.body), self.visit_block(node.orelse))
+
+    def visit_Assert(self, node: ast.Assert):
         test = self.visit_expr(node.test)
         return ASTAssertStatement(self.get_dbg(node), test)
 
-    def visit_Pass(self, node):
+    def visit_Pass(self, node: ast.Pass):
         return ASTPassStatement(self.get_dbg(node))
 
-    def visit_If(self, node):
+    def visit_If(self, node: ast.If):
         test = self.visit_expr(node.test)
         return ASTCondStatement(self.get_dbg(node), test, self.visit_block(node.body), self.visit_block(node.orelse))
 
-    def visit_Assign(self, node):
+    def visit_Assign(self, node: ast.Assign):
         dbg_info = self.get_dbg(node)
         expr = self.visit_expr(node.value)
         parsed_targets = []
@@ -95,7 +96,7 @@ class ZenoPyBaseASTTransformer(ast.NodeTransformer):
             parsed_targets.append(self.visit_assign_target(target))
         return ASTAssignStatement(dbg_info, parsed_targets, expr)
 
-    def visit_AugAssign(self, node):
+    def visit_AugAssign(self, node: ast.AugAssign):
         dbg_info = self.get_dbg(node)
         op_type = self.get_op_name_from_node(node.op)
         if isinstance(node.target, ast.Name):
@@ -113,20 +114,20 @@ class ZenoPyBaseASTTransformer(ast.NodeTransformer):
                 ASTBinaryOperator(self.get_dbg(node.value), op_type, target_expr, expr))
         raise InvalidAssignStatementException(dbg_info, "The value to be assigned must be an identifier name or subscript.")
 
-    def visit_AnnAssign(self, node):
+    def visit_AnnAssign(self, node: ast.AnnAssign):
         dbg_info = self.get_dbg(node)
         if isinstance(node.target, ast.Name):
             expr = self.visit_expr(node.value)
             return ASTAssignStatement(dbg_info, [self.visit_assign_target(node.target)], expr)
         raise InvalidAssignStatementException(dbg_info, "The value to be assigned must be an identifier name.")
 
-    def visit_BinOp(self, node):
+    def visit_BinOp(self, node: ast.BinOp):
         dbg_info = self.get_dbg(node)
         left = self.visit_expr(node.left)
         right = self.visit_expr(node.right)
         return ASTBinaryOperator(dbg_info, self.get_op_name_from_node(node.op), left, right)
 
-    def visit_Compare(self, node):
+    def visit_Compare(self, node: ast.Compare):
         dbg_info = self.get_dbg(node)
         left = self.visit_expr(node.left)
         comparators = []
@@ -142,7 +143,7 @@ class ZenoPyBaseASTTransformer(ast.NodeTransformer):
             finalized = ASTBinaryOperator(dbg_info, ASTBinaryOperator.Op.AND, finalized, expr)
         return finalized
 
-    def visit_BoolOp(self, node):
+    def visit_BoolOp(self, node: ast.BoolOp):
         dbg_info = self.get_dbg(node)
         values = []
         for val in node.values:
@@ -161,12 +162,12 @@ class ZenoPyBaseASTTransformer(ast.NodeTransformer):
         else:
             raise UnsupportedOperatorException(dbg_info, f"Invalid boolean operator {type(node.op).__name__} in circuit.")
 
-    def visit_UnaryOp(self, node):
+    def visit_UnaryOp(self, node: ast.UnaryOp):
         dbg_info = self.get_dbg(node)
         value = self.visit_expr(node.operand)
         return ASTUnaryOperator(dbg_info, self.get_op_name_from_node(node.op), value)
 
-    def visit_Call(self, node):
+    def visit_Call(self, node: ast.Call):
         dbg_info = self.get_dbg(node)
         if isinstance(node.func, ast.Attribute):
             if isinstance(node.func.value, ast.Name):
@@ -192,16 +193,6 @@ class ZenoPyBaseASTTransformer(ast.NodeTransformer):
             )
         raise UnsupportedOperatorException(dbg_info, f"Invalid call function {type(node.func)}. Only a static specified function name is supported here.")
 
-    def visit_CallStmt(self, node):
-        dbg_info = self.get_dbg(node)
-        if isinstance(node.func, ast.Name):
-            return ASTCallStatement(
-                dbg_info, node.func.id,
-                [self.visit_expr(arg) for arg in node.args],
-                {kwarg.arg: self.visit_expr(kwarg.value) for kwarg in node.keywords}
-            )
-        raise UnsupportedOperatorException(dbg_info, f"Invalid call function {type(node.func)}. Only a static specified function name is supported here.")
-
     def visit_Attribute(self, node: ast.Attribute):
         dbg_info = self.get_dbg(node)
         if isinstance(node.value, ast.Name):
@@ -211,11 +202,11 @@ class ZenoPyBaseASTTransformer(ast.NodeTransformer):
         after_name = node.attr
         return ASTNamedAttribute(dbg_info, None, after_name, [self.visit_expr(node.value)], {})
 
-    def visit_Name(self, node):
+    def visit_Name(self, node: ast.Name):
         dbg_info = self.get_dbg(node)
         return ASTLoad(dbg_info, node.id)
 
-    def visit_Constant(self, node):
+    def visit_Constant(self, node: ast.Constant):
         dbg_info = self.get_dbg(node)
         if node.value is None:
             raise UnsupportedConstantLiteralException(dbg_info, "Invalid constant `None` in circuit.")
@@ -227,41 +218,41 @@ class ZenoPyBaseASTTransformer(ast.NodeTransformer):
             return ASTConstantString(dbg_info, node.value)
         raise UnsupportedConstantLiteralException(dbg_info, f"Invalid constant value `{node.value}` in circuit")
 
-    def visit_List(self, node):
+    def visit_List(self, node: ast.List):
         dbg_info = self.get_dbg(node)
         if len(node.elts) == 0:
             raise UnsupportedLangFeatureException(dbg_info, "Cannot create an empty list (as an empty NDArray) in circuit.")
         parsed_elts = []
         for elt in node.elts:
             parsed_elts.append(self.visit_expr(elt))
-        return ASTSquareBrackets(dbg_info, len(parsed_elts), parsed_elts)
+        return ASTSquareBrackets(dbg_info, parsed_elts)
 
-    def visit_Tuple(self, node):
+    def visit_Tuple(self, node: ast.Tuple):
         dbg_info = self.get_dbg(node)
         if len(node.elts) == 0:
             raise UnsupportedLangFeatureException(dbg_info, "Cannot create an empty tuple in circuit.")
         parsed_elts = []
         for elt in node.elts:
             parsed_elts.append(self.visit_expr(elt))
-        return ASTParenthesis(dbg_info, len(parsed_elts), parsed_elts)
+        return ASTParenthesis(dbg_info, parsed_elts)
 
-    def visit_Subscript(self, node):
+    def visit_Subscript(self, node: ast.Subscript):
         value = self.visit_expr(node.value)
-        return ASTSlicing(self.get_dbg(node), value, self.visit_slice_key(node.slice))
+        return ASTSubscriptExp(self.get_dbg(node), value, self.visit_slice_key(node.slice))
 
-    def visit_Break(self, node):
+    def visit_Break(self, node: ast.Break):
         return ASTBreakStatement(self.get_dbg(node))
 
-    def visit_Continue(self, node):
+    def visit_Continue(self, node: ast.Continue):
         return ASTContinueStatement(self.get_dbg(node))
 
-    def visit_Return(self, node):
+    def visit_Return(self, node: ast.Return):
         result = node.value
         if result is not None:
             result = self.visit_expr(result)
         return ASTReturnStatement(self.get_dbg(node), result)
 
-    def visit_GeneratorExp(self, node):
+    def visit_GeneratorExp(self, node: ast.GeneratorExp):
         dbg = self.get_dbg(node)
         elt = self.visit_expr(node.elt)
         generators = []
@@ -274,7 +265,7 @@ class ZenoPyBaseASTTransformer(ast.NodeTransformer):
             generators.append(ASTGenerator(dbg, target, iter_expr, ifs))
         return ASTGeneratorExp(dbg, elt, generators, ASTGeneratorExp.Kind.TUPLE)
 
-    def visit_ListComp(self, node):
+    def visit_ListComp(self, node: ast.ListComp):
         dbg = self.get_dbg(node)
         elt = self.visit_expr(node.elt)
         generators = []
@@ -287,7 +278,7 @@ class ZenoPyBaseASTTransformer(ast.NodeTransformer):
             generators.append(ASTGenerator(dbg, target, iter_expr, ifs))
         return ASTGeneratorExp(dbg, elt, generators, ASTGeneratorExp.Kind.LIST)
 
-    def visit_IfExp(self, node):
+    def visit_IfExp(self, node: ast.IfExp):
         dbg = self.get_dbg(node)
         test = self.visit_expr(node.test)
         body = self.visit_expr(node.body)
@@ -318,8 +309,6 @@ class ZenoPyBaseASTTransformer(ast.NodeTransformer):
                 parsed_stmt = self.visit_Continue(stmt)
             elif isinstance(stmt, ast.Return):
                 parsed_stmt = self.visit_Return(stmt)
-            elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
-                parsed_stmt = self.visit_CallStmt(stmt.value)
             elif isinstance(stmt, ast.Expr):
                 parsed_stmt = ASTExprStatement(dbg_info, self.visit_expr(stmt.value))
             else:
@@ -456,12 +445,12 @@ class ZenoPyCircuitASTTransformer(ZenoPyBaseASTTransformer):
     def get_dbg(self, node) -> DebugInfo:
         return DebugInfo(self.method_name, self.source_code, True, node.lineno, node.col_offset, node.end_lineno, node.end_col_offset)
 
-    def visit_FunctionDef(self, node):
+    def visit_FunctionDef(self, node: ast.FunctionDef):
         dbg_info = self.get_dbg(node)
         args = self.visit_arguments(node.args)
         if node.returns is not None:
             raise InvalidProgramException(dbg_info, "Circuit function must not have a return annotation. Note that circuits should not return anything.")
-        return ASTProgram(dbg_info, self.visit_block(node.body), args)
+        return ASTCircuit(dbg_info, self.visit_block(node.body), args)
 
     def visit_arguments(self, node):
         results = []
@@ -475,7 +464,7 @@ class ZenoPyCircuitASTTransformer(ZenoPyBaseASTTransformer):
             annotation = self.visit_annotation(arg.annotation, name)
             if annotation.kind is None:
                 raise InvalidCircuitInputException(dbg, f"Invalid input annotation `{arg.annotation.value.id}` for `{name}`. It should be either `Public`, `Private` or `Hashed`. E.g. `x: Public[Number]`.")
-            results.append(ASTProgramInput(dbg, name, annotation))
+            results.append(ASTCircuitInput(dbg, name, annotation))
         return results
 
 
@@ -491,7 +480,7 @@ class ZenoPyChipASTTransformer(ZenoPyBaseASTTransformer):
             return self.visit_FunctionDef(node)
         raise InvalidProgramException(None, "Invalid code passed to the compiler! The chip must be a function.")
 
-    def visit_FunctionDef(self, node):
+    def visit_FunctionDef(self, node: ast.FunctionDef):
         dbg = self.get_dbg(node)
         args = self.visit_arguments(node.args)
         if node.returns is not None:
@@ -527,7 +516,7 @@ class ZenoPyExternalFuncASTTransformer(ZenoPyBaseASTTransformer):
             return self.visit_FunctionDef(node)
         raise InvalidProgramException(None, "Invalid code passed to the compiler! The external function must be a function.")
 
-    def visit_FunctionDef(self, node):
+    def visit_FunctionDef(self, node: ast.FunctionDef):
         dbg = self.get_dbg(node)
         if node.returns is not None:
             return_anno = self.visit_annotation(node.returns, None)

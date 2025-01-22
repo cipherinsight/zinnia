@@ -1,18 +1,17 @@
 import inspect
 import ast
-import json
 import sys
 from typing import Dict, Tuple, Callable, Any, List
 
 import astpretty
 
-from zenopy.ast.ast_transformer import ZenoPyCircuitASTTransformer, ZenoPyChipASTTransformer, ZenoPyExternalFuncASTTransformer
-from zenopy.ast.zk_ast_tree import ZKAbstractSyntaxTree
+from zenopy.compile.transformer.ast_transformer import ZenoPyCircuitASTTransformer, ZenoPyChipASTTransformer, ZenoPyExternalFuncASTTransformer
+from zenopy.internal.zk_ast_tree import ZKAbstractSyntaxTree
 from zenopy.backend.halo2_builder import Halo2ProgramBuilder
 from zenopy.backend.zk_program import ZKProgram
 from zenopy.debug.exception import InternalZenoPyException
 from zenopy.compile.ir_gen import IRGenerator
-from zenopy.debug.prettifier import prettify_zk_ast, prettify_ir_stmts, prettify_exception
+from zenopy.debug.prettifier import prettify_ir_stmts, prettify_exception
 from zenopy.exec.exec_ctx import ExecutionContext
 from zenopy.exec.mock_executor import MockProgramExecutor
 from zenopy.exec.exec_result import ZKExecResult
@@ -70,6 +69,9 @@ class ZKExternalFunc:
         self.callable = the_callable
         self.return_dt = return_dt
 
+    def __call__(self, *args, **kwargs):
+        return self.callable(*args, **kwargs)
+
     def get_external_function(self) -> ExternalFuncObj:
         return ExternalFuncObj(self.name, self.callable, self.return_dt)
 
@@ -83,7 +85,7 @@ class ZKExternalFunc:
 
 
 class ZKCircuit:
-    def __init__(self, name: str, source: str, chips: List[Any], externals: List[Any], debug=False):
+    def __init__(self, name: str, source: str, chips: List[Any] = None, externals: List[Any] = None, debug=False):
         if name == 'main':
             raise ValueError('Circuit name cannot be `main`, please use another name.')
         self.name = name
@@ -97,7 +99,9 @@ class ZKCircuit:
         self.preprocess_stmts = []
 
     @staticmethod
-    def __parse_chips(chips: List[Any]) -> Dict[str, ZKChip]:
+    def __parse_chips(chips: List[Any] | None) -> Dict[str, ZKChip]:
+        if chips is None:
+            return {}
         result = {}
         for chip in chips:
             if isinstance(chip, ZKChip):
@@ -108,7 +112,9 @@ class ZKCircuit:
         return result
 
     @staticmethod
-    def __parse_externals(externals: List[Any]) -> Dict[str, ZKExternalFunc]:
+    def __parse_externals(externals: List[Any] | None) -> Dict[str, ZKExternalFunc]:
+        if externals is None:
+            return {}
         result = {}
         for ext in externals:
             if isinstance(ext, ZKExternalFunc):
@@ -148,9 +154,6 @@ class ZKCircuit:
                 print(astpretty.pformat(tree.body[0], show_offsets=True), file=sys.stderr)
             transformer = ZenoPyCircuitASTTransformer(self.source, self.name)
             ir_comp_tree = transformer.visit(tree.body[0])
-            if self.debug:
-                print('*' * 20 + ' Transformed AST ' + '*' * 20, file=sys.stderr)
-                print(prettify_zk_ast(ir_comp_tree), file=sys.stderr)
             generator = IRGenerator()
             self.ir_stmts, self.preprocess_stmts, self.external_calls, self.prog_metadata = generator.generate(ZKAbstractSyntaxTree(
                 ir_comp_tree,
