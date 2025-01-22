@@ -20,7 +20,7 @@ class AlwaysSatisfiedEliminationIRPass(AbstractIRPass):
             arg_values = [None for _ in referring_tos]
             for i, referring_to in enumerate(referring_tos):
                 arg_values[i] = values_lookup[referring_to]
-            values_lookup[stmt.stmt_id] = builder.invoke_ir(stmt.operator, arg_values, {}, None)
+            values_lookup[stmt.stmt_id] = builder.create_ir(stmt.operator, arg_values, {}, None)
         for stmt in topological_order:
             if isinstance(stmt.operator, AssertIR):
                 value: IntegerValue = values_lookup[in_links[stmt.stmt_id][0]]

@@ -1,4 +1,4 @@
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 
 from zenopy.debug.dbg_info import DebugInfo
 from zenopy.builder.value import Value, NumberValue, IntegerValue, FloatValue, ListValue, TupleValue, NDArrayValue, \
@@ -10,10 +10,10 @@ class AbsIRBuilderInterface:
     def __init__(self):
         pass
 
-    def invoke_op(self, operator, args: List[Value], kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
+    def create_op(self, operator, args: List[Value], kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
-    def invoke_ir(self, operator, args: List[Value], kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
+    def create_ir(self, operator, args: List[Value], kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
     def op_select(self, condition: Value, a: Value, b: Value, dbg: Optional[DebugInfo] = None) -> Value:
@@ -133,7 +133,7 @@ class AbsIRBuilderInterface:
     def op_constant_class(self, dt: DTDescriptor, dbg: Optional[DebugInfo] = None) -> ClassValue:
         raise NotImplementedError()
 
-    def op_input(self, id_major: int, dt: DTDescriptor, kind: str, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_input(self, indices: Tuple[int, ...], dt: DTDescriptor, kind: str, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
     def op_parenthesis(self, args: List[Value], dbg: Optional[DebugInfo] = None) -> TupleValue:
@@ -154,6 +154,9 @@ class AbsIRBuilderInterface:
     def op_expose_public(self, value: Value, dbg: Optional[DebugInfo] = None) -> NoneValue:
         raise NotImplementedError()
 
+    def op_export_external(self, value: Value, for_which: int, key: int | str, indices: Tuple[int, ...], dbg: Optional[DebugInfo] = None) -> NoneValue:
+        raise NotImplementedError()
+
     def op_hash(self, value: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         raise NotImplementedError()
 
@@ -163,16 +166,25 @@ class AbsIRBuilderInterface:
     def ir_expose_public_f(self, value: FloatValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
         raise NotImplementedError()
 
+    def ir_export_external_i(self, value: IntegerValue, for_which: int, key: int | str, indices: Tuple[int, ...], dbg: Optional[DebugInfo] = None) -> NoneValue:
+        raise NotImplementedError()
+
+    def ir_export_external_f(self, value: FloatValue, for_which: int, key: int | str, indices: Tuple[int, ...], dbg: Optional[DebugInfo] = None) -> NoneValue:
+        raise NotImplementedError()
+
+    def ir_invoke_external(self, external_call_id: int, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        raise NotImplementedError()
+
     def ir_hash(self, values: List[NumberValue], dbg: Optional[DebugInfo] = None) -> IntegerValue:
         raise NotImplementedError()
 
-    def ir_read_integer(self, input_id: int, idx: int, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_read_integer(self, indices: Tuple[int, ...], dbg: Optional[DebugInfo] = None) -> IntegerValue:
         raise NotImplementedError()
 
     def ir_read_hash(self, input_id: int, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         raise NotImplementedError()
 
-    def ir_read_float(self, input_id: int, idx: int, dbg: Optional[DebugInfo] = None) -> FloatValue:
+    def ir_read_float(self, indices: Tuple[int, ...], dbg: Optional[DebugInfo] = None) -> FloatValue:
         raise NotImplementedError()
 
     def ir_assert(self, test: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:

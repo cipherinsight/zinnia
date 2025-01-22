@@ -16,3 +16,6 @@ class IRStatement:
         self.arguments = arguments
         self.dbg = dbg
         assert all([arg is not None for arg in arguments])
+
+    def __copy__(self):
+        return IRStatement(self.stmt_id, self.operator, self.arguments.copy(), self.dbg)

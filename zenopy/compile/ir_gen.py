@@ -1,3 +1,4 @@
+import copy
 from typing import List, Tuple, Dict
 
 from zenopy.ast.zk_ast_tree import ZKAbstractSyntaxTree
@@ -14,15 +15,21 @@ from zenopy.ast.zk_ast import ASTComponent, ASTProgram, ASTAssignStatement, ASTP
     ASTBinaryOperator, ASTNamedAttribute, ASTExprAttribute, ASTParenthesis, ASTChip, ASTReturnStatement, \
     ASTCallStatement, ASTUnaryOperator, ASTConstantNone, ASTNameAssignTarget, ASTSubscriptAssignTarget, \
     ASTListAssignTarget, ASTTupleAssignTarget, ASTAssignTarget, ASTExprStatement, ASTConstantString, ASTGeneratorExp, \
-    ASTGenerator, ASTCondExp
+    ASTGenerator, ASTCondExp, ASTProgramInput
 from zenopy.compile.ir_ctx import IRContext
+from zenopy.compile.multi_pass.external_call_remover import ExternalCallRemoverIRPass
 from zenopy.debug.exception import VariableNotFoundError, NoForElementsError, NotInLoopError, \
     InterScopeError, UnsupportedLangFeatureException, UnreachableStatementError, OperatorOrChipNotFoundException, \
     StatementNoEffectException, ControlEndWithoutReturnError, ReturnDatatypeMismatchError, \
     ChipArgumentsError, TupleUnpackingError, StaticInferenceError
+from zenopy.internal.external_call import ExternalCall
+from zenopy.internal.external_func_obj import ExternalFuncObj
+from zenopy.opdef.ir_op.ir_read_float import ReadFloatIR
+from zenopy.opdef.ir_op.ir_read_integer import ReadIntegerIR
 from zenopy.opdef.operator_factory import Operators
-from zenopy.internal.dt_descriptor import DTDescriptorFactory, NoneDTDescriptor, FloatDTDescriptor, IntegerDTDescriptor
-from zenopy.internal.prog_meta_data import ProgramMetadata, ProgramInputMetadata
+from zenopy.internal.dt_descriptor import DTDescriptorFactory, NoneDTDescriptor, FloatDTDescriptor, IntegerDTDescriptor, \
+    IntegerType, FloatType
+from zenopy.internal.prog_meta_data import ProgramMetadata, ProgramInputMetadata, ProgramCompiledInputMetadata
 from zenopy.debug.dbg_info import DebugInfo
 
 
@@ -32,17 +39,37 @@ class IRGenerator:
         self._ir_ctx = IRContext(self._ir_builder)
         self._prog_meta_data = None
         self._registered_chips = {}
+        self._registered_externals = {}
+        self._next_external_call_id = 1
+        self._external_calls = []
 
-    def generate(self, zk_ast: ZKAbstractSyntaxTree) -> Tuple[List[IRStatement], ProgramMetadata]:
-        self._prog_meta_data = ProgramMetadata()
+    def generate(self, zk_ast: ZKAbstractSyntaxTree) -> Tuple[List[IRStatement], List[IRStatement], List[ExternalCall], ProgramMetadata]:
         self._registered_chips = zk_ast.chips
+        self._registered_externals = zk_ast.externals
         self.visit(zk_ast.root)
         ir_graph = self._ir_builder.export_ir_graph()
-        ir_graph = ConstantFoldIRPass().exec(ir_graph)
-        ir_graph = DeadCodeEliminationIRPass().exec(ir_graph)
-        ir_graph = AlwaysSatisfiedEliminationIRPass().exec(ir_graph)
-        ir_graph = DuplicateCodeEliminationIRPass().exec(ir_graph)
-        return ir_graph.export_stmts(), self._prog_meta_data
+        ir_graph = ExternalCallRemoverIRPass().exec(ir_graph)
+        # ir_graph = ConstantFoldIRPass().exec(ir_graph)
+        # ir_graph = DeadCodeEliminationIRPass().exec(ir_graph)
+        # ir_graph = AlwaysSatisfiedEliminationIRPass().exec(ir_graph)
+        # ir_graph = DuplicateCodeEliminationIRPass().exec(ir_graph)
+        ir_stmts = ir_graph.export_stmts()
+        ir_graph_for_preprocess = self._ir_builder.export_ir_graph()
+        # ir_graph_for_preprocess = ConstantFoldIRPass().exec(ir_graph_for_preprocess)
+        # ir_graph_for_preprocess = DeadCodeEliminationIRPass().exec(ir_graph_for_preprocess)
+        # ir_graph_for_preprocess = AlwaysSatisfiedEliminationIRPass().exec(ir_graph_for_preprocess)
+        # ir_graph_for_preprocess = DuplicateCodeEliminationIRPass().exec(ir_graph_for_preprocess)
+        ir_stmts_for_preprocess = ir_graph_for_preprocess.export_stmts()
+        self._prog_meta_data = ProgramMetadata()
+        self._prog_meta_data.set_program_inputs([ProgramInputMetadata(inp.annotation.dt, inp.name, inp.annotation.kind) for inp in zk_ast.root.inputs])
+        compiled_inputs = []
+        for stmt in ir_stmts:
+            if isinstance(stmt.operator, ReadIntegerIR):
+                compiled_inputs.append(ProgramCompiledInputMetadata(IntegerType, stmt.operator.indices))
+            elif isinstance(stmt.operator, ReadFloatIR):
+                compiled_inputs.append(ProgramCompiledInputMetadata(FloatType, stmt.operator.indices))
+        self._prog_meta_data.set_program_compiled_inputs(compiled_inputs)
+        return ir_stmts, ir_stmts_for_preprocess, self._external_calls, self._prog_meta_data
 
     def visit(self, component: ASTComponent):
         typename = type(component).__name__
@@ -52,54 +79,10 @@ class IRGenerator:
             raise NotImplementedError(method_name)
         return method(component)
 
-    def visit_chip_call(self, chip: ASTChip, args: List[Value], kwargs: Dict[str, Value]):
-        chip_declared_args = [(x.name, x.annotation) for x in chip.inputs]
-        chip_filled_args = [None for _ in range(len(chip_declared_args))]
-        for i, arg in enumerate(args):
-            if i >= len(chip_declared_args):
-                raise ChipArgumentsError(chip.dbg, "Too many chip arguments")
-            arg_name, arg_anno = chip_declared_args[i]
-            if arg_anno is not None and arg_anno.dt != arg.type():
-                raise ChipArgumentsError(chip.dbg, f"Chip argument datatype mismatch for `{arg_name}`")
-            chip_filled_args[i] = arg
-        for key, arg in kwargs.items():
-            arg_assigned = False
-            for i, (name, anno) in enumerate(chip_declared_args):
-                if name == key:
-                    if chip_filled_args[i] is not None:
-                        raise ChipArgumentsError(chip.dbg, f"Chip argument `{name}` already assigned")
-                    if anno is not None and anno.dt != arg.type():
-                        raise ChipArgumentsError(chip.dbg, f"Chip argument datatype mismatch for `{name}`")
-                    chip_filled_args[i] = arg
-                    arg_assigned = True
-                    break
-            if not arg_assigned:
-                raise ChipArgumentsError(chip.dbg, f"No such argument `{key}`")
-        for i, (name, anno) in enumerate(chip_declared_args):
-            if chip_filled_args[i] is None:
-                raise ChipArgumentsError(chip.dbg, f"Chip argument for `{name}` not filled")
-        self._ir_ctx.chip_enter(chip.return_anno.dt)
-        self._register_global_datatypes()
-        for i, (name, anno) in enumerate(chip_declared_args):
-            self._ir_ctx.set(name, chip_filled_args[i])
-        for i, stmt in enumerate(chip.block):
-            self.visit(stmt)
-        return_vals_cond = self._ir_ctx.get_returns_with_conditions()
-        if not self._ir_ctx.check_return_existence() and not isinstance(chip.return_anno.dt, NoneDTDescriptor):
-            raise ControlEndWithoutReturnError(chip.dbg, "Chip control ends without a return statement")
-        self._ir_ctx.chip_leave()
-        if isinstance(chip.return_anno.dt, NoneDTDescriptor):
-            return self._ir_builder.op_constant_none()
-        return_value = return_vals_cond[-1][0]
-        for val, cond in reversed(return_vals_cond[:-1]):
-            return_value = self._ir_builder.op_select(cond, val, return_value)
-        return return_value
-
     def visit_ASTProgram(self, n: ASTProgram):
         for i, inp in enumerate(n.inputs):
-            ptr = self._ir_builder.op_input(i, inp.annotation.dt, inp.annotation.kind, dbg=n.dbg)
+            ptr = self._ir_builder.op_input((0, i), inp.annotation.dt, inp.annotation.kind, dbg=n.dbg)
             self._ir_ctx.set(inp.name, ptr.val() if isinstance(ptr, HashedValue) else ptr)
-            self._prog_meta_data.inputs.append(ProgramInputMetadata(inp.annotation.dt, inp.name, inp.annotation.kind))
         self._register_global_datatypes()
         for i, stmt in enumerate(n.block):
             self.visit(stmt)
@@ -196,6 +179,9 @@ class IRGenerator:
         chip = self._registered_chips.get(n.name, None)
         if chip is not None:
             return self.visit_chip_call(chip, visited_args, visited_kwargs)
+        external_func = self._registered_externals.get(n.name, None)
+        if external_func is not None:
+            return self.visit_external_call(external_func, visited_args, visited_kwargs)
         if Operators.instantiate_operator(n.name, None) is not None:
             raise StatementNoEffectException(n.dbg, f"Statement seems to have no effect")
         raise OperatorOrChipNotFoundException(n.dbg, f"Chip {n.name} not found")
@@ -260,6 +246,9 @@ class IRGenerator:
             chip = self._registered_chips.get(n.member, None)
             if n.target is None and chip is not None:
                 return self.visit_chip_call(chip, visited_args, visited_kwargs)
+            external_func = self._registered_externals.get(n.member, None)
+            if external_func is not None:
+                return self.visit_external_call(external_func, visited_args, visited_kwargs)
             operator = Operators.instantiate_operator(n.member, n.target)
             if operator is None:
                 raise OperatorOrChipNotFoundException(n.dbg, f"Operator or Chip {n.member} not found")
@@ -272,13 +261,13 @@ class IRGenerator:
             self_arg = [target_ptr]
             if operator is None:
                 raise OperatorOrChipNotFoundException(n.dbg, f"Operator {n.target}::{n.member} not found")
-        return self._ir_builder.invoke_op(operator, self_arg + visited_args, visited_kwargs, dbg=n.dbg)
+        return self._ir_builder.create_op(operator, self_arg + visited_args, visited_kwargs, dbg=n.dbg)
 
     def visit_ASTExprAttribute(self, n: ASTExprAttribute):
         target_ptr = self.visit(n.target)
         dt = target_ptr.type()
         operator = Operators.instantiate_operator(n.member, dt.get_typename())
-        return self._ir_builder.invoke_op(
+        return self._ir_builder.create_op(
             operator,
             [target_ptr] + [self.visit(arg) for arg in n.args],
             {k: self.visit(arg) for k, arg in n.kwargs.items()},
@@ -354,6 +343,63 @@ class IRGenerator:
         false_expr = self.visit(n.f_expr)
         cond_ptr = self._ir_builder.op_bool_scalar(cond_ptr, dbg=n.dbg)
         return self._ir_builder.op_select(cond_ptr, true_expr, false_expr)
+
+    def visit_chip_call(self, chip: ASTChip, args: List[Value], kwargs: Dict[str, Value]):
+        chip_declared_args = [(x.name, x.annotation) for x in chip.inputs]
+        chip_filled_args = [None for _ in range(len(chip_declared_args))]
+        for i, arg in enumerate(args):
+            if i >= len(chip_declared_args):
+                raise ChipArgumentsError(chip.dbg, "Too many chip arguments")
+            arg_name, arg_anno = chip_declared_args[i]
+            if arg_anno is not None and arg_anno.dt != arg.type():
+                raise ChipArgumentsError(chip.dbg, f"Chip argument datatype mismatch for `{arg_name}`")
+            chip_filled_args[i] = arg
+        for key, arg in kwargs.items():
+            arg_assigned = False
+            for i, (name, anno) in enumerate(chip_declared_args):
+                if name == key:
+                    if chip_filled_args[i] is not None:
+                        raise ChipArgumentsError(chip.dbg, f"Chip argument `{name}` already assigned")
+                    if anno is not None and anno.dt != arg.type():
+                        raise ChipArgumentsError(chip.dbg, f"Chip argument datatype mismatch for `{name}`")
+                    chip_filled_args[i] = arg
+                    arg_assigned = True
+                    break
+            if not arg_assigned:
+                raise ChipArgumentsError(chip.dbg, f"No such argument `{key}`")
+        for i, (name, anno) in enumerate(chip_declared_args):
+            if chip_filled_args[i] is None:
+                raise ChipArgumentsError(chip.dbg, f"Chip argument for `{name}` not filled")
+        self._ir_ctx.chip_enter(chip.return_anno.dt)
+        self._register_global_datatypes()
+        for i, (name, anno) in enumerate(chip_declared_args):
+            self._ir_ctx.set(name, chip_filled_args[i])
+        for i, stmt in enumerate(chip.block):
+            self.visit(stmt)
+        return_vals_cond = self._ir_ctx.get_returns_with_conditions()
+        if not self._ir_ctx.check_return_existence() and not isinstance(chip.return_anno.dt, NoneDTDescriptor):
+            raise ControlEndWithoutReturnError(chip.dbg, "Chip control ends without a return statement")
+        self._ir_ctx.chip_leave()
+        if isinstance(chip.return_anno.dt, NoneDTDescriptor):
+            return self._ir_builder.op_constant_none()
+        return_value = return_vals_cond[-1][0]
+        for val, cond in reversed(return_vals_cond[:-1]):
+            return_value = self._ir_builder.op_select(cond, val, return_value)
+        return return_value
+
+    def visit_external_call(self, external_func: ExternalFuncObj, args: List[Value], kwargs: Dict[str, Value]):
+        external_call_id = self._next_external_call_id
+        self._next_external_call_id += 1
+        for i, arg in enumerate(args):
+            self._ir_builder.op_export_external(arg, external_call_id, i, ())
+        for key, arg in kwargs.items():
+            self._ir_builder.op_export_external(arg, external_call_id, key, ())
+        self._ir_builder.ir_invoke_external(external_call_id)
+        self._external_calls.append(ExternalCall(
+            external_call_id, external_func.name,
+            [arg.type() for arg in args], {key: v.type() for key, v in kwargs.items()})
+        )
+        return self._ir_builder.op_input((external_call_id, ), external_func.return_dt, "Public")
 
     def _register_global_datatypes(self):
         float_class = self._ir_builder.op_constant_class(FloatDTDescriptor())

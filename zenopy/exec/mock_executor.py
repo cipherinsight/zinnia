@@ -37,16 +37,12 @@ class MockProgramExecutor(ZKProgramExecutor):
 
     def exec_ReadIntegerIR(self, stmt: IRStatement):
         assert isinstance(stmt.operator, ReadIntegerIR)
-        idx_major = stmt.operator.major
-        idx_minor = stmt.operator.minor
-        val = self.exec_ctx.inputs[(idx_major, idx_minor)]
+        val = self.exec_ctx.inputs[stmt.operator.indices]
         self.value_table[stmt.stmt_id] = val
 
     def exec_ReadFloatIR(self, stmt: IRStatement):
         assert isinstance(stmt.operator, ReadFloatIR)
-        idx_major = stmt.operator.major
-        idx_minor = stmt.operator.minor
-        val = self.exec_ctx.inputs[(idx_major, idx_minor)]
+        val = self.exec_ctx.inputs[stmt.operator.indices]
         self.value_table[stmt.stmt_id] = val
 
     def exec_ReadHashIR(self, stmt: IRStatement):

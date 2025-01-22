@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 
 from zenopy.builder.ir_builder import IRBuilder
 from zenopy.builder.value import Value, ClassValue, TupleValue, ListValue, NoneValue, NDArrayValue, IntegerValue, \
@@ -21,6 +21,8 @@ from zenopy.opdef.ir_op.ir_div_i import DivIIR
 from zenopy.opdef.ir_op.ir_eq_f import EqualFIR
 from zenopy.opdef.ir_op.ir_eq_i import EqualIIR
 from zenopy.opdef.ir_op.ir_exp_f import ExpFIR
+from zenopy.opdef.ir_op.ir_export_external_f import ExportExternalFIR
+from zenopy.opdef.ir_op.ir_export_external_i import ExportExternalIIR
 from zenopy.opdef.ir_op.ir_expose_public_f import ExposePublicFIR
 from zenopy.opdef.ir_op.ir_expose_public_i import ExposePublicIIR
 from zenopy.opdef.ir_op.ir_float_cast import FloatCastIR
@@ -32,6 +34,7 @@ from zenopy.opdef.ir_op.ir_gte_f import GreaterThanOrEqualFIR
 from zenopy.opdef.ir_op.ir_gte_i import GreaterThanOrEqualIIR
 from zenopy.opdef.ir_op.ir_hash import HashIR
 from zenopy.opdef.ir_op.ir_int_cast import IntCastIR
+from zenopy.opdef.ir_op.ir_invoke_external import InvokeExternalIR
 from zenopy.opdef.ir_op.ir_log_f import LogFIR
 from zenopy.opdef.ir_op.ir_logical_and import LogicalAndIR
 from zenopy.opdef.ir_op.ir_logical_not import LogicalNotIR
@@ -73,6 +76,7 @@ from zenopy.opdef.nocls.op_bool_scalar import BoolScalarOp
 from zenopy.opdef.nocls.op_div import DivOp
 from zenopy.opdef.nocls.op_eq import EqualOp
 from zenopy.opdef.nocls.op_exp import ExpOp
+from zenopy.opdef.nocls.op_export_external import ExportExternalOp
 from zenopy.opdef.nocls.op_expose_public import ExposePublicOp
 from zenopy.opdef.nocls.op_float_cast import FloatCastOp
 from zenopy.opdef.nocls.op_float_scalar import FloatScalarOp
@@ -111,11 +115,11 @@ class IRBuilderImpl(IRBuilder):
     def __init__(self) -> None:
         super().__init__()
 
-    def invoke_op(self, operator: AbstractOp, args: List[Value], kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
+    def create_op(self, operator: AbstractOp, args: List[Value], kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         kwargs = operator.argparse(dbg, args, kwargs)
         return operator.build(self, kwargs, dbg)
 
-    def invoke_ir(self, operator: AbstractIR, args: List[Value], kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
+    def create_ir(self, operator: AbstractIR, args: List[Value], kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         val, stmt = operator.build_ir(len(self.stmts), operator.argparse(dbg, args, kwargs), dbg)
         self.stmts.append(stmt)
         return val
@@ -321,8 +325,8 @@ class IRBuilderImpl(IRBuilder):
     def op_constant_class(self, dt: DTDescriptor, dbg: Optional[DebugInfo] = None) -> ClassValue:
         return ClassValue(dt)
 
-    def op_input(self, id_major: int, dt: DTDescriptor, kind: str, dbg: Optional[DebugInfo] = None) -> Value:
-        op = InputOp(id_major, dt, kind)
+    def op_input(self, indices: Tuple[int, ...], dt: DTDescriptor, kind: str, dbg: Optional[DebugInfo] = None) -> Value:
+        op = InputOp(indices, dt, kind)
         return op.build(self, {}, dbg)
 
     def op_parenthesis(self, args: List[Value], dbg: Optional[DebugInfo] = None) -> TupleValue:
@@ -360,6 +364,13 @@ class IRBuilderImpl(IRBuilder):
         assert isinstance(result, IntegerValue)
         return result
 
+    def op_export_external(self, value: Value, for_which: int, key: int | str, indices: Tuple[int, ...], dbg: Optional[DebugInfo] = None) -> NoneValue:
+        op = ExportExternalOp(for_which, key, indices)
+        kwargs = op.argparse(dbg, [value], {})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, NoneValue)
+        return result
+
     def ir_hash(self, values: List[NumberValue], dbg: Optional[DebugInfo] = None) -> IntegerValue:
         ir = HashIR()
         val, stmt = ir.build_ir(len(self.stmts), ir.argparse(dbg, values, {}), dbg)
@@ -381,22 +392,43 @@ class IRBuilderImpl(IRBuilder):
         assert isinstance(val, NoneValue)
         return val
 
-    def ir_read_integer(self, input_id: int, idx: int, dbg: Optional[DebugInfo] = None) -> IntegerValue:
-        ir = ReadIntegerIR(input_id, idx)
+    def ir_export_external_f(self, value: FloatValue, for_which: int, key: int | str, indices: Tuple[int, ...], dbg: Optional[DebugInfo] = None) -> NoneValue:
+        ir = ExportExternalFIR(for_which, key, indices)
+        val, stmt = ir.build_ir(len(self.stmts), ir.argparse(dbg, [value], {}), dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, NoneValue)
+        return val
+
+    def ir_export_external_i(self, value: IntegerValue, for_which: int, key: int | str, indices: Tuple[int, ...], dbg: Optional[DebugInfo] = None) -> NoneValue:
+        ir = ExportExternalIIR(for_which, key, indices)
+        val, stmt = ir.build_ir(len(self.stmts), ir.argparse(dbg, [value], {}), dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, NoneValue)
+        return val
+
+    def ir_invoke_external(self, external_call_id: int, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        ir = InvokeExternalIR(external_call_id)
+        val, stmt = ir.build_ir(len(self.stmts), ir.argparse(dbg, [], {}), dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, NoneValue)
+        return val
+
+    def ir_read_integer(self, indices: Tuple[int, ...], dbg: Optional[DebugInfo] = None) -> IntegerValue:
+        ir = ReadIntegerIR(indices)
         val, stmt = ir.build_ir(len(self.stmts), {}, dbg)
         self.stmts.append(stmt)
         assert isinstance(val, IntegerValue)
         return val
 
     def ir_read_hash(self, input_id: int, dbg: Optional[DebugInfo] = None) -> IntegerValue:
-        ir = ReadHashIR(input_id)
+        ir = ReadHashIR(0, input_id)
         val, stmt = ir.build_ir(len(self.stmts), {}, dbg)
         self.stmts.append(stmt)
         assert isinstance(val, IntegerValue)
         return val
 
-    def ir_read_float(self, input_id: int, idx: int, dbg: Optional[DebugInfo] = None) -> FloatValue:
-        ir = ReadFloatIR(input_id, idx)
+    def ir_read_float(self, indices: Tuple[int, ...], dbg: Optional[DebugInfo] = None) -> FloatValue:
+        ir = ReadFloatIR(indices)
         val, stmt = ir.build_ir(len(self.stmts), {}, dbg)
         self.stmts.append(stmt)
         assert isinstance(val, FloatValue)

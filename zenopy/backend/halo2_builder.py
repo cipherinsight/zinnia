@@ -2,7 +2,7 @@ from typing import List
 
 from zenopy.backend.abstract_builder import AbstractProgramBuilder
 from zenopy.backend.zk_program import Halo2ZKProgram
-from zenopy.internal.dt_descriptor import IntegerDTDescriptor, FloatDTDescriptor, NDArrayDTDescriptor
+from zenopy.internal.dt_descriptor import IntegerDTDescriptor, FloatDTDescriptor, NDArrayDTDescriptor, IntegerType
 from zenopy.internal.prog_meta_data import ProgramMetadata
 from zenopy.compile.ir_stmt import IRStatement
 from zenopy.opdef.ir_op.ir_abs_f import AbsFIR
@@ -138,26 +138,23 @@ class _Halo2StatementBuilder:
 
     def _build_ReadIntegerIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.operator, ReadIntegerIR)
-        major: int = stmt.operator.major
-        minor: int = stmt.operator.minor
         return [
-            f"let tmp_1 = ctx.load_witness(F::from((input.x_{major}_{minor}).abs() as u64));",
-            f"let {self._get_var_name(stmt.stmt_id)} = if input.x_{major}_{minor} >= 0 {{tmp_1}} else {{gate.neg(ctx, tmp_1)}};"
+            f"let tmp_1 = ctx.load_witness(F::from((input.x_{'_'.join(map(str, stmt.operator.indices))}).abs() as u64));",
+            f"let {self._get_var_name(stmt.stmt_id)} = if input.x_{'_'.join(map(str, stmt.operator.indices))} >= 0 {{tmp_1}} else {{gate.neg(ctx, tmp_1)}};"
         ]
 
     def _build_ReadHashIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.operator, ReadHashIR)
         major: int = stmt.operator.major
+        minor: int = stmt.operator.minor
         return [
-            f"let {self._get_var_name(stmt.stmt_id)} = ctx.load_witness(F::from_u128(input.hash_{major}));"
+            f"let {self._get_var_name(stmt.stmt_id)} = ctx.load_witness(F::from_u128(input.hash_{major}_{minor}));"
         ]
 
     def _build_ReadFloatIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.operator, ReadFloatIR)
-        major: int = stmt.operator.major
-        minor: int = stmt.operator.minor
         return [
-            f"let {self._get_var_name(stmt.stmt_id)} = ctx.load_witness(fixed_point_chip.quantization(input.x_{major}_{minor}));"
+            f"let {self._get_var_name(stmt.stmt_id)} = ctx.load_witness(fixed_point_chip.quantization(input.x_{'_'.join(map(str, stmt.operator.indices))}));"
         ]
 
     def _build_HashIR(self, stmt: IRStatement) -> List[str]:
@@ -546,23 +543,15 @@ use halo2_graph::scaffold::run;
     def build_input_data_structure(self) -> str:
         inputs = []
         for i, input_obj in enumerate(self.prog_metadata.inputs):
-            if isinstance(input_obj.dt, IntegerDTDescriptor):
-                inputs.append(f"pub x_{i}_0: i128")
-            elif isinstance(input_obj.dt, FloatDTDescriptor):
-                inputs.append(f"pub x_{i}_0: f64")
-            elif isinstance(input_obj.dt, NDArrayDTDescriptor):
-                elements_amount = input_obj.dt.get_number_of_elements()
-                for j in range(elements_amount):
-                    if isinstance(input_obj.dt.dtype, IntegerDTDescriptor):
-                        inputs.append(f"pub x_{i}_{j}: i128")
-                    elif isinstance(input_obj.dt.dtype, FloatDTDescriptor):
-                        inputs.append(f"pub x_{i}_{j}: f64")
-                    else:
-                        raise NotImplementedError("Unsupported NDArray dtype")
-            else:
-                raise NotImplementedError("Unsupported circuit input datatype")
             if input_obj.kind == "Hashed":
                 inputs.append(f"pub hash_{i}: u128")
+        for input_obj in self.prog_metadata.compiled_inputs:
+            if input_obj.dt == IntegerType:
+                inputs.append(f"pub x_{'_'.join(map(str, input_obj.indices))}: i128")
+            elif isinstance(input_obj.dt, FloatDTDescriptor):
+                inputs.append(f"pub x_{'_'.join(map(str, input_obj.indices))}: f64")
+            else:
+                raise NotImplementedError("Unsupported circuit input datatype")
         return """\
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CircuitInput {

@@ -99,12 +99,12 @@ def prettify_zk_ast(node: ASTComponent) -> str:
                 res += _inner(depth + 1, stmt)
             return res
         elif isinstance(n, ASTProgramInput):
-            res = [prefix + f' -> {n.name} ({"Public" if n.public else "Private"})']
+            res = [prefix + f' -> {n.name}']
             if n.annotation is not None:
                 res += _inner(depth + 1, n.annotation, 'annotation')
             return res
         elif isinstance(n, ASTAnnotation):
-            res = [prefix + f' {n.dt} ({"public" if n.public else "private"})']
+            res = [prefix + f' {n.dt}']
             return res
         elif isinstance(n, ASTForInStatement):
             res = [prefix]

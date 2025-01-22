@@ -36,5 +36,5 @@ class DuplicateCodeEliminationIRPass(AbstractIRPass):
                     ir_args[i] = values_lookup[arg]
                 else:
                     ir_args[i] = values_lookup[replacement]
-            values_lookup[stmt.stmt_id] = ir_builder.invoke_ir(stmt.operator, ir_args, {}, None)
+            values_lookup[stmt.stmt_id] = ir_builder.create_ir(stmt.operator, ir_args, {}, None)
         return ir_builder.export_ir_graph()

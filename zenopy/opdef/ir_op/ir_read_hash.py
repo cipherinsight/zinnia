@@ -9,19 +9,20 @@ from zenopy.debug.dbg_info import DebugInfo
 
 
 class ReadHashIR(AbstractIR):
-    def __init__(self, major: int):
+    def __init__(self, major: int, minor: int):
         super().__init__()
         self.major = major
+        self.minor = minor
 
     def get_signature(self) -> str:
-        return f"read_hash[{self.major}]"
+        return f"read_hash[{self.major}, {self.minor}]"
 
     @classmethod
     def get_name(cls) -> str:
         return "read_hash"
 
     def __eq__(self, other):
-        return super().__eq__(other) and self.major == other.major
+        return super().__eq__(other) and self.major == other.major and self.minor == other.minor
 
     def is_fixed_ir(self) -> bool:
         return True

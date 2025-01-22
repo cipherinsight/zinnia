@@ -1,26 +1,26 @@
 from typing import List, Dict, Optional, Tuple
 
-from zenopy.builder.value import Value, FloatValue
+from zenopy.builder.value import Value, NoneValue, IntegerValue
 from zenopy.compile.ir_stmt import IRStatement
 from zenopy.opdef.ir_op.abstract_ir import AbstractIR
 from zenopy.opdef.nocls.abstract_op import AbstractOp
 from zenopy.debug.dbg_info import DebugInfo
 
 
-class ReadFloatIR(AbstractIR):
-    def __init__(self, indices: Tuple[int, ...]):
+class InvokeExternalIR(AbstractIR):
+    def __init__(self, store_idx: int):
         super().__init__()
-        self.indices = indices
+        self.store_idx = store_idx
 
     def get_signature(self) -> str:
-        return f"read_float[{', '.join(map(str, self.indices))}]"
+        return f"invoke_external"
 
     @classmethod
     def get_name(cls) -> str:
-        return "read_float"
+        return "invoke_external"
 
     def __eq__(self, other):
-        return super().__eq__(other) and self.indices == other.indices
+        return super().__eq__(other) and self.store_idx == other.store_idx
 
     def is_fixed_ir(self) -> bool:
         return True
@@ -29,4 +29,4 @@ class ReadFloatIR(AbstractIR):
         return []
 
     def build_ir(self, ir_id: int, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Tuple[Value, IRStatement]:
-        return FloatValue(None, ir_id), IRStatement(ir_id, self, [], dbg)
+        return NoneValue(), IRStatement(ir_id, self, [], dbg)

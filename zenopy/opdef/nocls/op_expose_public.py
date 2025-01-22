@@ -5,7 +5,7 @@ from zenopy.debug.exception import TypeInferenceError
 from zenopy.internal.dt_descriptor import IntegerType, FloatType
 from zenopy.opdef.nocls.abstract_op import AbstractOp
 from zenopy.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zenopy.builder.value import Value, IntegerValue, FloatValue, NDArrayValue
+from zenopy.builder.value import Value, IntegerValue, FloatValue, NDArrayValue, TupleValue, ListValue, NoneValue
 
 
 class ExposePublicOp(AbstractOp):
@@ -30,10 +30,16 @@ class ExposePublicOp(AbstractOp):
             return reducer.ir_expose_public_i(x)
         elif isinstance(x, FloatValue):
             return reducer.ir_expose_public_f(x)
+        elif isinstance(x, TupleValue) or isinstance(x, ListValue):
+            for val in x.values():
+                reducer.op_expose_public(val)
+            return NoneValue()
         elif isinstance(x, NDArrayValue) and x.dtype() == IntegerType:
             for v in x.flattened_values():
                 reducer.ir_expose_public_i(v)
+            return NoneValue()
         elif isinstance(x, NDArrayValue) and x.dtype() == FloatType:
             for v in x.flattened_values():
                 reducer.ir_expose_public_f(v)
+            return NoneValue()
         raise TypeInferenceError(dbg, f"Unsupported argument type for `{self.get_name()}`: {x.type()}")

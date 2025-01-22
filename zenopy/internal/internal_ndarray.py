@@ -9,7 +9,7 @@ class InternalNDArray:
     def __init__(self, shape: Tuple[int, ...], values: List):
         self.shape = shape
         self.values = values
-        assert InternalNDArray._assert_shape_matches_value(shape, values)
+        assert InternalNDArray.check_list_shape_matches(shape, values)
 
     def __copy__(self) -> "InternalNDArray":
         return InternalNDArray(shape=self.shape, values=copy.copy(self.values))
@@ -304,7 +304,7 @@ class InternalNDArray:
         return InternalNDArray((lhs_shape[0], rhs_shape[1]), new_values)
 
     @staticmethod
-    def _assert_shape_matches_value(shape: Tuple[int, ...], values: List) -> bool:
+    def check_list_shape_matches(shape: Tuple[int, ...], values: List) -> bool:
         if len(shape) == 0:
             return False
         if shape[0] <= 0:
@@ -314,7 +314,7 @@ class InternalNDArray:
         if shape[0] != len(values):
             return False
         for i in range(shape[0]):
-            if not InternalNDArray._assert_shape_matches_value(shape[1:], values[i]):
+            if not InternalNDArray.check_list_shape_matches(shape[1:], values[i]):
                 return False
         return True
 

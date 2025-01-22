@@ -17,7 +17,7 @@ from zenopy.internal.dt_descriptor import DTDescriptorFactory, NoneDTDescriptor
 from zenopy.debug.dbg_info import DebugInfo
 
 
-class PyZKBaseASTTransformer(ast.NodeTransformer):
+class ZenoPyBaseASTTransformer(ast.NodeTransformer):
     def __init__(self, source_code: str, method_name: str):
         super().__init__()
         self.source_code = source_code
@@ -69,7 +69,7 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
     def visit(self, node):
         if isinstance(node, ast.FunctionDef):
             return self.visit_FunctionDef(node)
-        raise InvalidProgramException(None, "Invalid program passed to the compiler! The program must be a function.")
+        raise InvalidProgramException(None, "Invalid code passed to the compiler! The program must be a function.")
 
     def visit_For(self, node):
         target = self.visit_assign_target(node.target)
@@ -449,7 +449,7 @@ class PyZKBaseASTTransformer(ast.NodeTransformer):
         raise NotImplementedError()
 
 
-class PyZKCircuitASTTransformer(PyZKBaseASTTransformer):
+class ZenoPyCircuitASTTransformer(ZenoPyBaseASTTransformer):
     def __init__(self, source_code: str, method_name: str):
         super().__init__(source_code, method_name)
 
@@ -479,12 +479,17 @@ class PyZKCircuitASTTransformer(PyZKBaseASTTransformer):
         return results
 
 
-class PyZKChipASTTransformer(PyZKBaseASTTransformer):
+class ZenoPyChipASTTransformer(ZenoPyBaseASTTransformer):
     def __init__(self, source_code: str, method_name: str):
         super().__init__(source_code, method_name)
     
     def get_dbg(self, node) -> DebugInfo:
         return DebugInfo(self.method_name, self.source_code, False, node.lineno, node.col_offset, node.end_lineno, node.end_col_offset)
+
+    def visit(self, node):
+        if isinstance(node, ast.FunctionDef):
+            return self.visit_FunctionDef(node)
+        raise InvalidProgramException(None, "Invalid code passed to the compiler! The chip must be a function.")
 
     def visit_FunctionDef(self, node):
         dbg = self.get_dbg(node)
@@ -508,3 +513,26 @@ class PyZKChipASTTransformer(PyZKBaseASTTransformer):
                 annotation = self.visit_annotation(arg.annotation, name)
             results.append(ASTChipInput(dbg_info, name, annotation))
         return results
+
+
+class ZenoPyExternalFuncASTTransformer(ZenoPyBaseASTTransformer):
+    def __init__(self, source_code: str, method_name: str):
+        super().__init__(source_code, method_name)
+
+    def get_dbg(self, node) -> DebugInfo:
+        return DebugInfo(self.method_name, self.source_code, False, node.lineno, node.col_offset, node.end_lineno, node.end_col_offset)
+
+    def visit(self, node):
+        if isinstance(node, ast.FunctionDef):
+            return self.visit_FunctionDef(node)
+        raise InvalidProgramException(None, "Invalid code passed to the compiler! The external function must be a function.")
+
+    def visit_FunctionDef(self, node):
+        dbg = self.get_dbg(node)
+        if node.returns is not None:
+            return_anno = self.visit_annotation(node.returns, None)
+        else:
+            raise InvalidAnnotationException(dbg, "External Functions must have a return annotation.")
+        if return_anno.kind is not None:
+            raise InvalidAnnotationException(self.get_dbg(node.returns), f"Invalid return annotation for external functions. In external functions, the return type should NOT be annotated by `Public`, `Private` or `Hashed` because chip returns are not inputs. Please remove these specifiers and leave the corresponding datatype only.")
+        return return_anno.dt

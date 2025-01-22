@@ -28,6 +28,6 @@ class ConstantFoldIRPass(AbstractIRPass):
                     if constant_float_ir.get(value.val(), None) is None:
                         constant_float_ir[value.val()] = ir_builder.ir_constant_float(value.val())
                     ir_args[i] = constant_float_ir[value.val()]
-            new_val = ir_builder.invoke_ir(stmt.operator, ir_args, {}, None)
+            new_val = ir_builder.create_ir(stmt.operator, ir_args, {}, None)
             value_lookup_by_ptr[stmt.stmt_id] = new_val
         return ir_builder.export_ir_graph()
