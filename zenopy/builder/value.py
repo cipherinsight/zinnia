@@ -166,7 +166,10 @@ class NDArrayValue(Value):
             enpair: Callable[[NumberValue, int], Tuple[NumberValue, NumberValue | None]],
             depair: Callable[[NumberValue, NumberValue], NumberValue]
     ) -> 'NDArrayValue':
-        return NDArrayValue(self.shape(), self.dtype(), self.get().accumulate(axis, aggregator, initial, enpair, depair))
+        result = self.get().accumulate(axis, aggregator, initial, enpair, depair)
+        if isinstance(result, InternalNDArray):
+            return NDArrayValue(result.shape, self.dtype(), result)
+        return result
 
     def unary(self, dtype: NumberDTDescriptor, op: Callable[[NumberValue], NumberValue]) -> 'NDArrayValue':
         return NDArrayValue(self.shape(), dtype, self.get().unary(op))
