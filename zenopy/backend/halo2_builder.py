@@ -528,6 +528,7 @@ use clap::Parser;
 use halo2_base::utils::{ScalarField, BigPrimeField};
 use halo2_graph::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};
 use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
+use halo2_base::poseidon::hasher::PoseidonHasher;
 use halo2_base::gates::{GateChip, GateInstructions, RangeInstructions};
 use serde::{Serialize, Deserialize};
 use halo2_base::{
@@ -538,6 +539,12 @@ use halo2_base::{
 #[allow(unused_imports)]
 use halo2_graph::scaffold::cmd::Cli;
 use halo2_graph::scaffold::run;
+use snark_verifier_sdk::halo2::OptimizedPoseidonSpec;
+
+const T: usize = 3;
+const RATE: usize = 2;
+const R_F: usize = 8;
+const R_P: usize = 57;
 """
 
     def build_input_data_structure(self) -> str:
@@ -588,8 +595,8 @@ fn main() {{
     let range_chip = builder.range_chip();
     let fixed_point_chip = FixedPointChip::<F, PRECISION>::default(builder);
     let mut poseidon_hasher = PoseidonHasher::<F, T, RATE>::new(OptimizedPoseidonSpec::new::<R_F, R_P, 0>());
-    poseidon_hasher.initialize_consts(ctx, &gate);
     let ctx = builder.main(0);
+    poseidon_hasher.initialize_consts(ctx, &gate);
 """
         for stmt in self.stmts:
             translated_stmts += internal_builder.build_stmt(stmt)
