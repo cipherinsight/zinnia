@@ -7,12 +7,12 @@ from zinnia.opdef.ir_op.ir_read_float import ReadFloatIR
 from zinnia.opdef.ir_op.ir_read_integer import ReadIntegerIR
 from .executor import ZKProgramExecutor
 from .exec_ctx import ExecutionContext
-from zinnia.api.zk_program import ZKProgram
+from zinnia.api.zk_compiled_program import ZKCompiledProgram
 from .exec_result import ZKExecResult
 
 
 class MockProgramExecutor(ZKProgramExecutor):
-    def __init__(self, exec_ctx: ExecutionContext, zk_program: ZKProgram, config: ZinniaConfig):
+    def __init__(self, exec_ctx: ExecutionContext, zk_program: ZKCompiledProgram, config: ZinniaConfig):
         super().__init__(exec_ctx, zk_program, config)
         self.ir_stmts = zk_program.zk_program_irs
         self.value_table = {}

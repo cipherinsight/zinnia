@@ -1,7 +1,7 @@
 import pytest
 
 from zinnia import zk_circuit, ZKCircuit
-from zinnia.debug.exception import ZenoPyException
+from zinnia.debug.exception import ZinniaException
 
 
 def test_for_in_range_1():
@@ -177,7 +177,7 @@ def test_for_error_not_iterable():
             the_sum += i
         assert the_sum == 10
 
-    with pytest.raises(ZenoPyException) as e:
+    with pytest.raises(ZinniaException) as e:
         ZKCircuit.from_method(foo).compile()
     assert "is not iterable" in str(e.value)
 

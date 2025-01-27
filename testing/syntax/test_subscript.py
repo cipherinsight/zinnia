@@ -1,7 +1,7 @@
 import pytest
 
 from zinnia import zk_circuit, ZKCircuit, Integer, Public
-from zinnia.debug.exception import ZenoPyException
+from zinnia.debug.exception import ZinniaException
 
 
 def test_subscript_in_tuple():
@@ -93,7 +93,7 @@ def test_subscript_error_assign_tuple():
         the_tuple = (1, 2, 3, 4, 5, 6)
         the_tuple[0] = 10
 
-    with pytest.raises(ZenoPyException) as e:
+    with pytest.raises(ZinniaException) as e:
         ZKCircuit.from_method(foo).compile()
     assert "does not support item assignment" in str(e.value)
 
@@ -105,7 +105,7 @@ def test_subscript_error_assign_tuple_range():
         the_tuple = (1, 2, 3, 4, 5, 6)
         the_tuple[0:3] = (10, 20, 30)
 
-    with pytest.raises(ZenoPyException) as e:
+    with pytest.raises(ZinniaException) as e:
         ZKCircuit.from_method(foo).compile()
     assert "does not support item assignment" in str(e.value)
 

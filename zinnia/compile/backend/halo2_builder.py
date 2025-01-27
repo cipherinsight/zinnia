@@ -1,6 +1,6 @@
 from typing import List
 
-from zinnia.backend.abstract_builder import AbstractProgramBuilder
+from zinnia.compile.backend.abstract_builder import AbstractProgramBuilder
 from zinnia.compile.ir.ir_stmt import IRStatement
 from zinnia.opdef.ir_op.ir_abs_f import AbsFIR
 from zinnia.opdef.ir_op.ir_abs_i import AbsIIR

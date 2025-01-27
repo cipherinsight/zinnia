@@ -1,3 +1,4 @@
+import copy
 from typing import List
 
 from zinnia.compile.builder.builder_impl import IRBuilderImpl
@@ -11,6 +12,7 @@ class ConstantFoldIRPass(AbstractIRPass):
         super().__init__()
 
     def exec(self, ir_graph: IRGraph) -> IRGraph:
+        ir_graph = copy.copy(ir_graph)
         ir_builder = IRBuilderImpl()
         topological_order = ir_graph.get_topological_order(False)
         in_links, out_links = ir_graph.get_io_links()

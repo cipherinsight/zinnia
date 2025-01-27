@@ -45,6 +45,6 @@ class DTDescriptorFactory:
     def import_from(data: Dict) -> DTDescriptor:
         class_name = data['__class__']
         for datatype in DTDescriptorFactory.DATATYPE_REGISTRY:
-            if datatype.get_typename() == class_name:
+            if datatype.__name__ == class_name:
                 return datatype.import_from(data['dt_data'])
         raise NotImplementedError(f"Internal Error: DTDescriptorFactory: {class_name} is not implemented")

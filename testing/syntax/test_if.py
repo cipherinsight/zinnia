@@ -1,7 +1,7 @@
 import pytest
 
 from zinnia import zk_circuit, ZKCircuit, NDArray
-from zinnia.debug.exception import ZenoPyException
+from zinnia.debug.exception import ZinniaException
 
 
 def test_if():
@@ -120,7 +120,7 @@ def test_invalid_condition_with_ndarray():
         if ndarray_condition:
             assert False
 
-    with pytest.raises(ZenoPyException) as e:
+    with pytest.raises(ZinniaException) as e:
         ZKCircuit.from_method(foo).compile()
     assert "The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()" in str(e.value)
 

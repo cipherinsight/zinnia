@@ -1,3 +1,5 @@
+import copy
+
 from zinnia.compile.builder.builder_impl import IRBuilderImpl
 from zinnia.compile.ir.ir_graph import IRGraph
 from zinnia.compile.multi_pass.abstract_pass import AbstractIRPass
@@ -8,6 +10,7 @@ class DuplicateCodeEliminationIRPass(AbstractIRPass):
         super().__init__()
 
     def exec(self, ir_graph: IRGraph) -> IRGraph:
+        ir_graph = copy.copy(ir_graph)
         stmts = ir_graph.export_stmts()
         to_be_replaced = {}
         duplicate_lookup = []  # We temporarily perform O(n^2) search for a quick impl

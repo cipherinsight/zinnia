@@ -1,6 +1,6 @@
 from typing import List
 
-from zinnia.debug.exception import InternalZinniaException, ZenoPyException
+from zinnia.debug.exception import InternalZinniaException, ZinniaException
 from zinnia.compile.ir.ir_stmt import IRStatement
 
 
@@ -13,10 +13,10 @@ def prettify_ir_stmts(stmts: List[IRStatement]):
     return "\n".join(results)
 
 
-def prettify_exception(exception: InternalZinniaException) -> ZenoPyException:
+def prettify_exception(exception: InternalZinniaException) -> ZinniaException:
     if isinstance(exception, InternalZinniaException):
         if exception.dbg_i is None:
-            return ZenoPyException(f'{type(exception).__name__}: {exception.msg}')
+            return ZinniaException(f'{type(exception).__name__}: {exception.msg}')
         source_lines = exception.dbg_i.source_code.splitlines()
         error_report_msg = f'  In method "{exception.dbg_i.method_name}", line {exception.dbg_i.lineno}'
         if exception.dbg_i.end_lineno != exception.dbg_i.lineno:
@@ -48,5 +48,5 @@ def prettify_exception(exception: InternalZinniaException) -> ZenoPyException:
             error_report_msg += '^' * (exception.dbg_i.end_col_offset - exception.dbg_i.col_offset)
             error_report_msg += '\n'
         error_report_msg += type(exception).__name__ + ': ' + exception.msg
-        return ZenoPyException(error_report_msg)
+        return ZinniaException(error_report_msg)
     raise NotImplementedError

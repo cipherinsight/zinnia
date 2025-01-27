@@ -9,7 +9,7 @@ class MockExecConfig(ConfigBase):
         self.set('float_tolerance', 1e-6)
 
     def float_tolerance(self) -> float:
-        return self.__config['float_tolerance']
+        return self.get('float_tolerance')
 
     def verify(self, key: str, value: Any) -> Any:
         if key == 'float_tolerance':

@@ -1,3 +1,5 @@
+import copy
+
 from zinnia.compile.ir.ir_graph import IRGraph
 from zinnia.compile.multi_pass.abstract_pass import AbstractIRPass
 
@@ -7,6 +9,7 @@ class DeadCodeEliminationIRPass(AbstractIRPass):
         super().__init__()
 
     def exec(self, ir_graph: IRGraph) -> IRGraph:
+        ir_graph = copy.copy(ir_graph)
         stmts = ir_graph.export_stmts()
         ensuring_keep_stmts = [stmt.operator.is_fixed_ir() for stmt in stmts]
         in_d, out_d = ir_graph.get_io_degrees()

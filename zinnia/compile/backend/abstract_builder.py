@@ -1,7 +1,7 @@
 from typing import List
 
 from zinnia.compile.ir.ir_stmt import IRStatement
-from zinnia.api.zk_program import ZKProgram
+from zinnia.api.zk_compiled_program import ZKCompiledProgram
 
 
 class AbstractProgramBuilder:
@@ -9,5 +9,5 @@ class AbstractProgramBuilder:
         self.name = name
         self.stmts = stmts
 
-    def build(self) -> ZKProgram:
+    def build(self) -> ZKCompiledProgram:
         raise NotImplementedError()

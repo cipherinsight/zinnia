@@ -47,9 +47,9 @@ class ExecutionContext:
 
             if isinstance(value, np.bool):
                 return IntegerType
-            if isinstance(value, np.int_) or isinstance(value, np.intc) or isinstance(value, np.intp) or isinstance(value, np.int8) or isinstance(value, np.int16) or isinstance(value, np.int32) or isinstance(value, np.int64) or isinstance(value, np.int128) or isinstance(value, np.int256):
+            if ExecutionContext._is_numpy_integer(value):
                 return IntegerType
-            if isinstance(value, np.float16) or isinstance(value, np.float32) or isinstance(value, np.float64) or isinstance(value, np.float80) or isinstance(value, np.float96) or isinstance(value, np.float128) or isinstance(value, np.float256):
+            if ExecutionContext._is_numpy_float(value):
                 return FloatType
             if isinstance(value, np.ndarray):
                 shape = value.shape
@@ -95,9 +95,10 @@ class ExecutionContext:
                 for element_dtype in got.elements_dtype:
                     if not self._recursive_verify_datatype_matches(NDArrayDTDescriptor(expected.shape[1:], expected.dtype), element_dtype):
                         return False
-            for element_dtype in got.elements_dtype:
-                if not self._recursive_verify_datatype_matches(expected.dtype, element_dtype):
-                    return False
+            if len(expected.shape) == 1:
+                for element_dtype in got.elements_dtype:
+                    if not self._recursive_verify_datatype_matches(expected.dtype, element_dtype):
+                        return False
             return True
         return False
 
@@ -118,7 +119,7 @@ class ExecutionContext:
 
                 if isinstance(value, np.bool):
                     return [ZKParsedInput.Entry(indices, kind, 1 if value else 0)]
-                if isinstance(value, np.int_) or isinstance(value, np.intc) or isinstance(value, np.intp) or isinstance(value, np.int8) or isinstance(value, np.int16) or isinstance(value, np.int32) or isinstance(value, np.int64) or isinstance(value, np.int128) or isinstance(value, np.int256):
+                if ExecutionContext._is_numpy_integer(value):
                     return [ZKParsedInput.Entry(indices, kind, int(value))]
             except ImportError:
                 pass
@@ -135,7 +136,7 @@ class ExecutionContext:
 
                 if isinstance(value, np.bool):
                     return [ZKParsedInput.Entry(indices, kind, 1.0 if value else 0.0)]
-                if isinstance(value, np.float16) or isinstance(value, np.float32) or isinstance(value, np.float64) or isinstance(value, np.float80) or isinstance(value, np.float96) or isinstance(value, np.float128) or isinstance(value, np.float256):
+                if ExecutionContext._is_numpy_float(value):
                     return [ZKParsedInput.Entry(indices, kind, float(value))]
             except ImportError:
                 pass
@@ -155,12 +156,12 @@ class ExecutionContext:
         elif isinstance(dt, NDArrayDTDescriptor):
             ndarray = None
             if isinstance(value, list):
-                ndarray = InternalNDArray.from_1d_values_and_shape(value, dt.shape)
+                ndarray = InternalNDArray(dt.shape, value)
             try:
                 import numpy as np
 
                 if isinstance(value, np.ndarray):
-                    ndarray = InternalNDArray.from_1d_values_and_shape(value.tolist(), dt.shape)
+                    ndarray = InternalNDArray(dt.shape, value.tolist())
             except ImportError:
                 pass
             assert ndarray is not None
@@ -193,7 +194,7 @@ class ExecutionContext:
         for i, inp in enumerate(inputs):
             inferred_dtype = self._recursive_infer_datatype(arg_dict[inp.name])
             if not self._recursive_verify_datatype_matches(inp.get_dt(), inferred_dtype):
-                raise ZKCircuitParameterException(None, f'Input datatype mismatch for {inp.name}. Expected {inp.get_dt()}, got {inferred_dtype}')
+                raise ZKCircuitParameterException(None, f'Input datatype mismatch for `{inp.name}`. Expected {inp.get_dt()}, got {inferred_dtype}')
             parsed_result_input_entries += self._recursive_parse_value_to_entries(
                 (0, i,), inp.get_kind(), inp.get_dt(), arg_dict[inp.name])
         new_inputs = self._execute_external_calls(parsed_result_input_entries)
@@ -290,3 +291,156 @@ class ExecutionContext:
                 args = [value_table[x] for x in stmt.arguments]
                 value_table[stmt.stmt_id] = stmt.operator.mock_exec(stmt.operator.argparse(None, args, {}), MockExecConfig())
         return new_inputs
+
+    @staticmethod
+    def _is_numpy_integer(value: Any) -> bool:
+        try:
+            import numpy as np
+
+            try:
+                if isinstance(value, np.int_):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.intc):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.intp):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.int8):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.int16):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.int32):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.int64):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.int128):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.int256):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.uint):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.ulong):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.uint8):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.uintc):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.uintp):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.uint16):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.uint32):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.uint64):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.uint128):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.uint256):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.ulonglong):
+                    return True
+            except AttributeError:
+                pass
+        except ImportError:
+            pass
+        return False
+
+    @staticmethod
+    def _is_numpy_float(value: Any) -> bool:
+        try:
+            import numpy as np
+
+            try:
+                if isinstance(value, np.float16):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.float32):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.float64):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.float80):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.float96):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.float128):
+                    return True
+            except AttributeError:
+                pass
+            try:
+                if isinstance(value, np.float256):
+                    return True
+            except AttributeError:
+                pass
+        except ImportError:
+            pass
+        return False

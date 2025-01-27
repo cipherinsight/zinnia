@@ -33,9 +33,9 @@ class ReadIntegerIR(AbstractIR):
 
     def export(self) -> Dict:
         return {
-            "indices": self.indices
+            "indices": list(self.indices)
         }
 
     @staticmethod
     def import_from(data: Dict) -> 'ReadIntegerIR':
-        return ReadIntegerIR(data['indices'])
+        return ReadIntegerIR(tuple(data['indices']))

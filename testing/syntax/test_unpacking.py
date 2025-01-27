@@ -1,7 +1,7 @@
 import pytest
 
 from zinnia import zk_circuit, ZKCircuit
-from zinnia.debug.exception import ZenoPyException
+from zinnia.debug.exception import ZinniaException
 
 
 def test_tuple_unpacking():
@@ -61,7 +61,7 @@ def test_tuple_unpacking_with_error_1():
         tup = (1, 2, 3, 4)
         a, b, c = tup
 
-    with pytest.raises(ZenoPyException) as e:
+    with pytest.raises(ZinniaException) as e:
         ZKCircuit.from_method(foo).compile()
     assert "TupleUnpackingError" in str(e.value)
 
@@ -73,7 +73,7 @@ def test_tuple_unpacking_with_error_2():
         tup = (1, 2, 3, 4)
         a, b, c, d, e = tup
 
-    with pytest.raises(ZenoPyException) as e:
+    with pytest.raises(ZinniaException) as e:
         ZKCircuit.from_method(foo).compile()
     assert "TupleUnpackingError" in str(e.value)
 
@@ -90,7 +90,7 @@ def test_tuple_unpacking_with_error_3():
         assert d == 4
         assert e == 5
 
-    with pytest.raises(ZenoPyException) as e:
+    with pytest.raises(ZinniaException) as e:
         ZKCircuit.from_method(foo).compile()
     assert "TypeInferenceError: Integer is not iterable" in str(e.value)
 

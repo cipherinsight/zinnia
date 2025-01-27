@@ -3,7 +3,7 @@ from typing import List, Any, Dict
 
 from zinnia import ZKChip, ZKExternalFunc
 from zinnia.api.zk_parsed_input import ZKParsedInput
-from zinnia.api.zk_program import ZKProgram
+from zinnia.api.zk_compiled_program import ZKCompiledProgram
 from zinnia.compile.zinnia_compiler import ZinniaCompiler
 from zinnia.config.zinnia_config import ZinniaConfig
 from zinnia.debug.exception import InternalZinniaException
@@ -18,7 +18,7 @@ class ZKCircuit:
     chips: Dict[str, ZKChip]
     externals: Dict[str, ZKExternalFunc]
     config: ZinniaConfig
-    program: ZKProgram | None
+    program: ZKCompiledProgram | None
 
     def __init__(
             self,
@@ -96,7 +96,7 @@ class ZKCircuit:
             source_code = inspect.getsource(method)
         return ZKCircuit(method_name, source_code, chips, externals, config)
 
-    def compile(self) -> ZKProgram:
+    def compile(self) -> ZKCompiledProgram:
         try:
             self.program = ZinniaCompiler(ZinniaConfig()).compile(
                 self.source, self.name,
@@ -119,6 +119,9 @@ class ZKCircuit:
 
     def __call__(self, *args, **kwargs) -> ZKExecResult:
         return self.mock(*args, **kwargs)
+
+    def get_name(self) -> str:
+        return self.name
 
     def argparse(self, *args, **kwargs) -> ZKParsedInput:
         if self.program is None:

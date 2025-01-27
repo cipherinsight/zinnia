@@ -1,3 +1,5 @@
+import copy
+
 from zinnia.compile.builder.builder_impl import IRBuilderImpl
 from zinnia.compile.builder.value import IntegerValue
 from zinnia.compile.ir.ir_graph import IRGraph
@@ -10,6 +12,7 @@ class AlwaysSatisfiedEliminationIRPass(AbstractIRPass):
         super().__init__()
 
     def exec(self, ir_graph: IRGraph) -> IRGraph:
+        ir_graph = copy.copy(ir_graph)
         builder = IRBuilderImpl()
         in_links, out_links = ir_graph.get_io_links()
         topological_order = ir_graph.get_topological_order(False)

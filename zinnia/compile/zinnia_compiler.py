@@ -1,7 +1,7 @@
 import ast
 from typing import Dict, List
 
-from zinnia.backend.halo2_builder import Halo2ProgramBuilder
+from zinnia.compile.backend.halo2_builder import Halo2ProgramBuilder
 from zinnia.compile.ast import ASTChip, ASTCircuit
 from zinnia.compile.ir.ir_gen import IRGenerator
 from zinnia.compile.ir.ir_graph import IRGraph
@@ -15,7 +15,7 @@ from zinnia.compile.transformer import ZinniaExternalFuncASTTransformer, ZinniaC
 from zinnia.compile.transformer.chip import ZinniaChipASTTransformer
 from zinnia.compile.type_sys.dt_descriptor import DTDescriptor
 from zinnia.config.zinnia_config import ZinniaConfig
-from zinnia.api.zk_program import ZKProgram
+from zinnia.api.zk_compiled_program import ZKCompiledProgram
 from zinnia.api.zk_program_input import ZKProgramInput
 from zinnia.internal.internal_chip_object import InternalChipObject
 from zinnia.internal.internal_external_func_object import InternalExternalFuncObject
@@ -30,7 +30,7 @@ class ZinniaCompiler:
             source: str, name: str,
             chips: Dict[str, InternalChipObject],
             externals: Dict[str, InternalExternalFuncObject]
-    ) -> ZKProgram:
+    ) -> ZKCompiledProgram:
         fixed_source = ZinniaCompiler.fix_source_indentation(source)
         python_ast = ast.parse(ZinniaCompiler.fix_source_indentation(fixed_source))
         transformer = ZinniaCircuitASTTransformer(ZinniaCompiler.fix_source_indentation(fixed_source), name)
@@ -47,7 +47,7 @@ class ZinniaCompiler:
         program_inputs = []
         for inp in ast_tree.inputs:
             program_inputs.append(ZKProgramInput(inp.name, inp.annotation.dt, inp.annotation.kind))
-        return ZKProgram(name, compiled_source, self.config.get_backend(), preprocess_ir, zk_program_ir, program_inputs, externals)
+        return ZKCompiledProgram(name, compiled_source, self.config.get_backend(), preprocess_ir, zk_program_ir, program_inputs, externals)
 
     def run_passes_for_zk_program(self, ir_graph: IRGraph) -> List[IRStatement]:
         ir_graph = ExternalCallRemoverIRPass().exec(ir_graph)

@@ -129,7 +129,7 @@ class IRFactory:
         for k, op in IRFactory.Registry.__dict__.items():
             if not isclass(op) or not issubclass(op, AbstractIR):
                 continue
-            if op.__class__.__name__ == ir_class_name:
+            if op.__name__ == ir_class_name:
                 return op
         return None
 

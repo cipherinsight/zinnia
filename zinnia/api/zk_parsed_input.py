@@ -31,8 +31,14 @@ class ZKParsedInput:
         def get_value(self) -> Any:
             return self.value
 
+        def __str__(self):
+            return f'Entry(indices={self.indices}, kind="{self.kind}", value={self.value})'
+
     def __init__(self, entries: List['ZKParsedInput.Entry']):
         self.entries = entries
 
     def get_entries(self) -> List['ZKParsedInput.Entry']:
         return self.entries
+
+    def __str__(self):
+        return f"ZKParsedInput(entries={', '.join(map(str, self.entries))})"

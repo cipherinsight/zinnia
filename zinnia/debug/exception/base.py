@@ -8,6 +8,6 @@ class InternalZinniaException(Exception):
         self.msg = msg
 
 
-class ZenoPyException(Exception):
+class ZinniaException(Exception):
     def __init__(self, prettified_error_message: str):
         super().__init__(prettified_error_message)

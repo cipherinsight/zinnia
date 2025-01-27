@@ -1,7 +1,7 @@
 import pytest
 
 from zinnia import ZKCircuit, zk_circuit
-from zinnia.debug.exception import ZenoPyException
+from zinnia.debug.exception import ZinniaException
 
 
 def test_basic_if_exp_1():
@@ -31,7 +31,7 @@ def test_if_exp_with_different_types():
         the_value = 20 if cond else 10.0
         assert the_value == 20
 
-    with pytest.raises(ZenoPyException) as e:
+    with pytest.raises(ZinniaException) as e:
         ZKCircuit.from_method(foo).compile()
     assert "must have the same type" in str(e.value)
 

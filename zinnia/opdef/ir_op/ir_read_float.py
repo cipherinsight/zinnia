@@ -33,9 +33,9 @@ class ReadFloatIR(AbstractIR):
 
     def export(self) -> Dict:
         return {
-            "indices": self.indices
+            "indices": list(self.indices)
         }
 
     @staticmethod
     def import_from(data: Dict) -> 'ReadFloatIR':
-        return ReadFloatIR(data['indices'])
+        return ReadFloatIR(tuple(data['indices']))

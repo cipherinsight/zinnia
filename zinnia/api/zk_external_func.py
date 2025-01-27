@@ -1,7 +1,7 @@
 import inspect
 from typing import Callable
 
-from zinnia.debug.exception import InternalZinniaException
+from zinnia.debug.exception import InternalZinniaException, ZinniaException
 from zinnia.debug.prettifier import prettify_exception
 from zinnia.internal.internal_external_func_object import InternalExternalFuncObject
 
@@ -24,14 +24,21 @@ class ZKExternalFunc:
 
     @staticmethod
     def from_method(method) -> 'ZKExternalFunc':
+        from zinnia.api.zk_chip import ZKChip
+
         if isinstance(method, ZKExternalFunc):
             return method
+        if isinstance(method, ZKChip):
+            raise ZinniaException('Cannot convert a ZKChip into ZKExternalFunc.')
         source_code = inspect.getsource(method)
         method_name = method.__name__
         return ZKExternalFunc(method_name, source_code, method)
 
     def to_internal_object(self) -> InternalExternalFuncObject:
         return InternalExternalFuncObject(self.name, self.callable, self.return_dt)
+
+    def get_name(self) -> str:
+        return self.name
 
 
 def zk_external(method):
