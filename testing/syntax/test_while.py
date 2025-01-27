@@ -1,6 +1,6 @@
 import pytest
 
-from zenopy import zk_circuit, ZKCircuit, zk_chip, Integer
+from zinnia import zk_circuit, ZKCircuit, zk_chip, Integer
 
 
 def test_while():

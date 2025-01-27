@@ -1,6 +1,6 @@
 import pytest
 
-from zenopy import zk_circuit, ZKCircuit
+from zinnia import zk_circuit, ZKCircuit
 
 
 def test_basic_generator_tuple():

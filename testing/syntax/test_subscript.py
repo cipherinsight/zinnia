@@ -1,7 +1,7 @@
 import pytest
 
-from zenopy import zk_circuit, ZKCircuit, Integer, Public
-from zenopy.debug.exception import ZenoPyException
+from zinnia import zk_circuit, ZKCircuit, Integer, Public
+from zinnia.debug.exception import ZenoPyException
 
 
 def test_subscript_in_tuple():

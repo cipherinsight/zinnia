@@ -2,7 +2,7 @@ import os
 
 from setuptools import setup
 
-package = ["zenopy"]
+package = ["zinnia"]
 version = "0.0.1"
 description = (
     "A tool for synthesizing discrete data-generating processes from noisy I/O examples"
@@ -16,7 +16,7 @@ else:
     long_description = description
 
 setup(
-    name="zenopy",
+    name="zinnia",
     version=version,
     description=description,
     long_description=long_description,

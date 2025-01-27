@@ -1,4 +1,4 @@
-from zenopy import zk_circuit, ZKCircuit
+from zinnia import zk_circuit, ZKCircuit
 
 
 def test_create_tuple():

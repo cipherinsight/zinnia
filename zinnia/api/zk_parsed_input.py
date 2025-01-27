@@ -1,0 +1,38 @@
+from typing import Tuple, List, Any
+
+
+class ZKParsedInput:
+    class Kind:
+        FLOAT = "Float"
+        INTEGER = "INTEGER"
+        HASH = "HASH"
+
+    class Entry:
+        def __init__(self, indices: Tuple[int, ...], kind: str, value: Any):
+            self.indices = indices
+            self.kind = kind
+            self.value = value
+
+        def get_indices(self) -> Tuple[int, ...]:
+            return self.indices
+
+        def get_kind(self) -> str:
+            return self.kind
+
+        def is_float(self) -> bool:
+            return self.kind == ZKParsedInput.Kind.FLOAT
+
+        def is_integer(self) -> bool:
+            return self.kind == ZKParsedInput.Kind.INTEGER
+
+        def is_hash(self) -> bool:
+            return self.kind == ZKParsedInput.Kind.HASH
+
+        def get_value(self) -> Any:
+            return self.value
+
+    def __init__(self, entries: List['ZKParsedInput.Entry']):
+        self.entries = entries
+
+    def get_entries(self) -> List['ZKParsedInput.Entry']:
+        return self.entries

@@ -1,7 +1,7 @@
 import pytest
 
-from zenopy import zk_circuit, ZKCircuit, NDArray
-from zenopy.debug.exception import ZenoPyException
+from zinnia import zk_circuit, ZKCircuit, NDArray
+from zinnia.debug.exception import ZenoPyException
 
 
 def test_if():
