@@ -19,6 +19,7 @@ from zinnia.opdef.ir_op.ir_cosh_f import CosHFIR
 from zinnia.opdef.ir_op.ir_div_f import DivFIR
 from zinnia.opdef.ir_op.ir_div_i import DivIIR
 from zinnia.opdef.ir_op.ir_eq_f import EqualFIR
+from zinnia.opdef.ir_op.ir_eq_hash import EqualHashIR
 from zinnia.opdef.ir_op.ir_eq_i import EqualIIR
 from zinnia.opdef.ir_op.ir_exp_f import ExpFIR
 from zinnia.opdef.ir_op.ir_export_external_f import ExportExternalFIR
@@ -32,7 +33,7 @@ from zinnia.opdef.ir_op.ir_gt_f import GreaterThanFIR
 from zinnia.opdef.ir_op.ir_gt_i import GreaterThanIIR
 from zinnia.opdef.ir_op.ir_gte_f import GreaterThanOrEqualFIR
 from zinnia.opdef.ir_op.ir_gte_i import GreaterThanOrEqualIIR
-from zinnia.opdef.ir_op.ir_hash import HashIR
+from zinnia.opdef.ir_op.ir_poseidon_hash import PoseidonHashIR
 from zinnia.opdef.ir_op.ir_int_cast import IntCastIR
 from zinnia.opdef.ir_op.ir_invoke_external import InvokeExternalIR
 from zinnia.opdef.ir_op.ir_log_f import LogFIR
@@ -83,7 +84,7 @@ from zinnia.opdef.nocls.op_float_scalar import FloatScalarOp
 from zinnia.opdef.nocls.op_floor_divide import FloorDivideOp
 from zinnia.opdef.nocls.op_gt import GreaterThanOp
 from zinnia.opdef.nocls.op_gte import GreaterThanOrEqualOp
-from zinnia.opdef.nocls.op_hash import HashOp
+from zinnia.opdef.nocls.op_poseidon_hash import PoseidonHashOp
 from zinnia.opdef.nocls.op_input import InputOp
 from zinnia.opdef.nocls.op_int_cast import IntCastOp
 from zinnia.opdef.nocls.op_integer_scalar import IntegerScalarOp
@@ -357,8 +358,8 @@ class IRBuilderImpl(IRBuilder):
         assert isinstance(result, NoneValue)
         return result
 
-    def op_hash(self, value: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
-        op = HashOp()
+    def op_poseidon_hash(self, value: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+        op = PoseidonHashOp()
         kwargs = op.argparse(dbg, [value], {})
         result = op.build(self, kwargs, dbg)
         assert isinstance(result, IntegerValue)
@@ -371,8 +372,8 @@ class IRBuilderImpl(IRBuilder):
         assert isinstance(result, NoneValue)
         return result
 
-    def ir_hash(self, values: List[NumberValue], dbg: Optional[DebugInfo] = None) -> IntegerValue:
-        ir = HashIR()
+    def ir_poseidon_hash(self, values: List[NumberValue], dbg: Optional[DebugInfo] = None) -> IntegerValue:
+        ir = PoseidonHashIR()
         val, stmt = ir.build_ir(len(self.stmts), ir.argparse(dbg, values, {}), dbg)
         self.stmts.append(stmt)
         assert isinstance(val, IntegerValue)
@@ -427,8 +428,8 @@ class IRBuilderImpl(IRBuilder):
         assert isinstance(val, IntegerValue)
         return val
 
-    def ir_read_hash(self, input_id: int, dbg: Optional[DebugInfo] = None) -> IntegerValue:
-        ir = ReadHashIR(0, input_id)
+    def ir_read_hash(self, indices: Tuple[int, ...], dbg: Optional[DebugInfo] = None) -> IntegerValue:
+        ir = ReadHashIR(indices)
         val, stmt = ir.build_ir(len(self.stmts), {}, dbg)
         self.stmts.append(stmt)
         assert isinstance(val, IntegerValue)
@@ -632,6 +633,13 @@ class IRBuilderImpl(IRBuilder):
 
     def ir_equal_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         ir = EqualFIR()
+        val, stmt = ir.build_ir(len(self.stmts), ir.argparse(dbg, [a, b], {}), dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, IntegerValue)
+        return val
+
+    def ir_equal_hash(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+        ir = EqualHashIR()
         val, stmt = ir.build_ir(len(self.stmts), ir.argparse(dbg, [a, b], {}), dbg)
         self.stmts.append(stmt)
         assert isinstance(val, IntegerValue)

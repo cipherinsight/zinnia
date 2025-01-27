@@ -7,4 +7,3 @@ class _ZKTyping:
 
 Private = _ZKTyping("Private")
 Public = _ZKTyping("Public")
-Hashed = _ZKTyping("Hashed")

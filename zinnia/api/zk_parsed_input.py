@@ -4,8 +4,8 @@ from typing import Tuple, List, Any
 class ZKParsedInput:
     class Kind:
         FLOAT = "Float"
-        INTEGER = "INTEGER"
-        HASH = "HASH"
+        INTEGER = "Integer"
+        HASH = "Hash"
 
     class Entry:
         def __init__(self, indices: Tuple[int, ...], kind: str, value: Any):

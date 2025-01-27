@@ -15,6 +15,7 @@ from zinnia.opdef.ir_op.ir_cosh_f import CosHFIR
 from zinnia.opdef.ir_op.ir_div_f import DivFIR
 from zinnia.opdef.ir_op.ir_div_i import DivIIR
 from zinnia.opdef.ir_op.ir_eq_f import EqualFIR
+from zinnia.opdef.ir_op.ir_eq_hash import EqualHashIR
 from zinnia.opdef.ir_op.ir_eq_i import EqualIIR
 from zinnia.opdef.ir_op.ir_exp_f import ExpFIR
 from zinnia.opdef.ir_op.ir_expose_public_f import ExposePublicFIR
@@ -26,7 +27,7 @@ from zinnia.opdef.ir_op.ir_gt_f import GreaterThanFIR
 from zinnia.opdef.ir_op.ir_gt_i import GreaterThanIIR
 from zinnia.opdef.ir_op.ir_gte_f import GreaterThanOrEqualFIR
 from zinnia.opdef.ir_op.ir_gte_i import GreaterThanOrEqualIIR
-from zinnia.opdef.ir_op.ir_hash import HashIR
+from zinnia.opdef.ir_op.ir_poseidon_hash import PoseidonHashIR
 from zinnia.opdef.ir_op.ir_int_cast import IntCastIR
 from zinnia.opdef.ir_op.ir_log_f import LogFIR
 from zinnia.opdef.ir_op.ir_logical_or import LogicalOrIR
@@ -142,10 +143,8 @@ class _Halo2StatementBuilder:
 
     def _build_ReadHashIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.operator, ReadHashIR)
-        major: int = stmt.operator.major
-        minor: int = stmt.operator.minor
         return [
-            f"let {self._get_var_name(stmt.stmt_id)} = ctx.load_witness(F::from_u128(input.hash_{major}_{minor}));"
+            f"let {self._get_var_name(stmt.stmt_id)} = ctx.load_witness(F::from_u128(input.hash_{'_'.join(map(str, stmt.operator.indices))}));"
         ]
 
     def _build_ReadFloatIR(self, stmt: IRStatement) -> List[str]:
@@ -154,8 +153,8 @@ class _Halo2StatementBuilder:
             f"let {self._get_var_name(stmt.stmt_id)} = ctx.load_witness(fixed_point_chip.quantization(input.x_{'_'.join(map(str, stmt.operator.indices))}));"
         ]
 
-    def _build_HashIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, HashIR)
+    def _build_PoseidonHashIR(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, PoseidonHashIR)
         args = [self._get_var_name(arg) for arg in stmt.arguments]
         return [
             f"let {self._get_var_name(stmt.stmt_id)} = poseidon.hash_fix_len_array(ctx, &gate, &[{', '.join(args)}]);"
@@ -266,6 +265,12 @@ class _Halo2StatementBuilder:
 
     def _build_EqualIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.operator, EqualIIR)
+        lhs = self._get_var_name(stmt.arguments[0])
+        rhs = self._get_var_name(stmt.arguments[1])
+        return [f"let {self._get_var_name(stmt.stmt_id)} = gate.is_equal(ctx, {lhs}, {rhs});"]
+
+    def _build_EqualHashIR(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, EqualHashIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [f"let {self._get_var_name(stmt.stmt_id)} = gate.is_equal(ctx, {lhs}, {rhs});"]
@@ -521,7 +526,7 @@ class Halo2ProgramBuilder(AbstractProgramBuilder):
             elif isinstance(op, ReadFloatIR):
                 self.input_entries.append((op.indices, "Float"))
             elif isinstance(op, ReadHashIR):
-                self.input_entries.append(((op.major, op.minor), "Hash"))
+                self.input_entries.append((op.indices, "Hash"))
 
     def build(self) -> str:
         return self.build_source()

@@ -7,16 +7,16 @@ from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
 from zinnia.compile.builder.value import Value, NDArrayValue, TupleValue, IntegerValue, FloatValue, ListValue
 
 
-class HashOp(AbstractOp):
+class PoseidonHashOp(AbstractOp):
     def __init__(self):
         super().__init__()
 
     def get_signature(self) -> str:
-        return "hash"
+        return "poseidon_hash"
 
     @classmethod
     def get_name(cls) -> str:
-        return "hash"
+        return "poseidon_hash"
 
     def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return [
@@ -26,14 +26,14 @@ class HashOp(AbstractOp):
     def build(self, builder: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         x = kwargs["x"]
         if isinstance(x, IntegerValue):
-            return builder.ir_hash([x])
+            return builder.ir_poseidon_hash([x])
         elif isinstance(x, FloatValue):
-            return builder.ir_hash([x])
+            raise TypeInferenceError(dbg, f"Cannot perform Poseidon hash on Float type.")
         elif isinstance(x, NDArrayValue):
             values = x.flattened_values()
-            return builder.ir_hash(values)
+            return builder.ir_poseidon_hash(values)
         elif isinstance(x, TupleValue) or isinstance(x, ListValue):
             values = x.values()
-            hashes = [builder.op_hash(v) for v in values]
-            return builder.ir_hash(hashes)
+            hashes = [builder.op_poseidon_hash(v) for v in values]
+            return builder.ir_poseidon_hash(hashes)
         raise TypeInferenceError(dbg, f"Operator `{self.get_name()}` on type `{x.type()}` is not defined")

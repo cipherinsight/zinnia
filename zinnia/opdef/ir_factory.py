@@ -14,6 +14,7 @@ from zinnia.opdef.ir_op.ir_cosh_f import CosHFIR
 from zinnia.opdef.ir_op.ir_div_f import DivFIR
 from zinnia.opdef.ir_op.ir_div_i import DivIIR
 from zinnia.opdef.ir_op.ir_eq_f import EqualFIR
+from zinnia.opdef.ir_op.ir_eq_hash import EqualHashIR
 from zinnia.opdef.ir_op.ir_eq_i import EqualIIR
 from zinnia.opdef.ir_op.ir_exp_f import ExpFIR
 from zinnia.opdef.ir_op.ir_export_external_f import ExportExternalFIR
@@ -27,7 +28,7 @@ from zinnia.opdef.ir_op.ir_gt_f import GreaterThanFIR
 from zinnia.opdef.ir_op.ir_gt_i import GreaterThanIIR
 from zinnia.opdef.ir_op.ir_gte_f import GreaterThanOrEqualFIR
 from zinnia.opdef.ir_op.ir_gte_i import GreaterThanOrEqualIIR
-from zinnia.opdef.ir_op.ir_hash import HashIR
+from zinnia.opdef.ir_op.ir_poseidon_hash import PoseidonHashIR
 from zinnia.opdef.ir_op.ir_int_cast import IntCastIR
 from zinnia.opdef.ir_op.ir_invoke_external import InvokeExternalIR
 from zinnia.opdef.ir_op.ir_log_f import LogFIR
@@ -78,6 +79,7 @@ class IRFactory:
         DIV_I = DivIIR
         EQ_F = EqualFIR
         EQ_I = EqualIIR
+        EQ_HASH = EqualHashIR
         EXP_F = ExpFIR
         EXPORT_EXTERNAL_F = ExportExternalFIR
         EXPORT_EXTERNAL_I = ExportExternalIIR
@@ -90,7 +92,7 @@ class IRFactory:
         GT_I = GreaterThanIIR
         GTE_F = GreaterThanOrEqualFIR
         GTE_I = GreaterThanOrEqualIIR
-        HASH = HashIR
+        HASH = PoseidonHashIR
         INT_CAST = IntCastIR
         INVOKE_EXTERNAL = InvokeExternalIR
         LOG_F = LogFIR

@@ -4,7 +4,7 @@ from typing import Any, Tuple, Callable, List, Union
 from zinnia.internal.internal_ndarray import InternalNDArray
 from zinnia.compile.type_sys import DTDescriptor, NumberDTDescriptor, IntegerDTDescriptor, FloatDTDescriptor, \
     NDArrayDTDescriptor, TupleDTDescriptor, ListDTDescriptor, NoneDTDescriptor, ClassDTDescriptor, StringDTDescriptor, \
-    HashedDTDescriptor
+    PoseidonHashedDTDescriptor
 
 
 class Value:
@@ -186,13 +186,13 @@ class NDArrayValue(Value):
         )
 
     def get_item(self, slicing_params: List[int | Tuple[int, int, int]]) -> Value:
-        result = self.get().slice(slicing_params)
+        result = self.get().ndarray_get_item(slicing_params)
         if isinstance(result, InternalNDArray):
             return NDArrayValue(result.shape, self.dtype(), result)
         return result
 
     def set_item(self, slicing_params: List[int | Tuple[int, int, int]], val: Union['NDArrayValue', NumberValue]) -> 'NDArrayValue':
-        return NDArrayValue(self.shape(), self.dtype(), self.get().slice_assign(
+        return NDArrayValue(self.shape(), self.dtype(), self.get().ndarray_set_item(
             slicing_params,
             val.get() if isinstance(val, NDArrayValue) else val,
             lambda x, y: x.assign(y)
@@ -335,30 +335,3 @@ class StringValue(Value):
 
     def __copy__(self):
         return self.__class__(self.val())
-
-
-class HashedValue(Value):
-    def __init__(self, value: Value, hash_value: IntegerValue):
-        super().__init__(HashedDTDescriptor(value.type()))
-        self._value = value
-        self._hash = hash_value
-
-    def val(self) -> Value:
-        return self._value
-
-    def hash_val(self) -> IntegerValue:
-        return self._hash
-
-    def assign(self, value: 'HashedValue') -> 'HashedValue':
-        self._value = value._value
-        self._hash = value._hash
-        return self
-
-    def __copy__(self):
-        return self.__class__(self.val(), self.hash_val())
-
-    def __deepcopy__(self, memo):
-        new_instance = self.__class__(self.val(), self.hash_val())
-        memo[id(self)] = new_instance
-        new_instance._value = copy.deepcopy(self._value, memo)
-        return new_instance

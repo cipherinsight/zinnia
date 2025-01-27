@@ -7,7 +7,6 @@ class ZKProgramInput:
     class Kind:
         PUBLIC = "Public"
         PRIVATE = "Private"
-        HASHED = "Hashed"
 
     def __init__(self, name: str, dt: DTDescriptor, kind: str):
         self.name = name
@@ -28,9 +27,6 @@ class ZKProgramInput:
 
     def is_private(self) -> bool:
         return self.kind == ZKProgramInput.Kind.PRIVATE
-
-    def is_hashed(self) -> bool:
-        return self.kind == ZKProgramInput.Kind.HASHED
 
     def export(self) -> Dict:
         from zinnia.compile.type_sys.dt_factory import DTDescriptorFactory

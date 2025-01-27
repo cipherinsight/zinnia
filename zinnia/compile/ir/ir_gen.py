@@ -2,7 +2,7 @@ from typing import List, Tuple, Dict
 
 from zinnia.compile.ir.ir_graph import IRGraph
 from zinnia.compile.builder.builder_impl import IRBuilderImpl
-from zinnia.compile.builder.value import Value, HashedValue
+from zinnia.compile.builder.value import Value
 from zinnia.compile.ast import ASTComponent, ASTCircuit, ASTAssignStatement, ASTPassStatement, \
     ASTExpression, ASTForInStatement, ASTCondStatement, ASTConstantFloat, ASTConstantInteger, \
     ASTSubscriptExp, ASTLoad, ASTAssertStatement, ASTSquareBrackets, ASTBreakStatement, ASTContinueStatement, \
@@ -52,7 +52,7 @@ class IRGenerator:
     def visit_ASTCircuit(self, n: ASTCircuit):
         for i, inp in enumerate(n.inputs):
             ptr = self._ir_builder.op_input((0, i), inp.annotation.dt, inp.annotation.kind, dbg=n.dbg)
-            self._ir_ctx.set(inp.name, ptr.val() if isinstance(ptr, HashedValue) else ptr)
+            self._ir_ctx.set(inp.name, ptr)
         self._register_global_datatypes()
         for i, stmt in enumerate(n.block):
             self.visit(stmt)

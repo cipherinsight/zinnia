@@ -1,6 +1,6 @@
 import ast
 
-from zinnia.compile.ast import ASTCircuit, ASTCircuitInput
+from zinnia.compile.ast import ASTCircuit, ASTCircuitInput, ASTAnnotation
 from zinnia.compile.transformer.base import ZinniaBaseASTTransformer
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.debug.exception import InvalidProgramException, InvalidCircuitInputException
@@ -26,11 +26,9 @@ class ZinniaCircuitASTTransformer(ZinniaBaseASTTransformer):
             dbg = self.get_dbg(arg)
             name: str = arg.arg
             if arg.annotation is None:
-                raise InvalidCircuitInputException(dbg, "Circuit input must be annotated, e.g. `x: Public[Number]`.")
-            if not isinstance(arg.annotation, ast.Subscript) or not isinstance(arg.annotation.value, ast.Name):
-                raise InvalidCircuitInputException(dbg, f"Invalid input annotation for `{name}`. A valid input annotation should be like `x: Public[Number]`.")
+                raise InvalidCircuitInputException(dbg, "Circuit input must be annotated, e.g. `x: Public[Integer]` or `x: Private[Float]` or `x: Integer`.")
             annotation = self.visit_annotation(arg.annotation, name)
             if annotation.kind is None:
-                raise InvalidCircuitInputException(dbg, f"Invalid input annotation `{arg.annotation.value.id}` for `{name}`. It should be either `Public`, `Private` or `Hashed`. E.g. `x: Public[Number]`.")
+                annotation.kind = ASTAnnotation.Kind.PRIVATE
             results.append(ASTCircuitInput(dbg, name, annotation))
         return results

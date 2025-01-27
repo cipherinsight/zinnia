@@ -8,20 +8,19 @@ from zinnia.debug.dbg_info import DebugInfo
 
 
 class ReadHashIR(AbstractIR):
-    def __init__(self, major: int, minor: int):
+    def __init__(self, indices: Tuple[int, ...]):
         super().__init__()
-        self.major = major
-        self.minor = minor
+        self.indices = indices
 
     def get_signature(self) -> str:
-        return f"read_hash[{self.major}, {self.minor}]"
+        return f"read_hash[{self.indices}]"
 
     @classmethod
     def get_name(cls) -> str:
         return "read_hash"
 
     def __eq__(self, other):
-        return super().__eq__(other) and self.major == other.major and self.minor == other.minor
+        return super().__eq__(other) and self.indices == other.indices
 
     def is_fixed_ir(self) -> bool:
         return True
@@ -34,10 +33,10 @@ class ReadHashIR(AbstractIR):
 
     def export(self) -> Dict:
         return {
-            "indices": (self.major, self.minor)
+            "indices": list(self.indices)
         }
 
     @staticmethod
     def import_from(data: Dict) -> 'ReadHashIR':
         indices = data['indices']
-        return ReadHashIR(indices[0], indices[1])
+        return ReadHashIR(tuple(indices))

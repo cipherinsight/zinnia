@@ -7,16 +7,16 @@ from zinnia.opdef.ir_op.abstract_ir import AbstractIR
 from zinnia.debug.dbg_info import DebugInfo
 
 
-class HashIR(AbstractIR):
+class PoseidonHashIR(AbstractIR):
     def __init__(self):
         super().__init__()
 
     def get_signature(self) -> str:
-        return "hash"
+        return "poseidon_hash"
 
     @classmethod
     def get_name(cls) -> str:
-        return "hash"
+        return "poseidon_hash"
 
     def argparse(self, dbg_i: Optional[DebugInfo], args: List[Any], kwargs: Dict[str, Any]) -> Dict[str, Any]:
         if len(kwargs.items()) != 0:
@@ -29,7 +29,8 @@ class HashIR(AbstractIR):
         return None
 
     def mock_exec(self, kwargs: Dict[str, Any], config: MockExecConfig) -> Any:
-        raise NotImplementedError("TODO")
+        # TODO: implement mock execution for poseidon hash
+        return 0
 
     def build_ir(self, ir_id: int, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Tuple[Value, IRStatement]:
         assert all([isinstance(kwargs[f"x_{i}"], IntegerValue) for i in range(len(kwargs.items()))])
@@ -40,5 +41,5 @@ class HashIR(AbstractIR):
         return {}
 
     @staticmethod
-    def import_from(data: Dict) -> 'HashIR':
-        return HashIR()
+    def import_from(data: Dict) -> 'PoseidonHashIR':
+        return PoseidonHashIR()

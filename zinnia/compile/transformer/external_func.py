@@ -24,5 +24,5 @@ class ZinniaExternalFuncASTTransformer(ZinniaBaseASTTransformer):
         else:
             raise InvalidAnnotationException(dbg, "External Functions must have a return annotation.")
         if return_anno.kind is not None:
-            raise InvalidAnnotationException(self.get_dbg(node.returns), f"Invalid return annotation for external functions. In external functions, the return type should NOT be annotated by `Public`, `Private` or `Hashed` because chip returns are not inputs. Please remove these specifiers and leave the corresponding datatype only.")
+            raise InvalidAnnotationException(self.get_dbg(node.returns), f"Invalid return annotation for external functions. In external functions, the return type should NOT be annotated by `Public` or `Private` because chip returns are not inputs. Please remove these specifiers and leave the corresponding datatype only.")
         return return_anno.dt

@@ -4,6 +4,7 @@ from zinnia.config.zinnia_config import ZinniaConfig
 from zinnia.opdef.ir_op.abstract_ir import AbstractIR
 from zinnia.opdef.ir_op.ir_assert import AssertIR
 from zinnia.opdef.ir_op.ir_read_float import ReadFloatIR
+from zinnia.opdef.ir_op.ir_read_hash import ReadHashIR
 from zinnia.opdef.ir_op.ir_read_integer import ReadIntegerIR
 from .executor import ZKProgramExecutor
 from .exec_ctx import ExecutionContext
@@ -49,8 +50,9 @@ class MockProgramExecutor(ZKProgramExecutor):
         self.value_table[stmt.stmt_id] = val
 
     def exec_ReadHashIR(self, stmt: IRStatement):
-        # TODO: mock execution of Hash
-        raise NotImplementedError()
+        assert isinstance(stmt.operator, ReadHashIR)
+        val = self.input_table[stmt.operator.indices]
+        self.value_table[stmt.stmt_id] = val
 
     def exec_AssertIR(self, stmt: IRStatement):
         assert isinstance(stmt.operator, AssertIR)

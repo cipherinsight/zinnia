@@ -1,76 +1,46 @@
-from typing import Union
-from zinnia.lang.type import *
+from typing import Any
 
-def add(
-    lhs: Integer | Float | NDArray,
-    rhs: Integer | Float | NDArray
-) -> Union[Integer | Float, NDArray]:
+from zinnia.lang.type import Float, Integer, NDArray, Tuple, List
+
+
+def add(lhs: Any, rhs: Any) -> Any:
     pass
 
-def sub(
-    lhs: Integer | Float | NDArray,
-    rhs: Integer | Float | NDArray
-) -> Union[Integer | Float, NDArray]:
+def sub(lhs: Any, rhs: Any) -> Any:
     pass
 
-def mul(
-    lhs: Integer | Float | NDArray,
-    rhs: Integer | Float | NDArray
-) -> Union[Integer | Float, NDArray]:
+def mul(lhs: Any, rhs: Any) -> Any:
     pass
 
-def div(
-    lhs: Integer | Float | NDArray,
-    rhs: Integer | Float | NDArray
-) -> Union[Integer | Float, NDArray]:
+def div(lhs: Any, rhs: Any) -> Any:
     pass
 
-def sin(
-    x: Integer | Float | NDArray
-) -> Union[Integer | Float, NDArray]:
+def sin(x: Any) -> Any:
     pass
 
-def cos(
-    x: Integer | Float | NDArray
-) -> Union[Integer | Float, NDArray]:
+def cos(x: Any) -> Any:
     pass
 
-def tan(
-    x: Integer | Float | NDArray
-) -> Union[Integer | Float, NDArray]:
+def tan(x: Any) -> Any:
     pass
 
-def sinh(
-    x: Integer | Float | NDArray
-) -> Union[Integer | Float, NDArray]:
+def sinh(x: Any) -> Any:
     pass
 
-def cosh(
-    x: Integer | Float | NDArray
-) -> Union[Integer | Float, NDArray]:
+def cosh(x: Any) -> Any:
     pass
 
-def tanh(
-    x: Integer | Float | NDArray
-) -> Union[Integer | Float, NDArray]:
+def tanh(x: Any) -> Any:
     pass
 
-def exp(
-    x: Integer | Float | NDArray
-) -> Union[Integer | Float, NDArray]:
+def exp(x: Any) -> Any:
     pass
 
-def log(
-    x: Integer | Float | NDArray
-) -> Union[Integer | Float, NDArray]:
+def log(x: Any) -> Any:
     pass
 
-def concatenate(
-    *args, axis: Integer = 0
-) -> NDArray:
+def concatenate(arrays: Tuple, axis: Integer = 0) -> NDArray:
     pass
 
-def stack(
-    *args, axis: Integer = 0
-) -> NDArray:
+def stack(arrays: Tuple, axis: Integer = 0) -> NDArray:
     pass

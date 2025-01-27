@@ -28,7 +28,7 @@ class ZinniaChipASTTransformer(ZinniaBaseASTTransformer):
             raise InvalidAnnotationException(dbg, "Chip must have a return annotation. Please specify the return type as None if it does not return anything.")
         if return_anno.kind is not None:
             raise InvalidAnnotationException(self.get_dbg(node.returns),
-                                             f"Invalid return annotation for chips. In chips, the return type should NOT be annotated by `Public`, `Private` or `Hashed` because chip returns are not inputs. Please remove these specifiers and leave the corresponding datatype only.")
+                                             f"Invalid return annotation for chips. In chips, the return type should NOT be annotated by `Public` or `Private` because chip returns are not inputs. Please remove these specifiers and leave the corresponding datatype only.")
         return ASTChip(dbg, self.visit_block(node.body), args, return_anno.dt)
 
     def visit_arguments(self, node):

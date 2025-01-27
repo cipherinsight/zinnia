@@ -23,7 +23,7 @@ class InternalNDArray:
     def shape_matches(self, other: 'InternalNDArray') -> bool:
         return InternalNDArray._shape_matches(self.shape, other.shape)
 
-    def slice(self, slicing: List[int | Tuple[int, int, int]]) -> Any:
+    def ndarray_get_item(self, slicing: List[int | Tuple[int, int, int]]) -> Any:
         padded_slicing = slicing + [(None, None, None) for _ in range(len(self.shape) - len(slicing))]
         def _internal_helper(_depth: int, _slicing: List, _values: List):
             _slice = _slicing[_depth]
@@ -39,9 +39,9 @@ class InternalNDArray:
         number_of_singles = sum(1 for x in padded_slicing if isinstance(x, int))
         if number_of_singles == len(self.shape):
             return new_values
-        return InternalNDArray(shape=InternalNDArray._get_shape_of(new_values), values=new_values)
+        return InternalNDArray(shape=InternalNDArray.get_nested_list_shape(new_values), values=new_values)
 
-    def slice_assign(
+    def ndarray_set_item(
         self,
         slicing_data: List[int | Tuple[int, int, int]],
         other: Union['InternalNDArray', Any],
@@ -55,7 +55,7 @@ class InternalNDArray:
             encoder_next_id += 1
             return encoder_next_id - 1
         numbered_ndarray = self.unary(_encode)
-        sliced_numbered_ndarray = numbered_ndarray.slice(slicing_data)
+        sliced_numbered_ndarray = numbered_ndarray.ndarray_get_item(slicing_data)
         old_value_new_value_mapping = dict()
         def _create_mapping(x, y):
             nonlocal old_value_new_value_mapping
@@ -133,6 +133,8 @@ class InternalNDArray:
 
     @staticmethod
     def directed_broadcast(src: 'InternalNDArray', dst: Tuple[int, ...]) -> 'InternalNDArray':
+        if src.shape == dst:
+            return src
         def _internal_helper(_shape: Tuple[int, ...], _values: List):
             if len(_shape) == 1:
                 return _values[0]
@@ -323,7 +325,7 @@ class InternalNDArray:
         return lhs == rhs
 
     @staticmethod
-    def _get_shape_of(values: List) -> Tuple[int, ...]:
+    def get_nested_list_shape(values: List) -> Tuple[int, ...]:
         def _internal_helper(_vals):
             if isinstance(_vals, List):
                 tailing_shape = _internal_helper(_vals[0])
@@ -332,3 +334,11 @@ class InternalNDArray:
                 return (len(_vals), ) + tailing_shape
             return tuple()
         return _internal_helper(values)
+
+    @staticmethod
+    def is_nested_list_in_good_shape(values: List) -> bool:
+        try:
+            InternalNDArray.get_nested_list_shape(values)
+            return True
+        except AssertionError:
+            return False

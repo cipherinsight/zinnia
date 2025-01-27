@@ -24,6 +24,9 @@ class ListDTDescriptor(DTDescriptor):
     def from_annotation(cls, dbg_i: Optional[DebugInfo], args: List[DTDescriptor | int]) -> 'ListDTDescriptor':
         if len(args) == 0:
             raise InvalidAnnotationException(dbg_i, "Annotation `List` requires 1 or more arguments")
+        for arg in args:
+            if not isinstance(arg, DTDescriptor):
+                raise InvalidAnnotationException(dbg_i, "Annotation `List` requires all type arguments to be a datatype")
         return ListDTDescriptor([arg for arg in args])
 
     def export(self) -> Dict[str, Any]:

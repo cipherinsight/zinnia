@@ -371,9 +371,6 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
             elif node.value.id == ASTAnnotation.Kind.PRIVATE:
                 kind = ASTAnnotation.Kind.PRIVATE
                 node = node.slice
-            elif node.value.id == ASTAnnotation.Kind.HASHED:
-                kind = ASTAnnotation.Kind.HASHED
-                node = node.slice
 
         def _inner_parser(_n: ast.Name | ast.Subscript):
             if isinstance(_n, ast.Name):
@@ -392,19 +389,23 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
                             args.append(elt.value)
                         elif isinstance(elt, ast.Tuple):
                             if not all(isinstance(e, ast.Constant) for e in elt.elts):
-                                raise InvalidAnnotationException(self.get_dbg(elt),
-                                                                 error_msg + f" All tuple elements should be constant.")
+                                raise InvalidAnnotationException(
+                                    self.get_dbg(elt), error_msg + f" All tuple elements should be constant.")
                             args.append(tuple(e.value for e in elt.elts))
                         else:
                             raise InvalidAnnotationException(self.get_dbg(_n), error_msg)
                     return DTDescriptorFactory.create(self.get_dbg(_n), _n.value.id, tuple(args))
                 elif isinstance(_n.slice, ast.Constant):
                     return DTDescriptorFactory.create(self.get_dbg(_n), _n.value.id, (_n.slice.value,))
+                elif isinstance(_n.slice, ast.Name):
+                    return DTDescriptorFactory.create(self.get_dbg(_n), _n.value.id, (_inner_parser(_n.slice),))
+                elif isinstance(_n.slice, ast.Subscript):
+                    return DTDescriptorFactory.create(self.get_dbg(_n), _n.value.id, (_inner_parser(_n.slice),))
             elif isinstance(_n, ast.Constant):
                 if _n.value is None:
                     return NoneDTDescriptor()
-                raise InvalidAnnotationException(self.get_dbg(_n),
-                                                 error_msg + f" Constant value {_n.value} is not supported as an annotation.")
+                raise InvalidAnnotationException(
+                    self.get_dbg(_n), error_msg + f" Constant value {_n.value} is not supported as an annotation.")
             raise InvalidAnnotationException(self.get_dbg(_n), error_msg)
 
         return ASTAnnotation(self.get_dbg(node), _inner_parser(node), kind)

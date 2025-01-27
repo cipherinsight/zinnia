@@ -9,7 +9,6 @@ class ASTAnnotation(ASTComponent):
     class Kind:
         PUBLIC = "Public"
         PRIVATE = "Private"
-        HASHED = "Hashed"
 
     def __init__(self, dbg: DebugInfo, dt: DTDescriptor, kind: str | None):
         super().__init__(dbg)

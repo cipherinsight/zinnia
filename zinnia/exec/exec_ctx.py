@@ -1,5 +1,6 @@
 from typing import Dict, Tuple, List, Any
 
+from zinnia.lang.type import PoseidonHashed, NDArray, Integer, Float
 from zinnia.api.zk_parsed_input import ZKParsedInput
 from zinnia.compile.ir.ir_stmt import IRStatement
 from zinnia.config.mock_exec_config import MockExecConfig
@@ -8,7 +9,7 @@ from zinnia.internal.internal_external_func_object import InternalExternalFuncOb
 from zinnia.internal.internal_ndarray import InternalNDArray
 from zinnia.debug.exception.execution import ZKCircuitParameterException
 from zinnia.compile.type_sys import NDArrayDTDescriptor, FloatDTDescriptor, DTDescriptor, \
-    FloatType, IntegerType, TupleDTDescriptor, ListDTDescriptor, HashedDTDescriptor
+    FloatType, IntegerType, TupleDTDescriptor, ListDTDescriptor, PoseidonHashedDTDescriptor
 from zinnia.opdef.ir_op.ir_assert import AssertIR
 from zinnia.opdef.ir_op.ir_export_external_f import ExportExternalFIR
 from zinnia.opdef.ir_op.ir_export_external_i import ExportExternalIIR
@@ -42,6 +43,9 @@ class ExecutionContext:
         if isinstance(value, tuple):
             items_dt = [self._recursive_infer_datatype(x) for x in value]
             return TupleDTDescriptor(tuple(items_dt))
+        if isinstance(value, PoseidonHashed):
+            inner_dtype = self._recursive_infer_datatype(value.actual_value)
+            return PoseidonHashedDTDescriptor(inner_dtype)
         try:
             import numpy as np
 
@@ -57,6 +61,16 @@ class ExecutionContext:
                 return NDArrayDTDescriptor(shape, dtype)
         except ImportError:
             pass
+        if isinstance(value, NDArray):
+            shape = value.shape
+            dtype = None
+            if value.dtype == Integer:
+                dtype = IntegerType
+            elif value.dtype == Float:
+                dtype = FloatType
+            assert dtype is not None
+            return NDArrayDTDescriptor(shape, dtype)
+
         raise ValueError(f'Unrecognizable value as circuit input: {value}')
 
     def _recursive_verify_datatype_matches(
@@ -100,44 +114,45 @@ class ExecutionContext:
                     if not self._recursive_verify_datatype_matches(expected.dtype, element_dtype):
                         return False
             return True
+        elif isinstance(expected, PoseidonHashedDTDescriptor) and isinstance(got, PoseidonHashedDTDescriptor):
+            return self._recursive_verify_datatype_matches(expected.dtype, got.dtype)
         return False
 
     def _recursive_parse_value_to_entries(
             self,
             indices: Tuple[int, ...],
-            kind: str,
             dt: DTDescriptor,
             value: Any
     ) -> List[ZKParsedInput.Entry]:
         if dt == IntegerType:
             if isinstance(value, int):
-                return [ZKParsedInput.Entry(indices, kind, value)]
+                return [ZKParsedInput.Entry(indices, ZKParsedInput.Kind.INTEGER, value)]
             if isinstance(value, bool):
-                return [ZKParsedInput.Entry(indices, kind, 1 if value else 0)]
+                return [ZKParsedInput.Entry(indices, ZKParsedInput.Kind.INTEGER, 1 if value else 0)]
             try:
                 import numpy as np
 
                 if isinstance(value, np.bool):
-                    return [ZKParsedInput.Entry(indices, kind, 1 if value else 0)]
+                    return [ZKParsedInput.Entry(indices, ZKParsedInput.Kind.INTEGER, 1 if value else 0)]
                 if ExecutionContext._is_numpy_integer(value):
-                    return [ZKParsedInput.Entry(indices, kind, int(value))]
+                    return [ZKParsedInput.Entry(indices, ZKParsedInput.Kind.INTEGER, int(value))]
             except ImportError:
                 pass
             raise NotImplementedError()
         elif isinstance(dt, FloatDTDescriptor):
             if isinstance(value, int):
-                return [ZKParsedInput.Entry(indices, kind, float(value))]
+                return [ZKParsedInput.Entry(indices, ZKParsedInput.Kind.FLOAT, float(value))]
             if isinstance(value, bool):
-                return [ZKParsedInput.Entry(indices, kind, 1.0 if value else 0.0)]
+                return [ZKParsedInput.Entry(indices, ZKParsedInput.Kind.FLOAT, 1.0 if value else 0.0)]
             elif isinstance(value, float):
-                return [ZKParsedInput.Entry(indices, kind, value)]
+                return [ZKParsedInput.Entry(indices, ZKParsedInput.Kind.FLOAT, value)]
             try:
                 import numpy as np
 
                 if isinstance(value, np.bool):
-                    return [ZKParsedInput.Entry(indices, kind, 1.0 if value else 0.0)]
+                    return [ZKParsedInput.Entry(indices, ZKParsedInput.Kind.FLOAT, 1.0 if value else 0.0)]
                 if ExecutionContext._is_numpy_float(value):
-                    return [ZKParsedInput.Entry(indices, kind, float(value))]
+                    return [ZKParsedInput.Entry(indices, ZKParsedInput.Kind.FLOAT, float(value))]
             except ImportError:
                 pass
             raise NotImplementedError()
@@ -145,13 +160,13 @@ class ExecutionContext:
             assert isinstance(value, tuple)
             parsed_result = []
             for i, v in enumerate(value):
-                parsed_result.extend(self._recursive_parse_value_to_entries(indices + (i,), kind, dt.elements_dtype[i], v))
+                parsed_result.extend(self._recursive_parse_value_to_entries(indices + (i,), dt.elements_dtype[i], v))
             return parsed_result
         elif isinstance(dt, ListDTDescriptor):
             assert isinstance(value, list)
             parsed_result = []
             for i, v in enumerate(value):
-                parsed_result.extend(self._recursive_parse_value_to_entries(indices + (i,), kind, dt.elements_dtype[i], v))
+                parsed_result.extend(self._recursive_parse_value_to_entries(indices + (i,), dt.elements_dtype[i], v))
             return parsed_result
         elif isinstance(dt, NDArrayDTDescriptor):
             ndarray = None
@@ -164,21 +179,26 @@ class ExecutionContext:
                     ndarray = InternalNDArray(dt.shape, value.tolist())
             except ImportError:
                 pass
+            if isinstance(value, NDArray):
+                ndarray = value._NDArray__ndarray
             assert ndarray is not None
             flattened_values = ndarray.flatten()
             parsed_result = []
             for i, val in enumerate(flattened_values):
-                parsed_result += self._recursive_parse_value_to_entries(indices + (i, ), kind, dt.dtype, val)
+                parsed_result += self._recursive_parse_value_to_entries(indices + (i, ), dt.dtype, val)
             return parsed_result
-        elif isinstance(dt, HashedDTDescriptor):
-            pass
+        elif isinstance(dt, PoseidonHashedDTDescriptor):
+            assert isinstance(value, PoseidonHashed)
+            parsed_result = [ZKParsedInput.Entry(indices + (1, ), ZKParsedInput.Kind.HASH, value.get_hash())]
+            parsed_result += self._recursive_parse_value_to_entries(indices + (0, ), dt.dtype, value.get_value())
+            return parsed_result
         raise NotImplementedError( "Unsupported datatype for circuit")
 
     def argparse(self, *args, **kwargs) -> ZKParsedInput:
         inputs: List[ZKProgramInput] = self.circuit_inputs
         arg_dict = {}
         for i, arg in enumerate(args):
-            if i > len(inputs):
+            if i >= len(inputs):
                 raise ZKCircuitParameterException(None, f'Too many positional argument provided for the circuit')
             arg_dict[inputs[i].name] = arg
         for key, val in kwargs.items():
@@ -195,8 +215,7 @@ class ExecutionContext:
             inferred_dtype = self._recursive_infer_datatype(arg_dict[inp.name])
             if not self._recursive_verify_datatype_matches(inp.get_dt(), inferred_dtype):
                 raise ZKCircuitParameterException(None, f'Input datatype mismatch for `{inp.name}`. Expected {inp.get_dt()}, got {inferred_dtype}')
-            parsed_result_input_entries += self._recursive_parse_value_to_entries(
-                (0, i,), inp.get_kind(), inp.get_dt(), arg_dict[inp.name])
+            parsed_result_input_entries += self._recursive_parse_value_to_entries((0, i,), inp.get_dt(), arg_dict[inp.name])
         new_inputs = self._execute_external_calls(parsed_result_input_entries)
         return ZKParsedInput(parsed_result_input_entries + new_inputs)
 
@@ -261,7 +280,7 @@ class ExecutionContext:
             elif isinstance(stmt.operator, ReadFloatIR):
                 value_table[stmt.stmt_id] = input_table[stmt.operator.indices]
             elif isinstance(stmt.operator, ReadHashIR):
-                pass  # TODO
+                value_table[stmt.stmt_id] = input_table[stmt.operator.indices]
             elif isinstance(stmt.operator, InvokeExternalIR):
                 external_func = None
                 for name, ef in self.external_funcs.items():
@@ -277,7 +296,7 @@ class ExecutionContext:
                 for key, dt in stmt.operator.kwargs.items():
                     kwargs[key] = self._recursive_construct_python_object(exported_values, stmt.operator.store_idx, key, (), dt)
                 invoke_result = _callable(*args, **kwargs)
-                parsed_entries = self._recursive_parse_value_to_entries((stmt.operator.store_idx,), ZKProgramInput.Kind.PUBLIC, return_dt, invoke_result)
+                parsed_entries = self._recursive_parse_value_to_entries((stmt.operator.store_idx,), return_dt, invoke_result)
                 for entry in parsed_entries:
                     input_table[entry.get_indices()] = entry.get_value()
                 new_inputs += parsed_entries
