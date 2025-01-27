@@ -47,6 +47,8 @@ class ZKCompiledProgram:
 
     @staticmethod
     def deserialize(data: str, external_funcs: List[ZKExternalFunc] = None) -> 'ZKCompiledProgram':
+        if external_funcs is None:
+            external_funcs = []
         payload = json.loads(data)
         _name = payload['name']
         _source = payload['source']
