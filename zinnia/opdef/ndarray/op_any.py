@@ -27,4 +27,4 @@ class NDArray_AnyOp(AbstractAggregator):
         return builder.ir_logical_or(lhs, rhs), None
 
     def initial_func(self, builder: AbsIRBuilderInterface, dt: DTDescriptor, first_ele: NumberValue) -> Tuple[NumberValue, NumberValue | None]:
-        return builder.ir_constant_int(1), None
+        return builder.ir_constant_int(0), None

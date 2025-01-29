@@ -15,7 +15,7 @@ class NDArrayDTDescriptor(DTDescriptor):
         self.dtype = dtype
 
     def __str__(self) -> str:
-        return f'{self.get_typename()}[{self.dtype}, {",".join([str(x) for x in self.shape])}]'
+        return f'{self.get_typename()}[{self.dtype}, {", ".join([str(x) for x in self.shape])}]'
 
     def __eq__(self, other) -> bool:
         return super().__eq__(other) and self.shape == other.shape and self.dtype == other.dtype
