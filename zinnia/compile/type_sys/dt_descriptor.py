@@ -1,6 +1,5 @@
 from typing import Tuple, Optional, Any, Dict, Type, List
 
-from zinnia.debug.exception.transforming import InvalidAnnotationException
 from zinnia.debug.dbg_info import DebugInfo
 
 

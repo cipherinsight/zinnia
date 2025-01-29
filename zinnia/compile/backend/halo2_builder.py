@@ -6,10 +6,12 @@ from zinnia.opdef.ir_op.ir_abs_f import AbsFIR
 from zinnia.opdef.ir_op.ir_abs_i import AbsIIR
 from zinnia.opdef.ir_op.ir_add_f import AddFIR
 from zinnia.opdef.ir_op.ir_add_i import AddIIR
+from zinnia.opdef.ir_op.ir_add_str import AddStrIR
 from zinnia.opdef.ir_op.ir_assert import AssertIR
 from zinnia.opdef.ir_op.ir_bool_cast import BoolCastIR
 from zinnia.opdef.ir_op.ir_constant_int import ConstantIntIR
 from zinnia.opdef.ir_op.ir_constant_float import ConstantFloatIR
+from zinnia.opdef.ir_op.ir_constant_str import ConstantStrIR
 from zinnia.opdef.ir_op.ir_cos_f import CosFIR
 from zinnia.opdef.ir_op.ir_cosh_f import CosHFIR
 from zinnia.opdef.ir_op.ir_div_f import DivFIR
@@ -45,6 +47,7 @@ from zinnia.opdef.ir_op.ir_logical_not import LogicalNotIR
 from zinnia.opdef.ir_op.ir_logical_and import LogicalAndIR
 from zinnia.opdef.ir_op.ir_pow_f import PowFIR
 from zinnia.opdef.ir_op.ir_pow_i import PowIIR
+from zinnia.opdef.ir_op.ir_print import PrintIR
 from zinnia.opdef.ir_op.ir_read_float import ReadFloatIR
 from zinnia.opdef.ir_op.ir_read_hash import ReadHashIR
 from zinnia.opdef.ir_op.ir_read_integer import ReadIntegerIR
@@ -54,6 +57,8 @@ from zinnia.opdef.ir_op.ir_sign_f import SignFIR
 from zinnia.opdef.ir_op.ir_sign_i import SignIIR
 from zinnia.opdef.ir_op.ir_sin_f import SinFIR
 from zinnia.opdef.ir_op.ir_sinh_f import SinHFIR
+from zinnia.opdef.ir_op.ir_str_f import StrFIR
+from zinnia.opdef.ir_op.ir_str_i import StrIIR
 from zinnia.opdef.ir_op.ir_sub_f import SubFIR
 from zinnia.opdef.ir_op.ir_sub_i import SubIIR
 from zinnia.opdef.ir_op.ir_tan_f import TanFIR
@@ -184,6 +189,10 @@ class _Halo2StatementBuilder:
             f"let {self._get_var_name(stmt.stmt_id)} = Constant(fixed_point_chip.quantization({constant_val}));"
         ]
 
+    def _build_ConstantStrIR(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, ConstantStrIR)
+        return []
+
     def _build_FloatCastIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.operator, FloatCastIR)
         x = self._get_var_name(stmt.arguments[0])
@@ -203,6 +212,18 @@ class _Halo2StatementBuilder:
         assert isinstance(stmt.operator, IntCastIR)
         x = self._get_var_name(stmt.arguments[0])
         return [f"let {self._get_var_name(stmt.stmt_id)} = if fixed_point_chip.dequantization({x}) >= 0 {{Constant(F::from(fixed_point_chip.dequantization({x}) as u64))}} else {{gate.neg(ctx, Constant(F::from(fixed_point_chip.dequantization({x}) as u64))))}};"]
+
+    def _build_StrIIR(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, StrIIR)
+        return []
+
+    def _build_StrFIR(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, StrFIR)
+        return []
+
+    def _build_PrintIR(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, PrintIR)
+        return []
 
     def _build_EqualFIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.operator, EqualFIR)
@@ -511,6 +532,10 @@ class _Halo2StatementBuilder:
         return [
             f"let {self._get_var_name(stmt.stmt_id)} = gate.select(ctx, {true_val}, {false_val}, {cond});"
         ]
+
+    def _build_AddStrIR(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.operator, AddStrIR)
+        return []
 
 
 class Halo2ProgramBuilder(AbstractProgramBuilder):

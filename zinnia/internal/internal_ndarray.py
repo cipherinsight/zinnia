@@ -82,6 +82,9 @@ class InternalNDArray:
             return _result
         return _internal_helper(0, self.values)
 
+    def tolist(self) -> List[Any]:
+        return self.values
+
     @staticmethod
     def from_1d_values_and_shape(values_1dim: List[Any], shape: Tuple[int, ...]) -> 'InternalNDArray':
         def _internal_helper(_shape: Tuple[int, ...], _values: List):

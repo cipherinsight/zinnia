@@ -24,6 +24,7 @@ from zinnia.opdef.nocls.op_all import AllOp
 from zinnia.opdef.nocls.op_and import AndOp
 from zinnia.opdef.nocls.op_any import AnyOp
 from zinnia.opdef.nocls.op_assert import AssertOp
+from zinnia.opdef.nocls.op_print import PrintOp
 from zinnia.opdef.nocls.op_set_item import SetItemOp
 from zinnia.opdef.nocls.op_bool_cast import BoolCastOp
 from zinnia.opdef.nocls.op_concatenate import ConcatenateOp
@@ -63,6 +64,7 @@ from zinnia.opdef.nocls.op_sinh import SinHOp
 from zinnia.opdef.nocls.op_get_item import GetItemOp
 from zinnia.opdef.nocls.op_sqrt import SqrtOp
 from zinnia.opdef.nocls.op_stack import StackOp
+from zinnia.opdef.nocls.op_str import StrOp
 from zinnia.opdef.nocls.op_sub import SubOp
 from zinnia.opdef.nocls.op_tan import TanOp
 from zinnia.opdef.nocls.op_tanh import TanHOp
@@ -122,6 +124,8 @@ class Operators:
         STACK = StackOp
         ANY = AnyOp
         ALL = AllOp
+        STR = StrOp
+        PRINT = PrintOp
 
     class NDArray:
         ALL = NDArray_AllOp
@@ -144,12 +148,20 @@ class Operators:
     class Tuple:
         pass
 
+    class List:
+        pass
+
+    class String:
+        pass
+
     @staticmethod
     def get_operator(operator_name: str, class_name: Optional[str]):
         lookup = {
             None: Operators.NoCls,
             "NDArray": Operators.NDArray,
             "Tuple": Operators.Tuple,
+            "List": Operators.List,
+            "String": Operators.String,
         }
         ops = lookup.get(class_name)
         for k, op in ops.__dict__.items():

@@ -4,7 +4,8 @@ from zinnia.debug.dbg_info import DebugInfo
 from zinnia.debug.exception import StaticInferenceError
 from zinnia.opdef.nocls.abstract_arithemetic import AbstractArithemetic
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import Value, TupleValue, ListValue, NumberValue, IntegerValue, FloatValue
+from zinnia.compile.builder.value import Value, TupleValue, ListValue, NumberValue, IntegerValue, FloatValue, \
+    StringValue
 
 
 class MulOp(AbstractArithemetic):
@@ -61,4 +62,18 @@ class MulOp(AbstractArithemetic):
                 lhs.types() * rhs.val(),
                 lhs.values() * rhs.val()
             )
+        elif isinstance(lhs, StringValue) and isinstance(rhs, IntegerValue):
+            if rhs.val() is None:
+                raise StaticInferenceError(dbg, f"Cannot statically inference the number of repetitions")
+            result = lhs
+            for _ in range(rhs.val()):
+                result = builder.ir_add_str(result, lhs)
+            return result
+        elif isinstance(lhs, IntegerValue) and isinstance(rhs, StringValue):
+            if rhs.val() is None:
+                raise StaticInferenceError(dbg, f"Cannot statically inference the number of repetitions")
+            result = rhs
+            for _ in range(lhs.val()):
+                result = builder.ir_add_str(result, rhs)
+            return result
         return super().build(builder, kwargs, dbg)

@@ -127,9 +127,6 @@ class AbsIRBuilderInterface:
     def op_constant_none(self, dbg: Optional[DebugInfo] = None) -> NoneValue:
         raise NotImplementedError()
 
-    def op_constant_string(self, value: str, dbg: Optional[DebugInfo] = None) -> StringValue:
-        raise NotImplementedError()
-
     def op_constant_class(self, dt: DTDescriptor, dbg: Optional[DebugInfo] = None) -> ClassValue:
         raise NotImplementedError()
 
@@ -158,6 +155,12 @@ class AbsIRBuilderInterface:
         raise NotImplementedError()
 
     def op_poseidon_hash(self, value: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+        raise NotImplementedError()
+
+    def op_str(self, value: Value, dbg: Optional[DebugInfo] = None) -> StringValue:
+        raise NotImplementedError()
+
+    def op_ndarray_tolist(self, value: Value, dbg: Optional[DebugInfo] = None) -> ListValue:
         raise NotImplementedError()
 
     def ir_expose_public_i(self, value: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
@@ -203,10 +206,16 @@ class AbsIRBuilderInterface:
     def ir_constant_float(self, value: float, dbg: Optional[DebugInfo] = None) -> FloatValue:
         raise NotImplementedError()
 
+    def ir_constant_str(self, value: str, dbg: Optional[DebugInfo] = None) -> StringValue:
+        raise NotImplementedError()
+
     def ir_add_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         raise NotImplementedError()
 
     def ir_add_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> FloatValue:
+        raise NotImplementedError()
+
+    def ir_add_str(self, a: StringValue, b: StringValue, dbg: Optional[DebugInfo] = None) -> StringValue:
         raise NotImplementedError()
 
     def ir_sub_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
@@ -345,4 +354,13 @@ class AbsIRBuilderInterface:
         raise NotImplementedError()
 
     def ir_pow_f(self, x: FloatValue, exponent: FloatValue, dbg: Optional[DebugInfo] = None) -> FloatValue:
+        raise NotImplementedError()
+
+    def ir_str_i(self, x: IntegerValue, dbg: Optional[DebugInfo] = None) -> StringValue:
+        raise NotImplementedError()
+
+    def ir_str_f(self, x: FloatValue, dbg: Optional[DebugInfo] = None) -> StringValue:
+        raise NotImplementedError()
+
+    def ir_print(self, x: StringValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
         raise NotImplementedError()

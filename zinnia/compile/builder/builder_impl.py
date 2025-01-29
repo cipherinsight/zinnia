@@ -10,10 +10,12 @@ from zinnia.opdef.ir_op.ir_abs_f import AbsFIR
 from zinnia.opdef.ir_op.ir_abs_i import AbsIIR
 from zinnia.opdef.ir_op.ir_add_f import AddFIR
 from zinnia.opdef.ir_op.ir_add_i import AddIIR
+from zinnia.opdef.ir_op.ir_add_str import AddStrIR
 from zinnia.opdef.ir_op.ir_assert import AssertIR
 from zinnia.opdef.ir_op.ir_bool_cast import BoolCastIR
 from zinnia.opdef.ir_op.ir_constant_float import ConstantFloatIR
 from zinnia.opdef.ir_op.ir_constant_int import ConstantIntIR
+from zinnia.opdef.ir_op.ir_constant_str import ConstantStrIR
 from zinnia.opdef.ir_op.ir_cos_f import CosFIR
 from zinnia.opdef.ir_op.ir_cosh_f import CosHFIR
 from zinnia.opdef.ir_op.ir_div_f import DivFIR
@@ -52,6 +54,7 @@ from zinnia.opdef.ir_op.ir_ne_f import NotEqualFIR
 from zinnia.opdef.ir_op.ir_ne_i import NotEqualIIR
 from zinnia.opdef.ir_op.ir_pow_f import PowFIR
 from zinnia.opdef.ir_op.ir_pow_i import PowIIR
+from zinnia.opdef.ir_op.ir_print import PrintIR
 from zinnia.opdef.ir_op.ir_read_float import ReadFloatIR
 from zinnia.opdef.ir_op.ir_read_hash import ReadHashIR
 from zinnia.opdef.ir_op.ir_read_integer import ReadIntegerIR
@@ -62,6 +65,8 @@ from zinnia.opdef.ir_op.ir_sign_i import SignIIR
 from zinnia.opdef.ir_op.ir_sin_f import SinFIR
 from zinnia.opdef.ir_op.ir_sinh_f import SinHFIR
 from zinnia.opdef.ir_op.ir_sqrt_f import SqrtFIR
+from zinnia.opdef.ir_op.ir_str_f import StrFIR
+from zinnia.opdef.ir_op.ir_str_i import StrIIR
 from zinnia.opdef.ir_op.ir_sub_f import SubFIR
 from zinnia.opdef.ir_op.ir_sub_i import SubIIR
 from zinnia.opdef.ir_op.ir_tan_f import TanFIR
@@ -106,6 +111,7 @@ from zinnia.opdef.nocls.op_get_item import GetItemOp
 from zinnia.opdef.nocls.op_set_item import SetItemOp
 from zinnia.opdef.nocls.op_sign import SignOp
 from zinnia.opdef.nocls.op_sqrt import SqrtOp
+from zinnia.opdef.nocls.op_str import StrOp
 from zinnia.opdef.nocls.op_sub import SubOp
 from zinnia.opdef.nocls.op_tuple import TupleOp
 from zinnia.opdef.nocls.op_uadd import UAddOp
@@ -320,9 +326,6 @@ class IRBuilderImpl(IRBuilder):
     def op_constant_none(self, dbg: Optional[DebugInfo] = None) -> NoneValue:
         return NoneValue()
 
-    def op_constant_string(self, value: str, dbg: Optional[DebugInfo] = None) -> StringValue:
-        return StringValue(value)
-
     def op_constant_class(self, dt: DTDescriptor, dbg: Optional[DebugInfo] = None) -> ClassValue:
         return ClassValue(dt)
 
@@ -370,6 +373,20 @@ class IRBuilderImpl(IRBuilder):
         kwargs = op.argparse(dbg, [value], {})
         result = op.build(self, kwargs, dbg)
         assert isinstance(result, NoneValue)
+        return result
+
+    def op_str(self, value: Value, dbg: Optional[DebugInfo] = None) -> StringValue:
+        op = StrOp()
+        kwargs = op.argparse(dbg, [value], {})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, StringValue)
+        return result
+
+    def op_ndarray_tolist(self, value: Value, dbg: Optional[DebugInfo] = None) -> ListValue:
+        op = NDArray_ToListOp()
+        kwargs = op.argparse(dbg, [value], {})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, ListValue)
         return result
 
     def ir_poseidon_hash(self, values: List[NumberValue], dbg: Optional[DebugInfo] = None) -> IntegerValue:
@@ -456,6 +473,13 @@ class IRBuilderImpl(IRBuilder):
         assert isinstance(val, FloatValue)
         return val
 
+    def ir_constant_str(self, value: str, dbg: Optional[DebugInfo] = None) -> StringValue:
+        ir = ConstantStrIR(value)
+        val, stmt = ir.build_ir(len(self.stmts), {}, dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, StringValue)
+        return val
+
     def ir_add_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         ir = AddIIR()
         val, stmt = ir.build_ir(len(self.stmts), ir.argparse(dbg, [a, b], {}), dbg)
@@ -468,6 +492,13 @@ class IRBuilderImpl(IRBuilder):
         val, stmt = ir.build_ir(len(self.stmts), ir.argparse(dbg, [a, b], {}), dbg)
         self.stmts.append(stmt)
         assert isinstance(val, FloatValue)
+        return val
+
+    def ir_add_str(self, a: StringValue, b: StringValue, dbg: Optional[DebugInfo] = None) -> StringValue:
+        ir = AddStrIR()
+        val, stmt = ir.build_ir(len(self.stmts), ir.argparse(dbg, [a, b], {}), dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, StringValue)
         return val
 
     def ir_sub_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
@@ -798,3 +829,23 @@ class IRBuilderImpl(IRBuilder):
         self.stmts.append(stmt)
         assert isinstance(val, NoneValue)
         return val
+
+    def ir_str_i(self, x: IntegerValue, dbg: Optional[DebugInfo] = None) -> StringValue:
+        ir = StrIIR()
+        val, stmt = ir.build_ir(len(self.stmts), ir.argparse(dbg, [x], {}), dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, StringValue)
+        return val
+
+    def ir_str_f(self, x: FloatValue, dbg: Optional[DebugInfo] = None) -> StringValue:
+        ir = StrFIR()
+        val, stmt = ir.build_ir(len(self.stmts), ir.argparse(dbg, [x], {}), dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, StringValue)
+        return val
+
+    def ir_print(self, x: StringValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        ir = PrintIR()
+        val, stmt = ir.build_ir(len(self.stmts), ir.argparse(dbg, [x], {}), dbg)
+        self.stmts.append(stmt)
+        return NoneValue()

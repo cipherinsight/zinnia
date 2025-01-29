@@ -1,5 +1,5 @@
-from .lang.type import Integer, Float, Tuple, List, NDArray, PoseidonHashed
-from .lang.typing import Private, Public
+from .lang.type import Integer, Float, Tuple, List, NDArray, PoseidonHashed, integer, Int, Bool, Boolean, boolean
+from .lang.typing import Private, Public, private, public
 from .api.zk_chip import ZKChip, zk_chip
 from .api.zk_external_func import ZKExternalFunc, zk_external
 from .api.zk_circuit import ZKCircuit, zk_circuit

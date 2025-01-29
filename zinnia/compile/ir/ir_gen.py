@@ -1,8 +1,10 @@
 from typing import List, Tuple, Dict
 
+from zinnia.compile.ast.ast_formatted_value import ASTFormattedValue
+from zinnia.compile.ast.ast_joined_str import ASTJoinedStr
 from zinnia.compile.ir.ir_graph import IRGraph
 from zinnia.compile.builder.builder_impl import IRBuilderImpl
-from zinnia.compile.builder.value import Value
+from zinnia.compile.builder.value import Value, StringValue
 from zinnia.compile.ast import ASTComponent, ASTCircuit, ASTAssignStatement, ASTPassStatement, \
     ASTExpression, ASTForInStatement, ASTCondStatement, ASTConstantFloat, ASTConstantInteger, \
     ASTSubscriptExp, ASTLoad, ASTAssertStatement, ASTSquareBrackets, ASTBreakStatement, ASTContinueStatement, \
@@ -238,7 +240,7 @@ class IRGenerator:
                 return self.visit_external_call(external_func, visited_args, visited_kwargs)
             operator = Operators.instantiate_operator(n.member, n.target)
             if operator is None:
-                raise OperatorOrChipNotFoundException(n.dbg, f"Operator or Chip {n.member} not found")
+                raise OperatorOrChipNotFoundException(n.dbg, f"Operator or Chip `{n.member}` not found")
         else:
             target_ptr = self._ir_ctx.get(n.target)
             if target_ptr is None:
@@ -247,13 +249,15 @@ class IRGenerator:
             operator = Operators.instantiate_operator(n.member, dt.get_typename())
             self_arg = [target_ptr]
             if operator is None:
-                raise OperatorOrChipNotFoundException(n.dbg, f"Operator {n.target}::{n.member} not found")
+                raise OperatorOrChipNotFoundException(n.dbg, f"Operator `{n.target}.{n.member}` not found")
         return self._ir_builder.create_op(operator, self_arg + visited_args, visited_kwargs, dbg=n.dbg)
 
     def visit_ASTExprAttribute(self, n: ASTExprAttribute):
         target_ptr = self.visit(n.target)
         dt = target_ptr.type()
         operator = Operators.instantiate_operator(n.member, dt.get_typename())
+        if operator is None:
+            raise OperatorOrChipNotFoundException(n.dbg, f"Operator or Chip `{n.member}` not found")
         return self._ir_builder.create_op(
             operator,
             [target_ptr] + [self.visit(arg) for arg in n.args],
@@ -271,7 +275,7 @@ class IRGenerator:
         return self._ir_builder.op_constant_none(dbg=n.dbg)
 
     def visit_ASTConstantString(self, n: ASTConstantString):
-        return self._ir_builder.op_constant_string(n.value, dbg=n.dbg)
+        return self._ir_builder.ir_constant_str(n.value, dbg=n.dbg)
 
     def visit_ASTSubscriptExp(self, n: ASTSubscriptExp):
         val_ptr = self.visit(n.val)
@@ -330,6 +334,16 @@ class IRGenerator:
         false_expr = self.visit(n.f_expr)
         cond_ptr = self._ir_builder.op_bool_scalar(cond_ptr, dbg=n.dbg)
         return self._ir_builder.op_select(cond_ptr, true_expr, false_expr)
+
+    def visit_ASTJoinedStr(self, n: ASTJoinedStr):
+        values = [self.visit(val) for val in n.values]
+        str_value = self._ir_builder.ir_constant_str("")
+        for val in values:
+            str_value = self._ir_builder.op_add(str_value, val)
+        return str_value
+
+    def visit_ASTFormattedValue(self, n: ASTFormattedValue):
+        return self._ir_builder.op_str(self.visit(n.value))
 
     def visit_chip_call(self, chip: InternalChipObject, args: List[Value], kwargs: Dict[str, Value]):
         chip_declared_args = [(x.name, x.annotation) for x in chip.chip_ast.inputs]

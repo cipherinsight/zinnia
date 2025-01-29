@@ -5,10 +5,12 @@ from zinnia.opdef.ir_op.ir_abs_f import AbsFIR
 from zinnia.opdef.ir_op.ir_abs_i import AbsIIR
 from zinnia.opdef.ir_op.ir_add_f import AddFIR
 from zinnia.opdef.ir_op.ir_add_i import AddIIR
+from zinnia.opdef.ir_op.ir_add_str import AddStrIR
 from zinnia.opdef.ir_op.ir_assert import AssertIR
 from zinnia.opdef.ir_op.ir_bool_cast import BoolCastIR
 from zinnia.opdef.ir_op.ir_constant_float import ConstantFloatIR
 from zinnia.opdef.ir_op.ir_constant_int import ConstantIntIR
+from zinnia.opdef.ir_op.ir_constant_str import ConstantStrIR
 from zinnia.opdef.ir_op.ir_cos_f import CosFIR
 from zinnia.opdef.ir_op.ir_cosh_f import CosHFIR
 from zinnia.opdef.ir_op.ir_div_f import DivFIR
@@ -47,6 +49,7 @@ from zinnia.opdef.ir_op.ir_ne_f import NotEqualFIR
 from zinnia.opdef.ir_op.ir_ne_i import NotEqualIIR
 from zinnia.opdef.ir_op.ir_pow_f import PowFIR
 from zinnia.opdef.ir_op.ir_pow_i import PowIIR
+from zinnia.opdef.ir_op.ir_print import PrintIR
 from zinnia.opdef.ir_op.ir_read_float import ReadFloatIR
 from zinnia.opdef.ir_op.ir_read_hash import ReadHashIR
 from zinnia.opdef.ir_op.ir_read_integer import ReadIntegerIR
@@ -57,6 +60,8 @@ from zinnia.opdef.ir_op.ir_sign_i import SignIIR
 from zinnia.opdef.ir_op.ir_sin_f import SinFIR
 from zinnia.opdef.ir_op.ir_sinh_f import SinHFIR
 from zinnia.opdef.ir_op.ir_sqrt_f import SqrtFIR
+from zinnia.opdef.ir_op.ir_str_f import StrFIR
+from zinnia.opdef.ir_op.ir_str_i import StrIIR
 from zinnia.opdef.ir_op.ir_sub_f import SubFIR
 from zinnia.opdef.ir_op.ir_sub_i import SubIIR
 from zinnia.opdef.ir_op.ir_tan_f import TanFIR
@@ -125,6 +130,11 @@ class IRFactory:
         SUB_I = SubIIR
         TAN_F = TanFIR
         TANH_F = TanHFIR
+        STR_I = StrIIR
+        STR_F = StrFIR
+        ADD_STR = AddStrIR
+        CONSTANT_STR = ConstantStrIR
+        PRINT = PrintIR
 
     @staticmethod
     def get_ir_class(ir_class_name: str):

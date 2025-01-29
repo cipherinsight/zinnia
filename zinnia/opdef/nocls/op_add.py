@@ -3,7 +3,8 @@ from typing import Callable, Dict, Optional
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.opdef.nocls.abstract_arithemetic import AbstractArithemetic
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import NumberValue, IntegerValue, FloatValue, Value, TupleValue, ListValue
+from zinnia.compile.builder.value import NumberValue, IntegerValue, FloatValue, Value, TupleValue, ListValue, \
+    StringValue
 
 
 class AddOp(AbstractArithemetic):
@@ -42,4 +43,6 @@ class AddOp(AbstractArithemetic):
                 lhs.types() + rhs.types(),
                 lhs.values() + rhs.values()
             )
+        elif isinstance(lhs, StringValue) and isinstance(rhs, StringValue):
+            return builder.ir_add_str(lhs, rhs)
         return super().build(builder, kwargs, dbg)

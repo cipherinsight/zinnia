@@ -5,5 +5,8 @@ class _ZKTyping:
     def __getitem__(self, item):
         pass
 
+
 Private = _ZKTyping("Private")
 Public = _ZKTyping("Public")
+private = Private
+public = Public

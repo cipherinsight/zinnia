@@ -177,6 +177,9 @@ class NDArrayValue(Value):
     def flattened_values(self) -> List[NumberValue]:
         return self.get().flatten()
 
+    def tolist(self) -> List[NumberValue]:
+        return self.get().tolist()
+
     def flatten(self) -> 'NDArrayValue':
         flattened_values = self.get().flatten()
         return NDArrayValue(
@@ -322,16 +325,21 @@ class ClassValue(Value):
 
 
 class StringValue(Value):
-    def __init__(self, value: str):
+    def __init__(self, value: str, ptr: int):
         super().__init__(StringDTDescriptor())
         self._value = value
+        self._ptr = ptr
 
     def val(self) -> str:
         return self._value
 
+    def ptr(self) -> int:
+        return self._ptr
+
     def assign(self, value: 'StringValue') -> 'StringValue':
         self._value = value._value
+        self._ptr = value._ptr
         return self
 
     def __copy__(self):
-        return self.__class__(self.val())
+        return self.__class__(self.val(), self.ptr())
