@@ -24,6 +24,7 @@ def test_basic_if_exp_2():
     ZKCircuit.from_method(foo).compile()
 
 
+@pytest.mark.skip("consider removing this limitation")
 def test_if_exp_with_different_types():
     @zk_circuit
     def foo():

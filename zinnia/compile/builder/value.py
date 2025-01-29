@@ -47,10 +47,10 @@ class NumberValue(Value):
         return self
 
     def __copy__(self):
-        return self.__class__(self.type(), self._value, self._ptr)
+        raise NotImplementedError()
 
     def __deepcopy__(self, memo):
-        return self.__copy__()
+        raise NotImplementedError()
 
 
 class IntegerValue(NumberValue):
@@ -66,6 +66,12 @@ class IntegerValue(NumberValue):
     def assign(self, value: 'IntegerValue') -> 'IntegerValue':
         return super().assign(value)
 
+    def __copy__(self):
+        return self.__class__(self._value, self._ptr)
+
+    def __deepcopy__(self, memo):
+        return self.__copy__()
+
 
 class FloatValue(NumberValue):
     def __init__(self, value: float | None, ptr: int | None):
@@ -79,6 +85,12 @@ class FloatValue(NumberValue):
 
     def assign(self, value: 'IntegerValue') -> 'IntegerValue':
         return super().assign(value)
+
+    def __copy__(self):
+        return self.__class__(self._value, self._ptr)
+
+    def __deepcopy__(self, memo):
+        return self.__copy__()
 
 
 class NDArrayValue(Value):

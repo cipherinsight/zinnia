@@ -3,7 +3,8 @@ from typing import Callable, Dict, Optional
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.opdef.nocls.abstract_compare import AbstractCompare
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import NumberValue, IntegerValue, FloatValue, TupleValue, Value, ListValue
+from zinnia.compile.builder.value import NumberValue, IntegerValue, FloatValue, TupleValue, Value, ListValue, \
+    NDArrayValue
 
 
 class GreaterThanOrEqualOp(AbstractCompare):
@@ -54,4 +55,12 @@ class GreaterThanOrEqualOp(AbstractCompare):
             if len(lhs.values()) > len(rhs.values()):
                 return builder.ir_logical_or(result, all_prev_eq)
             return builder.ir_logical_or(result, builder.op_bool_scalar(builder.op_equal(lhs, rhs)))
+        elif isinstance(lhs, NDArrayValue) and isinstance(rhs, ListValue):
+            return builder.op_greater_than_or_equal(lhs, builder.op_ndarray_asarray(rhs, dbg), dbg)
+        elif isinstance(lhs, ListValue) and isinstance(rhs, NDArrayValue):
+            return builder.op_greater_than_or_equal(builder.op_ndarray_asarray(lhs, dbg), rhs, dbg)
+        elif isinstance(lhs, NDArrayValue) and isinstance(rhs, TupleValue):
+            return builder.op_greater_than_or_equal(lhs, builder.op_ndarray_asarray(rhs, dbg), dbg)
+        elif isinstance(lhs, TupleValue) and isinstance(rhs, NDArrayValue):
+            return builder.op_greater_than_or_equal(builder.op_ndarray_asarray(lhs, dbg), rhs, dbg)
         return super().build(builder, kwargs, dbg)

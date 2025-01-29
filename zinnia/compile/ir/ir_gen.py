@@ -404,8 +404,10 @@ class IRGenerator:
     def _register_global_datatypes(self):
         float_class = self._ir_builder.op_constant_class(FloatDTDescriptor())
         integer_class = self._ir_builder.op_constant_class(IntegerDTDescriptor())
-        self._ir_ctx.set("Float", float_class)
-        self._ir_ctx.set("Integer", integer_class)
+        for name in FloatDTDescriptor.get_alise_typenames():
+            self._ir_ctx.set(name, float_class)
+        for name in IntegerDTDescriptor.get_alise_typenames():
+            self._ir_ctx.set(name, integer_class)
 
     def _do_recursive_assign(self, target: ASTAssignTarget, value: Value, conditional_select: bool):
         if isinstance(target, ASTNameAssignTarget):

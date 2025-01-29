@@ -3,7 +3,8 @@ from typing import Callable, Optional, Dict
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.opdef.nocls.abstract_compare import AbstractCompare
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import NumberValue, IntegerValue, FloatValue, Value, TupleValue, ListValue
+from zinnia.compile.builder.value import NumberValue, IntegerValue, FloatValue, Value, TupleValue, ListValue, \
+    ClassValue, NDArrayValue
 
 
 class NotEqualOp(AbstractCompare):
@@ -46,4 +47,16 @@ class NotEqualOp(AbstractCompare):
             for l, r in zip(lhs.values(), rhs.values()):
                 result = builder.ir_logical_or(result, builder.op_bool_scalar(builder.op_not_equal(l, r)))
             return result
+        elif isinstance(lhs, ClassValue) and isinstance(rhs, ClassValue):
+            return builder.ir_constant_int(1) if lhs.val() != rhs.val() else builder.ir_constant_int(0)
+        elif isinstance(lhs, ClassValue) and isinstance(rhs, ClassValue):
+            return builder.ir_constant_int(1) if lhs.val() == rhs.val() else builder.ir_constant_int(0)
+        elif isinstance(lhs, NDArrayValue) and isinstance(rhs, ListValue):
+            return builder.op_not_equal(lhs, builder.op_ndarray_asarray(rhs, dbg), dbg)
+        elif isinstance(lhs, ListValue) and isinstance(rhs, NDArrayValue):
+            return builder.op_not_equal(builder.op_ndarray_asarray(lhs, dbg), rhs, dbg)
+        elif isinstance(lhs, NDArrayValue) and isinstance(rhs, TupleValue):
+            return builder.op_not_equal(lhs, builder.op_ndarray_asarray(rhs, dbg), dbg)
+        elif isinstance(lhs, TupleValue) and isinstance(rhs, NDArrayValue):
+            return builder.op_not_equal(builder.op_ndarray_asarray(lhs, dbg), rhs, dbg)
         return super().build(builder, kwargs, dbg)

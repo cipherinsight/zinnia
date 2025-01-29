@@ -160,7 +160,13 @@ class AbsIRBuilderInterface:
     def op_str(self, value: Value, dbg: Optional[DebugInfo] = None) -> StringValue:
         raise NotImplementedError()
 
-    def op_ndarray_tolist(self, value: Value, dbg: Optional[DebugInfo] = None) -> ListValue:
+    def op_ndarray_tolist(self, value: NDArrayValue, dbg: Optional[DebugInfo] = None) -> ListValue:
+        raise NotImplementedError()
+
+    def op_ndarray_asarray(self, value: ListValue | TupleValue, dbg: Optional[DebugInfo] = None) -> NDArrayValue:
+        raise NotImplementedError()
+
+    def op_ndarray_astype(self, value: NDArrayValue, dtype: ClassValue, dbg: Optional[DebugInfo] = None) -> NDArrayValue:
         raise NotImplementedError()
 
     def ir_expose_public_i(self, value: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:

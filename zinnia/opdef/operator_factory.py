@@ -4,10 +4,14 @@ from typing import Optional
 from zinnia.opdef.ndarray.op_T import NDArray_TOp
 from zinnia.opdef.ndarray.op_argmax import NDArray_ArgMaxOp
 from zinnia.opdef.ndarray.op_argmin import NDArray_ArgMinOp
+from zinnia.opdef.ndarray.op_asarray import NDArray_AsarrayOp
+from zinnia.opdef.ndarray.op_astype import NDArray_AsTypeOp
+from zinnia.opdef.ndarray.op_dtype import NDArray_DtypeOp
 from zinnia.opdef.ndarray.op_flat import NDArray_FlatOp
 from zinnia.opdef.ndarray.op_max import NDArray_MaxOp
 from zinnia.opdef.ndarray.op_min import NDArray_MinOp
 from zinnia.opdef.ndarray.op_reshape import NDArray_ReshapeOp
+from zinnia.opdef.ndarray.op_tolist import NDArray_ToListOp
 from zinnia.opdef.ndarray.op_transpose import NDArray_TransposeOp
 from zinnia.opdef.nocls.abstract_op import AbstractOp
 from zinnia.opdef.ndarray.op_all import NDArray_AllOp
@@ -144,6 +148,10 @@ class Operators:
         ARGMAX = NDArray_ArgMaxOp
         FLAT = NDArray_FlatOp
         RESHAPE = NDArray_ReshapeOp
+        ASARRAY = NDArray_AsarrayOp
+        TOLIST = NDArray_ToListOp
+        DTYPE = NDArray_DtypeOp
+        ASTYPE = NDArray_AsTypeOp
 
     class Tuple:
         pass

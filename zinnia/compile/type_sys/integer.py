@@ -15,7 +15,8 @@ class IntegerDTDescriptor(NumberDTDescriptor):
 
     @classmethod
     def get_alise_typenames(cls) -> List[str]:
-        return ["Integer", "int", "Int", "integer"]
+        # TODO: temporarily treat bool as integer. Please implement bool.
+        return ["Integer", "int", "Int", "integer", "Boolean", "bool", "Bool", "boolean"]
 
     @classmethod
     def from_annotation(cls, dbg_i: Optional[DebugInfo], args: Tuple[DTDescriptor | int, ...]) -> 'IntegerDTDescriptor':

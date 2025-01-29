@@ -21,7 +21,8 @@ class NDArray_IdentityOp(AbstractOp):
 
     def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return [
-            AbstractOp._ParamEntry("n")
+            AbstractOp._ParamEntry("n"),
+            AbstractOp._ParamEntry("dtype", True)
         ]
 
     def build(self, builder: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:

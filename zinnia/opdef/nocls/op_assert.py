@@ -4,7 +4,7 @@ from zinnia.debug.exception import TypeInferenceError, StaticInferenceError
 from zinnia.opdef.nocls.abstract_op import AbstractOp
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import Value, IntegerValue
+from zinnia.compile.builder.value import Value, IntegerValue, NDArrayValue
 
 
 class AssertOp(AbstractOp):
@@ -35,4 +35,7 @@ class AssertOp(AbstractOp):
             if operand.val() == 0 and condition.val() != 0:
                 raise StaticInferenceError(dbg, "Assertion is always unsatisfiable")
             return builder.ir_assert(builder.ir_select_i(condition, operand, builder.ir_constant_int(1)), dbg)
+        elif isinstance(operand, NDArrayValue):
+            operand_val = builder.op_bool_scalar(operand, dbg)
+            return builder.ir_assert(builder.ir_select_i(condition, operand_val, builder.ir_constant_int(1)), dbg)
         raise TypeInferenceError(dbg, f"Type `{operand.type()}` is not supported on operator `{self.get_signature()}`. It only accepts an Integer value")

@@ -71,8 +71,11 @@ from zinnia.opdef.ir_op.ir_sub_f import SubFIR
 from zinnia.opdef.ir_op.ir_sub_i import SubIIR
 from zinnia.opdef.ir_op.ir_tan_f import TanFIR
 from zinnia.opdef.ir_op.ir_tanh_f import TanHFIR
+from zinnia.opdef.ndarray.op_asarray import NDArray_AsarrayOp
+from zinnia.opdef.ndarray.op_astype import NDArray_AsTypeOp
 from zinnia.opdef.ndarray.op_get_item import NDArray_GetItemOp
 from zinnia.opdef.ndarray.op_set_item import NDArray_SetItemOp
+from zinnia.opdef.ndarray.op_tolist import NDArray_ToListOp
 from zinnia.opdef.nocls.abstract_op import AbstractOp
 from zinnia.opdef.nocls.op_abs import AbsOp
 from zinnia.opdef.nocls.op_add import AddOp
@@ -382,11 +385,25 @@ class IRBuilderImpl(IRBuilder):
         assert isinstance(result, StringValue)
         return result
 
-    def op_ndarray_tolist(self, value: Value, dbg: Optional[DebugInfo] = None) -> ListValue:
+    def op_ndarray_tolist(self, value: NDArrayValue, dbg: Optional[DebugInfo] = None) -> ListValue:
         op = NDArray_ToListOp()
         kwargs = op.argparse(dbg, [value], {})
         result = op.build(self, kwargs, dbg)
         assert isinstance(result, ListValue)
+        return result
+
+    def op_ndarray_asarray(self, value: ListValue | TupleValue, dbg: Optional[DebugInfo] = None) -> NDArrayValue:
+        op = NDArray_AsarrayOp()
+        kwargs = op.argparse(dbg, [value], {})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, NDArrayValue)
+        return result
+
+    def op_ndarray_astype(self, value: NDArrayValue, dtype: ClassValue, dbg: Optional[DebugInfo] = None) -> NDArrayValue:
+        op = NDArray_AsTypeOp()
+        kwargs = op.argparse(dbg, [value, dtype], {})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, NDArrayValue)
         return result
 
     def ir_poseidon_hash(self, values: List[NumberValue], dbg: Optional[DebugInfo] = None) -> IntegerValue:

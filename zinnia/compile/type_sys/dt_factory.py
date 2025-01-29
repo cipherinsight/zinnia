@@ -17,7 +17,8 @@ from zinnia.debug.exception import InvalidAnnotationException
 class DTDescriptorFactory:
     DATATYPE_REGISTRY = [
         NDArrayDTDescriptor, TupleDTDescriptor, ListDTDescriptor, IntegerDTDescriptor, FloatDTDescriptor,
-        BooleanDTDescriptor, NoneDTDescriptor, ClassDTDescriptor, PoseidonHashedDTDescriptor
+        NoneDTDescriptor, ClassDTDescriptor, PoseidonHashedDTDescriptor,
+        # BooleanDTDescriptor (TODO: temporarily disabled. Implement bool.)
     ]
 
     @staticmethod

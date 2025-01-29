@@ -27,9 +27,9 @@ class IntCastOp(AbstractOp):
 
     def build(self, builder: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         x = kwargs["x"]
-        if isinstance(x, IntegerValue):
-            return builder.ir_float_cast(x)
-        elif isinstance(x, FloatValue):
+        if isinstance(x, FloatValue):
+            return builder.ir_int_cast(x)
+        elif isinstance(x, IntegerValue):
             return copy.copy(x)
         elif isinstance(x, NDArrayValue):
             if x.dtype() == FloatType:
