@@ -3,7 +3,12 @@ from typing import Any
 from zinnia.lang.metatype import NDArrayMeta, PoseidonHashedMeta
 
 
+Boolean = bool
+boolean = bool
+Bool = bool
 Integer = int
+integer = int
+Int = int
 Float = float
 Tuple = tuple
 List = list

@@ -9,7 +9,8 @@ from zinnia.internal.internal_external_func_object import InternalExternalFuncOb
 from zinnia.internal.internal_ndarray import InternalNDArray
 from zinnia.debug.exception.execution import ZKCircuitParameterException
 from zinnia.compile.type_sys import NDArrayDTDescriptor, FloatDTDescriptor, DTDescriptor, \
-    FloatType, IntegerType, TupleDTDescriptor, ListDTDescriptor, PoseidonHashedDTDescriptor
+    FloatType, IntegerType, TupleDTDescriptor, ListDTDescriptor, PoseidonHashedDTDescriptor, BooleanType, \
+    BooleanDTDescriptor
 from zinnia.opdef.ir_op.ir_assert import AssertIR
 from zinnia.opdef.ir_op.ir_export_external_f import ExportExternalFIR
 from zinnia.opdef.ir_op.ir_export_external_i import ExportExternalIIR
@@ -84,6 +85,10 @@ class ExecutionContext:
             return True
         elif expected == IntegerType and got == FloatType:
             return False
+        elif expected == BooleanType and got == IntegerType:
+            return True
+        elif expected == IntegerType and got == BooleanType:
+            return True
         elif isinstance(expected, ListDTDescriptor) and isinstance(got, ListDTDescriptor):
             if len(expected.elements_dtype) != len(got.elements_dtype):
                 return False
@@ -156,6 +161,21 @@ class ExecutionContext:
             except ImportError:
                 pass
             raise NotImplementedError()
+        elif isinstance(dt, BooleanDTDescriptor):
+            if isinstance(value, int):
+                return [ZKParsedInput.Entry(indices, ZKParsedInput.Kind.INTEGER, 1 if value != 0 else 0)]
+            if isinstance(value, bool):
+                return [ZKParsedInput.Entry(indices, ZKParsedInput.Kind.INTEGER, 1 if value else 0)]
+            try:
+                import numpy as np
+
+                if isinstance(value, np.bool):
+                    return [ZKParsedInput.Entry(indices, ZKParsedInput.Kind.INTEGER, 1 if value else 0)]
+                if ExecutionContext._is_numpy_integer(value):
+                    return [ZKParsedInput.Entry(indices, ZKParsedInput.Kind.INTEGER, 1 if value != 0 else 0)]
+            except ImportError:
+                pass
+            raise NotImplementedError()
         elif isinstance(dt, TupleDTDescriptor):
             assert isinstance(value, tuple)
             parsed_result = []
@@ -192,7 +212,7 @@ class ExecutionContext:
             parsed_result = [ZKParsedInput.Entry(indices + (1, ), ZKParsedInput.Kind.HASH, value.get_hash())]
             parsed_result += self._recursive_parse_value_to_entries(indices + (0, ), dt.dtype, value.get_value())
             return parsed_result
-        raise NotImplementedError( "Unsupported datatype for circuit")
+        raise NotImplementedError(f"Unsupported datatype {dt} for circuit")
 
     def argparse(self, *args, **kwargs) -> ZKParsedInput:
         inputs: List[ZKProgramInput] = self.circuit_inputs

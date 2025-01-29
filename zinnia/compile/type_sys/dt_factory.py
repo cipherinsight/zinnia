@@ -1,6 +1,7 @@
 from typing import Optional, Tuple, Dict
 
 from zinnia.compile.type_sys import PoseidonHashedDTDescriptor
+from zinnia.compile.type_sys.boolean import BooleanDTDescriptor
 from zinnia.compile.type_sys.clazz import ClassDTDescriptor
 from zinnia.compile.type_sys.dt_descriptor import DTDescriptor
 from zinnia.compile.type_sys.float import FloatDTDescriptor
@@ -16,7 +17,7 @@ from zinnia.debug.exception import InvalidAnnotationException
 class DTDescriptorFactory:
     DATATYPE_REGISTRY = [
         NDArrayDTDescriptor, TupleDTDescriptor, ListDTDescriptor, IntegerDTDescriptor, FloatDTDescriptor,
-        NoneDTDescriptor, ClassDTDescriptor, PoseidonHashedDTDescriptor
+        BooleanDTDescriptor, NoneDTDescriptor, ClassDTDescriptor, PoseidonHashedDTDescriptor
     ]
 
     @staticmethod

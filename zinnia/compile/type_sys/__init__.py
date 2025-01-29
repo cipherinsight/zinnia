@@ -2,6 +2,7 @@ from zinnia.compile.type_sys.clazz import ClassDTDescriptor
 from zinnia.compile.type_sys.dt_descriptor import DTDescriptor
 from zinnia.compile.type_sys.float import FloatDTDescriptor
 from zinnia.compile.type_sys.integer import IntegerDTDescriptor
+from zinnia.compile.type_sys.boolean import BooleanDTDescriptor
 from zinnia.compile.type_sys.list import ListDTDescriptor
 from zinnia.compile.type_sys.ndarray import NDArrayDTDescriptor
 from zinnia.compile.type_sys.none import NoneDTDescriptor
@@ -13,6 +14,7 @@ from zinnia.compile.type_sys.dt_factory import DTDescriptorFactory
 
 FloatType = FloatDTDescriptor()
 IntegerType = IntegerDTDescriptor()
+BooleanType = BooleanDTDescriptor()
 NumberType = NumberDTDescriptor()
 NoneType = NoneDTDescriptor()
 StringType = StringDTDescriptor()
