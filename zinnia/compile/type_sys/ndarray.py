@@ -1,4 +1,4 @@
-from typing import Tuple, Any, Dict, Optional
+from typing import Tuple, Any, Dict, Optional, List
 
 from zinnia.compile.type_sys.dt_descriptor import DTDescriptor
 from zinnia.compile.type_sys.float import FloatDTDescriptor
@@ -21,8 +21,12 @@ class NDArrayDTDescriptor(DTDescriptor):
         return super().__eq__(other) and self.shape == other.shape and self.dtype == other.dtype
 
     @classmethod
-    def get_typename(cls):
+    def get_typename(cls) -> str:
         return "NDArray"
+
+    @classmethod
+    def get_alise_typenames(cls) -> List[str]:
+        return ["NDArray"]
 
     @classmethod
     def from_annotation(cls, dbg_i: Optional[DebugInfo], args: Tuple[DTDescriptor | int, ...]) -> 'NDArrayDTDescriptor':

@@ -24,7 +24,7 @@ class DTDescriptorFactory:
         if args is None:
             args = tuple()
         for datatype in DTDescriptorFactory.DATATYPE_REGISTRY:
-            if datatype.get_typename() == typename:
+            if typename in datatype.get_alise_typenames():
                 return datatype.from_annotation(dbg_i, args)
         raise InvalidAnnotationException(dbg_i, f'`{typename}` is not a valid type name')
 

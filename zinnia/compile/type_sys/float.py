@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 
 from zinnia.compile.type_sys.dt_descriptor import DTDescriptor
 from zinnia.compile.type_sys.number import NumberDTDescriptor
@@ -10,8 +10,12 @@ class FloatDTDescriptor(NumberDTDescriptor):
         super().__init__()
 
     @classmethod
-    def get_typename(cls):
+    def get_typename(cls) -> str:
         return "Float"
+
+    @classmethod
+    def get_alise_typenames(cls) -> List[str]:
+        return ["Float", "float"]
 
     @classmethod
     def from_annotation(cls, dbg_i: Optional[DebugInfo], args: Tuple[DTDescriptor | int, ...]) -> 'FloatDTDescriptor':

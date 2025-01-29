@@ -27,8 +27,12 @@ class DTDescriptor(object):
         raise NotImplementedError()
 
     @classmethod
-    def get_typename(cls):
+    def get_typename(cls) -> str:
         raise NotImplementedError()
+
+    @classmethod
+    def get_alise_typenames(cls) -> List[str]:
+        return [cls.get_typename()]
 
     @classmethod
     def from_annotation(cls, dbg_i: Optional[DebugInfo], args: Tuple[Any, ...]) -> 'DTDescriptor':

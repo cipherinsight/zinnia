@@ -1,4 +1,4 @@
-from typing import Tuple, Dict, Any, Optional
+from typing import Tuple, Dict, Any, Optional, List
 
 from zinnia.compile.type_sys.dt_descriptor import DTDescriptor
 from zinnia.debug.dbg_info import DebugInfo
@@ -19,6 +19,10 @@ class TupleDTDescriptor(DTDescriptor):
     @classmethod
     def get_typename(cls):
         return "Tuple"
+
+    @classmethod
+    def get_alise_typenames(cls) -> List[str]:
+        return ["Tuple", "tuple"]
 
     @classmethod
     def from_annotation(cls, dbg_i: Optional[DebugInfo], args: Tuple[DTDescriptor | int, ...]) -> 'TupleDTDescriptor':
