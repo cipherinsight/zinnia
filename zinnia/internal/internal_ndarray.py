@@ -202,6 +202,12 @@ class InternalNDArray:
                 if depth < axis:
                     return [_internal_helper(_shape[1:], depth + 1, x) for x in _operand]
                 elif depth == axis:
+                    if len(_shape) == 1:
+                        result = initial_generator(_operand[0])
+                        for i, x in enumerate(_operand):
+                            a, b = enpair_func(x, i)
+                            result = accumulator(result[0], result[1], a, b)
+                        return result
                     result = _generate_initial_by_shape(_shape[1:], _operand[0])
                     for i, x in enumerate(_operand):
                         result = _binary_accumulate(_shape[1:], result, x, i)
@@ -219,6 +225,47 @@ class InternalNDArray:
                 return _parsing_helper(val, idx)
             new_values = _parsing_helper(new_shape, new_values)
             return InternalNDArray(shape=new_shape, values=new_values)
+
+    def transpose(self, axes: Tuple[int, ...]) -> 'InternalNDArray':
+        assert tuple(sorted(axes)) == tuple(i for i in range(len(self.shape)))
+        values = self.flatten()
+        # Compute the new shape after transposition
+        new_shape = tuple(self.shape[axis] for axis in axes)
+
+        # Convert flat index to multi-index
+        def unravel_index(index, shape):
+            result = []
+            for size in reversed(shape):
+                result.append(index % size)
+                index //= size
+            return tuple(reversed(result))
+
+        # Convert multi-index to flat index
+        def ravel_index(indices, shape):
+            flat_index = 0
+            for i, s in zip(indices, shape):
+                flat_index = flat_index * s + i
+            return flat_index
+
+        # Initialize the transposed array
+        transposed = [None] * len(values)
+
+        # Map values to their new positions
+        for flat_idx in range(len(values)):
+            original_idx = unravel_index(flat_idx, self.shape)
+            new_idx = tuple(original_idx[axis] for axis in axes)
+            new_flat_idx = ravel_index(new_idx, new_shape)
+            transposed[new_flat_idx] = values[flat_idx]
+
+        # Recursively reshape the flattened transposed array into nested lists
+        def reshape(flat_list, shape):
+            if len(shape) == 1:
+                return flat_list
+            size = shape[0]
+            sub_size = len(flat_list) // size
+            return [reshape(flat_list[i * sub_size:(i + 1) * sub_size], shape[1:]) for i in range(size)]
+
+        return InternalNDArray(new_shape, reshape(transposed, new_shape))
 
     def for_each(self, func: Callable[[Tuple[int, ...], Any], Any]) -> 'InternalNDArray':
         def _internal_helper(_indices: Tuple[int, ...], _depth: int, _operand: List):

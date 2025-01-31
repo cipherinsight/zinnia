@@ -27,8 +27,8 @@ class AnyOp(AbstractOp):
         x = kwargs["x"]
         if isinstance(x, NDArrayValue):
             result = builder.ir_constant_int(0)
-            for v in x.flattened_values():
-                result = builder.ir_logical_or(result, builder.op_bool_scalar(v))
+            for i in range(x.shape()[0]):
+                result = builder.ir_logical_or(result, builder.op_bool_scalar(builder.op_ndarray_get_item(x, builder.op_square_brackets([builder.ir_constant_int(i)]))))
             return result
         elif isinstance(x, ListValue):
             result = builder.ir_constant_int(0)

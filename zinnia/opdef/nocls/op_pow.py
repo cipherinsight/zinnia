@@ -53,7 +53,7 @@ class PowOp(AbstractOp):
     def _build_pow(self, builder: AbsIRBuilderInterface, x: NumberValue, exponent: NumberValue) -> NumberValue:
         if isinstance(x, IntegerValue) and isinstance(exponent, IntegerValue):
             return builder.ir_pow_i(x, exponent)
-        elif isinstance(x, FloatValue) or isinstance(exponent, FloatValue):
+        elif isinstance(x, FloatValue) and isinstance(exponent, FloatValue):
             return builder.ir_pow_f(x, exponent)
         elif isinstance(x, IntegerValue) and isinstance(exponent, FloatValue):
             return builder.ir_pow_f(builder.ir_float_cast(x), exponent)

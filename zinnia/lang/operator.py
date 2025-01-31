@@ -44,3 +44,9 @@ def concatenate(arrays: Tuple, axis: Integer = 0) -> NDArray:
 
 def stack(arrays: Tuple, axis: Integer = 0) -> NDArray:
     pass
+
+def argmax(array: NDArray, axis: Integer = None) -> Any:
+    pass
+
+def argmin(array: NDArray, axis: Integer = None) -> Any:
+    pass

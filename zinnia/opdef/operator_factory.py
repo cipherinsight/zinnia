@@ -70,6 +70,7 @@ from zinnia.opdef.nocls.op_sqrt import SqrtOp
 from zinnia.opdef.nocls.op_stack import StackOp
 from zinnia.opdef.nocls.op_str import StrOp
 from zinnia.opdef.nocls.op_sub import SubOp
+from zinnia.opdef.nocls.op_sum import SumOp
 from zinnia.opdef.nocls.op_tan import TanOp
 from zinnia.opdef.nocls.op_tanh import TanHOp
 from zinnia.opdef.nocls.op_tuple import TupleOp
@@ -130,6 +131,7 @@ class Operators:
         ALL = AllOp
         STR = StrOp
         PRINT = PrintOp
+        SUM = SumOp
 
     class NDArray:
         ALL = NDArray_AllOp

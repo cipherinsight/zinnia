@@ -200,6 +200,14 @@ class NDArrayValue(Value):
             InternalNDArray((len(flattened_values),), flattened_values)
         )
 
+    def transpose(self, axes: Tuple[int, ...]) -> 'NDArrayValue':
+        internal_ndarray = self.get().transpose(axes)
+        return NDArrayValue(
+            internal_ndarray.shape,
+            self.dtype(),
+            internal_ndarray
+        )
+
     def get_item(self, slicing_params: List[int | Tuple[int, int, int]]) -> Value:
         result = self.get().ndarray_get_item(slicing_params)
         if isinstance(result, InternalNDArray):

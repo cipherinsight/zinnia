@@ -1,3 +1,4 @@
+import copy
 from typing import List, Dict, Optional
 
 from zinnia.opdef.nocls.abstract_op import AbstractOp
@@ -25,6 +26,4 @@ class NDArray_TOp(AbstractOp):
     def build(self, builder: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         the_self = kwargs["self"]
         assert isinstance(the_self, NDArrayValue)
-        new_shape = the_self.shape()[::-1]
-        flattened_values = the_self.get().flatten()
-        return NDArrayValue.from_shape_and_vector(new_shape, the_self.dtype(), flattened_values)
+        return copy.deepcopy(the_self.transpose(tuple(range(len(the_self.shape()))[::-1])))
