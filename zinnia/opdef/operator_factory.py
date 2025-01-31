@@ -28,7 +28,19 @@ class Operators:
         np_ops.NP_EyeOp, np_ops.NP_ZerosOp, np_ops.NP_OnesOp, np_ops.NP_IdentityOp,
         np_ops.NP_ConcatenateOp, np_ops.NP_ConcatOp, np_ops.NP_StackOp, np_ops.NP_MinimumOp,
         np_ops.NP_MaximumOp, np_ops.NP_LogicalNotOp, np_ops.NP_LogicalAndOp, np_ops.NP_LogicalOrOp,
-        np_ops.NP_AsarrayOp
+        np_ops.NP_AsarrayOp, np_ops.NP_AbsOp, np_ops.NP_AbsoluteOp, np_ops.NP_ACosOp,
+        np_ops.NP_AddOp, np_ops.NP_AllOp, np_ops.NP_AllCloseOp, np_ops.NP_AMaxOp,
+        np_ops.NP_AMinOp, np_ops.NP_AnyOp, np_ops.NP_ArgmaxOp, np_ops.NP_ArgminOp,
+        np_ops.NP_ArrayEqualOp, np_ops.NP_ArrayEquivOp, np_ops.NP_ASinOp, np_ops.NP_ATanOp,
+        np_ops.NP_CosOp, np_ops.NP_CosHOp, np_ops.NP_DivideOp, np_ops.NP_EqualOp,
+        np_ops.NP_ExpOp, np_ops.NP_FAbsOp, np_ops.NP_FloorDivideOp, np_ops.NP_FMaxOp,
+        np_ops.NP_FMinOp, np_ops.NP_FModOp, np_ops.NP_GreaterOp, np_ops.NP_GreaterEqualOp,
+        np_ops.NP_IsCloseOp, np_ops.NP_LessOp, np_ops.NP_LessEqualOp, np_ops.NP_LogOp,
+        np_ops.NP_LogicalXorOp, np_ops.NP_MaxOp, np_ops.NP_ModOp, np_ops.NP_MultiplyOp,
+        np_ops.NP_NegativeOp, np_ops.NP_PositiveOp, np_ops.NP_NotEqualOp, np_ops.NP_PowerOp,
+        np_ops.NP_PowOp, np_ops.NP_ProdOp, np_ops.NP_SignOp, np_ops.NP_SinHOp,
+        np_ops.NP_SqrtOp, np_ops.NP_SubtractOp, np_ops.NP_SumOp, np_ops.NP_TanOp,
+        np_ops.NP_TanHOp,
     ]
     Zinnia = [
         *NPLike
@@ -36,7 +48,7 @@ class Operators:
     Math = [
         math_ops.Math_TanHOp, math_ops.Math_TanOp, math_ops.Math_LogOp, math_ops.Math_ExpOp,
         math_ops.Math_CosOp, math_ops.Math_SinOp, math_ops.Math_CosHOp, math_ops.Math_SinHOp,
-        math_ops.Math_SqrtOp
+        math_ops.Math_SqrtOp, math_ops.Math_FAbsOp
     ]
 
     @staticmethod

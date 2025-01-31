@@ -6,16 +6,16 @@ from zinnia.debug.dbg_info import DebugInfo
 from zinnia.opdef.abstract.abstract_op import AbstractOp
 
 
-class NP_LogicalOrOp(AbstractOp):
+class NP_MultiplyOp(AbstractOp):
     def __init__(self):
         super().__init__()
 
     def get_signature(self) -> str:
-        return "np.logical_or"
+        return "np.multiply"
 
     @classmethod
     def get_name(cls) -> str:
-        return "logical_or"
+        return "multiply"
 
     def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return [
@@ -25,4 +25,4 @@ class NP_LogicalOrOp(AbstractOp):
 
     def build(self, builder: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         x1, x2 = kwargs["x1"], kwargs["x2"]
-        return builder.op_logical_or(x1, x2, dbg)
+        return builder.op_multiply(x1, x2, dbg)

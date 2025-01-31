@@ -7,3 +7,4 @@ from .op_sinh import Math_SinHOp
 from .op_tan import Math_TanOp
 from .op_tanh import Math_TanHOp
 from .op_sqrt import Math_SqrtOp
+from .op_fabs import Math_FAbsOp

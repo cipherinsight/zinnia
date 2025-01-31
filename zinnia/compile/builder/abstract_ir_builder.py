@@ -79,10 +79,10 @@ class AbsIRBuilderInterface:
     def op_sign(self, x: Value, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
-    def op_int_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_int_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         raise NotImplementedError()
 
-    def op_float_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_float_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> FloatValue:
         raise NotImplementedError()
 
     def op_bool_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
@@ -164,6 +164,42 @@ class AbsIRBuilderInterface:
         raise NotImplementedError()
 
     def op_implicit_type_align(self, lhs: Value, rhs: Value, dbg: Optional[DebugInfo] = None) -> TupleValue:
+        raise NotImplementedError()
+
+    def op_ndarray_max(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+        raise NotImplementedError()
+
+    def op_ndarray_min(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+        raise NotImplementedError()
+
+    def op_ndarray_argmax(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+        raise NotImplementedError()
+
+    def op_ndarray_argmin(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+        raise NotImplementedError()
+
+    def op_ndarray_sum(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+        raise NotImplementedError()
+
+    def op_ndarray_prod(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+        raise NotImplementedError()
+
+    def op_logical_and(self, lhs: Value, rhs: Value, dbg: Optional[DebugInfo] = None) -> Value:
+        raise NotImplementedError()
+
+    def op_ndarray_all(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+        raise NotImplementedError()
+
+    def op_logical_any(self, lhs: Value, rhs: Value, dbg: Optional[DebugInfo] = None) -> Value:
+        raise NotImplementedError()
+
+    def op_logical_or(self, lhs: Value, rhs: Value, dbg: Optional[DebugInfo] = None) -> Value:
+        raise NotImplementedError()
+
+    def op_logical_xor(self, lhs: Value, rhs: Value, dbg: Optional[DebugInfo] = None) -> Value:
+        raise NotImplementedError()
+
+    def op_logical_not(self, a: Value, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
     def ir_expose_public_i(self, value: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:

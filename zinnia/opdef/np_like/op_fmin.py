@@ -1,20 +1,20 @@
 from typing import Callable
 
-from zinnia.opdef.abstract.abstract_arithemetic import AbstractArithemetic
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import IntegerValue, NumberValue, FloatValue
+from zinnia.compile.builder.value import NumberValue, IntegerValue, FloatValue
+from zinnia.opdef.abstract.abstract_arithemetic import AbstractArithemetic
 
 
-class NP_MinimumOp(AbstractArithemetic):
+class NP_FMinOp(AbstractArithemetic):
     def __init__(self):
         super().__init__()
 
     def get_signature(self) -> str:
-        return "np.minimum"
+        return "np.fmin"
 
     @classmethod
     def get_name(cls) -> str:
-        return "minimum"
+        return "fmin"
 
     def get_build_op_lambda(self, builder: AbsIRBuilderInterface) -> Callable[[NumberValue, NumberValue], NumberValue]:
         def _inner(lhs: NumberValue, rhs: NumberValue) -> NumberValue:

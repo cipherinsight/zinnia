@@ -1,9 +1,12 @@
-from typing import Any
+from typing import Dict, Optional, List
 
-from zinnia.opdef.abstract.abstract_binary_logical import AbstractBinaryLogical
+from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
+from zinnia.compile.builder.value import Value
+from zinnia.debug.dbg_info import DebugInfo
+from zinnia.opdef.abstract.abstract_op import AbstractOp
 
 
-class NP_LogicalAndOp(AbstractBinaryLogical):
+class NP_LogicalAndOp(AbstractOp):
     def __init__(self):
         super().__init__()
 
@@ -14,16 +17,12 @@ class NP_LogicalAndOp(AbstractBinaryLogical):
     def get_name(cls) -> str:
         return "logical_and"
 
-    def perform_inference(self, lhs: Any, rhs: Any) -> Any:
-        if lhs is not None and rhs is not None:
-            return 1 if lhs != 0 and rhs != 0 else 0
-        elif lhs is None and rhs is None:
-            return None
-        elif lhs is None and rhs is not None:
-            return None if rhs != 0 else 0
-        elif lhs is not None and rhs is None:
-            return None if lhs != 0 else 0
-        raise NotImplementedError()
+    def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
+        return [
+            AbstractOp._ParamEntry("x1"),
+            AbstractOp._ParamEntry("x2"),
+        ]
 
-    def perform_ir_build(self, ir_builder, lhs: Any, rhs: Any) -> Any:
-        return ir_builder.create_logical_and(lhs, rhs)
+    def build(self, builder: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
+        x1, x2 = kwargs["x1"], kwargs["x2"]
+        return builder.op_logical_and(x1, x2, dbg)

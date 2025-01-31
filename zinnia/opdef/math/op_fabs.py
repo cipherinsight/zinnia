@@ -4,19 +4,19 @@ from zinnia.debug.exception import TypeInferenceError
 from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import Value, IntegerValue, FloatValue
+from zinnia.compile.builder.value import Value, IntegerValue, FloatValue, NDArrayValue
 
 
-class Math_CosOp(AbstractOp):
+class Math_FAbsOp(AbstractOp):
     def __init__(self):
         super().__init__()
 
     def get_signature(self) -> str:
-        return "math.cos"
+        return "math.fabs"
 
     @classmethod
     def get_name(cls) -> str:
-        return "cos"
+        return "fabs"
 
     def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return [
@@ -26,5 +26,5 @@ class Math_CosOp(AbstractOp):
     def build(self, builder: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         x = kwargs["x"]
         if isinstance(x, IntegerValue) or isinstance(x, FloatValue) or isinstance(x, NDArrayValue):
-            return builder.ir_cos_f(builder.op_float_cast(x))
-        raise TypeInferenceError(dbg, f"Operator `{self.get_name()}` not defined for `{x.type()}`")
+            return builder.ir_abs_f(builder.op_float_cast(x))
+        raise TypeInferenceError(dbg, f'Operator `{self.get_signature()}` not defined on type `{x.type()}`')

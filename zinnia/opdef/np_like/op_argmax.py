@@ -6,23 +6,23 @@ from zinnia.debug.dbg_info import DebugInfo
 from zinnia.opdef.abstract.abstract_op import AbstractOp
 
 
-class NP_LogicalOrOp(AbstractOp):
+class NP_ArgmaxOp(AbstractOp):
     def __init__(self):
         super().__init__()
 
     def get_signature(self) -> str:
-        return "np.logical_or"
+        return "np.argmax"
 
     @classmethod
     def get_name(cls) -> str:
-        return "logical_or"
+        return "argmax"
 
     def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return [
-            AbstractOp._ParamEntry("x1"),
-            AbstractOp._ParamEntry("x2"),
+            AbstractOp._ParamEntry("a"),
+            AbstractOp._ParamEntry("axis", True),
         ]
 
     def build(self, builder: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
-        x1, x2 = kwargs["x1"], kwargs["x2"]
-        return builder.op_logical_or(x1, x2, dbg)
+        a, axis = kwargs["a"], kwargs.get("axis", None)
+        return builder.op_ndarray_argmax(a, axis, dbg)

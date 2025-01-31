@@ -5,6 +5,10 @@ from zinnia.compile.builder.value import Value, ClassValue, TupleValue, ListValu
     FloatValue, StringValue, NumberValue
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.type_sys import DTDescriptor
+from zinnia.opdef.arithmetic.op_logical_and import LogicalAndOp
+from zinnia.opdef.arithmetic.op_logical_not import LogicalNotOp
+from zinnia.opdef.arithmetic.op_logical_or import LogicalOrOp
+from zinnia.opdef.arithmetic.op_logical_xor import LogicalXorOp
 from zinnia.opdef.internal.op_implicit_type_align import ImplicitTypeAlignOp
 from zinnia.opdef.internal.op_implicit_type_cast import ImplicitTypeCastOp
 from zinnia.opdef.ir_op.abstract_ir import AbstractIR
@@ -73,6 +77,8 @@ from zinnia.opdef.ir_op.ir_sub_f import SubFIR
 from zinnia.opdef.ir_op.ir_sub_i import SubIIR
 from zinnia.opdef.ir_op.ir_tan_f import TanFIR
 from zinnia.opdef.ir_op.ir_tanh_f import TanHFIR
+from zinnia.opdef.ndarray import NDArray_MaxOp, NDArray_MinOp, NDArray_ArgMaxOp, NDArray_ArgMinOp, NDArray_SumOp, \
+    NDArray_ProdOp, NDArray_AnyOp, NDArray_AllOp
 from zinnia.opdef.np_like.op_asarray import NP_AsarrayOp
 from zinnia.opdef.ndarray.op_astype import NDArray_AsTypeOp
 from zinnia.opdef.ndarray.op_get_item import NDArray_GetItemOp
@@ -238,15 +244,19 @@ class IRBuilderImpl(IRBuilder):
         kwargs = op.argparse(dbg, [x], {})
         return op.build(self, kwargs, dbg)
 
-    def op_int_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_int_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         op = IntCastOp()
         kwargs = op.argparse(dbg, [x], {})
-        return op.build(self, kwargs, dbg)
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, IntegerValue)
+        return result
 
-    def op_float_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_float_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> FloatValue:
         op = FloatCastOp()
         kwargs = op.argparse(dbg, [x], {})
-        return op.build(self, kwargs, dbg)
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, FloatValue)
+        return result
 
     def op_bool_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         op = BoolCastOp()
@@ -398,6 +408,90 @@ class IRBuilderImpl(IRBuilder):
         kwargs = op.argparse(dbg, [lhs, rhs], {})
         result = op.build(self, kwargs, dbg)
         assert isinstance(result, TupleValue)
+        return result
+
+    def op_ndarray_max(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+        op = NDArray_MaxOp()
+        kwargs = op.argparse(dbg, [a], {"axis": axis})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, Value)
+        return result
+
+    def op_ndarray_min(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+        op = NDArray_MinOp()
+        kwargs = op.argparse(dbg, [a], {"axis": axis})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, Value)
+        return result
+
+    def op_ndarray_argmax(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+        op = NDArray_ArgMaxOp()
+        kwargs = op.argparse(dbg, [a], {"axis": axis})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, Value)
+        return result
+
+    def op_ndarray_argmin(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+        op = NDArray_ArgMinOp()
+        kwargs = op.argparse(dbg, [a], {"axis": axis})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, Value)
+        return result
+
+    def op_ndarray_sum(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+        op = NDArray_SumOp()
+        kwargs = op.argparse(dbg, [a], {"axis": axis})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, Value)
+        return result
+
+    def op_ndarray_prod(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+        op = NDArray_ProdOp()
+        kwargs = op.argparse(dbg, [a], {"axis": axis})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, Value)
+        return result
+
+    def op_ndarray_any(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+        op = NDArray_AnyOp()
+        kwargs = op.argparse(dbg, [a], {"axis": axis})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, Value)
+        return result
+
+    def op_ndarray_all(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+        op = NDArray_AllOp()
+        kwargs = op.argparse(dbg, [a], {"axis": axis})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, Value)
+        return result
+
+    def op_logical_and(self, lhs: Value, rhs: Value, dbg: Optional[DebugInfo] = None) -> Value:
+        op = LogicalAndOp()
+        kwargs = op.argparse(dbg, [lhs, rhs], {})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, Value)
+        return result
+
+    def op_logical_or(self, lhs: Value, rhs: Value, dbg: Optional[DebugInfo] = None) -> Value:
+        op = LogicalOrOp()
+        kwargs = op.argparse(dbg, [lhs, rhs], {})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, Value)
+        return result
+
+    def op_logical_xor(self, lhs: Value, rhs: Value, dbg: Optional[DebugInfo] = None) -> Value:
+        op = LogicalXorOp()
+        kwargs = op.argparse(dbg, [lhs, rhs], {})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, Value)
+        return result
+
+    def op_logical_not(self, a: Value, dbg: Optional[DebugInfo] = None) -> Value:
+        op = LogicalNotOp()
+        kwargs = op.argparse(dbg, [a], {})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, Value)
         return result
 
     def ir_poseidon_hash(self, values: List[NumberValue], dbg: Optional[DebugInfo] = None) -> IntegerValue:

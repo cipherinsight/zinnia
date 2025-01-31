@@ -19,12 +19,14 @@ class NP_MaximumOp(AbstractArithemetic):
     def get_build_op_lambda(self, builder: AbsIRBuilderInterface) -> Callable[[NumberValue, NumberValue], NumberValue]:
         def _inner(lhs: NumberValue, rhs: NumberValue) -> NumberValue:
             if isinstance(lhs, IntegerValue) and isinstance(rhs, IntegerValue):
-                return builder.op_max(lhs, rhs)
+                return builder.ir_select_i(builder.ir_bool_cast(builder.ir_less_than_i(lhs, rhs)), rhs, lhs)
             elif isinstance(lhs, FloatValue) and isinstance(rhs, FloatValue):
-                return builder.op_max(lhs, rhs)
+                return builder.ir_select_f(builder.ir_bool_cast(builder.ir_less_than_f(lhs, rhs)), rhs, lhs)
             elif isinstance(lhs, IntegerValue) and isinstance(rhs, FloatValue):
-                return builder.op_max(builder.ir_float_cast(lhs), rhs)
+                lhs = builder.ir_float_cast(lhs)
+                return builder.ir_select_f(builder.ir_bool_cast(builder.ir_less_than_f(lhs, rhs)), rhs, lhs)
             elif isinstance(lhs, FloatValue) and isinstance(rhs, IntegerValue):
-                return builder.op_max(lhs, builder.ir_float_cast(rhs))
+                rhs = builder.ir_float_cast(rhs)
+                return builder.ir_select_f(builder.ir_bool_cast(builder.ir_less_than_f(lhs, rhs)), rhs, lhs)
             raise NotImplementedError()
         return _inner
