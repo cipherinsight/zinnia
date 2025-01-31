@@ -63,7 +63,7 @@ def test_tuple_unpacking_with_error_1():
 
     with pytest.raises(ZinniaException) as e:
         ZKCircuit.from_method(foo).compile()
-    assert "TupleUnpackingError" in str(e.value)
+    assert "UnpackingError" in str(e.value)
 
 
 def test_tuple_unpacking_with_error_2():
@@ -75,7 +75,7 @@ def test_tuple_unpacking_with_error_2():
 
     with pytest.raises(ZinniaException) as e:
         ZKCircuit.from_method(foo).compile()
-    assert "TupleUnpackingError" in str(e.value)
+    assert "UnpackingError" in str(e.value)
 
 
 def test_tuple_unpacking_with_error_3():

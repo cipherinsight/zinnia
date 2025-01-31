@@ -2,9 +2,10 @@ from typing import List, Tuple, Dict
 
 from zinnia.compile.ast.ast_formatted_value import ASTFormattedValue
 from zinnia.compile.ast.ast_joined_str import ASTJoinedStr
+from zinnia.compile.ast.ast_starred import ASTStarredExpr
 from zinnia.compile.ir.ir_graph import IRGraph
 from zinnia.compile.builder.builder_impl import IRBuilderImpl
-from zinnia.compile.builder.value import Value, StringValue
+from zinnia.compile.builder.value import Value, StringValue, ListValue, TupleValue
 from zinnia.compile.ast import ASTComponent, ASTCircuit, ASTAssignStatement, ASTPassStatement, \
     ASTExpression, ASTForInStatement, ASTCondStatement, ASTConstantFloat, ASTConstantInteger, \
     ASTSubscriptExp, ASTLoad, ASTAssertStatement, ASTSquareBrackets, ASTBreakStatement, ASTContinueStatement, \
@@ -16,7 +17,7 @@ from zinnia.compile.ir.ir_ctx import IRContext
 from zinnia.debug.exception import VariableNotFoundError, NotInLoopError, \
     InterScopeError, UnsupportedLangFeatureException, UnreachableStatementError, OperatorOrChipNotFoundException, \
     ControlEndWithoutReturnError, ReturnDatatypeMismatchError, \
-    ChipArgumentsError, TupleUnpackingError, StaticInferenceError
+    ChipArgumentsError, UnpackingError, StaticInferenceError
 
 from zinnia.internal.internal_chip_object import InternalChipObject
 from zinnia.internal.internal_external_func_object import InternalExternalFuncObject
@@ -229,7 +230,13 @@ class IRGenerator:
 
     def visit_ASTNamedAttribute(self, n: ASTNamedAttribute):
         self_arg = []
-        visited_args = [self.visit(arg) for arg in n.args]
+        visited_args = []
+        for arg in n.args:
+            if isinstance(arg, ASTStarredExpr):
+                iter_values = self._ir_builder.op_iter(self.visit(arg.value), arg.value.dbg)
+                visited_args.extend(iter_values.values())
+            else:
+                visited_args.append(self.visit(arg))
         visited_kwargs = {k: self.visit(arg) for k, arg in n.kwargs.items()}
         if n.target is None or DTDescriptorFactory.is_typename(n.target):
             chip = self._registered_chips.get(n.member, None)
@@ -261,9 +268,16 @@ class IRGenerator:
         operator = Operators.instantiate_operator(n.member, dt.get_typename())
         if operator is None:
             raise OperatorOrChipNotFoundException(n.dbg, f"Operator or Chip `{n.member}` not found")
+        visited_args = []
+        for arg in n.args:
+            if isinstance(arg, ASTStarredExpr):
+                iter_values = self._ir_builder.op_iter(self.visit(arg.value), arg.value.dbg)
+                visited_args.extend(iter_values.values())
+            else:
+                visited_args.append(self.visit(arg))
         return self._ir_builder.create_op(
             operator,
-            [target_ptr] + [self.visit(arg) for arg in n.args],
+            [target_ptr] + visited_args,
             {k: self.visit(arg) for k, arg in n.kwargs.items()},
             dbg=n.dbg
         )
@@ -297,11 +311,23 @@ class IRGenerator:
         return val_ptr
 
     def visit_ASTSquareBrackets(self, n: ASTSquareBrackets):
-        values = [self.visit(val) for val in n.values]
+        values = []
+        for value in n.values:
+            if isinstance(value, ASTStarredExpr):
+                iter_values = self._ir_builder.op_iter(self.visit(value.value), value.value.dbg)
+                values.extend(iter_values.values())
+            else:
+                values.append(self.visit(value))
         return self._ir_builder.op_square_brackets(values, dbg=n.dbg)
 
     def visit_ASTParenthesis(self, n: ASTParenthesis):
-        values = [self.visit(val) for val in n.values]
+        values = []
+        for value in n.values:
+            if isinstance(value, ASTStarredExpr):
+                iter_values = self._ir_builder.op_iter(self.visit(value.value), value.value.dbg)
+                values.extend(iter_values.values())
+            else:
+                values.append(self.visit(value))
         return self._ir_builder.op_parenthesis(values, dbg=n.dbg)
 
     def visit_ASTGeneratorExp(self, n: ASTGeneratorExp):
@@ -347,6 +373,9 @@ class IRGenerator:
 
     def visit_ASTFormattedValue(self, n: ASTFormattedValue):
         return self._ir_builder.op_str(self.visit(n.value))
+
+    def visit_ASTStarredExpr(self, n: ASTStarredExpr):
+        raise UnpackingError(n.dbg, "Can't use starred expression here.")
 
     def visit_chip_call(self, chip: InternalChipObject, args: List[Value], kwargs: Dict[str, Value]):
         chip_declared_args = [(x.name, x.annotation) for x in chip.chip_ast.inputs]
@@ -439,9 +468,9 @@ class IRGenerator:
             has_star = any([x.star for x in target.targets])
             elements = self._ir_builder.op_iter(value).values()
             if len(elements) < len(target.targets):
-                raise TupleUnpackingError(target.dbg, f"Not enough elements to unpack, expected {len(target.targets)} got {len(elements)}")
+                raise UnpackingError(target.dbg, f"Not enough elements to unpack, expected {len(target.targets)} got {len(elements)}")
             if len(elements) > len(target.targets) and not has_star:
-                raise TupleUnpackingError(target.dbg, f"Too many elements to unpack, expected {len(target.targets)} got {len(elements)}")
+                raise UnpackingError(target.dbg, f"Too many elements to unpack, expected {len(target.targets)} got {len(elements)}")
             if has_star:
                 star_idx = [i for i, x in enumerate(target.targets) if x.star][0]
                 elements_for_star = elements[star_idx:len(elements) - (len(target.targets) - star_idx - 1)]

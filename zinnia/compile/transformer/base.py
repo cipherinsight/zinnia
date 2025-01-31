@@ -2,6 +2,7 @@ import ast
 
 from zinnia.compile.ast.ast_formatted_value import ASTFormattedValue
 from zinnia.compile.ast.ast_joined_str import ASTJoinedStr
+from zinnia.compile.ast.ast_starred import ASTStarredExpr
 from zinnia.debug.exception import InvalidCircuitStatementException, \
     InvalidProgramException, InvalidAssignStatementException, InvalidAnnotationException, UnsupportedOperatorException, \
     UnsupportedConstantLiteralException, \
@@ -305,6 +306,10 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
         dbg = self.get_dbg(node)
         return ASTFormattedValue(dbg, self.visit_expr(node.value))
 
+    def visit_Starred(self, node: ast.Starred):
+        dbg = self.get_dbg(node)
+        return ASTStarredExpr(dbg, self.visit_expr(node.value))
+
     def visit_block(self, _stmts):
         stmts = []
         for stmt in _stmts:
@@ -371,6 +376,8 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
             return self.visit_JoinedStr(node)
         elif isinstance(node, ast.FormattedValue):
             return self.visit_FormattedValue(node)
+        elif isinstance(node, ast.Starred):
+            return self.visit_Starred(node)
         else:
             dbg_info = self.get_dbg(node)
             raise UnsupportedLangFeatureException(dbg_info, f"Expression transformation rule for {type(node)} is not implemented.")

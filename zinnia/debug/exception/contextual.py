@@ -67,6 +67,6 @@ class ChipArgumentsError(ContextualException):
         super().__init__(dbg_i, msg, *args)
 
 
-class TupleUnpackingError(ContextualException):
+class UnpackingError(ContextualException):
     def __init__(self, dbg_i: DebugInfo | None, msg: str, *args):
         super().__init__(dbg_i, msg, *args)
