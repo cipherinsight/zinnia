@@ -5,6 +5,8 @@ from zinnia.compile.builder.value import Value, ClassValue, TupleValue, ListValu
     FloatValue, StringValue, NumberValue
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.type_sys import DTDescriptor
+from zinnia.opdef.internal.op_implicit_type_align import ImplicitTypeAlignOp
+from zinnia.opdef.internal.op_implicit_type_cast import ImplicitTypeCastOp
 from zinnia.opdef.ir_op.abstract_ir import AbstractIR
 from zinnia.opdef.ir_op.ir_abs_f import AbsFIR
 from zinnia.opdef.ir_op.ir_abs_i import AbsIIR
@@ -71,54 +73,51 @@ from zinnia.opdef.ir_op.ir_sub_f import SubFIR
 from zinnia.opdef.ir_op.ir_sub_i import SubIIR
 from zinnia.opdef.ir_op.ir_tan_f import TanFIR
 from zinnia.opdef.ir_op.ir_tanh_f import TanHFIR
-from zinnia.opdef.ndarray.op_asarray import NDArray_AsarrayOp
+from zinnia.opdef.np_like.op_asarray import NP_AsarrayOp
 from zinnia.opdef.ndarray.op_astype import NDArray_AsTypeOp
 from zinnia.opdef.ndarray.op_get_item import NDArray_GetItemOp
 from zinnia.opdef.ndarray.op_set_item import NDArray_SetItemOp
 from zinnia.opdef.ndarray.op_tolist import NDArray_ToListOp
-from zinnia.opdef.nocls.abstract_op import AbstractOp
+from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.opdef.nocls.op_abs import AbsOp
-from zinnia.opdef.nocls.op_add import AddOp
-from zinnia.opdef.nocls.op_assert import AssertOp
+from zinnia.opdef.arithmetic.op_add import AddOp
+from zinnia.opdef.internal.op_assert import AssertOp
 from zinnia.opdef.nocls.op_bool_cast import BoolCastOp
-from zinnia.opdef.nocls.op_bool_scalar import BoolScalarOp
-from zinnia.opdef.nocls.op_div import DivOp
-from zinnia.opdef.nocls.op_eq import EqualOp
-from zinnia.opdef.nocls.op_exp import ExpOp
-from zinnia.opdef.nocls.op_export_external import ExportExternalOp
-from zinnia.opdef.nocls.op_expose_public import ExposePublicOp
+from zinnia.opdef.arithmetic.op_div import DivOp
+from zinnia.opdef.arithmetic.op_eq import EqualOp
+from zinnia.opdef.math.op_exp import Math_ExpOp
+from zinnia.opdef.internal.op_export_external import ExportExternalOp
+from zinnia.opdef.internal.op_expose_public import ExposePublicOp
 from zinnia.opdef.nocls.op_float_cast import FloatCastOp
-from zinnia.opdef.nocls.op_float_scalar import FloatScalarOp
-from zinnia.opdef.nocls.op_floor_divide import FloorDivideOp
-from zinnia.opdef.nocls.op_gt import GreaterThanOp
-from zinnia.opdef.nocls.op_gte import GreaterThanOrEqualOp
-from zinnia.opdef.nocls.op_poseidon_hash import PoseidonHashOp
-from zinnia.opdef.nocls.op_input import InputOp
+from zinnia.opdef.arithmetic.op_floor_divide import FloorDivideOp
+from zinnia.opdef.arithmetic.op_gt import GreaterThanOp
+from zinnia.opdef.arithmetic.op_gte import GreaterThanOrEqualOp
+from zinnia.opdef.internal.op_poseidon_hash import PoseidonHashOp
+from zinnia.opdef.internal.op_input import InputOp
 from zinnia.opdef.nocls.op_int_cast import IntCastOp
-from zinnia.opdef.nocls.op_integer_scalar import IntegerScalarOp
-from zinnia.opdef.nocls.op_iter import IterOp
+from zinnia.opdef.internal.op_iter import IterOp
 from zinnia.opdef.nocls.op_list import ListOp
-from zinnia.opdef.nocls.op_log import LogOp
-from zinnia.opdef.nocls.op_lt import LessThanOp
-from zinnia.opdef.nocls.op_lte import LessThanOrEqualOp
-from zinnia.opdef.nocls.op_mat_mul import MatMulOp
+from zinnia.opdef.math.op_log import Math_LogOp
+from zinnia.opdef.arithmetic.op_lt import LessThanOp
+from zinnia.opdef.arithmetic.op_lte import LessThanOrEqualOp
+from zinnia.opdef.arithmetic.op_mat_mul import MatMulOp
 from zinnia.opdef.nocls.op_max import MaxOp
 from zinnia.opdef.nocls.op_min import MinOp
-from zinnia.opdef.nocls.op_mod import ModOp
-from zinnia.opdef.nocls.op_mul import MulOp
-from zinnia.opdef.nocls.op_ne import NotEqualOp
-from zinnia.opdef.nocls.op_not import NotOp
+from zinnia.opdef.arithmetic.op_mod import ModOp
+from zinnia.opdef.arithmetic.op_mul import MulOp
+from zinnia.opdef.arithmetic.op_ne import NotEqualOp
+from zinnia.opdef.np_like.op_logical_not import NP_LogicalNotOp
 from zinnia.opdef.nocls.op_pow import PowOp
-from zinnia.opdef.nocls.op_select import SelectOp
-from zinnia.opdef.nocls.op_get_item import GetItemOp
-from zinnia.opdef.nocls.op_set_item import SetItemOp
-from zinnia.opdef.nocls.op_sign import SignOp
-from zinnia.opdef.nocls.op_sqrt import SqrtOp
+from zinnia.opdef.internal.op_select import SelectOp
+from zinnia.opdef.internal.op_get_item import GetItemOp
+from zinnia.opdef.internal.op_set_item import SetItemOp
+from zinnia.opdef.internal.op_sign import Math_SignOp
+from zinnia.opdef.math.op_sqrt import Math_SqrtOp
 from zinnia.opdef.nocls.op_str import StrOp
-from zinnia.opdef.nocls.op_sub import SubOp
+from zinnia.opdef.arithmetic.op_sub import SubOp
 from zinnia.opdef.nocls.op_tuple import TupleOp
-from zinnia.opdef.nocls.op_uadd import UAddOp
-from zinnia.opdef.nocls.op_usub import USubOp
+from zinnia.opdef.arithmetic.op_uadd import UAddOp
+from zinnia.opdef.arithmetic.op_usub import USubOp
 
 
 class IRBuilderImpl(IRBuilder):
@@ -215,17 +214,17 @@ class IRBuilderImpl(IRBuilder):
         return op.build(self, kwargs, dbg)
 
     def op_exp(self, x: Value, dbg: Optional[DebugInfo] = None) -> Value:
-        op = ExpOp()
+        op = Math_ExpOp()
         kwargs = op.argparse(dbg, [x], {})
         return op.build(self, kwargs, dbg)
 
     def op_log(self, x: Value, dbg: Optional[DebugInfo] = None) -> Value:
-        op = LogOp()
+        op = Math_LogOp()
         kwargs = op.argparse(dbg, [x], {})
         return op.build(self, kwargs, dbg)
 
     def op_sqrt(self, x: Value, dbg: Optional[DebugInfo] = None) -> Value:
-        op = SqrtOp()
+        op = Math_SqrtOp()
         kwargs = op.argparse(dbg, [x], {})
         return op.build(self, kwargs, dbg)
 
@@ -235,7 +234,7 @@ class IRBuilderImpl(IRBuilder):
         return op.build(self, kwargs, dbg)
 
     def op_sign(self, x: Value, dbg: Optional[DebugInfo] = None) -> Value:
-        op = SignOp()
+        op = Math_SignOp()
         kwargs = op.argparse(dbg, [x], {})
         return op.build(self, kwargs, dbg)
 
@@ -249,27 +248,8 @@ class IRBuilderImpl(IRBuilder):
         kwargs = op.argparse(dbg, [x], {})
         return op.build(self, kwargs, dbg)
 
-    def op_bool_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_bool_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         op = BoolCastOp()
-        kwargs = op.argparse(dbg, [x], {})
-        return op.build(self, kwargs, dbg)
-
-    def op_float_scalar(self, x: Value, dbg: Optional[DebugInfo] = None) -> FloatValue:
-        op = FloatScalarOp()
-        kwargs = op.argparse(dbg, [x], {})
-        result = op.build(self, kwargs, dbg)
-        assert isinstance(result, FloatValue)
-        return result
-
-    def op_int_scalar(self, x: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
-        op = IntegerScalarOp()
-        kwargs = op.argparse(dbg, [x], {})
-        result = op.build(self, kwargs, dbg)
-        assert isinstance(result, IntegerValue)
-        return result
-
-    def op_bool_scalar(self, x: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
-        op = BoolScalarOp()
         kwargs = op.argparse(dbg, [x], {})
         result = op.build(self, kwargs, dbg)
         assert isinstance(result, IntegerValue)
@@ -343,7 +323,7 @@ class IRBuilderImpl(IRBuilder):
         return ListValue(list(x.type() for x in args), list(args))
 
     def op_unary_not(self, x: Value, dbg: Optional[DebugInfo] = None) -> Value:
-        op = NotOp()
+        op = NP_LogicalNotOp()
         kwargs = op.argparse(dbg, [x], {})
         return op.build(self, kwargs, dbg)
 
@@ -393,7 +373,7 @@ class IRBuilderImpl(IRBuilder):
         return result
 
     def op_ndarray_asarray(self, value: ListValue | TupleValue, dbg: Optional[DebugInfo] = None) -> NDArrayValue:
-        op = NDArray_AsarrayOp()
+        op = NP_AsarrayOp()
         kwargs = op.argparse(dbg, [value], {})
         result = op.build(self, kwargs, dbg)
         assert isinstance(result, NDArrayValue)
@@ -404,6 +384,20 @@ class IRBuilderImpl(IRBuilder):
         kwargs = op.argparse(dbg, [value, dtype], {})
         result = op.build(self, kwargs, dbg)
         assert isinstance(result, NDArrayValue)
+        return result
+
+    def op_implicit_type_cast(self, value: Value, dest: DTDescriptor, dbg: Optional[DebugInfo] = None) -> Value:
+        op = ImplicitTypeCastOp(dest)
+        kwargs = op.argparse(dbg, [value], {})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, Value)
+        return result
+
+    def op_implicit_type_align(self, lhs: Value, rhs: Value, dbg: Optional[DebugInfo] = None) -> TupleValue:
+        op = ImplicitTypeAlignOp()
+        kwargs = op.argparse(dbg, [lhs, rhs], {})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, TupleValue)
         return result
 
     def ir_poseidon_hash(self, values: List[NumberValue], dbg: Optional[DebugInfo] = None) -> IntegerValue:

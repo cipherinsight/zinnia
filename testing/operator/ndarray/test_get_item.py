@@ -4,7 +4,7 @@ from zinnia import *
 def test_get_single_item_by_constants():
     @zk_circuit
     def foo():
-        array = NDArray.asarray([
+        array = np.asarray([
             [1, 2, 3],
             [4, 5, 6],
             [7, 8, 9]
@@ -25,7 +25,7 @@ def test_get_single_item_by_constants():
 def test_get_single_item_by_non_constants():
     @zk_circuit
     def foo():
-        array = NDArray.identity(10)
+        array = np.identity(10)
         for i in range(10):
             for j in range(10):
                 assert array[i, j] == array[i][j] == (1 if i == j else 0)
@@ -36,7 +36,7 @@ def test_get_single_item_by_non_constants():
 def test_get_single_item_by_variables():
     @zk_circuit
     def foo(x: int, y: int):
-        array = NDArray.identity(4)
+        array = np.identity(4)
         assert array[x, y] == array[x][y] == (1 if x == y else 0)
 
     for i in range(4):
@@ -47,7 +47,7 @@ def test_get_single_item_by_variables():
 def test_get_item_by_slice():
     @zk_circuit
     def foo():
-        array = NDArray.asarray([
+        array = np.asarray([
             [1, 2, 3],
             [4, 5, 6],
             [7, 8, 9]

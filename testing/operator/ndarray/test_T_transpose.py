@@ -6,8 +6,8 @@ from zinnia import *
 def test_T_1_dim():
     @zk_circuit
     def foo():
-        a = NDArray.asarray([1, 2, 3, 4, 5, 6])
-        assert (a.T == NDArray.asarray([1, 2, 3, 4, 5, 6])).all()
+        a = np.asarray([1, 2, 3, 4, 5, 6])
+        assert (a.T == np.asarray([1, 2, 3, 4, 5, 6])).all()
 
     assert foo()
 
@@ -15,12 +15,12 @@ def test_T_1_dim():
 def test_T_2_dim():
     @zk_circuit
     def foo():
-        a = NDArray.asarray([
+        a = np.asarray([
             [1, 2, 3],
             [4, 5, 6],
             [7, 8, 9]
         ])
-        assert (a.T == NDArray.asarray([
+        assert (a.T == np.asarray([
             [1, 4, 7],
             [2, 5, 8],
             [3, 6, 9]
@@ -32,12 +32,12 @@ def test_T_2_dim():
 def test_T_3_dim():
     @zk_circuit
     def foo():
-        a = NDArray.asarray([
+        a = np.asarray([
             [[1, 2], [3, 4]],
             [[5, 6], [7, 8]],
             [[9, 10], [11, 12]],
         ])
-        assert (a.T == NDArray.asarray([
+        assert (a.T == np.asarray([
             [[1, 5, 9], [3, 7, 11]],
             [[2, 6, 10], [4, 8, 12]]
         ])).all()
@@ -48,8 +48,8 @@ def test_T_3_dim():
 def test_transpose_1_dim():
     @zk_circuit
     def foo():
-        a = NDArray.asarray([1, 2, 3, 4, 5, 6])
-        assert (a.transpose() == NDArray.asarray([1, 2, 3, 4, 5, 6])).all()
+        a = np.asarray([1, 2, 3, 4, 5, 6])
+        assert (a.transpose() == np.asarray([1, 2, 3, 4, 5, 6])).all()
 
     assert foo()
 
@@ -57,12 +57,12 @@ def test_transpose_1_dim():
 def test_transpose_2_dim():
     @zk_circuit
     def foo():
-        a = NDArray.asarray([
+        a = np.asarray([
             [1, 2, 3],
             [4, 5, 6],
             [7, 8, 9]
         ])
-        assert (a.transpose() == NDArray.asarray([
+        assert (a.transpose() == np.asarray([
             [1, 4, 7],
             [2, 5, 8],
             [3, 6, 9]
@@ -74,11 +74,11 @@ def test_transpose_2_dim():
 def test_transpose_3_dim():
     @zk_circuit
     def foo():
-        a = NDArray.asarray([
+        a = np.asarray([
             [[1, 2], [3, 4]],
             [[5, 6], [7, 8]]
         ])
-        assert (a.transpose() == NDArray.asarray([
+        assert (a.transpose() == np.asarray([
             [[1, 5], [3, 7]],
             [[2, 6], [4, 8]]
         ])).all()

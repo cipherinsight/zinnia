@@ -1,11 +1,11 @@
 from typing import List, Dict, Optional
 
 from zinnia.debug.exception import TypeInferenceError
-from zinnia.opdef.nocls.abstract_op import AbstractOp
+from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.compile.type_sys import IntegerType, FloatType
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import Value, IntegerValue, NDArrayValue, FloatValue
+from zinnia.compile.builder.value import Value, IntegerValue, NDArrayValue, FloatValue, ListValue, TupleValue
 
 
 class BoolCastOp(AbstractOp):
@@ -31,8 +31,16 @@ class BoolCastOp(AbstractOp):
         elif isinstance(x, FloatValue):
             return builder.ir_not_equal_f(x, builder.ir_constant_float(0.0))
         elif isinstance(x, NDArrayValue):
+            flattened = x.flattened_values()
+            if len(flattened) != 1:
+                raise TypeInferenceError(dbg, f'The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()')
             if x.dtype() == IntegerType:
-                return x.unary(IntegerType, lambda u: builder.ir_bool_cast(u))
+                return builder.ir_not_equal_i(flattened[0], builder.ir_constant_int(0))
             elif x.dtype() == FloatType:
-                return x.unary(FloatType, lambda u: builder.ir_bool_cast(u))
-        raise TypeInferenceError(dbg, f'Invalid `{self.get_signature()}` on operand {x.type()}')
+                return builder.ir_not_equal_f(flattened[0], builder.ir_constant_float(0.0))
+            raise NotImplementedError()
+        elif isinstance(x, ListValue) or isinstance(x, TupleValue):
+            if len(x.types()) > 0:
+                return builder.ir_constant_int(1)
+            return builder.ir_constant_int(0)
+        raise TypeInferenceError(dbg, f"Unsupported argument type for `{self.get_name()}`: {x.type()}")

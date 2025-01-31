@@ -4,7 +4,7 @@ from zinnia.compile.builder.value import Value, NoneValue
 from zinnia.compile.ir.ir_stmt import IRStatement
 from zinnia.compile.type_sys import DTDescriptor
 from zinnia.opdef.ir_op.abstract_ir import AbstractIR
-from zinnia.opdef.nocls.abstract_op import AbstractOp
+from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.debug.dbg_info import DebugInfo
 
 

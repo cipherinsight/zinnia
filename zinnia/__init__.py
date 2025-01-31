@@ -11,3 +11,11 @@ from .debug.exception import ZinniaException
 from .exec.exec_result import ZKExecResult
 from .exec.mock_executor import MockProgramExecutor
 from .config.zinnia_config import ZinniaConfig
+from .lang.namespace import NamespaceNP
+
+
+np = NamespaceNP()
+try:
+    import numpy as np
+except ImportError:
+    pass

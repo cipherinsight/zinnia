@@ -3,10 +3,10 @@ from typing import List, Dict, Optional
 
 from zinnia.debug.exception import TypeInferenceError
 from zinnia.compile.type_sys import FloatType, IntegerType
-from zinnia.opdef.nocls.abstract_op import AbstractOp
+from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import Value, IntegerValue, FloatValue, NDArrayValue
+from zinnia.compile.builder.value import Value, IntegerValue, FloatValue, NDArrayValue, ListValue, TupleValue
 
 
 class FloatCastOp(AbstractOp):
@@ -32,8 +32,16 @@ class FloatCastOp(AbstractOp):
         elif isinstance(x, FloatValue):
             return copy.copy(x)
         elif isinstance(x, NDArrayValue):
+            flattened = x.flattened_values()
+            if len(flattened) != 1:
+                raise TypeInferenceError(dbg, f'Only length-1 arrays can be converted to scalars')
             if x.dtype() == FloatType:
-                return x.unary(FloatType, lambda u: copy.copy(u))
+                return copy.copy(flattened[0])
             elif x.dtype() == IntegerType:
-                return x.unary(FloatType, lambda u: builder.ir_float_cast(u))
-        raise TypeInferenceError(dbg, f'Float cast on `{x.type()}` is not defined')
+                return builder.ir_float_cast(flattened[0])
+            raise NotImplementedError()
+        elif isinstance(x, ListValue):
+            raise TypeInferenceError(dbg, f'List cannot be converted to float scalars')
+        elif isinstance(x, TupleValue):
+            raise TypeInferenceError(dbg, f'Tuple cannot be converted to float scalars')
+        raise TypeInferenceError(dbg, f"Unsupported argument type for `{self.get_name()}`: {x.type()}")

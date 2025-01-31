@@ -1,7 +1,7 @@
 from typing import Tuple
 
 from zinnia.compile.type_sys import DTDescriptor, IntegerType
-from zinnia.opdef.ndarray.abstract_aggregator import AbstractAggregator
+from zinnia.opdef.abstract.abstract_aggregator import AbstractAggregator
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
 from zinnia.compile.builder.value import NumberValue
 
@@ -11,11 +11,11 @@ class NDArray_AllOp(AbstractAggregator):
         super().__init__()
 
     def get_signature(self) -> str:
-        return "NDArray::all"
+        return "NDArray.all"
 
     @classmethod
     def get_name(cls) -> str:
-        return "NDArray::all"
+        return "all"
 
     def get_result_dtype(self, element_dt: DTDescriptor):
         return IntegerType

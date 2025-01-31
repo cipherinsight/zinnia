@@ -1,8 +1,8 @@
 from typing import List, Optional, Dict
 
 from zinnia.debug.dbg_info import DebugInfo
-from zinnia.opdef.ndarray.abstract_ndarray_item_slice import AbstractNDArrayItemSlice
-from zinnia.opdef.nocls.abstract_op import AbstractOp
+from zinnia.opdef.abstract.abstract_ndarray_item_slice import AbstractNDArrayItemSlice
+from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
 from zinnia.compile.builder.value import Value, NDArrayValue
 
@@ -12,11 +12,11 @@ class NDArray_GetItemOp(AbstractNDArrayItemSlice):
         super().__init__()
 
     def get_signature(self) -> str:
-        return "NDArray::__get_item__"
+        return "NDArray.__get_item__"
 
     @classmethod
     def get_name(cls) -> str:
-        return "NDArray::__get_item__"
+        return "__get_item__"
 
     def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return [

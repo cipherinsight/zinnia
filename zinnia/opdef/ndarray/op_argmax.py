@@ -1,7 +1,7 @@
 from typing import Tuple
 
 from zinnia.compile.type_sys import DTDescriptor, IntegerType
-from zinnia.opdef.ndarray.abstract_aggregator import AbstractAggregator
+from zinnia.opdef.abstract.abstract_aggregator import AbstractAggregator
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
 from zinnia.compile.builder.value import NumberValue
 
@@ -11,17 +11,17 @@ class NDArray_ArgMaxOp(AbstractAggregator):
         super().__init__()
 
     def get_signature(self) -> str:
-        return "NDArray::argmax"
+        return "NDArray.argmax"
 
     @classmethod
     def get_name(cls) -> str:
-        return "NDArray::argmax"
+        return "argmax"
 
     def get_result_dtype(self, element_dt: DTDescriptor):
         return IntegerType
 
     def aggregator_func(self, builder: AbsIRBuilderInterface, lhs: NumberValue, lhs_i: NumberValue, rhs: NumberValue, rhs_i: NumberValue, dt: DTDescriptor) -> Tuple[NumberValue, NumberValue | None]:
-        cond = builder.op_bool_scalar(builder.op_less_than(lhs, rhs))
+        cond = builder.op_bool_cast(builder.op_less_than(lhs, rhs))
         candidate = builder.op_select(cond, rhs, lhs)
         candidate_i = builder.op_select(cond, rhs_i, lhs_i)
         return candidate, candidate_i

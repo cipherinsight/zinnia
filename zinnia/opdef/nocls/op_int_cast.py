@@ -2,11 +2,11 @@ import copy
 from typing import List, Dict, Optional
 
 from zinnia.debug.exception import TypeInferenceError
-from zinnia.opdef.nocls.abstract_op import AbstractOp
+from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.compile.type_sys import FloatType, IntegerType
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import IntegerValue, FloatValue, Value, NDArrayValue
+from zinnia.compile.builder.value import IntegerValue, FloatValue, Value, NDArrayValue, ListValue, TupleValue
 
 
 class IntCastOp(AbstractOp):
@@ -27,13 +27,21 @@ class IntCastOp(AbstractOp):
 
     def build(self, builder: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         x = kwargs["x"]
-        if isinstance(x, FloatValue):
-            return builder.ir_int_cast(x)
-        elif isinstance(x, IntegerValue):
+        if isinstance(x, IntegerValue):
             return copy.copy(x)
+        elif isinstance(x, FloatValue):
+            return builder.ir_int_cast(x)
         elif isinstance(x, NDArrayValue):
-            if x.dtype() == FloatType:
-                return x.unary(IntegerType, lambda u: builder.ir_int_cast(u))
-            elif x.dtype() == IntegerType:
-                return x.unary(IntegerType, lambda u: copy.copy(u))
-        raise TypeInferenceError(dbg, f'Int cast on `{x.type()}` is not defined')
+            flattened = x.flattened_values()
+            if len(flattened) != 1:
+                raise TypeInferenceError(dbg, f'Only length-1 arrays can be converted to scalars')
+            if x.dtype() == IntegerType:
+                return copy.copy(flattened[0])
+            elif x.dtype() == FloatType:
+                return builder.ir_int_cast(flattened[0])
+            raise NotImplementedError()
+        elif isinstance(x, ListValue):
+            raise TypeInferenceError(dbg, f'List cannot be converted to integer scalars')
+        elif isinstance(x, TupleValue):
+            raise TypeInferenceError(dbg, f'Tuple cannot be converted to integer scalars')
+        raise TypeInferenceError(dbg, f"Unsupported argument type for `{self.get_name()}`: {x.type()}")

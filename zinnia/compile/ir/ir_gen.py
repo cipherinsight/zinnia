@@ -97,7 +97,7 @@ class IRGenerator:
         self._ir_ctx.loop_enter()
         while True:
             self._ir_ctx.loop_reiter()
-            test_expr = self._ir_builder.op_bool_scalar(self.visit(n.test_expr), dbg=n.dbg)
+            test_expr = self._ir_builder.op_bool_cast(self.visit(n.test_expr), dbg=n.dbg)
             if test_expr.val() is None:
                 raise StaticInferenceError(n.dbg, "Cannot statically infer the condition value in the while statement. This is crucial to determine number of loops at compile time.")
             elif test_expr.val() == 0:
@@ -138,7 +138,7 @@ class IRGenerator:
         if self._ir_ctx.check_return_existence():
             raise UnreachableStatementError(n.dbg, "This code is unreachable")
         cond_ptr = self.visit(n.cond)
-        true_cond_ptr = self._ir_builder.op_bool_scalar(cond_ptr, dbg=n.dbg)
+        true_cond_ptr = self._ir_builder.op_bool_cast(cond_ptr, dbg=n.dbg)
         false_cond_ptr = self._ir_builder.ir_logical_not(true_cond_ptr, dbg=n.dbg)
         self._ir_ctx.if_enter(true_cond_ptr)
         for _, stmt in enumerate(n.t_block):
@@ -242,12 +242,15 @@ class IRGenerator:
             if operator is None:
                 raise OperatorOrChipNotFoundException(n.dbg, f"Operator or Chip `{n.member}` not found")
         else:
-            target_ptr = self._ir_ctx.get(n.target)
-            if target_ptr is None:
+            if self._ir_ctx.exists(n.target):
+                target_ptr = self._ir_ctx.get(n.target)
+                dt = target_ptr.type()
+                operator = Operators.instantiate_operator(n.member, dt.get_typename())
+                self_arg = [target_ptr]
+            elif n.target in Operators.get_namespaces():
+                operator = Operators.instantiate_operator(n.member, n.target)
+            else:
                 raise VariableNotFoundError(n.dbg, f'Variable {n.target} referenced but not defined.')
-            dt = target_ptr.type()
-            operator = Operators.instantiate_operator(n.member, dt.get_typename())
-            self_arg = [target_ptr]
             if operator is None:
                 raise OperatorOrChipNotFoundException(n.dbg, f"Operator `{n.target}.{n.member}` not found")
         return self._ir_builder.create_op(operator, self_arg + visited_args, visited_kwargs, dbg=n.dbg)
@@ -311,7 +314,7 @@ class IRGenerator:
                 self._do_recursive_assign(gen.target, loop_index_ptr, False)
                 cond = self._ir_builder.ir_constant_int(1)
                 for _if in gen.ifs:
-                    cond = self._ir_builder.ir_logical_and(cond, self._ir_builder.op_bool_scalar(self.visit(_if)))
+                    cond = self._ir_builder.ir_logical_and(cond, self._ir_builder.op_bool_cast(self.visit(_if)))
                 if cond.val() is None:
                     raise StaticInferenceError(n.dbg, "Cannot statically infer the condition value in the generator expression. This is crucial to determine the datatype of the generated expression.")
                 if not cond.val():
@@ -332,7 +335,7 @@ class IRGenerator:
         cond_ptr = self.visit(n.cond)
         true_expr = self.visit(n.t_expr)
         false_expr = self.visit(n.f_expr)
-        cond_ptr = self._ir_builder.op_bool_scalar(cond_ptr, dbg=n.dbg)
+        cond_ptr = self._ir_builder.op_bool_cast(cond_ptr, dbg=n.dbg)
         return self._ir_builder.op_select(cond_ptr, true_expr, false_expr)
 
     def visit_ASTJoinedStr(self, n: ASTJoinedStr):

@@ -12,7 +12,7 @@ def test_int_casting():
 def test_float_casting():
     @zk_circuit
     def foo():
-        array = NDArray.asarray([float(1)])
+        array = np.asarray([float(1)])
         assert array.dtype == float
 
     foo()

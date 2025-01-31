@@ -116,7 +116,7 @@ def test_invalid_condition_with_ndarray():
     """This test is to check if the invalid condition is correctly parsed."""
     @zk_circuit
     def foo():
-        ndarray_condition = NDArray.ones((2, 2))
+        ndarray_condition = np.ones((2, 2))
         if ndarray_condition:
             assert False
 
@@ -129,7 +129,7 @@ def test_valid_condition_with_ndarray():
     """This test is to check if the invalid condition is correctly parsed."""
     @zk_circuit
     def foo():
-        ndarray_condition = NDArray.ones((1, 1))
+        ndarray_condition = np.ones((1, 1))
         if ndarray_condition:
             assert True
         else:

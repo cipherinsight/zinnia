@@ -1,6 +1,6 @@
 from typing import List, Dict, Optional
 
-from zinnia.opdef.nocls.abstract_op import AbstractOp
+from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
 from zinnia.compile.builder.value import NDArrayValue, Value, ListValue
@@ -11,11 +11,11 @@ class NDArray_ToListOp(AbstractOp):
         super().__init__()
 
     def get_signature(self) -> str:
-        return "NDArray::tolist"
+        return "NDArray.tolist"
 
     @classmethod
     def get_name(cls) -> str:
-        return "NDArray::tolist"
+        return "tolist"
 
     def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return [

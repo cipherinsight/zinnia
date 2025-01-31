@@ -5,7 +5,7 @@ from zinnia.compile.builder.value import Value
 from zinnia.config.mock_exec_config import MockExecConfig
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.ir.ir_stmt import IRStatement
-from zinnia.opdef.nocls.abstract_op import AbstractOp
+from zinnia.opdef.abstract.abstract_op import AbstractOp
 
 
 class AbstractIR(AbstractOp):

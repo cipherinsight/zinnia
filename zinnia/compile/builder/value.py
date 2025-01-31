@@ -4,7 +4,7 @@ from typing import Any, Tuple, Callable, List, Union
 from zinnia.internal.internal_ndarray import InternalNDArray
 from zinnia.compile.type_sys import DTDescriptor, NumberDTDescriptor, IntegerDTDescriptor, FloatDTDescriptor, \
     NDArrayDTDescriptor, TupleDTDescriptor, ListDTDescriptor, NoneDTDescriptor, ClassDTDescriptor, StringDTDescriptor, \
-    PoseidonHashedDTDescriptor
+    PoseidonHashedDTDescriptor, BooleanDTDescriptor
 
 
 class Value:

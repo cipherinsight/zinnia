@@ -2,7 +2,7 @@ import copy
 from typing import List, Dict, Optional
 
 from zinnia.debug.exception import TypeInferenceError, StaticInferenceError
-from zinnia.opdef.nocls.abstract_op import AbstractOp
+from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.compile.type_sys import IntegerType
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
@@ -14,11 +14,11 @@ class NDArray_TransposeOp(AbstractOp):
         super().__init__()
 
     def get_signature(self) -> str:
-        return "NDArray::transpose"
+        return "NDArray.transpose"
 
     @classmethod
     def get_name(cls) -> str:
-        return "NDArray::transpose"
+        return "transpose"
 
     def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return [

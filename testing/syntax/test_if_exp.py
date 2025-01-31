@@ -1,7 +1,4 @@
-import pytest
-
 from zinnia import ZKCircuit, zk_circuit
-from zinnia.debug.exception import ZinniaException
 
 
 def test_basic_if_exp_1():
@@ -24,17 +21,17 @@ def test_basic_if_exp_2():
     ZKCircuit.from_method(foo).compile()
 
 
-@pytest.mark.skip("consider removing this limitation")
 def test_if_exp_with_different_types():
     @zk_circuit
     def foo():
         cond = 1
         the_value = 20 if cond else 10.0
         assert the_value == 20
+        cond = 0
+        the_value = 20 if cond else 10.0
+        assert the_value == 10.0
 
-    with pytest.raises(ZinniaException) as e:
-        ZKCircuit.from_method(foo).compile()
-    assert "must have the same type" in str(e.value)
+    ZKCircuit.from_method(foo).compile()
 
 
 def test_nested_if_exp():

@@ -1,7 +1,7 @@
 from typing import List, Dict, Optional
 
 from zinnia.debug.exception import TypeInferenceError, StaticInferenceError
-from zinnia.opdef.nocls.abstract_op import AbstractOp
+from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.compile.type_sys import DTDescriptor, IntegerDTDescriptor, FloatDTDescriptor, IntegerType, FloatType, \
     NumberDTDescriptor
 from zinnia.debug.dbg_info import DebugInfo

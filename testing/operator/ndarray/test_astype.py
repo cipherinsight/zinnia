@@ -4,7 +4,7 @@ from zinnia import zk_circuit, NDArray
 def test_astype_1():
     @zk_circuit
     def foo(x: int, y: int):
-        array = NDArray.asarray([x, y])
+        array = np.asarray([x, y])
         assert array.dtype == int
         array = array.astype(float)
         assert array.dtype == float
@@ -15,7 +15,7 @@ def test_astype_1():
 def test_astype_2():
     @zk_circuit
     def foo(x: float, y: float):
-        array = NDArray.asarray([x, y])
+        array = np.asarray([x, y])
         assert array.dtype == float
         array = array.astype(float)
         assert array.dtype == float
@@ -27,7 +27,7 @@ def test_astype_2():
 def test_astype_3():
     @zk_circuit
     def foo(x: float, y: float):
-        array = NDArray.asarray([x, y])
+        array = np.asarray([x, y])
         assert array.dtype == float
         array = array.astype(int)
         assert array.dtype == int

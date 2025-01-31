@@ -2,7 +2,7 @@ from typing import Any, Optional, List, Dict
 
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.debug.exception import OperatorCallError, TypeInferenceError
-from zinnia.opdef.nocls.abstract_op import AbstractOp
+from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
 from zinnia.compile.builder.value import Value
 
@@ -33,5 +33,5 @@ class MinOp(AbstractOp):
             raise TypeInferenceError(dbg, f"All arguments for {self.get_name()} should have the same type")
         result = elements[0]
         for e in elements[1:]:
-            result = builder.op_select(builder.op_bool_scalar(builder.op_less_than(result, e)), result, e)
+            result = builder.op_select(builder.op_bool_cast(builder.op_less_than(result, e)), result, e)
         return result

@@ -1,10 +1,9 @@
 from typing import List, Optional, Dict
 
-from zinnia.compile.type_sys import IntegerType, FloatType
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.debug.exception import TypeInferenceError
-from zinnia.opdef.ndarray.abstract_ndarray_item_slice import AbstractNDArrayItemSlice
-from zinnia.opdef.nocls.abstract_op import AbstractOp
+from zinnia.opdef.abstract.abstract_ndarray_item_slice import AbstractNDArrayItemSlice
+from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
 from zinnia.compile.builder.value import Value, NDArrayValue, NumberValue, ListValue, TupleValue, IntegerValue, \
     FloatValue
@@ -15,11 +14,11 @@ class NDArray_SetItemOp(AbstractNDArrayItemSlice):
         super().__init__()
 
     def get_signature(self) -> str:
-        return "NDArray::__set_item__"
+        return "NDArray.__set_item__"
 
     @classmethod
     def get_name(cls) -> str:
-        return "NDArray::__set_item__"
+        return "__set_item__"
 
     def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return [
@@ -43,6 +42,7 @@ class NDArray_SetItemOp(AbstractNDArrayItemSlice):
                     new_value = builder.op_select(condition, builder.ir_float_cast(the_value), original_value)
                     new_ndarray = new_ndarray.set_item(candidate, new_value)
                 elif isinstance(the_value, FloatValue) and isinstance(original_value, IntegerValue):
+                    # TODO: raise a warning here
                     new_value = builder.op_select(condition, builder.ir_int_cast(the_value), original_value)
                     new_ndarray = new_ndarray.set_item(candidate, new_value)
                 elif the_value.type() == original_value.type():
@@ -61,7 +61,8 @@ class NDArray_SetItemOp(AbstractNDArrayItemSlice):
                 if not _value_ary.broadcast_to_compatible(original_value.shape()):
                     raise TypeInferenceError(dbg, f"Cannot broadcast input array from {_value_ary.shape()} to {original_value.shape}")
                 if _value_ary.dtype() != original_value.dtype():
-                    raise TypeInferenceError(dbg, f"Cannot assign {the_value.type()} to {original_value.type()}")
+                    # TODO: raise a warning if casting from float to int
+                    _value_ary = builder.op_ndarray_astype(_value_ary, builder.op_constant_class(original_value.dtype()))
                 _value_ary = _value_ary.broadcast_to(original_value.shape())
                 new_value = builder.op_select(condition, _value_ary, original_value)
                 new_ndarray = new_ndarray.set_item(candidate, new_value)

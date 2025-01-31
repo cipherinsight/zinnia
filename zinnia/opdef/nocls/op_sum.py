@@ -3,7 +3,7 @@ from typing import List, Dict, Optional
 
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.debug.exception import TypeInferenceError
-from zinnia.opdef.nocls.abstract_op import AbstractOp
+from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
 from zinnia.compile.builder.value import Value, NDArrayValue, ListValue, TupleValue, NumberValue
 

@@ -1,7 +1,7 @@
 from typing import Tuple
 
 from zinnia.compile.type_sys import DTDescriptor, IntegerDTDescriptor
-from zinnia.opdef.ndarray.abstract_aggregator import AbstractAggregator
+from zinnia.opdef.abstract.abstract_aggregator import AbstractAggregator
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
 from zinnia.compile.builder.value import NumberValue
 
@@ -11,11 +11,11 @@ class NDArray_SumOp(AbstractAggregator):
         super().__init__()
 
     def get_signature(self) -> str:
-        return "NDArray::sum"
+        return "NDArray.sum"
 
     @classmethod
     def get_name(cls) -> str:
-        return "NDArray::sum"
+        return "sum"
 
     def aggregator_func(self, builder: AbsIRBuilderInterface, lhs: NumberValue, lhs_i: NumberValue, rhs: NumberValue, rhs_i: NumberValue, dt: DTDescriptor) -> Tuple[NumberValue, NumberValue | None]:
         return builder.op_add(lhs, rhs), None

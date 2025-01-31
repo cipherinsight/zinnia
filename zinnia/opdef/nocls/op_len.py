@@ -1,7 +1,7 @@
 from typing import List, Dict, Optional
 
 from zinnia.debug.exception import TypeInferenceError
-from zinnia.opdef.nocls.abstract_op import AbstractOp
+from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
 from zinnia.compile.builder.value import Value, NDArrayValue, TupleValue, ListValue
@@ -26,7 +26,7 @@ class LenOp(AbstractOp):
     def build(self, builder: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         operand = kwargs["operand"]
         if isinstance(operand, NDArrayValue):
-            return builder.ir_constant_int(len(operand.shape()))
+            return builder.ir_constant_int(operand.shape()[0])
         elif isinstance(operand, TupleValue):
             return builder.ir_constant_int(len(operand.types()))
         elif isinstance(operand, ListValue):

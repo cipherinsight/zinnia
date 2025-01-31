@@ -85,16 +85,7 @@ class AbsIRBuilderInterface:
     def op_float_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
-    def op_bool_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> Value:
-        raise NotImplementedError()
-
-    def op_float_scalar(self, x: Value, dbg: Optional[DebugInfo] = None) -> FloatValue:
-        raise NotImplementedError()
-
-    def op_int_scalar(self, x: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
-        raise NotImplementedError()
-
-    def op_bool_scalar(self, x: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def op_bool_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         raise NotImplementedError()
 
     def op_list_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> ListValue:
@@ -167,6 +158,12 @@ class AbsIRBuilderInterface:
         raise NotImplementedError()
 
     def op_ndarray_astype(self, value: NDArrayValue, dtype: ClassValue, dbg: Optional[DebugInfo] = None) -> NDArrayValue:
+        raise NotImplementedError()
+
+    def op_implicit_type_cast(self, value: Value, dest: DTDescriptor, dbg: Optional[DebugInfo] = None) -> Value:
+        raise NotImplementedError()
+
+    def op_implicit_type_align(self, lhs: Value, rhs: Value, dbg: Optional[DebugInfo] = None) -> TupleValue:
         raise NotImplementedError()
 
     def ir_expose_public_i(self, value: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:

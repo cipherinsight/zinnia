@@ -1,7 +1,7 @@
 import copy
 from typing import List, Dict, Optional
 
-from zinnia.opdef.nocls.abstract_op import AbstractOp
+from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
 from zinnia.compile.builder.value import Value, NDArrayValue
@@ -12,11 +12,11 @@ class NDArray_TOp(AbstractOp):
         super().__init__()
 
     def get_signature(self) -> str:
-        return "NDArray::T"
+        return "NDArray.T"
 
     @classmethod
     def get_name(cls) -> str:
-        return "NDArray::T"
+        return "T"
 
     def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return [
