@@ -5,7 +5,7 @@ from zinnia.debug.exception import TypeInferenceError, StaticInferenceError
 from zinnia.compile.type_sys import IntegerType, FloatType
 from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import Value, NDArrayValue, TupleValue, ListValue
+from zinnia.compile.builder.value import Value, NDArrayValue, TupleValue, ListValue, NoneValue
 
 
 class NP_StackOp(AbstractOp):
@@ -27,7 +27,7 @@ class NP_StackOp(AbstractOp):
 
     def build(self, builder: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         the_arrays = kwargs['arrays']
-        axis = kwargs.get("axis", None)
+        axis = kwargs.get("axis", builder.op_constant_none())
         if not isinstance(the_arrays, TupleValue) and not isinstance(the_arrays, ListValue):
             raise TypeInferenceError(dbg, f"Expected `arrays` to be a list or tuple, but got {the_arrays.type()}")
         arrays = []
@@ -41,7 +41,7 @@ class NP_StackOp(AbstractOp):
             else:
                 raise TypeInferenceError(dbg, f"Expected all arguments to be NDArray, but got {arg.type()}")
         axis_value = 0
-        if axis is not None:
+        if not isinstance(axis, NoneValue):
             if axis.type() != IntegerType:
                 raise TypeInferenceError(dbg, f"Expected `axis` to be an integer, but got {axis.type()}")
             axis_value = axis.val()

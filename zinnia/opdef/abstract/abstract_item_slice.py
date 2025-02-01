@@ -44,4 +44,4 @@ class AbstractItemSliceOp(AbstractOp):
             builder.ir_less_than_i(number, builder.ir_constant_int(0)),
             builder.ir_logical_not(builder.ir_less_than_i(number, builder.ir_constant_int(dim)))
         )
-        builder.op_assert(builder.ir_logical_not(is_out_of_range), None)
+        builder.op_assert(builder.ir_logical_not(is_out_of_range), builder.op_constant_none())

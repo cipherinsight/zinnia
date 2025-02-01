@@ -77,8 +77,12 @@ from zinnia.opdef.ir_op.ir_sub_f import SubFIR
 from zinnia.opdef.ir_op.ir_sub_i import SubIIR
 from zinnia.opdef.ir_op.ir_tan_f import TanFIR
 from zinnia.opdef.ir_op.ir_tanh_f import TanHFIR
+from zinnia.opdef.lst import List_IndexOp
+from zinnia.opdef.lst.op_pop import List_PopOp
+from zinnia.opdef.lst.op_remove import List_RemoveOp
 from zinnia.opdef.ndarray import NDArray_MaxOp, NDArray_MinOp, NDArray_ArgMaxOp, NDArray_ArgMinOp, NDArray_SumOp, \
     NDArray_ProdOp, NDArray_AnyOp, NDArray_AllOp
+from zinnia.opdef.np_like import NP_ConcatenateOp
 from zinnia.opdef.np_like.op_asarray import NP_AsarrayOp
 from zinnia.opdef.ndarray.op_astype import NDArray_AsTypeOp
 from zinnia.opdef.ndarray.op_get_item import NDArray_GetItemOp
@@ -113,7 +117,7 @@ from zinnia.opdef.arithmetic.op_mod import ModOp
 from zinnia.opdef.arithmetic.op_mul import MulOp
 from zinnia.opdef.arithmetic.op_ne import NotEqualOp
 from zinnia.opdef.np_like.op_logical_not import NP_LogicalNotOp
-from zinnia.opdef.nocls.op_pow import PowOp
+from zinnia.opdef.arithmetic.op_power import PowerOp
 from zinnia.opdef.internal.op_select import SelectOp
 from zinnia.opdef.internal.op_get_item import GetItemOp
 from zinnia.opdef.internal.op_set_item import SetItemOp
@@ -144,9 +148,9 @@ class IRBuilderImpl(IRBuilder):
         kwargs = op.argparse(dbg, [condition, a, b], {})
         return op.build(self, kwargs, dbg)
 
-    def op_assert(self, test: Value, condition: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_assert(self, test: Value, condition: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> Value:
         op = AssertOp()
-        kwargs = op.argparse(dbg, [test] + ([condition] if condition is not None else []), {})
+        kwargs = op.argparse(dbg, [test, condition], {})
         return op.build(self, kwargs, dbg)
 
     def op_less_than(self, a: Value, b: Value, dbg: Optional[DebugInfo] = None) -> Value:
@@ -214,9 +218,9 @@ class IRBuilderImpl(IRBuilder):
         kwargs = op.argparse(dbg, [a, b], {})
         return op.build(self, kwargs, dbg)
 
-    def op_power(self, a: Value, b: Value, m: Value | None, dbg: Optional[DebugInfo] = None) -> Value:
-        op = PowOp()
-        kwargs = op.argparse(dbg, [a, b] + ([m] if m is not None else []), {})
+    def op_power(self, a: Value, b: Value, dbg: Optional[DebugInfo] = None) -> Value:
+        op = PowerOp()
+        kwargs = op.argparse(dbg, [a, b], {})
         return op.build(self, kwargs, dbg)
 
     def op_exp(self, x: Value, dbg: Optional[DebugInfo] = None) -> Value:
@@ -410,56 +414,56 @@ class IRBuilderImpl(IRBuilder):
         assert isinstance(result, TupleValue)
         return result
 
-    def op_ndarray_max(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_ndarray_max(self, a: NDArrayValue, axis: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> Value:
         op = NDArray_MaxOp()
         kwargs = op.argparse(dbg, [a], {"axis": axis})
         result = op.build(self, kwargs, dbg)
         assert isinstance(result, Value)
         return result
 
-    def op_ndarray_min(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_ndarray_min(self, a: NDArrayValue, axis: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> Value:
         op = NDArray_MinOp()
         kwargs = op.argparse(dbg, [a], {"axis": axis})
         result = op.build(self, kwargs, dbg)
         assert isinstance(result, Value)
         return result
 
-    def op_ndarray_argmax(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_ndarray_argmax(self, a: NDArrayValue, axis: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> Value:
         op = NDArray_ArgMaxOp()
         kwargs = op.argparse(dbg, [a], {"axis": axis})
         result = op.build(self, kwargs, dbg)
         assert isinstance(result, Value)
         return result
 
-    def op_ndarray_argmin(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_ndarray_argmin(self, a: NDArrayValue, axis: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> Value:
         op = NDArray_ArgMinOp()
         kwargs = op.argparse(dbg, [a], {"axis": axis})
         result = op.build(self, kwargs, dbg)
         assert isinstance(result, Value)
         return result
 
-    def op_ndarray_sum(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_ndarray_sum(self, a: NDArrayValue, axis: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> Value:
         op = NDArray_SumOp()
         kwargs = op.argparse(dbg, [a], {"axis": axis})
         result = op.build(self, kwargs, dbg)
         assert isinstance(result, Value)
         return result
 
-    def op_ndarray_prod(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_ndarray_prod(self, a: NDArrayValue, axis: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> Value:
         op = NDArray_ProdOp()
         kwargs = op.argparse(dbg, [a], {"axis": axis})
         result = op.build(self, kwargs, dbg)
         assert isinstance(result, Value)
         return result
 
-    def op_ndarray_any(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_ndarray_any(self, a: NDArrayValue, axis: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> Value:
         op = NDArray_AnyOp()
         kwargs = op.argparse(dbg, [a], {"axis": axis})
         result = op.build(self, kwargs, dbg)
         assert isinstance(result, Value)
         return result
 
-    def op_ndarray_all(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_ndarray_all(self, a: NDArrayValue, axis: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> Value:
         op = NDArray_AllOp()
         kwargs = op.argparse(dbg, [a], {"axis": axis})
         result = op.build(self, kwargs, dbg)
@@ -492,6 +496,34 @@ class IRBuilderImpl(IRBuilder):
         kwargs = op.argparse(dbg, [a], {})
         result = op.build(self, kwargs, dbg)
         assert isinstance(result, Value)
+        return result
+
+    def op_list_index(self, lst: ListValue, value: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+        op = List_IndexOp()
+        kwargs = op.argparse(dbg, [lst, value], {})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, IntegerValue)
+        return result
+
+    def op_list_pop(self, lst: ListValue, index: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        op = List_PopOp()
+        kwargs = op.argparse(dbg, [lst, index], {})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, NoneValue)
+        return result
+
+    def op_list_remove(self, lst: ListValue, value: Value, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        op = List_RemoveOp()
+        kwargs = op.argparse(dbg, [lst, value], {})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, NoneValue)
+        return result
+
+    def op_np_concatenate(self, arrays: ListValue | TupleValue, axis: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> NDArrayValue:
+        op = NP_ConcatenateOp()
+        kwargs = op.argparse(dbg, [arrays, axis], {})
+        result = op.build(self, kwargs, dbg)
+        assert isinstance(result, NDArrayValue)
         return result
 
     def ir_poseidon_hash(self, values: List[NumberValue], dbg: Optional[DebugInfo] = None) -> IntegerValue:

@@ -215,7 +215,7 @@ class IRGenerator:
         elif n.operator == n.Op.OR:
             return self._ir_builder.ir_logical_or(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.POW:
-            return self._ir_builder.op_power(lhs_expr, rhs_expr, None, dbg=n.dbg)
+            return self._ir_builder.op_power(lhs_expr, rhs_expr, dbg=n.dbg)
         raise NotImplementedError(f"Internal Error: Binary Operator {n.operator} not implemented")
 
     def visit_ASTUnaryOperator(self, n: ASTUnaryOperator):

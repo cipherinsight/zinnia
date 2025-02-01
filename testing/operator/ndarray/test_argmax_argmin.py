@@ -44,7 +44,7 @@ def test_argmax_with_multidim_array():
     def foo():
         array = np.asarray([[1, 2, 3], [4, 5, 6]])
         assert array.argmax() == 5
-        assert array.argmax(axis=-1) == 5
+        assert array.argmax(axis=None) == 5
 
     assert foo()
 
@@ -54,6 +54,6 @@ def test_argmin_with_multidim_array():
     def foo():
         array = np.asarray([[1, 2, 3], [4, 5, 6]])
         assert array.argmin() == 0
-        assert array.argmin(axis=-1) == 0
+        assert array.argmin(axis=None) == 0
 
     assert foo()

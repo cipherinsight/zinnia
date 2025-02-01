@@ -59,3 +59,6 @@ from .op_subtract import NP_SubtractOp
 from .op_sum import NP_SumOp
 from .op_tan import NP_TanOp
 from .op_tanh import NP_TanHOp
+from .op_repeat import NP_RepeatOp
+from .op_size import NP_SizeOp
+from .op_append import NP_AppendOp

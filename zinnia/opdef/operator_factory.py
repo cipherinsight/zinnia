@@ -5,6 +5,8 @@ import zinnia.opdef.np_like as np_ops
 import zinnia.opdef.math as math_ops
 import zinnia.opdef.nocls as global_ops
 import zinnia.opdef.ndarray as ndarray_ops
+import zinnia.opdef.lst as list_ops
+import zinnia.opdef.tupl as tuple_ops
 
 
 class Operators:
@@ -19,10 +21,16 @@ class Operators:
         ndarray_ops.NDArray_ToListOp, ndarray_ops.NDArray_AsTypeOp, ndarray_ops.NDArray_MaxOp, ndarray_ops.NDArray_MinOp,
         ndarray_ops.NDArray_ArgMaxOp, ndarray_ops.NDArray_ArgMinOp, ndarray_ops.NDArray_ShapeOp, ndarray_ops.NDArray_ReshapeOp,
         ndarray_ops.NDArray_FlatOp, ndarray_ops.NDArray_DtypeOp, ndarray_ops.NDArray_AllOp, ndarray_ops.NDArray_AnyOp,
-        ndarray_ops.NDArray_NdimOp
+        ndarray_ops.NDArray_NdimOp, ndarray_ops.NDArray_RepeatOp, ndarray_ops.NDArray_SizeOp, ndarray_ops.NDArray_FlattenOp
     ]
-    Tuple = []
-    List = []
+    Tuple = [
+        tuple_ops.Tuple_CountOp, tuple_ops.Tuple_IndexOp
+    ]
+    List = [
+        list_ops.List_AppendOp, list_ops.List_ExtendOp, list_ops.List_InsertOp, list_ops.List_PopOp,
+        list_ops.List_CopyOp, list_ops.List_ClearOp, list_ops.List_ReverseOp, list_ops.List_IndexOp,
+        list_ops.List_CountOp, list_ops.List_RemoveOp,
+    ]
     String = []
     NPLike = [
         np_ops.NP_EyeOp, np_ops.NP_ZerosOp, np_ops.NP_OnesOp, np_ops.NP_IdentityOp,
@@ -40,7 +48,7 @@ class Operators:
         np_ops.NP_NegativeOp, np_ops.NP_PositiveOp, np_ops.NP_NotEqualOp, np_ops.NP_PowerOp,
         np_ops.NP_PowOp, np_ops.NP_ProdOp, np_ops.NP_SignOp, np_ops.NP_SinHOp,
         np_ops.NP_SqrtOp, np_ops.NP_SubtractOp, np_ops.NP_SumOp, np_ops.NP_TanOp,
-        np_ops.NP_TanHOp,
+        np_ops.NP_TanHOp, np_ops.NP_RepeatOp, np_ops.NP_SizeOp, np_ops.NP_AppendOp
     ]
     Zinnia = [
         *NPLike

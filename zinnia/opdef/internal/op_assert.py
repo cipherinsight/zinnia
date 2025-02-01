@@ -4,7 +4,7 @@ from zinnia.debug.exception import TypeInferenceError, StaticInferenceError
 from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import Value, IntegerValue, NDArrayValue
+from zinnia.compile.builder.value import Value, IntegerValue, NDArrayValue, NoneValue
 
 
 class AssertOp(AbstractOp):
@@ -26,8 +26,8 @@ class AssertOp(AbstractOp):
 
     def build(self, builder: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         operand = kwargs["test"]
-        condition = kwargs["condition"]
-        if condition is None:
+        condition = kwargs.get("condition", builder.op_constant_none())
+        if isinstance(condition, NoneValue):
             condition = builder.ir_constant_int(1)
         if not isinstance(condition, IntegerValue):
             raise TypeInferenceError(dbg, f"Internal Error: `condition` should be an integer value")

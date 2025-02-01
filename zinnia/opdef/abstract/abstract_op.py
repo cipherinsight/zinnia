@@ -55,7 +55,11 @@ class AbstractOp:
         for param in params:
             if param.name not in filled and not param.default:
                 raise OperatorCallError(dbg_i, f"Operator `{self.get_name()}` missing required argument `{param.name}`")
-        return mapping
+        parse_result = {}
+        for k, v in mapping.items():
+            if v is not None:
+                parse_result[k] = v
+        return parse_result
 
     def build(self, builder: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()

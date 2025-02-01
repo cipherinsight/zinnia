@@ -8,7 +8,7 @@ from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
 from zinnia.compile.builder.value import NDArrayValue, Value, ListValue, IntegerValue, FloatValue, TupleValue, \
-    ClassValue
+    ClassValue, NoneValue
 
 
 class NP_AsarrayOp(AbstractOp):
@@ -30,7 +30,7 @@ class NP_AsarrayOp(AbstractOp):
 
     def build(self, builder: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         the_val = kwargs["val"]
-        the_dtype = kwargs["dtype"]
+        the_dtype = kwargs.get("dtype", builder.op_constant_none())
         if isinstance(the_val, NDArrayValue):
             return copy.deepcopy(the_val)
         if not isinstance(the_val, ListValue) and not isinstance(the_val, TupleValue):
@@ -44,7 +44,7 @@ class NP_AsarrayOp(AbstractOp):
             raise TypeInferenceError(dbg, f"To convert to NDArray, all sub-lists should be of the same shape.")
         the_shape = InternalNDArray.get_nested_list_shape(draft_list)
         internal_ndarray = InternalNDArray(the_shape, draft_list)
-        if the_dtype is not None:
+        if not isinstance(the_dtype, NoneValue):
             if not isinstance(the_dtype, ClassValue):
                 raise TypeInferenceError(dbg, f"Expected dtype to be a type, got {the_dtype.type()}")
             if the_dtype.val() == IntegerType:

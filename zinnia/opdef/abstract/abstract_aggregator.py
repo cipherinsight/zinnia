@@ -5,7 +5,7 @@ from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.compile.type_sys.dt_descriptor import DTDescriptor
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import Value, NDArrayValue, IntegerValue, NumberValue
+from zinnia.compile.builder.value import Value, NDArrayValue, IntegerValue, NumberValue, NoneValue
 
 
 class AbstractAggregator(AbstractOp):
@@ -38,21 +38,24 @@ class AbstractAggregator(AbstractOp):
 
     def build(self, builder: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         the_self = kwargs["self"]
-        the_axis = kwargs["axis"]
+        the_axis = kwargs.get("axis", builder.op_constant_none())
         assert isinstance(the_self, NDArrayValue)
         dtype = the_self.dtype()
         if not self.is_allowed_ndarray_dtype(dtype):
             raise TypeInferenceError(dbg, f"The dtype ({dtype}) of param `self: NDArray` is not allowed here")
-        if the_axis is None:
-            _axis = -1
+        if isinstance(the_axis, NoneValue):
+            _axis = None
         elif not isinstance(the_axis, IntegerValue):
             raise TypeInferenceError(dbg, "Param `axis` must be of type `Integer`")
         elif the_axis.val() is None:
             raise StaticInferenceError(dbg, "Cannot statically infer the value of param `axis`")
         else:
             _axis = the_axis.val()
-        if _axis >= len(the_self.shape()):
-            raise TypeInferenceError(dbg, f"Invalid `axis` value for `{self.get_signature()}`. The axis number exceeds total number of dimensions of the ndarray")
+        if _axis is not None:
+            if _axis < 0:
+                _axis += len(the_self.shape())
+            if _axis < 0 or _axis >= len(the_self.shape()):
+                raise TypeInferenceError(dbg, f"axis `{_axis}` is out of bounds for array of dimension {len(the_self.shape())}")
         dtype = self.get_result_dtype(dtype)
         result_value = the_self.accumulate(
             _axis,

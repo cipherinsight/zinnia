@@ -5,7 +5,7 @@ from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.compile.type_sys import FloatType, IntegerType
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import Value, IntegerValue, ClassValue, NDArrayValue
+from zinnia.compile.builder.value import Value, IntegerValue, ClassValue, NDArrayValue, NoneValue
 
 
 class NP_EyeOp(AbstractOp):
@@ -29,7 +29,7 @@ class NP_EyeOp(AbstractOp):
     def build(self, builder: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         n = kwargs["n"]
         m = kwargs["m"]
-        dtype = kwargs["dtype"]
+        dtype = kwargs.get("dtype", builder.op_constant_none())
         if not isinstance(n, IntegerValue):
             raise TypeInferenceError(dbg, "Param `n` must be of type `Number`")
         if n.val() is None:
@@ -43,7 +43,7 @@ class NP_EyeOp(AbstractOp):
         if m.val() <= 0:
             raise TypeInferenceError(dbg, "Invalid `m` value, m must be greater than 0")
         parsed_dtype = FloatType
-        if dtype is not None:
+        if not isinstance(dtype, NoneValue):
             if isinstance(dtype, ClassValue):
                 parsed_dtype = dtype.val()
             else:

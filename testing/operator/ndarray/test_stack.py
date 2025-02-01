@@ -36,7 +36,7 @@ def test_stack_axis_out_of_bound():
     def foo_2():
         array1 = np.asarray([1, 2, 3])
         array2 = np.asarray([4, 5, 6])
-        np.stack([array1, array2], axis=-1)
+        np.stack([array1, array2], axis=-3)
 
     with pytest.raises(ZinniaException) as e:
         assert foo_1()

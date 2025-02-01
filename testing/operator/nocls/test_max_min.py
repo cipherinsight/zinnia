@@ -44,7 +44,7 @@ def test_max_with_multidim_array():
     def foo():
         array = np.asarray([[1, 2, 3], [4, 5, 6]])
         assert array.max() == 6
-        assert array.max(axis=-1) == 6
+        assert array.max(axis=None) == 6
 
     assert foo()
 
@@ -54,6 +54,6 @@ def test_min_with_multidim_array():
     def foo():
         array = np.asarray([[1, 2, 3], [4, 5, 6]])
         assert array.min() == 1
-        assert array.min(axis=-1) == 1
+        assert array.min(axis=None) == 1
 
     assert foo()

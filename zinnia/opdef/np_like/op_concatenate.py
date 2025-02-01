@@ -5,7 +5,7 @@ from zinnia.debug.exception import TypeInferenceError, StaticInferenceError
 from zinnia.compile.type_sys import IntegerType, FloatType
 from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import Value, IntegerValue, NDArrayValue, TupleValue, ListValue
+from zinnia.compile.builder.value import Value, IntegerValue, NDArrayValue, TupleValue, ListValue, NoneValue
 
 
 class NP_ConcatenateOp(AbstractOp):
@@ -26,10 +26,10 @@ class NP_ConcatenateOp(AbstractOp):
         ]
 
     def build(self, builder: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
-        axis = kwargs.get("axis", None)
+        axis = kwargs.get("axis", builder.op_constant_none())
         arrays = kwargs["arrays"]
         axis_value = 0
-        if axis is not None:
+        if not isinstance(axis, NoneValue):
             if isinstance(axis, IntegerValue):
                 axis_value = axis.val()
             else:

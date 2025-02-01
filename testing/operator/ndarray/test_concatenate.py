@@ -29,7 +29,7 @@ def test_concat_invalid_axis():
     def foo_1():
         array1 = np.asarray([[1, 2], [3, 4]])
         array2 = np.asarray([[5, 6], [7, 8]])
-        np.concatenate([array1, array2], axis=-1)
+        np.concatenate([array1, array2], axis=-3)
 
     @zk_circuit
     def foo_2():

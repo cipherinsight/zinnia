@@ -19,7 +19,7 @@ class AbsIRBuilderInterface:
     def op_select(self, condition: Value, a: Value, b: Value, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
-    def op_assert(self, test: Value, condition: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_assert(self, test: Value, condition: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
     def op_less_than(self, a: Value, b: Value, dbg: Optional[DebugInfo] = None) -> Value:
@@ -61,7 +61,7 @@ class AbsIRBuilderInterface:
     def op_modulo(self, a: Value, b: Value, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
-    def op_power(self, a: Value, b: Value, m: Value | None, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_power(self, a: Value, b: Value, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
     def op_exp(self, x: Value, dbg: Optional[DebugInfo] = None) -> Value:
@@ -166,28 +166,28 @@ class AbsIRBuilderInterface:
     def op_implicit_type_align(self, lhs: Value, rhs: Value, dbg: Optional[DebugInfo] = None) -> TupleValue:
         raise NotImplementedError()
 
-    def op_ndarray_max(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_ndarray_max(self, a: NDArrayValue, axis: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
-    def op_ndarray_min(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_ndarray_min(self, a: NDArrayValue, axis: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
-    def op_ndarray_argmax(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_ndarray_argmax(self, a: NDArrayValue, axis: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
-    def op_ndarray_argmin(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_ndarray_argmin(self, a: NDArrayValue, axis: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
-    def op_ndarray_sum(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_ndarray_sum(self, a: NDArrayValue, axis: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
-    def op_ndarray_prod(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_ndarray_prod(self, a: NDArrayValue, axis: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
     def op_logical_and(self, lhs: Value, rhs: Value, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
-    def op_ndarray_all(self, a: NDArrayValue, axis: IntegerValue | None, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_ndarray_all(self, a: NDArrayValue, axis: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
     def op_logical_any(self, lhs: Value, rhs: Value, dbg: Optional[DebugInfo] = None) -> Value:
@@ -200,6 +200,18 @@ class AbsIRBuilderInterface:
         raise NotImplementedError()
 
     def op_logical_not(self, a: Value, dbg: Optional[DebugInfo] = None) -> Value:
+        raise NotImplementedError()
+
+    def op_list_index(self, lst: ListValue, value: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+        raise NotImplementedError()
+
+    def op_list_pop(self, lst: ListValue, index: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        raise NotImplementedError()
+
+    def op_list_remove(self, lst: ListValue, value: Value, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        raise NotImplementedError()
+
+    def op_np_concatenate(self, arrays: ListValue | TupleValue, axis: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> NDArrayValue:
         raise NotImplementedError()
 
     def ir_expose_public_i(self, value: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:

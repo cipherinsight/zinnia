@@ -5,7 +5,7 @@ from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.compile.type_sys import IntegerType, FloatType
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import Value, TupleValue, IntegerValue, ClassValue, NDArrayValue
+from zinnia.compile.builder.value import Value, TupleValue, IntegerValue, ClassValue, NDArrayValue, NoneValue
 
 
 class NP_OnesOp(AbstractOp):
@@ -27,7 +27,7 @@ class NP_OnesOp(AbstractOp):
 
     def build(self, builder: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         shape = kwargs["shape"]
-        dtype = kwargs["dtype"]
+        dtype = kwargs.get("dtype", builder.op_constant_none())
         if not isinstance(shape, TupleValue):
             raise TypeInferenceError(dbg, "Param `shape` must be of type `Tuple`")
         for ele_t, ele_v in zip(shape.types(), shape.values()):
@@ -39,7 +39,7 @@ class NP_OnesOp(AbstractOp):
             if ele_v.val() <= 0:
                 raise TypeInferenceError(dbg, "Every number element in `shape` must be greater than 0")
         parsed_dtype = FloatType
-        if dtype is not None:
+        if not isinstance(dtype, NoneValue):
             if isinstance(dtype, ClassValue):
                 parsed_dtype = dtype.val()
             else:

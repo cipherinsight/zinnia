@@ -6,7 +6,7 @@ from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.compile.type_sys import IntegerType
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import NDArrayValue, Value, TupleValue, ListValue
+from zinnia.compile.builder.value import NDArrayValue, Value, TupleValue, ListValue, NoneValue
 
 
 class NDArray_TransposeOp(AbstractOp):
@@ -28,9 +28,9 @@ class NDArray_TransposeOp(AbstractOp):
 
     def build(self, builder: AbsIRBuilderInterface, kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         the_self = kwargs["self"]
-        axes = kwargs.get("axes", None)
+        axes = kwargs.get("axes", builder.op_constant_none())
         assert isinstance(the_self, NDArrayValue)
-        if axes is None:
+        if isinstance(axes, NoneValue):
             axes_vals = tuple(range(len(the_self.shape()))[::-1])
         elif isinstance(axes, TupleValue) or isinstance(axes, ListValue):
             for ele_type, ele_val in zip(axes.types(), axes.values()):

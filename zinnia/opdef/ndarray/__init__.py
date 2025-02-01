@@ -15,3 +15,6 @@ from .op_transpose import NDArray_TransposeOp
 from .op_tolist import NDArray_ToListOp
 from .op_astype import NDArray_AsTypeOp
 from .op_ndim import NDArray_NdimOp
+from .op_repeat import NDArray_RepeatOp
+from .op_size import NDArray_SizeOp
+from .op_flatten import NDArray_FlattenOp

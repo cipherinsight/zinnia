@@ -220,7 +220,7 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
     def visit_Constant(self, node: ast.Constant):
         dbg_info = self.get_dbg(node)
         if node.value is None:
-            raise UnsupportedConstantLiteralException(dbg_info, "Invalid constant `None` in circuit.")
+            return ASTConstantNone(dbg_info)
         if isinstance(node.value, int):
             return ASTConstantInteger(dbg_info, node.value)
         elif isinstance(node.value, float):

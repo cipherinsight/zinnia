@@ -178,8 +178,8 @@ class InternalNDArray:
             enpair_func: Callable[[Any, Any], Tuple[Any, Any]] = lambda x, _: (x, None),
             depair_func: Callable[[Any, Any], Any] = lambda x, _: x
     ) -> Any:
-        assert 0 <= axis < len(self.shape) or axis == -1
-        if axis == -1:
+        assert axis is None or 0 <= axis < len(self.shape)
+        if axis is None:
             flatten_values = self.flatten()
             result, result_i = initial_generator(flatten_values[0])
             for i, x in enumerate(flatten_values):
@@ -286,7 +286,7 @@ class InternalNDArray:
 
     @staticmethod
     def concatenate(args: List['InternalNDArray'], axis=0) -> 'InternalNDArray':
-        if axis == -1:
+        if axis is None:
             flatten_values = []
             for arg in args:
                 flatten_values += arg.flatten()

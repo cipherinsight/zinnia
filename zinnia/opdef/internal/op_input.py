@@ -74,6 +74,6 @@ class InputOp(AbstractOp):
             val = builder.op_input(self.indices + (0,), self.dt.dtype, '')
             provided_hash = builder.ir_read_hash(self.indices + (1,))
             builder.op_expose_public(provided_hash)
-            builder.op_assert(builder.ir_equal_hash(builder.op_poseidon_hash(val), provided_hash), None)
+            builder.op_assert(builder.ir_equal_hash(builder.op_poseidon_hash(val), provided_hash), builder.op_constant_none())
             return val
         raise NotImplementedError()
