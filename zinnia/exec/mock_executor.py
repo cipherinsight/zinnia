@@ -3,6 +3,7 @@ from zinnia.config.mock_exec_config import MockExecConfig
 from zinnia.config.zinnia_config import ZinniaConfig
 from zinnia.opdef.ir_op.abstract_ir import AbstractIR
 from zinnia.opdef.ir_op.ir_assert import AssertIR
+from zinnia.opdef.ir_op.ir_print import PrintIR
 from zinnia.opdef.ir_op.ir_read_float import ReadFloatIR
 from zinnia.opdef.ir_op.ir_read_hash import ReadHashIR
 from zinnia.opdef.ir_op.ir_read_integer import ReadIntegerIR
@@ -38,6 +39,12 @@ class MockProgramExecutor(ZKProgramExecutor):
             self.value_table[stmt.stmt_id] = stmt.operator.mock_exec(stmt.operator.argparse(None, args, {}), config)
             return
         return method(stmt)
+
+    def exec_PrintIR(self, stmt: IRStatement):
+        assert isinstance(stmt.operator, PrintIR)
+        args = [self.value_table[x] for x in stmt.arguments]
+        stmt.operator.argparse(None, args, {})
+        print(args[0], end='', flush=True, sep='')
 
     def exec_ReadIntegerIR(self, stmt: IRStatement):
         assert isinstance(stmt.operator, ReadIntegerIR)

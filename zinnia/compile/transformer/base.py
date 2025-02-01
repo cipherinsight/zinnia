@@ -231,9 +231,6 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
 
     def visit_List(self, node: ast.List):
         dbg_info = self.get_dbg(node)
-        if len(node.elts) == 0:
-            raise UnsupportedLangFeatureException(dbg_info,
-                                                  "Cannot create an empty list (as an empty NDArray) in circuit.")
         parsed_elts = []
         for elt in node.elts:
             parsed_elts.append(self.visit_expr(elt))
@@ -241,8 +238,6 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
 
     def visit_Tuple(self, node: ast.Tuple):
         dbg_info = self.get_dbg(node)
-        if len(node.elts) == 0:
-            raise UnsupportedLangFeatureException(dbg_info, "Cannot create an empty tuple in circuit.")
         parsed_elts = []
         for elt in node.elts:
             parsed_elts.append(self.visit_expr(elt))

@@ -28,7 +28,7 @@ class Tuple_CountOp(AbstractOp):
         value = kwargs["value"]
         assert isinstance(the_self, TupleValue)
         answer = builder.ir_constant_int(0)
-        for i, v in the_self.values():
+        for i, v in enumerate(the_self.values()):
             equal = builder.op_bool_cast(builder.op_equal(v, value, dbg), dbg)
             answer = builder.op_select(equal, builder.op_add(answer, builder.ir_constant_int(1)), answer, dbg)
         return answer

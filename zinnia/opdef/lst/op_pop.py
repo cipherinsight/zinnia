@@ -4,7 +4,7 @@ from zinnia.debug.exception import TypeInferenceError
 from zinnia.opdef.abstract.abstract_op import AbstractOp
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import Value, ListValue, IntegerValue
+from zinnia.compile.builder.value import Value, ListValue, IntegerValue, NoneValue
 
 
 class List_PopOp(AbstractOp):
@@ -41,7 +41,7 @@ class List_PopOp(AbstractOp):
             builder.op_assert(builder.op_logical_and(
                 builder.op_less_than_or_equal(builder.ir_constant_int(0), parsed_index),
                 builder.op_less_than(parsed_index, builder.ir_constant_int(len(the_self.values())))
-            ), None, dbg)
+            ), builder.op_constant_none(), dbg)
             result = ListValue(the_self.types()[1:], the_self.values()[1:])
             for i in range(1, len(the_self.values())):
                 result = builder.op_select(
@@ -49,9 +49,14 @@ class List_PopOp(AbstractOp):
                     ListValue(the_self.types()[:i] + the_self.types()[i + 1:], the_self.values()[:i] + the_self.values()[i + 1:]),
                     result
                 )
-            return result
+            the_self.assign(result)
+            return NoneValue()
         parsed_index = index.val() if index.val() >= 0 else len(the_self.values()) + index.val()
-        return ListValue(
+        if parsed_index < 0 or parsed_index >= len(the_self.values()):
+            raise TypeInferenceError(dbg, f"pop index out of range")
+        new_list = ListValue(
             the_self.types()[:parsed_index] + the_self.types()[parsed_index + 1:],
             the_self.values()[:parsed_index] + the_self.values()[parsed_index + 1:]
         )
+        the_self.assign(new_list)
+        return NoneValue()

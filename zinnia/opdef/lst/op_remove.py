@@ -27,6 +27,6 @@ class List_RemoveOp(AbstractOp):
         the_self = kwargs["self"]
         the_value = kwargs["value"]
         assert isinstance(the_self, ListValue)
-        the_index = builder.op_list_index(the_self, the_value, dbg)
+        the_index = builder.op_list_index(the_self, the_value, builder.op_constant_none(), builder.op_constant_none(), dbg)
         builder.op_list_pop(the_self, the_index, dbg)
         return NoneValue()

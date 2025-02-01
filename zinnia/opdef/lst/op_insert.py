@@ -45,7 +45,7 @@ class List_InsertOp(AbstractOp):
             builder.op_assert(builder.op_logical_and(
                 builder.op_less_than_or_equal(builder.ir_constant_int(0), parsed_index),
                 builder.op_less_than(parsed_index, builder.ir_constant_int(len(the_self.values())))
-            ), None, dbg)
+            ), builder.op_constant_none(), dbg)
             result = ListValue([the_object.type()] + the_self.types(), [the_object] + the_self.values())
             for i in range(1, len(the_self.values())):
                 new_types = the_self.types().copy()

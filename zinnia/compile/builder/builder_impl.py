@@ -498,9 +498,9 @@ class IRBuilderImpl(IRBuilder):
         assert isinstance(result, Value)
         return result
 
-    def op_list_index(self, lst: ListValue, value: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def op_list_index(self, lst: ListValue, value: Value, start: IntegerValue | NoneValue, stop: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         op = List_IndexOp()
-        kwargs = op.argparse(dbg, [lst, value], {})
+        kwargs = op.argparse(dbg, [lst, value, start, stop], {})
         result = op.build(self, kwargs, dbg)
         assert isinstance(result, IntegerValue)
         return result

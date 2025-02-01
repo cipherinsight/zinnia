@@ -202,7 +202,7 @@ class AbsIRBuilderInterface:
     def op_logical_not(self, a: Value, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
-    def op_list_index(self, lst: ListValue, value: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def op_list_index(self, lst: ListValue, value: Value, start: IntegerValue | NoneValue, stop: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         raise NotImplementedError()
 
     def op_list_pop(self, lst: ListValue, index: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
