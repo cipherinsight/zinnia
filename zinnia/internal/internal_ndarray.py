@@ -4,9 +4,9 @@ from typing import Tuple, List, Callable, Any, Union
 
 class InternalNDArray:
     shape: Tuple[int, ...]
-    values: List
+    values: List | Any
 
-    def __init__(self, shape: Tuple[int, ...], values: List):
+    def __init__(self, shape: Tuple[int, ...], values: List | Any):
         self.shape = shape
         self.values = values
         assert InternalNDArray.check_list_shape_matches(shape, values)
@@ -24,6 +24,9 @@ class InternalNDArray:
         return InternalNDArray._shape_matches(self.shape, other.shape)
 
     def ndarray_get_item(self, slicing: List[int | Tuple[int, int, int]]) -> Any:
+        if self.shape == ():
+            assert len(slicing) == 0
+            return self.values
         padded_slicing = slicing + [(None, None, None) for _ in range(len(self.shape) - len(slicing))]
         def _internal_helper(_depth: int, _slicing: List, _values: List):
             _slice = _slicing[_depth]
@@ -73,6 +76,8 @@ class InternalNDArray:
         return numbered_ndarray.unary(_decode)
 
     def flatten(self) -> List[Any]:
+        if self.shape == ():
+            return [self.values]
         def _internal_helper(_depth: int, _values: List):
             if _depth == len(self.shape):
                 return [_values]
@@ -100,6 +105,8 @@ class InternalNDArray:
 
     @staticmethod
     def binary_broadcast(lhs: 'InternalNDArray', rhs: 'InternalNDArray') -> Tuple['InternalNDArray', 'InternalNDArray']:
+        if lhs.shape == rhs.shape:
+            return lhs, rhs
         shape_lhs, shape_rhs = lhs.shape, rhs.shape
         if len(shape_lhs) < len(shape_rhs):
             shape_lhs = tuple(1 for _ in range(len(shape_rhs) - len(shape_lhs))) + shape_lhs
@@ -128,6 +135,8 @@ class InternalNDArray:
 
     @staticmethod
     def binary_broadcast_compatible(shape_lhs: Tuple[int, ...], shape_rhs: Tuple[int, ...]) -> bool:
+        if shape_lhs == () or shape_rhs == ():
+            return True
         if len(shape_lhs) < len(shape_rhs):
             shape_lhs = tuple(1 for _ in range(len(shape_rhs) - len(shape_lhs))) + shape_lhs
         if len(shape_rhs) < len(shape_lhs):
@@ -138,15 +147,31 @@ class InternalNDArray:
     def directed_broadcast(src: 'InternalNDArray', dst: Tuple[int, ...]) -> 'InternalNDArray':
         if src.shape == dst:
             return src
-        def _internal_helper(_shape: Tuple[int, ...], _values: List):
+        shape_src = src.shape
+        if len(shape_src) < len(dst):
+            shape_src = tuple(1 for _ in range(len(dst) - len(shape_src))) + shape_src
+        def _internal_helper(expected_shape: Tuple[int, ...], _shape: Tuple[int, ...], _operand: List):
             if len(_shape) == 1:
-                return _values[0]
-            return [_internal_helper(_shape[1:], _values) for _ in range(_shape[0])]
-        new_values = _internal_helper(dst, src.values)
+                if _shape[0] == 1:
+                    return [_operand[0] for _ in range(expected_shape[0])]
+                assert _shape[0] == expected_shape[0]
+                return _operand
+            else:
+                if _shape[0] == 1:
+                    return [_internal_helper(expected_shape[1:], _shape[1:], _operand[0]) for _ in range(expected_shape[0])]
+                assert _shape[0] == expected_shape[0]
+                return [_internal_helper(expected_shape[1:], _shape[1:], _operand[i]) for i in range(expected_shape[0])]
+        def _pad_values(values, depth: int):
+            if depth <= 0:
+                return values
+            return [_pad_values(values, depth - 1)]
+        new_values = _internal_helper(dst, shape_src, _pad_values(src.values, len(dst) - len(src.shape)))
         return InternalNDArray(dst, new_values)
 
     @staticmethod
     def directed_broadcast_compatible(src: Tuple[int, ...], dst: Tuple[int, ...]) -> bool:
+        if src == ():
+            return True
         if len(src) < len(dst):
             src = tuple(1 for _ in range(len(dst) - len(src))) + src
         if len(dst) < len(src):
@@ -155,6 +180,8 @@ class InternalNDArray:
 
     def binary(self, other: 'InternalNDArray', op: Callable[[Any, Any], Any]) -> 'InternalNDArray':
         assert InternalNDArray._shape_matches(self.shape, other.shape)
+        if self.shape == ():
+            return InternalNDArray(shape=(), values=op(self.values, other.values))
         def _internal_helper(_shape: Tuple[int, ...], _lhs: List, _rhs: List):
             if len(_shape) == 1:
                 return [op(a, b) for a, b in zip(_lhs, _rhs)]
@@ -163,6 +190,8 @@ class InternalNDArray:
         return InternalNDArray(shape=self.shape, values=new_values)
 
     def unary(self, op: Callable[[Any], Any]) -> 'InternalNDArray':
+        if self.shape == ():
+            return InternalNDArray(shape=(), values=op(self.values))
         def _internal_helper(_shape: Tuple[int, ...], _operand: List):
             if len(_shape) == 1:
                 return [op(x) for x in _operand]
@@ -178,6 +207,11 @@ class InternalNDArray:
             enpair_func: Callable[[Any, Any], Tuple[Any, Any]] = lambda x, _: (x, None),
             depair_func: Callable[[Any, Any], Any] = lambda x, _: x
     ) -> Any:
+        if self.shape == ():
+            assert axis is None or axis == 0
+            result = initial_generator(self.values)
+            a, b = enpair_func(self.values, 0)
+            return depair_func(*accumulator(result[0], result[1], a, b))
         assert axis is None or 0 <= axis < len(self.shape)
         if axis is None:
             flatten_values = self.flatten()
@@ -268,6 +302,8 @@ class InternalNDArray:
         return InternalNDArray(new_shape, reshape(transposed, new_shape))
 
     def for_each(self, func: Callable[[Tuple[int, ...], Any], Any]) -> 'InternalNDArray':
+        if self.shape == ():
+            return InternalNDArray(shape=(), values=func((), self.values))
         def _internal_helper(_indices: Tuple[int, ...], _depth: int, _operand: List):
             if _depth == len(self.shape):
                 return func(_indices, _operand)
@@ -277,6 +313,8 @@ class InternalNDArray:
 
     @staticmethod
     def fill(shape: Tuple[int, ...], fill_value: Callable[[], Any]) -> 'InternalNDArray':
+        if shape == ():
+            return InternalNDArray(shape=(), values=fill_value())
         def _internal_helper(_shape: Tuple[int, ...]):
             if len(_shape) == 1:
                 return [fill_value() for _ in range(_shape[0])]
@@ -357,6 +395,8 @@ class InternalNDArray:
 
     @staticmethod
     def check_list_shape_matches(shape: Tuple[int, ...], values: List) -> bool:
+        if shape == ():
+            return True
         if len(shape) == 0:
             return False
         if shape[0] <= 0:

@@ -1,19 +1,20 @@
 from typing import Optional, List, Tuple, Dict
 
-from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import Value, IntegerValue
+from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
+from zinnia.compile.triplet import Value, IntegerValue
 from zinnia.compile.scope.abs_scope import AbstractScope
+from zinnia.compile.triplet.store import ValueStore
 from zinnia.compile.type_sys import DTDescriptor
 
 
 class ChipScope(AbstractScope):
-    var_table: Dict[str, Value]
+    var_table: Dict[str, ValueStore]
     has_return_stmt: bool
     return_dtype: DTDescriptor
     returns_with_conditions: List[Tuple[Value, IntegerValue]]
     calculated_returning_condition: IntegerValue | None
 
-    def __init__(self, ir_builder: AbsIRBuilderInterface, super_scope: Optional['AbstractScope'], return_dtype: DTDescriptor):
+    def __init__(self, ir_builder: IRBuilderInterface, super_scope: Optional['AbstractScope'], return_dtype: DTDescriptor):
         super().__init__(ir_builder, super_scope)
         self.var_table = {}
         self.has_return_stmt = False
@@ -27,11 +28,11 @@ class ChipScope(AbstractScope):
     def scope_leave(self, *args, **kwargs):
         pass
 
-    def set(self, name: str, ptr: Value):
-        assert isinstance(ptr, Value)
+    def set(self, name: str, ptr: ValueStore):
+        assert isinstance(ptr, ValueStore)
         self.var_table[name] = ptr
 
-    def get(self, name: str) -> Value:
+    def get(self, name: str) -> ValueStore:
         if name in self.var_table:
             return self.var_table[name]
         raise ValueError(f'Internal Error: Variable {name} not found in scope. Did you forget to check existence?')

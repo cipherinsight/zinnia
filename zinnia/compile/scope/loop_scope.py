@@ -1,19 +1,20 @@
 from typing import Optional, Dict
 
-from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import Value, IntegerValue
+from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
+from zinnia.compile.triplet import Value, IntegerValue
 from zinnia.compile.scope import AbstractScope
+from zinnia.compile.triplet.store import ValueStore
 from zinnia.compile.type_sys import DTDescriptor
 
 
 class LoopScope(AbstractScope):
     continue_condition: IntegerValue | None
     break_condition: IntegerValue | None
-    var_table: Dict[str, Value]
+    var_table: Dict[str, ValueStore]
     calculated_looping_condition: IntegerValue | None
     super_looping_condition: IntegerValue | None
 
-    def __init__(self, ir_builder: AbsIRBuilderInterface, super_scope: Optional['AbstractScope']):
+    def __init__(self, ir_builder: IRBuilderInterface, super_scope: Optional['AbstractScope']):
         super().__init__(ir_builder, super_scope)
         self.continue_condition = None
         self.break_condition = None
@@ -21,14 +22,14 @@ class LoopScope(AbstractScope):
         self.calculated_looping_condition = None
         self.super_looping_condition = self.super_scope.get_looping_condition()
 
-    def set(self, name: str, ptr: Value):
-        assert isinstance(ptr, Value)
+    def set(self, name: str, ptr: ValueStore):
+        assert isinstance(ptr, ValueStore)
         if self.super_scope.exists(name):
             self.super_scope.set(name, ptr)
         else:
             self.var_table[name] = ptr
 
-    def get(self, name: str) -> Value:
+    def get(self, name: str) -> ValueStore:
         if name in self.var_table:
             return self.var_table[name]
         return self.super_scope.get(name)

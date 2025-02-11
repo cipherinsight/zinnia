@@ -2,9 +2,9 @@ import copy
 
 from zinnia.compile.ir.ir_graph import IRGraph
 from zinnia.compile.multi_pass.abstract_pass import AbstractIRPass
-from zinnia.opdef.ir_op.ir_export_external_f import ExportExternalFIR
-from zinnia.opdef.ir_op.ir_export_external_i import ExportExternalIIR
-from zinnia.opdef.ir_op.ir_invoke_external import InvokeExternalIR
+from zinnia.ir_def.defs.ir_export_external_f import ExportExternalFIR
+from zinnia.ir_def.defs.ir_export_external_i import ExportExternalIIR
+from zinnia.ir_def.defs.ir_invoke_external import InvokeExternalIR
 
 
 class ExternalCallRemoverIRPass(AbstractIRPass):

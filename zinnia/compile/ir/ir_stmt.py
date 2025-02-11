@@ -21,7 +21,7 @@ class IRStatement:
         return IRStatement(self.stmt_id, self.operator, self.arguments.copy(), self.dbg)
 
     def export(self) -> Dict:
-        from zinnia.opdef.ir_factory import IRFactory
+        from zinnia.ir_def.ir_factory import IRFactory
 
         return {
             "stmt_id": self.stmt_id,
@@ -31,7 +31,7 @@ class IRStatement:
 
     @staticmethod
     def import_from(data: Dict):
-        from zinnia.opdef.ir_factory import IRFactory
+        from zinnia.ir_def.ir_factory import IRFactory
 
         return IRStatement(
             data["stmt_id"],

@@ -6,15 +6,15 @@ from zinnia.debug.exception import InvalidAnnotationException
 
 
 class TupleDTDescriptor(DTDescriptor):
-    def __init__(self, elements_dtype: Tuple[DTDescriptor, ...]):
+    def __init__(self, elements_type: Tuple[DTDescriptor, ...]):
         super().__init__()
-        self.elements_dtype = elements_dtype
+        self.elements_type = elements_type
 
     def __str__(self) -> str:
-        return f'{self.get_typename()}[{", ".join([str(x) for x in self.elements_dtype])}]'
+        return f'{self.get_typename()}[{", ".join([str(x) for x in self.elements_type])}]'
 
     def __eq__(self, other) -> bool:
-        return super().__eq__(other) and self.elements_dtype == other.elements_dtype
+        return super().__eq__(other) and self.elements_type == other.elements_type
 
     @classmethod
     def get_typename(cls):
@@ -35,7 +35,7 @@ class TupleDTDescriptor(DTDescriptor):
 
         return {
             'elements': [
-                DTDescriptorFactory.export(element) for element in self.elements_dtype
+                DTDescriptorFactory.export(element) for element in self.elements_type
             ]
         }
 
@@ -43,5 +43,5 @@ class TupleDTDescriptor(DTDescriptor):
     def import_from(data: Dict) -> 'TupleDTDescriptor':
         from zinnia.compile.type_sys.dt_factory import DTDescriptorFactory
 
-        elements_dtype = [DTDescriptorFactory.import_from(dtype) for dtype in data['elements']]
-        return TupleDTDescriptor(tuple(elements_dtype))
+        elements_type = [DTDescriptorFactory.import_from(dtype) for dtype in data['elements']]
+        return TupleDTDescriptor(tuple(elements_type))

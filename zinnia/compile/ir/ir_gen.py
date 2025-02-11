@@ -5,7 +5,7 @@ from zinnia.compile.ast.ast_joined_str import ASTJoinedStr
 from zinnia.compile.ast.ast_starred import ASTStarredExpr
 from zinnia.compile.ir.ir_graph import IRGraph
 from zinnia.compile.builder.builder_impl import IRBuilderImpl
-from zinnia.compile.builder.value import Value, StringValue, ListValue, TupleValue
+from zinnia.compile.triplet import Value, StringValue, ListValue, TupleValue
 from zinnia.compile.ast import ASTComponent, ASTCircuit, ASTAssignStatement, ASTPassStatement, \
     ASTExpression, ASTForInStatement, ASTCondStatement, ASTConstantFloat, ASTConstantInteger, \
     ASTSubscriptExp, ASTLoad, ASTAssertStatement, ASTSquareBrackets, ASTBreakStatement, ASTContinueStatement, \
@@ -21,7 +21,7 @@ from zinnia.debug.exception import VariableNotFoundError, NotInLoopError, \
 
 from zinnia.internal.internal_chip_object import InternalChipObject
 from zinnia.internal.internal_external_func_object import InternalExternalFuncObject
-from zinnia.opdef.operator_factory import Operators
+from zinnia.op_def.operator_factory import Operators
 from zinnia.compile.type_sys import DTDescriptorFactory, NoneDTDescriptor, FloatDTDescriptor, IntegerDTDescriptor
 
 
@@ -260,7 +260,7 @@ class IRGenerator:
                 raise VariableNotFoundError(n.dbg, f'Variable {n.target} referenced but not defined.')
             if operator is None:
                 raise OperatorOrChipNotFoundException(n.dbg, f"Operator `{n.target}.{n.member}` not found")
-        return self._ir_builder.create_op(operator, self_arg + visited_args, visited_kwargs, dbg=n.dbg)
+        return self._ir_builder.create_op(operator, self._ir_ctx.get_condition_value(), self_arg + visited_args, visited_kwargs, dbg=n.dbg)
 
     def visit_ASTExprAttribute(self, n: ASTExprAttribute):
         target_ptr = self.visit(n.target)
@@ -277,6 +277,7 @@ class IRGenerator:
                 visited_args.append(self.visit(arg))
         return self._ir_builder.create_op(
             operator,
+            self._ir_ctx.get_condition_value(),
             [target_ptr] + visited_args,
             {k: self.visit(arg) for k, arg in n.kwargs.items()},
             dbg=n.dbg
@@ -459,10 +460,9 @@ class IRGenerator:
                 elif isinstance(s, Tuple):
                     slicing_args.append(self._ir_builder.op_parenthesis([self.visit(s[0]), self.visit(s[1]), self.visit(s[2])]))
             slicing_args_value = self._ir_builder.op_square_brackets(slicing_args)
-            if conditional_select:
-                orig_value = self._ir_builder.op_get_item(target_value, slicing_args_value, dbg=target.dbg)
-                value = self._ir_builder.op_select(self._ir_ctx.get_condition_value(), value, orig_value, dbg=target.dbg)
-            value = self._ir_builder.op_set_item(target_value, slicing_args_value, value, dbg=target.dbg)
+            # we don't care conditional_select here. it is always true
+            assert conditional_select
+            value = self._ir_builder.op_set_item(self._ir_ctx.get_condition_value(), target_value, slicing_args_value, value, dbg=target.dbg)
         elif isinstance(target, ASTListAssignTarget) or isinstance(target, ASTTupleAssignTarget):
             assert sum([1 for x in target.targets if x.star]) <= 1
             has_star = any([x.star for x in target.targets])

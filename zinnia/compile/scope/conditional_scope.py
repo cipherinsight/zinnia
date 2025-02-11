@@ -1,18 +1,19 @@
 from typing import Optional, List, Tuple, Dict
 
-from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import Value, IntegerValue
+from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
+from zinnia.compile.triplet import Value, IntegerValue
 from zinnia.compile.scope.abs_scope import AbstractScope
+from zinnia.compile.triplet.store import ValueStore
 from zinnia.compile.type_sys import DTDescriptor
 
 
 class ConditionalScope(AbstractScope):
-    var_table: Dict[str, Value]
+    var_table: Dict[str, ValueStore]
     condition: IntegerValue
     has_return_stmt: bool
     calculated_branching_condition: IntegerValue | None
 
-    def __init__(self, ir_builder: AbsIRBuilderInterface, super_scope: Optional['AbstractScope'], condition: IntegerValue):
+    def __init__(self, ir_builder: IRBuilderInterface, super_scope: Optional['AbstractScope'], condition: IntegerValue):
         super().__init__(ir_builder, super_scope)
         self.var_table = {}
         self.has_return_stmt = False
@@ -23,14 +24,14 @@ class ConditionalScope(AbstractScope):
         else:
             self.calculated_branching_condition = self.condition
 
-    def set(self, name: str, ptr: Value):
-        assert isinstance(ptr, Value)
+    def set(self, name: str, ptr: ValueStore):
+        assert isinstance(ptr, ValueStore)
         if self.super_scope.exists(name):
             self.super_scope.set(name, ptr)
         else:
             self.var_table[name] = ptr
 
-    def get(self, name: str) -> Value:
+    def get(self, name: str) -> ValueStore:
         if name in self.var_table:
             return self.var_table[name]
         return self.super_scope.get(name)

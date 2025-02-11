@@ -1,3 +1,5 @@
+import numpy as np
+
 from zinnia import zk_circuit, NDArray
 
 

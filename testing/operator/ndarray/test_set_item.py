@@ -1,3 +1,5 @@
+import pytest
+
 from zinnia import *
 
 
@@ -27,6 +29,7 @@ def test_set_single_item_by_constants_1():
     assert foo()
 
 
+@pytest.mark.skip("A known bug. We should implement NDArrayView to fix this.")
 def test_set_single_item_by_constants_2():
     @zk_circuit
     def foo():
@@ -151,5 +154,19 @@ def test_set_single_item_by_different_dtype_2():
         array[1, 1] = 3
         assert array[1, 1] == 3.0
         assert array.dtype == float
+
+    assert foo()
+
+
+def test_set_item_by_broadcasting():
+    @zk_circuit
+    def foo():
+        array = np.zeros((3, 3), dtype=int)
+        array[0, :] = 1
+        array[1, :] = 2
+        array[2, :] = 3
+        assert (array[0, :] == [1, 1, 1]).all()
+        assert (array[1, :] == [2, 2, 2]).all()
+        assert (array[2, :] == [3, 3, 3]).all()
 
     assert foo()

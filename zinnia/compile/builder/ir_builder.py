@@ -1,8 +1,8 @@
-from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
+from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
 from zinnia.compile.ir.ir_graph import IRGraph
 
 
-class IRBuilder(AbsIRBuilderInterface):
+class IRBuilder(IRBuilderInterface):
     def __init__(self) -> None:
         super().__init__()
         self.stmts = []

@@ -1,24 +1,27 @@
 from typing import List, Tuple
 
-from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import Value, IntegerValue
+from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
+from zinnia.compile.triplet import Value, IntegerValue
 from zinnia.compile.scope import MasterScope, ChipScope, AbstractScope, LoopScope, ConditionalScope, GeneratorScope
 from zinnia.compile.type_sys import DTDescriptor
+from zinnia.compile.triplet.value_factory import ValueFactory
 
 
 class IRContext:
     scopes: List[AbstractScope]
-    ir_builder: AbsIRBuilderInterface
+    ir_builder: IRBuilderInterface
 
-    def __init__(self, ir_builder: AbsIRBuilderInterface):
+    def __init__(self, ir_builder: IRBuilderInterface):
         self.scopes = [MasterScope(ir_builder)]
         self.ir_builder = ir_builder
 
     def set(self, key: str, val: Value):
-        self.scopes[-1].set(key, val)
+        self.scopes[-1].set(key, val.into_value_store())
 
     def get(self, key: str) -> Value:
-        return self.scopes[-1].get(key)
+        exists_in_this = self.scopes[-1].exists_in_this(key)
+        value_store = self.scopes[-1].get(key)
+        return ValueFactory.from_value_store(value_store, not exists_in_this)
 
     def exists(self, key: str) -> bool:
         return self.scopes[-1].exists(key)

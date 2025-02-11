@@ -1,15 +1,16 @@
 from typing import Optional, List, Tuple
 
-from zinnia.compile.builder.abstract_ir_builder import AbsIRBuilderInterface
-from zinnia.compile.builder.value import Value, IntegerValue
+from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
+from zinnia.compile.triplet.store import ValueStore
+from zinnia.compile.triplet.value import Value, IntegerValue
 from zinnia.compile.type_sys import DTDescriptor
 
 
 class AbstractScope:
     super_scope: Optional['AbstractScope']
-    ir_builder: AbsIRBuilderInterface
+    ir_builder: IRBuilderInterface
 
-    def __init__(self, ir_builder: AbsIRBuilderInterface, super_scope: Optional['AbstractScope']):
+    def __init__(self, ir_builder: IRBuilderInterface, super_scope: Optional['AbstractScope']):
         self.ir_builder = ir_builder
         self.super_scope = super_scope
 
@@ -19,7 +20,7 @@ class AbstractScope:
     def scope_leave(self, *args, **kwargs):
         pass
 
-    def set(self, name: str, ptr: Value):
+    def set(self, name: str, ptr: ValueStore):
         raise NotImplementedError()
 
     def get(self, name: str) -> Value:

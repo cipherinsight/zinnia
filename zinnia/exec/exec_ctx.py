@@ -11,13 +11,13 @@ from zinnia.debug.exception.execution import ZKCircuitParameterException
 from zinnia.compile.type_sys import NDArrayDTDescriptor, FloatDTDescriptor, DTDescriptor, \
     FloatType, IntegerType, TupleDTDescriptor, ListDTDescriptor, PoseidonHashedDTDescriptor, BooleanType, \
     BooleanDTDescriptor
-from zinnia.opdef.ir_op.ir_assert import AssertIR
-from zinnia.opdef.ir_op.ir_export_external_f import ExportExternalFIR
-from zinnia.opdef.ir_op.ir_export_external_i import ExportExternalIIR
-from zinnia.opdef.ir_op.ir_invoke_external import InvokeExternalIR
-from zinnia.opdef.ir_op.ir_read_float import ReadFloatIR
-from zinnia.opdef.ir_op.ir_read_hash import ReadHashIR
-from zinnia.opdef.ir_op.ir_read_integer import ReadIntegerIR
+from zinnia.ir_def.defs.ir_assert import AssertIR
+from zinnia.ir_def.defs.ir_export_external_f import ExportExternalFIR
+from zinnia.ir_def.defs.ir_export_external_i import ExportExternalIIR
+from zinnia.ir_def.defs.ir_invoke_external import InvokeExternalIR
+from zinnia.ir_def.defs.ir_read_float import ReadFloatIR
+from zinnia.ir_def.defs.ir_read_hash import ReadHashIR
+from zinnia.ir_def.defs.ir_read_integer import ReadIntegerIR
 
 
 class ExecutionContext:
@@ -90,17 +90,17 @@ class ExecutionContext:
         elif expected == IntegerType and got == BooleanType:
             return True
         elif isinstance(expected, ListDTDescriptor) and isinstance(got, ListDTDescriptor):
-            if len(expected.elements_dtype) != len(got.elements_dtype):
+            if len(expected.elements_type) != len(got.elements_type):
                 return False
-            for i in range(len(expected.elements_dtype)):
-                if not self._recursive_verify_datatype_matches(expected.elements_dtype[i], got.elements_dtype[i]):
+            for i in range(len(expected.elements_type)):
+                if not self._recursive_verify_datatype_matches(expected.elements_type[i], got.elements_type[i]):
                     return False
             return True
         elif isinstance(expected, TupleDTDescriptor) and isinstance(got, TupleDTDescriptor):
-            if len(expected.elements_dtype) != len(got.elements_dtype):
+            if len(expected.elements_type) != len(got.elements_type):
                 return False
-            for i in range(len(expected.elements_dtype)):
-                if not self._recursive_verify_datatype_matches(expected.elements_dtype[i], got.elements_dtype[i]):
+            for i in range(len(expected.elements_type)):
+                if not self._recursive_verify_datatype_matches(expected.elements_type[i], got.elements_type[i]):
                     return False
             return True
         elif isinstance(expected, NDArrayDTDescriptor) and isinstance(got, NDArrayDTDescriptor):
@@ -108,14 +108,14 @@ class ExecutionContext:
                 return False
             return self._recursive_verify_datatype_matches(expected.dtype, got.dtype)
         elif isinstance(expected, NDArrayDTDescriptor) and isinstance(got, ListDTDescriptor):
-            if expected.shape[0] != len(got.elements_dtype):
+            if expected.shape[0] != len(got.elements_type):
                 return False
             if len(expected.shape) > 1:
-                for element_dtype in got.elements_dtype:
+                for element_dtype in got.elements_type:
                     if not self._recursive_verify_datatype_matches(NDArrayDTDescriptor(expected.shape[1:], expected.dtype), element_dtype):
                         return False
             if len(expected.shape) == 1:
-                for element_dtype in got.elements_dtype:
+                for element_dtype in got.elements_type:
                     if not self._recursive_verify_datatype_matches(expected.dtype, element_dtype):
                         return False
             return True
@@ -180,13 +180,13 @@ class ExecutionContext:
             assert isinstance(value, tuple)
             parsed_result = []
             for i, v in enumerate(value):
-                parsed_result.extend(self._recursive_parse_value_to_entries(indices + (i,), dt.elements_dtype[i], v))
+                parsed_result.extend(self._recursive_parse_value_to_entries(indices + (i,), dt.elements_type[i], v))
             return parsed_result
         elif isinstance(dt, ListDTDescriptor):
             assert isinstance(value, list)
             parsed_result = []
             for i, v in enumerate(value):
-                parsed_result.extend(self._recursive_parse_value_to_entries(indices + (i,), dt.elements_dtype[i], v))
+                parsed_result.extend(self._recursive_parse_value_to_entries(indices + (i,), dt.elements_type[i], v))
             return parsed_result
         elif isinstance(dt, NDArrayDTDescriptor):
             ndarray = None
@@ -253,13 +253,13 @@ class ExecutionContext:
             return float(exported_values[(for_which, key, indices)])
         elif isinstance(dt, TupleDTDescriptor):
             elements = []
-            for i in range(len(dt.elements_dtype)):
-                elements.append(self._recursive_construct_python_object(exported_values, for_which, key, indices + (i,), dt.elements_dtype[i]))
+            for i in range(len(dt.elements_type)):
+                elements.append(self._recursive_construct_python_object(exported_values, for_which, key, indices + (i,), dt.elements_type[i]))
             return tuple(elements)
         elif isinstance(dt, ListDTDescriptor):
             elements = []
-            for i in range(len(dt.elements_dtype)):
-                elements.append(self._recursive_construct_python_object(exported_values, for_which, key, indices + (i,), dt.elements_dtype[i]))
+            for i in range(len(dt.elements_type)):
+                elements.append(self._recursive_construct_python_object(exported_values, for_which, key, indices + (i,), dt.elements_type[i]))
             return list(elements)
         elif isinstance(dt, NDArrayDTDescriptor):
             shape = dt.shape
@@ -328,7 +328,7 @@ class ExecutionContext:
                 pass
             else:
                 args = [value_table[x] for x in stmt.arguments]
-                value_table[stmt.stmt_id] = stmt.operator.mock_exec(stmt.operator.argparse(None, args, {}), MockExecConfig())
+                value_table[stmt.stmt_id] = stmt.operator.mock_exec(args, MockExecConfig())
         return new_inputs
 
     @staticmethod
