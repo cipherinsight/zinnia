@@ -10,6 +10,8 @@ from zinnia.compile.type_sys import DTDescriptor
 class LoopScope(AbstractScope):
     continue_condition: IntegerValue | None
     break_condition: IntegerValue | None
+    return_guaranteed: bool
+    loop_terminated_guaranteed: bool
     var_table: Dict[str, ValueStore]
     calculated_looping_condition: IntegerValue | None
     super_looping_condition: IntegerValue | None
@@ -18,6 +20,8 @@ class LoopScope(AbstractScope):
         super().__init__(ir_builder, super_scope)
         self.continue_condition = None
         self.break_condition = None
+        self.return_guaranteed = False
+        self.loop_terminated_guaranteed = False
         self.var_table = {}
         self.calculated_looping_condition = None
         self.super_looping_condition = self.super_scope.get_looping_condition()
@@ -71,17 +75,20 @@ class LoopScope(AbstractScope):
     def get_return_dtype(self) -> DTDescriptor:
         return self.super_scope.get_return_dtype()
 
-    def return_value(self, value: Value, condition: IntegerValue):
-        self.super_scope.return_value(value, condition)
+    def set_return_guarantee(self):
+        self.return_guaranteed = True
 
-    def set_has_return(self):
-        self.super_scope.set_has_return()
+    def set_terminated_guarantee(self):
+        self.loop_terminated_guaranteed = True
 
     def register_return(self, value: Value, condition: IntegerValue):
         self.super_scope.register_return(value, condition)
 
-    def has_return_statement(self) -> bool:
-        return self.super_scope.has_return_statement()
+    def is_return_guaranteed(self) -> bool:
+        return self.return_guaranteed
+
+    def is_terminated_guaranteed(self) -> bool:
+        return self.loop_terminated_guaranteed
 
     def loop_continue(self, condition: IntegerValue):
         condition = self.ir_builder.ir_logical_not(condition)

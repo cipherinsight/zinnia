@@ -10,13 +10,15 @@ from zinnia.compile.type_sys import DTDescriptor
 class ConditionalScope(AbstractScope):
     var_table: Dict[str, ValueStore]
     condition: IntegerValue
-    has_return_stmt: bool
+    return_guaranteed: bool
+    loop_terminated_guaranteed: bool
     calculated_branching_condition: IntegerValue | None
 
     def __init__(self, ir_builder: IRBuilderInterface, super_scope: Optional['AbstractScope'], condition: IntegerValue):
         super().__init__(ir_builder, super_scope)
         self.var_table = {}
-        self.has_return_stmt = False
+        self.return_guaranteed = False
+        self.loop_terminated_guaranteed = False
         self.condition = condition
         super_branching_condition = self.super_scope.get_branching_condition()
         if super_branching_condition is not None:
@@ -67,15 +69,17 @@ class ConditionalScope(AbstractScope):
     def get_returns_with_conditions(self) -> List[Tuple[Value, IntegerValue]]:
         return self.super_scope.get_returns_with_conditions()
 
-    def has_return_statement(self) -> bool:
-        return self.has_return_stmt
+    def is_return_guaranteed(self) -> bool:
+        return self.return_guaranteed
 
-    def return_value(self, value: Value, condition: IntegerValue):
-        self.has_return_stmt = True
-        self.register_return(value, condition)
+    def is_terminated_guaranteed(self) -> bool:
+        return self.loop_terminated_guaranteed
 
-    def set_has_return(self):
-        self.has_return_stmt = True
+    def set_return_guarantee(self):
+        self.return_guaranteed = True
+
+    def set_terminated_guarantee(self):
+        self.loop_terminated_guaranteed = True
 
     def register_return(self, value: Value, condition: IntegerValue):
         self.super_scope.register_return(value, condition)

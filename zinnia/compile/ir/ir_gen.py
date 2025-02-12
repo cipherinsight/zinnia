@@ -62,39 +62,53 @@ class IRGenerator:
         return None
 
     def visit_ASTPassStatement(self, n: ASTPassStatement):
-        if self._ir_ctx.check_return_existence():
-            raise UnreachableStatementError(n.dbg, "This code is unreachable")
         return None
 
     def visit_ASTAssignStatement(self, n: ASTAssignStatement):
-        if self._ir_ctx.check_return_existence():
-            raise UnreachableStatementError(n.dbg, "This code is unreachable")
         val_ptr = self.visit(n.value)
         for target in n.targets:
             self._do_recursive_assign(target, val_ptr, True)
         return val_ptr
 
     def visit_ASTForInStatement(self, n: ASTForInStatement):
-        if self._ir_ctx.check_return_existence():
-            raise UnreachableStatementError(n.dbg, "This code is unreachable")
         iter_elts = self._ir_builder.op_iter(self.visit(n.iter_expr))
+        loop_body_return_guaranteed = False
+        loop_terminated = False
         self._ir_ctx.loop_enter()
         for loop_index_ptr in iter_elts.values():
             self._do_recursive_assign(n.target, loop_index_ptr, False)
             self._ir_ctx.loop_reiter()
             for _, stmt in enumerate(n.block):
+                break_condition = self._ir_ctx.get_break_condition_value()
+                if break_condition.val() is not None and break_condition.val() == 0:
+                    loop_terminated = True
+                    break
+                if self._ir_ctx.check_return_guaranteed():
+                    loop_body_return_guaranteed = True
+                    loop_terminated = True
+                    break
+                if self._ir_ctx.check_loop_terminated_guaranteed():
+                    loop_terminated = True
+                    break
                 self.visit(stmt)
+            if loop_terminated:
+                break
         break_condition = self._ir_ctx.get_break_condition_value()
         self._ir_ctx.loop_leave()
-        self._ir_ctx.if_enter(break_condition)
-        for _, stmt in enumerate(n.orelse):
-            self.visit(stmt)
-        self._ir_ctx.if_leave()
+        if break_condition.val() is None or break_condition.val() != 0:
+            self._ir_ctx.if_enter(break_condition)
+            for _, stmt in enumerate(n.orelse):
+                self.visit(stmt)
+            orelse_scope = self._ir_ctx.if_leave()
+            if break_condition.val() is not None and break_condition.val() != 0 and orelse_scope.is_return_guaranteed():
+                self._ir_ctx.set_return_guarantee()
+        if loop_body_return_guaranteed:
+            self._ir_ctx.set_return_guarantee()
         return None
 
     def visit_ASTWhileStatement(self, n: ASTWhileStatement):
-        if self._ir_ctx.check_return_existence():
-            raise UnreachableStatementError(n.dbg, "This code is unreachable")
+        loop_body_has_return = False
+        loop_terminated = False
         self._ir_ctx.loop_enter()
         while True:
             self._ir_ctx.loop_reiter()
@@ -105,63 +119,88 @@ class IRGenerator:
                 break
             for _, stmt in enumerate(n.block):
                 self.visit(stmt)
-            break_condition = self._ir_ctx.get_break_condition_value()
-            if break_condition.val() is not None and break_condition.val() == 0:
-                break
-            return_condition = self._ir_ctx.get_return_condition_value()
-            if return_condition.val() is not None and return_condition.val() == 0:
+                break_condition = self._ir_ctx.get_break_condition_value()
+                if break_condition.val() is not None and break_condition.val() == 0:
+                    loop_terminated = True
+                    break
+                if self._ir_ctx.check_return_guaranteed():
+                    loop_body_has_return = True
+                    loop_terminated = True
+                    break
+                if self._ir_ctx.check_loop_terminated_guaranteed():
+                    loop_terminated = True
+                    break
+            if loop_terminated:
                 break
         break_condition = self._ir_ctx.get_break_condition_value()
         self._ir_ctx.loop_leave()
-        self._ir_ctx.if_enter(break_condition)
-        for _, stmt in enumerate(n.orelse):
-            self.visit(stmt)
-        self._ir_ctx.if_leave()
+        if break_condition.val() is None or break_condition.val() != 0:
+            self._ir_ctx.if_enter(break_condition)
+            for _, stmt in enumerate(n.orelse):
+                self.visit(stmt)
+            orelse_scope = self._ir_ctx.if_leave()
+            if break_condition.val() is not None and break_condition.val() != 0 and orelse_scope.is_return_guaranteed():
+                self._ir_ctx.set_return_guarantee()
+        if loop_body_has_return:
+            self._ir_ctx.set_return_guarantee()
         return None
 
     def visit_ASTBreakStatement(self, n: ASTBreakStatement):
-        if self._ir_ctx.check_return_existence():
-            raise UnreachableStatementError(n.dbg, "This code is unreachable")
         if not self._ir_ctx.is_in_loop():
             raise NotInLoopError(n.dbg, "Invalid break statement here outside the loop.")
         self._ir_ctx.loop_break()
+        self._ir_ctx.set_terminated_guarantee()
         return None
 
     def visit_ASTContinueStatement(self, n: ASTContinueStatement):
-        if self._ir_ctx.check_return_existence():
-            raise UnreachableStatementError(n.dbg, "This code is unreachable")
         if not self._ir_ctx.is_in_loop():
             raise NotInLoopError(n.dbg, "Invalid continue statement here outside the loop.")
         self._ir_ctx.loop_continue()
         return None
 
     def visit_ASTCondStatement(self, n: ASTCondStatement):
-        if self._ir_ctx.check_return_existence():
-            raise UnreachableStatementError(n.dbg, "This code is unreachable")
         cond_ptr = self.visit(n.cond)
         true_cond_ptr = self._ir_builder.op_bool_cast(cond_ptr, dbg=n.dbg)
         false_cond_ptr = self._ir_builder.ir_logical_not(true_cond_ptr, dbg=n.dbg)
-        self._ir_ctx.if_enter(true_cond_ptr)
-        for _, stmt in enumerate(n.t_block):
-            self.visit(stmt)
-        scope_true = self._ir_ctx.if_leave()
-        self._ir_ctx.if_enter(false_cond_ptr)
-        for _, stmt in enumerate(n.f_block):
-            self.visit(stmt)
-        scope_false = self._ir_ctx.if_leave()
-        if scope_true.has_return_statement() and scope_false.has_return_statement():
-            self._ir_ctx.set_has_return()
+        scope_true = None
+        if true_cond_ptr.val() is None or true_cond_ptr.val() != 0:
+            self._ir_ctx.if_enter(true_cond_ptr)
+            for _, stmt in enumerate(n.t_block):
+                self.visit(stmt)
+            scope_true = self._ir_ctx.if_leave()
+        scope_false = None
+        if false_cond_ptr.val() is None or false_cond_ptr.val() != 0:
+            self._ir_ctx.if_enter(false_cond_ptr)
+            for _, stmt in enumerate(n.f_block):
+                self.visit(stmt)
+            scope_false = self._ir_ctx.if_leave()
+        # update return guarantee
+        if scope_true is not None and true_cond_ptr.val() is not None and true_cond_ptr.val() != 0 and scope_true.is_return_guaranteed():
+            self._ir_ctx.set_return_guarantee()
+        elif scope_false is not None and false_cond_ptr.val() is not None and false_cond_ptr.val() != 0 and scope_false.is_return_guaranteed():
+            self._ir_ctx.set_return_guarantee()
+        elif scope_true is not None and scope_false is not None and scope_true.is_return_guaranteed() and scope_false.is_return_guaranteed():
+            self._ir_ctx.set_return_guarantee()
+        # update terminated guarantee
+        if scope_true is not None and true_cond_ptr.val() is not None and true_cond_ptr.val() != 0:
+            if scope_true.is_terminated_guaranteed() or scope_true.is_return_guaranteed():
+                if self._ir_ctx.is_in_loop():
+                    self._ir_ctx.set_terminated_guarantee()
+        elif scope_false is not None and false_cond_ptr.val() is not None and false_cond_ptr.val() != 0 and scope_false.is_terminated_guaranteed():
+            if scope_false.is_terminated_guaranteed() or scope_false.is_return_guaranteed():
+                if self._ir_ctx.is_in_loop():
+                    self._ir_ctx.set_terminated_guarantee()
+        elif scope_true is not None and scope_false is not None:
+            if (scope_false.is_terminated_guaranteed() or scope_false.is_return_guaranteed()) and (scope_true.is_terminated_guaranteed() or scope_true.is_return_guaranteed()):
+                if self._ir_ctx.is_in_loop():
+                    self._ir_ctx.set_terminated_guarantee()
         return None
 
     def visit_ASTAssertStatement(self, n: ASTAssertStatement):
-        if self._ir_ctx.check_return_existence():
-            raise UnreachableStatementError(n.dbg, "This code is unreachable")
         test = self.visit(n.expr)
         return self._ir_builder.op_assert(test, self._ir_ctx.get_condition_value(), dbg=n.dbg)
 
     def visit_ASTReturnStatement(self, n: ASTReturnStatement):
-        if self._ir_ctx.check_return_existence():
-            raise UnreachableStatementError(n.dbg, "Unreachable return statement")
         if not self._ir_ctx.is_in_chip():
             raise UnsupportedLangFeatureException(n.dbg, "Return statements in circuits is not supported, it is only supported in chips")
         if n.expr is not None:
@@ -173,12 +212,11 @@ class IRGenerator:
         expected_return_dt = self._ir_ctx.get_return_dtype()
         if return_dt != expected_return_dt:
             raise ReturnDatatypeMismatchError(n.dbg, "Return datatype mismatch annotated return datatype")
-        self._ir_ctx.return_value(val)
+        self._ir_ctx.register_return(val)
+        self._ir_ctx.set_return_guarantee()
         return None
 
     def visit_ASTExprStatement(self, n: ASTExprStatement):
-        if self._ir_ctx.check_return_existence():
-            raise UnreachableStatementError(n.dbg, "This code is unreachable")
         return self.visit(n.expr)
 
     def visit_ASTBinaryOperator(self, n: ASTBinaryOperator):
@@ -411,7 +449,7 @@ class IRGenerator:
         for i, stmt in enumerate(chip.chip_ast.block):
             self.visit(stmt)
         return_vals_cond = self._ir_ctx.get_returns_with_conditions()
-        if not self._ir_ctx.check_return_existence() and not isinstance(chip.return_dt, NoneDTDescriptor) and (self._ir_ctx.get_return_condition_value() is None or self._ir_ctx.get_return_condition_value().val() != 0):
+        if not self._ir_ctx.check_return_guaranteed() and not isinstance(chip.return_dt, NoneDTDescriptor) and (self._ir_ctx.get_return_condition_value() is None or self._ir_ctx.get_return_condition_value().val() != 0):
             raise ControlEndWithoutReturnError(chip.chip_ast.dbg, "Chip control ends without a return statement")
         self._ir_ctx.chip_leave()
         if isinstance(chip.return_dt, NoneDTDescriptor):

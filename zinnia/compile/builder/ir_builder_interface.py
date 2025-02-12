@@ -416,5 +416,5 @@ class IRBuilderInterface:
     def ir_str_f(self, x: FloatValue, dbg: Optional[DebugInfo] = None) -> StringValue:
         raise NotImplementedError()
 
-    def ir_print(self, x: StringValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
+    def ir_print(self, cond: IntegerValue, x: StringValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
         raise NotImplementedError()

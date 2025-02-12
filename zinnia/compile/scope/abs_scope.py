@@ -32,7 +32,10 @@ class AbstractScope:
     def exists_in_this(self, name: str) -> bool:
         raise NotImplementedError()
 
-    def set_has_return(self):
+    def set_return_guarantee(self):
+        raise NotImplementedError()
+
+    def set_terminated_guarantee(self):
         raise NotImplementedError()
 
     def is_in_chip(self) -> bool:
@@ -53,13 +56,13 @@ class AbstractScope:
     def get_returning_condition(self) -> IntegerValue | None:
         raise NotImplementedError()
 
-    def return_value(self, value: Value, condition: IntegerValue):
-        raise NotImplementedError()
-
     def register_return(self, value: Value, condition: IntegerValue):
         raise NotImplementedError()
 
-    def has_return_statement(self) -> bool:
+    def is_return_guaranteed(self) -> bool:
+        raise NotImplementedError()
+
+    def is_terminated_guaranteed(self) -> bool:
         raise NotImplementedError()
 
     def get_returns_with_conditions(self) -> List[Tuple[Value, IntegerValue]]:

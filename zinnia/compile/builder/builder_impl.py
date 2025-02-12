@@ -993,8 +993,8 @@ class IRBuilderImpl(IRBuilder):
         assert isinstance(val, StringValue)
         return val
 
-    def ir_print(self, x: StringValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
+    def ir_print(self, cond: IntegerValue, x: StringValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
         ir = PrintIR()
-        val, stmt = ir.build_ir(len(self.stmts), [x], dbg)
+        val, stmt = ir.build_ir(len(self.stmts), [cond, x], dbg)
         self.stmts.append(stmt)
         return NoneValue()

@@ -56,5 +56,8 @@ class MasterScope(AbstractScope):
     def get_breaking_condition(self) -> IntegerValue | None:
         return None
 
-    def has_return_statement(self) -> bool:
+    def is_return_guaranteed(self) -> bool:
+        return False
+
+    def is_terminated_guaranteed(self) -> bool:
         return False

@@ -124,8 +124,11 @@ class IRContext:
             return self.ir_builder.ir_constant_int(1)
         return result
 
-    def check_return_existence(self) -> bool:
-        return self.scopes[-1].has_return_statement()
+    def check_return_guaranteed(self) -> bool:
+        return self.scopes[-1].is_return_guaranteed()
+
+    def check_loop_terminated_guaranteed(self) -> bool:
+        return self.scopes[-1].is_terminated_guaranteed()
 
     def get_returns_with_conditions(self) -> List[Tuple[Value, IntegerValue]]:
         return self.scopes[-1].get_returns_with_conditions()
@@ -133,8 +136,11 @@ class IRContext:
     def get_return_dtype(self):
         return self.scopes[-1].get_return_dtype()
 
-    def return_value(self, value: Value):
-        return self.scopes[-1].return_value(value, self.get_condition_value())
+    def register_return(self, value: Value):
+        return self.scopes[-1].register_return(value, self.get_condition_value())
 
-    def set_has_return(self):
-        return self.scopes[-1].set_has_return()
+    def set_return_guarantee(self):
+        return self.scopes[-1].set_return_guarantee()
+
+    def set_terminated_guarantee(self):
+        return self.scopes[-1].set_terminated_guarantee()

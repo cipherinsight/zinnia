@@ -9,7 +9,7 @@ from zinnia.compile.type_sys import DTDescriptor
 
 class ChipScope(AbstractScope):
     var_table: Dict[str, ValueStore]
-    has_return_stmt: bool
+    return_guaranteed: bool
     return_dtype: DTDescriptor
     returns_with_conditions: List[Tuple[Value, IntegerValue]]
     calculated_returning_condition: IntegerValue | None
@@ -17,7 +17,7 @@ class ChipScope(AbstractScope):
     def __init__(self, ir_builder: IRBuilderInterface, super_scope: Optional['AbstractScope'], return_dtype: DTDescriptor):
         super().__init__(ir_builder, super_scope)
         self.var_table = {}
-        self.has_return_stmt = False
+        self.return_guaranteed = False
         self.return_dtype = return_dtype
         self.returns_with_conditions = []
         self.calculated_returning_condition = None
@@ -68,15 +68,17 @@ class ChipScope(AbstractScope):
     def get_returns_with_conditions(self) -> List[Tuple[Value, IntegerValue]]:
         return self.returns_with_conditions
 
-    def return_value(self, value: Value, condition: IntegerValue):
-        self.has_return_stmt = True
-        self.register_return(value, condition)
+    def is_return_guaranteed(self) -> bool:
+        return self.return_guaranteed
 
-    def has_return_statement(self) -> bool:
-        return self.has_return_stmt
+    def set_return_guarantee(self):
+        self.return_guaranteed = True
 
-    def set_has_return(self):
-        self.has_return_stmt = True
+    def set_terminated_guarantee(self):
+        raise NotImplementedError("Unexpected `set_terminated_guarantee` call on a chip scope.")
+
+    def is_terminated_guaranteed(self) -> bool:
+        raise NotImplementedError("Unexpected `is_terminated_guaranteed` call on a chip scope.")
 
     def register_return(self, value: Value, condition: IntegerValue):
         self.returns_with_conditions.append((value, condition))

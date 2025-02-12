@@ -1,6 +1,6 @@
 from typing import List, Dict, Optional, Any, Tuple
 
-from zinnia.compile.triplet import Value, StringValue, NoneValue
+from zinnia.compile.triplet import Value, StringValue, NoneValue, IntegerValue
 from zinnia.compile.ir.ir_stmt import IRStatement
 from zinnia.config.mock_exec_config import MockExecConfig
 from zinnia.ir_def.abstract_ir import AbstractIR
@@ -24,9 +24,10 @@ class PrintIR(AbstractIR):
         return None
 
     def build_ir(self, ir_id: int, args: List[Value], dbg: Optional[DebugInfo] = None) -> Tuple[Value, IRStatement]:
-        x = args[0]
+        cond, x = args[0], args[1]
+        assert isinstance(cond, IntegerValue)
         assert isinstance(x, StringValue)
-        return NoneValue(), IRStatement(ir_id, self, [x.ptr()], dbg)
+        return NoneValue(), IRStatement(ir_id, self, [cond.ptr(), x.ptr()], dbg)
 
     def export(self) -> Dict:
         return {}

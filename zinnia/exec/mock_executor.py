@@ -43,7 +43,8 @@ class MockProgramExecutor(ZKProgramExecutor):
     def exec_PrintIR(self, stmt: IRStatement):
         assert isinstance(stmt.operator, PrintIR)
         args = [self.value_table[x] for x in stmt.arguments]
-        print(args[0], end='', flush=True, sep='')
+        if args[0] != 0:
+            print(args[1], end='', flush=True, sep='')
 
     def exec_ReadIntegerIR(self, stmt: IRStatement):
         assert isinstance(stmt.operator, ReadIntegerIR)

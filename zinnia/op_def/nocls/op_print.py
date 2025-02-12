@@ -19,6 +19,10 @@ class PrintOp(AbstractOp):
     def get_name(cls) -> str:
         return "print"
 
+    @classmethod
+    def is_inplace(cls) -> bool:
+        return True
+
     def argparse(self, dbg_i: Optional[DebugInfo], args: List[Any], kwargs: Dict[str, Any]) -> Dict[str, Any]:
         parsed_dict = {}
         for key in kwargs.keys():
@@ -49,5 +53,5 @@ class PrintOp(AbstractOp):
             if i < len(args) - 1:
                 print_value = builder.ir_add_str(print_value, sep)
         print_value = builder.ir_add_str(print_value, end)
-        builder.ir_print(print_value)
+        builder.ir_print(kwargs.get_condition(), print_value)
         return NoneValue()
