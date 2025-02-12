@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional
+from typing import List, Optional
 
 from zinnia.compile.builder.op_args_container import OpArgsContainer
 from zinnia.debug.exception import TypeInferenceError
@@ -35,6 +35,8 @@ class List_InsertOp(AbstractOp):
         the_index = kwargs["index"]
         the_object = kwargs["object"]
         assert isinstance(the_self, ListValue)
+        if the_self.type_locked():
+            raise TypeInferenceError(dbg, f"Cannot perform insert, as it modifies the datatype on the list which is defined at parent scope.")
         if not isinstance(the_index, IntegerValue):
             raise TypeInferenceError(dbg, f"Expected an integer index for `{self.get_name()}`, got {the_index.type()}")
         if the_index.val() is None:

@@ -19,9 +19,9 @@ class NumberValue(AtomicValue):
         assert isinstance(self._triplet.get_t(), NumberDTDescriptor)
         return self._triplet.get_t()
 
-    def assign(self, value: 'NumberValue') -> 'NumberValue':
+    def assign(self, value: 'NumberValue', force: bool = False) -> 'NumberValue':
         if self.type_locked():
-            assert value._triplet.get_s() == self._triplet.get_s()
+            assert force or value._triplet.get_s() == self._triplet.get_s()
         self._triplet.assign(value._triplet)
         return self
 

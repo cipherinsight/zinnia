@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional
+from typing import List, Optional
 
 from zinnia.compile.builder.op_args_container import OpArgsContainer
 from zinnia.debug.exception import TypeInferenceError
@@ -35,6 +35,8 @@ class List_PopOp(AbstractOp):
         assert isinstance(the_self, ListValue)
         if not isinstance(index, IntegerValue):
             raise TypeInferenceError(dbg, f"Expected an integer index for `{self.get_name()}`, got {index.type()}")
+        if the_self.type_locked():
+            raise TypeInferenceError(dbg, f"Cannot perform pop, as it modifies the datatype on the list which is defined at parent scope.")
         if index.val() is None:
             if not all(t == the_self.types()[0] for t in the_self.types()):
                 raise TypeInferenceError(dbg, f"`index` is not statically inferrable here. In this case, all sub-elements of the list should have the same type.")

@@ -1,5 +1,5 @@
 import copy
-from typing import List, Dict, Optional
+from typing import List, Optional
 
 from zinnia.compile.builder.op_args_container import OpArgsContainer
 from zinnia.op_def.abstract.abstract_op import AbstractOp

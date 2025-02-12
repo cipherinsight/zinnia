@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional
+from typing import List, Optional
 
 from zinnia.compile.builder.op_args_container import OpArgsContainer
 from zinnia.debug.exception import StaticInferenceError

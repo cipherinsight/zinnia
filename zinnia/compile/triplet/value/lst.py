@@ -33,10 +33,10 @@ class ListValue(Value):
         assert self.types()[i] == value.type()
         self._store.values = self._store.values[:i] + [value.into_value_store()] + self._store.values[i + 1:]
 
-    def assign(self, value: 'ListValue') -> 'ListValue':
+    def assign(self, value: 'ListValue', force: bool = False) -> 'ListValue':
         assert value.__class__ == self.__class__
         if self.type_locked():
-            assert value.type() == self.type()
+            assert force or value.type() == self.type()
         self._store.assign(value._store)
         return self
 

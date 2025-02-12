@@ -11,7 +11,7 @@ class Value:
     def type(self) -> DTDescriptor:
         raise NotImplementedError()
 
-    def assign(self, value: 'Value') -> 'Value':
+    def assign(self, value: 'Value', force: bool = False) -> 'Value':
         raise NotImplementedError()
 
     def type_locked(self) -> bool:

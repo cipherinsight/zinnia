@@ -13,10 +13,10 @@ class AtomicValue(Value):
     def type(self) -> DTDescriptor:
         return self._triplet.get_t()
 
-    def assign(self, value: 'AtomicValue') -> 'AtomicValue':
+    def assign(self, value: 'AtomicValue', force: bool = False) -> 'AtomicValue':
         assert value.__class__ == self.__class__
         if self.type_locked():
-            assert value._triplet.get_s() == self._triplet.get_s()
+            assert force or value._triplet.get_s() == self._triplet.get_s()
         self._triplet.assign(value._triplet)
         return self
 

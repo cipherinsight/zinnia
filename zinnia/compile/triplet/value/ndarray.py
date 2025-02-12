@@ -147,10 +147,10 @@ class NDArrayValue(Value):
             lambda x, y: x.assign(y)
         ))
 
-    def assign(self, value: 'NDArrayValue') -> 'NDArrayValue':
+    def assign(self, value: 'NDArrayValue', force: bool = False) -> 'NDArrayValue':
         assert value.__class__ == self.__class__
         if self.type_locked():
-            assert value.shape() == self.shape() and value.dtype() == self.dtype()
+            assert force or value.shape() == self.shape() and value.dtype() == self.dtype()
         self._store.assign(value._store)
         return self
 

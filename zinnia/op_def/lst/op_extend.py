@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional
+from typing import List, Optional
 
 from zinnia.compile.builder.op_args_container import OpArgsContainer
 from zinnia.debug.exception import TypeInferenceError
@@ -35,6 +35,8 @@ class List_ExtendOp(AbstractOp):
         assert isinstance(the_self, ListValue)
         if not isinstance(value, ListValue) and not isinstance(value, TupleValue):
             raise TypeInferenceError(dbg, f'Expected a List or Tuple, got {value.type()}')
+        if the_self.type_locked() and len(value.types()) != 0:
+            raise TypeInferenceError(dbg, f"Cannot perform extend, as it modifies the datatype on the list which is defined at parent scope.")
         new_value = ListValue(
             the_self.types() + list(value.types()),
             the_self.values() + list(value.values())

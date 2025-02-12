@@ -1,6 +1,7 @@
-from typing import List, Dict, Optional
+from typing import List, Optional
 
 from zinnia.compile.builder.op_args_container import OpArgsContainer
+from zinnia.debug.exception import TypeInferenceError
 from zinnia.op_def.abstract.abstract_op import AbstractOp
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
@@ -32,6 +33,8 @@ class List_AppendOp(AbstractOp):
         the_self = kwargs["self"]
         value = kwargs["value"]
         assert isinstance(the_self, ListValue)
+        if the_self.type_locked():
+            raise TypeInferenceError(dbg, f"Cannot perform append, as it modifies the datatype on the list which is defined at parent scope.")
         new_value = ListValue(
             the_self.types() + [value.type()],
             the_self.values() + [value]
