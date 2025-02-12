@@ -14,17 +14,8 @@ from .config.zinnia_config import ZinniaConfig
 from .lang.namespace import NamespaceNP
 
 
-def __update_recursion_depth():
-    import sys
-
-    sys.setrecursionlimit(10000)
-
-
 np = NamespaceNP()
 try:
     import numpy as np
 except ImportError:
     pass
-
-
-__update_recursion_depth()

@@ -65,12 +65,16 @@ class IRGenerator:
         return None
 
     def visit_ASTAssignStatement(self, n: ASTAssignStatement):
+        if self._ir_ctx.check_return_guaranteed() or self._ir_ctx.check_loop_terminated_guaranteed():
+            return None
         val_ptr = self.visit(n.value)
         for target in n.targets:
             self._do_recursive_assign(target, val_ptr, True)
-        return val_ptr
+        return None
 
     def visit_ASTForInStatement(self, n: ASTForInStatement):
+        if self._ir_ctx.check_return_guaranteed() or self._ir_ctx.check_loop_terminated_guaranteed():
+            return None
         iter_elts = self._ir_builder.op_iter(self.visit(n.iter_expr))
         loop_body_return_guaranteed = False
         loop_terminated = False
@@ -107,6 +111,8 @@ class IRGenerator:
         return None
 
     def visit_ASTWhileStatement(self, n: ASTWhileStatement):
+        if self._ir_ctx.check_return_guaranteed() or self._ir_ctx.check_loop_terminated_guaranteed():
+            return None
         loop_body_has_return = False
         loop_terminated = False
         self._ir_ctx.loop_enter()
@@ -146,6 +152,8 @@ class IRGenerator:
         return None
 
     def visit_ASTBreakStatement(self, n: ASTBreakStatement):
+        if self._ir_ctx.check_return_guaranteed() or self._ir_ctx.check_loop_terminated_guaranteed():
+            return None
         if not self._ir_ctx.is_in_loop():
             raise NotInLoopError(n.dbg, "Invalid break statement here outside the loop.")
         self._ir_ctx.loop_break()
@@ -153,12 +161,16 @@ class IRGenerator:
         return None
 
     def visit_ASTContinueStatement(self, n: ASTContinueStatement):
+        if self._ir_ctx.check_return_guaranteed() or self._ir_ctx.check_loop_terminated_guaranteed():
+            return None
         if not self._ir_ctx.is_in_loop():
             raise NotInLoopError(n.dbg, "Invalid continue statement here outside the loop.")
         self._ir_ctx.loop_continue()
         return None
 
     def visit_ASTCondStatement(self, n: ASTCondStatement):
+        if self._ir_ctx.check_return_guaranteed() or self._ir_ctx.check_loop_terminated_guaranteed():
+            return None
         cond_ptr = self.visit(n.cond)
         true_cond_ptr = self._ir_builder.op_bool_cast(cond_ptr, dbg=n.dbg)
         false_cond_ptr = self._ir_builder.ir_logical_not(true_cond_ptr, dbg=n.dbg)
@@ -197,10 +209,14 @@ class IRGenerator:
         return None
 
     def visit_ASTAssertStatement(self, n: ASTAssertStatement):
+        if self._ir_ctx.check_return_guaranteed() or self._ir_ctx.check_loop_terminated_guaranteed():
+            return None
         test = self.visit(n.expr)
         return self._ir_builder.op_assert(test, self._ir_ctx.get_condition_value(), dbg=n.dbg)
 
     def visit_ASTReturnStatement(self, n: ASTReturnStatement):
+        if self._ir_ctx.check_return_guaranteed() or self._ir_ctx.check_loop_terminated_guaranteed():
+            return None
         if not self._ir_ctx.is_in_chip():
             raise UnsupportedLangFeatureException(n.dbg, "Return statements in circuits is not supported, it is only supported in chips")
         if n.expr is not None:
@@ -217,6 +233,8 @@ class IRGenerator:
         return None
 
     def visit_ASTExprStatement(self, n: ASTExprStatement):
+        if self._ir_ctx.check_return_guaranteed() or self._ir_ctx.check_loop_terminated_guaranteed():
+            return None
         return self.visit(n.expr)
 
     def visit_ASTBinaryOperator(self, n: ASTBinaryOperator):

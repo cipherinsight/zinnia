@@ -78,7 +78,7 @@ class ChipScope(AbstractScope):
         raise NotImplementedError("Unexpected `set_terminated_guarantee` call on a chip scope.")
 
     def is_terminated_guaranteed(self) -> bool:
-        raise NotImplementedError("Unexpected `is_terminated_guaranteed` call on a chip scope.")
+        return False
 
     def register_return(self, value: Value, condition: IntegerValue):
         self.returns_with_conditions.append((value, condition))
