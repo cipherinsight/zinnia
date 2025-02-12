@@ -9,10 +9,12 @@ from zinnia.compile.triplet.value_factory import ValueFactory
 
 class IRContext:
     scopes: List[AbstractScope]
+    recursion_depth: int
     ir_builder: IRBuilderInterface
 
     def __init__(self, ir_builder: IRBuilderInterface):
         self.scopes = [MasterScope(ir_builder)]
+        self.recursion_depth = 0
         self.ir_builder = ir_builder
 
     def set(self, key: str, val: Value):
@@ -25,8 +27,8 @@ class IRContext:
     def exists(self, key: str) -> bool:
         return self.scopes[-1].exists(key)
 
-    def chip_enter(self, return_dtype: DTDescriptor):
-        new_scope = ChipScope(self.ir_builder, self.scopes[-1], return_dtype)
+    def chip_enter(self, return_dtype: DTDescriptor, assertion_condition: IntegerValue):
+        new_scope = ChipScope(self.ir_builder, self.scopes[-1], return_dtype, assertion_condition)
         new_scope.scope_enter()
         self.scopes.append(new_scope)
 
@@ -51,9 +53,9 @@ class IRContext:
         assert self.scopes[-1].is_in_loop()
         self.scopes[-1].loop_reiterate()
 
-    def loop_break(self):
+    def loop_break(self, condition: IntegerValue | None = None):
         assert self.scopes[-1].is_in_loop()
-        self.scopes[-1].loop_break(self.get_condition_value())
+        self.scopes[-1].loop_break(self.get_condition_value() if condition is None else condition)
 
     def loop_continue(self):
         assert self.scopes[-1].is_in_loop()
@@ -108,6 +110,13 @@ class IRContext:
             return self.ir_builder.ir_logical_and(conditions[0], self.ir_builder.ir_logical_and(conditions[1], conditions[2]))
         raise NotImplementedError()
 
+    def get_condition_value_for_assertion(self) -> IntegerValue:
+        condition_1 = self.scopes[-1].get_assertion_condition()
+        condition_2 = self.get_condition_value()
+        if condition_1 is None:
+            return condition_2
+        return self.ir_builder.ir_logical_and(condition_1, condition_2)
+
     def get_break_condition_value(self):
         result = self.scopes[-1].get_breaking_condition()
         if result is None:
@@ -140,3 +149,12 @@ class IRContext:
 
     def set_terminated_guarantee(self):
         return self.scopes[-1].set_terminated_guarantee()
+
+    def add_recursion_depth(self):
+        self.recursion_depth += 1
+
+    def sub_recursion_depth(self):
+        self.recursion_depth -= 1
+
+    def get_recursion_depth(self) -> int:
+        return self.recursion_depth

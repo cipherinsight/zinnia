@@ -34,6 +34,9 @@ class GeneratorScope(AbstractScope):
     def get_returning_condition(self) -> IntegerValue | None:
         return None
 
+    def get_assertion_condition(self) -> IntegerValue | None:
+        return None
+
     def exists(self, name: str) -> bool:
         if name in self.var_table:
             return True

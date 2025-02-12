@@ -1,5 +1,6 @@
 from typing import List, Tuple, Dict
 
+from zinnia.config.zinnia_config import ZinniaConfig
 from zinnia.compile.ast.ast_formatted_value import ASTFormattedValue
 from zinnia.compile.ast.ast_joined_str import ASTJoinedStr
 from zinnia.compile.ast.ast_starred import ASTStarredExpr
@@ -17,7 +18,7 @@ from zinnia.compile.ir.ir_ctx import IRContext
 from zinnia.debug.exception import VariableNotFoundError, NotInLoopError, \
     InterScopeError, UnsupportedLangFeatureException, UnreachableStatementError, OperatorOrChipNotFoundException, \
     ControlEndWithoutReturnError, ReturnDatatypeMismatchError, \
-    ChipArgumentsError, UnpackingError, StaticInferenceError
+    ChipArgumentsError, UnpackingError, StaticInferenceError, LoopLimitExceedError, RecursionLimitExceedError
 
 from zinnia.internal.internal_chip_object import InternalChipObject
 from zinnia.internal.internal_external_func_object import InternalExternalFuncObject
@@ -26,12 +27,13 @@ from zinnia.compile.type_sys import DTDescriptorFactory, NoneDTDescriptor, Float
 
 
 class IRGenerator:
-    def __init__(self):
+    def __init__(self, config: ZinniaConfig):
         self._ir_builder = IRBuilderImpl()
         self._ir_ctx = IRContext(self._ir_builder)
         self._registered_chips = {}
         self._registered_externals = {}
         self._next_external_call_id = 1
+        self._config = config
 
     def generate(
             self,
@@ -115,14 +117,23 @@ class IRGenerator:
             return None
         loop_body_has_return = False
         loop_terminated = False
+        loop_quota = self._config.loop_limit() + 1
         self._ir_ctx.loop_enter()
         while True:
             self._ir_ctx.loop_reiter()
             test_expr = self._ir_builder.op_bool_cast(self.visit(n.test_expr), dbg=n.dbg)
-            if test_expr.val() is None:
-                raise StaticInferenceError(n.dbg, "Cannot statically infer the condition value in the while statement. This is crucial to determine number of loops at compile time.")
+            loop_quota -= 1
+            if loop_quota <= 0:
+                if test_expr.val() is None:
+                    # TODO: raise a warning here
+                    self._ir_builder.op_assert(self._ir_builder.ir_constant_int(0), test_expr, dbg=n.dbg)
+                    break
+                else:
+                    raise LoopLimitExceedError(n.dbg, "Loop limit exceeded on while. Please check for infinite loops, or increase the loop limit.")
             elif test_expr.val() == 0:
                 break
+            if test_expr.val() is None:
+                self._ir_ctx.loop_break(self._ir_builder.ir_logical_not(test_expr))
             for _, stmt in enumerate(n.block):
                 self.visit(stmt)
                 break_condition = self._ir_ctx.get_break_condition_value()
@@ -212,7 +223,7 @@ class IRGenerator:
         if self._ir_ctx.check_return_guaranteed() or self._ir_ctx.check_loop_terminated_guaranteed():
             return None
         test = self.visit(n.expr)
-        return self._ir_builder.op_assert(test, self._ir_ctx.get_condition_value(), dbg=n.dbg)
+        return self._ir_builder.op_assert(test, self._ir_ctx.get_condition_value_for_assertion(), dbg=n.dbg)
 
     def visit_ASTReturnStatement(self, n: ASTReturnStatement):
         if self._ir_ctx.check_return_guaranteed() or self._ir_ctx.check_loop_terminated_guaranteed():
@@ -437,6 +448,14 @@ class IRGenerator:
     def visit_chip_call(self, chip: InternalChipObject, args: List[Value], kwargs: Dict[str, Value]):
         chip_declared_args = [(x.name, x.annotation) for x in chip.chip_ast.inputs]
         chip_filled_args = [None for _ in range(len(chip_declared_args))]
+        if self._ir_ctx.get_recursion_depth() >= self._config.recursion_limit():
+            self._ir_builder.op_assert(
+                self._ir_builder.ir_constant_int(0),
+                self._ir_builder.ir_logical_and(self._ir_ctx.get_condition_value_for_assertion(), self._ir_ctx.get_condition_value()),
+                dbg=chip.chip_ast.dbg
+            )
+            # TODO: raise a warning here
+            return self._ir_builder.op_placeholder_value(chip.return_dt, chip.chip_ast.dbg)
         for i, arg in enumerate(args):
             if i >= len(chip_declared_args):
                 raise ChipArgumentsError(chip.chip_ast.dbg, "Too many chip arguments")
@@ -460,7 +479,8 @@ class IRGenerator:
         for i, (name, anno) in enumerate(chip_declared_args):
             if chip_filled_args[i] is None:
                 raise ChipArgumentsError(chip.chip_ast.dbg, f"Chip argument for `{name}` not filled")
-        self._ir_ctx.chip_enter(chip.return_dt)
+        self._ir_ctx.add_recursion_depth()
+        self._ir_ctx.chip_enter(chip.return_dt, self._ir_ctx.get_condition_value())
         self._register_global_datatypes()
         for i, (name, anno) in enumerate(chip_declared_args):
             self._ir_ctx.set(name, chip_filled_args[i])
@@ -470,6 +490,7 @@ class IRGenerator:
         if not self._ir_ctx.check_return_guaranteed() and not isinstance(chip.return_dt, NoneDTDescriptor):
             raise ControlEndWithoutReturnError(chip.chip_ast.dbg, "Chip control ends without a return statement")
         self._ir_ctx.chip_leave()
+        self._ir_ctx.sub_recursion_depth()
         if isinstance(chip.return_dt, NoneDTDescriptor):
             return self._ir_builder.op_constant_none()
         return_value = return_vals_cond[-1][0]

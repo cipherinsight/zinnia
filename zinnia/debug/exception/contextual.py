@@ -22,6 +22,16 @@ class StaticInferenceError(ContextualException):
         super().__init__(dbg_i, msg, *args)
 
 
+class LoopLimitExceedError(ContextualException):
+    def __init__(self, dbg_i: DebugInfo | None, msg: str, *args):
+        super().__init__(dbg_i, msg, *args)
+
+
+class RecursionLimitExceedError(ContextualException):
+    def __init__(self, dbg_i: DebugInfo | None, msg: str, *args):
+        super().__init__(dbg_i, msg, *args)
+
+
 class TypeInferenceError(ContextualException):
     def __init__(self, dbg_i: DebugInfo | None, msg: str, *args):
         super().__init__(dbg_i, msg, *args)

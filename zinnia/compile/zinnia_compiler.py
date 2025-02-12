@@ -35,7 +35,7 @@ class ZinniaCompiler:
         python_ast = ast.parse(ZinniaCompiler.fix_source_indentation(fixed_source))
         transformer = ZinniaCircuitASTTransformer(ZinniaCompiler.fix_source_indentation(fixed_source), name)
         ast_tree: ASTCircuit = transformer.visit(python_ast.body[0])
-        generator = IRGenerator()
+        generator = IRGenerator(self.config)
         ir_graph = generator.generate(ast_tree, chips, externals)
         zk_program_ir = self.run_passes_for_zk_program(ir_graph)
         preprocess_ir = self.run_passes_for_input_preprocess(ir_graph)

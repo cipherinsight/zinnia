@@ -72,6 +72,9 @@ class LoopScope(AbstractScope):
     def get_returning_condition(self) -> IntegerValue | None:
         return self.super_scope.get_returning_condition()
 
+    def get_assertion_condition(self) -> IntegerValue | None:
+        return self.super_scope.get_assertion_condition()
+
     def get_return_dtype(self) -> DTDescriptor:
         return self.super_scope.get_return_dtype()
 

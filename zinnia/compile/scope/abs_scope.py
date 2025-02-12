@@ -59,6 +59,9 @@ class AbstractScope:
     def get_returning_condition(self) -> IntegerValue | None:
         raise NotImplementedError()
 
+    def get_assertion_condition(self) -> IntegerValue | None:
+        raise NotImplementedError()
+
     def register_return(self, value: Value, condition: IntegerValue):
         raise NotImplementedError()
 

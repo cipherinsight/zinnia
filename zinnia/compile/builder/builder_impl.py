@@ -78,6 +78,7 @@ from zinnia.ir_def.defs.ir_sub_f import SubFIR
 from zinnia.ir_def.defs.ir_sub_i import SubIIR
 from zinnia.ir_def.defs.ir_tan_f import TanFIR
 from zinnia.ir_def.defs.ir_tanh_f import TanHFIR
+from zinnia.op_def.internal.op_placeholder_value import PlaceholderValueOp
 from zinnia.op_def.lst import List_IndexOp
 from zinnia.op_def.lst.op_pop import List_PopOp
 from zinnia.op_def.lst.op_remove import List_RemoveOp
@@ -536,6 +537,13 @@ class IRBuilderImpl(IRBuilder):
         kwargs = op.argparse(dbg, [arrays, axis], {})
         result = op.build(self, OpArgsContainer(kwargs), dbg)
         assert isinstance(result, NDArrayValue)
+        return result
+
+    def op_placeholder_value(self, dt: DTDescriptor, dbg: Optional[DebugInfo] = None) -> Value:
+        op = PlaceholderValueOp(dt)
+        kwargs = op.argparse(dbg, [], {})
+        result = op.build(self, OpArgsContainer(kwargs), dbg)
+        assert isinstance(result, Value)
         return result
 
     def ir_poseidon_hash(self, values: List[NumberValue], dbg: Optional[DebugInfo] = None) -> IntegerValue:

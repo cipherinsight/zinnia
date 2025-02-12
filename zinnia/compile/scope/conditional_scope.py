@@ -66,6 +66,9 @@ class ConditionalScope(AbstractScope):
     def get_returning_condition(self) -> IntegerValue | None:
         return self.super_scope.get_returning_condition()
 
+    def get_assertion_condition(self) -> IntegerValue | None:
+        return self.super_scope.get_assertion_condition()
+
     def get_returns_with_conditions(self) -> List[Tuple[Value, IntegerValue]]:
         return self.super_scope.get_returns_with_conditions()
 

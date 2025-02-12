@@ -13,14 +13,22 @@ class ChipScope(AbstractScope):
     return_dtype: DTDescriptor
     returns_with_conditions: List[Tuple[Value, IntegerValue]]
     calculated_returning_condition: IntegerValue | None
+    assertion_condition: IntegerValue | None
 
-    def __init__(self, ir_builder: IRBuilderInterface, super_scope: Optional['AbstractScope'], return_dtype: DTDescriptor):
+    def __init__(
+            self,
+            ir_builder: IRBuilderInterface,
+            super_scope: Optional['AbstractScope'],
+            return_dtype: DTDescriptor,
+            assertion_condition: IntegerValue | None
+    ):
         super().__init__(ir_builder, super_scope)
         self.var_table = {}
         self.return_guaranteed = False
         self.return_dtype = return_dtype
         self.returns_with_conditions = []
         self.calculated_returning_condition = None
+        self.assertion_condition = assertion_condition
 
     def scope_enter(self, *args, **kwargs):
         pass
@@ -64,6 +72,9 @@ class ChipScope(AbstractScope):
 
     def get_returning_condition(self) -> IntegerValue | None:
         return self.calculated_returning_condition
+
+    def get_assertion_condition(self) -> IntegerValue | None:
+        return self.assertion_condition
 
     def get_returns_with_conditions(self) -> List[Tuple[Value, IntegerValue]]:
         return self.returns_with_conditions

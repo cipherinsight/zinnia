@@ -217,6 +217,9 @@ class IRBuilderInterface:
     def op_np_stack(self, arrays: ListValue | TupleValue, axis: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> NDArrayValue:
         raise NotImplementedError()
 
+    def op_placeholder_value(self, dt: DTDescriptor, dbg: Optional[DebugInfo] = None) -> Value:
+        raise NotImplementedError()
+
     def ir_expose_public_i(self, value: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
         raise NotImplementedError()
 
