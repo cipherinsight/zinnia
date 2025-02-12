@@ -101,3 +101,6 @@ class ConditionalScope(AbstractScope):
 
     def get_return_dtype(self) -> DTDescriptor:
         return self.super_scope.get_return_dtype()
+
+    def lock_parent_variable_types(self) -> bool:
+        return self.condition.val() is None

@@ -32,6 +32,9 @@ class AbstractScope:
     def exists_in_this(self, name: str) -> bool:
         raise NotImplementedError()
 
+    def lock_parent_variable_types(self) -> bool:
+        return False
+
     def set_return_guarantee(self):
         raise NotImplementedError()
 

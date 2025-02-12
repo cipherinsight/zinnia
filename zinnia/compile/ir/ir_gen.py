@@ -449,7 +449,7 @@ class IRGenerator:
         for i, stmt in enumerate(chip.chip_ast.block):
             self.visit(stmt)
         return_vals_cond = self._ir_ctx.get_returns_with_conditions()
-        if not self._ir_ctx.check_return_guaranteed() and not isinstance(chip.return_dt, NoneDTDescriptor) and (self._ir_ctx.get_return_condition_value() is None or self._ir_ctx.get_return_condition_value().val() != 0):
+        if not self._ir_ctx.check_return_guaranteed() and not isinstance(chip.return_dt, NoneDTDescriptor):
             raise ControlEndWithoutReturnError(chip.chip_ast.dbg, "Chip control ends without a return statement")
         self._ir_ctx.chip_leave()
         if isinstance(chip.return_dt, NoneDTDescriptor):
@@ -484,9 +484,9 @@ class IRGenerator:
         if isinstance(target, ASTNameAssignTarget):
             if self._ir_ctx.exists(target.name):
                 orig_value = self._ir_ctx.get(target.name)
-                if not self._ir_ctx.exists_in_top_scope(target.name) and value.type() != orig_value.type():
+                if orig_value.type_locked() and value.type() != orig_value.type():
                     raise InterScopeError(target.dbg, f"Cannot assign to `{target.name}`: this variable is declared at the outer scope. Attempting to change its datatype in the inner scope from {orig_value.type()} to {value.type()} is not allowed. Assigning to variables from outer scope must keep its datatype and shape.")
-                if not self._ir_ctx.exists_in_top_scope(target.name) and conditional_select:
+                if orig_value.type_locked() and conditional_select:
                     value = self._ir_builder.op_select(self._ir_ctx.get_condition_value(), value, orig_value, dbg=target.dbg)
             self._ir_ctx.set(target.name, value)
         elif isinstance(target, ASTSubscriptAssignTarget):

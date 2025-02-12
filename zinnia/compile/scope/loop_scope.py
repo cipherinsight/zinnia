@@ -121,3 +121,10 @@ class LoopScope(AbstractScope):
         self.calculated_looping_condition = self.break_condition
         if self.super_looping_condition is not None:
             self.calculated_looping_condition = self.ir_builder.ir_logical_and(self.calculated_looping_condition, self.super_looping_condition)
+
+    def lock_parent_variable_types(self) -> bool:
+        if self.break_condition is None and self.continue_condition is None:
+            return False
+        if (self.break_condition is not None and (self.break_condition.val() is None or self.break_condition.val() == 0)) or (self.continue_condition is not None and (self.continue_condition.val() is None or self.continue_condition.val() == 0)):
+            return True
+        return False

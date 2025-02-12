@@ -19,15 +19,11 @@ class IRContext:
         self.scopes[-1].set(key, val.into_value_store())
 
     def get(self, key: str) -> Value:
-        exists_in_this = self.scopes[-1].exists_in_this(key)
         value_store = self.scopes[-1].get(key)
-        return ValueFactory.from_value_store(value_store, not exists_in_this)
+        return ValueFactory.from_value_store(value_store, self.scopes[-1].lock_parent_variable_types())
 
     def exists(self, key: str) -> bool:
         return self.scopes[-1].exists(key)
-
-    def exists_in_top_scope(self, key: str) -> bool:
-        return self.scopes[-1].exists_in_this(key)
 
     def chip_enter(self, return_dtype: DTDescriptor):
         new_scope = ChipScope(self.ir_builder, self.scopes[-1], return_dtype)
