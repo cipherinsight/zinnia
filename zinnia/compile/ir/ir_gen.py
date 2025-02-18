@@ -480,7 +480,10 @@ class IRGenerator:
             if chip_filled_args[i] is None:
                 raise ChipArgumentsError(chip.chip_ast.dbg, f"Chip argument for `{name}` not filled")
         self._ir_ctx.add_recursion_depth()
-        self._ir_ctx.chip_enter(chip.return_dt, self._ir_ctx.get_condition_value())
+        self._ir_ctx.chip_enter(chip.return_dt, self._ir_builder.ir_logical_and(
+            self._ir_ctx.get_condition_value(),
+            self._ir_ctx.get_condition_value_for_assertion()
+        ))
         self._register_global_datatypes()
         for i, (name, anno) in enumerate(chip_declared_args):
             self._ir_ctx.set(name, chip_filled_args[i])
