@@ -295,40 +295,40 @@ class ExecutionContext:
         for entry in provided_inputs:
             input_table[entry.get_indices()] = entry.get_value()
         for stmt in self.preprocess_stmts:
-            if isinstance(stmt.operator, ReadIntegerIR):
-                value_table[stmt.stmt_id] = input_table[stmt.operator.indices]
-            elif isinstance(stmt.operator, ReadFloatIR):
-                value_table[stmt.stmt_id] = input_table[stmt.operator.indices]
-            elif isinstance(stmt.operator, ReadHashIR):
-                value_table[stmt.stmt_id] = input_table[stmt.operator.indices]
-            elif isinstance(stmt.operator, InvokeExternalIR):
+            if isinstance(stmt.ir_instance, ReadIntegerIR):
+                value_table[stmt.stmt_id] = input_table[stmt.ir_instance.indices]
+            elif isinstance(stmt.ir_instance, ReadFloatIR):
+                value_table[stmt.stmt_id] = input_table[stmt.ir_instance.indices]
+            elif isinstance(stmt.ir_instance, ReadHashIR):
+                value_table[stmt.stmt_id] = input_table[stmt.ir_instance.indices]
+            elif isinstance(stmt.ir_instance, InvokeExternalIR):
                 external_func = None
                 for name, ef in self.external_funcs.items():
-                    if name == stmt.operator.func_name:
+                    if name == stmt.ir_instance.func_name:
                         external_func = ef
                 if external_func is None:
-                    raise ValueError(f'External call with name {stmt.operator.func_name} not found')
+                    raise ValueError(f'External call with name {stmt.ir_instance.func_name} not found')
                 _callable = external_func.callable
                 return_dt = external_func.return_dt
                 args, kwargs = [], {}
-                for i, dt in enumerate(stmt.operator.args):
-                    args.append(self._recursive_construct_python_object(exported_values, stmt.operator.store_idx, i, (), dt))
-                for key, dt in stmt.operator.kwargs.items():
-                    kwargs[key] = self._recursive_construct_python_object(exported_values, stmt.operator.store_idx, key, (), dt)
+                for i, dt in enumerate(stmt.ir_instance.args):
+                    args.append(self._recursive_construct_python_object(exported_values, stmt.ir_instance.store_idx, i, (), dt))
+                for key, dt in stmt.ir_instance.kwargs.items():
+                    kwargs[key] = self._recursive_construct_python_object(exported_values, stmt.ir_instance.store_idx, key, (), dt)
                 invoke_result = _callable(*args, **kwargs)
-                parsed_entries = self._recursive_parse_value_to_entries((stmt.operator.store_idx,), return_dt, invoke_result)
+                parsed_entries = self._recursive_parse_value_to_entries((stmt.ir_instance.store_idx,), return_dt, invoke_result)
                 for entry in parsed_entries:
                     input_table[entry.get_indices()] = entry.get_value()
                 new_inputs += parsed_entries
-            elif isinstance(stmt.operator, ExportExternalIIR):
-                exported_values[(stmt.operator.for_which, stmt.operator.key, stmt.operator.indices)] = value_table[stmt.arguments[0]]
-            elif isinstance(stmt.operator, ExportExternalFIR):
-                exported_values[(stmt.operator.for_which, stmt.operator.key, stmt.operator.indices)] = value_table[stmt.arguments[0]]
-            elif isinstance(stmt.operator, AssertIR):
+            elif isinstance(stmt.ir_instance, ExportExternalIIR):
+                exported_values[(stmt.ir_instance.for_which, stmt.ir_instance.key, stmt.ir_instance.indices)] = value_table[stmt.arguments[0]]
+            elif isinstance(stmt.ir_instance, ExportExternalFIR):
+                exported_values[(stmt.ir_instance.for_which, stmt.ir_instance.key, stmt.ir_instance.indices)] = value_table[stmt.arguments[0]]
+            elif isinstance(stmt.ir_instance, AssertIR):
                 pass
             else:
                 args = [value_table[x] for x in stmt.arguments]
-                value_table[stmt.stmt_id] = stmt.operator.mock_exec(args, MockExecConfig())
+                value_table[stmt.stmt_id] = stmt.ir_instance.mock_exec(args, MockExecConfig())
         return new_inputs
 
     @staticmethod

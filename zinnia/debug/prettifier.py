@@ -7,7 +7,7 @@ from zinnia.compile.ir.ir_stmt import IRStatement
 def prettify_ir_stmts(stmts: List[IRStatement]):
     results = []
     for i, stmt in enumerate(stmts):
-        s = f'#{stmt.stmt_id}\t{stmt.operator.get_signature()}\t'
+        s = f'#{stmt.stmt_id}\t{stmt.ir_instance.get_signature()}\t'
         s += f'({", ".join([f"%{arg}" for arg in stmt.arguments])})'
         results.append(s)
     return "\n".join(results)

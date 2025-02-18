@@ -71,7 +71,7 @@ class _Halo2StatementBuilder:
         self.id_val_lookup = {}
 
     def build_stmt(self, stmt: IRStatement) -> str:
-        typename = type(stmt.operator).__name__
+        typename = type(stmt.ir_instance).__name__
         method_name = '_build_' + typename
         method = getattr(self, method_name, None)
         if method is None:
@@ -87,114 +87,114 @@ class _Halo2StatementBuilder:
         return var_name
 
     def _build_AddFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, AddFIR)
+        assert isinstance(stmt.ir_instance, AddFIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qadd(ctx, {lhs}, {rhs});"]
 
     def _build_SubFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, SubFIR)
+        assert isinstance(stmt.ir_instance, SubFIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qsub(ctx, {lhs}, {rhs});"]
 
     def _build_MulFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, MulFIR)
+        assert isinstance(stmt.ir_instance, MulFIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qmul(ctx, {lhs}, {rhs});"]
 
     def _build_DivFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, DivFIR)
+        assert isinstance(stmt.ir_instance, DivFIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qdiv(ctx, {lhs}, {rhs});"]
 
     def _build_AddIIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, AddIIR)
+        assert isinstance(stmt.ir_instance, AddIIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [f"let {self._get_var_name(stmt.stmt_id)} = gate.add(ctx, {lhs}, {rhs});"]
 
     def _build_SubIIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, SubIIR)
+        assert isinstance(stmt.ir_instance, SubIIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [f"let {self._get_var_name(stmt.stmt_id)} = gate.sub(ctx, {lhs}, {rhs});"]
 
     def _build_MulIIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, MulIIR)
+        assert isinstance(stmt.ir_instance, MulIIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [f"let {self._get_var_name(stmt.stmt_id)} = gate.mul(ctx, {lhs}, {rhs});"]
 
     def _build_DivIIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, DivIIR)
+        assert isinstance(stmt.ir_instance, DivIIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [f"let {self._get_var_name(stmt.stmt_id)} = gate.div_unsafe(ctx, {lhs}, {rhs});"]
 
     def _build_AssertIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, AssertIR)
+        assert isinstance(stmt.ir_instance, AssertIR)
         test = self._get_var_name(stmt.arguments[0])
         return [f"gate.assert_is_const(ctx, &{test}, &F::ONE);"]
 
     def _build_ReadIntegerIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, ReadIntegerIR)
+        assert isinstance(stmt.ir_instance, ReadIntegerIR)
         return [
-            f"let tmp_1 = ctx.load_witness(F::from((input.x_{'_'.join(map(str, stmt.operator.indices))}).abs() as u64));",
-            f"let {self._get_var_name(stmt.stmt_id)} = if input.x_{'_'.join(map(str, stmt.operator.indices))} >= 0 {{tmp_1}} else {{gate.neg(ctx, tmp_1)}};"
+            f"let tmp_1 = ctx.load_witness(F::from((input.x_{'_'.join(map(str, stmt.ir_instance.indices))}).abs() as u64));",
+            f"let {self._get_var_name(stmt.stmt_id)} = if input.x_{'_'.join(map(str, stmt.ir_instance.indices))} >= 0 {{tmp_1}} else {{gate.neg(ctx, tmp_1)}};"
         ]
 
     def _build_ReadHashIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, ReadHashIR)
+        assert isinstance(stmt.ir_instance, ReadHashIR)
         return [
-            f"let {self._get_var_name(stmt.stmt_id)} = ctx.load_witness(F::from_u128(input.hash_{'_'.join(map(str, stmt.operator.indices))}));"
+            f"let {self._get_var_name(stmt.stmt_id)} = ctx.load_witness(F::from_u128(input.hash_{'_'.join(map(str, stmt.ir_instance.indices))}));"
         ]
 
     def _build_ReadFloatIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, ReadFloatIR)
+        assert isinstance(stmt.ir_instance, ReadFloatIR)
         return [
-            f"let {self._get_var_name(stmt.stmt_id)} = ctx.load_witness(fixed_point_chip.quantization(input.x_{'_'.join(map(str, stmt.operator.indices))}));"
+            f"let {self._get_var_name(stmt.stmt_id)} = ctx.load_witness(fixed_point_chip.quantization(input.x_{'_'.join(map(str, stmt.ir_instance.indices))}));"
         ]
 
     def _build_PoseidonHashIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, PoseidonHashIR)
+        assert isinstance(stmt.ir_instance, PoseidonHashIR)
         args = [self._get_var_name(arg) for arg in stmt.arguments]
         return [
             f"let {self._get_var_name(stmt.stmt_id)} = poseidon.hash_fix_len_array(ctx, &gate, &[{', '.join(args)}]);"
         ]
 
     def _build_ExposePublicIIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, ExposePublicIIR)
+        assert isinstance(stmt.ir_instance, ExposePublicIIR)
         x = self._get_var_name(stmt.arguments[0])
         return [f"make_public.push({x});"]
 
     def _build_ExposePublicFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, ExposePublicFIR)
+        assert isinstance(stmt.ir_instance, ExposePublicFIR)
         x = self._get_var_name(stmt.arguments[0])
         return [f"make_public.push({x});"]
 
     def _build_ConstantIntIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, ConstantIntIR)
-        constant_val = stmt.operator.value
+        assert isinstance(stmt.ir_instance, ConstantIntIR)
+        constant_val = stmt.ir_instance.value
         return [
             f"let {self._get_var_name(stmt.stmt_id)} = " + (f"Constant(F::from({constant_val}));" if constant_val >= 0 else f"{{gate.neg(ctx, Constant(F::from({-constant_val})))}};")
         ]
 
     def _build_ConstantFloatIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, ConstantFloatIR)
-        constant_val = stmt.operator.value
+        assert isinstance(stmt.ir_instance, ConstantFloatIR)
+        constant_val = stmt.ir_instance.value
         return [
             f"let {self._get_var_name(stmt.stmt_id)} = Constant(fixed_point_chip.quantization({constant_val}));"
         ]
 
     def _build_ConstantStrIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, ConstantStrIR)
+        assert isinstance(stmt.ir_instance, ConstantStrIR)
         return []
 
     def _build_FloatCastIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, FloatCastIR)
+        assert isinstance(stmt.ir_instance, FloatCastIR)
         x = self._get_var_name(stmt.arguments[0])
         return [
             f"let tmp_1 = {x}.value().get_lower_128();",
@@ -209,24 +209,24 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_IntCastIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, IntCastIR)
+        assert isinstance(stmt.ir_instance, IntCastIR)
         x = self._get_var_name(stmt.arguments[0])
         return [f"let {self._get_var_name(stmt.stmt_id)} = if fixed_point_chip.dequantization({x}) >= 0 {{Constant(F::from(fixed_point_chip.dequantization({x}) as u64))}} else {{gate.neg(ctx, Constant(F::from(fixed_point_chip.dequantization({x}) as u64))))}};"]
 
     def _build_StrIIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, StrIIR)
+        assert isinstance(stmt.ir_instance, StrIIR)
         return []
 
     def _build_StrFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, StrFIR)
+        assert isinstance(stmt.ir_instance, StrFIR)
         return []
 
     def _build_PrintIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, PrintIR)
+        assert isinstance(stmt.ir_instance, PrintIR)
         return []
 
     def _build_EqualFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, EqualFIR)
+        assert isinstance(stmt.ir_instance, EqualFIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [
@@ -237,7 +237,7 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_NotEqualFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, NotEqualFIR)
+        assert isinstance(stmt.ir_instance, NotEqualFIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [
@@ -248,13 +248,13 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_LessThanFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, LessThanFIR)
+        assert isinstance(stmt.ir_instance, LessThanFIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [f"let {self._get_var_name(stmt.stmt_id)} = range_chip.is_less_than(ctx, {lhs}, {rhs}, 128);"]
 
     def _build_LessThanOrEqualFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, LessThanOrEqualFIR)
+        assert isinstance(stmt.ir_instance, LessThanOrEqualFIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [
@@ -264,7 +264,7 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_GreaterThanFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, GreaterThanFIR)
+        assert isinstance(stmt.ir_instance, GreaterThanFIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [
@@ -276,7 +276,7 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_GreaterThanOrEqualFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, GreaterThanOrEqualFIR)
+        assert isinstance(stmt.ir_instance, GreaterThanOrEqualFIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [
@@ -285,19 +285,19 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_EqualIIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, EqualIIR)
+        assert isinstance(stmt.ir_instance, EqualIIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [f"let {self._get_var_name(stmt.stmt_id)} = gate.is_equal(ctx, {lhs}, {rhs});"]
 
     def _build_EqualHashIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, EqualHashIR)
+        assert isinstance(stmt.ir_instance, EqualHashIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [f"let {self._get_var_name(stmt.stmt_id)} = gate.is_equal(ctx, {lhs}, {rhs});"]
 
     def _build_NotEqualIIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, NotEqualIIR)
+        assert isinstance(stmt.ir_instance, NotEqualIIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [
@@ -306,13 +306,13 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_LessThanIIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, LessThanIIR)
+        assert isinstance(stmt.ir_instance, LessThanIIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [f"let {self._get_var_name(stmt.stmt_id)} = range_chip.is_less_than(ctx, {lhs}, {rhs}, 128);"]
 
     def _build_LessThanOrEqualIIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, LessThanOrEqualIIR)
+        assert isinstance(stmt.ir_instance, LessThanOrEqualIIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [
@@ -322,7 +322,7 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_GreaterThanIIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, GreaterThanIIR)
+        assert isinstance(stmt.ir_instance, GreaterThanIIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [
@@ -334,7 +334,7 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_GreaterThanOrEqualIIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, GreaterThanOrEqualIIR)
+        assert isinstance(stmt.ir_instance, GreaterThanOrEqualIIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [
@@ -343,7 +343,7 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_BoolCastIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, BoolCastIR)
+        assert isinstance(stmt.ir_instance, BoolCastIR)
         x = self._get_var_name(stmt.arguments[0])
         return [
             f"let tmp_1 = gate.is_equal(ctx, {x}, Constant(F::ZERO)));",
@@ -351,14 +351,14 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_LogicalNotIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, LogicalNotIR)
+        assert isinstance(stmt.ir_instance, LogicalNotIR)
         x = self._get_var_name(stmt.arguments[0])
         return [
             f"let {self._get_var_name(stmt.stmt_id)} = gate.not(ctx, {x});"
         ]
 
     def _build_LogicalAndIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, LogicalAndIR)
+        assert isinstance(stmt.ir_instance, LogicalAndIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [
@@ -366,7 +366,7 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_LogicalOrIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, LogicalOrIR)
+        assert isinstance(stmt.ir_instance, LogicalOrIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [
@@ -374,63 +374,63 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_SinFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, SinFIR)
+        assert isinstance(stmt.ir_instance, SinFIR)
         x = self._get_var_name(stmt.arguments[0])
         return [
             f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qsin(ctx, {x});"
         ]
 
     def _build_ExpFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, ExpFIR)
+        assert isinstance(stmt.ir_instance, ExpFIR)
         x = self._get_var_name(stmt.arguments[0])
         return [
             f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qexp(ctx, {x});"
         ]
 
     def _build_LogFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, LogFIR)
+        assert isinstance(stmt.ir_instance, LogFIR)
         x = self._get_var_name(stmt.arguments[0])
         return [
             f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qlog(ctx, {x});"
         ]
 
     def _build_CosFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, CosFIR)
+        assert isinstance(stmt.ir_instance, CosFIR)
         x = self._get_var_name(stmt.arguments[0])
         return [
             f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qcos(ctx, {x});"
         ]
 
     def _build_TanFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, TanFIR)
+        assert isinstance(stmt.ir_instance, TanFIR)
         x = self._get_var_name(stmt.arguments[0])
         return [
             f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qtan(ctx, {x});"
         ]
 
     def _build_SinHFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, SinHFIR)
+        assert isinstance(stmt.ir_instance, SinHFIR)
         x = self._get_var_name(stmt.arguments[0])
         return [
             f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qsinh(ctx, {x});"
         ]
 
     def _build_CosHFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, CosHFIR)
+        assert isinstance(stmt.ir_instance, CosHFIR)
         x = self._get_var_name(stmt.arguments[0])
         return [
             f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qcosh(ctx, {x});"
         ]
 
     def _build_TanHIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, TanHFIR)
+        assert isinstance(stmt.ir_instance, TanHFIR)
         x = self._get_var_name(stmt.arguments[0])
         return [
             f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qtanh(ctx, {x});"
         ]
 
     def _build_PowFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, PowFIR)
+        assert isinstance(stmt.ir_instance, PowFIR)
         x = self._get_var_name(stmt.arguments[0])
         exponent = self._get_var_name(stmt.arguments[1])
         return [
@@ -438,7 +438,7 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_PowIIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, PowIIR)
+        assert isinstance(stmt.ir_instance, PowIIR)
         x = self._get_var_name(stmt.arguments[0])
         exponent = self._get_var_name(stmt.arguments[1])
         return [
@@ -446,7 +446,7 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_ModFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, ModFIR)
+        assert isinstance(stmt.ir_instance, ModFIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [
@@ -454,7 +454,7 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_ModIIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, ModIIR)
+        assert isinstance(stmt.ir_instance, ModIIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [
@@ -463,7 +463,7 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_FloorDivFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, FloorDivFIR)
+        assert isinstance(stmt.ir_instance, FloorDivFIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [
@@ -473,7 +473,7 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_FloorDivIIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, FloorDivIIR)
+        assert isinstance(stmt.ir_instance, FloorDivIIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [
@@ -482,14 +482,14 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_SignFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, SignFIR)
+        assert isinstance(stmt.ir_instance, SignFIR)
         x = self._get_var_name(stmt.arguments[0])
         return [
             f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.sign(ctx, {x});"
         ]
 
     def _build_SignIIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, SignIIR)
+        assert isinstance(stmt.ir_instance, SignIIR)
         x = self._get_var_name(stmt.arguments[0])
         return [
             f"let tmp_1 = range_chip.is_less_than(ctx, {x}, Constant(F::from(0)), 128);"
@@ -500,14 +500,14 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_AbsFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, AbsFIR)
+        assert isinstance(stmt.ir_instance, AbsFIR)
         x = self._get_var_name(stmt.arguments[0])
         return [
             f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qabs(ctx, {x});"
         ]
 
     def _build_AbsIIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, AbsIIR)
+        assert isinstance(stmt.ir_instance, AbsIIR)
         x = self._get_var_name(stmt.arguments[0])
         return [
             f"let tmp_1 = range_chip.is_less_than(ctx, {x}, Constant(F::from(0)), 128);"
@@ -516,7 +516,7 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_SelectIIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, SelectIIR)
+        assert isinstance(stmt.ir_instance, SelectIIR)
         cond = self._get_var_name(stmt.arguments[0])
         true_val = self._get_var_name(stmt.arguments[1])
         false_val = self._get_var_name(stmt.arguments[2])
@@ -525,7 +525,7 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_SelectFIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, SelectFIR)
+        assert isinstance(stmt.ir_instance, SelectFIR)
         cond = self._get_var_name(stmt.arguments[0])
         true_val = self._get_var_name(stmt.arguments[1])
         false_val = self._get_var_name(stmt.arguments[2])
@@ -534,7 +534,7 @@ class _Halo2StatementBuilder:
         ]
 
     def _build_AddStrIR(self, stmt: IRStatement) -> List[str]:
-        assert isinstance(stmt.operator, AddStrIR)
+        assert isinstance(stmt.ir_instance, AddStrIR)
         return []
 
 
@@ -545,7 +545,7 @@ class Halo2ProgramBuilder(AbstractProgramBuilder):
         super().__init__(name, stmts)
         self.input_entries = []
         for stmt in stmts:
-            op = stmt.operator
+            op = stmt.ir_instance
             if isinstance(op, ReadIntegerIR):
                 self.input_entries.append((op.indices, "Integer"))
             elif isinstance(op, ReadFloatIR):

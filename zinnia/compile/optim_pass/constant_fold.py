@@ -4,7 +4,7 @@ from typing import List
 from zinnia.compile.builder.builder_impl import IRBuilderImpl
 from zinnia.compile.triplet import IntegerValue, FloatValue, Value
 from zinnia.compile.ir.ir_graph import IRGraph
-from zinnia.compile.multi_pass.abstract_pass import AbstractIRPass
+from zinnia.compile.optim_pass.abstract_pass import AbstractIRPass
 
 
 class ConstantFoldIRPass(AbstractIRPass):
@@ -30,6 +30,6 @@ class ConstantFoldIRPass(AbstractIRPass):
                     if constant_float_ir.get(value.val(), None) is None:
                         constant_float_ir[value.val()] = ir_builder.ir_constant_float(value.val())
                     ir_args[i] = constant_float_ir[value.val()]
-            new_val = ir_builder.create_ir(stmt.operator, ir_args, None)
+            new_val = ir_builder.create_ir(stmt.ir_instance, ir_args, None)
             value_lookup_by_ptr[stmt.stmt_id] = new_val
         return ir_builder.export_ir_graph()

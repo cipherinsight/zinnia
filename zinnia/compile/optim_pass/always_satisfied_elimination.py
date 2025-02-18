@@ -3,7 +3,7 @@ import copy
 from zinnia.compile.builder.builder_impl import IRBuilderImpl
 from zinnia.compile.triplet import IntegerValue
 from zinnia.compile.ir.ir_graph import IRGraph
-from zinnia.compile.multi_pass.abstract_pass import AbstractIRPass
+from zinnia.compile.optim_pass.abstract_pass import AbstractIRPass
 from zinnia.ir_def.defs.ir_assert import AssertIR
 
 
@@ -23,9 +23,9 @@ class AlwaysSatisfiedEliminationIRPass(AbstractIRPass):
             arg_values = [None for _ in referring_tos]
             for i, referring_to in enumerate(referring_tos):
                 arg_values[i] = values_lookup[referring_to]
-            values_lookup[stmt.stmt_id] = builder.create_ir(stmt.operator, arg_values, None)
+            values_lookup[stmt.stmt_id] = builder.create_ir(stmt.ir_instance, arg_values, None)
         for stmt in topological_order:
-            if isinstance(stmt.operator, AssertIR):
+            if isinstance(stmt.ir_instance, AssertIR):
                 value: IntegerValue = values_lookup[in_links[stmt.stmt_id][0]]
                 if value.val() is not None and value.val() != 0:
                     to_be_eliminated.append(stmt.stmt_id)

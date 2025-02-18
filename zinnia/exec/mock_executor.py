@@ -30,39 +30,39 @@ class MockProgramExecutor(ZKProgramExecutor):
         return ZKExecResult(self.satisfied)
 
     def exec_stmt(self, stmt: IRStatement, config: MockExecConfig):
-        typename = type(stmt.operator).__name__
+        typename = type(stmt.ir_instance).__name__
         method_name = 'exec_' + typename
         method = getattr(self, method_name, None)
         if method is None:
             args = [self.value_table[x] for x in stmt.arguments]
-            assert isinstance(stmt.operator, AbstractIR)
-            self.value_table[stmt.stmt_id] = stmt.operator.mock_exec(args, config)
+            assert isinstance(stmt.ir_instance, AbstractIR)
+            self.value_table[stmt.stmt_id] = stmt.ir_instance.mock_exec(args, config)
             return
         return method(stmt)
 
     def exec_PrintIR(self, stmt: IRStatement):
-        assert isinstance(stmt.operator, PrintIR)
+        assert isinstance(stmt.ir_instance, PrintIR)
         args = [self.value_table[x] for x in stmt.arguments]
         if args[0] != 0:
             print(args[1], end='', flush=True, sep='')
 
     def exec_ReadIntegerIR(self, stmt: IRStatement):
-        assert isinstance(stmt.operator, ReadIntegerIR)
-        val = self.input_table[stmt.operator.indices]
+        assert isinstance(stmt.ir_instance, ReadIntegerIR)
+        val = self.input_table[stmt.ir_instance.indices]
         self.value_table[stmt.stmt_id] = val
 
     def exec_ReadFloatIR(self, stmt: IRStatement):
-        assert isinstance(stmt.operator, ReadFloatIR)
-        val = self.input_table[stmt.operator.indices]
+        assert isinstance(stmt.ir_instance, ReadFloatIR)
+        val = self.input_table[stmt.ir_instance.indices]
         self.value_table[stmt.stmt_id] = val
 
     def exec_ReadHashIR(self, stmt: IRStatement):
-        assert isinstance(stmt.operator, ReadHashIR)
-        val = self.input_table[stmt.operator.indices]
+        assert isinstance(stmt.ir_instance, ReadHashIR)
+        val = self.input_table[stmt.ir_instance.indices]
         self.value_table[stmt.stmt_id] = val
 
     def exec_AssertIR(self, stmt: IRStatement):
-        assert isinstance(stmt.operator, AssertIR)
+        assert isinstance(stmt.ir_instance, AssertIR)
         args = [self.value_table[x] for x in stmt.arguments]
         assert len(args) == 1
         if args[0] == 0:

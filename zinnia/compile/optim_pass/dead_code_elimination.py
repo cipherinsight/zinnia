@@ -1,7 +1,7 @@
 import copy
 
 from zinnia.compile.ir.ir_graph import IRGraph
-from zinnia.compile.multi_pass.abstract_pass import AbstractIRPass
+from zinnia.compile.optim_pass.abstract_pass import AbstractIRPass
 
 
 class DeadCodeEliminationIRPass(AbstractIRPass):
@@ -11,7 +11,7 @@ class DeadCodeEliminationIRPass(AbstractIRPass):
     def exec(self, ir_graph: IRGraph) -> IRGraph:
         ir_graph = copy.copy(ir_graph)
         stmts = ir_graph.export_stmts()
-        ensuring_keep_stmts = [stmt.operator.is_fixed_ir() for stmt in stmts]
+        ensuring_keep_stmts = [stmt.ir_instance.is_fixed_ir() for stmt in stmts]
         in_d, out_d = ir_graph.get_io_degrees()
         killing_queue = []
         to_be_eliminated = []

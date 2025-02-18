@@ -1,7 +1,7 @@
 import copy
 
 from zinnia.compile.ir.ir_graph import IRGraph
-from zinnia.compile.multi_pass.abstract_pass import AbstractIRPass
+from zinnia.compile.optim_pass.abstract_pass import AbstractIRPass
 from zinnia.ir_def.defs.ir_export_external_f import ExportExternalFIR
 from zinnia.ir_def.defs.ir_export_external_i import ExportExternalIIR
 from zinnia.ir_def.defs.ir_invoke_external import InvokeExternalIR
@@ -16,11 +16,11 @@ class ExternalCallRemoverIRPass(AbstractIRPass):
         stmts = ir_graph.export_stmts()
         to_be_eliminated = []
         for i, stmt in enumerate(stmts):
-            if isinstance(stmt.operator, InvokeExternalIR):
+            if isinstance(stmt.ir_instance, InvokeExternalIR):
                 to_be_eliminated.append(stmt.stmt_id)
-            elif isinstance(stmt.operator, ExportExternalIIR):
+            elif isinstance(stmt.ir_instance, ExportExternalIIR):
                 to_be_eliminated.append(stmt.stmt_id)
-            elif isinstance(stmt.operator, ExportExternalFIR):
+            elif isinstance(stmt.ir_instance, ExportExternalFIR):
                 to_be_eliminated.append(stmt.stmt_id)
         ir_graph.remove_stmt_bunch(to_be_eliminated)
         return ir_graph

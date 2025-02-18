@@ -6,11 +6,12 @@ from zinnia.compile.ast import ASTChip, ASTCircuit
 from zinnia.compile.ir.ir_gen import IRGenerator
 from zinnia.compile.ir.ir_graph import IRGraph
 from zinnia.compile.ir.ir_stmt import IRStatement
-from zinnia.compile.multi_pass.always_satisfied_elimination import AlwaysSatisfiedEliminationIRPass
-from zinnia.compile.multi_pass.constant_fold import ConstantFoldIRPass
-from zinnia.compile.multi_pass.dead_code_elimination import DeadCodeEliminationIRPass
-from zinnia.compile.multi_pass.duplicate_code_elimination import DuplicateCodeEliminationIRPass
-from zinnia.compile.multi_pass.external_call_remover import ExternalCallRemoverIRPass
+from zinnia.compile.optim_pass.always_satisfied_elimination import AlwaysSatisfiedEliminationIRPass
+from zinnia.compile.optim_pass.constant_fold import ConstantFoldIRPass
+from zinnia.compile.optim_pass.dead_code_elimination import DeadCodeEliminationIRPass
+from zinnia.compile.optim_pass.duplicate_code_elimination import DuplicateCodeEliminationIRPass
+from zinnia.compile.optim_pass.external_call_remover import ExternalCallRemoverIRPass
+from zinnia.compile.optim_pass.shortcut_optimization_pass import ShortcutOptimIRPass
 from zinnia.compile.transformer import ZinniaExternalFuncASTTransformer, ZinniaCircuitASTTransformer
 from zinnia.compile.transformer.chip import ZinniaChipASTTransformer
 from zinnia.compile.type_sys.dt_descriptor import DTDescriptor
@@ -51,6 +52,7 @@ class ZinniaCompiler:
 
     def run_passes_for_zk_program(self, ir_graph: IRGraph) -> List[IRStatement]:
         ir_graph = ExternalCallRemoverIRPass().exec(ir_graph)
+        ir_graph = ShortcutOptimIRPass().exec(ir_graph)
         ir_graph = ConstantFoldIRPass().exec(ir_graph)
         ir_graph = DeadCodeEliminationIRPass().exec(ir_graph)
         ir_graph = AlwaysSatisfiedEliminationIRPass().exec(ir_graph)
@@ -58,6 +60,7 @@ class ZinniaCompiler:
         return ir_graph.export_stmts()
 
     def run_passes_for_input_preprocess(self, ir_graph: IRGraph) -> List[IRStatement]:
+        ir_graph = ShortcutOptimIRPass().exec(ir_graph)
         ir_graph = ConstantFoldIRPass().exec(ir_graph)
         ir_graph = DeadCodeEliminationIRPass().exec(ir_graph)
         ir_graph = AlwaysSatisfiedEliminationIRPass().exec(ir_graph)
