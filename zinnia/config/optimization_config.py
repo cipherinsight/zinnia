@@ -4,13 +4,20 @@ from zinnia.config.base import ConfigBase
 
 
 class OptimizationConfig(ConfigBase):
-    def __init__(self):
+    def __init__(
+            self,
+            always_satisfied_elimination: bool = True,
+            constant_fold: bool = True,
+            dead_code_elimination: bool = True,
+            duplicate_code_elimination: bool = True,
+            shortcut_optimization: bool = True
+    ):
         super().__init__()
-        self.set('always_satisfied_elimination', True)
-        self.set('constant_fold', True)
-        self.set('dead_code_elimination', True)
-        self.set('duplicate_code_elimination', True)
-        self.set('shortcut_optimization', True)
+        self.set('always_satisfied_elimination', always_satisfied_elimination)
+        self.set('constant_fold', constant_fold)
+        self.set('dead_code_elimination', dead_code_elimination)
+        self.set('duplicate_code_elimination', duplicate_code_elimination)
+        self.set('shortcut_optimization', shortcut_optimization)
 
     def always_satisfied_elimination(self) -> bool:
         return self.get('always_satisfied_elimination')

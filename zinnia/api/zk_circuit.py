@@ -98,7 +98,7 @@ class ZKCircuit:
 
     def compile(self) -> ZKCompiledProgram:
         try:
-            self.program = ZinniaCompiler(ZinniaConfig()).compile(
+            self.program = ZinniaCompiler(self.config).compile(
                 self.source, self.name,
                 {k: v.to_internal_object() for k, v in self.chips.items()},
                 {k: v.to_internal_object() for k, v in self.externals.items()},

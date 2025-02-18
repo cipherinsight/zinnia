@@ -19,6 +19,15 @@ class ZKParsedInput:
         def get_kind(self) -> str:
             return self.kind
 
+        def get_key(self) -> str:
+            if self.kind == ZKParsedInput.Kind.FLOAT:
+                return f"x_{'_'.join(map(str, self.indices))}"
+            if self.kind == ZKParsedInput.Kind.INTEGER:
+                return f"x_{'_'.join(map(str, self.indices))}"
+            if self.kind == ZKParsedInput.Kind.HASH:
+                return f"hash_{'_'.join(map(str, self.indices))}"
+            raise NotImplementedError()
+
         def is_float(self) -> bool:
             return self.kind == ZKParsedInput.Kind.FLOAT
 

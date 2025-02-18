@@ -7,15 +7,16 @@ from zinnia.debug.dbg_info import DebugInfo
 
 
 class ReadFloatIR(AbstractIR):
-    def __init__(self, indices: Tuple[int, ...]):
+    def __init__(self, indices: Tuple[int, ...], is_public: bool):
         super().__init__()
         self.indices = indices
+        self.is_public = is_public
 
     def get_signature(self) -> str:
-        return f"read_float[{', '.join(map(str, self.indices))}]"
+        return f"read_float[{', '.join(map(str, self.indices))}][{self.is_public}]"
 
     def __eq__(self, other):
-        return super().__eq__(other) and self.indices == other.indices
+        return super().__eq__(other) and self.indices == other.indices and self.is_public == other.is_public
 
     def is_fixed_ir(self) -> bool:
         return True
@@ -25,9 +26,10 @@ class ReadFloatIR(AbstractIR):
 
     def export(self) -> Dict:
         return {
-            "indices": list(self.indices)
+            "indices": list(self.indices),
+            "is_public": self.is_public
         }
 
     @staticmethod
     def import_from(data: Dict) -> 'ReadFloatIR':
-        return ReadFloatIR(tuple(data['indices']))
+        return ReadFloatIR(tuple(data['indices']), data['is_public'])

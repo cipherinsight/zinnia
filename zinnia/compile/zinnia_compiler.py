@@ -1,6 +1,7 @@
 import ast
 from typing import Dict, List
 
+from zinnia.compile.backend.circom_builder import CircomProgramBuilder
 from zinnia.compile.backend.halo2_builder import Halo2ProgramBuilder
 from zinnia.compile.ast import ASTChip, ASTCircuit
 from zinnia.compile.ir.ir_gen import IRGenerator
@@ -42,6 +43,8 @@ class ZinniaCompiler:
         preprocess_ir = self.run_passes_for_input_preprocess(ir_graph)
         if self.config.get_backend() == ZinniaConfig.BACKEND_HALO2:
             prog_builder = Halo2ProgramBuilder(name, zk_program_ir)
+        elif self.config.get_backend() == ZinniaConfig.BACKEND_CIRCOM:
+            prog_builder = CircomProgramBuilder(name, zk_program_ir)
         else:
             raise NotImplementedError(f"Backend {self.config.get_backend()} is not supported.")
         compiled_source = prog_builder.build()

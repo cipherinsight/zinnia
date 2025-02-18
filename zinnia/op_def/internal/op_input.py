@@ -39,12 +39,12 @@ class InputOp(AbstractOp):
             values = []
             for i in range(total_number_of_elements):
                 if isinstance(dtype, IntegerDTDescriptor):
-                    _val = builder.ir_read_integer(self.indices + (i, ))
+                    _val = builder.ir_read_integer(self.indices + (i, ), should_expose_public)
                     if should_expose_public:
                         builder.ir_expose_public_i(_val)
                     values.append(_val)
                 elif isinstance(dtype, FloatDTDescriptor):
-                    _val = builder.ir_read_float(self.indices + (i, ))
+                    _val = builder.ir_read_float(self.indices + (i, ), should_expose_public)
                     if should_expose_public:
                         builder.ir_expose_public_f(_val)
                     values.append(_val)
@@ -62,18 +62,18 @@ class InputOp(AbstractOp):
                 values.append(val)
             return ListValue(list(v.type() for v in values), list(values))
         elif isinstance(self.dt, IntegerDTDescriptor):
-            val = builder.ir_read_integer(self.indices)
+            val = builder.ir_read_integer(self.indices, should_expose_public)
             if should_expose_public:
                 builder.ir_expose_public_i(val)
             return val
         elif isinstance(self.dt, FloatDTDescriptor):
-            val = builder.ir_read_float(self.indices)
+            val = builder.ir_read_float(self.indices, should_expose_public)
             if should_expose_public:
                 builder.ir_expose_public_f(val)
             return val
         elif isinstance(self.dt, PoseidonHashedDTDescriptor):
             val = builder.op_input(self.indices + (0,), self.dt.dtype, '')
-            provided_hash = builder.ir_read_hash(self.indices + (1,))
+            provided_hash = builder.ir_read_hash(self.indices + (1,), True)
             builder.op_expose_public(provided_hash)
             builder.op_assert(builder.ir_equal_hash(builder.op_poseidon_hash(val), provided_hash), builder.op_constant_none())
             return val

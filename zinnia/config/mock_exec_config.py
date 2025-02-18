@@ -4,9 +4,12 @@ from zinnia.config.base import ConfigBase
 
 
 class MockExecConfig(ConfigBase):
-    def __init__(self):
+    def __init__(
+            self,
+            float_tolerance: float = 1e-6
+    ):
         super().__init__()
-        self.set('float_tolerance', 1e-6)
+        self.set('float_tolerance', float_tolerance)
 
     def float_tolerance(self) -> float:
         return self.get('float_tolerance')

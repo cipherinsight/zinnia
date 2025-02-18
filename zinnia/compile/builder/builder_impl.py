@@ -595,22 +595,22 @@ class IRBuilderImpl(IRBuilder):
         assert isinstance(val, NoneValue)
         return val
 
-    def ir_read_integer(self, indices: Tuple[int, ...], dbg: Optional[DebugInfo] = None) -> IntegerValue:
-        ir = ReadIntegerIR(indices)
+    def ir_read_integer(self, indices: Tuple[int, ...], is_public: bool, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+        ir = ReadIntegerIR(indices, is_public)
         val, stmt = ir.build_ir(len(self.stmts), [], dbg)
         self.stmts.append(stmt)
         assert isinstance(val, IntegerValue)
         return val
 
-    def ir_read_hash(self, indices: Tuple[int, ...], dbg: Optional[DebugInfo] = None) -> IntegerValue:
-        ir = ReadHashIR(indices)
+    def ir_read_hash(self, indices: Tuple[int, ...], is_public: bool, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+        ir = ReadHashIR(indices, is_public)
         val, stmt = ir.build_ir(len(self.stmts), [], dbg)
         self.stmts.append(stmt)
         assert isinstance(val, IntegerValue)
         return val
 
-    def ir_read_float(self, indices: Tuple[int, ...], dbg: Optional[DebugInfo] = None) -> FloatValue:
-        ir = ReadFloatIR(indices)
+    def ir_read_float(self, indices: Tuple[int, ...], is_public: bool, dbg: Optional[DebugInfo] = None) -> FloatValue:
+        ir = ReadFloatIR(indices, is_public)
         val, stmt = ir.build_ir(len(self.stmts), [], dbg)
         self.stmts.append(stmt)
         assert isinstance(val, FloatValue)

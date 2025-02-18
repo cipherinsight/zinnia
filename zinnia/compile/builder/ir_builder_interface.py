@@ -245,13 +245,13 @@ class IRBuilderInterface:
     def ir_poseidon_hash(self, values: List[NumberValue], dbg: Optional[DebugInfo] = None) -> IntegerValue:
         raise NotImplementedError()
 
-    def ir_read_integer(self, indices: Tuple[int, ...], dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_read_integer(self, indices: Tuple[int, ...], is_public: bool, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         raise NotImplementedError()
 
-    def ir_read_hash(self, indices: Tuple[int, ...], dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_read_hash(self, indices: Tuple[int, ...], is_public: bool, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         raise NotImplementedError()
 
-    def ir_read_float(self, indices: Tuple[int, ...], dbg: Optional[DebugInfo] = None) -> FloatValue:
+    def ir_read_float(self, indices: Tuple[int, ...], is_public: bool, dbg: Optional[DebugInfo] = None) -> FloatValue:
         raise NotImplementedError()
 
     def ir_assert(self, test: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
