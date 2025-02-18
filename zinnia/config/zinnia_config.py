@@ -2,6 +2,7 @@ from typing import Any
 
 from zinnia.config.base import ConfigBase
 from zinnia.config.mock_exec_config import MockExecConfig
+from zinnia.config.optimization_config import OptimizationConfig
 
 
 class ZinniaConfig(ConfigBase):
@@ -15,6 +16,7 @@ class ZinniaConfig(ConfigBase):
         self.set("recursion_limit", self.DEFAULT_RECURSION_LIMIT)
         self.set("loop_limit", self.DEFAULT_LOOP_LIMIT)
         self.set("mock_config", MockExecConfig())
+        self.set("optimization_config", OptimizationConfig())
 
     def verify(self, key: str, value: Any) -> Any:
         if key == "backend":
@@ -27,6 +29,12 @@ class ZinniaConfig(ConfigBase):
             elif isinstance(value, dict):
                 return MockExecConfig().deserialize(value)
             raise ValueError(f"Invalid `mock_config` specified: {value}")
+        elif key == "optimization_config":
+            if isinstance(value, OptimizationConfig):
+                return value
+            elif isinstance(value, dict):
+                return OptimizationConfig().deserialize(value)
+            raise ValueError(f"Invalid `optimization_config` specified: {value}")
         elif key == "recursion_limit":
             if not isinstance(value, int) or value <= 0:
                 raise ValueError(f"Invalid `recursion_limit` specified: {value}")
@@ -40,14 +48,17 @@ class ZinniaConfig(ConfigBase):
     def get_backend(self) -> str:
         return self.get("backend")
 
-    def mock_config(self):
+    def mock_config(self) -> MockExecConfig:
         return self.get("mock_config")
 
-    def recursion_limit(self):
+    def optimization_config(self) -> OptimizationConfig:
+        return self.get("optimization_config")
+
+    def recursion_limit(self) -> int:
         return self.get("recursion_limit")
 
-    def loop_limit(self):
+    def loop_limit(self) -> int:
         return self.get("loop_limit")
 
     def get_required_keys(self) -> list[str]:
-        return ["backend", "mock_config", "recursion_limit", "loop_limit"]
+        return ["backend", "mock_config", "optimization_config", "recursion_limit", "loop_limit"]

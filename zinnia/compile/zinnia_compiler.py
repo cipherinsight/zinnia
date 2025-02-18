@@ -52,19 +52,29 @@ class ZinniaCompiler:
 
     def run_passes_for_zk_program(self, ir_graph: IRGraph) -> List[IRStatement]:
         ir_graph = ExternalCallRemoverIRPass().exec(ir_graph)
-        ir_graph = ShortcutOptimIRPass().exec(ir_graph)
-        ir_graph = ConstantFoldIRPass().exec(ir_graph)
-        ir_graph = DeadCodeEliminationIRPass().exec(ir_graph)
-        ir_graph = AlwaysSatisfiedEliminationIRPass().exec(ir_graph)
-        ir_graph = DuplicateCodeEliminationIRPass().exec(ir_graph)
+        if self.config.optimization_config().shortcut_optimization():
+            ir_graph = ShortcutOptimIRPass().exec(ir_graph)
+        if self.config.optimization_config().constant_fold():
+            ir_graph = ConstantFoldIRPass().exec(ir_graph)
+        if self.config.optimization_config().dead_code_elimination():
+            ir_graph = DeadCodeEliminationIRPass().exec(ir_graph)
+        if self.config.optimization_config().always_satisfied_elimination():
+            ir_graph = AlwaysSatisfiedEliminationIRPass().exec(ir_graph)
+        if self.config.optimization_config().duplicate_code_elimination():
+            ir_graph = DuplicateCodeEliminationIRPass().exec(ir_graph)
         return ir_graph.export_stmts()
 
     def run_passes_for_input_preprocess(self, ir_graph: IRGraph) -> List[IRStatement]:
-        ir_graph = ShortcutOptimIRPass().exec(ir_graph)
-        ir_graph = ConstantFoldIRPass().exec(ir_graph)
-        ir_graph = DeadCodeEliminationIRPass().exec(ir_graph)
-        ir_graph = AlwaysSatisfiedEliminationIRPass().exec(ir_graph)
-        ir_graph = DuplicateCodeEliminationIRPass().exec(ir_graph)
+        if self.config.optimization_config().shortcut_optimization():
+            ir_graph = ShortcutOptimIRPass().exec(ir_graph)
+        if self.config.optimization_config().constant_fold():
+            ir_graph = ConstantFoldIRPass().exec(ir_graph)
+        if self.config.optimization_config().dead_code_elimination():
+            ir_graph = DeadCodeEliminationIRPass().exec(ir_graph)
+        if self.config.optimization_config().always_satisfied_elimination():
+            ir_graph = AlwaysSatisfiedEliminationIRPass().exec(ir_graph)
+        if self.config.optimization_config().duplicate_code_elimination():
+            ir_graph = DuplicateCodeEliminationIRPass().exec(ir_graph)
         return ir_graph.export_stmts()
 
     @staticmethod
