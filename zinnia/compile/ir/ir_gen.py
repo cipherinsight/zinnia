@@ -1,3 +1,4 @@
+import warnings
 from typing import List, Tuple, Dict
 
 from zinnia.config.zinnia_config import ZinniaConfig
@@ -19,6 +20,8 @@ from zinnia.debug.exception import VariableNotFoundError, NotInLoopError, \
     InterScopeError, UnsupportedLangFeatureException, UnreachableStatementError, OperatorOrChipNotFoundException, \
     ControlEndWithoutReturnError, ReturnDatatypeMismatchError, \
     ChipArgumentsError, UnpackingError, StaticInferenceError, LoopLimitExceedError, RecursionLimitExceedError
+from zinnia.debug.warning.recursion_limit import RecursionLimitReachedWarning
+from zinnia.debug.warning.while_limit import LoopLimitReachedWarning
 
 from zinnia.internal.internal_chip_object import InternalChipObject
 from zinnia.internal.internal_external_func_object import InternalExternalFuncObject
@@ -125,7 +128,7 @@ class IRGenerator:
             loop_quota -= 1
             if loop_quota <= 0:
                 if test_expr.val() is None:
-                    # TODO: raise a warning here
+                    warnings.warn(LoopLimitReachedWarning(n.dbg, self._config.loop_limit()))
                     self._ir_builder.op_assert(self._ir_builder.ir_constant_int(0), test_expr, dbg=n.dbg)
                     break
                 else:
@@ -454,7 +457,7 @@ class IRGenerator:
                 self._ir_builder.ir_logical_and(self._ir_ctx.get_condition_value_for_assertion(), self._ir_ctx.get_condition_value()),
                 dbg=chip.chip_ast.dbg
             )
-            # TODO: raise a warning here
+            warnings.warn(RecursionLimitReachedWarning(chip.chip_ast.dbg, self._config.recursion_limit()))
             return self._ir_builder.op_placeholder_value(chip.return_dt, chip.chip_ast.dbg)
         for i, arg in enumerate(args):
             if i >= len(chip_declared_args):

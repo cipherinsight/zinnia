@@ -1,8 +1,11 @@
+import warnings
 from typing import List, Optional
 
 from zinnia.compile.builder.op_args_container import OpArgsContainer
+from zinnia.compile.type_sys import FloatType, IntegerType
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.debug.exception import TypeInferenceError
+from zinnia.debug.warning.implicit_cast import ImplicitCastWarning
 from zinnia.op_def.abstract.abstract_ndarray_item_slice import AbstractNDArrayItemSlice
 from zinnia.op_def.abstract.abstract_op import AbstractOp
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
@@ -49,7 +52,7 @@ class NDArray_SetItemOp(AbstractNDArrayItemSlice):
                 if ImplicitTypeCastOp.verify_cast_ability(processed_value.type(), original_value.type()):
                     processed_value = builder.op_implicit_type_cast(processed_value, original_value.type(), dbg)
                 elif isinstance(processed_value, FloatValue) and isinstance(original_value, IntegerValue):
-                    # TODO: raise a warning here
+                    warnings.warn(ImplicitCastWarning(dbg, processed_value.type(), original_value.type()))
                     processed_value = builder.ir_int_cast(processed_value, dbg)
                 elif processed_value.type() != original_value.type():
                     raise TypeInferenceError(dbg, f"Cannot assign {the_value.type()} to {original_value.type()}")
@@ -68,7 +71,8 @@ class NDArray_SetItemOp(AbstractNDArrayItemSlice):
                 if not _value_ary.broadcast_to_compatible(original_value.shape()):
                     raise TypeInferenceError(dbg, f"Cannot broadcast input array from {_value_ary.shape()} to {original_value.shape}")
                 if _value_ary.dtype() != original_value.dtype():
-                    # TODO: raise a warning if casting from float to int
+                    if _value_ary.dtype() == FloatType and original_value.dtype() == IntegerType:
+                        warnings.warn(ImplicitCastWarning(dbg, _value_ary.dtype(), original_value.dtype()))
                     _value_ary = builder.op_ndarray_astype(_value_ary, builder.op_constant_class(original_value.dtype()))
                 _value_ary = _value_ary.broadcast_to(original_value.shape())
                 new_value = builder.op_select(builder.ir_logical_and(statement_cond, condition), _value_ary, original_value)
