@@ -471,7 +471,7 @@ class _CircomStatementBuilder:
         rhs = self._get_var_name(stmt.arguments[1])
         var_name = self._get_var_name(stmt.stmt_id)
         return [
-            f"signal {var_name} <== ZinniaCodeGenReservedIntMod(252)({lhs}, {rhs});"
+            f"signal {var_name} <== ZinniaCodeGenReservedIntMod(252)([{lhs}, {rhs}]);"
         ]
 
 
