@@ -39,24 +39,24 @@ class AbstractArithemetic(AbstractOp):
             return IntegerDTDescriptor()
         raise NotImplementedError()
 
-    def build_number_and_number(self, builder: IRBuilderInterface, lhs: NumberValue, rhs: NumberValue) -> Value:
+    def build_number_and_number(self, builder: IRBuilderInterface, lhs: NumberValue, rhs: NumberValue, dbg: Optional[DebugInfo] = None) -> Value:
         return self.get_build_op_lambda(builder)(lhs, rhs)
 
-    def build_number_and_ndarray(self, builder: IRBuilderInterface, lhs: NumberValue, rhs: NDArrayValue) -> Value:
+    def build_number_and_ndarray(self, builder: IRBuilderInterface, lhs: NumberValue, rhs: NDArrayValue, dbg: Optional[DebugInfo] = None) -> Value:
         lhs_ndarray = NDArrayValue.from_number(lhs)
         lhs_ndarray, rhs_ndarray = NDArrayValue.binary_broadcast(lhs_ndarray, rhs)
         result = NDArrayValue.binary(lhs_ndarray, rhs_ndarray, self.get_expected_result_dt(lhs.type(), rhs.dtype()), self.get_build_op_lambda(builder))
         return result
 
-    def build_ndarray_and_number(self, builder: IRBuilderInterface, lhs: NDArrayValue, rhs: NumberValue) -> Value:
+    def build_ndarray_and_number(self, builder: IRBuilderInterface, lhs: NDArrayValue, rhs: NumberValue, dbg: Optional[DebugInfo] = None) -> Value:
         rhs_ndarray = NDArrayValue.from_number(rhs)
         lhs_ndarray, rhs_ndarray = NDArrayValue.binary_broadcast(lhs, rhs_ndarray)
         result = NDArrayValue.binary(lhs_ndarray, rhs_ndarray, self.get_expected_result_dt(lhs.dtype(), rhs.type()), self.get_build_op_lambda(builder))
         return result
 
-    def build_ndarray_and_ndarray(self, builder: IRBuilderInterface, lhs: NDArrayValue, rhs: NDArrayValue) -> NDArrayValue:
+    def build_ndarray_and_ndarray(self, builder: IRBuilderInterface, lhs: NDArrayValue, rhs: NDArrayValue, dbg: Optional[DebugInfo] = None) -> NDArrayValue:
         if not NDArrayValue.binary_broadcast_compatible(lhs.shape(), rhs.shape()):
-            raise TypeInferenceError(None, f"Cannot broadcast two NDArray with shapes {lhs.shape()} and {rhs.shape()}")
+            raise TypeInferenceError(dbg, f"Cannot broadcast two NDArray with shapes {lhs.shape()} and {rhs.shape()}")
         lhs, rhs = NDArrayValue.binary_broadcast(lhs, rhs)
         result = NDArrayValue.binary(lhs, rhs, self.get_expected_result_dt(lhs.dtype(), rhs.dtype()), self.get_build_op_lambda(builder))
         return result
@@ -64,11 +64,11 @@ class AbstractArithemetic(AbstractOp):
     def build(self, builder: IRBuilderInterface, kwargs: OpArgsContainer, dbg: Optional[DebugInfo] = None) -> Value:
         lhs, rhs = kwargs["lhs"], kwargs["rhs"]
         if isinstance(lhs, NumberValue) and isinstance(rhs, NumberValue):
-            return self.build_number_and_number(builder, lhs, rhs)
+            return self.build_number_and_number(builder, lhs, rhs, dbg)
         elif isinstance(lhs, NumberValue) and isinstance(rhs, NDArrayValue):
-            return self.build_number_and_ndarray(builder, lhs, rhs)
+            return self.build_number_and_ndarray(builder, lhs, rhs, dbg)
         elif isinstance(lhs, NDArrayValue) and isinstance(rhs, NumberValue):
-            return self.build_ndarray_and_number(builder, lhs, rhs)
+            return self.build_ndarray_and_number(builder, lhs, rhs, dbg)
         elif isinstance(lhs, NDArrayValue) and isinstance(rhs, NDArrayValue):
-            return self.build_ndarray_and_ndarray(builder, lhs, rhs)
+            return self.build_ndarray_and_ndarray(builder, lhs, rhs, dbg)
         raise TypeInferenceError(dbg, f"Operator `{self.get_name()}` not defined on `{lhs.type()}` and `{rhs.type()}`")

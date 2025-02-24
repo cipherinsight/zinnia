@@ -62,4 +62,4 @@ class NP_AllCloseOp(AbstractOp):
         if desired_dtype == IntegerType:
             right = builder.op_ndarray_astype(right, builder.op_constant_class(IntegerType), dbg)
         result = builder.op_less_than_or_equal(left, right, dbg)
-        return builder.op_ndarray_all(result, dbg)
+        return builder.op_ndarray_all(result, builder.op_constant_none(), dbg)

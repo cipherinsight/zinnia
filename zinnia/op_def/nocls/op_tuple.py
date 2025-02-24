@@ -35,7 +35,10 @@ class TupleOp(AbstractOp):
         x = kwargs["x"]
         if isinstance(x, NDArrayValue):
             sub_element_shape = x.shape()[1:]
-            sub_element_type = NDArrayDTDescriptor(sub_element_shape, x.dtype())
+            if sub_element_shape == ():
+                sub_element_type = x.dtype()
+            else:
+                sub_element_type = NDArrayDTDescriptor(sub_element_shape, x.dtype())
             return TupleValue(
                 tuple(sub_element_type for _ in range(x.shape()[0])),
                 tuple(builder.op_get_item(x, builder.op_square_brackets([builder.ir_constant_int(i)])) for i in range(x.shape()[0]))
