@@ -1,6 +1,6 @@
 from typing import List, Dict, Optional, Any, Tuple
 
-from zinnia.compile.triplet import Value, IntegerValue
+from zinnia.compile.triplet import Value, IntegerValue, FloatValue
 from zinnia.compile.ir.ir_stmt import IRStatement
 from zinnia.config.mock_exec_config import MockExecConfig
 from zinnia.ir_def.abstract_ir import AbstractIR
@@ -22,7 +22,7 @@ class PoseidonHashIR(AbstractIR):
         return 0
 
     def build_ir(self, ir_id: int, args: List[Value], dbg: Optional[DebugInfo] = None) -> Tuple[Value, IRStatement]:
-        assert all([isinstance(arg, IntegerValue) for arg in args])
+        assert all([isinstance(arg, IntegerValue) or isinstance(arg, FloatValue) for arg in args])
         return IntegerValue(self.infer(args, dbg), ir_id), IRStatement(ir_id, self, [arg.ptr() for arg in args], dbg)
 
     def export(self) -> Dict:

@@ -149,7 +149,7 @@ class _Halo2StatementBuilder:
     def _build_ReadHashIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, ReadHashIR)
         return [
-            f"let {self._get_var_name(stmt.stmt_id)} = ctx.load_witness(F::from_u128(input.hash_{'_'.join(map(str, stmt.ir_instance.indices))}));"
+            f"let {self._get_var_name(stmt.stmt_id)} = ctx.load_witness(F::from_str_vartime(&input.hash_{'_'.join(map(str, stmt.ir_instance.indices))}).expect(\"deserialize field element should not fail\"));"
         ]
 
     def _build_ReadFloatIR(self, stmt: IRStatement) -> List[str]:
@@ -162,7 +162,7 @@ class _Halo2StatementBuilder:
         assert isinstance(stmt.ir_instance, PoseidonHashIR)
         args = [self._get_var_name(arg) for arg in stmt.arguments]
         return [
-            f"let {self._get_var_name(stmt.stmt_id)} = poseidon.hash_fix_len_array(ctx, &gate, &[{', '.join(args)}]);"
+            f"let {self._get_var_name(stmt.stmt_id)} = poseidon_hasher.hash_fix_len_array(ctx, &gate, &[{', '.join(args)}]);"
         ]
 
     def _build_ExposePublicIIR(self, stmt: IRStatement) -> List[str]:
@@ -294,7 +294,9 @@ class _Halo2StatementBuilder:
         assert isinstance(stmt.ir_instance, EqualHashIR)
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
-        return [f"let {self._get_var_name(stmt.stmt_id)} = gate.is_equal(ctx, {lhs}, {rhs});"]
+        return [
+            f"let {self._get_var_name(stmt.stmt_id)} = gate.is_equal(ctx, {lhs}, {rhs});"
+        ]
 
     def _build_NotEqualIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, NotEqualIIR)
@@ -588,7 +590,7 @@ const R_P: usize = 57;
         inputs = []
         for i, (indices, kind) in enumerate(self.input_entries):
             if kind == "Hash":
-                inputs.append(f"pub hash_{'_'.join(map(str, indices))}: u128")
+                inputs.append(f"pub hash_{'_'.join(map(str, indices))}: String")
             elif kind == "Integer":
                 inputs.append(f"pub x_{'_'.join(map(str, indices))}: i128")
             elif kind == "Float":

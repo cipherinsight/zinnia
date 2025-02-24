@@ -29,7 +29,7 @@ class PoseidonHashOp(AbstractOp):
         if isinstance(x, IntegerValue):
             return builder.ir_poseidon_hash([x])
         elif isinstance(x, FloatValue):
-            raise TypeInferenceError(dbg, f"Cannot perform Poseidon hash on Float type.")
+            return builder.ir_poseidon_hash([x])
         elif isinstance(x, NDArrayValue):
             values = x.flattened_values()
             return builder.ir_poseidon_hash(values)

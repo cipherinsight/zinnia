@@ -14,10 +14,13 @@ class EqualHashIR(AbstractIR):
     def get_signature(self) -> str:
         return "eq_hash"
 
+    def is_fixed_ir(self) -> bool:
+        return True
+
     def infer(self, args: List[Value], dbg: Optional[DebugInfo] = None) -> Any:
         lhs, rhs = args[0], args[1]
         assert isinstance(lhs, IntegerValue) and isinstance(rhs, IntegerValue)
-        return 1
+        return None
 
     def mock_exec(self, args: List[Any], config: MockExecConfig) -> Any:
         # TODO: implement hash equal test

@@ -186,17 +186,17 @@ class NDArray(metaclass=NDArrayMeta):
 
 
 class PoseidonHashed(metaclass=PoseidonHashedMeta):
-    def __init__(self, actual_value: Any, hash_value: int):
+    def __init__(self, actual_value: Any, hash_value: str):
         self.actual_value = actual_value
         self.hash_value = hash_value
 
-    def get_hash(self) -> int:
+    def get_hash(self) -> str:
         return self.hash_value
 
     def get_value(self) -> Any:
         return self.actual_value
 
-    def set_hash(self, hash_value: int):
+    def set_hash(self, hash_value: str):
         self.hash_value = hash_value
 
     def set_value(self, actual_value: Any):
