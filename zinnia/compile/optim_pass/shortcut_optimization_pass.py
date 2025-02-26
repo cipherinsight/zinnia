@@ -14,6 +14,8 @@ from zinnia.ir_def.defs.ir_logical_and import LogicalAndIR
 from zinnia.ir_def.defs.ir_logical_or import LogicalOrIR
 from zinnia.ir_def.defs.ir_mul_f import MulFIR
 from zinnia.ir_def.defs.ir_mul_i import MulIIR
+from zinnia.ir_def.defs.ir_select_f import SelectFIR
+from zinnia.ir_def.defs.ir_select_i import SelectIIR
 from zinnia.ir_def.defs.ir_sub_f import SubFIR
 from zinnia.ir_def.defs.ir_sub_i import SubIIR
 
@@ -50,6 +52,34 @@ class ShortcutOptimIRPass(AbstractIRPass):
             return lhs
         if lhs.val() is not None and rhs.val() is not None:
             return ir_builder.ir_constant_int(1 if (lhs.val() != 0 or rhs.val() != 0) else 0)
+        return ir_builder.create_ir(ir_instance, ir_args, None)
+
+    def optimize_for_SelectIIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
+        cond, tv, fv = ir_args[0], ir_args[1], ir_args[2]
+        assert isinstance(cond, IntegerValue)
+        assert isinstance(tv, IntegerValue) and isinstance(fv, IntegerValue)
+        if cond.val() is not None and cond.val() != 0:
+            if tv.val() is not None:
+                return ir_builder.ir_constant_int(tv.val())
+            return tv
+        if cond.val() is not None and cond.val() == 0:
+            if fv.val() is not None:
+                return ir_builder.ir_constant_int(fv.val())
+            return fv
+        return ir_builder.create_ir(ir_instance, ir_args, None)
+
+    def optimize_for_SelectFIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
+        cond, tv, fv = ir_args[0], ir_args[1], ir_args[2]
+        assert isinstance(cond, IntegerValue)
+        assert isinstance(tv, FloatValue) and isinstance(fv, FloatValue)
+        if cond.val() is not None and cond.val() != 0:
+            if tv.val() is not None:
+                return ir_builder.ir_constant_float(tv.val())
+            return tv
+        if cond.val() is not None and cond.val() == 0:
+            if fv.val() is not None:
+                return ir_builder.ir_constant_float(fv.val())
+            return fv
         return ir_builder.create_ir(ir_instance, ir_args, None)
 
     def optimize_for_AddIIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
@@ -133,6 +163,10 @@ class ShortcutOptimIRPass(AbstractIRPass):
             return self.optimize_for_LogicalAndIR(ir_builder, ir_instance, ir_args)
         if isinstance(ir_instance, LogicalOrIR):
             return self.optimize_for_LogicalOrIR(ir_builder, ir_instance, ir_args)
+        if isinstance(ir_instance, SelectIIR):
+            return self.optimize_for_SelectIIR(ir_builder, ir_instance, ir_args)
+        if isinstance(ir_instance, SelectFIR):
+            return self.optimize_for_SelectFIR(ir_builder, ir_instance, ir_args)
         if isinstance(ir_instance, AddIIR):
             return self.optimize_for_AddIIR(ir_builder, ir_instance, ir_args)
         if isinstance(ir_instance, AddFIR):

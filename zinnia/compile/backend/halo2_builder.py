@@ -142,7 +142,7 @@ class _Halo2StatementBuilder:
     def _build_ReadIntegerIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, ReadIntegerIR)
         return [
-            f"let tmp_1 = ctx.load_witness(F::from((input.x_{'_'.join(map(str, stmt.ir_instance.indices))}).abs() as u64));",
+            f"let tmp_1 = ctx.load_witness(F::from_u128((input.x_{'_'.join(map(str, stmt.ir_instance.indices))}).abs() as u128));",
             f"let {self._get_var_name(stmt.stmt_id)} = if input.x_{'_'.join(map(str, stmt.ir_instance.indices))} >= 0 {{tmp_1}} else {{gate.neg(ctx, tmp_1)}};"
         ]
 
@@ -178,9 +178,15 @@ class _Halo2StatementBuilder:
     def _build_ConstantIntIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, ConstantIntIR)
         constant_val = stmt.ir_instance.value
-        return [
-            f"let {self._get_var_name(stmt.stmt_id)} = " + (f"Constant(F::from({constant_val}));" if constant_val >= 0 else f"{{gate.neg(ctx, Constant(F::from({-constant_val})))}};")
-        ]
+        if abs(constant_val) >= 18446744073709551615:
+            return [
+                f"let tmp_1 = ctx.load_constant(F::from_u128(\"{constant_val}\".parse::<u128>().unwrap()));",
+                f"let {self._get_var_name(stmt.stmt_id)} = " + (f"tmp_1;" if constant_val >= 0 else f"{{gate.neg(ctx, tmp_1)}};")
+            ]
+        else:
+            return [
+                f"let {self._get_var_name(stmt.stmt_id)} = " + (f"Constant(F::from({constant_val}));" if constant_val >= 0 else f"{{gate.neg(ctx, Constant(F::from({-constant_val})))}};")
+            ]
 
     def _build_ConstantFloatIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, ConstantFloatIR)
@@ -268,11 +274,7 @@ class _Halo2StatementBuilder:
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [
-            f"let tmp_1 = range_chip.is_less_than(ctx, {lhs}, {rhs}, 128);",
-            f"let tmp_2 = gate.not(ctx, tmp_1);",
-            f"let tmp_3 = gate.is_equal(ctx, {lhs}, {rhs});",
-            f"let tmp_4 = gate.not(ctx, tmp_3);",
-            f"let {self._get_var_name(stmt.stmt_id)} = gate.and(ctx, tmp_2, tmp_4);"
+            f"let {self._get_var_name(stmt.stmt_id)} = range_chip.is_less_than(ctx, {rhs}, {lhs}, 128);"  # Note the order of lhs and rhs
         ]
 
     def _build_GreaterThanOrEqualFIR(self, stmt: IRStatement) -> List[str]:
@@ -328,11 +330,7 @@ class _Halo2StatementBuilder:
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [
-            f"let tmp_1 = range_chip.is_less_than(ctx, {lhs}, {rhs}, 128);",
-            f"let tmp_2 = gate.not(ctx, tmp_1);",
-            f"let tmp_3 = gate.is_equal(ctx, {lhs}, {rhs});",
-            f"let tmp_4 = gate.not(ctx, tmp_3);",
-            f"let {self._get_var_name(stmt.stmt_id)} = gate.and(ctx, tmp_2, tmp_4);"
+            f"let {self._get_var_name(stmt.stmt_id)} = range_chip.is_less_than(ctx, {rhs}, {lhs}, 128);"  # Note the order of lhs and rhs
         ]
 
     def _build_GreaterThanOrEqualIIR(self, stmt: IRStatement) -> List[str]:
