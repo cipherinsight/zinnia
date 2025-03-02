@@ -7,8 +7,8 @@ import time
 
 from zinnia import ZKCircuit
 
-HALO2_FOLDER = "/Users/zhantong/Projects/halo2-graph"
-TIME_MEASURE_REPETITIONS = 100
+HALO2_FOLDER = "/home/zhantong/halo2-graph"
+TIME_MEASURE_REPETITIONS = 10
 
 
 def run_prove(name: str, source: str, data: str):
