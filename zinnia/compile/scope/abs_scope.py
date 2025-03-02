@@ -2,7 +2,7 @@ from typing import Optional, List, Tuple
 
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
 from zinnia.compile.triplet.store import ValueStore
-from zinnia.compile.triplet.value import Value, IntegerValue
+from zinnia.compile.triplet.value import Value, BooleanValue
 from zinnia.compile.type_sys import DTDescriptor
 
 
@@ -47,22 +47,22 @@ class AbstractScope:
     def is_in_loop(self) -> bool:
         raise NotImplementedError()
 
-    def get_branching_condition(self) -> IntegerValue | None:
+    def get_branching_condition(self) -> BooleanValue | None:
         raise NotImplementedError()
 
-    def get_looping_condition(self) -> IntegerValue | None:
+    def get_looping_condition(self) -> BooleanValue | None:
         raise NotImplementedError()
 
-    def get_breaking_condition(self) -> IntegerValue | None:
+    def get_breaking_condition(self) -> BooleanValue | None:
         raise NotImplementedError()
 
-    def get_returning_condition(self) -> IntegerValue | None:
+    def get_returning_condition(self) -> BooleanValue | None:
         raise NotImplementedError()
 
-    def get_assertion_condition(self) -> IntegerValue | None:
+    def get_assertion_condition(self) -> BooleanValue | None:
         raise NotImplementedError()
 
-    def register_return(self, value: Value, condition: IntegerValue):
+    def register_return(self, value: Value, condition: BooleanValue):
         raise NotImplementedError()
 
     def is_return_guaranteed(self) -> bool:
@@ -71,16 +71,16 @@ class AbstractScope:
     def is_terminated_guaranteed(self) -> bool:
         raise NotImplementedError()
 
-    def get_returns_with_conditions(self) -> List[Tuple[Value, IntegerValue]]:
+    def get_returns_with_conditions(self) -> List[Tuple[Value, BooleanValue]]:
         raise NotImplementedError()
 
     def get_return_dtype(self) -> DTDescriptor:
         raise NotImplementedError()
 
-    def loop_break(self, condition: IntegerValue):
+    def loop_break(self, condition: BooleanValue):
         raise NotImplementedError()
 
-    def loop_continue(self, condition: IntegerValue):
+    def loop_continue(self, condition: BooleanValue):
         raise NotImplementedError()
 
     def loop_reiterate(self):

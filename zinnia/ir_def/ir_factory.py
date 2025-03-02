@@ -8,6 +8,7 @@ from zinnia.ir_def.defs.ir_add_i import AddIIR
 from zinnia.ir_def.defs.ir_add_str import AddStrIR
 from zinnia.ir_def.defs.ir_assert import AssertIR
 from zinnia.ir_def.defs.ir_bool_cast import BoolCastIR
+from zinnia.ir_def.defs.ir_constant_bool import ConstantBoolIR
 from zinnia.ir_def.defs.ir_constant_float import ConstantFloatIR
 from zinnia.ir_def.defs.ir_constant_int import ConstantIntIR
 from zinnia.ir_def.defs.ir_constant_str import ConstantStrIR
@@ -53,6 +54,7 @@ from zinnia.ir_def.defs.ir_print import PrintIR
 from zinnia.ir_def.defs.ir_read_float import ReadFloatIR
 from zinnia.ir_def.defs.ir_read_hash import ReadHashIR
 from zinnia.ir_def.defs.ir_read_integer import ReadIntegerIR
+from zinnia.ir_def.defs.ir_select_b import SelectBIR
 from zinnia.ir_def.defs.ir_select_f import SelectFIR
 from zinnia.ir_def.defs.ir_select_i import SelectIIR
 from zinnia.ir_def.defs.ir_sign_f import SignFIR
@@ -78,6 +80,7 @@ class IRFactory:
         BOOL_CAST = BoolCastIR
         CONSTANT_FLOAT = ConstantFloatIR
         CONSTANT_INT = ConstantIntIR
+        CONSTANT_BOOL = ConstantBoolIR
         COS_F = CosFIR
         COSH_F = CosHFIR
         DIV_F = DivFIR
@@ -121,6 +124,7 @@ class IRFactory:
         READ_INT = ReadIntegerIR
         SELECT_F = SelectFIR
         SELECT_I = SelectIIR
+        SELECT_B = SelectBIR
         SIGN_F = SignFIR
         SIGN_I = SignIIR
         SIN_F = SinFIR

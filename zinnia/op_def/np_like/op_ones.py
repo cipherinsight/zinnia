@@ -1,9 +1,9 @@
-from typing import List, Dict, Optional
+from typing import List, Optional
 
 from zinnia.compile.builder.op_args_container import OpArgsContainer
 from zinnia.debug.exception import TypeInferenceError, StaticInferenceError
 from zinnia.op_def.abstract.abstract_op import AbstractOp
-from zinnia.compile.type_sys import IntegerType, FloatType
+from zinnia.compile.type_sys import IntegerType, FloatType, BooleanType
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
 from zinnia.compile.triplet import Value, TupleValue, IntegerValue, ClassValue, NDArrayValue, NoneValue
@@ -50,5 +50,7 @@ class NP_OnesOp(AbstractOp):
             return NDArrayValue.fill(parsed_shape, FloatType, lambda: builder.ir_constant_float(1.0))
         elif parsed_dtype == IntegerType:
             return NDArrayValue.fill(parsed_shape, IntegerType, lambda: builder.ir_constant_int(1))
+        elif parsed_dtype == BooleanType:
+            return NDArrayValue.fill(parsed_shape, BooleanType, lambda: builder.ir_constant_int(1))
         else:
             raise TypeInferenceError(dbg, f"Unsupported NDArray dtype {parsed_dtype}")

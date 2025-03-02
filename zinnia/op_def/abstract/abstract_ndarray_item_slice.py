@@ -21,7 +21,7 @@ class AbstractNDArrayItemSlice(AbstractItemSliceOp):
             if isinstance(sp, IntegerValue):
                 if sp.val() is not None:
                     self.check_single_slicing_number(sp, dim, dbg)
-                    return [[sp.val()]], [builder.ir_constant_int(1)]
+                    return [[sp.val()]], [builder.ir_constant_bool(True)]
                 self.insert_slicing_number_assertion(sp, dim, builder)
                 return [[i] for i in range(dim)], [builder.ir_equal_i(builder.ir_constant_int(i), sp) for i in range(dim)]
             elif isinstance(sp, TupleValue):
@@ -29,7 +29,7 @@ class AbstractNDArrayItemSlice(AbstractItemSliceOp):
                 start = start.val() if isinstance(start, IntegerValue) else None
                 stop = stop.val() if isinstance(stop, IntegerValue) else None
                 step = step.val() if isinstance(step, IntegerValue) else None
-                return [[(start, stop, step)]], [builder.ir_constant_int(1)]
+                return [[(start, stop, step)]], [builder.ir_constant_bool(True)]
             raise NotImplementedError()
         _candidates, _conditions = self.find_all_candidates(builder, _sps[1:], _shape[1:], dbg)
         if isinstance(sp, IntegerValue):

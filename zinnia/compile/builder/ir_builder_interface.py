@@ -1,5 +1,6 @@
 from typing import Optional, List, Dict, Tuple
 
+from zinnia.compile.triplet.value.boolean import BooleanValue
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.triplet import Value, NumberValue, IntegerValue, FloatValue, ListValue, TupleValue, NDArrayValue, \
     NoneValue, ClassValue, StringValue
@@ -10,7 +11,7 @@ class IRBuilderInterface:
     def __init__(self):
         pass
 
-    def create_op(self, operator, statement_condition: IntegerValue | None, args: List[Value], kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
+    def create_op(self, operator, statement_condition: BooleanValue | None, args: List[Value], kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
     def create_ir(self, operator, args: List[Value], dbg: Optional[DebugInfo] = None) -> Value:
@@ -85,7 +86,7 @@ class IRBuilderInterface:
     def op_float_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> FloatValue:
         raise NotImplementedError()
 
-    def op_bool_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def op_bool_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         raise NotImplementedError()
 
     def op_list_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> ListValue:
@@ -94,13 +95,13 @@ class IRBuilderInterface:
     def op_tuple_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> TupleValue:
         raise NotImplementedError()
 
-    def op_set_item(self, statement_condition: IntegerValue, the_self: Value, slicing_params: ListValue, the_value: Value, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_set_item(self, statement_condition: BooleanValue, the_self: Value, slicing_params: ListValue, the_value: Value, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
     def op_get_item(self, the_self: Value, slicing_params: ListValue, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
-    def op_ndarray_set_item(self, statement_condition: IntegerValue, the_self: NDArrayValue, slicing_params: ListValue, the_value: Value, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_ndarray_set_item(self, statement_condition: BooleanValue, the_self: NDArrayValue, slicing_params: ListValue, the_value: Value, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
     def op_ndarray_get_item(self, the_self: NDArrayValue, slicing_params: ListValue, dbg: Optional[DebugInfo] = None) -> Value:
@@ -202,13 +203,13 @@ class IRBuilderInterface:
     def op_logical_not(self, a: Value, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
-    def op_list_index(self, lst: ListValue, value: Value, start: IntegerValue | NoneValue, stop: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def op_list_index(self, statement_condition: BooleanValue, lst: ListValue, value: Value, start: IntegerValue | NoneValue, stop: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         raise NotImplementedError()
 
-    def op_list_pop(self, statement_condition: IntegerValue, lst: ListValue, index: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
+    def op_list_pop(self, statement_condition: BooleanValue, lst: ListValue, index: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
         raise NotImplementedError()
 
-    def op_list_remove(self, statement_condition: IntegerValue, lst: ListValue, value: Value, dbg: Optional[DebugInfo] = None) -> NoneValue:
+    def op_list_remove(self, statement_condition: BooleanValue, lst: ListValue, value: Value, dbg: Optional[DebugInfo] = None) -> NoneValue:
         raise NotImplementedError()
 
     def op_np_concatenate(self, arrays: ListValue | TupleValue, axis: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> NDArrayValue:
@@ -260,6 +261,9 @@ class IRBuilderInterface:
     def ir_constant_int(self, value: int, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         raise NotImplementedError()
 
+    def ir_constant_bool(self, value: bool, dbg: Optional[DebugInfo] = None) -> BooleanValue:
+        raise NotImplementedError()
+
     def ir_constant_float(self, value: float, dbg: Optional[DebugInfo] = None) -> FloatValue:
         raise NotImplementedError()
 
@@ -305,10 +309,13 @@ class IRBuilderInterface:
     def ir_mod_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> FloatValue:
         raise NotImplementedError()
 
-    def ir_select_i(self, condition: IntegerValue, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_select_i(self, condition: BooleanValue, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         raise NotImplementedError()
 
-    def ir_select_f(self, condition: IntegerValue, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> FloatValue:
+    def ir_select_b(self, condition: BooleanValue, a: BooleanValue, b: BooleanValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
+        raise NotImplementedError()
+
+    def ir_select_f(self, condition: BooleanValue, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> FloatValue:
         raise NotImplementedError()
 
     def ir_float_cast(self, a: IntegerValue, dbg: Optional[DebugInfo] = None) -> FloatValue:
@@ -326,52 +333,52 @@ class IRBuilderInterface:
     def ir_abs_f(self, x: FloatValue, dbg: Optional[DebugInfo] = None) -> FloatValue:
         raise NotImplementedError()
 
-    def ir_logical_and(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_logical_and(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         raise NotImplementedError()
 
-    def ir_logical_or(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_logical_or(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         raise NotImplementedError()
 
-    def ir_logical_not(self, a: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_logical_not(self, a: IntegerValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         raise NotImplementedError()
 
-    def ir_not_equal_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_not_equal_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         raise NotImplementedError()
 
-    def ir_not_equal_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_not_equal_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         raise NotImplementedError()
 
-    def ir_equal_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_equal_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         raise NotImplementedError()
 
-    def ir_equal_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_equal_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         raise NotImplementedError()
 
-    def ir_equal_hash(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_equal_hash(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         raise NotImplementedError()
 
-    def ir_less_than_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_less_than_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         raise NotImplementedError()
 
-    def ir_less_than_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_less_than_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         raise NotImplementedError()
 
-    def ir_less_than_or_equal_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_less_than_or_equal_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         raise NotImplementedError()
 
-    def ir_less_than_or_equal_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_less_than_or_equal_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         raise NotImplementedError()
 
-    def ir_greater_than_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_greater_than_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         raise NotImplementedError()
 
-    def ir_greater_than_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_greater_than_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         raise NotImplementedError()
 
-    def ir_greater_than_or_equal_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_greater_than_or_equal_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         raise NotImplementedError()
 
-    def ir_greater_than_or_equal_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_greater_than_or_equal_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         raise NotImplementedError()
 
     def ir_sin_f(self, x: FloatValue, dbg: Optional[DebugInfo] = None) -> FloatValue:

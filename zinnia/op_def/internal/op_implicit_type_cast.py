@@ -7,7 +7,7 @@ from zinnia.compile.type_sys import IntegerType, FloatType, DTDescriptor, TupleD
 from zinnia.op_def.abstract.abstract_op import AbstractOp
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
-from zinnia.compile.triplet import Value, IntegerValue, NDArrayValue, ListValue, TupleValue
+from zinnia.compile.triplet import Value, IntegerValue, NDArrayValue, ListValue, TupleValue, BooleanValue
 
 
 class ImplicitTypeCastOp(AbstractOp):
@@ -79,6 +79,10 @@ class ImplicitTypeCastOp(AbstractOp):
             return src
         if isinstance(src, IntegerValue) and dest == FloatType:
             return builder.op_float_cast(src)
+        if isinstance(src, IntegerValue) and dest == BooleanType:
+            return builder.op_bool_cast(src)
+        if isinstance(src, BooleanValue) and dest == IntegerType:
+            return builder.op_int_cast(src)
         if isinstance(src, TupleValue) and isinstance(dest, TupleDTDescriptor):
             assert len(src.types()) == len(dest.elements_type)
             new_values = []

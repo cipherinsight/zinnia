@@ -53,9 +53,9 @@ fn verify_solution<F: ScalarField>(
     let judge_id = ctx.load_witness(F::from_u128(input.judge_id));
     // apply constraints
     for i in 0..10 {
-        let judge_id_minus_one = GateInstructions::sub(&gate, ctx, judge_id, Constant(F::ONE));
-        let i_equals_judge_id_minus_one = gate.is_equal(ctx, Constant(F::from_u128(i)), judge_id_minus_one);
         for j in 0..10 {
+            let judge_id_minus_one = GateInstructions::sub(&gate, ctx, judge_id, Constant(F::ONE));
+            let i_equals_judge_id_minus_one = gate.is_equal(ctx, Constant(F::from_u128(i)), judge_id_minus_one);
             let j_equals_judge_id_minus_one = gate.is_equal(ctx, Constant(F::from_u128(j)), judge_id_minus_one);
             let i_not_equal_j = gate.is_equal(ctx, Constant(F::from_u128(i)), Constant(F::from_u128(j)));
             let i_not_equal_j = gate.not(ctx, i_not_equal_j);

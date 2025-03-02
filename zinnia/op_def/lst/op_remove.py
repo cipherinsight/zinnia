@@ -35,6 +35,6 @@ class List_RemoveOp(AbstractOp):
         assert isinstance(the_self, ListValue)
         if the_self.type_locked():
             raise TypeInferenceError(dbg, f"Cannot perform remove, as it modifies the datatype on the list which is defined at parent scope.")
-        the_index = builder.op_list_index(the_self, the_value, builder.op_constant_none(), builder.op_constant_none(), dbg)
+        the_index = builder.op_list_index(kwargs.get_condition(), the_self, the_value, builder.op_constant_none(), builder.op_constant_none(), dbg)
         builder.op_list_pop(kwargs.get_condition(), the_self, the_index, dbg)
         return NoneValue()

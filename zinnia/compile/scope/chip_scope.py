@@ -1,7 +1,7 @@
 from typing import Optional, List, Tuple, Dict
 
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
-from zinnia.compile.triplet import Value, IntegerValue
+from zinnia.compile.triplet import Value, BooleanValue
 from zinnia.compile.scope.abs_scope import AbstractScope
 from zinnia.compile.triplet.store import ValueStore
 from zinnia.compile.type_sys import DTDescriptor
@@ -11,16 +11,16 @@ class ChipScope(AbstractScope):
     var_table: Dict[str, ValueStore]
     return_guaranteed: bool
     return_dtype: DTDescriptor
-    returns_with_conditions: List[Tuple[Value, IntegerValue]]
-    calculated_returning_condition: IntegerValue | None
-    assertion_condition: IntegerValue | None
+    returns_with_conditions: List[Tuple[Value, BooleanValue]]
+    calculated_returning_condition: BooleanValue | None
+    assertion_condition: BooleanValue | None
 
     def __init__(
             self,
             ir_builder: IRBuilderInterface,
             super_scope: Optional['AbstractScope'],
             return_dtype: DTDescriptor,
-            assertion_condition: IntegerValue | None
+            assertion_condition: BooleanValue | None
     ):
         super().__init__(ir_builder, super_scope)
         self.var_table = {}
@@ -61,22 +61,22 @@ class ChipScope(AbstractScope):
     def is_in_loop(self) -> bool:
         return False
 
-    def get_branching_condition(self) -> IntegerValue | None:
+    def get_branching_condition(self) -> BooleanValue | None:
         return None
 
-    def get_looping_condition(self) -> IntegerValue | None:
+    def get_looping_condition(self) -> BooleanValue | None:
         return None
 
-    def get_breaking_condition(self) -> IntegerValue | None:
+    def get_breaking_condition(self) -> BooleanValue | None:
         return None
 
-    def get_returning_condition(self) -> IntegerValue | None:
+    def get_returning_condition(self) -> BooleanValue | None:
         return self.calculated_returning_condition
 
-    def get_assertion_condition(self) -> IntegerValue | None:
+    def get_assertion_condition(self) -> BooleanValue | None:
         return self.assertion_condition
 
-    def get_returns_with_conditions(self) -> List[Tuple[Value, IntegerValue]]:
+    def get_returns_with_conditions(self) -> List[Tuple[Value, BooleanValue]]:
         return self.returns_with_conditions
 
     def is_return_guaranteed(self) -> bool:
@@ -91,7 +91,7 @@ class ChipScope(AbstractScope):
     def is_terminated_guaranteed(self) -> bool:
         return False
 
-    def register_return(self, value: Value, condition: IntegerValue):
+    def register_return(self, value: Value, condition: BooleanValue):
         self.returns_with_conditions.append((value, condition))
         if self.calculated_returning_condition is None:
             self.calculated_returning_condition = self.ir_builder.ir_logical_not(condition)

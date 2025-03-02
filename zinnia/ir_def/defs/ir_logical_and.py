@@ -1,8 +1,9 @@
 from typing import List, Dict, Optional, Any, Tuple
 
-from zinnia.compile.triplet import Value, IntegerValue
+from zinnia.compile.triplet import Value
 
 from zinnia.compile.ir.ir_stmt import IRStatement
+from zinnia.compile.triplet.value.boolean import BooleanValue
 from zinnia.config.mock_exec_config import MockExecConfig
 from zinnia.ir_def.abstract_ir import AbstractIR
 from zinnia.debug.dbg_info import DebugInfo
@@ -17,24 +18,24 @@ class LogicalAndIR(AbstractIR):
 
     def infer(self, args: List[Value], dbg: Optional[DebugInfo] = None) -> Any:
         lhs, rhs = args[0], args[1]
-        assert isinstance(lhs, IntegerValue) and isinstance(rhs, IntegerValue)
+        assert isinstance(lhs, BooleanValue) and isinstance(rhs, BooleanValue)
         if lhs.val() is not None and rhs.val() is not None:
-            return 1 if lhs.val() != 0 and rhs.val() != 0 else 0
+            return True if (lhs.val() != False) and (rhs.val() != False) else False
         elif lhs.val() is None and rhs.val() is None:
             return None
         elif lhs.val() is None and rhs.val() is not None:
-            return None if rhs.val() != 0 else 0
+            return None if (rhs.val() != False) else False
         elif lhs.val() is not None and rhs.val() is None:
-            return None if lhs.val() != 0 else 0
+            return None if (lhs.val() != False) else False
         raise NotImplementedError()
 
     def mock_exec(self, args: List[Any], config: MockExecConfig) -> Any:
-        return 1 if args[0] != 0 and args[1] != 0 else 0
+        return True if (args[0] != False) and (args[1] != False) else False
 
     def build_ir(self, ir_id: int, args: List[Value], dbg: Optional[DebugInfo] = None) -> Tuple[Value, IRStatement]:
         lhs, rhs = args[0], args[1]
-        assert isinstance(lhs, IntegerValue) and isinstance(rhs, IntegerValue)
-        return IntegerValue(self.infer(args, dbg), ir_id), IRStatement(ir_id, self, [lhs.ptr(), rhs.ptr()], dbg)
+        assert isinstance(lhs, BooleanValue) and isinstance(rhs, BooleanValue)
+        return BooleanValue(self.infer(args, dbg), ir_id), IRStatement(ir_id, self, [lhs.ptr(), rhs.ptr()], dbg)
 
     def export(self) -> Dict:
         return {}

@@ -36,22 +36,22 @@ class NotEqualOp(AbstractCompare):
         lhs, rhs = kwargs["lhs"], kwargs["rhs"]
         if isinstance(lhs, TupleValue) and isinstance(rhs, TupleValue):
             if len(lhs.types()) != len(rhs.types()):
-                return builder.ir_constant_int(1)
-            result = builder.ir_constant_int(0)
+                return builder.ir_constant_bool(True)
+            result = builder.ir_constant_bool(False)
             for l, r in zip(lhs.values(), rhs.values()):
                 result = builder.ir_logical_or(result, builder.op_bool_cast(builder.op_not_equal(l, r)))
             return result
         elif isinstance(lhs, ListValue) and isinstance(rhs, ListValue):
             if len(lhs.types()) != len(rhs.types()):
-                return builder.ir_constant_int(1)
-            result = builder.ir_constant_int(0)
+                return builder.ir_constant_bool(True)
+            result = builder.ir_constant_bool(False)
             for l, r in zip(lhs.values(), rhs.values()):
                 result = builder.ir_logical_or(result, builder.op_bool_cast(builder.op_not_equal(l, r)))
             return result
         elif isinstance(lhs, ClassValue) and isinstance(rhs, ClassValue):
-            return builder.ir_constant_int(1) if lhs.val() != rhs.val() else builder.ir_constant_int(0)
+            return builder.ir_constant_bool(True) if lhs.val() != rhs.val() else builder.ir_constant_bool(False)
         elif isinstance(lhs, ClassValue) and isinstance(rhs, ClassValue):
-            return builder.ir_constant_int(1) if lhs.val() == rhs.val() else builder.ir_constant_int(0)
+            return builder.ir_constant_bool(True) if lhs.val() == rhs.val() else builder.ir_constant_bool(False)
         elif isinstance(lhs, NDArrayValue) and (isinstance(rhs, ListValue) or isinstance(rhs, TupleValue)):
             lhs, rhs = builder.op_implicit_type_align(lhs, rhs, dbg).values()
             return builder.op_not_equal(lhs, rhs, dbg)

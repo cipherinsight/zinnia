@@ -1,12 +1,13 @@
+import copy
 from typing import List, Dict, Optional
 
 from zinnia.compile.builder.op_args_container import OpArgsContainer
 from zinnia.debug.exception import TypeInferenceError
 from zinnia.op_def.abstract.abstract_op import AbstractOp
-from zinnia.compile.type_sys import IntegerType, FloatType
+from zinnia.compile.type_sys import IntegerType, FloatType, BooleanType
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
-from zinnia.compile.triplet import Value, IntegerValue, NDArrayValue, FloatValue, ListValue, TupleValue
+from zinnia.compile.triplet import Value, IntegerValue, NDArrayValue, FloatValue, ListValue, TupleValue, BooleanValue
 
 
 class BoolCastOp(AbstractOp):
@@ -27,7 +28,9 @@ class BoolCastOp(AbstractOp):
 
     def build(self, builder: IRBuilderInterface, kwargs: OpArgsContainer, dbg: Optional[DebugInfo] = None) -> Value:
         x = kwargs["x"]
-        if isinstance(x, IntegerValue):
+        if isinstance(x, BooleanValue):
+            return copy.copy(x)
+        elif isinstance(x, IntegerValue):
             return builder.ir_not_equal_i(x, builder.ir_constant_int(0))
         elif isinstance(x, FloatValue):
             return builder.ir_not_equal_f(x, builder.ir_constant_float(0.0))
@@ -39,9 +42,11 @@ class BoolCastOp(AbstractOp):
                 return builder.ir_not_equal_i(flattened[0], builder.ir_constant_int(0))
             elif x.dtype() == FloatType:
                 return builder.ir_not_equal_f(flattened[0], builder.ir_constant_float(0.0))
+            elif x.dtype() == BooleanType:
+                return flattened[0]
             raise NotImplementedError()
         elif isinstance(x, ListValue) or isinstance(x, TupleValue):
             if len(x.types()) > 0:
-                return builder.ir_constant_int(1)
-            return builder.ir_constant_int(0)
+                return builder.ir_constant_bool(True)
+            return builder.ir_constant_bool(False)
         raise TypeInferenceError(dbg, f"Unsupported argument type for `{self.get_name()}`: {x.type()}")

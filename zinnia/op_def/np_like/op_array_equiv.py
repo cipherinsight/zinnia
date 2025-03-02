@@ -37,5 +37,5 @@ class NP_ArrayEquivOp(AbstractOp):
         if isinstance(x2, NumberValue):
             x2 = NDArrayValue.from_number(x2)
         if not isinstance(x1, NDArrayValue) or not isinstance(x2, NDArrayValue):
-            return builder.ir_constant_int(0)
+            return builder.ir_constant_bool(False)
         return builder.op_ndarray_all(builder.op_equal(x1, x2, dbg), dbg)

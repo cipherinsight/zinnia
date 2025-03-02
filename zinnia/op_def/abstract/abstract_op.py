@@ -27,6 +27,10 @@ class AbstractOp:
     def is_inplace(cls) -> bool:
         return False
 
+    @classmethod
+    def requires_condition(cls) -> bool:
+        return False
+
     def __eq__(self, other):
         return self.__class__ == other.__class__
 

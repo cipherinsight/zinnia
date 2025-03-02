@@ -3,7 +3,7 @@ from typing import Optional, List, Dict
 from zinnia.compile.builder.op_args_container import OpArgsContainer
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.debug.exception import TypeInferenceError, StaticInferenceError
-from zinnia.compile.type_sys import IntegerType, FloatType
+from zinnia.compile.type_sys import IntegerType, FloatType, BooleanType
 from zinnia.op_def.abstract.abstract_op import AbstractOp
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
 from zinnia.compile.triplet import Value, NDArrayValue, TupleValue, ListValue, NoneValue
@@ -53,9 +53,9 @@ class NP_StackOp(AbstractOp):
                 raise TypeInferenceError(dbg, f"Cannot perform stack: all input arrays must have the same shape")
             if axis_value < 0 or axis_value > len(arg.shape()):
                 raise TypeInferenceError(dbg, f"`axis` ({axis.val()}) is out of bounds for array of dimension {len(arg.shape())}")
-        expected_dtype = IntegerType
+        expected_dtype = BooleanType
         for arg in arrays:
-            expected_dtype = FloatType if arg.dtype() == FloatType else expected_dtype
-        if expected_dtype == FloatType:
-            arrays = [(builder.op_ndarray_astype(arg, builder.op_constant_class(FloatType)) if arg.dtype() == IntegerType else arg) for arg in arrays]
+            expected_dtype = IntegerType if arg.dtype() == IntegerType and expected_dtype == BooleanType else expected_dtype
+            expected_dtype = FloatType if arg.dtype() == FloatType and expected_dtype != FloatType else expected_dtype
+        arrays = [(builder.op_ndarray_astype(arg, builder.op_constant_class(expected_dtype)) if arg.dtype() != expected_dtype else arg) for arg in arrays]
         return NDArrayValue.stack(expected_dtype, axis_value, arrays)

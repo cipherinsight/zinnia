@@ -1,7 +1,7 @@
 from typing import Dict
 
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
-from zinnia.compile.triplet import IntegerValue
+from zinnia.compile.triplet import BooleanValue
 from zinnia.compile.scope.abs_scope import AbstractScope
 from zinnia.compile.triplet.store import ValueStore
 
@@ -44,19 +44,19 @@ class MasterScope(AbstractScope):
     def is_in_loop(self) -> bool:
         return False
 
-    def get_branching_condition(self) -> IntegerValue | None:
+    def get_branching_condition(self) -> BooleanValue | None:
         return None
 
-    def get_looping_condition(self) -> IntegerValue | None:
+    def get_looping_condition(self) -> BooleanValue | None:
         return None
 
-    def get_returning_condition(self) -> IntegerValue | None:
+    def get_returning_condition(self) -> BooleanValue | None:
         return None
 
-    def get_breaking_condition(self) -> IntegerValue | None:
+    def get_breaking_condition(self) -> BooleanValue | None:
         return None
 
-    def get_assertion_condition(self) -> IntegerValue | None:
+    def get_assertion_condition(self) -> BooleanValue | None:
         return None
 
     def is_return_guaranteed(self) -> bool:

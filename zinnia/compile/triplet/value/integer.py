@@ -6,8 +6,8 @@ from zinnia.compile.triplet.store import ValueTriplet, ValueStore
 
 
 class IntegerValue(NumberValue):
-    def __init__(self, value: int | None, ptr: int | None):
-        super().__init__(ValueTriplet(ptr, value, IntegerDTDescriptor()))
+    def __init__(self, value: int | None, ptr: int | None, dt=IntegerDTDescriptor()):
+        super().__init__(ValueTriplet(ptr, value, dt))
 
     def val(self) -> int | None:
         return super().val()

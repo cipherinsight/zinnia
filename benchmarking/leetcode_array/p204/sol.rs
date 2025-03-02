@@ -47,8 +47,14 @@ fn verify_solution<F: ScalarField>(
     let result = ctx.load_witness(F::from(input.result));
 
     // constrain n between 0 and 1001
-    range_chip.check_less_than(ctx, n, Constant(F::from(1001)), 128);
-    range_chip.check_less_than(ctx, Constant(F::from(0)), n, 128);
+    let tmp = range_chip.is_less_than(ctx, n, Constant(F::from(1000)), 128);
+    let tmp_eq = gate.is_equal(ctx, n, Constant(F::from(1000)));
+    let tmp_or = gate.or(ctx, tmp, tmp_eq);
+    gate.assert_is_const(ctx, &tmp_or, &F::ONE);
+    let tmp = range_chip.is_less_than(ctx, Constant(F::from(0)), n, 128);
+    let tmp_eq = gate.is_equal(ctx, n, Constant(F::ZERO));
+    let tmp_or = gate.or(ctx, tmp, tmp_eq);
+    gate.assert_is_const(ctx, &tmp_or, &F::ONE);
 
     // constrain result == 1 when n == 0 or n == 1
     let n_eq_0 = gate.is_equal(ctx, n, Constant(F::from(0)));
@@ -60,19 +66,19 @@ fn verify_solution<F: ScalarField>(
     gate.assert_is_const(ctx, &constraint, &F::ONE);
 
     // calculate number of primes
-    let mut is_prime = vec![0; 1001];
-    let mut number_of_primes = 0;
+    let mut is_prime = vec![ctx.load_constant(F::ZERO); 1001];
+    let mut number_of_primes = ctx.load_constant(F::ZERO);
     for i in 2..1001 {
-        if is_prime[i] == 0 {
-            number_of_primes += 1;
-            for j in (i..1001).step_by(i) {
-                is_prime[j] = 1;
-            }
+        let is_prime_eq_0 = gate.is_equal(ctx, is_prime[i], Constant(F::ZERO));
+        let addition = gate.select(ctx, Constant(F::ONE), Constant(F::ZERO), is_prime_eq_0);
+        number_of_primes = gate.add(ctx, number_of_primes, addition);
+        for j in (i..1001).step_by(i) {
+            is_prime[j] = gate.select(ctx, Constant(F::ONE), is_prime[j], is_prime_eq_0);
         }
         // constrain that result == number_of_primes when n == i
         let i_eq_n = gate.is_equal(ctx, n, Constant(F::from(i as u64)));
         let not_i_eq_n = gate.not(ctx, i_eq_n);
-        let result_correct = gate.is_equal(ctx, result, Constant(F::from(number_of_primes as u64)));
+        let result_correct = gate.is_equal(ctx, result, number_of_primes);
         let constraint = gate.or(ctx, not_i_eq_n, result_correct);
         gate.assert_is_const(ctx, &constraint, &F::ONE);
     }

@@ -1,11 +1,11 @@
 from typing import Callable
 
-from zinnia.op_def.abstract.abstract_integer_arithemetic import AbstractIntegerArithemetic
+from zinnia.op_def.abstract.abstract_integer_arithemetic import AbstractLogicalArithemetic
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
 from zinnia.compile.triplet import IntegerValue
 
 
-class LogicalXorOp(AbstractIntegerArithemetic):
+class LogicalXorOp(AbstractLogicalArithemetic):
     def __init__(self):
         super().__init__()
 

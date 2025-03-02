@@ -1,20 +1,20 @@
 from typing import Optional, Dict
 
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
-from zinnia.compile.triplet import Value, IntegerValue
+from zinnia.compile.triplet import Value, BooleanValue
 from zinnia.compile.scope import AbstractScope
 from zinnia.compile.triplet.store import ValueStore
 from zinnia.compile.type_sys import DTDescriptor
 
 
 class LoopScope(AbstractScope):
-    continue_condition: IntegerValue | None
-    break_condition: IntegerValue | None
+    continue_condition: BooleanValue | None
+    break_condition: BooleanValue | None
     return_guaranteed: bool
     loop_terminated_guaranteed: bool
     var_table: Dict[str, ValueStore]
-    calculated_looping_condition: IntegerValue | None
-    super_looping_condition: IntegerValue | None
+    calculated_looping_condition: BooleanValue | None
+    super_looping_condition: BooleanValue | None
 
     def __init__(self, ir_builder: IRBuilderInterface, super_scope: Optional['AbstractScope']):
         super().__init__(ir_builder, super_scope)
@@ -60,19 +60,19 @@ class LoopScope(AbstractScope):
     def is_in_loop(self) -> bool:
         return True
 
-    def get_branching_condition(self) -> IntegerValue | None:
+    def get_branching_condition(self) -> BooleanValue | None:
         return self.super_scope.get_branching_condition()
 
-    def get_looping_condition(self) -> IntegerValue | None:
+    def get_looping_condition(self) -> BooleanValue | None:
         return self.calculated_looping_condition
 
-    def get_breaking_condition(self) -> IntegerValue | None:
+    def get_breaking_condition(self) -> BooleanValue | None:
         return self.break_condition
 
-    def get_returning_condition(self) -> IntegerValue | None:
+    def get_returning_condition(self) -> BooleanValue | None:
         return self.super_scope.get_returning_condition()
 
-    def get_assertion_condition(self) -> IntegerValue | None:
+    def get_assertion_condition(self) -> BooleanValue | None:
         return self.super_scope.get_assertion_condition()
 
     def get_return_dtype(self) -> DTDescriptor:
@@ -84,7 +84,7 @@ class LoopScope(AbstractScope):
     def set_terminated_guarantee(self):
         self.loop_terminated_guaranteed = True
 
-    def register_return(self, value: Value, condition: IntegerValue):
+    def register_return(self, value: Value, condition: BooleanValue):
         self.super_scope.register_return(value, condition)
 
     def is_return_guaranteed(self) -> bool:
@@ -93,7 +93,7 @@ class LoopScope(AbstractScope):
     def is_terminated_guaranteed(self) -> bool:
         return self.loop_terminated_guaranteed
 
-    def loop_continue(self, condition: IntegerValue):
+    def loop_continue(self, condition: BooleanValue):
         condition = self.ir_builder.ir_logical_not(condition)
         if self.continue_condition is None:
             self.continue_condition = condition
@@ -106,7 +106,7 @@ class LoopScope(AbstractScope):
         if self.super_looping_condition is not None:
             self.calculated_looping_condition = self.ir_builder.ir_logical_and(self.calculated_looping_condition, self.super_looping_condition)
 
-    def loop_break(self, condition: IntegerValue):
+    def loop_break(self, condition: BooleanValue):
         condition = self.ir_builder.ir_logical_not(condition)
         if self.break_condition is None:
             self.break_condition = condition

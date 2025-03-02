@@ -3,7 +3,7 @@ from typing import List, Optional
 from zinnia.compile.builder.op_args_container import OpArgsContainer
 from zinnia.op_def.abstract.abstract_op import AbstractOp
 from zinnia.compile.type_sys import DTDescriptor, IntegerDTDescriptor, NDArrayDTDescriptor, FloatDTDescriptor, \
-    TupleDTDescriptor, ListDTDescriptor, PoseidonHashedDTDescriptor, NoneDTDescriptor
+    TupleDTDescriptor, ListDTDescriptor, PoseidonHashedDTDescriptor, NoneDTDescriptor, BooleanDTDescriptor
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
 from zinnia.compile.triplet import Value, NDArrayValue, TupleValue, ListValue
@@ -48,6 +48,8 @@ class PlaceholderValueOp(AbstractOp):
             return ListValue(list(v.type() for v in values), list(values))
         elif isinstance(self.dt, IntegerDTDescriptor):
             return builder.ir_constant_int(0)
+        elif isinstance(self.dt, BooleanDTDescriptor):
+            return builder.ir_constant_bool(False)
         elif isinstance(self.dt, FloatDTDescriptor):
             return builder.ir_constant_float(0.0)
         elif isinstance(self.dt, PoseidonHashedDTDescriptor):

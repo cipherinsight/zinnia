@@ -35,8 +35,8 @@ class GreaterThanOp(AbstractCompare):
     def build(self, builder: IRBuilderInterface, kwargs: OpArgsContainer, dbg: Optional[DebugInfo] = None) -> Value:
         lhs, rhs = kwargs["lhs"], kwargs["rhs"]
         if isinstance(lhs, TupleValue) and isinstance(rhs, TupleValue):
-            result = builder.ir_constant_int(0)
-            all_prev_eq = builder.ir_constant_int(1)
+            result = builder.ir_constant_bool(False)
+            all_prev_eq = builder.ir_constant_bool(True)
             for l, r in zip(lhs.values(), rhs.values()):
                 gt_v = builder.op_bool_cast(builder.op_greater_than(l, r))
                 eq_v = builder.op_bool_cast(builder.op_equal(l, r))
@@ -46,8 +46,8 @@ class GreaterThanOp(AbstractCompare):
                 return builder.ir_logical_or(result, all_prev_eq)
             return result
         elif isinstance(lhs, ListValue) and isinstance(rhs, ListValue):
-            result = builder.ir_constant_int(0)
-            all_prev_eq = builder.ir_constant_int(1)
+            result = builder.ir_constant_bool(False)
+            all_prev_eq = builder.ir_constant_bool(True)
             for l, r in zip(lhs.values(), rhs.values()):
                 gt_v = builder.op_bool_cast(builder.op_greater_than(l, r))
                 eq_v = builder.op_bool_cast(builder.op_equal(l, r))

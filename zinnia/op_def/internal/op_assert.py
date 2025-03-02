@@ -29,16 +29,16 @@ class AssertOp(AbstractOp):
         operand = kwargs["test"]
         condition = kwargs.get("condition", builder.op_constant_none())
         if isinstance(condition, NoneValue):
-            condition = builder.ir_constant_int(1)
+            condition = builder.ir_constant_bool(True)
         if not isinstance(condition, IntegerValue):
             raise TypeInferenceError(dbg, f"Internal Error: `condition` should be an integer value")
         if isinstance(operand, IntegerValue):
             if operand.val() == 0 and (condition.val() is not None and condition.val() != 0):
                 raise StaticInferenceError(dbg, "Assertion is always unsatisfiable")
-            return builder.ir_assert(builder.ir_select_i(condition, operand, builder.ir_constant_int(1)), dbg)
+            return builder.ir_assert(builder.ir_select_i(condition, operand, builder.ir_constant_bool(True)), dbg)
         elif isinstance(operand, NDArrayValue):
-            test_val = builder.ir_constant_int(1)
+            test_val = builder.ir_constant_bool(True)
             for val in operand.flattened_values():
                 test_val = builder.ir_logical_and(test_val, builder.op_bool_cast(val, dbg))
-            return builder.ir_assert(builder.ir_select_i(condition, test_val, builder.ir_constant_int(1)), dbg)
+            return builder.ir_assert(builder.ir_select_i(condition, test_val, builder.ir_constant_bool(True)), dbg)
         raise TypeInferenceError(dbg, f"Type `{operand.type()}` is not supported on operator `{self.get_signature()}`. It only accepts an Integer value")

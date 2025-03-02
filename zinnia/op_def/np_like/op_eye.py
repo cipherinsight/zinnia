@@ -3,7 +3,7 @@ from typing import List, Dict, Optional
 from zinnia.compile.builder.op_args_container import OpArgsContainer
 from zinnia.debug.exception import TypeInferenceError, StaticInferenceError
 from zinnia.op_def.abstract.abstract_op import AbstractOp
-from zinnia.compile.type_sys import FloatType, IntegerType
+from zinnia.compile.type_sys import FloatType, IntegerType, BooleanType
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
 from zinnia.compile.triplet import Value, IntegerValue, ClassValue, NDArrayValue, NoneValue
@@ -56,6 +56,9 @@ class NP_EyeOp(AbstractOp):
         elif parsed_dtype == IntegerType:
             ndarray = NDArrayValue.fill(result_shape, IntegerType, lambda: builder.ir_constant_int(0))
             ndarray = ndarray.for_each(lambda pos, val: builder.ir_constant_int(1) if pos[0] == pos[1] else builder.ir_constant_int(0))
+        elif parsed_dtype == BooleanType:
+            ndarray = NDArrayValue.fill(result_shape, IntegerType, lambda: builder.ir_constant_bool(False))
+            ndarray = ndarray.for_each(lambda pos, val: builder.ir_constant_bool(True) if pos[0] == pos[1] else builder.ir_constant_bool(False))
         else:
             raise TypeInferenceError(dbg, f"Unsupported NDArray dtype {parsed_dtype}")
         return ndarray

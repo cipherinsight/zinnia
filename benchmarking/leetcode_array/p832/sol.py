@@ -28,6 +28,8 @@ def verify_solution(
         for j in range(shape[1]):
             assert image[i][j] == 1 or image[i][j] == 0
             assert result[i][j] == 1 or result[i][j] == 0
+    for i in range(shape[0]):
+        for j in range(shape[1]):
             assert result[i][j] == 1 - image[i][shape[1] - 1 - j]
 
 
@@ -43,8 +45,8 @@ def generate_solution(
     return result
 
 
-circuit = ZKCircuit.from_method(verify_solution)
-print(circuit.compile().source)
+# circuit = ZKCircuit.from_method(verify_solution)
+# print(circuit.compile().source)
 # np.random.seed(0)
 # image = np.random.randint(0, 2, (10, 10))
 # result = generate_solution(image)

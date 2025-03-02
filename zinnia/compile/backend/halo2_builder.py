@@ -9,6 +9,7 @@ from zinnia.ir_def.defs.ir_add_i import AddIIR
 from zinnia.ir_def.defs.ir_add_str import AddStrIR
 from zinnia.ir_def.defs.ir_assert import AssertIR
 from zinnia.ir_def.defs.ir_bool_cast import BoolCastIR
+from zinnia.ir_def.defs.ir_constant_bool import ConstantBoolIR
 from zinnia.ir_def.defs.ir_constant_int import ConstantIntIR
 from zinnia.ir_def.defs.ir_constant_float import ConstantFloatIR
 from zinnia.ir_def.defs.ir_constant_str import ConstantStrIR
@@ -51,6 +52,7 @@ from zinnia.ir_def.defs.ir_print import PrintIR
 from zinnia.ir_def.defs.ir_read_float import ReadFloatIR
 from zinnia.ir_def.defs.ir_read_hash import ReadHashIR
 from zinnia.ir_def.defs.ir_read_integer import ReadIntegerIR
+from zinnia.ir_def.defs.ir_select_b import SelectBIR
 from zinnia.ir_def.defs.ir_select_f import SelectFIR
 from zinnia.ir_def.defs.ir_select_i import SelectIIR
 from zinnia.ir_def.defs.ir_sign_f import SignFIR
@@ -188,6 +190,13 @@ class _Halo2StatementBuilder:
                 f"let {self._get_var_name(stmt.stmt_id)} = " + (f"Constant(F::from({constant_val}));" if constant_val >= 0 else f"{{gate.neg(ctx, Constant(F::from({-constant_val})))}};")
             ]
 
+    def _build_ConstantBoolIR(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.ir_instance, ConstantBoolIR)
+        constant_val = stmt.ir_instance.value
+        return [
+            f"let {self._get_var_name(stmt.stmt_id)} = Constant(F::{'ONE' if constant_val else 'ZERO'});"
+        ]
+
     def _build_ConstantFloatIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, ConstantFloatIR)
         constant_val = stmt.ir_instance.value
@@ -264,9 +273,8 @@ class _Halo2StatementBuilder:
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [
-            f"let tmp_1 = range_chip.is_less_than(ctx, {lhs}, {rhs}, 128);",
-            f"let tmp_2 = gate.is_equal(ctx, {lhs}, {rhs});",
-            f"let {self._get_var_name(stmt.stmt_id)} = gate.or(ctx, tmp_1, tmp_2);"
+            f"let tmp_1 = range_chip.is_less_than(ctx, {rhs}, {lhs}, 128);",  # Note the order of lhs and rhs
+            f"let {self._get_var_name(stmt.stmt_id)} = gate.not(ctx, tmp_1);"
         ]
 
     def _build_GreaterThanFIR(self, stmt: IRStatement) -> List[str]:
@@ -320,9 +328,8 @@ class _Halo2StatementBuilder:
         lhs = self._get_var_name(stmt.arguments[0])
         rhs = self._get_var_name(stmt.arguments[1])
         return [
-            f"let tmp_1 = range_chip.is_less_than(ctx, {lhs}, {rhs}, 128);",
-            f"let tmp_2 = gate.is_equal(ctx, {lhs}, {rhs});",
-            f"let {self._get_var_name(stmt.stmt_id)} = gate.or(ctx, tmp_1, tmp_2);"
+            f"let tmp_1 = range_chip.is_less_than(ctx, {rhs}, {lhs}, 128);",  # Note the order of lhs and rhs
+            f"let {self._get_var_name(stmt.stmt_id)} = gate.not(ctx, tmp_1);"
         ]
 
     def _build_GreaterThanIIR(self, stmt: IRStatement) -> List[str]:
@@ -524,6 +531,15 @@ class _Halo2StatementBuilder:
             f"let {self._get_var_name(stmt.stmt_id)} = gate.select(ctx, {true_val}, {false_val}, {cond});"
         ]
 
+    def _build_SelectBIR(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.ir_instance, SelectBIR)
+        cond = self._get_var_name(stmt.arguments[0])
+        true_val = self._get_var_name(stmt.arguments[1])
+        false_val = self._get_var_name(stmt.arguments[2])
+        return [
+            f"let {self._get_var_name(stmt.stmt_id)} = gate.select(ctx, {true_val}, {false_val}, {cond});"
+        ]
+
     def _build_SelectFIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, SelectFIR)
         cond = self._get_var_name(stmt.arguments[0])
@@ -624,6 +640,7 @@ fn main() {{
     def build_circuit_body(self) -> str:
         internal_builder = _Halo2StatementBuilder()
         translated_stmts = []
+        has_poseidon_hash_ir = any(isinstance(stmt.ir_instance, PoseidonHashIR) for stmt in self.stmts)
         initialize_stmts = """\
     const PRECISION: u32 = 63;
     println!("build_lookup_bit: {:?}", builder.lookup_bits());
@@ -632,8 +649,9 @@ fn main() {{
     let fixed_point_chip = FixedPointChip::<F, PRECISION>::default(builder);
     let mut poseidon_hasher = PoseidonHasher::<F, T, RATE>::new(OptimizedPoseidonSpec::new::<R_F, R_P, 0>());
     let ctx = builder.main(0);
-    poseidon_hasher.initialize_consts(ctx, &gate);
 """
+        if has_poseidon_hash_ir:
+            initialize_stmts += "    poseidon_hasher.initialize_consts(ctx, &gate);\n"
         for stmt in self.stmts:
             translated_stmts += internal_builder.build_stmt(stmt)
         return initialize_stmts + "    " + "\n    ".join(translated_stmts)

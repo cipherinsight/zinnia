@@ -25,8 +25,8 @@ const R_P: usize = 57;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CircuitInput {
-    pub image: Vec<u64>,
-    pub result: Vec<u64>,
+    pub image: Vec<u128>,
+    pub result: Vec<u128>,
 }
 
 fn verify_solution<F: ScalarField>(
@@ -46,16 +46,18 @@ fn verify_solution<F: ScalarField>(
     let mut images: Vec<AssignedValue<F>> = Vec::new();
     let mut results: Vec<AssignedValue<F>> = Vec::new();
     for i in 0..100 {
-        let image = ctx.load_witness(F::from(input.image[i]));
-        let result = ctx.load_witness(F::from(input.result[i]));
+        let image = ctx.load_witness(F::from_u128(input.image[i]));
+        let result = ctx.load_witness(F::from_u128(input.result[i]));
         images.push(image);
         results.push(result);
-        let eq_0 = gate.is_equal(ctx, image, Constant(F::from(0)));
-        let eq_1 = gate.is_equal(ctx, image, Constant(F::from(1)));
+        let constant_1 = Constant(F::from(1));
+        let constant_0 = Constant(F::from(0));
+        let eq_0 = gate.is_equal(ctx, image, constant_0);
+        let eq_1 = gate.is_equal(ctx, image, constant_1);
         let eq_0_or_1 = gate.or(ctx, eq_0, eq_1);
         gate.assert_is_const(ctx, &eq_0_or_1, &F::ONE);
-        let eq_0 = gate.is_equal(ctx, result, Constant(F::from(0)));
-        let eq_1 = gate.is_equal(ctx, result, Constant(F::from(1)));
+        let eq_0 = gate.is_equal(ctx, result, constant_0);
+        let eq_1 = gate.is_equal(ctx, result, constant_1);
         let eq_0_or_1 = gate.or(ctx, eq_0, eq_1);
         gate.assert_is_const(ctx, &eq_0_or_1, &F::ONE);
     }

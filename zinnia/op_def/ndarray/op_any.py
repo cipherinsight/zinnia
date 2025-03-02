@@ -21,10 +21,10 @@ class NDArray_AnyOp(AbstractAggregator):
         return IntegerType
 
     def is_allowed_ndarray_dtype(self, element_dt: DTDescriptor) -> bool:
-        return element_dt == IntegerType
+        return element_dt == IntegerType or element_dt == BooleanType
 
     def aggregator_func(self, builder: IRBuilderInterface, lhs: NumberValue, lhs_i: NumberValue, rhs: NumberValue, rhs_i: NumberValue, dt: DTDescriptor) -> Tuple[NumberValue, NumberValue | None]:
-        return builder.ir_logical_or(lhs, rhs), None
+        return builder.ir_logical_or(builder.op_bool_cast(lhs), builder.op_bool_cast(rhs)), None
 
     def initial_func(self, builder: IRBuilderInterface, dt: DTDescriptor, first_ele: NumberValue) -> Tuple[NumberValue, NumberValue | None]:
-        return builder.ir_constant_int(0), None
+        return builder.ir_constant_bool(False), None

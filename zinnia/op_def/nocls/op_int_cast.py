@@ -7,7 +7,7 @@ from zinnia.op_def.abstract.abstract_op import AbstractOp
 from zinnia.compile.type_sys import FloatType, IntegerType
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
-from zinnia.compile.triplet import IntegerValue, FloatValue, Value, NDArrayValue, ListValue, TupleValue
+from zinnia.compile.triplet import IntegerValue, FloatValue, Value, NDArrayValue, ListValue, TupleValue, BooleanValue
 
 
 class IntCastOp(AbstractOp):
@@ -30,6 +30,8 @@ class IntCastOp(AbstractOp):
         x = kwargs["x"]
         if isinstance(x, IntegerValue):
             return copy.copy(x)
+        if isinstance(x, BooleanValue):
+            return IntegerValue(x.val(), x.ptr())
         elif isinstance(x, FloatValue):
             return builder.ir_int_cast(x)
         elif isinstance(x, NDArrayValue):

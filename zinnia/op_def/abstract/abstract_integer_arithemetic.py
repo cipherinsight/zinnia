@@ -1,6 +1,7 @@
 from typing import Callable, Optional, Dict, List
 
 from zinnia.compile.builder.op_args_container import OpArgsContainer
+from zinnia.compile.triplet.value.boolean import BooleanValue
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.debug.exception import TypeInferenceError
 from zinnia.compile.type_sys import DTDescriptor, IntegerType
@@ -9,7 +10,7 @@ from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
 from zinnia.compile.triplet import Value, IntegerValue, NDArrayValue
 
 
-class AbstractIntegerArithemetic(AbstractOp):
+class AbstractLogicalArithemetic(AbstractOp):
     def __init__(self):
         super().__init__()
 
@@ -21,7 +22,7 @@ class AbstractIntegerArithemetic(AbstractOp):
 
     def check_ndarray_dtype(self, dbg_i: Optional[DebugInfo], dtype: DTDescriptor) -> None:
         if dtype != IntegerType:
-            raise TypeInferenceError(dbg_i, f'The dtype of NDArray should be `Integer` in {self.get_name()}')
+            raise TypeInferenceError(dbg_i, f'The dtype of NDArray should be `Integer` or `Boolean` in {self.get_name()}')
 
     def get_build_op_lambda(self, builder: IRBuilderInterface) -> Callable[[IntegerValue, IntegerValue], IntegerValue]:
         raise NotImplementedError()

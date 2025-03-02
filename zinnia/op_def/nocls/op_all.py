@@ -27,17 +27,17 @@ class AllOp(AbstractOp):
     def build(self, builder: IRBuilderInterface, kwargs: OpArgsContainer, dbg: Optional[DebugInfo] = None) -> Value:
         x = kwargs["x"]
         if isinstance(x, NDArrayValue):
-            result = builder.ir_constant_int(1)
+            result = builder.ir_constant_bool(True)
             for i in range(x.shape()[0]):
                 result = builder.ir_logical_and(result, builder.op_bool_cast(builder.op_ndarray_get_item(x, builder.op_square_brackets([builder.ir_constant_int(i)]))))
             return result
         elif isinstance(x, ListValue):
-            result = builder.ir_constant_int(1)
+            result = builder.ir_constant_bool(True)
             for v in x.values():
                 result = builder.ir_logical_and(result, builder.op_bool_cast(v))
             return result
         elif isinstance(x, TupleValue):
-            result = builder.ir_constant_int(1)
+            result = builder.ir_constant_bool(True)
             for v in x.values():
                 result = builder.ir_logical_and(result, builder.op_bool_cast(v))
             return result

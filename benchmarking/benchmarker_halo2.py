@@ -8,6 +8,7 @@ import time
 from zinnia import ZKCircuit
 
 HALO2_FOLDER = "/Users/zhantong/Projects/halo2-graph"
+TIME_MEASURE_REPETITIONS = 100
 
 
 def run_prove(name: str, source: str, data: str):
@@ -28,7 +29,7 @@ def run_prove(name: str, source: str, data: str):
         assert keygen_process.returncode == 0, keygen_feedback
         proving_time_in_seconds = 0
         snark_size = 0
-        for i in range(10):
+        for i in range(TIME_MEASURE_REPETITIONS):
             prove_process = subprocess.run(['cargo', 'run', '--example', 'target', '--', '--name', 'target', '-k', '16', '--input', 'target.in', 'prove'], capture_output=True, text=True, env=my_env)
             prove_feedback = prove_process.stdout + prove_process.stderr
             assert prove_process.returncode == 0, prove_feedback
@@ -40,7 +41,7 @@ def run_prove(name: str, source: str, data: str):
             snark_size = os.path.getsize(os.path.join(HALO2_FOLDER, "data/target.snark"))
         verify_time_in_seconds = 0
         advice_cells, fixed_cells, range_check_advice_cells = 0, 0, 0
-        for i in range(10):
+        for i in range(TIME_MEASURE_REPETITIONS):
             verify_process = subprocess.run(['cargo', 'run', '--example', 'target', '--', '--name', 'target', '-k', '16', '--input', 'target.in', 'verify'], capture_output=True, text=True, env=my_env)
             verify_feedback = verify_process.stdout + verify_process.stderr
             assert verify_process.returncode == 0, verify_feedback
@@ -64,12 +65,12 @@ def run_prove(name: str, source: str, data: str):
     os.chdir(original_directory)
     return {
         "name": name,
-        "proving_time": proving_time_in_seconds / 10,
+        "proving_time": proving_time_in_seconds / TIME_MEASURE_REPETITIONS,
         "snark_size": snark_size,
         "advice_cells": advice_cells,
         "fixed_cells": fixed_cells,
         "range_check_advice_cells": range_check_advice_cells,
-        "verify_time": verify_time_in_seconds / 10
+        "verify_time": verify_time_in_seconds / TIME_MEASURE_REPETITIONS
     }
 
 
@@ -107,12 +108,31 @@ def run_evaluate(dataset: str, problem: str):
     }
 
 
-MLALGO = ["neuron", "kmeans", "linear_regression"]
-LEETCODE_ARRAY = ["p204", "p832"]
-LEETCODE_DP = ["p740", "p1137"]
-LEETCODE_GRAPH = ["p3112", "p997"]
-LEETCODE_MATH = ["p492", "p2125"]
-LEETCODE_MATRIX = ["p73", "p2133"]
+MLALGO = [
+    "neuron",
+    "kmeans",
+    "linear_regression"
+]
+LEETCODE_ARRAY = [
+    "p204",
+    "p832"
+]
+LEETCODE_DP = [
+    "p740",
+    "p1137"
+]
+LEETCODE_GRAPH = [
+    "p3112",
+    "p997"
+]
+LEETCODE_MATH = [
+    "p492",
+    "p2125"
+]
+LEETCODE_MATRIX = [
+    "p73",
+    "p2133"
+]
 
 DATASETS = {
     "mlalgo": MLALGO,

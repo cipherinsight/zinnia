@@ -1,13 +1,13 @@
 from typing import Dict
 
-from zinnia.compile.triplet import Value, IntegerValue
+from zinnia.compile.triplet import Value, BooleanValue
 
 
 class OpArgsContainer:
     def __init__(
             self,
             kwargs: Dict[str, Value],
-            condition: IntegerValue = None
+            condition: BooleanValue = None
     ):
         self.kwargs = kwargs
         self.condition = condition
@@ -27,7 +27,7 @@ class OpArgsContainer:
     def get_kwargs(self) -> Dict[str, Value]:
         return self.kwargs
 
-    def get_condition(self) -> IntegerValue:
+    def get_condition(self) -> BooleanValue:
         return self.condition
 
     def has_condition(self) -> bool:

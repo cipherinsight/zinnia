@@ -9,6 +9,7 @@ from zinnia.ir_def.defs.ir_add_i import AddIIR
 from zinnia.ir_def.defs.ir_add_str import AddStrIR
 from zinnia.ir_def.defs.ir_assert import AssertIR
 from zinnia.ir_def.defs.ir_bool_cast import BoolCastIR
+from zinnia.ir_def.defs.ir_constant_bool import ConstantBoolIR
 from zinnia.ir_def.defs.ir_constant_int import ConstantIntIR
 from zinnia.ir_def.defs.ir_constant_float import ConstantFloatIR
 from zinnia.ir_def.defs.ir_constant_str import ConstantStrIR
@@ -51,6 +52,7 @@ from zinnia.ir_def.defs.ir_print import PrintIR
 from zinnia.ir_def.defs.ir_read_float import ReadFloatIR
 from zinnia.ir_def.defs.ir_read_hash import ReadHashIR
 from zinnia.ir_def.defs.ir_read_integer import ReadIntegerIR
+from zinnia.ir_def.defs.ir_select_b import SelectBIR
 from zinnia.ir_def.defs.ir_select_f import SelectFIR
 from zinnia.ir_def.defs.ir_select_i import SelectIIR
 from zinnia.ir_def.defs.ir_sign_f import SignFIR
@@ -211,6 +213,14 @@ class _CircomStatementBuilder:
         var_name = self._get_var_name(stmt.stmt_id)
         return [
             f"signal {var_name} <== {constant_val};"
+        ]
+
+    def _build_ConstantBoolIR(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.ir_instance, ConstantBoolIR)
+        constant_val = stmt.ir_instance.value
+        var_name = self._get_var_name(stmt.stmt_id)
+        return [
+            f"signal {var_name} <== {1 if constant_val else 0};"
         ]
 
     def _build_ConstantFloatIR(self, stmt: IRStatement) -> List[str]:
@@ -445,6 +455,16 @@ class _CircomStatementBuilder:
 
     def _build_SelectIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, SelectIIR)
+        cond = self._get_var_name(stmt.arguments[0])
+        true_val = self._get_var_name(stmt.arguments[1])
+        false_val = self._get_var_name(stmt.arguments[2])
+        var_name = self._get_var_name(stmt.stmt_id)
+        return [
+            f"signal {var_name} <== ZinniaCodeGenReservedSelector()([{false_val}, {true_val}], {cond});"
+        ]
+
+    def _build_SelectBIR(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.ir_instance, SelectBIR)
         cond = self._get_var_name(stmt.arguments[0])
         true_val = self._get_var_name(stmt.arguments[1])
         false_val = self._get_var_name(stmt.arguments[2])

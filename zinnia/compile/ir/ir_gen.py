@@ -14,7 +14,7 @@ from zinnia.compile.ast import ASTComponent, ASTCircuit, ASTAssignStatement, AST
     ASTBinaryOperator, ASTNamedAttribute, ASTExprAttribute, ASTParenthesis, ASTChip, ASTReturnStatement, \
     ASTUnaryOperator, ASTConstantNone, ASTNameAssignTarget, ASTSubscriptAssignTarget, \
     ASTListAssignTarget, ASTTupleAssignTarget, ASTAssignTarget, ASTExprStatement, ASTConstantString, ASTGeneratorExp, \
-    ASTGenerator, ASTCondExp, ASTWhileStatement
+    ASTGenerator, ASTCondExp, ASTWhileStatement, ASTConstantBoolean
 from zinnia.compile.ir.ir_ctx import IRContext
 from zinnia.debug.exception import VariableNotFoundError, NotInLoopError, \
     InterScopeError, UnsupportedLangFeatureException, UnreachableStatementError, OperatorOrChipNotFoundException, \
@@ -25,6 +25,7 @@ from zinnia.debug.warning.while_limit import LoopLimitReachedWarning
 
 from zinnia.internal.internal_chip_object import InternalChipObject
 from zinnia.internal.internal_external_func_object import InternalExternalFuncObject
+from zinnia.op_def.internal.op_implicit_type_cast import ImplicitTypeCastOp
 from zinnia.op_def.operator_factory import Operators
 from zinnia.compile.type_sys import DTDescriptorFactory, NoneDTDescriptor, FloatDTDescriptor, IntegerDTDescriptor
 
@@ -129,7 +130,7 @@ class IRGenerator:
             if loop_quota <= 0:
                 if test_expr.val() is None:
                     warnings.warn(LoopLimitReachedWarning(n.dbg, self._config.loop_limit()))
-                    self._ir_builder.op_assert(self._ir_builder.ir_constant_int(0), test_expr, dbg=n.dbg)
+                    self._ir_builder.op_assert(self._ir_builder.ir_constant_bool(False), test_expr, dbg=n.dbg)
                     break
                 else:
                     raise LoopLimitExceedError(n.dbg, "Loop limit exceeded on while. Please check for infinite loops, or increase the loop limit.")
@@ -240,8 +241,10 @@ class IRGenerator:
             val = self._ir_builder.op_constant_none()
             return_dt = NoneDTDescriptor()
         expected_return_dt = self._ir_ctx.get_return_dtype()
-        if return_dt != expected_return_dt:
+        if not ImplicitTypeCastOp.verify_cast_ability(return_dt, expected_return_dt):
             raise ReturnDatatypeMismatchError(n.dbg, "Return datatype mismatch annotated return datatype")
+        elif return_dt != expected_return_dt:
+            val = self._ir_builder.op_implicit_type_cast(val, expected_return_dt, n.dbg)
         self._ir_ctx.register_return(val)
         self._ir_ctx.set_return_guarantee()
         return None
@@ -359,6 +362,9 @@ class IRGenerator:
     def visit_ASTConstantInteger(self, n: ASTConstantInteger):
         return self._ir_builder.ir_constant_int(n.value, dbg=n.dbg)
 
+    def visit_ASTConstantBoolean(self, n: ASTConstantBoolean):
+        return self._ir_builder.ir_constant_bool(n.value, dbg=n.dbg)
+
     def visit_ASTConstantNone(self, n: ASTConstantNone):
         return self._ir_builder.op_constant_none(dbg=n.dbg)
 
@@ -409,7 +415,7 @@ class IRGenerator:
             iter_elts = self._ir_builder.op_iter(self.visit(iter_exp))
             for loop_index_ptr in iter_elts.values():
                 self._do_recursive_assign(gen.target, loop_index_ptr, False)
-                cond = self._ir_builder.ir_constant_int(1)
+                cond = self._ir_builder.ir_constant_bool(True)
                 for _if in gen.ifs:
                     cond = self._ir_builder.ir_logical_and(cond, self._ir_builder.op_bool_cast(self.visit(_if)))
                 if cond.val() is None:
@@ -453,7 +459,7 @@ class IRGenerator:
         chip_filled_args = [None for _ in range(len(chip_declared_args))]
         if self._ir_ctx.get_recursion_depth() >= self._config.recursion_limit():
             self._ir_builder.op_assert(
-                self._ir_builder.ir_constant_int(0),
+                self._ir_builder.ir_constant_bool(False),
                 self._ir_builder.ir_logical_and(self._ir_ctx.get_condition_value_for_assertion(), self._ir_ctx.get_condition_value()),
                 dbg=chip.chip_ast.dbg
             )

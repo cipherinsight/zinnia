@@ -4,8 +4,11 @@ from zinnia.compile.builder.ir_builder import IRBuilder
 from zinnia.compile.builder.op_args_container import OpArgsContainer
 from zinnia.compile.triplet import Value, ClassValue, TupleValue, ListValue, NoneValue, NDArrayValue, IntegerValue, \
     FloatValue, StringValue, NumberValue
+from zinnia.compile.triplet.value.boolean import BooleanValue
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.type_sys import DTDescriptor
+from zinnia.ir_def.defs.ir_constant_bool import ConstantBoolIR
+from zinnia.ir_def.defs.ir_select_b import SelectBIR
 from zinnia.op_def.arithmetic.op_logical_and import LogicalAndOp
 from zinnia.op_def.arithmetic.op_logical_not import LogicalNotOp
 from zinnia.op_def.arithmetic.op_logical_or import LogicalOrOp
@@ -136,10 +139,10 @@ class IRBuilderImpl(IRBuilder):
     def __init__(self) -> None:
         super().__init__()
 
-    def create_op(self, operator: AbstractOp, statement_condition: IntegerValue | None, args: List[Value], kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
+    def create_op(self, operator: AbstractOp, statement_condition: BooleanValue | None, args: List[Value], kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         kwargs = operator.argparse(dbg, args, kwargs)
-        if operator.is_inplace() and statement_condition is None:
-            raise ValueError(f"Operator {operator} is in-place and requires statement_condition")
+        if (operator.is_inplace() or operator.requires_condition()) and statement_condition is None:
+            raise ValueError(f"Operator {operator} requires statement_condition")
         if not operator.is_inplace():
             statement_condition = None
         return operator.build(self, OpArgsContainer(kwargs, statement_condition), dbg)
@@ -268,11 +271,11 @@ class IRBuilderImpl(IRBuilder):
         assert isinstance(result, FloatValue)
         return result
 
-    def op_bool_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def op_bool_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         op = BoolCastOp()
         kwargs = op.argparse(dbg, [x], {})
         result = op.build(self, OpArgsContainer(kwargs), dbg)
-        assert isinstance(result, IntegerValue)
+        assert isinstance(result, BooleanValue)
         return result
 
     def op_list_cast(self, x: Value, dbg: Optional[DebugInfo] = None) -> ListValue:
@@ -289,7 +292,7 @@ class IRBuilderImpl(IRBuilder):
         assert isinstance(result, TupleValue)
         return result
 
-    def op_set_item(self, statement_condition: IntegerValue, the_self: Value, slicing_params: ListValue, the_value: Value, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_set_item(self, statement_condition: BooleanValue, the_self: Value, slicing_params: ListValue, the_value: Value, dbg: Optional[DebugInfo] = None) -> Value:
         op = SetItemOp()
         kwargs = op.argparse(dbg, [the_self, the_value, slicing_params], {})
         return op.build(self, OpArgsContainer(kwargs, statement_condition), dbg)
@@ -299,7 +302,7 @@ class IRBuilderImpl(IRBuilder):
         kwargs = op.argparse(dbg, [the_self, slicing_params], {})
         return op.build(self, OpArgsContainer(kwargs), dbg)
 
-    def op_ndarray_set_item(self, statement_condition: IntegerValue, the_self: NDArrayValue, slicing_params: ListValue, the_value: Value, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_ndarray_set_item(self, statement_condition: BooleanValue, the_self: NDArrayValue, slicing_params: ListValue, the_value: Value, dbg: Optional[DebugInfo] = None) -> Value:
         op = NDArray_SetItemOp()
         kwargs = op.argparse(dbg, [the_self, the_value, slicing_params], {})
         return op.build(self, OpArgsContainer(kwargs, statement_condition), dbg)
@@ -504,21 +507,21 @@ class IRBuilderImpl(IRBuilder):
         assert isinstance(result, Value)
         return result
 
-    def op_list_index(self, lst: ListValue, value: Value, start: IntegerValue | NoneValue, stop: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def op_list_index(self, statement_condition: BooleanValue, lst: ListValue, value: Value, start: IntegerValue | NoneValue, stop: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         op = List_IndexOp()
         kwargs = op.argparse(dbg, [lst, value, start, stop], {})
-        result = op.build(self, OpArgsContainer(kwargs), dbg)
+        result = op.build(self, OpArgsContainer(kwargs, statement_condition), dbg)
         assert isinstance(result, IntegerValue)
         return result
 
-    def op_list_pop(self, statement_condition: IntegerValue, lst: ListValue, index: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
+    def op_list_pop(self, statement_condition: BooleanValue, lst: ListValue, index: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
         op = List_PopOp()
         kwargs = op.argparse(dbg, [lst, index], {})
         result = op.build(self, OpArgsContainer(kwargs, statement_condition), dbg)
         assert isinstance(result, NoneValue)
         return result
 
-    def op_list_remove(self, statement_condition: IntegerValue, lst: ListValue, value: Value, dbg: Optional[DebugInfo] = None) -> NoneValue:
+    def op_list_remove(self, statement_condition: BooleanValue, lst: ListValue, value: Value, dbg: Optional[DebugInfo] = None) -> NoneValue:
         op = List_RemoveOp()
         kwargs = op.argparse(dbg, [lst, value], {})
         result = op.build(self, OpArgsContainer(kwargs, statement_condition), dbg)
@@ -621,6 +624,13 @@ class IRBuilderImpl(IRBuilder):
         val, stmt = ir.build_ir(len(self.stmts), [], dbg)
         self.stmts.append(stmt)
         assert isinstance(val, IntegerValue)
+        return val
+
+    def ir_constant_bool(self, value: bool, dbg: Optional[DebugInfo] = None) -> BooleanValue:
+        ir = ConstantBoolIR(value)
+        val, stmt = ir.build_ir(len(self.stmts), [], dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, BooleanValue)
         return val
 
     def ir_constant_float(self, value: float, dbg: Optional[DebugInfo] = None) -> FloatValue:
@@ -728,14 +738,21 @@ class IRBuilderImpl(IRBuilder):
         assert isinstance(val, FloatValue)
         return val
 
-    def ir_select_i(self, condition: IntegerValue, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_select_i(self, condition: BooleanValue, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         ir = SelectIIR()
         val, stmt = ir.build_ir(len(self.stmts), [condition, a, b], dbg)
         self.stmts.append(stmt)
         assert isinstance(val, IntegerValue)
         return val
 
-    def ir_select_f(self, condition: IntegerValue, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> FloatValue:
+    def ir_select_b(self, condition: BooleanValue, a: BooleanValue, b: BooleanValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
+        ir = SelectBIR()
+        val, stmt = ir.build_ir(len(self.stmts), [condition, a, b], dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, BooleanValue)
+        return val
+
+    def ir_select_f(self, condition: BooleanValue, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> FloatValue:
         ir = SelectFIR()
         val, stmt = ir.build_ir(len(self.stmts), [condition, a, b], dbg)
         self.stmts.append(stmt)
@@ -777,116 +794,116 @@ class IRBuilderImpl(IRBuilder):
         assert isinstance(val, FloatValue)
         return val
 
-    def ir_logical_and(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_logical_and(self, a: BooleanValue, b: BooleanValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         ir = LogicalAndIR()
         val, stmt = ir.build_ir(len(self.stmts), [a, b], dbg)
         self.stmts.append(stmt)
-        assert isinstance(val, IntegerValue)
+        assert isinstance(val, BooleanValue)
         return val
 
-    def ir_logical_or(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_logical_or(self, a: BooleanValue, b: BooleanValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         ir = LogicalOrIR()
         val, stmt = ir.build_ir(len(self.stmts), [a, b], dbg)
         self.stmts.append(stmt)
-        assert isinstance(val, IntegerValue)
+        assert isinstance(val, BooleanValue)
         return val
 
-    def ir_logical_not(self, x: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_logical_not(self, x: BooleanValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         ir = LogicalNotIR()
         val, stmt = ir.build_ir(len(self.stmts), [x], dbg)
         self.stmts.append(stmt)
-        assert isinstance(val, IntegerValue)
+        assert isinstance(val, BooleanValue)
         return val
 
-    def ir_not_equal_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_not_equal_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         ir = NotEqualIIR()
         val, stmt = ir.build_ir(len(self.stmts), [a, b], dbg)
         self.stmts.append(stmt)
-        assert isinstance(val, IntegerValue)
+        assert isinstance(val, BooleanValue)
         return val
 
-    def ir_not_equal_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_not_equal_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         ir = NotEqualFIR()
         val, stmt = ir.build_ir(len(self.stmts), [a, b], dbg)
         self.stmts.append(stmt)
-        assert isinstance(val, IntegerValue)
+        assert isinstance(val, BooleanValue)
         return val
 
-    def ir_equal_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_equal_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         ir = EqualIIR()
         val, stmt = ir.build_ir(len(self.stmts), [a, b], dbg)
         self.stmts.append(stmt)
-        assert isinstance(val, IntegerValue)
+        assert isinstance(val, BooleanValue)
         return val
 
-    def ir_equal_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_equal_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         ir = EqualFIR()
         val, stmt = ir.build_ir(len(self.stmts), [a, b], dbg)
         self.stmts.append(stmt)
-        assert isinstance(val, IntegerValue)
+        assert isinstance(val, BooleanValue)
         return val
 
-    def ir_equal_hash(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_equal_hash(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         ir = EqualHashIR()
         val, stmt = ir.build_ir(len(self.stmts), [a, b], dbg)
         self.stmts.append(stmt)
-        assert isinstance(val, IntegerValue)
+        assert isinstance(val, BooleanValue)
         return val
 
-    def ir_less_than_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_less_than_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         ir = LessThanIIR()
         val, stmt = ir.build_ir(len(self.stmts), [a, b], dbg)
         self.stmts.append(stmt)
-        assert isinstance(val, IntegerValue)
+        assert isinstance(val, BooleanValue)
         return val
 
-    def ir_less_than_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_less_than_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         ir = LessThanFIR()
         val, stmt = ir.build_ir(len(self.stmts), [a, b], dbg)
         self.stmts.append(stmt)
-        assert isinstance(val, IntegerValue)
+        assert isinstance(val, BooleanValue)
         return val
 
-    def ir_less_than_or_equal_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_less_than_or_equal_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         ir = LessThanOrEqualIIR()
         val, stmt = ir.build_ir(len(self.stmts), [a, b], dbg)
         self.stmts.append(stmt)
-        assert isinstance(val, IntegerValue)
+        assert isinstance(val, BooleanValue)
         return val
 
-    def ir_less_than_or_equal_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_less_than_or_equal_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         ir = LessThanOrEqualFIR()
         val, stmt = ir.build_ir(len(self.stmts), [a, b], dbg)
         self.stmts.append(stmt)
-        assert isinstance(val, IntegerValue)
+        assert isinstance(val, BooleanValue)
         return val
 
-    def ir_greater_than_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_greater_than_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         ir = GreaterThanIIR()
         val, stmt = ir.build_ir(len(self.stmts), [a, b], dbg)
         self.stmts.append(stmt)
-        assert isinstance(val, IntegerValue)
+        assert isinstance(val, BooleanValue)
         return val
 
-    def ir_greater_than_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_greater_than_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         ir = GreaterThanFIR()
         val, stmt = ir.build_ir(len(self.stmts), [a, b], dbg)
         self.stmts.append(stmt)
-        assert isinstance(val, IntegerValue)
+        assert isinstance(val, BooleanValue)
         return val
 
-    def ir_greater_than_or_equal_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_greater_than_or_equal_i(self, a: IntegerValue, b: IntegerValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         ir = GreaterThanOrEqualIIR()
         val, stmt = ir.build_ir(len(self.stmts), [a, b], dbg)
         self.stmts.append(stmt)
-        assert isinstance(val, IntegerValue)
+        assert isinstance(val, BooleanValue)
         return val
 
-    def ir_greater_than_or_equal_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+    def ir_greater_than_or_equal_f(self, a: FloatValue, b: FloatValue, dbg: Optional[DebugInfo] = None) -> BooleanValue:
         ir = GreaterThanOrEqualFIR()
         val, stmt = ir.build_ir(len(self.stmts), [a, b], dbg)
         self.stmts.append(stmt)
-        assert isinstance(val, IntegerValue)
+        assert isinstance(val, BooleanValue)
         return val
 
     def ir_sin_f(self, x: FloatValue, dbg: Optional[DebugInfo] = None) -> FloatValue:

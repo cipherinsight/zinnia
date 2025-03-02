@@ -1,4 +1,4 @@
-from typing import Dict, Optional, List
+from typing import Optional, List
 
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
 from zinnia.compile.builder.op_args_container import OpArgsContainer

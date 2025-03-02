@@ -36,7 +36,7 @@ class PrintOp(AbstractOp):
     def build(self, builder: IRBuilderInterface, kwargs: OpArgsContainer, dbg: Optional[DebugInfo] = None) -> Value:
         sep = kwargs.get('sep', builder.ir_constant_str(" "))
         end = kwargs.get('end', builder.ir_constant_str("\n"))
-        flush = kwargs.get('flush', builder.ir_constant_int(0))
+        flush = kwargs.get('flush', builder.ir_constant_bool(False))
         if not isinstance(sep, StringValue):
             raise TypeInferenceError(dbg, f"Expected string for `sep` but got {sep.type()}")
         if not isinstance(end, StringValue):

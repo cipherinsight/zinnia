@@ -12,6 +12,7 @@ from .ast_cond_exp import ASTCondExp
 from .ast_cond_stmt import ASTCondStatement
 from .ast_constant_float import ASTConstantFloat
 from .ast_constant_int import ASTConstantInteger
+from .ast_constant_bool import ASTConstantBoolean
 from .ast_constant_none import ASTConstantNone
 from .ast_constant_str import ASTConstantString
 from .ast_continue_stmt import ASTContinueStatement

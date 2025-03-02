@@ -3,7 +3,8 @@ from typing import List, Dict, Callable, Optional
 from zinnia.compile.builder.op_args_container import OpArgsContainer
 from zinnia.debug.exception import TypeInferenceError
 from zinnia.op_def.abstract.abstract_op import AbstractOp
-from zinnia.compile.type_sys import DTDescriptor, IntegerDTDescriptor, FloatDTDescriptor, FloatType, IntegerType
+from zinnia.compile.type_sys import DTDescriptor, IntegerDTDescriptor, FloatDTDescriptor, FloatType, IntegerType, \
+    BooleanType, BooleanDTDescriptor
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
 from zinnia.compile.triplet import NDArrayValue, NumberValue, Value
@@ -31,11 +32,13 @@ class AbstractArithemetic(AbstractOp):
     def get_expected_result_dt(self, lhs_dt: DTDescriptor, rhs_dt: DTDescriptor):
         if lhs_dt == FloatType and rhs_dt == FloatType:
             return FloatDTDescriptor()
-        elif lhs_dt == FloatType and rhs_dt == IntegerType:
+        elif lhs_dt == FloatType and (rhs_dt == IntegerType or rhs_dt == BooleanType):
             return FloatDTDescriptor()
-        elif lhs_dt == IntegerType and rhs_dt == FloatType:
+        elif (lhs_dt == IntegerType or lhs_dt == BooleanType) and rhs_dt == FloatType:
             return FloatDTDescriptor()
         elif lhs_dt == IntegerType and rhs_dt == IntegerType:
+            return IntegerDTDescriptor()
+        elif lhs_dt == BooleanType and rhs_dt == BooleanType:
             return IntegerDTDescriptor()
         raise NotImplementedError()
 

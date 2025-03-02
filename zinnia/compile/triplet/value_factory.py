@@ -1,11 +1,11 @@
 from zinnia.compile.triplet.value import Value, ClassValue, FloatValue, IntegerValue, ListValue, NDArrayValue, \
-    NoneValue, StringValue, TupleValue
+    NoneValue, StringValue, TupleValue, BooleanValue
 from zinnia.compile.triplet.store import ValueStore
 
 
 class ValueFactory:
     VALUE_CLASSES = [
-        ClassValue, FloatValue, IntegerValue, ListValue, NDArrayValue, NoneValue, StringValue, TupleValue
+        ClassValue, FloatValue, IntegerValue, ListValue, NDArrayValue, NoneValue, StringValue, TupleValue, BooleanValue
     ]
 
     @classmethod

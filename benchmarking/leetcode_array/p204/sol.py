@@ -16,7 +16,7 @@ from zinnia import *
 def verify_solution(n: int, result: int):
     is_prime = [1] * 1001
     number_of_primes = 0
-    assert 1001 >= n >= 0
+    assert 1000 >= n >= 0
     if n == 1 or n == 0:
         assert result == 0
     else:

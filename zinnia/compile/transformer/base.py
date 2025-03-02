@@ -1,5 +1,6 @@
 import ast
 
+from zinnia.compile.ast.ast_constant_bool import ASTConstantBoolean
 from zinnia.compile.ast.ast_formatted_value import ASTFormattedValue
 from zinnia.compile.ast.ast_joined_str import ASTJoinedStr
 from zinnia.compile.ast.ast_starred import ASTStarredExpr
@@ -221,7 +222,9 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
         dbg_info = self.get_dbg(node)
         if node.value is None:
             return ASTConstantNone(dbg_info)
-        if isinstance(node.value, int):
+        if isinstance(node.value, bool):
+            return ASTConstantBoolean(dbg_info, node.value)
+        elif isinstance(node.value, int):
             return ASTConstantInteger(dbg_info, node.value)
         elif isinstance(node.value, float):
             return ASTConstantFloat(dbg_info, node.value)

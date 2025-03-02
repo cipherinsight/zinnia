@@ -5,6 +5,7 @@ from zinnia.compile.builder.builder_impl import IRBuilderImpl
 from zinnia.compile.triplet import IntegerValue, FloatValue, Value
 from zinnia.compile.ir.ir_graph import IRGraph
 from zinnia.compile.optim_pass.abstract_pass import AbstractIRPass
+from zinnia.compile.triplet.value.boolean import BooleanValue
 from zinnia.ir_def.abstract_ir import AbstractIR
 from zinnia.ir_def.defs.ir_add_f import AddFIR
 from zinnia.ir_def.defs.ir_add_i import AddIIR
@@ -27,36 +28,36 @@ class ShortcutOptimIRPass(AbstractIRPass):
     def optimize_for_LogicalAndIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
         lhs, rhs = ir_args[0], ir_args[1]
         assert isinstance(lhs, IntegerValue) and isinstance(rhs, IntegerValue)
-        if lhs.val() is not None and lhs.val() == 0:
-            return ir_builder.ir_constant_int(0)
-        if rhs.val() is not None and rhs.val() == 0:
-            return ir_builder.ir_constant_int(0)
-        if lhs.val() is not None and lhs.val() != 0:
+        if lhs.val() is not None and lhs.val() == False:
+            return ir_builder.ir_constant_bool(False)
+        if rhs.val() is not None and rhs.val() == False:
+            return ir_builder.ir_constant_bool(False)
+        if lhs.val() is not None and lhs.val() != False:
             return rhs
-        if rhs.val() is not None and rhs.val() != 0:
+        if rhs.val() is not None and rhs.val() != False:
             return lhs
         if lhs.val() is not None and rhs.val() is not None:
-            return ir_builder.ir_constant_int(1 if (lhs.val() != 0 and rhs.val() != 0) else 0)
+            return ir_builder.ir_constant_bool(True if (lhs.val() != False and rhs.val() != False) else False)
         return ir_builder.create_ir(ir_instance, ir_args, None)
 
     def optimize_for_LogicalOrIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
         lhs, rhs = ir_args[0], ir_args[1]
         assert isinstance(lhs, IntegerValue) and isinstance(rhs, IntegerValue)
-        if lhs.val() is not None and lhs.val() != 0:
-            return ir_builder.ir_constant_int(1)
-        if rhs.val() is not None and rhs.val() != 0:
-            return ir_builder.ir_constant_int(1)
-        if lhs.val() is not None and lhs.val() == 0:
+        if lhs.val() is not None and lhs.val() != False:
+            return ir_builder.ir_constant_bool(True)
+        if rhs.val() is not None and rhs.val() != False:
+            return ir_builder.ir_constant_bool(True)
+        if lhs.val() is not None and lhs.val() == False:
             return rhs
-        if rhs.val() is not None and rhs.val() == 0:
+        if rhs.val() is not None and rhs.val() == False:
             return lhs
         if lhs.val() is not None and rhs.val() is not None:
-            return ir_builder.ir_constant_int(1 if (lhs.val() != 0 or rhs.val() != 0) else 0)
+            return ir_builder.ir_constant_bool(True if (lhs.val() != False or rhs.val() != False) else False)
         return ir_builder.create_ir(ir_instance, ir_args, None)
 
     def optimize_for_SelectIIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
         cond, tv, fv = ir_args[0], ir_args[1], ir_args[2]
-        assert isinstance(cond, IntegerValue)
+        assert isinstance(cond, BooleanValue)
         assert isinstance(tv, IntegerValue) and isinstance(fv, IntegerValue)
         if cond.val() is not None and cond.val() != 0:
             if tv.val() is not None:
@@ -66,11 +67,13 @@ class ShortcutOptimIRPass(AbstractIRPass):
             if fv.val() is not None:
                 return ir_builder.ir_constant_int(fv.val())
             return fv
+        if tv.ptr() == fv.ptr():
+            return tv
         return ir_builder.create_ir(ir_instance, ir_args, None)
 
     def optimize_for_SelectFIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
         cond, tv, fv = ir_args[0], ir_args[1], ir_args[2]
-        assert isinstance(cond, IntegerValue)
+        assert isinstance(cond, BooleanValue)
         assert isinstance(tv, FloatValue) and isinstance(fv, FloatValue)
         if cond.val() is not None and cond.val() != 0:
             if tv.val() is not None:
@@ -80,6 +83,8 @@ class ShortcutOptimIRPass(AbstractIRPass):
             if fv.val() is not None:
                 return ir_builder.ir_constant_float(fv.val())
             return fv
+        if tv.ptr() == fv.ptr():
+            return tv
         return ir_builder.create_ir(ir_instance, ir_args, None)
 
     def optimize_for_AddIIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:

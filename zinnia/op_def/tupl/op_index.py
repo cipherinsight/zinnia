@@ -19,6 +19,10 @@ class Tuple_IndexOp(AbstractOp):
     def get_name(cls) -> str:
         return "index"
 
+    @classmethod
+    def requires_condition(cls) -> bool:
+        return False
+
     def get_param_entries(self) -> List[AbstractOp._ParamEntry]:
         return [
             AbstractOp._ParamEntry("self"),
@@ -41,7 +45,7 @@ class Tuple_IndexOp(AbstractOp):
             raise StaticInferenceError(dbg, f"`start` must be an integer")
         if not isinstance(stop, IntegerValue):
             raise StaticInferenceError(dbg, f"`stop` must be an integer")
-        found_answer = builder.ir_constant_int(0)
+        found_answer = builder.ir_constant_bool(False)
         answer = builder.ir_constant_int(0)
         for i, v in enumerate(the_self.values()):
             equal = builder.op_bool_cast(builder.op_equal(v, value, dbg), dbg)
@@ -50,8 +54,8 @@ class Tuple_IndexOp(AbstractOp):
                 builder.ir_less_than_i(builder.ir_constant_int(i), stop, dbg),
             ))
             answer = builder.op_select(builder.ir_logical_and(equal, builder.ir_logical_not(found_answer)), builder.ir_constant_int(i), answer, dbg)
-            found_answer = builder.op_select(equal, builder.ir_constant_int(1), found_answer, dbg)
+            found_answer = builder.op_logical_or(equal, found_answer, dbg)
         if found_answer.val() is not None and found_answer.val() == 0:
             raise StaticInferenceError(dbg, f"Value not found in tuple")
-        builder.op_assert(found_answer, builder.op_constant_none(), dbg)
+        builder.op_assert(found_answer, kwargs.get_condition(), dbg)
         return answer

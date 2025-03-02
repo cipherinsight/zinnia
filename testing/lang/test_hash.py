@@ -12,17 +12,6 @@ def test_hash_integer():
     assert foo(hashed_object)
 
 
-def test_error_hash_float():
-    @zk_circuit
-    def foo(x: PoseidonHashed[Float]):
-        assert x == 5.0
-
-    with pytest.raises(ZinniaException) as e:
-        hashed_object = PoseidonHashed(5.0, 0)
-        assert foo(hashed_object)
-    assert "Cannot perform Poseidon hash on Float type." in str(e.value)
-
-
 def test_hash_ndarray():
     @zk_circuit
     def foo(x: PoseidonHashed[NDArray[Integer, 2, 2]]):

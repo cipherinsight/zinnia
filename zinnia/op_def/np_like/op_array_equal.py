@@ -33,7 +33,7 @@ class NP_ArrayEqualOp(AbstractOp):
         if isinstance(x2, ListValue) or isinstance(x2, TupleValue):
             x2 = builder.op_np_asarray(x2, dbg)
         if not isinstance(x1, NDArrayValue) or not isinstance(x2, NDArrayValue):
-            return builder.ir_constant_int(0)
+            return builder.ir_constant_bool(False)
         if x1.shape() != x2.shape():
-            return builder.ir_constant_int(0)
+            return builder.ir_constant_bool(False)
         return builder.op_ndarray_all(builder.op_equal(x1, x2, dbg), dbg)

@@ -7,7 +7,7 @@ from zinnia.op_def.abstract.abstract_op import AbstractOp
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
 from zinnia.compile.triplet import Value, IntegerValue, FloatValue, NDArrayValue, ListValue, TupleValue, NoneValue, \
-    ClassValue
+    ClassValue, BooleanValue
 from zinnia.op_def.internal.op_implicit_type_align import ImplicitTypeAlignOp
 
 
@@ -33,12 +33,14 @@ class SelectOp(AbstractOp):
         cond = kwargs["cond"]
         tv, fv = kwargs["tv"], kwargs["fv"]
         if not isinstance(cond, IntegerValue):
-            raise TypeInferenceError(dbg, f'In `{self.get_name()}`, argument `cond` must be an `Integer`')
+            raise TypeInferenceError(dbg, f'In `{self.get_name()}`, argument `cond` must be an `Boolean`')
         if tv.type() != fv.type():
             if ImplicitTypeAlignOp.verify_align_ability(tv.type(), fv.type()):
                 tv, fv = builder.op_implicit_type_align(tv, fv, dbg).values()
             else:
                 raise TypeInferenceError(dbg, f'In `{self.get_name()}`, arguments `tv` and `fv` must have the same type')
+        if isinstance(tv, BooleanValue) and isinstance(fv, BooleanValue):
+            return builder.ir_select_b(cond, tv, fv)
         if isinstance(tv, IntegerValue) and isinstance(fv, IntegerValue):
             return builder.ir_select_i(cond, tv, fv)
         elif isinstance(tv, FloatValue) and isinstance(fv, FloatValue):

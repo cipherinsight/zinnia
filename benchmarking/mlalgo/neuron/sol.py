@@ -55,8 +55,8 @@ def verify_solution(
 # json_dict["initial_weights"] = [float(x) for x in [0.0, 0.0]]
 # print(json.dumps(json_dict, indent=2))
 
-with open("compiled.rs", "w") as f:
-    f.write(ZKCircuit.from_method(verify_solution).compile().source)
+# with open("compiled.rs", "w") as f:
+#     f.write(ZKCircuit.from_method(verify_solution).compile().source)
 
 # rust version 380900 advice cells
 # python version 381143 advice cells
