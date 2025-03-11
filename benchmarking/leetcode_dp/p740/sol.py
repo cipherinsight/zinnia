@@ -37,21 +37,21 @@ def verify_solution(
     assert result == max(take, skip)
 
 
-def generate_solution(
-    nums: NDArray[int, 20],
-):
-    n = 20
-    values = [0] * n
-    for num in nums:
-        values[num] += num
-    take = 0
-    skip = 0
-    for i in range(n):
-        takei = skip + values[i]
-        skipi = max(skip, take)
-        take = takei
-        skip = skipi
-    return max(take, skip)
+# def generate_solution(
+#     nums: NDArray[int, 20],
+# ):
+#     n = 20
+#     values = [0] * n
+#     for num in nums:
+#         values[num] += num
+#     take = 0
+#     skip = 0
+#     for i in range(n):
+#         takei = skip + values[i]
+#         skipi = max(skip, take)
+#         take = takei
+#         skip = skipi
+#     return max(take, skip)
 
 
 # np.random.seed(0)

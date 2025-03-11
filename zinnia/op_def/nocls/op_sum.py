@@ -30,9 +30,9 @@ class SumOp(AbstractOp):
         iterable = kwargs["iterable"]
         start = kwargs.get("start", builder.op_constant_none())
         if isinstance(iterable, NDArrayValue):
-            result = builder.op_get_item(iterable, builder.op_square_brackets([builder.ir_constant_int(0)]), dbg)
+            result = builder.op_get_item(builder.ir_constant_bool(False), iterable, builder.op_square_brackets([builder.ir_constant_int(0)]), dbg)
             for i in range(1, iterable.shape()[0]):
-                result = builder.op_add(result, builder.op_get_item(iterable, builder.op_square_brackets([builder.ir_constant_int(i)]), dbg), dbg)
+                result = builder.op_add(result, builder.op_get_item(builder.ir_constant_bool(False), iterable, builder.op_square_brackets([builder.ir_constant_int(i)]), dbg), dbg)
             if not isinstance(start, NoneValue):
                 return builder.op_add(result, start, dbg)
             return result

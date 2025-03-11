@@ -37,8 +37,7 @@ class AssertOp(AbstractOp):
                 raise StaticInferenceError(dbg, "Assertion is always unsatisfiable")
             return builder.ir_assert(builder.ir_select_i(condition, operand, builder.ir_constant_bool(True)), dbg)
         elif isinstance(operand, NDArrayValue):
-            test_val = builder.ir_constant_bool(True)
             for val in operand.flattened_values():
-                test_val = builder.ir_logical_and(test_val, builder.op_bool_cast(val, dbg))
-            return builder.ir_assert(builder.ir_select_i(condition, test_val, builder.ir_constant_bool(True)), dbg)
+                builder.ir_assert(builder.ir_select_i(condition, builder.op_bool_cast(val), builder.ir_constant_bool(True)), dbg)
+            return builder.op_constant_none()
         raise TypeInferenceError(dbg, f"Type `{operand.type()}` is not supported on operator `{self.get_signature()}`. It only accepts an Integer value")

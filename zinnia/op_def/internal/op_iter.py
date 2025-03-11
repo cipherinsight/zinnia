@@ -39,6 +39,6 @@ class IterOp(AbstractOp):
                 sub_element_type = NDArrayDTDescriptor(sub_element_shape, x.dtype())
             return TupleValue(
                 tuple(sub_element_type for _ in range(x.shape()[0])),
-                tuple(builder.op_get_item(x, builder.op_square_brackets([builder.ir_constant_int(i)])) for i in range(x.shape()[0]))
+                tuple(builder.op_get_item(builder.ir_constant_bool(False), x, builder.op_square_brackets([builder.ir_constant_int(i)])) for i in range(x.shape()[0]))
             )
         raise TypeInferenceError(dbg, f"{x.type()} is not iterable")

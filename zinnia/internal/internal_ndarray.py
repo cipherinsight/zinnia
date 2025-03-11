@@ -256,7 +256,7 @@ class InternalNDArray:
             new_shape = tuple(x for i, x in enumerate(self.shape) if i != axis)
             if len(new_shape) == 0:
                 val, idx = new_values
-                return _parsing_helper(val, idx)
+                return depair_func(val, idx)
             new_values = _parsing_helper(new_shape, new_values)
             return InternalNDArray(shape=new_shape, values=new_values)
 

@@ -4,7 +4,7 @@ from zinnia.debug.dbg_info import DebugInfo
 from zinnia.debug.exception import StaticInferenceError
 from zinnia.op_def.abstract.abstract_op import AbstractOp
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
-from zinnia.compile.triplet import Value, ListValue, TupleValue, IntegerValue, NoneValue
+from zinnia.compile.triplet import Value, ListValue, TupleValue, IntegerValue, NoneValue, BooleanValue
 
 
 class AbstractItemSliceOp(AbstractOp):
@@ -37,11 +37,14 @@ class AbstractItemSliceOp(AbstractOp):
             if actual_number < 0 or actual_number >= dim:
                 raise StaticInferenceError(dbg, f"Slicing Index out of range, expected {0} <= index < {dim}, but got {number.val()}")
 
-    def insert_slicing_number_assertion(self, number: IntegerValue, dim: int, builder: IRBuilderInterface):
-        is_neg = builder.ir_less_than_i(number, builder.ir_constant_int(0))
-        number = builder.ir_add_i(number, builder.ir_mul_i(builder.ir_constant_int(dim), is_neg))
-        is_out_of_range = builder.ir_logical_or(
-            builder.ir_less_than_i(number, builder.ir_constant_int(0)),
-            builder.ir_logical_not(builder.ir_less_than_i(number, builder.ir_constant_int(dim)))
+    def insert_slicing_number_assertion(self, number: IntegerValue, condition: BooleanValue, dim: int, builder: IRBuilderInterface):
+        # negative indexing is not fully supported yet
+        # consider enabling it after negative indexing is fully supported
+        # is_neg = builder.ir_less_than_i(number, builder.ir_constant_int(0))
+        # number = builder.ir_add_i(number, builder.ir_mul_i(builder.ir_constant_int(dim), is_neg))
+        is_not_out_of_range = builder.ir_logical_and(
+            builder.ir_greater_than_or_equal_i(number, builder.ir_constant_int(0)),
+            builder.ir_less_than_i(number, builder.ir_constant_int(dim))
         )
-        builder.op_assert(builder.ir_logical_not(is_out_of_range), builder.op_constant_none())
+        assert isinstance(condition, BooleanValue)
+        builder.op_assert(is_not_out_of_range, condition)

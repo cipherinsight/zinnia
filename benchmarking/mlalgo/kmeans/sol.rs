@@ -69,7 +69,7 @@ fn verify_solution<F: ScalarField>(
             }
             let mut new_label = ctx.load_constant(F::ZERO);
             let mut min_dist = dists[0];
-            for j in 1..classes {
+            for j in 0..classes {
                 let is_less = range_chip.is_less_than(ctx, dists[j], min_dist, 128);
                 min_dist = gate.select(ctx, dists[j], min_dist, is_less);
                 let tmp = ctx.load_constant(F::from_u128(j as u128));
@@ -82,6 +82,11 @@ fn verify_solution<F: ScalarField>(
         let mut counts = vec![ctx.load_constant(fixed_point_chip.quantization(0.0)); classes];
         for i in 0..n {
             let label_i = labels[i];
+            let label_i_lt_classes = range_chip.is_less_than(ctx, label_i, Constant(F::from_u128(classes as u128)), 128);
+            let label_i_lt_0 = range_chip.is_less_than(ctx, label_i, Constant(F::ZERO), 128);
+            let label_i_gte_0 = gate.not(ctx, label_i_lt_0);
+            let label_i_within_range = gate.and(ctx, label_i_lt_classes, label_i_gte_0);
+            gate.assert_is_const(ctx, &label_i_within_range, &F::ONE);
             for j in 0..classes {
                 let j_eq_label_i = gate.is_equal(ctx, label_i, Constant(F::from_u128(j as u128)));
                 for k in 0..d {

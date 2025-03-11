@@ -39,6 +39,6 @@ class ListOp(AbstractOp):
                 sub_element_type = NDArrayDTDescriptor(sub_element_shape, x.dtype())
             return ListValue(
                 list(sub_element_type for _ in range(x.shape()[0])),
-                list(builder.op_get_item(x, builder.op_square_brackets([builder.ir_constant_int(i)])) for i in range(x.shape()[0]))
+                list(builder.op_get_item(builder.ir_constant_bool(False), x, builder.op_square_brackets([builder.ir_constant_int(i)])) for i in range(x.shape()[0]))
             )
         raise TypeInferenceError(dbg, f"`list` operator is not defined on {x.type()}")

@@ -1,6 +1,7 @@
 import warnings
 from typing import List, Tuple, Dict
 
+from zinnia.compile.ast.ast_aug_assign import ASTAugAssignStatement
 from zinnia.config.zinnia_config import ZinniaConfig
 from zinnia.compile.ast.ast_formatted_value import ASTFormattedValue
 from zinnia.compile.ast.ast_joined_str import ASTJoinedStr
@@ -76,6 +77,23 @@ class IRGenerator:
         val_ptr = self.visit(n.value)
         for target in n.targets:
             self._do_recursive_assign(target, val_ptr, True)
+        return None
+
+    def visit_ASTAugAssignStatement(self, n: ASTAugAssignStatement):
+        if self._ir_ctx.check_return_guaranteed() or self._ir_ctx.check_loop_terminated_guaranteed():
+            return None
+        val_ptr = self.visit(n.value)
+        target = n.targets[0]
+        assert isinstance(target, ASTSubscriptAssignTarget)
+        target_value = self.visit(target.target)
+        slicing_args = []
+        for s in target.slicing.data:
+            if isinstance(s, ASTExpression):
+                slicing_args.append(self.visit(s))
+            elif isinstance(s, Tuple):
+                slicing_args.append(self._ir_builder.op_parenthesis([self.visit(s[0]), self.visit(s[1]), self.visit(s[2])]))
+        slicing_args_value = self._ir_builder.op_square_brackets(slicing_args)
+        self._ir_builder.op_aug_item(self._ir_ctx.get_condition_value(), n.op_type, target_value, slicing_args_value, val_ptr, dbg=target.dbg)
         return None
 
     def visit_ASTForInStatement(self, n: ASTForInStatement):
@@ -379,7 +397,7 @@ class IRGenerator:
                 slicing_args.append(self.visit(s))
             elif isinstance(s, Tuple):
                 slicing_args.append(self._ir_builder.op_parenthesis([self.visit(s[0]), self.visit(s[1]), self.visit(s[2])]))
-        return self._ir_builder.op_get_item(val_ptr, self._ir_builder.op_square_brackets(slicing_args), dbg=n.dbg)
+        return self._ir_builder.op_get_item(self._ir_ctx.get_condition_value(), val_ptr, self._ir_builder.op_square_brackets(slicing_args), dbg=n.dbg)
 
     def visit_ASTLoad(self, n: ASTLoad):
         val_ptr = self._ir_ctx.get(n.name)

@@ -36,6 +36,9 @@ class NDArray_SetItemOp(AbstractNDArrayItemSlice):
             AbstractOp._ParamEntry("slicing_params")
         ]
 
+    def augment_operation(self, builder: IRBuilderInterface, assignee: Value, new_value: Value) -> Value:
+        return new_value
+
     def build(self, builder: IRBuilderInterface, kwargs: OpArgsContainer, dbg: Optional[DebugInfo] = None) -> Value:
         the_self = kwargs['self']
         the_value = kwargs['value']
@@ -43,7 +46,7 @@ class NDArray_SetItemOp(AbstractNDArrayItemSlice):
         slicing_params = self.check_slicing_params_datatype(kwargs['slicing_params'], dbg)
         assert isinstance(the_self, NDArrayValue)
         self.check_slicing_dimensions(slicing_params.values(), the_self.shape(), dbg)
-        candidates, conditions = self.find_all_candidates(builder, slicing_params.values(), the_self.shape(), dbg)
+        candidates, conditions = self.find_all_candidates(builder, slicing_params.values(), the_self.shape(), kwargs.get_condition(), dbg)
         new_ndarray = the_self
         for candidate, condition in zip(candidates, conditions):
             original_value = new_ndarray.get_item(candidate)
@@ -56,7 +59,11 @@ class NDArray_SetItemOp(AbstractNDArrayItemSlice):
                     processed_value = builder.ir_int_cast(processed_value, dbg)
                 elif processed_value.type() != original_value.type():
                     raise TypeInferenceError(dbg, f"Cannot assign {the_value.type()} to {original_value.type()}")
-                new_value = builder.op_select(builder.ir_logical_and(statement_cond, condition), processed_value, original_value)
+                new_value = builder.op_select(
+                    builder.ir_logical_and(statement_cond, condition),
+                    self.augment_operation(builder, original_value, processed_value),
+                    original_value
+                )
                 new_ndarray = new_ndarray.set_item(candidate, new_value)
             elif isinstance(original_value, NDArrayValue):
                 _value_ary = the_value
@@ -75,7 +82,11 @@ class NDArray_SetItemOp(AbstractNDArrayItemSlice):
                         warnings.warn(ImplicitCastWarning(dbg, _value_ary.dtype(), original_value.dtype()))
                     _value_ary = builder.op_ndarray_astype(_value_ary, builder.op_constant_class(original_value.dtype()))
                 _value_ary = _value_ary.broadcast_to(original_value.shape())
-                new_value = builder.op_select(builder.ir_logical_and(statement_cond, condition), _value_ary, original_value)
+                new_value = builder.op_select(
+                    builder.ir_logical_and(statement_cond, condition),
+                    self.augment_operation(builder, original_value, _value_ary),
+                    original_value
+                )
                 new_ndarray = new_ndarray.set_item(candidate, new_value)
         the_self.assign(new_ndarray)
         return the_value

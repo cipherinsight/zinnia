@@ -29,7 +29,7 @@ class AllOp(AbstractOp):
         if isinstance(x, NDArrayValue):
             result = builder.ir_constant_bool(True)
             for i in range(x.shape()[0]):
-                result = builder.ir_logical_and(result, builder.op_bool_cast(builder.op_ndarray_get_item(x, builder.op_square_brackets([builder.ir_constant_int(i)]))))
+                result = builder.ir_logical_and(result, builder.op_bool_cast(builder.op_ndarray_get_item(builder.ir_constant_bool(False), x, builder.op_square_brackets([builder.ir_constant_int(i)]))))
             return result
         elif isinstance(x, ListValue):
             result = builder.ir_constant_bool(True)

@@ -59,6 +59,7 @@ from zinnia.ir_def.defs.ir_sign_f import SignFIR
 from zinnia.ir_def.defs.ir_sign_i import SignIIR
 from zinnia.ir_def.defs.ir_sin_f import SinFIR
 from zinnia.ir_def.defs.ir_sinh_f import SinHFIR
+from zinnia.ir_def.defs.ir_sqrt_f import SqrtFIR
 from zinnia.ir_def.defs.ir_str_f import StrFIR
 from zinnia.ir_def.defs.ir_str_i import StrIIR
 from zinnia.ir_def.defs.ir_sub_f import SubFIR
@@ -423,6 +424,10 @@ class _CircomStatementBuilder:
 
     def _build_AbsFIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, AbsFIR)
+        raise NotImplementedError("Floating-point operations are not supported in Circom")
+
+    def _build_SqrtFIR(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.ir_instance, SqrtFIR)
         raise NotImplementedError("Floating-point operations are not supported in Circom")
 
     def _build_AbsIIR(self, stmt: IRStatement) -> List[str]:

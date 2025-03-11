@@ -7,7 +7,7 @@ import time
 
 from zinnia import ZKCircuit
 
-HALO2_FOLDER = "/home/zhantong/halo2-graph"
+HALO2_FOLDER = "/Users/zhantong/Projects/halo2-graph"
 TIME_MEASURE_REPETITIONS = 10
 
 
@@ -133,6 +133,18 @@ LEETCODE_MATRIX = [
     "p73",
     "p2133"
 ]
+DS1000 = [
+    "case296",
+    "case309",
+    "case330",
+    "case360",
+    "case387",
+    "case418",
+    "case453",
+    "case459",
+    "case501",
+    "case510",
+]
 
 DATASETS = {
     "mlalgo": MLALGO,
@@ -140,7 +152,8 @@ DATASETS = {
     "leetcode_dp": LEETCODE_DP,
     "leetcode_graph": LEETCODE_GRAPH,
     "leetcode_math": LEETCODE_MATH,
-    "leetcode_matrix": LEETCODE_MATRIX
+    "leetcode_matrix": LEETCODE_MATRIX,
+    "ds1000": DS1000
 }
 
 
@@ -164,6 +177,8 @@ def main():
                 with open('results.json', 'w') as f:
                     f.write(json.dumps(results_dict, indent=2))
                 raise e
+        with open('results.json', 'w') as f:
+            f.write(json.dumps(results_dict, indent=2))
 
 
     with open('results.json', 'w') as f:

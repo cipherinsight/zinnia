@@ -1,0 +1,321 @@
+Total numbers of filtered cases: 140
+No. 510
+Problem:
+I want to process a gray image in the form of np.array.
+*EDIT: chose a slightly more complex example to clarify
+Suppose:
+im = np.array([ [0,0,0,0,0,0] [0,0,5,1,2,0] [0,1,8,0,1,0] [0,0,0,7,1,0] [0,0,0,0,0,0]])
+I'm trying to create this:
+[ [0,5,1,2], [1,8,0,1], [0,0,7,1] ]
+That is, to remove the peripheral zeros(black pixels) that fill an entire row/column.
+In extreme cases, an image can be totally black, and I want the result to be an empty array.
+I can brute force this with loops, but intuitively I feel like numpy has a better means of doing this.
+A:
+<code>
+import numpy as np
+im = np.array([[0,0,0,0,0,0],
+               [0,0,5,1,2,0],
+               [0,1,8,0,1,0],
+               [0,0,0,7,1,0],
+               [0,0,0,0,0,0]])
+</code>
+result = ... # put solution in this variable
+BEGIN SOLUTION
+<code>
+
+------------------------------------------------------------
+mask = im == 0
+rows = np.flatnonzero((~mask).sum(axis=1))
+cols = np.flatnonzero((~mask).sum(axis=0))
+if rows.shape[0] == 0:
+    result = np.array([])
+else:
+    result = im[rows.min():rows.max()+1, cols.min():cols.max()+1]
+
+
+============================================================
+No. 459
+Problem:
+I want to be able to calculate the mean of A:
+ import numpy as np
+ A = ['33.33', '33.33', '33.33', '33.37']
+ NA = np.asarray(A)
+ AVG = np.mean(NA, axis=0)
+ print AVG
+This does not work, unless converted to:
+A = [33.33, 33.33, 33.33, 33.37]
+Is it possible to compute AVG WITHOUT loops?
+A:
+<code>
+import numpy as np
+A = ['33.33', '33.33', '33.33', '33.37']
+NA = np.asarray(A)
+</code>
+AVG = ... # put solution in this variable
+BEGIN SOLUTION
+<code>
+
+------------------------------------------------------------
+AVG = np.mean(NA.astype(float), axis = 0)
+
+
+============================================================
+No. 501
+Problem:
+I have two arrays:
+•	a: a 3-dimensional source array (N x M x 2)
+•	b: a 2-dimensional index array (N x M) containing 0 and 1s.
+I want to use the indices in b to select the corresponding elements of a in its third dimension. The resulting array should have the dimensions N x M. Here is the example as code:
+import numpy as np
+a = np.array( # dims: 3x3x2
+    [[[ 0,  1],
+     [ 2,  3],
+     [ 4,  5]],
+    [[ 6,  7],
+     [ 8,  9],
+     [10, 11]],
+    [[12, 13],
+     [14, 15],
+     [16, 17]]]
+)
+b = np.array( # dims: 3x3
+    [[0, 1, 1],
+    [1, 0, 1],
+    [1, 1, 0]]
+)
+# select the elements in a according to b
+# to achieve this result:
+desired = np.array(
+  [[ 0,  3,  5],
+   [ 7,  8, 11],
+   [13, 15, 16]]
+)
+
+At first, I thought this must have a simple solution but I could not find one at all. Since I would like to port it to tensorflow, I would appreciate if somebody knows a numpy-type solution for this.
+A:
+<code>
+import numpy as np
+a = np.array(
+    [[[ 0,  1],
+     [ 2,  3],
+     [ 4,  5]],
+    [[ 6,  7],
+     [ 8,  9],
+     [10, 11]],
+    [[12, 13],
+     [14, 15],
+     [16, 17]]]
+)
+b = np.array(
+    [[0, 1, 1],
+    [1, 0, 1],
+    [1, 1, 0]]
+)
+</code>
+result = ... # put solution in this variable
+BEGIN SOLUTION
+<code>
+
+------------------------------------------------------------
+result = np.take_along_axis(a, b[..., np.newaxis], axis=-1)[..., 0]
+
+============================================================
+No. 309
+Problem:
+How can I get get the position (indices) of the largest value in a multi-dimensional NumPy array `a`?
+Note that I want to get the raveled index of it, in C order.
+A:
+<code>
+import numpy as np
+a = np.array([[10,50,30],[60,20,40]])
+</code>
+result = ... # put solution in this variable
+BEGIN SOLUTION
+<code>
+
+------------------------------------------------------------
+result = a.argmax()
+
+============================================================
+No. 330
+Problem:
+I need to square a 2D numpy array (elementwise) and I have tried the following code:
+import numpy as np
+a = np.arange(4).reshape(2, 2)
+print(a^2, '\n')
+print(a*a)
+that yields:
+[[2 3]
+[0 1]]
+[[0 1]
+[4 9]]
+Clearly, the notation a*a gives me the result I want and not a^2.
+I would like to know if another notation exists to raise a numpy array to power = 2 or power = N? Instead of a*a*a*..*a.
+A:
+<code>
+import numpy as np
+example_a = np.arange(4).reshape(2, 2)
+def f(a = example_a, power = 5):
+    # return the solution in this function
+    # result = f(a, power)
+    ### BEGIN SOLUTION
+------------------------------------------------------------
+    result = a ** power
+
+    return result
+
+============================================================
+No. 387
+Problem:
+I have a 2-d numpy array as follows:
+a = np.array([[1,5,9,13],
+              [2,6,10,14],
+              [3,7,11,15],
+              [4,8,12,16]]
+I want to extract it into patches of 2 by 2 sizes with out repeating the elements.
+The answer should exactly be the same. This can be 3-d array or list with the same order of elements as below:
+[[[1,5],
+ [2,6]],
+ [[9,13],
+ [10,14]],
+ [[3,7],
+ [4,8]],
+ [[11,15],
+ [12,16]]]
+How can do it easily?
+In my real problem the size of a is (36, 72). I can not do it one by one. I want programmatic way of doing it.
+A:
+<code>
+import numpy as np
+a = np.array([[1,5,9,13],
+              [2,6,10,14],
+              [3,7,11,15],
+              [4,8,12,16]])
+</code>
+result = ... # put solution in this variable
+BEGIN SOLUTION
+<code>
+
+------------------------------------------------------------
+result = a.reshape(a.shape[0]//2, 2, a.shape[1]//2, 2).swapaxes(1, 2).reshape(-1, 2, 2)
+
+============================================================
+No. 453
+Problem:
+Given a 2-dimensional array in python, I would like to normalize each row with L2 Norm.
+I have started this code:
+from numpy import linalg as LA
+X = np.array([[1, 2, 3, 6],
+              [4, 5, 6, 5],
+              [1, 2, 5, 5],
+              [4, 5,10,25],
+              [5, 2,10,25]])
+print X.shape
+x = np.array([LA.norm(v,ord=2) for v in X])
+print x
+Output:
+   (5, 4)             # array dimension
+   [ 7.07106781, 10.09950494,  7.41619849, 27.67670501, 27.45906044]   # L2 on each Row
+How can I have the rows of the matrix L2-normalized without using LOOPS?
+A:
+<code>
+from numpy import linalg as LA
+import numpy as np
+X = np.array([[1, -2, 3, 6],
+              [4, 5, -6, 5],
+              [-1, 2, 5, 5],
+              [4, 5,10,-25],
+              [5, -2,10,25]])
+</code>
+result = ... # put solution in this variable
+BEGIN SOLUTION
+<code>
+
+------------------------------------------------------------
+l2 = np.sqrt((X*X).sum(axis=-1))
+result = X / l2.reshape(-1, 1)
+
+
+============================================================
+No. 418
+Problem:
+I have a 2-dimensional numpy array which contains time series data. I want to bin that array into equal partitions of a given length (it is fine to drop the last partition if it is not the same size) and then calculate the mean of each of those bins. Due to some reason, I want the binning starts from the end of the array.
+I suspect there is numpy, scipy, or pandas functionality to do this.
+example:
+data = [[4,2,5,6,7],
+	[5,4,3,5,7]]
+for a bin size of 2:
+bin_data = [[(6,7),(2,5)],
+	     [(5,7),(4,3)]]
+bin_data_mean = [[6.5,3.5],
+		  [6,3.5]]
+for a bin size of 3:
+bin_data = [[(5,6,7)],
+	     [(3,5,7)]]
+bin_data_mean = [[6],
+		  [5]]
+A:
+<code>
+import numpy as np
+data = np.array([[4, 2, 5, 6, 7],
+[ 5, 4, 3, 5, 7]])
+bin_size = 3
+</code>
+bin_data_mean = ... # put solution in this variable
+BEGIN SOLUTION
+<code>
+
+------------------------------------------------------------
+new_data = data[:, ::-1]
+bin_data_mean = new_data[:,:(data.shape[1] // bin_size) * bin_size].reshape(data.shape[0], -1, bin_size).mean(axis=-1)
+
+============================================================
+No. 296
+Problem:
+Let's say I have a 1d numpy positive integer array like this
+a = array([1,2,3])
+I would like to encode this as a 2D one-hot array(for natural number)
+b = array([[0,1,0,0], [0,0,1,0], [0,0,0,1]])
+The leftmost element corresponds to 0 in `a`(NO MATTER whether 0 appears in `a` or not.), and the rightmost corresponds to the largest number.
+Is there a quick way to do this only using numpy? Quicker than just looping over a to set elements of b, that is.
+A:
+<code>
+import numpy as np
+a = np.array([1, 0, 3])
+</code>
+b = ... # put solution in this variable
+BEGIN SOLUTION
+<code>
+
+------------------------------------------------------------
+b = np.zeros((a.size, a.max()+1))
+b[np.arange(a.size), a]=1
+
+============================================================
+No. 360
+Problem:
+
+>>> arr = np.array([[1,2,3,4], [5,6,7,8], [9,10,11,12]])
+>>> arr
+array([[ 1,  2,  3,  4],
+       [ 5,  6,  7,  8],
+       [ 9, 10, 11, 12]])
+I am deleting the 3rd row
+array([[ 1,  2,  3,  4],
+       [ 5,  6,  7,  8]])
+Are there any good way ?  Please consider this to be a novice question.
+
+
+A:
+<code>
+import numpy as np
+a = np.arange(12).reshape(3, 4)
+</code>
+a = ... # put solution in this variable
+BEGIN SOLUTION
+<code>
+
+------------------------------------------------------------
+a = np.delete(a, 2, axis = 0)
+
+============================================================

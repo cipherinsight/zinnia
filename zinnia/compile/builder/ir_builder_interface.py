@@ -98,13 +98,19 @@ class IRBuilderInterface:
     def op_set_item(self, statement_condition: BooleanValue, the_self: Value, slicing_params: ListValue, the_value: Value, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
-    def op_get_item(self, the_self: Value, slicing_params: ListValue, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_aug_item(self, statement_condition: BooleanValue, aug_op_name: str, the_self: Value, slicing_params: ListValue, the_value: Value, dbg: Optional[DebugInfo] = None) -> Value:
+        raise NotImplementedError()
+
+    def op_get_item(self, statement_condition: BooleanValue, the_self: Value, slicing_params: ListValue, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
     def op_ndarray_set_item(self, statement_condition: BooleanValue, the_self: NDArrayValue, slicing_params: ListValue, the_value: Value, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
-    def op_ndarray_get_item(self, the_self: NDArrayValue, slicing_params: ListValue, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_ndarray_aug_item(self, statement_condition: BooleanValue, aug_op_name: str, the_self: NDArrayValue, slicing_params: ListValue, the_value: Value, dbg: Optional[DebugInfo] = None) -> Value:
+        raise NotImplementedError()
+
+    def op_ndarray_get_item(self, statement_condition: BooleanValue, the_self: NDArrayValue, slicing_params: ListValue, dbg: Optional[DebugInfo] = None) -> Value:
         raise NotImplementedError()
 
     def op_min(self, args: List[Value], dbg: Optional[DebugInfo] = None) -> Value:

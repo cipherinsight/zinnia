@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Callable
 
 from zinnia.compile.builder.op_args_container import OpArgsContainer
 from zinnia.debug.exception import TypeInferenceError, StaticInferenceError
@@ -6,7 +6,7 @@ from zinnia.op_def.abstract.abstract_item_slice import AbstractItemSliceOp
 from zinnia.op_def.abstract.abstract_op import AbstractOp
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
-from zinnia.compile.triplet import Value, NDArrayValue, TupleValue, IntegerValue, ListValue
+from zinnia.compile.triplet import Value, NDArrayValue, TupleValue, IntegerValue, ListValue, BooleanValue
 from zinnia.op_def.internal.op_implicit_type_cast import ImplicitTypeCastOp
 
 
@@ -15,11 +15,11 @@ class SetItemOp(AbstractItemSliceOp):
         super().__init__()
 
     def get_signature(self) -> str:
-        return "set_item"
+        return "__set_item__"
 
     @classmethod
     def get_name(cls) -> str:
-        return "set_item"
+        return "__set_item__"
 
     @classmethod
     def is_inplace(cls) -> bool:
@@ -32,7 +32,14 @@ class SetItemOp(AbstractItemSliceOp):
             AbstractOp._ParamEntry("slicing_params")
         ]
 
-    def _build_list_assignment(self, builder: IRBuilderInterface, condition: IntegerValue, the_self: ListValue, the_value: Value, slicing_param: TupleValue | IntegerValue, dbg: Optional[DebugInfo] = None) -> Value:
+    def _build_list_assignment(
+            self,
+            builder: IRBuilderInterface,
+            condition: BooleanValue,
+            augment_op: Callable[[Value, Value], Value],
+            the_self: ListValue, the_value: Value, slicing_param: TupleValue | IntegerValue,
+            dbg: Optional[DebugInfo] = None
+    ) -> Value:
         if isinstance(slicing_param, IntegerValue):
             if slicing_param.val() is not None:
                 self.check_single_slicing_number(slicing_param, len(the_self.values()), dbg)
@@ -40,7 +47,11 @@ class SetItemOp(AbstractItemSliceOp):
                 if the_self.type_locked():
                     if ImplicitTypeCastOp.verify_cast_ability(the_value.type(), the_self.types()[the_index]):
                         processed_value = builder.op_implicit_type_cast(the_value, the_self.types()[the_index], dbg)
-                        processed_value = builder.op_select(condition, processed_value, the_self.values()[the_index])
+                        processed_value = builder.op_select(
+                            condition,
+                            augment_op(the_self.values()[the_index], processed_value),
+                            the_self.values()[the_index]
+                        )
                         the_self.values()[the_index].assign(processed_value)
                     else:
                         raise StaticInferenceError(dbg,"Cannot change the data type of the list element, as the list is not defined at this scope")
@@ -56,11 +67,15 @@ class SetItemOp(AbstractItemSliceOp):
                 processed_value = builder.op_implicit_type_cast(the_value, the_self.types()[0])
             else:
                 raise StaticInferenceError(dbg, f"{the_self.type()} set_item: the value type is not equal to the element type of the list")
-            self.insert_slicing_number_assertion(slicing_param, len(the_self.values()), builder)
+            self.insert_slicing_number_assertion(slicing_param, condition, len(the_self.values()), builder)
             new_values = the_self.values()
             for i, v in enumerate(the_self.values()):
                 selected_value = builder.op_select(condition, processed_value, the_self.values()[i])
-                new_values[i] = builder.op_select(builder.ir_equal_i(slicing_param, builder.ir_constant_int(i)), selected_value, v)
+                new_values[i] = builder.op_select(
+                    builder.ir_equal_i(slicing_param, builder.ir_constant_int(i)),
+                    augment_op(v, selected_value),
+                    v
+                )
             the_self.assign(ListValue(the_self.types(), new_values))
             return the_value
         elif isinstance(slicing_param, TupleValue):
@@ -94,7 +109,7 @@ class SetItemOp(AbstractItemSliceOp):
             if len(slicing_params.values()) != 1:
                 raise StaticInferenceError(dbg, f"List set_item should have exactly one slicing parameter")
             slicing_param = slicing_params.values()[0]
-            return self._build_list_assignment(builder, kwargs.get_condition(), the_self, the_value, slicing_param, dbg)
+            return self._build_list_assignment(builder, kwargs.get_condition(), lambda x, y: y, the_self, the_value, slicing_param, dbg)
         if isinstance(the_self, NDArrayValue):
             return builder.op_ndarray_set_item(kwargs.get_condition(), the_self, slicing_params, the_value, dbg)
         raise TypeInferenceError(dbg, f"{the_self.type()} does not support item assignment")

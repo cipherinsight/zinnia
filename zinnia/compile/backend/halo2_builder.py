@@ -59,6 +59,7 @@ from zinnia.ir_def.defs.ir_sign_f import SignFIR
 from zinnia.ir_def.defs.ir_sign_i import SignIIR
 from zinnia.ir_def.defs.ir_sin_f import SinFIR
 from zinnia.ir_def.defs.ir_sinh_f import SinHFIR
+from zinnia.ir_def.defs.ir_sqrt_f import SqrtFIR
 from zinnia.ir_def.defs.ir_str_f import StrFIR
 from zinnia.ir_def.defs.ir_str_i import StrIIR
 from zinnia.ir_def.defs.ir_sub_f import SubFIR
@@ -87,6 +88,9 @@ class _Halo2StatementBuilder:
         var_name = f"y_{_id}"
         self.id_var_lookup[_id] = var_name
         return var_name
+
+    def _get_w_var_name(self, _id: int) -> str:
+        return f"w_{_id}"
 
     def _build_AddFIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, AddFIR)
@@ -201,7 +205,7 @@ class _Halo2StatementBuilder:
         assert isinstance(stmt.ir_instance, ConstantFloatIR)
         constant_val = stmt.ir_instance.value
         return [
-            f"let {self._get_var_name(stmt.stmt_id)} = Constant(fixed_point_chip.quantization({constant_val}));"
+            f"let {self._get_var_name(stmt.stmt_id)} = Constant(fixed_point_chip.quantization({constant_val} as f64));"
         ]
 
     def _build_ConstantStrIR(self, stmt: IRStatement) -> List[str]:
@@ -218,8 +222,6 @@ class _Halo2StatementBuilder:
             f"let tmp_4 = range_chip.is_less_than(ctx, {x}, Constant(F::from(0)), 128);",
             f"let tmp_5 = tmp_4.value().get_lower_128() != 0;",
             f"let tmp_6 = if tmp_5 {{ctx.load_witness(fixed_point_chip.quantization(-(tmp_3 as f64)))}} else {{ctx.load_witness(fixed_point_chip.quantization(tmp_1 as f64))}};",
-            f"let tmp_7 = if tmp_5 {{gate.is_equal(ctx, Constant(F::from_u128(tmp_3)), tmp_2)}} else {{gate.is_equal(ctx, Constant(F::from_u128(tmp_1)), {x})}};",
-            f"gate.assert_is_const(ctx, &tmp_7, &F::ONE);",
             f"let {self._get_var_name(stmt.stmt_id)} = tmp_6;"
         ]
 
@@ -511,6 +513,13 @@ class _Halo2StatementBuilder:
         x = self._get_var_name(stmt.arguments[0])
         return [
             f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qabs(ctx, {x});"
+        ]
+
+    def _build_SqrtFIR(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.ir_instance, SqrtFIR)
+        x = self._get_var_name(stmt.arguments[0])
+        return [
+            f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qsqrt(ctx, {x});"
         ]
 
     def _build_AbsIIR(self, stmt: IRStatement) -> List[str]:

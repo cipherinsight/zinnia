@@ -1,5 +1,6 @@
 import ast
 
+from zinnia.compile.ast.ast_aug_assign import ASTAugAssignStatement
 from zinnia.compile.ast.ast_constant_bool import ASTConstantBoolean
 from zinnia.compile.ast.ast_formatted_value import ASTFormattedValue
 from zinnia.compile.ast.ast_joined_str import ASTJoinedStr
@@ -115,11 +116,9 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
                     dbg_info, op_type, ASTLoad(self.get_dbg(node.target), identifier_name), expr
                 ))
         elif isinstance(node.target, ast.Subscript):
-            target_expr = self.visit_expr(node.target)
             expr = self.visit_expr(node.value)
-            return ASTAssignStatement(
-                dbg_info, [self.visit_assign_target(node.target)],
-                ASTBinaryOperator(self.get_dbg(node.value), op_type, target_expr, expr))
+            return ASTAugAssignStatement(
+                dbg_info, [self.visit_assign_target(node.target)], op_type, expr)
         raise InvalidAssignStatementException(dbg_info,
                                               "The value to be assigned must be an identifier name or subscript.")
 

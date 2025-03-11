@@ -13,6 +13,7 @@ from zinnia.op_def.arithmetic.op_logical_and import LogicalAndOp
 from zinnia.op_def.arithmetic.op_logical_not import LogicalNotOp
 from zinnia.op_def.arithmetic.op_logical_or import LogicalOrOp
 from zinnia.op_def.arithmetic.op_logical_xor import LogicalXorOp
+from zinnia.op_def.internal.op_aug_item import AugItemOp
 from zinnia.op_def.internal.op_implicit_type_align import ImplicitTypeAlignOp
 from zinnia.op_def.internal.op_implicit_type_cast import ImplicitTypeCastOp
 from zinnia.ir_def.abstract_ir import AbstractIR
@@ -87,6 +88,7 @@ from zinnia.op_def.lst.op_pop import List_PopOp
 from zinnia.op_def.lst.op_remove import List_RemoveOp
 from zinnia.op_def.ndarray import NDArray_MaxOp, NDArray_MinOp, NDArray_ArgMaxOp, NDArray_ArgMinOp, NDArray_SumOp, \
     NDArray_ProdOp, NDArray_AnyOp, NDArray_AllOp
+from zinnia.op_def.ndarray.op_aug_item import NDArray_AugItemOp
 from zinnia.op_def.np_like import NP_ConcatenateOp, NP_StackOp
 from zinnia.op_def.np_like.op_asarray import NP_AsarrayOp
 from zinnia.op_def.ndarray.op_astype import NDArray_AsTypeOp
@@ -297,20 +299,30 @@ class IRBuilderImpl(IRBuilder):
         kwargs = op.argparse(dbg, [the_self, the_value, slicing_params], {})
         return op.build(self, OpArgsContainer(kwargs, statement_condition), dbg)
 
-    def op_get_item(self, the_self: Value, slicing_params: ListValue, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_aug_item(self, statement_condition: BooleanValue, aug_op_name: str, the_self: Value, slicing_params: ListValue, the_value: Value, dbg: Optional[DebugInfo] = None) -> Value:
+        op = AugItemOp(aug_op_name)
+        kwargs = op.argparse(dbg, [the_self, the_value, slicing_params], {})
+        return op.build(self, OpArgsContainer(kwargs, statement_condition), dbg)
+
+    def op_get_item(self, statement_condition: BooleanValue, the_self: Value, slicing_params: ListValue, dbg: Optional[DebugInfo] = None) -> Value:
         op = GetItemOp()
         kwargs = op.argparse(dbg, [the_self, slicing_params], {})
-        return op.build(self, OpArgsContainer(kwargs), dbg)
+        return op.build(self, OpArgsContainer(kwargs, statement_condition), dbg)
 
     def op_ndarray_set_item(self, statement_condition: BooleanValue, the_self: NDArrayValue, slicing_params: ListValue, the_value: Value, dbg: Optional[DebugInfo] = None) -> Value:
         op = NDArray_SetItemOp()
         kwargs = op.argparse(dbg, [the_self, the_value, slicing_params], {})
         return op.build(self, OpArgsContainer(kwargs, statement_condition), dbg)
 
-    def op_ndarray_get_item(self, the_self: NDArrayValue, slicing_params: ListValue, dbg: Optional[DebugInfo] = None) -> Value:
+    def op_ndarray_aug_item(self, statement_condition: BooleanValue, aug_op_name: str, the_self: NDArrayValue, slicing_params: ListValue, the_value: Value, dbg: Optional[DebugInfo] = None) -> Value:
+        op = NDArray_AugItemOp(aug_op_name)
+        kwargs = op.argparse(dbg, [the_self, the_value, slicing_params], {})
+        return op.build(self, OpArgsContainer(kwargs, statement_condition), dbg)
+
+    def op_ndarray_get_item(self, statement_condition: BooleanValue, the_self: NDArrayValue, slicing_params: ListValue, dbg: Optional[DebugInfo] = None) -> Value:
         op = NDArray_GetItemOp()
         kwargs = op.argparse(dbg, [the_self, slicing_params], {})
-        return op.build(self, OpArgsContainer(kwargs), dbg)
+        return op.build(self, OpArgsContainer(kwargs, statement_condition), dbg)
 
     def op_min(self, args: List[Value], dbg: Optional[DebugInfo] = None) -> Value:
         op = MinOp()
