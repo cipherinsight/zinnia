@@ -65,7 +65,7 @@ fn main() {
     if args.execute {
         panic!("Execution not supported in this environment.");
     } else {
-        // Setup the program for proving.
+                // Setup the program for proving.
         let (pk, vk) = client.setup(FIBONACCI_ELF);
 
         let start = Instant::now();
@@ -77,6 +77,17 @@ fn main() {
         let duration = start.elapsed();
         println!("Prove time (zk-STARK) (ms): {:?}", duration.as_millis());
 
+        proof
+        .save("proof-with-pis-stark.bin")
+        .expect("saving proof failed");
+
+        let start = Instant::now();
+        // Verify the proof.
+        client.verify(&proof, &vk).expect("failed to verify proof");
+        let duration = start.elapsed();
+        println!("Verify time (zk-STARK) (ms): {:?}", duration.as_millis());
+        println!("Successfully verified proof!");
+
         let start = Instant::now();
         // Generate the proof
         let proof = client
@@ -85,7 +96,7 @@ fn main() {
             .run()
             .expect("failed to generate proof");
         let duration = start.elapsed();
-        println!("Prove time (ms): {:?}", duration.as_millis());
+        println!("Prove time (zk-SNARK) (ms): {:?}", duration.as_millis());
 
         println!("Successfully generated proof!");
 
@@ -97,7 +108,7 @@ fn main() {
         // Verify the proof.
         client.verify(&proof, &vk).expect("failed to verify proof");
         let duration = start.elapsed();
-        println!("Verify time (ms): {:?}", duration.as_millis());
+        println!("Verify time (zk-SNARK) (ms): {:?}", duration.as_millis());
         println!("Successfully verified proof!");
     }
 }

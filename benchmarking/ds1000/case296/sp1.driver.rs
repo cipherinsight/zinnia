@@ -50,30 +50,27 @@ fn main() {
     // Setup the inputs.
     let mut stdin = SP1Stdin::new();
 
-    let mut rng = rand::rngs::StdRng::seed_from_u64(0);
+    // let mut rng = rand::rngs::StdRng::seed_from_u64(0);
 
-    let bank = vec![
-        vec![0, 1, 0, 0, 0],
-        vec![0, 0, 0, 0, 0],
-        vec![1, 0, 1, 0, 0],
-        vec![0, 0, 0, 0, 0],
-        vec![0, 1, 0, 1, 0],
-    ];
-    let expected = 7;
-
-    for i in 0..5 {
-        for j in 0..5 {
-            stdin.write(&bank[i][j]);
-        }
+    for x in [
+        1, 0, 3
+    ] {
+        let tmp: i32 = x;
+        stdin.write(&tmp);
     }
-    stdin.write(&expected);
+    for x in [
+        0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1
+    ] {
+        let tmp: i32 = x;
+        stdin.write(&tmp);
+    }
 
-    // println!("n: {}", args.n);
+    // println!("n: {}", args.n
 
     if args.execute {
         panic!("Execution not supported in this environment.");
     } else {
-                // Setup the program for proving.
+        // Setup the program for proving.
         let (pk, vk) = client.setup(FIBONACCI_ELF);
 
         let start = Instant::now();
@@ -117,6 +114,5 @@ fn main() {
         client.verify(&proof, &vk).expect("failed to verify proof");
         let duration = start.elapsed();
         println!("Verify time (zk-SNARK) (ms): {:?}", duration.as_millis());
-        println!("Successfully verified proof!");
-    }
+        println!("Successfully verified proof!");    }
 }

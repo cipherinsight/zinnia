@@ -50,25 +50,44 @@ fn main() {
     // Setup the inputs.
     let mut stdin = SP1Stdin::new();
 
-    let mut rng = rand::rngs::StdRng::seed_from_u64(0);
+    // let mut rng = rand::rngs::StdRng::seed_from_u64(0);
 
-    let bank = vec![
-        vec![0, 1, 0, 0, 0],
-        vec![0, 0, 0, 0, 0],
-        vec![1, 0, 1, 0, 0],
-        vec![0, 0, 0, 0, 0],
-        vec![0, 1, 0, 1, 0],
-    ];
-    let expected = 7;
-
-    for i in 0..5 {
-        for j in 0..5 {
-            stdin.write(&bank[i][j]);
-        }
+    for x in [
+        1, 2, 3, 6,
+4, 5, 6, 5,
+1, 2, 5, 5,
+4, 5,10,25,
+5, 2,10,25
+    ] {
+        let tmp: f64 = x as f64;
+        stdin.write(&tmp);
     }
-    stdin.write(&expected);
-
-    // println!("n: {}", args.n);
+    for x in [
+        0.1414213562373095,
+0.282842712474619,
+0.4242640687119285,
+0.848528137423857,
+0.39605901719066977,
+0.4950737714883372,
+0.5940885257860046,
+0.4950737714883372,
+0.13483997249264842,
+0.26967994498529685,
+ 0.674199862463242,
+ 0.674199862463242,
+ 0.14452587470598482,
+ 0.18065734338248104,
+ 0.3613146867649621,
+ 0.9032867169124053,
+ 0.18208926018230742,
+ 0.07283570407292297,
+ 0.36417852036461484,
+ 0.9104463009115371
+    ] {
+        let tmp: f64 = x as f64;
+        stdin.write(&tmp);
+    }
+    // println!("n: {}", args.n
 
     if args.execute {
         panic!("Execution not supported in this environment.");

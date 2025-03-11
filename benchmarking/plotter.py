@@ -92,7 +92,8 @@ def plot_sp1_benchmarking_results():
     zinnia_snark_size = []
     sp1_stark_proving_time = []
     sp1_snark_proving_time = []
-    sp1_verify_time = []
+    sp1_stark_verify_time = []
+    sp1_snark_verify_time = []
     sp1_snark_size = []
     for key, value in sp1_results_dict.items():
         _zinnia_prove_time = zinnia_results_dict[key]['zinnia']['proving_time']
@@ -106,8 +107,9 @@ def plot_sp1_benchmarking_results():
         sp1_stark_proving_time.append(value['stark_proving_time'])
         sp1_snark_proving_time.append(value['snark_proving_time'])
         sp1_snark_size.append(value['snark_size'])
-        sp1_verify_time.append(value['verify_time'])
-    
+        sp1_stark_verify_time.append(value['stark_verify_time'])
+        sp1_snark_verify_time.append(value['snark_verify_time'])
+
     fig, ax = plt.subplots()
     width = 0.25
     x = np.arange(len(names))
@@ -127,8 +129,9 @@ def plot_sp1_benchmarking_results():
     fig, ax = plt.subplots()
     width = 0.25
     x = np.arange(len(names))
-    ax.bar(x + width * 0, zinnia_verify_time, width, label='Zinnia')
-    ax.bar(x + width * 1, sp1_verify_time, width, label='SP1')
+    ax.bar(x + width * 0, zinnia_verify_time, width, label='Zinnia zk-SNARK')
+    ax.bar(x + width * 1, sp1_stark_verify_time, width, label='SP1 zk-STARK')
+    ax.bar(x + width * 2, sp1_snark_verify_time, width, label='SP1 zk-SNARK')
     ax.tick_params(axis='x', labelrotation=90)
     ax.set_ylabel('Verify Time (s)')
     ax.set_xticks(x + width / 2, names)

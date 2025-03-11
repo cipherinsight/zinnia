@@ -50,30 +50,20 @@ fn main() {
     // Setup the inputs.
     let mut stdin = SP1Stdin::new();
 
-    let mut rng = rand::rngs::StdRng::seed_from_u64(0);
+    // let mut rng = rand::rngs::StdRng::seed_from_u64(0);
 
-    let bank = vec![
-        vec![0, 1, 0, 0, 0],
-        vec![0, 0, 0, 0, 0],
-        vec![1, 0, 1, 0, 0],
-        vec![0, 0, 0, 0, 0],
-        vec![0, 1, 0, 1, 0],
-    ];
-    let expected = 7;
-
-    for i in 0..5 {
-        for j in 0..5 {
-            stdin.write(&bank[i][j]);
-        }
+    for x in [
+        1.0, 2.33, 3.14, 9.99, 5.0, 1.0, 68.6719856393, 305.2447761824001, 99500.99900049991
+    ] {
+        let tmp: f64 = x;
+        stdin.write(&tmp);
     }
-    stdin.write(&expected);
-
-    // println!("n: {}", args.n);
+    // println!("n: {}", args.n
 
     if args.execute {
         panic!("Execution not supported in this environment.");
     } else {
-                // Setup the program for proving.
+        // Setup the program for proving.
         let (pk, vk) = client.setup(FIBONACCI_ELF);
 
         let start = Instant::now();

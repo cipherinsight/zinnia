@@ -21,25 +21,32 @@ def run_prove(name: str, driver_source: str, program_source: str):
         my_env = os.environ.copy()
         stark_proving_time_in_seconds = 0
         snark_proving_time_in_seconds = 0
-        verify_time_in_seconds = 0
+        stark_verify_time_in_seconds = 0
+        snark_verify_time_in_seconds = 0
         snark_size = 0
+        stark_size = 0
         for i in range(TIME_MEASURE_REPETITIONS):
             prove_process = subprocess.run(['cargo', 'run', '--release', '--', '--prove'], capture_output=True, text=True, env=my_env)
             prove_process_feedback = prove_process.stdout + prove_process.stderr
             assert prove_process.returncode == 0, prove_process_feedback
             match = re.search(r"Prove time \(zk-STARK\) \(ms\): \s*([\d\.]+)", prove_process_feedback)
             assert match
-            proving_time_1 = float(match.group(1))
-            match = re.search(r"Prove time \(ms\): \s*([\d\.]+)", prove_process_feedback)
+            proving_time_stark = float(match.group(1))
+            match = re.search(r"Prove time \(zk-SNARK\) \(ms\): \s*([\d\.]+)", prove_process_feedback)
             assert match
-            proving_time_2 = float(match.group(1))
-            match = re.search(r"Verify time \(ms\): \s*([\d\.]+)", prove_process_feedback)
+            proving_time_snark = float(match.group(1))
+            match = re.search(r"Verify time \(zk-STARK\) \(ms\): \s*([\d\.]+)", prove_process_feedback)
             assert match
-            verify_time = float(match.group(1))
-            stark_proving_time_in_seconds += proving_time_1 / 1000
-            snark_proving_time_in_seconds += proving_time_2 / 1000
-            verify_time_in_seconds += verify_time / 1000
+            verify_time_stark = float(match.group(1))
+            match = re.search(r"Verify time \(zk-SNARK\) \(ms\): \s*([\d\.]+)", prove_process_feedback)
+            assert match
+            verify_time_snark = float(match.group(1))
+            stark_proving_time_in_seconds += proving_time_stark / 1000
+            snark_proving_time_in_seconds += proving_time_snark / 1000
+            stark_verify_time_in_seconds += proving_time_stark / 1000
+            snark_verify_time_in_seconds += verify_time_snark / 1000
             snark_size = os.path.getsize(os.path.join(SP1_FOLDER, "proof-with-pis.bin"))
+            stark_size = os.path.getsize(os.path.join(SP1_FOLDER, "proof-with-pis-stark.bin"))
     except Exception as e:
         os.chdir(original_directory)
         raise e
@@ -49,7 +56,9 @@ def run_prove(name: str, driver_source: str, program_source: str):
         "stark_proving_time": stark_proving_time_in_seconds / TIME_MEASURE_REPETITIONS,
         "snark_proving_time": snark_proving_time_in_seconds / TIME_MEASURE_REPETITIONS,
         "snark_size": snark_size,
-        "verify_time": verify_time_in_seconds / TIME_MEASURE_REPETITIONS,
+        "stark_size": stark_size,
+        "stark_verify_time": stark_verify_time_in_seconds / TIME_MEASURE_REPETITIONS,
+        "snark_verify_time": snark_verify_time_in_seconds / TIME_MEASURE_REPETITIONS,
     }
 
 
@@ -89,6 +98,18 @@ LEETCODE_MATRIX = [
     "p73",
     "p2133"
 ]
+DS1000 = [
+    "case296",
+    "case309",
+    "case330",
+    "case360",
+    "case387",
+    "case418",
+    "case453",
+    "case459",
+    "case501",
+    "case510",
+]
 
 DATASETS = {
     "mlalgo": MLALGO,
@@ -96,7 +117,8 @@ DATASETS = {
     "leetcode_dp": LEETCODE_DP,
     "leetcode_graph": LEETCODE_GRAPH,
     "leetcode_math": LEETCODE_MATH,
-    "leetcode_matrix": LEETCODE_MATRIX
+    "leetcode_matrix": LEETCODE_MATRIX,
+    "ds1000": DS1000
 }
 
 
@@ -120,7 +142,8 @@ def main():
                 with open('results-sp1.json', 'w') as f:
                     f.write(json.dumps(results_dict, indent=2))
                 raise e
-
+        with open('results-sp1.json', 'w') as f:
+            f.write(json.dumps(results_dict, indent=2))
 
     with open('results-sp1.json', 'w') as f:
         f.write(json.dumps(results_dict, indent=2))
