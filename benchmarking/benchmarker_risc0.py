@@ -4,27 +4,23 @@ import re
 import subprocess
 
 
-SP1_FOLDER = "/home/zhantong/sp1proj"
+RISC0_FOLDER = "/home/zhantong/risc0proj"
 TIME_MEASURE_REPETITIONS = 10
 
 
 def run_prove(name: str, driver_source: str, program_source: str):
     original_directory = os.getcwd()
     try:
-        with open(os.path.join(SP1_FOLDER, "script/src/bin/main.rs"), "w") as f:
+        with open(os.path.join(RISC0_FOLDER, "host/src/main.rs"), "w") as f:
             f.write(driver_source)
-        with open(os.path.join(SP1_FOLDER, "program/src/main.rs"), "w") as f:
+        with open(os.path.join(RISC0_FOLDER, "guest/src/main.rs"), "w") as f:
             f.write(program_source)
-        # set pwd to sp1 folder
-        os.chdir(SP1_FOLDER)
+        # set pwd to risc0 folder
+        os.chdir(RISC0_FOLDER)
         # run the command
         my_env = os.environ.copy()
         stark_proving_time_in_seconds = 0
-        snark_proving_time_in_seconds = 0
         stark_verify_time_in_seconds = 0
-        snark_verify_time_in_seconds = 0
-        snark_size = 0
-        stark_size = 0
         for i in range(TIME_MEASURE_REPETITIONS):
             prove_process = subprocess.run(['cargo', 'run', '--release', '--', '--prove'], capture_output=True, text=True, env=my_env)
             prove_process_feedback = prove_process.stdout + prove_process.stderr
@@ -32,21 +28,11 @@ def run_prove(name: str, driver_source: str, program_source: str):
             match = re.search(r"Prove time \(zk-STARK\) \(ms\): \s*([\d\.]+)", prove_process_feedback)
             assert match
             proving_time_stark = float(match.group(1))
-            match = re.search(r"Prove time \(zk-SNARK\) \(ms\): \s*([\d\.]+)", prove_process_feedback)
-            assert match
-            proving_time_snark = float(match.group(1))
             match = re.search(r"Verify time \(zk-STARK\) \(ms\): \s*([\d\.]+)", prove_process_feedback)
             assert match
             verify_time_stark = float(match.group(1))
-            match = re.search(r"Verify time \(zk-SNARK\) \(ms\): \s*([\d\.]+)", prove_process_feedback)
-            assert match
-            verify_time_snark = float(match.group(1))
             stark_proving_time_in_seconds += proving_time_stark / 1000
-            snark_proving_time_in_seconds += proving_time_snark / 1000
             stark_verify_time_in_seconds += verify_time_stark / 1000
-            snark_verify_time_in_seconds += verify_time_snark / 1000
-            snark_size = os.path.getsize(os.path.join(SP1_FOLDER, "proof-with-pis.bin"))
-            stark_size = os.path.getsize(os.path.join(SP1_FOLDER, "proof-with-pis-stark.bin"))
     except Exception as e:
         os.chdir(original_directory)
         raise e
@@ -54,20 +40,16 @@ def run_prove(name: str, driver_source: str, program_source: str):
     return {
         "name": name,
         "stark_proving_time": stark_proving_time_in_seconds / TIME_MEASURE_REPETITIONS,
-        "snark_proving_time": snark_proving_time_in_seconds / TIME_MEASURE_REPETITIONS,
-        "snark_size": snark_size,
-        "stark_size": stark_size,
         "stark_verify_time": stark_verify_time_in_seconds / TIME_MEASURE_REPETITIONS,
-        "snark_verify_time": snark_verify_time_in_seconds / TIME_MEASURE_REPETITIONS,
     }
 
 
 def run_evaluate(dataset: str, problem: str):
     # Get the driver source
-    with open(os.path.join('../benchmarking', dataset, problem, 'sp1.driver.rs'), 'r') as f:
+    with open(os.path.join('../benchmarking', dataset, problem, 'risc0.driver.rs'), 'r') as f:
         driver_source = f.read()
     # Get the program source
-    with open(os.path.join('../benchmarking', dataset, problem, 'sp1.prog.rs'), 'r') as f:
+    with open(os.path.join('../benchmarking', dataset, problem, 'risc0.prog.rs'), 'r') as f:
         program_source = f.read()
     # Run
     return run_prove(f"{dataset}::{problem}.py", driver_source, program_source)
@@ -123,10 +105,10 @@ DATASETS = {
 
 
 def main():
-    if not os.path.exists('results-sp1.json'):
+    if not os.path.exists('results-risc0.json'):
         results_dict = {}
     else:
-        with open('results-sp1.json', 'r') as f:
+        with open('results-risc0.json', 'r') as f:
             results_dict = json.load(f)
 
     for dataset, problems in DATASETS.items():
@@ -139,13 +121,13 @@ def main():
                 results_dict[f"{dataset}::{problem}"] = result
             except AssertionError as e:
                 print(f"Failed to evaluate {dataset}::{problem}. Skipping...")
-                with open('results-sp1.json', 'w') as f:
+                with open('results-risc0.json', 'w') as f:
                     f.write(json.dumps(results_dict, indent=2))
                 raise e
-        with open('results-sp1.json', 'w') as f:
+        with open('results-risc0.json', 'w') as f:
             f.write(json.dumps(results_dict, indent=2))
 
-    with open('results-sp1.json', 'w') as f:
+    with open('results-risc0.json', 'w') as f:
         f.write(json.dumps(results_dict, indent=2))
 
 
