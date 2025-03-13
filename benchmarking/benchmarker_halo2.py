@@ -5,10 +5,13 @@ import re
 import subprocess
 import time
 
-from zinnia import ZKCircuit
+from zinnia import ZKCircuit, ZinniaConfig
+from zinnia.config.optimization_config import OptimizationConfig
 
-HALO2_FOLDER = "/Users/zhantong/Projects/halo2-graph"
+HALO2_FOLDER = "/home/zhantong/halo2-graph"
 TIME_MEASURE_REPETITIONS = 10
+RESULT_PATH = 'results-abalation.json'
+ENABLE_OPTIMIZATIONS = False
 
 
 def run_prove(name: str, source: str, data: str):
@@ -22,7 +25,7 @@ def run_prove(name: str, source: str, data: str):
         # set pwd to halo2 folder
         # run the command
         my_env = os.environ.copy()
-        my_env['RUST_MIN_STACK'] = '16777216'
+        my_env['RUST_MIN_STACK'] = '536870912'  # 512 MiB
         my_env['LOOKUP_BITS'] = '6'
         keygen_process = subprocess.run(['cargo', 'run', '--example', 'target', '--', '--name', 'target', '-k', '16', '--input', 'target.in', 'keygen'], capture_output=True, text=True, env=my_env)
         keygen_feedback = keygen_process.stdout + keygen_process.stderr
@@ -79,7 +82,14 @@ def run_evaluate(dataset: str, problem: str):
     # Get the method from the module
     method = getattr(module, 'verify_solution')
     # Get the circuit
-    circuit = ZKCircuit.from_method(method)
+    config = ZinniaConfig(optimization_config=OptimizationConfig(
+        always_satisfied_elimination=ENABLE_OPTIMIZATIONS,
+        constant_fold=ENABLE_OPTIMIZATIONS,
+        dead_code_elimination=ENABLE_OPTIMIZATIONS,  # the program gets toooo big without those optimizations. So in abalation study we always enable it
+        duplicate_code_elimination=ENABLE_OPTIMIZATIONS,
+        shortcut_optimization=ENABLE_OPTIMIZATIONS
+    ))
+    circuit = ZKCircuit.from_method(method, config=config)
     # Compile the circuit
     source = ""
     avg_time = 0
@@ -158,10 +168,10 @@ DATASETS = {
 
 
 def main():
-    if not os.path.exists('results.json'):
+    if not os.path.exists(RESULT_PATH):
         results_dict = {}
     else:
-        with open('results.json', 'r') as f:
+        with open(RESULT_PATH, 'r') as f:
             results_dict = json.load(f)
 
     for dataset, problems in DATASETS.items():
@@ -174,14 +184,14 @@ def main():
                 results_dict[f"{dataset}::{problem}"] = result
             except AssertionError as e:
                 print(f"Failed to evaluate {dataset}::{problem}. Skipping...")
-                with open('results.json', 'w') as f:
+                with open(RESULT_PATH, 'w') as f:
                     f.write(json.dumps(results_dict, indent=2))
                 raise e
-        with open('results.json', 'w') as f:
+        with open(RESULT_PATH, 'w') as f:
             f.write(json.dumps(results_dict, indent=2))
 
 
-    with open('results.json', 'w') as f:
+    with open(RESULT_PATH, 'w') as f:
         f.write(json.dumps(results_dict, indent=2))
 
 

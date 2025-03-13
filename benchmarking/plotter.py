@@ -95,6 +95,8 @@ def plot_sp1_benchmarking_results():
     sp1_stark_verify_time = []
     sp1_snark_verify_time = []
     sp1_snark_size = []
+    risc0_stark_proving_time = []
+    risc0_stark_verify_time = []
     for key, value in sp1_results_dict.items():
         _zinnia_prove_time = zinnia_results_dict[key]['zinnia']['proving_time']
         _zinnia_verify_time = zinnia_results_dict[key]['zinnia']['verify_time']
@@ -109,6 +111,9 @@ def plot_sp1_benchmarking_results():
         sp1_snark_size.append(value['snark_size'])
         sp1_stark_verify_time.append(value['stark_verify_time'])
         sp1_snark_verify_time.append(value['snark_verify_time'])
+        risc0_stark_proving_time.append(value['stark_proving_time'])
+        risc0_stark_verify_time.append(value['stark_verify_time'])
+
 
     fig, ax = plt.subplots()
     width = 0.25
@@ -141,6 +146,36 @@ def plot_sp1_benchmarking_results():
     fig.tight_layout()
     plt.show()
     fig.savefig('results-sp1-verifying-time.png', dpi=300)
+
+    fig, ax = plt.subplots()
+    width = 0.25
+    x = np.arange(len(names))
+    ax.bar(x + width * 0, zinnia_snark_proving_time, width, label='Zinnia zk-SNARK')
+    ax.bar(x + width * 1, risc0_stark_proving_time, width, label='RISC0 zk-STARK')
+    ax.tick_params(axis='x', labelrotation=90)
+    ax.set_ylabel('Prove Time (s)')
+    ax.set_xticks(x + width / 2, names)
+    ax.set_title('Zinnia Compiler Performance Overviews')
+    ax.set_yscale('log')
+    ax.legend()
+    fig.tight_layout()
+    plt.show()
+    fig.savefig('results-risc0-proving-time.png', dpi=300)
+
+    fig, ax = plt.subplots()
+    width = 0.25
+    x = np.arange(len(names))
+    ax.bar(x + width * 0, zinnia_verify_time, width, label='Zinnia zk-SNARK')
+    ax.bar(x + width * 1, risc0_stark_verify_time, width, label='RISC0 zk-STARK')
+    ax.tick_params(axis='x', labelrotation=90)
+    ax.set_ylabel('Verify Time (s)')
+    ax.set_xticks(x + width / 2, names)
+    ax.set_title('Zinnia Compiler Performance Overviews')
+    ax.set_yscale('log')
+    ax.legend()
+    fig.tight_layout()
+    plt.show()
+    fig.savefig('results-risc0-verifying-time.png', dpi=300)
 
     fig, ax = plt.subplots()
     width = 0.25

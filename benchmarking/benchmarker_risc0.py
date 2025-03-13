@@ -13,7 +13,7 @@ def run_prove(name: str, driver_source: str, program_source: str):
     try:
         with open(os.path.join(RISC0_FOLDER, "host/src/main.rs"), "w") as f:
             f.write(driver_source)
-        with open(os.path.join(RISC0_FOLDER, "guest/src/main.rs"), "w") as f:
+        with open(os.path.join(RISC0_FOLDER, "methods/guest/src/main.rs"), "w") as f:
             f.write(program_source)
         # set pwd to risc0 folder
         os.chdir(RISC0_FOLDER)
@@ -22,7 +22,7 @@ def run_prove(name: str, driver_source: str, program_source: str):
         stark_proving_time_in_seconds = 0
         stark_verify_time_in_seconds = 0
         for i in range(TIME_MEASURE_REPETITIONS):
-            prove_process = subprocess.run(['cargo', 'run', '--release', '--', '--prove'], capture_output=True, text=True, env=my_env)
+            prove_process = subprocess.run(['cargo', 'run', '--release'], capture_output=True, text=True, env=my_env)
             prove_process_feedback = prove_process.stdout + prove_process.stderr
             assert prove_process.returncode == 0, prove_process_feedback
             match = re.search(r"Prove time \(zk-STARK\) \(ms\): \s*([\d\.]+)", prove_process_feedback)
