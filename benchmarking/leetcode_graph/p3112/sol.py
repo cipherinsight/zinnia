@@ -29,50 +29,64 @@ def verify_solution(
                 if graph[i][k] != -1 and graph[k][j] != -1:
                     graph[i][j] = min(graph[i][j], graph[i][k] + graph[k][j])
     for i in range(n):
-        if graph[0][i] != -1:
-            assert answers[i] == -1
-        elif disappear[i] <= graph[0][i]:
+        if graph[0][i] != -1 and disappear[i] >= graph[0][i]:
             assert answers[i] == graph[0][i]
         else:
             assert answers[i] == -1
 
-
-# entries = ZKCircuit.from_method(verify_solution).argparse(
+# verify_solution(
 #     np.array([
-#         [0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
-#         [1, 0, 1, 0, 0, 0, 0, 0, 0, 0],
-#         [0, 1, 0, 1, 0, 0, 0, 0, 0, 0],
-#         [0, 0, 1, 0, 1, 0, 0, 0, 0, 0],
-#         [0, 0, 0, 1, 0, 1, 0, 0, 0, 0],
-#         [0, 0, 0, 0, 1, 0, 1, 0, 0, 0],
-#         [0, 0, 0, 0, 0, 1, 0, 1, 0, 0],
-#         [0, 0, 0, 0, 0, 0, 1, 0, 1, 0],
-#         [0, 0, 0, 0, 0, 0, 0, 1, 0, 1],
-#         [0, 0, 0, 0, 0, 0, 0, 0, 1, 0],
+#         [1, 1, 1, 1, 1, 1, 1, 1, 2, -1],
+#         [1, 1, 1, -1, 1, 1, -1, 1, 1, -1],
+#         [1, 6, 1, -1, -1, 1, -1, 1, 1, -1],
+#         [-1, 1, 1, -1, -1, 4, -1, 1, 1, -1],
+#         [-1, 6, 6, -1, -1, 1, -1, 8, 8, -1],
+#         [-1, 1, 1, 5, 1, -1, 8, 1, 3, -1],
+#         [1, 1, 6, 3, 4, -1, 8, 1, 3, -1],
+#         [9, 1, 1, 6, 9, 9, 1, 1, 1, -1],
+#         [9, 1, 1, 9, 6, 9, 9, 1, 8, -1],
+#         [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1],
 #     ]),
-#     np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
-#     np.array([-1, -1, -1, -1, -1, -1, -1, -1, -1, -1])
-# ).entries
-#
-# json_dict = {}
-# for entry in entries:
-#     json_dict[entry.get_key()] = entry.get_value()
-# print(json.dumps(json_dict, indent=2))
-#
-# json_dict = {}
-# json_dict["graph"] = [int(x) for x in np.array([
-#         [0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
-#         [1, 0, 1, 0, 0, 0, 0, 0, 0, 0],
-#         [0, 1, 0, 1, 0, 0, 0, 0, 0, 0],
-#         [0, 0, 1, 0, 1, 0, 0, 0, 0, 0],
-#         [0, 0, 0, 1, 0, 1, 0, 0, 0, 0],
-#         [0, 0, 0, 0, 1, 0, 1, 0, 0, 0],
-#         [0, 0, 0, 0, 0, 1, 0, 1, 0, 0],
-#         [0, 0, 0, 0, 0, 0, 1, 0, 1, 0],
-#         [0, 0, 0, 0, 0, 0, 0, 1, 0, 1],
-#         [0, 0, 0, 0, 0, 0, 0, 0, 1, 0],
-#     ]).flatten().tolist()]
-# json_dict["disappear"] = [int(x) for x in np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]).tolist()]
-# json_dict["answers"] = [int(x) for x in np.array([-1, -1, -1, -1, -1, -1, -1, -1, -1, -1]).tolist()]
-# print(json.dumps(json_dict, indent=2))
+#     np.array([1, 2, 3, 4, 5, 6, 7, 8, 1, 10]),
+#     np.array([1, 1, 1, 1, 1, 1, 1, 1, -1, -1])
+# )
+
+
+entries = ZKCircuit.from_method(verify_solution).argparse(
+    np.array([[1, 1, 1, 1, 1, 1, 1, 1, 2, -1],
+        [1, 1, 1, -1, 1, 1, -1, 1, 1, -1],
+        [1, 6, 1, -1, -1, 1, -1, 1, 1, -1],
+        [-1, 1, 1, -1, -1, 4, -1, 1, 1, -1],
+        [-1, 6, 6, -1, -1, 1, -1, 8, 8, -1],
+        [-1, 1, 1, 5, 1, -1, 8, 1, 3, -1],
+        [1, 1, 6, 3, 4, -1, 8, 1, 3, -1],
+        [9, 1, 1, 6, 9, 9, 1, 1, 1, -1],
+        [9, 1, 1, 9, 6, 9, 9, 1, 8, -1],
+        [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1]]
+    ),
+    np.array([1, 2, 3, 4, 5, 6, 7, 8, 1, 10]),
+    np.array([1, 1, 1, 1, 1, 1, 1, 1, -1, -1])
+).entries
+
+json_dict = {}
+for entry in entries:
+    json_dict[entry.get_key()] = entry.get_value()
+print(json.dumps(json_dict, indent=2))
+
+json_dict = {}
+json_dict["graph"] = [int(x) for x in np.array(
+    [[1, 1, 1, 1, 1, 1, 1, 1, 2, -1],
+    [1, 1, 1, -1, 1, 1, -1, 1, 1, -1],
+    [1, 6, 1, -1, -1, 1, -1, 1, 1, -1],
+    [-1, 1, 1, -1, -1, 4, -1, 1, 1, -1],
+    [-1, 6, 6, -1, -1, 1, -1, 8, 8, -1],
+    [-1, 1, 1, 5, 1, -1, 8, 1, 3, -1],
+    [1, 1, 6, 3, 4, -1, 8, 1, 3, -1],
+    [9, 1, 1, 6, 9, 9, 1, 1, 1, -1],
+    [9, 1, 1, 9, 6, 9, 9, 1, 8, -1],
+    [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1]]
+).flatten().tolist()]
+json_dict["disappear"] = [int(x) for x in np.array([1, 2, 3, 4, 5, 6, 7, 8, 1, 10]).tolist()]
+json_dict["answers"] = [int(x) for x in np.array([1, 1, 1, 1, 1, 1, 1, 1, -1, -1]).tolist()]
+print(json.dumps(json_dict, indent=2))
 

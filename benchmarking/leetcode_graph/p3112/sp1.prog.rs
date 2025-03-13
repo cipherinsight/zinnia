@@ -48,17 +48,11 @@ pub fn main() {
 
     // Validate the answers based on graph distances and disappear times
     for i in 0..n {
-        if graph[0][i] != -1 {
-            assert_eq!(
-                answers[i], -1,
-                "Expected answers[{}] to be -1, but got {}",
-                i, answers[i]
-            );
-        } else if disappear[i] <= graph[0][i] {
+        if graph[0][i] != -1 && disappear[i] >= graph[0][i]{
             assert_eq!(
                 answers[i], graph[0][i],
-                "Expected answers[{}] to be {}, but got {}",
-                i, graph[0][i], answers[i]
+                "Expected answers[{}] to be -1, but got {}",
+                i, answers[i]
             );
         } else {
             assert_eq!(

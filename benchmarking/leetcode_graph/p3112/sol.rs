@@ -98,23 +98,17 @@ fn verify_solution<F: ScalarField>(
         let graph_0_i = graph[i];
         let graph_0_i_equals_negative_one = gate.is_equal(ctx, graph_0_i, negative_one);
         let answer_equals_negative_one = gate.is_equal(ctx, answers[i], negative_one);
+        let answer_i_equals_graph_0_i = gate.is_equal(ctx, graph_0_i, answers[i]);
         // apply constraint #1
-        let constraint = gate.or(ctx, graph_0_i_equals_negative_one, answer_equals_negative_one);
+        let disappear_i_equal_graph_0_i: AssignedValue<F> = gate.is_equal(ctx, disappear[i], graph_0_i);
+        let disappear_i_gt_graph_0_i: AssignedValue<F> = range_chip.is_less_than(ctx, graph_0_i, disappear[i], 128);
+        let disappear_i_gte_graph_0_i = gate.or(ctx, disappear_i_gt_graph_0_i, disappear_i_equal_graph_0_i);
+        let cond = gate.and(ctx, disappear_i_gte_graph_0_i, graph_0_i_equals_negative_one);
+        let cond_not = gate.not(ctx, cond);
+        let constraint = gate.or(ctx, cond_not, answer_i_equals_graph_0_i);
         gate.assert_is_const(ctx, &constraint, &F::ONE);
         // apply constraint #2
-        let disappear_i_equal_graph_0_i: AssignedValue<F> = gate.is_equal(ctx, disappear[i], graph_0_i);
-        let disappear_i_less_than_graph_0_i: AssignedValue<F> = range_chip.is_less_than(ctx, disappear[i], graph_0_i, 128);
-        let disappear_i_leq_graph_0_i = gate.or(ctx, disappear_i_equal_graph_0_i, disappear_i_less_than_graph_0_i);
-        let condition = gate.and(ctx, graph_0_i_equals_negative_one, disappear_i_leq_graph_0_i);
-        let answer_i_equals_graph_0_i = gate.is_equal(ctx, graph_0_i, answers[i]);
-        let condition_not = gate.not(ctx, condition);
-        let constraint = gate.or(ctx, condition_not, answer_i_equals_graph_0_i);
-        gate.assert_is_const(ctx, &constraint, &F::ONE);
-        // apply constraint #3
-        let disappear_i_not_leq_graph_0_i = gate.not(ctx, disappear_i_leq_graph_0_i);
-        let condition: AssignedValue<F> = gate.and(ctx, disappear_i_not_leq_graph_0_i, graph_0_i_equals_negative_one);
-        let condition_not = gate.not(ctx, condition);
-        let constraint = gate.or(ctx, condition_not, answer_equals_negative_one);
+        let constraint = gate.or(ctx, cond, answer_equals_negative_one);
         gate.assert_is_const(ctx, &constraint, &F::ONE);
     }
 }
