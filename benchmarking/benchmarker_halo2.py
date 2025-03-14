@@ -11,9 +11,9 @@ from zinnia.config.optimization_config import OptimizationConfig
 
 HALO2_FOLDER = "/home/zhantong/halo2-graph"
 TIME_MEASURE_REPETITIONS = 10
-RESULT_PATH = 'results.json'
-ENABLE_OPTIMIZATIONS = True
-MULTIPROCESSING_POOL_SIZE = 32
+RESULT_PATH = 'results-ablation.json'
+ENABLE_OPTIMIZATIONS = False
+MULTIPROCESSING_POOL_SIZE = 1
 
 
 def prove_executor(_):
@@ -32,7 +32,7 @@ def prove_executor(_):
     return proving_time / 1000 if proving_unit == "ms" else proving_time
 
 
-def verify_executor():
+def verify_executor(_):
     my_env = os.environ.copy()
     my_env['RUST_MIN_STACK'] = '536870912'  # 512 MiB
     my_env['LOOKUP_BITS'] = '6'
@@ -75,7 +75,7 @@ def run_prove(name: str, source: str, data: str):
         assert keygen_process.returncode == 0, keygen_feedback
         with Pool(MULTIPROCESSING_POOL_SIZE) as p:
             results = p.map(prove_executor, [_ for _ in range(TIME_MEASURE_REPETITIONS)])
-            proving_time_in_seconds = sum([result[1] for result in results]) / len(results)
+            proving_time_in_seconds = sum([result for result in results]) / len(results)
         snark_size = os.path.getsize(os.path.join(HALO2_FOLDER, "data/target.snark"))
         with Pool(MULTIPROCESSING_POOL_SIZE) as p:
             results = p.map(verify_executor, [_ for _ in range(TIME_MEASURE_REPETITIONS)])
