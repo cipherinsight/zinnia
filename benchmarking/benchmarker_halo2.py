@@ -10,8 +10,8 @@ from zinnia.config.optimization_config import OptimizationConfig
 
 HALO2_FOLDER = "/home/zhantong/halo2-graph"
 TIME_MEASURE_REPETITIONS = 10
-RESULT_PATH = 'results-abalation.json'
-ENABLE_OPTIMIZATIONS = False
+RESULT_PATH = 'results.json'
+ENABLE_OPTIMIZATIONS = True
 
 
 def run_prove(name: str, source: str, data: str):
