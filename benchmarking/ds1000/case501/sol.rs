@@ -55,11 +55,15 @@ fn verify_solution<F: ScalarField>(
             let b_i_j = b[i * 3 + j];
             let b_i_j_eq_0 = gate.is_equal(ctx, b_i_j, Constant(F::ZERO));
             let b_i_j_eq_1 = gate.is_equal(ctx, b_i_j, Constant(F::ONE));
-            let b_i_j_in_range = gate.and(ctx, b_i_j_eq_0, b_i_j_eq_1);
+            let b_i_j_in_range = gate.or(ctx, b_i_j_eq_0, b_i_j_eq_1);
             gate.assert_is_const(ctx, &b_i_j_in_range, &F::ONE);
-            selected_item = gate.select(ctx, item_0, selected_item, b_i_j_eq_0);
-            selected_item = gate.select(ctx, item_1, selected_item, b_i_j_eq_1);
-            let constraint = gate.is_equal(ctx, selected_item, results[i * 3 + j]);
+            let cond_not = gate.not(ctx, b_i_j_eq_0);
+            let equal_constraint = gate.is_equal(ctx, item_0, results[i * 3 + j]);
+            let constraint = gate.or(ctx, cond_not, equal_constraint);
+            gate.assert_is_const(ctx, &constraint, &F::ONE);
+            let cond_not = gate.not(ctx, cond_not);
+            let equal_constraint = gate.is_equal(ctx, item_1, results[i * 3 + j]);
+            let constraint = gate.or(ctx, cond_not, equal_constraint);
             gate.assert_is_const(ctx, &constraint, &F::ONE);
         }
     }

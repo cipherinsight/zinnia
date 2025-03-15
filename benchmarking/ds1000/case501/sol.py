@@ -70,7 +70,7 @@ def verify_solution(a: NDArray[int, 3, 3, 2], b: NDArray[int, 3, 3], desired: ND
             assert b[i, j] == 0 or b[i, j] == 1
             if b[i, j] == 0:
                 assert a[i, j, 0] == desired[i, j]
-            elif b[i, j] == 1:
+            else:
                 assert a[i, j, 1] == desired[i, j]
 
 
