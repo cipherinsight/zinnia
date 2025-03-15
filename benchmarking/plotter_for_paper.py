@@ -95,13 +95,16 @@ def plot_evaluation_results():
     title_font = {'fontweight': 'bold', 'fontname': 'Times New Roman', 'fontsize': 12}
 
     # Plot the comparison of gate reductions
+    print(max(acc_rates), sum(acc_rates) / len(acc_rates))
     fig, ax = plt.subplots(figsize=(5, 3))
     ax.bar(names, 100 - acc_rates, color='silver')
     ax.bar(names, acc_rates, color='lightgreen', bottom=100 - acc_rates, label='Optimized\nGates (%)')
     ax.tick_params(axis='x', labelrotation=90)
     ylabel = ax.set_ylabel('No. of Gates (%)', fontdict=title_font)
     ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1]))
-    plt.axhline(0, color='black', linewidth=1, linestyle='-')
+    ax.set_ylim(0, 117)
+    ax.axhline(100, color='black', linewidth=1, linestyle='--')
+    ax.text(len(names) - 1.5, 105, 'Baseline', fontsize=8, color='black', ha='center')
     fig.legend([AnyObject('silver'), AnyObject('lightgreen')],
                ['Zinnia Gates (%)', 'Optimized Gates (%)'],
                handler_map={
@@ -137,7 +140,15 @@ def plot_evaluation_results():
                handler_map={
                    AnyObject: AnyObjectHandler()
                },
-               loc='upper center', ncol=2,
+               loc=(0.18, 0.92), ncol=2,
+               prop={'size': 8},
+               frameon=False)
+    fig.legend([AnyObject('mediumseagreen'), AnyObject('cornflowerblue')],
+               ['Zinnia', 'Baseline'],
+               handler_map={
+                   AnyObject: AnyObjectHandler()
+               },
+               loc=(0.68, 0.92), ncol=2,
                prop={'size': 8},
                frameon=False)
     fig.tight_layout(rect=[0, 0, 1.0, 0.97])
@@ -272,7 +283,6 @@ def plot_ablation_study():
         verifying_time_baselines.append(halo2_verify_time)
         verifying_time_optimizes.append(zinnia_verify_time)
         verifying_time_ablations.append(ablation_results_dict[key]['zinnia']['verify_time'])
-        print(abs(zinnia_results_dict[key]['halo2']['proving_time'] - ablation_results_dict[key]['halo2']['proving_time']))
         acc_rates.append(-(zinnia_gates - halo2_gates) / halo2_gates * 100)
         downgrade_rates.append((ablation_results_dict[key]['zinnia']['advice_cells'] - zinnia_gates) / halo2_gates * 100)
         prove_time_rates.append(-(zinnia_prove_time - halo2_prove_time) / halo2_prove_time * 100)
@@ -316,7 +326,7 @@ def plot_ablation_study():
     ax1_top.xaxis.tick_top()
     ax1.xaxis.tick_bottom()
     ax1.set_ylim(0, 175)
-    ax1_top.set_ylim(600, 620)
+    ax1_top.set_ylim(600, 625)
     ax1.axhline(y=100, color='black', linestyle='--', label='Baseline', linewidth=1)
     ax1.text(len(names) - 1.5, 105, 'Baseline', fontsize=8, color='black', ha='center')
     d = .15  # proportion of vertical to horizontal extent of the slanted line

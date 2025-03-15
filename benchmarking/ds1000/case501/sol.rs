@@ -53,13 +53,10 @@ fn verify_solution<F: ScalarField>(
             let item_1 = a[i * 3 * 2 + j * 2 + 1];
             let mut selected_item = ctx.load_constant(F::ZERO);
             let b_i_j = b[i * 3 + j];
-            let b_i_j_lt_0 = range_chip.is_less_than(ctx, b_i_j, Constant(F::ZERO), 128);
-            let b_i_j_gte_0 = gate.not(ctx, b_i_j_lt_0);
-            let b_i_j_lt_2 = range_chip.is_less_than(ctx, b_i_j, Constant(F::from(2)), 128);
-            let b_i_j_in_range = gate.and(ctx, b_i_j_gte_0, b_i_j_lt_2);
-            gate.assert_is_const(ctx, &b_i_j_in_range, &F::ONE);
             let b_i_j_eq_0 = gate.is_equal(ctx, b_i_j, Constant(F::ZERO));
             let b_i_j_eq_1 = gate.is_equal(ctx, b_i_j, Constant(F::ONE));
+            let b_i_j_in_range = gate.and(ctx, b_i_j_eq_0, b_i_j_eq_1);
+            gate.assert_is_const(ctx, &b_i_j_in_range, &F::ONE);
             selected_item = gate.select(ctx, item_0, selected_item, b_i_j_eq_0);
             selected_item = gate.select(ctx, item_1, selected_item, b_i_j_eq_1);
             let constraint = gate.is_equal(ctx, selected_item, results[i * 3 + j]);
