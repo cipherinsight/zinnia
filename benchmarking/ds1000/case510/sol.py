@@ -35,6 +35,9 @@ import json
 from zinnia import *
 
 import numpy as np
+
+from zinnia.config import OptimizationConfig
+
 im = np.array([[0,0,0,0,0,0],
                [0,0,5,1,2,0],
                [0,1,8,0,1,0],
@@ -70,7 +73,14 @@ def verify_solution(input: NDArray[int, 5, 6], result: NDArray[int, 3, 4]):
 # assert verify_solution(im, result)
 
 # Parse inputs
-# program = ZKCircuit.from_method(verify_solution).compile()
+# program = ZKCircuit.from_method(verify_solution, config=ZinniaConfig(optimization_config=OptimizationConfig(
+#     always_satisfied_elimination=False,
+#     constant_fold=False,
+#     dead_code_elimination=False,
+#     duplicate_code_elimination=False,
+#     shortcut_optimization=False,
+# ))).compile()
+# print(program.source)
 # parsed_inputs = program.argparse(im, result)
 # json_dict = {}
 # for entry in parsed_inputs.entries:

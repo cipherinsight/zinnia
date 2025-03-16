@@ -69,13 +69,13 @@ fn verify_solution<F: ScalarField>(
             let cont = gate.or(ctx, zero_rows[i], zero_cols[j]);
             let cont_not = gate.not(ctx, cont);
             let mut target_ans = ctx.load_constant(F::ZERO);
+            let idx_lt_0 = range_chip.is_less_than(ctx, idx, Constant(F::ZERO), 128);
+            let idx_gte_0 = gate.not(ctx, idx_lt_0);
+            let idx_lt_12 = range_chip.is_less_than(ctx, idx, Constant(F::from(12)), 128);
+            let constraint = gate.and(ctx, idx_gte_0, idx_lt_12);
+            let constraint = gate.or(ctx, constraint, cont);
+            gate.assert_is_const(ctx, &constraint, &F::ONE);
             for k in 0..12 {
-                let idx_lt_0 = range_chip.is_less_than(ctx, idx, Constant(F::ZERO), 128);
-                let idx_gte_0 = gate.not(ctx, idx_lt_0);
-                let idx_lt_12 = range_chip.is_less_than(ctx, idx, Constant(F::from(12)), 128);
-                let constraint = gate.and(ctx, idx_gte_0, idx_lt_12);
-                let constraint = gate.or(ctx, constraint, cont);
-                gate.assert_is_const(ctx, &constraint, &F::ONE);
                 let idx_eq_k = gate.is_equal(ctx, idx, Constant(F::from(k)));
                 target_ans = gate.select(ctx, results[k as usize], target_ans, idx_eq_k);
             }

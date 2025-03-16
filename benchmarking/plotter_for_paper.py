@@ -247,6 +247,42 @@ def plot_performance_overviews():
     plt.show()
     fig.savefig('results-zkvm-time.pdf', dpi=300)
 
+    fig, [ax1, ax2] = plt.subplots(2, 1, figsize=(10, 4.5))
+    width = 0.16
+    x = np.arange(len(names))
+    colors = ['mediumseagreen', 'cornflowerblue', 'wheat', 'orange', 'gold']
+    ax1.bar(x + width * -2, zinnia_snark_proving_time, width, color=colors[0])
+    ax1.bar(x + width * -1, baseline_snark_proving_time, width, color=colors[1])
+    ax1.bar(x + width * 0, risc0_stark_proving_time, width, color=colors[2])
+    ax1.bar(x + width * +1, sp1_stark_proving_time, width, color=colors[3])
+    ax1.bar(x + width * +2, sp1_snark_proving_time, width, color=colors[4])
+    ax1.tick_params(labelbottom=False)
+    ax1.set_xticks(x, names)
+    ylabel = ax1.set_ylabel('Proving Time (s)', fontdict=title_font)
+    ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1]))
+    ax1.set_yscale('log')
+    ax2.bar(x + width * -2, zinnia_verify_time, width, color=colors[0])
+    ax2.bar(x + width * -1, baseline_verify_time, width, color=colors[1])
+    ax2.bar(x + width * 0, risc0_stark_verify_time, width, color=colors[2])
+    ax2.bar(x + width * +1, sp1_stark_verify_time, width, color=colors[3])
+    ax2.bar(x + width * +2, sp1_snark_verify_time, width, color=colors[4])
+    ax2.tick_params(axis='x', labelrotation=90)
+    ylabel = ax2.set_ylabel('Verifying Time (ms)', fontdict=title_font)
+    ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1]))
+    ax2.set_xticks(x, names)
+    ax2.set_yscale('log')
+    fig.legend([AnyObject(c) for c in colors],
+               ['Zinnia (zk-SNARK)', 'Baseline (zk-SNARK)', 'RISC0 (zk-STARK)', 'SP1 (zk-STARK)', 'SP1 (zk-SNARK)'],
+               handler_map={
+                   AnyObject: AnyObjectHandler()
+               },
+               loc='upper center', ncol=5,
+               prop={'size': 8},
+               frameon=False)
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    plt.show()
+    fig.savefig('results-zkvm-time-landscape.pdf', dpi=300)
+
 
 def plot_ablation_study():
     with open('results.json', 'r') as f:
