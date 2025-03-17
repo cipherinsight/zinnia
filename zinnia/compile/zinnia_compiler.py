@@ -40,6 +40,9 @@ class ZinniaCompiler:
         generator = IRGenerator(self.config)
         ir_graph = generator.generate(ast_tree, chips, externals)
         zk_program_ir = self.run_passes_for_zk_program(ir_graph)
+        # carrie mini-task 17.03.25
+        for stmt in zk_program_ir:
+            print(stmt)
         preprocess_ir = self.run_passes_for_input_preprocess(ir_graph)
         if self.config.get_backend() == ZinniaConfig.BACKEND_HALO2:
             prog_builder = Halo2ProgramBuilder(name, zk_program_ir)
