@@ -8,6 +8,7 @@ from zinnia.compile.triplet.value.boolean import BooleanValue
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.type_sys import DTDescriptor
 from zinnia.ir_def.defs.ir_constant_bool import ConstantBoolIR
+from zinnia.ir_def.defs.ir_inv_i import InvIIR
 from zinnia.ir_def.defs.ir_select_b import SelectBIR
 from zinnia.op_def.arithmetic.op_logical_and import LogicalAndOp
 from zinnia.op_def.arithmetic.op_logical_not import LogicalNotOp
@@ -1014,6 +1015,13 @@ class IRBuilderImpl(IRBuilder):
         val, stmt = ir.build_ir(len(self.stmts), [test], dbg)
         self.stmts.append(stmt)
         assert isinstance(val, NoneValue)
+        return val
+
+    def ir_inv_i(self, x: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+        ir = InvIIR()
+        val, stmt = ir.build_ir(len(self.stmts), [x], dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, IntegerValue)
         return val
 
     def ir_str_i(self, x: IntegerValue, dbg: Optional[DebugInfo] = None) -> StringValue:

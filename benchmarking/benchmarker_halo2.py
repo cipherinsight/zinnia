@@ -107,6 +107,7 @@ def run_evaluate(dataset: str, problem: str):
     module = importlib.import_module('.' + dataset + '.' + problem + '.sol', 'benchmarking')
     # Get the method from the module
     method = getattr(module, 'verify_solution')
+    chips = getattr(module, 'chips', [])
     # Get the circuit
     config = ZinniaConfig(optimization_config=OptimizationConfig(
         always_satisfied_elimination=ENABLE_OPTIMIZATIONS,
@@ -115,7 +116,7 @@ def run_evaluate(dataset: str, problem: str):
         duplicate_code_elimination=ENABLE_OPTIMIZATIONS,
         shortcut_optimization=ENABLE_OPTIMIZATIONS
     ))
-    circuit = ZKCircuit.from_method(method, config=config)
+    circuit = ZKCircuit.from_method(method, chips=chips, config=config)
     # Compile the circuit
     with Pool(MULTIPROCESSING_POOL_SIZE) as p:
         results = p.map(compile_executor, [circuit for _ in range(TIME_MEASURE_REPETITIONS)])
@@ -177,8 +178,13 @@ DS1000 = [
     "case501",
     "case510",
 ]
+CRYPT = [
+    "ecc",
+    "poseidon",
+]
 
 DATASETS = {
+    "crypt": CRYPT,
     "mlalgo": MLALGO,
     "leetcode_array": LEETCODE_ARRAY,
     "leetcode_dp": LEETCODE_DP,

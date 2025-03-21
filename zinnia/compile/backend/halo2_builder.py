@@ -30,6 +30,7 @@ from zinnia.ir_def.defs.ir_gt_f import GreaterThanFIR
 from zinnia.ir_def.defs.ir_gt_i import GreaterThanIIR
 from zinnia.ir_def.defs.ir_gte_f import GreaterThanOrEqualFIR
 from zinnia.ir_def.defs.ir_gte_i import GreaterThanOrEqualIIR
+from zinnia.ir_def.defs.ir_inv_i import InvIIR
 from zinnia.ir_def.defs.ir_poseidon_hash import PoseidonHashIR
 from zinnia.ir_def.defs.ir_int_cast import IntCastIR
 from zinnia.ir_def.defs.ir_log_f import LogFIR
@@ -148,8 +149,8 @@ class _Halo2StatementBuilder:
     def _build_ReadIntegerIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, ReadIntegerIR)
         return [
-            f"let tmp_1 = ctx.load_witness(F::from_u128((input.x_{'_'.join(map(str, stmt.ir_instance.indices))}).abs() as u128));",
-            f"let {self._get_var_name(stmt.stmt_id)} = if input.x_{'_'.join(map(str, stmt.ir_instance.indices))} >= 0 {{tmp_1}} else {{gate.neg(ctx, tmp_1)}};"
+            f"let tmp_1 = if input.x_{'_'.join(map(str, stmt.ir_instance.indices))}.chars().nth(0).unwrap() == '-' {{ctx.load_witness(F::from_str_vartime(&input.x_{'_'.join(map(str, stmt.ir_instance.indices))}[1..]).expect(\"deserialize field element should not fail\"))}} else {{ctx.load_witness(F::from_str_vartime(&input.x_{'_'.join(map(str, stmt.ir_instance.indices))}).expect(\"deserialize field element should not fail\"))}};",
+            f"let {self._get_var_name(stmt.stmt_id)} = if input.x_{'_'.join(map(str, stmt.ir_instance.indices))}.chars().nth(0).unwrap() == '-' {{gate.neg(ctx, tmp_1)}} else {{tmp_1}};"
         ]
 
     def _build_ReadHashIR(self, stmt: IRStatement) -> List[str]:
@@ -531,6 +532,16 @@ class _Halo2StatementBuilder:
             f"let {self._get_var_name(stmt.stmt_id)} = gate.select(ctx, tmp_2, {x}, tmp_1);"
         ]
 
+    def _build_InvIIR(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.ir_instance, InvIIR)
+        x = self._get_var_name(stmt.arguments[0])
+        return [
+            f"let {self._get_var_name(stmt.stmt_id)} = ctx.load_witness({x}.value.evaluate().invert().unwrap());",
+            f"let tmp_1 = gate.mul(ctx, {x}, {self._get_var_name(stmt.stmt_id)});",
+            f"let tmp_2 = gate.is_equal(ctx, tmp_1, Constant(F::ONE));",
+            f"gate.assert_is_const(ctx, &tmp_2, &F::ONE);"
+        ]
+
     def _build_SelectIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, SelectIIR)
         cond = self._get_var_name(stmt.arguments[0])
@@ -615,7 +626,7 @@ const R_P: usize = 57;
             if kind == "Hash":
                 inputs.append(f"pub hash_{'_'.join(map(str, indices))}: String")
             elif kind == "Integer":
-                inputs.append(f"pub x_{'_'.join(map(str, indices))}: i128")
+                inputs.append(f"pub x_{'_'.join(map(str, indices))}: String")
             elif kind == "Float":
                 inputs.append(f"pub x_{'_'.join(map(str, indices))}: f64")
             else:

@@ -57,7 +57,7 @@ class Operators:
     Math = [
         math_ops.Math_TanHOp, math_ops.Math_TanOp, math_ops.Math_LogOp, math_ops.Math_ExpOp,
         math_ops.Math_CosOp, math_ops.Math_SinOp, math_ops.Math_CosHOp, math_ops.Math_SinHOp,
-        math_ops.Math_SqrtOp, math_ops.Math_FAbsOp
+        math_ops.Math_SqrtOp, math_ops.Math_FAbsOp, math_ops.Math_InvOp
     ]
 
     @staticmethod

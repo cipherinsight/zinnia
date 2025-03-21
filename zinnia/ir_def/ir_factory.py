@@ -31,6 +31,7 @@ from zinnia.ir_def.defs.ir_gt_f import GreaterThanFIR
 from zinnia.ir_def.defs.ir_gt_i import GreaterThanIIR
 from zinnia.ir_def.defs.ir_gte_f import GreaterThanOrEqualFIR
 from zinnia.ir_def.defs.ir_gte_i import GreaterThanOrEqualIIR
+from zinnia.ir_def.defs.ir_inv_i import InvIIR
 from zinnia.ir_def.defs.ir_poseidon_hash import PoseidonHashIR
 from zinnia.ir_def.defs.ir_int_cast import IntCastIR
 from zinnia.ir_def.defs.ir_invoke_external import InvokeExternalIR
@@ -134,6 +135,7 @@ class IRFactory:
         SUB_I = SubIIR
         TAN_F = TanFIR
         TANH_F = TanHFIR
+        INV_I = InvIIR
         STR_I = StrIIR
         STR_F = StrFIR
         ADD_STR = AddStrIR

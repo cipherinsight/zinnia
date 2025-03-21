@@ -8,3 +8,4 @@ from .op_tan import Math_TanOp
 from .op_tanh import Math_TanHOp
 from .op_sqrt import Math_SqrtOp
 from .op_fabs import Math_FAbsOp
+from .op_inv import Math_InvOp

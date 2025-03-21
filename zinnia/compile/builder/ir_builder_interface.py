@@ -420,6 +420,9 @@ class IRBuilderInterface:
     def ir_sign_f(self, x: FloatValue, dbg: Optional[DebugInfo] = None) -> FloatValue:
         raise NotImplementedError()
 
+    def ir_inv_i(self, x: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+        raise NotImplementedError()
+
     def ir_pow_i(self, x: IntegerValue, exponent: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
         raise NotImplementedError()
 
