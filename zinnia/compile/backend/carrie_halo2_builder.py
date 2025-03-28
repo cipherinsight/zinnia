@@ -81,6 +81,7 @@ class CarrieHalo2ProgramBuilder(AbstractProgramBuilder):
 
 
     # TODO: this one
+    # query: should this be called in init or just during build_circuit_body?
     def build_trans_dict(self):
         self.ir_translations = {'jack': 4098, 'jane': 4139}
 
@@ -92,6 +93,7 @@ class CarrieHalo2ProgramBuilder(AbstractProgramBuilder):
         try:
             value: str = self.ir_translations[stmt.ir_instance['__class__']]
             return value
+        # maybe should just raise the error instead of trying to handle it
         except KeyError:
             print("not implemented yet")
             return None
@@ -102,7 +104,6 @@ class CarrieHalo2ProgramBuilder(AbstractProgramBuilder):
 
     # first make the imports, then build the inputs with their correct data structure, then build circuit containing statements, then
     # build the cookie cutter main func
-
     def build_source(self) -> str:
         return self.build_imports() + "\n" + self.build_inputs() + "\n" + self.build_circuit_func() + "\n" + self.build_main_func() + "\n"
     
@@ -157,6 +158,7 @@ fn {circuit_name}<F: ScalarField>(
         return initialize_stmts + "    " + "\n    ".join(translated_stmts)
     
 
+    # this is just the most straightforward way to do it tbh
     def build_main_func(self) -> str:
         circuit_name = self.name
         return f"""\
@@ -165,17 +167,3 @@ fn main() {{
     let args = Cli::parse();
     run({circuit_name}, args);
 }}"""
-    
-
-# example idea:
-# keep all operations in a big ass dictionary
-    # if stmt_id == ?
-    # if stmt_instance == [name]
-        # return certain pattern
-
-
-
-    # goals:
-    # implement the dict thing
-    # do some testy test
-    # if time rethink IR factory (lol u wont have time for that you scrub)
