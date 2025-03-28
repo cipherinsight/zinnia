@@ -40,12 +40,14 @@ class ZinniaCompiler:
         generator = IRGenerator(self.config)
         ir_graph = generator.generate(ast_tree, chips, externals)
         zk_program_ir = self.run_passes_for_zk_program(ir_graph)
-        # carrie mini-task 17.03.25
+        # carrie mini-task
         for stmt in zk_program_ir:
-            print(stmt)
+            print(stmt.export)
         preprocess_ir = self.run_passes_for_input_preprocess(ir_graph)
         if self.config.get_backend() == ZinniaConfig.BACKEND_HALO2:
             prog_builder = Halo2ProgramBuilder(name, zk_program_ir)
+        elif self.config.get_backend() == ZinniaConfig.BACKEND_CARRIE_HALO2:
+            raise NotImplementedError(f"Backend {self.config.get_backend()} is not supported.")
         elif self.config.get_backend() == ZinniaConfig.BACKEND_CIRCOM:
             prog_builder = CircomProgramBuilder(name, zk_program_ir)
         else:

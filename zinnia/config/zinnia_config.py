@@ -8,6 +8,7 @@ from zinnia.config.optimization_config import OptimizationConfig
 class ZinniaConfig(ConfigBase):
     BACKEND_HALO2 = "halo2"
     BACKEND_CIRCOM = "circom"
+    BACKEND_CARRIE_HALO2 = "carrie-halo2"
     DEFAULT_RECURSION_LIMIT = 100
     DEFAULT_LOOP_LIMIT = 1000
 
@@ -28,7 +29,7 @@ class ZinniaConfig(ConfigBase):
 
     def verify(self, key: str, value: Any) -> Any:
         if key == "backend":
-            if value not in [self.BACKEND_HALO2, self.BACKEND_CIRCOM]:
+            if value not in [self.BACKEND_HALO2, self.BACKEND_CARRIE_HALO2, self.BACKEND_CIRCOM]:
                 raise ValueError(f"Invalid `backend` specified: {value}")
             return value
         elif key == "mock_config":
