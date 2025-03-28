@@ -67,6 +67,11 @@ from zinnia.ir_def.defs.ir_sub_i import SubIIR
 from zinnia.ir_def.defs.ir_tan_f import TanFIR
 from zinnia.ir_def.defs.ir_tanh_f import TanHFIR
 
+
+# thought it could be fun to see what piecewise translation would look like via dictionary lookup
+# will the power of a python dict lead to speedy transpiling?
+# we will see...
+
 class CarrieHalo2ProgramBuilder(AbstractProgramBuilder):
     ir_translations: dict
 
