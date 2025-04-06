@@ -1,4 +1,6 @@
 from typing import List
+from zinnia.debug.dbg_info import DebugInfo
+import re
 
 from zinnia.compile.backend.abstract_builder import AbstractProgramBuilder
 from zinnia.compile.ir.ir_stmt import IRStatement
@@ -73,49 +75,74 @@ from zinnia.ir_def.defs.ir_tanh_f import TanHFIR
 # we will see...
 
 class CarrieHalo2ProgramBuilder(AbstractProgramBuilder):
-    ir_translations: dict
+    ir_to_rust_conversions: dict
 
     def __init__(self, name: str, stmts: List[IRStatement]):
         print("init")
         super().__init__(name, stmts)
+        self.build_trans_dict()
 
 
     # TODO: this one
-    # query: should this be called in init or just during build_circuit_body?
+    # query: should this be called in init or during build_circuit_body?
     def build_trans_dict(self):
-        self.ir_translations = {'jack': 4098, 'jane': 4139}
+        self.ir_to_rust_conversions = {'jack': 4098, 'jane': 4139}
+
 
 
     def build_stmt(self, stmt: IRStatement) -> str:
-        print("build stmt")
-
         # do dict lookup here
         try:
-            value: str = self.ir_translations[stmt.ir_instance['__class__']]
+            value: str = self.ir_to_rust_conversions[stmt.ir_instance['__class__']]
             return value
         # maybe should just raise the error instead of trying to handle it
         except KeyError:
-            print("not implemented yet")
-            return None
+            raise NotImplementedError(f"Internal Error: IR class {stmt.ir_instance['__class__']} not located in builder dictionary.")
 
 
     def build(self) -> str:
         return self.build_source()
 
-    # first make the imports, then build the inputs with their correct data structure, then build circuit containing statements, then
-    # build the cookie cutter main func
-    def build_source(self) -> str:
-        return self.build_imports() + "\n" + self.build_inputs() + "\n" + self.build_circuit_func() + "\n" + self.build_main_func() + "\n"
-    
 
-    # TODO: this one
-    def build_imports(self):
-        # do nothing
-        print("hello")
-        # consider optimising import statements. they're not all always necessary
-        # but less of a priority cause that probably doesn't really affect 'optimisation'
-        # could do a thing where you do all IR conversions + then type match
-        #
+    def build_source(self) -> str:
+        program_body = self.build_inputs() + "\n" + self.build_circuit_func() + "\n" + self.build_main_func() + "\n"
+        imports = self.build_imports(program_body)
+        return imports + "\n" + program_body
+
+
+# check imports needed based on string matching once the rest of the circuit has been made
+    def build_imports(self, program_body: str) -> str:
+        import_stmts = ""
+        import_translations: dict[str, str] = {
+            "ScalarField": "use halo2_base::utils::{ScalarField};",
+            "BigPrimeField": "use halo2_base::utils::{BigPrimeField};",
+            "FixedPointChip": "use halo2_graph::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};",
+            "BaseCircuitBuilder": "use halo2_base::gates::circuit::builder::BaseCircuitBuilder;",
+            "PoseidonHasher": "use halo2_base::poseidon::hasher::PoseidonHasher;",
+            "GateChip": "use halo2_base::gates::{GateChip, GateInstructions, RangeInstructions};",
+            "Serialize": "use serde::{Serialize, Deserialize};",
+            "AssignedValue<[^>]+>": "use halo2_base::{Context, AssignedValue};",
+            "Existing(AssignedValue<[^>]+>)": "use halo2_base::QuantumCell::Existing;",
+            "Constant\([^>]+\)": "use halo2_base::QuantumCell::Constant;",
+            "Witness\([^>]+\)": "use halo2_base::QuantumCell::Witness;",
+            "WitnessFraction\(Assigned<[^>]+>\)": "use halo2_base::QuantumCell::WitnessFraction;",
+            "Cli::": "use halo2_graph::scaffold::cmd::Cli;",
+            "run\([^)]*,[^)]*\)": "use halo2_graph::scaffold::run;",
+            "OptimizedPoseidonSpec": "use snark_verifier_sdk::halo2::OptimizedPoseidonSpec;"
+        }
+
+        for key in import_translations.keys():
+            if re.search(key, program_body):
+                import_stmts += (import_translations[key] + "\n")
+
+        import_stmts += """\
+const T: usize = 3;
+const RATE: usize = 2;
+const R_F: usize = 8;
+const R_P: usize = 57;
+"""
+        
+        return import_stmts
 
 
     # TODO: this one
@@ -138,7 +165,6 @@ fn {circuit_name}<F: ScalarField>(
     
     
     def build_circuit_body(self):
-
         initialize_stmts = """\
     const PRECISION: u32 = 63;
     println!("build_lookup_bit: {:?}", builder.lookup_bits());
@@ -148,7 +174,6 @@ fn {circuit_name}<F: ScalarField>(
     let mut poseidon_hasher = PoseidonHasher::<F, T, RATE>::new(OptimizedPoseidonSpec::new::<R_F, R_P, 0>());
     let ctx = builder.main(0);
 """
-        self.build_trans_dict()
 
         has_poseidon_hash_ir = any(isinstance(stmt.ir_instance, PoseidonHashIR) for stmt in self.stmts)
         if has_poseidon_hash_ir:
