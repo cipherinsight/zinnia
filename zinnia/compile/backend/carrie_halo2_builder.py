@@ -75,29 +75,17 @@ from zinnia.ir_def.defs.ir_tanh_f import TanHFIR
 # we will see...
 
 class CarrieHalo2ProgramBuilder(AbstractProgramBuilder):
-    ir_to_rust_conversions: dict
+    ir_to_rust_conversions: dict[str, str]
 
     def __init__(self, name: str, stmts: List[IRStatement]):
         print("init")
         super().__init__(name, stmts)
-        self.build_trans_dict()
+        self.build_ir_to_rust_conversions()
 
 
     # TODO: this one
-    # query: should this be called in init or during build_circuit_body?
-    def build_trans_dict(self):
-        self.ir_to_rust_conversions = {'jack': 4098, 'jane': 4139}
-
-
-
-    def build_stmt(self, stmt: IRStatement) -> str:
-        # do dict lookup here
-        try:
-            value: str = self.ir_to_rust_conversions[stmt.ir_instance['__class__']]
-            return value
-        # maybe should just raise the error instead of trying to handle it
-        except KeyError:
-            raise NotImplementedError(f"Internal Error: IR class {stmt.ir_instance['__class__']} not located in builder dictionary.")
+    def build_ir_to_rust_conversions(self):
+        self.ir_to_rust_conversions = {'jack': '4098', 'jane': '4139'}
 
 
     def build(self) -> str:
@@ -110,45 +98,26 @@ class CarrieHalo2ProgramBuilder(AbstractProgramBuilder):
         return imports + "\n" + program_body
 
 
-# check imports needed based on string matching once the rest of the circuit has been made
-    def build_imports(self, program_body: str) -> str:
-        import_stmts = ""
-        import_translations: dict[str, str] = {
-            "ScalarField": "use halo2_base::utils::{ScalarField};",
-            "BigPrimeField": "use halo2_base::utils::{BigPrimeField};",
-            "FixedPointChip": "use halo2_graph::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};",
-            "BaseCircuitBuilder": "use halo2_base::gates::circuit::builder::BaseCircuitBuilder;",
-            "PoseidonHasher": "use halo2_base::poseidon::hasher::PoseidonHasher;",
-            "GateChip": "use halo2_base::gates::{GateChip, GateInstructions, RangeInstructions};",
-            "Serialize": "use serde::{Serialize, Deserialize};",
-            "AssignedValue<[^>]+>": "use halo2_base::{Context, AssignedValue};",
-            "Existing(AssignedValue<[^>]+>)": "use halo2_base::QuantumCell::Existing;",
-            "Constant\([^>]+\)": "use halo2_base::QuantumCell::Constant;",
-            "Witness\([^>]+\)": "use halo2_base::QuantumCell::Witness;",
-            "WitnessFraction\(Assigned<[^>]+>\)": "use halo2_base::QuantumCell::WitnessFraction;",
-            "Cli::": "use halo2_graph::scaffold::cmd::Cli;",
-            "run\([^)]*,[^)]*\)": "use halo2_graph::scaffold::run;",
-            "OptimizedPoseidonSpec": "use snark_verifier_sdk::halo2::OptimizedPoseidonSpec;"
-        }
+    # create circuit input struct
+    def build_inputs(self) -> str:
+        rust_input_vars: list[str] = []
 
-        for key in import_translations.keys():
-            if re.search(key, program_body):
-                import_stmts += (import_translations[key] + "\n")
-
-        import_stmts += """\
-const T: usize = 3;
-const RATE: usize = 2;
-const R_F: usize = 8;
-const R_P: usize = 57;
-"""
+        # iterate through ir statements to find 'read' statements
+        for stmt in self.stmts:
+            stmt_instance_type = stmt.ir_instance
+            match stmt_instance_type:
+                case ReadIntegerIR():
+                    rust_input_vars.append('pub x_%s: i128' % "_".join(map(str, stmt_instance_type.indices)))
+                case ReadFloatIR():
+                    rust_input_vars.append('pub x_%s: f64' % "_".join(map(str, stmt_instance_type.indices)))
+                case ReadHashIR():
+                    rust_input_vars.append('pub x_%s: String' % "_".join(map(str, stmt_instance_type.indices)))
         
-        return import_stmts
+        circuit_input_code = """
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CircuitInput {\n""" + ",\n".join(rust_input_vars) + "\n}\n"
+        return circuit_input_code
 
-
-    # TODO: this one
-    def build_inputs(self):
-        print("hello")
-        # find some way of converting input entries to rust inputs
 
 
     def build_circuit_func(self) -> str:
@@ -183,6 +152,15 @@ fn {circuit_name}<F: ScalarField>(
         return initialize_stmts + "    " + "\n    ".join(translated_stmts)
     
 
+    def build_stmt(self, stmt: IRStatement) -> str:
+        # do dict lookup here
+        try:
+            value: str = self.ir_to_rust_conversions[stmt.ir_instance['__class__']]
+            return value
+        except KeyError:
+            raise NotImplementedError(f"Internal Error: IR class {stmt.ir_instance['__class__']} not located in builder dictionary.")
+    
+
     # this is just the most straightforward way to do it tbh
     def build_main_func(self) -> str:
         circuit_name = self.name
@@ -192,3 +170,37 @@ fn main() {{
     let args = Cli::parse();
     run({circuit_name}, args);
 }}"""
+
+    # check imports needed based on string matching once the rest of the circuit has been made
+    def build_imports(self, program_body: str) -> str:
+        import_stmts = ""
+        import_translations: dict[str, str] = {
+            "ScalarField": "use halo2_base::utils::{ScalarField};",
+            "BigPrimeField": "use halo2_base::utils::{BigPrimeField};",
+            "FixedPointChip": "use halo2_graph::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};",
+            "BaseCircuitBuilder": "use halo2_base::gates::circuit::builder::BaseCircuitBuilder;",
+            "PoseidonHasher": "use halo2_base::poseidon::hasher::PoseidonHasher;",
+            "GateChip": "use halo2_base::gates::{GateChip, GateInstructions, RangeInstructions};",
+            "Serialize": "use serde::{Serialize, Deserialize};",
+            "AssignedValue<[^>]+>": "use halo2_base::{Context, AssignedValue};",
+            "Existing(AssignedValue<[^>]+>)": "use halo2_base::QuantumCell::Existing;",
+            "Constant\([^>]+\)": "use halo2_base::QuantumCell::Constant;",
+            "Witness\([^>]+\)": "use halo2_base::QuantumCell::Witness;",
+            "WitnessFraction\(Assigned<[^>]+>\)": "use halo2_base::QuantumCell::WitnessFraction;",
+            "Cli::": "use halo2_graph::scaffold::cmd::Cli;",
+            "run\([^)]*,[^)]*\)": "use halo2_graph::scaffold::run;",
+            "OptimizedPoseidonSpec": "use snark_verifier_sdk::halo2::OptimizedPoseidonSpec;"
+        }
+
+        for key in import_translations.keys():
+            if re.search(key, program_body):
+                import_stmts += (import_translations[key] + "\n")
+
+        import_stmts += """\
+const T: usize = 3;
+const RATE: usize = 2;
+const R_F: usize = 8;
+const R_P: usize = 57;
+"""
+        
+        return import_stmts
