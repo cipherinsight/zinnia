@@ -8,7 +8,6 @@ from zinnia.ir_def.defs.ir_abs_f import AbsFIR
 from zinnia.ir_def.defs.ir_abs_i import AbsIIR
 from zinnia.ir_def.defs.ir_add_f import AddFIR
 from zinnia.ir_def.defs.ir_add_i import AddIIR
-from zinnia.ir_def.defs.ir_add_str import AddStrIR
 from zinnia.ir_def.defs.ir_assert import AssertIR
 from zinnia.ir_def.defs.ir_bool_cast import BoolCastIR
 from zinnia.ir_def.defs.ir_constant_bool import ConstantBoolIR
@@ -75,19 +74,39 @@ from zinnia.ir_def.defs.ir_tanh_f import TanHFIR
 # we will see...
 
 class CarrieHalo2ProgramBuilder(AbstractProgramBuilder):
-    ir_to_rust_conversions: dict[str, str]
+    ir_to_rust_conversions: dict
 
     def __init__(self, name: str, stmts: List[IRStatement]):
-        print("init")
         super().__init__(name, stmts)
         self.build_ir_to_rust_conversions()
 
 
-    # TODO: this one
+    # TODO: rest of IR statements for this one
     def build_ir_to_rust_conversions(self):
-        self.ir_to_rust_conversions = {'jack': '4098', 'jane': '4139'}
+        self.ir_to_rust_conversions = {
+            AddFIR: ("let y_%s = fixed_point_chip.qadd(ctx, %s, %s);", ("id", "arg_0", "arg_1")),
+            SubFIR: ("let y_%s = fixed_point_chip.qsub(ctx, %s, %s);", ("id", "arg_0", "arg_1")),
+            MulFIR: ("let y_%s = fixed_point_chip.qmul(ctx, %s, %s);", ("id", "arg_0", "arg_1")),
+            DivFIR: ("let y_%s = fixed_point_chip.qdiv(ctx, %s, %s);", ("id", "arg_0", "arg_1")),
+            AddIIR: ("let y_%s = gate.add(ctx, %s, %s);", ("id", "arg_0", "arg_1")),
+            SubIIR: ("let y_%s = gate.sub(ctx, %s, %s);", ("id", "arg_0", "arg_1")),
+            MulIIR: ("let y_%s = gate.mul(ctx, %s, %s);", ("id", "arg_0", "arg_1")),
+            DivIIR: ("let y_%s = gate.div_unsafe(ctx, %s, %s);", ("id", "arg_0", "arg_1")),
+            AssertIR: ("gate.assert_is_const(ctx, &%s, &F::ONE);", ("arg_0",)),
+            ReadIntegerIR: ("let tmp_1 = ctx.load_witness(F::from_u128((input.x_%s).abs() as u128));\nlet y_%s = if input.x_%s >= 0 {{tmp_1}} else {{gate.neg(ctx, tmp_1)}};", ("indices", "id", "indices")),
+            ReadHashIR: ("let y_%s = ctx.load_witness(F::from_str_vartime(&input.hash_%s).expect(\"deserialize field element should not fail\"));", ("id", "indices")),
+            ReadFloatIR: ("let y_%s = ctx.load_witness(fixed_point_chip.quantization(input.x_%s));", ("id", "indices")),
+            PoseidonHashIR: ("let y_%s = poseidon_hasher.hash_fix_len_array(ctx, &gate, &[%s]);", ("id", "comma_args")),
+            ExposePublicIIR: ("make_public.push(%s);", ("arg_0",)),
+            ExposePublicFIR: ("make_public.push(%s);", ("arg_0",)),
+            ConstantIntIR: ("let y_%s = ctx.load_constant(F::from_u128(%s as u128));", ("id", "value")),
+            ConstantFloatIR: ("let y_%s = Constant(fixed_point_chip.quantization(%s as f64));", ("id", "value")),
+            EqualIIR: ("let y_%s = gate.is_equal(ctx, y_%s, y_%s);", ("id", "arg_0", "arg_1")),
+            NotEqualIIR: ("let tmp_1 = gate.is_equal(ctx, %s, %s);\nlet y_%s = gate.not(ctx, tmp_1);", ("arg_0", "arg_1", "id"))
+        }
 
 
+    # TODO: fix source code formatting issue in terminal
     def build(self) -> str:
         return self.build_source()
 
@@ -144,21 +163,48 @@ fn {circuit_name}<F: ScalarField>(
     let ctx = builder.main(0);
 """
 
+        translated_stmts: list[str] = []
         has_poseidon_hash_ir = any(isinstance(stmt.ir_instance, PoseidonHashIR) for stmt in self.stmts)
         if has_poseidon_hash_ir:
             initialize_stmts += "    poseidon_hasher.initialize_consts(ctx, &gate);\n"
         for stmt in self.stmts:
             translated_stmts += self.build_stmt(stmt)
-        return initialize_stmts + "    " + "\n    ".join(translated_stmts)
+
+        translated_stmts_str = "\n\t".join(translated_stmts)
+        return initialize_stmts + translated_stmts_str
     
+    # arg types:
+    # id (stmt id)
+    # indices (joined with _)
+    # arg_0 (arg's id)
+    # arg_1 (arg's id)
+    # comma_args (do later)
+    # value (ir instance.value)
 
     def build_stmt(self, stmt: IRStatement) -> str:
         # do dict lookup here
         try:
-            value: str = self.ir_to_rust_conversions[stmt.ir_instance['__class__']]
-            return value
+            code_args_tuple: tuple[str, tuple[str]] = self.ir_to_rust_conversions[stmt.ir_instance.__class__]
         except KeyError:
-            raise NotImplementedError(f"Internal Error: IR class {stmt.ir_instance['__class__']} not located in builder dictionary.")
+            raise NotImplementedError(f"Internal Error: IR class {stmt.ir_instance.__class__} not located in builder dictionary.")
+        
+        # extract code + required arguments to fill in here
+        arg_values: list[str] = []
+        arg_names: tuple[str] = code_args_tuple[1]
+
+        for arg in arg_names:
+            match arg:
+                case "id": arg_values.append(stmt.stmt_id)
+                case "indices": arg_values.append("_".join(map(str, stmt.ir_instance.indices)))
+                case "arg_0": arg_values.append(stmt.arguments[0])
+                case "arg_1": arg_values.append(stmt.arguments[1])
+                case "value": arg_values.append(stmt.ir_instance.value)
+                case _: raise NotImplementedError("Internal Error: argument type '%s' has not yet been implemented in build_stmt" % arg)
+        
+        rust_translation: str = (code_args_tuple[0] % tuple(arg_values)) + "\n\t"
+        return rust_translation
+
+
     
 
     # this is just the most straightforward way to do it tbh

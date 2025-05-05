@@ -14,7 +14,7 @@ class ZinniaConfig(ConfigBase):
 
     def __init__(
             self,
-            backend: str = BACKEND_HALO2,
+            backend: str = BACKEND_CARRIE_HALO2,
             recursion_limit: int = DEFAULT_RECURSION_LIMIT,
             loop_limit: int = DEFAULT_LOOP_LIMIT,
             mock_config: MockExecConfig = MockExecConfig(),
