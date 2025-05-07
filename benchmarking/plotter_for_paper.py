@@ -9,6 +9,8 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 
 NAME_MAPPING = {
+    'crypt::ecc':                'CRYPT······ECC',
+    'crypt::poseidon':           'CRYPT·Poseidon',
     'ds1000::case296':           'DS1000····#296',
     'ds1000::case309':           'DS1000····#309',
     'ds1000::case330':           'DS1000····#330',
@@ -116,6 +118,63 @@ def plot_evaluation_results():
     fig.tight_layout(rect=[0, 0, 1.0, 0.97])
     plt.show()
     fig.savefig('gate-reductions.pdf', dpi=300)
+
+    fig = plt.figure(figsize=(10, 3.2))
+    gs = gridspec.GridSpec(4, 2, width_ratios=[1, 1], height_ratios=[1 for _ in range(4)])  # 2 rows, 2 columns
+    ax1 = plt.subplot(gs[0:4, 0])  # Span all rows in the first column
+    ax3 = plt.subplot(gs[2:4, 1])  # Bottom-right subplot
+    ax2 = plt.subplot(gs[0:2, 1], sharex=ax3)  # Top-right subplot, sharing x-axis with bottom-right
+    ax2.tick_params(labelbottom=False)
+
+    # Plot the comparison of gate reductions
+    ax1.bar(names, 100 - acc_rates, color='silver')
+    ax1.bar(names, acc_rates, color='lightgreen', bottom=100 - acc_rates)
+    ax1.tick_params(axis='x', labelrotation=90)
+    ax1.set_ylabel('No. of Gates (%)', fontdict=title_font)
+    ax1.set_ylim(0, 117)
+    ax1.axhline(y=100, color='black', linestyle='--', label='Baseline', linewidth=1)
+    ax1.text(len(names) - 1.5, 105, 'Baseline', fontsize=8, color='black', ha='center')
+    d = .15  # proportion of vertical to horizontal extent of the slanted line
+    kwargs = dict(marker=[(-1, -d), (1, d)], markersize=12,
+                  linestyle="none", color='k', mec='k', mew=1, clip_on=False)
+
+    # Plot the comparison of proving & verifying time
+    width = 0.4
+    x = np.arange(len(names))
+    colors = ['mediumseagreen', 'cornflowerblue', 'lightcoral']
+    ax2.bar(x + width * -1, proving_time_optimizes, width, color=colors[0])
+    ax2.bar(x + width * 0, proving_time_baselines, width, color=colors[1])
+    ax2.set_xticks(x, names)
+    ax2.set_yscale('log')
+    ax2.set_xticks([])
+    ax3.bar(x + width * -1, verifying_time_optimizes, width, color=colors[0])
+    ax3.bar(x + width * 0, verifying_time_baselines, width, color=colors[1])
+    ylabel = ax3.set_ylabel('Verifying Time (ms)  Proving Time (s)', fontdict=title_font)
+    # ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1] + 0.6))
+    ax3.set_xticks(x, names)
+    ax3.set_yscale('log')
+    ax3.tick_params(axis='x', labelrotation=90)
+    fig.legend([AnyObject('silver'), AnyObject('lightgreen')],
+               ['Zinnia Gates (%)', 'Optimized Gates (%)'],
+               handler_map={
+                   AnyObject: AnyObjectHandler()
+               },
+               loc=(0.11, 0.92), ncol=2,
+               prop={'size': 8},
+               frameon=False)
+    fig.legend([AnyObject('mediumseagreen'), AnyObject('cornflowerblue')],
+               ['Zinnia', 'Baseline'],
+               handler_map={
+                   AnyObject: AnyObjectHandler()
+               },
+               loc=(0.7, 0.92), ncol=3,
+               prop={'size': 8},
+               frameon=False)
+
+    # Show the plot
+    plt.tight_layout(rect=(0, 0, 1, 0.95))
+    plt.show()
+    fig.savefig('gate-reductions-compact.pdf', dpi=300)
 
     # Plot the comparison of proving time
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 3))
@@ -247,7 +306,7 @@ def plot_performance_overviews():
     plt.show()
     fig.savefig('results-zkvm-time.pdf', dpi=300)
 
-    fig, [ax1, ax2] = plt.subplots(2, 1, figsize=(10, 4.5))
+    fig, [ax1, ax2] = plt.subplots(2, 1, figsize=(6, 4.5))
     width = 0.16
     x = np.arange(len(names))
     colors = ['mediumseagreen', 'cornflowerblue', 'wheat', 'orange', 'gold']
@@ -271,12 +330,22 @@ def plot_performance_overviews():
     ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1]))
     ax2.set_xticks(x, names)
     ax2.set_yscale('log')
-    fig.legend([AnyObject(c) for c in colors],
-               ['Zinnia (zk-SNARK)', 'Baseline (zk-SNARK)', 'RISC0 (zk-STARK)', 'SP1 (zk-STARK)', 'SP1 (zk-SNARK)'],
+    print(np.mean(np.asarray(zinnia_snark_proving_time) / risc0_stark_proving_time))
+    print(np.mean(np.asarray(zinnia_verify_time) / risc0_stark_verify_time))
+    fig.legend([AnyObject(c) for c in colors][:3],
+               ['Zinnia (zk-SNARK)', 'Baseline (zk-SNARK)', 'RISC0 (zk-STARK)'],
                handler_map={
                    AnyObject: AnyObjectHandler()
                },
-               loc='upper center', ncol=5,
+               loc='upper center', ncol=3,
+               prop={'size': 8},
+               frameon=False)
+    fig.legend([AnyObject(c) for c in colors][3:],
+               ['SP1 (zk-STARK)', 'SP1 (zk-SNARK)'],
+               handler_map={
+                   AnyObject: AnyObjectHandler()
+               },
+               loc=(0.29, 0.913), ncol=2,
                prop={'size': 8},
                frameon=False)
     fig.tight_layout(rect=(0, 0, 1, 0.95))

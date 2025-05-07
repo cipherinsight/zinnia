@@ -110,8 +110,13 @@ DS1000 = [
     "case501",
     "case510",
 ]
+CRYPT = [
+    "ecc",
+    "poseidon",
+]
 
 DATASETS = {
+    "crypt": CRYPT,
     "mlalgo": MLALGO,
     "leetcode_array": LEETCODE_ARRAY,
     "leetcode_dp": LEETCODE_DP,
