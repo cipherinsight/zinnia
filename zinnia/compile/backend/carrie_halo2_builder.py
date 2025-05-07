@@ -71,8 +71,6 @@ from zinnia.ir_def.defs.ir_tanh_f import TanHFIR
 
 class CarrieHalo2ProgramBuilder(AbstractProgramBuilder):
     ir_to_rust_conversions: dict
-    arg_to_value_conversions: dict
-
     def __init__(self, name: str, stmts: List[IRStatement]):
         super().__init__(name, stmts)
         self.build_ir_to_rust_conversions()
