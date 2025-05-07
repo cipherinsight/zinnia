@@ -69,12 +69,9 @@ from zinnia.ir_def.defs.ir_tan_f import TanFIR
 from zinnia.ir_def.defs.ir_tanh_f import TanHFIR
 
 
-# thought it could be fun to see what piecewise translation would look like via dictionary lookup
-# will the power of a python dict lead to speedy transpiling?
-# we will see...
-
 class CarrieHalo2ProgramBuilder(AbstractProgramBuilder):
     ir_to_rust_conversions: dict
+    arg_to_value_conversions: dict
 
     def __init__(self, name: str, stmts: List[IRStatement]):
         super().__init__(name, stmts)
@@ -84,7 +81,7 @@ class CarrieHalo2ProgramBuilder(AbstractProgramBuilder):
     # TODO: rest of IR statements for this one
     def build_ir_to_rust_conversions(self):
         self.ir_to_rust_conversions = {
-            AddFIR: ("let y_%s = fixed_point_chip.qadd(ctx, %s, %s);", ("id", "arg_0", "arg_1")),
+            AddFIR: ("let y_%s = fixed_point_chip.qadd(ctx, y_%s, y_%s);", ("id", "arg_0", "arg_1")),
             SubFIR: ("let y_%s = fixed_point_chip.qsub(ctx, %s, %s);", ("id", "arg_0", "arg_1")),
             MulFIR: ("let y_%s = fixed_point_chip.qmul(ctx, %s, %s);", ("id", "arg_0", "arg_1")),
             DivFIR: ("let y_%s = fixed_point_chip.qdiv(ctx, %s, %s);", ("id", "arg_0", "arg_1")),
@@ -92,6 +89,9 @@ class CarrieHalo2ProgramBuilder(AbstractProgramBuilder):
             SubIIR: ("let y_%s = gate.sub(ctx, %s, %s);", ("id", "arg_0", "arg_1")),
             MulIIR: ("let y_%s = gate.mul(ctx, %s, %s);", ("id", "arg_0", "arg_1")),
             DivIIR: ("let y_%s = gate.div_unsafe(ctx, %s, %s);", ("id", "arg_0", "arg_1")),
+            EqualIIR: ("let y_%s = gate.is_equal(ctx, y_%s, y_%s);", ("id", "arg_0", "arg_1")),
+            NotEqualIIR: ("let tmp_1 = gate.is_equal(ctx, %s, %s);\nlet y_%s = gate.not(ctx, tmp_1);", ("arg_0", "arg_1", "id")),
+            LessThanOrEqualIIR: ("let tmp_1 = range_chip.is_less_than(ctx, %s, %s, 128);\nlet {y_%s} = gate.not(ctx, tmp_1);", ("arg_1", "arg_0", "id")),
             AssertIR: ("gate.assert_is_const(ctx, &%s, &F::ONE);", ("arg_0",)),
             ReadIntegerIR: ("let tmp_1 = ctx.load_witness(F::from_u128((input.x_%s).abs() as u128));\nlet y_%s = if input.x_%s >= 0 {{tmp_1}} else {{gate.neg(ctx, tmp_1)}};", ("indices", "id", "indices")),
             ReadHashIR: ("let y_%s = ctx.load_witness(F::from_str_vartime(&input.hash_%s).expect(\"deserialize field element should not fail\"));", ("id", "indices")),
@@ -101,12 +101,15 @@ class CarrieHalo2ProgramBuilder(AbstractProgramBuilder):
             ExposePublicFIR: ("make_public.push(%s);", ("arg_0",)),
             ConstantIntIR: ("let y_%s = ctx.load_constant(F::from_u128(%s as u128));", ("id", "value")),
             ConstantFloatIR: ("let y_%s = Constant(fixed_point_chip.quantization(%s as f64));", ("id", "value")),
-            EqualIIR: ("let y_%s = gate.is_equal(ctx, y_%s, y_%s);", ("id", "arg_0", "arg_1")),
-            NotEqualIIR: ("let tmp_1 = gate.is_equal(ctx, %s, %s);\nlet y_%s = gate.not(ctx, tmp_1);", ("arg_0", "arg_1", "id"))
+            ConstantBoolIR: ("let y_%s = Constant(F::%s);", ("id", "bool_val")),
+            LogicalNotIR: ("let y_%s = gate.not(ctx, y_%s);", ("id", "arg_0")),
+            LogicalAndIR: ("let y_%s = gate.and(ctx, y_%s, y_%s);", ("id", "arg_0", "arg_1")),
+            SelectIIR: ("let y_%s = gate.select(ctx, %s, %s, %s);", ("id", "arg_0", "arg_1", "arg_2")),
+            PowIIR: ("let y_%s = gate.pow_var(ctx, %s, %s, 128);", ("id", "arg_0", "arg_1")),
+            LessThanIIR: ("let y_%s = range_chip.is_less_than(ctx, %s, %s, 128);", ("id", "arg_0", "arg_1")),
         }
 
 
-    # TODO: fix source code formatting issue in terminal
     def build(self) -> str:
         return self.build_source()
 
@@ -170,7 +173,7 @@ fn {circuit_name}<F: ScalarField>(
         for stmt in self.stmts:
             translated_stmts += self.build_stmt(stmt)
 
-        translated_stmts_str = "\n\t".join(translated_stmts)
+        translated_stmts_str = "".join(translated_stmts)
         return initialize_stmts + translated_stmts_str
     
     # arg types:
@@ -180,6 +183,7 @@ fn {circuit_name}<F: ScalarField>(
     # arg_1 (arg's id)
     # comma_args (do later)
     # value (ir instance.value)
+    # bool_val (ZERO if 0, ONE if 1)
 
     def build_stmt(self, stmt: IRStatement) -> str:
         # do dict lookup here
@@ -198,7 +202,9 @@ fn {circuit_name}<F: ScalarField>(
                 case "indices": arg_values.append("_".join(map(str, stmt.ir_instance.indices)))
                 case "arg_0": arg_values.append(stmt.arguments[0])
                 case "arg_1": arg_values.append(stmt.arguments[1])
+                case "arg_2": arg_values.append(stmt.arguments[2])
                 case "value": arg_values.append(stmt.ir_instance.value)
+                case "bool_val": arg_values.append({'ONE' if stmt.ir_instance.value else 'ZERO'})
                 case _: raise NotImplementedError("Internal Error: argument type '%s' has not yet been implemented in build_stmt" % arg)
         
         rust_translation: str = (code_args_tuple[0] % tuple(arg_values)) + "\n\t"

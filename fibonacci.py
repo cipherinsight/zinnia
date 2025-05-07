@@ -1,4 +1,4 @@
-from zinnia import zk_circuit
+from zinnia import *
 
 
 @zk_circuit
@@ -19,3 +19,6 @@ def fibonacci(n: int, result: int):
 
 
 assert fibonacci(10, 55)
+# fib_circuit = ZKCircuit.from_method(fibonacci)
+# program = fib_circuit.compile()
+# print(program.source)

@@ -1,5 +1,6 @@
 import ast
 from typing import Dict, List
+import time
 
 from zinnia.compile.backend.circom_builder import CircomProgramBuilder
 from zinnia.compile.backend.halo2_builder import Halo2ProgramBuilder
@@ -53,7 +54,10 @@ class ZinniaCompiler:
             prog_builder = CircomProgramBuilder(name, zk_program_ir)
         else:
             raise NotImplementedError(f"Backend {self.config.get_backend()} is not supported.")
+        start_time = time.time()
         compiled_source = prog_builder.build()
+        end_time = time.time()
+        print("--- %s seconds ---" % (end_time - start_time))
         program_inputs = []
         for inp in ast_tree.inputs:
             program_inputs.append(ZKProgramInput(inp.name, inp.annotation.dt, inp.annotation.kind))
