@@ -4,9 +4,10 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.gridspec as gridspec
 import numpy as np
+from matplotlib import rcParams
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
-
+rcParams["axes.xmargin"] = 0.02
 
 NAME_MAPPING = {
     'crypt::ecc':                'CRYPT······ECC',
@@ -100,15 +101,15 @@ def plot_evaluation_results():
     print(max(acc_rates), sum(acc_rates) / len(acc_rates))
     fig, ax = plt.subplots(figsize=(5, 3))
     ax.bar(names, 100 - acc_rates, color='silver')
-    ax.bar(names, acc_rates, color='lightgreen', bottom=100 - acc_rates, label='Optimized\nGates (%)')
+    ax.bar(names, acc_rates, color='lightgreen', bottom=100 - acc_rates, label='Optimized\nConstraints (%)')
     ax.tick_params(axis='x', labelrotation=90)
-    ylabel = ax.set_ylabel('No. of Gates (%)', fontdict=title_font)
+    ylabel = ax.set_ylabel('No. of Constraints (%)', fontdict=title_font)
     ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1]))
     ax.set_ylim(0, 117)
     ax.axhline(100, color='black', linewidth=1, linestyle='--')
     ax.text(len(names) - 1.5, 105, 'Baseline', fontsize=8, color='black', ha='center')
     fig.legend([AnyObject('silver'), AnyObject('lightgreen')],
-               ['Zinnia Gates (%)', 'Optimized Gates (%)'],
+               ['Zinnia Constraints (%)', 'Optimized Constraints (%)'],
                handler_map={
                    AnyObject: AnyObjectHandler()
                },
@@ -117,7 +118,7 @@ def plot_evaluation_results():
                frameon=False)
     fig.tight_layout(rect=[0, 0, 1.0, 0.97])
     plt.show()
-    fig.savefig('gate-reductions.pdf', dpi=300)
+    fig.savefig('constraint-reductions.pdf', dpi=300)
 
     fig = plt.figure(figsize=(10, 3.2))
     gs = gridspec.GridSpec(4, 2, width_ratios=[1, 1], height_ratios=[1 for _ in range(4)])  # 2 rows, 2 columns
@@ -130,10 +131,10 @@ def plot_evaluation_results():
     ax1.bar(names, 100 - acc_rates, color='silver')
     ax1.bar(names, acc_rates, color='lightgreen', bottom=100 - acc_rates)
     ax1.tick_params(axis='x', labelrotation=90)
-    ax1.set_ylabel('No. of Gates (%)', fontdict=title_font)
+    ax1.set_ylabel('No. of Constraints (%)', fontdict=title_font)
     ax1.set_ylim(0, 117)
     ax1.axhline(y=100, color='black', linestyle='--', label='Baseline', linewidth=1)
-    ax1.text(len(names) - 1.5, 105, 'Baseline', fontsize=8, color='black', ha='center')
+    ax1.text(len(names) - 3.5, 105, 'Halo2 Baseline', fontsize=8, color='black', ha='center')
     d = .15  # proportion of vertical to horizontal extent of the slanted line
     kwargs = dict(marker=[(-1, -d), (1, d)], markersize=12,
                   linestyle="none", color='k', mec='k', mew=1, clip_on=False)
@@ -155,15 +156,15 @@ def plot_evaluation_results():
     ax3.set_yscale('log')
     ax3.tick_params(axis='x', labelrotation=90)
     fig.legend([AnyObject('silver'), AnyObject('lightgreen')],
-               ['Zinnia Gates (%)', 'Optimized Gates (%)'],
+               ['Zinnia Constraints (%)', 'Optimized Constraints (%)'],
                handler_map={
                    AnyObject: AnyObjectHandler()
                },
-               loc=(0.11, 0.92), ncol=2,
+               loc=(0.07, 0.92), ncol=2,
                prop={'size': 8},
                frameon=False)
     fig.legend([AnyObject('mediumseagreen'), AnyObject('cornflowerblue')],
-               ['Zinnia', 'Baseline'],
+               ['Zinnia', 'Halo2'],
                handler_map={
                    AnyObject: AnyObjectHandler()
                },
@@ -174,7 +175,7 @@ def plot_evaluation_results():
     # Show the plot
     plt.tight_layout(rect=(0, 0, 1, 0.95))
     plt.show()
-    fig.savefig('gate-reductions-compact.pdf', dpi=300)
+    fig.savefig('constraint-reductions-compact.pdf', dpi=300)
 
     # Plot the comparison of proving time
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 3))
@@ -273,79 +274,67 @@ def plot_performance_overviews():
     fig, [ax1, ax2] = plt.subplots(1, 2, figsize=(10, 3))
     width = 0.16
     x = np.arange(len(names))
-    colors = ['mediumseagreen', 'cornflowerblue', 'wheat', 'orange', 'gold']
-    ax1.bar(x + width * -2, zinnia_snark_proving_time, width, color=colors[0])
-    ax1.bar(x + width * -1, baseline_snark_proving_time, width, color=colors[1])
-    ax1.bar(x + width * 0, risc0_stark_proving_time, width, color=colors[2])
-    ax1.bar(x + width * +1, sp1_stark_proving_time, width, color=colors[3])
-    ax1.bar(x + width * +2, sp1_snark_proving_time, width, color=colors[4])
+    colors = ['mediumseagreen', 'lightcoral', 'cornflowerblue', 'orange']
+    ax1.bar(x + width * -1.5, zinnia_snark_proving_time, width, color=colors[0])
+    ax1.bar(x + width * -0.5, risc0_stark_proving_time, width, color=colors[1])
+    ax1.bar(x + width * +0.5, sp1_stark_proving_time, width, color=colors[2])
+    ax1.bar(x + width * +1.5, sp1_snark_proving_time, width, color=colors[3])
     ax1.tick_params(axis='x', labelrotation=90)
     ylabel = ax1.set_ylabel('Proving Time (s)', fontdict=title_font)
     ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1]))
     ax1.set_xticks(x, names)
     ax1.set_yscale('log')
-    ax2.bar(x + width * -2, zinnia_verify_time, width, color=colors[0])
-    ax2.bar(x + width * -1, baseline_verify_time, width, color=colors[1])
-    ax2.bar(x + width * 0, risc0_stark_verify_time, width, color=colors[2])
-    ax2.bar(x + width * +1, sp1_stark_verify_time, width, color=colors[3])
-    ax2.bar(x + width * +2, sp1_snark_verify_time, width, color=colors[4])
+    ax2.bar(x + width * -1.5, zinnia_verify_time, width, color=colors[0])
+    ax2.bar(x + width * -0.5, risc0_stark_verify_time, width, color=colors[1])
+    ax2.bar(x + width * +0.5, sp1_stark_verify_time, width, color=colors[2])
+    ax2.bar(x + width * +1.5, sp1_snark_verify_time, width, color=colors[3])
     ax2.tick_params(axis='x', labelrotation=90)
     ylabel = ax2.set_ylabel('Verifying Time (ms)', fontdict=title_font)
     ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1]))
     ax2.set_xticks(x, names)
     ax2.set_yscale('log')
     fig.legend([AnyObject(c) for c in colors],
-               ['Zinnia (zk-SNARK)', 'Baseline (zk-SNARK)', 'RISC0 (zk-STARK)', 'SP1 (zk-STARK)', 'SP1 (zk-SNARK)'],
+               ['Zinnia (zk-SNARK)', 'RISC0 (zk-STARK)', 'SP1 (zk-STARK)', 'SP1 (zk-SNARK)'],
                handler_map={
                    AnyObject: AnyObjectHandler()
                },
-               loc='upper center', ncol=5,
+               loc='upper center', ncol=4,
                prop={'size': 8},
                frameon=False)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     plt.show()
     fig.savefig('results-zkvm-time.pdf', dpi=300)
 
-    fig, [ax1, ax2] = plt.subplots(2, 1, figsize=(6, 4.5))
-    width = 0.16
+    fig, [ax1, ax2] = plt.subplots(2, 1, figsize=(10, 3.5))
+    width = 0.2
     x = np.arange(len(names))
-    colors = ['mediumseagreen', 'cornflowerblue', 'wheat', 'orange', 'gold']
-    ax1.bar(x + width * -2, zinnia_snark_proving_time, width, color=colors[0])
-    ax1.bar(x + width * -1, baseline_snark_proving_time, width, color=colors[1])
-    ax1.bar(x + width * 0, risc0_stark_proving_time, width, color=colors[2])
-    ax1.bar(x + width * +1, sp1_stark_proving_time, width, color=colors[3])
-    ax1.bar(x + width * +2, sp1_snark_proving_time, width, color=colors[4])
+    colors = ['mediumseagreen', 'lightcoral', 'cornflowerblue', 'orange']
+    ax1.bar(x + width * -1.5, zinnia_snark_proving_time, width, color=colors[0])
+    ax1.bar(x + width * -0.5, risc0_stark_proving_time, width, color=colors[1])
+    ax1.bar(x + width * +0.5, sp1_stark_proving_time, width, color=colors[2])
+    ax1.bar(x + width * +1.5, sp1_snark_proving_time, width, color=colors[3])
     ax1.tick_params(labelbottom=False)
     ax1.set_xticks(x, names)
-    ylabel = ax1.set_ylabel('Proving Time (s)', fontdict=title_font)
+    ylabel = ax1.set_ylabel('  Proving Time (s)', fontdict=title_font)
     ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1]))
     ax1.set_yscale('log')
-    ax2.bar(x + width * -2, zinnia_verify_time, width, color=colors[0])
-    ax2.bar(x + width * -1, baseline_verify_time, width, color=colors[1])
-    ax2.bar(x + width * 0, risc0_stark_verify_time, width, color=colors[2])
-    ax2.bar(x + width * +1, sp1_stark_verify_time, width, color=colors[3])
-    ax2.bar(x + width * +2, sp1_snark_verify_time, width, color=colors[4])
-    ax2.tick_params(axis='x', labelrotation=90)
-    ylabel = ax2.set_ylabel('Verifying Time (ms)', fontdict=title_font)
+    ax2.bar(x + width * -1.5, zinnia_verify_time, width, color=colors[0])
+    ax2.bar(x + width * -0.5, risc0_stark_verify_time, width, color=colors[1])
+    ax2.bar(x + width * +0.5, sp1_stark_verify_time, width, color=colors[2])
+    ax2.bar(x + width * +1.5, sp1_snark_verify_time, width, color=colors[3])
+    ax2.tick_params(axis='x')
+    ylabel = ax2.set_ylabel('Verifying Time (ms)    ', fontdict=title_font)
     ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1]))
     ax2.set_xticks(x, names)
+    ax2.set_xticklabels(names, rotation=30, ha='right')
     ax2.set_yscale('log')
-    print(np.mean(np.asarray(zinnia_snark_proving_time) / risc0_stark_proving_time))
-    print(np.mean(np.asarray(zinnia_verify_time) / risc0_stark_verify_time))
-    fig.legend([AnyObject(c) for c in colors][:3],
-               ['Zinnia (zk-SNARK)', 'Baseline (zk-SNARK)', 'RISC0 (zk-STARK)'],
+    # print(np.mean(np.asarray(zinnia_verify_time) / risc0_stark_verify_time))
+    fig.legend([AnyObject(c) for c in colors],
+               ['Zinnia (zk-SNARK)', 'RISC0 (zk-STARK)', 'SP1 (zk-STARK)', 'SP1 (zk-SNARK)'],
                handler_map={
                    AnyObject: AnyObjectHandler()
                },
-               loc='upper center', ncol=3,
-               prop={'size': 8},
-               frameon=False)
-    fig.legend([AnyObject(c) for c in colors][3:],
-               ['SP1 (zk-STARK)', 'SP1 (zk-SNARK)'],
-               handler_map={
-                   AnyObject: AnyObjectHandler()
-               },
-               loc=(0.29, 0.913), ncol=2,
+               loc='upper center', ncol=4,
                prop={'size': 8},
                frameon=False)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
@@ -394,7 +383,6 @@ def plot_ablation_study():
         verify_time_rates.append(-(zinnia_verify_time - halo2_verify_time) / halo2_verify_time * 100)
         snark_size_rates.append(-(zinnia_snark_size - halo2_snark_size) / halo2_snark_size * 100)
         zinnia_compile_times.append(value['zinnia_compile_time'])
-
     acc_rates = np.asarray(acc_rates)
     downgrade_rates = np.asarray(downgrade_rates)
     verifying_time_baselines = np.asarray(verifying_time_baselines) * 1000
@@ -403,6 +391,8 @@ def plot_ablation_study():
     proving_time_baselines = np.asarray(proving_time_baselines)
     proving_time_optimizes = np.asarray(proving_time_optimizes)
     proving_time_ablations = np.asarray(proving_time_ablations)
+
+    print('longer than', np.mean(downgrade_rates))
 
     plt.rc('font', family='monospace', )
     # plt.rc('text', usetex=True)
@@ -416,13 +406,14 @@ def plot_ablation_study():
     ax2 = plt.subplot(gs[0:2, 1], sharex=ax3)  # Top-right subplot, sharing x-axis with bottom-right
     ax2.tick_params(labelbottom=False)
 
+
     # Plot the comparison of gate reductions
     ax1.bar(names, 100 - acc_rates, color='silver')
     ax1_top.bar(names, 100 - acc_rates, color='silver')
     ax1.bar(names, downgrade_rates, color='lightcoral', bottom=100 - acc_rates)
     ax1_top.bar(names, downgrade_rates, color='lightcoral', bottom=100 - acc_rates)
     ax1.tick_params(axis='x', labelrotation=90)
-    ylabel = ax1.set_ylabel('No. of Gates (%)', fontdict=title_font)
+    ylabel = ax1.set_ylabel('No. of Constraints (%)', fontdict=title_font)
     ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1] + 0.2))
     ax1_top.spines.bottom.set_visible(False)
     ax1_top.set_xticks([])
@@ -433,7 +424,7 @@ def plot_ablation_study():
     ax1.set_ylim(0, 175)
     ax1_top.set_ylim(600, 625)
     ax1.axhline(y=100, color='black', linestyle='--', label='Baseline', linewidth=1)
-    ax1.text(len(names) - 1.5, 105, 'Baseline', fontsize=8, color='black', ha='center')
+    ax1.text(len(names) - 3.5, 105, 'Halo2 Baseline', fontsize=8, color='black', ha='center')
     d = .15  # proportion of vertical to horizontal extent of the slanted line
     kwargs = dict(marker=[(-1, -d), (1, d)], markersize=12,
                   linestyle="none", color='k', mec='k', mew=1, clip_on=False)
@@ -469,11 +460,11 @@ def plot_ablation_study():
                prop={'size': 8},
                frameon=False)
     fig.legend([AnyObject('mediumseagreen'), AnyObject('cornflowerblue'), AnyObject('lightcoral')],
-               ['Zinnia (Optimized)', 'Baseline', 'Zinnia (Unoptimized)'],
+               ['Zinnia (Optimized)', 'Halo2', 'Zinnia (Unoptimized)'],
                handler_map={
                    AnyObject: AnyObjectHandler()
                },
-               loc=(0.545, 0.92), ncol=3,
+               loc=(0.565, 0.92), ncol=3,
                prop={'size': 8},
                frameon=False)
 

@@ -11,16 +11,16 @@
 import json
 
 import numpy as np
-a = np.array([1, 0, 3])
+# a = np.array([1, 0, 3])
 # </code>
 # b = ... # put solution in this variable
 # BEGIN SOLUTION
 # <code>
 #
 # ------------------------------------------------------------
-b = np.zeros((a.size, a.max()+1))
-b[np.arange(a.size), a]=1
-b = b.astype(int)
+# b = np.zeros((a.size, a.max()+1))
+# b[np.arange(a.size), a]=1
+# b = b.astype(int)
 
 from zinnia import *
 

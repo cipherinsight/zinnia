@@ -33,16 +33,16 @@ def verify_solution(
             assert result[i][j] == 1 - image[i][shape[1] - 1 - j]
 
 
-def generate_solution(
-    image: NDArray[int, 10, 10]
-):
-    shape = image.shape
-    assert np.logical_or(image == 0, image == 1).all()
-    result = np.zeros_like(image)
-    for i in range(shape[0]):
-        for j in range(shape[1]):
-            result[i][j] = 1 - image[i][shape[1] - 1 - j]
-    return result
+# def generate_solution(
+#     image: NDArray[int, 10, 10]
+# ):
+#     shape = image.shape
+#     assert np.logical_or(image == 0, image == 1).all()
+#     result = np.zeros_like(image)
+#     for i in range(shape[0]):
+#         for j in range(shape[1]):
+#             result[i][j] = 1 - image[i][shape[1] - 1 - j]
+#     return result
 
 
 # circuit = ZKCircuit.from_method(verify_solution)

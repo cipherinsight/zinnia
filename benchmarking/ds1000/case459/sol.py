@@ -26,8 +26,8 @@ import json
 import numpy as np
 from zinnia import *
 
-A = [33.33, 33.33, 33.33, 33.37]
-AVG = np.mean(np.asarray(A).astype(float), axis = 0)
+# A = [33.33, 33.33, 33.33, 33.37]
+# AVG = np.mean(np.asarray(A).astype(float), axis = 0)
 
 
 @zk_circuit

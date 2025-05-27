@@ -20,17 +20,17 @@
 import json
 
 import numpy as np
-data = np.array([[4, 2, 5, 6, 7],
-[ 5, 4, 3, 5, 7]])
-bin_size = 3
+# data = np.array([[4, 2, 5, 6, 7],
+# [ 5, 4, 3, 5, 7]])
+# bin_size = 3
 # </code>
 # bin_data_mean = ... # put solution in this variable
 # BEGIN SOLUTION
 # <code>
 #
 # ------------------------------------------------------------
-new_data = data[:, ::-1]
-bin_data_mean = new_data[:,:(data.shape[1] // bin_size) * bin_size].reshape(data.shape[0], -1, bin_size).mean(axis=-1)
+# new_data = data[:, ::-1]
+# bin_data_mean = new_data[:,:(data.shape[1] // bin_size) * bin_size].reshape(data.shape[0], -1, bin_size).mean(axis=-1)
 # print(bin_data_mean)
 
 from zinnia import *

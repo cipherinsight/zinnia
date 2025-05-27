@@ -38,18 +38,18 @@ import numpy as np
 
 from zinnia.config import OptimizationConfig
 
-im = np.array([[0,0,0,0,0,0],
-               [0,0,5,1,2,0],
-               [0,1,8,0,1,0],
-               [0,0,0,7,1,0],
-               [0,0,0,0,0,0]])
-mask = im == 0
-rows = np.flatnonzero((~mask).sum(axis=1))
-cols = np.flatnonzero((~mask).sum(axis=0))
-if rows.shape[0] == 0:
-    result = np.array([])
-else:
-    result = im[rows.min():rows.max()+1, cols.min():cols.max()+1]
+# im = np.array([[0,0,0,0,0,0],
+#                [0,0,5,1,2,0],
+#                [0,1,8,0,1,0],
+#                [0,0,0,7,1,0],
+#                [0,0,0,0,0,0]])
+# mask = im == 0
+# rows = np.flatnonzero((~mask).sum(axis=1))
+# cols = np.flatnonzero((~mask).sum(axis=0))
+# if rows.shape[0] == 0:
+#     result = np.array([])
+# else:
+#     result = im[rows.min():rows.max()+1, cols.min():cols.max()+1]
 
 
 @zk_circuit

@@ -36,9 +36,9 @@ def verify_solution(a: NDArray[float, 2, 2], power: float, desired_result: NDArr
     assert a ** power == desired_result
 
 
-example_a = np.asarray([[1, 2.33], [3.14, 9.99]])
-power = 5
-desired_result = example_a ** power
+# example_a = np.asarray([[1, 2.33], [3.14, 9.99]])
+# power = 5
+# desired_result = example_a ** power
 # assert verify_solution(example_a, power, desired_result)
 
 # Parse inputs

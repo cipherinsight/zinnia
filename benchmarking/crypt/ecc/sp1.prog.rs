@@ -15,6 +15,7 @@ use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use ethereum_types::U512;
 
+// source start
 fn extended_gcd(a: U512, b: U512, p: U512) -> (U512, U512, U512) {
     if a == U512::from(0) {
         (b, U512::from(0), U512::from(1))

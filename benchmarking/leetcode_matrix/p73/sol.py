@@ -27,17 +27,17 @@ def verify_solution(
                 assert sol[i, :] == 0
 
 
-def generate_solution(
-        matrix: NDArray[int, 8, 10],
-):
-    m, n = matrix.shape
-    sol = np.copy(matrix)
-    for i in range(m):
-        for j in range(n):
-            if matrix[i, j] == 0:
-                sol[:, j] = 0
-                sol[i, :] = 0
-    return sol
+# def generate_solution(
+#         matrix: NDArray[int, 8, 10],
+# ):
+#     m, n = matrix.shape
+#     sol = np.copy(matrix)
+#     for i in range(m):
+#         for j in range(n):
+#             if matrix[i, j] == 0:
+#                 sol[:, j] = 0
+#                 sol[i, :] = 0
+#     return sol
 
 
 # np.random.seed(0)

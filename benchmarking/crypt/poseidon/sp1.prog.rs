@@ -16,6 +16,7 @@ use light_poseidon::{Poseidon, PoseidonBytesHasher, parameters::bn254_x5};
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 
+// source start
 fn convert_bytes_to_slices(bytes: Vec<u8>) -> Vec<[u8; 32]> {
     let mut padded_bytes = bytes;
 

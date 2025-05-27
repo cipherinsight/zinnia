@@ -8,14 +8,14 @@ import json
 
 import numpy as np
 
-a = np.array([[10,50,30],[60,20,40]])
+# a = np.array([[10,50,30],[60,20,40]])
 # </code>
 # result = ... # put solution in this variable
 # BEGIN SOLUTION
 # <code>
 #
 # ------------------------------------------------------------
-result = a.argmax()
+# result = a.argmax()
 
 
 from zinnia import *

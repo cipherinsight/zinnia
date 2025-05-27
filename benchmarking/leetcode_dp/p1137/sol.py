@@ -28,20 +28,20 @@ def verify_solution(
         assert n != i or sol == c
 
 
-def generate_solution(
-        n: int,
-):
-    if n == 0:
-        return 0
-    if n == 1:
-        return 1
-    if n == 2:
-        return 1
-    a, b, c = 0, 1, 1
-    for i in range(3, 101):
-        a, b, c = b, c, a + b + c
-        if n == i:
-            return c
+# def generate_solution(
+#         n: int,
+# ):
+#     if n == 0:
+#         return 0
+#     if n == 1:
+#         return 1
+#     if n == 2:
+#         return 1
+#     a, b, c = 0, 1, 1
+#     for i in range(3, 101):
+#         a, b, c = b, c, a + b + c
+#         if n == i:
+#             return c
 
 
 # solution = generate_solution(100)

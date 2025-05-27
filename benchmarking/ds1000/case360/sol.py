@@ -17,14 +17,14 @@
 import json
 
 import numpy as np
-a = np.arange(12).reshape(3, 4)
+# a = np.arange(12).reshape(3, 4)
 # </code>
 # a = ... # put solution in this variable
 # BEGIN SOLUTION
 # <code>
 #
 # ------------------------------------------------------------
-b = np.delete(a, 2, axis = 0)
+# b = np.delete(a, 2, axis = 0)
 
 import numpy as np
 

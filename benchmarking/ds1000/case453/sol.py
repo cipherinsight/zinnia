@@ -6,11 +6,11 @@ import json
 
 import numpy as np
 from numpy import linalg as LA
-X = np.array([[1, 2, 3, 6],
-              [4, 5, 6, 5],
-              [1, 2, 5, 5],
-              [4, 5,10,25],
-              [5, 2,10,25]])
+# X = np.array([[1, 2, 3, 6],
+#               [4, 5, 6, 5],
+#               [1, 2, 5, 5],
+#               [4, 5,10,25],
+#               [5, 2,10,25]])
 # print X.shape
 # result = np.array([LA.norm(v,ord=2) for v in X])
 # print x
@@ -33,8 +33,8 @@ X = np.array([[1, 2, 3, 6],
 # <code>
 #
 # ------------------------------------------------------------
-l2 = np.sqrt((X*X).sum(axis=-1))
-result = X / l2.reshape(-1, 1)
+# l2 = np.sqrt((X*X).sum(axis=-1))
+# result = X / l2.reshape(-1, 1)
 
 from zinnia import *
 
