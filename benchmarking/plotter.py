@@ -193,11 +193,40 @@ def plot_sp1_benchmarking_results():
     fig.savefig('results-sp1-snark-size.png', dpi=300)
 
 
+def plot_noir_benchmarking_results():
+    with open('results.json', 'r') as f:
+        zinnia_results_dict = json.load(f)
+    with open('results-noir.json', 'r') as f:
+        noir_results_dict = json.load(f)
+
+    names = []
+    zinnia_gates = []
+    noir_gates = []
+    for key, value in noir_results_dict.items():
+        names.append(key)
+        zinnia_gates.append(zinnia_results_dict[key]['zinnia']['advice_cells'])
+        noir_gates.append(value['total_gates'])
+
+    fig, ax = plt.subplots()
+    width = 0.25
+    x = np.arange(len(names))
+    ax.bar(x + width * 0, zinnia_gates, width, label='Zinnia')
+    ax.bar(x + width * 1, noir_gates, width, label='Noir')
+    ax.tick_params(axis='x', labelrotation=90)
+    ax.set_ylabel('Gates')
+    ax.set_xticks(x + width / 2, names)
+    ax.set_title('Zinnia Compiler Performance Overviews')
+    ax.set_yscale('log')
+    ax.legend()
+    fig.tight_layout()
+    plt.show()
+    fig.savefig('results-noir-gate-sizes.png', dpi=300)
+
 
 def main():
-    plot_halo2_benchmarking_results()
-    plot_sp1_benchmarking_results()
-
+    # plot_halo2_benchmarking_results()
+    # plot_sp1_benchmarking_results()
+    plot_noir_benchmarking_results()
 
 if __name__ == "__main__":
     main()
