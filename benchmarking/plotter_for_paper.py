@@ -6,6 +6,12 @@ import matplotlib.gridspec as gridspec
 import numpy as np
 from matplotlib import rcParams
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+from scipy.stats import wilcoxon
+from scipy.stats import ttest_rel
+from scipy.stats import ks_2samp
+from scipy.stats import binomtest
+from scipy import stats
+from scipy.stats import rankdata, norm
 
 rcParams["axes.xmargin"] = 0.02
 
@@ -36,6 +42,128 @@ NAME_MAPPING = {
     'leetcode_matrix::p73':      'LC-Matrix··#73',
     'leetcode_matrix::p2133':    'LC-Matrix#2133',
 }
+
+
+def paired_t_test_one_sided(a, b, alternative='less'):
+    """
+    Perform a one-sided paired t-test.
+
+    Parameters:
+    - a, b: array-like, paired samples of the same length
+    - alternative: 'less' for testing mean(a - b) < 0,
+                   'greater' for testing mean(a - b) > 0
+
+    Returns:
+    - t_stat: the computed t statistic
+    - p_value: the one-sided p-value
+    """
+    a = np.asarray(a)
+    b = np.asarray(b)
+    if a.shape != b.shape:
+        raise ValueError("Samples a and b must have the same shape")
+
+    diff = a - b
+    n = len(diff)
+    mean_diff = np.mean(diff)
+    std_diff = np.std(diff, ddof=1)
+    se = std_diff / np.sqrt(n)
+    t_stat = mean_diff / se
+    df = n - 1
+
+    if alternative == 'less':
+        p_value = stats.t.cdf(t_stat, df)
+    elif alternative == 'greater':
+        p_value = 1 - stats.t.cdf(t_stat, df)
+    else:
+        raise ValueError("alternative must be 'less' or 'greater'")
+
+    return t_stat, p_value
+
+
+def wilcoxon_signed_rank(x, y):
+    """
+    Compute the Wilcoxon signed-rank test for paired samples x and y.
+
+    Parameters
+    ----------
+    x, y : array-like, same shape
+        Paired observations.
+
+    Returns
+    -------
+    W : float
+        The smaller of the sum of ranks for positive and negative differences.
+    p_value : float
+        Two-sided p-value (normal approximation).
+    """
+    x = np.asarray(x)
+    y = np.asarray(y)
+    if x.shape != y.shape:
+        raise ValueError("Both inputs must have the same shape.")
+
+    # 1. Compute differences and drop zeros
+    d = x - y
+    non_zero = d != 0
+    d = d[non_zero]
+    n = len(d)
+    if n == 0:
+        raise ValueError("All differences are zero.")
+
+    # 2. Get signed ranks
+    signs = np.sign(d)
+    abs_d = np.abs(d)
+    ranks = rankdata(abs_d)  # average ranks for ties
+
+    # 3. Sum ranks for positive and negative differences
+    W_pos = np.sum(ranks[signs > 0])
+    W_neg = np.sum(ranks[signs < 0])
+
+    # Use the smaller sum as the test statistic
+    W = min(W_pos, W_neg)
+
+    # 4. Approximate p-value via normal approximation
+    mean_W = n * (n + 1) / 4
+    var_W = n * (n + 1) * (2 * n + 1) / 24
+    sigma_W = np.sqrt(var_W)
+
+    # continuity correction can be added by +/-0.5; omitted here
+    z = (W - mean_W) / sigma_W
+    p_value = 2 * norm.cdf(z)  # two-sided
+
+    return W, p_value
+
+def ks_test_stochastic_dominance(A, B):
+    A = np.array(A)
+    B = np.array(B)
+    # alternative='less' tests F_A(x) >= F_B(x) for some x  (A stochastically less than B)
+    result = ks_2samp(A, B, alternative='less', mode='asymp')
+    return result.statistic, result.pvalue
+
+
+def sign_test_binomial(A, B):
+    """
+    Perform a one-sided sign test (binomial) for H1: median(A) < median(B).
+
+    Parameters:
+    - A, B: array-like of paired measurements.
+
+    Returns:
+    - k: number of pairs where A < B
+    - n: total number of non-tied pairs
+    - p_value: one-sided p-value (H1: A < B)
+    """
+    A = np.array(A)
+    B = np.array(B)
+    diffs = A - B
+    # Exclude ties (diff == 0)
+    non_ties = diffs[diffs != 0]
+    n = len(non_ties)
+    # Count how many differences are negative (A < B)
+    k = np.sum(non_ties < 0)
+
+    # Perform binomial test for H1: probability of "success" (A < B) > 0.5
+    test_result = binomtest(k, n, p=0.5, alternative='greater')
+    return k, n, test_result.pvalue
 
 
 class AnyObject:
@@ -271,6 +399,11 @@ def plot_performance_overviews():
     zinnia_verify_time = np.asarray(zinnia_verify_time) * 1000
     baseline_verify_time = np.asarray(baseline_verify_time) * 1000
 
+    stat, p_value = wilcoxon_signed_rank(
+        np.asarray(zinnia_snark_proving_time), np.asarray(sp1_stark_proving_time))
+    # print(f"statistic: {t_stat:.4f}")
+    print(f"p-value (H1: A < B): {p_value:.4f}")
+
     fig, [ax1, ax2] = plt.subplots(1, 2, figsize=(10, 3))
     width = 0.16
     x = np.arange(len(names))
@@ -361,6 +494,8 @@ def plot_ablation_study():
     verify_time_rates = []
     snark_size_rates = []
     zinnia_compile_times = []
+    zinnia_gates_list = []
+    halo2_gates_list = []
     for key, value in zinnia_results_dict.items():
         names.append(NAME_MAPPING[key])
         zinnia_gates = value['zinnia']['advice_cells']
@@ -371,6 +506,8 @@ def plot_ablation_study():
         halo2_verify_time = value['halo2']['verify_time']
         zinnia_snark_size = value['zinnia']['snark_size']
         halo2_snark_size = value['halo2']['snark_size']
+        zinnia_gates_list.append(zinnia_gates)
+        halo2_gates_list.append(halo2_gates)
         proving_time_baselines.append(halo2_prove_time)
         proving_time_optimizes.append(zinnia_prove_time)
         proving_time_ablations.append(ablation_results_dict[key]['zinnia']['proving_time'])
@@ -391,8 +528,6 @@ def plot_ablation_study():
     proving_time_baselines = np.asarray(proving_time_baselines)
     proving_time_optimizes = np.asarray(proving_time_optimizes)
     proving_time_ablations = np.asarray(proving_time_ablations)
-
-    print('longer than', np.mean(downgrade_rates))
 
     plt.rc('font', family='monospace', )
     # plt.rc('text', usetex=True)

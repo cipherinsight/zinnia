@@ -1,8 +1,11 @@
+import importlib
 import json
 import os.path
 import re
 import subprocess
 
+from zinnia import ZinniaConfig, ZKCircuit
+from zinnia.config import OptimizationConfig
 
 NOIR_FOLDER = "/Users/zhantong/Projects/hello_noir"
 TIME_MEASURE_REPETITIONS = 10
@@ -23,7 +26,10 @@ def run_prove(name: str, input_source: str, program_source: str):
         total_gates = 0
         opcode_count = 0
         for i in range(TIME_MEASURE_REPETITIONS):
-            subprocess.run(['nargo', 'execute'], capture_output=True, text=True, env=my_env)
+            execute_process = subprocess.run(['nargo', 'execute'], capture_output=True, text=True, env=my_env)
+            execute_process_feedback = execute_process.stdout + execute_process.stderr
+            assert execute_process.returncode == 0, execute_process_feedback
+            assert "Circuit witness successfully solved" in execute_process_feedback
             prove_process = subprocess.run(['bb', 'prove', '-b', './target/hello_noir.json', '-w', './target/hello_noir.gz', '-o', './target'], capture_output=True, text=True, env=my_env)
             prove_process_feedback = prove_process.stdout + prove_process.stderr
             assert prove_process.returncode == 0, prove_process_feedback
@@ -58,12 +64,27 @@ def run_prove(name: str, input_source: str, program_source: str):
 def run_evaluate(dataset: str, problem: str):
     # Get the driver source
     with open(os.path.join('../benchmarking', dataset, problem, 'Prover.toml'), 'r') as f:
-        input_source = f.read()
+        baseline_input_source = f.read()
+    with open(os.path.join('../benchmarking', dataset, problem, 'Prover.zinnia.toml'), 'r') as f:
+        ours_input_source = f.read()
     # Get the program source
     with open(os.path.join('../benchmarking', dataset, problem, 'main.nr'), 'r') as f:
-        program_source = f.read()
+        baseline_program_source = f.read()
+    module = importlib.import_module('.' + dataset + '.' + problem + '.sol', 'benchmarking')
+    # Get the method from the module
+    method = getattr(module, 'verify_solution')
+    chips = getattr(module, 'chips', [])
+    # Get the circuit
+    config = ZinniaConfig(backend="noir")
+    circuit = ZKCircuit.from_method(method, chips=chips, config=config)
+    ours_program_source = circuit.compile().source
     # Run
-    return run_prove(f"{dataset}::{problem}.py", input_source, program_source)
+    result_ours = run_prove(f"{dataset}::{problem}.ours.noir", ours_input_source, ours_program_source)
+    result_baseline = run_prove(f"{dataset}::{problem}.baseline.noir", baseline_input_source, baseline_program_source)
+    return {
+        "ours_on_noir": result_ours,
+        "baseline_on_noir": result_baseline,
+    }
 
 
 LEETCODE_ARRAY = [
@@ -96,7 +117,7 @@ DS1000 = [
 ]
 CRYPT = [
     "ecc",
-    "poseidon",
+    # "poseidon",
 ]
 
 DATASETS = {
@@ -130,9 +151,10 @@ def main():
                 with open('results-noir.json', 'w') as f:
                     f.write(json.dumps(results_dict, indent=2))
                 raise e
+            with open('results-noir.json', 'w') as f:
+                f.write(json.dumps(results_dict, indent=2))
         with open('results-noir.json', 'w') as f:
             f.write(json.dumps(results_dict, indent=2))
-
     with open('results-noir.json', 'w') as f:
         f.write(json.dumps(results_dict, indent=2))
 

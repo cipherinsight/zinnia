@@ -194,8 +194,6 @@ def plot_sp1_benchmarking_results():
 
 
 def plot_noir_benchmarking_results():
-    with open('results.json', 'r') as f:
-        zinnia_results_dict = json.load(f)
     with open('results-noir.json', 'r') as f:
         noir_results_dict = json.load(f)
 
@@ -204,8 +202,8 @@ def plot_noir_benchmarking_results():
     noir_gates = []
     for key, value in noir_results_dict.items():
         names.append(key)
-        zinnia_gates.append(zinnia_results_dict[key]['zinnia']['advice_cells'])
-        noir_gates.append(value['total_gates'])
+        zinnia_gates.append(value['ours_on_noir']['total_gates'])
+        noir_gates.append(value['baseline_on_noir']['total_gates'])
 
     fig, ax = plt.subplots()
     width = 0.25

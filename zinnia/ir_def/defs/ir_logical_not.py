@@ -16,7 +16,6 @@ class LogicalNotIR(AbstractIR):
     def get_signature(self) -> str:
         return "logical_not"
 
-
     def infer(self, args: List[Value], dbg: Optional[DebugInfo] = None) -> Any:
         x = args[0]
         assert isinstance(x, BooleanValue)

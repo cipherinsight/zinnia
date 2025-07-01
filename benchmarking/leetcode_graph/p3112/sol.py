@@ -10,7 +10,7 @@
 #
 # Note that the graph might be disconnected and might contain multiple edges.
 #
-# Return the array answer, with answer[i] denoting the minimum units of time required to reach node i from node 0. If node i is unreachable from node 0 then answer[i] is -1.
+# Return the array answer, with answer[i] denoting the minimum units of time required to reach node i from node 0. If node i is unreachable from node 0 then answer[i] is 0.
 import json
 
 from zinnia import *
@@ -26,46 +26,46 @@ def verify_solution(
     for k in range(n):
         for i in range(n):
             for j in range(n):
-                if graph[i][k] != -1 and graph[k][j] != -1:
+                if graph[i][k] != 0 and graph[k][j] != 0:
                     graph[i][j] = min(graph[i][j], graph[i][k] + graph[k][j])
     for i in range(n):
-        if graph[0][i] != -1 and disappear[i] >= graph[0][i]:
+        if graph[0][i] != 0 and disappear[i] >= graph[0][i]:
             assert answers[i] == graph[0][i]
         else:
-            assert answers[i] == -1
+            assert answers[i] == 0
 
 # verify_solution(
 #     np.array([
-#         [1, 1, 1, 1, 1, 1, 1, 1, 2, -1],
-#         [1, 1, 1, -1, 1, 1, -1, 1, 1, -1],
-#         [1, 6, 1, -1, -1, 1, -1, 1, 1, -1],
-#         [-1, 1, 1, -1, -1, 4, -1, 1, 1, -1],
-#         [-1, 6, 6, -1, -1, 1, -1, 8, 8, -1],
-#         [-1, 1, 1, 5, 1, -1, 8, 1, 3, -1],
-#         [1, 1, 6, 3, 4, -1, 8, 1, 3, -1],
-#         [9, 1, 1, 6, 9, 9, 1, 1, 1, -1],
-#         [9, 1, 1, 9, 6, 9, 9, 1, 8, -1],
-#         [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1],
+#         [1, 1, 1, 1, 1, 1, 1, 1, 2, 0],
+#         [1, 1, 1, 0, 1, 1, 0, 1, 1, 0],
+#         [1, 6, 1, 0, 0, 1, 0, 1, 1, 0],
+#         [0, 1, 1, 0, 0, 4, 0, 1, 1, 0],
+#         [0, 6, 6, 0, 0, 1, 0, 8, 8, 0],
+#         [0, 1, 1, 5, 1, 0, 8, 1, 3, 0],
+#         [1, 1, 6, 3, 4, 0, 8, 1, 3, 0],
+#         [9, 1, 1, 6, 9, 9, 1, 1, 1, 0],
+#         [9, 1, 1, 9, 6, 9, 9, 1, 8, 0],
+#         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 #     ]),
 #     np.array([1, 2, 3, 4, 5, 6, 7, 8, 1, 10]),
-#     np.array([1, 1, 1, 1, 1, 1, 1, 1, -1, -1])
+#     np.array([1, 1, 1, 1, 1, 1, 1, 1, 0, 0])
 # )
 
 
 # entries = ZKCircuit.from_method(verify_solution).argparse(
-#     np.array([[1, 1, 1, 1, 1, 1, 1, 1, 2, -1],
-#         [1, 1, 1, -1, 1, 1, -1, 1, 1, -1],
-#         [1, 6, 1, -1, -1, 1, -1, 1, 1, -1],
-#         [-1, 1, 1, -1, -1, 4, -1, 1, 1, -1],
-#         [-1, 6, 6, -1, -1, 1, -1, 8, 8, -1],
-#         [-1, 1, 1, 5, 1, -1, 8, 1, 3, -1],
-#         [1, 1, 6, 3, 4, -1, 8, 1, 3, -1],
-#         [9, 1, 1, 6, 9, 9, 1, 1, 1, -1],
-#         [9, 1, 1, 9, 6, 9, 9, 1, 8, -1],
-#         [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1]]
+#     np.array([[1, 1, 1, 1, 1, 1, 1, 1, 2, 0],
+#         [1, 1, 1, 0, 1, 1, 0, 1, 1, 0],
+#         [1, 6, 1, 0, 0, 1, 0, 1, 1, 0],
+#         [0, 1, 1, 0, 0, 4, 0, 1, 1, 0],
+#         [0, 6, 6, 0, 0, 1, 0, 8, 8, 0],
+#         [0, 1, 1, 5, 1, 0, 8, 1, 3, 0],
+#         [1, 1, 6, 3, 4, 0, 8, 1, 3, 0],
+#         [9, 1, 1, 6, 9, 9, 1, 1, 1, 0],
+#         [9, 1, 1, 9, 6, 9, 9, 1, 8, 0],
+#         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
 #     ),
 #     np.array([1, 2, 3, 4, 5, 6, 7, 8, 1, 10]),
-#     np.array([1, 1, 1, 1, 1, 1, 1, 1, -1, -1])
+#     np.array([1, 1, 1, 1, 1, 1, 1, 1, 0, 0])
 # ).entries
 
 # json_dict = {}
@@ -75,18 +75,18 @@ def verify_solution(
 
 # json_dict = {}
 # json_dict["graph"] = [int(x) for x in np.array(
-#     [[1, 1, 1, 1, 1, 1, 1, 1, 2, -1],
-#     [1, 1, 1, -1, 1, 1, -1, 1, 1, -1],
-#     [1, 6, 1, -1, -1, 1, -1, 1, 1, -1],
-#     [-1, 1, 1, -1, -1, 4, -1, 1, 1, -1],
-#     [-1, 6, 6, -1, -1, 1, -1, 8, 8, -1],
-#     [-1, 1, 1, 5, 1, -1, 8, 1, 3, -1],
-#     [1, 1, 6, 3, 4, -1, 8, 1, 3, -1],
-#     [9, 1, 1, 6, 9, 9, 1, 1, 1, -1],
-#     [9, 1, 1, 9, 6, 9, 9, 1, 8, -1],
-#     [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1]]
+#     [[1, 1, 1, 1, 1, 1, 1, 1, 2, 0],
+#     [1, 1, 1, 0, 1, 1, 0, 1, 1, 0],
+#     [1, 6, 1, 0, 0, 1, 0, 1, 1, 0],
+#     [0, 1, 1, 0, 0, 4, 0, 1, 1, 0],
+#     [0, 6, 6, 0, 0, 1, 0, 8, 8, 0],
+#     [0, 1, 1, 5, 1, 0, 8, 1, 3, 0],
+#     [1, 1, 6, 3, 4, 0, 8, 1, 3, 0],
+#     [9, 1, 1, 6, 9, 9, 1, 1, 1, 0],
+#     [9, 1, 1, 9, 6, 9, 9, 1, 8, 0],
+#     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
 # ).flatten().tolist()]
 # json_dict["disappear"] = [int(x) for x in np.array([1, 2, 3, 4, 5, 6, 7, 8, 1, 10]).tolist()]
-# json_dict["answers"] = [int(x) for x in np.array([1, 1, 1, 1, 1, 1, 1, 1, -1, -1]).tolist()]
+# json_dict["answers"] = [int(x) for x in np.array([1, 1, 1, 1, 1, 1, 1, 1, 0, 0]).tolist()]
 # print(json.dumps(json_dict, indent=2))
 

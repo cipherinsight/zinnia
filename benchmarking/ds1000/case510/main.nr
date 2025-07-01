@@ -29,7 +29,7 @@ fn main(input: [[Field; 6]; 5], result: [[Field; 4]; 3]) {
     for i in 0..5 {
         for j in 0..6 {
             if !(zero_rows[i] | zero_cols[j]) {
-                let k: u64 = idx as u64;
+                let k: u128 = idx as u128;
                 assert(input[i][j] == flat_result[k], "Mismatch at flattened index k, position (i,j)");
                 idx += 1;
             }

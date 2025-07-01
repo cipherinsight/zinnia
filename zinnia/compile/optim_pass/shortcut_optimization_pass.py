@@ -15,6 +15,7 @@ from zinnia.ir_def.defs.ir_logical_and import LogicalAndIR
 from zinnia.ir_def.defs.ir_logical_or import LogicalOrIR
 from zinnia.ir_def.defs.ir_mul_f import MulFIR
 from zinnia.ir_def.defs.ir_mul_i import MulIIR
+from zinnia.ir_def.defs.ir_select_b import SelectBIR
 from zinnia.ir_def.defs.ir_select_f import SelectFIR
 from zinnia.ir_def.defs.ir_select_i import SelectIIR
 from zinnia.ir_def.defs.ir_sub_f import SubFIR
@@ -59,6 +60,8 @@ class ShortcutOptimIRPass(AbstractIRPass):
         cond, tv, fv = ir_args[0], ir_args[1], ir_args[2]
         assert isinstance(cond, BooleanValue)
         assert isinstance(tv, IntegerValue) and isinstance(fv, IntegerValue)
+        if isinstance(tv, BooleanValue) and isinstance(fv, BooleanValue):
+            return self.optimize_for_SelectBIR(ir_builder, ir_instance, ir_args)
         if cond.val() is not None and cond.val() != 0:
             if tv.val() is not None:
                 return ir_builder.ir_constant_int(tv.val())
@@ -69,6 +72,30 @@ class ShortcutOptimIRPass(AbstractIRPass):
             return fv
         if tv.ptr() == fv.ptr():
             return tv
+        return ir_builder.create_ir(ir_instance, ir_args, None)
+
+    def optimize_for_SelectBIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
+        cond, tv, fv = ir_args[0], ir_args[1], ir_args[2]
+        assert isinstance(cond, BooleanValue)
+        assert isinstance(tv, BooleanValue) and isinstance(fv, BooleanValue)
+        if cond.val() is not None and cond.val() != 0:
+            if tv.val() is not None:
+                return ir_builder.ir_constant_int(tv.val())
+            return tv
+        if cond.val() is not None and cond.val() == 0:
+            if fv.val() is not None:
+                return ir_builder.ir_constant_int(fv.val())
+            return fv
+        if tv.ptr() == fv.ptr():
+            return tv
+        if fv.val() is not None and fv.val() == True:
+            return ir_builder.ir_logical_or(ir_builder.ir_logical_not(cond), tv)
+        if fv.val() is not None and fv.val() == False:
+            return ir_builder.ir_logical_and(cond, tv)
+        if tv.val() is not None and tv.val() == True:
+            return ir_builder.ir_logical_or(cond, fv)
+        if tv.val() is not None and tv.val() == False:
+            return ir_builder.ir_logical_and(ir_builder.ir_logical_not(cond), fv)
         return ir_builder.create_ir(ir_instance, ir_args, None)
 
     def optimize_for_SelectFIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
@@ -168,6 +195,8 @@ class ShortcutOptimIRPass(AbstractIRPass):
             return self.optimize_for_LogicalAndIR(ir_builder, ir_instance, ir_args)
         if isinstance(ir_instance, LogicalOrIR):
             return self.optimize_for_LogicalOrIR(ir_builder, ir_instance, ir_args)
+        if isinstance(ir_instance, SelectBIR):
+            return self.optimize_for_SelectBIR(ir_builder, ir_instance, ir_args)
         if isinstance(ir_instance, SelectIIR):
             return self.optimize_for_SelectIIR(ir_builder, ir_instance, ir_args)
         if isinstance(ir_instance, SelectFIR):

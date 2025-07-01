@@ -13,7 +13,7 @@ class DuplicateCodeEliminationIRPass(AbstractIRPass):
         ir_graph = copy.copy(ir_graph)
         stmts = ir_graph.export_stmts()
         to_be_replaced = {}
-        duplicate_lookup = []  # We temporarily perform O(n^2) search for a quick impl
+        duplicate_lookup = []  # We temporarily perform O(n^2) search for a quick impl. This can be improved with a hash table.
         for i, stmt in enumerate(stmts):
             existing_stmt_id = None
             for item in duplicate_lookup:

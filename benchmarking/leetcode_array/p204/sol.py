@@ -14,16 +14,16 @@ from zinnia import *
 
 @zk_circuit
 def verify_solution(n: int, result: int):
-    is_prime = [1] * 1001
+    is_prime = [1] * 101
     number_of_primes = 0
-    assert 1000 >= n >= 0
+    assert 100 >= n >= 0
     if n == 1 or n == 0:
         assert result == 0
     else:
-        for i in range(2, 1001):
+        for i in range(2, 101):
             if is_prime[i] == 1:
                 number_of_primes += 1
-                for j in range(i, 1001, i):
+                for j in range(i, 101, i):
                     is_prime[j] = 0
             assert i != n or number_of_primes == result
 

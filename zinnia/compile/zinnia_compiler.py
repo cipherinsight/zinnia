@@ -4,12 +4,14 @@ from typing import Dict, List
 from zinnia.compile.backend.circom_builder import CircomProgramBuilder
 from zinnia.compile.backend.halo2_builder import Halo2ProgramBuilder
 from zinnia.compile.ast import ASTChip, ASTCircuit
+from zinnia.compile.backend.noir_builder import NoirProgramBuilder
 from zinnia.compile.ir.ir_gen import IRGenerator
 from zinnia.compile.ir.ir_graph import IRGraph
 from zinnia.compile.ir.ir_stmt import IRStatement
 from zinnia.compile.optim_pass.always_satisfied_elimination import AlwaysSatisfiedEliminationIRPass
 from zinnia.compile.optim_pass.constant_fold import ConstantFoldIRPass
 from zinnia.compile.optim_pass.dead_code_elimination import DeadCodeEliminationIRPass
+from zinnia.compile.optim_pass.double_not_elimination import DoubleNotEliminationIRPass
 from zinnia.compile.optim_pass.duplicate_code_elimination import DuplicateCodeEliminationIRPass
 from zinnia.compile.optim_pass.external_call_remover import ExternalCallRemoverIRPass
 from zinnia.compile.optim_pass.shortcut_optimization_pass import ShortcutOptimIRPass
@@ -45,6 +47,8 @@ class ZinniaCompiler:
             prog_builder = Halo2ProgramBuilder(name, zk_program_ir)
         elif self.config.get_backend() == ZinniaConfig.BACKEND_CIRCOM:
             prog_builder = CircomProgramBuilder(name, zk_program_ir)
+        elif self.config.get_backend() == ZinniaConfig.BACKEND_NOIR:
+            prog_builder = NoirProgramBuilder(name, zk_program_ir)
         else:
             raise NotImplementedError(f"Backend {self.config.get_backend()} is not supported.")
         compiled_source = prog_builder.build()
@@ -57,6 +61,7 @@ class ZinniaCompiler:
         ir_graph = ExternalCallRemoverIRPass().exec(ir_graph)
         if self.config.optimization_config().shortcut_optimization():
             ir_graph = ShortcutOptimIRPass().exec(ir_graph)
+            ir_graph = DoubleNotEliminationIRPass().exec(ir_graph)
         if self.config.optimization_config().constant_fold():
             ir_graph = ConstantFoldIRPass().exec(ir_graph)
         if self.config.optimization_config().dead_code_elimination():
@@ -70,6 +75,7 @@ class ZinniaCompiler:
     def run_passes_for_input_preprocess(self, ir_graph: IRGraph) -> List[IRStatement]:
         if self.config.optimization_config().shortcut_optimization():
             ir_graph = ShortcutOptimIRPass().exec(ir_graph)
+            ir_graph = DoubleNotEliminationIRPass().exec(ir_graph)
         if self.config.optimization_config().constant_fold():
             ir_graph = ConstantFoldIRPass().exec(ir_graph)
         if self.config.optimization_config().dead_code_elimination():
