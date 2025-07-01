@@ -538,9 +538,9 @@ fn main({self.build_main_params()}) {{
         for stmt in self.stmts:
             if isinstance(stmt.ir_instance, ReadIntegerIR):
                 if stmt.ir_instance.is_public:
-                    the_inputs.append(f'x_{'_'.join(map(str, stmt.ir_instance.indices))}: pub Field')
+                    the_inputs.append(f'x_{"_".join(map(str, stmt.ir_instance.indices))}: pub Field')
                 else:
-                    the_inputs.append(f'x_{'_'.join(map(str, stmt.ir_instance.indices))}: Field')
+                    the_inputs.append(f'x_{"_".join(map(str, stmt.ir_instance.indices))}: Field')
             elif isinstance(stmt.ir_instance, ReadFloatIR):
                 raise NotImplementedError("Floating-point operations are not supported in Noir")
             elif isinstance(stmt.ir_instance, ReadHashIR):
