@@ -3,12 +3,13 @@ import json
 import os.path
 import re
 import subprocess
+import time
 
 from zinnia import ZinniaConfig, ZKCircuit
 from zinnia.config import OptimizationConfig
 
 NOIR_FOLDER = "/Users/zhantong/Projects/hello_noir"
-TIME_MEASURE_REPETITIONS = 10
+TIME_MEASURE_REPETITIONS = 100
 
 
 def run_prove(name: str, input_source: str, program_source: str):
@@ -25,21 +26,29 @@ def run_prove(name: str, input_source: str, program_source: str):
         circuit_size = 0
         total_gates = 0
         opcode_count = 0
+        proving_times = []
+        verifying_times = []
         for i in range(TIME_MEASURE_REPETITIONS):
             execute_process = subprocess.run(['nargo', 'execute'], capture_output=True, text=True, env=my_env)
             execute_process_feedback = execute_process.stdout + execute_process.stderr
             assert execute_process.returncode == 0, execute_process_feedback
             assert "Circuit witness successfully solved" in execute_process_feedback
+            start_time = time.time()
             prove_process = subprocess.run(['bb', 'prove', '-b', './target/hello_noir.json', '-w', './target/hello_noir.gz', '-o', './target'], capture_output=True, text=True, env=my_env)
             prove_process_feedback = prove_process.stdout + prove_process.stderr
             assert prove_process.returncode == 0, prove_process_feedback
             match = re.search(r"Finalized circuit size: \s*([\d\.]+)", prove_process_feedback)
             assert match
             circuit_size = int(match.group(1))
+            end_time = time.time()
+            proving_times.append(end_time - start_time)
             write_vk_process = subprocess.run(['bb', 'write_vk', '-b', './target/hello_noir.json', '-o', './target'], capture_output=True, text=True, env=my_env)
             assert write_vk_process.returncode == 0
+            start_time = time.time()
             verify_process = subprocess.run(['bb', 'verify', '-k', './target/vk', '-p', './target/proof'], capture_output=True, text=True, env=my_env)
             assert verify_process.returncode == 0
+            end_time = time.time()
+            verifying_times.append(end_time - start_time)
             profiler_process = subprocess.run(['noir-profiler', 'gates', '--artifact-path', './target/hello_noir.json', '--backend-path', 'bb', '--output', './target', '--', '--include_gates_per_opcode'], capture_output=True, text=True, env=my_env)
             assert profiler_process.returncode == 0
             profiler_process_feedback = profiler_process.stdout + profiler_process.stderr
@@ -57,7 +66,9 @@ def run_prove(name: str, input_source: str, program_source: str):
         "name": name,
         "circuit_size": circuit_size,
         "opcode_count": opcode_count,
-        "total_gates": total_gates
+        "total_gates": total_gates,
+        "proving_time": sum(proving_times) / len(proving_times),
+        "verifying_time": sum(verifying_times) / len(verifying_times),
     }
 
 
@@ -117,7 +128,7 @@ DS1000 = [
 ]
 CRYPT = [
     "ecc",
-    # "poseidon",
+    "poseidon",
 ]
 
 DATASETS = {

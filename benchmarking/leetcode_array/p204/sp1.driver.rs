@@ -29,10 +29,10 @@ struct Args {
     #[clap(long)]
     prove: bool,
 
-    #[clap(long, default_value = "100")]
+    #[clap(long, default_value = "1000")]
     n: u32,
 
-    #[clap(long, default_value = "25")]
+    #[clap(long, default_value = "168")]
     result: u32,
 }
 

@@ -26,9 +26,9 @@ fn main() {
 
     // For example:
     let mut builder = ExecutorEnv::builder();
-    let tmp: u32 = 100;
+    let tmp: u32 = 1000;
     builder.write(&tmp).unwrap();
-    let tmp: u32 = 25;
+    let tmp: u32 = 168;
     builder.write(&tmp).unwrap();
 
     let env = builder

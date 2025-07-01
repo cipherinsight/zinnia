@@ -186,9 +186,15 @@ class _NoirStatementBuilder:
 
     def _build_PoseidonHashIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, PoseidonHashIR)
-        raise NotImplementedError("TODO")
+        assign_inputs = [
+            f"{self._get_var_name(arg)}"
+            for i, arg in enumerate(stmt.arguments)
+        ]
+        text = ', '.join(assign_inputs)
+        var_name = self._get_var_name(stmt.stmt_id)
         return [
-            f"poseidon::bn254::hash_10(inputs)"
+            f"let inputs: [Field; {len(stmt.arguments)}] = [{text}];",
+            f"let {var_name}: Field = poseidon::bn254::hash_10(inputs);"
         ]
 
     def _build_ExposePublicIIR(self, stmt: IRStatement) -> List[str]:
