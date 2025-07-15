@@ -10,10 +10,9 @@ from zinnia import ZKCircuit, ZinniaConfig
 from zinnia.config.optimization_config import OptimizationConfig
 
 HALO2_FOLDER = "/home/zhantong/halo2-graph"
-TIME_MEASURE_REPETITIONS = 10
-RESULT_PATH = 'results.json'
-ENABLE_OPTIMIZATIONS = True
 MULTIPROCESSING_POOL_SIZE = 1
+ABLATION_SETTING = 4  # supported 1, 2, 3, 4
+RESULT_PATH = f'results-ablation-{ABLATION_SETTING}.json'
 
 
 def prove_executor(_):
@@ -74,11 +73,11 @@ def run_prove(name: str, source: str, data: str):
         keygen_feedback = keygen_process.stdout + keygen_process.stderr
         assert keygen_process.returncode == 0, keygen_feedback
         with Pool(MULTIPROCESSING_POOL_SIZE) as p:
-            results = p.map(prove_executor, [_ for _ in range(TIME_MEASURE_REPETITIONS)])
+            results = p.map(prove_executor, [_ for _ in range(1)])
             proving_time_in_seconds = sum([result for result in results]) / len(results)
         snark_size = os.path.getsize(os.path.join(HALO2_FOLDER, "data/target.snark"))
         with Pool(MULTIPROCESSING_POOL_SIZE) as p:
-            results = p.map(verify_executor, [_ for _ in range(TIME_MEASURE_REPETITIONS)])
+            results = p.map(verify_executor, [_ for _ in range(1)])
             advice_cells, fixed_cells, range_check_advice_cells, _ = results[0]
             verify_time_in_seconds = sum([result[3] for result in results]) / len(results)
     except Exception as e:
@@ -110,16 +109,16 @@ def run_evaluate(dataset: str, problem: str):
     chips = getattr(module, 'chips', [])
     # Get the circuit
     config = ZinniaConfig(optimization_config=OptimizationConfig(
-        always_satisfied_elimination=ENABLE_OPTIMIZATIONS,
-        constant_fold=ENABLE_OPTIMIZATIONS,
-        dead_code_elimination=ENABLE_OPTIMIZATIONS,  # the program gets toooo big without those optimizations. So in abalation study we always enable it
-        duplicate_code_elimination=ENABLE_OPTIMIZATIONS,
-        shortcut_optimization=ENABLE_OPTIMIZATIONS
+        always_satisfied_elimination=False if ABLATION_SETTING == 1 else True,
+        constant_fold=False if ABLATION_SETTING == 1 else True,
+        dead_code_elimination=False if ABLATION_SETTING == 2 else True,  # the program gets toooo big without those optimizations. So in abalation study we always enable it
+        duplicate_code_elimination=False if ABLATION_SETTING == 3 else True,
+        shortcut_optimization=False if ABLATION_SETTING == 4 else True
     ))
     circuit = ZKCircuit.from_method(method, chips=chips, config=config)
     # Compile the circuit
     with Pool(MULTIPROCESSING_POOL_SIZE) as p:
-        results = p.map(compile_executor, [circuit for _ in range(TIME_MEASURE_REPETITIONS)])
+        results = p.map(compile_executor, [circuit for _ in range(1)])
         source = results[0][0]
         avg_time = sum([result[1] for result in results]) / len(results)
     # Get the input data
@@ -127,16 +126,8 @@ def run_evaluate(dataset: str, problem: str):
         data = f.read()
     # Run
     result1 = run_prove(f"{dataset}::{problem}.py", source, data)
-    # source 2
-    with open(os.path.join('../benchmarking', dataset, problem, 'sol.rs'), 'r') as f:
-        source = f.read()
-    # Get the input data
-    with open(os.path.join('../benchmarking', dataset, problem, 'sol.rs.in'), 'r') as f:
-        data = f.read()
-    result2 = run_prove(f"{dataset}::{problem}.rs", source, data)
     return {
         "zinnia": result1,
-        "halo2": result2,
         "zinnia_compile_time": avg_time
     }
 
