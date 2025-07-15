@@ -88,14 +88,14 @@ class ShortcutOptimIRPass(AbstractIRPass):
             return fv
         if tv.ptr() == fv.ptr():
             return tv
-        if fv.val() is not None and fv.val() == True:
-            return ir_builder.ir_logical_or(ir_builder.ir_logical_not(cond), tv)
+        # if fv.val() is not None and fv.val() == True:
+        #     return ir_builder.ir_logical_or(ir_builder.ir_logical_not(cond), tv)
         if fv.val() is not None and fv.val() == False:
             return ir_builder.ir_logical_and(cond, tv)
         if tv.val() is not None and tv.val() == True:
             return ir_builder.ir_logical_or(cond, fv)
-        if tv.val() is not None and tv.val() == False:
-            return ir_builder.ir_logical_and(ir_builder.ir_logical_not(cond), fv)
+        # if tv.val() is not None and tv.val() == False:
+        #     return ir_builder.ir_logical_and(ir_builder.ir_logical_not(cond), fv)
         return ir_builder.create_ir(ir_instance, ir_args, None)
 
     def optimize_for_SelectFIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
