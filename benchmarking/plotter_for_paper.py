@@ -1,8 +1,12 @@
 import json
 
+import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.gridspec as gridspec
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+from matplotlib.colors import LogNorm
 import numpy as np
 from matplotlib import rcParams
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
@@ -16,31 +20,31 @@ from scipy.stats import rankdata, norm
 rcParams["axes.xmargin"] = 0.02
 
 NAME_MAPPING = {
-    'crypt::ecc':                'CRYPT······ECC',
-    'crypt::poseidon':           'CRYPT·Poseidon',
-    'ds1000::case296':           'DS1000····#296',
-    'ds1000::case309':           'DS1000····#309',
-    'ds1000::case330':           'DS1000····#330',
-    'ds1000::case360':           'DS1000····#360',
-    'ds1000::case387':           'DS1000····#387',
-    'ds1000::case418':           'DS1000····#418',
-    'ds1000::case453':           'DS1000····#453',
-    'ds1000::case459':           'DS1000····#459',
-    'ds1000::case501':           'DS1000····#501',
-    'ds1000::case510':           'DS1000····#510',
-    'mlalgo::neuron':            'MLAlgo··Neuron',
-    'mlalgo::kmeans':            'MLAlgo··KMeans',
-    'mlalgo::linear_regression': 'MLAlgo··LinReg',
-    'leetcode_array::p204':      'LC-Array··#204',
-    'leetcode_array::p832':      'LC-Array··#832',
-    'leetcode_dp::p740':         'LC-DP·····#740',
-    'leetcode_dp::p1137':        'LC-DP····#1137',
-    'leetcode_graph::p3112':     'LC-Graph·#3112',
-    'leetcode_graph::p997':      'LC-Graph··#997',
-    'leetcode_math::p492':       'LC-Math···#492',
-    'leetcode_math::p2125':      'LC-Math··#2125',
-    'leetcode_matrix::p73':      'LC-Matrix··#73',
-    'leetcode_matrix::p2133':    'LC-Matrix#2133',
+    'crypt::ecc':                'CRY······ECC',
+    'crypt::poseidon':           'CRY·····Hash',
+    'ds1000::case296':           'DS······#296',
+    'ds1000::case309':           'DS······#309',
+    'ds1000::case330':           'DS······#330',
+    'ds1000::case360':           'DS······#360',
+    'ds1000::case387':           'DS······#387',
+    'ds1000::case418':           'DS······#418',
+    'ds1000::case453':           'DS······#453',
+    'ds1000::case459':           'DS······#459',
+    'ds1000::case501':           'DS······#501',
+    'ds1000::case510':           'DS······#510',
+    'mlalgo::neuron':            'ML····Neuron',
+    'mlalgo::kmeans':            'ML····KMeans',
+    'mlalgo::linear_regression': 'ML····LinReg',
+    'leetcode_array::p204':      'LC-Arr··#204',
+    'leetcode_array::p832':      'LC-Arr··#832',
+    'leetcode_dp::p740':         'LC-DP···#740',
+    'leetcode_dp::p1137':        'LC-DP··#1137',
+    'leetcode_graph::p3112':     'LC-Gra·#3112',
+    'leetcode_graph::p997':      'LC-Gra··#997',
+    'leetcode_math::p492':       'LC-Math·#492',
+    'leetcode_math::p2125':      'LC-Math#2125',
+    'leetcode_matrix::p73':      'LC-Mat···#73',
+    'leetcode_matrix::p2133':    'LC-Mat·#2133',
 }
 
 
@@ -195,10 +199,12 @@ def plot_evaluation_results():
     verify_time_rates = []
     snark_size_rates = []
     zinnia_compile_times = []
+    zinnia_gates = []
+    halo2_gates = []
     for key, value in results_dict.items():
         names.append(NAME_MAPPING[key])
-        zinnia_gates = value['zinnia']['advice_cells']
-        halo2_gates = value['halo2']['advice_cells']
+        _zinnia_gates = value['zinnia']['advice_cells']
+        _halo2_gates = value['halo2']['advice_cells']
         zinnia_prove_time = value['zinnia']['proving_time']
         halo2_prove_time = value['halo2']['proving_time']
         zinnia_verify_time = value['zinnia']['verify_time']
@@ -209,7 +215,9 @@ def plot_evaluation_results():
         proving_time_optimizes.append(zinnia_prove_time)
         verifying_time_baselines.append(halo2_verify_time)
         verifying_time_optimizes.append(zinnia_verify_time)
-        acc_rates.append(-(zinnia_gates - halo2_gates) / halo2_gates * 100)
+        zinnia_gates.append(_zinnia_gates)
+        halo2_gates.append(_halo2_gates)
+        acc_rates.append(-(_zinnia_gates - _halo2_gates) / _halo2_gates * 100)
         prove_time_rates.append(-(zinnia_prove_time - halo2_prove_time) / halo2_prove_time * 100)
         verify_time_rates.append(-(zinnia_verify_time - halo2_verify_time) / halo2_verify_time * 100)
         snark_size_rates.append(-(zinnia_snark_size - halo2_snark_size) / halo2_snark_size * 100)
@@ -438,7 +446,7 @@ def plot_performance_overviews():
     plt.show()
     fig.savefig('results-zkvm-time.pdf', dpi=300)
 
-    fig, [ax1, ax2] = plt.subplots(2, 1, figsize=(10, 3.5))
+    fig, [ax1, ax2] = plt.subplots(2, 1, figsize=(5, 3.5))
     width = 0.2
     x = np.arange(len(names))
     colors = ['mediumseagreen', 'lightcoral', 'cornflowerblue', 'orange']
@@ -456,10 +464,10 @@ def plot_performance_overviews():
     ax2.bar(x + width * +0.5, sp1_stark_verify_time, width, color=colors[2])
     ax2.bar(x + width * +1.5, sp1_snark_verify_time, width, color=colors[3])
     ax2.tick_params(axis='x')
-    ylabel = ax2.set_ylabel('Verifying Time (ms)    ', fontdict=title_font)
+    ylabel = ax2.set_ylabel('Verifying Time (ms)                  ', fontdict=title_font)
     ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1]))
     ax2.set_xticks(x, names)
-    ax2.set_xticklabels(names, rotation=30, ha='right')
+    ax2.set_xticklabels(names, rotation=90)
     ax2.set_yscale('log')
     # print(np.mean(np.asarray(zinnia_verify_time) / risc0_stark_verify_time))
     fig.legend([AnyObject(c) for c in colors],
@@ -467,7 +475,7 @@ def plot_performance_overviews():
                handler_map={
                    AnyObject: AnyObjectHandler()
                },
-               loc='upper center', ncol=4,
+               loc=(0.24, 0.90), ncol=2,
                prop={'size': 8},
                frameon=False)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
@@ -609,10 +617,149 @@ def plot_ablation_study():
     fig.savefig('ablation-study.pdf', dpi=300)
 
 
+def plot_performance_heatmap():
+    with open('results.json', 'r') as f:
+        results_dict = json.load(f)
+    with open('results-noir.json', 'r') as f:
+        noir_results_dict = json.load(f)
+
+    names = []
+    zinnia_plonk_gates = []
+    zinnia_ultrahonk_gates = []
+    halo2_gates = []
+    noir_gates = []
+    zinnia_plonk_proving_times = []
+    zinnia_ultrahonk_proving_times = []
+    zinnia_ultrahonk_verifying_times = []
+    halo2_proving_times = []
+    noir_proving_times = []
+    zinnia_plonk_verifying_times = []
+    noir_verifying_times = []
+    halo2_verifying_times = []
+    noir_excluded = []
+    for i, (key, value) in enumerate(results_dict.items()):
+        names.append(NAME_MAPPING[key])
+        _zinnia_gates = value['zinnia']['advice_cells']
+        _halo2_gates = value['halo2']['advice_cells']
+        _zinnia_prove_time = value['zinnia']['proving_time']
+        _halo2_prove_time = value['halo2']['proving_time']
+        _zinnia_verify_time = value['zinnia']['verify_time']
+        _halo2_verify_time = value['halo2']['verify_time']
+        if key in noir_results_dict:
+            _zinnia_ultrahonk_gates = noir_results_dict[key]['ours_on_noir']['total_gates']
+            _noir_gates = noir_results_dict[key]['baseline_on_noir']['total_gates']
+            _zinnia_ultrahonk_proving_time = noir_results_dict[key]['ours_on_noir']['proving_time']
+            _zinnia_ultrahonk_verifying_time = noir_results_dict[key]['ours_on_noir']['verifying_time']
+            _noir_proving_time = noir_results_dict[key]['baseline_on_noir']['proving_time']
+            _noir_verifying_time = noir_results_dict[key]['baseline_on_noir']['verifying_time']
+        else:
+            noir_excluded.append(i)
+            _zinnia_ultrahonk_gates = 0
+            _noir_gates = 0
+            _zinnia_ultrahonk_proving_time = 0
+            _zinnia_ultrahonk_verifying_time = 0
+            _noir_proving_time = 0
+            _noir_verifying_time = 0
+        zinnia_plonk_gates.append(_zinnia_gates)
+        zinnia_ultrahonk_gates.append(_zinnia_ultrahonk_gates)
+        halo2_gates.append(_halo2_gates)
+        noir_gates.append(_noir_gates)
+        zinnia_plonk_proving_times.append(_zinnia_prove_time)
+        zinnia_plonk_verifying_times.append(_zinnia_verify_time)
+        halo2_proving_times.append(_halo2_prove_time)
+        halo2_verifying_times.append(_halo2_verify_time)
+        zinnia_ultrahonk_proving_times.append(_zinnia_ultrahonk_proving_time)
+        noir_proving_times.append(_noir_proving_time)
+        noir_verifying_times.append(_noir_verifying_time)
+        zinnia_ultrahonk_verifying_times.append(_zinnia_ultrahonk_verifying_time)
+
+    plt.rc('font', family='monospace', )
+    # plt.rc('text', usetex=True)
+    title_font = {'fontweight': 'bold', 'fontname': 'Times New Roman', 'fontsize': 12}
+
+    # Generate random data for 25 tasks, 3 metrics (size, p-time, v-time), 2 conditions (I and II)
+    tasks = names
+
+    # A and B values for condition I and II
+    A_I = np.asarray([zinnia_plonk_gates, zinnia_plonk_proving_times, zinnia_plonk_verifying_times]).transpose()
+    B_I = np.asarray([halo2_gates, halo2_proving_times, halo2_verifying_times]).transpose()
+
+    A_II = np.asarray([zinnia_ultrahonk_gates, zinnia_ultrahonk_proving_times, zinnia_ultrahonk_verifying_times]).transpose()
+    B_II = np.asarray([noir_gates, noir_proving_times, noir_verifying_times]).transpose()
+
+
+    # Compute improvement percentage: (B - A) / A
+    imp_I = (A_I / B_I)
+    imp_II = (A_II / B_II)
+
+    mask = np.isnan(imp_II).any(axis=1)
+    clean = imp_II[~mask]
+
+    # Setup diverging colormap: red (negative) to white (zero) to green (positive)
+    cmap = mcolors.LinearSegmentedColormap.from_list('mycolormap',
+                                                     [(0, 'green'), (0.5, 'white'), (1, 'lightcoral')])
+
+    # Plotting
+    fig, axes = plt.subplots(1, 2, figsize=(7, 8), sharey=True)
+    fig.subplots_adjust(wspace=0.05)
+    metrics = ['No. Constraints', 'Proving Time (s)', 'Verifying Time (ms)']
+
+    for ax, imp, A_vals, title in zip(axes, [imp_I, imp_II], [A_I, A_II], ['Halo2 Baseline (PLONK)', 'Noir Baseline (UNTRAHONK)']):
+        im = ax.imshow(imp, cmap=cmap, norm=mcolors.LogNorm(vmin=0.75, vmax=1.333333), aspect='auto')
+        ax.set_xticks(np.arange(3))
+        ax.set_xticklabels(metrics, fontdict=title_font, rotation=10)
+        ax.set_title(title, fontdict=title_font, fontsize=14)
+        # Annotate each cell with A's value
+        for i in range(25):
+            if i in noir_excluded and 'Noir' in title:
+                for j in range(3):
+                    ax.text(j, i, 'N/A', ha='center', va='center', fontsize=13)
+            else:
+                for j in range(3):
+                    if j == 0:
+                        ax.text(j, i, f"{int(A_vals[i, j])}", ha='center', va='center', fontsize=13)
+                    elif j == 1:
+                        ax.text(j, i, f"{A_vals[i, j]:.1f}", ha='center', va='center', fontsize=13)
+                    elif j == 2:
+                        tmp = A_vals[i, j] * 1000
+                        ax.text(j, i, f"{tmp:.1f}", ha='center', va='center', fontsize=13)
+
+    axes[0].set_yticks(np.arange(25))
+    axes[0].set_yticklabels(tasks, fontsize=13)
+    axes[0].invert_yaxis()
+    axes[1].invert_yaxis()
+
+    legend_ax = inset_axes(
+        ax,
+        width="30%",  # or a fraction, or "3in", etc.
+        height="20%",
+        bbox_to_anchor=(0.05, 0.04, 0.3, 0.05),  # (left, bottom, w, h)
+        bbox_transform=fig.transFigure,
+        loc='lower left'
+    )
+    gradient = np.linspace(0, 1, 256).reshape(1, -1)
+    legend_ax.imshow(gradient, aspect='auto', cmap=cmap)
+    legend_ax.set_axis_off()  # hide default axes
+    legend_ax.set_axis_on()
+    legend_ax.xaxis.set_ticks_position('bottom')
+    legend_ax.set_yticks([])
+    N = gradient.shape[1]
+    legend_ax.set_xticks([0, N // 2, N - 1])
+    legend_ax.set_xticklabels(['ACC', '1$\\times$', 'DEC'], fontsize=8)
+    for spine in legend_ax.spines.values():
+        spine.set_edgecolor('black')
+        spine.set_linewidth(0.5)
+
+    plt.tight_layout(w_pad=0.05)
+    plt.show()
+    fig.savefig('circuit-performance.pdf', dpi=300)
+
+
 def main():
-    plot_evaluation_results()
-    plot_performance_overviews()
-    plot_ablation_study()
+    # plot_evaluation_results()
+    # plot_performance_overviews()
+    # plot_ablation_study()
+    plot_performance_heatmap()
 
 
 if __name__ == "__main__":

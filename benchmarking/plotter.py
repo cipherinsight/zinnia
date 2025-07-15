@@ -200,10 +200,18 @@ def plot_noir_benchmarking_results():
     names = []
     zinnia_gates = []
     noir_gates = []
+    zinnia_proving_times = []
+    noir_proving_times = []
+    zinnia_verifying_times = []
+    noir_verifying_times = []
     for key, value in noir_results_dict.items():
         names.append(key)
         zinnia_gates.append(value['ours_on_noir']['total_gates'])
         noir_gates.append(value['baseline_on_noir']['total_gates'])
+        zinnia_proving_times.append(value['ours_on_noir']['proving_time'])
+        noir_proving_times.append(value['baseline_on_noir']['proving_time'])
+        zinnia_verifying_times.append(value['ours_on_noir']['verifying_time'])
+        noir_verifying_times.append(value['baseline_on_noir']['verifying_time'])
 
     fig, ax = plt.subplots()
     width = 0.25
@@ -219,6 +227,36 @@ def plot_noir_benchmarking_results():
     fig.tight_layout()
     plt.show()
     fig.savefig('results-noir-gate-sizes.png', dpi=300)
+
+    fig, ax = plt.subplots()
+    width = 0.25
+    x = np.arange(len(names))
+    ax.bar(x + width * 0, zinnia_proving_times, width, label='Zinnia')
+    ax.bar(x + width * 1, noir_proving_times, width, label='Noir')
+    ax.tick_params(axis='x', labelrotation=90)
+    ax.set_ylabel('Proving Time (s)')
+    ax.set_xticks(x + width / 2, names)
+    ax.set_title('Zinnia Compiler Performance Overviews')
+    # ax.set_yscale('log')
+    ax.legend()
+    fig.tight_layout()
+    plt.show()
+    fig.savefig('results-noir-proving-times.png', dpi=300)
+
+    fig, ax = plt.subplots()
+    width = 0.25
+    x = np.arange(len(names))
+    ax.bar(x + width * 0, zinnia_verifying_times, width, label='Zinnia')
+    ax.bar(x + width * 1, noir_verifying_times, width, label='Noir')
+    ax.tick_params(axis='x', labelrotation=90)
+    ax.set_ylabel('Verifying Time (s)')
+    ax.set_xticks(x + width / 2, names)
+    ax.set_title('Zinnia Compiler Performance Overviews')
+    # ax.set_yscale('log')
+    ax.legend()
+    fig.tight_layout()
+    plt.show()
+    fig.savefig('results-noir-verifying-times.png', dpi=300)
 
 
 def main():
