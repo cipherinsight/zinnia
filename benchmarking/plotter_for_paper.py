@@ -483,10 +483,10 @@ def plot_performance_overviews():
     fig.savefig('results-zkvm-time-landscape.pdf', dpi=300)
 
 
-def plot_ablation_study():
+def plot_ablation_study_old():
     with open('results.json', 'r') as f:
         zinnia_results_dict = json.load(f)
-    with open('results-ablation.json', 'r') as f:
+    with open('results-ablation-1.json', 'r') as f:
         ablation_results_dict = json.load(f)
 
     names = []
@@ -755,10 +755,92 @@ def plot_performance_heatmap():
     fig.savefig('circuit-performance.pdf', dpi=300)
 
 
+def plot_ablation_study():
+    with open('results.json', 'r') as f:
+        zinnia_results_dict = json.load(f)
+    with open('results-ablation-1.json', 'r') as f:
+        ablation_results_1 = json.load(f)
+    with open('results-ablation-2.json', 'r') as f:
+        ablation_results_2 = json.load(f)
+    with open('results-ablation-3.json', 'r') as f:
+        ablation_results_3 = json.load(f)
+    with open('results-ablation-4.json', 'r') as f:
+        ablation_results_4 = json.load(f)
+
+    names = []
+    baseline_gates = []
+    no_ablation_gates = []
+    ablation_1_increased_gates = []
+    ablation_2_increased_gates = []
+    ablation_3_increased_gates = []
+    ablation_4_increased_gates = []
+    for key, value in zinnia_results_dict.items():
+        names.append(NAME_MAPPING[key])
+        zinnia_gates = value['zinnia']['advice_cells']
+        halo2_gates = value['halo2']['advice_cells']
+        ablation_1_gates = ablation_results_1[key]['zinnia']['advice_cells']
+        ablation_2_gates = ablation_results_2[key]['zinnia']['advice_cells']
+        ablation_3_gates = ablation_results_3[key]['zinnia']['advice_cells']
+        ablation_4_gates = ablation_results_4[key]['zinnia']['advice_cells']
+        baseline_gates.append(halo2_gates)
+        no_ablation_gates.append(zinnia_gates)
+        ablation_1_increased_gates.append(ablation_1_gates - zinnia_gates)
+        ablation_2_increased_gates.append(ablation_2_gates - zinnia_gates)
+        ablation_3_increased_gates.append(ablation_3_gates - zinnia_gates)
+        ablation_4_increased_gates.append(ablation_4_gates - zinnia_gates)
+    ablation_1_increased_gates = np.asarray(ablation_1_increased_gates)
+    ablation_2_increased_gates = np.asarray(ablation_2_increased_gates)
+    ablation_3_increased_gates = np.asarray(ablation_3_increased_gates)
+    ablation_4_increased_gates = np.asarray(ablation_4_increased_gates)
+    no_ablation_gates = np.asarray(no_ablation_gates)
+    baseline_gates = np.asarray(baseline_gates)
+    the_base_bar = (no_ablation_gates / baseline_gates) * 100
+    ablation_dce_bar = (ablation_2_increased_gates / baseline_gates) * 100
+    ablation_cse_bar = (ablation_3_increased_gates / baseline_gates) * 100
+    ablation_pm_bar = (ablation_4_increased_gates / baseline_gates) * 100
+    ablation_symex_bar = (ablation_1_increased_gates / baseline_gates) * 100
+    for i in range(len(names)):
+        sum = ablation_symex_bar[i] + the_base_bar[i] + ablation_dce_bar[i] + ablation_cse_bar[i] + ablation_pm_bar[i]
+        # some symbolic execution pruned branches cannot be detected by the disabling optimizations
+        # so we need to ensure the sum is at least 100%
+        if sum < 100:
+            ablation_symex_bar[i] += 100 - sum
+
+    print('mean::', ((ablation_symex_bar + the_base_bar + ablation_dce_bar + ablation_cse_bar + ablation_pm_bar)).mean())
+
+    plt.rc('font', family='monospace', )
+    # plt.rc('text', usetex=True)
+    title_font = {'fontweight': 'bold', 'fontname': 'Times New Roman', 'fontsize': 12}
+    # Plot the comparison of gate reductions
+    fig, ax = plt.subplots(figsize=(5, 3))
+    ax.bar(names, the_base_bar, color='silver')
+    ax.bar(names, ablation_dce_bar, color='wheat', bottom=the_base_bar, label='DCE')
+    ax.bar(names, ablation_cse_bar, color='lightskyblue', bottom=the_base_bar + ablation_dce_bar, label='CSE')
+    ax.bar(names, ablation_pm_bar, color='mediumpurple', bottom=the_base_bar + ablation_dce_bar + ablation_cse_bar, label='PM')
+    ax.bar(names, ablation_symex_bar, color='mediumseagreen', bottom=ablation_pm_bar + the_base_bar + ablation_dce_bar + ablation_cse_bar, label='SymEx')
+    ax.tick_params(axis='x', labelrotation=90)
+    ylabel = ax.set_ylabel('No. of Constraints (%)', fontdict=title_font)
+    ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1]))
+    ax.set_ylim(0, 400)
+    ax.axhline(100, color='black', linewidth=1, linestyle='--')
+    ax.text(len(names) - 2, 70, 'Baseline', fontsize=8, color='black', ha='center')
+    fig.legend([AnyObject('silver'), AnyObject('wheat'), AnyObject('lightskyblue'), AnyObject('mediumpurple'), AnyObject('mediumseagreen')],
+               ['No Ablation', 'w/o Dead Code Elimination', 'w/o Common Sub-expression Elimination', 'w/o Pattern Matching Rewrites', 'w/o Symbolic Execution Pruning'],
+               handler_map={
+                   AnyObject: AnyObjectHandler()
+               },
+               loc=(0.16, 0.64), ncol=1,
+               prop={'size': 8},
+               frameon=False)
+    fig.tight_layout()
+    plt.show()
+    fig.savefig('ablation-study.pdf', dpi=300)
+
+
 def main():
-    # plot_evaluation_results()
-    # plot_performance_overviews()
-    # plot_ablation_study()
+    plot_evaluation_results()
+    plot_performance_overviews()
+    plot_ablation_study()
     plot_performance_heatmap()
 
 
