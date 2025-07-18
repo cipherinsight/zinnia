@@ -4,7 +4,7 @@ import re
 import subprocess
 import time
 
-CAIRO_FOLDER = "/home/cairo_projects/hello_world"
+CAIRO_FOLDER = "/home/zhantong/cairo_projects/hello_world"
 TIME_MEASURE_REPETITIONS = 10
 
 
@@ -95,18 +95,18 @@ DS1000 = [
     "case510",
 ]
 CRYPT = [
-    "ecc",
+    # "ecc",  # Cairo's p value is different
     "poseidon",
 ]
 
 DATASETS = {
-    # "crypt": CRYPT,
+    "crypt": CRYPT,
     # "mlalgo": MLALGO,
-    # "leetcode_array": LEETCODE_ARRAY,
-    # "leetcode_dp": LEETCODE_DP,
-    # "leetcode_graph": LEETCODE_GRAPH,
-    # "leetcode_math": LEETCODE_MATH,
-    # "leetcode_matrix": LEETCODE_MATRIX,
+    "leetcode_array": LEETCODE_ARRAY,
+    "leetcode_dp": LEETCODE_DP,
+    "leetcode_graph": LEETCODE_GRAPH,
+    "leetcode_math": LEETCODE_MATH,
+    "leetcode_matrix": LEETCODE_MATRIX,
     "ds1000": DS1000
 }
 
