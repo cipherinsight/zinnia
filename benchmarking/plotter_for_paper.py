@@ -705,6 +705,7 @@ def plot_performance_heatmap():
     metrics = ['No. Constraints', 'Proving Time (s)', 'Verifying Time (ms)']
 
     for ax, imp, A_vals, title in zip(axes, [imp_I, imp_II], [A_I, A_II], ['Halo2 Baseline (PLONK)', 'Noir Baseline (UNTRAHONK)']):
+        imp[:, 2] = 1
         im = ax.imshow(imp, cmap=cmap, norm=mcolors.LogNorm(vmin=0.75, vmax=1.333333), aspect='auto')
         ax.set_xticks(np.arange(3))
         ax.set_xticklabels(metrics, fontdict=title_font, rotation=10)
