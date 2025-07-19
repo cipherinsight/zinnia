@@ -359,12 +359,15 @@ def plot_performance_overviews():
         sp1_results_dict = json.load(f)
     with open('results-risc0.json', 'r') as f:
         risc0_results_dict = json.load(f)
+    with open('results-cairo.json', 'r') as f:
+        cairo_results_dict = json.load(f)
 
     plt.rc('font', family='monospace', )
     # plt.rc('text', usetex=True)
     title_font = {'fontweight': 'bold', 'fontname': 'Times New Roman', 'fontsize': 12}
 
     names = []
+    keys = []
     zinnia_snark_proving_time = []
     baseline_snark_proving_time = []
     zinnia_verify_time = []
@@ -377,6 +380,8 @@ def plot_performance_overviews():
     sp1_snark_size = []
     risc0_stark_proving_time = []
     risc0_stark_verify_time = []
+    cairo_stark_proving_time = []
+    cairo_stark_verify_time = []
     for key, value in sp1_results_dict.items():
         _zinnia_prove_time = zinnia_results_dict[key]['zinnia']['proving_time']
         _zinnia_verify_time = zinnia_results_dict[key]['zinnia']['verify_time']
@@ -384,6 +389,7 @@ def plot_performance_overviews():
         _baseline_prove_time = zinnia_results_dict[key]['halo2']['proving_time']
         _baseline_verify_time = zinnia_results_dict[key]['halo2']['verify_time']
 
+        keys.append(key)
         names.append(NAME_MAPPING[key])
         zinnia_snark_proving_time.append(_zinnia_prove_time)
         baseline_snark_proving_time.append(_baseline_prove_time)
@@ -401,10 +407,20 @@ def plot_performance_overviews():
         risc0_stark_proving_time.append(value['stark_proving_time'])
         risc0_stark_verify_time.append(value['stark_verify_time'])
 
+    for key in keys:
+        if key not in cairo_results_dict:
+            cairo_stark_proving_time.append(0)
+            cairo_stark_verify_time.append(0)
+            continue
+        else:
+            cairo_stark_proving_time.append(cairo_results_dict[key]['stark_proving_time'])
+            cairo_stark_verify_time.append(cairo_results_dict[key]['stark_verify_time'])
+
     risc0_stark_verify_time = np.asarray(risc0_stark_verify_time) * 1000
     sp1_snark_verify_time = np.asarray(sp1_snark_verify_time) * 1000
     sp1_stark_verify_time = np.asarray(sp1_stark_verify_time) * 1000
     zinnia_verify_time = np.asarray(zinnia_verify_time) * 1000
+    cairo_stark_verify_time = np.asarray(cairo_stark_verify_time) * 1000
     baseline_verify_time = np.asarray(baseline_verify_time) * 1000
 
     stat, p_value = wilcoxon_signed_rank(
@@ -413,56 +429,68 @@ def plot_performance_overviews():
     print(f"p-value (H1: A < B): {p_value:.4f}")
 
     fig, [ax1, ax2] = plt.subplots(1, 2, figsize=(10, 3))
-    width = 0.16
+    width = 0.12
     x = np.arange(len(names))
-    colors = ['mediumseagreen', 'lightcoral', 'cornflowerblue', 'orange']
-    ax1.bar(x + width * -1.5, zinnia_snark_proving_time, width, color=colors[0])
-    ax1.bar(x + width * -0.5, risc0_stark_proving_time, width, color=colors[1])
-    ax1.bar(x + width * +0.5, sp1_stark_proving_time, width, color=colors[2])
-    ax1.bar(x + width * +1.5, sp1_snark_proving_time, width, color=colors[3])
+    colors = ['mediumseagreen', 'lightcoral', 'cornflowerblue', 'orange', 'black']
+    ax1.bar(x + width * -2, zinnia_snark_proving_time, width, color=colors[0])
+    ax1.bar(x + width * -1, risc0_stark_proving_time, width, color=colors[1])
+    ax1.bar(x + width * +0, sp1_stark_proving_time, width, color=colors[2])
+    ax1.bar(x + width * +1, sp1_snark_proving_time, width, color=colors[3])
+    ax1.bar(x + width * +2, cairo_stark_proving_time, width, color=colors[4])
     ax1.tick_params(axis='x', labelrotation=90)
     ylabel = ax1.set_ylabel('Proving Time (s)', fontdict=title_font)
     ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1]))
     ax1.set_xticks(x, names)
     ax1.set_yscale('log')
-    ax2.bar(x + width * -1.5, zinnia_verify_time, width, color=colors[0])
-    ax2.bar(x + width * -0.5, risc0_stark_verify_time, width, color=colors[1])
-    ax2.bar(x + width * +0.5, sp1_stark_verify_time, width, color=colors[2])
-    ax2.bar(x + width * +1.5, sp1_snark_verify_time, width, color=colors[3])
+    ax2.bar(x + width * -2, zinnia_verify_time, width, color=colors[0])
+    ax2.bar(x + width * -1, risc0_stark_verify_time, width, color=colors[1])
+    ax2.bar(x + width * +0, sp1_stark_verify_time, width, color=colors[2])
+    ax2.bar(x + width * +1, sp1_snark_verify_time, width, color=colors[3])
+    ax2.bar(x + width * +2, cairo_stark_verify_time, width, color=colors[4])
     ax2.tick_params(axis='x', labelrotation=90)
     ylabel = ax2.set_ylabel('Verifying Time (ms)', fontdict=title_font)
     ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1]))
     ax2.set_xticks(x, names)
     ax2.set_yscale('log')
     fig.legend([AnyObject(c) for c in colors],
-               ['Zinnia (zk-SNARK)', 'RISC0 (zk-STARK)', 'SP1 (zk-STARK)', 'SP1 (zk-SNARK)'],
+               ['Zinnia (zk-SNARK)', 'RISC0 (zk-STARK)', 'SP1 (zk-STARK)', 'SP1 (zk-SNARK)', 'Cairo (zk-STARK)'],
                handler_map={
                    AnyObject: AnyObjectHandler()
                },
-               loc='upper center', ncol=4,
+               loc='upper center', ncol=5,
                prop={'size': 8},
                frameon=False)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     plt.show()
     fig.savefig('results-zkvm-time.pdf', dpi=300)
 
+    zinnia_metrics = []
+    cairo_metrics = []
+    for i in range(len(cairo_stark_proving_time)):
+        if cairo_stark_proving_time[i] != 0:
+            zinnia_metrics.append(zinnia_snark_proving_time[i])
+            cairo_metrics.append(cairo_stark_proving_time[i])
+    print((np.asarray(cairo_metrics) / np.asarray(zinnia_metrics)).mean())
+
     fig, [ax1, ax2] = plt.subplots(2, 1, figsize=(5, 3.5))
-    width = 0.2
+    width = 0.16
     x = np.arange(len(names))
-    colors = ['mediumseagreen', 'lightcoral', 'cornflowerblue', 'orange']
-    ax1.bar(x + width * -1.5, zinnia_snark_proving_time, width, color=colors[0])
-    ax1.bar(x + width * -0.5, risc0_stark_proving_time, width, color=colors[1])
-    ax1.bar(x + width * +0.5, sp1_stark_proving_time, width, color=colors[2])
-    ax1.bar(x + width * +1.5, sp1_snark_proving_time, width, color=colors[3])
+    colors = ['mediumseagreen', 'lightcoral', 'cornflowerblue', 'orange', 'gray']
+    ax1.bar(x + width * -2, zinnia_snark_proving_time, width, color=colors[0])
+    ax1.bar(x + width * -1, risc0_stark_proving_time, width, color=colors[1])
+    ax1.bar(x + width * +0, sp1_stark_proving_time, width, color=colors[2])
+    ax1.bar(x + width * +1, sp1_snark_proving_time, width, color=colors[3])
+    ax1.bar(x + width * +2, cairo_stark_proving_time, width, color=colors[4])
     ax1.tick_params(labelbottom=False)
     ax1.set_xticks(x, names)
     ylabel = ax1.set_ylabel('  Proving Time (s)', fontdict=title_font)
     ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1]))
     ax1.set_yscale('log')
-    ax2.bar(x + width * -1.5, zinnia_verify_time, width, color=colors[0])
-    ax2.bar(x + width * -0.5, risc0_stark_verify_time, width, color=colors[1])
-    ax2.bar(x + width * +0.5, sp1_stark_verify_time, width, color=colors[2])
-    ax2.bar(x + width * +1.5, sp1_snark_verify_time, width, color=colors[3])
+    ax2.bar(x + width * -2, zinnia_verify_time, width, color=colors[0])
+    ax2.bar(x + width * -1, risc0_stark_verify_time, width, color=colors[1])
+    ax2.bar(x + width * +0, sp1_stark_verify_time, width, color=colors[2])
+    ax2.bar(x + width * +1, sp1_snark_verify_time, width, color=colors[3])
+    ax2.bar(x + width * +2, cairo_stark_verify_time, width, color=colors[4])
     ax2.tick_params(axis='x')
     ylabel = ax2.set_ylabel('Verifying Time (ms)                  ', fontdict=title_font)
     ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1]))
@@ -470,12 +498,20 @@ def plot_performance_overviews():
     ax2.set_xticklabels(names, rotation=90)
     ax2.set_yscale('log')
     # print(np.mean(np.asarray(zinnia_verify_time) / risc0_stark_verify_time))
-    fig.legend([AnyObject(c) for c in colors],
-               ['Zinnia (zk-SNARK)', 'RISC0 (zk-STARK)', 'SP1 (zk-STARK)', 'SP1 (zk-SNARK)'],
+    fig.legend([AnyObject(c) for c in colors[:2]],
+               ['Zinnia (zk-SNARK)', 'RISC0 (zk-STARK)'],
                handler_map={
                    AnyObject: AnyObjectHandler()
                },
-               loc=(0.24, 0.90), ncol=2,
+               loc=(0.24, 0.95), ncol=3,
+               prop={'size': 8},
+               frameon=False)
+    fig.legend([AnyObject(c) for c in colors[2:]],
+               ['SP1 (zk-STARK)', 'SP1 (zk-SNARK)', 'Cairo (zk-STARK)'],
+               handler_map={
+                   AnyObject: AnyObjectHandler()
+               },
+               loc=(0.11, 0.90), ncol=3,
                prop={'size': 8},
                frameon=False)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
@@ -839,10 +875,10 @@ def plot_ablation_study():
 
 
 def main():
-    plot_evaluation_results()
+    # plot_evaluation_results()
     plot_performance_overviews()
-    plot_ablation_study()
-    plot_performance_heatmap()
+    # plot_ablation_study()
+    # plot_performance_heatmap()
 
 
 if __name__ == "__main__":

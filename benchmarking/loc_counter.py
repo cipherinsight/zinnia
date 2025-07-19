@@ -112,6 +112,16 @@ def count_risc0(dataset: str, problem: str):
     return len(lines)
 
 
+def count_cairo(dataset: str, problem: str):
+    with open(os.path.join('../benchmarking', dataset, problem, 'main.cairo'), 'r') as f:
+        source = f.read()
+
+    lines = source.split('\n')
+    lines = [line for line in lines if line.strip() != '']
+    lines = [line for line in lines if not line.startswith('//')]
+    return len(lines)
+
+
 def count_noir(dataset: str, problem: str):
     with open(os.path.join('../benchmarking', dataset, problem, 'main.nr'), 'r') as f:
         source = f.read()
@@ -173,11 +183,24 @@ def main():
                 continue
         if tmp:
             print(f'{dataset} avg (noir):', sum(tmp) / len(tmp))
+    for dataset, problems in DATASETS.items():
+        tmp = []
+        for problem in problems:
+            try:
+                cnt = count_cairo(dataset, problem)
+                noir_counts.append(cnt)
+                tmp.append(cnt)
+                print(f'{dataset}:{problem} (cairo) = {cnt}')
+            except:
+                continue
+        if tmp:
+            print(f'{dataset} avg (cairo):', sum(tmp) / len(tmp))
     print('Zinnia avg:', sum(zinnia_counts) / len(zinnia_counts))
     print('Halo2 avg:', sum(halo2_counts) / len(halo2_counts))
     print('SP1 avg:', sum(sp1_counts) / len(sp1_counts))
     print('RISC0 avg:', sum(risc0_counts) / len(risc0_counts))
     print('Noir avg:', sum(noir_counts) / len(noir_counts))
+    print('Cairo avg:', sum(noir_counts) / len(noir_counts))
 
 if __name__ == '__main__':
     main()
