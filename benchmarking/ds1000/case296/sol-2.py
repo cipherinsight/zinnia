@@ -25,7 +25,7 @@ import numpy as np
 from zinnia import *
 
 @zk_circuit
-def verify_solution(data: NDArray[int, 6], result: NDArray[int, 6, 7]):
+def verify_solution(data: NDArray[int, 6], result: NDArray[int, 6, 4]):
     for i in range(result.shape[0]):
         for j in range(result.shape[1]):
             assert result[i][j] == (1 if j == data[i] else 0)

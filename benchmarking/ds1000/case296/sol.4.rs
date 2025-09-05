@@ -46,15 +46,15 @@ fn verify_solution<F: ScalarField>(
     let mut result: Vec<Vec<AssignedValue<F>>> = Vec::new();
     for i in 0..12 {
         let mut tmp: Vec<AssignedValue<F>> = Vec::new();
-        for j in 0..13 {
-            tmp.push(ctx.load_witness(F::from(input.solution[i * 13 + j])));
+        for j in 0..4 {
+            tmp.push(ctx.load_witness(F::from(input.solution[i * 4 + j])));
         }
         result.push(tmp);
     }
 
     // verify the solution
     for i in 0..12 {
-        for j in 0..13 {
+        for j in 0..4 {
             let j_eq_data_i = gate.is_equal(ctx, Constant(F::from(j as u64)), data[i]);
             let j_ne_data_i = gate.not(ctx, j_eq_data_i);
             let result_i_j = result[i][j];
