@@ -10,54 +10,11 @@ from zinnia import ZKCircuit, ZinniaConfig
 from zinnia.config.optimization_config import OptimizationConfig
 
 HALO2_FOLDER = "/home/zhantong/halo2-graph"
-TIME_MEASURE_REPETITIONS = 10
 RESULT_PATH = 'results-scale.json'
 ENABLE_OPTIMIZATIONS = True
-MULTIPROCESSING_POOL_SIZE = 1
 
 
-def prove_executor(_):
-    my_env = os.environ.copy()
-    my_env['RUST_MIN_STACK'] = '5368709120'  # 512 MiB
-    my_env['LOOKUP_BITS'] = '6'
-    prove_process = subprocess.run(
-        ['cargo', 'run', '--example', 'target', '--', '--name', 'target', '-k', '16', '--input', 'target.in', 'prove'],
-        capture_output=True, text=True, env=my_env)
-    prove_feedback = prove_process.stdout + prove_process.stderr
-    assert prove_process.returncode == 0, prove_feedback
-    match = re.search(r"Proving time: \s*([\d\.]+)(ms|s)", prove_feedback)
-    assert match
-    proving_time = float(match.group(1))
-    proving_unit = match.group(2)
-    return proving_time / 1000 if proving_unit == "ms" else proving_time
-
-
-def verify_executor(_):
-    my_env = os.environ.copy()
-    my_env['RUST_MIN_STACK'] = '5368709120'  # 512 MiB
-    my_env['LOOKUP_BITS'] = '6'
-    verify_process = subprocess.run(
-        ['cargo', 'run', '--example', 'target', '--', '--name', 'target', '-k', '16', '--input', 'target.in', 'verify'],
-        capture_output=True, text=True, env=my_env)
-    verify_feedback = verify_process.stdout + verify_process.stderr
-    assert verify_process.returncode == 0, verify_feedback
-    match = re.search(r"Gate Chip \| Phase 0: \s*([\d\.]+) advice cells", verify_feedback)
-    assert match
-    advice_cells = int(match.group(1))
-    match = re.search(r"Total \s*([\d\.]+) fixed cells", verify_feedback)
-    assert match
-    fixed_cells = int(match.group(1))
-    match = re.search(r"Total range check advice cells to lookup per phase: \[\s*([\d\.]+), 0, 0]", verify_feedback)
-    assert match
-    range_check_advice_cells = int(match.group(1))
-    match = re.search(r"Snark verified successfully in \s*([\d\.]+)(ms|s)", verify_feedback)
-    assert match
-    verify_time = float(match.group(1))
-    verify_unit = match.group(2)
-    return advice_cells, fixed_cells, range_check_advice_cells, verify_time / 1000 if verify_unit == "ms" else verify_time
-
-
-def run_prove(name: str, source: str, data: str):
+def run_keygen(name: str, source: str, data: str):
     original_directory = os.getcwd()
     try:
         os.chdir(HALO2_FOLDER)
@@ -73,26 +30,16 @@ def run_prove(name: str, source: str, data: str):
         keygen_process = subprocess.run(['cargo', 'run', '--example', 'target', '--', '--name', 'target', '-k', '16', '--input', 'target.in', 'keygen'], capture_output=True, text=True, env=my_env)
         keygen_feedback = keygen_process.stdout + keygen_process.stderr
         assert keygen_process.returncode == 0, keygen_feedback
-        with Pool(MULTIPROCESSING_POOL_SIZE) as p:
-            results = p.map(prove_executor, [_ for _ in range(TIME_MEASURE_REPETITIONS)])
-            proving_time_in_seconds = sum([result for result in results]) / len(results)
-        snark_size = os.path.getsize(os.path.join(HALO2_FOLDER, "data/target.snark"))
-        with Pool(MULTIPROCESSING_POOL_SIZE) as p:
-            results = p.map(verify_executor, [_ for _ in range(TIME_MEASURE_REPETITIONS)])
-            advice_cells, fixed_cells, range_check_advice_cells, _ = results[0]
-            verify_time_in_seconds = sum([result[3] for result in results]) / len(results)
+        match = re.search(r': (\d+) advice cells', keygen_feedback)
+        assert match
+        advice_cells = int(match.group(1))
     except Exception as e:
         os.chdir(original_directory)
         raise e
     os.chdir(original_directory)
     return {
         "name": name,
-        "proving_time": proving_time_in_seconds,
-        "snark_size": snark_size,
-        "advice_cells": advice_cells,
-        "fixed_cells": fixed_cells,
-        "range_check_advice_cells": range_check_advice_cells,
-        "verify_time": verify_time_in_seconds
+        "advice_cells": advice_cells
     }
 
 
@@ -104,44 +51,45 @@ def compile_executor(circuit):
 
 
 def run_evaluate(dataset: str, problem: str):
-    module = importlib.import_module('.' + dataset + '.' + problem + '.sol', 'benchmarking')
-    # Get the method from the module
-    method = getattr(module, 'verify_solution')
-    chips = getattr(module, 'chips', [])
-    # Get the circuit
-    config = ZinniaConfig(optimization_config=OptimizationConfig(
-        always_satisfied_elimination=ENABLE_OPTIMIZATIONS,
-        constant_fold=ENABLE_OPTIMIZATIONS,
-        dead_code_elimination=ENABLE_OPTIMIZATIONS,  # the program gets toooo big without those optimizations. So in abalation study we always enable it
-        duplicate_code_elimination=ENABLE_OPTIMIZATIONS,
-        shortcut_optimization=ENABLE_OPTIMIZATIONS
-    ))
-    circuit = ZKCircuit.from_method(method, chips=chips, config=config)
-    # Compile the circuit
-    results = compile_executor(circuit)
-    source = results[0]
     # Get the input data
-    results = []
-    for scale in [10, 100, 1000]:
+    all_results = []
+    for scale in [2, 4, 8, 16]:
+        module = importlib.import_module('.' + dataset + '.' + problem + '.sol-' + str(scale), 'benchmarking')
+        # Get the method from the module
+        method = getattr(module, 'verify_solution')
+        chips = getattr(module, 'chips', [])
+        # Get the circuit
+        config = ZinniaConfig(optimization_config=OptimizationConfig(
+            always_satisfied_elimination=ENABLE_OPTIMIZATIONS,
+            constant_fold=ENABLE_OPTIMIZATIONS,
+            dead_code_elimination=ENABLE_OPTIMIZATIONS,  # the program gets toooo big without those optimizations. So in abalation study we always enable it
+            duplicate_code_elimination=ENABLE_OPTIMIZATIONS,
+            shortcut_optimization=ENABLE_OPTIMIZATIONS
+        ))
+        circuit = ZKCircuit.from_method(method, chips=chips, config=config)
+        # Compile the circuit
+        results = compile_executor(circuit)
+        source = results[0]
+        print(source)
         with open(os.path.join('../benchmarking', dataset, problem, f'sol.{scale}.py.in'), 'r') as f:
             data = f.read()
         # Run
-        result1 = run_prove(f"{dataset}::{problem}.py", source, data)
+        result1 = run_keygen(f"{dataset}::{problem}.py", source, data)
         # source 2
         with open(os.path.join('../benchmarking', dataset, problem, f'sol.{scale}.rs'), 'r') as f:
             source = f.read()
         # Get the input data
         with open(os.path.join('../benchmarking', dataset, problem, f'sol.{scale}.rs.in'), 'r') as f:
             data = f.read()
-        result2 = run_prove(f"{dataset}::{problem}.rs", source, data)
-        results.append([result1, result2])
+        result2 = run_keygen(f"{dataset}::{problem}.rs", source, data)
+        all_results.append([result1, result2])
     return {
-        "zinnia_10": results[0][0],
-        "halo2_10": results[0][1],
-        "zinnia_100": results[1][0],
-        "halo2_100": results[1][1],
-        "zinnia_1000": results[2][0],
-        "halo2_1000": results[2][1],
+        "zinnia_10": all_results[0][0],
+        "halo2_10": all_results[0][1],
+        "zinnia_100": all_results[1][0],
+        "halo2_100": all_results[1][1],
+        "zinnia_1000": all_results[2][0],
+        "halo2_1000": all_results[2][1],
     }
 
 
