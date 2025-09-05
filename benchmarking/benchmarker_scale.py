@@ -9,8 +9,8 @@ from multiprocessing import Pool
 from zinnia import ZKCircuit, ZinniaConfig
 from zinnia.config.optimization_config import OptimizationConfig
 
-HALO2_FOLDER = "/home/zhantong/halo2-graph"
-RESULT_PATH = 'results-scale.json'
+HALO2_FOLDER = "/home/zhantong/halo2-graph-dup"
+RESULT_PATH = 'results-scale-2.json'
 ENABLE_OPTIMIZATIONS = True
 
 
@@ -84,12 +84,14 @@ def run_evaluate(dataset: str, problem: str):
         result2 = run_keygen(f"{dataset}::{problem}.rs", source, data)
         all_results.append([result1, result2])
     return {
-        "zinnia_10": all_results[0][0],
-        "halo2_10": all_results[0][1],
-        "zinnia_100": all_results[1][0],
-        "halo2_100": all_results[1][1],
-        "zinnia_1000": all_results[2][0],
-        "halo2_1000": all_results[2][1],
+        "zinnia_2": all_results[0][0],
+        "halo2_2": all_results[0][1],
+        "zinnia_4": all_results[1][0],
+        "halo2_4": all_results[1][1],
+        "zinnia_8": all_results[2][0],
+        "halo2_8": all_results[2][1],
+        "zinnia_16": all_results[3][0],
+        "halo2_16": all_results[3][1],
     }
 
 
@@ -113,8 +115,8 @@ DS1000 = [
 
 
 DATASETS = {
-    "mlalgo": MLALGO,
-    # "ds1000": DS1000
+    # "mlalgo": MLALGO,
+    "ds1000": DS1000
 }
 
 
@@ -135,11 +137,10 @@ def main():
                 results_dict[f"{dataset}::{problem}"] = result
             except AssertionError as e:
                 print(f"Failed to evaluate {dataset}::{problem}. Skipping...")
+                raise e
+            finally:
                 with open(RESULT_PATH, 'w') as f:
                     f.write(json.dumps(results_dict, indent=2))
-                raise e
-        with open(RESULT_PATH, 'w') as f:
-            f.write(json.dumps(results_dict, indent=2))
 
 
     with open(RESULT_PATH, 'w') as f:

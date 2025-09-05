@@ -419,7 +419,7 @@ fn {circuit_name}<F: ScalarField>(
     """ + ("    poseidon_hasher.initialize_consts(ctx, &gate);\n" if has_poseidon else "") + f"""
         // ===== Self-describing meta: read from our own source file =====
         // Replace PLACHOLDER_PATH at build time with the absolute path to THIS .rs file.
-        let src = fs::read_to_string("/home/zhantong/halo2-graph/examples/target.rs").expect("read source");
+        let src = fs::read_to_string("/home/zhantong/halo2-graph-dup/examples/target.rs").expect("read source");
         let start_tag = "<BEGIN_ZINNIA_META>";
         let end_tag   = "</END_ZINNIA_META>";
         let start = src.find(start_tag).expect("begin tag not found") + start_tag.len();
