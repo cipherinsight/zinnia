@@ -14,4 +14,4 @@ from zinnia import *
 
 @zk_circuit
 def verify_solution(a: NDArray[int, 32, 4], result: NDArray[int, 32, 2, 2]):
-    assert a.reshape((a.shape[0]//2, 2, a.shape[1]//2, 2)).transpose((0, 2, 1, 3)).reshape((8, 2, 2)) == result
+    assert a.reshape((a.shape[0]//2, 2, a.shape[1]//2, 2)).transpose((0, 2, 1, 3)).reshape((32, 2, 2)) == result
