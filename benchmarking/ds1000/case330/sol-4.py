@@ -6,5 +6,5 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(a: NDArray[float, 8, 8], power: float, desired_result: NDArray[float, 8, 8]):
+def verify_solution(a: NDArray[float, 8, 2], power: float, desired_result: NDArray[float, 8, 2]):
     assert a ** power == desired_result

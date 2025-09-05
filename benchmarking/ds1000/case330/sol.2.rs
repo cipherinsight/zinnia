@@ -46,7 +46,7 @@ fn verify_solution<F: ScalarField>(
     let data = input.data.iter().map(|x| ctx.load_witness(fixed_point_chip.quantization(*x))).collect::<Vec<_>>();
     let result = input.results.iter().map(|x| ctx.load_witness(fixed_point_chip.quantization(*x))).collect::<Vec<_>>();
     let power = ctx.load_witness(fixed_point_chip.quantization(input.power));
-    for i in 0..(4*4) {
+    for i in 0..(4*2) {
         let input_lt_0 = range_chip.is_less_than(ctx, data[i], Constant(fixed_point_chip.quantization(0.0)), 128);
         let input_gte_0 = gate.not(ctx, input_lt_0);
         gate.assert_is_const(ctx, &input_gte_0, &F::ONE);
