@@ -10,7 +10,7 @@ from zinnia import ZKCircuit, ZinniaConfig
 from zinnia.config.optimization_config import OptimizationConfig
 
 HALO2_FOLDER = "/home/zhantong/halo2-graph-dup"
-RESULT_PATH = 'results-scale-2.json'
+RESULT_PATH = 'results-scale.json'
 ENABLE_OPTIMIZATIONS = True
 
 
