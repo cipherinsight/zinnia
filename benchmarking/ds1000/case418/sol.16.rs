@@ -45,7 +45,7 @@ fn verify_solution<F: ScalarField>(
     let data: Vec<AssignedValue<F>> = input.data.iter().map(|x| ctx.load_witness(fixed_point_chip.quantization(*x))).collect::<Vec<_>>();
     let results: Vec<AssignedValue<F>> = input.results.iter().map(|x| ctx.load_witness(fixed_point_chip.quantization(*x))).collect::<Vec<_>>();
     // apply constraints
-    for i in 0..16 {
+    for i in 0..32 {
         let mut sum = ctx.load_constant(fixed_point_chip.quantization(0.0));
         sum = fixed_point_chip.qadd(ctx, sum, data[i * 5 + 2]);
         sum = fixed_point_chip.qadd(ctx, sum, data[i * 5 + 3]);
