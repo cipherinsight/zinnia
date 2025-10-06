@@ -2,6 +2,9 @@ import sys
 import os
 import json
 
+def is_almost_integer(x, tol=1e-6):
+    return abs(x - round(x)) < tol
+
 
 def recursively_convert_json_integers_to_strings(obj):
     if isinstance(obj, dict):

@@ -4,7 +4,7 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(a: NDArray[float, 13], result: NDArray[bool, 13]):
+def verify_solution(a: NDArray[float, 13], result: NDArray[int, 13]):
     # a = [0, 1, 2, 5, 6, 7, 8, 8, 8, 10, 29, 32, 45]
     # Compute mean and std manually, since np.std is unavailable
     # Detect outliers outside (μ - 2σ, μ + 2σ)
@@ -23,7 +23,7 @@ def verify_solution(a: NDArray[float, 13], result: NDArray[bool, 13]):
         inside = (a[i] > lower) and (a[i] < upper)
         expected.append(not inside)
 
-    assert result == expected
+    assert result.astype(int) == expected
 
 
 if __name__ == '__main__':
