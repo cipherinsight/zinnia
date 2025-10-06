@@ -82,18 +82,11 @@ LEETCODE_MATRIX = [
     "p73",
     "p2133"
 ]
-DS1000 = [
-    "case296",
-    "case309",
-    # "case330",
-    "case360",
-    "case387",
-    # "case418",
-    # "case453",
-    # "case459",
-    "case501",
-    "case510",
-]
+DS1000 = ['case295', 'case296', 'case297', 'case299', 'case301', 'case302', 'case303', 'case304', 'case309', 'case310',
+          'case313', 'case318', 'case319', 'case322', 'case329', 'case335', 'case336', 'case337', 'case338', 'case339',
+          'case353', 'case354', 'case360', 'case368', 'case369', 'case370', 'case385', 'case387', 'case388', 'case389',
+          'case390', 'case391', 'case392', 'case393', 'case406', 'case407', 'case408', 'case409', 'case415', 'case433',
+          'case434', 'case435', 'case436', 'case437', 'case441', 'case480', 'case501', 'case507', 'case510']
 CRYPT = [
     # "ecc",  # Cairo's p value is different
     "poseidon",
