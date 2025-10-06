@@ -66,3 +66,4 @@ from .op_dot import NP_DotOp
 from .op_arange import NP_ARangeOp
 from .op_linspace import NP_LinspaceOp
 from .op_array import NP_ArrayOp
+from .op_mean import NP_MeanOp

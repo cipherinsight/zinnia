@@ -844,7 +844,6 @@ def plot_ablation_study():
             ablation_symex_bar[i] += 100 - sum
 
     print('mean::', ((ablation_symex_bar + the_base_bar + ablation_dce_bar + ablation_cse_bar + ablation_pm_bar)).mean())
-
     plt.rc('font', family='monospace', )
     # plt.rc('text', usetex=True)
     title_font = {'fontweight': 'bold', 'fontname': 'Times New Roman', 'fontsize': 12}
@@ -856,17 +855,17 @@ def plot_ablation_study():
     ax.bar(names, ablation_pm_bar, color='mediumpurple', bottom=the_base_bar + ablation_dce_bar + ablation_cse_bar, label='PM')
     ax.bar(names, ablation_symex_bar, color='mediumseagreen', bottom=ablation_pm_bar + the_base_bar + ablation_dce_bar + ablation_cse_bar, label='SymEx')
     ax.tick_params(axis='x', labelrotation=90)
-    ylabel = ax.set_ylabel('No. of Constraints (%)', fontdict=title_font)
-    ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1]))
+    ylabel = ax.set_ylabel('Reduced Arithmetic Circuit Size  (%)    ', fontdict=title_font)
+    ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1]-0.25))
     ax.set_ylim(0, 400)
     ax.axhline(100, color='black', linewidth=1, linestyle='--')
     ax.text(len(names) - 2, 70, 'Baseline', fontsize=8, color='black', ha='center')
-    fig.legend([AnyObject('silver'), AnyObject('wheat'), AnyObject('lightskyblue'), AnyObject('mediumpurple'), AnyObject('mediumseagreen')],
-               ['No Ablation', 'w/o Dead Code Elimination', 'w/o Common Sub-expression Elimination', 'w/o Pattern Matching Rewrites', 'w/o Symbolic Execution Pruning'],
+    fig.legend([AnyObject('wheat'), AnyObject('lightskyblue'), AnyObject('mediumpurple'), AnyObject('mediumseagreen')],
+               ['By Identity & Dead Code Elimination', 'By Gate Reuse', 'By Algebraic Pattern Matching Rewrites', 'By Constant Folding'],
                handler_map={
                    AnyObject: AnyObjectHandler()
                },
-               loc=(0.16, 0.64), ncol=1,
+               loc=(0.16, 0.68), ncol=1,
                prop={'size': 8},
                frameon=False)
     fig.tight_layout()
@@ -876,8 +875,8 @@ def plot_ablation_study():
 
 def main():
     # plot_evaluation_results()
-    plot_performance_overviews()
-    # plot_ablation_study()
+    # plot_performance_overviews()
+    plot_ablation_study()
     # plot_performance_heatmap()
 
 

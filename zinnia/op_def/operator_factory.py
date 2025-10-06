@@ -49,7 +49,8 @@ class Operators:
         np_ops.NP_PowOp, np_ops.NP_ProdOp, np_ops.NP_SignOp, np_ops.NP_SinHOp,
         np_ops.NP_SqrtOp, np_ops.NP_SubtractOp, np_ops.NP_SumOp, np_ops.NP_TanOp,
         np_ops.NP_TanHOp, np_ops.NP_RepeatOp, np_ops.NP_SizeOp, np_ops.NP_AppendOp,
-        np_ops.NP_DotOp, np_ops.NP_ARangeOp, np_ops.NP_LinspaceOp, np_ops.NP_ArrayOp
+        np_ops.NP_DotOp, np_ops.NP_ARangeOp, np_ops.NP_LinspaceOp, np_ops.NP_ArrayOp,
+        np_ops.NP_MeanOp
     ]
     Zinnia = [
         *NPLike

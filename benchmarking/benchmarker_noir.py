@@ -34,7 +34,9 @@ def run_prove(name: str, input_source: str, program_source: str):
             assert execute_process.returncode == 0, execute_process_feedback
             assert "Circuit witness successfully solved" in execute_process_feedback
             start_time = time.time()
-            prove_process = subprocess.run(['bb', 'prove', '-b', './target/hello_noir.json', '-w', './target/hello_noir.gz', '-o', './target'], capture_output=True, text=True, env=my_env)
+            prove_process = subprocess.run(
+                ['bb', 'prove', '-b', './target/hello_noir.json', '-w', './target/hello_noir.gz', '-o', './target'],
+                capture_output=True, text=True, env=my_env)
             prove_process_feedback = prove_process.stdout + prove_process.stderr
             assert prove_process.returncode == 0, prove_process_feedback
             match = re.search(r"Finalized circuit size: \s*([\d\.]+)", prove_process_feedback)
@@ -42,14 +44,19 @@ def run_prove(name: str, input_source: str, program_source: str):
             circuit_size = int(match.group(1))
             end_time = time.time()
             proving_times.append(end_time - start_time)
-            write_vk_process = subprocess.run(['bb', 'write_vk', '-b', './target/hello_noir.json', '-o', './target'], capture_output=True, text=True, env=my_env)
+            write_vk_process = subprocess.run(['bb', 'write_vk', '-b', './target/hello_noir.json', '-o', './target'],
+                                              capture_output=True, text=True, env=my_env)
             assert write_vk_process.returncode == 0
             start_time = time.time()
-            verify_process = subprocess.run(['bb', 'verify', '-k', './target/vk', '-p', './target/proof'], capture_output=True, text=True, env=my_env)
+            verify_process = subprocess.run(['bb', 'verify', '-k', './target/vk', '-p', './target/proof'],
+                                            capture_output=True, text=True, env=my_env)
             assert verify_process.returncode == 0
             end_time = time.time()
             verifying_times.append(end_time - start_time)
-            profiler_process = subprocess.run(['noir-profiler', 'gates', '--artifact-path', './target/hello_noir.json', '--backend-path', 'bb', '--output', './target', '--', '--include_gates_per_opcode'], capture_output=True, text=True, env=my_env)
+            profiler_process = subprocess.run(
+                ['noir-profiler', 'gates', '--artifact-path', './target/hello_noir.json', '--backend-path', 'bb',
+                 '--output', './target', '--', '--include_gates_per_opcode'], capture_output=True, text=True,
+                env=my_env)
             assert profiler_process.returncode == 0
             profiler_process_feedback = profiler_process.stdout + profiler_process.stderr
             match = re.search(r"Total gates by opcodes: \s*([\d\.]+),", profiler_process_feedback)
@@ -118,26 +125,23 @@ LEETCODE_MATRIX = [
     "p73",
     "p2133"
 ]
-DS1000 = [
-    "case296",
-    "case309",
-    "case360",
-    "case387",
-    "case501",
-    "case510",
-]
+DS1000 = ['case295', 'case296', 'case297', 'case299', 'case301', 'case302', 'case303', 'case304', 'case309', 'case310',
+          'case313', 'case318', 'case319', 'case322', 'case329', 'case335', 'case336', 'case337', 'case338', 'case339',
+          'case353', 'case354', 'case360', 'case368', 'case369', 'case370', 'case385', 'case387', 'case388', 'case389',
+          'case390', 'case391', 'case392', 'case393', 'case406', 'case407', 'case408', 'case409', 'case415', 'case433',
+          'case434', 'case435', 'case436', 'case437', 'case441', 'case480', 'case501', 'case507', 'case510']
 CRYPT = [
     "ecc",
     "poseidon",
 ]
 
 DATASETS = {
-    "crypt": CRYPT,
-    "leetcode_array": LEETCODE_ARRAY,
-    "leetcode_dp": LEETCODE_DP,
-    "leetcode_graph": LEETCODE_GRAPH,
-    "leetcode_math": LEETCODE_MATH,
-    "leetcode_matrix": LEETCODE_MATRIX,
+    # "crypt": CRYPT,
+    # "leetcode_array": LEETCODE_ARRAY,
+    # "leetcode_dp": LEETCODE_DP,
+    # "leetcode_graph": LEETCODE_GRAPH,
+    # "leetcode_math": LEETCODE_MATH,
+    # "leetcode_matrix": LEETCODE_MATRIX,
     "ds1000": DS1000
 }
 
