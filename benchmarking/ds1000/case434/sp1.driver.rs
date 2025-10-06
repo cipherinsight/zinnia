@@ -1,0 +1,98 @@
+// SP1 driver code
+use alloy_sol_types::SolType;
+use clap::Parser;
+use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
+use std::time::Instant;
+
+pub const FIBONACCI_ELF: &[u8] = include_elf!("fibonacci-program");
+
+#[derive(Parser, Debug)]
+#[clap(author, version, about, long_about = None)]
+struct Args {
+    #[clap(long)] execute: bool,
+    #[clap(long)] prove: bool,
+}
+
+fn main() {
+    sp1_sdk::utils::setup_logger();
+    dotenv::dotenv().ok();
+    let args = Args::parse();
+    if args.execute == args.prove {
+        eprintln!("Error: You must specify either --execute or --prove");
+        std::process::exit(1);
+    }
+
+    let client = ProverClient::from_env();
+    let mut stdin = SP1Stdin::new();
+
+    let a: [[i32; 4]; 4] = [
+        [0, 3, 1, 3],
+        [3, 0, 0, 0],
+        [1, 0, 0, 0],
+        [3, 0, 0, 0],
+    ];
+    for i in 0..4 {
+        for j in 0..4 {
+            stdin.write(&a[i][j]);
+        }
+    }
+
+    let mut modified = a;
+    let zero_rows = [1usize, 3usize];
+    let zero_cols = [1usize, 2usize];
+    for &r in zero_rows.iter() {
+        for j in 0..4 {
+            modified[r][j] = 0;
+        }
+    }
+    for &c in zero_cols.iter() {
+        for i in 0..4 {
+            modified[i][c] = 0;
+        }
+    }
+
+    for i in 0..4 {
+        for j in 0..4 {
+            stdin.write(&modified[i][j]);
+        }
+    }
+
+    if args.execute {
+        panic!("Execution not supported in this environment.");
+    } else {
+        let (pk, vk) = client.setup(FIBONACCI_ELF);
+
+        let start = Instant::now();
+        let proof = client.prove(&pk, &stdin)
+            .run()
+            .expect("failed to generate proof");
+        let duration = start.elapsed();
+        println!("Prove time (zk-STARK) (ms): {:?}", duration.as_millis());
+
+        proof.save("proof-with-pis-stark.bin").expect("saving proof failed");
+
+        let start = Instant::now();
+        client.verify(&proof, &vk).expect("failed to verify proof");
+        let duration = start.elapsed();
+        println!("Verify time (zk-STARK) (ms): {:?}", duration.as_millis());
+        println!("Successfully verified proof!");
+
+        let start = Instant::now();
+        let proof = client.prove(&pk, &stdin)
+            .plonk()
+            .run()
+            .expect("failed to generate proof");
+        let duration = start.elapsed();
+        println!("Prove time (zk-SNARK) (ms): {:?}", duration.as_millis());
+
+        println!("Successfully generated proof!");
+
+        proof.save("proof-with-pis.bin").expect("saving proof failed");
+
+        let start = Instant::now();
+        client.verify(&proof, &vk).expect("failed to verify proof");
+        let duration = start.elapsed();
+        println!("Verify time (zk-SNARK) (ms): {:?}", duration.as_millis());
+        println!("Successfully verified proof!");
+    }
+}
