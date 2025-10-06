@@ -13,7 +13,5 @@ case="$1"
 mkdir -p "$case"
 
 # Create the files
-touch "$case/risc0.driver.rs"
-touch "$case/risc0.prog.rs"
-touch "$case/sp1.driver.rs"
-touch "$case/sp1.prog.rs"
+touch "$case/sol.rs"
+touch "$case/sol.rs.in"
