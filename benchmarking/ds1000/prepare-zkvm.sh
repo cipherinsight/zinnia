@@ -13,7 +13,7 @@ case="$1"
 mkdir -p "$case"
 
 # Create the files
-touch "$case/main.nr"
-touch "$case/Prover.toml"
-
-echo "Files created in the '$case' directory."
+touch "$case/risc0.driver.rs"
+touch "$case/risc0.prog.rs"
+touch "$case/sp1.driver.rs"
+touch "$case/sp1.prog.rs"
