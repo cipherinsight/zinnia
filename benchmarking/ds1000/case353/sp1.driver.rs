@@ -101,3 +101,28 @@ fn main() {
 
         let start = Instant::now();
         client.verify(&proof, &vk).expect("failed to verify proof");
+        let duration = start.elapsed();
+        println!("Verify time (zk-STARK) (ms): {:?}", duration.as_millis());
+        println!("Successfully verified proof!");
+
+        let start = Instant::now();
+        let proof = client
+            .prove(&pk, &stdin)
+            .plonk()
+            .run()
+            .expect("failed to generate proof");
+        let duration = start.elapsed();
+        println!("Prove time (zk-SNARK) (ms): {:?}", duration.as_millis());
+
+        println!("Successfully generated proof!");
+
+        proof
+            .save("proof-with-pis.bin")
+            .expect("saving proof failed");
+
+        let start = Instant::now();
+        client.verify(&proof, &vk).expect("failed to verify proof");
+        let duration = start.elapsed();
+        println!("Verify time (zk-SNARK) (ms): {:?}", duration.as_millis());
+        println!("Successfully verified proof!");    }
+}

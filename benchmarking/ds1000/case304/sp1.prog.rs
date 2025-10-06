@@ -3,34 +3,35 @@
 sp1_zkvm::entrypoint!(main);
 
 pub fn main() {
-    // read input A
+    // read input A (7)
     let mut a: Vec<i32> = Vec::new();
     for _ in 0..7 {
         a.push(sp1_zkvm::io::read::<i32>());
     }
 
-    // read input B
+    // read input B (3x2)
     let mut b: Vec<Vec<i32>> = Vec::new();
     for _ in 0..3 {
-        let mut tmp: Vec<i32> = Vec::new();
+        let mut row: Vec<i32> = Vec::new();
         for _ in 0..2 {
-            tmp.push(sp1_zkvm::io::read::<i32>());
+            row.push(sp1_zkvm::io::read::<i32>());
         }
-        b.push(tmp);
+        b.push(row);
     }
 
-    // Zinnia logic: truncated = A[1:], reversed_part = truncated[::-1], reshaped = reversed_part.reshape((3,2))
+    // truncated = A[1:]
     let mut truncated: Vec<i32> = Vec::new();
     for i in 1..7 {
-        truncated.push(a[i]);
+        truncated.push(a[i as usize]);
     }
 
+    // reversed_part = truncated[::-1]
     let mut reversed_part: Vec<i32> = Vec::new();
     for i in (0..truncated.len()).rev() {
-        reversed_part.push(truncated[i]);
+        reversed_part.push(truncated[i as usize]);
     }
 
-    // reshape reversed_part (len = 6) into (3,2)
+    // reshaped = reversed_part.reshape((3,2))
     let nrow: usize = 3;
     let ncol: usize = 2;
     let mut reshaped: Vec<Vec<i32>> = Vec::new();
@@ -43,10 +44,10 @@ pub fn main() {
         reshaped.push(row);
     }
 
-    // check B == reshaped
+    // assert B == reshaped
     for i in 0..nrow {
         for j in 0..ncol {
-            assert_eq!(b[i][j as usize], reshaped[i][j as usize]);
+            assert_eq!(b[i as usize][j as usize], reshaped[i as usize][j as usize]);
         }
     }
 

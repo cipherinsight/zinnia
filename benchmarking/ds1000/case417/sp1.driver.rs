@@ -9,17 +9,13 @@ pub const FIBONACCI_ELF: &[u8] = include_elf!("fibonacci-program");
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    #[clap(long)]
-    execute: bool,
-
-    #[clap(long)]
-    prove: bool,
+    #[clap(long)] execute: bool,
+    #[clap(long)] prove: bool,
 }
 
 fn main() {
     sp1_sdk::utils::setup_logger();
     dotenv::dotenv().ok();
-
     let args = Args::parse();
     if args.execute == args.prove {
         eprintln!("Error: You must specify either --execute or --prove");
@@ -29,14 +25,14 @@ fn main() {
     let client = ProverClient::from_env();
     let mut stdin = SP1Stdin::new();
 
-    // Input data:
-    // data = [4,2,5,6,7,5,4,3,5,7]
-    // result = [5.0,5.3333333,4.3333333]
-    for x in [4.0, 2.0, 5.0, 6.0, 7.0, 5.0, 4.0, 3.0, 5.0, 7.0] {
-        stdin.write(&x);
+    let data: [f64; 10] = [4.0, 2.0, 5.0, 6.0, 7.0, 5.0, 4.0, 3.0, 5.0, 7.0];
+    let result: [f64; 3] = [5.0, 5.3333333333, 4.3333333333];
+
+    for i in 0..10 {
+        stdin.write(&data[i]);
     }
-    for x in [5.0_f32, 5.3333333_f32, 4.3333333_f32] {
-        stdin.write(&x);
+    for i in 0..3 {
+        stdin.write(&result[i]);
     }
 
     if args.execute {

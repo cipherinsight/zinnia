@@ -3,57 +3,34 @@
 sp1_zkvm::entrypoint!(main);
 
 pub fn main() {
-    // read data (2x5)
-    let mut data: Vec<Vec<f32>> = Vec::new();
-    for _ in 0..2 {
-        let mut row: Vec<f32> = Vec::new();
-        for _ in 0..5 {
-            row.push(sp1_zkvm::io::read::<f32>());
-        }
-        data.push(row);
-    }
+    let mut data: [[f64; 5]; 2] = [[0.0; 5]; 2];
+    let mut result: [[f64; 1]; 2] = [[0.0; 1]; 2];
 
-    // read result (2x1)
-    let mut result: Vec<Vec<f32>> = Vec::new();
-    for _ in 0..2 {
-        let mut row: Vec<f32> = Vec::new();
-        for _ in 0..1 {
-            row.push(sp1_zkvm::io::read::<f32>());
+    for i in 0..2 {
+        for j in 0..5 {
+            data[i][j] = sp1_zkvm::io::read::<f64>();
         }
-        result.push(row);
+    }
+    for i in 0..2 {
+        for j in 0..1 {
+            result[i][j] = sp1_zkvm::io::read::<f64>();
+        }
     }
 
     let bin_size: usize = 3;
-    let ncol: usize = (5 / bin_size) * bin_size;
+    let mut expected: [[f64; 1]; 2] = [[0.0; 1]; 2];
 
-    // trimmed = data[:, :3]
-    let mut trimmed: Vec<Vec<f32>> = Vec::new();
     for i in 0..2 {
-        let mut row: Vec<f32> = Vec::new();
-        for j in 0..ncol {
-            row.push(data[i][j]);
-        }
-        trimmed.push(row);
-    }
-
-    // reshape (2,1,3) and mean along last axis
-    let mut bin_data_mean: Vec<Vec<f32>> = Vec::new();
-    for i in 0..2 {
-        let mut row: Vec<f32> = Vec::new();
-        let mut s: f32 = 0.0;
+        let mut sum = 0.0;
         for j in 0..bin_size {
-            s += trimmed[i][j];
+            sum += data[i][j];
         }
-        row.push(s / (bin_size as f32));
-        bin_data_mean.push(row);
+        expected[i][0] = sum / (bin_size as f64);
     }
 
-    // assert result == bin_data_mean
     for i in 0..2 {
         for j in 0..1 {
-            assert!((result[i][j] - bin_data_mean[i][j]).abs() < 1e-6);
+            assert!((result[i][j] - expected[i][j]).abs() < 1e-9);
         }
     }
-
-    // sp1_zkvm::io::commit_slice(&output);
 }

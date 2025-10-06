@@ -6,17 +6,20 @@ use risc0_zkvm::{default_prover, ExecutorEnv};
 use std::time::Instant;
 
 fn main() {
+    // Initialize tracing. In order to view logs, run `RUST_LOG=info cargo run`
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::filter::EnvFilter::from_default_env())
         .init();
 
     let mut builder = ExecutorEnv::builder();
 
-    // Input data: A = [1,2,3,4,5,6,7], B = [[7,6],[5,4],[3,2]]
+    // A (7)
     for data in [1, 2, 3, 4, 5, 6, 7] {
         let tmp: i32 = data as i32;
         builder.write(&tmp).unwrap();
     }
+
+    // B (3x2)
     for data in [
         7, 6,
         5, 4,
@@ -27,6 +30,7 @@ fn main() {
     }
 
     let env = builder.build().unwrap();
+
     let prover = default_prover();
 
     let start = Instant::now();

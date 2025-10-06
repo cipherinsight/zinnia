@@ -33,7 +33,7 @@ pub fn main() {
     for i in 0..6 {
         for j in 0..5 {
             let expected: i32 = if (flat[i] - a_min) == j { 1 } else { 0 };
-            assert_eq!(result[i][j], expected);
+            assert_eq!(result[i][j as usize], expected);
         }
     }
 

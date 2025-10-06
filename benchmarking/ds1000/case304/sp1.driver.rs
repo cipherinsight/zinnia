@@ -1,4 +1,16 @@
 // SP1 driver code
+//! An end-to-end example of using the SP1 SDK to generate a proof of a program that can be executed
+//! or have a core proof generated.
+//!
+//! You can run this script using the following command:
+//! ```shell
+//! RUST_LOG=info cargo run --release -- --execute
+//! ```
+//! or
+//! ```shell
+//! RUST_LOG=info cargo run --release -- --prove
+//! ```
+
 use alloy_sol_types::SolType;
 use clap::Parser;
 use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
@@ -30,4 +42,60 @@ fn main() {
     let client = ProverClient::from_env();
     let mut stdin = SP1Stdin::new();
 
-    // Input data: A = [1,2,3,4,5,6,7], B = [[7,6],[5,4],]()
+    // A (7)
+    for x in [1, 2, 3, 4, 5, 6, 7] {
+        let tmp: i32 = x;
+        stdin.write(&tmp);
+    }
+
+    // B (3x2)
+    for x in [
+        7, 6,
+        5, 4,
+        3, 2
+    ] {
+        let tmp: i32 = x;
+        stdin.write(&tmp);
+    }
+
+    if args.execute {
+        panic!("Execution not supported in this environment.");
+    } else {
+        let (pk, vk) = client.setup(FIBONACCI_ELF);
+
+        let start = Instant::now();
+        let proof = client
+            .prove(&pk, &stdin)
+            .run()
+            .expect("failed to generate proof");
+        let duration = start.elapsed();
+        println!("Prove time (zk-STARK) (ms): {:?}", duration.as_millis());
+
+        proof.save("proof-with-pis-stark.bin").expect("saving proof failed");
+
+        let start = Instant::now();
+        client.verify(&proof, &vk).expect("failed to verify proof");
+        let duration = start.elapsed();
+        println!("Verify time (zk-STARK) (ms): {:?}", duration.as_millis());
+        println!("Successfully verified proof!");
+
+        let start = Instant::now();
+        let proof = client
+            .prove(&pk, &stdin)
+            .plonk()
+            .run()
+            .expect("failed to generate proof");
+        let duration = start.elapsed();
+        println!("Prove time (zk-SNARK) (ms): {:?}", duration.as_millis());
+
+        println!("Successfully generated proof!");
+
+        proof.save("proof-with-pis.bin").expect("saving proof failed");
+
+        let start = Instant::now();
+        client.verify(&proof, &vk).expect("failed to verify proof");
+        let duration = start.elapsed();
+        println!("Verify time (zk-SNARK) (ms): {:?}", duration.as_millis());
+        println!("Successfully verified proof!");
+    }
+}

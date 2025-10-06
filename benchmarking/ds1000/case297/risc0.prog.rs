@@ -28,7 +28,7 @@ fn main() {
     for i in 0..3 {
         for j in 0..5 {
             let expected: i32 = if (a[i] - a_min) == j { 1 } else { 0 };
-            assert_eq!(result[i][j], expected);
+            assert_eq!(result[i as usize][j as usize], expected);
         }
     }
 

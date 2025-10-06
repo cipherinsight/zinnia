@@ -1,81 +1,33 @@
-// SP1 driver code
-use alloy_sol_types::SolType;
-use clap::Parser;
-use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
-use std::time::Instant;
+// SP1 program code
+#![no_main]
+sp1_zkvm::entrypoint!(main);
 
-pub const FIBONACCI_ELF: &[u8] = include_elf!("fibonacci-program");
+pub fn main() {
+    let mut a: [i32; 3] = [0; 3];
+    let mut b: [i32; 3] = [0; 3];
+    let mut c: [i32; 3] = [0; 3];
+    let mut result: [i32; 3] = [0; 3];
 
-#[derive(Parser, Debug)]
-#[clap(author, version, about, long_about = None)]
-struct Args {
-    #[clap(long)]
-    execute: bool,
-
-    #[clap(long)]
-    prove: bool,
-}
-
-fn main() {
-    sp1_sdk::utils::setup_logger();
-    dotenv::dotenv().ok();
-
-    let args = Args::parse();
-
-    if args.execute == args.prove {
-        eprintln!("Error: You must specify either --execute or --prove");
-        std::process::exit(1);
+    for i in 0..3 {
+        a[i] = sp1_zkvm::io::read::<i32>();
+    }
+    for i in 0..3 {
+        b[i] = sp1_zkvm::io::read::<i32>();
+    }
+    for i in 0..3 {
+        c[i] = sp1_zkvm::io::read::<i32>();
+    }
+    for i in 0..3 {
+        result[i] = sp1_zkvm::io::read::<i32>();
     }
 
-    let client = ProverClient::from_env();
-    let mut stdin = SP1Stdin::new();
+    let mut expected: [i32; 3] = [0; 3];
+    for i in 0..3 {
+        let ab_max = if a[i] > b[i] { a[i] } else { b[i] };
+        expected[i] = if ab_max > c[i] { ab_max } else { c[i] };
+    }
 
-    // Input data:
-    // a = [10,20,30]
-    // b = [30,20,20]
-    // c = [50,20,40]
-    // result = [50,20,40]
-    for x in [10, 20, 30] { stdin.write(&x); }
-    for x in [30, 20, 20] { stdin.write(&x); }
-    for x in [50, 20, 40] { stdin.write(&x); }
-    for x in [50, 20, 40] { stdin.write(&x); }
-
-    if args.execute {
-        panic!("Execution not supported in this environment.");
-    } else {
-        let (pk, vk) = client.setup(FIBONACCI_ELF);
-
-        let start = Instant::now();
-        let proof = client.prove(&pk, &stdin)
-            .run()
-            .expect("failed to generate proof");
-        let duration = start.elapsed();
-        println!("Prove time (zk-STARK) (ms): {:?}", duration.as_millis());
-
-        proof.save("proof-with-pis-stark.bin").expect("saving proof failed");
-
-        let start = Instant::now();
-        client.verify(&proof, &vk).expect("failed to verify proof");
-        let duration = start.elapsed();
-        println!("Verify time (zk-STARK) (ms): {:?}", duration.as_millis());
-        println!("Successfully verified proof!");
-
-        let start = Instant::now();
-        let proof = client.prove(&pk, &stdin)
-            .plonk()
-            .run()
-            .expect("failed to generate proof");
-        let duration = start.elapsed();
-        println!("Prove time (zk-SNARK) (ms): {:?}", duration.as_millis());
-
-        println!("Successfully generated proof!");
-
-        proof.save("proof-with-pis.bin").expect("saving proof failed");
-
-        let start = Instant::now();
-        client.verify(&proof, &vk).expect("failed to verify proof");
-        let duration = start.elapsed();
-        println!("Verify time (zk-SNARK) (ms): {:?}", duration.as_millis());
-        println!("Successfully verified proof!");
+    for i in 0..3 {
+        assert_eq!(result[i], expected[i]);
     }
 }
