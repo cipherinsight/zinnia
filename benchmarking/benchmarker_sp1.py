@@ -5,7 +5,7 @@ import subprocess
 
 
 SP1_FOLDER = "/home/zhantong/sp1proj"
-TIME_MEASURE_REPETITIONS = 1
+TIME_MEASURE_REPETITIONS = 10
 
 
 def run_prove(name: str, driver_source: str, program_source: str):
