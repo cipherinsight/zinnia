@@ -11,8 +11,16 @@ from zinnia.ir_def.defs.ir_add_f import AddFIR
 from zinnia.ir_def.defs.ir_add_i import AddIIR
 from zinnia.ir_def.defs.ir_div_f import DivFIR
 from zinnia.ir_def.defs.ir_div_i import DivIIR
+from zinnia.ir_def.defs.ir_gt_f import GreaterThanFIR
+from zinnia.ir_def.defs.ir_gt_i import GreaterThanIIR
+from zinnia.ir_def.defs.ir_gte_f import GreaterThanOrEqualFIR
+from zinnia.ir_def.defs.ir_gte_i import GreaterThanOrEqualIIR
 from zinnia.ir_def.defs.ir_logical_and import LogicalAndIR
 from zinnia.ir_def.defs.ir_logical_or import LogicalOrIR
+from zinnia.ir_def.defs.ir_lt_f import LessThanFIR
+from zinnia.ir_def.defs.ir_lt_i import LessThanIIR
+from zinnia.ir_def.defs.ir_lte_f import LessThanOrEqualFIR
+from zinnia.ir_def.defs.ir_lte_i import LessThanOrEqualIIR
 from zinnia.ir_def.defs.ir_mul_f import MulFIR
 from zinnia.ir_def.defs.ir_mul_i import MulIIR
 from zinnia.ir_def.defs.ir_select_b import SelectBIR
@@ -190,6 +198,90 @@ class ShortcutOptimIRPass(AbstractIRPass):
             return lhs
         return ir_builder.create_ir(ir_instance, ir_args, None)
 
+    def optimize_for_LessThanIIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
+        lhs, rhs = ir_args[0], ir_args[1]
+        assert isinstance(lhs, IntegerValue) and isinstance(rhs, IntegerValue)
+        if lhs.ptr() == rhs.ptr():
+            return ir_builder.ir_constant_bool(False)
+        return ir_builder.create_ir(ir_instance, ir_args, None)
+    
+    def optimize_for_LessThanFIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
+        lhs, rhs = ir_args[0], ir_args[1]
+        assert isinstance(lhs, FloatValue) and isinstance(rhs, FloatValue)
+        if lhs.ptr() == rhs.ptr():
+            return ir_builder.ir_constant_bool(False)
+        return ir_builder.create_ir(ir_instance, ir_args, None)
+    
+    def optimize_for_LessThanOrEqualIIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
+        lhs, rhs = ir_args[0], ir_args[1]
+        assert isinstance(lhs, IntegerValue) and isinstance(rhs, IntegerValue)
+        if lhs.ptr() == rhs.ptr():
+            return ir_builder.ir_constant_bool(True)
+        return ir_builder.create_ir(ir_instance, ir_args, None)
+    
+    def optimize_for_LessThanOrEqualFIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
+        lhs, rhs = ir_args[0], ir_args[1]
+        assert isinstance(lhs, FloatValue) and isinstance(rhs, FloatValue)
+        if lhs.ptr() == rhs.ptr():
+            return ir_builder.ir_constant_bool(True)
+        return ir_builder.create_ir(ir_instance, ir_args, None)
+    
+    def optimize_for_GreaterThanIIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
+        lhs, rhs = ir_args[0], ir_args[1]
+        assert isinstance(lhs, IntegerValue) and isinstance(rhs, IntegerValue)
+        if lhs.ptr() == rhs.ptr():
+            return ir_builder.ir_constant_bool(False)
+        return ir_builder.create_ir(ir_instance, ir_args, None)
+    
+    def optimize_for_GreaterThanFIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
+        lhs, rhs = ir_args[0], ir_args[1]
+        assert isinstance(lhs, FloatValue) and isinstance(rhs, FloatValue)
+        if lhs.ptr() == rhs.ptr():
+            return ir_builder.ir_constant_bool(False)
+        return ir_builder.create_ir(ir_instance, ir_args, None)
+    
+    def optimize_for_GreaterThanOrEqualIIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
+        lhs, rhs = ir_args[0], ir_args[1]
+        assert isinstance(lhs, IntegerValue) and isinstance(rhs, IntegerValue)
+        if lhs.ptr() == rhs.ptr():
+            return ir_builder.ir_constant_bool(True)
+        return ir_builder.create_ir(ir_instance, ir_args, None)
+    
+    def optimize_for_GreaterThanOrEqualFIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
+        lhs, rhs = ir_args[0], ir_args[1]
+        assert isinstance(lhs, FloatValue) and isinstance(rhs, FloatValue)
+        if lhs.ptr() == rhs.ptr():
+            return ir_builder.ir_constant_bool(True)
+        return ir_builder.create_ir(ir_instance, ir_args, None)
+    
+    def optimize_for_IsEqualIIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
+        lhs, rhs = ir_args[0], ir_args[1]
+        assert isinstance(lhs, IntegerValue) and isinstance(rhs, IntegerValue)
+        if lhs.ptr() == rhs.ptr():
+            return ir_builder.ir_constant_bool(True)
+        return ir_builder.create_ir(ir_instance, ir_args, None)
+    
+    def optimize_for_IsEqualFIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
+        lhs, rhs = ir_args[0], ir_args[1]
+        assert isinstance(lhs, FloatValue) and isinstance(rhs, FloatValue)
+        if lhs.ptr() == rhs.ptr():
+            return ir_builder.ir_constant_bool(True)
+        return ir_builder.create_ir(ir_instance, ir_args, None)
+    
+    def optimize_for_IsNotEqualIIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
+        lhs, rhs = ir_args[0], ir_args[1]
+        assert isinstance(lhs, IntegerValue) and isinstance(rhs, IntegerValue)
+        if lhs.ptr() == rhs.ptr():
+            return ir_builder.ir_constant_bool(False)
+        return ir_builder.create_ir(ir_instance, ir_args, None)
+    
+    def optimize_for_IsNotEqualFIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
+        lhs, rhs = ir_args[0], ir_args[1]
+        assert isinstance(lhs, FloatValue) and isinstance(rhs, FloatValue)
+        if lhs.ptr() == rhs.ptr():
+            return ir_builder.ir_constant_bool(False)
+        return ir_builder.create_ir(ir_instance, ir_args, None)
+
     def optimize_ir(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
         if isinstance(ir_instance, LogicalAndIR):
             return self.optimize_for_LogicalAndIR(ir_builder, ir_instance, ir_args)
@@ -215,6 +307,24 @@ class ShortcutOptimIRPass(AbstractIRPass):
             return self.optimize_for_MulFIR(ir_builder, ir_instance, ir_args)
         if isinstance(ir_instance, DivIIR):
             return self.optimize_for_DivIIR(ir_builder, ir_instance, ir_args)
+        if isinstance(ir_instance, DivFIR):
+            return self.optimize_for_DivFIR(ir_builder, ir_instance, ir_args)
+        if isinstance(ir_instance, LessThanIIR):
+            return self.optimize_for_LessThanIIR(ir_builder, ir_instance, ir_args)
+        if isinstance(ir_instance, LessThanFIR):
+            return self.optimize_for_LessThanFIR(ir_builder, ir_instance, ir_args)
+        if isinstance(ir_instance, GreaterThanIIR):
+            return self.optimize_for_GreaterThanIIR(ir_builder, ir_instance, ir_args)
+        if isinstance(ir_instance, GreaterThanFIR):
+            return self.optimize_for_GreaterThanFIR(ir_builder, ir_instance, ir_args)
+        if isinstance(ir_instance, LessThanOrEqualIIR):
+            return self.optimize_for_LessThanOrEqualIIR(ir_builder, ir_instance, ir_args)
+        if isinstance(ir_instance, LessThanOrEqualFIR):
+            return self.optimize_for_LessThanOrEqualFIR(ir_builder, ir_instance, ir_args)
+        if isinstance(ir_instance, GreaterThanOrEqualIIR):
+            return self.optimize_for_GreaterThanOrEqualIIR(ir_builder, ir_instance, ir_args)
+        if isinstance(ir_instance, GreaterThanOrEqualFIR):
+            return self.optimize_for_GreaterThanOrEqualFIR(ir_builder, ir_instance, ir_args)
         if isinstance(ir_instance, DivFIR):
             return self.optimize_for_DivFIR(ir_builder, ir_instance, ir_args)
         return ir_builder.create_ir(ir_instance, ir_args, None)
