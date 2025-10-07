@@ -14,38 +14,35 @@ fn main() {
 
     // training_x (10x2)
     for data in [
-        -2.0, -1.0,
-        -2.0,  1.0,
-        -1.0, -1.0,
-        -1.0,  1.0,
-         0.0,  0.0,
-         1.0, -1.0,
-         1.0,  1.0,
-         2.0, -1.0,
-         2.0,  1.0,
-         2.0,  0.0
+        0.2, 0.1,
+        0.5, -1.0,
+        1.2, 0.0,
+        1.8, -0.3,
+        2.2, 1.0,
+        0.7, 0.5,
+        1.1, -0.2,
+        2.8, 0.9,
+        0.3, -0.4,
+        1.6, 1.2
     ] {
         builder.write(&data).unwrap();
     }
 
     // training_y (10)
-    for data in [
-        0.5, 2.5, 1.0, 4.0, 1.5, 2.0, 6.0, 4.5, 8.5, 5.5
-    ] {
-        builder.write(&data).unwrap();
+    for data in [0, 0, 0, 0, 1, 0, 0, 1, 0, 1] {
+        let val: i32 = data;
+        builder.write(&val).unwrap();
     }
 
     // testing_x (2x2)
-    for data in [
-        -1.0, 0.0,
-         1.0, 2.0
-    ] {
+    for data in [1.4, 0.0, 0.4, 2.0] {
         builder.write(&data).unwrap();
     }
 
     // testing_y (2)
-    for data in [1.5, 9.0] {
-        builder.write(&data).unwrap();
+    for data in [0, 0] {
+        let val: i32 = data;
+        builder.write(&val).unwrap();
     }
 
     let env = builder.build().unwrap();

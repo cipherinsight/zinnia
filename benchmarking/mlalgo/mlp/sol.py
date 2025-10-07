@@ -18,7 +18,7 @@ def verify_solution(
     train_m = 10
     test_m = 2
     # hyperparams
-    steps = 30
+    steps = 10
     lr = 0.02  # smaller step
 
     # smaller init

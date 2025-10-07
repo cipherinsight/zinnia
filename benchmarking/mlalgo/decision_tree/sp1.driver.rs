@@ -30,28 +30,37 @@ fn main() {
     let client = ProverClient::from_env();
     let mut stdin = SP1Stdin::new();
 
+    // training_x (10x2)
     for x in [
-        -2.0, -1.0, -2.0, 1.0, -1.0, -1.0, -1.0, 1.0, 0.0, 0.0,
-         1.0, -1.0, 1.0, 1.0, 2.0, -1.0, 2.0, 1.0, 2.0, 0.0
+        0.2, 0.1,
+        0.5, -1.0,
+        1.2, 0.0,
+        1.8, -0.3,
+        2.2, 1.0,
+        0.7, 0.5,
+        1.1, -0.2,
+        2.8, 0.9,
+        0.3, -0.4,
+        1.6, 1.2
     ] {
         stdin.write(&x);
     }
 
-    for y in [
-        0.5, 2.5, 1.0, 4.0, 1.5, 2.0, 6.0, 4.5, 8.5, 5.5
-    ] {
-        stdin.write(&y);
+    // training_y (10)
+    for y in [0, 0, 0, 0, 1, 0, 0, 1, 0, 1] {
+        let val: i32 = y;
+        stdin.write(&val);
     }
 
-    for x in [
-        -1.0, 0.0,
-         1.0, 2.0
-    ] {
+    // testing_x (2x2)
+    for x in [1.4, 0.0, 0.4, 2.0] {
         stdin.write(&x);
     }
 
-    for y in [1.5, 9.0] {
-        stdin.write(&y);
+    // testing_y (2)
+    for y in [0, 0] {
+        let val: i32 = y;
+        stdin.write(&val);
     }
 
     if args.execute {

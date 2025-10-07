@@ -47,7 +47,7 @@ fn verify_solution<F: ScalarField>(
     let hidden_dim = 3usize;
     let train_m = 10usize;
     let test_m = 2usize;
-    let steps = 50usize;
+    let steps = 10usize;
 
     // Constants
     let lr = Constant(fp.quantization(0.02));
