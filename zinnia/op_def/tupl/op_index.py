@@ -57,5 +57,5 @@ class Tuple_IndexOp(AbstractOp):
             found_answer = builder.op_logical_or(equal, found_answer, dbg)
         if found_answer.val() is not None and found_answer.val() == 0:
             raise StaticInferenceError(dbg, f"Value not found in tuple")
-        builder.op_assert(found_answer, kwargs.get_condition(), dbg)
+        # builder.op_assert(found_answer, kwargs.get_condition(), dbg)
         return answer

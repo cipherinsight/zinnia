@@ -47,5 +47,6 @@ if __name__ == '__main__':
     json_dict = {}
     for entry in parsed_inputs.entries:
         json_dict[entry.get_key()] = entry.get_value()
-    with open('./sol.py.in', 'w') as f:
-        json.dump(json_dict, f, indent=2)
+    # with open('./sol.py.in', 'w') as f:
+    #     json.dump(json_dict, f, indent=2)
+    print(program.source)

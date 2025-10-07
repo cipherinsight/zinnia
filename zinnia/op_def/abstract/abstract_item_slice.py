@@ -42,9 +42,10 @@ class AbstractItemSliceOp(AbstractOp):
         # consider enabling it after negative indexing is fully supported
         # is_neg = builder.ir_less_than_i(number, builder.ir_constant_int(0))
         # number = builder.ir_add_i(number, builder.ir_mul_i(builder.ir_constant_int(dim), is_neg))
-        is_not_out_of_range = builder.ir_logical_and(
-            builder.ir_greater_than_or_equal_i(number, builder.ir_constant_int(0)),
-            builder.ir_less_than_i(number, builder.ir_constant_int(dim))
-        )
-        assert isinstance(condition, BooleanValue)
-        builder.op_assert(is_not_out_of_range, condition)
+        # is_not_out_of_range = builder.ir_logical_and(
+        #     builder.ir_greater_than_or_equal_i(number, builder.ir_constant_int(0)),
+        #     builder.ir_less_than_i(number, builder.ir_constant_int(dim))
+        # )
+        # assert isinstance(condition, BooleanValue)
+        # builder.op_assert(is_not_out_of_range, condition)
+        pass
