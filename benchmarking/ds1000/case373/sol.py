@@ -14,7 +14,7 @@ def verify_solution(grades: NDArray[float, 27], result: NDArray[float, 27]):
         assert grades[i] <= grades[i + 1]
 
     # 2) ECDF values at sorted sample points: i/n for i=1..n
-    ys = np.zeros((n, ), dtype=int)
+    ys = np.zeros((n, ), dtype=float)
     for i in range(n):
         ys[i] = (i + 1) / float(n)
 
