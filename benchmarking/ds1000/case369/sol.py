@@ -22,7 +22,7 @@ def verify_solution(a: NDArray[int, 5, 3], result: int):
     comparison = a == a[:, 0].reshape((5, 1))
     computed = np.all(comparison)
 
-    assert (result == 1) == computed
+    assert result == computed
 
 
 if __name__ == '__main__':

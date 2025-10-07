@@ -35,11 +35,15 @@ where
     F: BigPrimeField,
 {
     let gate = GateChip::<F>::default();
-    let ctx = builder.main(0);
+
+    // Borrow from `builder` BEFORE getting `ctx`
     let _range = builder.range_chip();
     let _poseidon = PoseidonHasher::<F, T, RATE>::new(
         OptimizedPoseidonSpec::new::<R_F, R_P, 0>(),
     );
+
+    // Now take the mutable borrow for the context
+    let ctx = builder.main(0);
 
     // --- Load matrices ---
     let mut a: Vec<Vec<AssignedValue<F>>> = Vec::new();
@@ -65,7 +69,7 @@ where
     let zero_cols = 0u64;
     let zero_const = Constant(F::ZERO);
 
-    // --- Step 1: build modified matrix ---
+    // --- Step 1 & 2: build modified matrix and assert equals result ---
     // modified[i][j] = 0 if (i == zero_rows) or (j == zero_cols) else a[i][j]
     for i in 0..4 {
         for j in 0..4 {
@@ -74,7 +78,6 @@ where
             let is_zero_pos = gate.or(ctx, i_eq, j_eq);
             let selected = gate.select(ctx, zero_const, a[i][j], is_zero_pos);
 
-            // --- Step 2: assert equality with result[i][j] ---
             let eq = gate.is_equal(ctx, selected, result[i][j]);
             gate.assert_is_const(ctx, &eq, &F::ONE);
         }

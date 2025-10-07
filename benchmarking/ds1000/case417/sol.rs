@@ -69,13 +69,14 @@ where
 
     // --- Step 3: Reshape (3, 3) & compute mean along last axis ---
     let nrow = trim_len / bin_size;
-    let one_third = Constant(fixed_point_chip.quantization(1.0 / 3.0));
+    let three_const = Constant(fixed_point_chip.quantization(3.0));
 
+    assert!(nrow == 3);
     for i in 0..nrow {
         // Compute mean of 3 elements per row
         let mut sum = fixed_point_chip.qadd(ctx, trimmed[i * bin_size], trimmed[i * bin_size + 1]);
         sum = fixed_point_chip.qadd(ctx, sum, trimmed[i * bin_size + 2]);
-        let mean = fixed_point_chip.qmul(ctx, sum, one_third);
+        let mean = fixed_point_chip.qdiv(ctx, sum, three_const);
 
         // --- Compare with expected result[i] (within ±1e-3) ---
         let diff = fixed_point_chip.qsub(ctx, result[i], mean);

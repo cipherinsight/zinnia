@@ -516,7 +516,15 @@ class _Halo2StatementBuilder:
         assert isinstance(stmt.ir_instance, SqrtFIR)
         x = self._get_var_name(stmt.arguments[0])
         return [
-            f"let {self._get_var_name(stmt.stmt_id)} = fixed_point_chip.qsqrt(ctx, {x});"
+            f"let tmp_1: f64 = fixed_point_chip.dequantization(*({x}.value()));",
+            f"let tmp_2: f64 = if tmp_1 < 0.0 {{panic!(\"sqrt of negative number\")}} else {{tmp_1.sqrt()}};",
+            f"let {self._get_var_name(stmt.stmt_id)} = ctx.load_witness(fixed_point_chip.quantization(tmp_2));",
+            f"let tmp_mul = fixed_point_chip.qmul(ctx, {self._get_var_name(stmt.stmt_id)}, {self._get_var_name(stmt.stmt_id)});",
+            f"let tmp_3 = fixed_point_chip.qsub(ctx, tmp_mul, {x});",
+            f"let tmp_4 = range_chip.is_less_than(ctx, tmp_3, Constant(fixed_point_chip.quantization(0.001)), 128);",
+            f"let tmp_5 = range_chip.is_less_than(ctx, Constant(fixed_point_chip.quantization(-0.001)), tmp_3, 128);",
+            f"gate.assert_is_const(ctx, &tmp_4, &F::ONE);",
+            f"gate.assert_is_const(ctx, &tmp_5, &F::ONE);"
         ]
 
     def _build_AbsIIR(self, stmt: IRStatement) -> List[str]:

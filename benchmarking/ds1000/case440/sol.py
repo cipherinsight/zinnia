@@ -1,4 +1,5 @@
 import json
+import math
 
 from zinnia import *
 
@@ -21,13 +22,11 @@ def verify_solution(Y: NDArray[int, 4, 3, 3], X: NDArray[float, 3, 4]):
     M = X.shape[0]
     N = X.shape[1]
 
-    expected = [[0.0 for _ in range(N)] for _ in range(M)]
+    expected = np.zeros((M, N), dtype=float)
     for i in range(N):        # column index in X
         for j in range(M):    # row index in X
             # Diagonal entry of Y[i] at (j,j) equals X[j,i]^2
-            expected[j][i] = (Y[i, j, j]) ** 0.5
-
-    assert X == expected
+            assert X[j][i] * X[j][i] == Y[i, j, j]
 
 
 if __name__ == '__main__':

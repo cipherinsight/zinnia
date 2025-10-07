@@ -2,7 +2,6 @@ use std::result;
 use clap::Parser;
 use halo2_base::utils::{ScalarField, BigPrimeField};
 use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use halo2_base::poseidon::hasher::PoseidonHasher;
 use halo2_base::gates::{GateChip, GateInstructions, RangeInstructions};
 use halo2_base::{
     Context,
@@ -13,6 +12,7 @@ use halo2_graph::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};
 use halo2_graph::scaffold::cmd::Cli;
 use halo2_graph::scaffold::run;
 use serde::{Serialize, Deserialize};
+use halo2_base::poseidon::hasher::PoseidonHasher;
 use snark_verifier_sdk::halo2::OptimizedPoseidonSpec;
 
 const T: usize = 3;
@@ -22,70 +22,84 @@ const R_P: usize = 57;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CircuitInput {
-    pub a: Vec<f64>,
-    pub result: (f64, f64),
+    pub a: Vec<f64>,      // len = 13
+    pub result: Vec<f64>, // len = 2 -> [lower, upper]
 }
 
 fn verify_solution<F: ScalarField>(
     builder: &mut BaseCircuitBuilder<F>,
     input: CircuitInput,
-    make_public: &mut Vec<AssignedValue<F>>,
-)
-where
+    _make_public: &mut Vec<AssignedValue<F>>,
+) where
     F: BigPrimeField,
 {
     const PRECISION: u32 = 63;
     let gate = GateChip::<F>::default();
-    let range_chip = builder.range_chip();
-    let fixed_point_chip = FixedPointChip::<F, PRECISION>::default(builder);
-    let mut poseidon_hasher =
+    let range = builder.range_chip();
+    let fp = FixedPointChip::<F, PRECISION>::default(builder);
+    let _poseidon =
         PoseidonHasher::<F, T, RATE>::new(OptimizedPoseidonSpec::new::<R_F, R_P, 0>());
     let ctx = builder.main(0);
 
-    // --- Load array and results ---
-    let a: Vec<AssignedValue<F>> =
-        input.a.iter().map(|x| ctx.load_witness(fixed_point_chip.quantization(*x))).collect();
-    let result_lower = ctx.load_witness(fixed_point_chip.quantization(input.result.0));
-    let result_upper = ctx.load_witness(fixed_point_chip.quantization(input.result.1));
+    // Load inputs
+    let a: Vec<AssignedValue<F>> = input
+        .a
+        .iter()
+        .map(|x| ctx.load_witness(fp.quantization(*x)))
+        .collect();
+    let out: Vec<AssignedValue<F>> = input
+        .result
+        .iter()
+        .map(|x| ctx.load_witness(fp.quantization(*x)))
+        .collect();
 
-    let n = a.len() as f64;
-    let n_const = Constant(fixed_point_chip.quantization(n));
-    let three = Constant(fixed_point_chip.quantization(3.0));
+    // Constants
+    let n = 13usize;
+    let n_f = Constant(fp.quantization(n as f64));
+    let three = Constant(fp.quantization(3.0));
+    let zero = ctx.load_constant(fp.quantization(0.0));
+    let tol_pos = Constant(fp.quantization(0.001));
+    let tol_neg = Constant(fp.quantization(-0.001));
 
-    // --- Step 1: mean_val = sum(a) / n ---
-    let mut sum = fixed_point_chip.qadd(ctx, a[0], a[1]);
-    for i in 2..a.len() {
-        sum = fixed_point_chip.qadd(ctx, sum, a[i]);
+    // mean = sum(a) / n
+    let mut sum = zero;
+    for i in 0..n {
+        sum = fp.qadd(ctx, sum, a[i]);
     }
-    let mean_val = fixed_point_chip.qdiv(ctx, sum, n_const);
+    let mean = fp.qdiv(ctx, sum, n_f);
 
-    // --- Step 2: variance = sum((x - mean)^2) / n ---
-    let mut var_sum = ctx.load_constant(fixed_point_chip.quantization(0.0));
-    for i in 0..a.len() {
-        let diff = fixed_point_chip.qsub(ctx, a[i], mean_val);
-        let sq = fixed_point_chip.qmul(ctx, diff, diff);
-        var_sum = fixed_point_chip.qadd(ctx, var_sum, sq);
+    // variance = sum((a[i] - mean)^2) / n
+    let mut sse = zero;
+    for i in 0..n {
+        let diff = fp.qsub(ctx, a[i], mean);
+        let sq = fp.qmul(ctx, diff, diff);
+        sse = fp.qadd(ctx, sse, sq);
     }
-    let variance = fixed_point_chip.qdiv(ctx, var_sum, n_const);
+    let variance = fp.qdiv(ctx, sse, n_f);
 
-    // --- Step 3: std_val = sqrt(variance) ---
-    let std_val = fixed_point_chip.qsqrt(ctx, variance);
+    // std = sqrt(variance)
+    let std = fp.qsqrt(ctx, variance);
 
-    // --- Step 4: lower = mean - 3 * std ---
-    let three_std = fixed_point_chip.qmul(ctx, three, std_val);
-    let lower = fixed_point_chip.qsub(ctx, mean_val, three_std);
+    // lower = mean - 3*std
+    // upper = mean + 3*std
+    let three_std = fp.qmul(ctx, three, std);
+    let lower = fp.qsub(ctx, mean, three_std);
+    let upper = fp.qadd(ctx, mean, three_std);
 
-    // --- Step 5: upper = mean + 3 * std ---
-    let upper = fixed_point_chip.qadd(ctx, mean_val, three_std);
+    // Assert result == (lower, upper) within ±1e-3
+    // out[0] == lower
+    let d0 = fp.qsub(ctx, out[0], lower);
+    let ok0_lo = range.is_less_than(ctx, d0, tol_pos, 128);
+    let ok0_hi = range.is_less_than(ctx, tol_neg, d0, 128);
+    let ok0 = gate.and(ctx, ok0_lo, ok0_hi);
+    gate.assert_is_const(ctx, &ok0, &F::ONE);
 
-    // --- Step 6: assert equality within ±0.001 ---
-    for (computed, expected) in [(lower, result_lower), (upper, result_upper)] {
-        let diff = fixed_point_chip.qsub(ctx, expected, computed);
-        let le = range_chip.is_less_than(ctx, diff, Constant(fixed_point_chip.quantization(0.001)), 128);
-        let ge = range_chip.is_less_than(ctx, Constant(fixed_point_chip.quantization(-0.001)), diff, 128);
-        let ok = gate.and(ctx, le, ge);
-        gate.assert_is_const(ctx, &ok, &F::ONE);
-    }
+    // out[1] == upper
+    let d1 = fp.qsub(ctx, out[1], upper);
+    let ok1_lo = range.is_less_than(ctx, d1, tol_pos, 128);
+    let ok1_hi = range.is_less_than(ctx, tol_neg, d1, 128);
+    let ok1 = gate.and(ctx, ok1_lo, ok1_hi);
+    gate.assert_is_const(ctx, &ok1, &F::ONE);
 }
 
 fn main() {

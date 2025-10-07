@@ -1,4 +1,5 @@
 import json
+import math
 
 from zinnia import *
 
@@ -14,7 +15,7 @@ def verify_solution(a: NDArray[float, 13], result: Tuple[float, float]):
     # manual std: sqrt(sum((x - mean)^2) / n)
     variance = np.sum((a - mean_val) * (a - mean_val))
     variance /= n
-    std_val = variance ** 0.5
+    std_val = math.sqrt(variance)
 
     lower = mean_val - 3 * std_val
     upper = mean_val + 3 * std_val

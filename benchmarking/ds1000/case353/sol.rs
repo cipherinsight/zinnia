@@ -9,7 +9,6 @@ use halo2_base::{
     AssignedValue,
     QuantumCell::{Constant, Witness},
 };
-use halo2_graph::gadget::fixed_point::FixedPointChip;
 use halo2_graph::scaffold::cmd::Cli;
 use halo2_graph::scaffold::run;
 use serde::{Serialize, Deserialize};
@@ -35,68 +34,65 @@ fn verify_solution<F: ScalarField>(
 where
     F: BigPrimeField,
 {
-    const PRECISION: u32 = 63;
+    // === initialize all chips before main context ===
     let gate = GateChip::<F>::default();
     let range_chip = builder.range_chip();
-    let _fixed_point_chip = FixedPointChip::<F, PRECISION>::default(builder);
-    let _poseidon_hasher =
-        PoseidonHasher::<F, T, RATE>::new(OptimizedPoseidonSpec::new::<R_F, R_P, 0>());
+    let _poseidon = PoseidonHasher::<F, T, RATE>::new(
+        OptimizedPoseidonSpec::new::<R_F, R_P, 0>(),
+    );
+
+    // === now obtain main region ===
     let ctx = builder.main(0);
 
-    // ---- Load A, B, output ----
+    // --- Load input matrices ---
     let mut A: Vec<Vec<AssignedValue<F>>> = Vec::new();
     for i in 0..input.A.len() {
-        A.push(
-            input.A[i]
-                .iter()
-                .map(|x| ctx.load_witness(F::from(*x)))
-                .collect(),
-        );
+        let mut row: Vec<AssignedValue<F>> = Vec::new();
+        for j in 0..input.A[i].len() {
+            row.push(ctx.load_witness(F::from(input.A[i][j])));
+        }
+        A.push(row);
     }
 
     let mut B: Vec<Vec<AssignedValue<F>>> = Vec::new();
     for i in 0..input.B.len() {
-        B.push(
-            input.B[i]
-                .iter()
-                .map(|x| ctx.load_witness(F::from(*x)))
-                .collect(),
-        );
+        let mut row: Vec<AssignedValue<F>> = Vec::new();
+        for j in 0..input.B[i].len() {
+            row.push(ctx.load_witness(F::from(input.B[i][j])));
+        }
+        B.push(row);
     }
 
     let mut output: Vec<Vec<AssignedValue<F>>> = Vec::new();
     for i in 0..input.output.len() {
-        output.push(
-            input.output[i]
-                .iter()
-                .map(|x| ctx.load_witness(F::from(*x)))
-                .collect(),
-        );
+        let mut row: Vec<AssignedValue<F>> = Vec::new();
+        for j in 0..input.output[i].len() {
+            row.push(ctx.load_witness(F::from(input.output[i][j])));
+        }
+        output.push(row);
     }
 
-    // ---- Step 1: Membership check (in_B[i]) ----
-    let n_a = A.len();
-    let n_b = B.len();
+    // --- Step 1: membership check ---
     let mut in_B: Vec<AssignedValue<F>> = Vec::new();
-
-    for i in 0..n_a {
+    for i in 0..4 {
         let mut found = ctx.load_constant(F::ZERO);
-        for j in 0..n_b {
+        for j in 0..7 {
             let m0 = gate.is_equal(ctx, A[i][0], B[j][0]);
             let m1 = gate.is_equal(ctx, A[i][1], B[j][1]);
             let m2 = gate.is_equal(ctx, A[i][2], B[j][2]);
-            let row_match = gate.and(ctx, gate.and(ctx, m0, m1), m2);
+            let and01 = gate.and(ctx, m0, m1);
+            let row_match = gate.and(ctx, and01, m2);
             found = gate.or(ctx, found, row_match);
         }
         in_B.push(found);
     }
 
-    // ---- Step 2: prefix count for rows NOT in B ----
+    // --- Step 2: prefix counts & flags ---
     let mut pref = ctx.load_constant(F::ZERO);
     let mut pref_before: Vec<AssignedValue<F>> = Vec::new();
     let mut keep_flag: Vec<AssignedValue<F>> = Vec::new();
 
-    for i in 0..n_a {
+    for i in 0..4 {
         pref_before.push(pref);
         // not_in = 1 - in_B[i]
         let not_in = gate.not(ctx, in_B[i]);
@@ -104,39 +100,38 @@ where
         pref = gate.add(ctx, pref, not_in);
     }
 
-    // assert pref == 2
-    let eq_pref = gate.is_equal(ctx, pref, Constant(F::from(2)));
-    gate.assert_is_const(ctx, &eq_pref, &F::ONE);
+    // --- Step 3: assert total kept == 2 ---
+    let two = Constant(F::from(2));
+    let eq_kept = gate.is_equal(ctx, pref, two);
+    gate.assert_is_const(ctx, &eq_kept, &F::ONE);
 
-    // ---- Step 3: build expected kept rows ----
-    let mut exp: Vec<Vec<AssignedValue<F>>> =
-        vec![vec![ctx.load_constant(F::ZERO); 3], vec![ctx.load_constant(F::ZERO); 3]];
+    // --- Step 4: build expected kept rows ---
+    let mut exp: Vec<Vec<AssignedValue<F>>> = vec![
+        vec![ctx.load_constant(F::ZERO); 3],
+        vec![ctx.load_constant(F::ZERO); 3],
+    ];
 
-    for i in 0..n_a {
+    for i in 0..4 {
         let is_keep = keep_flag[i];
-
-        // is_pos0 = (pref_before[i] == 0)
         let is_pos0 = gate.is_equal(ctx, pref_before[i], Constant(F::ZERO));
-        // is_pos1 = (pref_before[i] == 1)
-        let is_pos1 = gate.is_equal(ctx, pref_before[i], Constant(F::from(1)));
+        let is_pos1 = gate.is_equal(ctx, pref_before[i], Constant(F::from(1u64)));
 
-        // w0 = is_keep * is_pos0
-        let w0 = gate.mul(ctx, is_keep, is_pos0);
-        // w1 = is_keep * is_pos1
-        let w1 = gate.mul(ctx, is_keep, is_pos1);
+        let w0 = gate.and(ctx, is_keep, is_pos0);
+        let w1 = gate.and(ctx, is_keep, is_pos1);
 
         for c in 0..3 {
-            let add0 = gate.mul(ctx, A[i][c], w0);
-            let add1 = gate.mul(ctx, A[i][c], w1);
+            let a_ic = A[i][c];
+            let add0 = gate.mul(ctx, a_ic, w0);
+            let add1 = gate.mul(ctx, a_ic, w1);
             exp[0][c] = gate.add(ctx, exp[0][c], add0);
             exp[1][c] = gate.add(ctx, exp[1][c], add1);
         }
     }
 
-    // ---- Step 4: Compare with output ----
+    // --- Step 5: assert equality with output ---
     for r in 0..2 {
         for c in 0..3 {
-            let eq = gate.is_equal(ctx, output[r][c], exp[r][c]);
+            let eq = gate.is_equal(ctx, exp[r][c], output[r][c]);
             gate.assert_is_const(ctx, &eq, &F::ONE);
         }
     }

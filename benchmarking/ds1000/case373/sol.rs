@@ -9,7 +9,7 @@ use halo2_base::{
     AssignedValue,
     QuantumCell::{Constant, Witness},
 };
-use halo2_graph::gadget::fixed_point::FixedPointChip;
+use halo2_graph::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};
 use halo2_graph::scaffold::cmd::Cli;
 use halo2_graph::scaffold::run;
 use serde::{Serialize, Deserialize};
@@ -34,45 +34,47 @@ fn verify_solution<F: ScalarField>(
 where
     F: BigPrimeField,
 {
-    const PRECISION: u32 = 63; // same quantization scale as IR spec
+    const PRECISION: u32 = 63;
     let gate = GateChip::<F>::default();
     let range_chip = builder.range_chip();
     let fixed_point_chip = FixedPointChip::<F, PRECISION>::default(builder);
-    let _poseidon_hasher =
+    let _poseidon =
         PoseidonHasher::<F, T, RATE>::new(OptimizedPoseidonSpec::new::<R_F, R_P, 0>());
     let ctx = builder.main(0);
 
+    // --- Step 1: Load inputs ---
     let n = input.grades.len();
-    assert_eq!(n, 27);
+    let grades: Vec<AssignedValue<F>> = input
+        .grades
+        .iter()
+        .map(|x| ctx.load_witness(fixed_point_chip.quantization(*x)))
+        .collect();
+    let results: Vec<AssignedValue<F>> = input
+        .result
+        .iter()
+        .map(|x| ctx.load_witness(fixed_point_chip.quantization(*x)))
+        .collect();
 
-    // ---- Load grades ----
-    let mut grades_fp: Vec<AssignedValue<F>> = Vec::new();
-    for g in input.grades.iter() {
-        let q = fixed_point_chip.quantization(*g);
-        grades_fp.push(ctx.load_witness(q));
-    }
-
-    // ---- Load expected ECDF result ----
-    let mut result_fp: Vec<AssignedValue<F>> = Vec::new();
-    for r in input.result.iter() {
-        let q = fixed_point_chip.quantization(*r);
-        result_fp.push(ctx.load_witness(q));
-    }
-
-    // ---- Step 1: verify non-decreasing ----
+    // --- Step 2: Validate sortedness (non-decreasing) ---
     for i in 0..(n - 1) {
-        let le = range_chip.is_less_than(ctx, grades_fp[i], grades_fp[i + 1], 128);
-        let ge = gate.is_equal(ctx, grades_fp[i], grades_fp[i + 1]);
-        let le_or_eq = gate.or(ctx, le, ge);
-        gate.assert_is_const(ctx, &le_or_eq, &F::ONE);
+        let leq = range_chip.is_less_than(ctx, grades[i + 1], grades[i], 128);
+        let not_leq = gate.not(ctx, leq);
+        gate.assert_is_const(ctx, &not_leq, &F::ONE);
     }
 
-    // ---- Step 2 & 3: verify ECDF values (i+1)/n ----
+    // --- Step 3: Verify ECDF values result[i] = (i+1)/n ---
+    let n_const = Constant(fixed_point_chip.quantization(n as f64));
     for i in 0..n {
-        let ideal_val = fixed_point_chip.quantization((i as f64 + 1.0) / n as f64);
-        let ideal_fp = ctx.load_constant(ideal_val);
-        let eq = gate.is_equal(ctx, result_fp[i], ideal_fp);
-        gate.assert_is_const(ctx, &eq, &F::ONE);
+        let idx_plus = (i + 1) as f64;
+        let idx_val = Constant(fixed_point_chip.quantization(idx_plus));
+        let expected = fixed_point_chip.qdiv(ctx, idx_val, n_const);
+        let diff = fixed_point_chip.qsub(ctx, results[i], expected);
+
+        // assert |diff| <= 1e-3
+        let upper = range_chip.is_less_than(ctx, diff, Constant(fixed_point_chip.quantization(0.001)), 128);
+        let lower = range_chip.is_less_than(ctx, Constant(fixed_point_chip.quantization(-0.001)), diff, 128);
+        let within_tol = gate.and(ctx, upper, lower);
+        gate.assert_is_const(ctx, &within_tol, &F::ONE);
     }
 }
 

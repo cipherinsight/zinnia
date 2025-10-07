@@ -2,7 +2,6 @@ use std::result;
 use clap::Parser;
 use halo2_base::utils::{ScalarField, BigPrimeField};
 use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use halo2_base::poseidon::hasher::PoseidonHasher;
 use halo2_base::gates::{GateChip, GateInstructions, RangeInstructions};
 use halo2_base::{
     Context,
@@ -13,6 +12,7 @@ use halo2_graph::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};
 use halo2_graph::scaffold::cmd::Cli;
 use halo2_graph::scaffold::run;
 use serde::{Serialize, Deserialize};
+use halo2_base::poseidon::hasher::PoseidonHasher;
 use snark_verifier_sdk::halo2::OptimizedPoseidonSpec;
 
 const T: usize = 3;
@@ -22,15 +22,15 @@ const R_P: usize = 57;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CircuitInput {
-    pub post: Vec<f64>,
-    pub distance: Vec<f64>,
-    pub result: f64,
+    pub post: Vec<f64>,       // len = 4
+    pub distance: Vec<f64>,   // len = 4
+    pub result: f64,          // scalar Pearson r
 }
 
 fn verify_solution<F: ScalarField>(
     builder: &mut BaseCircuitBuilder<F>,
     input: CircuitInput,
-    make_public: &mut Vec<AssignedValue<F>>,
+    _make_public: &mut Vec<AssignedValue<F>>,
 )
 where
     F: BigPrimeField,
@@ -38,76 +38,85 @@ where
     const PRECISION: u32 = 63;
     let gate = GateChip::<F>::default();
     let range = builder.range_chip();
-    let fixed = FixedPointChip::<F, PRECISION>::default(builder);
-    let ctx = builder.main(0);
-
+    let fp = FixedPointChip::<F, PRECISION>::default(builder);
     let _poseidon =
         PoseidonHasher::<F, T, RATE>::new(OptimizedPoseidonSpec::new::<R_F, R_P, 0>());
+    let ctx = builder.main(0);
 
-    let n = input.post.len() as f64;
-    let n_const = Constant(fixed.quantization(n));
-
-    // --- Load inputs ---
+    // Load inputs
     let post: Vec<AssignedValue<F>> = input
         .post
         .iter()
-        .map(|x| ctx.load_witness(fixed.quantization(*x)))
+        .map(|x| ctx.load_witness(fp.quantization(*x)))
         .collect();
     let distance: Vec<AssignedValue<F>> = input
         .distance
         .iter()
-        .map(|x| ctx.load_witness(fixed.quantization(*x)))
+        .map(|x| ctx.load_witness(fp.quantization(*x)))
         .collect();
-    let result = ctx.load_witness(fixed.quantization(input.result));
+    let out_r = ctx.load_witness(fp.quantization(input.result));
 
-    // --- Step 1: means ---
-    let mut sum_post = ctx.load_constant(fixed.quantization(0.0));
-    let mut sum_dist = ctx.load_constant(fixed.quantization(0.0));
-    for i in 0..post.len() {
-        sum_post = fixed.qadd(ctx, sum_post, post[i]);
-        sum_dist = fixed.qadd(ctx, sum_dist, distance[i]);
+    // Constants
+    let n = 4usize;
+    let n_f = Constant(fp.quantization(n as f64));
+    let zero = ctx.load_constant(fp.quantization(0.0));
+    let tol_pos = Constant(fp.quantization(0.001));
+    let tol_neg = Constant(fp.quantization(-0.001));
+
+    // mean_post = sum(post)/n
+    let mut sum_post = zero;
+    for i in 0..n {
+        sum_post = fp.qadd(ctx, sum_post, post[i]);
     }
-    let mean_post = fixed.qdiv(ctx, sum_post, n_const);
-    let mean_dist = fixed.qdiv(ctx, sum_dist, n_const);
+    let mean_post = fp.qdiv(ctx, sum_post, n_f);
 
-    // --- Step 2: covariance ---
-    let mut cov_sum = ctx.load_constant(fixed.quantization(0.0));
-    for i in 0..post.len() {
-        let dp = fixed.qsub(ctx, post[i], mean_post);
-        let dd = fixed.qsub(ctx, distance[i], mean_dist);
-        let prod = fixed.qmul(ctx, dp, dd);
-        cov_sum = fixed.qadd(ctx, cov_sum, prod);
+    // mean_distance = sum(distance)/n
+    let mut sum_dist = zero;
+    for i in 0..n {
+        sum_dist = fp.qadd(ctx, sum_dist, distance[i]);
     }
-    let cov = fixed.qdiv(ctx, cov_sum, n_const);
+    let mean_distance = fp.qdiv(ctx, sum_dist, n_f);
 
-    // --- Step 3: variances ---
-    let mut var_post_sum = ctx.load_constant(fixed.quantization(0.0));
-    let mut var_dist_sum = ctx.load_constant(fixed.quantization(0.0));
-    for i in 0..post.len() {
-        let dp = fixed.qsub(ctx, post[i], mean_post);
-        let dd = fixed.qsub(ctx, distance[i], mean_dist);
-        let dp_sq = fixed.qmul(ctx, dp, dp);
-        let dd_sq = fixed.qmul(ctx, dd, dd);
-        var_post_sum = fixed.qadd(ctx, var_post_sum, dp_sq);
-        var_dist_sum = fixed.qadd(ctx, var_dist_sum, dd_sq);
+    // cov = sum((post[i]-mean_post)*(distance[i]-mean_distance)) / n
+    let mut cov_sum = zero;
+    for i in 0..n {
+        let dp = fp.qsub(ctx, post[i], mean_post);
+        let dd = fp.qsub(ctx, distance[i], mean_distance);
+        let prod = fp.qmul(ctx, dp, dd);
+        cov_sum = fp.qadd(ctx, cov_sum, prod);
     }
-    let var_post = fixed.qdiv(ctx, var_post_sum, n_const);
-    let var_dist = fixed.qdiv(ctx, var_dist_sum, n_const);
+    let cov = fp.qdiv(ctx, cov_sum, n_f);
 
-    // --- Step 4: standard deviations ---
-    let std_post = fixed.qsqrt(ctx, var_post);
-    let std_dist = fixed.qsqrt(ctx, var_dist);
+    // var_post and var_distance (population)
+    let mut sse_post = zero;
+    let mut sse_dist = zero;
+    for i in 0..n {
+        let dp = fp.qsub(ctx, post[i], mean_post);
+        let dd = fp.qsub(ctx, distance[i], mean_distance);
+    
+        let dp_sq = fp.qmul(ctx, dp, dp);
+        sse_post = fp.qadd(ctx, sse_post, dp_sq);
+    
+        let dd_sq = fp.qmul(ctx, dd, dd);
+        sse_dist = fp.qadd(ctx, sse_dist, dd_sq);
+    }
+    let var_post = fp.qdiv(ctx, sse_post, n_f);
+    let var_distance = fp.qdiv(ctx, sse_dist, n_f);
 
-    // --- Step 5: correlation ---
-    let denom = fixed.qmul(ctx, std_post, std_dist);
-    let pearson_r = fixed.qdiv(ctx, cov, denom);
+    // stds
+    let std_post = fp.qsqrt(ctx, var_post);
+    let std_distance = fp.qsqrt(ctx, var_distance);
 
-    // --- Step 6: assert equality ---
-    let diff = fixed.qsub(ctx, pearson_r, result);
-    let within_upper = range.is_less_than(ctx, diff, Constant(fixed.quantization(0.001)), 128);
-    let within_lower = range.is_less_than(ctx, Constant(fixed.quantization(-0.001)), diff, 128);
-    let eq = gate.and(ctx, within_upper, within_lower);
-    gate.assert_is_const(ctx, &eq, &F::ONE);
+    // pearson r = cov / (std_post * std_distance)
+    let denom = fp.qmul(ctx, std_post, std_distance);
+    let r = fp.qdiv(ctx, cov, denom);
+
+    // Assert result == r within ±1e-3
+    let diff = fp.qsub(ctx, out_r, r);
+    let le = range.is_less_than(ctx, diff, tol_pos, 128);
+    let ge = range.is_less_than(ctx, tol_neg, diff, 128);
+    let ok = gate.and(ctx, le, ge);
+    gate.assert_is_const(ctx, &ok, &F::ONE);
 }
 
 fn main() {

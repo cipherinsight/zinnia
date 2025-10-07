@@ -21,7 +21,7 @@ def verify_solution(a: NDArray[int, 3, 5], result: int):
 
     comparison = (a == a[0])
 
-    assert np.all(comparison, axis=-1) == (result == 1)
+    assert np.all(comparison) == result
 
 
 if __name__ == '__main__':

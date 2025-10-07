@@ -2,16 +2,17 @@ use std::result;
 use clap::Parser;
 use halo2_base::utils::{ScalarField, BigPrimeField};
 use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use halo2_base::poseidon::hasher::PoseidonHasher;
-use halo2_base::gates::{GateChip, GateInstructions};
+use halo2_base::gates::{GateChip, GateInstructions, RangeInstructions};
 use halo2_base::{
     Context,
     AssignedValue,
     QuantumCell::{Constant, Witness},
 };
+use halo2_graph::gadget::fixed_point::FixedPointChip;
 use halo2_graph::scaffold::cmd::Cli;
 use halo2_graph::scaffold::run;
 use serde::{Serialize, Deserialize};
+use halo2_base::poseidon::hasher::PoseidonHasher;
 use snark_verifier_sdk::halo2::OptimizedPoseidonSpec;
 
 const T: usize = 3;
@@ -21,60 +22,73 @@ const R_P: usize = 57;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CircuitInput {
-    pub x: Vec<u64>,
-    pub y: Vec<u64>,
+    pub x: Vec<u64>,      // len = 9
+    pub y: Vec<u64>,      // len = 9
     pub a: u64,
     pub b: u64,
-    pub result: i64,
+    pub result: i64,      // could be -1 if not found
 }
 
 fn verify_solution<F: ScalarField>(
     builder: &mut BaseCircuitBuilder<F>,
     input: CircuitInput,
-    make_public: &mut Vec<AssignedValue<F>>,
+    _make_public: &mut Vec<AssignedValue<F>>,
 )
 where
     F: BigPrimeField,
 {
+    const PRECISION: u32 = 63; // unused here; kept for parity with other examples
     let gate = GateChip::<F>::default();
-    let ctx = builder.main(0);
+    let _range = builder.range_chip();
+    let _fp = FixedPointChip::<F, PRECISION>::default(builder);
     let _poseidon =
         PoseidonHasher::<F, T, RATE>::new(OptimizedPoseidonSpec::new::<R_F, R_P, 0>());
+    let ctx = builder.main(0);
 
-    // --- Load inputs ---
-    let x: Vec<AssignedValue<F>> = input.x.iter().map(|v| ctx.load_witness(F::from(*v))).collect();
-    let y: Vec<AssignedValue<F>> = input.y.iter().map(|v| ctx.load_witness(F::from(*v))).collect();
+    let n = 9usize;
+
+    // Load arrays x, y
+    let x: Vec<AssignedValue<F>> =
+        input.x.iter().map(|v| ctx.load_witness(F::from(*v))).collect();
+    let y: Vec<AssignedValue<F>> =
+        input.y.iter().map(|v| ctx.load_witness(F::from(*v))).collect();
+
+    // Load scalars a, b
     let a = ctx.load_witness(F::from(input.a));
     let b = ctx.load_witness(F::from(input.b));
-    let expected = ctx.load_witness(F::from(input.result));
 
-    // Constants
-    let neg_one = gate.neg(ctx, Constant(F::ONE)); // -1
-    let zero = Constant(F::ZERO);
+    // Load expected result (may be negative)
+    let out = if input.result >= 0 {
+        ctx.load_witness(F::from(input.result as u64))
+    } else {
+        // load positive magnitude then negate
+        let pos = ctx.load_witness(F::from((-input.result) as u64));
+        gate.neg(ctx, pos)
+    };
 
-    // --- Initialize found_index = -1 ---
-    let mut found_index = neg_one;
+    // found_index = -1
+    let neg_one = gate.neg(ctx, Constant(F::from(1u64)));
+    let mut found = neg_one;
 
-    // --- Iterate over elements ---
-    for i in 0..x.len() {
-        // cond1: x[i] == a
-        let cond1 = gate.is_equal(ctx, x[i], a);
-        // cond2: y[i] == b
-        let cond2 = gate.is_equal(ctx, y[i], b);
-        // cond3: found_index == -1
-        let cond3 = gate.is_equal(ctx, found_index, neg_one);
+    // for i in 0..n:
+    //   if x[i]==a && y[i]==b && found==-1: found = i
+    for i in 0..n {
+        let xi_eq_a = gate.is_equal(ctx, x[i], a);
+        let yi_eq_b = gate.is_equal(ctx, y[i], b);
+        let found_is_neg1 = gate.is_equal(ctx, found, neg_one);
 
-        // combined condition: (x[i]==a) AND (y[i]==b) AND (found_index==-1)
-        let cond12 = gate.and(ctx, cond1, cond2);
-        let combined = gate.and(ctx, cond12, cond3);
+        let t = gate.and(ctx, xi_eq_a, yi_eq_b);
+        let cond = gate.and(ctx, t, found_is_neg1);
 
-        // Select: if combined then i else found_index
-        let i_const = Constant(F::from(i as u64));
-        found_index = gate.select(ctx, i_const, found_index, combined);
+        // i as field
+        let i_val = Constant(F::from(i as u64));
+
+        // found = cond ? i : found
+        found = gate.select(ctx, i_val, found, cond);
     }
 
-    // --- Assert final result ---
-    let eq = gate.is_equal(ctx, found_index, expected);
+    // assert result == found
+    let eq = gate.is_equal(ctx, out, found);
     gate.assert_is_const(ctx, &eq, &F::ONE);
 }
 

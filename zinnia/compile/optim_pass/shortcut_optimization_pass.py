@@ -28,6 +28,8 @@ from zinnia.ir_def.defs.ir_select_f import SelectFIR
 from zinnia.ir_def.defs.ir_select_i import SelectIIR
 from zinnia.ir_def.defs.ir_sub_f import SubFIR
 from zinnia.ir_def.defs.ir_sub_i import SubIIR
+from zinnia.ir_def.defs.ir_eq_f import EqualFIR
+from zinnia.ir_def.defs.ir_eq_i import EqualIIR
 
 
 class ShortcutOptimIRPass(AbstractIRPass):
@@ -264,14 +266,14 @@ class ShortcutOptimIRPass(AbstractIRPass):
             return ir_builder.ir_constant_bool(True)
         return ir_builder.create_ir(ir_instance, ir_args, None)
     
-    def optimize_for_IsEqualIIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
+    def optimize_for_EqualIIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
         lhs, rhs = ir_args[0], ir_args[1]
         assert isinstance(lhs, IntegerValue) and isinstance(rhs, IntegerValue)
         if lhs.ptr() == rhs.ptr():
             return ir_builder.ir_constant_bool(True)
         return ir_builder.create_ir(ir_instance, ir_args, None)
     
-    def optimize_for_IsEqualFIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
+    def optimize_for_EqualFIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
         lhs, rhs = ir_args[0], ir_args[1]
         assert isinstance(lhs, FloatValue) and isinstance(rhs, FloatValue)
         if lhs.ptr() == rhs.ptr():
@@ -335,6 +337,10 @@ class ShortcutOptimIRPass(AbstractIRPass):
             return self.optimize_for_GreaterThanOrEqualIIR(ir_builder, ir_instance, ir_args)
         if isinstance(ir_instance, GreaterThanOrEqualFIR):
             return self.optimize_for_GreaterThanOrEqualFIR(ir_builder, ir_instance, ir_args)
+        if isinstance(ir_instance, EqualIIR):
+            return self.optimize_for_EqualIIR(ir_builder, ir_instance, ir_args)
+        if isinstance(ir_instance, EqualFIR):
+            return self.optimize_for_EqualFIR(ir_builder, ir_instance, ir_args)
         if isinstance(ir_instance, DivFIR):
             return self.optimize_for_DivFIR(ir_builder, ir_instance, ir_args)
         return ir_builder.create_ir(ir_instance, ir_args, None)

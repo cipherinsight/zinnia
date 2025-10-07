@@ -2,18 +2,18 @@ use std::result;
 use clap::Parser;
 use halo2_base::utils::{ScalarField, BigPrimeField};
 use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use halo2_base::poseidon::hasher::PoseidonHasher;
 use halo2_base::gates::{GateChip, GateInstructions, RangeInstructions};
 use halo2_base::{
     Context,
     AssignedValue,
-    QuantumCell::{Constant, Existing, Witness},
+    QuantumCell::{Constant, Witness},
 };
 use halo2_graph::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};
 use halo2_graph::scaffold::cmd::Cli;
 use halo2_graph::scaffold::run;
 use serde::{Serialize, Deserialize};
 use snark_verifier_sdk::halo2::OptimizedPoseidonSpec;
+use halo2_base::poseidon::hasher::PoseidonHasher;
 
 const T: usize = 3;
 const RATE: usize = 2;
@@ -22,92 +22,74 @@ const R_P: usize = 57;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CircuitInput {
-    pub data: Vec<Vec<f64>>,
-    pub result: Vec<Vec<f64>>,
+    pub data: Vec<Vec<f64>>,   // shape: 2 x 5
+    pub result: Vec<Vec<f64>>, // shape: 2 x 1
 }
 
 fn verify_solution<F: ScalarField>(
     builder: &mut BaseCircuitBuilder<F>,
     input: CircuitInput,
-    make_public: &mut Vec<AssignedValue<F>>,
+    _make_public: &mut Vec<AssignedValue<F>>,
 )
 where
     F: BigPrimeField,
 {
     const PRECISION: u32 = 63;
     let gate = GateChip::<F>::default();
-    let range_chip = builder.range_chip();
-    let fixed_point_chip = FixedPointChip::<F, PRECISION>::default(builder);
-    let mut poseidon_hasher =
+    let range = builder.range_chip();
+    let fp = FixedPointChip::<F, PRECISION>::default(builder);
+    let _poseidon =
         PoseidonHasher::<F, T, RATE>::new(OptimizedPoseidonSpec::new::<R_F, R_P, 0>());
     let ctx = builder.main(0);
 
-    // --- Load inputs ---
-    let mut data: Vec<Vec<AssignedValue<F>>> = Vec::new();
+    // Load inputs
+    let mut data: Vec<Vec<AssignedValue<F>>> = Vec::new();   // 2 x 5
     for i in 0..input.data.len() {
         let mut row: Vec<AssignedValue<F>> = Vec::new();
         for j in 0..input.data[i].len() {
-            row.push(ctx.load_witness(fixed_point_chip.quantization(input.data[i][j])));
+            row.push(ctx.load_witness(fp.quantization(input.data[i][j])));
         }
         data.push(row);
     }
 
-    let mut result: Vec<Vec<AssignedValue<F>>> = Vec::new();
+    let mut result: Vec<Vec<AssignedValue<F>>> = Vec::new(); // 2 x 1
     for i in 0..input.result.len() {
         let mut row: Vec<AssignedValue<F>> = Vec::new();
         for j in 0..input.result[i].len() {
-            row.push(ctx.load_witness(fixed_point_chip.quantization(input.result[i][j])));
+            row.push(ctx.load_witness(fp.quantization(input.result[i][j])));
         }
         result.push(row);
     }
 
-    // --- Parameters ---
-    let bin_size = 3;
-    let one_third = Constant(fixed_point_chip.quantization(1.0 / 3.0));
+    // Constants
+    let three = Constant(fp.quantization(3.0));
+    let tol_pos = Constant(fp.quantization(0.001));
+    let tol_neg = Constant(fp.quantization(-0.001));
+    let zero = ctx.load_constant(fp.quantization(0.0));
 
-    // --- Step 1: Reverse each row ---
-    let mut reversed_rows: Vec<Vec<AssignedValue<F>>> = Vec::new();
-    for i in 0..data.len() {
-        let mut reversed_row: Vec<AssignedValue<F>> = Vec::new();
-        let ncol = data[i].len();
-        for j in 0..ncol {
-            reversed_row.push(data[i][ncol - 1 - j]);
-        }
-        reversed_rows.push(reversed_row);
-    }
+    // Compute per-row means after reversing and trimming to first 3 entries
+    // new_data[i] = reverse(data[i]); trimmed = new_data[i][0..3]
+    // mean_i = (new_data[i][0] + new_data[i][1] + new_data[i][2]) / 3
+    // Note: reversing length-1 axis of result is a no-op; preserved semantically.
+    let rows = 2usize;
+    for i in 0..rows {
+        // indices after reverse: [4,3,2,1,0]; take first 3 -> [4,3,2]
+        let a = data[i][4];
+        let b = data[i][3];
+        let c = data[i][2];
 
-    // --- Step 2: Trim to multiple of bin_size along columns ---
-    let trim_len = (5 / bin_size) * bin_size; // 3
-    let mut trimmed_rows: Vec<Vec<AssignedValue<F>>> = Vec::new();
-    for i in 0..reversed_rows.len() {
-        let row = reversed_rows[i]
-            .iter()
-            .take(trim_len)
-            .cloned()
-            .collect::<Vec<_>>();
-        trimmed_rows.push(row);
-    }
+        let mut sum = zero;
+        sum = fp.qadd(ctx, sum, a);
+        sum = fp.qadd(ctx, sum, b);
+        sum = fp.qadd(ctx, sum, c);
+        let mean = fp.qdiv(ctx, sum, three); // shape (rows,1) effectively
 
-    // --- Step 3: Compute mean across each 3-element bin (axis=-1) ---
-    let mut means: Vec<AssignedValue<F>> = Vec::new();
-    for i in 0..trimmed_rows.len() {
-        let sum1 = fixed_point_chip.qadd(ctx, trimmed_rows[i][0], trimmed_rows[i][1]);
-        let sum2 = fixed_point_chip.qadd(ctx, sum1, trimmed_rows[i][2]);
-        let mean = fixed_point_chip.qmul(ctx, sum2, one_third);
-        means.push(mean);
-    }
-
-    // --- Step 4: Reverse result array (same shape [[6],[5]]) ---
-    let mut reversed_means: Vec<AssignedValue<F>> = means.clone();
-    reversed_means.reverse();
-
-    // --- Step 5: Assert equality ---
-    for i in 0..reversed_means.len() {
-        let diff = fixed_point_chip.qsub(ctx, result[i][0], reversed_means[i]);
-        let le = range_chip.is_less_than(ctx, diff, Constant(fixed_point_chip.quantization(0.001)), 128);
-        let ge = range_chip.is_less_than(ctx, Constant(fixed_point_chip.quantization(-0.001)), diff, 128);
-        let eq = gate.and(ctx, le, ge);
-        gate.assert_is_const(ctx, &eq, &F::ONE);
+        // reverse along axis=1: length=1, so identity; compare to result[i][0]
+        let diff = fp.qsub(ctx, result[i][0], mean);
+        let le = range.is_less_than(ctx, diff, tol_pos, 128);
+        let ge = range.is_less_than(ctx, tol_neg, diff, 128);
+        let ok = gate.and(ctx, le, ge);
+        gate.assert_is_const(ctx, &ok, &F::ONE);
     }
 }
 

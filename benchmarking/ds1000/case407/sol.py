@@ -9,12 +9,9 @@ def verify_solution(a: NDArray[int, 10], accmap: NDArray[int, 10], result: NDArr
     sum1 = 0
     sum2 = 0
     for i in range(10):
-        if accmap[i] == 0:
-            sum0 += a[i]
-        if accmap[i] == 1:
-            sum1 += a[i]
-        if accmap[i] == 2:
-            sum2 += a[i]
+        sum0 += a[i] * (accmap[i] == 0)
+        sum1 += a[i] * (accmap[i] == 1)
+        sum2 += a[i] * (accmap[i] == 2)
 
     expected = [sum0, sum1, sum2]
     assert result == expected

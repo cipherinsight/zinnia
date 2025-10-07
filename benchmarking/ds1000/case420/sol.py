@@ -11,13 +11,13 @@ def verify_solution(x: float, result: float):
     if x > x_max:
         expected = x_max
     elif x >= x_min:
-        expected = 3 * x ** 2 - 2 * x ** 3
+        expected = 3 * x * x - 2 * x * x * x
     assert result == expected
 
 
 if __name__ == '__main__':
     x = 0.25
-    result = 3 * (x ** 2) - 2 * (x ** 3)
+    result = 3 * x * x - 2 * x * x * x
 
     assert verify_solution(x, result)
 

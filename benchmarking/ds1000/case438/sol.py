@@ -1,4 +1,5 @@
 import json
+import math
 
 from zinnia import *
 
@@ -29,8 +30,8 @@ def verify_solution(post: NDArray[float, 4], distance: NDArray[float, 4], result
     var_post /= n
     var_distance /= n
 
-    std_post = var_post ** 0.5
-    std_distance = var_distance ** 0.5
+    std_post = math.sqrt(var_post)
+    std_distance = math.sqrt(var_distance)
 
     pearson_r = cov / (std_post * std_distance)
     expected = pearson_r

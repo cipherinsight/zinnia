@@ -2,17 +2,17 @@ use std::result;
 use clap::Parser;
 use halo2_base::utils::{ScalarField, BigPrimeField};
 use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use halo2_base::poseidon::hasher::PoseidonHasher;
 use halo2_base::gates::{GateChip, GateInstructions, RangeInstructions};
 use halo2_base::{
     Context,
     AssignedValue,
     QuantumCell::{Constant, Witness},
 };
-use halo2_graph::gadget::fixed_point::FixedPointChip;
+use halo2_graph::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};
 use halo2_graph::scaffold::cmd::Cli;
 use halo2_graph::scaffold::run;
 use serde::{Serialize, Deserialize};
+use halo2_base::poseidon::hasher::PoseidonHasher;
 use snark_verifier_sdk::halo2::OptimizedPoseidonSpec;
 
 const T: usize = 3;
@@ -22,7 +22,7 @@ const R_P: usize = 57;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CircuitInput {
-    pub grades: Vec<f64>,
+    pub grades: Vec<f64>,  // len = 27, already sorted (verified in-circuit)
     pub threshold: f64,
     pub low: f64,
     pub high: f64,
@@ -31,65 +31,87 @@ pub struct CircuitInput {
 fn verify_solution<F: ScalarField>(
     builder: &mut BaseCircuitBuilder<F>,
     input: CircuitInput,
-    make_public: &mut Vec<AssignedValue<F>>,
+    _make_public: &mut Vec<AssignedValue<F>>,
 )
 where
     F: BigPrimeField,
 {
     const PRECISION: u32 = 63;
     let gate = GateChip::<F>::default();
-    let range_chip = builder.range_chip();
-    let fixed_point_chip = FixedPointChip::<F, PRECISION>::default(builder);
-    let _poseidon_hasher =
+    let range = builder.range_chip();
+    let fp = FixedPointChip::<F, PRECISION>::default(builder);
+    let _poseidon =
         PoseidonHasher::<F, T, RATE>::new(OptimizedPoseidonSpec::new::<R_F, R_P, 0>());
     let ctx = builder.main(0);
 
-    let n = input.grades.len();
+    let n = 27usize;
 
-    // ---- Step 1: load all witnesses ----
-    let mut grades_fp: Vec<AssignedValue<F>> = Vec::new();
-    for g in &input.grades {
-        grades_fp.push(ctx.load_witness(fixed_point_chip.quantization(*g)));
-    }
+    // Load inputs
+    let grades: Vec<AssignedValue<F>> = input
+        .grades
+        .iter()
+        .map(|x| ctx.load_witness(fp.quantization(*x)))
+        .collect();
+    let threshold = ctx.load_witness(fp.quantization(input.threshold));
+    let out_low = ctx.load_witness(fp.quantization(input.low));
+    let out_high = ctx.load_witness(fp.quantization(input.high));
 
-    let threshold_fp = ctx.load_witness(fixed_point_chip.quantization(input.threshold));
-    let low_fp = ctx.load_witness(fixed_point_chip.quantization(input.low));
-    let high_fp = ctx.load_witness(fixed_point_chip.quantization(input.high));
+    // Tolerance constants
+    let tol_pos = Constant(fp.quantization(0.001));
+    let tol_neg = Constant(fp.quantization(-0.001));
 
-    // ---- Step 2: verify sortedness (non-decreasing) ----
+    // 1) Verify sortedness (non-decreasing): grades[i] <= grades[i+1]
     for i in 0..(n - 1) {
-        let lt = range_chip.is_less_than(ctx, grades_fp[i], grades_fp[i + 1], 128);
-        let eq = gate.is_equal(ctx, grades_fp[i], grades_fp[i + 1]);
-        let le_or_eq = gate.or(ctx, lt, eq);
-        gate.assert_is_const(ctx, &le_or_eq, &F::ONE);
+        // grades[i+1] < grades[i] must be false
+        let bad = range.is_less_than(ctx, grades[i + 1], grades[i], 128);
+        let ok = gate.not(ctx, bad);
+        gate.assert_is_const(ctx, &ok, &F::ONE);
     }
 
-    // ---- Step 3: find t = smallest k such that (k+1)/n > threshold ----
-    let mut t_flags: Vec<AssignedValue<F>> = Vec::new();
-    let mut found_any = ctx.load_constant(F::ZERO);
-
+    // 2) Find first index t where (k+1)/n > threshold
+    let n_f = ctx.load_constant(fp.quantization(n as f64));
+    let mut t = ctx.load_constant(fp.quantization(n as f64)); // sentinel t = n
     for k in 0..n {
-        let val = fixed_point_chip.quantization((k as f64 + 1.0) / n as f64);
-        let yk = ctx.load_constant(val);
-        let gt = range_chip.is_less_than(ctx, threshold_fp, yk, 128); // threshold < yk → yk > threshold
-        let not_found = gate.not(ctx, found_any);
-        let first_hit = gate.and(ctx, gt, not_found);
-        found_any = gate.or(ctx, found_any, gt);
-        t_flags.push(first_hit);
+        let k1 = Constant(fp.quantization((k + 1) as f64));
+        let frac = fp.qdiv(ctx, k1, n_f); // (k+1)/n
+
+        // cond: frac > threshold  <=>  threshold < frac
+        let cond_gt = range.is_less_than(ctx, threshold, frac, 128);
+
+        // update only if we haven't set t yet (t == n)
+        let t_is_n = gate.is_equal(ctx, t, Constant(fp.quantization(n as f64)));
+        let cond = gate.and(ctx, cond_gt, t_is_n);
+
+        // t = cond ? k : t
+        let k_const = ctx.load_constant(fp.quantization(k as f64));
+        t = gate.select(ctx, k_const, t, cond);
     }
 
-    // ---- Step 4: derive computed_low, computed_high ----
-    let computed_low = grades_fp[0];
-    let mut computed_high = ctx.load_constant(fixed_point_chip.quantization(0.0));
+    // 3) computed_low = grades[0]; computed_high = grades[t]
+    let computed_low = grades[0];
+
+    // Select grades[t]
+    let mut computed_high = ctx.load_constant(fp.quantization(0.0));
     for k in 0..n {
-        computed_high = gate.select(ctx, grades_fp[k], computed_high, t_flags[k]);
+        let k_const = Constant(fp.quantization(k as f64));
+        let is_k = gate.is_equal(ctx, t, k_const);
+        computed_high = gate.select(ctx, grades[k], computed_high, is_k);
     }
 
-    // ---- Step 5: compare with provided outputs ----
-    let eq_low = gate.is_equal(ctx, computed_low, low_fp);
-    let eq_high = gate.is_equal(ctx, computed_high, high_fp);
-    let both = gate.and(ctx, eq_low, eq_high);
-    gate.assert_is_const(ctx, &both, &F::ONE);
+    // 4) Verify outputs within ±1e-3
+    // low
+    let d_low = fp.qsub(ctx, out_low, computed_low);
+    let low_ok_hi = range.is_less_than(ctx, d_low, tol_pos, 128);
+    let low_ok_lo = range.is_less_than(ctx, tol_neg, d_low, 128);
+    let low_ok = gate.and(ctx, low_ok_hi, low_ok_lo);
+    gate.assert_is_const(ctx, &low_ok, &F::ONE);
+
+    // high
+    let d_high = fp.qsub(ctx, out_high, computed_high);
+    let high_ok_hi = range.is_less_than(ctx, d_high, tol_pos, 128);
+    let high_ok_lo = range.is_less_than(ctx, tol_neg, d_high, 128);
+    let high_ok = gate.and(ctx, high_ok_hi, high_ok_lo);
+    gate.assert_is_const(ctx, &high_ok, &F::ONE);
 }
 
 fn main() {

@@ -2,17 +2,17 @@ use std::result;
 use clap::Parser;
 use halo2_base::utils::{ScalarField, BigPrimeField};
 use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use halo2_base::poseidon::hasher::PoseidonHasher;
 use halo2_base::gates::{GateChip, GateInstructions, RangeInstructions};
 use halo2_base::{
     Context,
     AssignedValue,
-    QuantumCell::{Constant, Existing, Witness},
+    QuantumCell::{Constant, Witness},
 };
 use halo2_graph::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};
 use halo2_graph::scaffold::cmd::Cli;
 use halo2_graph::scaffold::run;
 use serde::{Serialize, Deserialize};
+use halo2_base::poseidon::hasher::PoseidonHasher;
 use snark_verifier_sdk::halo2::OptimizedPoseidonSpec;
 
 const T: usize = 3;
@@ -29,53 +29,58 @@ pub struct CircuitInput {
 fn verify_solution<F: ScalarField>(
     builder: &mut BaseCircuitBuilder<F>,
     input: CircuitInput,
-    make_public: &mut Vec<AssignedValue<F>>,
+    _make_public: &mut Vec<AssignedValue<F>>,
 )
 where
     F: BigPrimeField,
 {
     const PRECISION: u32 = 63;
     let gate = GateChip::<F>::default();
-    let range_chip = builder.range_chip();
-    let fixed_point_chip = FixedPointChip::<F, PRECISION>::default(builder);
-    let mut poseidon_hasher =
-        PoseidonHasher::<F, T, RATE>::new(OptimizedPoseidonSpec::new::<R_F, R_P, 0>());
+    let range = builder.range_chip();
+    let fp = FixedPointChip::<F, PRECISION>::default(builder);
+    let _poseidon = PoseidonHasher::<F, T, RATE>::new(OptimizedPoseidonSpec::new::<R_F, R_P, 0>());
     let ctx = builder.main(0);
 
-    // --- Load inputs ---
-    let x = ctx.load_witness(fixed_point_chip.quantization(input.x));
-    let result = ctx.load_witness(fixed_point_chip.quantization(input.result));
+    // Load inputs
+    let x = ctx.load_witness(fp.quantization(input.x));
+    let out = ctx.load_witness(fp.quantization(input.result));
 
-    // --- Constants ---
-    let x_min = Constant(fixed_point_chip.quantization(0.0));
-    let x_max = Constant(fixed_point_chip.quantization(1.0));
-    let three = Constant(fixed_point_chip.quantization(3.0));
-    let two = Constant(fixed_point_chip.quantization(2.0));
+    // Constants
+    let x_min = ctx.load_constant(fp.quantization(0.0));
+    let x_max = ctx.load_constant(fp.quantization(1.0));
+    let c2 = Constant(fp.quantization(2.0));
+    let c3 = Constant(fp.quantization(3.0));
+    let tol_pos = Constant(fp.quantization(0.001));
+    let tol_neg = Constant(fp.quantization(-0.001));
 
-    // --- Condition flags ---
-    let gt_xmax = range_chip.is_less_than(ctx, x_max, x, 128); // x > x_max ?
-    let lt_xmin = range_chip.is_less_than(ctx, x, x_min, 128); // x < x_min ?
-    let ge_xmin = gate.not(ctx, lt_xmin);                      // x >= x_min
-
-    // --- Compute 3*x^2 - 2*x^3 ---
-    let x_sq = fixed_point_chip.qmul(ctx, x, x);
-    let x_cu = fixed_point_chip.qmul(ctx, x_sq, x);
-    let term1 = fixed_point_chip.qmul(ctx, three, x_sq);
-    let term2 = fixed_point_chip.qmul(ctx, two, x_cu);
-    let cubic_val = fixed_point_chip.qsub(ctx, term1, term2);
-
-    // --- expected = x_min by default ---
+    // expected = x_min
     let mut expected = x_min;
 
-    // If x >= x_min → expected = cubic_val
-    expected = gate.select(ctx, cubic_val, expected, ge_xmin);
-    // If x > x_max → expected = x_max
-    expected = gate.select(ctx, x_max, expected, gt_xmax);
+    // cond1: x > x_max  <=>  x_max < x
+    let cond_gt_xmax = range.is_less_than(ctx, x_max, x, 128);
+    expected = gate.select(ctx, x_max, expected, cond_gt_xmax);
 
-    // --- Compare with provided result (±1e-3 tolerance) ---
-    let diff = fixed_point_chip.qsub(ctx, result, expected);
-    let le = range_chip.is_less_than(ctx, diff, Constant(fixed_point_chip.quantization(0.001)), 128);
-    let ge = range_chip.is_less_than(ctx, Constant(fixed_point_chip.quantization(-0.001)), diff, 128);
+    // cond2: x >= x_min  <=>  NOT(x < x_min)
+    let lt_xmin = range.is_less_than(ctx, x, x_min, 128);
+    let ge_xmin = gate.not(ctx, lt_xmin);
+
+    // Only apply cubic if NOT(cond1) AND ge_xmin
+    let not_cond1 = gate.not(ctx, cond_gt_xmax);
+    let cond_mid = gate.and(ctx, not_cond1, ge_xmin);
+
+    // smooth = 3*x^2 - 2*x^3
+    let x2 = fp.qmul(ctx, x, x);
+    let x3 = fp.qmul(ctx, x2, x);
+    let t1 = fp.qmul(ctx, c3, x2);
+    let t2 = fp.qmul(ctx, c2, x3);
+    let smooth = fp.qsub(ctx, t1, t2);
+
+    expected = gate.select(ctx, smooth, expected, cond_mid);
+
+    // Assert result == expected (±1e-3)
+    let diff = fp.qsub(ctx, out, expected);
+    let le = range.is_less_than(ctx, diff, tol_pos, 128);
+    let ge = range.is_less_than(ctx, tol_neg, diff, 128);
     let ok = gate.and(ctx, le, ge);
     gate.assert_is_const(ctx, &ok, &F::ONE);
 }

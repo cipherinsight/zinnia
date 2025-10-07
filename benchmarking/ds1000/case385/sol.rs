@@ -2,18 +2,18 @@ use std::result;
 use clap::Parser;
 use halo2_base::utils::{ScalarField, BigPrimeField};
 use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use halo2_base::poseidon::hasher::PoseidonHasher;
 use halo2_base::gates::{GateChip, GateInstructions, RangeInstructions};
 use halo2_base::{
     Context,
     AssignedValue,
-    QuantumCell::{Constant, Witness},
+    QuantumCell::Constant,
 };
 use halo2_graph::gadget::fixed_point::FixedPointChip;
 use halo2_graph::scaffold::cmd::Cli;
 use halo2_graph::scaffold::run;
 use serde::{Serialize, Deserialize};
 use snark_verifier_sdk::halo2::OptimizedPoseidonSpec;
+use halo2_base::poseidon::hasher::PoseidonHasher;
 
 const T: usize = 3;
 const RATE: usize = 2;
@@ -22,14 +22,14 @@ const R_P: usize = 57;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CircuitInput {
-    pub a: Vec<Vec<u64>>,
-    pub result: Vec<Vec<Vec<u64>>>,
+    pub a: Vec<Vec<u64>>,               // 4 x 4
+    pub result: Vec<Vec<Vec<u64>>>,     // 4 x 2 x 2
 }
 
 fn verify_solution<F: ScalarField>(
     builder: &mut BaseCircuitBuilder<F>,
     input: CircuitInput,
-    make_public: &mut Vec<AssignedValue<F>>,
+    _make_public: &mut Vec<AssignedValue<F>>,
 )
 where
     F: BigPrimeField,
@@ -42,7 +42,7 @@ where
         PoseidonHasher::<F, T, RATE>::new(OptimizedPoseidonSpec::new::<R_F, R_P, 0>());
     let ctx = builder.main(0);
 
-    // ---- Step 1: load matrix a ----
+    // Load a[4][4]
     let mut a: Vec<Vec<AssignedValue<F>>> = Vec::new();
     for i in 0..input.a.len() {
         let mut row: Vec<AssignedValue<F>> = Vec::new();
@@ -52,50 +52,30 @@ where
         a.push(row);
     }
 
-    // ---- Step 2: perform reshape(2,2,2,2) + transpose(0,2,1,3) + transpose(1,0,2,3) ----
-    // We emulate this with explicit index arithmetic, equivalent to the Python ops.
+    // Load result[4][2][2]
+    let mut result: Vec<Vec<Vec<AssignedValue<F>>>> = Vec::new();
+    for o in 0..input.result.len() {
+        let mut plane: Vec<Vec<AssignedValue<F>>> = Vec::new();
+        for r in 0..input.result[o].len() {
+            let mut row: Vec<AssignedValue<F>> = Vec::new();
+            for c in 0..input.result[o][r].len() {
+                row.push(ctx.load_witness(F::from(input.result[o][r][c])));
+            }
+            plane.push(row);
+        }
+        result.push(plane);
+    }
 
-    // Flatten a[4][4] into a vector of length 16 (row-major)
-    let mut flat: Vec<AssignedValue<F>> = Vec::new();
+    // Assert: result[o][r][c] == a[i][j], with
+    // o = floor(j/2)*2 + floor(i/2), r = i%2, c = j%2
     for i in 0..4 {
         for j in 0..4 {
-            flat.push(a[i][j]);
-        }
-    }
+            let o = (j / 2) * 2 + (i / 2);
+            let r = i % 2;
+            let c = j % 2;
 
-    // Compute indices of final reshaped/transposed (4,2,2)
-    // The mapping is determined by the NumPy transformation sequence.
-    // Manual derivation yields the following block extraction pattern:
-    // Block0: [[1,5],[2,6]]
-    // Block1: [[3,7],[4,8]]
-    // Block2: [[9,13],[10,14]]
-    // Block3: [[11,15],[12,16]]
-    // (indices in flat array correspond accordingly)
-    let mut computed: Vec<Vec<Vec<AssignedValue<F>>>> = vec![vec![vec![ctx.load_constant(F::ZERO); 2]; 2]; 4];
-    let index_map = vec![
-        vec![vec![0, 1], vec![4, 5]],    // block0
-        vec![vec![2, 3], vec![6, 7]],    // block1
-        vec![vec![8, 9], vec![12, 13]],  // block2
-        vec![vec![10, 11], vec![14, 15]] // block3
-    ];
-
-    for b in 0..4 {
-        for i in 0..2 {
-            for j in 0..2 {
-                let idx = index_map[b][i][j];
-                computed[b][i][j] = flat[idx];
-            }
-        }
-    }
-
-    // ---- Step 3: verify equality with expected result ----
-    for b in 0..4 {
-        for i in 0..2 {
-            for j in 0..2 {
-                let expected = ctx.load_witness(F::from(input.result[b][i][j]));
-                let eq = gate.is_equal(ctx, computed[b][i][j], expected);
-                gate.assert_is_const(ctx, &eq, &F::ONE);
-            }
+            let eq = gate.is_equal(ctx, result[o][r][c], a[i][j]);
+            gate.assert_is_const(ctx, &eq, &F::ONE);
         }
     }
 }

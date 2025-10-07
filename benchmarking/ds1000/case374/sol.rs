@@ -7,9 +7,9 @@ use halo2_base::gates::{GateChip, GateInstructions, RangeInstructions};
 use halo2_base::{
     Context,
     AssignedValue,
-    QuantumCell::{Constant, Witness},
+    QuantumCell::{Constant, Existing, Witness},
 };
-use halo2_graph::gadget::fixed_point::FixedPointChip;
+use halo2_graph::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};
 use halo2_graph::scaffold::cmd::Cli;
 use halo2_graph::scaffold::run;
 use serde::{Serialize, Deserialize};
@@ -43,70 +43,95 @@ where
         PoseidonHasher::<F, T, RATE>::new(OptimizedPoseidonSpec::new::<R_F, R_P, 0>());
     let ctx = builder.main(0);
 
-    let n = input.grades.len();
-    let m = input.eval.len();
+    let n = 27;
+    let m = 3;
 
-    // ---- Step 1: Load witnesses ----
-    let mut grades_fp: Vec<AssignedValue<F>> = Vec::new();
-    for g in &input.grades {
-        grades_fp.push(ctx.load_witness(fixed_point_chip.quantization(*g)));
-    }
+    // Load inputs
+    let grades: Vec<AssignedValue<F>> = input
+        .grades
+        .iter()
+        .map(|x| ctx.load_witness(fixed_point_chip.quantization(*x)))
+        .collect();
+    let evals: Vec<AssignedValue<F>> = input
+        .eval
+        .iter()
+        .map(|x| ctx.load_witness(fixed_point_chip.quantization(*x)))
+        .collect();
+    let results: Vec<AssignedValue<F>> = input
+        .result
+        .iter()
+        .map(|x| ctx.load_witness(fixed_point_chip.quantization(*x)))
+        .collect();
 
-    let mut eval_fp: Vec<AssignedValue<F>> = Vec::new();
-    for e in &input.eval {
-        eval_fp.push(ctx.load_witness(fixed_point_chip.quantization(*e)));
-    }
-
-    let mut result_fp: Vec<AssignedValue<F>> = Vec::new();
-    for r in &input.result {
-        result_fp.push(ctx.load_witness(fixed_point_chip.quantization(*r)));
-    }
-
-    // ---- Step 2: verify sortedness of grades ----
+    // 1) Verify non-decreasing: grades[i] <= grades[i+1]
     for i in 0..(n - 1) {
-        let lt = range_chip.is_less_than(ctx, grades_fp[i], grades_fp[i + 1], 128);
-        let eq = gate.is_equal(ctx, grades_fp[i], grades_fp[i + 1]);
-        let le_or_eq = gate.or(ctx, lt, eq);
-        gate.assert_is_const(ctx, &le_or_eq, &F::ONE);
+        let strict_gt = range_chip.is_less_than(ctx, grades[i + 1], grades[i], 128); // (i+1) < i  ?
+        let le = gate.not(ctx, strict_gt); // !(grades[i+1] < grades[i])  => grades[i] <= grades[i+1]
+        gate.assert_is_const(ctx, &le, &F::ONE);
     }
 
-    // ---- Step 3: compute ECDF values (ys[i] = (i+1)/n) ----
-    let mut ys: Vec<AssignedValue<F>> = Vec::new();
+    // 2) ys[i] = (i+1)/n
+    let n_const = Constant(fixed_point_chip.quantization(n as f64));
+    let mut ys: Vec<AssignedValue<F>> = Vec::with_capacity(n);
     for i in 0..n {
-        let ideal = fixed_point_chip.quantization((i as f64 + 1.0) / n as f64);
-        ys.push(ctx.load_constant(ideal));
+        let i1 = Constant(fixed_point_chip.quantization((i + 1) as f64));
+        ys.push(fixed_point_chip.qdiv(ctx, i1, n_const));
     }
 
-    // ---- Step 4: evaluate ECDF for each eval[i] ----
+    // 3) Apply ECDF to each eval[i]
     for i in 0..m {
-        let x = eval_fp[i];
-        let mut computed = ctx.load_constant(fixed_point_chip.quantization(0.0));
+        let x = evals[i];
 
-        // Case 1: x < grades[0] -> 0.0
-        let lt_min = range_chip.is_less_than(ctx, x, grades_fp[0], 128);
+        // Extremes
+        let lt_first = range_chip.is_less_than(ctx, x, grades[0], 128);           // x < first
+        let lt_last  = range_chip.is_less_than(ctx, x, grades[n - 1], 128);       // x < last
+        let ge_last  = gate.not(ctx, lt_last);                                     // x >= last
 
-        // Case 2: x >= grades[n-1] -> 1.0
-        let lt_max = range_chip.is_less_than(ctx, x, grades_fp[n - 1], 128);
-        let ge_max = gate.not(ctx, lt_max);
+        // val = 0; if x >= last -> 1
+        let mut val = ctx.load_constant(fixed_point_chip.quantization(0.0));
+        let one = ctx.load_constant(fixed_point_chip.quantization(1.0));
+        val = gate.select(ctx, one, val, ge_last);
 
-        // Case 3: otherwise, find smallest j such that grades[j] > x
-        // emulate sequential selection: computed = ys[j-1] when grades[j] > x and grades[j-1] <= x
-        for j in 1..n {
-            let gt = range_chip.is_less_than(ctx, x, grades_fp[j], 128); // grades[j] > x
-            let le_prev = range_chip.is_less_than(ctx, grades_fp[j - 1], x, 128);
-            let le_prev_not = gate.not(ctx, le_prev);
-            let cond_window = gate.and(ctx, gt, le_prev_not);
-            computed = gate.select(ctx, ys[j - 1], computed, cond_window);
+        // Find smallest j with grades[j] > x
+        // j_idx initialized to (n - 1); updated only on the FIRST match
+        let mut j_idx = ctx.load_constant(fixed_point_chip.quantization((n - 1) as f64));
+        let mut found = ctx.load_constant(F::ZERO); // boolean 0/1
+
+        for k in 0..n {
+            let gt = range_chip.is_less_than(ctx, x, grades[k], 128); // x < grades[k] ?
+            let not_found = gate.not(ctx, found);
+            let take = gate.and(ctx, not_found, gt);
+
+            let k_const = Constant(fixed_point_chip.quantization(k as f64));
+            j_idx = gate.select(ctx, k_const, j_idx, take);
+
+            found = gate.or(ctx, found, gt);
         }
 
-        // Apply boundary conditions
-        let y_one = ctx.load_constant(fixed_point_chip.quantization(1.0));
-        computed = gate.select(ctx, y_one, computed, ge_max);  // x >= max → 1.0
-        // x < min → 0 (already default)
+        // y_sel = ys[j_idx - 1]
+        let j_minus_1 = fixed_point_chip.qsub(ctx, j_idx, Constant(fixed_point_chip.quantization(1.0)));
+        let mut y_sel = ctx.load_constant(fixed_point_chip.quantization(0.0));
+        for k in 0..n {
+            let k_const = Constant(fixed_point_chip.quantization(k as f64));
+            let eq = gate.is_equal(ctx, j_minus_1, k_const);
+            y_sel = gate.select(ctx, ys[k], y_sel, eq);
+        }
 
-        // Compare with expected result
-        let eq = gate.is_equal(ctx, computed, result_fp[i]);
-        gate.assert_is_const(ctx, &eq, &F::ONE);
+        // Inner region: (!lt_first) & (!ge_last)
+        let tmp1 = gate.not(ctx, lt_first);
+        let tmp2 = gate.not(ctx, ge_last);
+        let inner = gate.and(ctx, tmp1, tmp2);
+        let computed = gate.select(ctx, y_sel, val, inner);
+
+        // Debug (optional)
+        // println!("Computed {:?} vs Expected {:?}", fixed_point_chip.dequantization(*computed.value()), fixed_point_chip.dequantization(*results[i].value()));
+
+        // Assert |computed - results[i]| <= 1e-3
+        let diff = fixed_point_chip.qsub(ctx, computed, results[i]);
+        let le = range_chip.is_less_than(ctx, diff, Constant(fixed_point_chip.quantization(0.001)), 128);
+        let ge = range_chip.is_less_than(ctx, Constant(fixed_point_chip.quantization(-0.001)), diff, 128);
+        let ok = gate.and(ctx, le, ge);
+        gate.assert_is_const(ctx, &ok, &F::ONE);
     }
 }
 

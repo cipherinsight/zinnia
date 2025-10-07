@@ -15,12 +15,12 @@ def verify_solution(grades: NDArray[float, 27], eval: NDArray[float, 3], result:
         assert grades[i] <= grades[i + 1]
 
     # 2) Build ECDF ys = i/n for i=1..n
-    ys = np.zeros((n, ), dtype=int)
+    ys = np.zeros((n, ), dtype=float)
     for i in range(n):
         ys[i] = (i + 1) / float(n)
 
     # 3) Apply ECDF function to eval elements
-    computed = np.zeros((m, ), dtype=int)
+    computed = np.zeros((m, ), dtype=float)
     for i in range(m):
         x = eval[i]
         if x < grades[0]:

@@ -44,19 +44,19 @@ where
     let ctx = builder.main(0);
 
     // Load all matrices
-    let mut A: Vec<Vec<AssignedValue<F>>> = input
+    let A: Vec<Vec<AssignedValue<F>>> = input
         .A
         .iter()
         .map(|row| row.iter().map(|x| ctx.load_witness(F::from(*x))).collect())
         .collect();
 
-    let mut B: Vec<Vec<AssignedValue<F>>> = input
+    let B: Vec<Vec<AssignedValue<F>>> = input
         .B
         .iter()
         .map(|row| row.iter().map(|x| ctx.load_witness(F::from(*x))).collect())
         .collect();
 
-    let mut output: Vec<Vec<AssignedValue<F>>> = input
+    let output: Vec<Vec<AssignedValue<F>>> = input
         .output
         .iter()
         .map(|row| row.iter().map(|x| ctx.load_witness(F::from(*x))).collect())
@@ -73,7 +73,9 @@ where
             let m0 = gate.is_equal(ctx, A[i][0], B[j][0]);
             let m1 = gate.is_equal(ctx, A[i][1], B[j][1]);
             let m2 = gate.is_equal(ctx, A[i][2], B[j][2]);
-            let row_match = gate.and(ctx, gate.and(ctx, m0, m1), m2);
+            // FIX: split nested ands to avoid double mutable borrow
+            let and01 = gate.and(ctx, m0, m1);
+            let row_match = gate.and(ctx, and01, m2);
             found = gate.or(ctx, found, row_match);
         }
         inB.push(found);
@@ -86,7 +88,8 @@ where
             let m0 = gate.is_equal(ctx, B[j][0], A[i][0]);
             let m1 = gate.is_equal(ctx, B[j][1], A[i][1]);
             let m2 = gate.is_equal(ctx, B[j][2], A[i][2]);
-            let row_match = gate.and(ctx, gate.and(ctx, m0, m1), m2);
+            let and01 = gate.and(ctx, m0, m1);
+            let row_match = gate.and(ctx, and01, m2);
             found = gate.or(ctx, found, row_match);
         }
         inA.push(found);
