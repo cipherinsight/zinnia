@@ -80,6 +80,8 @@ class ShortcutOptimIRPass(AbstractIRPass):
             return fv
         if tv.ptr() == fv.ptr():
             return tv
+        if tv.val() == 1 and fv.val() == 0:
+            return cond
         return ir_builder.create_ir(ir_instance, ir_args, None)
 
     def optimize_for_SelectBIR(self, ir_builder: IRBuilderImpl, ir_instance: AbstractIR, ir_args: List[Value]) -> Value:
@@ -96,6 +98,8 @@ class ShortcutOptimIRPass(AbstractIRPass):
             return fv
         if tv.ptr() == fv.ptr():
             return tv
+        if tv.val() == True and fv.val() == False:
+            return cond
         # if fv.val() is not None and fv.val() == True:
         #     return ir_builder.ir_logical_or(ir_builder.ir_logical_not(cond), tv)
         if fv.val() is not None and fv.val() == False:

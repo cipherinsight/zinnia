@@ -13,20 +13,20 @@ def verify_solution(a: NDArray[int, 2, 5], permutation: NDArray[int, 5], result:
         # Build c[j] as an integer via equality indicators
         cj = 0
         for i in range(5):
-            is_target = 1 if permutation[i] == j else 0
+            is_target = permutation[i] == j
             cj = cj + i * is_target
 
         # Row 0: select a[0, cj] by summing over all t with indicator [cj == t]
         sel_val_r0 = 0
         for t in range(5):
-            ind = 1 if cj == t else 0
+            ind = cj == t
             sel_val_r0 = sel_val_r0 + a[0, t] * ind
         assert result[0, j] == sel_val_r0
 
         # Row 1: same selection for row 1
         sel_val_r1 = 0
         for t in range(5):
-            ind = 1 if cj == t else 0
+            ind = cj == t
             sel_val_r1 = sel_val_r1 + a[1, t] * ind
         assert result[1, j] == sel_val_r1
 
@@ -51,3 +51,4 @@ if __name__ == '__main__':
         json_dict[entry.get_key()] = entry.get_value()
     with open('./sol.py.in', 'w') as f:
         json.dump(json_dict, f, indent=2)
+    print(program.source)
