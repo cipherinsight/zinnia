@@ -76,8 +76,14 @@ def run_evaluate(dataset: str, problem: str):
 MLALGO = [
     "neuron",
     "kmeans",
-    "linear_regression"
+    "linear_regression",
+    "mlp",
+    "svm",
+    "logistic",
+    "decision_tree",
+    "bayes"
 ]
+
 LEETCODE_ARRAY = [
     "p204",
     "p832"

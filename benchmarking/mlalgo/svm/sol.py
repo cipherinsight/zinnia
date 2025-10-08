@@ -14,7 +14,7 @@ def verify_solution(
     # Objective (scaled): 0.5*||w||^2 + (1/m) * sum_i max(0, 1 - y_i (w·x_i + b))
     # Subgradient updates with fixed iterations (static loop bound)
 
-    w = np.zeros((2,))
+    w = np.zeros((2,), dtype=float)
     b = 0.0
     m = 10.0
     lr = 0.05
@@ -29,18 +29,18 @@ def verify_solution(
             margin = training_y[i] * score
             if margin < 1.0:
                 # subgradient of hinge term: -y_i * x_i (and -y_i for bias)
-                gw0 += -training_y[i] * training_x[i, 0]
-                gw1 += -training_y[i] * training_x[i, 1]
-                gb += -training_y[i]
+                gw0 -= training_y[i] * training_x[i, 0]
+                gw1 -= training_y[i] * training_x[i, 1]
+                gb -= training_y[i]
         # add gradient of 0.5*||w||^2, and average hinge part by m
         gw0 = gw0 / m + w[0]
         gw1 = gw1 / m + w[1]
         gb = gb / m
 
         # update
-        w[0] = w[0] - lr * gw0
-        w[1] = w[1] - lr * gw1
-        b = b - lr * gb
+        w[0] -= lr * gw0
+        w[1] -= lr * gw1
+        b -= lr * gb
 
     # Evaluate on testing set: require correct sign on both examples with a small margin
     for i in range(2):

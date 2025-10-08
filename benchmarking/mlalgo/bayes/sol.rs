@@ -89,8 +89,12 @@ where
         let x1 = tr_x[i][1];
 
         // yi == 0.0 ?
-        let yi_is_zero = gate.is_equal(ctx, yi, Constant(fp.quantization(0.0)));
-        let yi_is_one  = gate.is_equal(ctx, yi, one);
+        let tmp1 = range.is_less_than(ctx, yi, Constant(fp.quantization(0.001)), 128);
+        let tmp2 = range.is_less_than(ctx, Constant(fp.quantization(-0.001)), yi, 128);
+        let yi_is_zero = gate.and(ctx, tmp1, tmp2);
+        let tmp1 = range.is_less_than(ctx, yi, Constant(fp.quantization(1.001)), 128);
+        let tmp2 = range.is_less_than(ctx, Constant(fp.quantization(1.0 - 0.001)), yi, 128);
+        let yi_is_one  = gate.and(ctx, tmp1, tmp2);
 
         // xj >= 0.5  <=>  !(xj < 0.5)
         let x0_lt_half = range.is_less_than(ctx, x0, half, 128);
