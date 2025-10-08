@@ -133,15 +133,18 @@ DS1000 = ['case295', 'case296', 'case297', 'case299', 'case301', 'case302', 'cas
 CRYPT = [
     "ecc",
     "poseidon",
+    "mimc",
+    "elgamal",
+    "merkle"
 ]
 
 DATASETS = {
-    # "crypt": CRYPT,
-    # "leetcode_array": LEETCODE_ARRAY,
-    # "leetcode_dp": LEETCODE_DP,
-    # "leetcode_graph": LEETCODE_GRAPH,
-    # "leetcode_math": LEETCODE_MATH,
-    # "leetcode_matrix": LEETCODE_MATRIX,
+    "crypt": CRYPT,
+    "leetcode_array": LEETCODE_ARRAY,
+    "leetcode_dp": LEETCODE_DP,
+    "leetcode_graph": LEETCODE_GRAPH,
+    "leetcode_math": LEETCODE_MATH,
+    "leetcode_matrix": LEETCODE_MATRIX,
     "ds1000": DS1000
 }
 
