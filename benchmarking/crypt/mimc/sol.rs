@@ -22,57 +22,41 @@ const R_P: usize = 57;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CircuitInput {
-    pub g: String,
-    pub sk: String,
-    pub r: String,
-    pub msg: String,
+    pub msg: Vec<u64>,
+    pub expected: String,
 }
 
 // ---------------------------------------------------------
-// Zinnia Chips → Halo2 reusable components
+// Zinnia Chips → Halo2 Components
 // ---------------------------------------------------------
 
-fn elgamal_keygen<F: ScalarField>(
+fn mimc_permute<F: ScalarField>(
     ctx: &mut Context<F>,
     gate: &GateChip<F>,
-    g: AssignedValue<F>,
-    sk: AssignedValue<F>,
+    mut x: AssignedValue<F>,
 ) -> AssignedValue<F> {
-    // pk = g ^ sk
-    gate.pow_var(ctx, g, sk, 251)
+    let consts = [1u64, 2, 3, 4, 5, 6, 7, 8];
+    for c in consts {
+        let c_val = Constant(F::from(c));
+        let t = gate.add(ctx, x, c_val);
+        let t2 = gate.mul(ctx, t, t);
+        let t3 = gate.mul(ctx, t2, t);
+        x = t3;
+    }
+    x
 }
 
-fn elgamal_encrypt<F: ScalarField>(
+fn mimc3_hash_3<F: ScalarField>(
     ctx: &mut Context<F>,
     gate: &GateChip<F>,
-    g: AssignedValue<F>,
-    pk: AssignedValue<F>,
-    msg: AssignedValue<F>,
-    r: AssignedValue<F>,
-) -> (AssignedValue<F>, AssignedValue<F>) {
-    // c1 = g^r
-    let c1 = gate.pow_var(ctx, g, r, 251);
-    // c2 = msg * pk^r
-    let pk_r = gate.pow_var(ctx, pk, r, 251);
-    let c2 = gate.mul(ctx, msg, pk_r);
-    (c1, c2)
-}
-
-fn elgamal_decrypt<F: ScalarField>(
-    ctx: &mut Context<F>,
-    gate: &GateChip<F>,
-    sk: AssignedValue<F>,
-    c1: AssignedValue<F>,
-    c2: AssignedValue<F>,
+    msg: &Vec<AssignedValue<F>>,
 ) -> AssignedValue<F> {
-    // shared = c1 ^ sk
-    let shared = gate.pow_var(ctx, c1, sk, 251);
-    // msg = c2 * inv(shared)
-    let inv_shared = ctx.load_witness(shared.value.evaluate().invert().unwrap());
-    let tmp = gate.mul(ctx, shared, inv_shared);
-    let tmp_eq_1 = gate.is_equal(ctx, tmp, Constant(F::ONE));
-    gate.assert_is_const(ctx, &tmp_eq_1, &F::ONE);
-    gate.mul(ctx, c2, inv_shared)
+    let mut state = ctx.load_constant(F::ZERO);
+    for i in 0..3 {
+        let s = gate.add(ctx, state, msg[i]);
+        state = mimc_permute(ctx, gate, s);
+    }
+    state
 }
 
 // ---------------------------------------------------------
@@ -95,21 +79,19 @@ where
         PoseidonHasher::<F, T, RATE>::new(OptimizedPoseidonSpec::new::<R_F, R_P, 0>());
     let ctx = builder.main(0);
 
-    // Parse big integers (string → field)
-    let g = ctx.load_witness(F::from_str_vartime(&input.g).unwrap());
-    let sk = ctx.load_witness(F::from_str_vartime(&input.sk).unwrap());
-    let r = ctx.load_witness(F::from_str_vartime(&input.r).unwrap());
-    let msg = ctx.load_witness(F::from_str_vartime(&input.msg).unwrap());
+    // Load inputs
+    let msg: Vec<AssignedValue<F>> = input
+        .msg
+        .iter()
+        .map(|x| ctx.load_witness(F::from(*x)))
+        .collect();
+    let expected = ctx.load_witness(F::from_str_vartime(&input.expected).unwrap());
 
-    // Key generation
-    let pk = elgamal_keygen(ctx, &gate, g, sk);
-    // Encryption
-    let (c1, c2) = elgamal_encrypt(ctx, &gate, g, pk, msg, r);
-    // Decryption
-    let recovered = elgamal_decrypt(ctx, &gate, sk, c1, c2);
+    // Compute MiMC-3 hash
+    let h = mimc3_hash_3(ctx, &gate, &msg);
 
-    // Round-trip consistency check
-    let eq = gate.is_equal(ctx, recovered, msg);
+    // Equality check
+    let eq = gate.is_equal(ctx, h, expected);
     gate.assert_is_const(ctx, &eq, &F::ONE);
 }
 

@@ -177,17 +177,20 @@ DS1000 = [
 CRYPT = [
     "ecc",
     "poseidon",
+    "elgamal",
+    "mimc",
+    "merkle"
 ]
 
 DATASETS = {
-    # "crypt": CRYPT,
+    "crypt": CRYPT,
     "mlalgo": MLALGO,
-    # "leetcode_array": LEETCODE_ARRAY,
-    # "leetcode_dp": LEETCODE_DP,
-    # "leetcode_graph": LEETCODE_GRAPH,
-    # "leetcode_math": LEETCODE_MATH,
-    # "leetcode_matrix": LEETCODE_MATRIX,
-    # "ds1000": DS1000
+    "leetcode_array": LEETCODE_ARRAY,
+    "leetcode_dp": LEETCODE_DP,
+    "leetcode_graph": LEETCODE_GRAPH,
+    "leetcode_math": LEETCODE_MATH,
+    "leetcode_matrix": LEETCODE_MATRIX,
+    "ds1000": DS1000
 }
 
 
