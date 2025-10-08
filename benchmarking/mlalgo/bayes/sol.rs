@@ -160,8 +160,10 @@ where
     for i in 0..2 {
         let x0 = te_x[i][0];
         let x1 = te_x[i][1];
-        let x0_ge = gate.not(ctx, range.is_less_than(ctx, x0, half, 128));
-        let x1_ge = gate.not(ctx, range.is_less_than(ctx, x1, half, 128));
+        let tmp1 = range.is_less_than(ctx, x0, half, 128);
+        let tmp2 = range.is_less_than(ctx, x1, half, 128);
+        let x0_ge = gate.not(ctx, tmp1);
+        let x1_ge = gate.not(ctx, tmp2);
 
         // class 0 terms
         let one_minus_theta0_f0 = {

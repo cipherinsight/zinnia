@@ -87,7 +87,8 @@ where
         for i in 0..train_m {
             let s0 = fp.qmul(ctx, tr_x[i][0], w0);
             let s1 = fp.qmul(ctx, tr_x[i][1], w1);
-            let z = fp.qadd(ctx, fp.qadd(ctx, s0, s1), b);
+            let tmp = fp.qadd(ctx, s0, s1);
+            let z = fp.qadd(ctx, tmp, b);
 
             // sigmoid(z) ≈ 0.5 + 0.25z - (z^3)/48
             let z2 = fp.qmul(ctx, z, z);
@@ -111,8 +112,10 @@ where
         let mut dw1 = zero;
         let mut db = zero;
         for i in 0..train_m {
-            dw0 = fp.qadd(ctx, dw0, fp.qmul(ctx, tr_x[i][0], errors[i]));
-            dw1 = fp.qadd(ctx, dw1, fp.qmul(ctx, tr_x[i][1], errors[i]));
+            let tmp1 = fp.qmul(ctx, tr_x[i][0], errors[i]);
+            let tmp2 = fp.qmul(ctx, tr_x[i][1], errors[i]);
+            dw0 = fp.qadd(ctx, dw0, tmp1);
+            dw1 = fp.qadd(ctx, dw1, tmp2);
             db = fp.qadd(ctx, db, errors[i]);
         }
 
@@ -135,7 +138,8 @@ where
     for i in 0..test_m {
         let s0 = fp.qmul(ctx, te_x[i][0], w0);
         let s1 = fp.qmul(ctx, te_x[i][1], w1);
-        let z = fp.qadd(ctx, fp.qadd(ctx, s0, s1), b);
+        let tmp = fp.qadd(ctx, s0, s1);
+        let z = fp.qadd(ctx, tmp, b);
 
         // sigmoid approximation again
         let z2 = fp.qmul(ctx, z, z);
@@ -153,7 +157,7 @@ where
         // mismatch += (pred != y)
         let diff = fp.qsub(ctx, pred, te_y[i]);
         let abs_diff = {
-            let neg_diff = fp.qneg(ctx, diff);
+            let neg_diff = fp.neg(ctx, diff);
             let lt0 = range.is_less_than(ctx, diff, zero, 128);
             gate.select(ctx, neg_diff, diff, lt0)
         };

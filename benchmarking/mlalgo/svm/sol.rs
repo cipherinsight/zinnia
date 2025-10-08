@@ -101,9 +101,9 @@ fn verify_solution<F: ScalarField>(
             // Δgw0 = -y * x0 ; Δgw1 = -y * x1 ; Δgb = -y
             let yx0 = fp.qmul(ctx, tr_y[i], tr_x[i][0]);
             let yx1 = fp.qmul(ctx, tr_y[i], tr_x[i][1]);
-            let neg_yx0 = fp.qneg(ctx, yx0);
-            let neg_yx1 = fp.qneg(ctx, yx1);
-            let neg_y   = fp.qneg(ctx, tr_y[i]);
+            let neg_yx0 = fp.neg(ctx, yx0);
+            let neg_yx1 = fp.neg(ctx, yx1);
+            let neg_y   = fp.neg(ctx, tr_y[i]);
 
             // conditional add via select: cond? (g+Δ) : g
             let cand_gw0 = fp.qadd(ctx, gw0, neg_yx0);
@@ -117,8 +117,10 @@ fn verify_solution<F: ScalarField>(
         }
 
         // Average hinge part and add L2 term (w) to gw
-        gw0 = fp.qadd(ctx, fp.qmul(ctx, gw0, inv_m), w0);
-        gw1 = fp.qadd(ctx, fp.qmul(ctx, gw1, inv_m), w1);
+        let tmp1 = fp.qmul(ctx, gw0, inv_m);
+        let tmp2 = fp.qmul(ctx, gw1, inv_m);
+        gw0 = fp.qadd(ctx, tmp1, w0);
+        gw1 = fp.qadd(ctx, tmp2, w1);
         gb  = fp.qmul(ctx, gb, inv_m);
 
         // Parameter updates: w -= lr * gw ; b -= lr * gb
