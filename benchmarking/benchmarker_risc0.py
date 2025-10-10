@@ -91,6 +91,9 @@ DS1000 = [
 CRYPT = [
     "ecc",
     "poseidon",
+    "elgamal",
+    "mimc",
+    "merkle"
 ]
 
 DATASETS = {
