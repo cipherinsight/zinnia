@@ -11,13 +11,13 @@ def verify_solution(x: float, result: float):
     if x > x_max:
         expected = x_max
     elif x >= x_min:
-        expected = 3 * x * x - 2 * x * x * x
+        expected = x * x * 3 - x * x * x * 2
     assert result == expected
 
 
 if __name__ == '__main__':
     x = 0.25
-    result = 3 * x * x - 2 * x * x * x
+    result = x * x * 3 - x * x * x * 2
 
     assert verify_solution(x, result)
 
@@ -27,5 +27,6 @@ if __name__ == '__main__':
     json_dict = {}
     for entry in parsed_inputs.entries:
         json_dict[entry.get_key()] = entry.get_value()
-    with open('./sol.py.in', 'w') as f:
-        json.dump(json_dict, f, indent=2)
+    # with open('./sol.py.in', 'w') as f:
+    #     json.dump(json_dict, f, indent=2)
+    print(program.source)
