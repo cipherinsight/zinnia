@@ -11,7 +11,7 @@ from zinnia.config.optimization_config import OptimizationConfig
 
 HALO2_FOLDER = "/home/zhantong/halo2-graph"
 MULTIPROCESSING_POOL_SIZE = 1
-ABLATION_SETTING = 1  # supported 1, 2, 3, 4
+ABLATION_SETTING = 4  # supported 1, 2, 3, 4
 RESULT_PATH = f'results-ablation-{ABLATION_SETTING}.json'
 
 
