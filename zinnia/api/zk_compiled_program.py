@@ -19,6 +19,7 @@ class ZKCompiledProgram:
         zk_program_irs: List[IRStatement],
         program_inputs: List[ZKProgramInput],
         external_funcs: Dict[str, InternalExternalFuncObject],
+        eval_data: Dict = None,
     ):
         self.name = name
         self.source = source
@@ -27,6 +28,7 @@ class ZKCompiledProgram:
         self.zk_program_irs = zk_program_irs
         self.program_inputs = program_inputs
         self.external_funcs = external_funcs
+        self.eval_data = eval_data
         for key, ef in external_funcs.items():
             assert ef.name == key
 
@@ -84,4 +86,5 @@ class ZKCompiledProgram:
             "zk_program_irs": [ir.export() for ir in self.zk_program_irs],
             "program_inputs": [pi.export() for pi in self.program_inputs],
             "external_funcs": [ef.name for ef in self.external_funcs.values()],
+            "eval_data": self.eval_data
         })

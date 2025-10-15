@@ -1,5 +1,7 @@
 from typing import List, Dict, Optional, Any, Tuple
 
+from z3 import z3
+
 from zinnia.compile.triplet import Value, IntegerValue
 from zinnia.compile.ir.ir_stmt import IRStatement
 from zinnia.compile.triplet.value.boolean import BooleanValue
@@ -18,12 +20,12 @@ class SelectBIR(AbstractIR):
     def infer(self, args: List[Value], dbg: Optional[DebugInfo] = None) -> Any:
         cond, tv, fv = args[0], args[1], args[2]
         assert isinstance(cond, BooleanValue) and isinstance(tv, BooleanValue) and isinstance(fv, BooleanValue)
-        if cond.val() is None:
+        if cond.c_val() is None:
             return None
-        elif cond.val() != False:
-            return tv.val()
+        elif cond.c_val() != False:
+            return tv.c_val()
         else:
-            return fv.val()
+            return fv.c_val()
 
     def mock_exec(self, args: List[Any], config: MockExecConfig) -> Any:
         return int(args[1] if args[0] != False else args[2])
@@ -31,7 +33,10 @@ class SelectBIR(AbstractIR):
     def build_ir(self, ir_id: int, args: List[Value], dbg: Optional[DebugInfo] = None) -> Tuple[Value, IRStatement]:
         cond, tv, fv = args[0], args[1], args[2]
         assert isinstance(cond, BooleanValue) and isinstance(tv, BooleanValue) and isinstance(fv, BooleanValue)
-        return BooleanValue(self.infer(args, dbg), ir_id), IRStatement(ir_id, self, [cond.ptr(), tv.ptr(), fv.ptr()], dbg)
+        return BooleanValue(
+            self.infer(args, dbg), ir_id,
+            z3e=z3.If(cond.z3_sym, tv.z3_sym, fv.z3_sym), rel=cond.z3_rel+tv.z3_rel+fv.z3_rel
+        ), IRStatement(ir_id, self, [cond.ptr(), tv.ptr(), fv.ptr()], dbg)
 
     def export(self) -> Dict:
         return {}

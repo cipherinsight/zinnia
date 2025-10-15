@@ -12,6 +12,9 @@ class StringValue(AtomicValue):
     def val(self) -> str:
         return self._triplet.get_s()
 
+    def c_val(self) -> str:
+        return self._triplet.get_s()
+
     def ptr(self) -> int:
         return self._triplet.get_v()
 

@@ -210,7 +210,7 @@ class _NoirStatementBuilder:
         constant_val = stmt.ir_instance.value
         var_name = self._get_var_name(stmt.stmt_id)
         return [
-            f"let {var_name} = {constant_val};"
+            f"let {var_name} = {int(constant_val)};"
         ]
 
     def _build_ConstantBoolIR(self, stmt: IRStatement) -> List[str]:

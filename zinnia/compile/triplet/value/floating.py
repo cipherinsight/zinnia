@@ -1,4 +1,6 @@
-from typing import Union
+from typing import Union, List
+
+from z3 import z3
 
 from zinnia.compile.triplet.value.number import NumberValue
 from zinnia.compile.triplet.store import ValueTriplet, ValueStore
@@ -6,11 +8,17 @@ from zinnia.compile.type_sys import FloatType, FloatDTDescriptor
 
 
 class FloatValue(NumberValue):
-    def __init__(self, value: float | None, ptr: int | None):
+    def __init__(self, value: float | None, ptr: int | None, rel: List | None = None):
         super().__init__(ValueTriplet(ptr, value, FloatDTDescriptor()))
+        self.z3_sym = z3.Real(f'float_{self.ptr}')
+        self.z3_val = rel is None
+        self.z3_rel = [] if rel is None else rel[:-10]
 
     def val(self) -> float | None:
-        return super().val()
+        if super().val() is not None:
+            return super().val()
+        # Note: For fast compilation, we do not resolve float values
+        return None
 
     def ptr(self) -> int | None:
         return super().ptr()

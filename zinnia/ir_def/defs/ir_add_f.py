@@ -17,7 +17,7 @@ class AddFIR(AbstractIR):
     def infer(self, args: List[Value], dbg: Optional[DebugInfo] = None) -> Any:
         lhs, rhs = args[0], args[1]
         assert isinstance(lhs, FloatValue) and isinstance(rhs, FloatValue)
-        return lhs.val() + rhs.val() if lhs.val() is not None and rhs.val() is not None else None
+        return lhs.c_val() + rhs.c_val() if lhs.c_val() is not None and rhs.c_val() is not None else None
 
     def mock_exec(self, args: List[Any], config: MockExecConfig) -> Any:
         return float(args[0] + args[1])

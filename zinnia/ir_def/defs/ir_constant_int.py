@@ -26,7 +26,7 @@ class ConstantIntIR(AbstractIR):
         return int(self.value)
 
     def build_ir(self, ir_id: int, args: List[Value], dbg: Optional[DebugInfo] = None) -> Tuple[Value, IRStatement]:
-        return IntegerValue(self.value, ir_id), IRStatement(ir_id, self, [], dbg)
+        return IntegerValue(self.value, ir_id, z3e=int(self.value)), IRStatement(ir_id, self, [], dbg)
 
     def export(self) -> Dict:
         return {

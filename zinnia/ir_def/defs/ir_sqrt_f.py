@@ -21,9 +21,9 @@ class SqrtFIR(AbstractIR):
     def infer(self, args: List[Value], dbg: Optional[DebugInfo] = None) -> Any:
         x = args[0]
         assert isinstance(x, FloatValue)
-        if x.val() is not None and x.val() < 0:
-            raise StaticInferenceError(dbg, f"A negative value is inferred at compiler time on `sqrt`. Cannot take square root of negative number: {x.val()}")
-        return math.sqrt(x.val()) if x.val() is not None else None
+        if x.c_val() is not None and x.c_val() < 0:
+            raise StaticInferenceError(dbg, f"A negative value is inferred at compiler time on `sqrt`. Cannot take square root of negative number: {x.c_val()}")
+        return math.sqrt(x.c_val()) if x.c_val() is not None else None
 
     def mock_exec(self, args: List[Any], config: MockExecConfig) -> Any:
         return float(math.sqrt(args[0]))

@@ -12,6 +12,9 @@ class ClassValue(AtomicValue):
     def val(self) -> DTDescriptor:
         return self._triplet.get_s()
 
+    def c_val(self) -> DTDescriptor:
+        return self._triplet.get_s()
+
     def __copy__(self):
         return self.__class__(self.val())
 

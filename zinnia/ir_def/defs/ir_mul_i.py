@@ -17,7 +17,7 @@ class MulIIR(AbstractIR):
     def infer(self, args: List[Value], dbg: Optional[DebugInfo] = None) -> Any:
         lhs, rhs = args[0], args[1]
         assert isinstance(lhs, IntegerValue) and isinstance(rhs, IntegerValue)
-        return lhs.val() * rhs.val() if lhs.val() is not None and rhs.val() is not None else None
+        return lhs.c_val() * rhs.c_val() if lhs.c_val() is not None and rhs.c_val() is not None else None
 
     def mock_exec(self, args: List[Any], config: MockExecConfig) -> Any:
         return int(int(args[0]) * int(args[1]))
@@ -25,7 +25,10 @@ class MulIIR(AbstractIR):
     def build_ir(self, ir_id: int, args: List[Value], dbg: Optional[DebugInfo] = None) -> Tuple[Value, IRStatement]:
         lhs, rhs = args[0], args[1]
         assert isinstance(lhs, IntegerValue) and isinstance(rhs, IntegerValue)
-        return IntegerValue(self.infer(args, dbg), ir_id), IRStatement(ir_id, self, [lhs.ptr(), rhs.ptr()], dbg)
+        return IntegerValue(
+            self.infer(args, dbg), ir_id,
+            z3e=lhs.z3_sym * rhs.z3_sym, rel=lhs.z3_rel + rhs.z3_rel
+        ), IRStatement(ir_id, self, [lhs.ptr(), rhs.ptr()], dbg)
 
     def export(self) -> Dict:
         return {}

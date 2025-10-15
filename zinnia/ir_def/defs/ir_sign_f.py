@@ -17,7 +17,7 @@ class SignFIR(AbstractIR):
     def infer(self, args: List[Value], dbg: Optional[DebugInfo] = None) -> Any:
         x = args[0]
         assert isinstance(x, FloatValue)
-        return (1.0 if x.val() > 0 else (-1.0 if x.val() < 0 else 0.0)) if x.val() is not None else None
+        return (1.0 if x.c_val() > 0 else (-1.0 if x.c_val() < 0 else 0.0)) if x.c_val() is not None else None
 
     def mock_exec(self, args: List[Any], config: MockExecConfig) -> Any:
         return float(1.0 if args[0] > config.float_tolerance() else (-1.0 if args[0] < -config.float_tolerance() else 0.0))

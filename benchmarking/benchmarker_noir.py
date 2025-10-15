@@ -28,11 +28,15 @@ def run_prove(name: str, input_source: str, program_source: str):
         opcode_count = 0
         proving_times = []
         verifying_times = []
+        compilation_times = []
         for i in range(TIME_MEASURE_REPETITIONS):
+            start_time = time.time()
             execute_process = subprocess.run(['nargo', 'execute'], capture_output=True, text=True, env=my_env)
             execute_process_feedback = execute_process.stdout + execute_process.stderr
             assert execute_process.returncode == 0, execute_process_feedback
             assert "Circuit witness successfully solved" in execute_process_feedback
+            end_time = time.time()
+            compilation_times.append(end_time - start_time)
             start_time = time.time()
             prove_process = subprocess.run(
                 ['bb', 'prove', '-b', './target/hello_noir.json', '-w', './target/hello_noir.gz', '-o', './target'],
@@ -76,6 +80,7 @@ def run_prove(name: str, input_source: str, program_source: str):
         "total_gates": total_gates,
         "proving_time": sum(proving_times) / len(proving_times),
         "verifying_time": sum(verifying_times) / len(verifying_times),
+        "nargo_compilation_time": sum(compilation_times) / len(compilation_times),
     }
 
 
@@ -95,13 +100,15 @@ def run_evaluate(dataset: str, problem: str):
     # Get the circuit
     config = ZinniaConfig(backend="noir")
     circuit = ZKCircuit.from_method(method, chips=chips, config=config)
-    ours_program_source = circuit.compile().source
+    compiled_program = circuit.compile()
+    ours_program_source = compiled_program.source
     # Run
     result_ours = run_prove(f"{dataset}::{problem}.ours.noir", ours_input_source, ours_program_source)
     result_baseline = run_prove(f"{dataset}::{problem}.baseline.noir", baseline_input_source, baseline_program_source)
     return {
         "ours_on_noir": result_ours,
         "baseline_on_noir": result_baseline,
+        "zinnia_compilation_time": compiled_program.eval_data
     }
 
 
@@ -166,11 +173,10 @@ def main():
                 results_dict[f"{dataset}::{problem}"] = result
             except AssertionError as e:
                 print(f"Failed to evaluate {dataset}::{problem}. Skipping...")
+                raise e
+            finally:
                 with open('results-noir.json', 'w') as f:
                     f.write(json.dumps(results_dict, indent=2))
-                raise e
-            with open('results-noir.json', 'w') as f:
-                f.write(json.dumps(results_dict, indent=2))
         with open('results-noir.json', 'w') as f:
             f.write(json.dumps(results_dict, indent=2))
     with open('results-noir.json', 'w') as f:

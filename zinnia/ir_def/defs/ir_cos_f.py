@@ -19,7 +19,7 @@ class CosFIR(AbstractIR):
     def infer(self, args: List[Value], dbg: Optional[DebugInfo] = None) -> Any:
         x = args[0]
         assert isinstance(x, FloatValue)
-        return math.cos(x.val()) if x.val() is not None else None
+        return math.cos(x.c_val()) if x.c_val() is not None else None
 
     def mock_exec(self, args: List[Any], config: MockExecConfig) -> Any:
         return float(math.cos(args[0]))
