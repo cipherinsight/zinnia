@@ -38,21 +38,20 @@ class ZinniaCompiler:
             externals: Dict[str, InternalExternalFuncObject]
     ) -> ZKCompiledProgram:
         time_transform, time_smt, time_ir_pass, time_code_gen = 0.0, 0.0, 0.0, 0.0
-        time_checkpoint_1 = time.time()
+        time_checkpoint_transform_s = time.time()
         SMTUtils.ENABLE_RESOLVE = True
         smt_checkpoint = SMTUtils.ACCUMULATED_TIME
         fixed_source = ZinniaCompiler.fix_source_indentation(source)
         python_ast = ast.parse(ZinniaCompiler.fix_source_indentation(fixed_source))
         transformer = ZinniaCircuitASTTransformer(ZinniaCompiler.fix_source_indentation(fixed_source), name)
         ast_tree: ASTCircuit = transformer.visit(python_ast.body[0])
+        time_transform += time.time() - time_checkpoint_transform_s
         generator = IRGenerator(self.config)
         ir_graph = generator.generate(ast_tree, chips, externals)
+        SMTUtils.ENABLE_RESOLVE = False
+        time_checkpoint_ir_pass_s = time.time()
         zk_program_ir = self.run_passes_for_zk_program(ir_graph)
         preprocess_ir = self.run_passes_for_input_preprocess(ir_graph)
-        time_checkpoint_2 = time.time()
-        SMTUtils.ENABLE_RESOLVE = False
-        time_transform += time_checkpoint_2 - time_checkpoint_1 - (SMTUtils.ACCUMULATED_TIME - smt_checkpoint)
-        time_smt += SMTUtils.ACCUMULATED_TIME - smt_checkpoint
         if self.config.get_backend() == ZinniaConfig.BACKEND_HALO2:
             prog_builder = Halo2ProgramBuilder(name, zk_program_ir)
         elif self.config.get_backend() == ZinniaConfig.BACKEND_CIRCOM:
@@ -61,11 +60,11 @@ class ZinniaCompiler:
             prog_builder = NoirProgramBuilder(name, zk_program_ir)
         else:
             raise NotImplementedError(f"Backend {self.config.get_backend()} is not supported.")
-        time_checkpoint_3 = time.time()
-        time_ir_pass += time_checkpoint_3 - time_checkpoint_2
+        time_ir_pass += time.time() - time_checkpoint_ir_pass_s
+        time_checkpoint_circuit_gen_s = time.time()
         compiled_source = prog_builder.build()
-        time_checkpoint_4 = time.time()
-        time_code_gen += time_checkpoint_4 - time_checkpoint_3
+        time_code_gen += time.time() - time_checkpoint_circuit_gen_s
+        time_smt += SMTUtils.ACCUMULATED_TIME - smt_checkpoint
         program_inputs = []
         for inp in ast_tree.inputs:
             program_inputs.append(ZKProgramInput(inp.name, inp.annotation.dt, inp.annotation.kind))

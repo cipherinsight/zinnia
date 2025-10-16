@@ -10,7 +10,7 @@ from zinnia.compile.triplet.store import ValueTriplet, ValueStore
 class BooleanValue(IntegerValue):
     def __init__(self, value: bool | None, ptr: int | None, z3e = None, rel: List | None = None):
         super().__init__(value, ptr, z3e, rel, BooleanDTDescriptor())
-        self.z3_sym = z3.Bool(f'bool_{self.ptr}')
+        self.z3_sym = z3.Bool(f'bool_{int(ptr)}')
         if z3e is not None:
             self.z3_rel += [self.z3_sym == z3e]
 

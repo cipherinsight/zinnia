@@ -10,7 +10,7 @@ from zinnia.compile.triplet.store import ValueTriplet, ValueStore
 class IntegerValue(NumberValue):
     def __init__(self, value: int | None, ptr: int | None, z3e = None, rel: List | None = None, dt=IntegerDTDescriptor()):
         super().__init__(ValueTriplet(ptr, value, dt))
-        self.z3_sym = z3.Int(f'int_{self.ptr}')
+        self.z3_sym = z3.Int(f'int_{int(ptr)}')
         self.z3_val = rel is None and z3e is None
         self.z3_expr = z3e
         self.z3_rel = [] if rel is None else rel[:-10]

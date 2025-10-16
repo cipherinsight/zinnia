@@ -864,11 +864,65 @@ def plot_ablation_study():
     plt.show()
     fig.savefig('ablation-study.pdf', dpi=300)
 
+
+def plot_compile_time_scalability():
+    with open('results.json', 'r') as f:
+        zinnia_results_dict = json.load(f)
+
+    # Sort keys by their display names (alphabetical)
+    sorted_keys = sorted(zinnia_results_dict.keys(), key=lambda k: NAME_MAPPING.get(k, k))
+
+    names = []
+    rust_compile_times = []
+    ast_ir_transform_times = []
+    smt_reasoning_times = []
+    exec_ir_pass_times = []
+    code_gen_times = []
+    for key in sorted_keys:
+        value = zinnia_results_dict[key]
+        names.append(NAME_MAPPING.get(key, key))
+        rust_compile_times.append(value['halo2']['cargo_compile_time'])
+        ast_ir_transform_times.append(value['zinnia_compile_time']['time_transform'])
+        smt_reasoning_times.append(value['zinnia_compile_time']['time_smt'])
+        exec_ir_pass_times.append(value['zinnia_compile_time']['time_ir_pass'])
+        code_gen_times.append(value['zinnia_compile_time']['time_code_gen'])
+    rust_compile_times = np.asarray(rust_compile_times)
+    ast_ir_transform_times = np.asarray(ast_ir_transform_times)
+    smt_reasoning_times = np.asarray(smt_reasoning_times)
+    exec_ir_pass_times = np.asarray(exec_ir_pass_times)
+    code_gen_times = np.asarray(code_gen_times)
+    total_zinnia_compile_times = ast_ir_transform_times + smt_reasoning_times + exec_ir_pass_times + code_gen_times
+
+    plt.rc('font', family='monospace', )
+    # plt.rc('text', usetex=True)
+    title_font = {'fontweight': 'bold', 'fontname': 'Times New Roman', 'fontsize': 12}
+    # Plot the comparison of gate reductions
+    fig, ax = plt.subplots(figsize=(12, 3))
+    ax.bar(names, ast_ir_transform_times, color='mediumseagreen')
+    ax.bar(names, smt_reasoning_times, color='mediumpurple', bottom=ast_ir_transform_times, label='DCE')
+    ax.bar(names, exec_ir_pass_times, color='wheat', bottom=ast_ir_transform_times + smt_reasoning_times, label='CSE')
+    ax.bar(names, code_gen_times, color='lightskyblue', bottom=ast_ir_transform_times + smt_reasoning_times + exec_ir_pass_times, label='PM')
+    ax.tick_params(axis='x', labelrotation=90)
+    ylabel = ax.set_ylabel('Compilation Time (s)', fontdict=title_font)
+    # ax.set_ylim(0, 620)
+    fig.legend([AnyObject('mediumseagreen'), AnyObject('mediumpurple'), AnyObject('wheat'), AnyObject('lightskyblue')],
+               ['AST Traversal & IR Generation', 'SMT Reasoning', 'Executing IR Passes', 'Generating ZK Circuit'],
+               handler_map={
+                   AnyObject: AnyObjectHandler()
+               },
+               loc=(0.07, 0.66), ncol=1,
+               frameon=False)
+    fig.tight_layout()
+    plt.show()
+    fig.savefig('compilation-scalability.pdf', dpi=300)
+
+
 def main():
     # plot_evaluation_results()
     # plot_performance_overviews()
     # plot_ablation_study()
-    plot_performance_heatmap()
+    # plot_performance_heatmap()
+    plot_compile_time_scalability()
 
 
 if __name__ == "__main__":
