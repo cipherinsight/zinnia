@@ -13,7 +13,6 @@ HALO2_FOLDER = "/home/zhantong/halo2-graph"
 TIME_MEASURE_REPETITIONS = 10
 RESULT_PATH = 'results.json'
 ENABLE_OPTIMIZATIONS = True
-MULTIPROCESSING_POOL_SIZE = 1
 
 
 def prove_executor(_):
@@ -30,6 +29,17 @@ def prove_executor(_):
     proving_time = float(match.group(1))
     proving_unit = match.group(2)
     return proving_time / 1000 if proving_unit == "ms" else proving_time
+
+
+def compile_rust_executor(_):
+    my_env = os.environ.copy()
+    my_env['RUST_MIN_STACK'] = '536870912'  # 512 MiB
+    my_env['LOOKUP_BITS'] = '6'
+    time_begin = time.time()
+    subprocess.run(
+        ['cargo', 'run', '--example', 'target', '--', '--name', 'target', '-k', '16', '--input', 'target.in', 'compile'],
+        capture_output=True, text=True, env=my_env)
+    return time.time() - time_begin
 
 
 def verify_executor(_):
@@ -65,6 +75,7 @@ def run_prove(name: str, source: str, data: str):
             f.write(source)
         with open(os.path.join(HALO2_FOLDER, "data/target.in"), "w") as f:
             f.write(data)
+        rust_compile_time = compile_rust_executor(0)
         # set pwd to halo2 folder
         # run the command
         my_env = os.environ.copy()
@@ -73,14 +84,9 @@ def run_prove(name: str, source: str, data: str):
         keygen_process = subprocess.run(['cargo', 'run', '--example', 'target', '--', '--name', 'target', '-k', '16', '--input', 'target.in', 'keygen'], capture_output=True, text=True, env=my_env)
         keygen_feedback = keygen_process.stdout + keygen_process.stderr
         assert keygen_process.returncode == 0, keygen_feedback
-        with Pool(MULTIPROCESSING_POOL_SIZE) as p:
-            results = p.map(prove_executor, [_ for _ in range(TIME_MEASURE_REPETITIONS)])
-            proving_time_in_seconds = sum([result for result in results]) / len(results)
+        proving_time_in_seconds = prove_executor(0)
         snark_size = os.path.getsize(os.path.join(HALO2_FOLDER, "data/target.snark"))
-        with Pool(MULTIPROCESSING_POOL_SIZE) as p:
-            results = p.map(verify_executor, [_ for _ in range(TIME_MEASURE_REPETITIONS)])
-            advice_cells, fixed_cells, range_check_advice_cells, _ = results[0]
-            verify_time_in_seconds = sum([result[3] for result in results]) / len(results)
+        advice_cells, fixed_cells, range_check_advice_cells, verify_time_in_seconds = verify_executor(0)
     except Exception as e:
         os.chdir(original_directory)
         raise e
@@ -92,15 +98,17 @@ def run_prove(name: str, source: str, data: str):
         "advice_cells": advice_cells,
         "fixed_cells": fixed_cells,
         "range_check_advice_cells": range_check_advice_cells,
-        "verify_time": verify_time_in_seconds
+        "verify_time": verify_time_in_seconds,
+        "cargo_compile_time": rust_compile_time
     }
 
 
 def compile_executor(circuit):
     start_time = time.time()
-    source = circuit.compile().source
+    program = circuit.compile()
+    source = program.source
     end_time = time.time()
-    return source, end_time - start_time
+    return source, end_time - start_time, program.eval_data
 
 
 def run_evaluate(dataset: str, problem: str):
@@ -118,10 +126,7 @@ def run_evaluate(dataset: str, problem: str):
     ))
     circuit = ZKCircuit.from_method(method, chips=chips, config=config)
     # Compile the circuit
-    with Pool(MULTIPROCESSING_POOL_SIZE) as p:
-        results = p.map(compile_executor, [circuit for _ in range(TIME_MEASURE_REPETITIONS)])
-        source = results[0][0]
-        avg_time = sum([result[1] for result in results]) / len(results)
+    source, zinnia_compile_time, compilation_eval_data = compile_executor(circuit)
     # Get the input data
     with open(os.path.join('../benchmarking', dataset, problem, 'sol.py.in'), 'r') as f:
         data = f.read()
@@ -137,7 +142,8 @@ def run_evaluate(dataset: str, problem: str):
     return {
         "zinnia": result1,
         "halo2": result2,
-        "zinnia_compile_time": avg_time
+        "zinnia_compile_time": compilation_eval_data,
+        "halo2_compile_time": 0.0
     }
 
 
@@ -175,8 +181,8 @@ DS1000 = [
     'case295', 'case296', 'case297', 'case298', 'case299', 'case300', 'case301', 'case302', 'case303', 'case304', 'case309', 'case310', 'case313', 'case318', 'case319', 'case322', 'case323', 'case324', 'case329', 'case330', 'case334', 'case335', 'case336', 'case337', 'case338', 'case339', 'case353', 'case354', 'case360', 'case368', 'case369', 'case370', 'case373', 'case374', 'case375', 'case385', 'case387', 'case388', 'case389', 'case390', 'case391', 'case392', 'case393', 'case406', 'case407', 'case408', 'case409', 'case414', 'case415', 'case416', 'case417', 'case418', 'case419', 'case420', 'case428', 'case429', 'case430', 'case431', 'case433', 'case434', 'case435', 'case436', 'case437', 'case438', 'case440', 'case441', 'case452', 'case453', 'case459', 'case480', 'case501', 'case507', 'case510'
 ]
 CRYPT = [
-    "ecc",
     "poseidon",
+    "ecc",
     "elgamal",
     "mimc",
     "merkle"
@@ -184,13 +190,13 @@ CRYPT = [
 
 DATASETS = {
     "crypt": CRYPT,
+    "ds1000": DS1000,
     "mlalgo": MLALGO,
     "leetcode_array": LEETCODE_ARRAY,
     "leetcode_dp": LEETCODE_DP,
     "leetcode_graph": LEETCODE_GRAPH,
     "leetcode_math": LEETCODE_MATH,
     "leetcode_matrix": LEETCODE_MATRIX,
-    "ds1000": DS1000
 }
 
 
