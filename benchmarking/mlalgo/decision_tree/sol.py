@@ -46,16 +46,9 @@ def verify_solution(
                             # Evaluate training error
                             for i in range(n_train):
                                 # Root decision
-                                go_right = 1 if training_x[i, fr] >= thr[tr] else 0
-                                pred = 0
-                                if go_right == 0:
-                                    # Left branch prediction
-                                    pred = 1 if training_x[i, fl] >= thr[tl] else 0
-                                else:
-                                    # Right branch prediction
-                                    pred = 1 if training_x[i, fr2] >= thr[tr2] else 0
-                                if pred != training_y[i]:
-                                    err += 1
+                                go_right = training_x[i, fr] >= thr[tr]
+                                pred = training_x[i, fr2] >= thr[tr2] if go_right else training_x[i, fl] >= thr[tl]
+                                err += pred != training_y[i]
                             # Argmin with deterministic tie-breaking on (fr,tr,fl,tl,fr2,tr2)
                             if err < best_err:
                                 best_err = err
@@ -80,14 +73,9 @@ def verify_solution(
     # Evaluate on the test set
     test_errors = 0
     for i in range(n_test):
-        go_right = 1 if testing_x[i, best_feat_r] >= thr[best_thr_r] else 0
-        pred = 0
-        if go_right == 0:
-            pred = 1 if testing_x[i, best_feat_l] >= thr[best_thr_l] else 0
-        else:
-            pred = 1 if testing_x[i, best_feat_rr] >= thr[best_thr_rr] else 0
-        if pred != testing_y[i]:
-            test_errors += 1
+        go_right = testing_x[i, best_feat_r] >= thr[best_thr_r]
+        pred = testing_x[i, best_feat_rr] >= thr[best_thr_rr] if go_right else testing_x[i, best_feat_l] >= thr[best_thr_l]
+        test_errors += pred != testing_y[i]
 
     # For this tiny instance, allow at most 1 test error
     assert test_errors <= 1
