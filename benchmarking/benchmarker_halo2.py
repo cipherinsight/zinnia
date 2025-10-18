@@ -84,9 +84,18 @@ def run_prove(name: str, source: str, data: str):
         keygen_process = subprocess.run(['cargo', 'run', '--example', 'target', '--', '--name', 'target', '-k', '16', '--input', 'target.in', 'keygen'], capture_output=True, text=True, env=my_env)
         keygen_feedback = keygen_process.stdout + keygen_process.stderr
         assert keygen_process.returncode == 0, keygen_feedback
-        proving_time_in_seconds = prove_executor(0)
+        tmps = []
+        for _ in range(TIME_MEASURE_REPETITIONS):
+            proving_time = prove_executor(0)
+            tmps.append(proving_time)
+        proving_time_in_seconds = sum(tmps) / TIME_MEASURE_REPETITIONS
         snark_size = os.path.getsize(os.path.join(HALO2_FOLDER, "data/target.snark"))
-        advice_cells, fixed_cells, range_check_advice_cells, verify_time_in_seconds = verify_executor(0)
+        tmps = []
+        advice_cells, fixed_cells, range_check_advice_cells = 0, 0, 0
+        for _ in range(TIME_MEASURE_REPETITIONS):
+            advice_cells, fixed_cells, range_check_advice_cells, verifying_time = verify_executor(0)
+            tmps.append(verifying_time)
+        verify_time_in_seconds = sum(tmps) / TIME_MEASURE_REPETITIONS
     except Exception as e:
         os.chdir(original_directory)
         raise e
@@ -126,7 +135,12 @@ def run_evaluate(dataset: str, problem: str):
     ))
     circuit = ZKCircuit.from_method(method, chips=chips, config=config)
     # Compile the circuit
-    source, zinnia_compile_time, compilation_eval_data = compile_executor(circuit)
+    tmps = []
+    source = ""
+    for _ in range(TIME_MEASURE_REPETITIONS):
+        source, _, compilation_eval_data = compile_executor(circuit)
+        tmps.append(compilation_eval_data)
+    compilation_eval_data = {k: sum(d[k] for d in tmps) / TIME_MEASURE_REPETITIONS for k in tmps[0].keys()}
     # Get the input data
     with open(os.path.join('../benchmarking', dataset, problem, 'sol.py.in'), 'r') as f:
         data = f.read()
