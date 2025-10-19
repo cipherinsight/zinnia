@@ -743,7 +743,7 @@ def plot_performance_heatmap():
         # Annotate each cell with A's value. For imshow(imp.T), x index = task, y index = metric
         for i in range(n_tasks):
             for j in range(len(metrics)):
-                if (j == 0) and (i in noir_excluded) and ('Noir' in title):
+                if (i in noir_excluded) and ('Noir' in title):
                     ax.text(i, j, 'N/A', ha='center', va='center', fontsize=7, rotation=90)
                 else:
                     if j == 0:
@@ -836,7 +836,7 @@ def plot_ablation_study():
         if sum < 100:
             ablation_symex_bar[i] += 100 - sum
 
-    print('mean::', ((ablation_symex_bar + the_base_bar + ablation_dce_bar + ablation_cse_bar + ablation_pm_bar)).mean())
+    print('Mean increase in ablation:', ((ablation_symex_bar + the_base_bar + ablation_dce_bar + ablation_cse_bar + ablation_pm_bar)).mean())
     plt.rc('font', family='monospace', )
     # plt.rc('text', usetex=True)
     title_font = {'fontweight': 'bold', 'fontname': 'Times New Roman', 'fontsize': 12}
@@ -858,7 +858,7 @@ def plot_ablation_study():
                handler_map={
                    AnyObject: AnyObjectHandler()
                },
-               loc=(0.07, 0.66), ncol=1,
+               loc=(0.07, 0.56), ncol=1,
                frameon=False)
     fig.tight_layout()
     plt.show()
@@ -916,9 +916,6 @@ def plot_compile_time_scalability():
         gridspec_kw={'height_ratios': [1.5, 1]}
     )
 
-    # ------------------------------------------------
-    # Top: Absolute compilation times
-    # ------------------------------------------------
     ax1.bar(names, ast_ir_transform_times, color='mediumseagreen')
     ax1.bar(names, smt_reasoning_times, color='mediumpurple',
             bottom=ast_ir_transform_times)
@@ -928,12 +925,9 @@ def plot_compile_time_scalability():
             bottom=ast_ir_transform_times + smt_reasoning_times + exec_ir_pass_times)
 
     ax1.set_ylabel('Compilation Time (s)', fontdict=title_font)
-    ax1.set_yscale('log')
+    # ax1.set_yscale('log')
     ax1.tick_params(axis='x', labelbottom=False)
 
-    # ------------------------------------------------
-    # Bottom: Normalized to 100%
-    # ------------------------------------------------
     ax2.bar(names, ast_norm, color='mediumseagreen')
     ax2.bar(names, smt_norm, color='mediumpurple', bottom=ast_norm)
     ax2.bar(names, exec_norm, color='wheat', bottom=ast_norm + smt_norm)
@@ -954,12 +948,203 @@ def plot_compile_time_scalability():
     fig.savefig('compilation-scalability.pdf', dpi=300, bbox_inches='tight')
 
 
+def compute_pct_advantage(baseline_arr, optimized_arr):
+    """
+    Return (mean_percent_advantage, n) where percent advantage = (baseline - optimized) / baseline * 100.
+    Only entries with baseline>0 and optimized>0 are considered.
+    """
+    b = np.asarray(baseline_arr, dtype=float)
+    o = np.asarray(optimized_arr, dtype=float)
+    mask = (b > 0) & (o > 0) & (~np.isnan(b)) & (~np.isnan(o))
+    if np.sum(mask) == 0:
+        return float('nan'), 0
+    pct = (b[mask] - o[mask]) / b[mask] * 100.0
+    return float(np.nanmean(pct)), int(np.sum(mask))
+
+
+# NEW helper: compute mean multiplicative ratio baseline/optimized
+def compute_mean_ratio(baseline_arr, optimized_arr):
+    """
+    Return (mean_ratio, n) where ratio = baseline / optimized, averaged across valid entries.
+    Only entries with baseline>0 and optimized>0 are considered.
+    """
+    b = np.asarray(baseline_arr, dtype=float)
+    o = np.asarray(optimized_arr, dtype=float)
+    mask = (b > 0) & (o > 0) & (~np.isnan(b)) & (~np.isnan(o))
+    if np.sum(mask) == 0:
+        return float('nan'), 0
+    ratios = b[mask] / o[mask]
+    return float(np.nanmean(ratios)), int(np.sum(mask))
+
+
+def print_average_advantages():
+    """
+    Compute and print average proving/verifying time advantages of Zinnia over:
+      - Halo2, Noir, Cairo, SP1 (STARK), SP1 (SNARK), Risc0
+    And average constraint-count advantages over Halo2 and Noir.
+    """
+    with open('results.json', 'r') as f:
+        zinnia_results = json.load(f)
+    with open('results-noir.json', 'r') as f:
+        noir_results = json.load(f)
+    with open('results-sp1.json', 'r') as f:
+        sp1_results = json.load(f)
+    with open('results-risc0.json', 'r') as f:
+        risc0_results = json.load(f)
+    with open('results-cairo.json', 'r') as f:
+        cairo_results = json.load(f)
+
+    # Use keys present in zinnia results for Halo2 comparisons
+    keys = sorted(zinnia_results.keys(), key=lambda k: NAME_MAPPING.get(k, k))
+
+    # Prepare arrays for Halo2 comparisons (halo2 stored inside zinnia results)
+    halo2_prove = []
+    halo2_verify = []
+    zinnia_prove = []
+    zinnia_verify = []
+    halo2_gates = []
+    zinnia_gates = []
+
+    for k in keys:
+        z = zinnia_results[k]
+        halo2_prove.append(z['halo2'].get('proving_time', 0))
+        halo2_verify.append(z['halo2'].get('verify_time', 0) * 1000.0)  # ms
+        zinnia_prove.append(z['zinnia'].get('proving_time', 0))
+        zinnia_verify.append(z['zinnia'].get('verify_time', 0) * 1000.0)  # ms
+        halo2_gates.append(z['halo2'].get('advice_cells', 0))
+        zinnia_gates.append(z['zinnia'].get('advice_cells', 0))
+
+    # Halo2 averages
+    mean_p_adv_halo2, n_p_halo2 = compute_pct_advantage(halo2_prove, zinnia_prove)
+    mean_v_adv_halo2, n_v_halo2 = compute_pct_advantage(halo2_verify, zinnia_verify)
+    mean_c_adv_halo2, n_c_halo2 = compute_pct_advantage(halo2_gates, zinnia_gates)
+    mean_p_ratio_halo2, _ = compute_mean_ratio(halo2_prove, zinnia_prove)
+    mean_v_ratio_halo2, _ = compute_mean_ratio(halo2_verify, zinnia_verify)
+    mean_c_ratio_halo2, _ = compute_mean_ratio(halo2_gates, zinnia_gates)
+
+    # Noir comparisons: only keys present in noir_results
+    noir_keys = sorted([k for k in keys if k in noir_results], key=lambda k: NAME_MAPPING.get(k, k))
+    noir_baseline_prove = []
+    noir_baseline_verify = []
+    noir_ours_prove = []
+    noir_ours_verify = []
+    noir_baseline_gates = []
+    noir_ours_gates = []
+
+    for k in noir_keys:
+        nrec = noir_results[k]
+        baseline = nrec.get('baseline_on_noir', {})
+        ours = nrec.get('ours_on_noir', {})
+        noir_baseline_prove.append(baseline.get('proving_time', 0))
+        noir_baseline_verify.append(baseline.get('verifying_time', 0) * 1000.0)
+        noir_ours_prove.append(ours.get('proving_time', 0))
+        noir_ours_verify.append(ours.get('verifying_time', 0) * 1000.0)
+        noir_baseline_gates.append(baseline.get('total_gates', 0))
+        noir_ours_gates.append(ours.get('total_gates', 0))
+
+    mean_p_adv_noir, n_p_noir = compute_pct_advantage(noir_baseline_prove, noir_ours_prove)
+    mean_v_adv_noir, n_v_noir = compute_pct_advantage(noir_baseline_verify, noir_ours_verify)
+    mean_c_adv_noir, n_c_noir = compute_pct_advantage(noir_baseline_gates, noir_ours_gates)
+    mean_p_ratio_noir, _ = compute_mean_ratio(noir_baseline_prove, noir_ours_prove)
+    mean_v_ratio_noir, _ = compute_mean_ratio(noir_baseline_verify, noir_ours_verify)
+    mean_c_ratio_noir, _ = compute_mean_ratio(noir_baseline_gates, noir_ours_gates)
+
+    # SP1 comparisons (may miss some keys)
+    sp1_keys = sorted([k for k in keys if k in sp1_results], key=lambda k: NAME_MAPPING.get(k, k))
+    sp1_stark_baseline_prove = []
+    sp1_stark_baseline_verify = []
+    sp1_snark_baseline_prove = []
+    sp1_snark_baseline_verify = []
+    z_prove_for_sp1 = []
+    z_verify_for_sp1 = []
+
+    for k in sp1_keys:
+        s = sp1_results[k]
+        # SP1 may have stark_* and snark_* fields; use get with 0 default
+        sp1_stark_baseline_prove.append(s.get('stark_proving_time', 0))
+        sp1_stark_baseline_verify.append(s.get('stark_verify_time', 0) * 1000.0)
+        sp1_snark_baseline_prove.append(s.get('snark_proving_time', 0))
+        sp1_snark_baseline_verify.append(s.get('snark_verify_time', 0) * 1000.0)
+        # zinnia values for this key
+        z = zinnia_results[k]
+        z_prove_for_sp1.append(z['zinnia'].get('proving_time', 0))
+        z_verify_for_sp1.append(z['zinnia'].get('verify_time', 0) * 1000.0)
+
+    mean_p_adv_sp1_stark, n_p_sp1_stark = compute_pct_advantage(sp1_stark_baseline_prove, z_prove_for_sp1)
+    mean_v_adv_sp1_stark, n_v_sp1_stark = compute_pct_advantage(sp1_stark_baseline_verify, z_verify_for_sp1)
+    mean_p_adv_sp1_snark, n_p_sp1_snark = compute_pct_advantage(sp1_snark_baseline_prove, z_prove_for_sp1)
+    mean_v_adv_sp1_snark, n_v_sp1_snark = compute_pct_advantage(sp1_snark_baseline_verify, z_verify_for_sp1)
+    mean_p_ratio_sp1_stark, _ = compute_mean_ratio(sp1_stark_baseline_prove, z_prove_for_sp1)
+    mean_v_ratio_sp1_stark, _ = compute_mean_ratio(sp1_stark_baseline_verify, z_verify_for_sp1)
+    mean_p_ratio_sp1_snark, _ = compute_mean_ratio(sp1_snark_baseline_prove, z_prove_for_sp1)
+    mean_v_ratio_sp1_snark, _ = compute_mean_ratio(sp1_snark_baseline_verify, z_verify_for_sp1)
+
+    # Risc0 comparisons
+    risc0_keys = sorted([k for k in keys if k in risc0_results], key=lambda k: NAME_MAPPING.get(k, k))
+    risc0_prove = []
+    risc0_verify = []
+    z_prove_risc0 = []
+    z_verify_risc0 = []
+    for k in risc0_keys:
+        r = risc0_results[k]
+        risc0_prove.append(r.get('stark_proving_time', 0))
+        risc0_verify.append(r.get('stark_verify_time', 0) * 1000.0)
+        z = zinnia_results[k]
+        z_prove_risc0.append(z['zinnia'].get('proving_time', 0))
+        z_verify_risc0.append(z['zinnia'].get('verify_time', 0) * 1000.0)
+    mean_p_adv_risc0, n_p_risc0 = compute_pct_advantage(risc0_prove, z_prove_risc0)
+    mean_v_adv_risc0, n_v_risc0 = compute_pct_advantage(risc0_verify, z_verify_risc0)
+    mean_p_ratio_risc0, _ = compute_mean_ratio(risc0_prove, z_prove_risc0)
+    mean_v_ratio_risc0, _ = compute_mean_ratio(risc0_verify, z_verify_risc0)
+
+    # Cairo comparisons
+    cairo_keys = sorted([k for k in keys if k in cairo_results], key=lambda k: NAME_MAPPING.get(k, k))
+    cairo_prove = []
+    cairo_verify = []
+    z_prove_cairo = []
+    z_verify_cairo = []
+    for k in cairo_keys:
+        c = cairo_results[k]
+        cairo_prove.append(c.get('stark_proving_time', 0))
+        cairo_verify.append(c.get('stark_verify_time', 0) * 1000.0)
+        z = zinnia_results[k]
+        z_prove_cairo.append(z['zinnia'].get('proving_time', 0))
+        z_verify_cairo.append(z['zinnia'].get('verify_time', 0) * 1000.0)
+    mean_p_adv_cairo, n_p_cairo = compute_pct_advantage(cairo_prove, z_prove_cairo)
+    mean_v_adv_cairo, n_v_cairo = compute_pct_advantage(cairo_verify, z_verify_cairo)
+    mean_p_ratio_cairo, _ = compute_mean_ratio(cairo_prove, z_prove_cairo)
+    mean_v_ratio_cairo, _ = compute_mean_ratio(cairo_verify, z_verify_cairo)
+
+    # Print concise summary with multiplicative factors
+    def ratio_str(r, n):
+        return f"{r:.2f}x" if n > 0 and not np.isnan(r) else "n/a"
+
+    print("=== Average advantages (positive => Zinnia is faster / smaller) ===")
+    print(f"Halo2: Proving {mean_p_adv_halo2:+.1f}% (n={n_p_halo2}) ~{ratio_str(mean_p_ratio_halo2, n_p_halo2)} faster, "
+          f"Verifying {mean_v_adv_halo2:+.1f}% (n={n_v_halo2}) ~{ratio_str(mean_v_ratio_halo2, n_v_halo2)} faster, "
+          f"Constraints {mean_c_adv_halo2:+.1f}% (n={n_c_halo2}) ~{ratio_str(mean_c_ratio_halo2, n_c_halo2)}× smaller")
+    print(f"Noir:  Proving {mean_p_adv_noir:+.1f}% (n={n_p_noir}) ~{ratio_str(mean_p_ratio_noir, n_p_noir)} faster, "
+          f"Verifying {mean_v_adv_noir:+.1f}% (n={n_v_noir}) ~{ratio_str(mean_v_ratio_noir, n_v_noir)} faster, "
+          f"Constraints {mean_c_adv_noir:+.1f}% (n={n_c_noir}) ~{ratio_str(mean_c_ratio_noir, n_c_noir)}× smaller")
+    print(f"SP1 (STARK): Proving {mean_p_adv_sp1_stark:+.1f}% (n={n_p_sp1_stark}) ~{ratio_str(mean_p_ratio_sp1_stark, n_p_sp1_stark)} faster, "
+          f"Verifying {mean_v_adv_sp1_stark:+.1f}% (n={n_v_sp1_stark}) ~{ratio_str(mean_v_ratio_sp1_stark, n_v_sp1_stark)} faster")
+    print(f"SP1 (SNARK): Proving {mean_p_adv_sp1_snark:+.1f}% (n={n_p_sp1_snark}) ~{ratio_str(mean_p_ratio_sp1_snark, n_p_sp1_snark)} faster, "
+          f"Verifying {mean_v_adv_sp1_snark:+.1f}% (n={n_v_sp1_snark}) ~{ratio_str(mean_v_ratio_sp1_snark, n_v_sp1_snark)} faster")
+    print(f"Risc0: Proving {mean_p_adv_risc0:+.1f}% (n={n_p_risc0}) ~{ratio_str(mean_p_ratio_risc0, n_p_risc0)} faster, "
+          f"Verifying {mean_v_adv_risc0:+.1f}% (n={n_v_risc0}) ~{ratio_str(mean_v_ratio_risc0, n_v_risc0)} faster")
+    print(f"Cairo: Proving {mean_p_adv_cairo:+.1f}% (n={n_p_cairo}) ~{ratio_str(mean_p_ratio_cairo, n_p_cairo)} faster, "
+          f"Verifying {mean_v_adv_cairo:+.1f}% (n={n_v_cairo}) ~{ratio_str(mean_v_ratio_cairo, n_v_cairo)} faster")
+    print("===============================================================")
+
+
 def main():
     # plot_evaluation_results()
-    # plot_performance_overviews()
-    # plot_ablation_study()
-    # plot_performance_heatmap()
+    plot_performance_overviews()
+    plot_ablation_study()
+    plot_performance_heatmap()
     plot_compile_time_scalability()
+    # Print summary advantages
+    print_average_advantages()
 
 
 if __name__ == "__main__":
