@@ -9,6 +9,7 @@ class ZinniaConfig(ConfigBase):
     BACKEND_HALO2 = "halo2"
     BACKEND_CIRCOM = "circom"
     BACKEND_NOIR = "noir"
+    BACKEND_CIRC_ZOK = "circ_zok"
     DEFAULT_RECURSION_LIMIT = 100
     DEFAULT_LOOP_LIMIT = 1000
 

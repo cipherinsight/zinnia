@@ -2,6 +2,7 @@ import ast
 import time
 from typing import Dict, List
 
+from zinnia.compile.backend.circ_zok_builder import CirCZokratesProgramBuilder
 from zinnia.compile.backend.circom_builder import CircomProgramBuilder
 from zinnia.compile.backend.halo2_builder import Halo2ProgramBuilder
 from zinnia.compile.ast import ASTChip, ASTCircuit
@@ -58,6 +59,8 @@ class ZinniaCompiler:
             prog_builder = CircomProgramBuilder(name, zk_program_ir)
         elif self.config.get_backend() == ZinniaConfig.BACKEND_NOIR:
             prog_builder = NoirProgramBuilder(name, zk_program_ir)
+        elif self.config.get_backend() == ZinniaConfig.BACKEND_CIRC_ZOK:
+            prog_builder = CirCZokratesProgramBuilder(name, zk_program_ir)
         else:
             raise NotImplementedError(f"Backend {self.config.get_backend()} is not supported.")
         time_ir_pass += time.time() - time_checkpoint_ir_pass_s
