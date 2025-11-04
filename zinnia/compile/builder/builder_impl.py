@@ -146,6 +146,7 @@ class SMTUtils:
     ACCUMULATED_TIME = 0
     ENABLE_RESOLVE = True
     NUMBER_OF_CONSTRAINTS = []
+    NO_TIMEOUT_CASES = 0
 
     @staticmethod
     def _is_value(e):
@@ -187,6 +188,12 @@ class SMTUtils:
                 SMTUtils.NUMBER_OF_CONSTRAINTS.append(len(s.assertions()))
                 if res == z3.unsat:
                     return SMTUtils._to_python_value(v)
+                elif res == z3.unknown:
+                    if "timeout" in s.reason_unknown():
+                        SMTUtils.NO_TIMEOUT_CASES += 1
+            elif res == z3.unknown:
+                if "timeout" in s.reason_unknown():
+                    SMTUtils.NO_TIMEOUT_CASES += 1
             return None
         except Exception as e:
             pass
