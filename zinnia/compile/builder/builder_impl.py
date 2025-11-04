@@ -145,6 +145,7 @@ from zinnia.op_def.arithmetic.op_usub import USubOp
 class SMTUtils:
     ACCUMULATED_TIME = 0
     ENABLE_RESOLVE = True
+    NUMBER_OF_CONSTRAINTS = []
 
     @staticmethod
     def _is_value(e):
@@ -183,6 +184,7 @@ class SMTUtils:
                 v = m.eval(expr, model_completion=True)
                 s.add(expr != v)
                 res = s.check()
+                SMTUtils.NUMBER_OF_CONSTRAINTS.append(len(s.assertions()))
                 if res == z3.unsat:
                     return SMTUtils._to_python_value(v)
             return None
@@ -1110,9 +1112,9 @@ class IRBuilderImpl(IRBuilder):
         constraints = self._build_smt_constraints_for(expr.ptr())
         if len(constraints) == 0:
             return None  # no need to solve
-        # if len(constraints) > 256:
-            # early reject requests that are too complex
-            # return None
+        # # if len(constraints) > 256:
+        #     early reject requests that are too complex (disabled)
+        #     # return None
         timeout = 500
         start_time = time.time()
         if isinstance(expr, BooleanValue):
@@ -1123,7 +1125,7 @@ class IRBuilderImpl(IRBuilder):
             result = SMTUtils.resolve_expr(z3.Real(f"real_{expr.ptr()}"), constraints, timeout)
         else:
             return None
-        SMTUtils.ACCUMULATED_TIME += (time.time() - start_time) * 1000
+        SMTUtils.ACCUMULATED_TIME += (time.time() - start_time)
         if result is not None:
             self.smt_solve_cache[expr.ptr()] = result
         return result

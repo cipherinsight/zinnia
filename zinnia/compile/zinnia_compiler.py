@@ -41,6 +41,7 @@ class ZinniaCompiler:
         time_transform, time_smt, time_ir_pass, time_code_gen = 0.0, 0.0, 0.0, 0.0
         time_checkpoint_transform_s = time.time()
         SMTUtils.ENABLE_RESOLVE = True
+        SMTUtils.NUMBER_OF_CONSTRAINTS = []
         smt_checkpoint = SMTUtils.ACCUMULATED_TIME
         fixed_source = ZinniaCompiler.fix_source_indentation(source)
         python_ast = ast.parse(ZinniaCompiler.fix_source_indentation(fixed_source))
@@ -78,7 +79,9 @@ class ZinniaCompiler:
                 'time_smt': time_smt,
                 'time_ir_pass': time_ir_pass,
                 'time_code_gen': time_code_gen,
-                'total_time': time_transform + time_smt + time_ir_pass + time_code_gen
+                'total_time': time_transform + time_smt + time_ir_pass + time_code_gen,
+                'max_no_of_constraints': max(SMTUtils.NUMBER_OF_CONSTRAINTS),
+                'total_smt_invocations': len(SMTUtils.NUMBER_OF_CONSTRAINTS),
             })
 
     def run_passes_for_zk_program(self, ir_graph: IRGraph) -> List[IRStatement]:
