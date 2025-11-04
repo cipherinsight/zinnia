@@ -1123,7 +1123,7 @@ class IRBuilderImpl(IRBuilder):
             result = SMTUtils.resolve_expr(z3.Real(f"real_{expr.ptr()}"), constraints, timeout)
         else:
             return None
-        SMTUtils.ACCUMULATED_TIME += min(float(timeout), (time.time() - start_time) / 1000)
+        SMTUtils.ACCUMULATED_TIME += (time.time() - start_time) / 1000
         if result is not None:
             self.smt_solve_cache[expr.ptr()] = result
         return result
