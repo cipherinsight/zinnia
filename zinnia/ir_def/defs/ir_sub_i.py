@@ -27,7 +27,6 @@ class SubIIR(AbstractIR):
         assert isinstance(lhs, IntegerValue) and isinstance(rhs, IntegerValue)
         return IntegerValue(
             self.infer(args, dbg), ir_id,
-            z3e = lhs.z3_sym - rhs.z3_sym, rel = lhs.z3_rel + rhs.z3_rel
         ), IRStatement(ir_id, self, [lhs.ptr(), rhs.ptr()], dbg)
 
     def export(self) -> Dict:

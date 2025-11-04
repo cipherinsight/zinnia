@@ -37,7 +37,6 @@ class LogicalOrIR(AbstractIR):
         assert isinstance(lhs, BooleanValue) and isinstance(rhs, BooleanValue)
         return BooleanValue(
             self.infer(args, dbg), ir_id,
-            z3e = z3.Or(lhs.z3_sym, rhs.z3_sym), rel = lhs.z3_rel + rhs.z3_rel
         ), IRStatement(ir_id, self, [lhs.ptr(), rhs.ptr()], dbg)
 
     def export(self) -> Dict:
