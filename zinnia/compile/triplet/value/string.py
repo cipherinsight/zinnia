@@ -9,10 +9,7 @@ class StringValue(AtomicValue):
     def __init__(self, value: str, ptr: int):
         super().__init__(ValueTriplet(ptr, value, StringDTDescriptor()))
 
-    def val(self) -> str:
-        return self._triplet.get_s()
-
-    def c_val(self) -> str:
+    def val(self, ir_builder_interface=None) -> str:
         return self._triplet.get_s()
 
     def ptr(self) -> int:

@@ -39,7 +39,7 @@ class List_InsertOp(AbstractOp):
             raise TypeInferenceError(dbg, f"Cannot perform insert, as it modifies the datatype on the list which is defined at parent scope.")
         if not isinstance(the_index, IntegerValue):
             raise TypeInferenceError(dbg, f"Expected an integer index for `{self.get_name()}`, got {the_index.type()}")
-        if the_index.val() is None:
+        if the_index.val(builder) is None:
             if not all(t == the_self.types()[0] for t in the_self.types()):
                 raise TypeInferenceError(dbg, f"`index` is not statically inferrable here. In this case, all sub-elements of the list should have the same type.")
             if not the_object.type() == the_self.types()[0]:
@@ -65,7 +65,7 @@ class List_InsertOp(AbstractOp):
                     new_list, result
                 )
             return result
-        parsed_index = the_index.val() if the_index.val() >= 0 else len(the_self.values()) + the_index.val()
+        parsed_index = the_index.val(builder) if the_index.val(builder) >= 0 else len(the_self.values()) + the_index.val(builder)
         new_types = the_self.types().copy()
         new_types.insert(parsed_index, the_object.type())
         new_values = the_self.values().copy()

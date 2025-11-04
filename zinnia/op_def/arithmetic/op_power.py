@@ -25,17 +25,17 @@ class PowerOp(AbstractArithemetic):
             if isinstance(lhs, IntegerValue) and isinstance(rhs, IntegerValue):
                 return builder.ir_pow_i(lhs, rhs)
             elif isinstance(lhs, FloatValue) and isinstance(rhs, FloatValue):
-                if lhs.val() is not None and lhs.val() < 0:
+                if lhs.val(builder) is not None and lhs.val(builder) < 0:
                     raise TypeInferenceError(None, "Math domain error. Complex values are not supported yet.")
                 builder.op_assert(builder.op_logical_not(builder.op_less_than(lhs, builder.ir_constant_float(0))), builder.op_constant_none(), dbg=None)
                 return builder.ir_pow_f(lhs, rhs)
             elif isinstance(lhs, IntegerValue) and isinstance(rhs, FloatValue):
-                if lhs.val() is not None and lhs.val() < 0:
+                if lhs.val(builder) is not None and lhs.val(builder) < 0:
                     raise TypeInferenceError(None, "Math domain error. Complex values are not supported yet.")
                 builder.op_assert(builder.op_logical_not(builder.op_less_than(lhs, builder.ir_constant_int(0))), builder.op_constant_none(), dbg=None)
                 return builder.ir_pow_f(builder.ir_float_cast(lhs), rhs)
             elif isinstance(lhs, FloatValue) and isinstance(rhs, IntegerValue):
-                if lhs.val() is not None and lhs.val() < 0:
+                if lhs.val(builder) is not None and lhs.val(builder) < 0:
                     raise TypeInferenceError(None, "Math domain error. Complex values are not supported yet.")
                 builder.op_assert(builder.op_logical_not(builder.op_less_than(lhs, builder.ir_constant_float(0))), builder.op_constant_none(), dbg=None)
                 return builder.ir_pow_f(lhs, builder.ir_float_cast(rhs))

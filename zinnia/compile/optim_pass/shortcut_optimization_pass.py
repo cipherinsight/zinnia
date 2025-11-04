@@ -32,7 +32,7 @@ from zinnia.ir_def.defs.ir_eq_f import EqualFIR
 from zinnia.ir_def.defs.ir_eq_i import EqualIIR
 
 
-class ShortcutOptimIRPass(AbstractIRPass):
+class PatternMatchOptimIRPass(AbstractIRPass):
     def __init__(self):
         super().__init__()
 

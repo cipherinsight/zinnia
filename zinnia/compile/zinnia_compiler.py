@@ -7,6 +7,7 @@ from zinnia.compile.backend.circom_builder import CircomProgramBuilder
 from zinnia.compile.backend.halo2_builder import Halo2ProgramBuilder
 from zinnia.compile.ast import ASTChip, ASTCircuit
 from zinnia.compile.backend.noir_builder import NoirProgramBuilder
+from zinnia.compile.builder.builder_impl import SMTUtils
 from zinnia.compile.ir.ir_gen import IRGenerator
 from zinnia.compile.ir.ir_graph import IRGraph
 from zinnia.compile.ir.ir_stmt import IRStatement
@@ -16,10 +17,9 @@ from zinnia.compile.optim_pass.dead_code_elimination import DeadCodeEliminationI
 from zinnia.compile.optim_pass.double_not_elimination import DoubleNotEliminationIRPass
 from zinnia.compile.optim_pass.duplicate_code_elimination import DuplicateCodeEliminationIRPass
 from zinnia.compile.optim_pass.external_call_remover import ExternalCallRemoverIRPass
-from zinnia.compile.optim_pass.shortcut_optimization_pass import ShortcutOptimIRPass
+from zinnia.compile.optim_pass.shortcut_optimization_pass import PatternMatchOptimIRPass
 from zinnia.compile.transformer import ZinniaExternalFuncASTTransformer, ZinniaCircuitASTTransformer
 from zinnia.compile.transformer.chip import ZinniaChipASTTransformer
-from zinnia.compile.triplet.value.number import SMTUtils
 from zinnia.compile.type_sys.dt_descriptor import DTDescriptor
 from zinnia.config.zinnia_config import ZinniaConfig
 from zinnia.api.zk_compiled_program import ZKCompiledProgram
@@ -84,7 +84,7 @@ class ZinniaCompiler:
     def run_passes_for_zk_program(self, ir_graph: IRGraph) -> List[IRStatement]:
         ir_graph = ExternalCallRemoverIRPass().exec(ir_graph)
         if self.config.optimization_config().shortcut_optimization():
-            ir_graph = ShortcutOptimIRPass().exec(ir_graph)
+            ir_graph = PatternMatchOptimIRPass().exec(ir_graph)
             ir_graph = DoubleNotEliminationIRPass().exec(ir_graph)
         if self.config.optimization_config().constant_fold():
             ir_graph = ConstantFoldIRPass().exec(ir_graph)
@@ -98,7 +98,7 @@ class ZinniaCompiler:
 
     def run_passes_for_input_preprocess(self, ir_graph: IRGraph) -> List[IRStatement]:
         if self.config.optimization_config().shortcut_optimization():
-            ir_graph = ShortcutOptimIRPass().exec(ir_graph)
+            ir_graph = PatternMatchOptimIRPass().exec(ir_graph)
             ir_graph = DoubleNotEliminationIRPass().exec(ir_graph)
         if self.config.optimization_config().constant_fold():
             ir_graph = ConstantFoldIRPass().exec(ir_graph)

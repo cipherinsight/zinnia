@@ -9,10 +9,7 @@ class ClassValue(AtomicValue):
     def __init__(self, value: DTDescriptor):
         super().__init__(ValueTriplet(None, value, ClassDTDescriptor()))
 
-    def val(self) -> DTDescriptor:
-        return self._triplet.get_s()
-
-    def c_val(self) -> DTDescriptor:
+    def val(self, ir_builder_interface=None) -> DTDescriptor:
         return self._triplet.get_s()
 
     def __copy__(self):

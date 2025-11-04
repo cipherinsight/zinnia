@@ -36,45 +36,45 @@ class MulOp(AbstractArithemetic):
     def build(self, builder: IRBuilderInterface, kwargs: OpArgsContainer, dbg: Optional[DebugInfo] = None) -> Value:
         lhs, rhs = kwargs["lhs"], kwargs["rhs"]
         if isinstance(lhs, IntegerValue) and isinstance(rhs, TupleValue):
-            if lhs.val() is None:
+            if lhs.val(builder) is None:
                 raise StaticInferenceError(dbg, f"Cannot statically inference the number of repetitions")
             return TupleValue(
-                rhs.types() * lhs.val(),
-                rhs.values() * lhs.val()
+                rhs.types() * lhs.val(builder),
+                rhs.values() * lhs.val(builder)
             )
         elif isinstance(lhs, TupleValue) and isinstance(rhs, IntegerValue):
-            if rhs.val() is None:
+            if rhs.val(builder) is None:
                 raise StaticInferenceError(dbg, f"Cannot statically inference the number of repetitions")
             return TupleValue(
-                lhs.types() * rhs.val(),
-                lhs.values() * rhs.val()
+                lhs.types() * rhs.val(builder),
+                lhs.values() * rhs.val(builder)
             )
         elif isinstance(lhs, IntegerValue) and isinstance(rhs, ListValue):
-            if lhs.val() is None:
+            if lhs.val(builder) is None:
                 raise StaticInferenceError(dbg, f"Cannot statically inference the number of repetitions")
             return ListValue(
-                rhs.types() * lhs.val(),
-                rhs.values() * lhs.val()
+                rhs.types() * lhs.val(builder),
+                rhs.values() * lhs.val(builder)
             )
         elif isinstance(lhs, ListValue) and isinstance(rhs, IntegerValue):
-            if rhs.val() is None:
+            if rhs.val(builder) is None:
                 raise StaticInferenceError(dbg, f"Cannot statically inference the number of repetitions")
             return ListValue(
-                lhs.types() * rhs.val(),
-                lhs.values() * rhs.val()
+                lhs.types() * rhs.val(builder),
+                lhs.values() * rhs.val(builder)
             )
         elif isinstance(lhs, StringValue) and isinstance(rhs, IntegerValue):
-            if rhs.val() is None:
+            if rhs.val(builder) is None:
                 raise StaticInferenceError(dbg, f"Cannot statically inference the number of repetitions")
             result = lhs
-            for _ in range(rhs.val()):
+            for _ in range(rhs.val(builder)):
                 result = builder.ir_add_str(result, lhs)
             return result
         elif isinstance(lhs, IntegerValue) and isinstance(rhs, StringValue):
-            if rhs.val() is None:
+            if rhs.val(builder) is None:
                 raise StaticInferenceError(dbg, f"Cannot statically inference the number of repetitions")
             result = rhs
-            for _ in range(lhs.val()):
+            for _ in range(lhs.val(builder)):
                 result = builder.ir_add_str(result, rhs)
             return result
         elif isinstance(lhs, NDArrayValue) and (isinstance(rhs, ListValue) or isinstance(rhs, TupleValue)):

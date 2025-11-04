@@ -61,33 +61,33 @@ class NP_ARangeOp(AbstractOp):
             _start = 0
         elif not isinstance(start, NumberValue):
             raise TypeInferenceError(dbg, "`arange` arguments must be of type `Integer` or `Float`")
-        elif start.val() is None:
+        elif start.val(builder) is None:
             raise TypeInferenceError(dbg, "`arange` arguments must can be statically inferred")
         else:
-            _start = start.val()
+            _start = start.val(builder)
         if not isinstance(stop, NumberValue):
             raise TypeInferenceError(dbg, "`arange` arguments must be of type `Integer` or `Float`")
-        elif stop.val() is None:
+        elif stop.val(builder) is None:
             raise TypeInferenceError(dbg, "`arange` arguments must can be statically inferred")
         else:
-            _stop = stop.val()
+            _stop = stop.val(builder)
         if isinstance(step, NoneValue):
             _step = 1
         elif not isinstance(step, NumberValue):
             raise TypeInferenceError(dbg, "`arange` arguments must be of type `Integer` or `Float`")
-        elif step.val() is None:
+        elif step.val(builder) is None:
             raise TypeInferenceError(dbg, "`arange` arguments must can be statically inferred")
         else:
-            _step = step.val()
+            _step = step.val(builder)
         inferred_dtype = IntegerType
         if isinstance(start, FloatValue) or isinstance(stop, FloatValue) or isinstance(step, FloatValue):
             inferred_dtype = FloatType
         if not isinstance(dtype, NoneValue):
             if not isinstance(dtype, ClassValue):
                 raise TypeInferenceError(dbg, "`dtype` must be a type")
-            if dtype.val() not in [IntegerType, FloatType]:
-                raise TypeInferenceError(dbg, f"Unexpected dtype got: {dtype.val()}")
-            inferred_dtype = dtype.val()
+            if dtype.val(builder) not in [IntegerType, FloatType]:
+                raise TypeInferenceError(dbg, f"Unexpected dtype got: {dtype.val(builder)}")
+            inferred_dtype = dtype.val(builder)
         elements = []
         current = _start
         while current < _stop:

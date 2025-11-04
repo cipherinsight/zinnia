@@ -60,7 +60,7 @@ class SelectOp(AbstractOp):
         elif isinstance(tv, NoneValue) and isinstance(fv, NoneValue):
             return NoneValue()
         elif isinstance(tv, ClassValue) and isinstance(fv, ClassValue):
-            if cond.val() is None:
+            if cond.val(builder) is None:
                 raise StaticInferenceError(dbg, f'In `{self.get_name()}`, argument `cond` is not statically inferable, which is required for class selection')
-            return tv if cond.val() else fv
+            return tv if cond.val(builder) else fv
         raise TypeInferenceError(dbg, f'In `{self.get_name()}`, unsupported types for `tv` and `fv`: {tv.type()} and {fv.type()}')

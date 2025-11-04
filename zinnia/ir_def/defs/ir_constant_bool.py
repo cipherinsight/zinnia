@@ -27,7 +27,7 @@ class ConstantBoolIR(AbstractIR):
         return bool(self.value)
 
     def build_ir(self, ir_id: int, args: List[Value], dbg: Optional[DebugInfo] = None) -> Tuple[Value, IRStatement]:
-        return BooleanValue(self.value, ir_id, z3e=self.value), IRStatement(ir_id, self, [], dbg)
+        return BooleanValue(self.value, ir_id), IRStatement(ir_id, self, [], dbg)
 
     def export(self) -> Dict:
         return {

@@ -33,7 +33,7 @@ class AssertOp(AbstractOp):
         if not isinstance(condition, IntegerValue):
             raise TypeInferenceError(dbg, f"Internal Error: `condition` should be an integer value")
         if isinstance(operand, IntegerValue):
-            # if operand.val() == 0 and (condition.val() is not None and condition.val() != 0):
+            # if operand.val(builder) == 0 and (condition.val(builder) is not None and condition.val(builder) != 0):
             #     raise StaticInferenceError(dbg, "Assertion is always unsatisfiable")
             return builder.ir_assert(builder.ir_select_i(condition, operand, builder.ir_constant_bool(True)), dbg)
         elif isinstance(operand, NDArrayValue):

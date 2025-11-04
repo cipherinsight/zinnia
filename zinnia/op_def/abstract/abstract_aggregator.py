@@ -48,15 +48,15 @@ class AbstractAggregator(AbstractOp):
             _axis = None
         elif not isinstance(the_axis, IntegerValue):
             raise TypeInferenceError(dbg, "Param `axis` must be of type `Integer`")
-        elif the_axis.val() is None:
+        elif the_axis.val(builder) is None:
             raise StaticInferenceError(dbg, "Cannot statically infer the value of param `axis`")
         else:
-            _axis = the_axis.val()
+            _axis = the_axis.val(builder)
         if _axis is not None:
             if _axis < 0:
                 _axis += len(the_self.shape())
             if _axis < 0 or _axis >= len(the_self.shape()):
-                raise TypeInferenceError(dbg, f"axis `{the_axis.val()}` is out of bounds for array of dimension {len(the_self.shape())}")
+                raise TypeInferenceError(dbg, f"axis `{the_axis.val(builder)}` is out of bounds for array of dimension {len(the_self.shape())}")
         dtype = self.get_result_dtype(dtype)
         result_value = the_self.accumulate(
             _axis,

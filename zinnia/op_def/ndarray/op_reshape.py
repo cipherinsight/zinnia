@@ -36,14 +36,14 @@ class NDArray_ReshapeOp(AbstractOp):
             raise TypeInferenceError(dbg, f"`shape` of `{self.get_name()}` must be a Tuple of Integer")
         num_elements = 1
         for element in the_shape.values():
-            if element.val() is None:
+            if element.val(builder) is None:
                 raise StaticInferenceError(dbg, f"Cannot statically infer the value of the argument `shape`")
-            num_elements *= element.val()
+            num_elements *= element.val(builder)
         num_elements_self = 1
         for element in the_self.shape():
             num_elements_self *= element
         if num_elements != num_elements_self:
             raise TypeInferenceError(dbg, f"Number of elements in `shape` must be equal to the number of elements in the original `NDArray`")
         flattened_values = the_self.get().flatten()
-        new_shape = tuple(x.val() for x in the_shape.values())
+        new_shape = tuple(x.val(builder) for x in the_shape.values())
         return NDArrayValue.from_shape_and_vector(new_shape, the_self.dtype(), flattened_values)

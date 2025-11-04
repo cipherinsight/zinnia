@@ -35,17 +35,17 @@ class NP_OnesOp(AbstractOp):
             if ele_t != IntegerType:
                 raise TypeInferenceError(dbg, "Every element in `shape` Tuple must be of type `Integer`")
             assert isinstance(ele_v, IntegerValue)
-            if ele_v.val() is None:
+            if ele_v.val(builder) is None:
                 raise StaticInferenceError(dbg, "Every number element in `shape` must be statically inferrable")
-            if ele_v.val() <= 0:
+            if ele_v.val(builder) <= 0:
                 raise TypeInferenceError(dbg, "Every number element in `shape` must be greater than 0")
         parsed_dtype = FloatType
         if not isinstance(dtype, NoneValue):
             if isinstance(dtype, ClassValue):
-                parsed_dtype = dtype.val()
+                parsed_dtype = dtype.val(builder)
             else:
                 raise TypeInferenceError(dbg, f"Invalid type for argument `dtype`: {dtype.type()}, it must be a datatype")
-        parsed_shape = tuple(v.val() for v in shape.values())
+        parsed_shape = tuple(v.val(builder) for v in shape.values())
         if parsed_dtype == FloatType:
             return NDArrayValue.fill(parsed_shape, FloatType, lambda: builder.ir_constant_float(1.0))
         elif parsed_dtype == IntegerType:

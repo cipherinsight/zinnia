@@ -31,17 +31,17 @@ class NP_IdentityOp(AbstractOp):
         dtype = kwargs.get("dtype", builder.op_constant_none())
         if not isinstance(n, IntegerValue):
             raise TypeInferenceError(dbg, "Param `n` must be of type `Number`")
-        if n.val() is None:
+        if n.val(builder) is None:
             raise StaticInferenceError(dbg, "Cannot statically infer the value of param `n`")
-        if n.val() <= 0:
+        if n.val(builder) <= 0:
             raise TypeInferenceError(dbg, "Invalid `n` value, n must be greater than 0")
         parsed_dtype = FloatType
         if not isinstance(dtype, NoneValue):
             if isinstance(dtype, ClassValue):
-                parsed_dtype = dtype.val()
+                parsed_dtype = dtype.val(builder)
             else:
                 raise TypeInferenceError(dbg, f"Invalid argument dtype, it must be a datatype")
-        result_shape = (n.val(), n.val())
+        result_shape = (n.val(builder), n.val(builder))
         if parsed_dtype == FloatType:
             ndarray = NDArrayValue.fill(result_shape, FloatType, lambda: builder.ir_constant_float(0.0))
             ndarray = ndarray.for_each(lambda pos, val: builder.ir_constant_float(1.0) if pos[0] == pos[1] else builder.ir_constant_float(0.0))

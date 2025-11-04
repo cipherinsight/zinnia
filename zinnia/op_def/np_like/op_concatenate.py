@@ -52,9 +52,9 @@ class NP_ConcatenateOp(AbstractOp):
         ]
         if not isinstance(axis, NoneValue):
             if isinstance(axis, IntegerValue):
-                if axis.val() is None:
+                if axis.val(builder) is None:
                     raise StaticInferenceError(dbg, f"`axis` value is not statically inferable")
-                axis_value = axis.val() if axis.val() >= 0 else len(sources[0].shape()) + axis.val()
+                axis_value = axis.val(builder) if axis.val(builder) >= 0 else len(sources[0].shape()) + axis.val(builder)
             else:
                 raise TypeInferenceError(dbg, f"Expected `axis` to be an integer, but got {axis.type()}")
         for i, src in enumerate(sources):
@@ -65,7 +65,7 @@ class NP_ConcatenateOp(AbstractOp):
             if not len(lhs_shape) == len(rhs_shape):
                 raise TypeInferenceError(dbg, "Cannot perform concatenate: elements shape number of dimensions mismatch")
             if len(lhs_shape) <= axis_value or axis_value < 0:
-                raise TypeInferenceError(dbg, f"Cannot perform concatenate: `axis` ({axis.val()}) out of bounds for array with {len(lhs_shape)} dimensions")
+                raise TypeInferenceError(dbg, f"Cannot perform concatenate: `axis` ({axis.val(builder)}) out of bounds for array with {len(lhs_shape)} dimensions")
             if not all([a == b or j == axis_value for j, (a, b) in enumerate(zip(lhs_shape, rhs_shape))]):
                 raise TypeInferenceError(dbg, "Cannot perform concatenate: all the input array dimensions except for the concatenation axis must match exactly")
         return NDArrayValue.concatenate(FloatType if expected_float else IntegerType, axis_value, sources)

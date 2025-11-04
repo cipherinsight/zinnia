@@ -45,14 +45,14 @@ class NP_StackOp(AbstractOp):
         if not isinstance(axis, NoneValue):
             if axis.type() != IntegerType:
                 raise TypeInferenceError(dbg, f"Expected `axis` to be an integer, but got {axis.type()}")
-            if axis.val() is None:
+            if axis.val(builder) is None:
                 raise StaticInferenceError(dbg, f"`axis` value is not statically inferable")
-            axis_value = axis.val() if axis.val() >= 0 else len(arrays[0].shape()) + axis.val() + 1
+            axis_value = axis.val(builder) if axis.val(builder) >= 0 else len(arrays[0].shape()) + axis.val(builder) + 1
         for i, arg in enumerate(arrays):
             if not (i == 0 or arg.shape() == arrays[i - 1].shape()):
                 raise TypeInferenceError(dbg, f"Cannot perform stack: all input arrays must have the same shape")
             if axis_value < 0 or axis_value > len(arg.shape()):
-                raise TypeInferenceError(dbg, f"`axis` ({axis.val()}) is out of bounds for array of dimension {len(arg.shape())}")
+                raise TypeInferenceError(dbg, f"`axis` ({axis.val(builder)}) is out of bounds for array of dimension {len(arg.shape())}")
         expected_dtype = BooleanType
         for arg in arrays:
             expected_dtype = IntegerType if arg.dtype() == IntegerType and expected_dtype == BooleanType else expected_dtype

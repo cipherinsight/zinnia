@@ -21,9 +21,9 @@ class LogFIR(AbstractIR):
     def infer(self, args: List[Value], dbg: Optional[DebugInfo] = None) -> Any:
         x = args[0]
         assert isinstance(x, FloatValue)
-        if x.c_val() is not None and x.c_val() <= 0:
-            raise StaticInferenceError(dbg, f"Invalid argument for `log`: argument ({x.c_val()}) inferred to be negative or zero")
-        return math.log(x.c_val()) if x.c_val() is not None else None
+        if x.val() is not None and x.val() <= 0:
+            raise StaticInferenceError(dbg, f"Invalid argument for `log`: argument ({x.val()}) inferred to be negative or zero")
+        return math.log(x.val()) if x.val() is not None else None
 
     def mock_exec(self, args: List[Any], config: MockExecConfig) -> Any:
         return float(math.log(args[0]))

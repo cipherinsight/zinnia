@@ -11,7 +11,7 @@ class AbstractItemSliceOp(AbstractOp):
     def __init__(self):
         super().__init__()
 
-    def check_slicing_params_datatype(self, slicing_params: Value, dbg: Optional[DebugInfo]) -> ListValue:
+    def check_slicing_params_datatype(self, builder: IRBuilderInterface, slicing_params: Value, dbg: Optional[DebugInfo]) -> ListValue:
         if not isinstance(slicing_params, ListValue):
             raise ValueError(f"Internal Error: slicing_params is not a `ListValue`")
         for slicing_param in slicing_params.values():
@@ -23,19 +23,19 @@ class AbstractItemSliceOp(AbstractOp):
                 if not all(isinstance(x, IntegerValue) or isinstance(x, NoneValue) for x in slicing_param.values()):
                     raise ValueError(f"Internal Error: Unexpected tuple elements type")
                 for i in range(3):
-                    if isinstance(slicing_param.values()[i], IntegerValue) and slicing_param.values()[i].val() is None:
+                    if isinstance(slicing_param.values()[i], IntegerValue) and slicing_param.values()[i].val(builder) is None:
                         raise StaticInferenceError(dbg, f"Cannot statically infer the values to slicing parameters at compile time when doing range slicing. This makes the result data type of the slicing operation non-deterministic.")
-                if isinstance(slicing_param.values()[2], IntegerValue) and slicing_param.values()[2].val() == 0:
+                if isinstance(slicing_param.values()[2], IntegerValue) and slicing_param.values()[2].val(builder) == 0:
                     raise StaticInferenceError(dbg, f"Slice step cannot be 0")
         return slicing_params
 
-    def check_single_slicing_number(self, number: IntegerValue, dim: int, dbg: Optional[DebugInfo] = None):
-        if number.val() is not None:
-            actual_number = number.val()
+    def check_single_slicing_number(self, builder: IRBuilderInterface, number: IntegerValue, dim: int, dbg: Optional[DebugInfo] = None):
+        if number.val(builder) is not None:
+            actual_number = number.val(builder)
             if actual_number < 0:
                 actual_number += dim
             if actual_number < 0 or actual_number >= dim:
-                raise StaticInferenceError(dbg, f"Slicing Index out of range, expected {0} <= index < {dim}, but got {number.val()}")
+                raise StaticInferenceError(dbg, f"Slicing Index out of range, expected {0} <= index < {dim}, but got {number.val(builder)}")
 
     def insert_slicing_number_assertion(self, number: IntegerValue, condition: BooleanValue, dim: int, builder: IRBuilderInterface):
         # negative indexing is not fully supported yet

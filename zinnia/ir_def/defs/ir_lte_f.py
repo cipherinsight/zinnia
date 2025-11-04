@@ -18,7 +18,7 @@ class LessThanOrEqualFIR(AbstractIR):
     def infer(self, args: List[Value], dbg: Optional[DebugInfo] = None) -> Any:
         lhs, rhs = args[0], args[1]
         assert isinstance(lhs, FloatValue) and isinstance(rhs, FloatValue)
-        return (True if lhs.c_val() <= rhs.c_val() else False) if lhs.c_val() is not None and rhs.c_val() is not None else None
+        return (True if lhs.val() <= rhs.val() else False) if lhs.val() is not None and rhs.val() is not None else None
 
     def mock_exec(self, args: List[Any], config: MockExecConfig) -> Any:
         return True if (args[0] < args[1] or abs(args[0] - args[1]) < config.float_tolerance()) else False

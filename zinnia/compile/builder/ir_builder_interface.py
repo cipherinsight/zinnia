@@ -437,3 +437,9 @@ class IRBuilderInterface:
 
     def ir_print(self, cond: IntegerValue, x: StringValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
         raise NotImplementedError()
+
+    def smt_solve_constancy(
+        self,
+        expr: NumberValue
+    ) -> Optional[bool | int | float]:
+        raise NotImplementedError()

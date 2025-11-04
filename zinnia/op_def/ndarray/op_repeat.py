@@ -38,9 +38,9 @@ class NDArray_RepeatOp(AbstractOp):
             axis = builder.ir_constant_int(0)
         if not isinstance(axis, IntegerValue):
             raise TypeInferenceError(dbg, f"`axis` must be an integer, but got {axis.type()}")
-        if axis.val() is None:
+        if axis.val(builder) is None:
             raise StaticInferenceError(dbg, f"`axis` must be statically inferrable")
-        axis_val = axis.val() if axis.val() >= 0 else axis.val() + len(the_self.shape())
+        axis_val = axis.val(builder) if axis.val(builder) >= 0 else axis.val(builder) + len(the_self.shape())
         if axis_val < 0 or axis_val >= len(the_self.shape()):
-            raise StaticInferenceError(dbg, f"`axis` {axis.val()} is out of bounds for array of dimension {len(the_self.shape())}")
-        return NDArrayValue.concatenate(the_self.dtype(), axis.val(), [copy.deepcopy(the_self) for _ in range(repeats.val())])
+            raise StaticInferenceError(dbg, f"`axis` {axis.val(builder)} is out of bounds for array of dimension {len(the_self.shape())}")
+        return NDArrayValue.concatenate(the_self.dtype(), axis.val(builder), [copy.deepcopy(the_self) for _ in range(repeats.val(builder))])

@@ -1,7 +1,5 @@
 from typing import List, Dict, Optional, Any, Tuple
 
-from z3 import z3
-
 from zinnia.compile.triplet import Value
 
 from zinnia.compile.ir.ir_stmt import IRStatement
@@ -21,14 +19,14 @@ class LogicalOrIR(AbstractIR):
     def infer(self, args: List[Value], dbg: Optional[DebugInfo] = None) -> Any:
         lhs, rhs = args[0], args[1]
         assert isinstance(lhs, BooleanValue) and isinstance(rhs, BooleanValue)
-        if lhs.c_val() is not None and rhs.c_val() is not None:
-            return True if (lhs.c_val() != False) or (rhs.c_val() != False) else False
-        elif lhs.c_val() is None and rhs.c_val() is None:
+        if lhs.val() is not None and rhs.val() is not None:
+            return True if (lhs.val() != False) or (rhs.val() != False) else False
+        elif lhs.val() is None and rhs.val() is None:
             return None
-        elif lhs.c_val() is None and rhs.c_val() is not None:
-            return None if (rhs.c_val() == False) else True
-        elif lhs.c_val() is not None and rhs.c_val() is None:
-            return None if (lhs.c_val() == False) else True
+        elif lhs.val() is None and rhs.val() is not None:
+            return None if (rhs.val() == False) else True
+        elif lhs.val() is not None and rhs.val() is None:
+            return None if (lhs.val() == False) else True
         raise NotImplementedError()
 
     def mock_exec(self, args: List[Any], config: MockExecConfig) -> Any:

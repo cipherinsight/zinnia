@@ -18,7 +18,7 @@ class EqualIIR(AbstractIR):
     def infer(self, args: List[Value], dbg: Optional[DebugInfo] = None) -> Any:
         lhs, rhs = args[0], args[1]
         assert isinstance(lhs, IntegerValue) and isinstance(rhs, IntegerValue)
-        return (True if lhs.c_val() == rhs.c_val() else False) if lhs.c_val() is not None and rhs.c_val() is not None else None
+        return (True if lhs.val() == rhs.val() else False) if lhs.val() is not None and rhs.val() is not None else None
 
     def mock_exec(self, args: List[Any], config: MockExecConfig) -> Any:
         return True if args[0] == args[1] else False
@@ -28,7 +28,6 @@ class EqualIIR(AbstractIR):
         assert isinstance(lhs, IntegerValue) and isinstance(rhs, IntegerValue)
         return BooleanValue(
             self.infer(args, dbg), ir_id,
-            z3e=lhs.z3_sym==rhs.z3_sym, rel=lhs.z3_rel + rhs.z3_rel
         ), IRStatement(ir_id, self, [lhs.ptr(), rhs.ptr()], dbg)
 
     def export(self) -> Dict:

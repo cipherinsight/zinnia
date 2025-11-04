@@ -55,7 +55,7 @@ class List_IndexOp(AbstractOp):
             ))
             answer = builder.op_select(builder.ir_logical_and(equal, builder.ir_logical_not(found_answer)), builder.ir_constant_int(i), answer, dbg)
             found_answer = builder.op_logical_or(equal, found_answer, dbg)
-        if found_answer.val() is not None and found_answer.val() == 0:
+        if found_answer.val(builder) is not None and found_answer.val(builder) == 0:
             raise StaticInferenceError(dbg, f"Value not found in list")
         # builder.op_assert(found_answer, kwargs.get_condition(), dbg)
         return answer

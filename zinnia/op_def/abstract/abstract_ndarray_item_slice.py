@@ -19,23 +19,23 @@ class AbstractNDArrayItemSlice(AbstractItemSliceOp):
         sp, dim = _sps[0], _shape[0]
         if len(_sps) == 1:
             if isinstance(sp, IntegerValue):
-                if sp.val() is not None:
-                    self.check_single_slicing_number(sp, dim, dbg)
-                    return [[sp.val()]], [builder.ir_constant_bool(True)]
+                if sp.val(builder) is not None:
+                    self.check_single_slicing_number(builder, sp, dim, dbg)
+                    return [[sp.val(builder)]], [builder.ir_constant_bool(True)]
                 self.insert_slicing_number_assertion(sp, condition, dim, builder)
                 return [[i] for i in range(dim)], [builder.ir_equal_i(builder.ir_constant_int(i), sp) for i in range(dim)]
             elif isinstance(sp, TupleValue):
                 start, stop, step = sp.values()
-                start = start.val() if isinstance(start, IntegerValue) else None
-                stop = stop.val() if isinstance(stop, IntegerValue) else None
-                step = step.val() if isinstance(step, IntegerValue) else None
+                start = start.val(builder) if isinstance(start, IntegerValue) else None
+                stop = stop.val(builder) if isinstance(stop, IntegerValue) else None
+                step = step.val(builder) if isinstance(step, IntegerValue) else None
                 return [[(start, stop, step)]], [builder.ir_constant_bool(True)]
             raise NotImplementedError()
         _candidates, _conditions = self.find_all_candidates(builder, _sps[1:], _shape[1:], condition, dbg)
         if isinstance(sp, IntegerValue):
-            if sp.val() is not None:
-                self.check_single_slicing_number(sp, dim, dbg)
-                _candidates = [[sp.val()] + x for x in _candidates]
+            if sp.val(builder) is not None:
+                self.check_single_slicing_number(builder, sp, dim, dbg)
+                _candidates = [[sp.val(builder)] + x for x in _candidates]
                 return _candidates, _conditions
             self.insert_slicing_number_assertion(sp, condition, dim, builder)
             _new_candidates, _new_conditions = [], []
@@ -45,9 +45,9 @@ class AbstractNDArrayItemSlice(AbstractItemSliceOp):
             return _new_candidates, _new_conditions
         elif isinstance(sp, TupleValue):
             start, stop, step = sp.values()
-            start = start.val() if isinstance(start, IntegerValue) else None
-            stop = stop.val() if isinstance(stop, IntegerValue) else None
-            step = step.val() if isinstance(step, IntegerValue) else None
+            start = start.val(builder) if isinstance(start, IntegerValue) else None
+            stop = stop.val(builder) if isinstance(stop, IntegerValue) else None
+            step = step.val(builder) if isinstance(step, IntegerValue) else None
             _candidates = [[(start, stop, step)] + x for x in _candidates]
             return _candidates, _conditions
         raise NotImplementedError()

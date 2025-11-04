@@ -18,12 +18,12 @@ class SelectFIR(AbstractIR):
     def infer(self, args: List[Value], dbg: Optional[DebugInfo] = None) -> Any:
         cond, tv, fv = args[0], args[1], args[2]
         assert isinstance(cond, BooleanValue) and isinstance(tv, FloatValue) and isinstance(fv, FloatValue)
-        if cond.c_val() is None:
+        if cond.val() is None:
             return None
-        elif cond.c_val() != False:
-            return tv.c_val()
+        elif cond.val() != False:
+            return tv.val()
         else:
-            return fv.c_val()
+            return fv.val()
 
     def mock_exec(self, args: List[Any], config: MockExecConfig) -> Any:
         return float(args[1] if args[0] != 0 else args[2])

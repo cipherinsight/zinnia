@@ -41,9 +41,9 @@ class SetItemOp(AbstractItemSliceOp):
             dbg: Optional[DebugInfo] = None
     ) -> Value:
         if isinstance(slicing_param, IntegerValue):
-            if slicing_param.val() is not None:
-                self.check_single_slicing_number(slicing_param, len(the_self.values()), dbg)
-                the_index = slicing_param.val() if slicing_param.val() >= 0 else len(the_self.values()) + slicing_param.val()
+            if slicing_param.val(builder) is not None:
+                self.check_single_slicing_number(builder, slicing_param, len(the_self.values()), dbg)
+                the_index = slicing_param.val(builder) if slicing_param.val(builder) >= 0 else len(the_self.values()) + slicing_param.val(builder)
                 if the_self.type_locked():
                     if ImplicitTypeCastOp.verify_cast_ability(the_value.type(), the_self.types()[the_index]):
                         processed_value = builder.op_implicit_type_cast(the_value, the_self.types()[the_index], dbg)
@@ -80,9 +80,9 @@ class SetItemOp(AbstractItemSliceOp):
             return the_value
         elif isinstance(slicing_param, TupleValue):
             [start, stop, step] = slicing_param.values()
-            start = start.val() if isinstance(start, IntegerValue) else None
-            stop = stop.val() if isinstance(stop, IntegerValue) else None
-            step = step.val() if isinstance(step, IntegerValue) else None
+            start = start.val(builder) if isinstance(start, IntegerValue) else None
+            stop = stop.val(builder) if isinstance(stop, IntegerValue) else None
+            step = step.val(builder) if isinstance(step, IntegerValue) else None
             converted_value = builder.op_list_cast(the_value)
             if step is None or step == 1:
                 the_self.assign(ListValue(
@@ -104,7 +104,7 @@ class SetItemOp(AbstractItemSliceOp):
     def build(self, builder: IRBuilderInterface, kwargs: OpArgsContainer, dbg: Optional[DebugInfo] = None) -> Value:
         the_self = kwargs['self']
         the_value = kwargs['value']
-        slicing_params = self.check_slicing_params_datatype(kwargs['slicing_params'], dbg)
+        slicing_params = self.check_slicing_params_datatype(builder, kwargs['slicing_params'], dbg)
         if isinstance(the_self, ListValue):
             if len(slicing_params.values()) != 1:
                 raise StaticInferenceError(dbg, f"List set_item should have exactly one slicing parameter")

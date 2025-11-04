@@ -31,7 +31,7 @@ class IntCastOp(AbstractOp):
         if isinstance(x, IntegerValue):
             return copy.copy(x)
         if isinstance(x, BooleanValue):
-            return IntegerValue(x.val(), x.ptr())
+            return IntegerValue(x.val(builder), x.ptr())
         elif isinstance(x, FloatValue):
             return builder.ir_int_cast(x)
         elif isinstance(x, NDArrayValue):

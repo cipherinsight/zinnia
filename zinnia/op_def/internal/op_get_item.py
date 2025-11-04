@@ -32,9 +32,9 @@ class GetItemOp(AbstractItemSliceOp):
 
     def _build_tuple_list_slicing(self, builder: IRBuilderInterface, the_self: TupleValue | ListValue, slicing_param: TupleValue | IntegerValue, condition: BooleanValue, dbg: Optional[DebugInfo] = None) -> Value:
         if isinstance(slicing_param, IntegerValue):
-            if slicing_param.val() is not None:
-                self.check_single_slicing_number(slicing_param, len(the_self.values()), dbg)
-                return the_self.values()[slicing_param.val()]
+            if slicing_param.val(builder) is not None:
+                self.check_single_slicing_number(builder, slicing_param, len(the_self.values()), dbg)
+                return the_self.values()[slicing_param.val(builder)]
             all_datatype_equal = all(x == the_self.types()[0] for x in the_self.types()[1:])
             if not all_datatype_equal:
                 raise StaticInferenceError(dbg, f"{the_self.type()} Slicing: all elements in the {the_self.type()} should have the same data type, otherwise the result data type is non-deterministic")
@@ -45,9 +45,9 @@ class GetItemOp(AbstractItemSliceOp):
             return result
         elif isinstance(slicing_param, TupleValue):
             [start, stop, step] = slicing_param.values()
-            start = start.val() if isinstance(start, IntegerValue) else None
-            stop = stop.val() if isinstance(stop, IntegerValue) else None
-            step = step.val() if isinstance(step, IntegerValue) else None
+            start = start.val(builder) if isinstance(start, IntegerValue) else None
+            stop = stop.val(builder) if isinstance(stop, IntegerValue) else None
+            step = step.val(builder) if isinstance(step, IntegerValue) else None
             if isinstance(the_self, TupleValue):
                 return TupleValue(the_self.types()[start:stop:step], the_self.values()[start:stop:step])
             elif isinstance(the_self, ListValue):
@@ -56,7 +56,7 @@ class GetItemOp(AbstractItemSliceOp):
 
     def build(self, builder: IRBuilderInterface, kwargs: OpArgsContainer, dbg: Optional[DebugInfo] = None) -> Value:
         the_self = kwargs['self']
-        slicing_params = self.check_slicing_params_datatype(kwargs['slicing_params'], dbg)
+        slicing_params = self.check_slicing_params_datatype(builder, kwargs['slicing_params'], dbg)
         if isinstance(the_self, TupleValue):
             if len(slicing_params.values()) != 1:
                 raise StaticInferenceError(dbg, f"Tuple slicing should have exactly one slicing parameter")

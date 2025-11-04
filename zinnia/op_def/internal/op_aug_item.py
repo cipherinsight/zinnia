@@ -64,7 +64,7 @@ class AugItemOp(SetItemOp):
     def build(self, builder: IRBuilderInterface, kwargs: OpArgsContainer, dbg: Optional[DebugInfo] = None) -> Value:
         the_self = kwargs['self']
         the_value = kwargs['value']
-        slicing_params = self.check_slicing_params_datatype(kwargs['slicing_params'], dbg)
+        slicing_params = self.check_slicing_params_datatype(builder, kwargs['slicing_params'], dbg)
         if isinstance(the_self, ListValue):
             if len(slicing_params.values()) != 1:
                 raise StaticInferenceError(dbg, f"List set_item should have exactly one slicing parameter")

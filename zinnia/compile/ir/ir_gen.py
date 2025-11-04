@@ -108,7 +108,7 @@ class IRGenerator:
             self._ir_ctx.loop_reiter()
             for _, stmt in enumerate(n.block):
                 break_condition = self._ir_ctx.get_break_condition_value()
-                if break_condition.val() is not None and break_condition.val() == 0:
+                if break_condition.val(self._ir_builder) is not None and break_condition.val(self._ir_builder) == 0:
                     loop_terminated = True
                     break
                 if self._ir_ctx.check_return_guaranteed():
@@ -123,12 +123,12 @@ class IRGenerator:
                 break
         break_condition = self._ir_ctx.get_break_condition_value()
         self._ir_ctx.loop_leave()
-        if break_condition.val() is None or break_condition.val() != 0:
+        if break_condition.val(self._ir_builder) is None or break_condition.val(self._ir_builder) != 0:
             self._ir_ctx.if_enter(break_condition)
             for _, stmt in enumerate(n.orelse):
                 self.visit(stmt)
             orelse_scope = self._ir_ctx.if_leave()
-            if break_condition.val() is not None and break_condition.val() != 0 and orelse_scope.is_return_guaranteed():
+            if break_condition.val(self._ir_builder) is not None and break_condition.val(self._ir_builder) != 0 and orelse_scope.is_return_guaranteed():
                 self._ir_ctx.set_return_guarantee()
         if loop_body_return_guaranteed:
             self._ir_ctx.set_return_guarantee()
@@ -146,20 +146,20 @@ class IRGenerator:
             test_expr = self._ir_builder.op_bool_cast(self.visit(n.test_expr), dbg=n.dbg)
             loop_quota -= 1
             if loop_quota <= 0:
-                if test_expr.val() is None:
+                if test_expr.val(self._ir_builder) is None:
                     warnings.warn(LoopLimitReachedWarning(n.dbg, self._config.loop_limit()))
                     self._ir_builder.op_assert(self._ir_builder.ir_constant_bool(False), test_expr, dbg=n.dbg)
                     break
                 else:
                     raise LoopLimitExceedError(n.dbg, "Loop limit exceeded on while. Please check for infinite loops, or increase the loop limit.")
-            elif test_expr.val() == 0:
+            elif test_expr.val(self._ir_builder) == 0:
                 break
-            if test_expr.val() is None:
+            if test_expr.val(self._ir_builder) is None:
                 self._ir_ctx.loop_break(self._ir_builder.ir_logical_not(test_expr))
             for _, stmt in enumerate(n.block):
                 self.visit(stmt)
                 break_condition = self._ir_ctx.get_break_condition_value()
-                if break_condition.val() is not None and break_condition.val() == 0:
+                if break_condition.val(self._ir_builder) is not None and break_condition.val(self._ir_builder) == 0:
                     loop_terminated = True
                     break
                 if self._ir_ctx.check_return_guaranteed():
@@ -173,12 +173,12 @@ class IRGenerator:
                 break
         break_condition = self._ir_ctx.get_break_condition_value()
         self._ir_ctx.loop_leave()
-        if break_condition.val() is None or break_condition.val() != 0:
+        if break_condition.val(self._ir_builder) is None or break_condition.val(self._ir_builder) != 0:
             self._ir_ctx.if_enter(break_condition)
             for _, stmt in enumerate(n.orelse):
                 self.visit(stmt)
             orelse_scope = self._ir_ctx.if_leave()
-            if break_condition.val() is not None and break_condition.val() != 0 and orelse_scope.is_return_guaranteed():
+            if break_condition.val(self._ir_builder) is not None and break_condition.val(self._ir_builder) != 0 and orelse_scope.is_return_guaranteed():
                 self._ir_ctx.set_return_guarantee()
         if loop_body_has_return:
             self._ir_ctx.set_return_guarantee()
@@ -208,30 +208,30 @@ class IRGenerator:
         true_cond_ptr = self._ir_builder.op_bool_cast(cond_ptr, dbg=n.dbg)
         false_cond_ptr = self._ir_builder.ir_logical_not(true_cond_ptr, dbg=n.dbg)
         scope_true = None
-        if true_cond_ptr.val() is None or true_cond_ptr.val() != 0:
+        if true_cond_ptr.val(self._ir_builder) is None or true_cond_ptr.val(self._ir_builder) != 0:
             self._ir_ctx.if_enter(true_cond_ptr)
             for _, stmt in enumerate(n.t_block):
                 self.visit(stmt)
             scope_true = self._ir_ctx.if_leave()
         scope_false = None
-        if false_cond_ptr.val() is None or false_cond_ptr.val() != 0:
+        if false_cond_ptr.val(self._ir_builder) is None or false_cond_ptr.val(self._ir_builder) != 0:
             self._ir_ctx.if_enter(false_cond_ptr)
             for _, stmt in enumerate(n.f_block):
                 self.visit(stmt)
             scope_false = self._ir_ctx.if_leave()
         # update return guarantee
-        if scope_true is not None and true_cond_ptr.val() is not None and true_cond_ptr.val() != 0 and scope_true.is_return_guaranteed():
+        if scope_true is not None and true_cond_ptr.val(self._ir_builder) is not None and true_cond_ptr.val(self._ir_builder) != 0 and scope_true.is_return_guaranteed():
             self._ir_ctx.set_return_guarantee()
-        elif scope_false is not None and false_cond_ptr.val() is not None and false_cond_ptr.val() != 0 and scope_false.is_return_guaranteed():
+        elif scope_false is not None and false_cond_ptr.val(self._ir_builder) is not None and false_cond_ptr.val(self._ir_builder) != 0 and scope_false.is_return_guaranteed():
             self._ir_ctx.set_return_guarantee()
         elif scope_true is not None and scope_false is not None and scope_true.is_return_guaranteed() and scope_false.is_return_guaranteed():
             self._ir_ctx.set_return_guarantee()
         # update terminated guarantee
-        if scope_true is not None and true_cond_ptr.val() is not None and true_cond_ptr.val() != 0:
+        if scope_true is not None and true_cond_ptr.val(self._ir_builder) is not None and true_cond_ptr.val(self._ir_builder) != 0:
             if scope_true.is_terminated_guaranteed() or scope_true.is_return_guaranteed():
                 if self._ir_ctx.is_in_loop():
                     self._ir_ctx.set_terminated_guarantee()
-        elif scope_false is not None and false_cond_ptr.val() is not None and false_cond_ptr.val() != 0 and scope_false.is_terminated_guaranteed():
+        elif scope_false is not None and false_cond_ptr.val(self._ir_builder) is not None and false_cond_ptr.val(self._ir_builder) != 0 and scope_false.is_terminated_guaranteed():
             if scope_false.is_terminated_guaranteed() or scope_false.is_return_guaranteed():
                 if self._ir_ctx.is_in_loop():
                     self._ir_ctx.set_terminated_guarantee()
@@ -436,9 +436,9 @@ class IRGenerator:
                 cond = self._ir_builder.ir_constant_bool(True)
                 for _if in gen.ifs:
                     cond = self._ir_builder.ir_logical_and(cond, self._ir_builder.op_bool_cast(self.visit(_if)))
-                if cond.val() is None:
+                if cond.val(self._ir_builder) is None:
                     raise StaticInferenceError(n.dbg, "Cannot statically infer the condition value in the generator expression. This is crucial to determine the datatype of the generated expression.")
-                if not cond.val():
+                if not cond.val(self._ir_builder):
                     continue
                 if len(generators) == 1:
                     generated_expressions.append(self.visit(n.elt))

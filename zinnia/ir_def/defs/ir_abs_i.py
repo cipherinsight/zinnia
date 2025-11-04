@@ -1,7 +1,5 @@
 from typing import List, Dict, Optional, Any, Tuple
 
-from z3 import z3
-
 from zinnia.compile.triplet import Value, IntegerValue
 from zinnia.compile.ir.ir_stmt import IRStatement
 from zinnia.config.mock_exec_config import MockExecConfig
@@ -19,7 +17,7 @@ class AbsIIR(AbstractIR):
     def infer(self, args: List[Value], dbg: Optional[DebugInfo] = None) -> Any:
         x = args[0]
         assert isinstance(x, IntegerValue)
-        return abs(x.c_val()) if x.c_val() is not None else None
+        return abs(x.val()) if x.val() is not None else None
 
     def mock_exec(self, args: List[Any], config: MockExecConfig) -> Any:
         return int(abs(args[0]))
@@ -29,7 +27,6 @@ class AbsIIR(AbstractIR):
         assert isinstance(x, IntegerValue)
         return IntegerValue(
             self.infer(args, dbg), ir_id,
-            z3e=z3.Abs(x.z3_sym), rel=x.z3_rel
         ), IRStatement(ir_id, self, [x.ptr()], dbg)
 
     def export(self) -> Dict:

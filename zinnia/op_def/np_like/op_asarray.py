@@ -48,13 +48,13 @@ class NP_AsarrayOp(AbstractOp):
         if not isinstance(the_dtype, NoneValue):
             if not isinstance(the_dtype, ClassValue):
                 raise TypeInferenceError(dbg, f"Expected dtype to be a type, got {the_dtype.type()}")
-            if the_dtype.val() == IntegerType:
+            if the_dtype.val(builder) == IntegerType:
                 internal_ndarray = internal_ndarray.unary(lambda u: builder.op_int_cast(u))
-            elif the_dtype.val() == FloatType:
+            elif the_dtype.val(builder) == FloatType:
                 internal_ndarray = internal_ndarray.unary(lambda u: builder.op_float_cast(u))
             else:
-                raise TypeInferenceError(dbg, f"Expected dtype to be int or float, got {the_dtype.val()}")
-            return NDArrayValue(the_shape, the_dtype.val(), internal_ndarray)
+                raise TypeInferenceError(dbg, f"Expected dtype to be int or float, got {the_dtype.val(builder)}")
+            return NDArrayValue(the_shape, the_dtype.val(builder), internal_ndarray)
         inferred_dtype = IntegerType
         for v in internal_ndarray.flatten():
             if isinstance(v, IntegerValue):

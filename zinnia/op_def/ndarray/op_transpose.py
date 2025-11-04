@@ -37,9 +37,9 @@ class NDArray_TransposeOp(AbstractOp):
             for ele_type, ele_val in zip(axes.types(), axes.values()):
                 if ele_type != IntegerType:
                     raise StaticInferenceError(dbg, f"Each element in `axes` should be an integer")
-                if ele_val.val() is None:
+                if ele_val.val(builder) is None:
                     raise StaticInferenceError(dbg, f"Each element in `axes` should be able to be statically inferrable")
-            axes_vals = tuple(x.val() for x in axes.values())
+            axes_vals = tuple(x.val(builder) for x in axes.values())
         else:
             raise TypeInferenceError(dbg, f"`axes` should be a tuple or list of integers")
         axes_vals = tuple((ax + len(the_self.shape()) if ax < 0 else ax) for ax in axes_vals)

@@ -42,9 +42,9 @@ class NP_SizeOp(AbstractOp):
             return builder.ir_constant_int(number_elements)
         if not isinstance(the_axis, IntegerValue):
             raise TypeInferenceError(dbg, f"Expected `axis` to be an integer, got {the_axis.type()}")
-        if the_axis.val() is None:
+        if the_axis.val(builder) is None:
             raise StaticInferenceError(dbg, f"Cannot statically infer the value to `axis`")
-        axis_val = the_axis.val() if the_axis.val() >= 0 else len(the_self.shape()) + the_axis.val()
+        axis_val = the_axis.val(builder) if the_axis.val(builder) >= 0 else len(the_self.shape()) + the_axis.val(builder)
         if axis_val < 0 or axis_val >= len(the_self.shape()):
-            raise StaticInferenceError(dbg, f"`axis` {the_axis.val()} is out of bounds for array of dimension {len(the_self.shape())}")
+            raise StaticInferenceError(dbg, f"`axis` {the_axis.val(builder)} is out of bounds for array of dimension {len(the_self.shape())}")
         return builder.ir_constant_int(the_self.shape()[axis_val])

@@ -33,12 +33,12 @@ class NDArray_AsTypeOp(AbstractOp):
         assert isinstance(the_self, NDArrayValue)
         if not isinstance(the_dtype, ClassValue):
             raise TypeInferenceError(dbg, f"`dtype` expected a class value, got {the_dtype.type()}")
-        if the_dtype.val() == IntegerType:
+        if the_dtype.val(builder) == IntegerType:
             if the_self.dtype() == IntegerType:
                 return copy.deepcopy(the_self)
             return the_self.unary(IntegerType, lambda x: builder.ir_int_cast(x, dbg))
-        elif the_dtype.val() == FloatType:
+        elif the_dtype.val(builder) == FloatType:
             if the_self.dtype() == FloatType:
                 return copy.deepcopy(the_self)
             return the_self.unary(FloatType, lambda x: builder.ir_float_cast(x, dbg))
-        raise TypeInferenceError(dbg, f"Unsupported dtype got: {the_dtype.val()}")
+        raise TypeInferenceError(dbg, f"Unsupported dtype got: {the_dtype.val(builder)}")

@@ -31,7 +31,7 @@ class NDArray_GetItemOp(AbstractNDArrayItemSlice):
 
     def build(self, builder: IRBuilderInterface, kwargs: OpArgsContainer, dbg: Optional[DebugInfo] = None) -> Value:
         the_self = kwargs['self']
-        slicing_params = self.check_slicing_params_datatype(kwargs['slicing_params'], dbg)
+        slicing_params = self.check_slicing_params_datatype(builder, kwargs['slicing_params'], dbg)
         assert isinstance(the_self, NDArrayValue)
         self.check_slicing_dimensions(slicing_params.values(), the_self.shape(), dbg)
         candidates, conditions = self.find_all_candidates(builder, slicing_params.values(), the_self.shape(), kwargs.get_condition(), dbg)

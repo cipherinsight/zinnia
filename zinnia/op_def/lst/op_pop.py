@@ -37,7 +37,7 @@ class List_PopOp(AbstractOp):
             raise TypeInferenceError(dbg, f"Expected an integer index for `{self.get_name()}`, got {index.type()}")
         if the_self.type_locked():
             raise TypeInferenceError(dbg, f"Cannot perform pop, as it modifies the datatype on the list which is defined at parent scope.")
-        if index.val() is None:
+        if index.val(builder) is None:
             if not all(t == the_self.types()[0] for t in the_self.types()):
                 raise TypeInferenceError(dbg, f"`index` is not statically inferrable here. In this case, all sub-elements of the list should have the same type.")
             parsed_index = builder.op_select(
@@ -58,7 +58,7 @@ class List_PopOp(AbstractOp):
                 )
             the_self.assign(result)
             return NoneValue()
-        parsed_index = index.val() if index.val() >= 0 else len(the_self.values()) + index.val()
+        parsed_index = index.val(builder) if index.val(builder) >= 0 else len(the_self.values()) + index.val(builder)
         if parsed_index < 0 or parsed_index >= len(the_self.values()):
             raise TypeInferenceError(dbg, f"pop index out of range")
         new_list = ListValue(

@@ -44,24 +44,24 @@ class RangeOp(AbstractOp):
             _start = 0
         elif not isinstance(start, IntegerValue):
             raise TypeInferenceError(dbg, "`range` arguments must be of type `Integer`")
-        elif start.val() is None:
+        elif start.val(builder) is None:
             raise TypeInferenceError(dbg, "`range` arguments must can be statically inferred")
         else:
-            _start = start.val()
+            _start = start.val(builder)
         if not isinstance(stop, IntegerValue):
             raise TypeInferenceError(dbg, "`range` arguments must be of type `Integer`")
-        elif stop.val() is None:
+        elif stop.val(builder) is None:
             raise TypeInferenceError(dbg, "`range` arguments must can be statically inferred")
         else:
-            _stop = stop.val()
+            _stop = stop.val(builder)
         if isinstance(step, NoneValue):
             _step = 1
         elif not isinstance(step, IntegerValue):
             raise TypeInferenceError(dbg, "`range` arguments must be of type `Integer`")
-        elif step.val() is None:
+        elif step.val(builder) is None:
             raise TypeInferenceError(dbg, "`range` arguments must can be statically inferred")
         else:
-            _step = step.val()
+            _step = step.val(builder)
         values = list(range(_start, _stop, _step))
         values = [builder.ir_constant_int(v) for v in values]
         return ListValue([IntegerType for _ in values], values)

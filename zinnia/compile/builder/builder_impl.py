@@ -1,7 +1,11 @@
+import time
 from typing import List, Dict, Optional, Tuple
+
+from z3 import z3
 
 from zinnia.compile.builder.ir_builder import IRBuilder
 from zinnia.compile.builder.op_args_container import OpArgsContainer
+from zinnia.compile.ir.ir_stmt import IRStatement
 from zinnia.compile.triplet import Value, ClassValue, TupleValue, ListValue, NoneValue, NDArrayValue, IntegerValue, \
     FloatValue, StringValue, NumberValue
 from zinnia.compile.triplet.value.boolean import BooleanValue
@@ -138,9 +142,60 @@ from zinnia.op_def.arithmetic.op_uadd import UAddOp
 from zinnia.op_def.arithmetic.op_usub import USubOp
 
 
+class SMTUtils:
+    ACCUMULATED_TIME = 0
+    ENABLE_RESOLVE = True
+
+    @staticmethod
+    def _is_value(e):
+        return (
+            z3.is_int_value(e)
+            or z3.is_rational_value(e)
+            or z3.is_algebraic_value(e)
+            or z3.is_true(e)
+            or z3.is_false(e)
+        )
+
+    @staticmethod
+    def _to_python_value(e):
+        if z3.is_bool(e):
+            return bool(e)
+        if z3.is_int_value(e):
+            return int(e.as_long())
+        if z3.is_rational_value(e):
+            return float(e.as_fraction())
+        if z3.is_algebraic_value(e):
+            return float(e.approx(10))
+        return None
+
+    @staticmethod
+    def resolve_expr(expr, constraints, timeout_ms):
+        try:
+            s = z3.Solver()
+            s.set(timeout=timeout_ms)
+
+            # Base constraints
+            s.add(constraints)
+            res = s.check()
+
+            if res == z3.sat:
+                m = s.model()
+                v = m.eval(expr, model_completion=True)
+                s.add(expr != v)
+                res = s.check()
+                if res == z3.unsat:
+                    return SMTUtils._to_python_value(v)
+            return None
+        except Exception as e:
+            pass
+        return None
+
+
+
 class IRBuilderImpl(IRBuilder):
     def __init__(self) -> None:
         super().__init__()
+        self.smt_solve_cache = dict()
 
     def create_op(self, operator: AbstractOp, statement_condition: BooleanValue | None, args: List[Value], kwargs: Dict[str, Value], dbg: Optional[DebugInfo] = None) -> Value:
         kwargs = operator.argparse(dbg, args, kwargs)
@@ -1043,3 +1098,113 @@ class IRBuilderImpl(IRBuilder):
         val, stmt = ir.build_ir(len(self.stmts), [cond, x], dbg)
         self.stmts.append(stmt)
         return NoneValue()
+
+    def smt_solve_constancy(
+        self,
+        expr: NumberValue
+    ) -> Optional[bool | int | float]:
+        if not SMTUtils.ENABLE_RESOLVE:
+            return None
+        if expr.ptr() in self.smt_solve_cache.keys():
+            return self.smt_solve_cache[expr.ptr()]
+        constraints = self._build_smt_constraints_for(expr.ptr())
+        if len(constraints) == 0:
+            return None  # no need to solve
+        if len(constraints) > 256:
+            # early reject requests that are too complex
+            return None
+        timeout = 1000
+        start_time = time.time()
+        if isinstance(expr, BooleanValue):
+            result = SMTUtils.resolve_expr(z3.Bool(f"bool_{expr.ptr()}"), constraints, timeout)
+        elif isinstance(expr, IntegerValue):
+            result = SMTUtils.resolve_expr(z3.Int(f"int_{expr.ptr()}"), constraints, timeout)
+        elif isinstance(expr, FloatValue):
+            result = SMTUtils.resolve_expr(z3.Real(f"real_{expr.ptr()}"), constraints, timeout)
+        else:
+            return None
+        SMTUtils.ACCUMULATED_TIME += min(float(timeout), (time.time() - start_time) / 1000)
+        if result is not None:
+            self.smt_solve_cache[expr.ptr()] = result
+        return result
+
+    def _build_smt_constraints_for(self, ptr: int) -> list:
+        constraints = []
+        visited_ptrs = set()
+        to_be_visited = set()
+        to_be_visited.add(ptr)
+
+        while len(to_be_visited) > 0:
+            current_ptr = to_be_visited.pop()
+            if current_ptr in visited_ptrs:
+                continue
+            visited_ptrs.add(current_ptr)
+            stmt = self.stmts[current_ptr]
+            assert isinstance(stmt, IRStatement)
+            if stmt.stmt_id in self.smt_solve_cache.keys():
+                val = self.smt_solve_cache[stmt.stmt_id]
+                if isinstance(val, bool):
+                    constraints.append(z3.Bool(f"bool_{stmt.stmt_id}") == val)
+                elif isinstance(val, int):
+                    constraints.append(z3.Int(f"int_{stmt.stmt_id}") == val)
+                elif isinstance(val, float):
+                    constraints.append(z3.Real(f"real_{stmt.stmt_id}") == val)
+                continue
+            for operand in stmt.arguments:
+                to_be_visited.add(operand)
+            if isinstance(stmt.ir_instance, AssertIR):
+                constraints.append(z3.Bool(f"bool_{stmt.stmt_id}") == True)
+            elif isinstance(stmt.ir_instance, AddIIR):
+                constraints.append(z3.Int(f"int_{stmt.stmt_id}") == z3.Int(f"int_{stmt.arguments[0]}") + z3.Int(f"int_{stmt.arguments[1]}"))
+            elif isinstance(stmt.ir_instance, SubIIR):
+                constraints.append(z3.Int(f"int_{stmt.stmt_id}") == z3.Int(f"int_{stmt.arguments[0]}") - z3.Int(f"int_{stmt.arguments[1]}"))
+            elif isinstance(stmt.ir_instance, MulIIR):
+                constraints.append(z3.Int(f"int_{stmt.stmt_id}") == z3.Int(f"int_{stmt.arguments[0]}") * z3.Int(f"int_{stmt.arguments[1]}"))
+            elif isinstance(stmt.ir_instance, DivIIR):
+                constraints.append(z3.Int(f"int_{stmt.stmt_id}") == z3.Int(f"int_{stmt.arguments[0]}") / z3.Int(f"int_{stmt.arguments[1]}"))
+            elif isinstance(stmt.ir_instance, FloorDivIIR):
+                constraints.append(z3.Int(f"int_{stmt.stmt_id}") == z3.Int(f"int_{stmt.arguments[0]}") / z3.Int(f"int_{stmt.arguments[1]}"))
+            elif isinstance(stmt.ir_instance, PowIIR):
+                constraints.append(z3.Int(f"int_{stmt.stmt_id}") == z3.Int(f"int_{stmt.arguments[0]}") ** z3.Int(f"int_{stmt.arguments[1]}"))
+            elif isinstance(stmt.ir_instance, ModIIR):
+                constraints.append(z3.Int(f"int_{stmt.stmt_id}") == z3.Int(f"int_{stmt.arguments[0]}") % z3.Int(f"int_{stmt.arguments[1]}"))
+            elif isinstance(stmt.ir_instance, InvIIR):
+                constraints.append(z3.Int(f"int_{stmt.stmt_id}") * z3.Int(f"int_{stmt.arguments[0]}") == 1)
+            elif isinstance(stmt.ir_instance, BoolCastIR):
+                constraints.append(z3.Bool(f"bool_{stmt.stmt_id}") == z3.If(z3.Int(f"int_{stmt.arguments[0]}") != 0, True, False))
+            elif isinstance(stmt.ir_instance, NotEqualIIR):
+                constraints.append(z3.Bool(f"bool_{stmt.stmt_id}") == (z3.Int(f"int_{stmt.arguments[0]}") != z3.Int(f"int_{stmt.arguments[1]}")))
+            elif isinstance(stmt.ir_instance, EqualIIR):
+                constraints.append(z3.Bool(f"bool_{stmt.stmt_id}") == (z3.Int(f"int_{stmt.arguments[0]}") == z3.Int(f"int_{stmt.arguments[1]}")))
+            elif isinstance(stmt.ir_instance, LessThanIIR):
+                constraints.append(z3.Bool(f"bool_{stmt.stmt_id}") == (z3.Int(f"int_{stmt.arguments[0]}") < z3.Int(f"int_{stmt.arguments[1]}")))
+            elif isinstance(stmt.ir_instance, LessThanOrEqualIIR):
+                constraints.append(z3.Bool(f"bool_{stmt.stmt_id}") == (z3.Int(f"int_{stmt.arguments[0]}") <= z3.Int(f"int_{stmt.arguments[1]}")))
+            elif isinstance(stmt.ir_instance, GreaterThanIIR):
+                constraints.append(z3.Bool(f"bool_{stmt.stmt_id}") == (z3.Int(f"int_{stmt.arguments[0]}") > z3.Int(f"int_{stmt.arguments[1]}")))
+            elif isinstance(stmt.ir_instance, GreaterThanOrEqualIIR):
+                constraints.append(z3.Bool(f"bool_{stmt.stmt_id}") == (z3.Int(f"int_{stmt.arguments[0]}") >= z3.Int(f"int_{stmt.arguments[1]}")))
+            elif isinstance(stmt.ir_instance, LogicalOrIR):
+                constraints.append(z3.Bool(f"bool_{stmt.stmt_id}") == z3.Or(z3.Bool(f"bool_{stmt.arguments[0]}"), z3.Bool(f"bool_{stmt.arguments[1]}")))
+            elif isinstance(stmt.ir_instance, LogicalAndIR):
+                constraints.append(z3.Bool(f"bool_{stmt.stmt_id}") == z3.And(z3.Bool(f"bool_{stmt.arguments[0]}"), z3.Bool(f"bool_{stmt.arguments[1]}")))
+            elif isinstance(stmt.ir_instance, LogicalNotIR):
+                constraints.append(z3.Bool(f"bool_{stmt.stmt_id}") == z3.Not(z3.Bool(f"bool_{stmt.arguments[0]}")))
+            elif isinstance(stmt.ir_instance, SelectIIR):
+                constraints.append(z3.Int(f"int_{stmt.stmt_id}") == z3.If(z3.Bool(f"bool_{stmt.arguments[0]}"), z3.Int(f"int_{stmt.arguments[1]}"), z3.Int(f"int_{stmt.arguments[2]}")))
+            elif isinstance(stmt.ir_instance, SelectBIR):
+                constraints.append(z3.Int(f"bool_{stmt.stmt_id}") == z3.If(z3.Bool(f"bool_{stmt.arguments[0]}"), z3.Bool(f"bool_{stmt.arguments[1]}"), z3.Bool(f"bool_{stmt.arguments[2]}")))
+            elif isinstance(stmt.ir_instance, SignIIR):
+                constraints.append(z3.Int(f"int_{stmt.stmt_id}") == z3.If(z3.Int(f"int_{stmt.arguments[0]}") > 0, 1, z3.If(z3.Int(f"int_{stmt.arguments[0]}") < 0, -1, 0)))
+            elif isinstance(stmt.ir_instance, ReadIntegerIR):
+                pass
+            elif isinstance(stmt.ir_instance, ConstantIntIR):
+                constraints.append(z3.Int(f"int_{stmt.stmt_id}") == stmt.ir_instance.value)
+            elif isinstance(stmt.ir_instance, ConstantBoolIR):
+                constraints.append(z3.Bool(f"bool_{stmt.stmt_id}") == bool(stmt.ir_instance.value))
+            else:
+                import warnings
+                warnings.warn(f"encountered an IR: {type(stmt.ir_instance)}")
+                # unsupported IR (float numbers), fall back to no constraints
+                return []
+        return constraints
