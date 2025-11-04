@@ -1110,10 +1110,10 @@ class IRBuilderImpl(IRBuilder):
         constraints = self._build_smt_constraints_for(expr.ptr())
         if len(constraints) == 0:
             return None  # no need to solve
-        if len(constraints) > 256:
+        # if len(constraints) > 256:
             # early reject requests that are too complex
-            return None
-        timeout = 1000
+            # return None
+        timeout = 500
         start_time = time.time()
         if isinstance(expr, BooleanValue):
             result = SMTUtils.resolve_expr(z3.Bool(f"bool_{expr.ptr()}"), constraints, timeout)
@@ -1123,7 +1123,7 @@ class IRBuilderImpl(IRBuilder):
             result = SMTUtils.resolve_expr(z3.Real(f"real_{expr.ptr()}"), constraints, timeout)
         else:
             return None
-        SMTUtils.ACCUMULATED_TIME += (time.time() - start_time) / 1000
+        SMTUtils.ACCUMULATED_TIME += (time.time() - start_time) * 1000
         if result is not None:
             self.smt_solve_cache[expr.ptr()] = result
         return result
@@ -1203,8 +1203,6 @@ class IRBuilderImpl(IRBuilder):
             elif isinstance(stmt.ir_instance, ConstantBoolIR):
                 constraints.append(z3.Bool(f"bool_{stmt.stmt_id}") == bool(stmt.ir_instance.value))
             else:
-                import warnings
-                warnings.warn(f"encountered an IR: {type(stmt.ir_instance)}")
                 # unsupported IR (float numbers), fall back to no constraints
                 return []
         return constraints
