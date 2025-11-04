@@ -96,7 +96,7 @@ LEETCODE_GRAPH = [
     "p997"
 ]
 LEETCODE_MATH = [
-    "p492",
+    # "p492",
     "p2125"
 ]
 LEETCODE_MATRIX = [
@@ -104,7 +104,7 @@ LEETCODE_MATRIX = [
     "p2133"
 ]
 DS1000 = ['case295', 'case296', 'case297', 'case299', 'case301', 'case302', 'case303', 'case304', 'case309', 'case310',
-          'case313', 'case318', 'case319', 'case322', 'case329', 'case335', 'case336', 'case337', 'case338', 'case339',
+          'case313', 'case318', 'case319', 'case322', 'case335', 'case336', 'case337', 'case338', 'case339', # 'case329' removed for power function
           'case353', 'case354', 'case360', 'case368', 'case369', 'case370', 'case385', 'case387', 'case388', 'case389',
           'case390', 'case391', 'case392', 'case393', 'case406', 'case407', 'case408', 'case409', 'case415', 'case433',
           'case434', 'case435', 'case436', 'case437', 'case441', 'case480', 'case501', 'case507', 'case510']
@@ -129,17 +129,19 @@ def main():
     for dataset, problems in DATASETS.items():
         for problem in problems:
             if f"{dataset}::{problem}" in results_dict.keys():
-                if ENABLE_OPTIMIZATIONS and "circ_optimization_enabled" in results_dict[f"{dataset}::{problem}"]:
-                    continue
-                if not ENABLE_OPTIMIZATIONS and "circ_optimization_disabled" in results_dict[f"{dataset}::{problem}"]:
+                # if ENABLE_OPTIMIZATIONS and "circ_optimization_enabled" in results_dict[f"{dataset}::{problem}"].keys():
+                    # continue
+                if not ENABLE_OPTIMIZATIONS and "circ_optimization_disabled" in results_dict[f"{dataset}::{problem}"].keys():
                     continue
             try:
                 print('Evaluating', f"{dataset}::{problem}")
                 result = run_evaluate(dataset, problem)
+                if f"{dataset}::{problem}" not in results_dict.keys():
+                    results_dict[f"{dataset}::{problem}"] = {}
                 if ENABLE_OPTIMIZATIONS:
-                    result["circ_optimization_enabled"] = result
+                    results_dict[f"{dataset}::{problem}"]["circ_optimization_enabled"] = result
                 else:
-                    result["circ_optimization_disabled"] = result
+                    results_dict[f"{dataset}::{problem}"]["circ_optimization_disabled"] = result
             except AssertionError as e:
                 print(f"Failed to evaluate {dataset}::{problem}. Skipping...")
                 raise e

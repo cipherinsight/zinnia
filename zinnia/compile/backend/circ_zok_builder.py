@@ -72,7 +72,7 @@ class _ZokratesStatementBuilder:
     def __init__(self):
         self.id_var_lookup = {}
         self.next_tmp_id = 0
-        self.id_val_lookup = {}
+        self.id_type_lookup = {}
 
     def build_stmt(self, stmt: IRStatement) -> str:
         typename = type(stmt.ir_instance).__name__
@@ -82,12 +82,18 @@ class _ZokratesStatementBuilder:
             raise NotImplementedError(method_name)
         return method(stmt)
 
-    def _get_var_name(self, _id: int) -> str:
+    def _get_var_name(self, _id: int, _type: str) -> str:
         var_name = self.id_var_lookup.get(_id, None)
         if var_name is not None:
+            if _type != self.id_type_lookup[_id]:
+                if _type == "field":
+                    return f"({var_name} ? ONE : ZERO)"
+                else:
+                    return f"({var_name} != 0)"
             return var_name
         var_name = f"y_{_id}"
         self.id_var_lookup[_id] = var_name
+        self.id_type_lookup[_id] = _type
         return var_name
 
     def _allocate_tmp_name(self) -> str:
@@ -117,52 +123,52 @@ class _ZokratesStatementBuilder:
 
     def _build_AddIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, AddIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
-            f"field {var_name} = {lhs} + {rhs};",
+            f"field {var_name} = {lhs} + {rhs}",
         ]
 
     def _build_SubIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, SubIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
-            f"field {var_name} = {lhs} - {rhs};",
+            f"field {var_name} = {lhs} - {rhs}",
         ]
 
     def _build_MulIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, MulIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
-            f"field {var_name} = {lhs} * {rhs};",
+            f"field {var_name} = {lhs} * {rhs}",
         ]
 
     def _build_DivIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, DivIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
-            f"field {var_name} = {lhs} / {rhs};",
+            f"field {var_name} = {lhs} / {rhs}",
         ]
 
     def _build_FloorDivIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, FloorDivIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
-            f"field {var_name} = {lhs} / {rhs};",
+            f"field {var_name} = {lhs} / {rhs}",
         ]
 
     def _build_AssertIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, AssertIR)
-        test = self._get_var_name(stmt.arguments[0])
+        test = self._get_var_name(stmt.arguments[0], "bool")
         return [
             f"assert({test})"
         ]
@@ -170,13 +176,13 @@ class _ZokratesStatementBuilder:
     def _build_ReadIntegerIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, ReadIntegerIR)
         return [
-            f"field {self._get_var_name(stmt.stmt_id)} = x_{'_'.join(map(str, stmt.ir_instance.indices))}"
+            f"field {self._get_var_name(stmt.stmt_id, 'field')} = x_{'_'.join(map(str, stmt.ir_instance.indices))}"
         ]
 
     def _build_ReadHashIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, ReadHashIR)
         return [
-            f"field {self._get_var_name(stmt.stmt_id)} = hash_{'_'.join(map(str, stmt.ir_instance.indices))};"
+            f"field {self._get_var_name(stmt.stmt_id, 'field')} = hash_{'_'.join(map(str, stmt.ir_instance.indices))}"
         ]
 
     def _build_ReadFloatIR(self, stmt: IRStatement) -> List[str]:
@@ -198,17 +204,17 @@ class _ZokratesStatementBuilder:
     def _build_ConstantIntIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, ConstantIntIR)
         constant_val = stmt.ir_instance.value
-        var_name = self._get_var_name(stmt.stmt_id)
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
-            f"field {var_name} = {constant_val};"
+            f"field {var_name} = {constant_val}"
         ]
 
     def _build_ConstantBoolIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, ConstantBoolIR)
         constant_val = stmt.ir_instance.value
-        var_name = self._get_var_name(stmt.stmt_id)
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
-            f"bool {var_name} = {'true' if constant_val else 'false'};"
+            f"bool {var_name} = {'true' if constant_val else 'false'}"
         ]
 
     def _build_ConstantFloatIR(self, stmt: IRStatement) -> List[str]:
@@ -277,43 +283,43 @@ class _ZokratesStatementBuilder:
 
     def _build_PowIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, PowIIR)
-        x = self._get_var_name(stmt.arguments[0])
-        exponent = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        x = self._get_var_name(stmt.arguments[0], "field")
+        exponent = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
             f"field {var_name} = {x} ** {exponent}"
         ]
 
     def _build_LogicalNotIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, LogicalNotIR)
-        x = self._get_var_name(stmt.arguments[0])
-        var_name = self._get_var_name(stmt.stmt_id)
+        x = self._get_var_name(stmt.arguments[0], "bool")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"bool {var_name} = !{x}"
         ]
 
     def _build_LogicalAndIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, LogicalAndIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "bool")
+        rhs = self._get_var_name(stmt.arguments[1], "bool")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"bool {var_name} = {lhs} && {rhs}"
         ]
 
     def _build_LogicalOrIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, LogicalOrIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "bool")
+        rhs = self._get_var_name(stmt.arguments[1], "bool")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"bool {var_name} = {lhs} || {rhs}"
         ]
 
     def _build_BoolCastIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, BoolCastIR)
-        x = self._get_var_name(stmt.arguments[0])
-        var_name = self._get_var_name(stmt.stmt_id)
+        x = self._get_var_name(stmt.arguments[0], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"bool {var_name} = {x} != 0"
         ]
@@ -344,63 +350,63 @@ class _ZokratesStatementBuilder:
 
     def _build_EqualIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, EqualIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"bool {var_name} = {lhs} == {rhs}"
         ]
 
     def _build_EqualHashIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, EqualHashIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"bool {var_name} = {lhs} == {rhs}"
         ]
 
     def _build_NotEqualIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, NotEqualIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"bool {var_name} = {lhs} != {rhs}"
         ]
 
     def _build_LessThanIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, LessThanIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"bool {var_name} = {lhs} < {rhs}"
         ]
 
     def _build_LessThanOrEqualIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, LessThanOrEqualIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"bool {var_name} = {lhs} <= {rhs}"
         ]
 
     def _build_GreaterThanIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, GreaterThanIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"bool {var_name} = {lhs} > {rhs}"
         ]
 
     def _build_GreaterThanOrEqualIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, GreaterThanOrEqualIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"bool {var_name} = {lhs} >= {rhs}"
         ]
@@ -415,8 +421,8 @@ class _ZokratesStatementBuilder:
 
     def _build_AbsIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, AbsIIR)
-        x = self._get_var_name(stmt.arguments[0])
-        var_name = self._get_var_name(stmt.stmt_id)
+        x = self._get_var_name(stmt.arguments[0], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
             f"field {var_name} = if {x} < 0 then {{ -{x} }} else {{ {x} }}"
         ]
@@ -427,30 +433,30 @@ class _ZokratesStatementBuilder:
 
     def _build_SignIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, SignIIR)
-        x = self._get_var_name(stmt.arguments[0])
-        var_name = self._get_var_name(stmt.stmt_id)
+        x = self._get_var_name(stmt.arguments[0], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
             f"field {var_name} = if {x} < 0 then {{-1}} else {{if {x} > 0 then {{1}} else {{0}}}}"
         ]
 
     def _build_SelectIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, SelectIIR)
-        cond = self._get_var_name(stmt.arguments[0])
-        true_val = self._get_var_name(stmt.arguments[1])
-        false_val = self._get_var_name(stmt.arguments[2])
-        var_name = self._get_var_name(stmt.stmt_id)
+        cond = self._get_var_name(stmt.arguments[0], "bool")
+        true_val = self._get_var_name(stmt.arguments[1], "field")
+        false_val = self._get_var_name(stmt.arguments[2], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
-            f"field {var_name} = if {cond} then {{ {true_val} }} else {{ {false_val} }}"
+            f"field {var_name} = {cond} ? {true_val} : {false_val}"
         ]
 
     def _build_SelectBIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, SelectBIR)
-        cond = self._get_var_name(stmt.arguments[0])
-        true_val = self._get_var_name(stmt.arguments[1])
-        false_val = self._get_var_name(stmt.arguments[2])
-        var_name = self._get_var_name(stmt.stmt_id)
+        cond = self._get_var_name(stmt.arguments[0], "bool")
+        true_val = self._get_var_name(stmt.arguments[1], "bool")
+        false_val = self._get_var_name(stmt.arguments[2], "bool")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
-            f"bool {var_name} = if {cond} then {{ {true_val} }} else {{ {false_val} }}"
+            f"bool {var_name} = {cond} ? {true_val} : {false_val}"
         ]
 
     def _build_SelectFIR(self, stmt: IRStatement) -> List[str]:
@@ -467,9 +473,9 @@ class _ZokratesStatementBuilder:
 
     def _build_ModIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, ModIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
             f"field {var_name} = {lhs} % {rhs}"
         ]
@@ -496,10 +502,9 @@ class CirCZokratesProgramBuilder(AbstractProgramBuilder):
     def build_source(self) -> str:
         circuit_body_str = self.build_circuit_body()
         params_str = self.build_params()
-        return f"int main({params_str}){{\n{circuit_body_str}}}"
+        return f"def main({params_str}) -> field:\n    field ONE = 1\n    field ZERO = 0\n    {circuit_body_str}\n    return 0"
 
     def build_params(self) -> str:
-        circuit_name = self.name
         all_inputs = []
         for stmt in self.stmts:
             if isinstance(stmt.ir_instance, ReadIntegerIR) and stmt.ir_instance.is_public:
@@ -514,9 +519,7 @@ class CirCZokratesProgramBuilder(AbstractProgramBuilder):
                 raise NotImplementedError("Floating-point operations are not supported")
             elif isinstance(stmt.ir_instance, ReadHashIR) and not stmt.ir_instance.is_public:
                 all_inputs.append(f"private field x_{'_'.join(map(str, stmt.ir_instance.indices))}")
-        public_inputs_str = ''
-        return f"""\
-component main {public_inputs_str} = {circuit_name}();"""
+        return ', '.join(all_inputs)
 
     def build_circuit_body(self) -> str:
         internal_builder = _ZokratesStatementBuilder()

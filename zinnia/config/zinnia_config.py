@@ -30,7 +30,7 @@ class ZinniaConfig(ConfigBase):
 
     def verify(self, key: str, value: Any) -> Any:
         if key == "backend":
-            if value not in [self.BACKEND_HALO2, self.BACKEND_CIRCOM, self.BACKEND_NOIR]:
+            if value not in [self.BACKEND_HALO2, self.BACKEND_CIRCOM, self.BACKEND_NOIR, self.BACKEND_CIRC_ZOK]:
                 raise ValueError(f"Invalid `backend` specified: {value}")
             return value
         elif key == "mock_config":
