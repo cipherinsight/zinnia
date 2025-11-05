@@ -3,6 +3,7 @@ import json
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.lines as mlines
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
@@ -186,6 +187,27 @@ class AnyObjectHandler:
                                    lw=3, transform=handlebox.get_transform())
         handlebox.add_artist(patch)
         return patch
+
+
+class LineLegendHandler:
+    def legend_artist(self, legend, orig_handle, fontsize, handlebox):
+        x0, y0 = handlebox.xdescent, handlebox.ydescent
+        width, height = handlebox.width, handlebox.height
+
+        # Compute vertical center
+        y_center = y0 + height / 2
+
+        # Draw a horizontal line
+        line = mlines.Line2D(
+            [x0, x0 + width],  # start and end x positions
+            [y_center, y_center],  # y positions (horizontal line)
+            color=orig_handle.get_color() if hasattr(orig_handle, 'get_color') else orig_handle.color,
+            linewidth=orig_handle.get_linewidth() if hasattr(orig_handle, 'get_linewidth') else 2,
+            transform=handlebox.get_transform()
+        )
+
+        handlebox.add_artist(line)
+        return line
 
 
 def plot_evaluation_results():
@@ -868,12 +890,15 @@ def plot_ablation_study():
 def plot_compile_time_scalability():
     with open('results.json', 'r') as f:
         zinnia_results_dict = json.load(f)
+    with open('results-noir.json', 'r') as f:
+        noir_results_dict = json.load(f)
 
     # Sort keys by display names (alphabetical)
     sorted_keys = sorted(zinnia_results_dict.keys(), key=lambda k: NAME_MAPPING.get(k, k))
 
     names = []
-    rust_compile_times = []
+    cargo_compile_times = []
+    nargo_compile_times = []
     ast_ir_transform_times = []
     smt_reasoning_times = []
     exec_ir_pass_times = []
@@ -882,14 +907,19 @@ def plot_compile_time_scalability():
     for key in sorted_keys:
         value = zinnia_results_dict[key]
         names.append(NAME_MAPPING.get(key, key))
-        rust_compile_times.append(value['halo2']['cargo_compile_time'])
+        cargo_compile_times.append(value['halo2']['cargo_compile_time'])
         ast_ir_transform_times.append(value['zinnia_compile_time']['time_transform'])
         smt_reasoning_times.append(value['zinnia_compile_time']['time_smt'])
         exec_ir_pass_times.append(value['zinnia_compile_time']['time_ir_pass'])
         code_gen_times.append(value['zinnia_compile_time']['time_code_gen'])
+        if key in noir_results_dict:
+            nargo_compile_times.append(noir_results_dict[key]['baseline_on_noir']['nargo_compilation_time'])
+        else:
+            nargo_compile_times.append(np.nan)
 
     # Convert to numpy arrays
-    rust_compile_times = np.asarray(rust_compile_times)
+    cargo_compile_times = np.asarray(cargo_compile_times)
+    nargo_compile_times = np.asarray(nargo_compile_times)
     ast_ir_transform_times = np.asarray(ast_ir_transform_times)
     smt_reasoning_times = np.asarray(smt_reasoning_times)
     exec_ir_pass_times = np.asarray(exec_ir_pass_times)
@@ -923,6 +953,8 @@ def plot_compile_time_scalability():
             bottom=ast_ir_transform_times + smt_reasoning_times)
     ax1.bar(names, code_gen_times, color='lightskyblue',
             bottom=ast_ir_transform_times + smt_reasoning_times + exec_ir_pass_times)
+    ax1.scatter(names, cargo_compile_times, marker='_', color='firebrick', linewidths=1)
+    ax1.scatter(names, nargo_compile_times, marker='_', color='black', linewidths=1)
 
     ax1.set_ylabel('Compilation Time (s)', fontdict=title_font)
     # ax1.set_yscale('log')
@@ -942,6 +974,11 @@ def plot_compile_time_scalability():
         [AnyObject('mediumseagreen'), AnyObject('mediumpurple'), AnyObject('wheat'), AnyObject('lightskyblue')],
         ['AST Traversal & IR Generation', 'SMT Reasoning', 'Executing IR Passes', 'Generating ZK Circuit'],
         handler_map={AnyObject: AnyObjectHandler()}, loc=(0.07, 0.84), ncol=2, frameon=False
+    )
+    fig.legend(
+        [AnyObject('firebrick'), AnyObject('black')],
+        ['Halo2 Baseline (cargo)', 'Noir Baseline (nargo)'],
+        handler_map={AnyObject: LineLegendHandler()}, loc=(0.57, 0.84), ncol=1, frameon=False
     )
     fig.tight_layout(h_pad=0.1)
     plt.show()
@@ -1139,9 +1176,9 @@ def print_average_advantages():
 
 def main():
     # plot_evaluation_results()
-    plot_performance_overviews()
-    plot_ablation_study()
-    plot_performance_heatmap()
+    # plot_performance_overviews()
+    # plot_ablation_study()
+    # plot_performance_heatmap()
     plot_compile_time_scalability()
     # Print summary advantages
     print_average_advantages()
