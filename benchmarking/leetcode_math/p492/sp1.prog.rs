@@ -22,7 +22,7 @@ pub fn main() {
 
     let mut w = area;
 
-    for i in 1..=1000 {
+    for i in 1..=401 {
         if area % i == 0 {
             w = i;
         }

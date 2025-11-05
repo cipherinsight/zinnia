@@ -96,7 +96,7 @@ LEETCODE_GRAPH = [
     "p997"
 ]
 LEETCODE_MATH = [
-    # "p492",
+    # "p492",  # circ crashed. does not know why
     "p2125"
 ]
 LEETCODE_MATRIX = [
@@ -129,8 +129,8 @@ def main():
     for dataset, problems in DATASETS.items():
         for problem in problems:
             if f"{dataset}::{problem}" in results_dict.keys():
-                # if ENABLE_OPTIMIZATIONS and "circ_optimization_enabled" in results_dict[f"{dataset}::{problem}"].keys():
-                    # continue
+                if ENABLE_OPTIMIZATIONS and "circ_optimization_enabled" in results_dict[f"{dataset}::{problem}"].keys():
+                    continue
                 if not ENABLE_OPTIMIZATIONS and "circ_optimization_disabled" in results_dict[f"{dataset}::{problem}"].keys():
                     continue
             try:

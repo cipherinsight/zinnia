@@ -1,12 +1,12 @@
 #[executable]
 pub fn main() {
-    let mut w: u32 = 999;
-    let area: u32 = 999;
-    let expected_l: u32 = 37;
-    let expected_w: u32 = 27;
+    let mut w: u32 = 400;
+    let area: u32 = 351;
+    let expected_l: u32 = 27;
+    let expected_w: u32 = 13;
     let mut done: bool = false;
 
-    for i in 1_u32..1001_u32 {
+    for i in 1_u32..401_u32 {
         let fi = i;
         if !done {
             let q: u32 = area / fi;

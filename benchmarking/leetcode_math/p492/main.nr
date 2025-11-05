@@ -15,7 +15,7 @@ fn main(
     let mut w: Field = area;
     let mut done: bool = false;
 
-    for i in 1..1001 {
+    for i in 1..401 {
         let fi = Field::from(i as u128);
         if !done {
             let (q, r) = unsafe {mydivision(area, fi)};

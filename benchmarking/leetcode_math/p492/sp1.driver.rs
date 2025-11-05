@@ -52,9 +52,9 @@ fn main() {
 
     let mut rng = rand::rngs::StdRng::seed_from_u64(0);
 
-    let area = 999;
-    let expected_l = 37;
-    let expected_w = 27;
+    let area = 351;
+    let expected_l = 27;
+    let expected_w = 13;
 
     stdin.write(&area);
     stdin.write(&expected_l);

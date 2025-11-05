@@ -27,7 +27,7 @@ fn main() {
     // For example:
     let mut builder = ExecutorEnv::builder();
     for data in [
-        999, 37, 27
+        351, 27, 13
     ] {
         let tmp: i32 = data as i32;
         builder.write(&tmp).unwrap();

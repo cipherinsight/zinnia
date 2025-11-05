@@ -51,7 +51,7 @@ fn verify_solution<F: ScalarField>(
     let expected_w = ctx.load_witness(F::from_u128(input.expected_w));
     let mut w = ctx.load_witness(F::from_u128(input.area));
     let mut break_condition = ctx.load_witness(F::from_u128(0));
-    for i in 1..1001 {
+    for i in 1..401 {
         let var_i = ctx.load_constant(F::from(i));
         let (_, area_mod_i) = range_chip.div_mod_var(ctx, area, var_i, 128, 128);
         let area_mod_i_equals_0 = gate.is_equal(ctx, area_mod_i, Constant(F::ZERO));
