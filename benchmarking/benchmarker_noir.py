@@ -9,7 +9,7 @@ from zinnia import ZinniaConfig, ZKCircuit
 from zinnia.config import OptimizationConfig
 
 NOIR_FOLDER = "/Users/zhantong/Projects/hello_noir"
-TIME_MEASURE_REPETITIONS = 100
+TIME_MEASURE_REPETITIONS = 10
 
 
 def run_prove(name: str, input_source: str, program_source: str):
@@ -31,13 +31,16 @@ def run_prove(name: str, input_source: str, program_source: str):
         compilation_times = []
         for i in range(TIME_MEASURE_REPETITIONS):
             start_time = time.time()
+            compile_process = subprocess.run(['nargo', 'compile'], capture_output=True, text=True, env=my_env)
+            compile_process_feedback = compile_process.stdout + compile_process.stderr
+            assert compile_process.returncode == 0, compile_process_feedback
+            end_time = time.time()
+            compilation_times.append(end_time - start_time)
+            start_time = time.time()
             execute_process = subprocess.run(['nargo', 'execute'], capture_output=True, text=True, env=my_env)
             execute_process_feedback = execute_process.stdout + execute_process.stderr
             assert execute_process.returncode == 0, execute_process_feedback
             assert "Circuit witness successfully solved" in execute_process_feedback
-            end_time = time.time()
-            compilation_times.append(end_time - start_time)
-            start_time = time.time()
             prove_process = subprocess.run(
                 ['bb', 'prove', '-b', './target/hello_noir.json', '-w', './target/hello_noir.gz', '-o', './target'],
                 capture_output=True, text=True, env=my_env)
@@ -108,7 +111,6 @@ def run_evaluate(dataset: str, problem: str):
     return {
         "ours_on_noir": result_ours,
         "baseline_on_noir": result_baseline,
-        "zinnia_compilation_time": compiled_program.eval_data
     }
 
 

@@ -74,7 +74,7 @@ class _NoirStatementBuilder:
         self.id_var_lookup = {}
         self.next_tmp_id = 0
         self.id_val_lookup = {}
-        self.known_types = {}
+        self.id_type_lookup = {}
 
     def build_stmt(self, stmt: IRStatement) -> str:
         typename = type(stmt.ir_instance).__name__
@@ -84,12 +84,18 @@ class _NoirStatementBuilder:
             raise NotImplementedError(method_name)
         return method(stmt)
 
-    def _get_var_name(self, _id: int) -> str:
+    def _get_var_name(self, _id: int, _type: str) -> str:
         var_name = self.id_var_lookup.get(_id, None)
         if var_name is not None:
+            if _type != self.id_type_lookup[_id]:
+                if _type == "field" and self.id_type_lookup[_id] == "bool":
+                    return f"(if {var_name} {{1}} else {{0}})"
+                elif _type == "bool" and self.id_type_lookup[_id] == "field":
+                    return f"({var_name} != 0)"
             return var_name
         var_name = f"y_{_id}"
         self.id_var_lookup[_id] = var_name
+        self.id_type_lookup[_id] = _type
         return var_name
 
     def _build_AddFIR(self, stmt: IRStatement) -> List[str]:
@@ -114,68 +120,66 @@ class _NoirStatementBuilder:
 
     def _build_AddIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, AddIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
             f"let {var_name} = {lhs} + {rhs};",
         ]
 
     def _build_SubIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, SubIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
             f"let {var_name} = {lhs} - {rhs};",
         ]
 
     def _build_MulIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, MulIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
             f"let {var_name} = {lhs} * {rhs};",
         ]
 
     def _build_DivIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, DivIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
             f"let {var_name} = ({lhs} as Field) / ({rhs} as Field);",
         ]
 
     def _build_FloorDivIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, FloorDivIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
             f"let {var_name} = (({lhs} as u128) / ({rhs} as u128)) as Field;"
         ]
 
     def _build_AssertIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, AssertIR)
-        test = self._get_var_name(stmt.arguments[0])
+        test = self._get_var_name(stmt.arguments[0], "bool")
         return [
             f"assert({test});"
         ]
 
     def _build_ReadIntegerIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, ReadIntegerIR)
-        var_name = self._get_var_name(stmt.stmt_id)
-        self.known_types[var_name] = "Field"
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
             f"let {var_name}: Field = x_{'_'.join(map(str, stmt.ir_instance.indices))};"
         ]
 
     def _build_ReadHashIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, ReadHashIR)
-        var_name = self._get_var_name(stmt.stmt_id)
-        self.known_types[var_name] = "Field"
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
             f"let {var_name}: Field = x_{'_'.join(map(str, stmt.ir_instance.indices))};"
         ]
@@ -187,11 +191,11 @@ class _NoirStatementBuilder:
     def _build_PoseidonHashIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, PoseidonHashIR)
         assign_inputs = [
-            f"{self._get_var_name(arg)}"
+            f"{self._get_var_name(arg, 'field')}"
             for i, arg in enumerate(stmt.arguments)
         ]
         text = ', '.join(assign_inputs)
-        var_name = self._get_var_name(stmt.stmt_id)
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
             f"let inputs: [Field; {len(stmt.arguments)}] = [{text}];",
             f"let {var_name}: Field = poseidon::bn254::hash_10(inputs);"
@@ -208,7 +212,7 @@ class _NoirStatementBuilder:
     def _build_ConstantIntIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, ConstantIntIR)
         constant_val = stmt.ir_instance.value
-        var_name = self._get_var_name(stmt.stmt_id)
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
             f"let {var_name} = {int(constant_val)};"
         ]
@@ -216,7 +220,7 @@ class _NoirStatementBuilder:
     def _build_ConstantBoolIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, ConstantBoolIR)
         constant_val = stmt.ir_instance.value
-        var_name = self._get_var_name(stmt.stmt_id)
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"let {var_name} = {'true' if constant_val else 'false'};"
         ]
@@ -287,9 +291,9 @@ class _NoirStatementBuilder:
 
     def _build_PowIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, PowIIR)
-        x = self._get_var_name(stmt.arguments[0])
-        exponent = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        x = self._get_var_name(stmt.arguments[0], "field")
+        exponent = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
             f"let mut {var_name}: Field = 1;",
             f"for i in 0..252 {{",
@@ -303,34 +307,34 @@ class _NoirStatementBuilder:
 
     def _build_LogicalNotIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, LogicalNotIR)
-        x = self._get_var_name(stmt.arguments[0])
-        var_name = self._get_var_name(stmt.stmt_id)
+        x = self._get_var_name(stmt.arguments[0], "bool")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"let {var_name} = !({x});"
         ]
 
     def _build_LogicalAndIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, LogicalAndIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "bool")
+        rhs = self._get_var_name(stmt.arguments[1], "bool")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"let {var_name} = ({lhs} & {rhs});"
         ]
 
     def _build_LogicalOrIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, LogicalOrIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "bool")
+        rhs = self._get_var_name(stmt.arguments[1], "bool")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"let {var_name} = ({lhs} | {rhs});"
         ]
 
     def _build_BoolCastIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, BoolCastIR)
-        x = self._get_var_name(stmt.arguments[0])
-        var_name = self._get_var_name(stmt.stmt_id)
+        x = self._get_var_name(stmt.arguments[0], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"let {var_name} = if {x} == 0 {{false}} else {{true}};",
         ]
@@ -361,63 +365,63 @@ class _NoirStatementBuilder:
 
     def _build_EqualIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, EqualIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"let {var_name} = {lhs} == {rhs};"
         ]
 
     def _build_EqualHashIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, EqualHashIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"let {var_name} = {lhs} == {rhs};"
         ]
 
     def _build_NotEqualIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, NotEqualIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"let {var_name} = {lhs} != {rhs};"
         ]
 
     def _build_LessThanIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, LessThanIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"let {var_name} = ({lhs} as u128) < ({rhs} as u128);"
         ]
 
     def _build_LessThanOrEqualIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, LessThanOrEqualIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"let {var_name} = ({lhs} as u128) <= ({rhs} as u128);"
         ]
 
     def _build_GreaterThanIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, GreaterThanIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"let {var_name} = ({lhs} as u128) > ({rhs} as u128);"
         ]
 
     def _build_GreaterThanOrEqualIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, GreaterThanOrEqualIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"let {var_name} = ({lhs} as u128) >= ({rhs} as u128);"
         ]
@@ -432,8 +436,8 @@ class _NoirStatementBuilder:
 
     def _build_AbsIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, AbsIIR)
-        x = self._get_var_name(stmt.arguments[0])
-        var_name = self._get_var_name(stmt.stmt_id)
+        x = self._get_var_name(stmt.arguments[0], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
             f"let {var_name}: Field = if ({x} as u128) > 10944121435919637611123202872628637544274182200208017171849102093287904247808 {{0 - {x}}} else {x};",
         ]
@@ -444,28 +448,28 @@ class _NoirStatementBuilder:
 
     def _build_SignIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, SignIIR)
-        x = self._get_var_name(stmt.arguments[0])
-        var_name = self._get_var_name(stmt.stmt_id)
+        x = self._get_var_name(stmt.arguments[0], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
             f"let {var_name}: Field = if ({x} as u128) > 10944121435919637611123202872628637544274182200208017171849102093287904247808 {{1}} else {{0 - 1}};",
         ]
 
     def _build_SelectIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, SelectIIR)
-        cond = self._get_var_name(stmt.arguments[0])
-        true_val = self._get_var_name(stmt.arguments[1])
-        false_val = self._get_var_name(stmt.arguments[2])
-        var_name = self._get_var_name(stmt.stmt_id)
+        cond = self._get_var_name(stmt.arguments[0], "bool")
+        true_val = self._get_var_name(stmt.arguments[1], "field")
+        false_val = self._get_var_name(stmt.arguments[2], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
             f"let {var_name} = if {cond} {{ {true_val} }} else {{ {false_val} }};"
         ]
 
     def _build_SelectBIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, SelectBIR)
-        cond = self._get_var_name(stmt.arguments[0])
-        true_val = self._get_var_name(stmt.arguments[1])
-        false_val = self._get_var_name(stmt.arguments[2])
-        var_name = self._get_var_name(stmt.stmt_id)
+        cond = self._get_var_name(stmt.arguments[0], "bool")
+        true_val = self._get_var_name(stmt.arguments[1], "bool")
+        false_val = self._get_var_name(stmt.arguments[2], "bool")
+        var_name = self._get_var_name(stmt.stmt_id, "bool")
         return [
             f"let {var_name} = if {cond} {{ {true_val} }} else {{ {false_val} }};"
         ]
@@ -484,17 +488,17 @@ class _NoirStatementBuilder:
 
     def _build_ModIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, ModIIR)
-        lhs = self._get_var_name(stmt.arguments[0])
-        rhs = self._get_var_name(stmt.arguments[1])
-        var_name = self._get_var_name(stmt.stmt_id)
+        lhs = self._get_var_name(stmt.arguments[0], "field")
+        rhs = self._get_var_name(stmt.arguments[1], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
             f"let {var_name} = (({lhs} as u128) % ({rhs} as u128)) as Field;",
         ]
 
     def _build_InvIIR(self, stmt: IRStatement) -> List[str]:
         assert isinstance(stmt.ir_instance, InvIIR)
-        x = self._get_var_name(stmt.arguments[0])
-        var_name = self._get_var_name(stmt.stmt_id)
+        x = self._get_var_name(stmt.arguments[0], "field")
+        var_name = self._get_var_name(stmt.stmt_id, "field")
         return [
             f"let {var_name}: Field = 1 / ({x} as Field);"
         ]
