@@ -942,8 +942,8 @@ def plot_compile_time_scalability():
 
     # Two stacked bar charts, shared x-axis
     fig, (ax1, ax2) = plt.subplots(
-        2, 1, figsize=(12, 4), sharex=True,
-        gridspec_kw={'height_ratios': [1.5, 1]}
+        2, 1, figsize=(12, 3), sharex=True,
+        gridspec_kw={'height_ratios': [1, 1]}
     )
 
     ax1.bar(names, ast_ir_transform_times, color='mediumseagreen')
@@ -956,7 +956,7 @@ def plot_compile_time_scalability():
     ax1.scatter(names, cargo_compile_times, marker='_', color='firebrick', linewidths=1)
     ax1.scatter(names, nargo_compile_times, marker='_', color='black', linewidths=1)
 
-    ax1.set_ylabel('Compilation Time (s)', fontdict=title_font)
+    ax1.set_ylabel('Time (s)', fontdict=title_font)
     # ax1.set_yscale('log')
     ax1.tick_params(axis='x', labelbottom=False)
 
@@ -973,16 +973,71 @@ def plot_compile_time_scalability():
     fig.legend(
         [AnyObject('mediumseagreen'), AnyObject('mediumpurple'), AnyObject('wheat'), AnyObject('lightskyblue')],
         ['AST Traversal & IR Generation', 'SMT Reasoning', 'Executing IR Passes', 'Generating ZK Circuit'],
-        handler_map={AnyObject: AnyObjectHandler()}, loc=(0.07, 0.84), ncol=2, frameon=False
+        handler_map={AnyObject: AnyObjectHandler()}, loc=(0.07, 0.77), ncol=2, frameon=False
     )
     fig.legend(
         [AnyObject('firebrick'), AnyObject('black')],
         ['Halo2 Baseline (cargo)', 'Noir Baseline (nargo)'],
-        handler_map={AnyObject: LineLegendHandler()}, loc=(0.57, 0.84), ncol=1, frameon=False
+        handler_map={AnyObject: LineLegendHandler()}, loc=(0.54, 0.77), ncol=1, frameon=False
     )
     fig.tight_layout(h_pad=0.1)
     plt.show()
     fig.savefig('compilation-scalability.pdf', dpi=300, bbox_inches='tight')
+
+
+def plot_smt_constraints():
+    with open('results.json', 'r') as f:
+        zinnia_results_dict = json.load(f)
+
+    # Sort keys by display names (alphabetical)
+    sorted_keys = sorted(zinnia_results_dict.keys(), key=lambda k: NAME_MAPPING.get(k, k))
+
+    names = []
+    maximum_constraints = []
+    smt_invocations = []
+    timeout_invocations = []
+
+    for key in sorted_keys:
+        value = zinnia_results_dict[key]
+        names.append(NAME_MAPPING.get(key, key))
+        maximum_constraints.append(value['zinnia_compile_time']['max_no_of_constraints'])
+        smt_invocations.append(value['zinnia_compile_time']['total_smt_invocations'])
+        timeout_invocations.append(value['zinnia_compile_time']['timeout_cases'])
+
+    # Convert to numpy arrays
+    maximum_constraints = np.asarray(maximum_constraints)
+    smt_invocations = np.asarray(smt_invocations)
+    timeout_invocations = np.asarray(timeout_invocations)
+
+    # Plot setup
+    plt.rc('font', family='monospace')
+    title_font = {'fontweight': 'bold', 'fontname': 'Times New Roman', 'fontsize': 12}
+
+    # Two stacked bar charts, shared x-axis
+    fig, (ax1, ax2, ax3) = plt.subplots(
+        3, 1, figsize=(12, 5), sharex=True,
+        gridspec_kw={'height_ratios': [1.5, 1.5, 1]}
+    )
+
+    ax1.bar(names, maximum_constraints, color='grey')
+    ax1.set_ylabel('Max. Constraints', fontdict=title_font)
+    ax1.set_yscale('log')
+    ax1.tick_params(axis='x', labelbottom=False)
+
+    ax2.bar(names, smt_invocations, color='grey')
+    ax2.set_ylabel('SMT Queries', fontdict=title_font)
+    ax2.tick_params(axis='x', labelrotation=90)
+    ax2.set_yscale('log')
+
+    print(len(timeout_invocations))
+    ax3.bar(names, timeout_invocations, color='grey')
+    ax3.set_ylabel('Timeout Queries', fontdict=title_font)
+    ax3.tick_params(axis='x', labelrotation=90)
+    ax3.set_yscale('log')
+
+    fig.tight_layout(h_pad=0.1)
+    plt.show()
+    fig.savefig('smt-query-data.pdf', dpi=300, bbox_inches='tight')
 
 
 def compute_pct_advantage(baseline_arr, optimized_arr):
@@ -1175,11 +1230,11 @@ def print_average_advantages():
 
 
 def main():
-    # plot_evaluation_results()
-    # plot_performance_overviews()
-    # plot_ablation_study()
-    # plot_performance_heatmap()
+    plot_performance_overviews()
+    plot_ablation_study()
+    plot_performance_heatmap()
     plot_compile_time_scalability()
+    plot_smt_constraints()
     # Print summary advantages
     print_average_advantages()
 
