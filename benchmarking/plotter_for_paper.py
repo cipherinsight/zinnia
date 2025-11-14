@@ -863,28 +863,84 @@ def plot_ablation_study():
     # plt.rc('text', usetex=True)
     title_font = {'fontweight': 'bold', 'fontname': 'Times New Roman', 'fontsize': 12}
     # Plot the comparison of gate reductions
-    fig, ax = plt.subplots(figsize=(12, 3))
+    fig, ax = plt.subplots(figsize=(12, 2.5))
     ax.bar(names, the_base_bar, color='silver')
     ax.bar(names, ablation_dce_bar, color='wheat', bottom=the_base_bar, label='DCE')
     ax.bar(names, ablation_cse_bar, color='lightskyblue', bottom=the_base_bar + ablation_dce_bar, label='CSE')
     ax.bar(names, ablation_pm_bar, color='mediumpurple', bottom=the_base_bar + ablation_dce_bar + ablation_cse_bar, label='PM')
     ax.bar(names, ablation_symex_bar, color='mediumseagreen', bottom=ablation_pm_bar + the_base_bar + ablation_dce_bar + ablation_cse_bar, label='SymEx')
     ax.tick_params(axis='x', labelrotation=90)
-    ylabel = ax.set_ylabel('Arithmetic Circuit Size (%)', fontdict=title_font)
+    ylabel = ax.set_ylabel('Circuit Size (%)', fontdict=title_font)
     ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1]-0.15))
     ax.set_ylim(0, 620)
     ax.axhline(100, color='black', linewidth=1, linestyle='--')
     ax.text(len(names) - 7, 125, 'Baseline (100%)', fontsize=8, color='black', ha='center')
-    fig.legend([AnyObject('grey'), AnyObject('wheat'), AnyObject('lightskyblue'), AnyObject('mediumpurple'), AnyObject('mediumseagreen')],
-               ['No Ablation', 'w/o Dead Code Elimination', 'w/o Common Sub-expression Elimination', 'w/o Pattern Matching Rewrites', 'w/o Symbolic Execution Path Pruning'],
+    fig.legend([AnyObject('grey'), AnyObject('wheat'), AnyObject('lightskyblue')],
+               ['No Ablation', 'w/o Dead Code Elimination', 'w/o Common Sub-expression Elimination'],
                handler_map={
                    AnyObject: AnyObjectHandler()
                },
-               loc=(0.07, 0.56), ncol=1,
+               loc=(0.07, 0.62), ncol=1,
+               frameon=False)
+    fig.legend([AnyObject('mediumpurple'), AnyObject('mediumseagreen')],
+               ['w/o Pattern Matching Rewrites', 'w/o Symbolic Execution Path Pruning'],
+               handler_map={
+                   AnyObject: AnyObjectHandler()
+               },
+               loc=(0.67, 0.72), ncol=1,
                frameon=False)
     fig.tight_layout()
     plt.show()
     fig.savefig('ablation-study.pdf', dpi=300)
+
+
+def plot_circ_comparison():
+    with open('results.json', 'r') as f:
+        _zinnia_all_results_dict = json.load(f)
+    with open('results-circ-optimizer.json', 'r') as f:
+        results_dict = json.load(f)
+
+    # Sort keys by their display names (alphabetical)
+    sorted_keys = sorted(_zinnia_all_results_dict.keys(), key=lambda k: NAME_MAPPING.get(k, k))
+
+    names = []
+    optim_enabled_circuit_size = []
+    optim_disabled_circuit_size = []
+    for key in sorted_keys:
+        names.append(NAME_MAPPING.get(key, key))
+        if key not in results_dict.keys():
+            optim_enabled_circuit_size.append(-10)
+            optim_disabled_circuit_size.append(-10)
+            continue
+        value = results_dict[key]
+        optim_enabled = value['circ_optimization_enabled']['no_of_constraints']
+        optim_disabled = value['circ_optimization_disabled']['no_of_constraints']
+        optim_enabled_circuit_size.append(optim_enabled)
+        optim_disabled_circuit_size.append(optim_disabled)
+    optim_enabled_circuit_size = np.asarray(optim_enabled_circuit_size)
+    optim_disabled_circuit_size = np.asarray(optim_disabled_circuit_size)
+
+    plt.rc('font', family='monospace', )
+    # plt.rc('text', usetex=True)
+    title_font = {'fontweight': 'bold', 'fontname': 'Times New Roman', 'fontsize': 12}
+    # Plot the comparison of gate reductions
+    fig, ax = plt.subplots(figsize=(12, 2.5))
+    ax.plot(names, optim_enabled_circuit_size, 'ko', markersize=4, label='CirC Optim. Enabled')
+    ax.plot(names, optim_disabled_circuit_size, 'ks', markersize=4, label='CirC Optim. Disabled')
+    ax.vlines(names, ymin=optim_enabled_circuit_size, ymax=optim_disabled_circuit_size, linestyles='-', color='black')
+    ax.tick_params(axis='x', labelrotation=90)
+    ax.set_yscale('log')
+
+    print('Average improvement using CirC:', 1 -
+        optim_enabled_circuit_size[optim_enabled_circuit_size != -10].sum() / optim_disabled_circuit_size[optim_disabled_circuit_size != -10].sum()
+    )
+
+    ylabel = ax.set_ylabel('Circuit Size (#Constraints)', fontdict=title_font)
+    ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1]-0.25))
+    plt.legend()
+    fig.tight_layout()
+    plt.show()
+    fig.savefig('circ-optimization-study.pdf', dpi=300)
 
 
 def plot_compile_time_scalability():
@@ -972,12 +1028,12 @@ def plot_compile_time_scalability():
 
     fig.legend(
         [AnyObject('mediumseagreen'), AnyObject('mediumpurple'), AnyObject('wheat'), AnyObject('lightskyblue')],
-        ['AST Traversal & IR Generation', 'SMT Reasoning', 'Executing IR Passes', 'Generating ZK Circuit'],
+        ['AST Traversal & IR Generation', 'SMT Solving', 'Executing IR Passes', 'Generating ZK Circuit'],
         handler_map={AnyObject: AnyObjectHandler()}, loc=(0.07, 0.77), ncol=2, frameon=False
     )
     fig.legend(
         [AnyObject('firebrick'), AnyObject('black')],
-        ['Halo2 Baseline (cargo)', 'Noir Baseline (nargo)'],
+        ['Halo2 Baseline (cargo build)', 'Noir Baseline (nargo compile)'],
         handler_map={AnyObject: LineLegendHandler()}, loc=(0.54, 0.77), ncol=1, frameon=False
     )
     fig.tight_layout(h_pad=0.1)
@@ -1235,6 +1291,7 @@ def main():
     plot_performance_heatmap()
     plot_compile_time_scalability()
     plot_smt_constraints()
+    plot_circ_comparison()
     # Print summary advantages
     print_average_advantages()
 
