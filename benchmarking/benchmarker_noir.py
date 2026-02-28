@@ -28,14 +28,13 @@ def run_prove(name: str, input_source: str, program_source: str):
         opcode_count = 0
         proving_times = []
         verifying_times = []
-        compilation_times = []
+        start_time = time.time()
+        compile_process = subprocess.run(['nargo', 'compile'], capture_output=True, text=True, env=my_env)
+        compile_process_feedback = compile_process.stdout + compile_process.stderr
+        assert compile_process.returncode == 0, compile_process_feedback
+        end_time = time.time()
+        compilation_time = end_time - start_time
         for i in range(TIME_MEASURE_REPETITIONS):
-            start_time = time.time()
-            compile_process = subprocess.run(['nargo', 'compile'], capture_output=True, text=True, env=my_env)
-            compile_process_feedback = compile_process.stdout + compile_process.stderr
-            assert compile_process.returncode == 0, compile_process_feedback
-            end_time = time.time()
-            compilation_times.append(end_time - start_time)
             start_time = time.time()
             execute_process = subprocess.run(['nargo', 'execute'], capture_output=True, text=True, env=my_env)
             execute_process_feedback = execute_process.stdout + execute_process.stderr
@@ -83,7 +82,7 @@ def run_prove(name: str, input_source: str, program_source: str):
         "total_gates": total_gates,
         "proving_time": sum(proving_times) / len(proving_times),
         "verifying_time": sum(verifying_times) / len(verifying_times),
-        "nargo_compilation_time": sum(compilation_times) / len(compilation_times),
+        "nargo_compilation_time": compilation_time
     }
 
 

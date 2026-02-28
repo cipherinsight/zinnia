@@ -455,5 +455,5 @@ if __name__ == '__main__':
     # export_zkvm_time_tables('both')
     # export_circuit_size_tables()
     # export_ablation_circuit_increase_table()
-    # export_proof_size_tables()
-    export_benchmark_overview()
+    export_proof_size_tables()
+    # export_benchmark_overview()
