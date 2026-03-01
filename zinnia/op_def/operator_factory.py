@@ -14,7 +14,8 @@ class Operators:
         global_ops.TupleOp, global_ops.StrOp, global_ops.RangeOp, global_ops.PrintOp,
         global_ops.PowOp, global_ops.MinOp, global_ops.MaxOp, global_ops.RangeOp,
         global_ops.ListOp, global_ops.LenOp, global_ops.FloatCastOp, global_ops.BoolCastOp,
-        global_ops.IntCastOp, global_ops.SumOp, global_ops.AnyOp, global_ops.AllOp
+        global_ops.IntCastOp, global_ops.SumOp, global_ops.AnyOp, global_ops.AllOp,
+        global_ops.PoseidonHashBuiltinOp, global_ops.MerkleVerifyOp
     ]
     NDArray = [
         ndarray_ops.NDArray_ProdOp, ndarray_ops.NDArray_SumOp, ndarray_ops.NDArray_TOp, ndarray_ops.NDArray_TransposeOp,

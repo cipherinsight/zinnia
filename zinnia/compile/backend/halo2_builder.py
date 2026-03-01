@@ -67,6 +67,12 @@ from zinnia.ir_def.defs.ir_sub_f import SubFIR
 from zinnia.ir_def.defs.ir_sub_i import SubIIR
 from zinnia.ir_def.defs.ir_tan_f import TanFIR
 from zinnia.ir_def.defs.ir_tanh_f import TanHFIR
+from zinnia.lang.poseidon_params import (
+    POSEIDON_FULL_ROUNDS,
+    POSEIDON_PARTIAL_ROUNDS,
+    POSEIDON_RATE,
+    POSEIDON_T,
+)
 
 
 class _Halo2StatementBuilder:
@@ -617,11 +623,11 @@ use halo2_base::{
 use halo2_graph::scaffold::cmd::Cli;
 use halo2_graph::scaffold::run;
 use snark_verifier_sdk::halo2::OptimizedPoseidonSpec;
-
-const T: usize = 3;
-const RATE: usize = 2;
-const R_F: usize = 8;
-const R_P: usize = 57;
+""" + f"""
+const T: usize = {POSEIDON_T};
+const RATE: usize = {POSEIDON_RATE};
+const R_F: usize = {POSEIDON_FULL_ROUNDS};
+const R_P: usize = {POSEIDON_PARTIAL_ROUNDS};
 """
 
     def build_input_data_structure(self) -> str:

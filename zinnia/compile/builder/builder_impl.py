@@ -195,8 +195,8 @@ class SMTUtils:
                 if "timeout" in s.reason_unknown():
                     SMTUtils.NO_TIMEOUT_CASES += 1
             return None
-        except Exception as e:
-            pass
+        except z3.Z3Exception:
+            return None
         return None
 
 
@@ -1202,7 +1202,7 @@ class IRBuilderImpl(IRBuilder):
             elif isinstance(stmt.ir_instance, SelectIIR):
                 constraints.append(z3.Int(f"int_{stmt.stmt_id}") == z3.If(z3.Bool(f"bool_{stmt.arguments[0]}"), z3.Int(f"int_{stmt.arguments[1]}"), z3.Int(f"int_{stmt.arguments[2]}")))
             elif isinstance(stmt.ir_instance, SelectBIR):
-                constraints.append(z3.Int(f"bool_{stmt.stmt_id}") == z3.If(z3.Bool(f"bool_{stmt.arguments[0]}"), z3.Bool(f"bool_{stmt.arguments[1]}"), z3.Bool(f"bool_{stmt.arguments[2]}")))
+                constraints.append(z3.Bool(f"bool_{stmt.stmt_id}") == z3.If(z3.Bool(f"bool_{stmt.arguments[0]}"), z3.Bool(f"bool_{stmt.arguments[1]}"), z3.Bool(f"bool_{stmt.arguments[2]}")))
             elif isinstance(stmt.ir_instance, SignIIR):
                 constraints.append(z3.Int(f"int_{stmt.stmt_id}") == z3.If(z3.Int(f"int_{stmt.arguments[0]}") > 0, 1, z3.If(z3.Int(f"int_{stmt.arguments[0]}") < 0, -1, 0)))
             elif isinstance(stmt.ir_instance, ReadIntegerIR):

@@ -302,9 +302,9 @@ class IRGenerator:
         elif n.operator == n.Op.GTE:
             return self._ir_builder.op_greater_than_or_equal(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.AND:
-            return self._ir_builder.ir_logical_and(lhs_expr, rhs_expr, dbg=n.dbg)
+            return self._ir_builder.op_logical_and(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.OR:
-            return self._ir_builder.ir_logical_or(lhs_expr, rhs_expr, dbg=n.dbg)
+            return self._ir_builder.op_logical_or(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.POW:
             return self._ir_builder.op_power(lhs_expr, rhs_expr, dbg=n.dbg)
         raise NotImplementedError(f"Internal Error: Binary Operator {n.operator} not implemented")
