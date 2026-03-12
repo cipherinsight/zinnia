@@ -15,7 +15,7 @@ from zinnia import *
 from typing import Any
 import numpy as onp
 
-from examples.utils import create_circuit, create_prove_verify_keys, prove, verify
+from utils import create_circuit, create_prove_verify_keys, prove, verify
 
 
 TX_COUNT = 12

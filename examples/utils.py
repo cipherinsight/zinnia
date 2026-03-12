@@ -91,10 +91,18 @@ def _ensure_halo2_paths(circuit_name: str, k: int) -> Halo2Artifacts:
 
 
 def _normalize_value(value: Any) -> str:
-	# Halo2 input JSON uses stringified scalar values.
+	# Integer-like lanes are serialized as field-element strings.
 	if isinstance(value, bool):
 		return "1" if value else "0"
 	return str(value)
+
+
+def _normalize_entry_value(entry: Any) -> Any:
+	# Float lanes are deserialized as f64 in generated Rust input structs, so they
+	# must remain JSON numbers instead of quoted strings.
+	if entry.is_float():
+		return float(entry.get_value())
+	return _normalize_value(entry.get_value())
 
 
 def _is_low_level_mapping(payload: Mapping[str, Any]) -> bool:
@@ -103,7 +111,7 @@ def _is_low_level_mapping(payload: Mapping[str, Any]) -> bool:
 	return all(key.startswith("x_") or key.startswith("hash_") for key in keys)
 
 
-def _to_input_mapping(circuit: ZKCircuit, data: Any) -> dict[str, str]:
+def _to_input_mapping(circuit: ZKCircuit, data: Any) -> dict[str, Any]:
 	# Feature highlight:
 	# This adapter accepts multiple caller-facing formats and normalizes them
 	# into the exact key/value mapping consumed by the Halo2 example binary.
@@ -112,7 +120,7 @@ def _to_input_mapping(circuit: ZKCircuit, data: Any) -> dict[str, str]:
 			return {str(k): _normalize_value(v) for k, v in data.items()}
 		# Preferred path: use circuit argparse to encode typed inputs correctly.
 		parsed = circuit.argparse(**dict(data))
-		return {entry.get_key(): _normalize_value(entry.get_value()) for entry in parsed.entries}
+		return {entry.get_key(): _normalize_entry_value(entry) for entry in parsed.entries}
 
 	if isinstance(data, str):
 		# JSON payload support helps scripted pipelines and fixture files.
@@ -122,19 +130,19 @@ def _to_input_mapping(circuit: ZKCircuit, data: Any) -> dict[str, str]:
 		if _is_low_level_mapping(payload):
 			return {str(k): _normalize_value(v) for k, v in payload.items()}
 		parsed = circuit.argparse(**payload)
-		return {entry.get_key(): _normalize_value(entry.get_value()) for entry in parsed.entries}
+		return {entry.get_key(): _normalize_entry_value(entry) for entry in parsed.entries}
 
 	if isinstance(data, Sequence) and not isinstance(data, (bytes, bytearray, str)):
 		# Positional argument path mirrors direct function-call style.
 		parsed = circuit.argparse(*data)
-		return {entry.get_key(): _normalize_value(entry.get_value()) for entry in parsed.entries}
+		return {entry.get_key(): _normalize_entry_value(entry) for entry in parsed.entries}
 
 	raise TypeError(
 		"Unsupported `data` type. Use one of: mapping, JSON string, or a sequence of circuit arguments."
 	)
 
 
-def _write_input_data(circuit: ZKCircuit, data: Any, input_path: Path) -> dict[str, str]:
+def _write_input_data(circuit: ZKCircuit, data: Any, input_path: Path) -> dict[str, Any]:
 	# Convert and persist witness/public values for the Rust runner.
 	mapped = _to_input_mapping(circuit, data)
 	with input_path.open("w", encoding="utf-8") as fp:

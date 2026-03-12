@@ -3,6 +3,7 @@ from .floating import FloatValue
 from .integer import IntegerValue
 from .boolean import BooleanValue
 from .lst import ListValue
+from .dynamic_ndarray import DynamicNDArrayValue
 from .ndarray import NDArrayValue
 from .none import NoneValue
 from .number import NumberValue

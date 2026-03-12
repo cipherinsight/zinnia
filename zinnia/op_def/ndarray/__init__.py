@@ -4,10 +4,12 @@ from .op_argmax import NDArray_ArgMaxOp
 from .op_argmin import NDArray_ArgMinOp
 from .op_dtype import NDArray_DtypeOp
 from .op_flat import NDArray_FlatOp
+from .op_filter import NDArray_FilterOp
 from .op_max import NDArray_MaxOp
 from .op_min import NDArray_MinOp
 from .op_reshape import NDArray_ReshapeOp
 from .op_shape import NDArray_ShapeOp
+from .op_moveaxis import NDArray_MoveAxisOp
 from .op_sum import NDArray_SumOp
 from .op_prod import NDArray_ProdOp
 from .op_T import NDArray_TOp

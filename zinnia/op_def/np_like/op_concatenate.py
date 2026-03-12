@@ -6,7 +6,8 @@ from zinnia.debug.exception import TypeInferenceError, StaticInferenceError
 from zinnia.compile.type_sys import IntegerType, FloatType
 from zinnia.op_def.abstract.abstract_op import AbstractOp
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
-from zinnia.compile.triplet import Value, IntegerValue, NDArrayValue, TupleValue, ListValue, NoneValue
+from zinnia.compile.triplet import Value, IntegerValue, NDArrayValue, DynamicNDArrayValue, TupleValue, ListValue, NoneValue
+from zinnia.op_def.dynamic_ndarray.op_concatenate import DynamicNDArray_ConcatenateOp
 
 
 class NP_ConcatenateOp(AbstractOp):
@@ -50,6 +51,17 @@ class NP_ConcatenateOp(AbstractOp):
             builder.op_ndarray_astype(ary, builder.op_constant_class(FloatType)) if expected_float and ary.dtype() != FloatType else ary
             for ary in sources
         ]
+
+        has_dynamic = any(isinstance(src, DynamicNDArrayValue) for src in sources)
+        if has_dynamic:
+            if not isinstance(axis, (IntegerValue, NoneValue)):
+                raise TypeInferenceError(dbg, f"Expected `axis` to be an integer, but got {axis.type()}")
+            dyn_sources = [src if isinstance(src, DynamicNDArrayValue) else src.to_dynamic_ndarray() for src in sources]
+            op = DynamicNDArray_ConcatenateOp()
+            dyn_axis = axis
+            kwargs2 = op.argparse(dbg, [builder.op_parenthesis(dyn_sources), dyn_axis], {})
+            return op.build(builder, OpArgsContainer(kwargs2), dbg)
+
         if not isinstance(axis, NoneValue):
             if isinstance(axis, IntegerValue):
                 if axis.val(builder) is None:
@@ -57,6 +69,7 @@ class NP_ConcatenateOp(AbstractOp):
                 axis_value = axis.val(builder) if axis.val(builder) >= 0 else len(sources[0].shape()) + axis.val(builder)
             else:
                 raise TypeInferenceError(dbg, f"Expected `axis` to be an integer, but got {axis.type()}")
+
         for i, src in enumerate(sources):
             if i == 0:
                 continue

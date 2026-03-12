@@ -3,6 +3,7 @@ from zinnia.compile.type_sys.dt_descriptor import DTDescriptor
 from zinnia.compile.type_sys.float import FloatDTDescriptor
 from zinnia.compile.type_sys.integer import IntegerDTDescriptor
 from zinnia.compile.type_sys.boolean import BooleanDTDescriptor
+from zinnia.compile.type_sys.dynamic_ndarray import DynamicNDArrayDTDescriptor
 from zinnia.compile.type_sys.list import ListDTDescriptor
 from zinnia.compile.type_sys.ndarray import NDArrayDTDescriptor
 from zinnia.compile.type_sys.none import NoneDTDescriptor

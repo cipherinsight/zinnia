@@ -6,7 +6,9 @@ from zinnia.ir_def.defs.ir_abs_i import AbsIIR
 from zinnia.ir_def.defs.ir_add_f import AddFIR
 from zinnia.ir_def.defs.ir_add_i import AddIIR
 from zinnia.ir_def.defs.ir_add_str import AddStrIR
+from zinnia.ir_def.defs.ir_allocate_dynamic_ndarray_meta import AllocateDynamicNDArrayMetaIR
 from zinnia.ir_def.defs.ir_assert import AssertIR
+from zinnia.ir_def.defs.ir_assert_dynamic_ndarray_meta import AssertDynamicNDArrayMetaIR
 from zinnia.ir_def.defs.ir_bool_cast import BoolCastIR
 from zinnia.ir_def.defs.ir_constant_bool import ConstantBoolIR
 from zinnia.ir_def.defs.ir_constant_float import ConstantFloatIR
@@ -16,6 +18,8 @@ from zinnia.ir_def.defs.ir_cos_f import CosFIR
 from zinnia.ir_def.defs.ir_cosh_f import CosHFIR
 from zinnia.ir_def.defs.ir_div_f import DivFIR
 from zinnia.ir_def.defs.ir_div_i import DivIIR
+from zinnia.ir_def.defs.ir_dynamic_ndarray_get_item import DynamicNDArrayGetItemIR
+from zinnia.ir_def.defs.ir_dynamic_ndarray_set_item import DynamicNDArraySetItemIR
 from zinnia.ir_def.defs.ir_eq_f import EqualFIR
 from zinnia.ir_def.defs.ir_eq_hash import EqualHashIR
 from zinnia.ir_def.defs.ir_eq_i import EqualIIR
@@ -47,11 +51,15 @@ from zinnia.ir_def.defs.ir_mod_f import ModFIR
 from zinnia.ir_def.defs.ir_mod_i import ModIIR
 from zinnia.ir_def.defs.ir_mul_f import MulFIR
 from zinnia.ir_def.defs.ir_mul_i import MulIIR
+from zinnia.ir_def.defs.ir_allocate_memory import AllocateMemoryIR
+from zinnia.ir_def.defs.ir_memory_trace_emit import MemoryTraceEmitIR
+from zinnia.ir_def.defs.ir_memory_trace_seal import MemoryTraceSealIR
 from zinnia.ir_def.defs.ir_ne_f import NotEqualFIR
 from zinnia.ir_def.defs.ir_ne_i import NotEqualIIR
 from zinnia.ir_def.defs.ir_pow_f import PowFIR
 from zinnia.ir_def.defs.ir_pow_i import PowIIR
 from zinnia.ir_def.defs.ir_print import PrintIR
+from zinnia.ir_def.defs.ir_read_memory import ReadMemoryIR
 from zinnia.ir_def.defs.ir_read_float import ReadFloatIR
 from zinnia.ir_def.defs.ir_read_hash import ReadHashIR
 from zinnia.ir_def.defs.ir_read_integer import ReadIntegerIR
@@ -69,6 +77,8 @@ from zinnia.ir_def.defs.ir_sub_f import SubFIR
 from zinnia.ir_def.defs.ir_sub_i import SubIIR
 from zinnia.ir_def.defs.ir_tan_f import TanFIR
 from zinnia.ir_def.defs.ir_tanh_f import TanHFIR
+from zinnia.ir_def.defs.ir_witness_dynamic_ndarray_meta import WitnessDynamicNDArrayMetaIR
+from zinnia.ir_def.defs.ir_write_memory import WriteMemoryIR
 
 
 class IRFactory:
@@ -78,6 +88,9 @@ class IRFactory:
         ADD_F = AddFIR
         ADD_I = AddIIR
         ASSERT = AssertIR
+        ALLOCATE_DYNAMIC_NDARRAY_META = AllocateDynamicNDArrayMetaIR
+        WITNESS_DYNAMIC_NDARRAY_META = WitnessDynamicNDArrayMetaIR
+        ASSERT_DYNAMIC_NDARRAY_META = AssertDynamicNDArrayMetaIR
         BOOL_CAST = BoolCastIR
         CONSTANT_FLOAT = ConstantFloatIR
         CONSTANT_INT = ConstantIntIR
@@ -86,6 +99,8 @@ class IRFactory:
         COSH_F = CosHFIR
         DIV_F = DivFIR
         DIV_I = DivIIR
+        DYNAMIC_NDARRAY_GET_ITEM = DynamicNDArrayGetItemIR
+        DYNAMIC_NDARRAY_SET_ITEM = DynamicNDArraySetItemIR
         EQ_F = EqualFIR
         EQ_I = EqualIIR
         EQ_HASH = EqualHashIR
@@ -116,6 +131,11 @@ class IRFactory:
         MOD_I = ModIIR
         MUL_F = MulFIR
         MUL_I = MulIIR
+        ALLOCATE_MEMORY = AllocateMemoryIR
+        WRITE_MEMORY = WriteMemoryIR
+        READ_MEMORY = ReadMemoryIR
+        MEMORY_TRACE_EMIT = MemoryTraceEmitIR
+        MEMORY_TRACE_SEAL = MemoryTraceSealIR
         NE_F = NotEqualFIR
         NE_I = NotEqualIIR
         POW_F = PowFIR

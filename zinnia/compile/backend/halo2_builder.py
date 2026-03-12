@@ -1,4 +1,4 @@
-from typing import List
+from typing import Dict, List, Tuple
 
 from zinnia.compile.backend.abstract_builder import AbstractProgramBuilder
 from zinnia.compile.ir.ir_stmt import IRStatement
@@ -7,7 +7,9 @@ from zinnia.ir_def.defs.ir_abs_i import AbsIIR
 from zinnia.ir_def.defs.ir_add_f import AddFIR
 from zinnia.ir_def.defs.ir_add_i import AddIIR
 from zinnia.ir_def.defs.ir_add_str import AddStrIR
+from zinnia.ir_def.defs.ir_allocate_dynamic_ndarray_meta import AllocateDynamicNDArrayMetaIR
 from zinnia.ir_def.defs.ir_assert import AssertIR
+from zinnia.ir_def.defs.ir_assert_dynamic_ndarray_meta import AssertDynamicNDArrayMetaIR
 from zinnia.ir_def.defs.ir_bool_cast import BoolCastIR
 from zinnia.ir_def.defs.ir_constant_bool import ConstantBoolIR
 from zinnia.ir_def.defs.ir_constant_int import ConstantIntIR
@@ -43,6 +45,9 @@ from zinnia.ir_def.defs.ir_mod_f import ModFIR
 from zinnia.ir_def.defs.ir_mod_i import ModIIR
 from zinnia.ir_def.defs.ir_mul_f import MulFIR
 from zinnia.ir_def.defs.ir_mul_i import MulIIR
+from zinnia.ir_def.defs.ir_allocate_memory import AllocateMemoryIR
+from zinnia.ir_def.defs.ir_memory_trace_emit import MemoryTraceEmitIR
+from zinnia.ir_def.defs.ir_memory_trace_seal import MemoryTraceSealIR
 from zinnia.ir_def.defs.ir_ne_f import NotEqualFIR
 from zinnia.ir_def.defs.ir_ne_i import NotEqualIIR
 from zinnia.ir_def.defs.ir_logical_not import LogicalNotIR
@@ -50,6 +55,7 @@ from zinnia.ir_def.defs.ir_logical_and import LogicalAndIR
 from zinnia.ir_def.defs.ir_pow_f import PowFIR
 from zinnia.ir_def.defs.ir_pow_i import PowIIR
 from zinnia.ir_def.defs.ir_print import PrintIR
+from zinnia.ir_def.defs.ir_read_memory import ReadMemoryIR
 from zinnia.ir_def.defs.ir_read_float import ReadFloatIR
 from zinnia.ir_def.defs.ir_read_hash import ReadHashIR
 from zinnia.ir_def.defs.ir_read_integer import ReadIntegerIR
@@ -67,6 +73,8 @@ from zinnia.ir_def.defs.ir_sub_f import SubFIR
 from zinnia.ir_def.defs.ir_sub_i import SubIIR
 from zinnia.ir_def.defs.ir_tan_f import TanFIR
 from zinnia.ir_def.defs.ir_tanh_f import TanHFIR
+from zinnia.ir_def.defs.ir_witness_dynamic_ndarray_meta import WitnessDynamicNDArrayMetaIR
+from zinnia.ir_def.defs.ir_write_memory import WriteMemoryIR
 from zinnia.lang.poseidon_params import (
     POSEIDON_FULL_ROUNDS,
     POSEIDON_PARTIAL_ROUNDS,
@@ -583,6 +591,53 @@ class _Halo2StatementBuilder:
         assert isinstance(stmt.ir_instance, AddStrIR)
         return []
 
+    def _build_AllocateDynamicNDArrayMetaIR(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.ir_instance, AllocateDynamicNDArrayMetaIR)
+        return []
+
+    def _build_WitnessDynamicNDArrayMetaIR(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.ir_instance, WitnessDynamicNDArrayMetaIR)
+        return []
+
+    def _build_AssertDynamicNDArrayMetaIR(self, stmt: IRStatement) -> List[str]:
+        assert isinstance(stmt.ir_instance, AssertDynamicNDArrayMetaIR)
+        rank_var = self._get_var_name(stmt.arguments[0])
+        offset_var = self._get_var_name(stmt.arguments[1])
+        max_rank = stmt.ir_instance.max_rank
+        max_length = stmt.ir_instance.max_length
+        shape_vars = [self._get_var_name(arg) for arg in stmt.arguments[2:2 + max_rank]]
+        stride_vars = [self._get_var_name(arg) for arg in stmt.arguments[2 + max_rank:2 + 2 * max_rank]]
+        lines = [
+            f"let rank_positive_{stmt.stmt_id} = range_chip.is_less_than(ctx, Constant(F::ZERO), {rank_var}, 128);",
+            f"gate.assert_is_const(ctx, &rank_positive_{stmt.stmt_id}, &F::ONE);",
+            f"let rank_upper_{stmt.stmt_id} = range_chip.is_less_than(ctx, {rank_var}, Constant(F::from({max_rank + 1}u64)), 128);",
+            f"gate.assert_is_const(ctx, &rank_upper_{stmt.stmt_id}, &F::ONE);",
+            f"let offset_upper_{stmt.stmt_id} = range_chip.is_less_than(ctx, {offset_var}, Constant(F::from({max_length + 1}u64)), 128);",
+            f"gate.assert_is_const(ctx, &offset_upper_{stmt.stmt_id}, &F::ONE);",
+        ]
+        for i in range(max_rank):
+            shape_i = shape_vars[i]
+            stride_i = stride_vars[i]
+            lines += [
+                f"let shape_positive_{stmt.stmt_id}_{i} = range_chip.is_less_than(ctx, Constant(F::ZERO), {shape_i}, 128);",
+                f"gate.assert_is_const(ctx, &shape_positive_{stmt.stmt_id}_{i}, &F::ONE);",
+                f"let shape_upper_{stmt.stmt_id}_{i} = range_chip.is_less_than(ctx, {shape_i}, Constant(F::from({max_length + 1}u64)), 128);",
+                f"gate.assert_is_const(ctx, &shape_upper_{stmt.stmt_id}_{i}, &F::ONE);",
+                f"let stride_positive_{stmt.stmt_id}_{i} = range_chip.is_less_than(ctx, Constant(F::ZERO), {stride_i}, 128);",
+                f"gate.assert_is_const(ctx, &stride_positive_{stmt.stmt_id}_{i}, &F::ONE);",
+                f"let stride_upper_{stmt.stmt_id}_{i} = range_chip.is_less_than(ctx, {stride_i}, Constant(F::from({max_length + 1}u64)), 128);",
+                f"gate.assert_is_const(ctx, &stride_upper_{stmt.stmt_id}_{i}, &F::ONE);",
+                f"let axis_active_{stmt.stmt_id}_{i} = range_chip.is_less_than(ctx, Constant(F::from({i}u64)), {rank_var}, 128);",
+                f"let axis_inactive_{stmt.stmt_id}_{i} = gate.not(ctx, axis_active_{stmt.stmt_id}_{i});",
+                f"let shape_one_{stmt.stmt_id}_{i} = gate.is_equal(ctx, {shape_i}, Constant(F::ONE));",
+                f"let stride_one_{stmt.stmt_id}_{i} = gate.is_equal(ctx, {stride_i}, Constant(F::ONE));",
+                f"let shape_inactive_ok_{stmt.stmt_id}_{i} = gate.or(ctx, axis_active_{stmt.stmt_id}_{i}, shape_one_{stmt.stmt_id}_{i});",
+                f"let stride_inactive_ok_{stmt.stmt_id}_{i} = gate.or(ctx, axis_active_{stmt.stmt_id}_{i}, stride_one_{stmt.stmt_id}_{i});",
+                f"gate.assert_is_const(ctx, &shape_inactive_ok_{stmt.stmt_id}_{i}, &F::ONE);",
+                f"gate.assert_is_const(ctx, &stride_inactive_ok_{stmt.stmt_id}_{i}, &F::ONE);",
+            ]
+        return lines
+
 
 class Halo2ProgramBuilder(AbstractProgramBuilder):
     input_entries: List
@@ -667,9 +722,147 @@ fn main() {{
     run({circuit_name}, args);
 }}"""
 
+    def _collect_memory_segments(self) -> Dict[int, Tuple[int, int]]:
+        segments: Dict[int, Tuple[int, int]] = {}
+        for stmt in self.stmts:
+            if not isinstance(stmt.ir_instance, AllocateMemoryIR):
+                continue
+            segment_id = stmt.ir_instance.segment_id
+            if segment_id in segments:
+                raise ValueError(f"Duplicate memory allocation for segment {segment_id}")
+            segments[segment_id] = (stmt.ir_instance.size, stmt.ir_instance.init_value)
+        return segments
+
+    def _build_memory_consistency_block(self, memory_segments: Dict[int, Tuple[int, int]]) -> List[str]:
+        lines: List[str] = []
+        if len(memory_segments) == 0:
+            return lines
+        lines += [
+            "// Memory consistency constraints (sorted permutation over (segment, address, time, value, is_write)).",
+            "if mem_trace_unsorted.len() > 0 {",
+            "    let mut mem_trace_sorted = mem_trace_unsorted.clone();",
+            "    mem_trace_sorted.sort_by_key(|row| (",
+            "        row.0.value().get_lower_128(),",
+            "        row.1.value().get_lower_128(),",
+            "        row.2.value().get_lower_128(),",
+            "    ));",
+            "",
+            "    let mut mem_gp = ctx.load_constant(F::ONE);",
+            "    for i in 0..mem_trace_unsorted.len() {",
+            "        let u_row = &mem_trace_unsorted[i];",
+            "        let s_row = &mem_trace_sorted[i];",
+            "",
+            "        let u_tmp_1 = gate.mul(ctx, u_row.1, Constant(F::from(7u64)));",
+            "        let u_tmp_2 = gate.add(ctx, u_row.0, u_tmp_1);",
+            "        let u_tmp_3 = gate.mul(ctx, u_row.2, Constant(F::from(13u64)));",
+            "        let u_tmp_4 = gate.add(ctx, u_tmp_2, u_tmp_3);",
+            "        let u_tmp_5 = gate.mul(ctx, u_row.3, Constant(F::from(17u64)));",
+            "        let u_tmp_6 = gate.add(ctx, u_tmp_4, u_tmp_5);",
+            "        let u_lin = gate.add(ctx, u_tmp_6, gate.mul(ctx, u_row.4, Constant(F::from(19u64))));",
+            "",
+            "        let s_tmp_1 = gate.mul(ctx, s_row.1, Constant(F::from(7u64)));",
+            "        let s_tmp_2 = gate.add(ctx, s_row.0, s_tmp_1);",
+            "        let s_tmp_3 = gate.mul(ctx, s_row.2, Constant(F::from(13u64)));",
+            "        let s_tmp_4 = gate.add(ctx, s_tmp_2, s_tmp_3);",
+            "        let s_tmp_5 = gate.mul(ctx, s_row.3, Constant(F::from(17u64)));",
+            "        let s_tmp_6 = gate.add(ctx, s_tmp_4, s_tmp_5);",
+            "        let s_lin = gate.add(ctx, s_tmp_6, gate.mul(ctx, s_row.4, Constant(F::from(19u64))));",
+            "",
+            "        let u_term = gate.add(ctx, u_lin, Constant(F::from(104729u64)));",
+            "        let s_term = gate.add(ctx, s_lin, Constant(F::from(104729u64)));",
+            "        let gp_mul = gate.mul(ctx, mem_gp, u_term);",
+            "        mem_gp = gate.div_unsafe(ctx, gp_mul, s_term);",
+            "    }",
+            "    gate.assert_is_const(ctx, &mem_gp, &F::ONE);",
+            "",
+            "    for (row_idx, row) in mem_trace_sorted.iter().enumerate() {",
+            "        let seg = row.0;",
+            "        let addr = row.1;",
+            "",
+            "        let mut seg_in_range = ctx.load_constant(F::ZERO);",
+            "        let mut bound_ok = ctx.load_constant(F::ZERO);",
+            "        let mut init_value = ctx.load_constant(F::ZERO);",
+        ]
+        for seg_id, (seg_size, seg_init) in sorted(memory_segments.items()):
+            lines += [
+                f"        let seg_eq_{seg_id} = gate.is_equal(ctx, seg, Constant(F::from({seg_id}u64)));",
+                f"        let seg_bound_ok_{seg_id} = range_chip.is_less_than(ctx, addr, Constant(F::from({seg_size}u64)), 128);",
+                f"        let seg_bound_term_{seg_id} = gate.and(ctx, seg_eq_{seg_id}, seg_bound_ok_{seg_id});",
+                f"        seg_in_range = gate.or(ctx, seg_in_range, seg_eq_{seg_id});",
+                f"        bound_ok = gate.or(ctx, bound_ok, seg_bound_term_{seg_id});",
+                f"        init_value = gate.select(ctx, Constant(F::from({seg_init})), init_value, seg_eq_{seg_id});",
+            ]
+        lines += [
+            "        gate.assert_is_const(ctx, &seg_in_range, &F::ONE);",
+            "        gate.assert_is_const(ctx, &bound_ok, &F::ONE);",
+            "",
+            "        let is_read = gate.not(ctx, row.4);",
+            "        let first_cell = if row_idx == 0 {",
+            "            ctx.load_constant(F::ONE)",
+            "        } else {",
+            "            ctx.load_constant(F::ZERO)",
+            "        };",
+            "        let check_init = gate.and(ctx, first_cell, is_read);",
+            "        let init_eq = gate.is_equal(ctx, row.3, init_value);",
+            "        let init_guard = gate.or(ctx, gate.not(ctx, check_init), init_eq);",
+            "        gate.assert_is_const(ctx, &init_guard, &F::ONE);",
+            "    }",
+            "",
+            "    if mem_trace_sorted.len() > 1 {",
+            "        for i in 0..(mem_trace_sorted.len() - 1) {",
+            "            let curr = &mem_trace_sorted[i];",
+            "            let next = &mem_trace_sorted[i + 1];",
+            "",
+            "            let seg_lt = range_chip.is_less_than(ctx, curr.0, next.0, 128);",
+            "            let seg_eq = gate.is_equal(ctx, curr.0, next.0);",
+            "            let addr_lt = range_chip.is_less_than(ctx, curr.1, next.1, 128);",
+            "            let addr_eq = gate.is_equal(ctx, curr.1, next.1);",
+            "            let time_lt = range_chip.is_less_than(ctx, curr.2, next.2, 128);",
+            "            let time_eq = gate.is_equal(ctx, curr.2, next.2);",
+            "            let time_lte = gate.or(ctx, time_lt, time_eq);",
+            "",
+            "            let addr_order = gate.or(ctx, addr_lt, gate.and(ctx, addr_eq, time_lte));",
+            "            let lex_ok = gate.or(ctx, seg_lt, gate.and(ctx, seg_eq, addr_order));",
+            "            gate.assert_is_const(ctx, &lex_ok, &F::ONE);",
+            "",
+            "            let same_cell = gate.and(ctx, seg_eq, addr_eq);",
+            "            let same_cell_time_guard = gate.or(ctx, gate.not(ctx, same_cell), time_lt);",
+            "            gate.assert_is_const(ctx, &same_cell_time_guard, &F::ONE);",
+            "",
+            "            let next_is_read = gate.not(ctx, next.4);",
+            "            let value_eq = gate.is_equal(ctx, curr.3, next.3);",
+            "            let need_read_consistency = gate.and(ctx, same_cell, next_is_read);",
+            "            let read_consistency_guard = gate.or(ctx, gate.not(ctx, need_read_consistency), value_eq);",
+            "            gate.assert_is_const(ctx, &read_consistency_guard, &F::ONE);",
+            "",
+            "            let is_new_cell = gate.not(ctx, same_cell);",
+            "            let mut next_init = ctx.load_constant(F::ZERO);",
+        ]
+        for seg_id, (_, seg_init) in sorted(memory_segments.items()):
+            lines += [
+                f"            let next_seg_eq_{seg_id} = gate.is_equal(ctx, next.0, Constant(F::from({seg_id}u64)));",
+                f"            next_init = gate.select(ctx, Constant(F::from({seg_init})), next_init, next_seg_eq_{seg_id});",
+            ]
+        lines += [
+            "            let next_is_read_init = gate.and(ctx, is_new_cell, next_is_read);",
+            "            let next_init_eq = gate.is_equal(ctx, next.3, next_init);",
+            "            let next_init_guard = gate.or(ctx, gate.not(ctx, next_is_read_init), next_init_eq);",
+            "            gate.assert_is_const(ctx, &next_init_guard, &F::ONE);",
+            "        }",
+            "    }",
+            "}",
+        ]
+        return lines
+
     def build_circuit_body(self) -> str:
         internal_builder = _Halo2StatementBuilder()
-        translated_stmts = []
+        translated_stmts: List[str] = []
+        memory_segments = self._collect_memory_segments()
+        has_memory_ir = any(
+            isinstance(stmt.ir_instance, (AllocateMemoryIR, WriteMemoryIR, ReadMemoryIR, MemoryTraceEmitIR, MemoryTraceSealIR))
+            for stmt in self.stmts
+        )
+        has_explicit_memory_trace = any(isinstance(stmt.ir_instance, MemoryTraceEmitIR) for stmt in self.stmts)
         has_poseidon_hash_ir = any(isinstance(stmt.ir_instance, PoseidonHashIR) for stmt in self.stmts)
         initialize_stmts = """\
     const PRECISION: u32 = 63;
@@ -682,6 +875,70 @@ fn main() {{
 """
         if has_poseidon_hash_ir:
             initialize_stmts += "    poseidon_hasher.initialize_consts(ctx, &gate);\n"
+        if has_memory_ir:
+            initialize_stmts += "    let mut mem_trace_unsorted: Vec<(AssignedValue<F>, AssignedValue<F>, AssignedValue<F>, AssignedValue<F>, AssignedValue<F>)> = vec![];\n"
+            initialize_stmts += "    let mut mem_trace_time_by_segment: std::collections::HashMap<u64, u64> = std::collections::HashMap::new();\n"
+            for seg_id in sorted(memory_segments.keys()):
+                initialize_stmts += f"    mem_trace_time_by_segment.insert({seg_id}u64, 0u64);\n"
         for stmt in self.stmts:
+            if isinstance(stmt.ir_instance, AllocateMemoryIR):
+                continue
+            if isinstance(stmt.ir_instance, ReadMemoryIR):
+                address_var = internal_builder._get_var_name(stmt.arguments[0])
+                read_var = internal_builder._get_var_name(stmt.stmt_id)
+                translated_stmts.append(f"let {read_var} = ctx.load_witness(F::ZERO);")
+                if not has_explicit_memory_trace:
+                    segment_id = stmt.ir_instance.segment_id
+                    ts_var = f"mem_t_{stmt.stmt_id}"
+                    translated_stmts += [
+                        f"let {ts_var} = *mem_trace_time_by_segment.get(&({segment_id}u64)).unwrap_or(&0u64);",
+                        f"mem_trace_time_by_segment.insert({segment_id}u64, {ts_var} + 1);",
+                        f"let mem_seg_{stmt.stmt_id} = ctx.load_constant(F::from({segment_id}u64));",
+                        f"let mem_addr_{stmt.stmt_id} = gate.add(ctx, {address_var}, Constant(F::ZERO));",
+                        f"let mem_time_{stmt.stmt_id} = ctx.load_constant(F::from({ts_var}));",
+                        f"let mem_value_{stmt.stmt_id} = gate.add(ctx, {read_var}, Constant(F::ZERO));",
+                        f"let mem_is_write_{stmt.stmt_id} = ctx.load_constant(F::ZERO);",
+                        f"mem_trace_unsorted.push((mem_seg_{stmt.stmt_id}, mem_addr_{stmt.stmt_id}, mem_time_{stmt.stmt_id}, mem_value_{stmt.stmt_id}, mem_is_write_{stmt.stmt_id}));",
+                    ]
+                continue
+            if isinstance(stmt.ir_instance, WriteMemoryIR):
+                if not has_explicit_memory_trace:
+                    segment_id = stmt.ir_instance.segment_id
+                    address_var = internal_builder._get_var_name(stmt.arguments[0])
+                    value_var = internal_builder._get_var_name(stmt.arguments[1])
+                    ts_var = f"mem_t_{stmt.stmt_id}"
+                    translated_stmts += [
+                        f"let {ts_var} = *mem_trace_time_by_segment.get(&({segment_id}u64)).unwrap_or(&0u64);",
+                        f"mem_trace_time_by_segment.insert({segment_id}u64, {ts_var} + 1);",
+                        f"let mem_seg_{stmt.stmt_id} = ctx.load_constant(F::from({segment_id}u64));",
+                        f"let mem_addr_{stmt.stmt_id} = gate.add(ctx, {address_var}, Constant(F::ZERO));",
+                        f"let mem_time_{stmt.stmt_id} = ctx.load_constant(F::from({ts_var}));",
+                        f"let mem_value_{stmt.stmt_id} = gate.add(ctx, {value_var}, Constant(F::ZERO));",
+                        f"let mem_is_write_{stmt.stmt_id} = ctx.load_constant(F::ONE);",
+                        f"mem_trace_unsorted.push((mem_seg_{stmt.stmt_id}, mem_addr_{stmt.stmt_id}, mem_time_{stmt.stmt_id}, mem_value_{stmt.stmt_id}, mem_is_write_{stmt.stmt_id}));",
+                    ]
+                continue
+            if isinstance(stmt.ir_instance, MemoryTraceEmitIR):
+                segment_id = stmt.ir_instance.segment_id
+                if segment_id not in memory_segments:
+                    raise ValueError(f"Memory trace references unallocated segment {segment_id}")
+                address_var = internal_builder._get_var_name(stmt.arguments[0])
+                value_var = internal_builder._get_var_name(stmt.arguments[1])
+                ts_var = f"mem_t_{stmt.stmt_id}"
+                translated_stmts += [
+                    f"let {ts_var} = *mem_trace_time_by_segment.get(&({segment_id}u64)).unwrap_or(&0u64);",
+                    f"mem_trace_time_by_segment.insert({segment_id}u64, {ts_var} + 1);",
+                    f"let mem_seg_{stmt.stmt_id} = ctx.load_constant(F::from({segment_id}u64));",
+                    f"let mem_addr_{stmt.stmt_id} = gate.add(ctx, {address_var}, Constant(F::ZERO));",
+                    f"let mem_time_{stmt.stmt_id} = ctx.load_constant(F::from({ts_var}));",
+                    f"let mem_value_{stmt.stmt_id} = gate.add(ctx, {value_var}, Constant(F::ZERO));",
+                    f"let mem_is_write_{stmt.stmt_id} = ctx.load_constant(F::{'ONE' if stmt.ir_instance.is_write else 'ZERO'});",
+                    f"mem_trace_unsorted.push((mem_seg_{stmt.stmt_id}, mem_addr_{stmt.stmt_id}, mem_time_{stmt.stmt_id}, mem_value_{stmt.stmt_id}, mem_is_write_{stmt.stmt_id}));",
+                ]
+                continue
+            if isinstance(stmt.ir_instance, MemoryTraceSealIR):
+                continue
             translated_stmts += internal_builder.build_stmt(stmt)
+        if has_memory_ir and len(memory_segments) > 0:
+            translated_stmts += self._build_memory_consistency_block(memory_segments)
         return initialize_stmts + "    " + "\n    ".join(translated_stmts)

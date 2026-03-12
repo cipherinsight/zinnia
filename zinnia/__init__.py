@@ -1,4 +1,4 @@
-from .lang.type import Integer, Float, Tuple, List, NDArray, PoseidonHashed, integer, Int, Bool, Boolean, boolean
+from .lang.type import Integer, Float, Tuple, List, NDArray, DynamicNDArray, PoseidonHashed, integer, Int, Bool, Boolean, boolean
 from .lang.typing import Private, Public, private, public
 from .lang.operator import *
 from .api.zk_chip import ZKChip, zk_chip

@@ -3,7 +3,7 @@ from typing import List, Dict, Optional
 from zinnia.compile.builder.op_args_container import OpArgsContainer
 from zinnia.debug.exception import TypeInferenceError
 from zinnia.compile.type_sys import IntegerType, FloatType, DTDescriptor, TupleDTDescriptor, ListDTDescriptor, \
-    NDArrayDTDescriptor, BooleanType
+    NDArrayDTDescriptor, DynamicNDArrayDTDescriptor, BooleanType
 from zinnia.op_def.abstract.abstract_op import AbstractOp
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
@@ -29,6 +29,7 @@ class ImplicitTypeCastOp(AbstractOp):
 
     @staticmethod
     def verify_cast_ability(src: DTDescriptor, dest: DTDescriptor) -> bool:
+        ndarray_like = (NDArrayDTDescriptor, DynamicNDArrayDTDescriptor)
         if src == dest:
             return True
         if src == IntegerType and dest == FloatType:
@@ -55,7 +56,7 @@ class ImplicitTypeCastOp(AbstractOp):
                 if not ImplicitTypeCastOp.verify_cast_ability(s, d):
                     return False
             return True
-        if (isinstance(src, ListDTDescriptor) or isinstance(src, TupleDTDescriptor)) and isinstance(dest, NDArrayDTDescriptor):
+        if (isinstance(src, ListDTDescriptor) or isinstance(src, TupleDTDescriptor)) and isinstance(dest, ndarray_like):
             if len(src.elements_type) != dest.shape[0]:
                 return False
             if len(dest.shape) > 1:
@@ -68,7 +69,7 @@ class ImplicitTypeCastOp(AbstractOp):
                 ImplicitTypeCastOp.verify_cast_ability(sub_element_type, dest.dtype)
                 for sub_element_type in src.elements_type
             )
-        if isinstance(src, NDArrayDTDescriptor) and isinstance(dest, NDArrayDTDescriptor):
+        if isinstance(src, ndarray_like) and isinstance(dest, ndarray_like):
             if src.shape != dest.shape:
                 return False
             return ImplicitTypeCastOp.verify_cast_ability(src.dtype, dest.dtype)
@@ -95,7 +96,7 @@ class ImplicitTypeCastOp(AbstractOp):
             for s, d in zip(src.values(), dest.elements_type):
                 new_values.append(self.recursive_build_implicit_type_cast(builder, s, d, dbg))
             return TupleValue(tuple(v.type() for v in new_values), tuple(new_values))
-        if (isinstance(src, ListValue) or isinstance(src, TupleValue)) and isinstance(dest, NDArrayDTDescriptor):
+        if (isinstance(src, ListValue) or isinstance(src, TupleValue)) and isinstance(dest, (NDArrayDTDescriptor, DynamicNDArrayDTDescriptor)):
             assert len(src.types()) == dest.shape[0]
             if len(dest.shape) > 1:
                 sub_element_dest_type = NDArrayDTDescriptor(dest.shape[1:], dest.dtype)
@@ -107,7 +108,7 @@ class ImplicitTypeCastOp(AbstractOp):
             for s in src.values():
                 new_values.append(self.recursive_build_implicit_type_cast(builder, s, dest.dtype, dbg))
             return NDArrayValue.from_shape_and_vector((len(src.values()),), dest.dtype, new_values)
-        if isinstance(src, NDArrayValue) and isinstance(dest, NDArrayDTDescriptor):
+        if isinstance(src, NDArrayValue) and isinstance(dest, (NDArrayDTDescriptor, DynamicNDArrayDTDescriptor)):
             if src.type() == dest:
                 return src
             return builder.op_ndarray_astype(src, builder.op_constant_class(dest.dtype))

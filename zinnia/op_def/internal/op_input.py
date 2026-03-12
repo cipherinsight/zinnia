@@ -4,7 +4,7 @@ from zinnia.compile.ast import ASTAnnotation
 from zinnia.compile.builder.op_args_container import OpArgsContainer
 from zinnia.op_def.abstract.abstract_op import AbstractOp
 from zinnia.compile.type_sys import DTDescriptor, IntegerDTDescriptor, NDArrayDTDescriptor, FloatDTDescriptor, \
-    TupleDTDescriptor, ListDTDescriptor, PoseidonHashedDTDescriptor
+    TupleDTDescriptor, ListDTDescriptor, PoseidonHashedDTDescriptor, DynamicNDArrayDTDescriptor
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
 from zinnia.compile.triplet import Value, NDArrayValue, TupleValue, ListValue
@@ -31,7 +31,7 @@ class InputOp(AbstractOp):
         should_expose_public = False
         if self.kind == ASTAnnotation.Kind.PUBLIC:
             should_expose_public = True
-        if isinstance(self.dt, NDArrayDTDescriptor):
+        if isinstance(self.dt, (NDArrayDTDescriptor, DynamicNDArrayDTDescriptor)):
             total_number_of_elements = 1
             for i in self.dt.shape:
                 total_number_of_elements *= i

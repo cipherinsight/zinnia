@@ -3,6 +3,7 @@ from typing import List, Dict, Optional
 from zinnia.compile.builder.op_args_container import OpArgsContainer
 from zinnia.debug.exception import TypeInferenceError, StaticInferenceError
 from zinnia.compile.type_sys import IntegerType
+from zinnia.compile.type_sys.ndarray_bounds import infer_ndarray_compile_bounds_from_shape
 from zinnia.op_def.abstract.abstract_op import AbstractOp
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
@@ -34,16 +35,13 @@ class NDArray_ReshapeOp(AbstractOp):
             raise TypeInferenceError(dbg, f"`shape` of `{self.get_name()}` must be a Tuple")
         if not all(x == IntegerType for x in the_shape.types()):
             raise TypeInferenceError(dbg, f"`shape` of `{self.get_name()}` must be a Tuple of Integer")
-        num_elements = 1
-        for element in the_shape.values():
-            if element.val(builder) is None:
-                raise StaticInferenceError(dbg, f"Cannot statically infer the value of the argument `shape`")
-            num_elements *= element.val(builder)
+        bounds = infer_ndarray_compile_bounds_from_shape(the_shape, builder, dbg, self.get_name())
+        num_elements = bounds.max_length
         num_elements_self = 1
         for element in the_self.shape():
             num_elements_self *= element
         if num_elements != num_elements_self:
             raise TypeInferenceError(dbg, f"Number of elements in `shape` must be equal to the number of elements in the original `NDArray`")
         flattened_values = the_self.get().flatten()
-        new_shape = tuple(x.val(builder) for x in the_shape.values())
+        new_shape = bounds.static_shape
         return NDArrayValue.from_shape_and_vector(new_shape, the_self.dtype(), flattened_values)

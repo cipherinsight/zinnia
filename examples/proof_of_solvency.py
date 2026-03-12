@@ -13,7 +13,7 @@ from zinnia import *
 
 from typing import Any
 
-from examples.utils import create_circuit, create_prove_verify_keys, prove, verify
+from utils import create_circuit, create_prove_verify_keys, prove, verify
 
 
 NUM_BUCKETS = 8

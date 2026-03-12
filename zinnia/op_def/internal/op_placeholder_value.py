@@ -3,7 +3,7 @@ from typing import List, Optional
 from zinnia.compile.builder.op_args_container import OpArgsContainer
 from zinnia.op_def.abstract.abstract_op import AbstractOp
 from zinnia.compile.type_sys import DTDescriptor, IntegerDTDescriptor, NDArrayDTDescriptor, FloatDTDescriptor, \
-    TupleDTDescriptor, ListDTDescriptor, PoseidonHashedDTDescriptor, NoneDTDescriptor, BooleanDTDescriptor
+    TupleDTDescriptor, ListDTDescriptor, PoseidonHashedDTDescriptor, NoneDTDescriptor, BooleanDTDescriptor, DynamicNDArrayDTDescriptor
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
 from zinnia.compile.triplet import Value, NDArrayValue, TupleValue, ListValue
@@ -25,7 +25,7 @@ class PlaceholderValueOp(AbstractOp):
         return []
 
     def build(self, builder: IRBuilderInterface, kwargs: OpArgsContainer, dbg: Optional[DebugInfo] = None) -> Value:
-        if isinstance(self.dt, NDArrayDTDescriptor):
+        if isinstance(self.dt, (NDArrayDTDescriptor, DynamicNDArrayDTDescriptor)):
             total_number_of_elements = 1
             for i in self.dt.shape:
                 total_number_of_elements *= i

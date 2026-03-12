@@ -3,7 +3,7 @@ from typing import List, Dict, Optional, Tuple
 from zinnia.compile.builder.op_args_container import OpArgsContainer
 from zinnia.debug.exception import TypeInferenceError
 from zinnia.compile.type_sys import IntegerType, FloatType, DTDescriptor, TupleDTDescriptor, ListDTDescriptor, \
-    NDArrayDTDescriptor, BooleanType
+    NDArrayDTDescriptor, DynamicNDArrayDTDescriptor, BooleanType
 from zinnia.op_def.abstract.abstract_op import AbstractOp
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
@@ -29,6 +29,7 @@ class ImplicitTypeAlignOp(AbstractOp):
 
     @staticmethod
     def verify_align_ability(lhs: DTDescriptor, rhs: DTDescriptor) -> bool:
+        ndarray_like = (NDArrayDTDescriptor, DynamicNDArrayDTDescriptor)
         if lhs == rhs:
             return True
         if lhs == IntegerType and rhs == FloatType:
@@ -57,7 +58,7 @@ class ImplicitTypeAlignOp(AbstractOp):
                 if not ImplicitTypeAlignOp.verify_align_ability(l, r):
                     return False
             return True
-        if (isinstance(lhs, ListDTDescriptor) or isinstance(lhs, TupleDTDescriptor)) and isinstance(rhs, NDArrayDTDescriptor):
+        if (isinstance(lhs, ListDTDescriptor) or isinstance(lhs, TupleDTDescriptor)) and isinstance(rhs, ndarray_like):
             if len(lhs.elements_type) != rhs.shape[0]:
                 return False
             if len(rhs.shape) > 1:
@@ -70,7 +71,7 @@ class ImplicitTypeAlignOp(AbstractOp):
                 ImplicitTypeAlignOp.verify_align_ability(sub_element_type, rhs.dtype)
                 for sub_element_type in lhs.elements_type
             )
-        if isinstance(lhs, NDArrayDTDescriptor) and (isinstance(rhs, ListDTDescriptor) or isinstance(rhs, TupleDTDescriptor)):
+        if isinstance(lhs, ndarray_like) and (isinstance(rhs, ListDTDescriptor) or isinstance(rhs, TupleDTDescriptor)):
             if len(rhs.elements_type) != lhs.shape[0]:
                 return False
             if len(lhs.shape) > 1:
@@ -83,7 +84,7 @@ class ImplicitTypeAlignOp(AbstractOp):
                 ImplicitTypeAlignOp.verify_align_ability(sub_element_type, lhs.dtype)
                 for sub_element_type in rhs.elements_type
             )
-        if isinstance(lhs, NDArrayDTDescriptor) and isinstance(rhs, NDArrayDTDescriptor):
+        if isinstance(lhs, ndarray_like) and isinstance(rhs, ndarray_like):
             if lhs.shape != rhs.shape:
                 return False
             return ImplicitTypeAlignOp.verify_align_ability(lhs.dtype, rhs.dtype)

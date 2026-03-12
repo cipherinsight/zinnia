@@ -7,7 +7,8 @@ from zinnia.compile.type_sys import DTDescriptor, IntegerDTDescriptor, FloatDTDe
     BooleanType, BooleanDTDescriptor
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
-from zinnia.compile.triplet import NDArrayValue, NumberValue, Value
+from zinnia.compile.triplet import DynamicNDArrayValue, NDArrayValue, NumberValue, Value
+from zinnia.op_def.dynamic_ndarray.broadcast_binary import dynamic_broadcast_binary
 
 
 class AbstractArithemetic(AbstractOp):
@@ -46,18 +47,49 @@ class AbstractArithemetic(AbstractOp):
         return self.get_build_op_lambda(builder)(lhs, rhs)
 
     def build_number_and_ndarray(self, builder: IRBuilderInterface, lhs: NumberValue, rhs: NDArrayValue, dbg: Optional[DebugInfo] = None) -> Value:
+        if isinstance(rhs, DynamicNDArrayValue):
+            lhs_dyn = NDArrayValue.from_number(lhs).to_dynamic_ndarray()
+            return dynamic_broadcast_binary(
+                builder,
+                lhs_dyn,
+                rhs,
+                self.get_expected_result_dt(lhs.type(), rhs.dtype()),
+                self.get_build_op_lambda(builder),
+                dbg,
+            )
         lhs_ndarray = NDArrayValue.from_number(lhs)
         lhs_ndarray, rhs_ndarray = NDArrayValue.binary_broadcast(lhs_ndarray, rhs)
         result = NDArrayValue.binary(lhs_ndarray, rhs_ndarray, self.get_expected_result_dt(lhs.type(), rhs.dtype()), self.get_build_op_lambda(builder))
         return result
 
     def build_ndarray_and_number(self, builder: IRBuilderInterface, lhs: NDArrayValue, rhs: NumberValue, dbg: Optional[DebugInfo] = None) -> Value:
+        if isinstance(lhs, DynamicNDArrayValue):
+            rhs_dyn = NDArrayValue.from_number(rhs).to_dynamic_ndarray()
+            return dynamic_broadcast_binary(
+                builder,
+                lhs,
+                rhs_dyn,
+                self.get_expected_result_dt(lhs.dtype(), rhs.type()),
+                self.get_build_op_lambda(builder),
+                dbg,
+            )
         rhs_ndarray = NDArrayValue.from_number(rhs)
         lhs_ndarray, rhs_ndarray = NDArrayValue.binary_broadcast(lhs, rhs_ndarray)
         result = NDArrayValue.binary(lhs_ndarray, rhs_ndarray, self.get_expected_result_dt(lhs.dtype(), rhs.type()), self.get_build_op_lambda(builder))
         return result
 
     def build_ndarray_and_ndarray(self, builder: IRBuilderInterface, lhs: NDArrayValue, rhs: NDArrayValue, dbg: Optional[DebugInfo] = None) -> NDArrayValue:
+        if isinstance(lhs, DynamicNDArrayValue) or isinstance(rhs, DynamicNDArrayValue):
+            lhs_dyn = lhs if isinstance(lhs, DynamicNDArrayValue) else lhs.to_dynamic_ndarray()
+            rhs_dyn = rhs if isinstance(rhs, DynamicNDArrayValue) else rhs.to_dynamic_ndarray()
+            return dynamic_broadcast_binary(
+                builder,
+                lhs_dyn,
+                rhs_dyn,
+                self.get_expected_result_dt(lhs.dtype(), rhs.dtype()),
+                self.get_build_op_lambda(builder),
+                dbg,
+            )
         if not NDArrayValue.binary_broadcast_compatible(lhs.shape(), rhs.shape()):
             raise TypeInferenceError(dbg, f"Cannot broadcast two NDArray with shapes {lhs.shape()} and {rhs.shape()}")
         lhs, rhs = NDArrayValue.binary_broadcast(lhs, rhs)

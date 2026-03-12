@@ -4,7 +4,7 @@ from zinnia.debug.dbg_info import DebugInfo
 from zinnia.debug.exception import StaticInferenceError
 from zinnia.op_def.abstract.abstract_op import AbstractOp
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
-from zinnia.compile.triplet import Value, ListValue, TupleValue, IntegerValue, NoneValue, BooleanValue
+from zinnia.compile.triplet import Value, ListValue, TupleValue, IntegerValue, NDArrayValue, NoneValue, BooleanValue
 
 
 class AbstractItemSliceOp(AbstractOp):
@@ -15,8 +15,11 @@ class AbstractItemSliceOp(AbstractOp):
         if not isinstance(slicing_params, ListValue):
             raise ValueError(f"Internal Error: slicing_params is not a `ListValue`")
         for slicing_param in slicing_params.values():
-            if not isinstance(slicing_param, TupleValue) and not isinstance(slicing_param, IntegerValue):
+            if not isinstance(slicing_param, TupleValue) and not isinstance(slicing_param, IntegerValue) and not isinstance(slicing_param, NDArrayValue):
                 raise ValueError(f"Internal Error: slicing_param_tuple is not a `TupleValue` or `IntegerValue`")
+            if isinstance(slicing_param, NDArrayValue):
+                # NDArray slicing param represents boolean-mask filtering.
+                continue
             if isinstance(slicing_param, TupleValue):
                 if len(slicing_param.values()) != 3:
                     raise ValueError(f"Internal Error: Unexpected tuple length {len(slicing_param.values())}")
