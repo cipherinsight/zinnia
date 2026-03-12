@@ -89,6 +89,9 @@ class IRContext:
     def is_in_loop(self) -> bool:
         return self.scopes[-1].is_in_loop()
 
+    def is_in_conditional(self) -> bool:
+        return isinstance(self.scopes[-1], ConditionalScope)
+
     def get_condition_value(self) -> BooleanValue:
         condition_1 = self.scopes[-1].get_looping_condition()
         condition_2 = self.scopes[-1].get_branching_condition()
