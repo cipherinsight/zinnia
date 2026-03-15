@@ -19,7 +19,8 @@ class ZinniaConfig(ConfigBase):
             recursion_limit: int = DEFAULT_RECURSION_LIMIT,
             loop_limit: int = DEFAULT_LOOP_LIMIT,
             mock_config: MockExecConfig = MockExecConfig(),
-            optimization_config: OptimizationConfig = OptimizationConfig()
+            optimization_config: OptimizationConfig = OptimizationConfig(),
+            enable_memory_consistency: bool = False,
     ):
         super().__init__()
         self.set("backend", backend)
@@ -27,6 +28,7 @@ class ZinniaConfig(ConfigBase):
         self.set("loop_limit", loop_limit)
         self.set("mock_config", mock_config)
         self.set("optimization_config", optimization_config)
+        self.set("enable_memory_consistency", enable_memory_consistency)
 
     def verify(self, key: str, value: Any) -> Any:
         if key == "backend":
@@ -53,6 +55,10 @@ class ZinniaConfig(ConfigBase):
             if not isinstance(value, int) or value <= 0:
                 raise ValueError(f"Invalid `loop_limit` specified: {value}")
             return value
+        elif key == "enable_memory_consistency":
+            if not isinstance(value, bool):
+                raise ValueError(f"Invalid `enable_memory_consistency` specified: {value}")
+            return value
         return value
 
     def get_backend(self) -> str:
@@ -69,6 +75,9 @@ class ZinniaConfig(ConfigBase):
 
     def loop_limit(self) -> int:
         return self.get("loop_limit")
+
+    def memory_consistency_enabled(self) -> bool:
+        return bool(self.get("enable_memory_consistency"))
 
     def get_required_keys(self) -> list[str]:
         return ["backend", "mock_config", "optimization_config", "recursion_limit", "loop_limit"]

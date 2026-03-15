@@ -10,14 +10,19 @@ from zinnia.internal.internal_ndarray import InternalNDArray
 from zinnia.debug.exception.execution import ZKCircuitParameterException
 from zinnia.compile.type_sys import NDArrayDTDescriptor, FloatDTDescriptor, DTDescriptor, \
     FloatType, IntegerType, TupleDTDescriptor, ListDTDescriptor, PoseidonHashedDTDescriptor, BooleanType, \
-    BooleanDTDescriptor
+    BooleanDTDescriptor, DynamicNDArrayDTDescriptor
 from zinnia.ir_def.defs.ir_assert import AssertIR
+from zinnia.ir_def.defs.ir_allocate_memory import AllocateMemoryIR
 from zinnia.ir_def.defs.ir_export_external_f import ExportExternalFIR
 from zinnia.ir_def.defs.ir_export_external_i import ExportExternalIIR
 from zinnia.ir_def.defs.ir_invoke_external import InvokeExternalIR
+from zinnia.ir_def.defs.ir_memory_trace_emit import MemoryTraceEmitIR
+from zinnia.ir_def.defs.ir_memory_trace_seal import MemoryTraceSealIR
+from zinnia.ir_def.defs.ir_read_memory import ReadMemoryIR
 from zinnia.ir_def.defs.ir_read_float import ReadFloatIR
 from zinnia.ir_def.defs.ir_read_hash import ReadHashIR
 from zinnia.ir_def.defs.ir_read_integer import ReadIntegerIR
+from zinnia.ir_def.defs.ir_write_memory import WriteMemoryIR
 
 
 class ExecutionContext:
@@ -30,6 +35,10 @@ class ExecutionContext:
         self.circuit_inputs = circuit_inputs
         self.preprocess_stmts = preprocess_stmts
         self.external_funcs = external_funcs
+        self.last_memory_trace: List[Tuple[int, int, int, int, bool]] = []
+
+    def get_last_memory_trace(self) -> List[Tuple[int, int, int, int, bool]]:
+        return self.last_memory_trace.copy()
 
     def _recursive_infer_datatype(self, value: Any) -> DTDescriptor:
         if isinstance(value, int):
@@ -50,7 +59,7 @@ class ExecutionContext:
         try:
             import numpy as np
 
-            if isinstance(value, np.bool):
+            if isinstance(value, np.bool_):
                 return IntegerType
             if ExecutionContext._is_numpy_integer(value):
                 return IntegerType
@@ -103,11 +112,11 @@ class ExecutionContext:
                 if not self._recursive_verify_datatype_matches(expected.elements_type[i], got.elements_type[i]):
                     return False
             return True
-        elif isinstance(expected, NDArrayDTDescriptor) and isinstance(got, NDArrayDTDescriptor):
+        elif isinstance(expected, (NDArrayDTDescriptor, DynamicNDArrayDTDescriptor)) and isinstance(got, NDArrayDTDescriptor):
             if expected.shape != got.shape:
                 return False
             return self._recursive_verify_datatype_matches(expected.dtype, got.dtype)
-        elif isinstance(expected, NDArrayDTDescriptor) and isinstance(got, ListDTDescriptor):
+        elif isinstance(expected, (NDArrayDTDescriptor, DynamicNDArrayDTDescriptor)) and isinstance(got, ListDTDescriptor):
             if expected.shape[0] != len(got.elements_type):
                 return False
             if len(expected.shape) > 1:
@@ -137,7 +146,7 @@ class ExecutionContext:
             try:
                 import numpy as np
 
-                if isinstance(value, np.bool):
+                if isinstance(value, np.bool_):
                     return [ZKParsedInput.Entry(indices, ZKParsedInput.Kind.INTEGER, 1 if value else 0)]
                 if ExecutionContext._is_numpy_integer(value):
                     return [ZKParsedInput.Entry(indices, ZKParsedInput.Kind.INTEGER, int(value))]
@@ -154,7 +163,7 @@ class ExecutionContext:
             try:
                 import numpy as np
 
-                if isinstance(value, np.bool):
+                if isinstance(value, np.bool_):
                     return [ZKParsedInput.Entry(indices, ZKParsedInput.Kind.FLOAT, 1.0 if value else 0.0)]
                 if ExecutionContext._is_numpy_float(value):
                     return [ZKParsedInput.Entry(indices, ZKParsedInput.Kind.FLOAT, float(value))]
@@ -169,7 +178,7 @@ class ExecutionContext:
             try:
                 import numpy as np
 
-                if isinstance(value, np.bool):
+                if isinstance(value, np.bool_):
                     return [ZKParsedInput.Entry(indices, ZKParsedInput.Kind.INTEGER, 1 if value else 0)]
                 if ExecutionContext._is_numpy_integer(value):
                     return [ZKParsedInput.Entry(indices, ZKParsedInput.Kind.INTEGER, 1 if value != 0 else 0)]
@@ -188,7 +197,7 @@ class ExecutionContext:
             for i, v in enumerate(value):
                 parsed_result.extend(self._recursive_parse_value_to_entries(indices + (i,), dt.elements_type[i], v))
             return parsed_result
-        elif isinstance(dt, NDArrayDTDescriptor):
+        elif isinstance(dt, (NDArrayDTDescriptor, DynamicNDArrayDTDescriptor)):
             ndarray = None
             if isinstance(value, list):
                 ndarray = InternalNDArray(dt.shape, value)
@@ -261,7 +270,7 @@ class ExecutionContext:
             for i in range(len(dt.elements_type)):
                 elements.append(self._recursive_construct_python_object(exported_values, for_which, key, indices + (i,), dt.elements_type[i]))
             return list(elements)
-        elif isinstance(dt, NDArrayDTDescriptor):
+        elif isinstance(dt, (NDArrayDTDescriptor, DynamicNDArrayDTDescriptor)):
             shape = dt.shape
             elements = []
             elements_count = 1
@@ -292,6 +301,11 @@ class ExecutionContext:
         value_table = {}
         new_inputs = []
         exported_values = {}
+        memories: Dict[int, Dict[int, int]] = {}
+        memory_sizes: Dict[int, int] = {}
+        memory_init_values: Dict[int, int] = {}
+        memory_timestamps: Dict[int, int] = {}
+        memory_trace_rows: List[Tuple[int, int, int, int, bool]] = []
         for entry in provided_inputs:
             input_table[entry.get_indices()] = entry.get_value()
         for stmt in self.preprocess_stmts:
@@ -324,11 +338,60 @@ class ExecutionContext:
                 exported_values[(stmt.ir_instance.for_which, stmt.ir_instance.key, stmt.ir_instance.indices)] = value_table[stmt.arguments[0]]
             elif isinstance(stmt.ir_instance, ExportExternalFIR):
                 exported_values[(stmt.ir_instance.for_which, stmt.ir_instance.key, stmt.ir_instance.indices)] = value_table[stmt.arguments[0]]
+            elif isinstance(stmt.ir_instance, AllocateMemoryIR):
+                segment_id = stmt.ir_instance.segment_id
+                if segment_id in memories:
+                    raise ValueError(f"Memory segment {segment_id} already allocated")
+                size = stmt.ir_instance.size
+                init_value = stmt.ir_instance.init_value
+                memories[segment_id] = {i: init_value for i in range(size)}
+                memory_sizes[segment_id] = size
+                memory_init_values[segment_id] = init_value
+                memory_timestamps[segment_id] = 0
+            elif isinstance(stmt.ir_instance, WriteMemoryIR):
+                segment_id = stmt.ir_instance.segment_id
+                if segment_id not in memories:
+                    raise ValueError(f"Memory segment {segment_id} is not allocated")
+                address = value_table[stmt.arguments[0]]
+                value = value_table[stmt.arguments[1]]
+                if not isinstance(address, int):
+                    raise ValueError("Memory address must be an integer")
+                if not isinstance(value, int):
+                    raise ValueError("Memory value must be an integer")
+                if address < 0 or address >= memory_sizes[segment_id]:
+                    raise ValueError(f"Memory address {address} out of range for segment {segment_id}")
+                memories[segment_id][address] = value
+            elif isinstance(stmt.ir_instance, ReadMemoryIR):
+                segment_id = stmt.ir_instance.segment_id
+                if segment_id not in memories:
+                    raise ValueError(f"Memory segment {segment_id} is not allocated")
+                address = value_table[stmt.arguments[0]]
+                if not isinstance(address, int):
+                    raise ValueError("Memory address must be an integer")
+                if address < 0 or address >= memory_sizes[segment_id]:
+                    raise ValueError(f"Memory address {address} out of range for segment {segment_id}")
+                value_table[stmt.stmt_id] = memories[segment_id].get(address, memory_init_values[segment_id])
+            elif isinstance(stmt.ir_instance, MemoryTraceEmitIR):
+                segment_id = stmt.ir_instance.segment_id
+                if segment_id not in memory_timestamps:
+                    memory_timestamps[segment_id] = 0
+                address = value_table[stmt.arguments[0]]
+                value = value_table[stmt.arguments[1]]
+                if not isinstance(address, int):
+                    raise ValueError("Memory trace address must be an integer")
+                if not isinstance(value, int):
+                    raise ValueError("Memory trace value must be an integer")
+                timestamp = memory_timestamps[segment_id]
+                memory_trace_rows.append((segment_id, address, timestamp, value, stmt.ir_instance.is_write))
+                memory_timestamps[segment_id] = timestamp + 1
+            elif isinstance(stmt.ir_instance, MemoryTraceSealIR):
+                pass
             elif isinstance(stmt.ir_instance, AssertIR):
                 pass
             else:
                 args = [value_table[x] for x in stmt.arguments]
                 value_table[stmt.stmt_id] = stmt.ir_instance.mock_exec(args, MockExecConfig())
+        self.last_memory_trace = memory_trace_rows
         return new_inputs
 
     @staticmethod

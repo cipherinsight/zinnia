@@ -7,6 +7,7 @@ from zinnia.compile.type_sys.dt_descriptor import DTDescriptor
 from zinnia.compile.type_sys.float import FloatDTDescriptor
 from zinnia.compile.type_sys.integer import IntegerDTDescriptor
 from zinnia.compile.type_sys.list import ListDTDescriptor
+from zinnia.compile.type_sys.dynamic_ndarray import DynamicNDArrayDTDescriptor
 from zinnia.compile.type_sys.ndarray import NDArrayDTDescriptor
 from zinnia.compile.type_sys.none import NoneDTDescriptor
 from zinnia.compile.type_sys.tuple import TupleDTDescriptor
@@ -16,7 +17,7 @@ from zinnia.debug.exception import InvalidAnnotationException
 
 class DTDescriptorFactory:
     DATATYPE_REGISTRY = [
-        NDArrayDTDescriptor, TupleDTDescriptor, ListDTDescriptor, IntegerDTDescriptor, FloatDTDescriptor,
+        DynamicNDArrayDTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor, ListDTDescriptor, IntegerDTDescriptor, FloatDTDescriptor,
         NoneDTDescriptor, ClassDTDescriptor, PoseidonHashedDTDescriptor,
         # BooleanDTDescriptor (TODO: temporarily disabled. Implement bool.)
     ]

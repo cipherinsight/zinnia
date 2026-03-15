@@ -3,7 +3,7 @@ from typing import Optional, List, Dict, Tuple
 from zinnia.compile.triplet.value.boolean import BooleanValue
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.triplet import Value, NumberValue, IntegerValue, FloatValue, ListValue, TupleValue, NDArrayValue, \
-    NoneValue, ClassValue, StringValue
+    DynamicNDArrayValue, NoneValue, ClassValue, StringValue
 from zinnia.compile.type_sys import DTDescriptor
 
 
@@ -164,6 +164,31 @@ class IRBuilderInterface:
     def op_np_asarray(self, value: ListValue | TupleValue, dbg: Optional[DebugInfo] = None) -> NDArrayValue:
         raise NotImplementedError()
 
+    def op_dynamic_ndarray_zeros(
+        self,
+        shape: TupleValue,
+        dtype: ClassValue | NoneValue,
+        dbg: Optional[DebugInfo] = None,
+    ) -> DynamicNDArrayValue:
+        raise NotImplementedError()
+
+    def op_dynamic_ndarray_ones(
+        self,
+        shape: TupleValue,
+        dtype: ClassValue | NoneValue,
+        dbg: Optional[DebugInfo] = None,
+    ) -> DynamicNDArrayValue:
+        raise NotImplementedError()
+
+    def op_dynamic_ndarray_eye(
+        self,
+        n: IntegerValue,
+        m: IntegerValue,
+        dtype: ClassValue | NoneValue,
+        dbg: Optional[DebugInfo] = None,
+    ) -> DynamicNDArrayValue:
+        raise NotImplementedError()
+
     def op_ndarray_astype(self, value: NDArrayValue, dtype: ClassValue, dbg: Optional[DebugInfo] = None) -> NDArrayValue:
         raise NotImplementedError()
 
@@ -189,6 +214,23 @@ class IRBuilderInterface:
         raise NotImplementedError()
 
     def op_ndarray_prod(self, a: NDArrayValue, axis: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> Value:
+        raise NotImplementedError()
+
+    def op_ndarray_transpose(
+        self,
+        a: NDArrayValue,
+        axes: TupleValue | ListValue | NoneValue,
+        dbg: Optional[DebugInfo] = None,
+    ) -> NDArrayValue:
+        raise NotImplementedError()
+
+    def op_ndarray_moveaxis(
+        self,
+        a: NDArrayValue,
+        source: IntegerValue,
+        destination: IntegerValue,
+        dbg: Optional[DebugInfo] = None,
+    ) -> NDArrayValue:
         raise NotImplementedError()
 
     def op_logical_and(self, lhs: Value, rhs: Value, dbg: Optional[DebugInfo] = None) -> Value:
@@ -259,6 +301,75 @@ class IRBuilderInterface:
         raise NotImplementedError()
 
     def ir_read_float(self, indices: Tuple[int, ...], is_public: bool, dbg: Optional[DebugInfo] = None) -> FloatValue:
+        raise NotImplementedError()
+
+    def ir_allocate_memory(self, segment_id: int, size: int, init_value: int = 0, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        raise NotImplementedError()
+
+    def ir_write_memory(self, segment_id: int, address: IntegerValue, value: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        raise NotImplementedError()
+
+    def ir_read_memory(self, segment_id: int, address: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+        raise NotImplementedError()
+
+    def ir_memory_trace_emit(self, segment_id: int, is_write: bool, address: IntegerValue, value: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        raise NotImplementedError()
+
+    def ir_memory_trace_seal(self, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        raise NotImplementedError()
+
+    def ir_allocate_dynamic_ndarray_meta(
+        self,
+        array_id: int,
+        dtype_name: str,
+        max_length: int,
+        max_rank: int,
+        dbg: Optional[DebugInfo] = None,
+    ) -> NoneValue:
+        raise NotImplementedError()
+
+    def ir_witness_dynamic_ndarray_meta(
+        self,
+        array_id: int,
+        max_rank: int,
+        rank: IntegerValue,
+        offset: IntegerValue,
+        shape_entries: List[IntegerValue],
+        stride_entries: List[IntegerValue],
+        dbg: Optional[DebugInfo] = None,
+    ) -> NoneValue:
+        raise NotImplementedError()
+
+    def ir_assert_dynamic_ndarray_meta(
+        self,
+        array_id: int,
+        max_rank: int,
+        max_length: int,
+        rank: IntegerValue,
+        offset: IntegerValue,
+        shape_entries: List[IntegerValue],
+        stride_entries: List[IntegerValue],
+        dbg: Optional[DebugInfo] = None,
+    ) -> NoneValue:
+        raise NotImplementedError()
+
+    def ir_dynamic_ndarray_get_item(
+        self,
+        array_id: int,
+        segment_id: int,
+        linear_address: IntegerValue,
+        dbg: Optional[DebugInfo] = None,
+    ) -> IntegerValue:
+        raise NotImplementedError()
+
+    def ir_dynamic_ndarray_set_item(
+        self,
+        array_id: int,
+        segment_id: int,
+        linear_address: IntegerValue,
+        value: IntegerValue,
+        dbg: Optional[DebugInfo] = None,
+    ) -> NoneValue:
         raise NotImplementedError()
 
     def ir_assert(self, test: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:

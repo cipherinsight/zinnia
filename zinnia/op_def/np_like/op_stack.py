@@ -6,7 +6,8 @@ from zinnia.debug.exception import TypeInferenceError, StaticInferenceError
 from zinnia.compile.type_sys import IntegerType, FloatType, BooleanType
 from zinnia.op_def.abstract.abstract_op import AbstractOp
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
-from zinnia.compile.triplet import Value, NDArrayValue, TupleValue, ListValue, NoneValue
+from zinnia.compile.triplet import Value, IntegerValue, NDArrayValue, DynamicNDArrayValue, TupleValue, ListValue, NoneValue
+from zinnia.op_def.dynamic_ndarray.op_stack import DynamicNDArray_StackOp
 
 
 class NP_StackOp(AbstractOp):
@@ -41,6 +42,22 @@ class NP_StackOp(AbstractOp):
                 arrays.append(builder.op_np_asarray(arg))
             else:
                 raise TypeInferenceError(dbg, f"Expected all arguments to be NDArray, but got {arg.type()}")
+
+        has_dynamic = any(isinstance(arg, DynamicNDArrayValue) for arg in arrays)
+        if has_dynamic:
+            if not isinstance(axis, (IntegerValue, NoneValue)):
+                raise TypeInferenceError(dbg, f"Expected `axis` to be an integer, but got {axis.type()}")
+            expected_dtype = BooleanType
+            for arg in arrays:
+                expected_dtype = IntegerType if arg.dtype() == IntegerType and expected_dtype == BooleanType else expected_dtype
+                expected_dtype = FloatType if arg.dtype() == FloatType and expected_dtype != FloatType else expected_dtype
+            arrays = [(builder.op_ndarray_astype(arg, builder.op_constant_class(expected_dtype)) if arg.dtype() != expected_dtype else arg) for arg in arrays]
+            dyn_arrays = [arg if isinstance(arg, DynamicNDArrayValue) else arg.to_dynamic_ndarray() for arg in arrays]
+            op = DynamicNDArray_StackOp()
+            dyn_axis = axis
+            kwargs2 = op.argparse(dbg, [builder.op_parenthesis(dyn_arrays), dyn_axis], {})
+            return op.build(builder, OpArgsContainer(kwargs2), dbg)
+
         axis_value = 0
         if not isinstance(axis, NoneValue):
             if axis.type() != IntegerType:
@@ -48,6 +65,7 @@ class NP_StackOp(AbstractOp):
             if axis.val(builder) is None:
                 raise StaticInferenceError(dbg, f"`axis` value is not statically inferable")
             axis_value = axis.val(builder) if axis.val(builder) >= 0 else len(arrays[0].shape()) + axis.val(builder) + 1
+
         for i, arg in enumerate(arrays):
             if not (i == 0 or arg.shape() == arrays[i - 1].shape()):
                 raise TypeInferenceError(dbg, f"Cannot perform stack: all input arrays must have the same shape")

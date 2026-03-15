@@ -5,9 +5,12 @@ from zinnia.compile.builder.op_args_container import OpArgsContainer
 from zinnia.debug.exception import TypeInferenceError, StaticInferenceError
 from zinnia.op_def.abstract.abstract_op import AbstractOp
 from zinnia.compile.type_sys import IntegerType
+from zinnia.compile.type_sys.ndarray_bounds import infer_ndarray_compile_bounds_from_static_shape
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.builder.ir_builder_interface import IRBuilderInterface
-from zinnia.compile.triplet import NDArrayValue, Value, TupleValue, ListValue, NoneValue
+from zinnia.compile.triplet import NDArrayValue, DynamicNDArrayValue, Value, TupleValue, ListValue, NoneValue
+from zinnia.compile.builder.op_args_container import OpArgsContainer
+from zinnia.op_def.dynamic_ndarray.op_transpose import DynamicNDArray_TransposeOp
 
 
 class NDArray_TransposeOp(AbstractOp):
@@ -31,6 +34,20 @@ class NDArray_TransposeOp(AbstractOp):
         the_self = kwargs["self"]
         axes = kwargs.get("axes", builder.op_constant_none())
         assert isinstance(the_self, NDArrayValue)
+
+        if isinstance(the_self, DynamicNDArrayValue):
+            op = DynamicNDArray_TransposeOp()
+            kwargs2 = op.argparse(dbg, [the_self], {"axes": axes})
+            return op.build(builder, OpArgsContainer(kwargs2), dbg)
+
+        if isinstance(axes, (TupleValue, ListValue)):
+            if any(v.val(builder) is None for v in axes.values()):
+                op = DynamicNDArray_TransposeOp()
+                dyn_self = the_self.to_dynamic_ndarray()
+                kwargs2 = op.argparse(dbg, [dyn_self], {"axes": axes})
+                return op.build(builder, OpArgsContainer(kwargs2), dbg)
+
+        infer_ndarray_compile_bounds_from_static_shape(the_self.shape(), dbg, self.get_name())
         if isinstance(axes, NoneValue):
             axes_vals = tuple(range(len(the_self.shape()))[::-1])
         elif isinstance(axes, TupleValue) or isinstance(axes, ListValue):

@@ -8,8 +8,10 @@ from zinnia.compile.ir.ir_stmt import IRStatement
 class IRGraph:
     def __init__(self, stmts: List[IRStatement]):
         self.stmts = []
-        self.in_d = self.out_d = []
-        self.in_links = self.out_links = []
+        self.in_d = []
+        self.out_d = []
+        self.in_links = []
+        self.out_links = []
         self.update_graph(stmts)
 
     def __copy__(self):
@@ -58,7 +60,7 @@ class IRGraph:
         for stmt in after_removal_stmts:
             stmt.stmt_id = id_mapping[stmt.stmt_id]
             for i, arg in enumerate(stmt.arguments):
-                stmt.arguments[i] = id_mapping[arg]
+                stmt.arguments[i] = id_mapping[arg] if arg is not None else None
         self.update_graph(after_removal_stmts)
 
     def remove_stmt_bunch(self, indices: List[int]):
@@ -69,7 +71,7 @@ class IRGraph:
         for stmt in after_removal_stmts:
             stmt.stmt_id = id_mapping[stmt.stmt_id]
             for i, arg in enumerate(stmt.arguments):
-                stmt.arguments[i] = id_mapping[arg]
+                stmt.arguments[i] = id_mapping[arg] if arg is not None else None
         self.update_graph(after_removal_stmts)
 
     def export_stmts(self) -> List[IRStatement]:

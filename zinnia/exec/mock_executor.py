@@ -3,10 +3,13 @@ from zinnia.config.mock_exec_config import MockExecConfig
 from zinnia.config.zinnia_config import ZinniaConfig
 from zinnia.ir_def.abstract_ir import AbstractIR
 from zinnia.ir_def.defs.ir_assert import AssertIR
+from zinnia.ir_def.defs.ir_allocate_memory import AllocateMemoryIR
+from zinnia.ir_def.defs.ir_read_memory import ReadMemoryIR
 from zinnia.ir_def.defs.ir_print import PrintIR
 from zinnia.ir_def.defs.ir_read_float import ReadFloatIR
 from zinnia.ir_def.defs.ir_read_hash import ReadHashIR
 from zinnia.ir_def.defs.ir_read_integer import ReadIntegerIR
+from zinnia.ir_def.defs.ir_write_memory import WriteMemoryIR
 from .executor import ZKProgramExecutor
 from .exec_ctx import ExecutionContext
 from zinnia.api.zk_compiled_program import ZKCompiledProgram
@@ -19,6 +22,9 @@ class MockProgramExecutor(ZKProgramExecutor):
         self.ir_stmts = zk_program.zk_program_irs
         self.value_table = {}
         self.input_table = {}
+        self.memories = {}
+        self.memory_sizes = {}
+        self.memory_init_values = {}
         self.satisfied = True
 
     def exec(self, *args, **kwargs) -> ZKExecResult:
@@ -67,3 +73,23 @@ class MockProgramExecutor(ZKProgramExecutor):
         assert len(args) == 1
         if args[0] == 0:
             self.satisfied = False
+
+    def exec_AllocateMemoryIR(self, stmt: IRStatement):
+        assert isinstance(stmt.ir_instance, AllocateMemoryIR)
+        segment_id = stmt.ir_instance.segment_id
+        self.memory_sizes[segment_id] = stmt.ir_instance.size
+        self.memory_init_values[segment_id] = stmt.ir_instance.init_value
+        self.memories[segment_id] = {i: stmt.ir_instance.init_value for i in range(stmt.ir_instance.size)}
+
+    def exec_WriteMemoryIR(self, stmt: IRStatement):
+        assert isinstance(stmt.ir_instance, WriteMemoryIR)
+        segment_id = stmt.ir_instance.segment_id
+        address = self.value_table[stmt.arguments[0]]
+        value = self.value_table[stmt.arguments[1]]
+        self.memories[segment_id][address] = value
+
+    def exec_ReadMemoryIR(self, stmt: IRStatement):
+        assert isinstance(stmt.ir_instance, ReadMemoryIR)
+        segment_id = stmt.ir_instance.segment_id
+        address = self.value_table[stmt.arguments[0]]
+        self.value_table[stmt.stmt_id] = self.memories[segment_id].get(address, self.memory_init_values[segment_id])

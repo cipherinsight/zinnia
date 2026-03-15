@@ -5,7 +5,7 @@ from zinnia.compile.triplet.store import CompositeNDArrayValueStore, ValueStore
 from zinnia.compile.triplet.value.value import Value
 from zinnia.compile.triplet.value.number import NumberValue
 from zinnia.internal.internal_ndarray import InternalNDArray
-from zinnia.compile.type_sys import NumberDTDescriptor, NDArrayDTDescriptor, DTDescriptor
+from zinnia.compile.type_sys import NumberDTDescriptor, NDArrayDTDescriptor, DynamicNDArrayDTDescriptor, DTDescriptor
 
 
 class NDArrayValue(Value):
@@ -126,6 +126,18 @@ class NDArrayValue(Value):
             InternalNDArray((len(flattened_values),), flattened_values)
         )
 
+    def to_dynamic_ndarray(self) -> 'DynamicNDArrayValue':
+        from zinnia.compile.triplet.value.dynamic_ndarray import DynamicNDArrayValue
+
+        flattened_values = self.get().flatten()
+        return DynamicNDArrayValue.from_max_bounds_and_vector(
+            len(flattened_values),
+            len(self.shape()),
+            self.dtype(),
+            flattened_values,
+            logical_shape=self.shape(),
+        )
+
     def transpose(self, axes: Tuple[int, ...]) -> 'NDArrayValue':
         internal_ndarray = self.get().transpose(axes)
         return NDArrayValue(
@@ -167,6 +179,8 @@ class NDArrayValue(Value):
     @classmethod
     def from_value_store(cls, store: ValueStore, type_locked: bool = False) -> Union['Value', None]:
         if not isinstance(store, CompositeNDArrayValueStore):
+            return None
+        if isinstance(store.data_type, DynamicNDArrayDTDescriptor):
             return None
         new_instance = cls.__new__(cls)
         new_instance._store = store

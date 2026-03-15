@@ -14,9 +14,12 @@ from zinnia.compile.ir.ir_stmt import IRStatement
 from zinnia.compile.optim_pass.always_satisfied_elimination import AlwaysSatisfiedEliminationIRPass
 from zinnia.compile.optim_pass.constant_fold import ConstantFoldIRPass
 from zinnia.compile.optim_pass.dead_code_elimination import DeadCodeEliminationIRPass
+from zinnia.compile.optim_pass.dynamic_ndarray_memory_lowering import DynamicNDArrayMemoryLoweringIRPass
+from zinnia.compile.optim_pass.dynamic_ndarray_meta_assert_injection import DynamicNDArrayMetaAssertInjectionIRPass
 from zinnia.compile.optim_pass.double_not_elimination import DoubleNotEliminationIRPass
 from zinnia.compile.optim_pass.duplicate_code_elimination import DuplicateCodeEliminationIRPass
 from zinnia.compile.optim_pass.external_call_remover import ExternalCallRemoverIRPass
+from zinnia.compile.optim_pass.memory_trace_injection import MemoryTraceInjectionIRPass
 from zinnia.compile.optim_pass.shortcut_optimization_pass import PatternMatchOptimIRPass
 from zinnia.compile.transformer import ZinniaExternalFuncASTTransformer, ZinniaCircuitASTTransformer
 from zinnia.compile.transformer.chip import ZinniaChipASTTransformer
@@ -88,6 +91,9 @@ class ZinniaCompiler:
 
     def run_passes_for_zk_program(self, ir_graph: IRGraph) -> List[IRStatement]:
         ir_graph = ExternalCallRemoverIRPass().exec(ir_graph)
+        if self.config.get_backend() == ZinniaConfig.BACKEND_HALO2 and self.config.memory_consistency_enabled():
+            ir_graph = DynamicNDArrayMemoryLoweringIRPass().exec(ir_graph)
+            ir_graph = DynamicNDArrayMetaAssertInjectionIRPass().exec(ir_graph)
         if self.config.optimization_config().shortcut_optimization():
             ir_graph = PatternMatchOptimIRPass().exec(ir_graph)
             ir_graph = DoubleNotEliminationIRPass().exec(ir_graph)
@@ -102,6 +108,8 @@ class ZinniaCompiler:
         return ir_graph.export_stmts()
 
     def run_passes_for_input_preprocess(self, ir_graph: IRGraph) -> List[IRStatement]:
+        if self.config.get_backend() == ZinniaConfig.BACKEND_HALO2 and self.config.memory_consistency_enabled():
+            ir_graph = MemoryTraceInjectionIRPass().exec(ir_graph)
         if self.config.optimization_config().shortcut_optimization():
             ir_graph = PatternMatchOptimIRPass().exec(ir_graph)
             ir_graph = DoubleNotEliminationIRPass().exec(ir_graph)

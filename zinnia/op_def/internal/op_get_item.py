@@ -56,17 +56,20 @@ class GetItemOp(AbstractItemSliceOp):
 
     def build(self, builder: IRBuilderInterface, kwargs: OpArgsContainer, dbg: Optional[DebugInfo] = None) -> Value:
         the_self = kwargs['self']
-        slicing_params = self.check_slicing_params_datatype(builder, kwargs['slicing_params'], dbg)
+        raw_slicing_params = kwargs['slicing_params']
+        assert isinstance(raw_slicing_params, ListValue)
         if isinstance(the_self, TupleValue):
+            slicing_params = self.check_slicing_params_datatype(builder, raw_slicing_params, dbg)
             if len(slicing_params.values()) != 1:
                 raise StaticInferenceError(dbg, f"Tuple slicing should have exactly one slicing parameter")
             slicing_param = slicing_params.values()[0]
             return self._build_tuple_list_slicing(builder, the_self, slicing_param, kwargs.get_condition(), dbg)
         elif isinstance(the_self, ListValue):
+            slicing_params = self.check_slicing_params_datatype(builder, raw_slicing_params, dbg)
             if len(slicing_params.values()) != 1:
                 raise StaticInferenceError(dbg, f"List slicing should have exactly one slicing parameter")
             slicing_param = slicing_params.values()[0]
             return self._build_tuple_list_slicing(builder, the_self, slicing_param, kwargs.get_condition(), dbg)
         elif isinstance(the_self, NDArrayValue):
-            return builder.op_ndarray_get_item(kwargs.get_condition(), the_self, slicing_params, dbg)
+            return builder.op_ndarray_get_item(kwargs.get_condition(), the_self, raw_slicing_params, dbg)
         raise TypeInferenceError(dbg, f"Operator `{self.get_signature()}` not defined on type {the_self.type()}")

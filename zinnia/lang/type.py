@@ -149,6 +149,12 @@ class NDArray(metaclass=NDArrayMeta):
             return NDArray(result, self.dtype)
         return result
 
+    def transpose(self, axes: Tuple[int, ...] = None) -> 'NDArray':
+        pass
+
+    def moveaxis(self, source: int, destination: int) -> 'NDArray':
+        pass
+
     @staticmethod
     def __parse_slicing_params(key):
         slicing_params = []
@@ -183,6 +189,10 @@ class NDArray(metaclass=NDArrayMeta):
 
         assert isinstance(self.__ndarray, InternalNDArray)
         return str(self.__ndarray.values)
+
+
+class DynamicNDArray(NDArray):
+    pass
 
 
 class PoseidonHashed(metaclass=PoseidonHashedMeta):

@@ -28,10 +28,9 @@ class ConditionalScope(AbstractScope):
 
     def set(self, name: str, ptr: ValueStore):
         assert isinstance(ptr, ValueStore)
-        if self.super_scope.exists(name):
-            self.super_scope.set(name, ptr)
-        else:
-            self.var_table[name] = ptr
+        # Keep branch writes local; build-time Phi merging at join will decide
+        # how to update the outer scope.
+        self.var_table[name] = ptr
 
     def get(self, name: str) -> ValueStore:
         if name in self.var_table:
@@ -107,3 +106,6 @@ class ConditionalScope(AbstractScope):
 
     def lock_parent_variable_types(self) -> bool:
         return self.condition.val() is None
+
+    def get_local_var_table(self) -> Dict[str, ValueStore]:
+        return dict(self.var_table)

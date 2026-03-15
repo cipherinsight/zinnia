@@ -1,7 +1,7 @@
-from typing import List, Dict, Optional
+from typing import List, Optional
 
 from zinnia.compile.builder.op_args_container import OpArgsContainer
-from zinnia.debug.exception import TypeInferenceError, StaticInferenceError
+from zinnia.debug.exception import TypeInferenceError
 from zinnia.op_def.abstract.abstract_op import AbstractOp
 from zinnia.compile.type_sys import FloatType, IntegerType, BooleanType
 from zinnia.debug.dbg_info import DebugInfo
@@ -31,9 +31,9 @@ class NP_IdentityOp(AbstractOp):
         dtype = kwargs.get("dtype", builder.op_constant_none())
         if not isinstance(n, IntegerValue):
             raise TypeInferenceError(dbg, "Param `n` must be of type `Number`")
-        if n.val(builder) is None:
-            raise StaticInferenceError(dbg, "Cannot statically infer the value of param `n`")
-        if n.val(builder) <= 0:
+        n_val = n.val(builder)
+        is_dynamic = n_val is None
+        if n_val is not None and n_val <= 0:
             raise TypeInferenceError(dbg, "Invalid `n` value, n must be greater than 0")
         parsed_dtype = FloatType
         if not isinstance(dtype, NoneValue):
@@ -41,7 +41,10 @@ class NP_IdentityOp(AbstractOp):
                 parsed_dtype = dtype.val(builder)
             else:
                 raise TypeInferenceError(dbg, f"Invalid argument dtype, it must be a datatype")
-        result_shape = (n.val(builder), n.val(builder))
+        if is_dynamic:
+            return builder.op_dynamic_ndarray_eye(n, n, dtype, dbg)
+
+        result_shape = (n_val, n_val)
         if parsed_dtype == FloatType:
             ndarray = NDArrayValue.fill(result_shape, FloatType, lambda: builder.ir_constant_float(0.0))
             ndarray = ndarray.for_each(lambda pos, val: builder.ir_constant_float(1.0) if pos[0] == pos[1] else builder.ir_constant_float(0.0))

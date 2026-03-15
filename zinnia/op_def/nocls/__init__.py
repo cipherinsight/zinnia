@@ -11,6 +11,8 @@ from .op_min import MinOp
 from .op_pow import PowOp
 from .op_print import PrintOp
 from .op_range import RangeOp
+from .op_poseidon_hash import PoseidonHashBuiltinOp
+from .op_merkle_verify import MerkleVerifyOp
 from .op_str import StrOp
 from .op_sum import SumOp
 from .op_tuple import TupleOp

@@ -9,6 +9,7 @@ from zinnia.compile.ast.ast_starred import ASTStarredExpr
 from zinnia.compile.ir.ir_graph import IRGraph
 from zinnia.compile.builder.builder_impl import IRBuilderImpl
 from zinnia.compile.triplet import Value, StringValue, ListValue, TupleValue
+from zinnia.compile.triplet import NDArrayValue, DynamicNDArrayValue, NumberValue
 from zinnia.compile.ast import ASTComponent, ASTCircuit, ASTAssignStatement, ASTPassStatement, \
     ASTExpression, ASTForInStatement, ASTCondStatement, ASTConstantFloat, ASTConstantInteger, \
     ASTSubscriptExp, ASTLoad, ASTAssertStatement, ASTSquareBrackets, ASTBreakStatement, ASTContinueStatement, \
@@ -17,6 +18,8 @@ from zinnia.compile.ast import ASTComponent, ASTCircuit, ASTAssignStatement, AST
     ASTListAssignTarget, ASTTupleAssignTarget, ASTAssignTarget, ASTExprStatement, ASTConstantString, ASTGeneratorExp, \
     ASTGenerator, ASTCondExp, ASTWhileStatement, ASTConstantBoolean
 from zinnia.compile.ir.ir_ctx import IRContext
+from zinnia.compile.scope.conditional_scope import ConditionalScope
+from zinnia.compile.triplet.value_factory import ValueFactory
 from zinnia.debug.exception import VariableNotFoundError, NotInLoopError, \
     InterScopeError, UnsupportedLangFeatureException, UnreachableStatementError, OperatorOrChipNotFoundException, \
     ControlEndWithoutReturnError, ReturnDatatypeMismatchError, \
@@ -26,9 +29,14 @@ from zinnia.debug.warning.while_limit import LoopLimitReachedWarning
 
 from zinnia.internal.internal_chip_object import InternalChipObject
 from zinnia.internal.internal_external_func_object import InternalExternalFuncObject
+from zinnia.compile.builder.op_args_container import OpArgsContainer
+from zinnia.op_def.dynamic_ndarray.op_astype import DynamicNDArray_AsTypeOp
 from zinnia.op_def.internal.op_implicit_type_cast import ImplicitTypeCastOp
 from zinnia.op_def.operator_factory import Operators
-from zinnia.compile.type_sys import DTDescriptorFactory, NoneDTDescriptor, FloatDTDescriptor, IntegerDTDescriptor
+from zinnia.compile.type_sys import DTDescriptorFactory, NoneDTDescriptor, FloatDTDescriptor, IntegerDTDescriptor, \
+    DTDescriptor, BooleanType, IntegerType, FloatType, NumberDTDescriptor, NDArrayDTDescriptor, \
+    DynamicNDArrayDTDescriptor, ListDTDescriptor, TupleDTDescriptor
+from zinnia.op_def.dynamic_ndarray.view_utils import default_like
 
 
 class IRGenerator:
@@ -219,6 +227,9 @@ class IRGenerator:
             for _, stmt in enumerate(n.f_block):
                 self.visit(stmt)
             scope_false = self._ir_ctx.if_leave()
+
+        self._merge_conditional_scope_bindings(n, true_cond_ptr, false_cond_ptr, scope_true, scope_false)
+
         # update return guarantee
         if scope_true is not None and true_cond_ptr.val(self._ir_builder) is not None and true_cond_ptr.val(self._ir_builder) != 0 and scope_true.is_return_guaranteed():
             self._ir_ctx.set_return_guarantee()
@@ -240,6 +251,255 @@ class IRGenerator:
                 if self._ir_ctx.is_in_loop():
                     self._ir_ctx.set_terminated_guarantee()
         return None
+
+    @staticmethod
+    def _dtype_family(dt: DTDescriptor) -> str:
+        if dt in (BooleanType, IntegerType, FloatType):
+            return "scalar"
+        if isinstance(dt, (NDArrayDTDescriptor, DynamicNDArrayDTDescriptor)):
+            return "ndarray"
+        if isinstance(dt, ListDTDescriptor):
+            return "list"
+        if isinstance(dt, TupleDTDescriptor):
+            return "tuple"
+        return "other"
+
+    @staticmethod
+    def _scalar_join(lhs: NumberDTDescriptor, rhs: NumberDTDescriptor) -> NumberDTDescriptor | None:
+        if lhs == rhs:
+            return lhs
+        if (lhs == BooleanType and rhs == IntegerType) or (lhs == IntegerType and rhs == BooleanType):
+            return IntegerType
+        if (lhs == IntegerType and rhs == FloatType) or (lhs == FloatType and rhs == IntegerType):
+            return FloatType
+        if (lhs == BooleanType and rhs == FloatType) or (lhs == FloatType and rhs == BooleanType):
+            return FloatType
+        return None
+
+    def _type_lattice_join(self, lhs: DTDescriptor, rhs: DTDescriptor) -> DTDescriptor | None:
+        lhs_family = self._dtype_family(lhs)
+        rhs_family = self._dtype_family(rhs)
+        if lhs_family != rhs_family:
+            return None
+
+        if lhs_family == "scalar":
+            assert isinstance(lhs, NumberDTDescriptor) and isinstance(rhs, NumberDTDescriptor)
+            return self._scalar_join(lhs, rhs)
+
+        if lhs_family == "ndarray":
+            assert isinstance(lhs, (NDArrayDTDescriptor, DynamicNDArrayDTDescriptor))
+            assert isinstance(rhs, (NDArrayDTDescriptor, DynamicNDArrayDTDescriptor))
+
+            lhs_dtype = lhs.dtype
+            rhs_dtype = rhs.dtype
+            out_dtype = self._scalar_join(lhs_dtype, rhs_dtype)
+            if out_dtype is None:
+                return None
+
+            lhs_is_static = isinstance(lhs, NDArrayDTDescriptor) and not isinstance(lhs, DynamicNDArrayDTDescriptor)
+            rhs_is_static = isinstance(rhs, NDArrayDTDescriptor) and not isinstance(rhs, DynamicNDArrayDTDescriptor)
+            if lhs_is_static and rhs_is_static:
+                if lhs.shape != rhs.shape:
+                    return None
+                return NDArrayDTDescriptor(lhs.shape, out_dtype)
+
+            def max_len_rank(dt: NDArrayDTDescriptor | DynamicNDArrayDTDescriptor) -> Tuple[int, int]:
+                if isinstance(dt, DynamicNDArrayDTDescriptor):
+                    return dt.max_length, dt.max_rank
+                m = 1
+                for dim in dt.shape:
+                    m *= dim
+                return m, len(dt.shape)
+
+            l_len, l_rank = max_len_rank(lhs)
+            r_len, r_rank = max_len_rank(rhs)
+            return DynamicNDArrayDTDescriptor(out_dtype, max(l_len, r_len), max(l_rank, r_rank))
+
+        if lhs_family == "list":
+            assert isinstance(lhs, ListDTDescriptor) and isinstance(rhs, ListDTDescriptor)
+            if len(lhs.elements_type) != len(rhs.elements_type):
+                return None
+            merged: List[DTDescriptor] = []
+            for ldt, rdt in zip(lhs.elements_type, rhs.elements_type):
+                j = self._type_lattice_join(ldt, rdt)
+                if j is None:
+                    return None
+                merged.append(j)
+            return ListDTDescriptor(merged)
+
+        if lhs_family == "tuple":
+            assert isinstance(lhs, TupleDTDescriptor) and isinstance(rhs, TupleDTDescriptor)
+            if len(lhs.elements_type) != len(rhs.elements_type):
+                return None
+            merged_t: List[DTDescriptor] = []
+            for ldt, rdt in zip(lhs.elements_type, rhs.elements_type):
+                j = self._type_lattice_join(ldt, rdt)
+                if j is None:
+                    return None
+                merged_t.append(j)
+            return TupleDTDescriptor(tuple(merged_t))
+
+        return lhs if lhs == rhs else None
+
+    def _lift_value_to_dtype(self, value: Value, dest: DTDescriptor, dbg) -> Value:
+        if value.type() == dest:
+            return value
+
+        if dest in (BooleanType, IntegerType, FloatType):
+            if dest == BooleanType:
+                return self._ir_builder.op_bool_cast(value, dbg)
+            if dest == IntegerType:
+                return self._ir_builder.op_int_cast(value, dbg)
+            return self._ir_builder.op_float_cast(value, dbg)
+
+        if isinstance(dest, ListDTDescriptor):
+            assert isinstance(value, ListValue)
+            src_values = value.values()
+            if len(src_values) != len(dest.elements_type):
+                raise InterScopeError(dbg, "Incompatible list lengths while merging control-flow branches")
+            lifted = [self._lift_value_to_dtype(v, dt, dbg) for v, dt in zip(src_values, dest.elements_type)]
+            return ListValue(list(dest.elements_type), lifted)
+
+        if isinstance(dest, TupleDTDescriptor):
+            assert isinstance(value, TupleValue)
+            src_values = value.values()
+            if len(src_values) != len(dest.elements_type):
+                raise InterScopeError(dbg, "Incompatible tuple lengths while merging control-flow branches")
+            lifted = [self._lift_value_to_dtype(v, dt, dbg) for v, dt in zip(src_values, dest.elements_type)]
+            return TupleValue(tuple(dest.elements_type), tuple(lifted))
+
+        if isinstance(dest, NDArrayDTDescriptor):
+            if not isinstance(value, NDArrayValue) or isinstance(value, DynamicNDArrayValue):
+                raise InterScopeError(dbg, f"Cannot lift {value.type()} to {dest}")
+            if value.shape() != dest.shape:
+                raise InterScopeError(dbg, f"Incompatible ndarray shapes while merging control-flow branches: {value.shape()} vs {dest.shape}")
+            if value.dtype() != dest.dtype:
+                value = self._ir_builder.op_ndarray_astype(value, self._ir_builder.op_constant_class(dest.dtype), dbg)
+            return value
+
+        if isinstance(dest, DynamicNDArrayDTDescriptor):
+            if isinstance(value, NDArrayValue) and not isinstance(value, DynamicNDArrayValue):
+                value = value.to_dynamic_ndarray()
+            if not isinstance(value, DynamicNDArrayValue):
+                raise InterScopeError(dbg, f"Cannot lift {value.type()} to {dest}")
+
+            if value.dtype() != dest.dtype:
+                op = DynamicNDArray_AsTypeOp()
+                kwargs = op.argparse(dbg, [value, self._ir_builder.op_constant_class(dest.dtype)], {})
+                value = op.build(
+                    self._ir_builder,
+                    OpArgsContainer(kwargs),
+                    dbg,
+                )
+                assert isinstance(value, DynamicNDArrayValue)
+
+            out_max_len = dest.max_length
+            out_max_rank = dest.max_rank
+
+            src_values = value.flattened_values()
+            if len(src_values) > 0:
+                fallback = default_like(self._ir_builder, src_values[0])
+            else:
+                fallback = self._ir_builder.ir_constant_int(0)
+            widened_values: List[NumberValue] = []
+            for i in range(out_max_len):
+                widened_values.append(src_values[i] if i < len(src_values) else fallback)
+
+            src_shape = value.runtime_shape_entries()
+            src_stride = value.runtime_stride_entries()
+            shape_pad = max(0, out_max_rank - len(src_shape))
+            stride_pad = max(0, out_max_rank - len(src_stride))
+            widened_shape = [self._ir_builder.ir_constant_int(1) for _ in range(shape_pad)] + src_shape
+            widened_stride = [self._ir_builder.ir_constant_int(1) for _ in range(stride_pad)] + src_stride
+
+            return DynamicNDArrayValue.from_max_bounds_and_vector(
+                out_max_len,
+                out_max_rank,
+                dest.dtype,
+                widened_values,
+                logical_shape=(out_max_len,),
+                logical_offset=0,
+                logical_strides=(1,),
+                runtime_logical_length=value.runtime_logical_length(),
+                runtime_rank=value.runtime_rank(),
+                runtime_shape_entries=widened_shape,
+                runtime_stride_entries=widened_stride,
+                runtime_offset=value.runtime_offset(),
+            )
+
+        raise InterScopeError(dbg, f"Unsupported merge-lift destination type {dest}")
+
+    def _merge_conditional_scope_bindings(self, n: ASTCondStatement, true_cond_ptr, false_cond_ptr, scope_true, scope_false):
+        true_bindings: Dict[str, Value] = {}
+        false_bindings: Dict[str, Value] = {}
+
+        if scope_true is not None and isinstance(scope_true, ConditionalScope):
+            for key, store in scope_true.get_local_var_table().items():
+                true_bindings[key] = ValueFactory.from_value_store(store, False)
+        if scope_false is not None and isinstance(scope_false, ConditionalScope):
+            for key, store in scope_false.get_local_var_table().items():
+                false_bindings[key] = ValueFactory.from_value_store(store, False)
+
+        merged_names = set(true_bindings.keys()) | set(false_bindings.keys())
+        if len(merged_names) == 0:
+            return
+
+        true_static = true_cond_ptr.val(self._ir_builder)
+        false_static = false_cond_ptr.val(self._ir_builder)
+
+        for name in merged_names:
+            t_has = name in true_bindings
+            f_has = name in false_bindings
+            parent_has = self._ir_ctx.exists(name)
+            parent_val = self._ir_ctx.get(name) if parent_has else None
+
+            if t_has and f_has:
+                tv = true_bindings[name]
+                fv = false_bindings[name]
+            elif t_has:
+                tv = true_bindings[name]
+                if parent_has:
+                    fv = parent_val
+                else:
+                    if true_static == 1:
+                        self._ir_ctx.set(name, tv)
+                        continue
+                    raise InterScopeError(
+                        n.dbg,
+                        f"Cannot define `{name}` only in one dynamic branch unless that branch is statically true",
+                    )
+            else:
+                assert f_has
+                fv = false_bindings[name]
+                if parent_has:
+                    tv = parent_val
+                else:
+                    if false_static == 1:
+                        self._ir_ctx.set(name, fv)
+                        continue
+                    raise InterScopeError(
+                        n.dbg,
+                        f"Cannot define `{name}` only in one dynamic branch unless that branch is statically true",
+                    )
+
+            assert tv is not None and fv is not None
+            join_dt = self._type_lattice_join(tv.type(), fv.type())
+            if join_dt is None:
+                raise InterScopeError(
+                    n.dbg,
+                    f"Cannot merge `{name}` across branches due to incompatible types: {tv.type()} vs {fv.type()}",
+                )
+
+            tv_join = self._lift_value_to_dtype(tv, join_dt, n.dbg)
+            fv_join = self._lift_value_to_dtype(fv, join_dt, n.dbg)
+
+            if true_static == 1:
+                merged_value = tv_join
+            elif false_static == 1:
+                merged_value = fv_join
+            else:
+                merged_value = self._ir_builder.op_select(true_cond_ptr, tv_join, fv_join, dbg=n.dbg)
+            self._ir_ctx.set(name, merged_value)
 
     def visit_ASTAssertStatement(self, n: ASTAssertStatement):
         if self._ir_ctx.check_return_guaranteed() or self._ir_ctx.check_loop_terminated_guaranteed():
@@ -302,9 +562,9 @@ class IRGenerator:
         elif n.operator == n.Op.GTE:
             return self._ir_builder.op_greater_than_or_equal(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.AND:
-            return self._ir_builder.ir_logical_and(lhs_expr, rhs_expr, dbg=n.dbg)
+            return self._ir_builder.op_logical_and(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.OR:
-            return self._ir_builder.ir_logical_or(lhs_expr, rhs_expr, dbg=n.dbg)
+            return self._ir_builder.op_logical_or(lhs_expr, rhs_expr, dbg=n.dbg)
         elif n.operator == n.Op.POW:
             return self._ir_builder.op_power(lhs_expr, rhs_expr, dbg=n.dbg)
         raise NotImplementedError(f"Internal Error: Binary Operator {n.operator} not implemented")
@@ -553,9 +813,9 @@ class IRGenerator:
         if isinstance(target, ASTNameAssignTarget):
             if self._ir_ctx.exists(target.name):
                 orig_value = self._ir_ctx.get(target.name)
-                if orig_value.type_locked() and value.type() != orig_value.type():
-                    raise InterScopeError(target.dbg, f"Cannot assign to `{target.name}`: this variable is declared at the outer scope. Attempting to change its datatype in the inner scope from {orig_value.type()} to {value.type()} is not allowed. Assigning to variables from outer scope must keep its datatype and shape.")
-                if orig_value.type_locked() and conditional_select:
+                if orig_value.type_locked() and self._type_lattice_join(orig_value.type(), value.type()) is None:
+                    raise InterScopeError(target.dbg, f"Cannot assign to `{target.name}`: type merge is inconsistent across control-flow paths ({orig_value.type()} vs {value.type()}).")
+                if orig_value.type_locked() and conditional_select and (not self._ir_ctx.is_in_conditional()):
                     value = self._ir_builder.op_select(self._ir_ctx.get_condition_value(), value, orig_value, dbg=target.dbg)
             self._ir_ctx.set(target.name, value)
         elif isinstance(target, ASTSubscriptAssignTarget):

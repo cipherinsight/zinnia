@@ -5,6 +5,7 @@ import zinnia.op_def.np_like as np_ops
 import zinnia.op_def.math as math_ops
 import zinnia.op_def.nocls as global_ops
 import zinnia.op_def.ndarray as ndarray_ops
+import zinnia.op_def.dynamic_ndarray as dynamic_ndarray_ops
 import zinnia.op_def.lst as list_ops
 import zinnia.op_def.tupl as tuple_ops
 
@@ -14,14 +15,45 @@ class Operators:
         global_ops.TupleOp, global_ops.StrOp, global_ops.RangeOp, global_ops.PrintOp,
         global_ops.PowOp, global_ops.MinOp, global_ops.MaxOp, global_ops.RangeOp,
         global_ops.ListOp, global_ops.LenOp, global_ops.FloatCastOp, global_ops.BoolCastOp,
-        global_ops.IntCastOp, global_ops.SumOp, global_ops.AnyOp, global_ops.AllOp
+        global_ops.IntCastOp, global_ops.SumOp, global_ops.AnyOp, global_ops.AllOp,
+        global_ops.PoseidonHashBuiltinOp, global_ops.MerkleVerifyOp
     ]
     NDArray = [
         ndarray_ops.NDArray_ProdOp, ndarray_ops.NDArray_SumOp, ndarray_ops.NDArray_TOp, ndarray_ops.NDArray_TransposeOp,
+        ndarray_ops.NDArray_MoveAxisOp,
         ndarray_ops.NDArray_ToListOp, ndarray_ops.NDArray_AsTypeOp, ndarray_ops.NDArray_MaxOp, ndarray_ops.NDArray_MinOp,
         ndarray_ops.NDArray_ArgMaxOp, ndarray_ops.NDArray_ArgMinOp, ndarray_ops.NDArray_ShapeOp, ndarray_ops.NDArray_ReshapeOp,
         ndarray_ops.NDArray_FlatOp, ndarray_ops.NDArray_DtypeOp, ndarray_ops.NDArray_AllOp, ndarray_ops.NDArray_AnyOp,
-        ndarray_ops.NDArray_NdimOp, ndarray_ops.NDArray_RepeatOp, ndarray_ops.NDArray_SizeOp, ndarray_ops.NDArray_FlattenOp
+        ndarray_ops.NDArray_NdimOp, ndarray_ops.NDArray_RepeatOp, ndarray_ops.NDArray_SizeOp, ndarray_ops.NDArray_FlattenOp,
+        ndarray_ops.NDArray_FilterOp,
+    ]
+    DynamicNDArray = [
+        dynamic_ndarray_ops.DynamicNDArray_ZerosOp,
+        dynamic_ndarray_ops.DynamicNDArray_OnesOp,
+        dynamic_ndarray_ops.DynamicNDArray_EyeOp,
+        dynamic_ndarray_ops.DynamicNDArray_ConcatenateOp,
+        dynamic_ndarray_ops.DynamicNDArray_StackOp,
+        dynamic_ndarray_ops.DynamicNDArray_SumOp,
+        dynamic_ndarray_ops.DynamicNDArray_ProdOp,
+        dynamic_ndarray_ops.DynamicNDArray_MaxOp,
+        dynamic_ndarray_ops.DynamicNDArray_MinOp,
+        dynamic_ndarray_ops.DynamicNDArray_ArgMaxOp,
+        dynamic_ndarray_ops.DynamicNDArray_ArgMinOp,
+        dynamic_ndarray_ops.DynamicNDArray_AllOp,
+        dynamic_ndarray_ops.DynamicNDArray_AnyOp,
+        dynamic_ndarray_ops.DynamicNDArray_TransposeOp,
+        dynamic_ndarray_ops.DynamicNDArray_MoveAxisOp,
+        dynamic_ndarray_ops.DynamicNDArray_NdimOp,
+        dynamic_ndarray_ops.DynamicNDArray_ShapeOp,
+        dynamic_ndarray_ops.DynamicNDArray_SizeOp,
+        dynamic_ndarray_ops.DynamicNDArray_TOp,
+        dynamic_ndarray_ops.DynamicNDArray_ToListOp,
+        dynamic_ndarray_ops.DynamicNDArray_FlatOp,
+        dynamic_ndarray_ops.DynamicNDArray_FlattenOp,
+        dynamic_ndarray_ops.DynamicNDArray_DtypeOp,
+        dynamic_ndarray_ops.DynamicNDArray_AsTypeOp,
+        dynamic_ndarray_ops.DynamicNDArray_FilterOp,
+        *NDArray,
     ]
     Tuple = [
         tuple_ops.Tuple_CountOp, tuple_ops.Tuple_IndexOp
@@ -50,7 +82,7 @@ class Operators:
         np_ops.NP_SqrtOp, np_ops.NP_SubtractOp, np_ops.NP_SumOp, np_ops.NP_TanOp,
         np_ops.NP_TanHOp, np_ops.NP_RepeatOp, np_ops.NP_SizeOp, np_ops.NP_AppendOp,
         np_ops.NP_DotOp, np_ops.NP_ARangeOp, np_ops.NP_LinspaceOp, np_ops.NP_ArrayOp,
-        np_ops.NP_MeanOp
+        np_ops.NP_MeanOp, np_ops.NP_MoveAxisOp, np_ops.NP_TransposeOp
     ]
     Zinnia = [
         *NPLike
@@ -70,6 +102,7 @@ class Operators:
         lookup = {
             None: Operators.NoCls,
             "NDArray": Operators.NDArray,
+            "DynamicNDArray": Operators.DynamicNDArray,
             "Tuple": Operators.Tuple,
             "List": Operators.List,
             "String": Operators.String,

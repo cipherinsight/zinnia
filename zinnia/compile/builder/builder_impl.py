@@ -7,7 +7,7 @@ from zinnia.compile.builder.ir_builder import IRBuilder
 from zinnia.compile.builder.op_args_container import OpArgsContainer
 from zinnia.compile.ir.ir_stmt import IRStatement
 from zinnia.compile.triplet import Value, ClassValue, TupleValue, ListValue, NoneValue, NDArrayValue, IntegerValue, \
-    FloatValue, StringValue, NumberValue
+    DynamicNDArrayValue, FloatValue, StringValue, NumberValue
 from zinnia.compile.triplet.value.boolean import BooleanValue
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.compile.type_sys import DTDescriptor
@@ -27,7 +27,9 @@ from zinnia.ir_def.defs.ir_abs_i import AbsIIR
 from zinnia.ir_def.defs.ir_add_f import AddFIR
 from zinnia.ir_def.defs.ir_add_i import AddIIR
 from zinnia.ir_def.defs.ir_add_str import AddStrIR
+from zinnia.ir_def.defs.ir_allocate_dynamic_ndarray_meta import AllocateDynamicNDArrayMetaIR
 from zinnia.ir_def.defs.ir_assert import AssertIR
+from zinnia.ir_def.defs.ir_assert_dynamic_ndarray_meta import AssertDynamicNDArrayMetaIR
 from zinnia.ir_def.defs.ir_bool_cast import BoolCastIR
 from zinnia.ir_def.defs.ir_constant_float import ConstantFloatIR
 from zinnia.ir_def.defs.ir_constant_int import ConstantIntIR
@@ -36,6 +38,8 @@ from zinnia.ir_def.defs.ir_cos_f import CosFIR
 from zinnia.ir_def.defs.ir_cosh_f import CosHFIR
 from zinnia.ir_def.defs.ir_div_f import DivFIR
 from zinnia.ir_def.defs.ir_div_i import DivIIR
+from zinnia.ir_def.defs.ir_dynamic_ndarray_get_item import DynamicNDArrayGetItemIR
+from zinnia.ir_def.defs.ir_dynamic_ndarray_set_item import DynamicNDArraySetItemIR
 from zinnia.ir_def.defs.ir_eq_f import EqualFIR
 from zinnia.ir_def.defs.ir_eq_hash import EqualHashIR
 from zinnia.ir_def.defs.ir_eq_i import EqualIIR
@@ -66,11 +70,15 @@ from zinnia.ir_def.defs.ir_mod_f import ModFIR
 from zinnia.ir_def.defs.ir_mod_i import ModIIR
 from zinnia.ir_def.defs.ir_mul_f import MulFIR
 from zinnia.ir_def.defs.ir_mul_i import MulIIR
+from zinnia.ir_def.defs.ir_allocate_memory import AllocateMemoryIR
+from zinnia.ir_def.defs.ir_memory_trace_emit import MemoryTraceEmitIR
+from zinnia.ir_def.defs.ir_memory_trace_seal import MemoryTraceSealIR
 from zinnia.ir_def.defs.ir_ne_f import NotEqualFIR
 from zinnia.ir_def.defs.ir_ne_i import NotEqualIIR
 from zinnia.ir_def.defs.ir_pow_f import PowFIR
 from zinnia.ir_def.defs.ir_pow_i import PowIIR
 from zinnia.ir_def.defs.ir_print import PrintIR
+from zinnia.ir_def.defs.ir_read_memory import ReadMemoryIR
 from zinnia.ir_def.defs.ir_read_float import ReadFloatIR
 from zinnia.ir_def.defs.ir_read_hash import ReadHashIR
 from zinnia.ir_def.defs.ir_read_integer import ReadIntegerIR
@@ -87,12 +95,15 @@ from zinnia.ir_def.defs.ir_sub_f import SubFIR
 from zinnia.ir_def.defs.ir_sub_i import SubIIR
 from zinnia.ir_def.defs.ir_tan_f import TanFIR
 from zinnia.ir_def.defs.ir_tanh_f import TanHFIR
+from zinnia.ir_def.defs.ir_witness_dynamic_ndarray_meta import WitnessDynamicNDArrayMetaIR
+from zinnia.ir_def.defs.ir_write_memory import WriteMemoryIR
 from zinnia.op_def.internal.op_placeholder_value import PlaceholderValueOp
 from zinnia.op_def.lst import List_IndexOp
 from zinnia.op_def.lst.op_pop import List_PopOp
 from zinnia.op_def.lst.op_remove import List_RemoveOp
 from zinnia.op_def.ndarray import NDArray_MaxOp, NDArray_MinOp, NDArray_ArgMaxOp, NDArray_ArgMinOp, NDArray_SumOp, \
-    NDArray_ProdOp, NDArray_AnyOp, NDArray_AllOp
+    NDArray_ProdOp, NDArray_AnyOp, NDArray_AllOp, NDArray_TransposeOp, NDArray_MoveAxisOp
+from zinnia.op_def.dynamic_ndarray import DynamicNDArray_ZerosOp, DynamicNDArray_OnesOp, DynamicNDArray_EyeOp
 from zinnia.op_def.ndarray.op_aug_item import NDArray_AugItemOp
 from zinnia.op_def.np_like import NP_ConcatenateOp, NP_StackOp
 from zinnia.op_def.np_like.op_asarray import NP_AsarrayOp
@@ -195,8 +206,8 @@ class SMTUtils:
                 if "timeout" in s.reason_unknown():
                     SMTUtils.NO_TIMEOUT_CASES += 1
             return None
-        except Exception as e:
-            pass
+        except z3.Z3Exception:
+            return None
         return None
 
 
@@ -479,6 +490,43 @@ class IRBuilderImpl(IRBuilder):
         assert isinstance(result, NDArrayValue)
         return result
 
+    def op_dynamic_ndarray_zeros(
+        self,
+        shape: TupleValue,
+        dtype: ClassValue | NoneValue,
+        dbg: Optional[DebugInfo] = None,
+    ) -> DynamicNDArrayValue:
+        op = DynamicNDArray_ZerosOp()
+        kwargs = op.argparse(dbg, [shape], {"dtype": dtype})
+        result = op.build(self, OpArgsContainer(kwargs), dbg)
+        assert isinstance(result, DynamicNDArrayValue)
+        return result
+
+    def op_dynamic_ndarray_ones(
+        self,
+        shape: TupleValue,
+        dtype: ClassValue | NoneValue,
+        dbg: Optional[DebugInfo] = None,
+    ) -> DynamicNDArrayValue:
+        op = DynamicNDArray_OnesOp()
+        kwargs = op.argparse(dbg, [shape], {"dtype": dtype})
+        result = op.build(self, OpArgsContainer(kwargs), dbg)
+        assert isinstance(result, DynamicNDArrayValue)
+        return result
+
+    def op_dynamic_ndarray_eye(
+        self,
+        n: IntegerValue,
+        m: IntegerValue,
+        dtype: ClassValue | NoneValue,
+        dbg: Optional[DebugInfo] = None,
+    ) -> DynamicNDArrayValue:
+        op = DynamicNDArray_EyeOp()
+        kwargs = op.argparse(dbg, [n, m], {"dtype": dtype})
+        result = op.build(self, OpArgsContainer(kwargs), dbg)
+        assert isinstance(result, DynamicNDArrayValue)
+        return result
+
     def op_ndarray_astype(self, value: NDArrayValue, dtype: ClassValue, dbg: Optional[DebugInfo] = None) -> NDArrayValue:
         op = NDArray_AsTypeOp()
         kwargs = op.argparse(dbg, [value, dtype], {})
@@ -540,6 +588,31 @@ class IRBuilderImpl(IRBuilder):
         kwargs = op.argparse(dbg, [a], {"axis": axis})
         result = op.build(self, OpArgsContainer(kwargs), dbg)
         assert isinstance(result, Value)
+        return result
+
+    def op_ndarray_transpose(
+        self,
+        a: NDArrayValue,
+        axes: TupleValue | ListValue | NoneValue,
+        dbg: Optional[DebugInfo] = None,
+    ) -> NDArrayValue:
+        op = NDArray_TransposeOp()
+        kwargs = op.argparse(dbg, [a], {"axes": axes})
+        result = op.build(self, OpArgsContainer(kwargs), dbg)
+        assert isinstance(result, NDArrayValue)
+        return result
+
+    def op_ndarray_moveaxis(
+        self,
+        a: NDArrayValue,
+        source: IntegerValue,
+        destination: IntegerValue,
+        dbg: Optional[DebugInfo] = None,
+    ) -> NDArrayValue:
+        op = NDArray_MoveAxisOp()
+        kwargs = op.argparse(dbg, [a, source, destination], {})
+        result = op.build(self, OpArgsContainer(kwargs), dbg)
+        assert isinstance(result, NDArrayValue)
         return result
 
     def op_ndarray_any(self, a: NDArrayValue, axis: IntegerValue | NoneValue, dbg: Optional[DebugInfo] = None) -> Value:
@@ -694,6 +767,121 @@ class IRBuilderImpl(IRBuilder):
         val, stmt = ir.build_ir(len(self.stmts), [], dbg)
         self.stmts.append(stmt)
         assert isinstance(val, FloatValue)
+        return val
+
+    def ir_allocate_memory(self, segment_id: int, size: int, init_value: int = 0, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        ir = AllocateMemoryIR(segment_id, size, init_value)
+        val, stmt = ir.build_ir(len(self.stmts), [], dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, NoneValue)
+        return val
+
+    def ir_write_memory(self, segment_id: int, address: IntegerValue, value: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        ir = WriteMemoryIR(segment_id)
+        val, stmt = ir.build_ir(len(self.stmts), [address, value], dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, NoneValue)
+        return val
+
+    def ir_read_memory(self, segment_id: int, address: IntegerValue, dbg: Optional[DebugInfo] = None) -> IntegerValue:
+        ir = ReadMemoryIR(segment_id)
+        val, stmt = ir.build_ir(len(self.stmts), [address], dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, IntegerValue)
+        return val
+
+    def ir_memory_trace_emit(self, segment_id: int, is_write: bool, address: IntegerValue, value: IntegerValue, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        ir = MemoryTraceEmitIR(segment_id, is_write)
+        val, stmt = ir.build_ir(len(self.stmts), [address, value], dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, NoneValue)
+        return val
+
+    def ir_memory_trace_seal(self, dbg: Optional[DebugInfo] = None) -> NoneValue:
+        ir = MemoryTraceSealIR()
+        val, stmt = ir.build_ir(len(self.stmts), [], dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, NoneValue)
+        return val
+
+    def ir_allocate_dynamic_ndarray_meta(
+        self,
+        array_id: int,
+        dtype_name: str,
+        max_length: int,
+        max_rank: int,
+        dbg: Optional[DebugInfo] = None,
+    ) -> NoneValue:
+        ir = AllocateDynamicNDArrayMetaIR(array_id, dtype_name, max_length, max_rank)
+        val, stmt = ir.build_ir(len(self.stmts), [], dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, NoneValue)
+        return val
+
+    def ir_witness_dynamic_ndarray_meta(
+        self,
+        array_id: int,
+        max_rank: int,
+        rank: IntegerValue,
+        offset: IntegerValue,
+        shape_entries: List[IntegerValue],
+        stride_entries: List[IntegerValue],
+        dbg: Optional[DebugInfo] = None,
+    ) -> NoneValue:
+        if len(shape_entries) != max_rank or len(stride_entries) != max_rank:
+            raise ValueError("shape_entries and stride_entries must have length max_rank")
+        ir = WitnessDynamicNDArrayMetaIR(array_id, max_rank)
+        args = [rank, offset] + shape_entries + stride_entries
+        val, stmt = ir.build_ir(len(self.stmts), args, dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, NoneValue)
+        return val
+
+    def ir_assert_dynamic_ndarray_meta(
+        self,
+        array_id: int,
+        max_rank: int,
+        max_length: int,
+        rank: IntegerValue,
+        offset: IntegerValue,
+        shape_entries: List[IntegerValue],
+        stride_entries: List[IntegerValue],
+        dbg: Optional[DebugInfo] = None,
+    ) -> NoneValue:
+        if len(shape_entries) != max_rank or len(stride_entries) != max_rank:
+            raise ValueError("shape_entries and stride_entries must have length max_rank")
+        ir = AssertDynamicNDArrayMetaIR(array_id, max_rank, max_length)
+        args = [rank, offset] + shape_entries + stride_entries
+        val, stmt = ir.build_ir(len(self.stmts), args, dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, NoneValue)
+        return val
+
+    def ir_dynamic_ndarray_get_item(
+        self,
+        array_id: int,
+        segment_id: int,
+        linear_address: IntegerValue,
+        dbg: Optional[DebugInfo] = None,
+    ) -> IntegerValue:
+        ir = DynamicNDArrayGetItemIR(array_id, segment_id)
+        val, stmt = ir.build_ir(len(self.stmts), [linear_address], dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, IntegerValue)
+        return val
+
+    def ir_dynamic_ndarray_set_item(
+        self,
+        array_id: int,
+        segment_id: int,
+        linear_address: IntegerValue,
+        value: IntegerValue,
+        dbg: Optional[DebugInfo] = None,
+    ) -> NoneValue:
+        ir = DynamicNDArraySetItemIR(array_id, segment_id)
+        val, stmt = ir.build_ir(len(self.stmts), [linear_address, value], dbg)
+        self.stmts.append(stmt)
+        assert isinstance(val, NoneValue)
         return val
 
     def ir_constant_int(self, value: int, dbg: Optional[DebugInfo] = None) -> IntegerValue:
@@ -1202,7 +1390,7 @@ class IRBuilderImpl(IRBuilder):
             elif isinstance(stmt.ir_instance, SelectIIR):
                 constraints.append(z3.Int(f"int_{stmt.stmt_id}") == z3.If(z3.Bool(f"bool_{stmt.arguments[0]}"), z3.Int(f"int_{stmt.arguments[1]}"), z3.Int(f"int_{stmt.arguments[2]}")))
             elif isinstance(stmt.ir_instance, SelectBIR):
-                constraints.append(z3.Int(f"bool_{stmt.stmt_id}") == z3.If(z3.Bool(f"bool_{stmt.arguments[0]}"), z3.Bool(f"bool_{stmt.arguments[1]}"), z3.Bool(f"bool_{stmt.arguments[2]}")))
+                constraints.append(z3.Bool(f"bool_{stmt.stmt_id}") == z3.If(z3.Bool(f"bool_{stmt.arguments[0]}"), z3.Bool(f"bool_{stmt.arguments[1]}"), z3.Bool(f"bool_{stmt.arguments[2]}")))
             elif isinstance(stmt.ir_instance, SignIIR):
                 constraints.append(z3.Int(f"int_{stmt.stmt_id}") == z3.If(z3.Int(f"int_{stmt.arguments[0]}") > 0, 1, z3.If(z3.Int(f"int_{stmt.arguments[0]}") < 0, -1, 0)))
             elif isinstance(stmt.ir_instance, ReadIntegerIR):

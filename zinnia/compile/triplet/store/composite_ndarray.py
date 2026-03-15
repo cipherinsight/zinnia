@@ -1,12 +1,12 @@
 import copy
 
 from zinnia.compile.triplet.store.store import ValueStore
-from zinnia.compile.type_sys import NDArrayDTDescriptor
+from zinnia.compile.type_sys import NDArrayDTDescriptor, DynamicNDArrayDTDescriptor
 from zinnia.internal.internal_ndarray import InternalNDArray
 
 
 class CompositeNDArrayValueStore(ValueStore):
-    def __init__(self, data_type: NDArrayDTDescriptor, ndarray: InternalNDArray):
+    def __init__(self, data_type: NDArrayDTDescriptor | DynamicNDArrayDTDescriptor, ndarray: InternalNDArray):
         self.ndarray = ndarray
         self.data_type = data_type
 

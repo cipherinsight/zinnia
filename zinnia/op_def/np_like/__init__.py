@@ -67,3 +67,5 @@ from .op_arange import NP_ARangeOp
 from .op_linspace import NP_LinspaceOp
 from .op_array import NP_ArrayOp
 from .op_mean import NP_MeanOp
+from .op_moveaxis import NP_MoveAxisOp
+from .op_transpose import NP_TransposeOp
