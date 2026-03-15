@@ -345,31 +345,30 @@ def plot_loc_landscape():
     plt.show()
     fig.savefig('loc-complexity-landscape.pdf', dpi=300)
 
-    # ---- Aggregate distribution (box or violin) ----
-    fig2, (ax3, ax4) = plt.subplots(1, 2, figsize=(5, 3.4), sharey=False)
+    # ---- Aggregate distribution (LoC only) ----
+    fig2, ax3 = plt.subplots(1, 1, figsize=(5, 3.4), sharey=False)
 
     data_loc = [ser[~np.isnan(ser)] for ser in loc_series]
-    data_complexity = [ser[~np.isnan(ser)] for ser in complexity_series]
 
-    # Boxplot version (swap with violinplot if desired)
+    # Keep ordering consistent with legend (Zinnia first)
     data_loc = list(reversed(data_loc))
-    data_complexity = list(reversed(data_complexity))
-    labels = list(reversed(labels))
-    ax3.boxplot(data_loc, labels=labels, patch_artist=True,
-                boxprops=dict(facecolor='lightgray', color='k', alpha=0.6))
-    ax3.tick_params(axis='x', labelrotation=30, labelfontfamily='Times New Roman')
-    ax3.set_ylabel("LoC Distribution", fontdict={'fontweight': 'bold', 'fontname': 'Times New Roman', 'fontsize': 12})
-    ax3.grid(True, axis='y', linestyle='--', alpha=0.3)
+    labels_loc = list(reversed(labels))
 
-    ax4.boxplot(data_complexity, labels=labels, patch_artist=True,
-                boxprops=dict(facecolor='lightgray', color='k', alpha=0.6))
-    ax4.tick_params(axis='x', labelrotation=30, labelfontfamily='Times New Roman')
-    ax4.set_ylabel("Cyclomatic Complexity Distribution", fontdict={'fontweight': 'bold', 'fontname': 'Times New Roman', 'fontsize': 12})
-    ax4.grid(True, axis='y', linestyle='--', alpha=0.3)
+    ax3.boxplot(
+        data_loc,
+        labels=labels_loc,
+        patch_artist=True,
+        vert=False,
+        boxprops=dict(facecolor='lightgray', color='k', alpha=0.6),
+    )
+    # Labels are now on y-axis; do not rotate.
+    ax3.tick_params(axis='y', labelfontfamily='Times New Roman')
+    ax3.set_xlabel("LoC Distribution", fontdict={'fontweight': 'bold', 'fontname': 'Times New Roman', 'fontsize': 12})
+    ax3.grid(True, axis='x', linestyle='--', alpha=0.3)
 
     fig2.tight_layout()
     plt.show()
-    fig2.savefig('loc-complexity-distribution.pdf', dpi=300)
+    fig2.savefig('loc-distribution.pdf', dpi=300)
 
 
 
