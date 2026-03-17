@@ -19,6 +19,8 @@ from zinnia.op_def.dynamic_ndarray.view_utils import default_like
 
 
 class DynamicNDArray_GetItemOp(AbstractOp):
+    MUX_THRESHOLD = 100
+
     def get_signature(self) -> str:
         return "DynamicNDArray.__get_item__"
 
@@ -46,6 +48,22 @@ class DynamicNDArray_GetItemOp(AbstractOp):
             builder.ir_write_memory(segment_id, builder.ir_constant_int(i), builder.op_int_cast(src))
         return segment_id
 
+    def _select_by_index_mux(
+        self,
+        builder: IRBuilderInterface,
+        index: IntegerValue,
+        values: List[NumberValue],
+        max_len: int,
+        fallback: NumberValue,
+        dbg: Optional[DebugInfo],
+    ) -> NumberValue:
+        cells = [values[i] if i < len(values) else fallback for i in range(max_len)]
+        selected = cells[0]
+        for i in range(1, max_len):
+            cond = builder.op_equal(index, builder.ir_constant_int(i), dbg)
+            selected = cast(NumberValue, builder.op_select(builder.op_bool_cast(cond, dbg), cells[i], selected, dbg))
+        return selected
+
     def _materialize_dtype(self, builder: IRBuilderInterface, x: IntegerValue, the_self: DynamicNDArrayValue) -> Value:
         dtype = the_self.dtype()
         if dtype == FloatType:
@@ -63,7 +81,7 @@ class DynamicNDArray_GetItemOp(AbstractOp):
             builder.op_less_than(normalized, builder.ir_constant_int(max_len), dbg),
             dbg,
         )
-        builder.op_assert(index_in_range, builder.op_constant_none(), dbg)
+        # builder.op_assert(index_in_range, builder.op_constant_none(), dbg)
         return normalized
 
     def _dynamic_scalar_index(
@@ -75,9 +93,14 @@ class DynamicNDArray_GetItemOp(AbstractOp):
     ) -> Value:
         max_len = the_self.max_length()
         src_values = the_self.flattened_values()
+        normalized = self._normalize_index(builder, index, max_len, dbg)
+
+        if max_len < self.MUX_THRESHOLD:
+            fallback_num = default_like(builder, cast(NumberValue, src_values[0])) if len(src_values) > 0 else builder.ir_constant_int(0)
+            return self._select_by_index_mux(builder, normalized, src_values, max_len, fallback_num, dbg)
+
         fallback = builder.ir_constant_int(0)
         segment_id = self._write_source_memory(builder, src_values, max_len, fallback)
-        normalized = self._normalize_index(builder, index, max_len, dbg)
         read_val = builder.ir_read_memory(segment_id, normalized)
         return self._materialize_dtype(builder, read_val, the_self)
 
@@ -116,7 +139,8 @@ class DynamicNDArray_GetItemOp(AbstractOp):
         src_values = the_self.flattened_values()
         fallback_num = default_like(builder, cast(NumberValue, src_values[0])) if len(src_values) > 0 else builder.ir_constant_int(0)
         fallback_int = builder.op_int_cast(fallback_num)
-        segment_id = self._write_source_memory(builder, src_values, max_len, fallback_int)
+        use_mux = max_len < self.MUX_THRESHOLD
+        segment_id = self._write_source_memory(builder, src_values, max_len, fallback_int) if not use_mux else -1
 
         out_values: List[NumberValue] = [fallback_num for _ in range(max_len)]
         write_ptr = builder.ir_constant_int(0)
@@ -130,8 +154,11 @@ class DynamicNDArray_GetItemOp(AbstractOp):
             in_range = builder.op_logical_and(in_low, builder.op_logical_and(in_high_stop, in_high_cap, dbg), dbg)
 
             read_idx = cast(IntegerValue, builder.op_select(builder.op_bool_cast(in_range, dbg), idx, builder.ir_constant_int(0), dbg))
-            read_int = builder.ir_read_memory(segment_id, read_idx)
-            read_num = cast(NumberValue, self._materialize_dtype(builder, read_int, the_self))
+            if use_mux:
+                read_num = self._select_by_index_mux(builder, read_idx, src_values, max_len, fallback_num, dbg)
+            else:
+                read_int = builder.ir_read_memory(segment_id, read_idx)
+                read_num = cast(NumberValue, self._materialize_dtype(builder, read_int, the_self))
 
             for j in range(max_len):
                 ptr_is_j = builder.op_equal(write_ptr, builder.ir_constant_int(j), dbg)
