@@ -4,14 +4,17 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(a: NDArray[int, 3], result: NDArray[int, 3, 5]):
-    # a = [1, 2, 5]
-    a_min = a.min()
-    # temp = a - a_min = [0, 1, 4]
-    for i in range(result.shape[0]):
-        for j in range(result.shape[1]):
-            expected = 1 if (a[i] - a_min) == j else 0
-            assert result[i, j] == expected
+def verify_solution(a: DynamicNDArray[int, 3, 1], result: DynamicNDArray[int, 15, 2]):
+    shifted = a - a.min()
+    columns = np.stack((
+        result[0:15:5],
+        result[1:15:5],
+        result[2:15:5],
+        result[3:15:5],
+        result[4:15:5],
+    ), axis=0)
+    for value in range(5):
+        assert (columns[value] == 1) == (shifted == value)
 
 
 

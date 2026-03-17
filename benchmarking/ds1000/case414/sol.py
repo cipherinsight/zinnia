@@ -4,18 +4,9 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(data: NDArray[float, 10], result: NDArray[float, 3]):
-    # data = [4, 2, 5, 6, 7, 5, 4, 3, 5, 7]
-    # bin_size = 3
-    # Drop last element to make length multiple of 3 → data[:9]
-    # reshape to (3, 3): [[4,2,5], [6,7,5], [4,3,5]]
-    # mean along axis=1 → [3.67, 6, 4]
-
-    bin_size = 3
-    trimmed = data[:(10 // bin_size) * bin_size]
-    reshaped = trimmed.reshape((3, bin_size))
-    bin_data_mean = np.mean(reshaped, axis=1)
-    assert result == bin_data_mean
+def verify_solution(data: DynamicNDArray[float, 10, 1], result: DynamicNDArray[float, 3, 1]):
+    expected = data[:9].reshape((3, 3)).sum(axis=1) / 3
+    assert result == expected
 
 
 if __name__ == '__main__':

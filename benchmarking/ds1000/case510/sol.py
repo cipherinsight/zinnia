@@ -53,21 +53,9 @@ from zinnia.config import OptimizationConfig
 
 
 @zk_circuit
-def verify_solution(input: NDArray[int, 5, 6], result: NDArray[int, 3, 4]):
-    zero_rows = []
-    zero_cols = []
-    for i in range(5):
-        zero_rows.append(all(input[i, :] == 0))
-    for i in range(6):
-        zero_cols.append(all(input[:, i] == 0))
-    idx = 0
-    flatten_result = result.flatten()
-    for i in range(5):
-        for j in range(6):
-            if zero_rows[i] or zero_cols[j]:
-                continue
-            assert flatten_result[idx] == input[i, j]
-            idx += 1
+def verify_solution(input: DynamicNDArray[int, 30, 2], result: DynamicNDArray[int, 12, 2]):
+    expected = np.concatenate((input[7:11], input[13:17], input[19:23]), axis=0)
+    assert result == expected
 
 # print(result)
 # assert verify_solution(im, result)

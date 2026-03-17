@@ -242,33 +242,27 @@ def plot_loc_landscape():
             all_problems.append((dataset, problem))
     names = [NAME_MAPPING[f'{d}::{p}'] for d, p in all_problems]
 
-    # Gather metrics
-    zinnia_loc, zinnia_complexity = [], []
-    halo2_loc, halo2_complexity = [], []
-    noir_loc, noir_complexity = [], []
-    risc0_loc, risc0_complexity = [], []
-    sp1_loc, sp1_complexity = [], []
-    cairo_loc, cairo_complexity = [], []
+    # Gather metrics (LoC only for landscape)
+    zinnia_loc = []
+    halo2_loc = []
+    noir_loc = []
+    risc0_loc = []
+    sp1_loc = []
+    cairo_loc = []
 
     for dataset, problem in all_problems:
-        a, b = count_zinnia(dataset, problem)
+        a, _ = count_zinnia(dataset, problem)
         zinnia_loc.append(a)
-        zinnia_complexity.append(b)
-        a, b = count_halo2(dataset, problem)
+        a, _ = count_halo2(dataset, problem)
         halo2_loc.append(a)
-        halo2_complexity.append(b)
-        a, b = count_noir(dataset, problem)
+        a, _ = count_noir(dataset, problem)
         noir_loc.append(a)
-        noir_complexity.append(b)
-        a, b = count_risc0(dataset, problem)
+        a, _ = count_risc0(dataset, problem)
         risc0_loc.append(a)
-        risc0_complexity.append(b)
-        a, b = count_sp1(dataset, problem)
+        a, _ = count_sp1(dataset, problem)
         sp1_loc.append(a)
-        sp1_complexity.append(b)
-        a, b = count_cairo(dataset, problem)
+        a, _ = count_cairo(dataset, problem)
         cairo_loc.append(a)
-        cairo_complexity.append(b)
 
     # Convert to numpy arrays
     zinnia_loc = np.asarray(zinnia_loc, dtype=float)
@@ -277,42 +271,31 @@ def plot_loc_landscape():
     risc0_loc = np.asarray(risc0_loc, dtype=float)
     sp1_loc = np.asarray(sp1_loc, dtype=float)
     cairo_loc = np.asarray(cairo_loc, dtype=float)
-    zinnia_complexity = np.asarray(zinnia_complexity, dtype=float)
-    halo2_complexity = np.asarray(halo2_complexity, dtype=float)
-    noir_complexity = np.asarray(noir_complexity, dtype=float)
-    risc0_complexity = np.asarray(risc0_complexity, dtype=float)
-    sp1_complexity = np.asarray(sp1_complexity, dtype=float)
-    cairo_complexity = np.asarray(cairo_complexity, dtype=float)
-
     # =============================
-    # NEW: Compute average advantages
+    # Compute average LoC advantages
     # =============================
     baselines = {
-        'Halo2': (halo2_loc, halo2_complexity),
-        'Noir': (noir_loc, noir_complexity),
-        'Risc0': (risc0_loc, risc0_complexity),
-        'SP1': (sp1_loc, sp1_complexity),
-        'Cairo': (cairo_loc, cairo_complexity)
+        'Halo2': halo2_loc,
+        'Noir': noir_loc,
+        'Risc0': risc0_loc,
+        'SP1': sp1_loc,
+        'Cairo': cairo_loc
     }
 
-    print("\n=== Average Advantage of Zinnia over Other Baselines ===")
-    print(f"{'Baseline':<10} | {'ΔLoC':>10} | {'ΔLoC %':>10} | {'ΔComplex':>12} | {'ΔComplex %':>12}")
-    print("-" * 62)
+    print("\n=== Average LoC Advantage of Zinnia over Other Baselines ===")
+    print(f"{'Baseline':<10} | {'LoC Ratio':>10} | {'ΔLoC %':>10}")
+    print("-" * 40)
 
-    for name, (loc_arr, comp_arr) in baselines.items():
+    for name, loc_arr in baselines.items():
         # Filter NaNs
         mask = (~np.isnan(zinnia_loc)) & (~np.isnan(loc_arr))
         loc_diff = np.nanmean(loc_arr[mask] / zinnia_loc[mask])
         loc_pct = np.nanmean((loc_arr[mask] - zinnia_loc[mask]) / loc_arr[mask] * 100)
 
-        mask = (~np.isnan(zinnia_complexity)) & (~np.isnan(comp_arr))
-        comp_diff = np.nanmean(comp_arr[mask] / zinnia_complexity[mask])
-        comp_pct = np.nanmean((comp_arr[mask] - zinnia_complexity[mask]) / comp_arr[mask] * 100)
+        print(f"{name:<10} | {loc_diff:>10.2f} | {loc_pct:>9.2f}%")
 
-        print(f"{name:<10} | {loc_diff:>10.2f} | {loc_pct:>9.2f}% | {comp_diff:>12.2f} | {comp_pct:>11.2f}%")
-
-    print("-" * 62)
-    print("Positive values → Zinnia uses fewer LoC / lower complexity on average\n")
+    print("-" * 40)
+    print("Positive values → Zinnia uses fewer LoC on average\n")
 
     # =============================
     # Existing plotting code follows
@@ -321,29 +304,22 @@ def plot_loc_landscape():
     colors = list(reversed(['mediumseagreen', 'purple', 'azure', 'lightcoral', 'orange', 'gray']))
     labels = list(reversed(['Zinnia', 'Halo2', 'Noir', 'Risc0', 'SP1', 'Cairo']))
     loc_series = list(reversed([zinnia_loc, halo2_loc, noir_loc, risc0_loc, sp1_loc, cairo_loc]))
-    complexity_series = list(reversed([zinnia_complexity, halo2_complexity, noir_complexity, risc0_complexity, sp1_complexity, cairo_complexity]))
-
     x = np.arange(len(names))
     marker_size = 40
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 4), sharex=True, height_ratios=[1, 1])
+    fig, ax1 = plt.subplots(1, 1, figsize=(12, 3.2), sharex=True)
     for ser, col, lbl in zip(loc_series, colors, labels):
         ax1.scatter(x, ser, marker='o', s=marker_size, color=col, edgecolors='k', linewidths=0.5, alpha=0.9, label=lbl)
     ax1.set_ylabel('LoC', fontdict={'fontweight': 'bold', 'fontname': 'Times New Roman', 'fontsize': 12})
     ax1.set_xlim(-0.5, len(names) - 0.5)
     ax1.grid(True, axis='y', linestyle='--', alpha=0.3)
-
-    for ser, col, lbl in zip(complexity_series, colors, labels):
-        ax2.scatter(x, ser, marker='s', s=marker_size, color=col, edgecolors='k', linewidths=0.5, alpha=0.9)
-    ax2.set_ylabel('Cyclomatic Complexity', fontdict={'fontweight': 'bold', 'fontname': 'Times New Roman', 'fontsize': 10})
-    ax2.set_xticks(x)
-    ax2.set_xticklabels(names, rotation=90)
-    ax2.grid(True, axis='y', linestyle='--', alpha=0.3)
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(names, rotation=90)
 
     fig.legend(loc='upper center', ncol=6, prop={'size': 8}, frameon=False)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     plt.show()
-    fig.savefig('loc-complexity-landscape.pdf', dpi=300)
+    fig.savefig('loc-landscape.pdf', dpi=300)
 
     # ---- Aggregate distribution (LoC only) ----
     fig2, ax3 = plt.subplots(1, 1, figsize=(5, 3.4), sharey=False)

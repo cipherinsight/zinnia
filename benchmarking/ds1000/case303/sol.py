@@ -4,22 +4,12 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(A: NDArray[int, 7], B: NDArray[int, 3, 2]):
-    # A = [1, 2, 3, 4, 5, 6, 7], ncol = 2
-    # Truncate last element -> [1, 2, 3, 4, 5, 6]
-    # Expected reshape result:
-    # [[1, 2],
-    #  [3, 4],
-    #  [5, 6]]
-
+def verify_solution(A: DynamicNDArray[int, 7, 1], B: DynamicNDArray[int, 6, 2]):
     ncol = 2
-    nrow = 3   # since (7 // 2) = 3 full rows
-    truncated = [A[0], A[1], A[2], A[3], A[4], A[5]]
-
-    for i in range(nrow):
-        for j in range(ncol):
-            idx = i * ncol + j
-            assert B[i, j] == truncated[idx]
+    nrow = B.shape[0] // ncol
+    used = nrow * ncol
+    for i in range(used):
+        assert B[i] == A[i]
 
 
 

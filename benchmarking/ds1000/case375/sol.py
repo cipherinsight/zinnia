@@ -4,7 +4,7 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(grades: NDArray[float, 27], threshold: float, low: float, high: float):
+def verify_solution(grades: DynamicNDArray[float, 27, 1], threshold: float, low: float, high: float):
     # Goal: ECDF over 'grades' (sorted ascending, verified in-circuit), then
     # find the longest interval [low, high) such that ECDF(x) < threshold for any x in [low, high),
     # with low, high constrained to be elements of the original (sorted) array.
@@ -15,7 +15,7 @@ def verify_solution(grades: NDArray[float, 27], threshold: float, low: float, hi
     #
     # We don't sort in-circuit; instead, we VERIFY that 'grades' is already sorted.
 
-    n = 27
+    n = grades.shape[0]
 
     # 1) Verify sortedness (non-decreasing)
     for i in range(n - 1):

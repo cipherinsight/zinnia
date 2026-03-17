@@ -4,44 +4,38 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(data: NDArray[float, 2, 5], result: NDArray[float, 2, 1]):
-    # data =
-    # [[4, 2, 5, 6, 7],
-    #  [5, 4, 3, 5, 7]]
-    # bin_size = 3
-    # Reverse each row, take bins of 3, compute mean, then reverse result
-    # Steps:
-    #   new_data = [[7,6,5,2,4],
-    #               [7,5,3,4,5]]
-    #   trimmed = new_data[:, :3] -> [[7,6,5],[7,5,3]]
-    #   reshaped = (2,1,3)
-    #   mean = [[6],[5]]
-    #   reverse result → same shape [[6],[5]]
+def verify_solution(a: DynamicNDArray[int, 6, 2], mask: DynamicNDArray[int, 6, 2]):
+    rows = a.shape[0] // 2
+    for r in range(rows):
+        left_idx = 2 * r
+        right_idx = left_idx + 1
 
-    bin_size = 3
-    new_data = data[:, ::-1]
-    trimmed = new_data[:, :(5 // bin_size) * bin_size]
-    reshaped = trimmed.reshape((data.shape[0], 1, bin_size))
-    bin_data_mean = np.mean(reshaped, axis=-1)[:, ::-1]
-    expected = bin_data_mean
-    assert result == expected
+        left = a[left_idx]
+        right = a[right_idx]
+
+        row_min = left if left <= right else right
+
+        assert (mask[left_idx] == 1) == (left == row_min)
+        assert (mask[right_idx] == 1) == (right == row_min)
 
 
 if __name__ == '__main__':
-    data = [
-        [4, 2, 5, 6, 7],
-        [5, 4, 3, 5, 7]
+    a = [
+        [0, 1],
+        [2, 1],
+        [4, 8]
     ]
-    result = [
-        [6.0],
-        [5.0]
+    mask = [
+        [1, 0],
+        [0, 1],
+        [1, 0]
     ]
 
-    assert verify_solution(data, result)
+    assert verify_solution(a, mask)
 
     # Parse inputs
     program = ZKCircuit.from_method(verify_solution).compile()
-    parsed_inputs = program.argparse(data, result)
+    parsed_inputs = program.argparse(a, mask)
     json_dict = {}
     for entry in parsed_inputs.entries:
         json_dict[entry.get_key()] = entry.get_value()

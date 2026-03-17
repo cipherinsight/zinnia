@@ -4,21 +4,16 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(data: NDArray[float, 10], result: NDArray[float, 3]):
-    # data = [4, 2, 5, 6, 7, 5, 4, 3, 5, 7]
-    # bin_size = 3
-    # Reverse the array → [7,5,3,4,5,7,6,5,2,4]
-    # Trim to multiple of 3 → first 9 elements: [7,5,3,4,5,7,6,5,2]
-    # reshape to (3,3): [[7,5,3],[4,5,7],[6,5,2]]
-    # mean along last axis → [5,5.33,4.33]
+def verify_solution(data: DynamicNDArray[float, 10, 1], result: DynamicNDArray[float, 3, 1]):
+    bins = result.shape[0]
+    bin_size = data.shape[0] // bins
 
-    bin_size = 3
-    new_data = data[::-1]
-    trimmed = new_data[:(10 // bin_size) * bin_size]
-    reshaped = trimmed.reshape((3, bin_size))
-    bin_data_mean = np.mean(reshaped, axis=1)
-    expected = bin_data_mean
-    assert result == expected
+    for b in range(bins):
+        start = data.shape[0] - (b + 1) * bin_size
+        total = 0.0
+        for k in range(bin_size):
+            total = total + data[start + k]
+        assert result[b] == total / float(bin_size)
 
 
 if __name__ == '__main__':

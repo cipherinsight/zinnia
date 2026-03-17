@@ -146,13 +146,21 @@ def run_evaluate(dataset: str, problem: str):
         data = f.read()
     # Run
     result1 = run_prove(f"{dataset}::{problem}.py", source, data)
-    # source 2
-    with open(os.path.join('../benchmarking', dataset, problem, 'sol.rs'), 'r') as f:
-        source = f.read()
-    # Get the input data
-    with open(os.path.join('../benchmarking', dataset, problem, 'sol.rs.in'), 'r') as f:
-        data = f.read()
-    result2 = run_prove(f"{dataset}::{problem}.rs", source, data)
+    sol_rs_path = os.path.join('../benchmarking', dataset, problem, 'sol.rs')
+    sol_rs_in_path = os.path.join('../benchmarking', dataset, problem, 'sol.rs.in')
+    if os.path.exists(sol_rs_path) and os.path.exists(sol_rs_in_path):
+        with open(sol_rs_path, 'r') as f:
+            source = f.read()
+        # Get the input data
+        with open(sol_rs_in_path, 'r') as f:
+            data = f.read()
+        result2 = run_prove(f"{dataset}::{problem}.rs", source, data)
+    else:
+        result2 = {
+            "name": f"{dataset}::{problem}.rs",
+            "skipped": True,
+            "reason": "legacy halo2 variant removed after dynamic-array migration"
+        }
     return {
         "zinnia": result1,
         "halo2": result2,
@@ -215,6 +223,8 @@ DATASETS = {
 
 
 def main():
+    force_reeval = os.environ.get("FORCE_REEVAL", "0") == "1"
+
     if not os.path.exists(RESULT_PATH):
         results_dict = {}
     else:
@@ -223,7 +233,7 @@ def main():
 
     for dataset, problems in DATASETS.items():
         for problem in problems:
-            if f"{dataset}::{problem}" in results_dict.keys():
+            if (not force_reeval) and f"{dataset}::{problem}" in results_dict.keys():
                 continue
             try:
                 print('Evaluating', f"{dataset}::{problem}")

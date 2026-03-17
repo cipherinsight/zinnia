@@ -4,21 +4,12 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(a: NDArray[int, 5, 6], result: NDArray[int, 5]):
-    # Expected: [5, 9, 13, 17, 21]
-    nrows = a.shape[0]
-    ncols = a.shape[1]
-
-    flipped = np.zeros(a.shape, dtype=int)
-    for i in range(nrows):
-        for j in range(ncols):
-            flipped[i, j] = a[i, (ncols - 1) - j]  # correct fliplr
-
-    diag_vals = np.zeros((nrows, ), dtype=int)
-    for k in range(nrows):
-        diag_vals[k] = flipped[k, k]
-
-    assert result == diag_vals
+def verify_solution(a: DynamicNDArray[int, 30, 2], result: DynamicNDArray[int, 5, 1]):
+    rows = result.shape[0]
+    cols = a.shape[0] // rows
+    for r in range(rows):
+        idx = r * cols + (cols - 1 - r)
+        assert result[r] == a[idx]
 
 
 if __name__ == '__main__':

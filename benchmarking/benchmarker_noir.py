@@ -88,13 +88,19 @@ def run_prove(name: str, input_source: str, program_source: str):
 
 def run_evaluate(dataset: str, problem: str):
     # Get the driver source
-    with open(os.path.join('../benchmarking', dataset, problem, 'Prover.toml'), 'r') as f:
-        baseline_input_source = f.read()
+    baseline_input_path = os.path.join('../benchmarking', dataset, problem, 'Prover.toml')
+    baseline_program_path = os.path.join('../benchmarking', dataset, problem, 'main.nr')
+    baseline_input_source = None
+    baseline_program_source = None
+    if os.path.exists(baseline_input_path) and os.path.exists(baseline_program_path):
+        with open(baseline_input_path, 'r') as f:
+            baseline_input_source = f.read()
     with open(os.path.join('../benchmarking', dataset, problem, 'Prover.zinnia.toml'), 'r') as f:
         ours_input_source = f.read()
     # Get the program source
-    with open(os.path.join('../benchmarking', dataset, problem, 'main.nr'), 'r') as f:
-        baseline_program_source = f.read()
+    if baseline_program_source is None and baseline_program_path and os.path.exists(baseline_program_path):
+        with open(baseline_program_path, 'r') as f:
+            baseline_program_source = f.read()
     module = importlib.import_module('.' + dataset + '.' + problem + '.sol', 'benchmarking')
     # Get the method from the module
     method = getattr(module, 'verify_solution')
@@ -106,7 +112,14 @@ def run_evaluate(dataset: str, problem: str):
     ours_program_source = compiled_program.source
     # Run
     result_ours = run_prove(f"{dataset}::{problem}.ours.noir", ours_input_source, ours_program_source)
-    result_baseline = run_prove(f"{dataset}::{problem}.baseline.noir", baseline_input_source, baseline_program_source)
+    if baseline_input_source is not None and baseline_program_source is not None:
+        result_baseline = run_prove(f"{dataset}::{problem}.baseline.noir", baseline_input_source, baseline_program_source)
+    else:
+        result_baseline = {
+            "name": f"{dataset}::{problem}.baseline.noir",
+            "skipped": True,
+            "reason": "legacy noir variant removed after dynamic-array migration"
+        }
     return {
         "ours_on_noir": result_ours,
         "baseline_on_noir": result_baseline,

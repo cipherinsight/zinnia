@@ -33,11 +33,17 @@ class AssertOp(AbstractOp):
         if not isinstance(condition, IntegerValue):
             raise TypeInferenceError(dbg, f"Internal Error: `condition` should be an integer value")
         if isinstance(operand, IntegerValue):
-            # if operand.val(builder) == 0 and (condition.val(builder) is not None and condition.val(builder) != 0):
-            #     raise StaticInferenceError(dbg, "Assertion is always unsatisfiable")
-            return builder.ir_assert(builder.ir_select_i(condition, operand, builder.ir_constant_bool(True)), dbg)
+            asserted = builder.ir_select_i(condition, operand, builder.ir_constant_bool(True))
+            solved = builder.smt_solve_constancy(asserted)
+            if solved is False:
+                raise StaticInferenceError(dbg, "Assertion is always unsatisfiable under current path condition")
+            return builder.ir_assert(asserted, dbg)
         elif isinstance(operand, NDArrayValue):
             for val in operand.flattened_values():
-                builder.ir_assert(builder.ir_select_i(condition, builder.op_bool_cast(val), builder.ir_constant_bool(True)), dbg)
+                asserted = builder.ir_select_i(condition, builder.op_bool_cast(val), builder.ir_constant_bool(True))
+                solved = builder.smt_solve_constancy(asserted)
+                if solved is False:
+                    raise StaticInferenceError(dbg, "Assertion is always unsatisfiable under current path condition")
+                builder.ir_assert(asserted, dbg)
             return builder.op_constant_none()
         raise TypeInferenceError(dbg, f"Type `{operand.type()}` is not supported on operator `{self.get_signature()}`. It only accepts an Integer value")

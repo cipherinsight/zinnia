@@ -49,8 +49,15 @@ import json
 from zinnia import *
 
 @zk_circuit
-def verify_solution(a: NDArray[int, 4, 4], result: NDArray[int, 4, 2, 2]):
-    assert a.reshape((a.shape[0]//2, 2, a.shape[1]//2, 2)).transpose((0, 2, 1, 3)).reshape((4, 2, 2)) == result
+def verify_solution(a: DynamicNDArray[int, 16, 2], result: DynamicNDArray[int, 16, 3]):
+    rows = a.shape[0] // 4
+    cols = a.shape[0] // rows
+
+    row_pairs = rows // 2
+    col_pairs = cols // 2
+
+    expected = a.reshape((row_pairs, 2, col_pairs, 2)).transpose((0, 2, 1, 3)).reshape((result.shape[0],))
+    assert result.reshape((result.shape[0],)) == expected
 
 
 # assert verify_solution(a, result)

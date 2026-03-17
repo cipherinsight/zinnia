@@ -4,18 +4,8 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(data: NDArray[int, 10], result: NDArray[int, 3]):
-    # data = [4, 2, 5, 6, 7, 5, 4, 3, 5, 7]
-    # bin_size = 3
-    # Drop last element to make length multiple of 3 → data[:9]
-    # reshape to (3, 3): [[4,2,5], [6,7,5], [4,3,5]]
-    # max along axis=1 → [5,7,5]
-
-    bin_size = 3
-    trimmed = data[:(10 // bin_size) * bin_size]
-    reshaped = trimmed.reshape((3, bin_size))
-    bin_data_max = reshaped.max(axis=1)
-    expected = bin_data_max
+def verify_solution(data: DynamicNDArray[int, 10, 1], result: DynamicNDArray[int, 3, 1]):
+    expected = data[:9].reshape((3, 3)).max(axis=1)
     assert result == expected
 
 

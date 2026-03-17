@@ -4,36 +4,20 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(X: NDArray[int, 5, 4], result: NDArray[float, 5, 4]):
-    # X =
-    # [[ 1, -2,  3,   6],
-    #  [ 4,  5, -6,   5],
-    #  [-1,  2,  5,   5],
-    #  [ 4,  5, 10, -25],
-    #  [ 5, -2, 10,  25]]
-    #
-    # Each row normalized by its L1 norm:
-    # l1 = sum(abs(X), axis=1)
-    # result = X / l1.reshape(-1, 1)
-
-    rows = X.shape[0]
-    cols = X.shape[1]
-
-    l1 = []
-    for i in range(rows):
-        s = 0.0
-        for j in range(cols):
-            val = X[i, j]
-            s += val if val >= 0 else -val
-        l1.append(s)
-
-    expected = []
-    for i in range(rows):
-        row = []
-        for j in range(cols):
-            row.append(X[i, j] / l1[i])
-        expected.append(row)
-
+def verify_solution(X: DynamicNDArray[int, 20, 2], result: DynamicNDArray[float, 20, 2]):
+    l1_0 = np.stack((X[0:4], -X[0:4]), axis=0).max(axis=0).reshape((1, 4)).sum(axis=1)
+    l1_1 = np.stack((X[4:8], -X[4:8]), axis=0).max(axis=0).reshape((1, 4)).sum(axis=1)
+    l1_2 = np.stack((X[8:12], -X[8:12]), axis=0).max(axis=0).reshape((1, 4)).sum(axis=1)
+    l1_3 = np.stack((X[12:16], -X[12:16]), axis=0).max(axis=0).reshape((1, 4)).sum(axis=1)
+    l1_4 = np.stack((X[16:20], -X[16:20]), axis=0).max(axis=0).reshape((1, 4)).sum(axis=1)
+    l1 = np.concatenate((l1_0, l1_1, l1_2, l1_3, l1_4), axis=0)
+    expected = np.concatenate((
+        X[0:4] / l1[0],
+        X[4:8] / l1[1],
+        X[8:12] / l1[2],
+        X[12:16] / l1[3],
+        X[16:20] / l1[4],
+    ), axis=0)
     assert result == expected
 
 

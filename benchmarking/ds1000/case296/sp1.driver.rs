@@ -52,6 +52,11 @@ fn main() {
 
     // let mut rng = rand::rngs::StdRng::seed_from_u64(0);
 
+    let rows: i32 = 3;
+    let cols: i32 = 4;
+    stdin.write(&rows);
+    stdin.write(&cols);
+
     for x in [
         1, 0, 3
     ] {

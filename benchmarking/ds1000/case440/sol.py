@@ -5,28 +5,10 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(Y: NDArray[int, 4, 3, 3], X: NDArray[float, 3, 4]):
-    # Y has shape (N=4, M=3, M=3), where Y[i] = x_i @ x_i^T and all entries of X are positive.
-    # Recover X by taking the square root of the diagonal of each MxM slice Y[i].
-    # For this concrete instance, the recovered X (M x N) should be:
-    # Columns (i = 0..3):
-    #  i=0: sqrt(diag([[81,63,63],[63,49,49],[63,49,49]])) -> [9,7,7]
-    #  i=1: sqrt(diag([[ 4,12, 8],[12,36,24],[ 8,24,16]])) -> [2,6,4]
-    #  i=2: sqrt(diag([[25,35,25],[35,49,35],[25,35,25]])) -> [5,7,5]
-    #  i=3: sqrt(diag([[25,30,10],[30,36,12],[10,12, 4]])) -> [5,6,2]
-    # So X =
-    # [[9, 2, 5, 5],
-    #  [7, 6, 7, 6],
-    #  [7, 4, 5, 2]]
-
-    M = X.shape[0]
-    N = X.shape[1]
-
-    expected = np.zeros((M, N), dtype=float)
-    for i in range(N):        # column index in X
-        for j in range(M):    # row index in X
-            # Diagonal entry of Y[i] at (j,j) equals X[j,i]^2
-            assert X[j][i] * X[j][i] == Y[i, j, j]
+def verify_solution(Y: DynamicNDArray[int, 36, 3], X: DynamicNDArray[float, 12, 2]):
+    diag_flat = np.concatenate((Y[0:9:4], Y[9:18:4], Y[18:27:4], Y[27:36:4]), axis=0)
+    expected_order = np.concatenate((X[0:12:4], X[1:12:4], X[2:12:4], X[3:12:4]), axis=0)
+    assert diag_flat == (expected_order ** 2)
 
 
 if __name__ == '__main__':

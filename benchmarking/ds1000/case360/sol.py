@@ -31,8 +31,9 @@ import numpy as np
 from zinnia import *
 
 @zk_circuit
-def verify_solution(data: NDArray[int, 3, 4], result: NDArray[int, 2, 4]):
-    assert data[:2] == result
+def verify_solution(data: DynamicNDArray[int, 12, 2], result: DynamicNDArray[int, 8, 2]):
+    expected = data[:8].reshape((2, 4))
+    assert result.reshape((8,)) == expected.reshape((8,))
 
 
 # assert verify_solution(a, b)

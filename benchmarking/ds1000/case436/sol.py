@@ -4,20 +4,14 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(a: NDArray[int, 3, 2], mask: NDArray[int, 3, 2]):
-    # a =
-    # [[0, 1],
-    #  [2, 1],
-    #  [4, 8]]
-    # For each row, find the maximum and mark True where the element equals the row max.
-    # Expected mask =
-    # [[False, True],
-    #  [True, False],
-    #  [False, True]]
-
-    row_max = a.max(axis=1).reshape((a.shape[0], 1))
-    expected = (a == row_max)
-    assert (mask == 1) == expected
+def verify_solution(a: DynamicNDArray[int, 6, 2], mask: DynamicNDArray[int, 6, 2]):
+    a0 = a[0:6:2]
+    a1 = a[1:6:2]
+    row_max = np.stack((a0, a1), axis=0).max(axis=0)
+    m0 = mask[0:6:2]
+    m1 = mask[1:6:2]
+    assert (m0 == 1) == (a0 == row_max)
+    assert (m1 == 1) == (a1 == row_max)
 
 
 if __name__ == '__main__':

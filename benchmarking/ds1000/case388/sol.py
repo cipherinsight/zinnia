@@ -4,48 +4,18 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(a: NDArray[int, 4, 5], result: NDArray[int, 4, 2, 2]):
-    # a =
-    # [[ 1,  5,  9, 13, 17],
-    #  [ 2,  6, 10, 14, 18],
-    #  [ 3,  7, 11, 15, 19],
-    #  [ 4,  8, 12, 16, 20]]
-    #
-    # Patch size = 2. If shape not divisible, drop the extra row/column.
-    # We drop the last column to make width divisible by 2.
-    #
-    # Expected result =
-    # [
-    #   [[ 1,  5],
-    #    [ 2,  6]],
-    #   [[ 9, 13],
-    #    [10, 14]],
-    #   [[ 3,  7],
-    #    [ 4,  8]],
-    #   [[11, 15],
-    #    [12, 16]],
-    # ]
-    #
-    # NumPy reference (without swapaxes):
-    # x = a[:(a.shape[0]//2)*2, :(a.shape[1]//2)*2]
-    # out = x.reshape(x.shape[0]//2, 2, x.shape[1]//2, 2).transpose((0, 2, 1, 3)).reshape((-1, 2, 2))
+def verify_solution(a: DynamicNDArray[int, 20, 2], result: DynamicNDArray[int, 16, 3]):
+    rows = 4
+    cols = a.shape[0] // rows
+    kept_cols = cols - 1
 
-    patch = 2
-    # 1) Trim to multiples of patch size
-    rows = (a.shape[0] // patch) * patch  # 4
-    cols = (a.shape[1] // patch) * patch  # 4
-    x = a[:rows, :cols]                   # (4, 4)
+    trimmed_flat = np.concatenate((a[0:kept_cols], a[cols:(cols + kept_cols)], a[2 * cols:(2 * cols + kept_cols)], a[3 * cols:(3 * cols + kept_cols)]), axis=0)
+    trimmed = trimmed_flat.reshape((rows, kept_cols))
 
-    # 2) Blockify -> (rows/2, 2, cols/2, 2) == (2, 2, 2, 2)
-    blk = x.reshape((rows // patch, patch, cols // patch, patch))
-
-    # 3) Reorder so that we iterate column blocks inside each row block: (0, 2, 1, 3)
-    perm = blk.transpose((0, 2, 1, 3))
-
-    # 4) Flatten blocks -> (num_blocks, 2, 2) == (4, 2, 2)
-    computed = perm.reshape(( (rows // patch) * (cols // patch), patch, patch ))
-
-    assert result == computed
+    row_pairs = rows // 2
+    col_pairs = kept_cols // 2
+    expected = trimmed.reshape((row_pairs, 2, col_pairs, 2)).transpose((0, 2, 1, 3)).reshape((result.shape[0],))
+    assert result.reshape((result.shape[0],)) == expected
 
 
 if __name__ == '__main__':

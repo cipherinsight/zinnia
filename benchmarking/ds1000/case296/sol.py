@@ -25,10 +25,15 @@ import numpy as np
 from zinnia import *
 
 @zk_circuit
-def verify_solution(data: NDArray[int, 3], result: NDArray[int, 3, 4]):
-    for i in range(result.shape[0]):
-        for j in range(result.shape[1]):
-            assert result[i][j] == (1 if j == data[i] else 0)
+def verify_solution(data: DynamicNDArray[int, 3, 1], result: DynamicNDArray[int, 12, 2]):
+    columns = np.stack((
+        result[0:12:4],
+        result[1:12:4],
+        result[2:12:4],
+        result[3:12:4],
+    ), axis=0)
+    for value in range(4):
+        assert (columns[value] == 1) == (data == value)
 
 
 # assert verify_solution(a, b)

@@ -4,22 +4,10 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(data: NDArray[float, 2, 5], result: NDArray[float, 2, 1]):
-    # data =
-    # [[4, 2, 5, 6, 7],
-    #  [5, 4, 3, 5, 7]]
-    # bin_size = 3
-    # Trim last 2 elements (drop incomplete bin) → [:, :3]
-    # reshape to (2,1,3):
-    # [[[4,2,5]],
-    #  [[5,4,3]]]
-    # mean along last axis → [[3.67],[4]]
-
-    bin_size = 3
-    trimmed = data[:, :(5 // bin_size) * bin_size]
-    reshaped = trimmed.reshape((data.shape[0], 1, bin_size))
-    bin_data_mean = np.mean(reshaped, axis=-1)
-    assert result == bin_data_mean
+def verify_solution(data: DynamicNDArray[float, 10, 2], result: DynamicNDArray[float, 2, 2]):
+    first_bins = np.concatenate((data[0:3], data[5:8]), axis=0).reshape((2, 3))
+    expected = first_bins.sum(axis=1) / 3
+    assert result == expected
 
 
 if __name__ == '__main__':

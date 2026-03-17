@@ -1305,8 +1305,6 @@ class IRBuilderImpl(IRBuilder):
         if expr.ptr() in self.smt_solve_cache.keys():
             return self.smt_solve_cache[expr.ptr()]
         constraints = self._build_smt_constraints_for(expr.ptr())
-        if len(constraints) == 0:
-            return None  # no need to solve
         # # if len(constraints) > 256:
         #     early reject requests that are too complex (disabled)
         #     # return None
@@ -1400,6 +1398,7 @@ class IRBuilderImpl(IRBuilder):
             elif isinstance(stmt.ir_instance, ConstantBoolIR):
                 constraints.append(z3.Bool(f"bool_{stmt.stmt_id}") == bool(stmt.ir_instance.value))
             else:
-                # unsupported IR (float numbers), fall back to no constraints
-                return []
+                # Unsupported IR is treated as an unconstrained symbolic leaf.
+                # This keeps the solver query valid and avoids skipping SMT checks.
+                continue
         return constraints

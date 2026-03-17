@@ -4,14 +4,8 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(a: NDArray[int, 2, 3], result: int):
-    # a = [[10, 50, 30],
-    #      [60, 20, 40]]
-    # Flattened array (C order): [10, 50, 30, 60, 20, 40]
-    # Maximum value = 60 → raveled index = 3
-
-    computed = a.argmax()
-    assert result == computed
+def verify_solution(a: DynamicNDArray[int, 6, 2], result: int):
+    assert result == a.argmax()
 
 
 

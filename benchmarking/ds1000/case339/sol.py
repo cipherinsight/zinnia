@@ -4,54 +4,18 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(a: NDArray[int, 5, 6], result: NDArray[int, 2, 5]):
-    # a =
-    # [[ 0,  1,  2,  3,  4,  5],
-    #  [ 5,  6,  7,  8,  9, 10],
-    #  [10, 11, 12, 13, 14, 15],
-    #  [15, 16, 17, 18, 19, 20],
-    #  [20, 21, 22, 23, 24, 25]]
-    #
-    # Reference behavior:
-    # dim = min(a.shape) = 5
-    # b = a[:dim, :dim]
-    # result = np.vstack((np.diag(b), np.diag(np.fliplr(b))))
-    #
-    # Expected:
-    # [[ 0,  6, 12, 18, 24],
-    #  [ 4,  8, 12, 16, 20]]
+def verify_solution(a: DynamicNDArray[int, 30, 2], result: DynamicNDArray[int, 10, 2]):
+    flat_result = result.reshape((10,))
 
-    nrows, ncols = 5, 6
-    dim = min(nrows, ncols)
+    rows = flat_result.shape[0] // 2
+    cols = a.shape[0] // rows
 
-    # Extract the square submatrix b = a[:dim, :dim]
-    b = np.zeros((dim, dim), dtype=int)
-    for i in range(dim):
-        for j in range(dim):
-            b[i, j] = a[i, j]
+    for r in range(rows):
+        main_idx = r * cols + r
+        anti_idx = r * cols + (rows - 1 - r)
 
-    # Compute the main diagonal
-    main_diag = np.zeros((dim, ), dtype=int)
-    for i in range(dim):
-        main_diag[i] = b[i, i]
-
-    # Compute the horizontally flipped matrix
-    flipped = np.zeros(b.shape, dtype=int)
-    for i in range(dim):
-        for j in range(dim):
-            flipped[i, j] = b[i, (dim - 1) - j]
-
-    # Compute the anti-diagonal
-    anti_diag = np.zeros((dim, ), dtype=int)
-    for i in range(dim):
-        anti_diag[i] = flipped[i, i]
-
-    # Stack them together
-    stacked = np.zeros((2, dim), dtype=int)
-    stacked[0, :] = main_diag
-    stacked[1, :] = anti_diag
-
-    assert result == stacked
+        assert flat_result[r] == a[main_idx]
+        assert flat_result[rows + r] == a[anti_idx]
 
 
 if __name__ == '__main__':

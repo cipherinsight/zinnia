@@ -39,8 +39,21 @@ from numpy import linalg as LA
 from zinnia import *
 
 @zk_circuit
-def verify_solution(X: NDArray[float, 5, 4], result: NDArray[float, 5, 4]):
-    assert result == X / np.sqrt((X*X).sum(axis=-1)).reshape((5, 1))
+def verify_solution(X: DynamicNDArray[float, 20, 2], result: DynamicNDArray[float, 20, 2]):
+    l2_0 = ((X[0:4] * X[0:4]).reshape((1, 4)).sum(axis=1)) ** 0.5
+    l2_1 = ((X[4:8] * X[4:8]).reshape((1, 4)).sum(axis=1)) ** 0.5
+    l2_2 = ((X[8:12] * X[8:12]).reshape((1, 4)).sum(axis=1)) ** 0.5
+    l2_3 = ((X[12:16] * X[12:16]).reshape((1, 4)).sum(axis=1)) ** 0.5
+    l2_4 = ((X[16:20] * X[16:20]).reshape((1, 4)).sum(axis=1)) ** 0.5
+    l2 = np.concatenate((l2_0, l2_1, l2_2, l2_3, l2_4), axis=0)
+    expected = np.concatenate((
+        X[0:4] / l2[0],
+        X[4:8] / l2[1],
+        X[8:12] / l2[2],
+        X[12:16] / l2[3],
+        X[16:20] / l2[4],
+    ), axis=0)
+    assert result == expected
 
 
 # assert verify_solution(X, result)

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import time
 from typing import Tuple
 
 from z3 import z3
@@ -7,6 +8,30 @@ from zinnia.compile.triplet import IntegerValue, TupleValue
 from zinnia.compile.type_sys import IntegerType
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.debug.exception import StaticInferenceError, TypeInferenceError
+
+
+def _accumulate_smt_time(elapsed_s: float) -> None:
+    # Import lazily to avoid creating a hard import cycle at module import time.
+    try:
+        from zinnia.compile.builder.builder_impl import SMTUtils
+
+        setattr(SMTUtils, "ACCUMULATED_TIME", getattr(SMTUtils, "ACCUMULATED_TIME", 0.0) + elapsed_s)
+    except Exception:
+        # Timing should never break compilation behavior.
+        return
+
+
+def _record_smt_invocation(assertion_count: int, timed_out: bool = False) -> None:
+    # Import lazily to avoid creating a hard import cycle at module import time.
+    try:
+        from zinnia.compile.builder.builder_impl import SMTUtils
+
+        SMTUtils.NUMBER_OF_CONSTRAINTS.append(assertion_count)
+        if timed_out:
+            setattr(SMTUtils, "NO_TIMEOUT_CASES", getattr(SMTUtils, "NO_TIMEOUT_CASES", 0) + 1)
+    except Exception:
+        # Metrics should never break compilation behavior.
+        return
 
 
 @dataclass(frozen=True)
@@ -122,7 +147,14 @@ def infer_ndarray_max_bounds_from_shape(
     for c in constraints:
         opt.add(c)
     handle = opt.maximize(product_expr)
-    if opt.check() != z3.sat:
+    solve_start = time.time()
+    try:
+        solve_res = opt.check()
+    finally:
+        _accumulate_smt_time(time.time() - solve_start)
+    timed_out = solve_res == z3.unknown and "timeout" in str(opt.reason_unknown())
+    _record_smt_invocation(len(opt.assertions()), timed_out)
+    if solve_res != z3.sat:
         raise StaticInferenceError(
             dbg,
             f"Cannot infer compile-time maximum bound for `shape` in `{opname}`. "

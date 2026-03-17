@@ -4,17 +4,14 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(a: NDArray[int, 3, 8], result: NDArray[int, 3, 7]):
-    # a =
-    # [[ 0,  1,  2,  3, 5, 6, 7, 8],
-    #  [ 4,  5,  6,  7, 5, 3, 2, 5],
-    #  [ 8,  9, 10, 11, 4, 5, 3, 5]]
-    # Extract columns in range [low, min(high, a.shape[1])) with low=1, high=10
-    low = 1
-    # a.shape[1] == 8, so clamped high = 8
-    clamped_high = 8
-    expected = a[:, low:clamped_high]
-    assert result == expected
+def verify_solution(a: DynamicNDArray[int, 24, 2], result: DynamicNDArray[int, 21, 2]):
+    rows = 3
+    cols = a.shape[0] // rows
+    trimmed_cols = cols - 1
+
+    expected_flat = np.concatenate((a[1:cols], a[(cols + 1):(2 * cols)], a[(2 * cols + 1):(3 * cols)]), axis=0)
+    expected = expected_flat.reshape((rows, trimmed_cols)).reshape((result.shape[0],))
+    assert result.reshape((result.shape[0],)) == expected
 
 
 if __name__ == '__main__':

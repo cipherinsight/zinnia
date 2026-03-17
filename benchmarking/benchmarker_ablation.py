@@ -11,7 +11,7 @@ from zinnia.config.optimization_config import OptimizationConfig
 
 HALO2_FOLDER = "/home/zhantong/halo2-graph"
 MULTIPROCESSING_POOL_SIZE = 1
-ABLATION_SETTING = 2  # supported 1, 2, 3, 4
+ABLATION_SETTING = 4  # supported 1, 2, 3, 4
 RESULT_PATH = f'results-ablation-{ABLATION_SETTING}.json'
 
 
@@ -193,6 +193,8 @@ DATASETS = {
 
 
 def main():
+    force_reeval = os.environ.get("FORCE_REEVAL", "0") == "1"
+
     if not os.path.exists(RESULT_PATH):
         results_dict = {}
     else:
@@ -201,7 +203,7 @@ def main():
 
     for dataset, problems in DATASETS.items():
         for problem in problems:
-            if f"{dataset}::{problem}" in results_dict.keys():
+            if (not force_reeval) and f"{dataset}::{problem}" in results_dict.keys():
                 continue
             try:
                 print('Evaluating', f"{dataset}::{problem}")

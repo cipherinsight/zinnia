@@ -4,29 +4,12 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(a: NDArray[int, 5, 5], result: NDArray[int, 5]):
-    # a =
-    # [[ 0,  1,  2,  3,  4],
-    #  [ 5,  6,  7,  8,  9],
-    #  [10, 11, 12, 13, 14],
-    #  [15, 16, 17, 18, 19],
-    #  [20, 21, 22, 23, 24]]
-    #
-    # Expected result = [4, 8, 12, 16, 20]
-    # Reference: result = np.diag(np.fliplr(a))
-    #
-    # Since diag and fliplr are not available, we manually reverse columns and collect the diagonal.
-
-    flipped = np.zeros(a.shape, dtype=int)
-    for i in range(5):
-        for j in range(5):
-            flipped[i, j] = a[i, 4 - j]  # horizontally flip (fliplr)
-
-    diag_vals = np.zeros((5, ), dtype=int)
-    for k in range(5):
-        diag_vals[k] = flipped[k, k]  # extract diagonal
-
-    assert result == diag_vals
+def verify_solution(a: DynamicNDArray[int, 25, 2], result: DynamicNDArray[int, 5, 1]):
+    n = result.shape[0]
+    side = a.shape[0] // n
+    for r in range(n):
+        idx = r * side + (side - 1 - r)
+        assert result[r] == a[idx]
 
 
 if __name__ == '__main__':

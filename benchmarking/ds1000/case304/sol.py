@@ -4,20 +4,11 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(A: NDArray[int, 7], B: NDArray[int, 3, 2]):
-    # A = [1,2,3,4,5,6,7], ncol = 2
-    # Keep last 6 elements, reverse them, then reshape (3,2)
-    # Reference behavior:
-    #   truncated = A[1:]      -> [2,3,4,5,6,7]
-    #   reversed_part = truncated[::-1] -> [7,6,5,4,3,2]
-    #   reshaped = reversed_part.reshape((3,2))
-    #   Expected B == reshaped
-
-    truncated = A[1:]
-    reversed_part = truncated[::-1]
-    reshaped = reversed_part.reshape((3, 2))
-
-    assert B == reshaped
+def verify_solution(A: DynamicNDArray[int, 7, 1], B: DynamicNDArray[int, 6, 2]):
+    flat_b = B.reshape((6,))
+    n = flat_b.shape[0]
+    for i in range(n):
+        assert flat_b[i] == A[n - i]
 
 
 

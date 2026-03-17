@@ -21,11 +21,11 @@ pub fn main() {
         }
     }
 
-    // Verify sqrt(diag(Y[i])) = X[:, i]
+    // Verify diag(Y[i]) = X[:, i]^2
     for i in 0..4 {
         for j in 0..3 {
-            let expected = y[i][j][j].sqrt();
-            assert!((x[j][i] - expected).abs() < 1e-6);
+            let expected_squared = y[i][j][j];
+            assert!((x[j][i] * x[j][i] - expected_squared).abs() < 1e-6);
         }
     }
 }

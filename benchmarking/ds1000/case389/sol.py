@@ -4,25 +4,13 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(a: NDArray[int, 4, 2, 3], result: NDArray[int, 4, 6]):
-    # a shape: (n=4, nrows=2, ncols=3)
-    # Goal: tile the 4 small (2x3) blocks into a (h=4, w=6) array in row-major block order.
+def verify_solution(a: DynamicNDArray[int, 24, 3], result: DynamicNDArray[int, 24, 2]):
+    block_rows = 2
+    block_cols = 2
+    row_size = a.shape[0] // (block_rows * block_cols * 2)
 
-    # Equivalent to:
-    # n, nrows, ncols = a.shape
-    # out = a.reshape(h//nrows, -1, nrows, ncols).swapaxes(1, 2).reshape(h, w)
-    # Since swapaxes isn't available, use transpose((0, 2, 1, 3)).
-
-    nrows = 2
-    ncols = 3
-    h = 4
-    w = 6
-
-    step1 = a.reshape((h // nrows, 2, nrows, ncols))   # (2, 2, 2, 3)
-    step2 = step1.transpose((0, 2, 1, 3))               # swapaxes(1,2) -> (0,2,1,3)
-    computed = step2.reshape((h, w))                     # (4, 6)
-
-    assert result == computed
+    expected = a.reshape((block_rows, 2, block_cols, row_size)).transpose((0, 2, 1, 3)).reshape((result.shape[0],))
+    assert result.reshape((result.shape[0],)) == expected
 
 
 if __name__ == '__main__':

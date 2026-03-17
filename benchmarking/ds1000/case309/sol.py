@@ -21,8 +21,8 @@ import numpy as np
 from zinnia import *
 
 @zk_circuit
-def verify_solution(a: NDArray[int, 2, 3], result: int):
-    assert a.argmax() == result
+def verify_solution(a: DynamicNDArray[int, 6, 2], result: int):
+    assert result == a.argmax()
 
 
 # assert verify_solution(a, result)

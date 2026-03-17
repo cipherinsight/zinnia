@@ -758,7 +758,8 @@ fn main() {{
             "        let u_tmp_4 = gate.add(ctx, u_tmp_2, u_tmp_3);",
             "        let u_tmp_5 = gate.mul(ctx, u_row.3, Constant(F::from(17u64)));",
             "        let u_tmp_6 = gate.add(ctx, u_tmp_4, u_tmp_5);",
-            "        let u_lin = gate.add(ctx, u_tmp_6, gate.mul(ctx, u_row.4, Constant(F::from(19u64))));",
+            "        let u_tmp_7 = gate.mul(ctx, u_row.4, Constant(F::from(19u64)));",
+            "        let u_lin = gate.add(ctx, u_tmp_6, u_tmp_7);",
             "",
             "        let s_tmp_1 = gate.mul(ctx, s_row.1, Constant(F::from(7u64)));",
             "        let s_tmp_2 = gate.add(ctx, s_row.0, s_tmp_1);",
@@ -766,7 +767,8 @@ fn main() {{
             "        let s_tmp_4 = gate.add(ctx, s_tmp_2, s_tmp_3);",
             "        let s_tmp_5 = gate.mul(ctx, s_row.3, Constant(F::from(17u64)));",
             "        let s_tmp_6 = gate.add(ctx, s_tmp_4, s_tmp_5);",
-            "        let s_lin = gate.add(ctx, s_tmp_6, gate.mul(ctx, s_row.4, Constant(F::from(19u64))));",
+            "        let s_tmp_7 = gate.mul(ctx, s_row.4, Constant(F::from(19u64)));",
+            "        let s_lin = gate.add(ctx, s_tmp_6, s_tmp_7);",
             "",
             "        let u_term = gate.add(ctx, u_lin, Constant(F::from(104729u64)));",
             "        let s_term = gate.add(ctx, s_lin, Constant(F::from(104729u64)));",
@@ -804,7 +806,8 @@ fn main() {{
             "        };",
             "        let check_init = gate.and(ctx, first_cell, is_read);",
             "        let init_eq = gate.is_equal(ctx, row.3, init_value);",
-            "        let init_guard = gate.or(ctx, gate.not(ctx, check_init), init_eq);",
+            "        let not_check_init = gate.not(ctx, check_init);",
+            "        let init_guard = gate.or(ctx, not_check_init, init_eq);",
             "        gate.assert_is_const(ctx, &init_guard, &F::ONE);",
             "    }",
             "",
@@ -821,18 +824,22 @@ fn main() {{
             "            let time_eq = gate.is_equal(ctx, curr.2, next.2);",
             "            let time_lte = gate.or(ctx, time_lt, time_eq);",
             "",
-            "            let addr_order = gate.or(ctx, addr_lt, gate.and(ctx, addr_eq, time_lte));",
-            "            let lex_ok = gate.or(ctx, seg_lt, gate.and(ctx, seg_eq, addr_order));",
+            "            let addr_eq_and_time_lte = gate.and(ctx, addr_eq, time_lte);",
+            "            let addr_order = gate.or(ctx, addr_lt, addr_eq_and_time_lte);",
+            "            let seg_eq_and_addr_order = gate.and(ctx, seg_eq, addr_order);",
+            "            let lex_ok = gate.or(ctx, seg_lt, seg_eq_and_addr_order);",
             "            gate.assert_is_const(ctx, &lex_ok, &F::ONE);",
             "",
             "            let same_cell = gate.and(ctx, seg_eq, addr_eq);",
-            "            let same_cell_time_guard = gate.or(ctx, gate.not(ctx, same_cell), time_lt);",
+            "            let not_same_cell = gate.not(ctx, same_cell);",
+            "            let same_cell_time_guard = gate.or(ctx, not_same_cell, time_lt);",
             "            gate.assert_is_const(ctx, &same_cell_time_guard, &F::ONE);",
             "",
             "            let next_is_read = gate.not(ctx, next.4);",
             "            let value_eq = gate.is_equal(ctx, curr.3, next.3);",
             "            let need_read_consistency = gate.and(ctx, same_cell, next_is_read);",
-            "            let read_consistency_guard = gate.or(ctx, gate.not(ctx, need_read_consistency), value_eq);",
+            "            let not_need_read_consistency = gate.not(ctx, need_read_consistency);",
+            "            let read_consistency_guard = gate.or(ctx, not_need_read_consistency, value_eq);",
             "            gate.assert_is_const(ctx, &read_consistency_guard, &F::ONE);",
             "",
             "            let is_new_cell = gate.not(ctx, same_cell);",
@@ -846,7 +853,8 @@ fn main() {{
         lines += [
             "            let next_is_read_init = gate.and(ctx, is_new_cell, next_is_read);",
             "            let next_init_eq = gate.is_equal(ctx, next.3, next_init);",
-            "            let next_init_guard = gate.or(ctx, gate.not(ctx, next_is_read_init), next_init_eq);",
+            "            let not_next_is_read_init = gate.not(ctx, next_is_read_init);",
+            "            let next_init_guard = gate.or(ctx, not_next_is_read_init, next_init_eq);",
             "            gate.assert_is_const(ctx, &next_init_guard, &F::ONE);",
             "        }",
             "    }",
@@ -857,6 +865,7 @@ fn main() {{
     def build_circuit_body(self) -> str:
         internal_builder = _Halo2StatementBuilder()
         translated_stmts: List[str] = []
+        stmt_lookup: Dict[int, IRStatement] = {stmt.stmt_id: stmt for stmt in self.stmts}
         memory_segments = self._collect_memory_segments()
         has_memory_ir = any(
             isinstance(stmt.ir_instance, (AllocateMemoryIR, WriteMemoryIR, ReadMemoryIR, MemoryTraceEmitIR, MemoryTraceSealIR))
@@ -880,15 +889,25 @@ fn main() {{
             initialize_stmts += "    let mut mem_trace_time_by_segment: std::collections::HashMap<u64, u64> = std::collections::HashMap::new();\n"
             for seg_id in sorted(memory_segments.keys()):
                 initialize_stmts += f"    mem_trace_time_by_segment.insert({seg_id}u64, 0u64);\n"
+                initialize_stmts += f"    let mut memory_model_seg_{seg_id}: std::collections::HashMap<u64, AssignedValue<F>> = std::collections::HashMap::new();\n"
         for stmt in self.stmts:
             if isinstance(stmt.ir_instance, AllocateMemoryIR):
                 continue
             if isinstance(stmt.ir_instance, ReadMemoryIR):
                 address_var = internal_builder._get_var_name(stmt.arguments[0])
                 read_var = internal_builder._get_var_name(stmt.stmt_id)
-                translated_stmts.append(f"let {read_var} = ctx.load_witness(F::ZERO);")
+                segment_id = stmt.ir_instance.segment_id
+                if segment_id not in memory_segments:
+                    raise ValueError(f"Read memory references unallocated segment {segment_id}")
+                _, seg_init = memory_segments[segment_id]
+                translated_stmts += [
+                    f"let mem_addr_key_{stmt.stmt_id} = {address_var}.value().get_lower_128() as u64;",
+                    f"let {read_var} = match memory_model_seg_{segment_id}.get(&mem_addr_key_{stmt.stmt_id}) {{",
+                    f"    Some(v) => *v,",
+                    f"    None => ctx.load_constant(F::from({seg_init}u64)),",
+                    f"}};",
+                ]
                 if not has_explicit_memory_trace:
-                    segment_id = stmt.ir_instance.segment_id
                     ts_var = f"mem_t_{stmt.stmt_id}"
                     translated_stmts += [
                         f"let {ts_var} = *mem_trace_time_by_segment.get(&({segment_id}u64)).unwrap_or(&0u64);",
@@ -902,10 +921,18 @@ fn main() {{
                     ]
                 continue
             if isinstance(stmt.ir_instance, WriteMemoryIR):
+                segment_id = stmt.ir_instance.segment_id
+                if segment_id not in memory_segments:
+                    raise ValueError(f"Write memory references unallocated segment {segment_id}")
+                address_var = internal_builder._get_var_name(stmt.arguments[0])
+                value_var = internal_builder._get_var_name(stmt.arguments[1])
+                value_stmt = stmt_lookup.get(stmt.arguments[1])
+                if isinstance(value_stmt.ir_instance, IntCastIR):
+                    cast_src_id = value_stmt.arguments[0]
+                    cast_src_stmt = stmt_lookup.get(cast_src_id)
+                    if isinstance(cast_src_stmt.ir_instance, (ReadFloatIR, ConstantFloatIR, AddFIR, SubFIR, MulFIR, DivFIR, PowFIR, ModFIR, FloorDivFIR, SinFIR, CosFIR, TanFIR, SinHFIR, CosHFIR, TanHFIR, SqrtFIR, LogFIR, ExpFIR, AbsFIR, SignFIR, EqualFIR, NotEqualFIR, LessThanFIR, LessThanOrEqualFIR, GreaterThanFIR, GreaterThanOrEqualFIR, SelectFIR, FloatCastIR)):
+                        value_var = internal_builder._get_var_name(cast_src_id)
                 if not has_explicit_memory_trace:
-                    segment_id = stmt.ir_instance.segment_id
-                    address_var = internal_builder._get_var_name(stmt.arguments[0])
-                    value_var = internal_builder._get_var_name(stmt.arguments[1])
                     ts_var = f"mem_t_{stmt.stmt_id}"
                     translated_stmts += [
                         f"let {ts_var} = *mem_trace_time_by_segment.get(&({segment_id}u64)).unwrap_or(&0u64);",
@@ -917,6 +944,11 @@ fn main() {{
                         f"let mem_is_write_{stmt.stmt_id} = ctx.load_constant(F::ONE);",
                         f"mem_trace_unsorted.push((mem_seg_{stmt.stmt_id}, mem_addr_{stmt.stmt_id}, mem_time_{stmt.stmt_id}, mem_value_{stmt.stmt_id}, mem_is_write_{stmt.stmt_id}));",
                     ]
+                translated_stmts += [
+                    f"let mem_addr_key_{stmt.stmt_id} = {address_var}.value().get_lower_128() as u64;",
+                    f"let mem_value_model_{stmt.stmt_id} = gate.add(ctx, {value_var}, Constant(F::ZERO));",
+                    f"memory_model_seg_{segment_id}.insert(mem_addr_key_{stmt.stmt_id}, mem_value_model_{stmt.stmt_id});",
+                ]
                 continue
             if isinstance(stmt.ir_instance, MemoryTraceEmitIR):
                 segment_id = stmt.ir_instance.segment_id
@@ -938,6 +970,13 @@ fn main() {{
                 continue
             if isinstance(stmt.ir_instance, MemoryTraceSealIR):
                 continue
+            if isinstance(stmt.ir_instance, FloatCastIR):
+                src_stmt = stmt_lookup.get(stmt.arguments[0])
+                if isinstance(src_stmt.ir_instance, ReadMemoryIR):
+                    translated_stmts += [
+                        f"let {internal_builder._get_var_name(stmt.stmt_id)} = {internal_builder._get_var_name(stmt.arguments[0])};"
+                    ]
+                    continue
             translated_stmts += internal_builder.build_stmt(stmt)
         if has_memory_ir and len(memory_segments) > 0:
             translated_stmts += self._build_memory_consistency_block(memory_segments)

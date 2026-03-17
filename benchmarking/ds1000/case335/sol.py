@@ -4,15 +4,9 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(a: NDArray[int, 3], b: NDArray[int, 3], c: NDArray[int, 3], result: NDArray[int, 3]):
-    # a = [10, 20, 30]
-    # b = [30, 20, 20]
-    # c = [50, 20, 40]
-    # Reference formula: result = np.max([a, b, c], axis=0)
-    stacked = np.array([a.tolist(), b.tolist(), c.tolist()])
-    computed = np.max(stacked, axis=0)
-
-    assert result == computed
+def verify_solution(a: DynamicNDArray[int, 3, 1], b: DynamicNDArray[int, 3, 1], c: DynamicNDArray[int, 3, 1], result: DynamicNDArray[int, 3, 1]):
+    expected = np.stack((a, b, c), axis=0).max(axis=0)
+    assert result == expected
 
 
 if __name__ == '__main__':

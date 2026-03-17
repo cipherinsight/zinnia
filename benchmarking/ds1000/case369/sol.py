@@ -4,25 +4,11 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(a: NDArray[int, 5, 3], result: int):
-    # a =
-    # [
-    #   [1, 1, 1],
-    #   [2, 2, 2],
-    #   [3, 3, 3],
-    #   [4, 4, 4],
-    #   [5, 5, 5]
-    # ]
-    #
-    # Reference code:
-    # result = np.isclose(a, a[:, 0].reshape(-1, 1), atol=0).all()
-    #
-    # Meaning: verify that all columns are equal elementwise.
-
-    comparison = a == a[:, 0].reshape((5, 1))
-    computed = np.all(comparison)
-
-    assert result == computed
+def verify_solution(a: DynamicNDArray[int, 15, 2], result: int):
+    col0 = a[0:15:3]
+    col1 = a[1:15:3]
+    col2 = a[2:15:3]
+    assert result == ((col0 == col1).all() and (col0 == col2).all())
 
 
 if __name__ == '__main__':

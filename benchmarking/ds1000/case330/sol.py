@@ -32,8 +32,8 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(a: NDArray[float, 2, 2], power: float, desired_result: NDArray[float, 2, 2]):
-    assert a ** power == desired_result
+def verify_solution(a: DynamicNDArray[float, 4, 2], power: float, desired_result: DynamicNDArray[float, 4, 2]):
+    assert desired_result == (a ** power)
 
 
 # example_a = np.asarray([[1, 2.33], [3.14, 9.99]])

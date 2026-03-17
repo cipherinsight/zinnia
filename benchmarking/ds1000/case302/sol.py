@@ -4,20 +4,13 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(A: NDArray[int, 6], B: NDArray[int, 3, 2]):
-    # A = [1, 2, 3, 4, 5, 6], nrow = 3
-    # Expected reshape result:
-    # [[1, 2],
-    #  [3, 4],
-    #  [5, 6]]
-
+def verify_solution(A: DynamicNDArray[int, 6, 1], B: DynamicNDArray[int, 6, 2]):
     nrow = 3
-    ncol = 2  # Since len(A) = 6 and nrow = 3
-
-    for i in range(nrow):
-        for j in range(ncol):
-            idx = i * ncol + j
-            assert B[i, j] == A[idx]
+    ncol = A.shape[0] // nrow
+    for r in range(nrow):
+        for c in range(ncol):
+            idx = r * ncol + c
+            assert B[idx] == A[idx]
 
 
 

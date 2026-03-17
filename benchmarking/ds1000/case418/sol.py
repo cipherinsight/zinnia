@@ -36,11 +36,10 @@ import numpy as np
 from zinnia import *
 
 @zk_circuit
-def verify_solution(data: NDArray[float, 2, 5], result: NDArray[float, 2, 1]):
-    new_data = data[:, ::-1]
-    bin_data_mean = new_data[:, :(data.shape[1] // 3) * 3].reshape((data.shape[0], 1, 3)).sum(axis=-1) / 3
-    # print(bin_data_mean)
-    assert result == bin_data_mean
+def verify_solution(data: DynamicNDArray[float, 10, 2], result: DynamicNDArray[float, 2, 2]):
+    last_bins = np.concatenate((data[2:5], data[7:10]), axis=0).reshape((2, 3))
+    expected = last_bins.sum(axis=1) / 3
+    assert result == expected
 
 
 # assert verify_solution(data, bin_data_mean)

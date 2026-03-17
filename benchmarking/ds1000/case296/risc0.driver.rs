@@ -27,6 +27,11 @@ fn main() {
     // For example:
     let mut builder = ExecutorEnv::builder();
 
+    let rows: i32 = 3;
+    let cols: i32 = 4;
+    builder.write(&rows).unwrap();
+    builder.write(&cols).unwrap();
+
     for data in [1, 0, 3, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1] {
         let tmp: i32 = data as i32;
         builder.write(&tmp).unwrap();

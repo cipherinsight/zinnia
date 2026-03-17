@@ -4,40 +4,24 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(a: NDArray[int, 10], index: NDArray[int, 10], result: NDArray[int, 3]):
+def verify_solution(a: DynamicNDArray[int, 10, 1], index: DynamicNDArray[int, 10, 1], result: DynamicNDArray[int, 3, 1]):
     n = a.shape[0]
-    # First pass: seed minima from the first occurrence of each group (no infinities needed)
-    found0 = False
-    found1 = False
-    found2 = False
-    min0 = 0
-    min1 = 0
-    min2 = 0
-    for i in range(n):
-        if (index[i] == 0) and (not found0):
-            min0 = a[i]
-            found0 = True
-        if (index[i] == 1) and (not found1):
-            min1 = a[i]
-            found1 = True
-        if (index[i] == 2) and (not found2):
-            min2 = a[i]
-            found2 = True
-
-    # Ensure each group exists (true for this instantiated case)
-    assert found0 and found1 and found2
-
-    # Second pass: refine minima
-    for i in range(n):
-        if index[i] == 0 and a[i] < min0:
-            min0 = a[i]
-        if index[i] == 1 and a[i] < min1:
-            min1 = a[i]
-        if index[i] == 2 and a[i] < min2:
-            min2 = a[i]
-
-    expected = [min0, min1, min2]
-    assert result == expected
+    groups = result.shape[0]
+    for g in range(groups):
+        found = False
+        min_v = 0
+        for i in range(n):
+            idx = index[i]
+            if idx < 0:
+                idx = idx + groups
+            if idx == g:
+                if not found:
+                    min_v = a[i]
+                    found = True
+                elif a[i] < min_v:
+                    min_v = a[i]
+        assert found
+        assert result[g] == min_v
 
 
 if __name__ == '__main__':

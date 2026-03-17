@@ -23,18 +23,8 @@ def verify_solution(grades: NDArray[float, 27], eval: NDArray[float, 3], result:
     computed = np.zeros((m, ), dtype=float)
     for i in range(m):
         x = eval[i]
-        if x < grades[0]:
-            computed[i] = 0.0
-        elif x >= grades[n - 1]:
-            computed[i] = 1.0
-        else:
-            # Find smallest j such that grades[j] > x
-            j = 0
-            for k in range(n):
-                if grades[k] > x:
-                    j = k
-                    break
-            computed[i] = ys[j - 1]
+        # ecdf(x) is the fraction of samples <= x
+        computed[i] = (grades <= x).sum() / float(n)
 
     assert np.allclose(computed, result)
 

@@ -1,4 +1,5 @@
 import json
+import os
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -390,8 +391,10 @@ def plot_performance_overviews():
     plt.rc('font', family='monospace', )
     title_font = {'fontweight': 'bold', 'fontname': 'Times New Roman', 'fontsize': 12}
 
-    # Sort keys by display name (alphabetical)
-    sorted_keys = sorted(sp1_results_dict.keys(), key=lambda k: NAME_MAPPING.get(k, k))
+    # Sort keys by display name (alphabetical).
+    # Use the main result set as the axis source so labels are not dropped
+    # when a zkVM backend is missing entries for some tasks.
+    sorted_keys = sorted(zinnia_results_dict.keys(), key=lambda k: NAME_MAPPING.get(k, k))
     names = [NAME_MAPPING.get(k, k) for k in sorted_keys]
 
     # Collect data in sorted order
@@ -411,15 +414,17 @@ def plot_performance_overviews():
     cairo_stark_verify_time = []
 
     for key in sorted_keys:
-        sp1_val = sp1_results_dict[key]
-        zinnia_val = zinnia_results_dict[key]
+        sp1_val = sp1_results_dict.get(key, {})
+        zinnia_val = zinnia_results_dict.get(key, {})
         # base halo2 info stored inside zinnia_results_dict
-        baseline_snark_proving_time.append(zinnia_val['halo2']['proving_time'])
-        baseline_verify_time.append(zinnia_val['halo2']['verify_time'])
+        halo2_val = zinnia_val.get('halo2', {})
+        zinnia_core = zinnia_val.get('zinnia', {})
+        baseline_snark_proving_time.append(halo2_val.get('proving_time', np.nan))
+        baseline_verify_time.append(halo2_val.get('verify_time', np.nan))
 
-        zinnia_snark_proving_time.append(zinnia_val['zinnia']['proving_time'])
-        zinnia_verify_time.append(zinnia_val['zinnia']['verify_time'])
-        zinnia_snark_size.append(zinnia_val['zinnia']['snark_size'])
+        zinnia_snark_proving_time.append(zinnia_core.get('proving_time', np.nan))
+        zinnia_verify_time.append(zinnia_core.get('verify_time', np.nan))
+        zinnia_snark_size.append(zinnia_core.get('snark_size', np.nan))
 
         sp1_stark_proving_time.append(sp1_val.get('stark_proving_time', 0))
         sp1_snark_proving_time.append(sp1_val.get('snark_proving_time', 0))
@@ -653,8 +658,8 @@ def plot_performance_heatmap():
     with open('results-noir.json', 'r') as f:
         noir_results_dict = json.load(f)
 
-    # Sort keys by display name (alphabetical)
-    sorted_keys = sorted(results_dict.keys(), key=lambda k: NAME_MAPPING.get(k, k))
+    # Plot over the full known benchmark universe so missing backend data appears as N/A cells.
+    sorted_keys = sorted(NAME_MAPPING.keys(), key=lambda k: NAME_MAPPING.get(k, k))
     names = [NAME_MAPPING.get(k, k) for k in sorted_keys]
 
     zinnia_plonk_gates = []
@@ -670,18 +675,43 @@ def plot_performance_heatmap():
     noir_proving_times = []
     noir_verifying_times = []
     noir_excluded = []
+    halo2_excluded = []
+
+    def _has_noir_source(task_key: str) -> bool:
+        if '::' not in task_key:
+            return False
+        dataset, problem = task_key.split('::', 1)
+        return os.path.exists(os.path.join(dataset, problem, 'main.nr'))
+
+    def _has_halo2_source(task_key: str) -> bool:
+        if '::' not in task_key:
+            return False
+        dataset, problem = task_key.split('::', 1)
+        # Halo2 baseline tasks are backed by generated Rust verifier + input template.
+        return (
+            os.path.exists(os.path.join(dataset, problem, 'sol.rs'))
+            and os.path.exists(os.path.join(dataset, problem, 'sol.rs.in'))
+        )
 
     # Build arrays in sorted order and record noir-missing indices
     for i, key in enumerate(sorted_keys):
-        value = results_dict[key]
-        _zinnia_gates = value['zinnia']['advice_cells']
-        _halo2_gates = value['halo2']['advice_cells']
-        _zinnia_prove_time = value['zinnia']['proving_time']
-        _halo2_prove_time = value['halo2']['proving_time']
-        _zinnia_verify_time = value['zinnia']['verify_time']
-        _halo2_verify_time = value['halo2']['verify_time']
+        value = results_dict.get(key, {})
+        zinnia_val = value.get('zinnia', {})
+        halo2_val = value.get('halo2', None)
+        _zinnia_gates = zinnia_val.get('advice_cells', 0)
+        _zinnia_prove_time = zinnia_val.get('proving_time', 0)
+        _zinnia_verify_time = zinnia_val.get('verify_time', 0)
+        if halo2_val is not None and _has_halo2_source(key):
+            _halo2_gates = halo2_val.get('advice_cells', 0)
+            _halo2_prove_time = halo2_val.get('proving_time', 0)
+            _halo2_verify_time = halo2_val.get('verify_time', 0)
+        else:
+            halo2_excluded.append(i)
+            _halo2_gates = 0
+            _halo2_prove_time = 0
+            _halo2_verify_time = 0
 
-        if key in noir_results_dict:
+        if key in noir_results_dict and _has_noir_source(key):
             _zinnia_ultrahonk_gates = noir_results_dict[key]['ours_on_noir']['total_gates']
             _noir_gates = noir_results_dict[key]['baseline_on_noir']['total_gates']
             _zinnia_ultrahonk_proving_time = noir_results_dict[key]['ours_on_noir']['proving_time']
@@ -742,6 +772,13 @@ def plot_performance_heatmap():
         imp_copy = imp.copy()
         if imp_copy.shape[0] > 0:
             imp_copy[:, 2] = 1.0
+        # Render missing backend cells with neutral color and N/A annotation.
+        if 'Halo2' in title:
+            for idx in set(halo2_excluded):
+                imp_copy[idx, :] = 1.0
+        if 'Noir' in title:
+            for idx in set(noir_excluded):
+                imp_copy[idx, :] = 1.0
         # Transpose so metrics are on y-axis and tasks on x-axis => shape (3, n_tasks)
         im = ax.imshow(imp_copy.T, cmap=cmap, norm=mcolors.LogNorm(vmin=0.75, vmax=1.333333), aspect='auto')
 
@@ -766,6 +803,8 @@ def plot_performance_heatmap():
         for i in range(n_tasks):
             for j in range(len(metrics)):
                 if (i in noir_excluded) and ('Noir' in title):
+                    ax.text(i, j, 'N/A', ha='center', va='center', fontsize=7, rotation=90)
+                elif (i in halo2_excluded) and ('Halo2' in title):
                     ax.text(i, j, 'N/A', ha='center', va='center', fontsize=7, rotation=90)
                 else:
                     if j == 0:
@@ -819,7 +858,7 @@ def plot_ablation_study():
     sorted_keys = sorted(zinnia_results_dict.keys(), key=lambda k: NAME_MAPPING.get(k, k))
 
     names = []
-    baseline_gates = []
+    reference_gates = []
     no_ablation_gates = []
     ablation_1_increased_gates = []
     ablation_2_increased_gates = []
@@ -828,13 +867,13 @@ def plot_ablation_study():
     for key in sorted_keys:
         value = zinnia_results_dict[key]
         names.append(NAME_MAPPING.get(key, key))
-        zinnia_gates = value['zinnia']['advice_cells']
-        halo2_gates = value['halo2']['advice_cells']
-        ablation_1_gates = ablation_results_1[key]['zinnia']['advice_cells']
-        ablation_2_gates = ablation_results_2[key]['zinnia']['advice_cells']
-        ablation_3_gates = ablation_results_3[key]['zinnia']['advice_cells']
-        ablation_4_gates = ablation_results_4[key]['zinnia']['advice_cells']
-        baseline_gates.append(halo2_gates)
+        zinnia_gates = value.get('zinnia', {}).get('advice_cells', np.nan)
+        ablation_1_gates = ablation_results_1.get(key, {}).get('zinnia', {}).get('advice_cells', np.nan)
+        ablation_2_gates = ablation_results_2.get(key, {}).get('zinnia', {}).get('advice_cells', np.nan)
+        ablation_3_gates = ablation_results_3.get(key, {}).get('zinnia', {}).get('advice_cells', np.nan)
+        ablation_4_gates = ablation_results_4.get(key, {}).get('zinnia', {}).get('advice_cells', np.nan)
+        # Use fully optimized Zinnia as baseline for ablation normalization.
+        reference_gates.append(zinnia_gates)
         no_ablation_gates.append(zinnia_gates)
         ablation_1_increased_gates.append(ablation_1_gates - zinnia_gates)
         ablation_2_increased_gates.append(ablation_2_gates - zinnia_gates)
@@ -845,20 +884,30 @@ def plot_ablation_study():
     ablation_3_increased_gates = np.asarray(ablation_3_increased_gates)
     ablation_4_increased_gates = np.asarray(ablation_4_increased_gates)
     no_ablation_gates = np.asarray(no_ablation_gates)
-    baseline_gates = np.asarray(baseline_gates)
-    the_base_bar = (no_ablation_gates / baseline_gates) * 100
-    ablation_dce_bar = (ablation_2_increased_gates / baseline_gates) * 100
-    ablation_cse_bar = (ablation_3_increased_gates / baseline_gates) * 100
-    ablation_pm_bar = (ablation_4_increased_gates / baseline_gates) * 100
-    ablation_symex_bar = (ablation_1_increased_gates / baseline_gates) * 100
+    reference_gates = np.asarray(reference_gates)
+    valid_ref = np.isfinite(reference_gates) & (reference_gates != 0)
+
+    the_base_bar = np.full(reference_gates.shape, np.nan)
+    the_base_bar[valid_ref] = 100.0
+
+    ablation_dce_bar = np.full(reference_gates.shape, np.nan)
+    ablation_cse_bar = np.full(reference_gates.shape, np.nan)
+    ablation_pm_bar = np.full(reference_gates.shape, np.nan)
+    ablation_symex_bar = np.full(reference_gates.shape, np.nan)
+    ablation_dce_bar[valid_ref] = (ablation_2_increased_gates[valid_ref] / reference_gates[valid_ref]) * 100
+    ablation_cse_bar[valid_ref] = (ablation_3_increased_gates[valid_ref] / reference_gates[valid_ref]) * 100
+    ablation_pm_bar[valid_ref] = (ablation_4_increased_gates[valid_ref] / reference_gates[valid_ref]) * 100
+    ablation_symex_bar[valid_ref] = (ablation_1_increased_gates[valid_ref] / reference_gates[valid_ref]) * 100
     for i in range(len(names)):
         sum = ablation_symex_bar[i] + the_base_bar[i] + ablation_dce_bar[i] + ablation_cse_bar[i] + ablation_pm_bar[i]
+        if np.isnan(sum):
+            continue
         # some symbolic execution pruned branches cannot be detected by the disabling optimizations
         # so we need to ensure the sum is at least 100%
         if sum < 100:
             ablation_symex_bar[i] += 100 - sum
 
-    print('Mean increase in ablation:', ((ablation_symex_bar + the_base_bar + ablation_dce_bar + ablation_cse_bar + ablation_pm_bar)).mean())
+    print('Mean increase in ablation:', np.nanmean((ablation_symex_bar + the_base_bar + ablation_dce_bar + ablation_cse_bar + ablation_pm_bar)))
     plt.rc('font', family='monospace', )
     # plt.rc('text', usetex=True)
     title_font = {'fontweight': 'bold', 'fontname': 'Times New Roman', 'fontsize': 12}
@@ -874,7 +923,7 @@ def plot_ablation_study():
     ylabel.set_position((ylabel.get_position()[0], ylabel.get_position()[1]-0.15))
     ax.set_ylim(0, 620)
     ax.axhline(100, color='black', linewidth=1, linestyle='--')
-    ax.text(len(names) - 7, 125, 'Baseline (100%)', fontsize=8, color='black', ha='center')
+    ax.text(len(names) - 9, 55, 'Fully Optimized Baseline (100%)', fontsize=8, color='black', ha='center')
     fig.legend([AnyObject('grey'), AnyObject('wheat'), AnyObject('lightskyblue')],
                ['No Ablation', 'w/o Dead Code Elimination', 'w/o Common Sub-expression Elimination'],
                handler_map={
@@ -963,11 +1012,12 @@ def plot_compile_time_scalability():
     for key in sorted_keys:
         value = zinnia_results_dict[key]
         names.append(NAME_MAPPING.get(key, key))
-        cargo_compile_times.append(value['halo2']['cargo_compile_time'])
-        ast_ir_transform_times.append(value['zinnia_compile_time']['time_transform'])
-        smt_reasoning_times.append(value['zinnia_compile_time']['time_smt'])
-        exec_ir_pass_times.append(value['zinnia_compile_time']['time_ir_pass'])
-        code_gen_times.append(value['zinnia_compile_time']['time_code_gen'])
+        cargo_compile_times.append(value.get('halo2', {}).get('cargo_compile_time', np.nan))
+        zct = value.get('zinnia_compile_time', {})
+        ast_ir_transform_times.append(zct.get('time_transform', np.nan))
+        smt_reasoning_times.append(zct.get('time_smt', np.nan))
+        exec_ir_pass_times.append(zct.get('time_ir_pass', np.nan))
+        code_gen_times.append(zct.get('time_code_gen', np.nan))
         if key in noir_results_dict:
             nargo_compile_times.append(noir_results_dict[key]['baseline_on_noir']['nargo_compilation_time'])
         else:
@@ -1155,12 +1205,14 @@ def print_average_advantages():
 
     for k in keys:
         z = zinnia_results[k]
-        halo2_prove.append(z['halo2'].get('proving_time', 0))
-        halo2_verify.append(z['halo2'].get('verify_time', 0) * 1000.0)  # ms
-        zinnia_prove.append(z['zinnia'].get('proving_time', 0))
-        zinnia_verify.append(z['zinnia'].get('verify_time', 0) * 1000.0)  # ms
-        halo2_gates.append(z['halo2'].get('advice_cells', 0))
-        zinnia_gates.append(z['zinnia'].get('advice_cells', 0))
+        halo2 = z.get('halo2', {})
+        z_core = z.get('zinnia', {})
+        halo2_prove.append(halo2.get('proving_time', np.nan))
+        halo2_verify.append(halo2.get('verify_time', np.nan) * 1000.0)  # ms
+        zinnia_prove.append(z_core.get('proving_time', np.nan))
+        zinnia_verify.append(z_core.get('verify_time', np.nan) * 1000.0)  # ms
+        halo2_gates.append(halo2.get('advice_cells', np.nan))
+        zinnia_gates.append(z_core.get('advice_cells', np.nan))
 
     # Halo2 averages
     mean_p_adv_halo2, n_p_halo2 = compute_pct_advantage(halo2_prove, zinnia_prove)

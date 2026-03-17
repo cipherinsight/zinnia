@@ -4,41 +4,15 @@ from zinnia import *
 
 
 @zk_circuit
-def verify_solution(a: NDArray[int, 5, 5], result: NDArray[int, 2, 5]):
-    # a =
-    # [[ 0,  1,  2,  3,  4],
-    #  [ 5,  6,  7,  8,  9],
-    #  [10, 11, 12, 13, 14],
-    #  [15, 16, 17, 18, 19],
-    #  [20, 21, 22, 23, 24]]
-    #
-    # Expected result =
-    # [[ 0,  6, 12, 18, 24],
-    #  [ 4,  8, 12, 16, 20]]
-    #
-    # Reference: result = np.vstack((np.diag(a), np.diag(np.fliplr(a))))
-    #
-    # Since diag and fliplr are not available, we manually compute both diagonals.
+def verify_solution(a: DynamicNDArray[int, 25, 2], result: DynamicNDArray[int, 10, 2]):
+    rows = result.shape[0] // 2
+    cols = a.shape[0] // rows
 
-    n = a.shape[0]
-    main_diag = np.zeros((n, ), dtype=int)
-    for i in range(n):
-        main_diag[i] = a[i, i]
-
-    flipped = np.zeros(a.shape, dtype=int)
-    for i in range(n):
-        for j in range(n):
-            flipped[i, j] = a[i, (n - 1) - j]
-
-    anti_diag = np.zeros((n, ), dtype=int)
-    for i in range(n):
-        anti_diag[i] = flipped[i, i]
-
-    stacked = np.zeros((2, n), dtype=int)
-    stacked[0, :] = main_diag
-    stacked[1, :] = anti_diag
-
-    assert result == stacked
+    for r in range(rows):
+        main_idx = r * cols + r
+        anti_idx = r * cols + (rows - 1 - r)
+        assert result[r] == a[main_idx]
+        assert result[rows + r] == a[anti_idx]
 
 
 if __name__ == '__main__':
