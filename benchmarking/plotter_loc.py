@@ -322,7 +322,7 @@ def plot_loc_landscape():
     fig.savefig('loc-landscape.pdf', dpi=300)
 
     # ---- Aggregate distribution (LoC only) ----
-    fig2, ax3 = plt.subplots(1, 1, figsize=(5, 3.4), sharey=False)
+    fig2, ax3 = plt.subplots(1, 1, figsize=(4.4, 2.6), sharey=False)
 
     data_loc = [ser[~np.isnan(ser)] for ser in loc_series]
 
