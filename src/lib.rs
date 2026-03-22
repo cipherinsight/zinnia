@@ -3,8 +3,8 @@ use pyo3::prelude::*;
 pub mod ast;
 pub mod backend;
 pub mod builder;
-pub mod dyn_ndarray;
 pub mod error;
+pub mod helpers;
 pub mod ir;
 pub mod ir_ctx;
 pub mod ir_defs;
@@ -73,20 +73,9 @@ fn run_optimization_pass(
     let graph = IRGraph::import_stmts(&data)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
 
-    let result_graph = match pass_name {
-        "ExternalCallRemover" => ExternalCallRemover.exec(graph),
-        "DeadCodeElimination" => DeadCodeElimination.exec(graph),
-        "DoubleNotElimination" => DoubleNotElimination.exec(graph),
-        "AlwaysSatisfiedElimination" => AlwaysSatisfiedElimination.exec(graph),
-        "ConstantFold" => ConstantFold.exec(graph),
-        "DuplicateCodeElimination" => DuplicateCodeElimination.exec(graph),
-        "DynamicNDArrayMemoryLowering" => {
-            DynamicNDArrayMemoryLowering::new(mux_threshold).exec(graph)
-        }
-        "DynamicNDArrayMetaAssertInjection" => DynamicNDArrayMetaAssertInjection.exec(graph),
-        "MemoryTraceInjection" => MemoryTraceInjection.exec(graph),
-        "PatternMatchOptim" => PatternMatchOptim.exec(graph),
-        _ => {
+    let result_graph = match apply_pass(graph, pass_name, mux_threshold) {
+        Some(g) => g,
+        None => {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "Unknown optimization pass: {}", pass_name
             )));
@@ -113,8 +102,8 @@ fn generate_ir(ast_json: &str, loop_limit: u32, recursion_limit: u32) -> PyResul
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e)))
 }
 
-fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32) -> IRGraph {
-    match pass_name {
+fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32) -> Option<IRGraph> {
+    Some(match pass_name {
         "ExternalCallRemover" => ExternalCallRemover.exec(graph),
         "DeadCodeElimination" => DeadCodeElimination.exec(graph),
         "DoubleNotElimination" => DoubleNotElimination.exec(graph),
@@ -125,14 +114,17 @@ fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32) -> IRGraph {
         "DynamicNDArrayMetaAssertInjection" => DynamicNDArrayMetaAssertInjection.exec(graph),
         "MemoryTraceInjection" => MemoryTraceInjection.exec(graph),
         "PatternMatchOptim" => PatternMatchOptim.exec(graph),
-        _ => graph,
-    }
+        _ => return None,
+    })
 }
 
 fn run_pass_pipeline(graph: IRGraph, passes: &[&str], mux_threshold: u32) -> IRGraph {
     let mut g = graph;
     for pass_name in passes {
-        g = apply_pass(g, pass_name, mux_threshold);
+        match apply_pass(g, pass_name, mux_threshold) {
+            Some(result) => g = result,
+            None => panic!("Unknown optimization pass in pipeline: {}", pass_name),
+        }
     }
     g
 }
@@ -223,12 +215,13 @@ fn compile_circuit(ast_json: &str, config_json: &str, chips_json: String, extern
         preprocess_passes.push("DuplicateCodeElimination");
     }
 
+    // Clone before consuming in the zk pipeline
+    let preprocess_base = base_graph.clone();
+
     // Run zk_program pipeline
     let zk_graph = run_pass_pipeline(base_graph, &zk_passes, mux_threshold);
 
-    // Re-generate IR for the preprocess pipeline (IRGraph is not Clone)
-    let preprocess_base = IRGenerator::generate_from_json_with_chips(ir_config, ast_json, &chips, &externals)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    // Run preprocess pipeline on the cloned graph
     let preprocess_graph = run_pass_pipeline(preprocess_base, &preprocess_passes, mux_threshold);
 
     // Serialize results

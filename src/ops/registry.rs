@@ -52,10 +52,10 @@ pub fn build_op(
         OpNamespace::NoCls => build_nocls_op(op_name, builder, args),
         OpNamespace::Math => build_math_op(op_name, builder, args),
         OpNamespace::Np | OpNamespace::Zinnia => build_np_op(op_name, builder, args),
-        OpNamespace::NDArray => build_ndarray_op(op_name, builder, args),
-        OpNamespace::List => build_list_op(op_name, builder, args),
-        OpNamespace::Tuple => build_tuple_op(op_name, builder, args),
-        OpNamespace::DynamicNDArray => build_dynamic_ndarray_op(op_name, builder, args),
+        OpNamespace::NDArray => None, // Dispatched directly by ir_gen
+        OpNamespace::List => None, // Dispatched directly by ir_gen
+        OpNamespace::Tuple => None, // Dispatched directly by ir_gen
+        OpNamespace::DynamicNDArray => None, // Dispatched directly by ir_gen
         OpNamespace::String => None, // String methods not yet implemented
     }
 }
@@ -143,137 +143,7 @@ fn build_np_op(name: &str, builder: &mut IRBuilder, args: &OpArgs) -> Option<Val
         "maximum" => np_like::NpMaximumOp.build(builder, args),
         "fmin" => np_like::NpFMinOp.build(builder, args),
         "fmax" => np_like::NpFMaxOp.build(builder, args),
-        "acos" => np_like::NpACosOp.build(builder, args),
-        "asin" => np_like::NpASinOp.build(builder, args),
-        "atan" => np_like::NpATanOp.build(builder, args),
-        // Array creation & reduction stubs (panic with clear message if invoked)
-        "zeros" => np_like::NpZerosOp.build(builder, args),
-        "ones" => np_like::NpOnesOp.build(builder, args),
-        "eye" => np_like::NpEyeOp.build(builder, args),
-        "identity" => np_like::NpIdentityOp.build(builder, args),
-        "concatenate" => np_like::NpConcatenateOp.build(builder, args),
-        "concat" => np_like::NpConcatOp.build(builder, args),
-        "stack" => np_like::NpStackOp.build(builder, args),
-        "asarray" => np_like::NpAsarrayOp.build(builder, args),
-        "array" => np_like::NpArrayOp.build(builder, args),
-        "all" => np_like::NpAllOp.build(builder, args),
-        "any" => np_like::NpAnyOp.build(builder, args),
-        "allclose" => np_like::NpAllCloseOp.build(builder, args),
-        "isclose" => np_like::NpIsCloseOp.build(builder, args),
-        "array_equal" => np_like::NpArrayEqualOp.build(builder, args),
-        "array_equiv" => np_like::NpArrayEquivOp.build(builder, args),
-        "argmax" => np_like::NpArgmaxOp.build(builder, args),
-        "argmin" => np_like::NpArgminOp.build(builder, args),
-        "amax" => np_like::NpAMaxOp.build(builder, args),
-        "amin" => np_like::NpAMinOp.build(builder, args),
-        "max" => np_like::NpMaxOp.build(builder, args),
-        "sum" => np_like::NpSumOp.build(builder, args),
-        "prod" => np_like::NpProdOp.build(builder, args),
-        "repeat" => np_like::NpRepeatOp.build(builder, args),
-        "size" => np_like::NpSizeOp.build(builder, args),
-        "dot" => np_like::NpDotOp.build(builder, args),
-        "append" => np_like::NpAppendOp.build(builder, args),
-        "arange" => np_like::NpARangeOp.build(builder, args),
-        "linspace" => np_like::NpLinspaceOp.build(builder, args),
-        "mean" => np_like::NpMeanOp.build(builder, args),
-        "moveaxis" => np_like::NpMoveAxisOp.build(builder, args),
-        "transpose" => np_like::NpTransposeOp.build(builder, args),
-        _ => return None,
-    };
-    Some(result)
-}
-
-fn build_ndarray_op(name: &str, builder: &mut IRBuilder, args: &OpArgs) -> Option<Value> {
-    use crate::ops::ndarray_ops::*;
-    let result = match name {
-        "sum" => NDArraySumOp.build(builder, args),
-        "prod" => NDArrayProdOp.build(builder, args),
-        "max" => NDArrayMaxOp.build(builder, args),
-        "min" => NDArrayMinOp.build(builder, args),
-        "argmax" => NDArrayArgmaxOp.build(builder, args),
-        "argmin" => NDArrayArgminOp.build(builder, args),
-        "all" => NDArrayAllOp.build(builder, args),
-        "any" => NDArrayAnyOp.build(builder, args),
-        "reshape" => NDArrayReshapeOp.build(builder, args),
-        "flatten" => NDArrayFlattenOp.build(builder, args),
-        "T" => NDArrayTOp.build(builder, args),
-        "transpose" => NDArrayTransposeOp.build(builder, args),
-        "moveaxis" => NDArrayMoveaxisOp.build(builder, args),
-        "astype" => NDArrayAstypeOp.build(builder, args),
-        "dtype" => NDArrayDtypeOp.build(builder, args),
-        "shape" => NDArrayShapeOp.build(builder, args),
-        "size" => NDArraySizeOp.build(builder, args),
-        "ndim" => NDArrayNdimOp.build(builder, args),
-        "flat" => NDArrayFlatOp.build(builder, args),
-        "filter" => NDArrayFilterOp.build(builder, args),
-        "tolist" => NDArrayTolistOp.build(builder, args),
-        "__get_item__" => NDArrayGetItemOp.build(builder, args),
-        "__set_item__" => NDArraySetItemOp.build(builder, args),
-        "repeat" => NDArrayRepeatOp.build(builder, args),
-        _ => return None,
-    };
-    Some(result)
-}
-
-fn build_list_op(name: &str, builder: &mut IRBuilder, args: &OpArgs) -> Option<Value> {
-    use crate::ops::list_ops::*;
-    let result = match name {
-        "append" => ListAppendOp.build(builder, args),
-        "extend" => ListExtendOp.build(builder, args),
-        "insert" => ListInsertOp.build(builder, args),
-        "pop" => ListPopOp.build(builder, args),
-        "remove" => ListRemoveOp.build(builder, args),
-        "clear" => ListClearOp.build(builder, args),
-        "index" => ListIndexOp.build(builder, args),
-        "count" => ListCountOp.build(builder, args),
-        "reverse" => ListReverseOp.build(builder, args),
-        "copy" => ListCopyOp.build(builder, args),
-        _ => return None,
-    };
-    Some(result)
-}
-
-fn build_tuple_op(name: &str, builder: &mut IRBuilder, args: &OpArgs) -> Option<Value> {
-    use crate::ops::tuple_ops::*;
-    let result = match name {
-        "count" => TupleCountOp.build(builder, args),
-        "index" => TupleIndexOp.build(builder, args),
-        _ => return None,
-    };
-    Some(result)
-}
-
-fn build_dynamic_ndarray_op(name: &str, builder: &mut IRBuilder, args: &OpArgs) -> Option<Value> {
-    use crate::ops::dynamic_ndarray_ops::*;
-    let result = match name {
-        "sum" => DynNDArraySumOp.build(builder, args),
-        "prod" => DynNDArrayProdOp.build(builder, args),
-        "max" => DynNDArrayMaxOp.build(builder, args),
-        "min" => DynNDArrayMinOp.build(builder, args),
-        "argmax" => DynNDArrayArgmaxOp.build(builder, args),
-        "argmin" => DynNDArrayArgminOp.build(builder, args),
-        "all" => DynNDArrayAllOp.build(builder, args),
-        "any" => DynNDArrayAnyOp.build(builder, args),
-        "flatten" => DynNDArrayFlattenOp.build(builder, args),
-        "T" => DynNDArrayTOp.build(builder, args),
-        "transpose" => DynNDArrayTransposeOp.build(builder, args),
-        "moveaxis" => DynNDArrayMoveaxisOp.build(builder, args),
-        "astype" => DynNDArrayAstypeOp.build(builder, args),
-        "dtype" => DynNDArrayDtypeOp.build(builder, args),
-        "shape" => DynNDArrayShapeOp.build(builder, args),
-        "size" => DynNDArraySizeOp.build(builder, args),
-        "ndim" => DynNDArrayNdimOp.build(builder, args),
-        "flat" => DynNDArrayFlatOp.build(builder, args),
-        "filter" => DynNDArrayFilterOp.build(builder, args),
-        "tolist" => DynNDArrayTolistOp.build(builder, args),
-        "__get_item__" => DynNDArrayGetItemOp.build(builder, args),
-        "__set_item__" => DynNDArraySetItemOp.build(builder, args),
-        "repeat" => DynNDArrayRepeatOp.build(builder, args),
-        "concatenate" => DynNDArrayConcatenateOp.build(builder, args),
-        "stack" => DynNDArrayStackOp.build(builder, args),
-        "zeros" => DynNDArrayZerosOp.build(builder, args),
-        "ones" => DynNDArrayOnesOp.build(builder, args),
-        "eye" => DynNDArrayEyeOp.build(builder, args),
+        // Remaining np ops are dispatched directly by ir_gen
         _ => return None,
     };
     Some(result)

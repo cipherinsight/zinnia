@@ -2,10 +2,44 @@ use crate::ir::{IRGraph, IRStatement};
 use crate::ir_defs::IR;
 use crate::types::{ScalarValue, StmtId, StringValue, Value};
 
+macro_rules! ir_binary {
+    ($($name:ident => $variant:expr),* $(,)?) => {
+        $(
+            pub fn $name(&mut self, a: &Value, b: &Value) -> Value {
+                self.create_ir(&$variant, &[a.clone(), b.clone()])
+            }
+        )*
+    };
+}
+
+macro_rules! ir_unary {
+    ($($name:ident => $variant:expr),* $(,)?) => {
+        $(
+            pub fn $name(&mut self, a: &Value) -> Value {
+                self.create_ir(&$variant, &[a.clone()])
+            }
+        )*
+    };
+}
+
+macro_rules! ir_ternary {
+    ($($name:ident => $variant:expr),* $(,)?) => {
+        $(
+            pub fn $name(&mut self, a: &Value, b: &Value, c: &Value) -> Value {
+                self.create_ir(&$variant, &[a.clone(), b.clone(), c.clone()])
+            }
+        )*
+    };
+}
+
 /// IR builder that accumulates IR statements and provides typed convenience
 /// methods. Mirrors Python `IRBuilderImpl` from `builder_impl.py`.
 pub struct IRBuilder {
     pub stmts: Vec<IRStatement>,
+    /// Next available memory segment ID for dynamic array allocations.
+    next_segment_id: u32,
+    /// Next available array ID for dynamic ndarray metadata.
+    next_array_id: u32,
 }
 
 impl Default for IRBuilder {
@@ -17,7 +51,25 @@ impl Default for IRBuilder {
 #[allow(clippy::cloned_ref_to_slice_refs)]
 impl IRBuilder {
     pub fn new() -> Self {
-        Self { stmts: Vec::new() }
+        Self {
+            stmts: Vec::new(),
+            next_segment_id: 0,
+            next_array_id: 0,
+        }
+    }
+
+    /// Allocate a unique memory segment ID.
+    pub fn alloc_segment_id(&mut self) -> u32 {
+        let id = self.next_segment_id;
+        self.next_segment_id += 1;
+        id
+    }
+
+    /// Allocate a unique array metadata ID.
+    pub fn alloc_array_id(&mut self) -> u32 {
+        let id = self.next_array_id;
+        self.next_array_id += 1;
+        id
     }
 
     /// Ensure a value has an IR pointer. If it's a pure compile-time constant
@@ -94,235 +146,103 @@ impl IRBuilder {
         self.create_ir(&IR::ConstantStr { value }, &[])
     }
 
-    pub fn ir_equal_i(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::EqI, &[a.clone(), b.clone()])
-    }
+    // ── Macro-generated convenience methods ──────────────────────────
 
-    pub fn ir_select_i(&mut self, cond: &Value, tv: &Value, fv: &Value) -> Value {
-        self.create_ir(&IR::SelectI, &[cond.clone(), tv.clone(), fv.clone()])
-    }
+    // Logic
+    ir_binary!(
+        ir_logical_and => IR::LogicalAnd,
+        ir_logical_or  => IR::LogicalOr,
+    );
+    ir_unary!(ir_logical_not => IR::LogicalNot);
 
-    pub fn ir_logical_and(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::LogicalAnd, &[a.clone(), b.clone()])
-    }
+    // Integer arithmetic
+    ir_binary!(
+        ir_add_i       => IR::AddI,
+        ir_sub_i       => IR::SubI,
+        ir_mul_i       => IR::MulI,
+        ir_div_i       => IR::DivI,
+        ir_floor_div_i => IR::FloorDivI,
+        ir_mod_i       => IR::ModI,
+        ir_pow_i       => IR::PowI,
+    );
+    ir_unary!(
+        ir_abs_i  => IR::AbsI,
+        ir_sign_i => IR::SignI,
+        ir_inv_i  => IR::InvI,
+    );
 
-    pub fn ir_logical_or(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::LogicalOr, &[a.clone(), b.clone()])
-    }
+    // Float arithmetic
+    ir_binary!(
+        ir_add_f       => IR::AddF,
+        ir_sub_f       => IR::SubF,
+        ir_mul_f       => IR::MulF,
+        ir_div_f       => IR::DivF,
+        ir_floor_div_f => IR::FloorDivF,
+        ir_mod_f       => IR::ModF,
+        ir_pow_f       => IR::PowF,
+    );
+    ir_unary!(
+        ir_abs_f  => IR::AbsF,
+        ir_sign_f => IR::SignF,
+    );
 
-    pub fn ir_logical_not(&mut self, a: &Value) -> Value {
-        self.create_ir(&IR::LogicalNot, &[a.clone()])
-    }
+    // Comparisons
+    ir_binary!(
+        ir_equal_i                  => IR::EqI,
+        ir_equal_f                  => IR::EqF,
+        ir_not_equal_i              => IR::NeI,
+        ir_not_equal_f              => IR::NeF,
+        ir_less_than_i              => IR::LtI,
+        ir_less_than_f              => IR::LtF,
+        ir_less_than_or_equal_i     => IR::LteI,
+        ir_less_than_or_equal_f     => IR::LteF,
+        ir_greater_than_i           => IR::GtI,
+        ir_greater_than_f           => IR::GtF,
+        ir_greater_than_or_equal_i  => IR::GteI,
+        ir_greater_than_or_equal_f  => IR::GteF,
+        ir_equal_hash               => IR::EqHash,
+    );
 
-    // ── Integer arithmetic ────────────────────────────────────────────
+    // Selection (ternary: cond, true_val, false_val)
+    ir_ternary!(
+        ir_select_i => IR::SelectI,
+        ir_select_f => IR::SelectF,
+        ir_select_b => IR::SelectB,
+    );
 
-    pub fn ir_add_i(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::AddI, &[a.clone(), b.clone()])
-    }
+    // Casting
+    ir_unary!(
+        ir_int_cast   => IR::IntCast,
+        ir_float_cast => IR::FloatCast,
+        ir_bool_cast  => IR::BoolCast,
+    );
 
-    pub fn ir_sub_i(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::SubI, &[a.clone(), b.clone()])
-    }
+    // String operations
+    ir_binary!(ir_add_str => IR::AddStr, ir_print => IR::Print);
+    ir_unary!(ir_str_i => IR::StrI, ir_str_f => IR::StrF);
 
-    pub fn ir_mul_i(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::MulI, &[a.clone(), b.clone()])
-    }
+    // Math functions           
+    ir_unary!(
+        ir_sin_f  => IR::SinF,
+        ir_cos_f  => IR::CosF,
+        ir_tan_f  => IR::TanF,
+    );
 
-    pub fn ir_div_i(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::DivI, &[a.clone(), b.clone()])
-    }
+    ir_unary!(
+        ir_sinh_f => IR::SinHF,
+        ir_cosh_f => IR::CosHF,
+        ir_tanh_f => IR::TanHF,
+        ir_sqrt_f => IR::SqrtF,
+        ir_exp_f  => IR::ExpF,
+        ir_log_f  => IR::LogF,
+    );
 
-    pub fn ir_floor_div_i(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::FloorDivI, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_mod_i(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::ModI, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_pow_i(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::PowI, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_abs_i(&mut self, a: &Value) -> Value {
-        self.create_ir(&IR::AbsI, &[a.clone()])
-    }
-
-    pub fn ir_sign_i(&mut self, a: &Value) -> Value {
-        self.create_ir(&IR::SignI, &[a.clone()])
-    }
-
-    pub fn ir_inv_i(&mut self, a: &Value) -> Value {
-        self.create_ir(&IR::InvI, &[a.clone()])
-    }
-
-    // ── Float arithmetic ──────────────────────────────────────────────
-
-    pub fn ir_add_f(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::AddF, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_sub_f(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::SubF, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_mul_f(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::MulF, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_div_f(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::DivF, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_floor_div_f(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::FloorDivF, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_mod_f(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::ModF, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_pow_f(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::PowF, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_abs_f(&mut self, a: &Value) -> Value {
-        self.create_ir(&IR::AbsF, &[a.clone()])
-    }
-
-    pub fn ir_sign_f(&mut self, a: &Value) -> Value {
-        self.create_ir(&IR::SignF, &[a.clone()])
-    }
-
-    // ── Comparisons ───────────────────────────────────────────────────
-
-    pub fn ir_equal_f(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::EqF, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_not_equal_i(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::NeI, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_not_equal_f(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::NeF, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_less_than_i(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::LtI, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_less_than_f(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::LtF, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_less_than_or_equal_i(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::LteI, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_less_than_or_equal_f(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::LteF, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_greater_than_i(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::GtI, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_greater_than_f(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::GtF, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_greater_than_or_equal_i(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::GteI, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_greater_than_or_equal_f(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::GteF, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_equal_hash(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::EqHash, &[a.clone(), b.clone()])
-    }
-
-    // ── Selection ─────────────────────────────────────────────────────
-
-    pub fn ir_select_f(&mut self, cond: &Value, tv: &Value, fv: &Value) -> Value {
-        self.create_ir(&IR::SelectF, &[cond.clone(), tv.clone(), fv.clone()])
-    }
-
-    pub fn ir_select_b(&mut self, cond: &Value, tv: &Value, fv: &Value) -> Value {
-        self.create_ir(&IR::SelectB, &[cond.clone(), tv.clone(), fv.clone()])
-    }
-
-    // ── Casting ───────────────────────────────────────────────────────
-
-    pub fn ir_int_cast(&mut self, a: &Value) -> Value {
-        self.create_ir(&IR::IntCast, &[a.clone()])
-    }
-
-    pub fn ir_float_cast(&mut self, a: &Value) -> Value {
-        self.create_ir(&IR::FloatCast, &[a.clone()])
-    }
-
-    pub fn ir_bool_cast(&mut self, a: &Value) -> Value {
-        self.create_ir(&IR::BoolCast, &[a.clone()])
-    }
-
-    // ── String ────────────────────────────────────────────────────────
-
-    pub fn ir_add_str(&mut self, a: &Value, b: &Value) -> Value {
-        self.create_ir(&IR::AddStr, &[a.clone(), b.clone()])
-    }
-
-    pub fn ir_str_i(&mut self, a: &Value) -> Value {
-        self.create_ir(&IR::StrI, &[a.clone()])
-    }
-
-    pub fn ir_str_f(&mut self, a: &Value) -> Value {
-        self.create_ir(&IR::StrF, &[a.clone()])
-    }
-
-    pub fn ir_print(&mut self, cond: &Value, x: &Value) -> Value {
-        self.create_ir(&IR::Print, &[cond.clone(), x.clone()])
-    }
-
-    // ── Math functions ────────────────────────────────────────────────
-
-    pub fn ir_sin_f(&mut self, a: &Value) -> Value {
-        self.create_ir(&IR::SinF, &[a.clone()])
-    }
-
-    pub fn ir_cos_f(&mut self, a: &Value) -> Value {
-        self.create_ir(&IR::CosF, &[a.clone()])
-    }
-
-    pub fn ir_tan_f(&mut self, a: &Value) -> Value {
-        self.create_ir(&IR::TanF, &[a.clone()])
-    }
-
-    pub fn ir_sinh_f(&mut self, a: &Value) -> Value {
-        self.create_ir(&IR::SinHF, &[a.clone()])
-    }
-
-    pub fn ir_cosh_f(&mut self, a: &Value) -> Value {
-        self.create_ir(&IR::CosHF, &[a.clone()])
-    }
-
-    pub fn ir_tanh_f(&mut self, a: &Value) -> Value {
-        self.create_ir(&IR::TanHF, &[a.clone()])
-    }
-
-    pub fn ir_sqrt_f(&mut self, a: &Value) -> Value {
-        self.create_ir(&IR::SqrtF, &[a.clone()])
-    }
-
-    pub fn ir_exp_f(&mut self, a: &Value) -> Value {
-        self.create_ir(&IR::ExpF, &[a.clone()])
-    }
-
-    pub fn ir_log_f(&mut self, a: &Value) -> Value {
-        self.create_ir(&IR::LogF, &[a.clone()])
-    }
+    // Assert & expose
+    ir_unary!(
+        ir_assert          => IR::Assert,
+        ir_expose_public_i => IR::ExposePublicI,
+        ir_expose_public_f => IR::ExposePublicF,
+    );
 
     // ── I/O ───────────────────────────────────────────────────────────
 
@@ -336,20 +256,6 @@ impl IRBuilder {
 
     pub fn ir_read_hash(&mut self, indices: Vec<u32>, is_public: bool) -> Value {
         self.create_ir(&IR::ReadHash { indices, is_public }, &[])
-    }
-
-    // ── Assert & expose ───────────────────────────────────────────────
-
-    pub fn ir_assert(&mut self, test: &Value) -> Value {
-        self.create_ir(&IR::Assert, &[test.clone()])
-    }
-
-    pub fn ir_expose_public_i(&mut self, x: &Value) -> Value {
-        self.create_ir(&IR::ExposePublicI, &[x.clone()])
-    }
-
-    pub fn ir_expose_public_f(&mut self, x: &Value) -> Value {
-        self.create_ir(&IR::ExposePublicF, &[x.clone()])
     }
 
     // ── Memory ────────────────────────────────────────────────────────
