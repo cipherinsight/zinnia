@@ -1,7 +1,6 @@
 from typing import Any
 
 from zinnia.config.base import ConfigBase
-from zinnia.config.mock_exec_config import MockExecConfig
 from zinnia.config.optimization_config import OptimizationConfig
 
 
@@ -18,7 +17,6 @@ class ZinniaConfig(ConfigBase):
             backend: str = BACKEND_HALO2,
             recursion_limit: int = DEFAULT_RECURSION_LIMIT,
             loop_limit: int = DEFAULT_LOOP_LIMIT,
-            mock_config: MockExecConfig = MockExecConfig(),
             optimization_config: OptimizationConfig = OptimizationConfig(),
             enable_memory_consistency: bool = False,
     ):
@@ -26,7 +24,6 @@ class ZinniaConfig(ConfigBase):
         self.set("backend", backend)
         self.set("recursion_limit", recursion_limit)
         self.set("loop_limit", loop_limit)
-        self.set("mock_config", mock_config)
         self.set("optimization_config", optimization_config)
         self.set("enable_memory_consistency", enable_memory_consistency)
 
@@ -35,12 +32,6 @@ class ZinniaConfig(ConfigBase):
             if value not in [self.BACKEND_HALO2, self.BACKEND_CIRCOM, self.BACKEND_NOIR, self.BACKEND_CIRC_ZOK]:
                 raise ValueError(f"Invalid `backend` specified: {value}")
             return value
-        elif key == "mock_config":
-            if isinstance(value, MockExecConfig):
-                return value
-            elif isinstance(value, dict):
-                return MockExecConfig().deserialize(value)
-            raise ValueError(f"Invalid `mock_config` specified: {value}")
         elif key == "optimization_config":
             if isinstance(value, OptimizationConfig):
                 return value
@@ -64,9 +55,6 @@ class ZinniaConfig(ConfigBase):
     def get_backend(self) -> str:
         return self.get("backend")
 
-    def mock_config(self) -> MockExecConfig:
-        return self.get("mock_config")
-
     def optimization_config(self) -> OptimizationConfig:
         return self.get("optimization_config")
 
@@ -80,4 +68,4 @@ class ZinniaConfig(ConfigBase):
         return bool(self.get("enable_memory_consistency"))
 
     def get_required_keys(self) -> list[str]:
-        return ["backend", "mock_config", "optimization_config", "recursion_limit", "loop_limit"]
+        return ["backend", "optimization_config", "recursion_limit", "loop_limit"]

@@ -1,0 +1,255 @@
+---
+title: Contributing to Zinnia
+description: Development setup, testing, code style, architecture overview, and design patterns for Zinnia contributors.
+---
+
+# Contributing to Zinnia
+
+This guide covers everything you need to start contributing to Zinnia, a zk-SNARK programming framework that compiles a Python-like DSL into static arithmetic circuits. The codebase is approximately 20,000+ lines of Python, organized into clearly separated modules with well-defined interfaces.
+
+## Development Setup
+
+### Prerequisites
+
+- Python 3.10 or later
+- pip (Python package manager)
+- Git
+
+### Installation
+
+Clone the repository and install dependencies:
+
+```bash
+git clone <repository-url>
+cd zinnia-src
+pip install -r requirements.txt
+pip install -e .
+```
+
+The key dependencies are:
+
+| Package | Purpose |
+|---------|---------|
+| `z3-solver` | SMT solver used for symbolic execution and constant resolution during compilation |
+| `numpy` | Runtime support for array operations and the `np` namespace |
+| `pytest` | Test framework |
+
+### Verifying Your Setup
+
+After installation, run the test suite to confirm everything works:
+
+```bash
+pytest testing/
+```
+
+## Running Tests
+
+Zinnia uses pytest. The test suite is organized into four categories under `testing/`:
+
+```
+testing/
+  api/        # Tests for the user-facing API (ZKCircuit, ZKChip, ZKExternalFunc)
+  lang/       # Tests for language types and typing annotations
+  syntax/     # Tests for supported Python syntax constructs
+  operator/   # Tests for operators, organized by namespace:
+              #   ndarray/, nocls/, tupl/, dynamic_ndarray/, np_like/, math/
+```
+
+Run the full suite:
+
+```bash
+pytest testing/
+```
+
+Run a specific category:
+
+```bash
+pytest testing/operator/
+pytest testing/syntax/
+```
+
+Run a single test file:
+
+```bash
+pytest testing/operator/nocls/test_len.py
+```
+
+Run with verbose output:
+
+```bash
+pytest -v testing/
+```
+
+### Type Checking
+
+A type-check script is available at the project root:
+
+```bash
+bash type-check.sh
+```
+
+### Writing Tests
+
+When adding new functionality, place tests in the appropriate subdirectory of `testing/`. Follow the existing naming convention: `test_<feature>.py`. Each test typically:
+
+1. Defines a circuit function decorated with `@zk_circuit`.
+2. Compiles it using `ZKCircuit`.
+3. Optionally executes it with `MockProgramExecutor` to verify correctness.
+4. Asserts properties of the compiled output or execution result.
+
+## Project Philosophy
+
+Zinnia is built around three core design principles:
+
+1. **Python compatibility.** Zinnia source must be syntactically valid Python. Users write circuits using familiar Python constructs. The framework intercepts and compiles these into arithmetic circuits rather than executing them directly.
+
+2. **SMT-backed symbolic execution.** The compiler uses Z3 to reason about values at compile time, converting dynamic constructs (branches, bounded loops, data-dependent indexing) into static circuit wiring. This means every `if`/`else` becomes a multiplexer, every bounded `for` loop is fully unrolled, and every array access is resolved to fixed wiring.
+
+3. **Backend agnosticism.** The IR is designed to be backend-independent. The same Zinnia program can be compiled to Halo2, Circom, Noir, or CirC/Zokrates output by swapping the backend builder.
+
+## Architecture Overview
+
+The compilation pipeline flows through six stages:
+
+```
+Python Source
+    |
+    v
+[Python AST]          -- ast.parse (standard CPython parser)
+    |
+    v
+[Zinnia AST]          -- compile/transformer/ (60+ custom AST nodes)
+    |
+    v
+[IR Graph]            -- compile/ir/ (IRGenerator, symbolic execution)
+    |
+    v
+[Optimized IR Graph]  -- compile/optim_pass/ (10 optimization passes)
+    |
+    v
+[Backend Output]      -- compile/backend/ (Halo2, Circom, Noir, CirC-Zok)
+```
+
+Each stage is handled by a distinct module:
+
+- **Transformer** (`compile/transformer/`): Converts the Python AST into Zinnia's own AST representation, which includes type annotations, visibility markers (Public/Private), and circuit-specific semantics.
+
+- **IR Generator** (`compile/ir/`): Walks the Zinnia AST via symbolic execution, using `IRBuilderInterface` to emit IR statements. Each statement references an `AbstractIR` instance and a list of argument pointers. The result is an `IRGraph` -- a directed acyclic graph of `IRStatement` nodes.
+
+- **Optimization Passes** (`compile/optim_pass/`): A sequence of `AbstractIRPass` implementations that transform the `IRGraph`. Passes include constant folding, dead code elimination, pattern matching, and more.
+
+- **Backend Builders** (`compile/backend/`): Each backend extends `AbstractProgramBuilder` and translates the optimized IR statement list into the target format.
+
+The key supporting systems are:
+
+- **Type System** (`compile/type_sys/`): A hierarchy of `DTDescriptor` classes that describe Zinnia types (Integer, Float, NDArray, List, Tuple, etc.).
+
+- **Triplet/Value System** (`compile/triplet/`): Each value in the compiler carries three components: a pointer (IR graph node ID), a compile-time-known scalar (or `None`), and a type descriptor. This is the `ValueTriplet`, wrapped by typed `Value` subclasses.
+
+- **Operator System** (`op_def/`): 223 operator definitions organized by namespace, each implementing `AbstractOp`. Operators translate high-level operations (like `len`, `sum`, `np.dot`) into sequences of IR builder calls.
+
+## Code Style
+
+- Follow standard Python conventions (PEP 8).
+- Use type hints on all public method signatures.
+- Class names use PascalCase. Method and variable names use snake_case.
+- Private/internal fields are prefixed with underscore.
+- Each module directory has an `__init__.py` that re-exports public symbols.
+- Keep imports organized: standard library first, then zinnia internals, grouped by subpackage.
+
+## Key Design Patterns
+
+Understanding these patterns is essential for navigating and extending the codebase.
+
+### Abstract Base Classes
+
+Most extension points are defined as abstract base classes with methods that raise `NotImplementedError`:
+
+- `AbstractOp` -- base for all operators
+- `AbstractIR` -- base for all IR node types
+- `AbstractIRPass` -- base for optimization passes
+- `AbstractProgramBuilder` -- base for backend code generators
+- `DTDescriptor` -- base for all type descriptors
+- `Value` -- base for all value types in the triplet system
+
+### Factory Pattern
+
+Factories serve as registries that map names to implementations and handle serialization/deserialization:
+
+- `DTDescriptorFactory` -- creates type descriptors from type names, manages the `DATATYPE_REGISTRY` list
+- `ValueFactory` -- reconstructs `Value` instances from `ValueStore` data, iterating through `VALUE_CLASSES`
+- `Operators` (in `operator_factory.py`) -- maps operator names to `AbstractOp` subclasses, organized by namespace
+- `IRFactory` -- maps IR class names to `AbstractIR` subclasses via a `Registry` inner class
+
+### Visitor Pattern
+
+AST traversal and code generation use the visitor pattern:
+
+- The `ZinniaCircuitASTTransformer` visits Python AST nodes and produces Zinnia AST nodes.
+- The `IRGenerator` visits Zinnia AST nodes and produces IR statements.
+- Backend builders iterate over IR statements and dispatch to `_build_<IRType>` methods.
+
+### Strategy Pattern
+
+Backend builders implement the strategy pattern. The compiler selects a builder based on configuration:
+
+```python
+if config.get_backend() == ZinniaConfig.BACKEND_HALO2:
+    prog_builder = Halo2ProgramBuilder(name, zk_program_ir)
+elif config.get_backend() == ZinniaConfig.BACKEND_CIRCOM:
+    prog_builder = CircomProgramBuilder(name, zk_program_ir)
+# ... etc.
+```
+
+All builders share the same interface (`AbstractProgramBuilder.build() -> ZKCompiledProgram`).
+
+### Decorator Pattern
+
+User-facing entry points use Python decorators:
+
+- `@zk_circuit` -- marks a function as a ZK circuit
+- `@zk_chip` -- marks a class as a reusable chip
+- `@zk_external` -- marks a function as an external (non-circuit) computation
+
+These decorators capture the source code and metadata needed for compilation.
+
+## Common Extension Points
+
+The most frequent types of contributions involve extending one of these subsystems:
+
+| Task | Guide |
+|------|-------|
+| Add a new operator (e.g., a new NumPy function) | [Adding Operators](./adding-operators) |
+| Add a new optimization pass | [Adding Optimization Passes](./adding-optimization-passes) |
+| Add a new type to the type system | [Adding Types](./adding-types) |
+
+Other extension points include adding new IR definitions (`ir_def/defs/`), adding new backend builders (`compile/backend/`), and extending the AST transformer to support new Python syntax.
+
+## Module Dependency Flow
+
+When working on the codebase, it helps to understand the dependency direction:
+
+```
+api/ (user-facing, depends on everything below)
+  |
+compile/
+  |-- transformer/ (depends on ast/, type_sys/)
+  |-- ir/          (depends on triplet/, ir_def/)
+  |-- builder/     (depends on ir/, triplet/, op_def/)
+  |-- optim_pass/  (depends on ir/, triplet/)
+  |-- backend/     (depends on ir/, ir_def/)
+  |-- type_sys/    (standalone)
+  |-- triplet/     (depends on type_sys/)
+  |
+op_def/ (depends on triplet/, builder/)
+  |
+ir_def/ (depends on triplet/)
+  |
+lang/ (standalone type definitions)
+  |
+config/ (standalone)
+  |
+debug/ (standalone)
+```
+
+Dependencies flow downward. Lower modules do not import from higher ones. This layering makes it safe to modify lower-level modules without worrying about circular dependencies.

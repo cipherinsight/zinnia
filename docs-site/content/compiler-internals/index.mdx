@@ -1,0 +1,84 @@
+---
+title: Compiler Internals Overview
+description: Design philosophy and stage-by-stage summary of the Zinnia compiler, which transforms Python-like source code into static arithmetic circuits via SMT-backed symbolic execution.
+---
+
+# Compiler Internals Overview
+
+This section documents the internals of the Zinnia compiler for contributors who need to understand, modify, or extend the compilation pipeline. Zinnia compiles a Python-like DSL into static arithmetic circuits suitable for zk-SNARK proving systems.
+
+## Design Philosophy
+
+The central challenge Zinnia addresses is the mismatch between expressive, dynamic programs and the rigid requirements of arithmetic circuits. Circuits must have a fixed topology determined entirely at compile time -- there are no branches, no variable-length loops, and no dynamic memory allocation at runtime. Yet programmers expect `if`/`else`, `for` loops over data-dependent ranges, and arrays with runtime-determined lengths.
+
+Zinnia resolves this through three key design decisions:
+
+1. **SMT-backed symbolic execution.** Rather than tracing a single concrete execution, the compiler maintains a full symbolic state and uses Z3 to reason about which values are compile-time constants, what upper bounds hold, and which constraints are always satisfied. This converts control dependence into data dependence, producing branch-free IR that maps directly to circuit wiring.
+
+2. **Flow-sensitive type inference.** Variables can change type across branches. The compiler tracks types per-path and merges them at join points using a lattice-based join operator, ensuring that the resulting circuit correctly handles all possible execution paths.
+
+3. **Two-tier memory model.** Small arrays use index-oblivious multiplexers (cheap but O(n) per access). Large or dynamic arrays use a zkRAM memory-trace model (O(log N) per access) that is lowered to sorting and adjacency-check constraints.
+
+## Compilation Stages
+
+The compiler pipeline has six stages, each implemented by a distinct set of modules:
+
+### Stage 1: Parsing
+
+Python source code is parsed into a standard Python AST using `ast.parse`. This reuses the CPython parser, which means Zinnia source must be syntactically valid Python. The parser is not customized; all Zinnia-specific semantics are handled in subsequent stages.
+
+### Stage 2: AST Transformation
+
+A family of transformer classes converts the Python AST into Zinnia's internal AST representation (60+ node types). The transformers apply type annotations, resolve Zinnia-specific constructs (circuits, chips, external functions), and produce a typed AST that captures the full semantics of the source program.
+
+**Key modules:** `compile/transformer/`, `compile/ast/`
+
+### Stage 3: IR Generation (Symbolic Execution)
+
+The core of the compiler. The IR generator symbolically executes the Zinnia AST, maintaining a symbolic state consisting of an environment, a path condition, and an emitted constraint graph. Each language construct (expression, assignment, conditional, loop, function call) is compiled by updating this symbolic state and emitting IR statements. The SMT solver is consulted to resolve constants, compute bounds, and simplify constraints.
+
+**Key modules:** `compile/ir/`, `compile/builder/`, `compile/scope/`, `compile/triplet/`, `compile/type_sys/`
+
+### Stage 4: Optimization
+
+Ten optimization passes transform the IR to reduce circuit size. Passes range from high-level transformations (lowering dynamic arrays to memory operations, injecting memory traces) to standard compiler optimizations (constant folding, dead code elimination, duplicate elimination) to circuit-specific simplifications (removing always-satisfied assertions, eliminating double negations).
+
+**Key modules:** `compile/optim_pass/`
+
+### Stage 5: Backend Code Generation
+
+The optimized IR is translated into the target proving system's native format. Each backend maps the abstract IR operations to the specific constraint representation required by the target (e.g., Halo2 regions and cells, Circom templates, Noir functions).
+
+**Key modules:** `compile/backend/`
+
+### Stage 6: Output
+
+The backend produces the final circuit artifact -- source files, configuration, and any auxiliary data needed by the proving system.
+
+## Module Map
+
+| Directory | Purpose |
+|---|---|
+| `compile/zinnia_compiler.py` | Main orchestrator (`ZinniaCompiler` class) |
+| `compile/ast/` | 60+ AST node classes |
+| `compile/transformer/` | Python AST to Zinnia AST conversion |
+| `compile/ir/` | IR generation, `IRStatement`, `IRGraph`, `IRContext` |
+| `compile/type_sys/` | Type descriptors (`DTDescriptor` hierarchy) |
+| `compile/scope/` | Variable scope management |
+| `compile/builder/` | IR building utilities and SMT integration |
+| `compile/triplet/` | Value representation (type + constraint + witness) |
+| `compile/optim_pass/` | Optimization passes |
+| `compile/backend/` | Backend code generators |
+| `ir_def/` | ~80 IR type definitions |
+
+## Reading Order
+
+For a first pass through the compiler internals, the recommended reading order is:
+
+1. **[Architecture](./architecture)** -- The full pipeline with class-level detail.
+2. **[Symbolic Execution](./symbolic-execution)** -- How the compiler converts dynamic programs to static circuits.
+3. **[IR](./ir)** -- The intermediate representation that all backends consume.
+4. **[Type Inference](./type-inference)** -- The flow-sensitive type system.
+5. **[Optimization Passes](./optimization-passes)** -- How circuits are shrunk.
+6. **[Memory Model](./memory-model)** -- How arrays and memory work in a circuit.
+7. **[Backend](./backend)** -- How IR becomes target code.

@@ -1,0 +1,251 @@
+---
+title: Configuration
+description: How to configure the Zinnia compiler with ZinniaConfig, optimization passes, and backend selection.
+---
+
+# Configuration
+
+Zinnia's behavior is controlled through `ZinniaConfig`, which governs the target backend,
+resource limits, optimization passes, and mock execution settings.
+
+## Imports
+
+```python
+from zinnia import ZinniaConfig
+from zinnia.config.optimization_config import OptimizationConfig
+from zinnia.config.mock_exec_config import MockExecConfig
+```
+
+## ZinniaConfig
+
+`ZinniaConfig` is the top-level configuration object. Pass it when creating a circuit:
+
+```python
+from zinnia import ZKCircuit, ZinniaConfig
+
+config = ZinniaConfig(
+    backend=ZinniaConfig.BACKEND_HALO2,
+    recursion_limit=100,
+    loop_limit=1000,
+    enable_memory_consistency=False,
+)
+
+circuit = ZKCircuit.from_method(my_func, config=config)
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `backend` | `str` | `BACKEND_HALO2` | Target proof system backend. |
+| `recursion_limit` | `int` | `100` | Maximum recursion depth for chip calls. |
+| `loop_limit` | `int` | `1000` | Maximum number of loop iterations. |
+| `mock_config` | `MockExecConfig` | `MockExecConfig()` | Settings for mock execution. |
+| `optimization_config` | `OptimizationConfig` | `OptimizationConfig()` | Compiler optimization passes. |
+| `enable_memory_consistency` | `bool` | `False` | Enable memory consistency checks. |
+
+### Default Configuration
+
+With no arguments, `ZinniaConfig()` uses all defaults:
+
+```python
+config = ZinniaConfig()
+# backend = "halo2"
+# recursion_limit = 100
+# loop_limit = 1000
+# mock_config = MockExecConfig(float_tolerance=1e-6)
+# optimization_config = OptimizationConfig(all passes enabled)
+# enable_memory_consistency = False
+```
+
+## Backend Selection
+
+Zinnia supports multiple proof system backends. The backend determines the format of the
+compiled output.
+
+| Constant | Value | Status |
+|----------|-------|--------|
+| `ZinniaConfig.BACKEND_HALO2` | `"halo2"` | Recommended. Primary backend. |
+| `ZinniaConfig.BACKEND_CIRCOM` | `"circom"` | Under refactoring. |
+| `ZinniaConfig.BACKEND_NOIR` | `"noir"` | Under refactoring. |
+| `ZinniaConfig.BACKEND_CIRC_ZOK` | `"circ_zok"` | Under refactoring. |
+
+For production use, `BACKEND_HALO2` is the recommended and most stable backend. The other
+backends are included for research and experimentation but are undergoing active
+refactoring.
+
+```python
+config = ZinniaConfig(backend=ZinniaConfig.BACKEND_HALO2)
+```
+
+Setting an unrecognized backend string raises a `ValueError`.
+
+## Recursion and Loop Limits
+
+Zinnia circuits compile to static arithmetic circuits, which means all control flow must be
+bounded. The `recursion_limit` and `loop_limit` parameters set upper bounds on how deeply
+the compiler will unroll recursive chip calls and loops.
+
+```python
+config = ZinniaConfig(
+    recursion_limit=200,  # Allow deeper recursion
+    loop_limit=5000,      # Allow more loop iterations
+)
+```
+
+- **`recursion_limit`** -- Maximum depth of recursive chip calls. If a chip calls itself
+  (or a chain of chips recurses), the compiler stops unrolling at this depth. Must be a
+  positive integer.
+- **`loop_limit`** -- Maximum number of iterations for any single loop. The compiler
+  statically unrolls loops up to this bound. Must be a positive integer.
+
+If your circuit requires deeper recursion or longer loops, increase these values. Be aware
+that higher limits produce larger circuits.
+
+## OptimizationConfig
+
+The `OptimizationConfig` controls which compiler optimization passes are applied during
+compilation. All passes are enabled by default.
+
+```python
+from zinnia.config.optimization_config import OptimizationConfig
+
+opt = OptimizationConfig(
+    always_satisfied_elimination=True,
+    constant_fold=True,
+    dead_code_elimination=True,
+    duplicate_code_elimination=True,
+    shortcut_optimization=True,
+)
+
+config = ZinniaConfig(optimization_config=opt)
+```
+
+### Optimization Passes
+
+| Pass | Default | Description |
+|------|---------|-------------|
+| `always_satisfied_elimination` | `True` | Removes constraints that are always satisfied (tautologies). For example, `assert True` or `assert x == x` produce constraints that can be eliminated without affecting correctness. |
+| `constant_fold` | `True` | Evaluates expressions with known constant operands at compile time. For example, `2 + 3` is replaced by `5` in the IR. |
+| `dead_code_elimination` | `True` | Removes IR statements whose results are never used by any constraint or output. |
+| `duplicate_code_elimination` | `True` | Detects and merges identical sub-expressions to avoid redundant constraints. |
+| `shortcut_optimization` | `True` | Applies miscellaneous peephole optimizations, such as simplifying `x * 1` to `x` or `x + 0` to `x`. |
+
+### Disabling Optimizations
+
+To disable a specific optimization (for example, for debugging):
+
+```python
+opt = OptimizationConfig(constant_fold=False)
+config = ZinniaConfig(optimization_config=opt)
+```
+
+To disable all optimizations:
+
+```python
+opt = OptimizationConfig(
+    always_satisfied_elimination=False,
+    constant_fold=False,
+    dead_code_elimination=False,
+    duplicate_code_elimination=False,
+    shortcut_optimization=False,
+)
+```
+
+## MockExecConfig
+
+The `MockExecConfig` controls settings for mock execution (the `circuit.mock()` call).
+
+```python
+from zinnia.config.mock_exec_config import MockExecConfig
+
+mock_cfg = MockExecConfig(float_tolerance=1e-8)
+config = ZinniaConfig(mock_config=mock_cfg)
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `float_tolerance` | `float` | `1e-6` | Tolerance for floating-point comparisons during mock execution. Two float values are considered equal if their absolute difference is less than this threshold. |
+
+Lowering the tolerance makes constraint checks stricter. This is useful when debugging
+precision issues in circuits that use `Float` types.
+
+## Memory Consistency Mode
+
+When `enable_memory_consistency` is set to `True`, the compiler inserts additional
+constraints to verify that memory accesses (array reads and writes) are consistent. This
+is primarily used for circuits that manipulate arrays with dynamic indices.
+
+```python
+config = ZinniaConfig(enable_memory_consistency=True)
+```
+
+Memory consistency checking adds overhead to the circuit size. Leave it disabled unless your
+circuit performs dynamic array indexing that requires soundness guarantees.
+
+## Configuration with Decorators
+
+When using the `@zk_circuit` decorator, the default configuration is used. To customize
+configuration with the decorator pattern, create the circuit explicitly with
+`ZKCircuit.from_method`:
+
+```python
+from zinnia import ZKCircuit, ZinniaConfig, Integer, Private
+
+config = ZinniaConfig(loop_limit=5000)
+
+def my_circuit(a: Private[Integer]):
+    total = 0
+    for i in range(100):
+        total = total + a
+    assert total == a * 100
+
+circuit = ZKCircuit.from_method(my_circuit, config=config)
+result = circuit.mock(7)
+```
+
+## Serialization
+
+Both `OptimizationConfig` and `MockExecConfig` support dictionary-based serialization.
+`ZinniaConfig` accepts dictionaries in place of config objects:
+
+```python
+config = ZinniaConfig(
+    mock_config={"float_tolerance": 1e-8},
+    optimization_config={"constant_fold": False},
+)
+```
+
+## Complete Example
+
+```python
+from zinnia import ZKCircuit, ZinniaConfig, Integer, Float, Private, Public
+from zinnia.config.optimization_config import OptimizationConfig
+from zinnia.config.mock_exec_config import MockExecConfig
+
+# Full custom configuration
+config = ZinniaConfig(
+    backend=ZinniaConfig.BACKEND_HALO2,
+    recursion_limit=50,
+    loop_limit=2000,
+    mock_config=MockExecConfig(float_tolerance=1e-10),
+    optimization_config=OptimizationConfig(
+        always_satisfied_elimination=True,
+        constant_fold=True,
+        dead_code_elimination=True,
+        duplicate_code_elimination=True,
+        shortcut_optimization=True,
+    ),
+    enable_memory_consistency=False,
+)
+
+def precise_circuit(a: Private[Float], b: Public[Float]):
+    c = a + b
+    assert c == 3.14159265358979
+
+circuit = ZKCircuit.from_method(precise_circuit, config=config)
+result = circuit.mock(1.14159265358979, 2.0)
+print(result.is_satisfied())
+```

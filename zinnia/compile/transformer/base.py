@@ -1,23 +1,99 @@
 import ast
 
-from zinnia.compile.ast.ast_aug_assign import ASTAugAssignStatement
-from zinnia.compile.ast.ast_constant_bool import ASTConstantBoolean
-from zinnia.compile.ast.ast_formatted_value import ASTFormattedValue
-from zinnia.compile.ast.ast_joined_str import ASTJoinedStr
-from zinnia.compile.ast.ast_starred import ASTStarredExpr
 from zinnia.debug.exception import InvalidCircuitStatementException, \
     InvalidProgramException, InvalidAssignStatementException, InvalidAnnotationException, UnsupportedOperatorException, \
     UnsupportedConstantLiteralException, \
     UnsupportedLangFeatureException
-from zinnia.compile.ast import ASTAnnotation, ASTAssignStatement, \
-    ASTLoad, ASTForInStatement, ASTPassStatement, ASTAssertStatement, ASTCondStatement, \
-    ASTSubscriptExp, ASTSquareBrackets, ASTBreakStatement, ASTContinueStatement, ASTBinaryOperator, ASTUnaryOperator, \
-    ASTNamedAttribute, ASTExprAttribute, ASTParenthesis, ASTReturnStatement, \
-    ASTConstantInteger, ASTConstantFloat, ASTSlice, ASTConstantNone, ASTExprStatement, ASTConstantString, \
-    ASTNameAssignTarget, ASTSubscriptAssignTarget, ASTTupleAssignTarget, ASTListAssignTarget, ASTGenerator, \
-    ASTGeneratorExp, ASTCondExp, ASTWhileStatement
-from zinnia.compile.type_sys import DTDescriptorFactory, NoneDTDescriptor
 from zinnia.debug.dbg_info import DebugInfo
+
+
+# Type name to DTDescriptor class name mapping (matches DTDescriptorFactory.DATATYPE_REGISTRY order)
+_TYPE_ALIASES = {
+    "DynamicNDArray": "DynamicNDArrayDTDescriptor",
+    "NDArray": "NDArrayDTDescriptor",
+    "Tuple": "TupleDTDescriptor", "tuple": "TupleDTDescriptor",
+    "List": "ListDTDescriptor", "list": "ListDTDescriptor",
+    "Integer": "IntegerDTDescriptor", "int": "IntegerDTDescriptor", "Int": "IntegerDTDescriptor", "integer": "IntegerDTDescriptor",
+    "Boolean": "IntegerDTDescriptor", "bool": "IntegerDTDescriptor", "Bool": "IntegerDTDescriptor", "boolean": "IntegerDTDescriptor",
+    "Float": "FloatDTDescriptor", "float": "FloatDTDescriptor",
+    "None": "NoneDTDescriptor",
+    "Class": "ClassDTDescriptor",
+    "PoseidonHashed": "PoseidonHashedDTDescriptor",
+    "String": "StringDTDescriptor", "str": "StringDTDescriptor",
+}
+
+
+def make_type_dict(dbg, typename, args=None):
+    """Create a type descriptor dict matching the format Rust expects.
+
+    Returns: {"__class__": "<ClassName>", "dt_data": {...}}
+    """
+    if args is None:
+        args = ()
+
+    class_name = _TYPE_ALIASES.get(typename)
+    if class_name is None:
+        raise InvalidAnnotationException(dbg, f'`{typename}` is not a valid type name')
+
+    # Simple scalar types (no args needed)
+    if class_name in ("IntegerDTDescriptor", "FloatDTDescriptor", "NoneDTDescriptor",
+                       "StringDTDescriptor", "ClassDTDescriptor"):
+        return {"__class__": class_name, "dt_data": {}}
+
+    # NDArray: args = (dtype_dict, *shape_ints)
+    if class_name == "NDArrayDTDescriptor":
+        if len(args) < 2:
+            raise InvalidAnnotationException(dbg, f"NDArray requires at least 2 arguments (dtype and shape dimensions).")
+        dtype_dict = args[0]
+        if not isinstance(dtype_dict, dict):
+            raise InvalidAnnotationException(dbg, f"First argument to NDArray must be a type.")
+        shape = []
+        for a in args[1:]:
+            if not isinstance(a, int):
+                raise InvalidAnnotationException(dbg, f"NDArray shape dimensions must be integers.")
+            shape.append(a)
+        return {"__class__": "NDArrayDTDescriptor", "dt_data": {"dtype": dtype_dict, "shape": shape}}
+
+    # DynamicNDArray: args = (dtype_dict, max_length, max_rank)
+    if class_name == "DynamicNDArrayDTDescriptor":
+        if len(args) != 3:
+            raise InvalidAnnotationException(dbg, f"DynamicNDArray requires exactly 3 arguments (dtype, max_length, max_rank).")
+        dtype_dict = args[0]
+        if not isinstance(dtype_dict, dict):
+            raise InvalidAnnotationException(dbg, f"First argument to DynamicNDArray must be a type.")
+        if not isinstance(args[1], int) or not isinstance(args[2], int):
+            raise InvalidAnnotationException(dbg, f"DynamicNDArray max_length and max_rank must be integers.")
+        return {"__class__": "DynamicNDArrayDTDescriptor", "dt_data": {
+            "dtype": dtype_dict, "max_length": args[1], "max_rank": args[2]
+        }}
+
+    # List: args = (element_type_dicts...)
+    if class_name == "ListDTDescriptor":
+        if len(args) < 1:
+            raise InvalidAnnotationException(dbg, f"List requires at least 1 argument.")
+        elements = []
+        for a in args:
+            if not isinstance(a, dict):
+                raise InvalidAnnotationException(dbg, f"List element types must be type descriptors.")
+            elements.append(a)
+        return {"__class__": "ListDTDescriptor", "dt_data": {"elements": elements}}
+
+    # Tuple: args = (element_type_dicts_or_ints...)
+    if class_name == "TupleDTDescriptor":
+        if len(args) < 1:
+            raise InvalidAnnotationException(dbg, f"Tuple requires at least 1 argument.")
+        elements = list(args)
+        return {"__class__": "TupleDTDescriptor", "dt_data": {"elements": elements}}
+
+    # PoseidonHashed: args = (dtype_dict,)
+    if class_name == "PoseidonHashedDTDescriptor":
+        if len(args) != 1:
+            raise InvalidAnnotationException(dbg, f"PoseidonHashed requires exactly 1 argument.")
+        if not isinstance(args[0], dict):
+            raise InvalidAnnotationException(dbg, f"PoseidonHashed argument must be a type descriptor.")
+        return {"__class__": "PoseidonHashedDTDescriptor", "dt_data": {"dtype": args[0]}}
+
+    raise InvalidAnnotationException(dbg, f'`{typename}` is not a valid type name')
 
 
 class ZinniaBaseASTTransformer(ast.NodeTransformer):
@@ -28,42 +104,42 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
 
     def get_op_name_from_node(self, node) -> str:
         if isinstance(node, ast.Add):
-            return ASTBinaryOperator.Op.ADD
+            return "add"
         elif isinstance(node, ast.Sub):
-            return ASTBinaryOperator.Op.SUB
+            return "sub"
         elif isinstance(node, ast.Div):
-            return ASTBinaryOperator.Op.DIV
+            return "div"
         elif isinstance(node, ast.Mult):
-            return ASTBinaryOperator.Op.MUL
+            return "mul"
         elif isinstance(node, ast.MatMult):
-            return ASTBinaryOperator.Op.MAT_MUL
+            return "mat_mul"
         elif isinstance(node, ast.FloorDiv):
-            return ASTBinaryOperator.Op.FLOOR_DIV
+            return "floor_div"
         elif isinstance(node, ast.Mod):
-            return ASTBinaryOperator.Op.MOD
+            return "mod"
         if isinstance(node, ast.Not):
-            return ASTUnaryOperator.Op.NOT
+            return "not"
         elif isinstance(node, ast.USub):
-            return ASTUnaryOperator.Op.USUB
+            return "usub"
         elif isinstance(node, ast.UAdd):
-            return ASTUnaryOperator.Op.UADD
+            return "uadd"
         elif isinstance(node, ast.Pow):
-            return ASTBinaryOperator.Op.POW
+            return "pow"
         raise UnsupportedOperatorException(self.get_dbg(node), f"Invalid operator {type(node.op).__name__} in circuit.")
 
     def get_comp_op_name_from_node(self, node) -> str:
         if isinstance(node, ast.GtE):
-            return ASTBinaryOperator.Op.GTE
+            return "gte"
         elif isinstance(node, ast.LtE):
-            return ASTBinaryOperator.Op.LTE
+            return "lte"
         elif isinstance(node, ast.Gt):
-            return ASTBinaryOperator.Op.GT
+            return "gt"
         elif isinstance(node, ast.Lt):
-            return ASTBinaryOperator.Op.LT
+            return "lt"
         elif isinstance(node, ast.Eq):
-            return ASTBinaryOperator.Op.EQ
+            return "eq"
         elif isinstance(node, ast.NotEq):
-            return ASTBinaryOperator.Op.NE
+            return "ne"
         raise UnsupportedOperatorException(self.get_dbg(node),
                                            f"Invalid compare operator {type(node).__name__} in circuit.")
 
@@ -78,32 +154,34 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
     def visit_For(self, node: ast.For):
         target = self.visit_assign_target(node.target)
         iter_expr = self.visit_expr(node.iter)
-        return ASTForInStatement(self.get_dbg(node.iter), target, iter_expr, self.visit_block(node.body),
-                                 self.visit_block(node.orelse))
+        return {"__class__": "ASTForInStatement",
+                "target": target, "iter_expr": iter_expr,
+                "block": self.visit_block(node.body), "orelse": self.visit_block(node.orelse)}
 
     def visit_While(self, node: ast.While):
         test_expr = self.visit_expr(node.test)
-        return ASTWhileStatement(self.get_dbg(node.test), test_expr, self.visit_block(node.body),
-                                 self.visit_block(node.orelse))
+        return {"__class__": "ASTWhileStatement",
+                "test_expr": test_expr,
+                "block": self.visit_block(node.body), "orelse": self.visit_block(node.orelse)}
 
     def visit_Assert(self, node: ast.Assert):
         test = self.visit_expr(node.test)
-        return ASTAssertStatement(self.get_dbg(node), test)
+        return {"__class__": "ASTAssertStatement", "expr": test}
 
     def visit_Pass(self, node: ast.Pass):
-        return ASTPassStatement(self.get_dbg(node))
+        return {"__class__": "ASTPassStatement"}
 
     def visit_If(self, node: ast.If):
         test = self.visit_expr(node.test)
-        return ASTCondStatement(self.get_dbg(node), test, self.visit_block(node.body), self.visit_block(node.orelse))
+        return {"__class__": "ASTCondStatement",
+                "cond": test, "t_block": self.visit_block(node.body), "f_block": self.visit_block(node.orelse)}
 
     def visit_Assign(self, node: ast.Assign):
-        dbg_info = self.get_dbg(node)
         expr = self.visit_expr(node.value)
         parsed_targets = []
         for target in node.targets:
             parsed_targets.append(self.visit_assign_target(target))
-        return ASTAssignStatement(dbg_info, parsed_targets, expr)
+        return {"__class__": "ASTAssignStatement", "targets": parsed_targets, "value": expr}
 
     def visit_AugAssign(self, node: ast.AugAssign):
         dbg_info = self.get_dbg(node)
@@ -111,14 +189,14 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
         if isinstance(node.target, ast.Name):
             identifier_name = node.target.id
             expr = self.visit_expr(node.value)
-            return ASTAssignStatement(
-                dbg_info, [self.visit_assign_target(node.target)], ASTBinaryOperator(
-                    dbg_info, op_type, ASTLoad(self.get_dbg(node.target), identifier_name), expr
-                ))
+            lhs = {"__class__": "ASTLoad", "name": identifier_name}
+            bin_op = {"__class__": "ASTBinaryOperator", "operator": op_type, "lhs": lhs, "rhs": expr}
+            return {"__class__": "ASTAssignStatement",
+                    "targets": [self.visit_assign_target(node.target)], "value": bin_op}
         elif isinstance(node.target, ast.Subscript):
             expr = self.visit_expr(node.value)
-            return ASTAugAssignStatement(
-                dbg_info, [self.visit_assign_target(node.target)], op_type, expr)
+            return {"__class__": "ASTAugAssignStatement",
+                    "targets": [self.visit_assign_target(node.target)], "value": expr, "op_type": op_type}
         raise InvalidAssignStatementException(dbg_info,
                                               "The value to be assigned must be an identifier name or subscript.")
 
@@ -126,140 +204,116 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
         dbg_info = self.get_dbg(node)
         if isinstance(node.target, ast.Name):
             expr = self.visit_expr(node.value)
-            return ASTAssignStatement(dbg_info, [self.visit_assign_target(node.target)], expr)
+            return {"__class__": "ASTAssignStatement", "targets": [self.visit_assign_target(node.target)], "value": expr}
         raise InvalidAssignStatementException(dbg_info, "The value to be assigned must be an identifier name.")
 
     def visit_BinOp(self, node: ast.BinOp):
-        dbg_info = self.get_dbg(node)
         left = self.visit_expr(node.left)
         right = self.visit_expr(node.right)
-        return ASTBinaryOperator(dbg_info, self.get_op_name_from_node(node.op), left, right)
+        return {"__class__": "ASTBinaryOperator", "operator": self.get_op_name_from_node(node.op),
+                "lhs": left, "rhs": right}
 
     def visit_Compare(self, node: ast.Compare):
-        dbg_info = self.get_dbg(node)
         left = self.visit_expr(node.left)
-        comparators = []
-        for com in node.comparators:
-            comparators.append(self.visit_expr(com))
+        comparators = [self.visit_expr(com) for com in node.comparators]
         assert len(node.ops) == len(comparators)
-        comparators = [left] + comparators
+        all_operands = [left] + comparators
         compare_expr_list = []
         for i, op in enumerate(node.ops):
             compare_expr_list.append(
-                ASTBinaryOperator(dbg_info, self.get_comp_op_name_from_node(op), comparators[i], comparators[i + 1]))
+                {"__class__": "ASTBinaryOperator", "operator": self.get_comp_op_name_from_node(op),
+                 "lhs": all_operands[i], "rhs": all_operands[i + 1]})
         finalized = compare_expr_list[0]
         for expr in compare_expr_list[1:]:
-            finalized = ASTBinaryOperator(dbg_info, ASTBinaryOperator.Op.AND, finalized, expr)
+            finalized = {"__class__": "ASTBinaryOperator", "operator": "and", "lhs": finalized, "rhs": expr}
         return finalized
 
     def visit_BoolOp(self, node: ast.BoolOp):
         dbg_info = self.get_dbg(node)
-        values = []
-        for val in node.values:
-            values.append(self.visit_expr(val))
+        values = [self.visit_expr(val) for val in node.values]
         assert len(values) > 1
         if isinstance(node.op, ast.And):
             base_node = values[0]
             for val in values[1:]:
-                base_node = ASTBinaryOperator(dbg_info, ASTBinaryOperator.Op.AND, base_node, val)
+                base_node = {"__class__": "ASTBinaryOperator", "operator": "and", "lhs": base_node, "rhs": val}
             return base_node
         elif isinstance(node.op, ast.Or):
             base_node = values[0]
             for val in values[1:]:
-                base_node = ASTBinaryOperator(dbg_info, ASTBinaryOperator.Op.OR, base_node, val)
+                base_node = {"__class__": "ASTBinaryOperator", "operator": "or", "lhs": base_node, "rhs": val}
             return base_node
         else:
             raise UnsupportedOperatorException(dbg_info,
                                                f"Invalid boolean operator {type(node.op).__name__} in circuit.")
 
     def visit_UnaryOp(self, node: ast.UnaryOp):
-        dbg_info = self.get_dbg(node)
         value = self.visit_expr(node.operand)
-        return ASTUnaryOperator(dbg_info, self.get_op_name_from_node(node.op), value)
+        return {"__class__": "ASTUnaryOperator", "operator": self.get_op_name_from_node(node.op), "operand": value}
 
     def visit_Call(self, node: ast.Call):
         dbg_info = self.get_dbg(node)
+        args = [self.visit_expr(arg) for arg in node.args]
+        kwargs = {kwarg.arg: self.visit_expr(kwarg.value) for kwarg in node.keywords}
         if isinstance(node.func, ast.Attribute):
             if isinstance(node.func.value, ast.Name):
-                before_name = node.func.value.id
-                after_name = node.func.attr
-                return ASTNamedAttribute(
-                    dbg_info, before_name, after_name,
-                    [self.visit_expr(arg) for arg in node.args],
-                    {kwarg.arg: self.visit_expr(kwarg.value) for kwarg in node.keywords}
-                )
+                return {"__class__": "ASTNamedAttribute",
+                        "target": node.func.value.id, "member": node.func.attr,
+                        "args": args, "kwargs": kwargs}
             else:
-                after_name = node.func.attr
-                return ASTExprAttribute(
-                    dbg_info, self.visit_expr(node.func.value), after_name,
-                    [self.visit_expr(arg) for arg in node.args],
-                    {kwarg.arg: self.visit_expr(kwarg.value) for kwarg in node.keywords}
-                )
+                return {"__class__": "ASTExprAttribute",
+                        "target": self.visit_expr(node.func.value), "member": node.func.attr,
+                        "args": args, "kwargs": kwargs}
         elif isinstance(node.func, ast.Name):
-            return ASTNamedAttribute(
-                dbg_info, None, node.func.id,
-                [self.visit_expr(arg) for arg in node.args],
-                {kwarg.arg: self.visit_expr(kwarg.value) for kwarg in node.keywords}
-            )
+            return {"__class__": "ASTNamedAttribute", "target": None, "member": node.func.id,
+                    "args": args, "kwargs": kwargs}
         raise UnsupportedOperatorException(dbg_info,
                                            f"Invalid call function {type(node.func)}. Only a static specified function name is supported here.")
 
     def visit_Attribute(self, node: ast.Attribute):
-        dbg_info = self.get_dbg(node)
         if isinstance(node.value, ast.Name):
-            after_name = node.attr
-            before_name = node.value.id
-            return ASTNamedAttribute(dbg_info, before_name, after_name, [], {})
-        after_name = node.attr
-        return ASTNamedAttribute(dbg_info, None, after_name, [self.visit_expr(node.value)], {})
+            return {"__class__": "ASTNamedAttribute", "target": node.value.id, "member": node.attr}
+        return {"__class__": "ASTNamedAttribute", "target": None, "member": node.attr}
 
     def visit_Name(self, node: ast.Name):
-        dbg_info = self.get_dbg(node)
-        return ASTLoad(dbg_info, node.id)
+        return {"__class__": "ASTLoad", "name": node.id}
 
     def visit_Constant(self, node: ast.Constant):
         dbg_info = self.get_dbg(node)
         if node.value is None:
-            return ASTConstantNone(dbg_info)
+            return {"__class__": "ASTConstantNone"}
         if isinstance(node.value, bool):
-            return ASTConstantBoolean(dbg_info, node.value)
+            return {"__class__": "ASTConstantBoolean", "value": node.value}
         elif isinstance(node.value, int):
-            return ASTConstantInteger(dbg_info, node.value)
+            return {"__class__": "ASTConstantInteger", "value": node.value}
         elif isinstance(node.value, float):
-            return ASTConstantFloat(dbg_info, node.value)
+            return {"__class__": "ASTConstantFloat", "value": node.value}
         elif isinstance(node.value, str):
-            return ASTConstantString(dbg_info, node.value)
+            return {"__class__": "ASTConstantString", "value": node.value}
         raise UnsupportedConstantLiteralException(dbg_info, f"Invalid constant value `{node.value}` in circuit")
 
     def visit_List(self, node: ast.List):
-        dbg_info = self.get_dbg(node)
-        parsed_elts = []
-        for elt in node.elts:
-            parsed_elts.append(self.visit_expr(elt))
-        return ASTSquareBrackets(dbg_info, parsed_elts)
+        parsed_elts = [self.visit_expr(elt) for elt in node.elts]
+        return {"__class__": "ASTSquareBrackets", "values": parsed_elts}
 
     def visit_Tuple(self, node: ast.Tuple):
-        dbg_info = self.get_dbg(node)
-        parsed_elts = []
-        for elt in node.elts:
-            parsed_elts.append(self.visit_expr(elt))
-        return ASTParenthesis(dbg_info, parsed_elts)
+        parsed_elts = [self.visit_expr(elt) for elt in node.elts]
+        return {"__class__": "ASTParenthesis", "values": parsed_elts}
 
     def visit_Subscript(self, node: ast.Subscript):
         value = self.visit_expr(node.value)
-        return ASTSubscriptExp(self.get_dbg(node), value, self.visit_slice_key(node.slice))
+        return {"__class__": "ASTSubscriptExp", "val": value, "slicing": self.visit_slice_key(node.slice)}
 
     def visit_Break(self, node: ast.Break):
-        return ASTBreakStatement(self.get_dbg(node))
+        return {"__class__": "ASTBreakStatement"}
 
     def visit_Continue(self, node: ast.Continue):
-        return ASTContinueStatement(self.get_dbg(node))
+        return {"__class__": "ASTContinueStatement"}
 
     def visit_Return(self, node: ast.Return):
-        result = node.value
-        if result is not None:
-            result = self.visit_expr(result)
-        return ASTReturnStatement(self.get_dbg(node), result)
+        result = None
+        if node.value is not None:
+            result = self.visit_expr(node.value)
+        return {"__class__": "ASTReturnStatement", "expr": result}
 
     def visit_GeneratorExp(self, node: ast.GeneratorExp):
         dbg = self.get_dbg(node)
@@ -268,11 +322,9 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
         for gen in node.generators:
             target = self.visit_assign_target(gen.target)
             iter_expr = self.visit_expr(gen.iter)
-            ifs = []
-            for if_expr in gen.ifs:
-                ifs.append(self.visit_expr(if_expr))
-            generators.append(ASTGenerator(dbg, target, iter_expr, ifs))
-        return ASTGeneratorExp(dbg, elt, generators, ASTGeneratorExp.Kind.TUPLE)
+            ifs = [self.visit_expr(if_expr) for if_expr in gen.ifs]
+            generators.append({"__class__": "ASTGenerator", "target": target, "iter": iter_expr, "ifs": ifs})
+        return {"__class__": "ASTGeneratorExp", "elt": elt, "generators": generators, "kind": "tuple"}
 
     def visit_ListComp(self, node: ast.ListComp):
         dbg = self.get_dbg(node)
@@ -281,31 +333,25 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
         for gen in node.generators:
             target = self.visit_assign_target(gen.target)
             iter_expr = self.visit_expr(gen.iter)
-            ifs = []
-            for if_expr in gen.ifs:
-                ifs.append(self.visit_expr(if_expr))
-            generators.append(ASTGenerator(dbg, target, iter_expr, ifs))
-        return ASTGeneratorExp(dbg, elt, generators, ASTGeneratorExp.Kind.LIST)
+            ifs = [self.visit_expr(if_expr) for if_expr in gen.ifs]
+            generators.append({"__class__": "ASTGenerator", "target": target, "iter": iter_expr, "ifs": ifs})
+        return {"__class__": "ASTGeneratorExp", "elt": elt, "generators": generators, "kind": "list"}
 
     def visit_IfExp(self, node: ast.IfExp):
-        dbg = self.get_dbg(node)
         test = self.visit_expr(node.test)
         body = self.visit_expr(node.body)
         orelse = self.visit_expr(node.orelse)
-        return ASTCondExp(dbg, test, body, orelse)
+        return {"__class__": "ASTCondExp", "cond": test, "t_expr": body, "f_expr": orelse}
 
     def visit_JoinedStr(self, node: ast.JoinedStr):
-        dbg = self.get_dbg(node)
         values = [self.visit_expr(v) for v in node.values]
-        return ASTJoinedStr(dbg, values)
+        return {"__class__": "ASTJoinedStr", "values": values}
 
     def visit_FormattedValue(self, node: ast.FormattedValue):
-        dbg = self.get_dbg(node)
-        return ASTFormattedValue(dbg, self.visit_expr(node.value))
+        return {"__class__": "ASTFormattedValue", "value": self.visit_expr(node.value)}
 
     def visit_Starred(self, node: ast.Starred):
-        dbg = self.get_dbg(node)
-        return ASTStarredExpr(dbg, self.visit_expr(node.value))
+        return {"__class__": "ASTStarredExpr", "value": self.visit_expr(node.value)}
 
     def visit_block(self, _stmts):
         stmts = []
@@ -334,7 +380,7 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
             elif isinstance(stmt, ast.Return):
                 parsed_stmt = self.visit_Return(stmt)
             elif isinstance(stmt, ast.Expr):
-                parsed_stmt = ASTExprStatement(dbg_info, self.visit_expr(stmt.value))
+                parsed_stmt = {"__class__": "ASTExprStatement", "expr": self.visit_expr(stmt.value)}
             else:
                 raise InvalidCircuitStatementException(dbg_info, f"Invalid circuit statement defined: {type(stmt)}.")
             stmts.append(parsed_stmt)
@@ -380,19 +426,23 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
             raise UnsupportedLangFeatureException(dbg_info, f"Expression transformation rule for {type(node)} is not implemented.")
 
     def visit_annotation(self, node, name: str | None):
+        """Parse a type annotation and return {"kind": str|None, "dt": full_type_dict}.
+
+        The full_type_dict has format {"__class__": "XxxDTDescriptor", "dt_data": {...}}.
+        """
         kind = None
         error_msg = f"Invalid annotation for `{name}`." if name is not None else "Invalid annotation."
         if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
-            if node.value.id == ASTAnnotation.Kind.PUBLIC:
-                kind = ASTAnnotation.Kind.PUBLIC
+            if node.value.id == "Public":
+                kind = "Public"
                 node = node.slice
-            elif node.value.id == ASTAnnotation.Kind.PRIVATE:
-                kind = ASTAnnotation.Kind.PRIVATE
+            elif node.value.id == "Private":
+                kind = "Private"
                 node = node.slice
 
-        def _inner_parser(_n: ast.Name | ast.Subscript):
+        def _inner_parser(_n):
             if isinstance(_n, ast.Name):
-                return DTDescriptorFactory.create(self.get_dbg(_n), _n.id)
+                return make_type_dict(self.get_dbg(_n), _n.id)
             elif isinstance(_n, ast.Subscript):
                 if not isinstance(_n.value, ast.Name):
                     raise InvalidAnnotationException(self.get_dbg(_n), error_msg)
@@ -412,63 +462,55 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
                             args.append(tuple(e.value for e in elt.elts))
                         else:
                             raise InvalidAnnotationException(self.get_dbg(_n), error_msg)
-                    return DTDescriptorFactory.create(self.get_dbg(_n), _n.value.id, tuple(args))
+                    return make_type_dict(self.get_dbg(_n), _n.value.id, tuple(args))
                 elif isinstance(_n.slice, ast.Constant):
-                    return DTDescriptorFactory.create(self.get_dbg(_n), _n.value.id, (_n.slice.value,))
+                    return make_type_dict(self.get_dbg(_n), _n.value.id, (_n.slice.value,))
                 elif isinstance(_n.slice, ast.Name):
-                    return DTDescriptorFactory.create(self.get_dbg(_n), _n.value.id, (_inner_parser(_n.slice),))
+                    return make_type_dict(self.get_dbg(_n), _n.value.id, (_inner_parser(_n.slice),))
                 elif isinstance(_n.slice, ast.Subscript):
-                    return DTDescriptorFactory.create(self.get_dbg(_n), _n.value.id, (_inner_parser(_n.slice),))
+                    return make_type_dict(self.get_dbg(_n), _n.value.id, (_inner_parser(_n.slice),))
             elif isinstance(_n, ast.Constant):
                 if _n.value is None:
-                    return NoneDTDescriptor()
+                    return make_type_dict(self.get_dbg(_n), "None")
                 raise InvalidAnnotationException(
                     self.get_dbg(_n), error_msg + f" Constant value {_n.value} is not supported as an annotation.")
             raise InvalidAnnotationException(self.get_dbg(_n), error_msg)
 
-        return ASTAnnotation(self.get_dbg(node), _inner_parser(node), kind)
+        return {"kind": kind, "dt": _inner_parser(node)}
 
     def visit_slice_key(self, node):
-        dbg = self.get_dbg(node)
-        constant_none = ASTConstantNone(dbg)
+        constant_none = {"__class__": "ASTConstantNone"}
         if isinstance(node, ast.Slice):
-            lo, hi, step = constant_none, constant_none, constant_none
-            if node.lower is not None:
-                lo = self.visit_expr(node.lower)
-            if node.upper is not None:
-                hi = self.visit_expr(node.upper)
-            if node.step is not None:
-                step = self.visit_expr(node.step)
-            return ASTSlice(self.get_dbg(node), [(lo, hi, step)])
+            lo = self.visit_expr(node.lower) if node.lower is not None else constant_none
+            hi = self.visit_expr(node.upper) if node.upper is not None else constant_none
+            step = self.visit_expr(node.step) if node.step is not None else constant_none
+            return {"__class__": "ASTSlice", "data": [[lo, hi, step]]}
         elif isinstance(node, ast.Tuple):
             slicing_data = []
             for elt in node.elts:
                 if isinstance(elt, ast.Slice):
-                    lo, hi, step = constant_none, constant_none, constant_none
-                    if elt.lower is not None:
-                        lo = self.visit_expr(elt.lower)
-                    if elt.upper is not None:
-                        hi = self.visit_expr(elt.upper)
-                    if elt.step is not None:
-                        step = self.visit_expr(elt.step)
-                    slicing_data.append((lo, hi, step))
+                    lo = self.visit_expr(elt.lower) if elt.lower is not None else constant_none
+                    hi = self.visit_expr(elt.upper) if elt.upper is not None else constant_none
+                    step = self.visit_expr(elt.step) if elt.step is not None else constant_none
+                    slicing_data.append([lo, hi, step])
                 else:
                     slicing_data.append(self.visit_expr(elt))
-            return ASTSlice(dbg, slicing_data)
-        return ASTSlice(dbg, [self.visit_expr(node)])
+            return {"__class__": "ASTSlice", "data": slicing_data}
+        return {"__class__": "ASTSlice", "data": [self.visit_expr(node)]}
 
     def visit_assign_target(self, node, starred=False):
         if isinstance(node, ast.Name):
-            return ASTNameAssignTarget(self.get_dbg(node), node.id, star=starred)
+            return {"__class__": "ASTNameAssignTarget", "name": node.id, "star": starred}
         elif isinstance(node, ast.Subscript):
-            return ASTSubscriptAssignTarget(self.get_dbg(node), self.visit_expr(node.value),
-                                            self.visit_slice_key(node.slice), star=starred)
+            return {"__class__": "ASTSubscriptAssignTarget",
+                    "target": self.visit_expr(node.value),
+                    "slicing": self.visit_slice_key(node.slice), "star": starred}
         elif isinstance(node, ast.Tuple):
-            elements = tuple(self.visit_assign_target(elt) for elt in node.elts)
-            return ASTTupleAssignTarget(self.get_dbg(node), elements, star=starred)
+            elements = [self.visit_assign_target(elt) for elt in node.elts]
+            return {"__class__": "ASTTupleAssignTarget", "targets": elements, "star": starred}
         elif isinstance(node, ast.List):
-            elements = list(self.visit_assign_target(elt) for elt in node.elts)
-            return ASTListAssignTarget(self.get_dbg(node), elements, star=starred)
+            elements = [self.visit_assign_target(elt) for elt in node.elts]
+            return {"__class__": "ASTListAssignTarget", "targets": elements, "star": starred}
         elif isinstance(node, ast.Starred):
             return self.visit_assign_target(node.value, True)
         raise NotImplementedError()

@@ -1,0 +1,362 @@
+---
+title: Syntax Reference
+description: Comprehensive syntax reference for the Zinnia language, covering programs, statements, expressions, and assignment targets.
+---
+
+# Syntax Reference
+
+Zinnia programs are syntactically valid Python. This page documents the complete set of
+syntactic constructs that the Zinnia compiler accepts.
+
+## Programs
+
+A program is a sequence of top-level statements. Typically a program defines one or more
+functions (including a main entry point) along with optional top-level declarations.
+
+```python
+def main(x: Public[Integer], y: Private[Integer]) -> Integer:
+    result = x + y
+    return result
+```
+
+## Statements
+
+### Sequential Composition
+
+Statements execute in order, top to bottom, within a block.
+
+```python
+a = 1
+b = 2
+c = a + b
+```
+
+### If / Elif / Else
+
+Standard Python conditional blocks.
+
+```python
+if x > 0:
+    sign = 1
+elif x == 0:
+    sign = 0
+else:
+    sign = -1
+```
+
+### While Loops
+
+While loops repeat as long as the condition holds. The compiler must be able to prove
+a static upper bound on the number of iterations.
+
+```python
+i = 0
+total = 0
+while i < n:
+    total = total + i
+    i = i + 1
+```
+
+### For Loops
+
+For loops iterate over `range(...)` or other iterables.
+
+```python
+total = 0
+for i in range(10):
+    total = total + i
+```
+
+```python
+values = [1, 2, 3, 4, 5]
+total = 0
+for v in values:
+    total = total + v
+```
+
+### Break and Continue
+
+Loop control statements work inside `while` and `for` loops.
+
+```python
+total = 0
+for i in range(100):
+    if i > 10:
+        break
+    if i % 2 == 0:
+        continue
+    total = total + i
+```
+
+### Function Definitions
+
+Functions are defined with `def` and may include type annotations for parameters and
+return values.
+
+```python
+def add(a: Integer, b: Integer) -> Integer:
+    return a + b
+```
+
+Functions can also have no return type annotation:
+
+```python
+def greet():
+    pass
+```
+
+### Input Declarations
+
+Function parameters annotated with `Public` or `Private` declare circuit inputs.
+
+```python
+def circuit(x: Public[Integer], witness: Private[NDArray[Float, 3, 3]]):
+    assert x > 0
+```
+
+### Assignments
+
+Simple assignment binds a value to a name.
+
+```python
+x = 42
+name = "hello"
+matrix = NDArray.zeros((3, 3))
+```
+
+### Augmented Assignment
+
+Augmented assignment operators update a variable in place.
+
+```python
+x += 1
+y -= 2
+z *= 3
+w /= 4
+r %= 5
+p **= 2
+q //= 3
+```
+
+### Return Statements
+
+Return a value from a function.
+
+```python
+def square(x: Integer) -> Integer:
+    return x * x
+```
+
+### Assert Statements
+
+Assert statements compile into circuit constraints. If the condition is false, the
+proof is unsatisfiable.
+
+```python
+assert x >= 0
+assert balance == expected, "balance mismatch"
+```
+
+### Pass Statements
+
+A no-op placeholder.
+
+```python
+def placeholder():
+    pass
+```
+
+## Expressions
+
+### Variables
+
+Variables reference previously assigned names.
+
+```python
+x = 10
+y = x + 1
+```
+
+### Literals
+
+Zinnia supports integer, float, boolean, string, and `None` literals.
+
+```python
+a = 42          # integer
+b = 3.14        # float
+c = True        # boolean
+d = "hello"     # string
+e = None        # None
+```
+
+### Binary Operators
+
+Arithmetic, comparison, logical, and matrix operators.
+
+```python
+# Arithmetic
+a = x + y
+b = x - y
+c = x * y
+d = x / y
+e = x % y
+f = x ** 2
+g = x // y
+
+# Matrix multiplication
+h = A @ B
+
+# Logical
+p = a and b
+q = a or b
+```
+
+### Unary Operators
+
+```python
+a = -x
+b = +x
+c = not flag
+```
+
+### Array and List Indexing
+
+```python
+# Single element
+val = arr[0]
+
+# Multi-dimensional
+val = matrix[i, j]
+
+# Slicing
+sub = arr[1:5]
+sub = arr[0:10:2]
+sub = arr[:, 0]
+```
+
+### List Construction
+
+```python
+xs = [1, 2, 3, 4, 5]
+empty = []
+nested = [[1, 2], [3, 4]]
+```
+
+### Tuple Construction
+
+```python
+pair = (1, 2)
+triple = (1, 2, 3)
+single = (42,)
+```
+
+### Function Calls
+
+```python
+result = add(3, 4)
+length = len(my_list)
+total = sum(values)
+s = math.sin(theta)
+arr = np.zeros((3, 3))
+```
+
+### Conditional Expressions
+
+Ternary inline conditionals.
+
+```python
+result = a if condition else b
+```
+
+### Generator Expressions
+
+Generator expressions are supported inside function calls such as `sum` and `any`.
+
+```python
+total = sum(x * x for x in values)
+has_positive = any(v > 0 for v in data)
+all_valid = all(v >= 0 for v in data)
+```
+
+### Subscript Expressions
+
+Subscript syntax is used for type parameterization and array access.
+
+```python
+# Type subscript
+x: Public[Integer]
+arr: NDArray[Int, 3, 4]
+
+# Value subscript
+val = my_list[idx]
+```
+
+### Slicing
+
+Slicing uses the standard Python `start:stop:step` syntax.
+
+```python
+sub = arr[1:5]         # elements 1 through 4
+sub = arr[::2]         # every other element
+sub = arr[::-1]        # reversed
+row = matrix[0, :]     # first row
+col = matrix[:, 0]     # first column
+```
+
+### Attribute Access
+
+Attribute access is used for module functions, array properties, and method calls.
+
+```python
+s = arr.shape
+d = arr.dtype
+t = arr.T
+n = arr.ndim
+result = math.sqrt(2.0)
+```
+
+## Assignment Targets
+
+### Name
+
+Assign to a simple variable name.
+
+```python
+x = 10
+```
+
+### Subscript
+
+Assign to an indexed position in a list or array.
+
+```python
+arr[0] = 99
+matrix[i, j] = 1.0
+```
+
+### List Unpacking
+
+Unpack a list or tuple into multiple variables.
+
+```python
+[a, b, c] = [1, 2, 3]
+```
+
+### Tuple Unpacking
+
+```python
+a, b = 1, 2
+x, y, z = get_coordinates()
+```
+
+## Comments
+
+Zinnia uses standard Python comments. Comments are ignored by the compiler.
+
+```python
+# This is a comment
+x = 42  # inline comment
+
+# Multi-line comments use multiple # lines
+# like this
+```

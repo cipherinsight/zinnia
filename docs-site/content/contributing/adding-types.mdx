@@ -1,0 +1,480 @@
+---
+title: Adding Types
+description: Guide to adding new types to Zinnia's type system, including the DTDescriptor hierarchy, DTDescriptorFactory registration, creating Value types in the triplet system, and type inference integration.
+---
+
+# Adding Types
+
+Zinnia's type system is the foundation that connects user annotations to compile-time reasoning and IR generation. Adding a new type requires changes across multiple subsystems: the type descriptor hierarchy, the value system, and the factory registries. This guide walks through each step.
+
+## Architecture of the Type System
+
+Types in Zinnia span three layers:
+
+1. **User-facing types** (`zinnia/lang/type.py`): Classes like `Integer`, `Float`, `NDArray` that users reference in annotations (e.g., `x: Private[Integer]`).
+
+2. **Type descriptors** (`zinnia/compile/type_sys/`): `DTDescriptor` subclasses that the compiler uses internally to reason about types. These carry structural information (e.g., an `NDArrayDTDescriptor` knows its element type and shape).
+
+3. **Value types** (`zinnia/compile/triplet/value/`): `Value` subclasses that pair a type descriptor with a pointer (IR node ID) and an optional compile-time scalar. These are what the IR builder and operators work with.
+
+When adding a new type, you need to create entries in all three layers plus register them in the corresponding factories.
+
+## The `DTDescriptor` Hierarchy
+
+All type descriptors extend `DTDescriptor`, defined in `zinnia/compile/type_sys/dt_descriptor.py`:
+
+```python
+class DTDescriptor(object):
+    def __init__(self):
+        pass
+
+    @classmethod
+    def get_typename(cls) -> str:
+        raise NotImplementedError()
+
+    @classmethod
+    def get_alise_typenames(cls) -> List[str]:
+        return [cls.get_typename()]
+
+    @classmethod
+    def from_annotation(cls, dbg_i, args) -> 'DTDescriptor':
+        raise NotImplementedError()
+
+    def export(self) -> Dict[str, Any]:
+        raise NotImplementedError()
+
+    @staticmethod
+    def import_from(data: Dict) -> 'DTDescriptor':
+        raise NotImplementedError()
+```
+
+The current hierarchy is:
+
+```
+DTDescriptor
+  |-- NumberDTDescriptor (abstract, for numeric types)
+  |     |-- IntegerDTDescriptor
+  |     |-- FloatDTDescriptor
+  |-- BooleanDTDescriptor
+  |-- NDArrayDTDescriptor
+  |-- DynamicNDArrayDTDescriptor
+  |-- ListDTDescriptor
+  |-- TupleDTDescriptor
+  |-- NoneDTDescriptor
+  |-- ClassDTDescriptor
+  |-- PoseidonHashedDTDescriptor
+  |-- StringDTDescriptor
+```
+
+`NumberDTDescriptor` is an intermediate abstract class that groups numeric types. If your new type is numeric, extend `NumberDTDescriptor`. Otherwise, extend `DTDescriptor` directly.
+
+### Required Methods
+
+**`get_typename() -> str`** (classmethod): Returns the canonical type name. This is used for display, error messages, and factory lookup.
+
+**`get_alise_typenames() -> List[str]`** (classmethod): Returns all names that should resolve to this type. For example, `IntegerDTDescriptor` accepts `"Integer"`, `"int"`, `"Int"`, and `"integer"`. This allows users to write `int` or `Integer` interchangeably.
+
+**`from_annotation(dbg_i, args) -> DTDescriptor`** (classmethod): Constructs an instance from annotation arguments. For simple types (like `Integer`), this ignores `args`. For parameterized types (like `NDArray[Integer, 3, 3]`), this parses the arguments to extract element type and shape.
+
+**`export() -> Dict`**: Serializes the descriptor to a dictionary for JSON export. Used when saving compiled programs.
+
+**`import_from(data: Dict) -> DTDescriptor`** (staticmethod): Reconstructs a descriptor from serialized data.
+
+**`__eq__(self, other) -> bool`**: Inherited from `DTDescriptor` base. Compares by class and typename. Override if your type has additional parameters that affect equality (e.g., `NDArrayDTDescriptor` compares element type and shape).
+
+## The `DTDescriptorFactory`
+
+Defined in `zinnia/compile/type_sys/dt_factory.py`, the factory maintains a `DATATYPE_REGISTRY` list:
+
+```python
+class DTDescriptorFactory:
+    DATATYPE_REGISTRY = [
+        DynamicNDArrayDTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor,
+        ListDTDescriptor, IntegerDTDescriptor, FloatDTDescriptor,
+        NoneDTDescriptor, ClassDTDescriptor, PoseidonHashedDTDescriptor,
+    ]
+```
+
+The factory provides:
+
+- `create(dbg_i, typename, args)` -- iterates the registry, checks `get_alise_typenames()`, and calls `from_annotation()` on the matching class.
+- `is_typename(typename)` -- checks whether a name is a recognized type.
+- `export(dt)` / `import_from(data)` -- serialization that includes the class name for deserialization dispatch.
+
+To register a new type, add its class to `DATATYPE_REGISTRY` and add its import at the top of the file.
+
+## The Value System
+
+Every value in the compiler is a `Value` subclass (in `zinnia/compile/triplet/value/`). The base class:
+
+```python
+class Value:
+    def __init__(self, type_locked: bool = False):
+        self._type_locked = type_locked
+
+    def type(self) -> DTDescriptor:
+        raise NotImplementedError()
+
+    def assign(self, value: 'Value', force: bool = False) -> 'Value':
+        raise NotImplementedError()
+
+    @classmethod
+    def from_value_store(cls, store: ValueStore, type_locked: bool = False):
+        raise NotImplementedError()
+
+    def into_value_store(self) -> ValueStore:
+        raise NotImplementedError()
+```
+
+For scalar types (integer, float, boolean), the value holds a `ValueTriplet` with three components:
+
+- **Pointer (V)**: `int | None` -- the IR graph node ID
+- **Scalar (S)**: The compile-time-known value, or `None`
+- **Type (T)**: A `DTDescriptor` instance
+
+For composite types (arrays, lists, tuples), the value holds multiple inner values and uses a composite `ValueStore` instead of a `ValueTriplet`.
+
+### Inheritance for Scalar Types
+
+```
+Value
+  |-- AtomicValue (holds a ValueTriplet)
+        |-- NumberValue (for numeric scalars)
+        |     |-- IntegerValue
+        |     |-- FloatValue
+        |-- BooleanValue
+        |-- StringValue
+        |-- NoneValue
+```
+
+### Inheritance for Composite Types
+
+```
+Value
+  |-- NDArrayValue (holds a list of element values + shape)
+  |-- DynamicNDArrayValue (holds element values + dynamic bounds)
+  |-- ListValue (holds a list of element values)
+  |-- TupleValue (holds a list of element values with mixed types)
+  |-- ClassValue (holds a chip instance + field values)
+```
+
+### The `ValueFactory`
+
+Defined in `zinnia/compile/triplet/value_factory.py`:
+
+```python
+class ValueFactory:
+    VALUE_CLASSES = [
+        ClassValue, FloatValue, IntegerValue, ListValue,
+        DynamicNDArrayValue, NDArrayValue, NoneValue,
+        StringValue, TupleValue, BooleanValue
+    ]
+
+    @classmethod
+    def from_value_store(cls, value_store, type_locked=False) -> Value:
+        for c in cls.VALUE_CLASSES:
+            r = c.from_value_store(value_store, type_locked)
+            if r is not None:
+                return r
+        raise NotImplementedError()
+```
+
+Each `Value` subclass implements `from_value_store()` as a class method. It returns `None` if the store does not match its type, or a new instance if it does. The factory iterates through all registered classes until one claims the store.
+
+## Complete Walkthrough: Adding a `Complex` Type
+
+Let us walk through adding a complex number type that stores a real and imaginary part, both as floats.
+
+### Step 1: Create the DTDescriptor
+
+Create `zinnia/compile/type_sys/complex.py`:
+
+```python
+from typing import Tuple, Optional, Dict, Any, List
+
+from zinnia.compile.type_sys.dt_descriptor import DTDescriptor
+from zinnia.debug.dbg_info import DebugInfo
+
+
+class ComplexDTDescriptor(DTDescriptor):
+    def __init__(self):
+        super().__init__()
+
+    @classmethod
+    def get_typename(cls) -> str:
+        return "Complex"
+
+    @classmethod
+    def get_alise_typenames(cls) -> List[str]:
+        return ["Complex", "complex"]
+
+    @classmethod
+    def from_annotation(
+        cls,
+        dbg_i: Optional[DebugInfo],
+        args: Tuple[DTDescriptor | int, ...]
+    ) -> 'ComplexDTDescriptor':
+        # Complex takes no type parameters
+        return ComplexDTDescriptor()
+
+    def export(self) -> Dict[str, Any]:
+        return {}
+
+    @staticmethod
+    def import_from(data: Dict) -> 'ComplexDTDescriptor':
+        return ComplexDTDescriptor()
+```
+
+Export it from `zinnia/compile/type_sys/__init__.py`:
+
+```python
+from .complex import ComplexDTDescriptor
+```
+
+### Step 2: Register in DTDescriptorFactory
+
+In `zinnia/compile/type_sys/dt_factory.py`, add the import and register:
+
+```python
+from zinnia.compile.type_sys.complex import ComplexDTDescriptor
+
+class DTDescriptorFactory:
+    DATATYPE_REGISTRY = [
+        DynamicNDArrayDTDescriptor, NDArrayDTDescriptor, TupleDTDescriptor,
+        ListDTDescriptor, IntegerDTDescriptor, FloatDTDescriptor,
+        NoneDTDescriptor, ClassDTDescriptor, PoseidonHashedDTDescriptor,
+        ComplexDTDescriptor,  # <-- add here
+    ]
+```
+
+### Step 3: Create the Value Type
+
+Create `zinnia/compile/triplet/value/complex.py`:
+
+```python
+import copy
+from typing import Union
+
+from zinnia.compile.triplet.value.value import Value
+from zinnia.compile.triplet.value.floating import FloatValue
+from zinnia.compile.type_sys.complex import ComplexDTDescriptor
+from zinnia.compile.triplet.store import ValueStore
+from zinnia.compile.triplet.store.composite_tuple import CompositeTupleValueStore
+
+
+class ComplexValue(Value):
+    """
+    A complex number value, represented as a pair of FloatValues
+    (real and imaginary parts).
+    """
+
+    def __init__(
+        self,
+        real: FloatValue,
+        imag: FloatValue,
+        type_locked: bool = False
+    ):
+        super().__init__(type_locked)
+        self._real = real
+        self._imag = imag
+        self._dt = ComplexDTDescriptor()
+
+    def type(self) -> ComplexDTDescriptor:
+        return self._dt
+
+    def real(self) -> FloatValue:
+        return self._real
+
+    def imag(self) -> FloatValue:
+        return self._imag
+
+    def assign(self, value: 'ComplexValue', force: bool = False) -> 'ComplexValue':
+        assert isinstance(value, ComplexValue)
+        self._real.assign(value._real, force)
+        self._imag.assign(value._imag, force)
+        return self
+
+    def __copy__(self):
+        return ComplexValue(
+            copy.copy(self._real),
+            copy.copy(self._imag),
+            self._type_locked
+        )
+
+    @classmethod
+    def from_value_store(
+        cls,
+        store: ValueStore,
+        type_locked: bool = False
+    ) -> Union['ComplexValue', None]:
+        # ComplexValue is stored as a CompositeTupleValueStore
+        # with two float entries
+        if not isinstance(store, CompositeTupleValueStore):
+            return None
+        entries = store.get_entries()
+        if len(entries) != 2:
+            return None
+        real = FloatValue.from_value_store(entries[0])
+        imag = FloatValue.from_value_store(entries[1])
+        if real is None or imag is None:
+            return None
+        val = ComplexValue(real, imag, type_locked)
+        return val
+
+    def into_value_store(self) -> ValueStore:
+        return CompositeTupleValueStore([
+            self._real.into_value_store(),
+            self._imag.into_value_store()
+        ])
+```
+
+Export it from `zinnia/compile/triplet/value/__init__.py`:
+
+```python
+from .complex import ComplexValue
+```
+
+### Step 4: Register in ValueFactory
+
+In `zinnia/compile/triplet/value_factory.py`:
+
+```python
+from zinnia.compile.triplet.value import (
+    Value, ClassValue, FloatValue, IntegerValue, ListValue,
+    DynamicNDArrayValue, NDArrayValue, NoneValue, StringValue,
+    TupleValue, BooleanValue, ComplexValue
+)
+
+class ValueFactory:
+    VALUE_CLASSES = [
+        ClassValue, ComplexValue, FloatValue, IntegerValue, ListValue,
+        DynamicNDArrayValue, NDArrayValue, NoneValue, StringValue,
+        TupleValue, BooleanValue
+    ]
+```
+
+Note: `ComplexValue` should appear before `TupleValue` in the list because its `from_value_store()` method also checks for `CompositeTupleValueStore`. Ordering matters -- the first class whose `from_value_store()` returns a non-None value wins.
+
+### Step 5: Create the User-Facing Type
+
+In `zinnia/lang/type.py`, add a user-facing class:
+
+```python
+class Complex:
+    """Complex number type for use in annotations."""
+    pass
+```
+
+Export it from `zinnia/__init__.py`:
+
+```python
+from .lang.type import Integer, Float, Tuple, List, NDArray, DynamicNDArray, PoseidonHashed, Complex
+```
+
+### Step 6: Add Operator Support
+
+At this point, the type exists but no operations work on it. You need to add operators. For example, to support `+` on complex numbers, you would either:
+
+- Extend the existing addition operator in `op_def/arithmetic/` to handle `ComplexValue`, or
+- Create complex-specific operators.
+
+Extending the addition operator might look like:
+
+```python
+# In the arithmetic add operator's build() method:
+if isinstance(lhs, ComplexValue) and isinstance(rhs, ComplexValue):
+    new_real = builder.op_add(lhs.real(), rhs.real(), dbg)
+    new_imag = builder.op_add(lhs.imag(), rhs.imag(), dbg)
+    return ComplexValue(new_real, new_imag)
+```
+
+### Step 7: Write Tests
+
+```python
+from zinnia import ZKCircuit, zk_circuit, Complex, Private, Float
+
+
+def test_complex_type_annotation():
+    @zk_circuit
+    def circuit(re: Private[Float], im: Private[Float]):
+        # Test that complex values can be constructed and used
+        ...
+
+    zk = ZKCircuit(circuit)
+    compiled = zk.compile()
+    # Verify compilation succeeds
+    assert compiled is not None
+```
+
+## Types with Parameters
+
+Some types are parameterized. For example, `NDArray[Integer, 3, 3]` takes an element type and shape dimensions. If your type is parameterized, the `from_annotation()` method must parse the `args` tuple:
+
+```python
+@classmethod
+def from_annotation(cls, dbg_i, args):
+    if len(args) < 1:
+        raise InvalidAnnotationException(dbg_i, "MyType requires at least one argument")
+    element_type = args[0]  # This is a DTDescriptor
+    size = args[1] if len(args) > 1 else None  # This might be an int
+    return MyDTDescriptor(element_type, size)
+```
+
+The `args` tuple contains either `DTDescriptor` instances (for type parameters) or `int` values (for numeric parameters), depending on what the user wrote in the annotation.
+
+Remember to update `export()` and `import_from()` to serialize all parameters:
+
+```python
+def export(self):
+    return {
+        "element_type": DTDescriptorFactory.export(self._element_type),
+        "size": self._size
+    }
+
+@staticmethod
+def import_from(data):
+    element_type = DTDescriptorFactory.import_from(data["element_type"])
+    return MyDTDescriptor(element_type, data["size"])
+```
+
+## Types with Composite Values
+
+If your type contains multiple sub-values (like an array or struct), you should use one of the composite `ValueStore` classes:
+
+- `CompositeTupleValueStore` -- for a fixed set of named/indexed sub-values
+- `CompositeListValueStore` -- for a variable-length list of same-typed sub-values
+- `CompositeNDArrayValueStore` -- for multi-dimensional arrays of same-typed sub-values
+
+Or create a new composite store if none of the existing ones fit.
+
+## Integration with Type Inference
+
+When you add a new type, the compiler's type inference system needs to know how to handle it. Key places where type information flows:
+
+1. **Annotation parsing** (`compile/transformer/`): The transformer calls `DTDescriptorFactory.create()` to resolve type annotations. If your type is registered correctly, this works automatically.
+
+2. **Operator type checking** (`op_def/`): Operators use `isinstance` checks on `Value` subclasses. You need to update relevant operators to handle your new value type.
+
+3. **IR builder** (`compile/builder/builder_impl.py`): If your type needs new IR builder convenience methods (like `ir_constant_complex()`), add them to `IRBuilderInterface` and `IRBuilderImpl`.
+
+4. **Backend code generation** (`compile/backend/`): If your type maps to new IR types, each backend builder needs handlers for those IR types.
+
+5. **Mock execution** (`exec/mock_executor.py`): The mock executor evaluates IR statements against concrete values. If you add new IR types, implement their `mock_exec()` methods.
+
+## Checklist for Adding a New Type
+
+- [ ] Create `DTDescriptor` subclass in `compile/type_sys/`
+- [ ] Implement `get_typename()`, `get_alise_typenames()`, `from_annotation()`, `export()`, `import_from()`
+- [ ] Export from `compile/type_sys/__init__.py`
+- [ ] Register in `DTDescriptorFactory.DATATYPE_REGISTRY`
+- [ ] Create `Value` subclass in `compile/triplet/value/`
+- [ ] Implement `type()`, `assign()`, `__copy__()`, `from_value_store()`, `into_value_store()`
+- [ ] Export from `compile/triplet/value/__init__.py`
+- [ ] Register in `ValueFactory.VALUE_CLASSES` (mind ordering)
+- [ ] Create user-facing type class in `lang/type.py`
+- [ ] Export from `zinnia/__init__.py`
+- [ ] Add operator support for the new type
+- [ ] Add IR definitions if the type requires new primitive operations
+- [ ] Update backend builders if new IR types were added
+- [ ] Write tests covering annotation parsing, operator behavior, and compilation
+- [ ] Run the full test suite to check for regressions

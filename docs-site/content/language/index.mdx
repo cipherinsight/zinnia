@@ -1,0 +1,101 @@
+---
+title: Language Overview
+description: An introduction to the Zinnia programming language, a Python-like DSL for writing zk-SNARK circuits.
+---
+
+# Language Overview
+
+Zinnia is a domain-specific language for writing zk-SNARK programs. It uses a Python-like
+syntax that compiles to static arithmetic circuits over a prime field. Programs written in
+Zinnia are also valid Python, which means you can prototype, test, and debug them using
+standard Python tooling before compiling to a zero-knowledge proof circuit.
+
+## Design Goals
+
+Zinnia is built around several core design principles:
+
+- **Python compatibility.** Every Zinnia program is syntactically valid Python. You can
+  run it with CPython or NumPy for testing, then compile it with the Zinnia compiler for
+  proof generation.
+
+- **Accessibility for data analysts.** The language targets users who are comfortable with
+  Python and NumPy but are not experts in cryptography or circuit design. Privacy
+  annotations and circuit constraints are expressed through familiar Python idioms such as
+  type hints and assertions.
+
+- **Array-programming style.** Zinnia provides NumPy-compatible array primitives
+  (`NDArray`, broadcasting, slicing, reductions) as first-class constructs. This enables
+  concise expression of linear algebra, statistical computations, and data transformations.
+
+- **Implicit bounded control flow.** Unlike many circuit DSLs that require explicit loop
+  bounds or manual unrolling, Zinnia's compiler uses SMT-based analysis to automatically
+  infer loop and recursion bounds from program structure. You write natural `while` loops
+  and recursive functions; the compiler proves they terminate within static bounds.
+
+- **Data-dependent programs.** Zinnia supports programs whose control flow depends on
+  private inputs. Both branches of an `if` statement are symbolically executed, and the
+  results are merged via guarded joins. This allows expressive programs without leaking
+  information through circuit structure.
+
+## A Minimal Example
+
+```python
+def main(balance: Public[Integer], threshold: Private[Integer]) -> Integer:
+    if balance > threshold:
+        result = balance - threshold
+    else:
+        result = 0
+    return result
+```
+
+This program takes a public balance and a private threshold, and returns the excess above
+the threshold (or zero). Both branches compile into the circuit; the guard selects which
+result propagates.
+
+## What Zinnia Supports
+
+Zinnia supports a substantial subset of Python:
+
+- Scalar types: integers, floats, booleans
+- Composite types: lists, tuples, fixed-size N-dimensional arrays (`NDArray`), and
+  bounded-dynamic arrays (`DynamicNDArray`)
+- Control flow: `if`/`elif`/`else`, `while`, `for`, `break`, `continue`, early `return`
+- Functions and bounded recursion
+- Privacy annotations via `Public[T]` and `Private[T]` type hints
+- Assertions that compile to circuit constraints
+- A NumPy-like library of array operations
+- Cryptographic primitives: Poseidon hashing and Merkle proof verification
+
+## What Zinnia Does Not Support
+
+Because all programs must compile to finite arithmetic circuits, certain Python features
+are excluded:
+
+- Unbounded recursion or loops that the compiler cannot statically bound
+- Dynamic memory allocation (heap objects, dictionaries, sets)
+- String manipulation beyond basic literals
+- Classes and object-oriented programming
+- Exceptions (`try`/`except`)
+- File I/O, networking, or other side effects
+- Importing arbitrary Python modules (only `math` and `np` are available)
+
+## How Compilation Works
+
+At a high level, the Zinnia compiler:
+
+1. Parses the Python source into an AST.
+2. Performs type inference with flow-sensitive typing.
+3. Analyzes control flow to determine loop and recursion bounds (using an SMT solver).
+4. Symbolically executes the program, producing an arithmetic circuit (a system of
+   rank-1 constraints over a prime field F_p).
+5. Emits the circuit along with public/private input mappings for use with a zk-SNARK
+   backend.
+
+The rest of this language reference covers each aspect of the language in detail:
+
+- [Syntax Reference](/docs/language/syntax) -- the full grammar
+- [Type System](/docs/language/type-system) -- scalars, arrays, and flow-sensitive typing
+- [Control Flow](/docs/language/control-flow) -- branches, loops, recursion
+- [Arrays](/docs/language/arrays) -- NDArray, DynamicNDArray, and operations
+- [Operators and Built-ins](/docs/language/operators) -- arithmetic, comparisons, and library functions
+- [Privacy Annotations](/docs/language/privacy-annotations) -- Public, Private, and PoseidonHashed

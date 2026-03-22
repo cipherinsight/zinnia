@@ -1,14 +1,12 @@
 from typing import Dict
 
-from zinnia.compile.type_sys.dt_descriptor import DTDescriptor
-
 
 class ZKProgramInput:
     class Kind:
         PUBLIC = "Public"
         PRIVATE = "Private"
 
-    def __init__(self, name: str, dt: DTDescriptor, kind: str):
+    def __init__(self, name: str, dt: dict, kind: str):
         self.name = name
         self.dt = dt
         self.kind = kind
@@ -16,7 +14,7 @@ class ZKProgramInput:
     def get_name(self) -> str:
         return self.name
 
-    def get_dt(self) -> DTDescriptor:
+    def get_dt(self) -> dict:
         return self.dt
 
     def get_kind(self) -> str:
@@ -29,20 +27,16 @@ class ZKProgramInput:
         return self.kind == ZKProgramInput.Kind.PRIVATE
 
     def export(self) -> Dict:
-        from zinnia.compile.type_sys.dt_factory import DTDescriptorFactory
-
         return {
             "name": self.name,
-            "dt": DTDescriptorFactory.export(self.dt),
+            "dt": self.dt,
             "kind": self.kind,
         }
 
     @staticmethod
     def import_from(data: Dict) -> 'ZKProgramInput':
-        from zinnia.compile.type_sys.dt_factory import DTDescriptorFactory
-
         return ZKProgramInput(
             name=data['name'],
-            dt=DTDescriptorFactory.import_from(data['dt']),
+            dt=data['dt'],
             kind=data['kind'],
         )

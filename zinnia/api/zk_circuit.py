@@ -1,15 +1,13 @@
 import inspect
+import json
 from typing import List, Any, Dict
 
 from zinnia import ZKChip, ZKExternalFunc
-from zinnia.api.zk_parsed_input import ZKParsedInput
 from zinnia.api.zk_compiled_program import ZKCompiledProgram
 from zinnia.compile.zinnia_compiler import ZinniaCompiler
 from zinnia.config.zinnia_config import ZinniaConfig
 from zinnia.debug.exception import InternalZinniaException
 from zinnia.debug.prettifier import prettify_exception
-from zinnia.exec.exec_result import ZKExecResult
-from zinnia.exec.mock_executor import MockProgramExecutor
 
 
 class ZKCircuit:
@@ -82,21 +80,34 @@ class ZKCircuit:
     ) -> 'ZKCircuit':
         if chips is None:
             chips = []
-        method_name = method.__name__
-        if method_name == '__zk_circuit_annotator_inner':
-            _method = None
+        func_name = method.__name__
+        if func_name == '__zk_circuit_annotator_inner':
+            # The @zk_circuit decorator captures source_code and method_name
+            # in its closure. Extract them.
+            _source_code = None
+            _method_name = None
+            if method.__closure__:
+                for cell in method.__closure__:
+                    contents = cell.cell_contents
+                    if isinstance(contents, str) and '\n' in contents and 'def ' in contents:
+                        _source_code = contents
+                    elif isinstance(contents, str) and '\n' not in contents:
+                        _method_name = contents
+            if _source_code is not None and _method_name is not None:
+                return ZKCircuit(_method_name, _source_code, chips, externals, config)
+            # Fallback: try to find the original callable
             for cell in method.__closure__:
-                if callable(cell.cell_contents):
-                    _method = cell.cell_contents
-                    break
-            assert _method is not None
-            source_code = inspect.getsource(_method)
-            method_name = _method.__name__
+                contents = cell.cell_contents
+                if callable(contents) and not isinstance(contents, type):
+                    source_code = inspect.getsource(contents)
+                    return ZKCircuit(contents.__name__, source_code, chips, externals, config)
+            raise ValueError("Could not extract circuit source from decorated function")
         else:
             source_code = inspect.getsource(method)
-        return ZKCircuit(method_name, source_code, chips, externals, config)
+        return ZKCircuit(func_name, source_code, chips, externals, config)
 
     def compile(self) -> ZKCompiledProgram:
+        from zinnia.debug.exception.base import ZinniaException
         try:
             self.program = ZinniaCompiler(self.config).compile(
                 self.source, self.name,
@@ -105,35 +116,48 @@ class ZKCircuit:
             )
         except InternalZinniaException as e:
             raise prettify_exception(e)
+        except (ValueError, RuntimeError) as e:
+            # Rust core may raise ValueError/RuntimeError for compilation errors
+            raise ZinniaException(str(e))
+        except BaseException as e:
+            # PyO3 PanicException inherits from BaseException
+            if type(e).__name__ == 'PanicException':
+                raise ZinniaException(str(e))
+            raise
         return self.program
 
-    def mock(self, *args, **kwargs) -> ZKExecResult:
+    def __call__(self, *args):
+        from zinnia.exec.exec_result import ZKExecResult
+        from zinnia.exec.input_parser import parse_inputs
+        from zinnia.compile._bridge import mock_execute
+
         if self.program is None:
             self.compile()
-        try:
-            exec_ctx = self.program.get_execution_context()
-            mock_executor = MockProgramExecutor(exec_ctx, self.program, self.config)
-            return mock_executor.exec(*args, **kwargs)
-        except InternalZinniaException as e:
-            raise prettify_exception(e)
 
-    def __call__(self, *args, **kwargs) -> ZKExecResult:
-        return self.mock(*args, **kwargs)
+        entries = parse_inputs(self.program.program_inputs, args)
+        externals_dict = {n: ext.callable for n, ext in self.externals.items()}
+
+        result_json = mock_execute(
+            self.program.zk_program_irs_json,
+            self.program.preprocess_irs_json,
+            json.dumps(entries),
+            externals_dict,
+        )
+        result = json.loads(result_json)
+        return ZKExecResult(result["satisfied"], result.get("public_outputs"))
+
+    def mock(self, *args):
+        return self(*args)
 
     def get_name(self) -> str:
         return self.name
 
-    def argparse(self, *args, **kwargs) -> ZKParsedInput:
-        if self.program is None:
-            self.compile()
-        exec_ctx = self.program.get_execution_context()
-        return exec_ctx.argparse(*args, **kwargs)
-
 
 def zk_circuit(method, config: ZinniaConfig = ZinniaConfig()):
+    source_code = inspect.getsource(method)
+    method_name = method.__name__
+
     def __zk_circuit_annotator_inner(*args, **kwargs):
-        source_code = inspect.getsource(method)
-        method_name = method.__name__
         defined_chips: List[ZKChip] = []
         defined_externals: List[ZKExternalFunc] = []
         for key, val in inspect.currentframe().f_back.f_locals.items():
@@ -142,5 +166,5 @@ def zk_circuit(method, config: ZinniaConfig = ZinniaConfig()):
             elif isinstance(val, ZKExternalFunc):
                 defined_externals.append(val)
         circuit = ZKCircuit(method_name, source_code, defined_chips, defined_externals, config)
-        return circuit(*args, **kwargs)
+        return circuit(*args)
     return __zk_circuit_annotator_inner

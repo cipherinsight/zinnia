@@ -1,0 +1,124 @@
+---
+title: Data Analytics Overview
+description: How Zinnia enables verifiable data analytics through circuit-native array primitives, bounded-dynamic arrays, and real-valued arithmetic over zk-SNARK circuits.
+---
+
+# Data Analytics Overview
+
+Zinnia is a zk-SNARK programming framework that compiles Python-like code to static
+arithmetic circuits. Its data analytics subsystem provides the primitives needed to express
+statistical computations, linear algebra, and data transformations as verifiable circuits
+over a prime field.
+
+This section documents the three pillars of Zinnia's data analytics support: array
+primitives, real-valued arithmetic, and non-linear function approximation.
+
+## Why Verifiable Data Analytics
+
+In conventional computation, a data analyst runs a query or model and publishes the result.
+Anyone who wants to verify correctness must either re-run the computation on the same data
+(requiring access to it) or trust the analyst. zk-SNARKs break this tradeoff: the analyst
+produces a proof that the published result is correct, without revealing the underlying data.
+
+Zinnia makes this practical by providing NumPy-style array operations that compile directly
+to arithmetic circuits. You write familiar Python code; the compiler handles the translation
+to rank-1 constraint systems over the BN254 prime field.
+
+## Three Tiers of Array Support
+
+Zinnia provides arrays at three levels of generality, each with different circuit cost
+characteristics.
+
+### Static NDArrays
+
+Static arrays have shapes known entirely at compile time. The compiler can unroll all
+operations and produce a fixed-size circuit with no runtime metadata overhead.
+
+```python
+# Static 3x3 matrix -- shape is part of the type
+A: NDArray[Float, 3, 3] = np.array([[1.0, 2.0, 3.0],
+                                     [4.0, 5.0, 6.0],
+                                     [7.0, 8.0, 9.0]])
+```
+
+Static arrays are the most efficient representation. The compiler uses them whenever the
+shape can be fully determined at compile time.
+
+### Bounded-Dynamic Arrays
+
+When array shapes depend on private inputs (for example, filtering rows that satisfy a
+predicate), the compiler falls back to bounded-dynamic arrays. These arrays carry a
+compile-time *envelope* that upper-bounds their size, and runtime metadata that describes the
+actual logical view within that envelope.
+
+```python
+# Dynamic array: up to 1000 Float elements, up to rank 2
+data: DynamicNDArray[Float, 1000, 2]
+```
+
+The envelope ensures the circuit size is fixed at compile time. The metadata -- logical
+length, shape, strides, and offset -- is constrained at proof time to lie within the
+envelope. See [Bounded-Dynamic Arrays](/docs/data-analytics/bounded-dynamic-arrays) for
+full details.
+
+### Array Operations
+
+Both static and dynamic arrays support a common set of operations drawn from NumPy
+conventions:
+
+- **Metadata-only operations** (O(1) circuit cost): indexing, slicing, transpose,
+  permutation, and reshape. These rewrite the offset, shape, and stride vectors without
+  touching the underlying data buffer.
+
+- **Data-touching operations** (O(L) circuit cost): filter, reduce, concatenate, and stack.
+  These iterate over the data buffer and produce new values.
+
+All operations lower to three zkRAM primitives: `alloc`, `read`, and `write`. See
+[Array Operations](/docs/data-analytics/array-operations) for the complete reference.
+
+## Real-Valued Arithmetic
+
+Arithmetic circuits operate over a prime field F_p, which natively supports only integers
+modulo p. Zinnia bridges this gap with a fixed-point encoding that maps real numbers into
+field elements using 64 fractional bits.
+
+The encoding achieves a machine epsilon of approximately 5.42 x 10^(-20), which exceeds
+the precision of IEEE 754 double-precision floating point. Values up to approximately
+5.9 x 10^56 can be represented without overflow.
+
+```python
+# Float values are automatically quantized to fixed-point
+x: Float = 3.14159
+y: Float = x * x  # multiplication in quantized representation
+```
+
+See [Real-Valued Arithmetic](/docs/data-analytics/real-arithmetic) for the encoding scheme,
+precision analysis, and operational semantics.
+
+## Non-Linear Functions
+
+Transcendental functions such as `exp`, `log`, `sin`, and `sqrt` have no direct
+representation as field operations. Zinnia approximates them using truncated Taylor series
+expansions, with the polynomial degree chosen so that the approximation error falls below
+the fixed-point precision threshold (2^(-64)).
+
+```python
+# Non-linear functions compile to polynomial circuits
+result = math.exp(x) + math.sin(y)
+```
+
+The circuit cost of each function is proportional to the Taylor degree: d multiplications
+and d additions. See
+[Non-Linear Functions](/docs/data-analytics/nonlinear-functions) for the full list of
+supported functions, their circuit costs, and precision guarantees.
+
+## Section Contents
+
+- [Bounded-Dynamic Arrays](/docs/data-analytics/bounded-dynamic-arrays) -- compile-time
+  envelopes, runtime metadata, and zkRAM lowering
+- [Array Operations](/docs/data-analytics/array-operations) -- the full operation catalog
+  with circuit costs and code examples
+- [Real-Valued Arithmetic](/docs/data-analytics/real-arithmetic) -- fixed-point encoding,
+  quantization, and precision characteristics
+- [Non-Linear Functions](/docs/data-analytics/nonlinear-functions) -- Taylor approximation,
+  supported functions, and circuit costs

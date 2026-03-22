@@ -1,0 +1,406 @@
+---
+title: Adding Optimization Passes
+description: Guide to adding new optimization passes to the Zinnia compiler, including the AbstractIRPass interface, IRGraph manipulation, pass pipeline ordering, and a complete walkthrough example.
+---
+
+# Adding Optimization Passes
+
+Optimization passes transform the IR graph to produce smaller, more efficient circuits. This guide covers when and how to add a new pass.
+
+## Overview
+
+After IR generation, the compiler runs a sequence of optimization passes. Each pass receives an `IRGraph` and returns a (possibly modified) `IRGraph`. Passes do not change the semantics of the program -- they only reduce the number of IR statements, which directly translates to fewer constraints in the final arithmetic circuit.
+
+The pass pipeline is defined in `ZinniaCompiler.run_passes_for_zk_program()` and `run_passes_for_input_preprocess()` in `zinnia/compile/zinnia_compiler.py`. Some passes are always applied, others are conditional on configuration settings.
+
+## The `AbstractIRPass` Interface
+
+All passes extend `AbstractIRPass`, defined in `zinnia/compile/optim_pass/abstract_pass.py`:
+
+```python
+from zinnia.compile.ir.ir_graph import IRGraph
+
+
+class AbstractIRPass:
+    def __init__(self):
+        pass
+
+    def exec(self, ir_graph: IRGraph) -> IRGraph:
+        ...
+```
+
+The interface is minimal: implement `exec()` to take an `IRGraph` and return an `IRGraph`. The returned graph may be the same object (modified in place) or a new one.
+
+Convention: always make a copy of the input graph before modifying it, so that the original is preserved in case the caller needs it:
+
+```python
+def exec(self, ir_graph: IRGraph) -> IRGraph:
+    ir_graph = copy.copy(ir_graph)
+    # ... modify ir_graph ...
+    return ir_graph
+```
+
+## Understanding `IRGraph`
+
+`IRGraph` is defined in `zinnia/compile/ir/ir_graph.py`. It wraps a list of `IRStatement` objects and maintains metadata about the graph structure.
+
+### Key Properties
+
+- `stmts` -- the list of `IRStatement` objects, indexed by `stmt_id`
+- `in_d` / `out_d` -- in-degree and out-degree for each node
+- `in_links` -- for each node, the list of argument pointers (which nodes it reads from)
+- `out_links` -- for each node, the list of nodes that read from it
+
+### Key Methods
+
+```python
+# Get in-degrees and out-degrees (as copies)
+in_d, out_d = ir_graph.get_io_degrees()
+
+# Get in-links and out-links (as copies)
+in_links, out_links = ir_graph.get_io_links()
+
+# Get statements in topological order
+stmts = ir_graph.get_topological_order(reverse=False)
+
+# Export the raw statement list
+stmts = ir_graph.export_stmts()
+
+# Retrieve a specific statement
+stmt = ir_graph.retrieve_stmt_with_id(idx)
+
+# Remove a single statement (re-indexes remaining statements)
+ir_graph.remove_stmt(idx)
+
+# Remove multiple statements at once
+ir_graph.remove_stmt_bunch(indices)
+```
+
+### `IRStatement` Structure
+
+Each `IRStatement` (defined in `zinnia/compile/ir/ir_stmt.py`) contains:
+
+- `stmt_id` (int) -- the node's index in the graph
+- `ir_instance` (AbstractIR) -- the IR operation (e.g., `AddIIR()`, `MulFIR()`, `AssertIR()`)
+- `arguments` (List[int]) -- pointers to input nodes (other `stmt_id` values)
+- `dbg` (Optional[DebugInfo]) -- source location info
+
+### Fixed IR Nodes
+
+Some IR nodes must not be removed by optimization passes, even if they have no consumers. These nodes return `True` from `ir_instance.is_fixed_ir()`. Examples include:
+
+- **Assertions** (`AssertIR`) -- removing an assertion would change program semantics
+- **Public outputs** (`ExposePublicIIR`, `ExposePublicFIR`) -- these define the circuit's public interface
+- **Print statements** (`PrintIR`) -- side effects must be preserved
+- **Memory operations** -- required for zkRAM consistency
+
+Always check `is_fixed_ir()` before removing a node.
+
+## Existing Passes
+
+Understanding the existing passes helps you decide whether a new pass is needed and where it should go.
+
+### Constant Folding (`ConstantFoldIRPass`)
+
+Walks the graph in topological order. For each statement, checks whether all input values have known compile-time scalars. If so, replaces references with constant IR nodes. This reduces the number of constraints by pre-computing values that are deterministic.
+
+**Implementation pattern**: Rebuilds the graph by creating a new `IRBuilderImpl`, iterating statements in topological order, and re-emitting each one. When inputs are known constants, it substitutes shared constant nodes.
+
+### Dead Code Elimination (`DeadCodeEliminationIRPass`)
+
+Starts from nodes with zero out-degree (no consumers) that are not fixed. Removes them, then propagates: if removing a node causes its inputs to become unused, those are removed too. Uses a work-queue approach.
+
+**Implementation pattern**: Iterates with a killing queue, tracking which nodes become dead as their consumers are removed.
+
+### Double Not Elimination (`DoubleNotEliminationIRPass`)
+
+Detects `NOT(NOT(x))` patterns and replaces them with `x`.
+
+### Duplicate Code Elimination (`DuplicateCodeEliminationIRPass`)
+
+Finds pairs of IR statements with identical operations and identical argument lists, then merges them by redirecting all references to one copy.
+
+### Always Satisfied Elimination (`AlwaysSatisfiedEliminationIRPass`)
+
+Removes assertion nodes whose test input is a constant `True`.
+
+### Pattern Match Optimization (`PatternMatchOptimIRPass`)
+
+Detects specific IR patterns and replaces them with more efficient equivalents. This is a peephole optimizer.
+
+### External Call Remover (`ExternalCallRemoverIRPass`)
+
+Strips external function call IR nodes from the ZK program pipeline, since external calls produce witnesses and do not generate constraints.
+
+### Memory-Related Passes
+
+- `DynamicNDArrayMemoryLoweringIRPass` -- lowers dynamic array operations to memory trace operations
+- `DynamicNDArrayMetaAssertInjectionIRPass` -- injects metadata consistency assertions
+- `MemoryTraceInjectionIRPass` -- adds memory trace sealing for the preprocessing pipeline
+
+## When to Add a New Pass
+
+Consider adding a new pass when:
+
+- You identify a recurring IR pattern that can be simplified or eliminated.
+- A new feature introduces IR that could benefit from a specific transformation.
+- Profiling shows that certain circuits have avoidable redundancy.
+- You need a domain-specific lowering step (e.g., the memory lowering passes).
+
+Before adding a pass, check whether the optimization can be achieved by extending an existing pass (particularly the pattern match optimizer).
+
+## Pass Pipeline Ordering
+
+The order in which passes run matters. The pipeline in `run_passes_for_zk_program()` is:
+
+```
+1. ExternalCallRemover        -- must run first to remove non-constraint IR
+2. DynamicNDArrayMemoryLowering    -- lowers dynamic array ops (if enabled)
+3. DynamicNDArrayMetaAssertInjection -- injects meta assertions (if enabled)
+4. PatternMatchOptim           -- peephole patterns
+5. DoubleNotElimination        -- simplify booleans
+6. ConstantFold                -- propagate constants
+7. DeadCodeElimination         -- remove unused nodes
+8. AlwaysSatisfiedElimination  -- remove trivial assertions
+9. DuplicateCodeElimination    -- merge identical nodes
+```
+
+Key ordering constraints:
+
+- **Lowering passes first**: Memory lowering introduces new IR nodes. These should be present before peephole and constant folding run, so they can be optimized.
+- **Pattern matching before constant folding**: Pattern matching may expose new constant-folding opportunities.
+- **Constant folding before DCE**: Folding may make some nodes' outputs unused.
+- **DCE before duplicate elimination**: Fewer nodes means fewer comparisons for duplicate detection.
+- **Always-satisfied elimination after constant folding**: Folding may reveal that assertion inputs are constant `True`.
+
+When adding a new pass, think about what it produces and what it enables. Place it accordingly.
+
+## Complete Walkthrough: Adding a Zero Multiplication Elimination Pass
+
+This pass detects patterns where a value is multiplied by zero and replaces the result with a constant zero. In circuit terms, `x * 0 = 0` does not need a multiplication constraint.
+
+### Step 1: Create the Pass File
+
+Create `zinnia/compile/optim_pass/zero_mul_elimination.py`:
+
+```python
+import copy
+from typing import List
+
+from zinnia.compile.ir.ir_graph import IRGraph
+from zinnia.compile.ir.ir_stmt import IRStatement
+from zinnia.compile.optim_pass.abstract_pass import AbstractIRPass
+from zinnia.ir_def.defs.ir_constant_int import ConstantIntIR
+from zinnia.ir_def.defs.ir_constant_float import ConstantFloatIR
+from zinnia.ir_def.defs.ir_mul_i import MulIIR
+from zinnia.ir_def.defs.ir_mul_f import MulFIR
+
+
+class ZeroMulEliminationIRPass(AbstractIRPass):
+    def __init__(self):
+        super().__init__()
+
+    def _is_zero_constant(self, stmt: IRStatement) -> bool:
+        """Check if a statement produces a constant zero."""
+        if isinstance(stmt.ir_instance, ConstantIntIR):
+            return stmt.ir_instance.value == 0
+        if isinstance(stmt.ir_instance, ConstantFloatIR):
+            return stmt.ir_instance.value == 0.0
+        return False
+
+    def _is_multiplication(self, stmt: IRStatement) -> bool:
+        """Check if a statement is a multiplication."""
+        return isinstance(stmt.ir_instance, (MulIIR, MulFIR))
+
+    def exec(self, ir_graph: IRGraph) -> IRGraph:
+        ir_graph = copy.copy(ir_graph)
+        stmts = ir_graph.export_stmts()
+        replacements = {}  # stmt_id -> replacement_stmt_id
+
+        # Find all zero-constant nodes
+        zero_nodes = set()
+        for stmt in stmts:
+            if self._is_zero_constant(stmt):
+                zero_nodes.add(stmt.stmt_id)
+
+        # Find multiplications where one operand is zero
+        for stmt in stmts:
+            if not self._is_multiplication(stmt):
+                continue
+            lhs_id, rhs_id = stmt.arguments[0], stmt.arguments[1]
+            if lhs_id in zero_nodes:
+                # x * 0 = 0, replace with the zero constant
+                replacements[stmt.stmt_id] = lhs_id
+            elif rhs_id in zero_nodes:
+                # 0 * x = 0, replace with the zero constant
+                replacements[stmt.stmt_id] = rhs_id
+
+        if not replacements:
+            return ir_graph
+
+        # Apply replacements: update all argument references
+        new_stmts = []
+        for stmt in stmts:
+            new_args = []
+            for arg in stmt.arguments:
+                # Follow replacement chain
+                while arg in replacements:
+                    arg = replacements[arg]
+                new_args.append(arg)
+            new_stmts.append(IRStatement(
+                stmt.stmt_id, stmt.ir_instance, new_args, stmt.dbg
+            ))
+
+        ir_graph.update_graph(new_stmts)
+        return ir_graph
+```
+
+### Step 2: Register in the Compiler
+
+In `zinnia/compile/zinnia_compiler.py`, import the pass and add it to the pipeline:
+
+```python
+from zinnia.compile.optim_pass.zero_mul_elimination import ZeroMulEliminationIRPass
+```
+
+Then add it to `run_passes_for_zk_program()`, after constant folding (which may produce zero constants) and before DCE (which will clean up the now-unused multiplication nodes):
+
+```python
+def run_passes_for_zk_program(self, ir_graph: IRGraph) -> List[IRStatement]:
+    ir_graph = ExternalCallRemoverIRPass().exec(ir_graph)
+    # ... existing passes ...
+    if self.config.optimization_config().constant_fold():
+        ir_graph = ConstantFoldIRPass().exec(ir_graph)
+    # Add zero multiplication elimination after constant folding
+    ir_graph = ZeroMulEliminationIRPass().exec(ir_graph)
+    if self.config.optimization_config().dead_code_elimination():
+        ir_graph = DeadCodeEliminationIRPass().exec(ir_graph)
+    # ... remaining passes ...
+    return ir_graph.export_stmts()
+```
+
+### Step 3: Make It Configurable (Optional)
+
+If the pass should be controlled by configuration, add a flag to `OptimizationConfig`:
+
+```python
+# In zinnia/config/optimization_config.py
+def zero_mul_elimination(self) -> bool:
+    return self._zero_mul_elimination
+```
+
+Then guard the pass in the compiler:
+
+```python
+if self.config.optimization_config().zero_mul_elimination():
+    ir_graph = ZeroMulEliminationIRPass().exec(ir_graph)
+```
+
+### Step 4: Write Tests
+
+Test optimization passes by compiling a circuit and inspecting the resulting IR, or by verifying that the optimized circuit produces correct results with fewer statements:
+
+```python
+import zinnia
+from zinnia import ZKCircuit, zk_circuit, Integer, Private, MockProgramExecutor
+
+
+def test_zero_mul_elimination():
+    @zk_circuit
+    def circuit(x: Private[Integer]):
+        return x * 0
+
+    zk = ZKCircuit(circuit)
+    compiled = zk.compile()
+    executor = MockProgramExecutor(compiled)
+    result = executor.execute({"x": 42})
+    assert result.output == 0
+```
+
+## Common Pass Implementation Patterns
+
+### Topological Traversal with Rebuilding
+
+Used by constant folding. Create a new `IRBuilderImpl`, walk the graph in topological order, and re-emit each statement. This naturally handles value propagation:
+
+```python
+def exec(self, ir_graph: IRGraph) -> IRGraph:
+    ir_graph = copy.copy(ir_graph)
+    ir_builder = IRBuilderImpl()
+    topological_order = ir_graph.get_topological_order(False)
+    in_links, out_links = ir_graph.get_io_links()
+    value_lookup = {}
+
+    for stmt in topological_order:
+        args = [value_lookup[ptr] for ptr in in_links[stmt.stmt_id]]
+        # Transform or re-emit
+        new_val = ir_builder.create_ir(stmt.ir_instance, args, None)
+        value_lookup[stmt.stmt_id] = new_val
+
+    return ir_builder.export_ir_graph()
+```
+
+### Degree-Based Elimination
+
+Used by dead code elimination. Start from nodes with specific degree properties and propagate:
+
+```python
+def exec(self, ir_graph: IRGraph) -> IRGraph:
+    ir_graph = copy.copy(ir_graph)
+    stmts = ir_graph.export_stmts()
+    in_d, out_d = ir_graph.get_io_degrees()
+    to_remove = []
+
+    for i, stmt in enumerate(stmts):
+        if out_d[i] == 0 and not stmt.ir_instance.is_fixed_ir():
+            to_remove.append(i)
+
+    ir_graph.remove_stmt_bunch(to_remove)
+    return ir_graph
+```
+
+### Pattern Matching and Replacement
+
+Used by double-not elimination and the pattern match optimizer. Scan for specific IR type sequences and rewrite references:
+
+```python
+def exec(self, ir_graph: IRGraph) -> IRGraph:
+    ir_graph = copy.copy(ir_graph)
+    stmts = ir_graph.export_stmts()
+    replacements = {}
+
+    for stmt in stmts:
+        if isinstance(stmt.ir_instance, LogicalNotIR):
+            inner_id = stmt.arguments[0]
+            inner = stmts[inner_id]
+            if isinstance(inner.ir_instance, LogicalNotIR):
+                # NOT(NOT(x)) -> x
+                replacements[stmt.stmt_id] = inner.arguments[0]
+
+    # Apply replacements to all argument references
+    ...
+```
+
+## Debugging Passes
+
+When developing a pass, it is helpful to inspect the IR graph before and after. You can print statement information:
+
+```python
+for stmt in ir_graph.export_stmts():
+    print(f"[{stmt.stmt_id}] {stmt.ir_instance.get_signature()} args={stmt.arguments}")
+```
+
+You can also use the mock executor to verify that the optimized circuit produces the same results as the unoptimized version.
+
+## Checklist for Adding a New Pass
+
+- [ ] Create pass file in `compile/optim_pass/`
+- [ ] Extend `AbstractIRPass`
+- [ ] Implement `exec(ir_graph) -> IRGraph`
+- [ ] Always `copy.copy(ir_graph)` before modifying
+- [ ] Respect `is_fixed_ir()` -- never remove fixed nodes
+- [ ] Import and add to the pipeline in `zinnia_compiler.py`
+- [ ] Place the pass at the correct position in the pipeline order
+- [ ] Optionally make it configurable via `OptimizationConfig`
+- [ ] Write tests that verify correctness and the optimization effect
+- [ ] Run the full test suite to check for regressions

@@ -11,10 +11,11 @@ class ZKChip:
         self.name = name
         self.source = source
         try:
-            ast_tree = ZinniaCompiler.chip_ast_parse(source, name)
+            ast_dict, return_dt = ZinniaCompiler.chip_ast_parse(source, name)
         except InternalZinniaException as e:
             raise prettify_exception(e)
-        self.ast_tree = ast_tree
+        self.ast_tree = ast_dict
+        self.return_dt = return_dt
 
     @staticmethod
     def from_source(name: str, source: str) -> 'ZKChip':
@@ -36,7 +37,7 @@ class ZKChip:
         raise ZinniaException('ZK Chip is not callable outside of a circuit.')
 
     def to_internal_object(self) -> InternalChipObject:
-        return InternalChipObject(self.name, self.ast_tree, self.ast_tree.return_dt)
+        return InternalChipObject(self.name, self.ast_tree, self.return_dt)
 
     def get_name(self) -> str:
         return self.name

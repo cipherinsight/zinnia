@@ -1,0 +1,210 @@
+---
+title: Memory Model
+description: How Zinnia handles arrays and memory in arithmetic circuits, using two strategies -- multiplexer-based access for small arrays and zkRAM for large or dynamic arrays.
+---
+
+# Memory Model
+
+Arithmetic circuits have no native concept of random-access memory. Every wire in a circuit is fixed at compile time, so reading from or writing to an array at a data-dependent index requires special handling. Zinnia provides two strategies, selected automatically based on array size and usage patterns.
+
+## The Challenge
+
+Consider a simple array access:
+
+```python
+value = arr[i]
+```
+
+If `i` is a compile-time constant, the compiler can directly connect the wire for `arr[i]` to `value`. But if `i` depends on runtime inputs, the compiler does not know which element will be accessed. It must produce a circuit that can return any element, with the correct one selected at proving time.
+
+Two approaches are available, each with different performance characteristics.
+
+## Strategy 1: Index-Oblivious Multiplexers
+
+For small, statically-sized arrays (typically fewer than ~100 elements), the compiler uses a multiplexer tree.
+
+### How It Works
+
+Given an array `arr` of `n` elements and a runtime index `i`, the compiler emits a chain of `SelectIR` operations that checks each possible index:
+
+```
+result = select(i == 0, arr[0],
+         select(i == 1, arr[1],
+         select(i == 2, arr[2],
+         ...
+         select(i == n-2, arr[n-2], arr[n-1])...)))
+```
+
+This is equivalent to a multiplexer (mux): a circuit that takes `n` data inputs and a selector, and outputs the selected input.
+
+### Cost
+
+- **Per access:** O(n) constraints, where `n` is the array length. Each access requires `n - 1` comparisons and `n - 1` select operations.
+- **Total for `m` accesses:** O(n * m) constraints.
+
+### When It Is Used
+
+The multiplexer strategy is used when:
+
+- The array is a static `NDArray` with a small number of elements.
+- The array is a `DynamicNDArray` with a small maximum size.
+- The compiler determines (via `resolve-max`) that the effective size is small.
+
+The threshold (approximately 100 elements) is a heuristic that balances the per-access cost of multiplexers against the fixed overhead of zkRAM.
+
+### Advantages
+
+- No fixed overhead -- cost is purely proportional to array size and access count.
+- Simple implementation -- no sorting network or memory trace required.
+- No timestamp tracking or consistency arguments.
+
+### Limitations
+
+- Cost grows linearly with array size per access. For large arrays, this becomes prohibitively expensive.
+- Every access touches every element (the circuit evaluates all comparisons), so there is no "short-circuit" for constant indices within the mux tree.
+
+## Strategy 2: zkRAM (Memory Trace Model)
+
+For large or dynamic arrays, the compiler uses a memory-trace model inspired by the RAM-to-circuit reductions in the SNARK literature.
+
+### Concept
+
+Instead of selecting from all elements on every access, the zkRAM model records a **trace** of all memory operations (reads and writes) and then proves that the trace is **consistent** -- that every read returns the value most recently written to that address.
+
+### Memory Trace
+
+A memory trace is a sequence of entries, each recording:
+
+| Field | Description |
+|---|---|
+| `op` | Operation type: read or write |
+| `address` | Memory address being accessed |
+| `value` | Value read or written |
+| `timestamp` | Monotonically increasing counter |
+
+During circuit execution, every `ReadMemoryIR` and `WriteMemoryIR` emits a trace entry via `MemoryTraceEmitIR`. At the end of the circuit, `MemoryTraceSealIR` finalizes the trace.
+
+### Consistency Argument
+
+The consistency argument proves that the trace is valid without revealing which addresses were accessed. It works in two steps:
+
+**Step 1: Sort by (address, timestamp).** The trace is reordered so that all accesses to the same address are grouped together, in chronological order. The sort is verified using a permutation argument (the sorted trace is a permutation of the original trace).
+
+**Step 2: Adjacency check.** For each pair of consecutive entries in the sorted trace:
+- If they access the same address, the read value must equal the most recently written value.
+- If they access different addresses, no constraint is needed (the transition is to a new address).
+
+Formally, for consecutive sorted entries `(op_i, addr_i, val_i, t_i)` and `(op_{i+1}, addr_{i+1}, val_{i+1}, t_{i+1})`:
+- If `addr_i == addr_{i+1}` and `op_{i+1} == read`, then `val_{i+1} == val_i`.
+- If `addr_i == addr_{i+1}` and `op_{i+1} == write`, no value constraint (the write overwrites).
+- If `addr_i != addr_{i+1}`, the entries are for different memory locations and are independent.
+
+### Cost
+
+- **Per access:** O(log N) constraints, where N is the total number of memory operations. The log factor comes from the permutation argument (typically implemented via a grand product or lookup argument).
+- **Fixed overhead:** The sorting network and adjacency check circuit. This is proportional to the total trace length.
+- **Total:** O(M log M) for M total memory operations.
+
+### When It Is Used
+
+The zkRAM strategy is used when:
+
+- The array is a `DynamicNDArray` with a large maximum size.
+- The array is accessed many times with data-dependent indices.
+- The multiplexer cost (O(n) per access) would exceed the zkRAM cost (O(log N) per access plus fixed overhead).
+
+### Advantages
+
+- Per-access cost is logarithmic in the trace size, not linear in the array size.
+- Scales to arrays with thousands or millions of elements.
+- Supports dynamic allocation (new arrays can be allocated at runtime within the circuit).
+
+### Limitations
+
+- Fixed overhead for the sorting and consistency-check circuits, which is wasteful for small arrays.
+- More complex backend implementation.
+- The permutation argument adds non-trivial constraints.
+
+## IR Primitives for Memory
+
+The memory model is reflected in five IR operations:
+
+### AllocateMemoryIR
+
+Allocates a contiguous region of memory. Takes the size as an argument and returns a base address.
+
+```
+s10: AllocateMemoryIR()   args=[s9]    # allocate s9 cells, return base address
+```
+
+### ReadMemoryIR
+
+Reads a value from a memory address. Takes the base address and offset as arguments.
+
+```
+s15: ReadMemoryIR()        args=[s10, s12]   # read from base s10 at offset s12
+```
+
+### WriteMemoryIR
+
+Writes a value to a memory address. Takes the base address, offset, and value as arguments.
+
+```
+s20: WriteMemoryIR()       args=[s10, s12, s18]   # write s18 to base s10 at offset s12
+```
+
+### MemoryTraceEmitIR
+
+Emits a memory trace entry. Generated by the `MemoryTraceInjectionIRPass` after each read or write.
+
+```
+s16: MemoryTraceEmitIR()   args=[s15, ...]   # emit trace entry for the read at s15
+```
+
+### MemoryTraceSealIR
+
+Finalizes the memory trace for a memory region. Generated at the end of the circuit for each zkRAM region.
+
+```
+s99: MemoryTraceSealIR()   args=[s10]   # seal trace for memory region at base s10
+```
+
+## Compilation Pipeline for Memory
+
+Memory operations are processed across multiple compilation stages:
+
+1. **IR Generation.** The `IRGenerator` produces high-level array access operations. At this stage, the memory strategy has not been decided.
+
+2. **DynamicNDArrayMetaAssertInjectionIRPass (Pass 2).** Injects bounds assertions for dynamic arrays, ensuring runtime lengths are within declared maximums.
+
+3. **DynamicNDArrayMemoryLoweringIRPass (Pass 3).** Decides the memory strategy for each array and lowers high-level array operations to `AllocateMemoryIR`, `ReadMemoryIR`, and `WriteMemoryIR`. Small arrays may be lowered to multiplexer chains instead.
+
+4. **MemoryTraceInjectionIRPass (Pass 4).** For zkRAM arrays, injects `MemoryTraceEmitIR` after each read/write and `MemoryTraceSealIR` at the end.
+
+5. **Optimization (Passes 5-10).** Standard optimizations (constant folding, dead code elimination, etc.) can simplify memory operations. For example, a read from a known constant address in a known array may be folded to a direct value.
+
+6. **Backend.** The backend translates memory IR to the target proving system's constraint representation, including the sorting network and adjacency checks for the consistency argument.
+
+## Example: Dynamic Array Sum
+
+Consider:
+
+```python
+def circuit(arr: DynamicNDArray[int, 100, 1], n: int) -> int:
+    total = 0
+    for i in range(n):
+        total += arr[i]
+    return total
+```
+
+The array `arr` has up to 100 elements. Because 100 exceeds the multiplexer threshold, the compiler uses zkRAM:
+
+1. `AllocateMemoryIR(100)` allocates memory for the array.
+2. The input values are written to memory via `WriteMemoryIR`.
+3. The loop is unrolled up to 100 times (the maximum of `n`).
+4. Each iteration issues `ReadMemoryIR` for `arr[i]`, guarded by `i < n`.
+5. Memory trace entries are emitted for each read and write.
+6. `MemoryTraceSealIR` finalizes the trace.
+7. The backend generates the sorting network and adjacency checks.
+
+The total circuit cost is dominated by the memory trace (up to 200 entries: 100 writes + up to 100 reads) and the sorting/consistency argument over that trace.

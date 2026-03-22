@@ -1,0 +1,217 @@
+---
+title: Bounded-Dynamic Arrays
+description: Detailed documentation of Zinnia's bounded-dynamic arrays, including compile-time envelopes, runtime metadata, zkRAM lowering, type inference, and soundness guarantees.
+---
+
+# Bounded-Dynamic Arrays
+
+Static arrays require shapes known at compile time. When array dimensions depend on private
+inputs -- for example, the number of rows that pass a filter -- the compiler cannot
+determine the shape statically. Bounded-dynamic arrays solve this by separating a
+compile-time *envelope* (an upper bound on size) from *runtime metadata* (the actual logical
+view).
+
+## The Compile-Time Envelope
+
+Every bounded-dynamic array is parameterized by three compile-time constants:
+
+| Parameter | Meaning |
+|-----------|---------|
+| `t` | Element type (e.g., `Float`, `Integer`) |
+| `L` | Total-element bound: the maximum number of elements the array can ever hold |
+| `R` | Rank bound: the maximum number of dimensions |
+
+These parameters determine the circuit size. The underlying data buffer always has capacity
+for `L` elements, regardless of how many are logically active at runtime. This ensures the
+circuit is a fixed size.
+
+```python
+# A dynamic array of Floats with at most 500 elements and at most rank 3
+data: DynamicNDArray[Float, 500, 3]
+```
+
+## Runtime Metadata
+
+At proof time, a bounded-dynamic array carries metadata that describes the active view
+within the envelope:
+
+| Field | Symbol | Constraint |
+|-------|--------|------------|
+| Logical length | `l` | `l <= L` |
+| Rank | `r` | `r <= R` |
+| Shape vector | `s` | `s[0] * s[1] * ... * s[r-1] <= L` |
+| Stride vector | `p` | Derived from shape (or set by transpose/slice) |
+| Offset | `o` | Starting position in the data buffer |
+
+The shape vector has `R` slots, but only the first `r` entries are meaningful. The remaining
+slots are constrained to 1. Similarly, the stride vector has `R` slots with only `r`
+active entries.
+
+### Metadata Invariants
+
+The compiler enforces the following invariants as circuit constraints:
+
+1. **Length bound.** `l <= L` -- the logical element count never exceeds the envelope.
+2. **Rank bound.** `r <= R` -- the number of dimensions never exceeds the rank bound.
+3. **Shape consistency.** The product of all shape entries equals `l`.
+4. **Stride consistency.** For a contiguous array, `p[i] = s[i+1] * s[i+2] * ... * s[r-1]`
+   and `p[r-1] = 1`.
+5. **Offset bound.** `o + l <= L` -- the active view fits within the allocated buffer.
+
+These invariants are enforced via range proofs and arithmetic constraints in the circuit.
+A malicious prover cannot claim metadata that falls outside the envelope.
+
+## Type Notation
+
+Zinnia uses subscript notation to distinguish static and dynamic array types:
+
+- **Static:** `<t, d1, d2, ..., dk>_s` -- element type `t` with fixed dimensions
+  `d1 x d2 x ... x dk`. Example: `<Float, 3, 4>_s` is a 3x4 matrix of floats.
+
+- **Dynamic:** `<t, L, R>_d` -- element type `t` with total-element bound `L` and rank
+  bound `R`. Example: `<Float, 500, 3>_d` is a dynamic array holding up to 500 floats in
+  up to 3 dimensions.
+
+In Python syntax, these correspond to:
+
+```python
+# Static
+A: NDArray[Float, 3, 4]
+
+# Dynamic
+B: DynamicNDArray[Float, 500, 3]
+```
+
+## When the Compiler Falls Back to Dynamic
+
+The compiler begins with static types and promotes to dynamic only when necessary. Promotion
+occurs in these situations:
+
+1. **Data-dependent shapes.** When an operation produces an array whose shape depends on a
+   private input. The canonical example is `filter`:
+
+   ```python
+   # result shape depends on how many elements satisfy the predicate
+   # compiler cannot determine this statically
+   result = data[data > threshold]
+   ```
+
+2. **Merging branches with different shapes.** When an `if`/`else` produces arrays of
+   different static shapes, the join requires a dynamic type that encompasses both:
+
+   ```python
+   if condition:
+       arr = np.zeros((3, 4))   # shape (3, 4)
+   else:
+       arr = np.zeros((5, 2))   # shape (5, 2)
+   # arr must be dynamic after the join: <Float, 20, 2>_d
+   ```
+
+3. **Loop-carried arrays.** When a loop modifies an array's shape on each iteration, the
+   loop-carried variable must be dynamic with bounds derived from the loop bound.
+
+The compiler computes the envelope parameters `L` and `R` automatically using its
+SMT-based bound analysis. You can also specify them explicitly via type annotations.
+
+## Lowering to zkRAM
+
+All array storage in Zinnia is backed by zkRAM, an abstraction over random-access memory
+that can be verified within the circuit. The three primitives are:
+
+- **`alloc(n)`** -- allocate a contiguous region of `n` field elements.
+- **`read(addr)`** -- return the value at address `addr`.
+- **`write(addr, val)`** -- set the value at address `addr` to `val`.
+
+A bounded-dynamic array with envelope `<t, L, R>` allocates `L` field elements for the
+data buffer plus `2R + 2` elements for the metadata (shape, stride, length, offset).
+
+### Element Access
+
+Accessing element `(i0, i1, ..., i_{r-1})` of a dynamic array computes the linear address:
+
+```
+addr = o + i0 * p[0] + i1 * p[1] + ... + i_{r-1} * p[r-1]
+```
+
+The compiler emits a `read(addr)` operation and constrains each index `i_k` to satisfy
+`0 <= i_k < s[k]` via range proofs.
+
+### Bounded Loops and Guarded Updates
+
+Operations that iterate over the data buffer (filter, reduce, etc.) use bounded loops that
+always execute `L` iterations. On each iteration, a guard determines whether the current
+index is within the logical length:
+
+```
+for j in range(L):
+    active = (j < l)
+    value = merge(active, data[j], identity)
+    accumulator = merge(active, f(accumulator, value), accumulator)
+```
+
+The `merge` operation selects between two values based on a boolean condition without
+revealing which was selected. This ensures the circuit topology is independent of the
+runtime data.
+
+## Soundness Guarantees
+
+The bounded-dynamic array design provides the following soundness properties:
+
+1. **Fixed circuit size.** The circuit size depends only on the envelope parameters `(t, L, R)`,
+   never on runtime metadata. A verifier can check the proof without knowing the actual
+   array dimensions.
+
+2. **Metadata integrity.** All metadata fields are constrained within their envelopes by
+   range proofs. A prover cannot claim a length greater than `L` or a rank greater than `R`.
+
+3. **No out-of-bounds access.** Every `read` and `write` is accompanied by constraints that
+   the computed address falls within the allocated region.
+
+4. **Deterministic padding.** Elements beyond the logical length are set to a canonical
+   value (zero for numeric types). This prevents information leakage through padding bytes.
+
+## Practical Usage Patterns
+
+### Creating Dynamic Arrays
+
+```python
+# From a literal with explicit type
+data: DynamicNDArray[Float, 100, 1] = np.array([1.0, 2.0, 3.0])
+
+# From a computation that produces variable-length output
+filtered = data[data > 0.0]  # type: DynamicNDArray[Float, 100, 1]
+```
+
+### Reshaping
+
+```python
+# Reshape is metadata-only when the new shape has the same element count
+matrix = data.reshape((10, 10))  # type: DynamicNDArray[Float, 100, 2]
+```
+
+### Iterating Over Dynamic Arrays
+
+```python
+# Reduction over a dynamic array
+total = np.sum(data)  # iterates L times internally, O(L) cost
+```
+
+### Combining Static and Dynamic
+
+```python
+# Static arrays promote to dynamic when combined with dynamic arrays
+static_arr: NDArray[Float, 3] = np.array([1.0, 2.0, 3.0])
+combined = np.concatenate([dynamic_arr, static_arr])
+# combined is dynamic, with L = L_dynamic + 3
+```
+
+## Performance Considerations
+
+- Prefer static arrays whenever possible. They allow the compiler to unroll operations and
+  produce smaller circuits.
+- Choose the tightest envelope you can. An array with `L = 1000` produces a circuit ten
+  times larger than one with `L = 100` for data-touching operations.
+- Metadata-only operations (index, slice, transpose) are effectively free -- they only
+  rewrite a few metadata constraints.
+- Data-touching operations always cost O(L) regardless of the actual logical length, because
+  the circuit must iterate over the full envelope to maintain shape-independence.

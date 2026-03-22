@@ -1,0 +1,166 @@
+---
+title: Core Concepts
+description: Essential background on zero-knowledge proofs, arithmetic circuits, and how Zinnia bridges expressive programs with static circuit constraints.
+---
+
+# Core Concepts
+
+This page covers the foundational concepts needed to understand what Zinnia does and why it is designed the way it is.
+
+## Zero-Knowledge Proofs
+
+A **zero-knowledge proof** (ZKP) is a cryptographic protocol that allows one party (the **prover**) to convince another party (the **verifier**) that a statement is true, without revealing any information beyond the truth of the statement itself.
+
+For example, a prover might demonstrate that they know a valid solution to a problem without revealing what that solution is. The verifier becomes convinced of the solution's existence and correctness, but learns nothing about the solution itself.
+
+Zero-knowledge proofs have three defining properties:
+
+- **Completeness.** If the statement is true and both parties follow the protocol, the verifier will be convinced.
+- **Soundness.** If the statement is false, no cheating prover can convince the verifier (except with negligible probability).
+- **Zero-knowledge.** If the statement is true, the verifier learns nothing beyond the fact that it is true.
+
+## zk-SNARKs
+
+**zk-SNARKs** (Zero-Knowledge Succinct Non-Interactive Arguments of Knowledge) are a specific family of zero-knowledge proofs with several desirable properties:
+
+- **Succinct.** Proofs are very small (typically a few hundred bytes) regardless of the complexity of the computation being proved.
+- **Non-interactive.** The prover generates a single proof message; no back-and-forth communication with the verifier is needed.
+- **Fast verification.** Verifying a proof takes milliseconds, even for computations that originally took minutes or hours to execute.
+
+These properties make zk-SNARKs practical for real-world applications: a prover can perform an expensive computation, produce a compact proof, and any number of verifiers can cheaply confirm correctness. Applications include private transactions, verifiable computation outsourcing, and -- the focus of Zinnia -- verifiable data analytics.
+
+## Arithmetic Circuits
+
+At the core of most zk-SNARK systems lies the **arithmetic circuit**. An arithmetic circuit is a directed acyclic graph (DAG) of gates that operate over elements of a finite field F_p (integers modulo a large prime p). Each gate performs either:
+
+- **Addition:** output = left_input + right_input (mod p)
+- **Multiplication:** output = left_input * right_input (mod p)
+
+The circuit's **wires** carry field elements between gates. Some wires are designated as **public inputs** (known to both prover and verifier), some as **private inputs** (known only to the prover), and some as internal wires computed from the inputs.
+
+A valid **witness** for a circuit is an assignment of values to all wires such that every gate's output equals the correct function of its inputs. The prover's job is to demonstrate knowledge of such a witness.
+
+### The Static Circuit Requirement
+
+The fundamental constraint of arithmetic circuits is that they are **static**: the circuit's topology -- its gates and how they are wired together -- must be completely determined at compile time, before any input values are known. The circuit is a fixed graph; only the values on its wires change from one execution to another.
+
+This means:
+
+- The number of gates is fixed.
+- Which gates connect to which is fixed.
+- There is no concept of "skipping" a gate or "conditionally" executing part of the circuit.
+
+Every gate in the circuit is always evaluated, for every proof. There is no branching at the circuit level.
+
+### Why This Is Challenging
+
+Most programs, especially data-analytic ones, are inherently dynamic:
+
+- **Conditional branches** execute different code depending on input values.
+- **Loops** may iterate a different number of times depending on data.
+- **Array accesses** use indices computed from data.
+- **Variable reassignment** changes what a name refers to depending on which branch was taken.
+
+None of these patterns have a direct representation in a static circuit. Bridging this gap -- allowing developers to write natural, dynamic-looking programs while producing valid static circuits -- is Zinnia's central challenge.
+
+## How Zinnia Bridges the Gap
+
+Zinnia's compiler uses **SMT-backed symbolic execution** to resolve the mismatch between expressive programs and static circuits.
+
+### Symbolic Execution
+
+Rather than executing the program with concrete values, the compiler executes it **symbolically**: variables hold symbolic expressions (like "input_0 + input_1") instead of concrete numbers. The compiler explores all possible execution paths through the program, building up a set of arithmetic constraints for each path.
+
+### SMT Solving
+
+At branch points where the path depends on input values, the compiler consults an **SMT solver** (specifically, Z3) to determine which paths are feasible and how to merge constraints from different paths. The SMT solver can also identify constraints that are always satisfied regardless of input values, enabling the compiler to eliminate them from the circuit entirely.
+
+### Static Circuit Construction
+
+The end result is a single static circuit that correctly handles all possible inputs within the program's declared bounds. Conditional branches are compiled using a **multiplexer** pattern: both branches are evaluated, and a selector wire chooses which result to use. Loops are unrolled to their maximum iteration count. Dynamic array operations are compiled with bounds-aware indexing logic.
+
+## Zinnia Concepts
+
+### Circuits (ZKCircuit)
+
+A **circuit** is the top-level unit of compilation in Zinnia. It corresponds to a single Python function decorated with `@zk_circuit` or wrapped with `ZKCircuit.from_method()`. Each circuit compiles to one arithmetic circuit that can be used to generate and verify proofs.
+
+```python
+from zinnia import zk_circuit
+
+@zk_circuit
+def my_circuit(x: int, y: int):
+    assert x + y == 42
+```
+
+### Chips (ZKChip)
+
+A **chip** is a reusable sub-circuit. Chips encapsulate a piece of circuit logic that can be called from within one or more circuits, similar to a function call. They are defined with the `@zk_chip` decorator or `ZKChip.from_method()`:
+
+```python
+from zinnia import zk_chip, zk_circuit
+
+@zk_chip
+def double(x: int) -> int:
+    return x * 2
+
+@zk_circuit
+def my_circuit(x: int, result: int):
+    assert double(x) == result
+```
+
+When a circuit calls a chip, the chip's constraints are inlined into the circuit at the call site.
+
+### Public vs. Private Inputs
+
+Circuit inputs are classified as either:
+
+- **Public:** Visible to both the prover and the verifier. These are the statement being proved.
+- **Private:** Known only to the prover. These are the witness -- the secret knowledge that makes the statement true.
+
+Zinnia uses the `Public` and `Private` type wrappers:
+
+```python
+from zinnia import Public, Private, Integer
+
+def my_circuit(secret: Private[Integer], commitment: Public[Integer]):
+    ...
+```
+
+### Compilation
+
+Compilation transforms a Zinnia function into a `ZKCompiledProgram` -- a representation of the arithmetic circuit in the target backend's format. The compilation pipeline proceeds through several stages:
+
+1. **Python AST parsing** using the standard `ast` module.
+2. **AST transformation** into Zinnia's internal AST, with flow-sensitive type analysis.
+3. **IR generation** via symbolic execution with SMT solving, producing a flat list of arithmetic constraints.
+4. **Optimization passes** including constant folding, dead code elimination, duplicate code elimination, always-satisfied constraint elimination, and dynamic array memory lowering.
+5. **Backend code generation** targeting Halo2, Circom, Noir, or CirC/Zokrates.
+
+### Mock Execution
+
+**Mock execution** evaluates a compiled circuit with concrete input values on the CPU, checking that all constraints are satisfied. This is the primary way to test circuits during development. Mock execution does not generate a cryptographic proof -- it verifies logical correctness.
+
+```python
+circuit = ZKCircuit.from_method(my_function)
+circuit.compile()
+result = circuit.mock(arg1, arg2, ...)
+```
+
+## zkRAM
+
+**zkRAM** (zero-knowledge Random Access Memory) is a circuit-level memory abstraction that enables efficient random-access reads and writes within a zero-knowledge circuit.
+
+In a standard arithmetic circuit, there is no concept of "memory" -- only fixed wires between gates. Accessing an array element at a data-dependent index cannot be expressed as a simple wire connection, because the index is not known at circuit-compile time.
+
+zkRAM solves this by maintaining a **memory trace**: a log of all read and write events that occur during the computation. Each event records an address, a value, and a timestamp. The circuit enforces consistency of this trace -- every read must return the value most recently written to that address -- using a sorting-based argument that costs O(N log N) constraints for N memory operations.
+
+Zinnia uses zkRAM internally when compiling `DynamicNDArray` operations that involve data-dependent indexing. The compiler's `DynamicNDArrayMemoryLoweringIRPass` and `MemoryTraceInjectionIRPass` optimization passes handle the lowering of high-level array operations to zkRAM primitives. From the developer's perspective, this is transparent -- you write natural array code, and the compiler handles the memory-trace machinery.
+
+## Next Steps
+
+With these concepts in hand, you are ready to explore:
+
+- The [Language Reference](/docs/language) for Zinnia's complete type system and supported operations.
+- The [Programming Guide](/docs/programming-guide) for practical patterns and techniques.
+- The [Compiler Internals](/docs/compiler-internals) for a deeper look at how Zinnia's compilation pipeline works.

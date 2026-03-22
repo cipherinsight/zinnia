@@ -1,0 +1,318 @@
+---
+title: Array Operations
+description: Comprehensive reference for all array operations in Zinnia, including circuit costs, zkRAM lowering, broadcasting semantics, and code examples.
+---
+
+# Array Operations
+
+Zinnia provides a NumPy-compatible set of array operations that compile to arithmetic
+circuits. Every operation falls into one of two categories based on its circuit cost:
+**metadata-only** operations that rewrite offset, shape, and stride vectors without
+touching the data buffer, and **data-touching** operations that read or write elements.
+
+All operations ultimately lower to three zkRAM primitives:
+
+| Primitive | Description |
+|-----------|-------------|
+| `alloc(n)` | Allocate a contiguous region of `n` field elements |
+| `read(addr)` | Return the field element at address `addr` |
+| `write(addr, val)` | Store `val` at address `addr` |
+
+## Metadata-Only Operations (O(1))
+
+These operations produce a new array view by rewriting the metadata (offset, shape, stride)
+of an existing array. They do not read or write any data elements, so their circuit cost
+is constant regardless of array size.
+
+### Indexing
+
+Selecting a single element or sub-array along one axis adjusts the offset and reduces the
+rank by one.
+
+```python
+A: NDArray[Float, 4, 5] = ...
+
+# Select row 2 -- produces a rank-1 view of shape (5,)
+row = A[2]
+
+# Select element (2, 3) -- produces a scalar
+val = A[2, 3]
+```
+
+**Lowering.** For `A[i]`, the compiler computes `offset_new = offset + i * stride[0]` and
+drops the first entries of the shape and stride vectors. No `read` is emitted until the
+scalar is actually used in an expression.
+
+**Constraints.** A range proof ensures `0 <= i < shape[0]`.
+
+### Slicing
+
+Slicing selects a contiguous sub-range along one or more axes. It adjusts the offset, shape,
+and stride without copying data.
+
+```python
+A: NDArray[Float, 10, 10] = ...
+
+# Slice rows 2 through 6 -- shape becomes (4, 10)
+sub = A[2:6]
+
+# Slice with step -- shape becomes (3, 10), stride doubles along axis 0
+strided = A[0:6:2]
+
+# Multi-axis slice
+block = A[1:5, 3:8]  # shape (4, 5)
+```
+
+**Lowering.** For `A[start:stop:step]` along axis `k`:
+- `offset_new = offset + start * stride[k]`
+- `shape_new[k] = ceil((stop - start) / step)`
+- `stride_new[k] = stride[k] * step`
+
+**Constraints.** Range proofs ensure `0 <= start`, `stop <= shape[k]`, and `step >= 1`.
+
+### Transpose and Permutation
+
+Transposing reorders the axes of an array by permuting the shape and stride vectors.
+
+```python
+A: NDArray[Float, 3, 4] = ...
+
+# Transpose -- shape becomes (4, 3)
+B = A.T
+
+# Explicit axis permutation for higher-rank arrays
+C: NDArray[Float, 2, 3, 4] = ...
+D = np.transpose(C, axes=(2, 0, 1))  # shape (4, 2, 3)
+```
+
+**Lowering.** The permutation `axes = (a0, a1, ..., a_{r-1})` produces:
+- `shape_new[i] = shape[axes[i]]`
+- `stride_new[i] = stride[axes[i]]`
+
+No data movement occurs.
+
+### Reshape
+
+Reshape changes the shape vector while keeping the total element count constant.
+
+```python
+A: NDArray[Float, 12] = ...
+
+# Reshape to 3x4 matrix
+B = A.reshape((3, 4))
+
+# Reshape to 2x2x3 tensor
+C = A.reshape((2, 2, 3))
+```
+
+**Lowering.** For contiguous arrays, reshape is metadata-only: the shape vector is
+replaced and strides are recomputed from the new shape. If the array is non-contiguous
+(e.g., after a strided slice), the compiler inserts a data copy first to restore
+contiguity, making it an O(L) operation.
+
+**Constraints.** The product of the new shape must equal the product of the old shape.
+
+## Data-Touching Operations
+
+These operations read from or write to the data buffer and therefore have circuit cost
+proportional to the array size.
+
+### Filter
+
+Filter selects elements satisfying a boolean predicate. The output length depends on the
+data, so the result is always a bounded-dynamic array.
+
+```python
+data: NDArray[Float, 100] = ...
+
+# Filter elements greater than zero
+positives = data[data > 0.0]
+# type: DynamicNDArray[Float, 100, 1]
+```
+
+**Circuit cost.** O(L), where L is the envelope size of the input array. The circuit
+iterates over all L positions, evaluates the predicate, and conditionally writes matching
+elements to the output buffer using guarded writes.
+
+**Lowering.** The filter compiles to a bounded loop:
+
+```
+output = alloc(L)
+write_idx = 0
+for j in range(L):
+    active = (j < l) AND predicate(data[j])
+    output[write_idx] = merge(active, data[j], output[write_idx])
+    write_idx = merge(active, write_idx + 1, write_idx)
+output_length = write_idx
+```
+
+Every iteration executes regardless of the predicate result. The `merge` gates select
+whether the write is real or a no-op.
+
+### Reduce
+
+Reductions fold an array along one or more axes using an associative operator (sum,
+product, min, max, mean).
+
+```python
+A: NDArray[Float, 4, 5] = ...
+
+# Sum all elements -- scalar output
+total = np.sum(A)
+
+# Sum along axis 0 -- shape (5,)
+col_sums = np.sum(A, axis=0)
+
+# Mean along axis 1 -- shape (4,)
+row_means = np.mean(A, axis=1)
+```
+
+**Circuit cost.** O(L * T\_ram), where L is the number of elements being reduced and
+T\_ram is the cost of a single zkRAM read. For a dynamic array, the loop always runs for
+the full envelope size L.
+
+**Lowering.** A sum reduction along axis `k` compiles to:
+
+```
+for each index combination along non-reduced axes:
+    acc = identity  # 0 for sum, 1 for product
+    for j in range(shape[k]):
+        active = (j < logical_shape[k])
+        val = read(compute_addr(indices, j, k))
+        acc = merge(active, acc + val, acc)
+    write(output_addr, acc)
+```
+
+**Supported reductions:** `np.sum`, `np.prod`, `np.min`, `np.max`, `np.mean`,
+`np.var`, `np.std`.
+
+### Concatenate
+
+Concatenation joins two or more arrays along an existing axis.
+
+```python
+A: NDArray[Float, 3, 4] = ...
+B: NDArray[Float, 2, 4] = ...
+
+# Concatenate along axis 0 -- shape (5, 4)
+C = np.concatenate([A, B], axis=0)
+```
+
+**Circuit cost.** O(L\_A + L\_B). Both input buffers are copied to a new output buffer.
+
+**Lowering.** The compiler allocates a new buffer of size `L_A + L_B`, copies elements
+from A into positions `[0, L_A)`, and elements from B into positions `[L_A, L_A + L_B)`.
+For dynamic arrays, both copies iterate over the full envelope.
+
+### Stack
+
+Stack joins arrays along a new axis, increasing the rank by one.
+
+```python
+A: NDArray[Float, 4] = ...
+B: NDArray[Float, 4] = ...
+
+# Stack along new axis 0 -- shape (2, 4)
+C = np.stack([A, B], axis=0)
+```
+
+**Circuit cost.** O(L\_A + L\_B), same as concatenate.
+
+**Lowering.** Similar to concatenate, but the output metadata reflects the additional
+axis. Elements are interleaved according to the stacking axis.
+
+## Broadcasting Semantics
+
+Zinnia follows NumPy broadcasting rules for element-wise operations between arrays of
+different shapes. Broadcasting is resolved at compile time when both shapes are static, or
+at proof time when one or both shapes are dynamic.
+
+### Rules
+
+1. If the arrays differ in rank, the shape of the lower-rank array is padded with ones on
+   the left.
+2. Arrays with size 1 along a particular axis are stretched to match the other array's size
+   along that axis.
+3. If sizes along any axis differ and neither is 1, the operation is a compile-time error.
+
+```python
+A: NDArray[Float, 3, 4] = ...
+b: NDArray[Float, 4] = ...
+
+# b is broadcast to shape (3, 4) -- each row of A is added to b
+C = A + b
+```
+
+**Lowering.** Broadcasting is implemented by adjusting strides. The axis with size 1 gets
+a stride of 0, so the same element is read repeatedly. No data duplication occurs.
+
+### Broadcasting with Dynamic Arrays
+
+When broadcasting involves a dynamic array, the compiler must verify at proof time that
+the broadcast is valid. This adds constraints checking that each dynamic axis is either
+equal to the corresponding axis of the other operand or equal to 1.
+
+## Element-Wise Operations
+
+Element-wise arithmetic (+, -, *, /) and comparisons (&lt;, &gt;, ==, etc.) iterate over all
+elements and produce a new array of the same shape.
+
+```python
+A: NDArray[Float, 3, 4] = ...
+B: NDArray[Float, 3, 4] = ...
+
+C = A + B       # element-wise addition
+D = A * B       # element-wise multiplication
+mask = A > 0.0  # element-wise comparison, produces NDArray[Integer, 3, 4]
+```
+
+**Circuit cost.** O(L) for both static and dynamic arrays.
+
+## Matrix Multiplication
+
+Matrix multiplication is supported via the `@` operator or `np.dot`.
+
+```python
+A: NDArray[Float, 3, 4] = ...
+B: NDArray[Float, 4, 5] = ...
+
+C = A @ B  # shape (3, 5), cost O(3 * 4 * 5) multiplications
+```
+
+**Circuit cost.** O(n * m * k) for an (n, m) x (m, k) multiplication. Each output element
+requires m multiplications and m - 1 additions.
+
+## Performance Summary
+
+| Operation | Category | Circuit Cost | Notes |
+|-----------|----------|-------------|-------|
+| Index | Metadata-only | O(1) | Adjusts offset |
+| Slice | Metadata-only | O(1) | Adjusts offset, shape, stride |
+| Transpose | Metadata-only | O(1) | Permutes shape and stride |
+| Reshape | Metadata-only | O(1) | Recomputes shape and stride (contiguous case) |
+| Filter | Data-touching | O(L) | Always iterates full envelope |
+| Reduce | Data-touching | O(L * T\_ram) | Per-element zkRAM read |
+| Concatenate | Data-touching | O(L\_A + L\_B) | Copies both buffers |
+| Stack | Data-touching | O(L\_A + L\_B) | Copies both buffers |
+| Element-wise | Data-touching | O(L) | One pass over all elements |
+| MatMul | Data-touching | O(n * m * k) | Triple nested loop |
+
+## Practical Guidance
+
+- **Prefer metadata-only operations.** Chaining slices, transposes, and reshapes is
+  essentially free. Restructure your computation to maximize the use of views before
+  materializing data.
+
+- **Minimize envelope sizes.** The circuit cost of every data-touching operation on a
+  dynamic array is proportional to the envelope size L, not the logical length l. Use the
+  tightest bound you can justify.
+
+- **Reduce early.** If you need only a summary statistic (sum, mean, max), compute it
+  before applying further transformations. A reduction from shape (1000, 50) to (50,)
+  eliminates 95% of the data early.
+
+- **Avoid unnecessary copies.** Concatenation and stack always copy data. If you can
+  express your computation as a view over existing arrays, do so.
+
+- **Be aware of reshape costs.** Reshaping a contiguous array is free. Reshaping a
+  non-contiguous view (e.g., after transpose + slice) triggers a data copy.

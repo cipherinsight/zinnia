@@ -1,0 +1,100 @@
+---
+title: Installation
+description: How to install Zinnia and its dependencies, including Python version requirements and backend setup.
+---
+
+# Installation
+
+This guide covers installing Zinnia from source and verifying that the installation works correctly.
+
+## Prerequisites
+
+Zinnia requires **Python 3.10 or later**. You can check your Python version with:
+
+```bash
+python3 --version
+```
+
+If you need to install or upgrade Python, visit [python.org](https://www.python.org/downloads/) or use your system's package manager.
+
+## Installing from Source
+
+Zinnia is distributed as a Python package with a `setup.py` build configuration. To install it, clone the repository and install in development mode:
+
+```bash
+git clone <repository-url> zinnia-project
+cd zinnia-project/zinnia-src
+pip install -e .
+```
+
+The `-e` flag installs the package in editable (development) mode, so changes to the source code take effect immediately without reinstalling.
+
+## Dependencies
+
+Zinnia depends on the following Python packages, listed in `requirements.txt`:
+
+| Package | Version | Purpose |
+|---|---|---|
+| `z3-solver` | 4.13.4.0 | SMT solver used during compilation for symbolic execution and constraint resolution |
+| `numpy` | 2.2.2 | Provides the NumPy integration and is used as a fallback for `zinnia.np` |
+| `pytest` | 8.3.4 | Test framework for running the test suite |
+| `boto` | 2.49.0 | AWS integration utilities |
+| `packaging` | 24.2 | Version handling utilities |
+| `pluggy` | 1.5.0 | Plugin framework (pytest dependency) |
+| `iniconfig` | 2.0.0 | Configuration parsing (pytest dependency) |
+
+Install all dependencies at once with:
+
+```bash
+pip install -r requirements.txt
+```
+
+The most important dependency is `z3-solver`, which provides the Z3 SMT solver that Zinnia uses during compilation to resolve data-dependent behavior into static circuit constraints. Without it, the compiler cannot function.
+
+## Verifying the Installation
+
+After installation, verify that Zinnia is correctly installed by importing it in a Python session:
+
+```python
+import zinnia
+print("Zinnia installed successfully")
+```
+
+You can also run one of the included examples to confirm end-to-end functionality:
+
+```bash
+cd zinnia-src
+python examples/fibonacci.py
+```
+
+If the example runs without errors, Zinnia is working correctly. The Fibonacci example defines a circuit that verifies Fibonacci sequence values, compiles it, and executes a mock proof.
+
+## Running the Test Suite
+
+To run the full test suite:
+
+```bash
+cd zinnia-src
+pytest testing/
+```
+
+## Backends
+
+Zinnia supports multiple proof-system backends for code generation:
+
+- **Halo2** -- The primary and most mature backend. Halo2 is a PLONK-based proving system that does not require a trusted setup.
+- **Circom** -- Generates Circom circuit definitions compatible with the Groth16 and PLONK provers.
+- **Noir** -- Targets Aztec's Noir proving system.
+- **CirC/Zokrates** -- Targets the CirC compiler infrastructure with Zokrates-compatible output.
+
+By default, Zinnia compiles to the Halo2 backend. Backend selection is controlled through the `ZinniaConfig` object:
+
+```python
+from zinnia import ZKCircuit, ZinniaConfig
+
+config = ZinniaConfig()
+# config.set_backend("halo2")  # default
+circuit = ZKCircuit.from_method(my_function, config=config)
+```
+
+Note that backend-specific proving infrastructure (e.g., the Halo2 Rust prover, or the Circom/snarkjs toolchain) must be installed separately if you want to generate and verify actual proofs. Zinnia's compilation and mock execution work without any backend prover installed.

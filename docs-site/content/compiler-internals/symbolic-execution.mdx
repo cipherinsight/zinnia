@@ -1,0 +1,219 @@
+---
+title: Symbolic Execution
+description: How Zinnia uses SMT-backed symbolic execution to convert dynamic, control-flow-rich programs into static, branch-free arithmetic circuits.
+---
+
+# Symbolic Execution
+
+Symbolic execution is the core mechanism by which Zinnia compiles programs with data-dependent control flow into static arithmetic circuits. This page describes the symbolic state, the key operators, the compilation rules for each language construct, and the invariants that guarantee correctness.
+
+## The Problem
+
+Arithmetic circuits are fixed-topology graphs: every gate and every wire must be determined at compile time. But programs written in Zinnia can contain:
+
+- `if`/`else` branches that depend on private inputs.
+- `for` loops whose iteration count depends on runtime values.
+- Array accesses with data-dependent indices.
+- Variables that are reassigned differently in different branches.
+
+The compiler must produce a single circuit that correctly handles all possible executions. Symbolic execution achieves this by executing the program over symbolic values rather than concrete ones, using an SMT solver (Z3) to reason about what can be determined statically.
+
+## Symbolic State
+
+At any point during compilation, the compiler maintains a symbolic state consisting of three components:
+
+```
+(Env, phi, G)
+```
+
+- **Env** (symbolic environment): A mapping from variable names to their current symbolic values. Each value is a triplet `(type, constraint, witness)` -- see [Type Inference](./type-inference) for details on the type component. The constraint component is a symbolic expression over the circuit's input variables. The witness component tracks concrete values when available (used for constant folding and debugging).
+
+- **phi** (path condition): A boolean formula representing the conjunction of all branch conditions taken to reach the current program point. When the compiler enters the `then` branch of `if g: ...`, the path condition becomes `phi AND g`. When it enters the `else` branch, the path condition becomes `phi AND NOT g`. The path condition is always satisfiable (the compiler does not explore provably unreachable paths).
+
+- **G** (emitted graph): The list of IR statements emitted so far. Each statement represents a single scalar operation (addition, multiplication, comparison, etc.) over field elements. Statements reference earlier statements by ID, forming a DAG.
+
+## Key Operators
+
+Four operators form the foundation of Zinnia's symbolic execution:
+
+### resolve(e, Env)
+
+**Purpose:** Determine whether a symbolic expression `e` is a compile-time constant.
+
+**Mechanism:** The compiler asks Z3 whether `e` has a unique value under the current path condition. Formally, it checks whether there exists exactly one value `v` such that `phi => (e = v)`. If so, `resolve` returns that constant value. Otherwise, it returns a sentinel indicating that `e` is not statically determined.
+
+**Use cases:**
+- Determining whether a loop bound is a constant (required for unrolling).
+- Determining whether an array index is constant (enabling direct wire selection vs. multiplexer).
+- Constant folding during IR generation.
+- Deciding whether a conditional can be eliminated (one branch is unreachable).
+
+### resolve-max(e, Env)
+
+**Purpose:** Compute a compile-time upper bound for a symbolic expression `e`.
+
+**Mechanism:** The compiler asks Z3 for the maximum value of `e` that is consistent with the current path condition and all accumulated constraints. This uses Z3's optimization capabilities. If no finite bound can be determined, compilation fails with an error.
+
+**Use cases:**
+- Determining the maximum iteration count for a loop with a data-dependent bound. The compiler unrolls to this maximum, using guards to skip iterations beyond the actual runtime count.
+- Determining the maximum length of a `DynamicNDArray`. The circuit must allocate enough wires for the worst case.
+- Sizing multiplexers for array accesses with data-dependent indices.
+
+### merge(g, v1, v2)
+
+**Purpose:** Produce a single value that equals `v1` when guard `g` is true and `v2` when `g` is false.
+
+**Mechanism:** Emits a `select` (multiplexer) IR instruction: `result = g * v1 + (1 - g) * v2`. This is the fundamental operation that converts control dependence to data dependence. Both `v1` and `v2` are fully computed (both branches are always executed), and the guard selects the correct result.
+
+**Use cases:**
+- Merging variable values at the join point after an `if`/`else`.
+- Merging array contents modified differently in different branches.
+- Implementing bounded-dynamic loops where some iterations may be "inactive."
+
+### lower(e, Env, G)
+
+**Purpose:** Compile an expression `e` into IR statements, appending them to `G`.
+
+**Mechanism:** Recursively decomposes the expression AST into primitive operations. Each primitive operation becomes an IR statement. The result is the statement ID of the final operation, which can be referenced by subsequent statements.
+
+For example, lowering `a + b * c` produces:
+1. `s1 = load(a)` -- look up `a` in Env
+2. `s2 = load(b)` -- look up `b` in Env
+3. `s3 = load(c)` -- look up `c` in Env
+4. `s4 = mul(s2, s3)` -- multiply b and c
+5. `s5 = add(s1, s4)` -- add a and the product
+
+The result is `s5`.
+
+## Compilation of Language Constructs
+
+### Expressions
+
+Expressions are compiled by `lower(e, Env, G)`. The rules follow the AST structure:
+
+- **Literals** become constant IR statements.
+- **Variable references** look up the current binding in `Env` and return its statement ID.
+- **Binary operations** lower both operands, then emit the corresponding IR operation (e.g., `int_add`, `int_mul`, `float_div`).
+- **Unary operations** lower the operand and emit the unary IR operation.
+- **Comparisons** lower both sides and emit comparison IR (e.g., `int_less_than`, `int_equal`).
+- **Function calls** are handled specially depending on whether the callee is a built-in, a chip method, or a user-defined function.
+- **Array indexing** checks whether the index resolves to a constant. If so, it directly selects the wire. If not, it emits a multiplexer or memory read (depending on the array's memory model).
+
+### Assignments
+
+An assignment `x = e` compiles `e` via `lower`, then updates `Env` to bind `x` to the result. If `x` already exists in `Env`, the binding is replaced (strong update). The old binding remains in the IR graph but is no longer referenced by `Env`.
+
+Augmented assignments (`x += e`, `x *= e`, etc.) are desugared to `x = x op e`.
+
+### Conditionals
+
+Conditionals are the construct that most directly exercises symbolic execution. Given:
+
+```python
+if g:
+    # then-branch
+else:
+    # else-branch
+```
+
+The compiler proceeds as follows:
+
+1. **Lower the guard.** Compile `g` to an IR statement, producing a boolean value `g_ir`.
+
+2. **Check resolvability.** Call `resolve(g, Env)`. If the guard is a compile-time constant:
+   - If true, execute only the then-branch.
+   - If false, execute only the else-branch.
+   - Skip the merge step entirely.
+
+3. **If the guard is not a constant, execute both branches:**
+   - Save the current environment: `Env_pre = copy(Env)`.
+   - Set `phi_then = phi AND g_ir`. Execute the then-branch, producing `Env_then`.
+   - Restore: `Env = Env_pre`. Set `phi_else = phi AND NOT g_ir`. Execute the else-branch, producing `Env_else`.
+
+4. **Merge.** For every variable `x` that was modified in either branch:
+   - `Env[x] = merge(g_ir, Env_then[x], Env_else[x])`
+   - This emits a `select` instruction that picks the correct value based on the guard.
+
+5. **Restore the path condition** to `phi` (the pre-conditional path condition).
+
+This approach avoids path explosion: the compiler always executes exactly two branches per conditional, regardless of nesting depth. A chain of `n` nested conditionals produces `O(n)` merge operations, not `O(2^n)` paths.
+
+### Loops
+
+Loops require that the iteration count be statically bounded. Given:
+
+```python
+for i in range(n):
+    body
+```
+
+The compiler proceeds:
+
+1. **Resolve the bound.** Call `resolve(n, Env)`. If `n` is a compile-time constant, the loop is unrolled exactly `n` times -- each iteration is compiled as a straight-line sequence of statements.
+
+2. **If `n` is not a constant, resolve the upper bound.** Call `resolve-max(n, Env)` to obtain `N_max`. The loop is unrolled `N_max` times. For each iteration `i`:
+   - Set the guard `g_i = (i < n)` (a runtime boolean).
+   - Execute the loop body under path condition `phi AND g_i`.
+   - Merge the environment: for each variable `x` modified in the body, `Env[x] = merge(g_i, Env_body[x], Env_pre[x])`.
+
+3. **If no bound can be determined**, compilation fails with an error indicating that the loop bound must be statically resolvable.
+
+While loops follow the same pattern but require the programmer to provide a bound annotation or the compiler to infer one from the loop condition.
+
+### Assertions
+
+Assertion statements like `assert x == y` or `assert_equal(x, y)` compile to constraint-assertion IR statements. The assertion expression is lowered, and an `assert` IR instruction is emitted. During optimization, the `AlwaysSatisfiedEliminationIRPass` uses Z3 to check whether the assertion is trivially true under the accumulated constraints, and removes it if so.
+
+Assertions under a non-trivial path condition are guarded: the assertion `phi => (x == y)` is emitted rather than the unconditional `x == y`.
+
+### Function Calls
+
+Function calls are compiled by inlining. The compiler:
+
+1. Evaluates argument expressions.
+2. Creates a new scope with formal parameters bound to argument values.
+3. Compiles the function body in this new scope.
+4. Returns the result value to the caller's environment.
+
+Recursive calls are handled by bounding the recursion depth at compile time. The compiler detects recursion and requires a static depth bound, then unrolls the recursion similarly to loops.
+
+### Chip Method Calls
+
+Chip method calls (calls to methods on `ZKChip` instances) are compiled similarly to function calls but within a `ChipScope`. The chip scope manages the chip's internal state and ensures that state updates are correctly sequenced.
+
+## Invariants
+
+Three invariants are maintained throughout symbolic execution:
+
+### 1. Path Soundness
+
+The path condition `phi` is always satisfiable. Before exploring a branch, the compiler checks (via Z3) that the branch condition conjoined with `phi` is satisfiable. If not, the branch is dead code and is skipped. This ensures that the compiler never emits constraints for unreachable code.
+
+### 2. Staticity Invariant
+
+Every value that the circuit topology depends on (loop bounds, array dimensions, type-level parameters) must be resolvable to a compile-time constant or a compile-time upper bound. If a value cannot be resolved, compilation fails. This ensures that the output circuit has a fixed, finite topology.
+
+### 3. Branch-Free Lowering
+
+The emitted IR graph `G` contains no control-flow instructions. All conditionals are converted to `select` (mux) operations. All loops are fully unrolled. The IR is a straight-line sequence of scalar operations. This invariant guarantees that the IR can be directly mapped to circuit wires and gates by any backend.
+
+## Avoiding Path Explosion
+
+A naive approach to compiling conditionals would enumerate all possible execution paths, leading to exponential blowup. Zinnia avoids this through guarded joins:
+
+- Both branches of every conditional are executed exactly once.
+- At the join point, a `select` instruction merges the results.
+- Nested conditionals produce nested `select` instructions, not separate paths.
+
+For a program with `k` nested conditionals, the naive approach would explore `2^k` paths. Zinnia produces `O(k)` merge operations. The trade-off is that both branches are always evaluated (wasting constraints when one branch is never taken at runtime), but the `AlwaysSatisfiedEliminationIRPass` and dead code elimination mitigate this by removing provably unnecessary constraints.
+
+## SMT Solver Integration
+
+The compiler uses Z3 through the `SMTUtils` class in `compile/builder/`. Key interactions with Z3 include:
+
+- **Satisfiability checks**: determining whether a path condition is satisfiable.
+- **Uniqueness checks**: determining whether an expression has a unique value (for `resolve`).
+- **Optimization queries**: finding the maximum value of an expression (for `resolve-max`).
+- **Tautology checks**: determining whether an assertion is always true (for optimization).
+
+Z3 queries are the most expensive part of compilation. The compiler caches query results and structures queries to minimize solver invocations. Despite this, compilation of programs with complex constraints can be significantly slower than traditional compilers.

@@ -1,0 +1,167 @@
+---
+title: Type Inference
+description: How Zinnia's flow-sensitive type system infers types, merges them at control-flow join points, and resolves compile-time constants for circuit generation.
+---
+
+# Type Inference
+
+Zinnia uses a local, flow-sensitive type inference system that tracks how variable types evolve through the program. The type system must handle a challenge unique to circuit compilation: at every control-flow join point, the compiler must produce a single static type for each variable, even when different branches assigned different types.
+
+## DTDescriptor Hierarchy
+
+All types in Zinnia are represented by the `DTDescriptor` (Data Type Descriptor) hierarchy, defined in `compile/type_sys/`. The hierarchy captures both the type itself and metadata needed for circuit generation (such as array dimensions and bounds).
+
+Key descriptors include:
+
+- **`IntDTDescriptor`** -- Integer type. Represents a field element used as an integer, with optional bit-width constraints.
+- **`FloatDTDescriptor`** -- Fixed-point floating-point type. Tracks the number of integer and fractional bits.
+- **`BoolDTDescriptor`** -- Boolean type. Constrained to values 0 and 1.
+- **`NDArrayDTDescriptor`** -- Static N-dimensional array. Tracks element type and fixed dimensions (e.g., `NDArray[int, 3, 4]` is a 3x4 integer matrix).
+- **`DynamicNDArrayDTDescriptor`** -- Bounded-dynamic N-dimensional array. Tracks element type, maximum dimensions, and the number of dynamic axes. For example, `DynamicNDArray[int, 8, 1]` is an integer array with up to 8 elements and 1 dynamic axis.
+- **`TupleDTDescriptor`** -- Fixed-length tuple with per-element types.
+- **`NoneDTDescriptor`** -- The type of `None`, used for functions with no return value.
+
+Each descriptor carries enough information for the compiler to determine the circuit resources needed: how many wires, what range checks, what memory allocations.
+
+## Local Type Inference
+
+Zinnia uses local type inference, meaning that types are inferred from the immediate context of each expression without global dataflow analysis. The rules are:
+
+1. **Literals** have known types: integer literals are `IntDTDescriptor`, float literals are `FloatDTDescriptor`, `True`/`False` are `BoolDTDescriptor`.
+
+2. **Type annotations** on function parameters and variable declarations are authoritative. When a type annotation is present, it determines the type.
+
+3. **Binary operators** infer their result type from the operand types:
+   - `int op int` produces `int` (for arithmetic) or `bool` (for comparisons).
+   - `int op float` or `float op int` promotes to `float`.
+   - `bool op bool` produces `bool` (for logical operations).
+
+4. **Function call return types** are determined by the callee's declared return type.
+
+5. **Array indexing** produces the element type of the array.
+
+Type inference happens during IR generation (Stage 3). As the `IRGenerator` processes each AST node, it computes the result type and packages it into a triplet along with the constraint and witness.
+
+## Flow-Sensitive Typing
+
+In Zinnia, a variable can have different types at different program points. Consider:
+
+```python
+if condition:
+    x = 42          # x is int
+else:
+    x = 3.14        # x is float
+# What is the type of x here?
+```
+
+A flow-insensitive type system would reject this or require `x` to be declared with a single type. Zinnia's flow-sensitive system handles it by:
+
+1. Tracking the type of `x` independently in each branch.
+2. At the join point, computing a **join type** that encompasses both possibilities.
+
+The compiler maintains a separate environment for each branch of a conditional. After both branches execute, the environments are merged, and the type of each modified variable is joined.
+
+## The Join Operator
+
+The join operator computes the least upper bound of two types in the type lattice. The rules are:
+
+- **Same types join to themselves**: `join(int, int) = int`, `join(bool, bool) = bool`.
+- **Numeric promotion**: `join(int, float) = float`. If one branch produces an integer and the other a float, the merged type is float. The integer value is implicitly cast.
+- **Bool-to-int promotion**: `join(bool, int) = int`. Booleans are promoted to integers.
+- **Array joins**: Two arrays join if they have the same dimensionality. The element types are joined recursively. If the dimensions differ, the result is a `DynamicNDArray` with the maximum of each dimension as the bound.
+- **Incompatible types**: If two types cannot be joined (e.g., an integer and a tuple), compilation fails with a type error.
+
+When a join requires promotion (e.g., int to float), the compiler emits a cast IR instruction for the value from the narrower type.
+
+## Strong Updates vs. Merge-Sensitive Updates
+
+The compiler distinguishes two kinds of variable updates:
+
+### Strong Updates
+
+A strong update occurs when a variable is assigned unconditionally (not inside a conditional branch). The variable's type and value are replaced entirely:
+
+```python
+x = 42      # x is int with value 42
+x = 3.14    # x is now float with value 3.14 (strong update)
+```
+
+Strong updates are simple: the old binding in `Env` is replaced by the new one.
+
+### Merge-Sensitive Updates
+
+A merge-sensitive update occurs when a variable is modified inside a conditional branch. At the join point, the compiler must merge the two possible values:
+
+```python
+if g:
+    x = a    # x might be a
+else:
+    x = b    # x might be b
+# x = select(g, a, b)  -- merge-sensitive update
+```
+
+The merge produces a `SelectIR` instruction and a joined type. The variable `x` after the join has:
+- **Type**: `join(type(a), type(b))`
+- **Value**: `select(g, a, b)`
+
+For arrays, merge-sensitive updates are per-element: each element of the array is independently merged.
+
+## resolve() for Compile-Time Constants
+
+The `resolve(e, Env)` operator attempts to determine whether an expression `e` is a compile-time constant. This is critical for:
+
+- **Loop bounds**: Loops must have statically known or bounded iteration counts.
+- **Array dimensions**: Static array dimensions must be compile-time constants.
+- **Type-level parameters**: Parameters in type annotations (e.g., the `10` in `NDArray[int, 10]`) must be constants.
+- **Conditional elimination**: If a branch guard is a constant, the dead branch can be skipped entirely.
+
+The implementation uses Z3 to check whether the expression has a unique satisfying value under the current path condition. If `phi => (e = v)` for some unique `v`, then `resolve` returns `v`. Otherwise, the expression is runtime-dependent.
+
+## resolve-max() for Upper Bound Inference
+
+When `resolve()` fails (the expression is not a constant), the compiler may still need a bound. `resolve-max(e, Env)` uses Z3's optimization capabilities to find the maximum value of `e` consistent with all accumulated constraints.
+
+This is used for:
+
+- **Dynamic loop bounds**: A loop `for i in range(n)` where `n` is not constant but has a known upper bound `N` is unrolled `N` times with per-iteration guards.
+- **Dynamic array sizing**: A `DynamicNDArray` with a runtime-dependent length needs a maximum length to allocate circuit resources.
+
+If Z3 cannot determine a finite upper bound, compilation fails. The programmer must provide additional constraints or annotations to bound the value.
+
+## Array Type Inference
+
+Arrays require special treatment because their type includes dimensional information:
+
+### Static Arrays (NDArray)
+
+Static arrays have compile-time-constant dimensions. The type `NDArray[int, 3, 4]` fully specifies a 3x4 integer matrix. All dimension parameters must be resolvable via `resolve()`. Operations on static arrays (indexing, slicing, element-wise operations) produce arrays with statically known result dimensions.
+
+### Bounded-Dynamic Arrays (DynamicNDArray)
+
+Dynamic arrays have dimensions that may vary at runtime up to a compile-time maximum. The type `DynamicNDArray[int, 8, 1]` specifies an integer array with up to 8 elements in 1 dynamic axis.
+
+The compiler tracks two pieces of information for each dynamic array:
+- The **maximum dimensions** (compile-time constants, from the type annotation or inferred via `resolve-max`).
+- The **actual dimensions** (runtime symbolic values, tracked as IR statements).
+
+Operations on dynamic arrays propagate both the maximum and actual dimensions. For example, concatenating two dynamic arrays of maximum length 8 produces a dynamic array of maximum length 16.
+
+## Type Inference During Symbolic Execution
+
+Type inference is interleaved with symbolic execution rather than being a separate pass. As the `IRGenerator` processes each AST node:
+
+1. It computes the result type using the local inference rules.
+2. It packages the type into a triplet `(type, constraint_expr, witness_value)`.
+3. It updates `Env` with the new triplet.
+4. At join points, it invokes the join operator on the types from each branch.
+
+This design means type inference benefits from the full symbolic state. For example, after `if x > 0`, the compiler knows that `x` is positive in the then-branch, which may affect the result types of subsequent operations.
+
+## Type Errors
+
+Type errors are reported during IR generation with full source location information. Common type errors include:
+
+- **Incompatible join**: two branches assign incompatible types to the same variable.
+- **Unresolvable dimension**: an array dimension cannot be resolved to a constant or bounded.
+- **Invalid operation**: an operation is not defined for the given operand types (e.g., bitwise operations on floats).
+- **Missing type annotation**: a function parameter or circuit input lacks a required type annotation.

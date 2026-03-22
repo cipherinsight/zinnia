@@ -1,0 +1,86 @@
+---
+title: Backend Code Generation
+description: How Zinnia's backend builders translate optimized IR into target proving system code. Covers the builder interface and current backend status.
+---
+
+# Backend Code Generation
+
+The backend is the final stage of the Zinnia compiler pipeline. It translates the optimized IR into source code or circuit descriptions for a specific zk-SNARK proving system.
+
+**Note:** The backend subsystem is currently under major refactoring. The information on this page reflects the existing architecture, but the API and implementation details are expected to change. Halo2 is the primary and most complete backend; other backends have varying levels of maturity.
+
+## Available Backends
+
+Zinnia includes four backend builders, defined in `compile/backend/`:
+
+| Backend | Target | Status |
+|---|---|---|
+| `Halo2Builder` | Halo2 (Rust) | Primary, most mature |
+| `CircomBuilder` | Circom | Functional |
+| `NoirBuilder` | Noir | Functional |
+| `CirCZokBuilder` | ZoKrates via CirC | Experimental |
+
+### Halo2Builder
+
+The Halo2 backend generates Rust source code that uses the Halo2 library to define a circuit. It maps IR statements to Halo2 regions, columns, and cells. This is the most actively maintained backend and supports the full IR instruction set, including memory operations and special gadgets (Poseidon hash, Merkle verification).
+
+### CircomBuilder
+
+The Circom backend generates Circom template code. Each IR statement maps to a Circom constraint or signal assignment. Circom's template system is used to structure the output.
+
+### NoirBuilder
+
+The Noir backend generates Noir source code. IR operations map to Noir expressions and constraint statements.
+
+### CirCZokBuilder
+
+The CirC/ZoKrates backend generates ZoKrates-compatible code that can be processed by the CirC toolchain. This backend is the least mature.
+
+## Builder Interface
+
+All backends implement a common interface for iterating over the IR and producing output. The general structure is:
+
+1. **Initialization.** The builder receives the optimized `IRGraph` and sets up the output context (file handles, code buffers, etc.).
+
+2. **Input declaration.** The builder iterates over `InputIR` statements and declares corresponding input signals/variables in the target language.
+
+3. **Statement translation.** The builder iterates over the IR statements in order. For each statement, it dispatches on the IR type and emits the corresponding target-language code. Since the IR is topologically sorted, each statement's operands have already been translated.
+
+4. **Output declaration.** The builder processes `OutputIR` statements and declares the circuit outputs.
+
+5. **Finalization.** The builder writes auxiliary code (e.g., circuit configuration in Halo2, template wiring in Circom) and produces the final output files.
+
+### IR-to-Target Mapping
+
+Each IR operation has a target-specific translation. For example:
+
+- `IntAddIR(a, b)` in Halo2 becomes a region that constrains `a + b = c` where `c` is a new cell.
+- `IntAddIR(a, b)` in Circom becomes `signal c <== a + b;`.
+- `SelectIR(g, a, b)` becomes `g * (a - b) + b` in all backends (the standard mux formula).
+
+Some IR operations require gadget-level implementations in the target. For example, `IntLessThanIR` requires a range-check decomposition that varies by backend. `PoseidonHashIR` maps to a pre-built Poseidon gadget in each target.
+
+### Memory Operations
+
+Memory IR operations (`AllocateMemoryIR`, `ReadMemoryIR`, `WriteMemoryIR`, `MemoryTraceEmitIR`, `MemoryTraceSealIR`) are among the most complex to translate. Each backend must implement the zkRAM consistency argument in its native constraint system. This typically involves:
+
+- Sorting the memory trace by (address, timestamp).
+- Checking adjacency constraints (consecutive accesses to the same address return consistent values).
+- Verifying the permutation between the execution-order trace and the sorted trace.
+
+## Output Artifacts
+
+The backend produces:
+
+- **Source files** in the target language (e.g., `.rs` for Halo2, `.circom` for Circom).
+- **Configuration** such as circuit parameters, column counts, and degree bounds.
+- **Auxiliary data** such as lookup tables or precomputed constants needed by the circuit.
+
+## Extending with a New Backend
+
+To add a new backend:
+
+1. Create a new builder class in `compile/backend/`.
+2. Implement the builder interface: handle each IR type by emitting the corresponding target code.
+3. Pay special attention to comparison operations (which require range checks), memory operations (which require the consistency argument), and special operations (which require gadget implementations).
+4. Register the backend in `ZinniaCompiler` so it can be selected via the compilation options.

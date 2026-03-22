@@ -7,9 +7,9 @@ from .api.zk_circuit import ZKCircuit, zk_circuit
 from .api.zk_compiled_program import ZKCompiledProgram
 from .api.zk_program_input import ZKProgramInput
 from .api.zk_parsed_input import ZKParsedInput
-from .debug.exception import ZinniaException
 from .exec.exec_result import ZKExecResult
 from .exec.mock_executor import MockProgramExecutor
+from .debug.exception import ZinniaException
 from .config.zinnia_config import ZinniaConfig
 from .lang.namespace import NamespaceNP
 

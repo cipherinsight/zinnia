@@ -1,0 +1,247 @@
+---
+title: External Functions
+description: How to define and use ZKExternalFunc for non-ZK helper functions in Zinnia.
+---
+
+# External Functions
+
+A `ZKExternalFunc` represents a helper function that runs outside the zero-knowledge
+circuit. External functions are used for tasks like data preprocessing, loading input data,
+or computing values that the circuit needs but that do not need to be proved.
+
+## Imports
+
+```python
+from zinnia import ZKExternalFunc, zk_external
+```
+
+## What External Functions Are
+
+In a zk-SNARK circuit, every operation produces constraints. But some operations -- reading
+a file, calling an API, or running an expensive preprocessing step -- should happen before
+the circuit runs, not inside it.
+
+External functions fill this role. They are:
+
+- **Callable outside circuits.** Unlike chips, you can call a `ZKExternalFunc` directly in
+  Python and it runs the underlying function. This makes them useful for testing and data
+  preparation.
+- **Removed during compilation.** The compiler's `ExternalCallRemoverIRPass` strips
+  external function calls from the circuit IR. The values produced by external functions are
+  treated as inputs to the circuit, not as constrained computations.
+- **Parsed at creation time.** Like chips, the source is parsed into an AST when the
+  `ZKExternalFunc` is instantiated, so structural errors are caught early.
+
+## Creating External Functions
+
+There are three ways to create a `ZKExternalFunc`.
+
+### Pattern 1: The `@zk_external` Decorator
+
+The most concise approach. The decorator wraps the function and returns a `ZKExternalFunc`
+instance that is also callable:
+
+```python
+from zinnia import zk_external, Integer
+
+@zk_external
+def load_threshold() -> Integer:
+    # In a real application, this might read from a file or database
+    return 42
+
+# Callable outside a circuit
+value = load_threshold()
+print(value)  # 42
+```
+
+### Pattern 2: `ZKExternalFunc.from_method`
+
+Pass a plain Python function to the factory method:
+
+```python
+from zinnia import ZKExternalFunc, Integer
+
+def load_threshold() -> Integer:
+    return 42
+
+external = ZKExternalFunc.from_method(load_threshold)
+
+# Still callable
+value = external()
+print(value)  # 42
+```
+
+If you pass a `ZKExternalFunc` instance to `from_method`, it is returned as-is. Passing a
+`ZKChip` raises a `ZinniaException`.
+
+### Pattern 3: Constructor with Source and Callable
+
+For advanced use cases, provide the name, source code, and the callable separately:
+
+```python
+from zinnia import ZKExternalFunc
+
+source = """
+def load_threshold() -> Integer:
+    return 42
+"""
+
+def load_threshold_impl():
+    return 42
+
+external = ZKExternalFunc(
+    name="load_threshold",
+    source=source,
+    the_callable=load_threshold_impl,
+)
+```
+
+This is useful when the source string (used for AST parsing and return type inference) and
+the actual callable come from different origins.
+
+## Using External Functions in Circuits
+
+External functions are passed to a circuit via the `externals` parameter and called by
+name inside the circuit body.
+
+### With `ZKCircuit.from_method`
+
+```python
+from zinnia import ZKCircuit, zk_external, Integer, Private
+
+@zk_external
+def get_max_value() -> Integer:
+    return 100
+
+def my_circuit(score: Private[Integer]):
+    limit = get_max_value()
+    assert score <= limit
+
+circuit = ZKCircuit.from_method(my_circuit, externals=[get_max_value])
+result = circuit.mock(85)
+print(result.is_satisfied())  # True
+```
+
+### With the `@zk_circuit` Decorator
+
+When using `@zk_circuit`, external functions defined in the calling scope are discovered
+automatically:
+
+```python
+from zinnia import zk_circuit, zk_external, Integer, Private
+
+@zk_external
+def get_max_value() -> Integer:
+    return 100
+
+@zk_circuit
+def my_circuit(score: Private[Integer]):
+    limit = get_max_value()
+    assert score <= limit
+
+result = my_circuit(85)
+print(result.is_satisfied())  # True
+```
+
+### Passing Plain Functions as Externals
+
+Plain Python functions in the `externals` list are automatically wrapped with
+`ZKExternalFunc.from_method`:
+
+```python
+def get_max_value() -> Integer:
+    return 100
+
+circuit = ZKCircuit.from_method(my_circuit, externals=[get_max_value])
+```
+
+## How External Calls Are Handled During Compilation
+
+When a circuit is compiled, the compiler:
+
+1. Parses the external function's source to determine its return type.
+2. Keeps track of external call sites in the circuit body.
+3. During IR optimization, the `ExternalCallRemoverIRPass` removes the external call and
+   replaces it with the precomputed result. The actual Python function is invoked during
+   mock execution (or proof generation) in the preprocessing phase, before the circuit
+   constraints are evaluated.
+
+This means external functions do not add any constraints to the circuit. Their return
+values flow into the circuit as concrete inputs.
+
+## Callable Outside Circuits
+
+Unlike `ZKChip`, a `ZKExternalFunc` can be called at any time. Calling it runs the
+underlying Python function:
+
+```python
+@zk_external
+def preprocess(data: Integer) -> Integer:
+    return data * 2 + 1
+
+# Works fine outside any circuit
+result = preprocess(10)
+print(result)  # 21
+```
+
+This makes external functions convenient for unit testing the preprocessing logic
+independently of the circuit.
+
+## Serialization Considerations
+
+When serializing a compiled program with `ZKCompiledProgram.serialize()`, external function
+callables are not included in the serialized data (functions cannot be serialized to JSON).
+Only the external function names are recorded.
+
+When deserializing, you must re-provide the external function instances:
+
+```python
+from zinnia import ZKCompiledProgram, ZKExternalFunc
+
+@zk_external
+def my_helper() -> Integer:
+    return 10
+
+# Serialize
+data = compiled_program.serialize()
+
+# Deserialize -- must re-provide externals
+restored = ZKCompiledProgram.deserialize(data, external_funcs=[my_helper])
+```
+
+If you omit an expected external function, or provide one that was not part of the original
+compilation, a `ZinniaException` is raised.
+
+## Complete Example
+
+```python
+from zinnia import (
+    ZKCircuit, zk_chip, zk_external,
+    Integer, NDArray, Public, Private, np,
+)
+
+@zk_external
+def load_weights() -> NDArray:
+    # In production, this might load from a file
+    return np.array([1, 2, 3, 4, 5])
+
+@zk_chip
+def dot_product(a: NDArray, b: NDArray) -> Integer:
+    return np.dot(a, b)
+
+def prediction_circuit(
+    features: Private[NDArray],
+    expected: Public[Integer],
+):
+    weights = load_weights()
+    result = dot_product(features, weights)
+    assert result == expected
+
+circuit = ZKCircuit.from_method(
+    prediction_circuit,
+    chips=[dot_product],
+    externals=[load_weights],
+)
+result = circuit.mock(np.array([1, 1, 1, 1, 1]), 15)
+print(result.is_satisfied())  # True
+```

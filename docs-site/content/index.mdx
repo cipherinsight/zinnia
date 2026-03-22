@@ -1,0 +1,64 @@
+---
+title: Zinnia Documentation
+description: A zk-SNARK programming framework for verifiable data analytics. Write Python-like code that compiles to static arithmetic circuits for zero-knowledge proofs.
+---
+
+# Zinnia
+
+Zinnia is a zk-SNARK programming framework for verifiable data analytics. It provides a Python-like domain-specific language (DSL) that compiles to static arithmetic circuits, enabling developers to write expressive, high-level programs that generate zero-knowledge proofs.
+
+## The Problem
+
+Zero-knowledge SNARKs require computations to be expressed as **static arithmetic circuits** -- fixed-topology graphs of addition and multiplication gates over a finite field. The circuit structure must be fully determined at compile time, independent of any input values. This creates a fundamental mismatch with the dynamic, data-dependent patterns found in typical data-analytic programs.
+
+Three specific problems arise:
+
+1. **Data-dependent control flow.** Programs with `if`/`else` branches that depend on private inputs cannot directly map to a single static circuit, because the circuit topology would need to change based on which branch executes.
+
+2. **Array operations with data-dependent behavior.** Operations like slicing, indexing, reshaping, and aggregation over arrays with dynamic lengths or data-dependent indices have no straightforward static-circuit representation.
+
+3. **Idiomatic variable rebinding.** In Python-style code, variables are routinely reassigned across branches (e.g., `x = a` in one branch, `x = b` in another). A circuit must reconcile these into a single wire, which requires careful type-aware merging at join points.
+
+## The Zinnia Approach
+
+Zinnia resolves these challenges through **SMT-backed symbolic execution**. During compilation, the Zinnia compiler symbolically executes the program, using an SMT solver (Z3) to reason about all possible execution paths and resolve data-dependent behavior into static circuit constraints. This allows developers to write natural, idiomatic code while the compiler automatically produces correct, optimized arithmetic circuits.
+
+Key aspects of the approach:
+
+- A **flow-sensitive type system** tracks how variable types and values evolve across branches, automatically inserting phi-node merges at control-flow join points.
+- **Bounded-dynamic arrays** (`DynamicNDArray`) allow arrays whose runtime length varies up to a compile-time bound, with the compiler generating circuits that handle all valid lengths.
+- The **SMT solver** determines which constraints are always satisfied (and can be eliminated) versus those that genuinely depend on inputs, enabling aggressive circuit optimization.
+
+## Key Features
+
+- **Python-compatible syntax.** Zinnia code looks and feels like standard Python. Types use familiar annotations such as `int`, `NDArray[int, 10]`, and `DynamicNDArray[int, 8, 1]`.
+- **Flow-sensitive type system.** Variables can be rebound across branches; the compiler tracks types per-path and merges them at join points.
+- **Bounded-dynamic arrays.** `DynamicNDArray` supports slicing, reshaping, aggregation, and other operations where the effective length depends on runtime values, within a compile-time upper bound.
+- **NumPy-like array API.** Matrix multiplication (`@`), element-wise operations, `sum`, `max`, `reshape`, slicing, and more are supported directly on circuit-native array types.
+- **Multiple backends.** The compiler targets Halo2 as the primary backend, with additional support for Circom, Noir, and CirC/Zokrates.
+- **Circuit-native primitives.** Arithmetic and array operations compile directly to efficient circuit gadgets rather than being emulated through generic VM instructions.
+- **SMT-backed compilation.** Z3-powered symbolic execution resolves dynamic behavior at compile time, producing optimized static circuits.
+- **Reusable sub-circuits.** The `ZKChip` abstraction lets you define composable circuit components that can be shared across multiple circuits.
+
+## Performance
+
+Zinnia achieves **zero abstraction cost**: circuits produced from high-level Zinnia programs are competitive with, or better than, hand-optimized DSL code written directly in low-level circuit languages. Compared to general-purpose zkVMs, Zinnia-compiled circuits typically achieve **5-20x faster proving times**, because the compiler generates specialized circuits rather than interpreting programs on a universal virtual machine.
+
+## Implementation
+
+Zinnia is implemented in Python (approximately 20,000 lines of code) with a modular architecture. The compilation pipeline is structured as:
+
+1. **Parsing.** Zinnia source code is parsed using the standard Python `ast` module.
+2. **AST transformation.** A custom transformer converts the Python AST into Zinnia's internal AST representation, applying the flow-sensitive type system.
+3. **IR generation.** The AST is lowered to a flat intermediate representation (IR) of arithmetic constraints, with SMT-backed symbolic execution resolving dynamic behavior.
+4. **Optimization passes.** Multiple IR passes perform constant folding, dead code elimination, duplicate elimination, always-satisfied constraint removal, and memory lowering for dynamic arrays.
+5. **Backend code generation.** The optimized IR is translated to the target proving system's circuit format.
+
+## Documentation Structure
+
+- **[Getting Started](/docs/getting-started/installation)** -- Installation, a quick-start tutorial, and core concepts behind zero-knowledge proofs and arithmetic circuits.
+- **[Language Reference](/docs/language)** -- Detailed specification of Zinnia's type system, operators, control flow, and array operations.
+- **[Programming Guide](/docs/programming-guide)** -- Patterns and best practices for writing Zinnia circuits, including chips, dynamic arrays, and testing strategies.
+- **[Data Analytics](/docs/data-analytics)** -- Worked examples of verifiable data-analytic computations.
+- **[Compiler Internals](/docs/compiler-internals)** -- Architecture of the compilation pipeline, IR design, optimization passes, and backend code generation.
+- **[Contributing](/docs/contributing)** -- How to contribute to the Zinnia project.

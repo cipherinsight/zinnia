@@ -1,0 +1,180 @@
+---
+title: Intermediate Representation
+description: Documentation of Zinnia's intermediate representation -- an SSA-style, branch-free, linear sequence of scalar operations over field elements.
+---
+
+# Intermediate Representation
+
+Zinnia's intermediate representation (IR) is the central data structure that connects the front-end (parsing, AST transformation, symbolic execution) to the back-end (optimization and code generation). The IR is designed to map directly to arithmetic circuit constraints.
+
+## Design Principles
+
+The IR is shaped by the constraints of arithmetic circuits:
+
+1. **Branch-free.** There are no conditional jumps, branches, or phi nodes in the traditional SSA sense. All control flow has been converted to data dependence via `select` (mux) operations during symbolic execution.
+
+2. **SSA-style.** Each IR statement defines a new value with a unique ID. Values are never reassigned. Statements reference earlier statements by their IDs, forming a directed acyclic graph (DAG).
+
+3. **Scalar.** Each operation acts on individual field elements. Array operations are decomposed into per-element scalar operations during IR generation. There are no vector or aggregate operations in the IR.
+
+4. **Linear.** The statements form an ordered list. The order is a valid topological sort of the DAG: every statement appears after all of its operands. This ordering simplifies backend code generation.
+
+5. **Field-element semantics.** All values are elements of a prime field. Integer and boolean operations are represented as field operations with appropriate range checks. Floating-point operations are represented using fixed-point encoding with field arithmetic.
+
+## IRStatement
+
+The fundamental unit of the IR is `IRStatement`, defined in `compile/ir/`. Each statement has:
+
+| Field | Type | Description |
+|---|---|---|
+| `stmt_id` | `int` | Unique identifier for this statement. Monotonically increasing. |
+| `ir_instance` | `AbstractIR` | The IR operation type (e.g., `IntAddIR`, `SelectIR`, `ReadMemoryIR`). |
+| `arguments` | `list[int]` | List of statement IDs that are inputs to this operation. |
+| `debug_info` | `DebugInfo` | Source location, variable name, and other metadata for error reporting. |
+
+### Example
+
+A fragment computing `z = x + y * 2`:
+
+```
+s0: InputIR()           args=[]        # input x
+s1: InputIR()           args=[]        # input y
+s2: ConstantIR(2)       args=[]        # constant 2
+s3: IntMulIR()          args=[s1, s2]  # y * 2
+s4: IntAddIR()          args=[s0, s3]  # x + (y * 2)
+```
+
+Statement `s4` is the result. Its arguments are `s0` and `s3`, which are the IR statements for `x` and `y * 2` respectively.
+
+## IR Operation Categories
+
+Approximately 80 IR types are defined in `ir_def/`. They fall into the following categories:
+
+### Arithmetic
+
+Operations over integer and floating-point (fixed-point) values:
+
+- **Integer**: `IntAddIR`, `IntSubIR`, `IntMulIR`, `IntDivIR`, `IntPowIR`, `IntModIR`
+- **Float**: `FloatAddIR`, `FloatSubIR`, `FloatMulIR`, `FloatDivIR`, `FloatPowIR`, `FloatModIR`
+
+Integer operations work over the native field. Division emits a multiplicative inverse constraint. Modular operations emit appropriate range checks.
+
+### Comparison
+
+- `IntLessThanIR`, `IntLessEqualIR`, `IntGreaterThanIR`, `IntGreaterEqualIR`
+- `IntEqualIR`, `IntNotEqualIR`
+- `FloatLessThanIR`, `FloatLessEqualIR`, `FloatGreaterThanIR`, `FloatGreaterEqualIR`
+- `FloatEqualIR`, `FloatNotEqualIR`
+
+Comparisons produce boolean values (0 or 1). They are implemented using range-check gadgets in the circuit.
+
+### Logic
+
+- `BoolAndIR`, `BoolOrIR`, `BoolNotIR`, `BoolXorIR`
+
+Boolean operations over single-bit values.
+
+### Cast
+
+- `IntToFloatIR`, `FloatToIntIR`, `IntToBoolIR`, `BoolToIntIR`
+
+Type conversions between integer, float (fixed-point), and boolean representations.
+
+### Input/Output
+
+- `InputIR` -- Declares a circuit input (public or private).
+- `OutputIR` -- Declares a circuit output.
+- `ConstantIR` -- A compile-time constant value embedded in the circuit.
+
+### Math Functions
+
+- `IntAbsIR`, `IntMinIR`, `IntMaxIR`
+- `FloatAbsIR`, `FloatMinIR`, `FloatMaxIR`
+- `FloatSqrtIR`, `FloatExpIR`, `FloatLogIR`
+
+Math functions are implemented as circuit gadgets, often involving Newton's method or lookup tables depending on the backend.
+
+### Memory
+
+Memory operations support the two-tier memory model:
+
+- `AllocateMemoryIR` -- Allocate a memory region of a given size.
+- `ReadMemoryIR` -- Read a value from a memory address.
+- `WriteMemoryIR` -- Write a value to a memory address.
+- `MemoryTraceEmitIR` -- Emit a memory trace entry (used by zkRAM).
+- `MemoryTraceSealIR` -- Finalize a memory trace for consistency checking.
+
+See [Memory Model](./memory-model) for how these operations are used.
+
+### Select (Mux)
+
+- `SelectIR` -- The multiplexer operation: `select(g, a, b)` returns `a` if `g` is true, `b` otherwise. Implemented as `g * a + (1 - g) * b`.
+
+This is the most important operation for control-flow conversion. Every merged variable at a conditional join point produces a `SelectIR`.
+
+### Assertions
+
+- `AssertIR` -- Assert that a value is true (equals 1). Used for `assert` statements and constraint enforcement.
+- `AssertEqualIR` -- Assert that two values are equal.
+
+Assertions become hard constraints in the circuit. A valid witness must satisfy all assertions.
+
+### Special
+
+- `PoseidonHashIR` -- Compute a Poseidon hash (a circuit-friendly hash function).
+- `MerkleVerifyIR` -- Verify a Merkle proof.
+
+These are implemented as pre-built gadgets in the backend.
+
+## IRGraph
+
+The `IRGraph` class represents a complete compiled program. It contains:
+
+- **statements**: An ordered list of `IRStatement` objects.
+- **input_stmts**: References to the statements that are circuit inputs.
+- **output_stmts**: References to the statements that are circuit outputs.
+- **memory_regions**: Metadata about allocated memory regions.
+- **metadata**: Additional information such as the source program name, compilation options, and statistics.
+
+The `IRGraph` is the primary data structure passed between the IR generator, optimization passes, and backend builders.
+
+### Graph Properties
+
+- **Topologically sorted.** Statement `i` only references statements with IDs less than `i`.
+- **Single-assignment.** Each statement ID is defined exactly once.
+- **Branch-free.** No control-flow operations -- only data-flow operations and `select`.
+- **Self-contained.** The graph includes all constants, inputs, and operations needed to reconstruct the circuit.
+
+## How IR is Generated from AST
+
+The `IRGenerator` walks the Zinnia AST and emits IR statements for each node. The mapping is largely compositional:
+
+1. **Leaf expressions** (literals, variable references) produce `ConstantIR` or look up an existing statement ID in the environment.
+
+2. **Binary expressions** recursively lower both operands, then emit the appropriate arithmetic/comparison/logic IR. The IR type is selected based on the operand types (integer vs. float, known from the type system).
+
+3. **Assignments** lower the right-hand side and update the environment to map the variable name to the resulting statement ID.
+
+4. **Conditionals** lower the guard, execute both branches (each producing environment updates and new IR statements), then emit `SelectIR` for every variable that differs between branches.
+
+5. **Loops** are unrolled. Each iteration produces a copy of the loop body's IR with the induction variable bound to the iteration index. For dynamic-bound loops, each iteration is guarded and merged.
+
+6. **Function calls** are inlined: the function body is compiled in a new scope with arguments bound to the caller's values.
+
+7. **Array operations** are decomposed into per-element operations. An array of `n` elements is represented as `n` separate IR values. Array indexing with a constant index selects one value directly. Array indexing with a dynamic index produces a chain of `SelectIR` operations (multiplexer) or a `ReadMemoryIR` (zkRAM).
+
+## Debugging IR
+
+The IR can be dumped in a human-readable text format for debugging. Each statement is printed with its ID, operation type, arguments, and debug info. Example output:
+
+```
+[s0] InputIR()                     args=[]          # circuit_input:x
+[s1] InputIR()                     args=[]          # circuit_input:y
+[s2] ConstantIR(1)                 args=[]          # constant
+[s3] IntMulIR()                    args=[s0, s0]    # x * x
+[s4] IntMulIR()                    args=[s1, s1]    # y * y
+[s5] IntAddIR()                    args=[s3, s4]    # x*x + y*y
+[s6] OutputIR()                    args=[s5]        # circuit_output:result
+```
+
+This corresponds to a circuit computing `result = x^2 + y^2`.

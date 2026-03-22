@@ -1,0 +1,301 @@
+---
+title: Type System
+description: Detailed documentation of Zinnia's type system, including scalar types, composite types, array types, flow-sensitive typing, and type join semantics.
+---
+
+# Type System
+
+Zinnia uses a statically analyzed type system with flow-sensitive typing. Types are
+inferred where possible and checked at compile time. Because all values ultimately compile
+to field elements in F_p, the type system serves as a high-level abstraction that guides
+circuit generation.
+
+## Scalar Types
+
+### Integer (Int / int)
+
+The integer type represents whole numbers. At the circuit level, integers are field
+elements in F_p. Standard arithmetic operations are supported.
+
+```python
+x: int = 42
+y: Int = -7
+z: Integer = x + y
+```
+
+`Integer`, `Int`, and `int` are all aliases for the same type.
+
+### Float (float)
+
+The float type represents rational numbers. Internally, floats are represented as
+fixed-point or rational encodings over the field. Arithmetic follows standard rules with
+the caveat that precision is bounded by the field size.
+
+```python
+pi: float = 3.14159
+area: Float = pi * r * r
+```
+
+`Float` and `float` are aliases for the same type.
+
+### Boolean (Bool / bool)
+
+Booleans represent truth values. In the circuit, a boolean is a field element constrained
+to be 0 or 1.
+
+```python
+flag: bool = True
+valid: Bool = x > 0
+result: Boolean = flag and valid
+```
+
+`Boolean`, `Bool`, and `bool` are aliases for the same type.
+
+## Type Aliases
+
+For convenience, Zinnia provides the following aliases:
+
+| Alias     | Canonical Type |
+|-----------|---------------|
+| `Integer` | `int`         |
+| `Int`     | `int`         |
+| `Float`   | `float`       |
+| `Bool`    | `bool`        |
+| `Boolean` | `bool`        |
+
+## Composite Types
+
+### List
+
+Lists are ordered, variable-length sequences of elements. All elements must be of the
+same type.
+
+```python
+xs: list = [1, 2, 3, 4, 5]
+ys = [True, False, True]
+```
+
+Lists support `append`, `extend`, `insert`, `pop`, `copy`, `clear`, `reverse`, `index`,
+`count`, and `remove` methods.
+
+### Tuple
+
+Tuples are fixed-length, immutable sequences. Elements may have different types.
+
+```python
+pair = (1, 3.14)
+triple = (True, 42, "label")
+```
+
+Tuples support `count` and `index` methods.
+
+## Array Types
+
+### NDArray -- Fixed-Size N-Dimensional Arrays
+
+`NDArray` represents a fixed-size, N-dimensional array whose shape is fully known at
+compile time. This is the primary array type for most Zinnia programs.
+
+#### Subscript Syntax
+
+The type is parameterized via subscript notation:
+
+```python
+NDArray[element_type, dim0, dim1, ...]
+```
+
+For example:
+
+```python
+# A 3x4 integer matrix
+matrix: NDArray[Int, 3, 4]
+
+# A 1-D float vector of length 10
+vec: NDArray[Float, 10]
+
+# A 2x2x2 integer tensor
+tensor: NDArray[Int, 2, 2, 2]
+```
+
+The first subscript argument is the element type (`Int` or `Float`). The remaining
+arguments specify the shape dimensions.
+
+#### Creation
+
+```python
+zeros = NDArray.zeros((3, 4))               # 3x4 integer zeros
+ones = NDArray.ones((2, 2), dtype=Float)     # 2x2 float ones
+eye = NDArray.identity(3)                    # 3x3 identity matrix
+rect_eye = NDArray.eye(3, 4)                 # 3x4 matrix with ones on diagonal
+data = NDArray.asarray([[1, 2], [3, 4]])     # from nested lists
+```
+
+#### Properties
+
+```python
+s = arr.shape    # tuple of dimension sizes
+d = arr.dtype    # element type (Int or Float)
+n = arr.ndim     # number of dimensions
+z = arr.size     # total number of elements
+```
+
+### DynamicNDArray -- Bounded-Dynamic Arrays
+
+`DynamicNDArray` represents an array whose shape is determined at runtime but whose
+total number of elements and rank have compile-time upper bounds. This type is useful
+when array dimensions depend on private inputs.
+
+#### Compile-Time Envelope
+
+A `DynamicNDArray` is characterized by two static bounds:
+
+- **L** -- the maximum total number of elements across all dimensions.
+- **R** -- the maximum rank (number of dimensions).
+
+At runtime, the actual shape may be smaller, but the circuit is sized for the worst case.
+
+#### Metadata
+
+Each `DynamicNDArray` carries runtime metadata:
+
+- Logical length (total number of active elements)
+- Rank (actual number of dimensions)
+- Shape vector (actual size of each dimension)
+- Stride vector (for memory layout)
+- Offset (base index into underlying storage)
+
+#### When to Use
+
+Use `DynamicNDArray` when the shape of an array depends on data but you can establish
+provable upper bounds. For example:
+
+```python
+def process(n: Public[Integer], data: Private[DynamicNDArray]) -> Integer:
+    # n determines the logical size of data at runtime
+    total = 0
+    for i in range(n):
+        total = total + data[i]
+    return total
+```
+
+`DynamicNDArray` exposes the same interface as `NDArray` (indexing, slicing, reductions,
+etc.) but the compiler generates circuits that account for the dynamic sizing.
+
+## Special Types
+
+### PoseidonHashed
+
+`PoseidonHashed` represents a value that has been committed via a Poseidon hash. This
+type is used for committing to private data so that the verifier can check consistency
+without seeing the underlying values.
+
+```python
+def verify(commitment: Public[PoseidonHashed], secret: Private[Integer]):
+    assert hash(secret) == commitment
+```
+
+### String
+
+Strings have limited support in Zinnia. They can be used as literal labels in assert
+messages and for basic display purposes, but string manipulation (concatenation, slicing,
+formatting) is not supported in circuit computation.
+
+```python
+assert x > 0, "x must be positive"
+```
+
+### None
+
+The `None` type represents the absence of a value. It is used as the implicit return type
+of functions that do not return a value.
+
+```python
+def side_effect(x: Public[Integer]):
+    assert x > 0
+    # implicitly returns None
+```
+
+## Flow-Sensitive Typing
+
+Zinnia uses flow-sensitive typing, which means that the type of a variable can change
+across different points in the program. A variable may be rebound to a value of a
+different type in different branches of a conditional.
+
+```python
+if flag:
+    x = 42       # x is Int here
+else:
+    x = 3.14     # x is Float here
+# After the join, x has type Float (via numeric promotion)
+```
+
+### The Join Operator
+
+At control-flow join points (after `if`/`else` blocks, loop exits), the compiler must
+reconcile the types of variables that may have been assigned different types in different
+branches. This is done via the **join operator**.
+
+#### Join Rules for Scalar Types
+
+The join operator follows numeric promotion:
+
+| Left Type | Right Type | Join Result |
+|-----------|-----------|-------------|
+| `Bool`    | `Bool`    | `Bool`      |
+| `Bool`    | `Int`     | `Int`       |
+| `Int`     | `Bool`    | `Int`       |
+| `Int`     | `Int`     | `Int`       |
+| `Bool`    | `Float`   | `Float`     |
+| `Float`   | `Bool`    | `Float`     |
+| `Int`     | `Float`   | `Float`     |
+| `Float`   | `Int`     | `Float`     |
+| `Float`   | `Float`   | `Float`     |
+
+In general: `Bool < Int < Float` in the promotion hierarchy.
+
+#### Join Rules for Arrays
+
+When joining `NDArray` types:
+
+- Element types are joined using the scalar join rules above.
+- Shape envelopes are widened: for each dimension, the join takes the maximum of the two
+  sizes. If ranks differ, the result may be promoted to a `DynamicNDArray`.
+
+```python
+if condition:
+    arr = NDArray.zeros((3, 4))
+else:
+    arr = NDArray.zeros((3, 5))
+# arr has a widened shape envelope after the join
+```
+
+### Strong Updates vs Merge-Sensitive Updates
+
+A **strong update** occurs when a variable is unconditionally assigned in a straight-line
+block. The old type is completely replaced.
+
+```python
+x = 42       # x: Int
+x = 3.14     # x: Float (strong update, old type discarded)
+```
+
+A **merge-sensitive update** occurs at a control-flow join where the variable was assigned
+in only some branches, or assigned different types in different branches. The compiler
+applies the join operator to reconcile types.
+
+```python
+x = 0              # x: Int
+if condition:
+    x = 3.14       # x: Float in this branch
+# At join: x = join(Int, Float) = Float
+```
+
+If a variable is assigned in one branch but not the other, its type at the join is the
+join of the type from the assigning branch and its type before the conditional.
+
+```python
+x = True           # x: Bool
+if condition:
+    x = 42         # x: Int in this branch
+# At join: x = join(Bool, Int) = Int
+```

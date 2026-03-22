@@ -1,0 +1,158 @@
+---
+title: Quick Start
+description: Write, compile, and test your first Zinnia zero-knowledge circuit in minutes.
+---
+
+# Quick Start
+
+This tutorial walks through writing, compiling, and testing a simple zero-knowledge circuit with Zinnia.
+
+## Your First Circuit
+
+A Zinnia circuit is a Python function that expresses a computation to be verified in zero knowledge. The simplest way to define one is with the `@zk_circuit` decorator.
+
+Here is a circuit that proves knowledge of two integers that sum to an expected value:
+
+```python
+from zinnia import zk_circuit
+
+@zk_circuit
+def verify_sum(a: int, b: int, expected_sum: int):
+    assert a + b == expected_sum
+```
+
+This circuit takes three integer inputs and asserts that the first two sum to the third. In a real deployment, `a` and `b` could be private (hidden from the verifier) while `expected_sum` is public, allowing a prover to demonstrate they know a valid decomposition of the sum without revealing the individual values.
+
+To run and test the circuit, call it directly with concrete arguments:
+
+```python
+assert verify_sum(3, 7, 10)   # passes: 3 + 7 == 10
+assert verify_sum(100, 200, 300)  # passes: 100 + 200 == 300
+```
+
+When you call a `@zk_circuit`-decorated function, Zinnia compiles the circuit, performs a mock execution with the provided inputs, and returns the result. The `assert` at the call site checks that the mock execution succeeded (all internal assertions were satisfied).
+
+## The Two API Styles
+
+Zinnia provides two ways to define and work with circuits.
+
+### Decorator Style
+
+The `@zk_circuit` decorator is the most concise approach. It compiles and mock-executes the circuit each time the decorated function is called:
+
+```python
+from zinnia import zk_circuit
+
+@zk_circuit
+def my_circuit(x: int, y: int):
+    assert x * y == 42
+
+assert my_circuit(6, 7)
+```
+
+This style is convenient for quick prototyping and for examples where you want minimal boilerplate.
+
+### Explicit `ZKCircuit` Style
+
+For more control over the compilation and execution lifecycle, use `ZKCircuit.from_method()`:
+
+```python
+from zinnia import ZKCircuit
+
+def my_circuit(x: int, y: int):
+    assert x * y == 42
+
+circuit = ZKCircuit.from_method(my_circuit)
+
+# Compile the circuit (produces a ZKCompiledProgram)
+compiled = circuit.compile()
+
+# Mock-execute with specific inputs
+result = circuit.mock(6, 7)
+
+# Alternatively, call the circuit object directly (equivalent to .mock())
+result = circuit(6, 7)
+```
+
+This style separates compilation from execution, which is useful when you want to compile once and test with multiple inputs, or when you need access to the compiled program object for inspection or code generation.
+
+## Understanding the Output
+
+Both styles produce a `ZKExecResult` object. The mock execution simulates the circuit with real values, checking that all assertions hold. If an assertion fails, Zinnia raises a `ZinniaException` with diagnostic information.
+
+## Public and Private Inputs
+
+In a zero-knowledge proof, some inputs are **public** (known to both prover and verifier) and others are **private** (known only to the prover). Zinnia provides the `Public` and `Private` type annotations to distinguish them:
+
+```python
+from zinnia import zk_circuit, Public, Private, Integer
+
+@zk_circuit
+def verify_square(secret: Private[Integer], public_square: Public[Integer]):
+    assert secret * secret == public_square
+
+assert verify_square(7, 49)
+```
+
+Here, `secret` is private -- the prover knows it but the verifier does not. The verifier only sees `public_square` and can confirm that the prover knows some value whose square equals 49, without learning that the value is 7.
+
+When no `Public`/`Private` annotation is specified, the default treatment depends on the backend and configuration. For prototyping and mock execution, the distinction does not affect behavior -- it matters when generating actual proofs.
+
+## Working with Arrays
+
+Zinnia supports fixed-size arrays via `NDArray` with a NumPy-like API:
+
+```python
+from zinnia import zk_circuit, NDArray
+
+@zk_circuit
+def sum_over_array(ary: NDArray[int, 10], result: int):
+    s = 0
+    for i in range(10):
+        s += ary[i]
+    assert s == result
+
+assert sum_over_array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 55)
+```
+
+For matrix operations, multi-dimensional arrays work naturally:
+
+```python
+from zinnia import zk_circuit, NDArray
+
+@zk_circuit
+def matrix_dot_prod(
+    mat_a: NDArray[int, 4, 4],
+    mat_b: NDArray[int, 4, 4],
+    result: NDArray[int, 4, 4]
+):
+    assert mat_a @ mat_b == result
+```
+
+The `@` operator performs matrix multiplication, just as in NumPy.
+
+## The Compilation Flow
+
+When Zinnia compiles a circuit, it goes through these stages:
+
+1. **Parse.** The Python function source is parsed into a standard Python AST.
+2. **Transform.** The AST is transformed into Zinnia's internal representation, applying type analysis and resolving control flow.
+3. **IR generation.** The transformed AST is lowered to a flat intermediate representation of arithmetic constraints. SMT-backed symbolic execution resolves any data-dependent behavior.
+4. **Optimization.** Multiple passes simplify the IR: constant folding, dead code elimination, duplicate removal, and more.
+5. **Code generation.** The optimized IR is emitted as circuit code for the target backend (Halo2 by default).
+
+During mock execution, Zinnia evaluates the circuit with concrete values to verify correctness without generating an actual cryptographic proof.
+
+## Important Notes
+
+- **Circuit names cannot be `main`.** The name `main` is reserved. If you define a function called `main` and try to create a circuit from it, Zinnia will raise a `ValueError`.
+
+- **Loops must have static bounds.** Because circuits are static, all loops must have iteration counts determinable at compile time. Use `range(n)` where `n` is a constant or a compile-time-known value.
+
+- **Assertions define the proof statement.** The `assert` statements in a circuit define what the prover must demonstrate. They compile into arithmetic constraints that the proof system enforces.
+
+## Next Steps
+
+- Read [Core Concepts](/docs/getting-started/core-concepts) to understand the theory behind zero-knowledge proofs and arithmetic circuits.
+- Explore the [Language Reference](/docs/language) for the full specification of Zinnia's type system, operators, and supported constructs.
+- See the [Programming Guide](/docs/programming-guide) for patterns and best practices when writing circuits.

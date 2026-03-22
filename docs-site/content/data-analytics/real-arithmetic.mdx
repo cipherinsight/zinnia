@@ -1,0 +1,235 @@
+---
+title: Real-Valued Arithmetic
+description: How Zinnia encodes real numbers as fixed-point field elements over the BN254 prime field, including quantization, precision, range, and arithmetic operations.
+---
+
+# Real-Valued Arithmetic
+
+Arithmetic circuits operate over a prime field F\_p, which natively supports only integers
+modulo p. To support real-valued computations -- statistical analysis, scientific
+computation, machine learning inference -- Zinnia uses a fixed-point encoding that maps
+real numbers into field elements with 64 fractional bits.
+
+## Fixed-Point Encoding
+
+Given a real number x, Zinnia encodes it as:
+
+```
+x_hat = floor(x * 2^s) mod p
+```
+
+where:
+- `s = 64` is the number of fractional bits
+- `p` is the BN254 prime: `21888242871839275222246405745257275088548364400416034343698204186575808495617`
+
+The encoded value `x_hat` is a field element in F\_p. Positive real numbers map to small
+field elements; negative real numbers map to large field elements (near p).
+
+### Sign Convention
+
+Values are interpreted as signed using the following convention:
+
+- If `x_hat <= (p - 1) / 2`, then x is non-negative.
+- If `x_hat > (p - 1) / 2`, then x is negative. The encoded value represents `x_hat - p`.
+
+This splits the field into a positive half `[0, (p-1)/2]` and a negative half
+`((p-1)/2, p-1]`.
+
+### Dequantization
+
+To recover the approximate real value from a field element:
+
+```
+x approx (x_hat - r) * 2^(-s)
+```
+
+where:
+- `r = 0` if `x_hat <= (p - 1) / 2` (non-negative)
+- `r = p` if `x_hat > (p - 1) / 2` (negative)
+
+This yields a value within one unit in the last place (ULP) of the original real number.
+
+## Precision Characteristics
+
+### Machine Epsilon
+
+The smallest positive value distinguishable from zero is:
+
+```
+epsilon = 2^(-s) = 2^(-64) approx 5.42 * 10^(-20)
+```
+
+This is the resolution of the fixed-point representation -- two values that differ by less
+than epsilon will map to the same field element.
+
+### Comparison with IEEE 754
+
+| Property | Zinnia Fixed-Point | IEEE 754 FP64 |
+|----------|-------------------|---------------|
+| Fractional precision | 64 bits | 52 bits (mantissa) |
+| Machine epsilon | ~5.42 x 10^(-20) | ~2.22 x 10^(-16) |
+| Precision style | Uniform (absolute) | Relative (scales with magnitude) |
+| Range | ~5.9 x 10^56 | ~1.8 x 10^308 |
+| Overflow behavior | Wraps modulo p | Infinity / NaN |
+
+Zinnia's fixed-point encoding provides roughly 3.6 orders of magnitude better absolute
+precision than FP64. However, the precision is *uniform* rather than relative: a value near
+10^50 has the same absolute precision as a value near 1. FP64, by contrast, maintains
+constant *relative* precision across its range.
+
+### Representable Range
+
+The maximum representable positive value is:
+
+```
+x_max = ((p - 1) / 2) * 2^(-s) approx 5.9 * 10^56
+```
+
+The minimum (most negative) representable value is approximately -5.9 x 10^56. Values
+outside this range wrap around modulo p, producing incorrect results.
+
+## Arithmetic Operations
+
+### Addition and Subtraction
+
+Field addition directly implements fixed-point addition:
+
+```
+(x * 2^s) + (y * 2^s) = (x + y) * 2^s
+```
+
+No scaling correction is needed. The circuit cost is one field addition (one constraint).
+
+```python
+a: Float = 1.5
+b: Float = 2.7
+c = a + b  # c = 4.2, one field addition
+d = a - b  # d = -1.2, one field subtraction
+```
+
+### Multiplication
+
+Fixed-point multiplication produces a double-width result that must be rescaled:
+
+```
+(x * 2^s) * (y * 2^s) = x * y * 2^(2s)
+```
+
+To obtain the correctly scaled result `x * y * 2^s`, the compiler divides by 2^s:
+
+```
+result = (x_hat * y_hat) / 2^s  (in the field)
+```
+
+The division by 2^s is implemented as multiplication by the modular inverse of 2^s in
+F\_p. This adds one field multiplication and one truncation constraint.
+
+```python
+a: Float = 3.0
+b: Float = 4.5
+c = a * b  # c = 13.5, multiplication + rescale
+```
+
+### Division
+
+Division is implemented as multiplication by the reciprocal:
+
+```
+x / y = x * inv(y)
+```
+
+where `inv(y)` is computed via a Newton-Raphson approximation or a dedicated inversion
+circuit. Division is more expensive than multiplication due to the inversion step.
+
+```python
+a: Float = 10.0
+b: Float = 3.0
+c = a / b  # c approx 3.333...
+```
+
+### Precision of Compound Operations
+
+Each multiplication introduces a rounding error of at most 2^(-s). After k sequential
+multiplications, the cumulative error is bounded by approximately k * 2^(-s). For most
+data analytics workloads -- where k is on the order of hundreds or thousands -- this
+remains well within acceptable precision.
+
+For example, a chain of 1000 multiplications accumulates at most:
+
+```
+1000 * 2^(-64) approx 5.42 * 10^(-17)
+```
+
+which is still below FP64's machine epsilon.
+
+## Range Proofs and Correctness
+
+The compiler must ensure that values stay within the representable range and that the sign
+convention is maintained correctly. This is achieved through range proofs.
+
+### Range Proof via Bit Decomposition
+
+To prove that a field element x\_hat represents a value in the valid range, the compiler
+decomposes x\_hat into bits:
+
+```
+x_hat = sum(b_i * 2^i)  for i = 0 to n-1
+```
+
+where each `b_i` is constrained to be 0 or 1 (via `b_i * (b_i - 1) = 0`). This proves
+that `x_hat` fits within n bits.
+
+### Overflow Detection
+
+For operations that might overflow (e.g., multiplication of two large values), the compiler
+inserts range checks on the result. If the result would exceed `(p - 1) / 2`, it would be
+misinterpreted as a negative number. The range proof prevents this by constraining the
+output to the valid positive or negative range.
+
+## When to Use Float vs Integer
+
+| Use Case | Recommended Type | Reason |
+|----------|-----------------|--------|
+| Counting, indexing, exact equality | `Integer` | No rounding, exact arithmetic |
+| Financial amounts (if precision known) | `Integer` (scaled) | Avoid rounding at controlled precision |
+| Statistical computation | `Float` | Natural representation of real values |
+| Scientific computation | `Float` | Supports non-linear functions |
+| Boolean predicates | `Integer` | 0/1 values, exact |
+| Cryptographic hashes | `Integer` | Exact field arithmetic |
+
+### Integer Arithmetic
+
+For completeness, Zinnia's integer arithmetic works directly over the prime field:
+
+- **Addition and multiplication** are native field operations with no overhead.
+- **Range proofs** for bounded integers use bit decomposition or lookup tables. The compiler
+  enforces `x = sum(b_i * 2^i)` where each `b_i` is in `{0, 1}`, proving that `x` fits
+  within a specified bit width.
+- **Comparisons** (less than, greater than) decompose to range checks: `a < b` is
+  equivalent to proving that `b - a` is positive and fits within the expected bit range.
+
+```python
+# Integer arithmetic -- exact, no rounding
+count: Integer = 0
+for item in data:
+    if item > threshold:
+        count = count + 1
+```
+
+## Practical Considerations
+
+1. **Uniform precision matters.** If your computation involves values spanning many orders
+   of magnitude, the uniform precision of fixed-point may waste bits on large values while
+   being more than sufficient for small values. Consider normalizing your inputs to a
+   narrow range.
+
+2. **Multiplication chains accumulate error.** While the per-operation error is tiny, very
+   long chains of multiplications (tens of thousands) may accumulate meaningful error.
+   Restructure computations to minimize sequential multiplication depth when possible.
+
+3. **Division is expensive.** Prefer multiplication by precomputed reciprocals when the
+   divisor is known at compile time.
+
+4. **Avoid values near the range boundary.** Values approaching 5.9 x 10^56 risk overflow
+   under further arithmetic. In practice, data analytics workloads rarely approach this
+   limit.

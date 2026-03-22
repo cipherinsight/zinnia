@@ -1,0 +1,260 @@
+---
+title: Privacy Annotations
+description: Documentation of Zinnia's privacy system, including Public and Private type annotations, circuit input layout, and PoseidonHashed commitments.
+---
+
+# Privacy Annotations
+
+Zinnia uses type annotations on function parameters to distinguish between public inputs
+(visible to both prover and verifier) and private inputs (known only to the prover). These
+annotations determine how values are mapped to the circuit's public input vector and
+private witness.
+
+## Public and Private
+
+### Public[Type]
+
+A `Public[Type]` annotation declares an input that is visible to both the prover and
+the verifier. Public inputs are part of the proof statement: anyone verifying the proof
+can see these values.
+
+```python
+def circuit(balance: Public[Integer]):
+    assert balance >= 0
+```
+
+### Private[Type]
+
+A `Private[Type]` annotation declares an input that is known only to the prover. Private
+inputs are part of the witness: they are used during proof generation but are not revealed
+to the verifier.
+
+```python
+def circuit(secret: Private[Integer]):
+    h = hash(secret)
+    # The verifier sees h but not secret
+```
+
+### Combined Usage
+
+Most circuits use a combination of public and private inputs.
+
+```python
+def verify_balance(
+    public_balance: Public[Integer],
+    private_details: Private[NDArray[Int, 10]]
+) -> Integer:
+    computed = private_details.sum()
+    assert computed == public_balance
+    return public_balance
+```
+
+In this example, the verifier knows the total balance but does not learn the individual
+account entries.
+
+## Supported Input Types
+
+Privacy annotations can wrap any Zinnia type:
+
+### Scalar Inputs
+
+```python
+def f(
+    a: Public[Integer],
+    b: Private[Integer],
+    c: Public[Float],
+    d: Private[Float],
+    e: Public[Bool],
+    f: Private[Bool],
+):
+    pass
+```
+
+### Array Inputs
+
+```python
+def g(
+    public_matrix: Public[NDArray[Int, 3, 3]],
+    private_vector: Private[NDArray[Float, 10]],
+    dynamic_data: Private[DynamicNDArray],
+):
+    pass
+```
+
+### Hashed Inputs
+
+```python
+def h(
+    commitment: Public[PoseidonHashed],
+    secret: Private[Integer],
+):
+    assert hash(secret) == commitment
+```
+
+## How Privacy Affects Circuit Layout
+
+The Zinnia compiler partitions circuit inputs into two categories based on the privacy
+annotations:
+
+### Public Input Vector
+
+All parameters annotated with `Public[T]` are placed into the circuit's public input
+vector. These values are:
+
+- Provided by the prover during proof generation.
+- Visible to the verifier during proof verification.
+- Part of the proof statement (the "instance").
+
+For array types, each element of the array occupies a separate slot in the public input
+vector. A `Public[NDArray[Int, 3, 4]]` contributes 12 field elements to the public input.
+
+### Private Witness
+
+All parameters annotated with `Private[T]` are placed into the circuit's private witness.
+These values are:
+
+- Provided by the prover during proof generation.
+- Not visible to the verifier.
+- Used to satisfy circuit constraints but never revealed.
+
+For array types, each element occupies a separate slot in the witness. A
+`Private[NDArray[Float, 5, 5]]` contributes 25 field elements to the witness.
+
+### Layout Example
+
+```python
+def example(
+    x: Public[Integer],          # public input slot 0
+    y: Public[Integer],          # public input slot 1
+    matrix: Public[NDArray[Int, 2, 2]],  # public input slots 2-5
+    secret: Private[Integer],    # witness slot 0
+    key: Private[NDArray[Int, 3]],       # witness slots 1-3
+):
+    pass
+```
+
+The public input vector has 6 elements: `[x, y, matrix[0,0], matrix[0,1], matrix[1,0], matrix[1,1]]`.
+
+The witness has 4 elements: `[secret, key[0], key[1], key[2]]`.
+
+## PoseidonHashed
+
+`PoseidonHashed` is a special type that represents a cryptographic commitment to data
+via the Poseidon hash function. Poseidon is a hash function specifically designed for
+efficiency inside arithmetic circuits.
+
+### How It Works
+
+The typical pattern is:
+
+1. The prover has some private data.
+2. The prover computes the Poseidon hash of the data and publishes the hash as a public
+   input.
+3. Inside the circuit, the prover provides the private data as a private witness and
+   the circuit verifies that the hash of the private data matches the public commitment.
+
+```python
+def verify_secret(
+    commitment: Public[PoseidonHashed],
+    secret: Private[Integer]
+) -> Bool:
+    computed_hash = hash(secret)
+    assert computed_hash == commitment
+    return True
+```
+
+### Use Cases
+
+PoseidonHashed is useful when:
+
+- You want to commit to private data without revealing it.
+- The verifier needs assurance that the prover used specific data without seeing the
+  data itself.
+- You are building protocols that require binding commitments (e.g., commit-and-prove
+  schemes).
+
+### Hashing Multiple Values
+
+You can hash multiple values by passing them as a tuple or list:
+
+```python
+def multi_commit(
+    commitment: Public[PoseidonHashed],
+    a: Private[Integer],
+    b: Private[Integer],
+    c: Private[Integer],
+):
+    assert hash((a, b, c)) == commitment
+```
+
+### Merkle Proof Verification
+
+For larger datasets, Zinnia provides `merkle_verify` to check membership proofs against
+a Poseidon-based Merkle tree:
+
+```python
+def check_membership(
+    root: Public[PoseidonHashed],
+    leaf: Private[Integer],
+    proof_path: Private[NDArray[Int, 20]],  # depth-20 tree
+) -> Bool:
+    valid = merkle_verify(root, leaf, proof_path)
+    assert valid
+    return True
+```
+
+This verifies that `leaf` is a member of the Merkle tree with the given `root`, using
+the provided authentication path. The proof path contains sibling hashes at each level
+of the tree.
+
+## Design Patterns
+
+### Prove Knowledge of a Preimage
+
+```python
+def prove_preimage(
+    h: Public[PoseidonHashed],
+    preimage: Private[Integer],
+):
+    assert hash(preimage) == h
+```
+
+The prover demonstrates knowledge of a value whose hash matches `h`, without revealing
+the value.
+
+### Private Computation with Public Result
+
+```python
+def private_average(
+    result: Public[Float],
+    data: Private[NDArray[Float, 100]],
+):
+    avg = data.sum() / 100.0
+    assert avg == result
+```
+
+The prover computes the average of 100 private values and proves the result matches
+the declared public output, without revealing the individual values.
+
+### Selective Disclosure
+
+```python
+def selective_disclosure(
+    disclosed_sum: Public[Integer],
+    commitment: Public[PoseidonHashed],
+    values: Private[NDArray[Int, 10]],
+    mask: Private[NDArray[Bool, 10]],
+):
+    # Verify the commitment covers all values
+    assert hash(values) == commitment
+
+    # Prove the sum of selected values
+    total = 0
+    for i in range(10):
+        if mask[i]:
+            total = total + values[i]
+    assert total == disclosed_sum
+```
+
+The prover reveals the sum of a selected subset of committed values, without revealing
+which values were selected or what the individual values are.

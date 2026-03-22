@@ -1,0 +1,306 @@
+---
+title: Circuits
+description: How to create, compile, and execute ZKCircuit programs in Zinnia.
+---
+
+# Circuits
+
+A `ZKCircuit` is the primary entry point for writing zero-knowledge programs in Zinnia. It
+wraps a Python-like function, compiles it to an arithmetic circuit, and provides mock
+execution for testing. This page covers all the ways to create circuits, compile them, and
+run them.
+
+## Imports
+
+```python
+from zinnia import ZKCircuit, zk_circuit, Integer, Float, Public, Private, ZKExecResult
+```
+
+## Creating a Circuit
+
+There are three ways to create a `ZKCircuit`: the `@zk_circuit` decorator, the
+`ZKCircuit.from_method` factory, and the constructor with a source string.
+
+### Pattern 1: The `@zk_circuit` Decorator
+
+The decorator pattern is the most concise approach. Decorate a function with `@zk_circuit`
+and call it directly. The decorator automatically discovers any `ZKChip` or
+`ZKExternalFunc` instances defined in the calling scope and passes them to the circuit.
+
+```python
+from zinnia import zk_circuit, Integer, Public, Private
+
+@zk_circuit
+def add_circuit(a: Private[Integer], b: Public[Integer]):
+    c = a + b
+    assert c == 10
+
+result = add_circuit(3, 7)
+print(result.is_satisfied())  # True
+```
+
+When you call a decorated function, Zinnia compiles the circuit on the fly and immediately
+runs a mock execution with the provided arguments. The return value is a `ZKExecResult`.
+
+You can also pass a custom `ZinniaConfig` to the decorator:
+
+```python
+from zinnia import zk_circuit, ZinniaConfig
+
+config = ZinniaConfig(loop_limit=500)
+
+@zk_circuit
+def my_circuit(a: Private[Integer]):
+    assert a > 0
+```
+
+### Pattern 2: `ZKCircuit.from_method`
+
+The `from_method` factory gives you an explicit circuit object that you can compile and
+execute in separate steps. This is useful when you want to reuse a compiled circuit across
+multiple test runs.
+
+```python
+from zinnia import ZKCircuit, Integer, Public, Private
+
+def multiply(a: Private[Integer], b: Public[Integer]):
+    c = a * b
+    assert c == 42
+
+circuit = ZKCircuit.from_method(multiply)
+
+# Compile once
+compiled = circuit.compile()
+
+# Execute multiple times
+result1 = circuit.mock(6, 7)
+print(result1.is_satisfied())  # True
+
+result2 = circuit.mock(5, 7)
+print(result2.is_satisfied())  # False
+```
+
+You can pass chips and external functions as lists:
+
+```python
+circuit = ZKCircuit.from_method(
+    multiply,
+    chips=[my_chip],
+    externals=[my_external],
+)
+```
+
+### Pattern 3: Source String Constructor
+
+For dynamic circuit generation or when loading circuit source from files, use the
+constructor directly with a source string:
+
+```python
+from zinnia import ZKCircuit
+
+source = """
+def add(a: Private[Integer], b: Public[Integer]):
+    c = a + b
+    assert c == 10
+"""
+
+circuit = ZKCircuit(name="add", source=source)
+result = circuit.mock(3, 7)
+print(result.is_satisfied())  # True
+```
+
+The `ZKCircuit.from_source` factory is an alias for the constructor:
+
+```python
+circuit = ZKCircuit.from_source(name="add", source=source)
+```
+
+## Name Restriction
+
+The circuit name cannot be `"main"`. This name is reserved internally by the compiler. If
+you attempt to use it, a `ValueError` is raised:
+
+```python
+# This raises ValueError: Circuit name cannot be `main`, please use another name.
+circuit = ZKCircuit(name="main", source=source)
+```
+
+When using `from_method` or the decorator, the circuit name is derived from the function
+name, so avoid naming your function `main`.
+
+## Compiling a Circuit
+
+Call `compile()` to transform the circuit into a `ZKCompiledProgram`:
+
+```python
+circuit = ZKCircuit.from_method(my_func)
+compiled_program = circuit.compile()
+```
+
+The compiled program contains the intermediate representation (IR) that targets the
+configured backend. Compilation performs parsing, type checking, IR generation, and
+optimization passes.
+
+## Mock Execution
+
+Mock execution simulates the circuit with concrete values. It evaluates all constraints
+and returns a `ZKExecResult` indicating whether the circuit is satisfied.
+
+```python
+result = circuit.mock(3, 7)
+
+# Check satisfaction
+if result.is_satisfied():
+    print("All constraints passed")
+
+# ZKExecResult is also truthy/falsy
+if result:
+    print("Satisfied")
+```
+
+The `__call__` method is an alias for `mock`, so these are equivalent:
+
+```python
+result = circuit.mock(3, 7)
+result = circuit(3, 7)
+```
+
+If you call `mock` or `__call__` before compiling, the circuit is automatically compiled
+first.
+
+## Parsing Inputs
+
+The `argparse` method converts arguments into a `ZKParsedInput` structure that maps each
+value to its circuit input slot. This is useful for inspecting how arguments are laid out
+in the circuit:
+
+```python
+circuit = ZKCircuit.from_method(my_func)
+parsed = circuit.argparse(3, 7)
+for entry in parsed.get_entries():
+    print(entry.get_key(), entry.get_kind(), entry.get_value())
+```
+
+Each entry has:
+
+- `get_indices()` -- the positional indices of the input in the circuit.
+- `get_kind()` -- one of `"Float"`, `"Integer"`, or `"Hash"`.
+- `get_value()` -- the concrete value.
+
+## Serialization
+
+Compiled programs can be serialized to JSON and deserialized later. This is useful for
+saving compilation results to disk or transmitting them over a network.
+
+```python
+circuit = ZKCircuit.from_method(my_func)
+compiled = circuit.compile()
+
+# Serialize to JSON string
+data = compiled.serialize()
+
+# Deserialize (external functions must be re-provided)
+restored = ZKCompiledProgram.deserialize(data, external_funcs=[my_external])
+```
+
+You can also retrieve the compiled source representation:
+
+```python
+source = compiled.get_compiled_source()
+backend = compiled.get_target_backend_name()
+```
+
+## Passing Chips and Externals
+
+Chips (reusable sub-circuit components) and external functions (non-ZK helpers) are passed
+as lists to the circuit constructor or factory methods:
+
+```python
+from zinnia import ZKCircuit, ZKChip, ZKExternalFunc
+
+@zk_chip
+def helper(x: Integer) -> Integer:
+    return x * 2
+
+@zk_external
+def load_data() -> Integer:
+    return 42
+
+circuit = ZKCircuit.from_method(
+    my_circuit_func,
+    chips=[helper],
+    externals=[load_data],
+)
+```
+
+You can pass either `ZKChip`/`ZKExternalFunc` instances or plain Python functions. Plain
+functions are automatically wrapped using `from_method`.
+
+When using the `@zk_circuit` decorator, chips and externals are discovered automatically
+from the local scope of the caller. Any `ZKChip` or `ZKExternalFunc` variable visible at
+the call site is included:
+
+```python
+from zinnia import zk_circuit, zk_chip, Integer, Private
+
+@zk_chip
+def double(x: Integer) -> Integer:
+    return x * 2
+
+@zk_circuit
+def my_circuit(a: Private[Integer]):
+    b = double(a)
+    assert b == 10
+
+# `double` is automatically available inside my_circuit
+result = my_circuit(5)
+```
+
+## Error Handling
+
+Zinnia raises `ZinniaException` for user-facing errors such as type mismatches, unsupported
+operations, or constraint violations during compilation. Internal compiler errors are
+caught and re-raised as prettified exceptions with source location information.
+
+```python
+from zinnia import ZinniaException
+
+try:
+    circuit.compile()
+except ZinniaException as e:
+    print(f"Compilation error: {e}")
+```
+
+## Complete Example
+
+```python
+from zinnia import (
+    ZKCircuit, zk_circuit, zk_chip,
+    Integer, Float, NDArray,
+    Public, Private, np,
+)
+
+# Define a reusable chip
+@zk_chip
+def clamp(value: Integer, lo: Integer, hi: Integer) -> Integer:
+    if value < lo:
+        return lo
+    if value > hi:
+        return hi
+    return value
+
+# Define the circuit
+def score_circuit(raw_score: Private[Integer], threshold: Public[Integer]):
+    clamped = clamp(raw_score, 0, 100)
+    assert clamped >= threshold
+
+# Create and run
+circuit = ZKCircuit.from_method(score_circuit, chips=[clamp])
+compiled = circuit.compile()
+
+result = circuit.mock(85, 70)
+print(result.is_satisfied())  # True
+
+result = circuit.mock(50, 70)
+print(result.is_satisfied())  # False
+```

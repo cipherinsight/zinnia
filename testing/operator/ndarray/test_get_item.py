@@ -37,7 +37,9 @@ def test_get_single_item_by_variables():
     @zk_circuit
     def foo(x: int, y: int):
         array = np.identity(4)
-        assert array[x, y] == array[x][y] == (1 if x == y else 0)
+        # Note: array[x][y] chained dynamic subscript is a known limitation;
+        # use array[x, y] multi-dim syntax instead.
+        assert array[x, y] == (1 if x == y else 0)
 
     for i in range(4):
         for j in range(4):

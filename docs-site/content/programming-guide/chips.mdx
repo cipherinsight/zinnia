@@ -1,0 +1,209 @@
+---
+title: Chips
+description: How to define and use ZKChip components as reusable sub-circuits in Zinnia.
+---
+
+# Chips
+
+A `ZKChip` is a reusable sub-circuit component. Chips let you factor out common logic into
+named building blocks that can be shared across multiple circuits. When a circuit calls a
+chip, the chip's logic is inlined into the circuit during compilation -- it compiles down to
+constraints just like the rest of the circuit.
+
+## Imports
+
+```python
+from zinnia import ZKChip, zk_chip, Integer, Float
+```
+
+## What Chips Are
+
+Chips serve the same role as helper functions in ordinary programming, but within the
+zero-knowledge circuit domain. A chip:
+
+- Defines a self-contained piece of circuit logic with typed inputs and a return value.
+- Is parsed into an AST at creation time (not at call time).
+- Is inlined into any circuit that references it during compilation.
+- Cannot be executed on its own outside of a circuit.
+
+Think of chips as "circuit-level functions" -- they exist only to organize and reuse
+constraint logic.
+
+## Creating Chips
+
+There are three ways to create a `ZKChip`.
+
+### Pattern 1: The `@zk_chip` Decorator
+
+The most concise approach. The decorator parses the function immediately and returns a
+`ZKChip` instance:
+
+```python
+from zinnia import zk_chip, Integer
+
+@zk_chip
+def double(x: Integer) -> Integer:
+    return x * 2
+```
+
+The variable `double` is now a `ZKChip` object, not a regular Python function.
+
+### Pattern 2: `ZKChip.from_method`
+
+Pass a plain Python function to the factory method:
+
+```python
+from zinnia import ZKChip, Integer
+
+def double(x: Integer) -> Integer:
+    return x * 2
+
+chip = ZKChip.from_method(double)
+```
+
+If you pass a `ZKChip` instance to `from_method`, it is returned as-is. Passing a
+`ZKExternalFunc` raises a `ZinniaException`.
+
+### Pattern 3: Source String Constructor
+
+For dynamically generated chips, pass the source code as a string:
+
+```python
+from zinnia import ZKChip
+
+source = """
+def double(x: Integer) -> Integer:
+    return x * 2
+"""
+
+chip = ZKChip(name="double", source=source)
+```
+
+`ZKChip.from_source(name, source)` is an alias for the constructor.
+
+## AST Parsing at Creation Time
+
+When a `ZKChip` is instantiated (by any method), its source code is immediately parsed
+into an AST. This means syntax errors and certain structural problems are caught early --
+at chip creation time rather than at circuit compilation time.
+
+```python
+# This raises a ZinniaException immediately if the source is malformed
+chip = ZKChip(name="bad", source="def bad( -> Integer:\n    return")
+```
+
+## Using Chips in Circuits
+
+To use a chip in a circuit, pass it in the `chips` parameter and call it by name inside the
+circuit function.
+
+### With `ZKCircuit.from_method`
+
+```python
+from zinnia import ZKCircuit, zk_chip, Integer, Private, Public
+
+@zk_chip
+def add_one(x: Integer) -> Integer:
+    return x + 1
+
+def my_circuit(a: Private[Integer], b: Public[Integer]):
+    incremented = add_one(a)
+    assert incremented == b
+
+circuit = ZKCircuit.from_method(my_circuit, chips=[add_one])
+result = circuit.mock(4, 5)
+print(result.is_satisfied())  # True
+```
+
+### With the `@zk_circuit` Decorator
+
+When using `@zk_circuit`, chips defined in the calling scope are discovered automatically.
+You do not need to pass them explicitly:
+
+```python
+from zinnia import zk_circuit, zk_chip, Integer, Private, Public
+
+@zk_chip
+def add_one(x: Integer) -> Integer:
+    return x + 1
+
+@zk_circuit
+def my_circuit(a: Private[Integer], b: Public[Integer]):
+    incremented = add_one(a)
+    assert incremented == b
+
+result = my_circuit(4, 5)
+print(result.is_satisfied())  # True
+```
+
+### Multiple Chips
+
+You can define and use multiple chips in a single circuit:
+
+```python
+from zinnia import ZKCircuit, zk_chip, Integer, Float, Private, Public
+
+@zk_chip
+def clamp(value: Integer, lo: Integer, hi: Integer) -> Integer:
+    if value < lo:
+        return lo
+    if value > hi:
+        return hi
+    return value
+
+@zk_chip
+def scale(value: Integer, factor: Integer) -> Integer:
+    return value * factor
+
+def pipeline(raw: Private[Integer], threshold: Public[Integer]):
+    clamped = clamp(raw, 0, 100)
+    scaled = scale(clamped, 2)
+    assert scaled >= threshold
+
+circuit = ZKCircuit.from_method(pipeline, chips=[clamp, scale])
+result = circuit.mock(85, 100)
+print(result.is_satisfied())  # True
+```
+
+### Passing Plain Functions as Chips
+
+When constructing a `ZKCircuit`, you can pass plain Python functions in the `chips` list.
+They are automatically wrapped with `ZKChip.from_method`:
+
+```python
+def triple(x: Integer) -> Integer:
+    return x * 3
+
+# `triple` is automatically converted to a ZKChip
+circuit = ZKCircuit.from_method(my_circuit, chips=[triple])
+```
+
+## Chips Cannot Be Called Outside Circuits
+
+Calling a `ZKChip` instance directly raises a `ZinniaException`. Chips only have meaning
+inside a circuit during compilation:
+
+```python
+from zinnia import zk_chip, Integer, ZinniaException
+
+@zk_chip
+def double(x: Integer) -> Integer:
+    return x * 2
+
+try:
+    double(5)  # Raises ZinniaException
+except ZinniaException as e:
+    print(e)  # "ZK Chip is not callable outside of a circuit."
+```
+
+## Retrieving the Chip Name
+
+Use `get_name()` to retrieve the name of a chip:
+
+```python
+@zk_chip
+def my_helper(x: Integer) -> Integer:
+    return x
+
+print(my_helper.get_name())  # "my_helper"
+```

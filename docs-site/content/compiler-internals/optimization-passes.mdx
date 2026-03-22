@@ -1,0 +1,157 @@
+---
+title: Optimization Passes
+description: Documentation of Zinnia's 10 IR optimization passes, their ordering, dependencies, and impact on circuit size.
+---
+
+# Optimization Passes
+
+After IR generation, Zinnia runs 10 optimization passes in a fixed order. Each pass takes an `IRGraph` and produces a transformed `IRGraph`. The passes are implemented in `compile/optim_pass/`.
+
+Optimization is critical for circuit size. The raw IR produced by symbolic execution contains significant redundancy: both branches of every conditional are fully materialized, loop unrolling duplicates code, and the SMT-backed approach generates conservative constraints. The optimization passes can reduce circuit size by 30-70% in typical programs.
+
+## Pass Ordering
+
+The passes run in the following order:
+
+| # | Pass | Category |
+|---|---|---|
+| 1 | `ExternalCallRemoverIRPass` | Structural |
+| 2 | `DynamicNDArrayMetaAssertInjectionIRPass` | Structural |
+| 3 | `DynamicNDArrayMemoryLoweringIRPass` | Structural |
+| 4 | `MemoryTraceInjectionIRPass` | Structural |
+| 5 | `PatternMatchOptimIRPass` | Algebraic simplification |
+| 6 | `ConstantFoldIRPass` | Standard optimization |
+| 7 | `DeadCodeEliminationIRPass` | Standard optimization |
+| 8 | `DuplicateCodeEliminationIRPass` | Standard optimization |
+| 9 | `DoubleNotEliminationIRPass` | Peephole |
+| 10 | `AlwaysSatisfiedEliminationIRPass` | Circuit-specific |
+
+The ordering matters. Structural passes (1-4) must run first because they introduce new IR statements that subsequent passes can optimize. Standard optimizations (5-8) reduce redundancy introduced by both the original compilation and the structural passes. Peephole and circuit-specific passes (9-10) clean up remaining inefficiencies.
+
+## Pass Descriptions
+
+### 1. ExternalCallRemoverIRPass
+
+**What it does:** Removes IR statements corresponding to external function calls. External functions are used for witness generation and other prover-side computations that do not appear in the circuit.
+
+**Why it matters:** External calls are present in the IR for completeness during compilation (they affect the symbolic environment), but they have no circuit representation. Removing them early prevents downstream passes from wasting time on dead code.
+
+**Dependencies:** None. Must run before dead code elimination to avoid interference.
+
+### 2. DynamicNDArrayMetaAssertInjectionIRPass
+
+**What it does:** Injects assertion statements that constrain the metadata of dynamic arrays. For each `DynamicNDArray`, this pass adds assertions ensuring that the runtime length is non-negative and does not exceed the declared maximum.
+
+**Why it matters:** Without these assertions, a malicious prover could claim a dynamic array has a length outside its declared bounds, leading to incorrect circuit behavior. These assertions are hard constraints that the prover must satisfy.
+
+**Example:** For a `DynamicNDArray[int, 8, 1]` with runtime length `n`, this pass injects:
+- `assert(n >= 0)`
+- `assert(n <= 8)`
+
+**Dependencies:** Must run before memory lowering (Pass 3), because memory lowering needs these constraints to be present.
+
+### 3. DynamicNDArrayMemoryLoweringIRPass
+
+**What it does:** Lowers dynamic array operations (indexing, slicing, assignment) from high-level array IR to low-level memory IR (`AllocateMemoryIR`, `ReadMemoryIR`, `WriteMemoryIR`). This pass decides whether each array uses the multiplexer strategy or the zkRAM strategy based on its maximum size.
+
+**Why it matters:** The IR generator produces high-level array operations that are agnostic to the memory model. This pass makes the memory strategy concrete, introducing the specific IR instructions that backends know how to compile.
+
+**Dependencies:** Must run after metadata assertion injection (Pass 2). Must run before memory trace injection (Pass 4).
+
+### 4. MemoryTraceInjectionIRPass
+
+**What it does:** For arrays that use the zkRAM memory model, this pass injects memory trace operations (`MemoryTraceEmitIR`, `MemoryTraceSealIR`). Each read and write to a zkRAM array emits a trace entry recording the operation type, address, value, and timestamp. At the end, a seal operation finalizes the trace for the consistency argument.
+
+**Why it matters:** The zkRAM consistency argument requires a complete, ordered trace of all memory operations. Without the trace, the verifier cannot check that reads return the values most recently written to each address.
+
+**Dependencies:** Must run after memory lowering (Pass 3), because it operates on the memory IR introduced by that pass.
+
+### 5. PatternMatchOptimIRPass
+
+**What it does:** Performs algebraic simplification via pattern matching on the IR graph. Recognizes and simplifies common patterns:
+
+- `x + 0` becomes `x`
+- `x * 1` becomes `x`
+- `x * 0` becomes `0`
+- `x - x` becomes `0`
+- `x / x` becomes `1` (when `x` is provably non-zero)
+- `select(g, x, x)` becomes `x` (when both branches produce the same value)
+- `not(not(x))` becomes `x`
+- Double negation of boolean expressions
+- Distributive law simplifications
+
+This pass is also referred to as "shortcut optimization" in the codebase.
+
+**Why it matters:** Symbolic execution and loop unrolling generate many trivially simplifiable expressions. For example, a loop that accumulates a sum starts with `sum = 0`, and the first iteration computes `sum + arr[0]`, which initially involves `0 + arr[0]` -- simplifiable to just `arr[0]`.
+
+**Dependencies:** Benefits from running after structural passes, which may introduce simplifiable patterns.
+
+### 6. ConstantFoldIRPass
+
+**What it does:** Evaluates operations whose inputs are all compile-time constants, replacing them with a single `ConstantIR` statement. For example, `IntAddIR(ConstantIR(3), ConstantIR(4))` is replaced by `ConstantIR(7)`.
+
+**Why it matters:** Constants propagate through the circuit and can cascade: folding one constant may make another operation foldable. This pass iterates until no more folding is possible.
+
+**Dependencies:** Benefits from running after pattern matching, which may expose new constants (e.g., `x * 0 = 0`).
+
+### 7. DeadCodeEliminationIRPass
+
+**What it does:** Removes IR statements whose results are not used by any output, assertion, or memory operation. Starting from the outputs and assertions, it traces backward through the dependency graph and marks all reachable statements. Unreachable statements are removed.
+
+**Why it matters:** Previous passes (especially external call removal and constant folding) can leave behind statements that no longer contribute to the circuit. Dead code elimination removes these, directly reducing the number of circuit constraints.
+
+**Dependencies:** Should run after constant folding, which may render operations dead (e.g., a conditional whose guard folded to a constant makes one branch's statements dead).
+
+### 8. DuplicateCodeEliminationIRPass
+
+**What it does:** Identifies IR statements that compute the same operation with the same arguments and replaces all references to the duplicates with a single canonical statement. This is equivalent to common subexpression elimination (CSE) in traditional compilers.
+
+**Why it matters:** Loop unrolling and branch materialization can produce many duplicate computations. For example, if both branches of a conditional compute `x + 1`, the two `IntAddIR` statements can be deduplicated into one.
+
+**Dependencies:** Should run after dead code elimination, which simplifies the graph and makes duplicate detection faster.
+
+### 9. DoubleNotEliminationIRPass
+
+**What it does:** Detects patterns of the form `BoolNotIR(BoolNotIR(x))` and replaces them with `x`.
+
+**Why it matters:** Double negations arise from the compilation of complex boolean expressions and from the guard/merge process in conditional compilation. Each `BoolNotIR` becomes a circuit constraint, so eliminating unnecessary ones reduces circuit size.
+
+**Dependencies:** A simple peephole pass with no specific ordering requirements, but placing it after the main optimization passes ensures it catches patterns that earlier passes may have exposed.
+
+### 10. AlwaysSatisfiedEliminationIRPass
+
+**What it does:** Identifies assertion statements that are provably always true and removes them. Uses the constraint structure of the IR (and optionally Z3) to determine whether an assertion is a tautology under the circuit's input constraints.
+
+**Why it matters:** Many assertions are generated conservatively during symbolic execution. For example, an assertion `assert(x >= 0)` may be trivially true if `x` is the result of an unsigned input. Removing tautological assertions directly reduces the constraint count.
+
+**Examples of always-satisfied assertions:**
+- Range checks on values that are already range-checked by construction.
+- Equality assertions between values that are defined to be equal.
+- Non-negativity checks on values that are computed as squares.
+
+**Dependencies:** Runs last because all prior optimizations may create new tautologies (e.g., constant folding may make an assertion trivially true).
+
+## Impact on Circuit Size
+
+The optimization passes have a cumulative effect on circuit size. As a rough guide for typical programs:
+
+| Pass | Typical Reduction |
+|---|---|
+| Pattern matching | 5-15% |
+| Constant folding | 5-10% |
+| Dead code elimination | 10-30% |
+| Duplicate elimination | 5-15% |
+| Double-not elimination | 1-3% |
+| Always-satisfied elimination | 5-20% |
+
+The actual reduction depends heavily on the program. Programs with many conditionals benefit more from dead code and always-satisfied elimination. Programs with loops benefit more from pattern matching and duplicate elimination.
+
+## Adding a New Pass
+
+To add a new optimization pass:
+
+1. Create a new class in `compile/optim_pass/` that takes an `IRGraph` and returns a transformed `IRGraph`.
+2. The pass should not modify the input graph in place; it should produce a new graph (or at minimum, a new statement list with updated references).
+3. Register the pass in the `ZinniaCompiler` orchestrator at the appropriate position in the pass sequence.
+4. Ensure the pass preserves the IR invariants: topological ordering, single assignment, and branch-free structure.
+5. Add tests that verify the pass produces correct and smaller IR for representative inputs.

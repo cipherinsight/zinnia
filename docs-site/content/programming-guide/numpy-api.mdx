@@ -1,0 +1,316 @@
+---
+title: NumPy-like API
+description: Using the Zinnia np namespace for NumPy-compatible array operations inside circuits.
+---
+
+# NumPy-like API
+
+Zinnia provides an `np` namespace that mirrors a subset of the NumPy API. This allows you
+to write array operations in circuits using familiar NumPy syntax. During compilation, these
+operations are translated into arithmetic circuit constraints.
+
+## Imports
+
+```python
+from zinnia import np
+```
+
+## How It Works
+
+Zinnia defines a `NamespaceNP` class that exposes NumPy-compatible function signatures. When
+you import `np` from `zinnia`, you get an instance of this namespace:
+
+```python
+from zinnia import np
+```
+
+However, if NumPy is installed in your Python environment, the real NumPy module shadows
+the Zinnia namespace:
+
+```python
+# In zinnia/__init__.py:
+from .lang.namespace import NamespaceNP
+
+np = NamespaceNP()
+try:
+    import numpy as np  # Shadows NamespaceNP if NumPy is available
+except ImportError:
+    pass
+```
+
+This design is intentional. Since Zinnia programs are valid Python, having `np` refer to
+real NumPy means you can run your circuit function as plain Python for testing. When the
+same code is compiled by the Zinnia compiler, the compiler recognizes `np.*` calls and
+translates them to circuit operations regardless of what `np` is at the Python level.
+
+## Supported Functions
+
+The following table lists all NumPy-like functions supported by Zinnia. Each function is
+implemented as a circuit operation and produces the corresponding arithmetic constraints
+when compiled.
+
+### Array Creation
+
+| Function | Description |
+|----------|-------------|
+| `np.array(...)` | Create an array from a list or nested lists. |
+| `np.asarray(...)` | Convert input to an array. |
+| `np.zeros(shape)` | Create an array filled with zeros. |
+| `np.ones(shape)` | Create an array filled with ones. |
+| `np.eye(N)` | Create an N x N identity matrix. |
+| `np.identity(N)` | Alias for `np.eye`. |
+| `np.arange(start, stop, step)` | Create an array with evenly spaced values within an interval. |
+| `np.linspace(start, stop, num)` | Create an array with evenly spaced values over a specified range. |
+
+### Array Manipulation
+
+| Function | Description |
+|----------|-------------|
+| `np.concatenate((a, b), axis)` | Join arrays along an existing axis. |
+| `np.stack((a, b), axis)` | Join arrays along a new axis. |
+| `np.append(arr, values)` | Append values to the end of an array. |
+| `np.repeat(a, repeats)` | Repeat elements of an array. |
+| `np.transpose(a)` | Permute the dimensions of an array. |
+| `np.moveaxis(a, source, destination)` | Move axes of an array to new positions. |
+
+### Arithmetic Operations
+
+| Function | Description |
+|----------|-------------|
+| `np.add(a, b)` | Element-wise addition. |
+| `np.subtract(a, b)` | Element-wise subtraction. |
+| `np.multiply(a, b)` | Element-wise multiplication. |
+| `np.divide(a, b)` | Element-wise division. |
+| `np.floor_divide(a, b)` | Element-wise floor division. |
+| `np.negative(a)` | Element-wise negation. |
+| `np.positive(a)` | Element-wise positive (identity for numeric types). |
+| `np.power(a, b)` | Element-wise exponentiation. |
+| `np.pow(a, b)` | Alias for `np.power`. |
+| `np.mod(a, b)` | Element-wise modulo. |
+| `np.fmod(a, b)` | Element-wise floating-point modulo. |
+
+### Mathematical Functions
+
+| Function | Description |
+|----------|-------------|
+| `np.abs(a)` | Element-wise absolute value. |
+| `np.fabs(a)` | Element-wise absolute value (float). |
+| `np.sqrt(a)` | Element-wise square root. |
+| `np.exp(a)` | Element-wise exponential. |
+| `np.log(a)` | Element-wise natural logarithm. |
+| `np.sign(a)` | Element-wise sign function (-1, 0, or 1). |
+
+### Trigonometric Functions
+
+| Function | Description |
+|----------|-------------|
+| `np.cos(a)` | Element-wise cosine. |
+| `np.sin(a)` | Element-wise sine. |
+| `np.tan(a)` | Element-wise tangent. |
+| `np.acos(a)` | Element-wise inverse cosine. |
+| `np.asin(a)` | Element-wise inverse sine. |
+| `np.atan(a)` | Element-wise inverse tangent. |
+| `np.cosh(a)` | Element-wise hyperbolic cosine. |
+| `np.sinh(a)` | Element-wise hyperbolic sine. |
+| `np.tanh(a)` | Element-wise hyperbolic tangent. |
+
+### Reduction Operations
+
+| Function | Description |
+|----------|-------------|
+| `np.sum(a)` | Sum of array elements. |
+| `np.prod(a)` | Product of array elements. |
+| `np.mean(a)` | Arithmetic mean of array elements. |
+| `np.amax(a)` | Maximum value in an array. |
+| `np.amin(a)` | Minimum value in an array. |
+| `np.max(a)` | Alias for `np.amax`. |
+| `np.min(a)` | Alias for `np.amin`. |
+| `np.argmax(a)` | Index of the maximum value. |
+| `np.argmin(a)` | Index of the minimum value. |
+| `np.all(a)` | Test whether all elements are true. |
+| `np.any(a)` | Test whether any element is true. |
+
+### Linear Algebra
+
+| Function | Description |
+|----------|-------------|
+| `np.dot(a, b)` | Dot product of two arrays. |
+
+### Comparison Operations
+
+| Function | Description |
+|----------|-------------|
+| `np.equal(a, b)` | Element-wise equality test. |
+| `np.not_equal(a, b)` | Element-wise inequality test. |
+| `np.greater(a, b)` | Element-wise greater-than test. |
+| `np.greater_equal(a, b)` | Element-wise greater-than-or-equal test. |
+| `np.less(a, b)` | Element-wise less-than test. |
+| `np.less_equal(a, b)` | Element-wise less-than-or-equal test. |
+| `np.allclose(a, b)` | Test whether all elements are approximately equal. |
+| `np.array_equal(a, b)` | Test whether two arrays are exactly equal. |
+| `np.array_equiv(a, b)` | Test whether two arrays are equivalent (broadcasting). |
+| `np.isclose(a, b)` | Element-wise approximate equality test. |
+| `np.maximum(a, b)` | Element-wise maximum. |
+| `np.minimum(a, b)` | Element-wise minimum. |
+| `np.fmax(a, b)` | Element-wise maximum, ignoring NaNs. |
+| `np.fmin(a, b)` | Element-wise minimum, ignoring NaNs. |
+
+### Logical Operations
+
+| Function | Description |
+|----------|-------------|
+| `np.logical_and(a, b)` | Element-wise logical AND. |
+| `np.logical_or(a, b)` | Element-wise logical OR. |
+| `np.logical_not(a)` | Element-wise logical NOT. |
+| `np.logical_xor(a, b)` | Element-wise logical XOR. |
+
+### Size and Shape
+
+| Function | Description |
+|----------|-------------|
+| `np.size(a)` | Number of elements in the array. |
+
+## Usage in Circuits
+
+Use `np` functions inside circuit bodies just as you would in regular NumPy code:
+
+```python
+from zinnia import ZKCircuit, NDArray, Integer, Float, Public, Private, np
+
+def stats_circuit(
+    data: Private[NDArray],
+    expected_mean: Public[Float],
+    expected_max: Public[Integer],
+):
+    avg = np.mean(data)
+    mx = np.amax(data)
+    assert avg == expected_mean
+    assert mx == expected_max
+
+circuit = ZKCircuit.from_method(stats_circuit)
+result = circuit.mock(np.array([10, 20, 30]), 20.0, 30)
+print(result.is_satisfied())  # True
+```
+
+### Array Creation Inside Circuits
+
+You can create arrays inside circuit functions. These become constant arrays in the
+compiled circuit:
+
+```python
+def matrix_circuit(v: Private[NDArray]):
+    identity = np.eye(3)
+    result = np.dot(identity, v)
+    assert np.array_equal(result, v)
+
+circuit = ZKCircuit.from_method(matrix_circuit)
+result = circuit.mock(np.array([1, 2, 3]))
+```
+
+### Linear Algebra
+
+The `np.dot` function computes dot products and matrix multiplications:
+
+```python
+def dot_circuit(a: Private[NDArray], b: Private[NDArray], expected: Public[Integer]):
+    result = np.dot(a, b)
+    assert result == expected
+
+circuit = ZKCircuit.from_method(dot_circuit)
+result = circuit.mock(np.array([1, 2, 3]), np.array([4, 5, 6]), 32)
+print(result.is_satisfied())  # True (1*4 + 2*5 + 3*6 = 32)
+```
+
+### Reductions
+
+Reduction operations collapse an array into a scalar or a lower-dimensional array:
+
+```python
+def reduction_circuit(data: Private[NDArray], threshold: Public[Float]):
+    total = np.sum(data)
+    average = np.mean(data)
+    largest = np.amax(data)
+    smallest = np.amin(data)
+    assert average >= threshold
+
+circuit = ZKCircuit.from_method(reduction_circuit)
+result = circuit.mock(np.array([10.0, 20.0, 30.0]), 15.0)
+print(result.is_satisfied())  # True (mean is 20.0 >= 15.0)
+```
+
+### Element-wise Operations
+
+Most arithmetic and mathematical functions operate element-wise on arrays:
+
+```python
+def elementwise_circuit(a: Private[NDArray], b: Private[NDArray]):
+    added = np.add(a, b)
+    scaled = np.multiply(added, 2)
+    assert np.array_equal(scaled, np.array([6, 10, 14]))
+
+circuit = ZKCircuit.from_method(elementwise_circuit)
+result = circuit.mock(np.array([1, 2, 3]), np.array([2, 3, 4]))
+print(result.is_satisfied())  # True
+```
+
+## Differences from Real NumPy
+
+While Zinnia's `np` namespace mirrors NumPy's API, there are important differences:
+
+1. **Static shapes.** Array dimensions must be known at compile time. You cannot create
+   arrays whose shape depends on a runtime value (use `DynamicNDArray` for limited dynamic
+   sizing).
+
+2. **Finite field arithmetic.** All values ultimately exist in a prime field. Operations
+   like division may behave differently from IEEE 754 floating-point arithmetic, especially
+   near edge cases.
+
+3. **No in-place mutation.** Circuit arrays are immutable values in the constraint system.
+   Operations always produce new arrays rather than modifying existing ones.
+
+4. **Subset of functions.** Not every NumPy function is supported. Only the functions
+   listed in this document have corresponding circuit implementations.
+
+5. **No fancy indexing.** Advanced NumPy indexing features (boolean masks, fancy integer
+   array indexing) are not available. Use standard integer indexing and slicing.
+
+6. **Constraint cost.** Each `np` operation produces constraints in the circuit.
+   Operations that are cheap in NumPy (like `np.sum` over a large array) may produce a
+   proportionally large number of constraints.
+
+7. **Mock vs. compiled behavior.** During mock execution with real NumPy installed, the
+   operations run through actual NumPy and behave identically to regular Python. During
+   compilation, the Zinnia compiler translates the same operations into circuit constraints.
+   If there is a discrepancy between NumPy's behavior and the circuit's field arithmetic,
+   the mock result may not match the proof result. Use `MockExecConfig.float_tolerance` to
+   control how strictly floating-point comparisons are enforced.
+
+## Complete Example
+
+```python
+from zinnia import (
+    ZKCircuit, zk_chip,
+    Integer, Float, NDArray,
+    Public, Private, np,
+)
+
+@zk_chip
+def normalize(data: NDArray) -> NDArray:
+    mn = np.amin(data)
+    mx = np.amax(data)
+    diff = np.subtract(mx, mn)
+    shifted = np.subtract(data, mn)
+    return np.divide(shifted, diff)
+
+def analysis_circuit(
+    measurements: Private[NDArray],
+    expected_mean: Public[Float],
+):
+    normed = normalize(measurements)
+    avg = np.mean(normed)
+    assert np.allclose(avg, expected_mean)
+
+circuit = ZKCircuit.from_method(analysis_circuit, chips=[normalize])
+result = circuit.mock(np.array([10.0, 20.0, 30.0, 40.0, 50.0]), 0.5)
+print(result.is_satisfied())  # True
+```

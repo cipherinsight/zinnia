@@ -1,0 +1,372 @@
+---
+title: Project Structure
+description: Detailed walkthrough of every directory and file in the Zinnia codebase, including module interconnections and data flow through the compilation pipeline.
+---
+
+# Project Structure
+
+This page provides a comprehensive walkthrough of the Zinnia codebase. Every directory and its purpose is explained, along with key files, module interconnections, and how data flows through the system.
+
+## Top-Level Layout
+
+```
+zinnia-src/
+  zinnia/          # Main package -- all compiler and runtime code
+  testing/         # Test suite (pytest)
+  examples/        # Example circuits
+  benchmarking/    # Performance benchmarks
+  docs/            # Documentation (fumadocs MDX)
+  setup.py         # Package configuration
+  requirements.txt # Python dependencies
+  type-check.sh    # Type checking script
+```
+
+## The `zinnia/` Package
+
+### `zinnia/__init__.py` -- Public Exports
+
+This file defines the public API surface. Everything a user imports from `zinnia` is re-exported here:
+
+- **Types**: `Integer`, `Float`, `Tuple`, `List`, `NDArray`, `DynamicNDArray`, `PoseidonHashed`, and aliases like `Int`, `Bool`
+- **Annotations**: `Private`, `Public` (and lowercase variants)
+- **Decorators**: `zk_circuit`, `zk_chip`, `zk_external`
+- **API classes**: `ZKCircuit`, `ZKChip`, `ZKExternalFunc`, `ZKCompiledProgram`, `ZKProgramInput`, `ZKParsedInput`
+- **Execution**: `MockProgramExecutor`, `ZKExecResult`
+- **Configuration**: `ZinniaConfig`
+- **Namespace**: `np` (a `NamespaceNP` instance, shadowed by real NumPy if available)
+
+---
+
+### `zinnia/api/` -- User-Facing API
+
+This directory contains the classes that users interact with directly.
+
+| File | Class | Purpose |
+|------|-------|---------|
+| `zk_circuit.py` | `ZKCircuit`, `zk_circuit` | The main entry point. The `@zk_circuit` decorator captures a function's source code. `ZKCircuit` orchestrates compilation by invoking `ZinniaCompiler`. |
+| `zk_chip.py` | `ZKChip`, `zk_chip` | Reusable circuit components. A chip is a class with methods that can be called from circuits. |
+| `zk_external_func.py` | `ZKExternalFunc`, `zk_external` | Functions computed outside the circuit (witness generation). The return type annotation determines what value re-enters the circuit. |
+| `zk_compiled_program.py` | `ZKCompiledProgram` | The output of compilation. Contains the generated source code, backend identifier, IR statements, input specifications, and compilation metadata. |
+| `zk_program_input.py` | `ZKProgramInput` | Describes a single input to the circuit (name, type descriptor, visibility). |
+| `zk_parsed_input.py` | `ZKParsedInput` | A parsed, validated input ready for execution or witness generation. |
+
+---
+
+### `zinnia/compile/` -- Compiler Core
+
+This is the largest directory, containing the entire compilation pipeline.
+
+#### `zinnia/compile/zinnia_compiler.py` -- Main Compiler Orchestrator
+
+The `ZinniaCompiler` class ties the entire pipeline together. Its `compile()` method:
+
+1. Fixes source indentation.
+2. Parses with `ast.parse`.
+3. Transforms via `ZinniaCircuitASTTransformer` to produce an `ASTCircuit`.
+4. Generates IR via `IRGenerator`.
+5. Runs optimization passes (two pipelines: one for the ZK program, one for input preprocessing).
+6. Selects a backend builder based on `ZinniaConfig`.
+7. Builds the final `ZKCompiledProgram`.
+
+It also exposes helper methods for parsing chips and external functions.
+
+#### `zinnia/compile/ast/` -- AST Node Classes
+
+Contains 60+ AST node classes representing Zinnia's intermediate AST. These are not Python's built-in AST nodes -- they carry Zinnia-specific semantics such as type annotations, visibility markers, and circuit structure. Key nodes include `ASTCircuit`, `ASTChip`, `ASTAssign`, `ASTForLoop`, `ASTIfElse`, and expression nodes for all supported operations.
+
+#### `zinnia/compile/transformer/` -- Python AST to Zinnia AST
+
+Three transformer classes convert Python AST nodes into Zinnia AST nodes:
+
+- `ZinniaCircuitASTTransformer` -- transforms `@zk_circuit`-decorated function bodies
+- `ZinniaChipASTTransformer` -- transforms `@zk_chip`-decorated class definitions
+- `ZinniaExternalFuncASTTransformer` -- transforms `@zk_external`-decorated functions
+
+Each transformer walks the Python AST and produces the corresponding Zinnia AST, resolving type annotations and validating syntax constraints along the way.
+
+#### `zinnia/compile/ir/` -- IR Generation
+
+| File | Purpose |
+|------|---------|
+| `ir_gen.py` | `IRGenerator` -- walks the Zinnia AST via symbolic execution, using the IR builder to emit IR statements. This is where control flow is converted to data flow (if/else to select, loops to unrolled sequences). |
+| `ir_stmt.py` | `IRStatement` -- a single IR node. Contains a `stmt_id` (integer), an `ir_instance` (an `AbstractIR` subclass), a list of `arguments` (pointers to other statement IDs), and optional debug info. |
+| `ir_graph.py` | `IRGraph` -- the directed acyclic graph of all IR statements. Tracks in/out degrees and links. Provides topological ordering, statement removal, and export. |
+| `ir_ctx.py` | `IRContext` -- tracks state during IR generation (variable bindings, scope stack, etc.). |
+
+The IR graph is the central data structure that optimization passes transform and backend builders consume.
+
+#### `zinnia/compile/type_sys/` -- Type Descriptors
+
+The type system is built on a hierarchy rooted at `DTDescriptor`:
+
+```
+DTDescriptor (abstract base)
+  NumberDTDescriptor (abstract, for numeric types)
+    IntegerDTDescriptor
+    FloatDTDescriptor
+  BooleanDTDescriptor
+  NDArrayDTDescriptor
+  DynamicNDArrayDTDescriptor
+  ListDTDescriptor
+  TupleDTDescriptor
+  NoneDTDescriptor
+  ClassDTDescriptor
+  PoseidonHashedDTDescriptor
+  StringDTDescriptor (internal)
+```
+
+Each descriptor implements:
+
+- `get_typename()` -- returns the canonical name (e.g., `"Integer"`)
+- `get_alise_typenames()` -- returns all accepted aliases (e.g., `["Integer", "int", "Int"]`)
+- `from_annotation()` -- constructs an instance from parsed type annotation arguments
+- `export()` / `import_from()` -- serialization for compiled program output
+
+The `DTDescriptorFactory` in `dt_factory.py` maintains a `DATATYPE_REGISTRY` list and provides `create()` to look up types by name.
+
+#### `zinnia/compile/triplet/` -- Value System
+
+The triplet system represents every value in the compiler as three components:
+
+- **Pointer (V)**: The IR graph node ID, or `None` for compile-time constants that have no IR representation.
+- **Scalar (S)**: The compile-time-known concrete value, or `None` if the value is only known at runtime.
+- **Type (T)**: A `DTDescriptor` instance.
+
+These are stored in a `ValueTriplet` (in `store/triplet.py`).
+
+The `value/` subdirectory contains typed wrappers:
+
+| File | Class | Wraps |
+|------|-------|-------|
+| `value.py` | `Value` | Abstract base |
+| `atomic.py` | `AtomicValue` | Base for scalar values (holds a `ValueTriplet`) |
+| `number.py` | `NumberValue` | Base for numeric values |
+| `integer.py` | `IntegerValue` | Integer triplet |
+| `floating.py` | `FloatValue` | Float triplet |
+| `boolean.py` | `BooleanValue` | Boolean triplet |
+| `ndarray.py` | `NDArrayValue` | Fixed-size array (composite: holds per-element values) |
+| `dynamic_ndarray.py` | `DynamicNDArrayValue` | Dynamic array with bounded size |
+| `lst.py` | `ListValue` | List (composite) |
+| `tupl.py` | `TupleValue` | Tuple (composite) |
+| `none.py` | `NoneValue` | None type |
+| `string.py` | `StringValue` | String (internal use) |
+| `clazz.py` | `ClassValue` | Chip/class instance |
+
+The `ValueFactory` in `value_factory.py` reconstructs `Value` instances from `ValueStore` data.
+
+#### `zinnia/compile/builder/` -- IR Building
+
+| File | Purpose |
+|------|---------|
+| `ir_builder_interface.py` | `IRBuilderInterface` -- defines the interface that operators call. Methods like `op_add`, `op_subtract`, `op_equal`, `ir_constant_int`, `create_ir`, `create_op`, etc. |
+| `builder_impl.py` | `IRBuilderImpl` -- the concrete implementation. Maintains an internal list of IR statements, creates new `Value` instances for each emitted IR, and provides the `SMTUtils` integration for constant resolution. |
+| `op_args_container.py` | `OpArgsContainer` -- read-only container passed to operator `build()` methods, wrapping keyword arguments and the current condition value. |
+| `smt_utils.py` | `SMTUtils` -- Z3 integration for determining whether values are compile-time constants. |
+
+#### `zinnia/compile/scope/` -- Scoping
+
+Manages variable scoping during IR generation:
+
+- `MasterScope` -- top-level scope for a circuit
+- `ChipScope` -- scope for chip method calls
+- `LoopScope` -- scope inside unrolled `for` loops
+- `ConditionalScope` -- scope inside `if`/`else` branches
+- `GeneratorScope` -- scope for generator expressions
+
+Each scope tracks variable bindings and handles the join semantics when scopes merge (e.g., after an `if`/`else`).
+
+#### `zinnia/compile/backend/` -- Code Generation
+
+Each backend builder extends `AbstractProgramBuilder`:
+
+| File | Class | Target |
+|------|-------|--------|
+| `abstract_builder.py` | `AbstractProgramBuilder` | Base class. Takes a name and list of `IRStatement`s. Provides `build() -> ZKCompiledProgram`. |
+| `halo2_builder.py` | `Halo2ProgramBuilder` | Generates Halo2 (Rust) circuit code |
+| `circom_builder.py` | `CircomProgramBuilder` | Generates Circom circuit code |
+| `noir_builder.py` | `NoirProgramBuilder` | Generates Noir circuit code |
+| `circ_zok_builder.py` | `CirCZokratesProgramBuilder` | Generates CirC/Zokrates output |
+
+Backend builders iterate over the IR statement list and dispatch each statement to a handler method based on the IR type.
+
+#### `zinnia/compile/optim_pass/` -- Optimization Passes
+
+All passes extend `AbstractIRPass` and implement `exec(ir_graph: IRGraph) -> IRGraph`:
+
+| Pass | File | Purpose |
+|------|------|---------|
+| Constant Folding | `constant_fold.py` | Replaces IR nodes whose inputs are all compile-time constants with constant IR nodes. |
+| Dead Code Elimination | `dead_code_elimination.py` | Removes IR nodes with zero out-degree (no consumers), unless marked as fixed (e.g., assertions, public outputs). |
+| Double Not Elimination | `double_not_elimination.py` | Simplifies `NOT(NOT(x))` to `x`. |
+| Duplicate Code Elimination | `duplicate_code_elimination.py` | Merges IR nodes that compute identical operations on identical inputs. |
+| Always Satisfied Elimination | `always_satisfied_elimination.py` | Removes assertions that are trivially true (e.g., `assert True`). |
+| Pattern Match Optimization | `shortcut_optimization_pass.py` | Detects and replaces common IR patterns with more efficient equivalents. |
+| External Call Remover | `external_call_remover.py` | Strips external function call IR for the ZK program pipeline (external calls produce witnesses, not constraints). |
+| DynamicNDArray Memory Lowering | `dynamic_ndarray_memory_lowering.py` | Lowers dynamic array get/set operations into memory trace operations for zkRAM. |
+| DynamicNDArray Meta Assert Injection | `dynamic_ndarray_meta_assert_injection.py` | Injects assertions to verify dynamic array metadata (bounds, shape) consistency. |
+| Memory Trace Injection | `memory_trace_injection.py` | Adds memory trace seal operations for the zkRAM consistency model. |
+
+Passes are applied in a specific order by `ZinniaCompiler.run_passes_for_zk_program()` and `run_passes_for_input_preprocess()`.
+
+---
+
+### `zinnia/ir_def/` -- IR Definitions
+
+Contains approximately 80 individual IR type definitions.
+
+| File | Purpose |
+|------|---------|
+| `abstract_ir.py` | `AbstractIR` -- base class. Defines `get_signature()`, `build_ir()`, `infer()`, `mock_exec()`, `export()`, and `import_from()`. |
+| `ir_factory.py` | `IRFactory` -- registry of all IR types. The `Registry` inner class maps symbolic names (e.g., `ADD_I`, `MUL_F`) to IR classes. Provides `export()` and `import_from()` for serialization. |
+| `defs/` | Individual IR type files. Each file defines one IR class. Examples: `ir_add_i.py` (integer addition), `ir_mul_f.py` (float multiplication), `ir_assert.py` (constraint assertion), `ir_select_i.py` (integer multiplexer). |
+
+IR types are organized by operation and data type. Most arithmetic and comparison operations have separate integer (`_i`) and float (`_f`) variants. This separation allows type-specific optimizations and backend code generation.
+
+---
+
+### `zinnia/op_def/` -- Operator Definitions
+
+Contains 223 operator definitions organized by namespace.
+
+| Directory | Namespace | Examples |
+|-----------|-----------|----------|
+| `abstract/` | -- | `AbstractOp` base class |
+| `arithmetic/` | -- | `+`, `-`, `*`, `/`, `//`, `%`, `**`, unary `-`, unary `+` |
+| `nocls/` | `None` (global) | `len`, `range`, `sum`, `min`, `max`, `print`, `int()`, `float()`, `bool()`, `poseidon_hash`, `merkle_verify` |
+| `ndarray/` | `NDArray` | `.sum()`, `.prod()`, `.T`, `.reshape()`, `.argmax()`, `.flatten()`, etc. |
+| `dynamic_ndarray/` | `DynamicNDArray` | Same methods as NDArray, plus dynamic allocation operations |
+| `np_like/` | `np` | `np.zeros`, `np.ones`, `np.eye`, `np.dot`, `np.concatenate`, `np.sin`, `np.exp`, `np.sqrt`, etc. |
+| `math/` | `math` | `math.sin`, `math.cos`, `math.exp`, `math.log`, `math.sqrt`, etc. |
+| `lst/` | `List` | `.append()`, `.extend()`, `.insert()`, `.pop()`, `.remove()`, `.reverse()`, etc. |
+| `tupl/` | `Tuple` | `.count()`, `.index()` |
+| `internal/` | -- | Internal-use operators |
+
+The `Operators` class in `operator_factory.py` serves as the registry:
+
+- Each namespace has a list of operator classes.
+- `get_operator(name, namespace)` looks up an operator by name within a namespace.
+- `instantiate_operator(name, namespace, ...)` creates an instance ready for use.
+
+---
+
+### `zinnia/lang/` -- Language Types and Runtime
+
+| File | Purpose |
+|------|---------|
+| `type.py` | Defines the user-facing type classes: `Integer`, `Float`, `NDArray`, `DynamicNDArray`, `Tuple`, `List`, `PoseidonHashed`. These are used in annotations. |
+| `typing.py` | Defines `Public` and `Private` annotation wrappers for marking input visibility. |
+| `operator.py` | Exports utility functions available to circuit code (e.g., `poseidon_hash`, array helpers). |
+| `namespace.py` | `NamespaceNP` -- a mock `np` namespace that routes calls to Zinnia's NumPy-like operators. |
+| `metatype.py` | Metaclasses used internally for type construction. |
+
+---
+
+### `zinnia/config/` -- Configuration
+
+| File | Class | Purpose |
+|------|-------|---------|
+| `base.py` | `ConfigBase` | Base configuration class |
+| `zinnia_config.py` | `ZinniaConfig` | Main config. Holds backend selection (`BACKEND_HALO2`, `BACKEND_CIRCOM`, `BACKEND_NOIR`, `BACKEND_CIRC_ZOK`), optimization settings, and memory consistency toggle. |
+| `optimization_config.py` | `OptimizationConfig` | Controls which optimization passes are enabled (constant fold, DCE, etc.). |
+| `mock_exec_config.py` | `MockExecConfig` | Configuration for mock execution (used in testing and witness generation). |
+
+---
+
+### `zinnia/exec/` -- Execution
+
+| File | Class | Purpose |
+|------|-------|---------|
+| `mock_executor.py` | `MockProgramExecutor` | Executes a compiled program against concrete inputs by evaluating each IR statement's `mock_exec()` method. Used for testing and witness generation. |
+| `exec_ctx.py` | `ExecutionContext` | Runtime context during mock execution. |
+| `exec_result.py` | `ZKExecResult` | The result of mock execution, containing output values and witness data. |
+
+---
+
+### `zinnia/internal/` -- Internal Utilities
+
+| File | Purpose |
+|------|---------|
+| `internal_ndarray.py` | Internal array implementation used during compilation. |
+| `internal_chip_object.py` | Internal representation of a chip instance, storing its parsed AST and method information. |
+| `internal_external_func_object.py` | Internal representation of an external function, storing its source and return type. |
+
+---
+
+### `zinnia/debug/` -- Error Handling
+
+| Subdirectory/File | Purpose |
+|-------------------|---------|
+| `exception/` | Exception hierarchy. Includes `ZinniaException` (base), `TypeInferenceError`, `OperatorCallError`, `InvalidAnnotationException`, and others. Each exception carries `DebugInfo` for source location reporting. |
+| `warning/` | Warning types for non-fatal issues. |
+| `dbg_info.py` | `DebugInfo` -- tracks source file, line number, and column for error reporting. Attached to AST nodes, IR statements, and operator calls. |
+| `prettifier.py` | Formats exceptions with source context for user-friendly error messages. |
+
+---
+
+## Data Flow Through the System
+
+Understanding how data flows from user code to compiled output is critical for contributors. Here is the detailed path:
+
+### 1. User Code to Python AST
+
+The user writes a function decorated with `@zk_circuit`. When `ZKCircuit.compile()` is called, it extracts the source code (via `inspect`) and passes it to `ZinniaCompiler.compile()`. The source is parsed by `ast.parse` into a standard Python AST.
+
+### 2. Python AST to Zinnia AST
+
+`ZinniaCircuitASTTransformer` visits each Python AST node and produces a Zinnia AST node. Type annotations like `x: Private[Integer]` are resolved to `DTDescriptor` instances via `DTDescriptorFactory`. The result is an `ASTCircuit` containing a list of input declarations and a body of Zinnia AST statements.
+
+### 3. Zinnia AST to IR Graph
+
+`IRGenerator` walks the Zinnia AST, maintaining an `IRContext` (variable bindings, scope stack) and an `IRBuilderImpl`. For each expression:
+
+- The generator evaluates it symbolically, producing a `Value` (with pointer, scalar, and type).
+- Operators are resolved via `Operators.get_operator()` and their `build()` method is called with the builder and arguments.
+- The operator's `build()` method calls builder methods (e.g., `builder.op_add()`, `builder.ir_constant_int()`), which internally call `builder.create_ir()` to emit `IRStatement` nodes.
+- Each `create_ir()` call creates a new `IRStatement`, appends it to the builder's statement list, and returns a `Value` whose pointer is the new statement's ID.
+
+Control flow is converted to data flow:
+- `if`/`else` becomes `select` IR (a multiplexer).
+- `for` loops are fully unrolled based on SMT-resolved bounds.
+- `assert` statements become `assert` IR nodes marked as fixed (not removable by DCE).
+
+The result is an `IRGraph` -- a flat list of `IRStatement` nodes forming a DAG.
+
+### 4. IR Graph Through Optimization
+
+The `IRGraph` passes through a pipeline of `AbstractIRPass` implementations. Each pass receives an `IRGraph` and returns a (possibly modified) `IRGraph`. The order matters:
+
+1. **External call removal** (strip non-constraint IR for the ZK pipeline)
+2. **Memory lowering** (if dynamic arrays + Halo2)
+3. **Meta assert injection** (if dynamic arrays + Halo2)
+4. **Pattern match optimization** (replace common IR patterns)
+5. **Double-not elimination** (simplify boolean logic)
+6. **Constant folding** (propagate known values)
+7. **Dead code elimination** (remove unused nodes)
+8. **Always-satisfied elimination** (remove trivial assertions)
+9. **Duplicate code elimination** (merge identical computations)
+
+### 5. Optimized IR to Backend Output
+
+The selected `AbstractProgramBuilder` subclass receives the optimized IR statement list. It iterates through each statement and dispatches to a type-specific build method. For example, `Halo2ProgramBuilder` generates Rust code with Halo2 API calls, while `CircomProgramBuilder` generates Circom template code.
+
+The output is a `ZKCompiledProgram` containing the generated source string, which can be written to a file and used with the target proving system.
+
+---
+
+## Test Suite Structure
+
+```
+testing/
+  api/             # Tests for ZKCircuit, ZKChip, ZKExternalFunc compilation and execution
+  lang/            # Tests for type annotations, visibility markers, namespace behavior
+  syntax/          # Tests for supported Python constructs (if/else, for, while, list comp, etc.)
+  operator/        # Tests for individual operators:
+    ndarray/       #   NDArray method tests
+    nocls/         #   Global function tests (len, sum, min, max, etc.)
+    tupl/          #   Tuple operation tests
+    dynamic_ndarray/ # DynamicNDArray operation tests
+    np_like/       #   NumPy-like function tests
+    math/          #   Math function tests
+```
+
+Each test typically defines a small circuit, compiles it, and verifies the output or mock execution result.
