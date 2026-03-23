@@ -1,4 +1,4 @@
-use crate::types::{CompositeData, Value, ZinniaType, DTDescriptorDict};
+use crate::types::{CompositeData, Value, ZinniaType};
 
 use super::{IRGenerator, SliceIndex};
 
@@ -301,11 +301,7 @@ impl IRGenerator {
     }
 
     pub(crate) fn parse_dt_descriptor(&self, dt_json: &serde_json::Value) -> ZinniaType {
-        // Try full DTDescriptorDict format: {"__class__": "...", "dt_data": {...}}
-        if let Ok(dict) = serde_json::from_value::<DTDescriptorDict>(dt_json.clone()) {
-            return ZinniaType::from_dt_dict(&dict).unwrap_or(ZinniaType::Integer);
-        }
-        // Fallback: bare dt_data without class wrapper (old format)
-        ZinniaType::Integer
+        // Direct ZinniaType serde format: "Integer", {"NDArray": {...}}, etc.
+        serde_json::from_value::<ZinniaType>(dt_json.clone()).unwrap_or(ZinniaType::Integer)
     }
 }

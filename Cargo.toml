@@ -5,16 +5,27 @@ edition = "2021"
 
 [lib]
 name = "_zinnia_core"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["halo2-backend", "extension-module"]
+halo2-backend = ["halo2_proofs", "pasta_curves", "rand"]
+extension-module = ["pyo3/extension-module"]
 
 [dependencies]
-pyo3 = { version = "0.23", features = ["extension-module"] }
+pyo3 = { version = "0.23", features = ["auto-initialize"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 pythonize = "0.23"
 num-bigint = "0.4"
 num-traits = "0.2"
 num-integer = "0.1"
+halo2_proofs = { version = "0.3", features = ["dev-graph"], optional = true }
+pasta_curves = { version = "0.5", optional = true }
+rand = { version = "0.8", optional = true }
+
+[dev-dependencies]
+pyo3 = { version = "0.23", features = ["auto-initialize"] }
 
 [build-dependencies]
 pyo3-build-config = "0.23"

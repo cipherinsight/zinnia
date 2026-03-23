@@ -7,91 +7,74 @@ from zinnia.debug.exception import InvalidCircuitStatementException, \
 from zinnia.debug.dbg_info import DebugInfo
 
 
-# Type name to DTDescriptor class name mapping (matches DTDescriptorFactory.DATATYPE_REGISTRY order)
+# Type name aliases → canonical ZinniaType variant name.
 _TYPE_ALIASES = {
-    "DynamicNDArray": "DynamicNDArrayDTDescriptor",
-    "NDArray": "NDArrayDTDescriptor",
-    "Tuple": "TupleDTDescriptor", "tuple": "TupleDTDescriptor",
-    "List": "ListDTDescriptor", "list": "ListDTDescriptor",
-    "Integer": "IntegerDTDescriptor", "int": "IntegerDTDescriptor", "Int": "IntegerDTDescriptor", "integer": "IntegerDTDescriptor",
-    "Boolean": "IntegerDTDescriptor", "bool": "IntegerDTDescriptor", "Bool": "IntegerDTDescriptor", "boolean": "IntegerDTDescriptor",
-    "Float": "FloatDTDescriptor", "float": "FloatDTDescriptor",
-    "None": "NoneDTDescriptor",
-    "Class": "ClassDTDescriptor",
-    "PoseidonHashed": "PoseidonHashedDTDescriptor",
-    "String": "StringDTDescriptor", "str": "StringDTDescriptor",
+    "Integer": "Integer", "int": "Integer", "Int": "Integer", "integer": "Integer",
+    "Boolean": "Integer", "bool": "Integer", "Bool": "Integer", "boolean": "Integer",
+    "Float": "Float", "float": "Float",
+    "String": "String", "str": "String",
+    "None": "None",
+    "Class": "Class",
+    "NDArray": "NDArray",
+    "DynamicNDArray": "DynamicNDArray",
+    "List": "List", "list": "List",
+    "Tuple": "Tuple", "tuple": "Tuple",
+    "PoseidonHashed": "PoseidonHashed",
 }
+
+# Scalar types that need no arguments.
+_SCALAR_TYPES = {"Integer", "Float", "Boolean", "String", "None", "Class"}
 
 
 def make_type_dict(dbg, typename, args=None):
-    """Create a type descriptor dict matching the format Rust expects.
+    """Create a type descriptor dict matching Rust's ZinniaType serde format.
 
-    Returns: {"__class__": "<ClassName>", "dt_data": {...}}
+    Scalars:  "Integer", "Float", etc.
+    Compound: {"NDArray": {"shape": [2,3], "dtype": "Integer"}}, etc.
     """
     if args is None:
         args = ()
 
-    class_name = _TYPE_ALIASES.get(typename)
-    if class_name is None:
+    variant = _TYPE_ALIASES.get(typename)
+    if variant is None:
         raise InvalidAnnotationException(dbg, f'`{typename}` is not a valid type name')
 
-    # Simple scalar types (no args needed)
-    if class_name in ("IntegerDTDescriptor", "FloatDTDescriptor", "NoneDTDescriptor",
-                       "StringDTDescriptor", "ClassDTDescriptor"):
-        return {"__class__": class_name, "dt_data": {}}
+    if variant in _SCALAR_TYPES:
+        return variant  # Just the string
 
-    # NDArray: args = (dtype_dict, *shape_ints)
-    if class_name == "NDArrayDTDescriptor":
+    if variant == "NDArray":
         if len(args) < 2:
-            raise InvalidAnnotationException(dbg, f"NDArray requires at least 2 arguments (dtype and shape dimensions).")
-        dtype_dict = args[0]
-        if not isinstance(dtype_dict, dict):
-            raise InvalidAnnotationException(dbg, f"First argument to NDArray must be a type.")
+            raise InvalidAnnotationException(dbg, "NDArray requires at least 2 arguments (dtype and shape dimensions).")
+        dtype = args[0]
         shape = []
         for a in args[1:]:
             if not isinstance(a, int):
-                raise InvalidAnnotationException(dbg, f"NDArray shape dimensions must be integers.")
+                raise InvalidAnnotationException(dbg, "NDArray shape dimensions must be integers.")
             shape.append(a)
-        return {"__class__": "NDArrayDTDescriptor", "dt_data": {"dtype": dtype_dict, "shape": shape}}
+        return {"NDArray": {"shape": shape, "dtype": dtype}}
 
-    # DynamicNDArray: args = (dtype_dict, max_length, max_rank)
-    if class_name == "DynamicNDArrayDTDescriptor":
+    if variant == "DynamicNDArray":
         if len(args) != 3:
-            raise InvalidAnnotationException(dbg, f"DynamicNDArray requires exactly 3 arguments (dtype, max_length, max_rank).")
-        dtype_dict = args[0]
-        if not isinstance(dtype_dict, dict):
-            raise InvalidAnnotationException(dbg, f"First argument to DynamicNDArray must be a type.")
+            raise InvalidAnnotationException(dbg, "DynamicNDArray requires exactly 3 arguments (dtype, max_length, max_rank).")
+        dtype = args[0]
         if not isinstance(args[1], int) or not isinstance(args[2], int):
-            raise InvalidAnnotationException(dbg, f"DynamicNDArray max_length and max_rank must be integers.")
-        return {"__class__": "DynamicNDArrayDTDescriptor", "dt_data": {
-            "dtype": dtype_dict, "max_length": args[1], "max_rank": args[2]
-        }}
+            raise InvalidAnnotationException(dbg, "DynamicNDArray max_length and max_rank must be integers.")
+        return {"DynamicNDArray": {"dtype": dtype, "max_length": args[1], "max_rank": args[2]}}
 
-    # List: args = (element_type_dicts...)
-    if class_name == "ListDTDescriptor":
+    if variant == "List":
         if len(args) < 1:
-            raise InvalidAnnotationException(dbg, f"List requires at least 1 argument.")
-        elements = []
-        for a in args:
-            if not isinstance(a, dict):
-                raise InvalidAnnotationException(dbg, f"List element types must be type descriptors.")
-            elements.append(a)
-        return {"__class__": "ListDTDescriptor", "dt_data": {"elements": elements}}
+            raise InvalidAnnotationException(dbg, "List requires at least 1 argument.")
+        return {"List": {"elements": list(args)}}
 
-    # Tuple: args = (element_type_dicts_or_ints...)
-    if class_name == "TupleDTDescriptor":
+    if variant == "Tuple":
         if len(args) < 1:
-            raise InvalidAnnotationException(dbg, f"Tuple requires at least 1 argument.")
-        elements = list(args)
-        return {"__class__": "TupleDTDescriptor", "dt_data": {"elements": elements}}
+            raise InvalidAnnotationException(dbg, "Tuple requires at least 1 argument.")
+        return {"Tuple": {"elements": list(args)}}
 
-    # PoseidonHashed: args = (dtype_dict,)
-    if class_name == "PoseidonHashedDTDescriptor":
+    if variant == "PoseidonHashed":
         if len(args) != 1:
-            raise InvalidAnnotationException(dbg, f"PoseidonHashed requires exactly 1 argument.")
-        if not isinstance(args[0], dict):
-            raise InvalidAnnotationException(dbg, f"PoseidonHashed argument must be a type descriptor.")
-        return {"__class__": "PoseidonHashedDTDescriptor", "dt_data": {"dtype": args[0]}}
+            raise InvalidAnnotationException(dbg, "PoseidonHashed requires exactly 1 argument.")
+        return {"PoseidonHashed": {"dtype": args[0]}}
 
     raise InvalidAnnotationException(dbg, f'`{typename}` is not a valid type name')
 

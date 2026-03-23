@@ -163,9 +163,10 @@ mod tests {
         ];
 
         for ty in types {
-            let dict = ty.to_dt_dict();
-            let restored = ZinniaType::from_dt_dict(&dict)
-                .unwrap_or_else(|e| panic!("Failed to round-trip {:?}: {}", ty, e));
+            let json = serde_json::to_string(&ty)
+                .unwrap_or_else(|e| panic!("Failed to serialize {:?}: {}", ty, e));
+            let restored: ZinniaType = serde_json::from_str(&json)
+                .unwrap_or_else(|e| panic!("Failed to deserialize {:?}: {}", json, e));
             assert_eq!(ty, restored, "Round-trip failed for {:?}", ty);
         }
     }

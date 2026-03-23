@@ -6,22 +6,20 @@ from zinnia.internal.internal_external_func_object import InternalExternalFuncOb
 
 
 class ZKCompiledProgram:
-    """Result of compiling a ZK circuit. Stores IR as JSON strings (Rust-owned)."""
+    """Result of compiling a ZK circuit. Stores IR as a JSON string (Rust-owned)."""
 
     def __init__(
         self,
         name: str,
         backend: str,
-        zk_program_irs_json: str,
-        preprocess_irs_json: str,
+        ir_stmts_json: str,
         program_inputs: List[ZKProgramInput],
         external_funcs: Dict[str, InternalExternalFuncObject],
         eval_data: Dict = None,
     ):
         self.name = name
         self.backend = backend
-        self.zk_program_irs_json = zk_program_irs_json
-        self.preprocess_irs_json = preprocess_irs_json
+        self.ir_stmts_json = ir_stmts_json
         self.program_inputs = program_inputs
         self.external_funcs = external_funcs
         self.eval_data = eval_data or {}
@@ -32,13 +30,9 @@ class ZKCompiledProgram:
     def get_target_backend_name(self) -> str:
         return self.backend
 
-    def get_zk_program_irs(self) -> list:
-        """Returns the ZK program IR statements as a list of dicts."""
-        return json.loads(self.zk_program_irs_json)
-
-    def get_preprocess_irs(self) -> list:
-        """Returns the preprocessing IR statements as a list of dicts."""
-        return json.loads(self.preprocess_irs_json)
+    def get_ir_stmts(self) -> list:
+        """Returns the IR statements as a list of dicts."""
+        return json.loads(self.ir_stmts_json)
 
     def get_program_inputs(self) -> List[ZKProgramInput]:
         return self.program_inputs
@@ -55,7 +49,6 @@ class ZKCompiledProgram:
         """Validate externals and return an execution context dict."""
         from zinnia.debug.exception import ZinniaException
 
-        # Check serialized external_funcs names against what the IR expects
         serialized = json.loads(self.serialize())
         expected_names = set(serialized.get("external_funcs", []))
         provided_names = set(self.external_funcs.keys())
@@ -73,33 +66,65 @@ class ZKCompiledProgram:
     def mock_execute(self, *args, externals=None, config=None):
         """Convenience: parse inputs and mock-execute in one call."""
         from zinnia.exec.exec_result import ZKExecResult
+        proof_result = self.prove(*args, backend="mock", externals=externals)
+        satisfied = proof_result.proof_bytes_hex == "mock_satisfied"
+        return ZKExecResult(satisfied, proof=proof_result)
+
+    def prove(self, *args, backend="mock", params=None, externals=None):
+        """Generate a proof for this compiled program.
+
+        Args:
+            *args: Positional arguments matching the circuit inputs.
+            backend: "mock" (default, fast) or "halo2" (real ZK proof).
+            params: Optional dict with proving parameters.
+            externals: Optional dict of {name: callable} for external functions.
+
+        Returns:
+            ZKProofResult containing the proof artifact.
+        """
+        from zinnia.exec.proof_result import ZKProofResult
         from zinnia.exec.input_parser import parse_inputs
-        from zinnia.compile._bridge import mock_execute
+        from zinnia.compile._bridge import prove_circuit
 
         entries = parse_inputs(self.program_inputs, args)
+        witness = {"entries": [
+            [e["key"], {e["kind"]: e["value"]}] for e in entries
+        ]}
+
         ext_dict = {}
         if externals:
-            for name, ext in externals.items():
-                if hasattr(ext, 'callable'):
-                    ext_dict[name] = ext.callable
-                elif callable(ext):
-                    ext_dict[name] = ext
+            ext_dict = externals
+        else:
+            for name, ef in self.external_funcs.items():
+                if hasattr(ef, 'callable'):
+                    ext_dict[name] = ef.callable
+                elif callable(ef):
+                    ext_dict[name] = ef
 
-        result_json = mock_execute(
-            self.zk_program_irs_json,
-            self.preprocess_irs_json,
-            json.dumps(entries),
+        params_json = json.dumps(params) if params else None
+
+        artifact_json = prove_circuit(
+            self.ir_stmts_json,
+            json.dumps(witness),
             ext_dict,
+            backend,
+            params_json,
         )
+        return ZKProofResult.from_json(artifact_json)
+
+    def verify(self, proof_result) -> bool:
+        """Verify a proof artifact (backend auto-detected from the artifact)."""
+        from zinnia.compile._bridge import verify_proof_artifact
+
+        result_json = verify_proof_artifact(proof_result.to_json())
         result = json.loads(result_json)
-        return ZKExecResult(result["satisfied"], result.get("public_outputs"))
+        return result["valid"]
 
     def serialize(self) -> str:
         return json.dumps({
             "name": self.name,
             "backend": self.backend,
-            "zk_program_irs": json.loads(self.zk_program_irs_json),
-            "preprocess_irs": json.loads(self.preprocess_irs_json),
+            "ir_stmts": json.loads(self.ir_stmts_json),
             "program_inputs": [pi.export() for pi in self.program_inputs],
             "external_funcs": [ef.name for ef in self.external_funcs.values()],
             "eval_data": self.eval_data,
@@ -112,7 +137,6 @@ class ZKCompiledProgram:
         payload = json.loads(data)
         _program_inputs = [ZKProgramInput.import_from(pi) for pi in payload['program_inputs']]
 
-        # external_funcs can be ZKExternalFunc or InternalExternalFuncObject
         ef_map = {}
         for ef in external_funcs:
             if hasattr(ef, 'to_internal_object'):
@@ -124,8 +148,7 @@ class ZKCompiledProgram:
         return ZKCompiledProgram(
             name=payload['name'],
             backend=payload['backend'],
-            zk_program_irs_json=json.dumps(payload['zk_program_irs']),
-            preprocess_irs_json=json.dumps(payload['preprocess_irs']),
+            ir_stmts_json=json.dumps(payload['ir_stmts']),
             program_inputs=_program_inputs,
             external_funcs=ef_map,
         )

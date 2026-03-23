@@ -1,9 +1,10 @@
-#[cfg(test)]
-mod tests {
-    use super::*;
+// Note: This file is included as `#[cfg(test)] mod tests;` from mod.rs,
+// so it's already test-only. No inner `mod tests` wrapper needed.
 
-    #[test]
-    fn test_generate_simple_constants() {
+use super::*;
+
+#[test]
+fn test_generate_simple_constants() {
         let json = r#"{
             "__class__": "ASTCircuit",
             "block": [
@@ -79,4 +80,3 @@ mod tests {
         let graph = IRGenerator::generate_from_json(IRGenConfig::default(), json).unwrap();
         assert!(graph.len() >= 3);
     }
-}

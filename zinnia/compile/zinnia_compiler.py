@@ -78,8 +78,7 @@ class ZinniaCompiler:
         return ZKCompiledProgram(
             name=name,
             backend=self.config.get_backend(),
-            zk_program_irs_json=json.dumps(result["zk_program_irs"]),
-            preprocess_irs_json=json.dumps(result["preprocess_irs"]),
+            ir_stmts_json=json.dumps(result["ir_stmts"]),
             program_inputs=program_inputs,
             external_funcs=externals,
             eval_data={

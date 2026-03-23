@@ -9,9 +9,9 @@ pub mod ir;
 pub mod ir_ctx;
 pub mod ir_defs;
 pub mod ir_gen;
-pub mod mock_exec;
 pub mod ops;
 pub mod optim;
+pub mod prove;
 pub mod scope;
 pub mod types;
 
@@ -20,9 +20,10 @@ use ir_gen::{IRGenConfig, IRGenerator};
 use optim::{
     AlwaysSatisfiedElimination, ConstantFold, DeadCodeElimination, DoubleNotElimination,
     DuplicateCodeElimination, DynamicNDArrayMemoryLowering, DynamicNDArrayMetaAssertInjection,
-    ExternalCallRemover, IRPass, MemoryTraceInjection, PatternMatchOptim,
+    ExternalCallRemover, // kept for run_optimization_pass API
+    IRPass, MemoryTraceInjection, PatternMatchOptim,
 };
-use types::{DTDescriptorDict, ZinniaType};
+use types::ZinniaType;
 
 /// A smoke-test function to verify the PyO3 bridge is working.
 #[pyfunction]
@@ -48,15 +49,12 @@ fn round_trip_ir_stmts(json_str: &str) -> PyResult<String> {
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e)))
 }
 
-/// Round-trip a ZinniaType through DTDescriptor dict format.
+/// Round-trip a ZinniaType through JSON serialization.
 #[pyfunction]
 fn round_trip_dt_descriptor(json_str: &str) -> PyResult<String> {
-    let dict: DTDescriptorDict = serde_json::from_str(json_str)
+    let zinnia_type: ZinniaType = serde_json::from_str(json_str)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e)))?;
-    let zinnia_type = ZinniaType::from_dt_dict(&dict)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    let exported = zinnia_type.to_dt_dict();
-    serde_json::to_string(&exported)
+    serde_json::to_string(&zinnia_type)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e)))
 }
 
@@ -131,7 +129,7 @@ fn run_pass_pipeline(graph: IRGraph, passes: &[&str], mux_threshold: u32) -> IRG
 
 /// Compile a circuit: generate IR from AST and run all optimization passes in one call.
 /// Takes AST JSON, config JSON, chips JSON, and externals JSON.
-/// Returns result JSON with zk_program_irs and preprocess_irs.
+/// Returns result JSON with ir_stmts (single unified IR graph).
 #[pyfunction]
 #[pyo3(signature = (ast_json, config_json, chips_json="{}".to_string(), externals_json="{}".to_string()))]
 fn compile_circuit(ast_json: &str, config_json: &str, chips_json: String, externals_json: String) -> PyResult<String> {
@@ -170,86 +168,126 @@ fn compile_circuit(ast_json: &str, config_json: &str, chips_json: String, extern
     let base_graph = IRGenerator::generate_from_json_with_chips(ir_config.clone(), ast_json, &chips, &externals)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
 
-    // Build pass pipeline for zk_program
-    let mut zk_passes: Vec<&str> = vec!["ExternalCallRemover"];
+    // Build optimization pass pipeline (single graph, no split).
+    // External call instructions are kept in the IR — they are resolved
+    // at prove-time by the preprocessing step.
+    let mut passes: Vec<&str> = Vec::new();
     if backend == "halo2" && enable_memory_consistency {
-        zk_passes.push("DynamicNDArrayMemoryLowering");
-        zk_passes.push("DynamicNDArrayMetaAssertInjection");
+        passes.push("DynamicNDArrayMemoryLowering");
+        passes.push("DynamicNDArrayMetaAssertInjection");
+        passes.push("MemoryTraceInjection");
     }
     if shortcut_optimization {
-        zk_passes.push("PatternMatchOptim");
-        zk_passes.push("DoubleNotElimination");
+        passes.push("PatternMatchOptim");
+        passes.push("DoubleNotElimination");
     }
     if constant_fold {
-        zk_passes.push("ConstantFold");
+        passes.push("ConstantFold");
     }
     if dead_code_elimination {
-        zk_passes.push("DeadCodeElimination");
+        passes.push("DeadCodeElimination");
     }
     if always_satisfied_elimination {
-        zk_passes.push("AlwaysSatisfiedElimination");
+        passes.push("AlwaysSatisfiedElimination");
     }
     if duplicate_code_elimination {
-        zk_passes.push("DuplicateCodeElimination");
+        passes.push("DuplicateCodeElimination");
     }
 
-    // Build pass pipeline for preprocess
-    let mut preprocess_passes: Vec<&str> = Vec::new();
-    if backend == "halo2" && enable_memory_consistency {
-        preprocess_passes.push("MemoryTraceInjection");
-    }
-    if shortcut_optimization {
-        preprocess_passes.push("PatternMatchOptim");
-        preprocess_passes.push("DoubleNotElimination");
-    }
-    if constant_fold {
-        preprocess_passes.push("ConstantFold");
-    }
-    if dead_code_elimination {
-        preprocess_passes.push("DeadCodeElimination");
-    }
-    if always_satisfied_elimination {
-        preprocess_passes.push("AlwaysSatisfiedElimination");
-    }
-    if duplicate_code_elimination {
-        preprocess_passes.push("DuplicateCodeElimination");
-    }
-
-    // Clone before consuming in the zk pipeline
-    let preprocess_base = base_graph.clone();
-
-    // Run zk_program pipeline
-    let zk_graph = run_pass_pipeline(base_graph, &zk_passes, mux_threshold);
-
-    // Run preprocess pipeline on the cloned graph
-    let preprocess_graph = run_pass_pipeline(preprocess_base, &preprocess_passes, mux_threshold);
-
-    // Serialize results
-    let zk_stmts = zk_graph.export_stmts();
-    let preprocess_stmts = preprocess_graph.export_stmts();
+    let optimized_graph = run_pass_pipeline(base_graph, &passes, mux_threshold);
+    let ir_stmts = optimized_graph.export_stmts();
 
     let result = serde_json::json!({
-        "zk_program_irs": zk_stmts,
-        "preprocess_irs": preprocess_stmts,
+        "ir_stmts": ir_stmts,
     });
 
     serde_json::to_string(&result)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e)))
 }
 
-/// Mock-execute a compiled circuit with concrete inputs.
-/// Evaluates preprocess IR (with external callbacks) then main IR.
+/// Execute a compiled circuit: preprocess (resolve externals) then prove.
+///
+/// Unified entry point for both mock and real proving.
+/// Steps: 1) parse IR + inputs → 2) preprocess (resolve externals) → 3) prove.
 #[pyfunction]
-#[pyo3(signature = (zk_program_ir_json, preprocess_ir_json, inputs_json, external_callables))]
-fn mock_execute(
+#[pyo3(signature = (ir_json, inputs_json, external_callables, backend="mock", params_json=None))]
+fn prove_circuit(
     py: Python<'_>,
-    zk_program_ir_json: &str,
-    preprocess_ir_json: &str,
+    ir_json: &str,
     inputs_json: &str,
     external_callables: &Bound<'_, pyo3::types::PyDict>,
+    backend: &str,
+    params_json: Option<&str>,
 ) -> PyResult<String> {
-    mock_exec::run_mock_execute(py, zk_program_ir_json, preprocess_ir_json, inputs_json, external_callables)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))
+    // 1. Parse IR graph (single graph, may contain external instructions)
+    let ir_data: Vec<serde_json::Value> = serde_json::from_str(ir_json)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e)))?;
+    let ir_graph = IRGraph::import_stmts(&ir_data)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+
+    // 2. Parse initial witness
+    let witness: prove::WitnessInput = serde_json::from_str(inputs_json)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Witness JSON parse error: {}", e)))?;
+
+    // 3. Create prover backend + params
+    let prover = prove::create_prover_backend(backend)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+    let params = if let Some(pj) = params_json {
+        serde_json::from_str(pj)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Params JSON parse error: {}", e)))?
+    } else {
+        prover.estimate_params(&ir_graph)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
+    };
+
+    // 4. Preprocess: resolve external calls in the same IR graph
+    let py_callback = prove::preprocess::py_callback::PyExternalCallback::new(py, external_callables);
+    let enriched_witness = prove::preprocess::run_preprocess(
+        &ir_graph, &witness, &params, &py_callback,
+    ).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+    // 5. Prove the IR with the enriched witness
+    let artifact = prover.prove(&ir_graph, &enriched_witness, &params)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+    serde_json::to_string(&artifact)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e)))
+}
+
+/// Estimate circuit parameters for a given IR.
+#[pyfunction]
+#[pyo3(signature = (zk_program_ir_json, backend="mock"))]
+fn estimate_circuit_params(zk_program_ir_json: &str, backend: &str) -> PyResult<String> {
+    let data: Vec<serde_json::Value> = serde_json::from_str(zk_program_ir_json)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e)))?;
+    let graph = IRGraph::import_stmts(&data)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+
+    let prover = prove::create_prover_backend(backend)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+    let params = prover.estimate_params(&graph)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+    serde_json::to_string(&params)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e)))
+}
+
+/// Verify a ZK proof.
+/// Returns a JSON-serialized VerifyResult.
+#[pyfunction]
+fn verify_proof_artifact(proof_artifact_json: &str) -> PyResult<String> {
+    let artifact: prove::ProofArtifact = serde_json::from_str(proof_artifact_json)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e)))?;
+
+    let backend = prove::create_prover_backend(&artifact.backend)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+    let result = backend.verify(&artifact)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+    serde_json::to_string(&result)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e)))
 }
 
 /// The Python module definition for zinnia._zinnia_core
@@ -262,6 +300,8 @@ fn _zinnia_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_optimization_pass, m)?)?;
     m.add_function(wrap_pyfunction!(generate_ir, m)?)?;
     m.add_function(wrap_pyfunction!(compile_circuit, m)?)?;
-    m.add_function(wrap_pyfunction!(mock_execute, m)?)?;
+    m.add_function(wrap_pyfunction!(prove_circuit, m)?)?;
+    m.add_function(wrap_pyfunction!(estimate_circuit_params, m)?)?;
+    m.add_function(wrap_pyfunction!(verify_proof_artifact, m)?)?;
     Ok(())
 }

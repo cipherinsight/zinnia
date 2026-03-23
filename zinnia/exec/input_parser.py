@@ -17,7 +17,6 @@ def parse_inputs(program_inputs: List[ZKProgramInput], args: tuple) -> list:
 
     entries = []
     for i, (pi, arg) in enumerate(zip(program_inputs, args)):
-        dt_class = pi.dt["__class__"]
         _flatten_value(entries, arg, pi.dt, (0, i), pi.name)
     return entries
 
@@ -32,31 +31,43 @@ def parse_inputs_to_parsed_input(program_inputs: List[ZKProgramInput], args: tup
     return ZKParsedInput(parsed_entries)
 
 
-def _flatten_value(entries: list, value: Any, dt: dict, indices: tuple, name: str):
-    """Recursively flatten a value according to its type descriptor."""
-    dt_class = dt["__class__"]
+def _get_type_variant(dt):
+    """Extract the type variant name and data from a ZinniaType serde dict.
 
-    if dt_class == "IntegerDTDescriptor":
+    Scalars: "Integer" → ("Integer", {})
+    Compound: {"NDArray": {"shape": ...}} → ("NDArray", {"shape": ...})
+    """
+    if isinstance(dt, str):
+        return dt, {}
+    if isinstance(dt, dict) and len(dt) == 1:
+        variant = next(iter(dt))
+        return variant, dt[variant]
+    raise ZinniaException(f"Invalid type descriptor: {dt}")
+
+
+def _flatten_value(entries: list, value: Any, dt, indices: tuple, name: str):
+    """Recursively flatten a value according to its type descriptor."""
+    variant, data = _get_type_variant(dt)
+
+    if variant == "Integer":
         int_val = _coerce_integer(value, name)
         key = "_".join(str(i) for i in indices)
         entries.append({"key": key, "kind": "Integer", "value": int_val})
 
-    elif dt_class == "FloatDTDescriptor":
+    elif variant == "Float":
         float_val = _coerce_float(value, name)
         key = "_".join(str(i) for i in indices)
         entries.append({"key": key, "kind": "Float", "value": float_val})
 
-    elif dt_class == "NDArrayDTDescriptor":
-        dt_data = dt["dt_data"]
-        shape = dt_data["shape"]
-        dtype = dt_data["dtype"]
+    elif variant == "NDArray":
+        shape = data["shape"]
+        dtype = data["dtype"]
         flat = _flatten_ndarray(value, shape, name)
         for flat_idx, elem in enumerate(flat):
             _flatten_value(entries, elem, dtype, indices + (flat_idx,), name)
 
-    elif dt_class == "ListDTDescriptor":
-        dt_data = dt["dt_data"]
-        elements_dt = dt_data["elements"]
+    elif variant == "List":
+        elements_dt = data["elements"]
         if not isinstance(value, (list, tuple)):
             raise ZinniaException(f"Expected list for `{name}`, got {type(value).__name__}")
         if len(value) != len(elements_dt):
@@ -64,9 +75,8 @@ def _flatten_value(entries: list, value: Any, dt: dict, indices: tuple, name: st
         for j, (elem, elem_dt) in enumerate(zip(value, elements_dt)):
             _flatten_value(entries, elem, elem_dt, indices + (j,), name)
 
-    elif dt_class == "TupleDTDescriptor":
-        dt_data = dt["dt_data"]
-        elements_dt = dt_data["elements"]
+    elif variant == "Tuple":
+        elements_dt = data["elements"]
         if not isinstance(value, (list, tuple)):
             raise ZinniaException(f"Expected tuple for `{name}`, got {type(value).__name__}")
         if len(value) != len(elements_dt):
@@ -74,29 +84,23 @@ def _flatten_value(entries: list, value: Any, dt: dict, indices: tuple, name: st
         for j, (elem, elem_dt) in enumerate(zip(value, elements_dt)):
             _flatten_value(entries, elem, elem_dt, indices + (j,), name)
 
-    elif dt_class == "PoseidonHashedDTDescriptor":
-        # PoseidonHashed wraps an inner type with a hash
-        # The value should be a PoseidonHashed object with actual_value and hash_value
+    elif variant == "PoseidonHashed":
         from zinnia.lang.type import PoseidonHashed as PoseidonHashedType
+        inner_dt = data["dtype"]
         if isinstance(value, PoseidonHashedType):
-            inner_dt = dt["dt_data"]["dtype"]
             _flatten_value(entries, value.actual_value, inner_dt, indices, name)
         else:
-            # Accept raw values too — treat as unhashed
-            inner_dt = dt["dt_data"]["dtype"]
             _flatten_value(entries, value, inner_dt, indices, name)
 
-    elif dt_class == "DynamicNDArrayDTDescriptor":
-        dt_data = dt["dt_data"]
-        dtype = dt_data["dtype"]
-        max_length = dt_data["max_length"]
-        # Flatten like NDArray but with dynamic length
+    elif variant == "DynamicNDArray":
+        dtype = data["dtype"]
+        max_length = data["max_length"]
         flat = _flatten_ndarray(value, [max_length], name)
         for flat_idx, elem in enumerate(flat):
             _flatten_value(entries, elem, dtype, indices + (flat_idx,), name)
 
     else:
-        raise ZinniaException(f"Unsupported type descriptor `{dt_class}` for `{name}`")
+        raise ZinniaException(f"Unsupported type `{variant}` for `{name}`")
 
 
 def _coerce_integer(value: Any, name: str) -> int:

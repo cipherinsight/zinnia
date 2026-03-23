@@ -1,7 +1,8 @@
 class ZKExecResult:
-    def __init__(self, satisfied: bool, public_outputs=None):
+    def __init__(self, satisfied: bool, public_outputs=None, proof=None):
         self.satisfied = satisfied
         self.public_outputs = public_outputs or {}
+        self.proof = proof  # Optional ZKProofResult, None for mock execution
 
     def is_satisfied(self) -> bool:
         return self.satisfied

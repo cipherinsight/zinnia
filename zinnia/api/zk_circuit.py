@@ -127,27 +127,49 @@ class ZKCircuit:
         return self.program
 
     def __call__(self, *args):
+        """Execute the circuit using the mock backend (default).
+
+        Equivalent to `self.prove(*args, backend="mock")`, but returns
+        a ZKExecResult for backward compatibility.
+        """
+        proof_result = self.prove(*args, backend="mock")
         from zinnia.exec.exec_result import ZKExecResult
-        from zinnia.exec.input_parser import parse_inputs
-        from zinnia.compile._bridge import mock_execute
-
-        if self.program is None:
-            self.compile()
-
-        entries = parse_inputs(self.program.program_inputs, args)
-        externals_dict = {n: ext.callable for n, ext in self.externals.items()}
-
-        result_json = mock_execute(
-            self.program.zk_program_irs_json,
-            self.program.preprocess_irs_json,
-            json.dumps(entries),
-            externals_dict,
-        )
-        result = json.loads(result_json)
-        return ZKExecResult(result["satisfied"], result.get("public_outputs"))
+        satisfied = proof_result.proof_bytes_hex == "mock_satisfied"
+        return ZKExecResult(satisfied, proof=proof_result)
 
     def mock(self, *args):
+        """Mock execution (alias for __call__)."""
         return self(*args)
+
+    def prove(self, *args, backend="mock", params=None):
+        """Compile (if needed), preprocess, and prove.
+
+        Args:
+            *args: Positional arguments matching the circuit inputs.
+            backend: "mock" (default, fast) or "halo2" (real ZK proof).
+            params: Optional dict with proving parameters.
+
+        Returns:
+            ZKProofResult containing the proof artifact.
+        """
+        if self.program is None:
+            self.compile()
+        externals_dict = {n: ext.callable for n, ext in self.externals.items()}
+        return self.program.prove(*args, backend=backend, params=params,
+                                  externals=externals_dict)
+
+    def verify(self, proof_result) -> bool:
+        """Verify a proof artifact (backend auto-detected from the artifact).
+
+        Args:
+            proof_result: A ZKProofResult from prove().
+
+        Returns:
+            True if the proof is valid.
+        """
+        if self.program is None:
+            self.compile()
+        return self.program.verify(proof_result)
 
     def get_name(self) -> str:
         return self.name
