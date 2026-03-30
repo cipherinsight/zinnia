@@ -35,9 +35,10 @@ impl IRContext {
         let store = ValueStore::new(val);
         let n = self.scopes.len();
 
-        // LoopScope and ConditionalScope: if var exists in parent, set it in parent
-        // This ensures mutations inside if/while blocks propagate
-        if matches!(&self.scopes[n - 1], Scope::Loop(_) | Scope::Conditional(_)) {
+        // LoopScope: if var exists in parent, set it in parent.
+        // This ensures mutations inside while blocks propagate to the loop variable.
+        // ConditionalScope writes stay local — the IR generator emits `select` to merge.
+        if matches!(&self.scopes[n - 1], Scope::Loop(_)) {
             for i in (0..n - 1).rev() {
                 if self.scopes[i].exists_local(key) {
                     self.scopes[i].set_local(key.to_string(), store);
