@@ -115,17 +115,17 @@ pub fn interpret_ir<S: Synthesizer>(
             IR::AddStr | IR::StrI | IR::StrF => None,
 
             // ── I/O ───────────────────────────────────────────────────
-            IR::ReadInteger { indices, is_public } => {
-                let key = indices_to_key(indices);
-                Some(synth.read_input(&key, *is_public)?)
+            IR::ReadInteger { path, is_public } => {
+                Some(synth.read_input(path, *is_public)?)
             }
-            IR::ReadFloat { indices, is_public } => {
-                let key = indices_to_key(indices);
-                Some(synth.read_input(&key, *is_public)?)
+            IR::ReadFloat { path, is_public } => {
+                Some(synth.read_input(path, *is_public)?)
             }
-            IR::ReadHash { indices, is_public } => {
-                let key = indices_to_key(indices);
-                Some(synth.read_input(&key, *is_public)?)
+            IR::ReadHash { path, is_public } => {
+                Some(synth.read_input(path, *is_public)?)
+            }
+            IR::ReadExternalResult { store_idx, output_idx, .. } => {
+                Some(synth.read_external_result(*store_idx, *output_idx)?)
             }
             IR::Print => None,
 
@@ -232,24 +232,3 @@ pub fn interpret_ir<S: Synthesizer>(
     Ok(())
 }
 
-/// Convert an indices vector to the key string format used by WitnessInput.
-/// E.g., [0, 1, 2] → "0_1_2".
-fn indices_to_key(indices: &[u32]) -> String {
-    indices
-        .iter()
-        .map(|i| i.to_string())
-        .collect::<Vec<_>>()
-        .join("_")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_indices_to_key() {
-        assert_eq!(indices_to_key(&[0, 1, 2]), "0_1_2");
-        assert_eq!(indices_to_key(&[0]), "0");
-        assert_eq!(indices_to_key(&[]), "");
-    }
-}

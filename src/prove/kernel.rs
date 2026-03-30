@@ -167,6 +167,21 @@ pub fn scale_fp(precision_bits: u32) -> Fp {
 use crate::prove::types::Value;
 use crate::prove::error::ProvingError;
 
+/// Parse a 64-char hex string into an Fp field element.
+pub fn hex_str_to_fp(s: &str) -> Result<Fp, ProvingError> {
+    if s.len() != 64 || !s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ProvingError::other(format!("Invalid hex field element: '{}'", s)));
+    }
+    let mut bytes = [0u8; 32];
+    for i in 0..32 {
+        bytes[i] = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)
+            .map_err(|_| ProvingError::other(format!("Invalid hex in '{}'", s)))?;
+    }
+    let repr = <Fp as PrimeField>::Repr::from(bytes);
+    Option::from(Fp::from_repr(repr))
+        .ok_or_else(|| ProvingError::other(format!("Hex '{}' is not a valid field element", s)))
+}
+
 /// Convert a `Value` to an Fp field element.
 /// Integers → direct. Floats → quantized. Bools → 0/1.
 pub fn value_to_fp(value: &Value, precision_bits: u32) -> Result<Fp, ProvingError> {
@@ -175,7 +190,13 @@ pub fn value_to_fp(value: &Value, precision_bits: u32) -> Result<Fp, ProvingErro
         Value::Float(v) => Ok(quantize_to_fp(*v, precision_bits)),
         Value::Bool(v) => Ok(if *v { Fp::one() } else { Fp::zero() }),
         Value::Str(s) => {
-            // Attempt to parse as integer (for hash values stored as strings)
+            // Try hex-encoded field element bytes first (used for Poseidon hashes)
+            if s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+                if let Ok(fp) = hex_str_to_fp(s) {
+                    return Ok(fp);
+                }
+            }
+            // Fall back to parsing as integer
             let v: i64 = s.parse().map_err(|_| {
                 ProvingError::other(format!("Cannot convert string '{}' to field element", s))
             })?;
@@ -201,13 +222,14 @@ pub fn fp_to_value(v: Fp, is_float: bool, precision_bits: u32) -> Value {
 // ---------------------------------------------------------------------------
 
 /// Evaluate a polynomial via Horner's method: p(x) = coefs[0] + x*(coefs[1] + x*(...))
-/// All values are Fp field elements (quantized fixed-point).
-pub fn horner_eval(x: Fp, coefs: &[Fp]) -> Fp {
+/// All values are Fp field elements in fixed-point representation (scaled by 2^precision_bits).
+pub fn horner_eval(x: Fp, coefs: &[Fp], precision_bits: u32) -> Fp {
     assert!(!coefs.is_empty());
     let n = coefs.len();
     let mut acc = coefs[n - 1];
     for i in (0..n - 1).rev() {
-        acc = x * acc + coefs[i];
+        let (prod, _) = fp_mul_rescale(x, acc, precision_bits);
+        acc = prod + coefs[i];
     }
     acc
 }
@@ -251,53 +273,34 @@ pub fn fp_floor_div(a: Fp, b: Fp) -> (Fp, Fp) {
     (i64_to_fp(q), Fp::from(r as u64))
 }
 
-/// Compute sin via Remez polynomial (fixed-point, quantized).
+/// Compute sin(x) using native f64 math on the dequantized value.
 pub fn fp_sin(x: Fp, precision_bits: u32) -> Fp {
-    let (x_abs, is_neg) = signed_decompose(x);
-    let two_pi = quantize_to_fp(std::f64::consts::PI * 2.0, precision_bits);
-    let scale = scale_fp(precision_bits);
-
-    // Reduce modulo 2π: x_mod = x_abs mod 2π
-    let (_, x_mod) = fp_floor_div(x_abs, two_pi);
-    // Scale x_mod back — fp_floor_div works on integer interpretation,
-    // so for fixed-point modulo we compute x_abs - floor(x_abs/two_pi)*two_pi
-    let (q, _) = fp_floor_div(x_abs, two_pi);
-    let x_mod = x_abs - q * two_pi;
-
-    let coefs: Vec<Fp> = SIN_COEFS.iter().map(|c| quantize_to_fp(*c, precision_bits)).collect();
-    let result = horner_eval(x_mod, &coefs);
-    if is_neg { -result } else { result }
+    let v = dequantize_from_fp(x, precision_bits);
+    quantize_to_fp(v.sin(), precision_bits)
 }
 
-/// Compute exp via Remez polynomial: exp(x) = 2^(x/ln2).
+/// Compute exp(x) using native f64 math on the dequantized value.
 pub fn fp_exp(x: Fp, precision_bits: u32) -> Fp {
-    let ln2 = quantize_to_fp(2.0f64.ln(), precision_bits);
-    let x_over_ln2 = fp_div_prescale(x, ln2, precision_bits);
-    let coefs: Vec<Fp> = EXP2_COEFS.iter().map(|c| quantize_to_fp(*c, precision_bits)).collect();
-    horner_eval(x_over_ln2, &coefs)
+    let v = dequantize_from_fp(x, precision_bits);
+    quantize_to_fp(v.exp(), precision_bits)
 }
 
-/// Compute log via Remez polynomial: log(x) = log2(x) * ln(2).
+/// Compute ln(x) using native f64 math on the dequantized value.
 pub fn fp_log(x: Fp, precision_bits: u32) -> Fp {
-    let coefs: Vec<Fp> = LOG2_COEFS.iter().map(|c| quantize_to_fp(*c, precision_bits)).collect();
-    let log2_val = horner_eval(x, &coefs);
-    let ln2 = quantize_to_fp(2.0f64.ln(), precision_bits);
-    let (result, _) = fp_mul_rescale(log2_val, ln2, precision_bits);
-    result
+    let v = dequantize_from_fp(x, precision_bits);
+    quantize_to_fp(v.ln(), precision_bits)
 }
 
-/// Compute cos: cos(x) = sin(x + π/2).
+/// Compute cos(x) using native f64 math on the dequantized value.
 pub fn fp_cos(x: Fp, precision_bits: u32) -> Fp {
-    let half_pi = quantize_to_fp(std::f64::consts::FRAC_PI_2, precision_bits);
-    fp_sin(x + half_pi, precision_bits)
+    let v = dequantize_from_fp(x, precision_bits);
+    quantize_to_fp(v.cos(), precision_bits)
 }
 
-/// Compute sqrt: sqrt(x) = exp(0.5 * log(x)).
+/// Compute sqrt(x) using native f64 math on the dequantized value.
 pub fn fp_sqrt(x: Fp, precision_bits: u32) -> Fp {
-    let log_x = fp_log(x, precision_bits);
-    let half = quantize_to_fp(0.5, precision_bits);
-    let (half_log, _) = fp_mul_rescale(half, log_x, precision_bits);
-    fp_exp(half_log, precision_bits)
+    let v = dequantize_from_fp(x, precision_bits);
+    quantize_to_fp(v.sqrt(), precision_bits)
 }
 
 /// Compute sinh: (exp(x) - exp(-x)) / 2.
@@ -389,15 +392,15 @@ mod tests {
 
     #[test]
     fn test_horner_eval_constant() {
-        // p(x) = 5
-        let result = horner_eval(Fp::from(10), &[Fp::from(5)]);
+        // p(x) = 5 — precision_bits=0 for raw (unscaled) arithmetic
+        let result = horner_eval(Fp::from(10), &[Fp::from(5)], 0);
         assert_eq!(result, Fp::from(5));
     }
 
     #[test]
     fn test_horner_eval_linear() {
-        // p(x) = 3 + 2*x at x=5 → 13
-        let result = horner_eval(Fp::from(5), &[Fp::from(3), Fp::from(2)]);
+        // p(x) = 3 + 2*x at x=5 → 13 — precision_bits=0 for raw arithmetic
+        let result = horner_eval(Fp::from(5), &[Fp::from(3), Fp::from(2)], 0);
         assert_eq!(result, Fp::from(13));
     }
 }

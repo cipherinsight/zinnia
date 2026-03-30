@@ -4,7 +4,8 @@
 use crate::ir::{IRGraph, IRStatement};
 use crate::ir_defs::IR;
 use crate::prove::halo2::mock_prove;
-use crate::prove::types::{ProvingParams, Value, WitnessInput};
+use crate::prove::types::ProvingParams;
+use crate::circuit_input::{CircuitInputs, InputNode, InputParam, ResolvedWitness, InputPath};
 
 fn make_graph(stmts: Vec<(IR, Vec<u32>)>) -> IRGraph {
     let ir_stmts: Vec<IRStatement> = stmts
@@ -15,6 +16,10 @@ fn make_graph(stmts: Vec<(IR, Vec<u32>)>) -> IRGraph {
     IRGraph::new(ir_stmts)
 }
 
+fn empty_resolved(params: &ProvingParams) -> ResolvedWitness {
+    ResolvedWitness::new(CircuitInputs::new(), params.precision_bits)
+}
+
 #[test]
 fn test_constant_add() {
     let ir = make_graph(vec![
@@ -22,7 +27,8 @@ fn test_constant_add() {
         (IR::ConstantInt { value: 5 }, vec![]),
         (IR::AddI, vec![0, 1]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 5, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 5, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 
 #[test]
@@ -32,7 +38,8 @@ fn test_mul() {
         (IR::ConstantInt { value: 7 }, vec![]),
         (IR::MulI, vec![0, 1]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 5, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 5, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 
 #[test]
@@ -42,7 +49,8 @@ fn test_sub() {
         (IR::ConstantInt { value: 3 }, vec![]),
         (IR::SubI, vec![0, 1]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 5, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 5, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 
 #[test]
@@ -54,7 +62,8 @@ fn test_boolean_logic() {
         (IR::LogicalNot, vec![1]),
         (IR::LogicalOr, vec![0, 1]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 5, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 5, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 
 #[test]
@@ -65,19 +74,28 @@ fn test_select() {
         (IR::ConstantInt { value: 20 }, vec![]),
         (IR::SelectI, vec![0, 1, 2]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 5, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 5, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 
 #[test]
 fn test_with_input() {
     let ir = make_graph(vec![
-        (IR::ReadInteger { indices: vec![0, 0], is_public: false }, vec![]),
+        (IR::ReadInteger { path: InputPath::new("x", vec![]), is_public: false }, vec![]),
         (IR::ConstantInt { value: 5 }, vec![]),
         (IR::AddI, vec![0, 1]),
     ]);
-    let mut witness = WitnessInput::new();
-    witness.entries.push(("0_0".to_string(), Value::Integer(42)));
-    mock_prove(&ir, &witness, &ProvingParams { k: 8, ..Default::default() }, vec![]).unwrap();
+    let witness = CircuitInputs {
+        params: vec![InputParam {
+            name: "x".to_string(),
+            is_public: false,
+            dtype: serde_json::json!("Integer"),
+            value: InputNode::Int(42),
+        }],
+    };
+    let params = ProvingParams { k: 8, ..Default::default() };
+    let resolved = ResolvedWitness::new(witness, params.precision_bits);
+    mock_prove(&ir, &resolved, &params, vec![]).unwrap();
 }
 
 #[test]
@@ -87,7 +105,8 @@ fn test_div() {
         (IR::ConstantInt { value: 4 }, vec![]),
         (IR::DivI, vec![0, 1]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 5, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 5, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 
 #[test]
@@ -97,7 +116,8 @@ fn test_inv() {
         (IR::InvI, vec![0]),
         (IR::MulI, vec![0, 1]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 5, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 5, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 
 #[test]
@@ -107,7 +127,8 @@ fn test_equality() {
         (IR::ConstantInt { value: 3 }, vec![]),
         (IR::EqI, vec![0, 1]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 6, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 6, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 
 #[test]
@@ -117,7 +138,8 @@ fn test_inequality() {
         (IR::ConstantInt { value: 5 }, vec![]),
         (IR::NeI, vec![0, 1]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 6, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 6, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 
 #[test]
@@ -127,7 +149,8 @@ fn test_floor_div() {
         (IR::ConstantInt { value: 3 }, vec![]),
         (IR::FloorDivI, vec![0, 1]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 5, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 5, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 
 #[test]
@@ -137,7 +160,8 @@ fn test_mod() {
         (IR::ConstantInt { value: 3 }, vec![]),
         (IR::ModI, vec![0, 1]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 5, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 5, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 
 #[test]
@@ -147,7 +171,8 @@ fn test_pow() {
         (IR::ConstantInt { value: 3 }, vec![]),
         (IR::PowI, vec![0, 1]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 8, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 8, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 
 #[test]
@@ -158,7 +183,8 @@ fn test_assert_with_eq() {
         (IR::EqI, vec![0, 1]),
         (IR::Assert, vec![2]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 6, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 6, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 
 #[test]
@@ -170,7 +196,8 @@ fn test_memory() {
         (IR::WriteMemory { segment_id: 0 }, vec![1, 2]),
         (IR::ReadMemory { segment_id: 0 }, vec![1]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 5, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 5, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 
 #[test]
@@ -180,7 +207,8 @@ fn test_lt() {
         (IR::ConstantInt { value: 5 }, vec![]),
         (IR::LtI, vec![0, 1]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 7, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 7, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 
 #[test]
@@ -189,7 +217,8 @@ fn test_sign() {
         (IR::ConstantInt { value: 5 }, vec![]),
         (IR::SignI, vec![0]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 8, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 8, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 
 #[test]
@@ -198,7 +227,8 @@ fn test_abs() {
         (IR::ConstantInt { value: -7 }, vec![]),
         (IR::AbsI, vec![0]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 6, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 6, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 
 #[test]
@@ -207,7 +237,8 @@ fn test_exp_constrained() {
         (IR::ConstantFloat { value: 1.0 }, vec![]),
         (IR::ExpF, vec![0]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 12, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 12, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 
 #[test]
@@ -216,7 +247,8 @@ fn test_sin_constrained() {
         (IR::ConstantFloat { value: 0.5 }, vec![]),
         (IR::SinF, vec![0]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 14, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 14, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 
 #[test]
@@ -226,7 +258,8 @@ fn test_poseidon_constrained() {
         (IR::ConstantInt { value: 2 }, vec![]),
         (IR::PoseidonHash, vec![0, 1]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 12, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 12, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 
 #[test]
@@ -235,7 +268,8 @@ fn test_bool_cast() {
         (IR::ConstantInt { value: 5 }, vec![]),
         (IR::BoolCast, vec![0]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 6, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 6, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 
 #[test]
@@ -245,5 +279,6 @@ fn test_float_mul_constrained() {
         (IR::ConstantFloat { value: 2.0 }, vec![]),
         (IR::MulF, vec![0, 1]),
     ]);
-    mock_prove(&ir, &WitnessInput::new(), &ProvingParams { k: 6, ..Default::default() }, vec![]).unwrap();
+    let params = ProvingParams { k: 6, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }

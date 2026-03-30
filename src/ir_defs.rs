@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::circuit_input::{InputPath, PathSegment};
+
 // ---------------------------------------------------------------------------
 // IR enum — all 78 IR instruction types as a single Rust enum
 // ---------------------------------------------------------------------------
@@ -90,16 +92,22 @@ pub enum IR {
 
     // ── I/O ───────────────────────────────────────────────────────────
     ReadInteger {
-        indices: Vec<u32>,
+        path: InputPath,
         is_public: bool,
     },
     ReadFloat {
-        indices: Vec<u32>,
+        path: InputPath,
         is_public: bool,
     },
     ReadHash {
-        indices: Vec<u32>,
+        path: InputPath,
         is_public: bool,
+    },
+    /// Read an external function result (resolved during preprocessing).
+    ReadExternalResult {
+        store_idx: u32,
+        output_idx: u32,
+        is_float: bool,
     },
     Print,
 
@@ -266,17 +274,17 @@ impl IR {
             IR::StrF => "str_f".to_string(),
 
             // I/O
-            IR::ReadInteger { indices, is_public } => {
-                let idx_str: Vec<String> = indices.iter().map(|i| i.to_string()).collect();
-                format!("read_integer[{}][{}]", idx_str.join(", "), is_public)
+            IR::ReadInteger { path, is_public } => {
+                format!("read_integer[{}][{}]", path.display(), is_public)
             }
-            IR::ReadFloat { indices, is_public } => {
-                let idx_str: Vec<String> = indices.iter().map(|i| i.to_string()).collect();
-                format!("read_float[{}][{}]", idx_str.join(", "), is_public)
+            IR::ReadFloat { path, is_public } => {
+                format!("read_float[{}][{}]", path.display(), is_public)
             }
-            IR::ReadHash { indices, is_public } => {
-                let idx_str: Vec<String> = indices.iter().map(|i| i.to_string()).collect();
-                format!("read_hash[({},)][{}]", idx_str.join(", "), is_public)
+            IR::ReadHash { path, is_public } => {
+                format!("read_hash[{}][{}]", path.display(), is_public)
+            }
+            IR::ReadExternalResult { store_idx, output_idx, is_float } => {
+                format!("read_external_result[{}.{}][float={}]", store_idx, output_idx, is_float)
             }
             IR::Print => "print".to_string(),
 
@@ -457,6 +465,7 @@ impl IR {
             IR::ReadInteger { .. } => "ReadIntegerIR",
             IR::ReadFloat { .. } => "ReadFloatIR",
             IR::ReadHash { .. } => "ReadHashIR",
+            IR::ReadExternalResult { .. } => "ReadExternalResultIR",
             IR::Print => "PrintIR",
             IR::Assert => "AssertIR",
             IR::ExposePublicI => "ExposePublicIIR",
@@ -488,14 +497,17 @@ impl IR {
             IR::ConstantBool { value } => serde_json::json!({ "value": value }),
             IR::ConstantStr { value } => serde_json::json!({ "value": value }),
 
-            IR::ReadInteger { indices, is_public } => {
-                serde_json::json!({ "indices": indices, "is_public": is_public })
+            IR::ReadInteger { path, is_public } => {
+                serde_json::json!({ "path": path, "is_public": is_public })
             }
-            IR::ReadFloat { indices, is_public } => {
-                serde_json::json!({ "indices": indices, "is_public": is_public })
+            IR::ReadFloat { path, is_public } => {
+                serde_json::json!({ "path": path, "is_public": is_public })
             }
-            IR::ReadHash { indices, is_public } => {
-                serde_json::json!({ "indices": indices, "is_public": is_public })
+            IR::ReadHash { path, is_public } => {
+                serde_json::json!({ "path": path, "is_public": is_public })
+            }
+            IR::ReadExternalResult { store_idx, output_idx, is_float } => {
+                serde_json::json!({ "store_idx": store_idx, "output_idx": output_idx, "is_float": is_float })
             }
 
             IR::AllocateMemory {
@@ -683,40 +695,35 @@ impl IR {
             "StrFIR" => Ok(IR::StrF),
 
             "ReadIntegerIR" => {
-                let indices: Vec<u32> = data["indices"]
-                    .as_array()
-                    .ok_or("ReadInteger: missing indices")?
-                    .iter()
-                    .map(|v| v.as_u64().unwrap_or(0) as u32)
-                    .collect();
+                let path: InputPath = serde_json::from_value(data["path"].clone())
+                    .map_err(|e| format!("ReadInteger: invalid path: {}", e))?;
                 let is_public = data["is_public"]
                     .as_bool()
                     .ok_or("ReadInteger: missing is_public")?;
-                Ok(IR::ReadInteger { indices, is_public })
+                Ok(IR::ReadInteger { path, is_public })
             }
             "ReadFloatIR" => {
-                let indices: Vec<u32> = data["indices"]
-                    .as_array()
-                    .ok_or("ReadFloat: missing indices")?
-                    .iter()
-                    .map(|v| v.as_u64().unwrap_or(0) as u32)
-                    .collect();
+                let path: InputPath = serde_json::from_value(data["path"].clone())
+                    .map_err(|e| format!("ReadFloat: invalid path: {}", e))?;
                 let is_public = data["is_public"]
                     .as_bool()
                     .ok_or("ReadFloat: missing is_public")?;
-                Ok(IR::ReadFloat { indices, is_public })
+                Ok(IR::ReadFloat { path, is_public })
             }
             "ReadHashIR" => {
-                let indices: Vec<u32> = data["indices"]
-                    .as_array()
-                    .ok_or("ReadHash: missing indices")?
-                    .iter()
-                    .map(|v| v.as_u64().unwrap_or(0) as u32)
-                    .collect();
+                let path: InputPath = serde_json::from_value(data["path"].clone())
+                    .map_err(|e| format!("ReadHash: invalid path: {}", e))?;
                 let is_public = data["is_public"]
                     .as_bool()
                     .ok_or("ReadHash: missing is_public")?;
-                Ok(IR::ReadHash { indices, is_public })
+                Ok(IR::ReadHash { path, is_public })
+            }
+            "ReadExternalResultIR" => {
+                Ok(IR::ReadExternalResult {
+                    store_idx: data["store_idx"].as_u64().unwrap_or(0) as u32,
+                    output_idx: data["output_idx"].as_u64().unwrap_or(0) as u32,
+                    is_float: data["is_float"].as_bool().unwrap_or(false),
+                })
             }
             "PrintIR" => Ok(IR::Print),
 
@@ -860,11 +867,11 @@ mod tests {
         );
         assert_eq!(
             IR::ReadInteger {
-                indices: vec![0, 1],
+                path: InputPath::new("x", vec![PathSegment::Index(1)]),
                 is_public: true,
             }
             .signature(),
-            "read_integer[0, 1][true]"
+            "read_integer[x.1][true]"
         );
     }
 
@@ -874,7 +881,7 @@ mod tests {
         assert!(!IR::ConstantInt { value: 0 }.is_fixed());
         assert!(IR::Assert.is_fixed());
         assert!(IR::ReadInteger {
-            indices: vec![],
+            path: InputPath::new("x", vec![]),
             is_public: true,
         }
         .is_fixed());
@@ -932,16 +939,21 @@ mod tests {
                 value: "hello".to_string(),
             },
             IR::ReadInteger {
-                indices: vec![0, 1],
+                path: InputPath::new("x", vec![PathSegment::Index(1)]),
                 is_public: true,
             },
             IR::ReadFloat {
-                indices: vec![2],
+                path: InputPath::new("y", vec![PathSegment::Index(2)]),
                 is_public: false,
             },
             IR::ReadHash {
-                indices: vec![3],
+                path: InputPath::new("h", vec![PathSegment::Hash]),
                 is_public: true,
+            },
+            IR::ReadExternalResult {
+                store_idx: 1,
+                output_idx: 0,
+                is_float: false,
             },
             IR::AllocateMemory {
                 segment_id: 1,

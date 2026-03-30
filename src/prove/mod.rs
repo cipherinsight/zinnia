@@ -39,7 +39,7 @@ pub mod halo2;
 // Re-export primary types.
 pub use error::ProvingError;
 pub use traits::{ProverBackend, Synthesizer};
-pub use types::{ProofArtifact, ProvingParams, Value, VerifyResult, WitnessInput};
+pub use types::{ProofArtifact, ProvingParams, Value, VerifyResult};
 
 /// Create a `ProverBackend` for the given backend name.
 ///

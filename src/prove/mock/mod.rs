@@ -13,7 +13,8 @@ use crate::ir::IRGraph;
 use crate::prove::error::ProvingError;
 use crate::prove::interpreter::interpret_ir;
 use crate::prove::traits::ProverBackend;
-use crate::prove::types::{ProofArtifact, ProvingParams, VerifyResult, WitnessInput};
+use crate::prove::types::{ProofArtifact, ProvingParams, VerifyResult};
+use crate::circuit_input::ResolvedWitness;
 
 use self::synthesizer::MockSynthesizer;
 
@@ -34,7 +35,7 @@ impl ProverBackend for MockProverBackend {
     fn prove(
         &self,
         ir: &IRGraph,
-        witness: &WitnessInput,
+        witness: &ResolvedWitness,
         params: &ProvingParams,
     ) -> Result<ProofArtifact, ProvingError> {
         let mut synth = MockSynthesizer::new(witness.clone(), params.clone());

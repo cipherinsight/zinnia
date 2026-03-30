@@ -100,8 +100,11 @@ impl IRGenerator {
             }
         }).collect();
 
+        // Allocate a unique store index for this external call
+        let store_idx = self.next_external_store_idx;
+        self.next_external_store_idx += 1;
+
         // Export each argument
-        let store_idx = 0u32; // Simple store index
         for (i, arg) in args.iter().enumerate() {
             let flat = crate::helpers::composite::flatten_composite(arg);
             for (j, v) in flat.iter().enumerate() {
@@ -138,11 +141,10 @@ impl IRGenerator {
             args: arg_dts,
             kwargs: std::collections::HashMap::new(),
         };
-        let result = self.builder.create_ir(&invoke_ir, &[]);
-        match return_dt {
-            ZinniaType::Integer | ZinniaType::Boolean => result,
-            ZinniaType::Float => result,
-            _ => result,
-        }
+        self.builder.create_ir(&invoke_ir, &[]);
+
+        // Read the external function result (resolved during preprocessing).
+        let is_float = matches!(return_dt, ZinniaType::Float);
+        self.builder.ir_read_external_result(store_idx, 0, is_float)
     }
 }

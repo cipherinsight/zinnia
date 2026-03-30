@@ -184,16 +184,45 @@ impl IRGenerator {
         }
     }
 
-    pub(crate) fn read_input_value(&mut self, dt: &ZinniaType, indices: Vec<u32>, is_public: bool) -> Value {
+    pub(crate) fn read_input_value(
+        &mut self,
+        dt: &ZinniaType,
+        param_name: &str,
+        segments: Vec<crate::circuit_input::PathSegment>,
+        is_public: bool,
+    ) -> Value {
+        use crate::circuit_input::{InputPath, PathSegment};
+
         match dt {
             ZinniaType::Integer | ZinniaType::Boolean => {
-                self.builder.ir_read_integer(indices, is_public)
+                let path = InputPath::new(param_name, segments);
+                self.builder.ir_read_integer(path, is_public)
             }
             ZinniaType::Float => {
-                self.builder.ir_read_float(indices, is_public)
+                let path = InputPath::new(param_name, segments);
+                self.builder.ir_read_float(path, is_public)
             }
-            ZinniaType::PoseidonHashed { .. } => {
-                self.builder.ir_read_hash(indices, is_public)
+            ZinniaType::PoseidonHashed { dtype } => {
+                // Read the hash value at segments ++ [Hash]
+                let mut hash_segs = segments.clone();
+                hash_segs.push(PathSegment::Hash);
+                let hash_path = InputPath::new(param_name, hash_segs);
+                let hash_val = self.builder.ir_read_hash(hash_path, is_public);
+
+                // Read the inner value at segments ++ [Inner, ...]
+                let mut inner_segs = segments;
+                inner_segs.push(PathSegment::Inner);
+                let inner_val = self.read_input_value(dtype, param_name, inner_segs, is_public);
+
+                // Compute hash of flattened inner values and assert equality
+                let flat = crate::helpers::composite::flatten_composite(&inner_val);
+                let computed_hash = self.builder.ir_poseidon_hash(&flat);
+                let eq = self.builder.ir_equal_hash(&computed_hash, &hash_val);
+                let bc = self.builder.ir_bool_cast(&eq);
+                self.builder.ir_assert(&bc);
+
+                // Return the inner value for circuit use
+                inner_val
             }
             ZinniaType::NDArray { shape, dtype } => {
                 let total: usize = shape.iter().product();
@@ -203,9 +232,9 @@ impl IRGenerator {
                 };
                 let mut values = Vec::new();
                 for flat_idx in 0..total {
-                    let mut sub_indices = indices.clone();
-                    sub_indices.push(flat_idx as u32);
-                    values.push(self.read_input_value(&inner_dt, sub_indices, is_public));
+                    let mut sub_segs = segments.clone();
+                    sub_segs.push(PathSegment::Index(flat_idx as u32));
+                    values.push(self.read_input_value(&inner_dt, param_name, sub_segs, is_public));
                 }
                 // Build nested structure from flat values
                 let types = values.iter().map(|v| v.zinnia_type()).collect();
@@ -215,9 +244,9 @@ impl IRGenerator {
                 let mut values = Vec::new();
                 let mut types = Vec::new();
                 for (j, elem_dt) in elements.iter().enumerate() {
-                    let mut sub_indices = indices.clone();
-                    sub_indices.push(j as u32);
-                    let val = self.read_input_value(elem_dt, sub_indices, is_public);
+                    let mut sub_segs = segments.clone();
+                    sub_segs.push(PathSegment::Index(j as u32));
+                    let val = self.read_input_value(elem_dt, param_name, sub_segs, is_public);
                     types.push(val.zinnia_type());
                     values.push(val);
                 }
@@ -227,9 +256,9 @@ impl IRGenerator {
                 let mut values = Vec::new();
                 let mut types = Vec::new();
                 for (j, elem_dt) in elements.iter().enumerate() {
-                    let mut sub_indices = indices.clone();
-                    sub_indices.push(j as u32);
-                    let val = self.read_input_value(elem_dt, sub_indices, is_public);
+                    let mut sub_segs = segments.clone();
+                    sub_segs.push(PathSegment::Index(j as u32));
+                    let val = self.read_input_value(elem_dt, param_name, sub_segs, is_public);
                     types.push(val.zinnia_type());
                     values.push(val);
                 }
@@ -243,9 +272,9 @@ impl IRGenerator {
                 // Read flat payload elements
                 let mut elements = Vec::new();
                 for flat_idx in 0..*max_length {
-                    let mut sub_indices = indices.clone();
-                    sub_indices.push(flat_idx as u32);
-                    let val = self.read_input_value(&inner_dt, sub_indices, is_public);
+                    let mut sub_segs = segments.clone();
+                    sub_segs.push(PathSegment::Index(flat_idx as u32));
+                    let val = self.read_input_value(&inner_dt, param_name, sub_segs, is_public);
                     elements.push(crate::ops::dyn_ndarray::value_to_scalar_i64(&val));
                 }
 
@@ -282,7 +311,8 @@ impl IRGenerator {
                 })
             }
             _ => {
-                self.builder.ir_read_integer(indices, is_public)
+                let path = InputPath::new(param_name, segments);
+                self.builder.ir_read_integer(path, is_public)
             }
         }
     }

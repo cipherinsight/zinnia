@@ -12,4 +12,5 @@ from zinnia._zinnia_core import (
     verify_proof_artifact,
     export_ir_json,
     import_ir_json,
+    poseidon_hash,
 )

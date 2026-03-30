@@ -14,6 +14,7 @@ pub mod optim;
 pub mod prove;
 pub mod scope;
 pub mod types;
+pub mod circuit_input;
 
 use ir::IRGraph;
 use ir_gen::{IRGenConfig, IRGenerator};
@@ -140,8 +141,8 @@ fn prove_circuit(
 ) -> PyResult<String> {
     let ir_graph = &compiled_ir.graph;
 
-    // Parse initial witness
-    let witness: prove::WitnessInput = serde_json::from_str(inputs_json)
+    // Parse structured witness
+    let witness_input: circuit_input::CircuitInputs = serde_json::from_str(inputs_json)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Witness JSON parse error: {}", e)))?;
 
     // Create prover backend + params
@@ -156,14 +157,14 @@ fn prove_circuit(
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
     };
 
-    // Preprocess: resolve external calls
+    // Preprocess: resolve external calls, build resolved witness
     let py_callback = prove::preprocess::py_callback::PyExternalCallback::new(py, external_callables);
-    let enriched_witness = prove::preprocess::run_preprocess(
-        ir_graph, &witness, &params, &py_callback,
+    let resolved_witness = prove::preprocess::run_preprocess(
+        ir_graph, &witness_input, &params, &py_callback,
     ).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
     // Prove
-    let artifact = prover.prove(ir_graph, &enriched_witness, &params)
+    let artifact = prover.prove(ir_graph, &resolved_witness, &params)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
     serde_json::to_string(&artifact)
@@ -205,6 +206,19 @@ fn import_ir_json(ir_json: &str) -> PyResult<CompiledIR> {
     Ok(CompiledIR { graph })
 }
 
+/// Compute the Poseidon hash of a list of integers using the Rust kernel.
+/// Returns the hash as a hex string of the full field element bytes (little-endian).
+/// This ensures Python-side hash computation matches the prover exactly.
+#[pyfunction]
+fn poseidon_hash(values: Vec<i64>) -> String {
+    use pasta_curves::Fp;
+    use pasta_curves::group::ff::PrimeField;
+    let fps: Vec<Fp> = values.iter().map(|v| prove::kernel::i64_to_fp(*v)).collect();
+    let result = prove::kernel::fp_poseidon(&fps);
+    let bytes = result.to_repr();
+    bytes.as_ref().iter().map(|b| format!("{:02x}", b)).collect()
+}
+
 /// The Python module definition for zinnia._zinnia_core
 #[pymodule]
 fn _zinnia_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -214,5 +228,6 @@ fn _zinnia_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(verify_proof_artifact, m)?)?;
     m.add_function(wrap_pyfunction!(export_ir_json, m)?)?;
     m.add_function(wrap_pyfunction!(import_ir_json, m)?)?;
+    m.add_function(wrap_pyfunction!(poseidon_hash, m)?)?;
     Ok(())
 }

@@ -1,6 +1,7 @@
 use crate::ir::IRGraph;
 use crate::prove::error::ProvingError;
-use crate::prove::types::{ProofArtifact, ProvingParams, VerifyResult, WitnessInput};
+use crate::prove::types::{ProofArtifact, ProvingParams, VerifyResult};
+use crate::circuit_input::{ResolvedWitness, InputPath};
 
 // ---------------------------------------------------------------------------
 // ProverBackend — top-level backend trait
@@ -18,11 +19,11 @@ pub trait ProverBackend: Send + Sync {
     /// Analyze the IR to recommend circuit-size parameters.
     fn estimate_params(&self, ir: &IRGraph) -> Result<ProvingParams, ProvingError>;
 
-    /// Generate a proof from an IR graph and witness inputs.
+    /// Generate a proof from an IR graph and resolved witness.
     fn prove(
         &self,
         ir: &IRGraph,
-        witness: &WitnessInput,
+        witness: &ResolvedWitness,
         params: &ProvingParams,
     ) -> Result<ProofArtifact, ProvingError>;
 
@@ -133,7 +134,8 @@ pub trait Synthesizer {
 
     // ── I/O ───────────────────────────────────────────────────────────
 
-    fn read_input(&mut self, key: &str, is_public: bool) -> Result<Self::CellRef, ProvingError>;
+    fn read_input(&mut self, path: &InputPath, is_public: bool) -> Result<Self::CellRef, ProvingError>;
+    fn read_external_result(&mut self, store_idx: u32, output_idx: u32) -> Result<Self::CellRef, ProvingError>;
     fn expose_public(&mut self, a: &Self::CellRef, label: &str) -> Result<(), ProvingError>;
     fn assert_true(&mut self, a: &Self::CellRef) -> Result<(), ProvingError>;
 

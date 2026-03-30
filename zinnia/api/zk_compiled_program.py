@@ -84,13 +84,10 @@ class ZKCompiledProgram:
             ZKProofResult containing the proof artifact.
         """
         from zinnia.exec.proof_result import ZKProofResult
-        from zinnia.exec.input_parser import parse_inputs
+        from zinnia.exec.input_parser import build_circuit_inputs
         from zinnia.compile._bridge import prove_circuit
 
-        entries = parse_inputs(self.program_inputs, args)
-        witness = {"entries": [
-            [e["key"], {e["kind"]: e["value"]}] for e in entries
-        ]}
+        witness = build_circuit_inputs(self.program_inputs, args)
 
         ext_dict = {}
         if externals:
@@ -135,6 +132,7 @@ class ZKCompiledProgram:
     @staticmethod
     def deserialize(data: str, external_funcs=None) -> 'ZKCompiledProgram':
         from zinnia.compile._bridge import import_ir_json
+        from zinnia.debug.exception import ZinniaException
         if external_funcs is None:
             external_funcs = []
         payload = json.loads(data)
@@ -147,6 +145,14 @@ class ZKCompiledProgram:
                 ef_map[internal.name] = internal
             else:
                 ef_map[ef.name] = ef
+
+        # Validate externals against what the circuit expects
+        expected_names = set(payload.get('external_funcs', []))
+        provided_names = set(ef_map.keys())
+        for name in provided_names - expected_names:
+            raise ZinniaException(f"External function {name} provided, but not expected")
+        for name in expected_names - provided_names:
+            raise ZinniaException(f"External function {name} expected, but not provided")
 
         compiled_ir = import_ir_json(json.dumps(payload['ir_stmts']))
 

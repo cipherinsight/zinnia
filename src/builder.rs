@@ -246,16 +246,20 @@ impl IRBuilder {
 
     // ── I/O ───────────────────────────────────────────────────────────
 
-    pub fn ir_read_integer(&mut self, indices: Vec<u32>, is_public: bool) -> Value {
-        self.create_ir(&IR::ReadInteger { indices, is_public }, &[])
+    pub fn ir_read_integer(&mut self, path: crate::circuit_input::InputPath, is_public: bool) -> Value {
+        self.create_ir(&IR::ReadInteger { path, is_public }, &[])
     }
 
-    pub fn ir_read_float(&mut self, indices: Vec<u32>, is_public: bool) -> Value {
-        self.create_ir(&IR::ReadFloat { indices, is_public }, &[])
+    pub fn ir_read_float(&mut self, path: crate::circuit_input::InputPath, is_public: bool) -> Value {
+        self.create_ir(&IR::ReadFloat { path, is_public }, &[])
     }
 
-    pub fn ir_read_hash(&mut self, indices: Vec<u32>, is_public: bool) -> Value {
-        self.create_ir(&IR::ReadHash { indices, is_public }, &[])
+    pub fn ir_read_hash(&mut self, path: crate::circuit_input::InputPath, is_public: bool) -> Value {
+        self.create_ir(&IR::ReadHash { path, is_public }, &[])
+    }
+
+    pub fn ir_read_external_result(&mut self, store_idx: u32, output_idx: u32, is_float: bool) -> Value {
+        self.create_ir(&IR::ReadExternalResult { store_idx, output_idx, is_float }, &[])
     }
 
     // ── Memory ────────────────────────────────────────────────────────
@@ -635,6 +639,14 @@ fn build_ir(ir: &IR, ir_id: StmtId, args: &[Value]) -> (Value, IRStatement) {
         ),
         IR::ReadHash { .. } => (
             Value::Integer(ScalarValue::new(None, Some(ir_id))),
+            IRStatement::new(ir_id, ir.clone(), vec![], None),
+        ),
+        IR::ReadExternalResult { is_float, .. } => (
+            if *is_float {
+                Value::Float(ScalarValue::new(None, Some(ir_id)))
+            } else {
+                Value::Integer(ScalarValue::new(None, Some(ir_id)))
+            },
             IRStatement::new(ir_id, ir.clone(), vec![], None),
         ),
         IR::Print => (

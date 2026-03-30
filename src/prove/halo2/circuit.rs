@@ -10,7 +10,8 @@ use crate::ir::IRGraph;
 use crate::prove::halo2::config::ZinniaConfig;
 use crate::prove::halo2::synthesizer::Halo2Synthesizer;
 use crate::prove::interpreter::interpret_ir;
-use crate::prove::types::{ProvingParams, WitnessInput};
+use crate::prove::types::ProvingParams;
+use crate::circuit_input::ResolvedWitness;
 
 /// A halo2 circuit constructed from a Zinnia IR program.
 ///
@@ -19,7 +20,7 @@ use crate::prove::types::{ProvingParams, WitnessInput};
 #[derive(Clone)]
 pub struct ZinniaCircuit {
     pub ir: IRGraph,
-    pub witness: Option<WitnessInput>,
+    pub witness: Option<ResolvedWitness>,
     pub params: ProvingParams,
 }
 

@@ -22,7 +22,8 @@ use rand::rngs::OsRng;
 use crate::ir::IRGraph;
 use crate::prove::error::ProvingError;
 use crate::prove::traits::ProverBackend;
-use crate::prove::types::{ProofArtifact, ProvingParams, VerifyResult, WitnessInput};
+use crate::prove::types::{ProofArtifact, ProvingParams, VerifyResult};
+use crate::circuit_input::ResolvedWitness;
 
 use self::circuit::ZinniaCircuit;
 
@@ -46,7 +47,7 @@ impl ProverBackend for Halo2ProverBackend {
     fn prove(
         &self,
         ir: &IRGraph,
-        witness: &WitnessInput,
+        witness: &ResolvedWitness,
         params: &ProvingParams,
     ) -> Result<ProofArtifact, ProvingError> {
         let k = params.k;
@@ -129,7 +130,7 @@ impl ProverBackend for Halo2ProverBackend {
 /// Run the halo2 MockProver on a circuit for testing/validation.
 pub fn mock_prove(
     ir: &IRGraph,
-    witness: &WitnessInput,
+    witness: &ResolvedWitness,
     params: &ProvingParams,
     public_inputs: Vec<Fp>,
 ) -> Result<(), String> {

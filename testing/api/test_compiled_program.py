@@ -28,10 +28,9 @@ def test_program_argparse():
     program = foo_circuit.compile()
     parsed_inputs = program.argparse(3, 4)
     assert isinstance(parsed_inputs, ZKParsedInput)
-    [entry_0, entry_1, entry_2] = parsed_inputs.entries
+    [entry_0, entry_1] = parsed_inputs.entries
     assert entry_0.indices == (0, 0) and entry_0.value == 3
     assert entry_1.indices == (0, 1) and entry_1.value == 4
-    assert entry_2.indices == (1, ) and entry_2.value == 7
 
 
 def test_program_serialization():

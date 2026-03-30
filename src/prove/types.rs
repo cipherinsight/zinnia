@@ -45,30 +45,6 @@ pub enum Value {
 }
 
 // ---------------------------------------------------------------------------
-// WitnessInput
-// ---------------------------------------------------------------------------
-
-/// Collected witness inputs for a circuit, keyed by indices string.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WitnessInput {
-    pub entries: Vec<(String, Value)>,
-}
-
-impl WitnessInput {
-    pub fn new() -> Self {
-        Self { entries: Vec::new() }
-    }
-
-    pub fn get(&self, key: &str) -> Option<&Value> {
-        self.entries.iter().find(|(k, _)| k == key).map(|(_, v)| v)
-    }
-}
-
-impl Default for WitnessInput {
-    fn default() -> Self { Self::new() }
-}
-
-// ---------------------------------------------------------------------------
 // Proof artifact
 // ---------------------------------------------------------------------------
 

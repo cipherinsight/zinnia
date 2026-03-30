@@ -87,7 +87,7 @@ mod tests {
             IRStatement::new(
                 1,
                 IR::ReadInteger {
-                    indices: vec![0],
+                    path: crate::circuit_input::InputPath::new("x", vec![]),
                     is_public: false,
                 },
                 vec![],

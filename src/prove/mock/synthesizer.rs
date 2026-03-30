@@ -12,7 +12,8 @@ use pasta_curves::Fp;
 use crate::prove::error::ProvingError;
 use crate::prove::kernel::{self, Field};
 use crate::prove::traits::Synthesizer;
-use crate::prove::types::{ProvingParams, Value, WitnessInput};
+use crate::prove::types::ProvingParams;
+use crate::circuit_input::{ResolvedWitness, InputPath};
 
 // ---------------------------------------------------------------------------
 // MockCell — the CellRef type for MockSynthesizer
@@ -38,7 +39,7 @@ impl MockCell {
 // ---------------------------------------------------------------------------
 
 pub struct MockSynthesizer {
-    witness: WitnessInput,
+    witness: ResolvedWitness,
     params: ProvingParams,
     pub satisfied: bool,
     pub assertion_failures: Vec<String>,
@@ -48,7 +49,7 @@ pub struct MockSynthesizer {
 }
 
 impl MockSynthesizer {
-    pub fn new(witness: WitnessInput, params: ProvingParams) -> Self {
+    pub fn new(witness: ResolvedWitness, params: ProvingParams) -> Self {
         Self {
             witness,
             params,
@@ -308,10 +309,13 @@ impl Synthesizer for MockSynthesizer {
 
     // ── I/O ───────────────────────────────────────────────────────────
 
-    fn read_input(&mut self, key: &str, _is_public: bool) -> Result<MockCell, ProvingError> {
-        let value = self.witness.get(key)
-            .ok_or_else(|| ProvingError::witness_missing(key))?;
-        let fp = kernel::value_to_fp(value, self.prec())?;
+    fn read_input(&mut self, path: &InputPath, _is_public: bool) -> Result<MockCell, ProvingError> {
+        let fp = self.witness.resolve_path(path)?;
+        Ok(MockCell(fp))
+    }
+
+    fn read_external_result(&mut self, store_idx: u32, output_idx: u32) -> Result<MockCell, ProvingError> {
+        let fp = self.witness.resolve_external(store_idx, output_idx)?;
         Ok(MockCell(fp))
     }
 

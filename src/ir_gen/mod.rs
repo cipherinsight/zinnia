@@ -68,6 +68,7 @@ pub struct IRGenerator {
     registered_chips: HashMap<String, RegisteredChip>,
     registered_externals: HashMap<String, RegisteredExternal>,
     recursion_depth: u32,
+    next_external_store_idx: u32,
 }
 
 impl IRGenerator {
@@ -79,6 +80,7 @@ impl IRGenerator {
             registered_chips: HashMap::new(),
             registered_externals: HashMap::new(),
             recursion_depth: 0,
+            next_external_store_idx: 1,
         }
     }
 
@@ -181,11 +183,11 @@ impl IRGenerator {
 
     fn visit_circuit(&mut self, n: &ASTCircuit) {
         // Process inputs
-        for (i, inp) in n.inputs.iter().enumerate() {
+        for (_i, inp) in n.inputs.iter().enumerate() {
             let dt = self.parse_dt_descriptor(&inp.annotation.dt);
             let kind = inp.annotation.kind.as_deref().unwrap_or("Private");
             let is_public = kind == "Public";
-            let val = self.read_input_value(&dt, vec![0, i as u32], is_public);
+            let val = self.read_input_value(&dt, &inp.name, vec![], is_public);
             self.ctx.set(&inp.name, val);
         }
 

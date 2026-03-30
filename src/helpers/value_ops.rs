@@ -172,29 +172,32 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
 pub fn apply_scalar_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) -> Value {
     let use_float = matches!(lhs, Value::Float(_)) || matches!(rhs, Value::Float(_));
     if use_float {
+        // Implicit cast: ensure both operands are float
+        let lf = ensure_float(b, lhs);
+        let rf = ensure_float(b, rhs);
         // Float operations
         match op {
-            "add" => b.ir_add_f(lhs, rhs),
-            "sub" => b.ir_sub_f(lhs, rhs),
-            "mul" => b.ir_mul_f(lhs, rhs),
-            "div" => b.ir_div_f(lhs, rhs),
-            "pow" => b.ir_pow_f(lhs, rhs),
+            "add" => b.ir_add_f(&lf, &rf),
+            "sub" => b.ir_sub_f(&lf, &rf),
+            "mul" => b.ir_mul_f(&lf, &rf),
+            "div" => b.ir_div_f(&lf, &rf),
+            "pow" => b.ir_pow_f(&lf, &rf),
             "mod" | "floor_div" => {
                 // Fallback to integer ops for these
                 b.ir_mod_i(lhs, rhs)
             }
-            "eq" => b.ir_equal_f(lhs, rhs),
+            "eq" => b.ir_equal_f(&lf, &rf),
             "ne" => {
-                let eq = b.ir_equal_f(lhs, rhs);
+                let eq = b.ir_equal_f(&lf, &rf);
                 b.ir_logical_not(&eq)
             }
-            "lt" => b.ir_less_than_f(lhs, rhs),
-            "lte" => b.ir_less_than_or_equal_f(lhs, rhs),
-            "gt" => b.ir_greater_than_f(lhs, rhs),
-            "gte" => b.ir_greater_than_or_equal_f(lhs, rhs),
-            "and" => b.ir_logical_and(lhs, rhs),
-            "or" => b.ir_logical_or(lhs, rhs),
-            "mat_mul" => crate::ops::static_ndarray_ops::matmul(b, lhs, rhs),
+            "lt" => b.ir_less_than_f(&lf, &rf),
+            "lte" => b.ir_less_than_or_equal_f(&lf, &rf),
+            "gt" => b.ir_greater_than_f(&lf, &rf),
+            "gte" => b.ir_greater_than_or_equal_f(&lf, &rf),
+            "and" => b.ir_logical_and(&lf, &rf),
+            "or" => b.ir_logical_or(&lf, &rf),
+            "mat_mul" => crate::ops::static_ndarray_ops::matmul(b, &lf, &rf),
             _ => panic!("Unknown binary operator: {}", op),
         }
     } else {

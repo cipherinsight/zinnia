@@ -251,8 +251,13 @@ impl IRGenerator {
             _ => match op {
                 "not" => self.builder.ir_logical_not(operand),
                 "usub" => {
-                    let zero = self.builder.ir_constant_int(0);
-                    self.builder.ir_sub_i(&zero, operand)
+                    if matches!(operand, Value::Float(_)) {
+                        let zero = self.builder.ir_constant_float(0.0);
+                        self.builder.ir_sub_f(&zero, operand)
+                    } else {
+                        let zero = self.builder.ir_constant_int(0);
+                        self.builder.ir_sub_i(&zero, operand)
+                    }
                 }
                 "uadd" => operand.clone(),
                 _ => panic!("Unknown unary operator: {}", op),
@@ -419,26 +424,44 @@ impl IRGenerator {
     }
 
     pub(crate) fn visit_generator_exp(&mut self, n: &ASTGeneratorExp) -> Value {
-        // Simple implementation: expand generators into a flat list of values
-        // Only handles single generator for now
         if n.generators.is_empty() {
             return Value::List(CompositeData { elements_type: vec![], values: vec![] });
         }
 
-        let gen = &n.generators[0];
+        let mut result_values = Vec::new();
+        self.expand_generators(&n.generators, 0, &n.elt, &mut result_values);
+
+        let types: Vec<ZinniaType> = result_values.iter().map(|v| v.zinnia_type()).collect();
+        if n.kind == "list" {
+            Value::List(CompositeData { elements_type: types, values: result_values })
+        } else {
+            Value::Tuple(CompositeData { elements_type: types, values: result_values })
+        }
+    }
+
+    fn expand_generators(
+        &mut self,
+        generators: &[ASTGenerator],
+        idx: usize,
+        elt: &ASTNode,
+        result: &mut Vec<Value>,
+    ) {
+        if idx >= generators.len() {
+            result.push(self.visit(elt));
+            return;
+        }
+
+        let gen = &generators[idx];
         let iter_val = self.visit(&gen.iter_expr);
 
         let elements: Vec<Value> = match &iter_val {
             Value::List(data) | Value::Tuple(data) => data.values.clone(),
-            _ => return Value::None,
+            _ => return,
         };
 
-        let mut result_values = Vec::new();
         for elem in &elements {
-            // Bind the generator target variable
             self.do_recursive_assign(&gen.target, elem.clone(), false);
 
-            // Check if conditions
             let mut passes = true;
             for if_expr in &gen.ifs {
                 let cond = self.visit(if_expr);
@@ -450,16 +473,8 @@ impl IRGenerator {
             }
 
             if passes {
-                let val = self.visit(&n.elt);
-                result_values.push(val);
+                self.expand_generators(generators, idx + 1, elt, result);
             }
-        }
-
-        let types: Vec<ZinniaType> = result_values.iter().map(|v| v.zinnia_type()).collect();
-        if n.kind == "list" {
-            Value::List(CompositeData { elements_type: types, values: result_values })
-        } else {
-            Value::Tuple(CompositeData { elements_type: types, values: result_values })
         }
     }
 

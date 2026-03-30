@@ -4,7 +4,12 @@ use crate::ir::{IRGraph, IRStatement};
 use crate::ir_defs::IR;
 use crate::prove::mock::MockProverBackend;
 use crate::prove::traits::ProverBackend;
-use crate::prove::types::{ProvingParams, Value, WitnessInput};
+use crate::prove::types::ProvingParams;
+use crate::circuit_input::{CircuitInputs, InputNode, InputParam, ResolvedWitness, InputPath, PathSegment};
+
+fn empty_resolved(prec: u32) -> ResolvedWitness {
+    ResolvedWitness::new(CircuitInputs::new(), prec)
+}
 
 fn make_graph(stmts: Vec<(IR, Vec<u32>)>) -> IRGraph {
     let ir_stmts: Vec<IRStatement> = stmts
@@ -30,7 +35,7 @@ fn test_mock_prove_simple_add() {
     ]);
     let backend = MockProverBackend;
     let params = ProvingParams::default();
-    let artifact = backend.prove(&ir, &WitnessInput::new(), &params).unwrap();
+    let artifact = backend.prove(&ir, &empty_resolved(params.precision_bits), &params).unwrap();
     assert_eq!(artifact.backend, "mock");
     assert_eq!(artifact.proof_bytes, "mock_satisfied");
 }
@@ -45,7 +50,7 @@ fn test_mock_prove_assert_pass() {
     ]);
     let backend = MockProverBackend;
     let params = ProvingParams::default();
-    let artifact = backend.prove(&ir, &WitnessInput::new(), &params).unwrap();
+    let artifact = backend.prove(&ir, &empty_resolved(params.precision_bits), &params).unwrap();
     assert_eq!(artifact.proof_bytes, "mock_satisfied");
 
     // Verify returns ok
@@ -63,7 +68,7 @@ fn test_mock_prove_assert_fail() {
     ]);
     let backend = MockProverBackend;
     let params = ProvingParams::default();
-    let artifact = backend.prove(&ir, &WitnessInput::new(), &params).unwrap();
+    let artifact = backend.prove(&ir, &empty_resolved(params.precision_bits), &params).unwrap();
     assert!(artifact.proof_bytes.starts_with("mock_unsatisfied"));
 
     // Verify returns invalid
@@ -74,15 +79,22 @@ fn test_mock_prove_assert_fail() {
 #[test]
 fn test_mock_prove_with_witness() {
     let ir = make_graph(vec![
-        (IR::ReadInteger { indices: vec![0, 0], is_public: false }, vec![]),
+        (IR::ReadInteger { path: InputPath::new("x", vec![]), is_public: false }, vec![]),
         (IR::ConstantInt { value: 5 }, vec![]),
         (IR::AddI, vec![0, 1]),
     ]);
-    let mut witness = WitnessInput::new();
-    witness.entries.push(("0_0".to_string(), Value::Integer(42)));
+    let witness = CircuitInputs {
+        params: vec![InputParam {
+            name: "x".to_string(),
+            is_public: false,
+            dtype: serde_json::json!("Integer"),
+            value: InputNode::Int(42),
+        }],
+    };
     let backend = MockProverBackend;
     let params = ProvingParams::default();
-    let artifact = backend.prove(&ir, &witness, &params).unwrap();
+    let resolved = ResolvedWitness::new(witness, params.precision_bits);
+    let artifact = backend.prove(&ir, &resolved, &params).unwrap();
     assert_eq!(artifact.proof_bytes, "mock_satisfied");
 }
 
@@ -97,7 +109,7 @@ fn test_mock_prove_memory() {
     ]);
     let backend = MockProverBackend;
     let params = ProvingParams::default();
-    let artifact = backend.prove(&ir, &WitnessInput::new(), &params).unwrap();
+    let artifact = backend.prove(&ir, &empty_resolved(params.precision_bits), &params).unwrap();
     assert_eq!(artifact.proof_bytes, "mock_satisfied");
 }
 
@@ -115,13 +127,13 @@ fn test_mock_halo2_consistency_add() {
         (IR::Assert, vec![4]),
     ]);
     let params = ProvingParams { k: 8, ..Default::default() };
-    let witness = WitnessInput::new();
+    let resolved = empty_resolved(params.precision_bits);
 
     // Mock backend
     let mock = MockProverBackend;
-    let mock_artifact = mock.prove(&ir, &witness, &params).unwrap();
+    let mock_artifact = mock.prove(&ir, &resolved, &params).unwrap();
     assert_eq!(mock_artifact.proof_bytes, "mock_satisfied");
 
     // Halo2 MockProver (built-in constraint checker)
-    halo2::mock_prove(&ir, &witness, &params, vec![]).unwrap();
+    halo2::mock_prove(&ir, &resolved, &params, vec![]).unwrap();
 }

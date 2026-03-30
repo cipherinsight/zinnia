@@ -20,7 +20,8 @@ use crate::prove::error::ProvingError;
 use crate::prove::halo2::config::ZinniaConfig;
 use crate::prove::kernel::{self, Field, EXP2_COEFS, LOG2_COEFS, SIN_COEFS};
 use crate::prove::traits::Synthesizer;
-use crate::prove::types::{ProvingParams, Value, WitnessInput};
+use crate::prove::types::ProvingParams;
+use crate::circuit_input::{ResolvedWitness, InputPath};
 
 // ---------------------------------------------------------------------------
 // Recorded operations
@@ -46,7 +47,7 @@ pub struct Halo2CellRef {
 
 pub struct Halo2Synthesizer {
     config: ZinniaConfig,
-    witness: Option<WitnessInput>,
+    witness: Option<ResolvedWitness>,
     params: ProvingParams,
     offset: usize,
     ops: Vec<GateOp>,
@@ -57,7 +58,7 @@ pub struct Halo2Synthesizer {
 }
 
 impl Halo2Synthesizer {
-    pub fn new(config: ZinniaConfig, witness: Option<WitnessInput>, params: ProvingParams) -> Self {
+    pub fn new(config: ZinniaConfig, witness: Option<ResolvedWitness>, params: ProvingParams) -> Self {
         Self {
             config, witness, params,
             offset: 0, ops: Vec::new(),
@@ -232,10 +233,14 @@ impl Halo2Synthesizer {
         kernel::quantize_to_fp(v, self.params.precision_bits)
     }
 
-    fn get_witness_fp(&self, key: &str) -> Option<Fp> {
+    fn get_witness_fp_path(&self, path: &InputPath) -> Option<Fp> {
         let w = self.witness.as_ref()?;
-        let value = w.get(key)?;
-        kernel::value_to_fp(value, self.params.precision_bits).ok()
+        w.resolve_path(path).ok()
+    }
+
+    fn get_external_fp(&self, store_idx: u32, output_idx: u32) -> Option<Fp> {
+        let w = self.witness.as_ref()?;
+        w.resolve_external(store_idx, output_idx).ok()
     }
 
     /// Constrained negation: returns -a using sub gate (0 - a = c).
@@ -627,13 +632,19 @@ impl Synthesizer for Halo2Synthesizer {
 
     // ── I/O (constrained) ─────────────────────────────────────────────
 
-    fn read_input(&mut self, key: &str, is_public: bool) -> Result<Halo2CellRef, ProvingError> {
-        let val = self.get_witness_fp(key).unwrap_or(Fp::zero());
-        let cell = self.rec_advice(0, val, &format!("input_{}", key));
+    fn read_input(&mut self, path: &InputPath, is_public: bool) -> Result<Halo2CellRef, ProvingError> {
+        let val = self.get_witness_fp_path(path).unwrap_or(Fp::zero());
+        let cell = self.rec_advice(0, val, &format!("input_{}", path.display()));
         if is_public {
             self.public_cells.push((0, self.offset, self.instance_row));
             self.instance_row += 1;
         }
+        self.offset += 1;
+        Ok(cell)
+    }
+    fn read_external_result(&mut self, store_idx: u32, output_idx: u32) -> Result<Halo2CellRef, ProvingError> {
+        let val = self.get_external_fp(store_idx, output_idx).unwrap_or(Fp::zero());
+        let cell = self.rec_advice(0, val, &format!("ext_{}_{}", store_idx, output_idx));
         self.offset += 1;
         Ok(cell)
     }

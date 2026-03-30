@@ -8,7 +8,7 @@
 //! # Architecture
 //!
 //! ```text
-//! IR graph ──► Preprocessor ──► enriched WitnessInput
+//! IR graph ──► Preprocessor ──► ResolvedWitness
 //!                    │
 //!             ExternalCallback trait
 //!                    │
@@ -25,33 +25,36 @@ use std::collections::HashMap;
 
 use pasta_curves::Fp;
 
+use std::collections::HashMap as StdHashMap;
+
 use crate::ir::IRGraph;
 use crate::ir_defs::IR;
 use crate::prove::error::ProvingError;
 use crate::prove::kernel::{self, Field};
-use crate::prove::types::{ProvingParams, Value, WitnessInput};
+use crate::prove::types::{ProvingParams, Value};
+use crate::circuit_input::{ResolvedWitness, CircuitInputs};
 
 use self::callback::ExternalCallback;
 
-/// Execute preprocessing on the IR graph: resolve external calls, enrich witness.
+/// Execute preprocessing on the IR graph: resolve external calls, build resolved witness.
 pub fn run_preprocess(
     ir: &IRGraph,
-    witness: &WitnessInput,
+    witness: &CircuitInputs,
     params: &ProvingParams,
     callback: &dyn ExternalCallback,
-) -> Result<WitnessInput, ProvingError> {
+) -> Result<ResolvedWitness, ProvingError> {
+    let mut resolved = ResolvedWitness::new(witness.clone(), params.precision_bits);
+
     if ir.stmts.is_empty() {
-        return Ok(witness.clone());
+        return Ok(resolved);
     }
 
     let mut preprocessor = Preprocessor::new(witness, params.precision_bits, callback);
     preprocessor.execute(ir)?;
 
-    let mut enriched = witness.clone();
-    for (key, value) in preprocessor.new_entries {
-        enriched.entries.push((key, value));
-    }
-    Ok(enriched)
+    // Transfer external results to the resolved witness
+    resolved.external_results = preprocessor.external_results;
+    Ok(resolved)
 }
 
 // ---------------------------------------------------------------------------
@@ -60,10 +63,10 @@ pub fn run_preprocess(
 
 struct Preprocessor<'a> {
     values: Vec<Option<Fp>>,
-    inputs: HashMap<String, Fp>,
-    external_arg_store: HashMap<u32, Vec<ExternArg>>,
-    new_entries: Vec<(String, Value)>,
+    witness: CircuitInputs,
     precision_bits: u32,
+    external_arg_store: HashMap<u32, Vec<ExternArg>>,
+    external_results: StdHashMap<(u32, u32), Fp>,
     callback: &'a dyn ExternalCallback,
     memories: HashMap<u32, Vec<Fp>>,
     memory_init: HashMap<u32, Fp>,
@@ -76,19 +79,13 @@ struct ExternArg {
 }
 
 impl<'a> Preprocessor<'a> {
-    fn new(witness: &WitnessInput, precision_bits: u32, callback: &'a dyn ExternalCallback) -> Self {
-        let mut inputs = HashMap::new();
-        for (key, value) in &witness.entries {
-            if let Ok(fp) = kernel::value_to_fp(value, precision_bits) {
-                inputs.insert(key.clone(), fp);
-            }
-        }
+    fn new(witness: &CircuitInputs, precision_bits: u32, callback: &'a dyn ExternalCallback) -> Self {
         Self {
             values: Vec::new(),
-            inputs,
-            external_arg_store: HashMap::new(),
-            new_entries: Vec::new(),
+            witness: witness.clone(),
             precision_bits,
+            external_arg_store: HashMap::new(),
+            external_results: StdHashMap::new(),
             callback,
             memories: HashMap::new(),
             memory_init: HashMap::new(),
@@ -120,9 +117,11 @@ impl<'a> Preprocessor<'a> {
             IR::ConstantStr { .. } => Ok(None),
 
             // Inputs
-            IR::ReadInteger { indices, .. } | IR::ReadFloat { indices, .. } | IR::ReadHash { indices, .. } => {
-                let key = indices_to_key(indices);
-                Ok(Some(self.inputs.get(&key).copied().unwrap_or(Fp::zero())))
+            IR::ReadInteger { path, .. } | IR::ReadFloat { path, .. } | IR::ReadHash { path, .. } => {
+                Ok(Some(self.witness.resolve(path, self.precision_bits).unwrap_or(Fp::zero())))
+            }
+            IR::ReadExternalResult { store_idx, output_idx, .. } => {
+                Ok(Some(self.external_results.get(&(*store_idx, *output_idx)).copied().unwrap_or(Fp::zero())))
             }
 
             // Integer arithmetic
@@ -287,17 +286,11 @@ impl<'a> Preprocessor<'a> {
         // Convert result Value → Fp
         let result_fp = kernel::value_to_fp(&result, self.precision_bits)?;
 
-        // Store as new witness entry
-        let key = format!("{}_{}", store_idx, 0);
-        self.new_entries.push((key.clone(), result));
-        self.inputs.insert(key, result_fp);
+        // Store as external result
+        self.external_results.insert((store_idx, 0), result_fp);
 
         Ok(Some(result_fp))
     }
-}
-
-fn indices_to_key(indices: &[u32]) -> String {
-    indices.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("_")
 }
 
 // ---------------------------------------------------------------------------
@@ -322,11 +315,11 @@ mod tests {
     #[test]
     fn test_empty_preprocess() {
         let graph = IRGraph::new(vec![]);
-        let witness = WitnessInput::new();
+        let witness = CircuitInputs::new();
         let params = ProvingParams::default();
         let cb = callback::NoExternalCallback;
         let result = run_preprocess(&graph, &witness, &params, &cb).unwrap();
-        assert_eq!(result.entries.len(), 0);
+        assert!(result.external_results.is_empty());
     }
 
     #[test]
@@ -337,8 +330,8 @@ mod tests {
             (IR::AddI, vec![0, 1]),
         ]);
         let cb = callback::NoExternalCallback;
-        let result = run_preprocess(&graph, &WitnessInput::new(), &ProvingParams::default(), &cb).unwrap();
-        assert_eq!(result.entries.len(), 0);
+        let result = run_preprocess(&graph, &CircuitInputs::new(), &ProvingParams::default(), &cb).unwrap();
+        assert!(result.external_results.is_empty());
     }
 
     #[test]
@@ -364,11 +357,9 @@ mod tests {
             },
         };
 
-        let result = run_preprocess(&graph, &WitnessInput::new(), &ProvingParams::default(), &cb).unwrap();
-        assert_eq!(result.entries.len(), 1);
-        match &result.entries[0].1 {
-            Value::Integer(v) => assert_eq!(*v, 20),
-            other => panic!("Expected Integer, got {:?}", other),
-        }
+        let result = run_preprocess(&graph, &CircuitInputs::new(), &ProvingParams::default(), &cb).unwrap();
+        assert_eq!(result.external_results.len(), 1);
+        let fp = result.external_results.get(&(0, 0)).unwrap();
+        assert_eq!(crate::prove::kernel::fp_to_i64(*fp), 20);
     }
 }
