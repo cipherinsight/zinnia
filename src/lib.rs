@@ -20,84 +20,14 @@ use ir_gen::{IRGenConfig, IRGenerator};
 use optim::{
     AlwaysSatisfiedElimination, ConstantFold, DeadCodeElimination, DoubleNotElimination,
     DuplicateCodeElimination, DynamicNDArrayMemoryLowering, DynamicNDArrayMetaAssertInjection,
-    ExternalCallRemover, // kept for run_optimization_pass API
-    IRPass, MemoryTraceInjection, PatternMatchOptim,
+    ExternalCallRemover, IRPass, MemoryTraceInjection, PatternMatchOptim,
 };
-use types::ZinniaType;
 
-/// A smoke-test function to verify the PyO3 bridge is working.
-#[pyfunction]
-fn hello() -> String {
-    "Hello from zinnia_core (Rust)!".to_string()
-}
-
-/// Returns the version of the Rust core library.
-#[pyfunction]
-fn core_version() -> String {
-    env!("CARGO_PKG_VERSION").to_string()
-}
-
-/// Export an IR statement dict list from Rust, for interop testing.
-#[pyfunction]
-fn round_trip_ir_stmts(json_str: &str) -> PyResult<String> {
-    let data: Vec<serde_json::Value> = serde_json::from_str(json_str)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e)))?;
-    let graph = IRGraph::import_stmts(&data)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    let exported = graph.export_stmts();
-    serde_json::to_string(&exported)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e)))
-}
-
-/// Round-trip a ZinniaType through JSON serialization.
-#[pyfunction]
-fn round_trip_dt_descriptor(json_str: &str) -> PyResult<String> {
-    let zinnia_type: ZinniaType = serde_json::from_str(json_str)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e)))?;
-    serde_json::to_string(&zinnia_type)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e)))
-}
-
-/// Run an optimization pass on an IR graph (JSON in, JSON out).
-#[pyfunction]
-#[pyo3(signature = (pass_name, ir_stmts_json, mux_threshold=100))]
-fn run_optimization_pass(
-    pass_name: &str,
-    ir_stmts_json: &str,
-    mux_threshold: u32,
-) -> PyResult<String> {
-    let data: Vec<serde_json::Value> = serde_json::from_str(ir_stmts_json)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e)))?;
-    let graph = IRGraph::import_stmts(&data)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-
-    let result_graph = match apply_pass(graph, pass_name, mux_threshold) {
-        Some(g) => g,
-        None => {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "Unknown optimization pass: {}", pass_name
-            )));
-        }
-    };
-
-    let exported = result_graph.export_stmts();
-    serde_json::to_string(&exported)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e)))
-}
-
-/// Generate IR from an AST JSON string. Returns IR statements as JSON.
-#[pyfunction]
-#[pyo3(signature = (ast_json, loop_limit=256, recursion_limit=16))]
-fn generate_ir(ast_json: &str, loop_limit: u32, recursion_limit: u32) -> PyResult<String> {
-    let config = IRGenConfig {
-        loop_limit,
-        recursion_limit,
-    };
-    let graph = IRGenerator::generate_from_json(config, ast_json)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    let exported = graph.export_stmts();
-    serde_json::to_string(&exported)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e)))
+/// Opaque handle holding a compiled IR graph.
+/// Python holds the reference; Rust owns the data.
+#[pyclass]
+pub struct CompiledIR {
+    graph: IRGraph,
 }
 
 fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32) -> Option<IRGraph> {
@@ -127,12 +57,11 @@ fn run_pass_pipeline(graph: IRGraph, passes: &[&str], mux_threshold: u32) -> IRG
     g
 }
 
-/// Compile a circuit: generate IR from AST and run all optimization passes in one call.
-/// Takes AST JSON, config JSON, chips JSON, and externals JSON.
-/// Returns result JSON with ir_stmts (single unified IR graph).
+/// Compile a circuit: generate IR from AST and run all optimization passes.
+/// Returns a CompiledIR handle (opaque to Python — no JSON round-trip).
 #[pyfunction]
 #[pyo3(signature = (ast_json, config_json, chips_json="{}".to_string(), externals_json="{}".to_string()))]
-fn compile_circuit(ast_json: &str, config_json: &str, chips_json: String, externals_json: String) -> PyResult<String> {
+fn compile_circuit(ast_json: &str, config_json: &str, chips_json: String, externals_json: String) -> PyResult<CompiledIR> {
     // Parse config
     let config: serde_json::Value = serde_json::from_str(config_json)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Config JSON parse error: {}", e)))?;
@@ -168,9 +97,7 @@ fn compile_circuit(ast_json: &str, config_json: &str, chips_json: String, extern
     let base_graph = IRGenerator::generate_from_json_with_chips(ir_config.clone(), ast_json, &chips, &externals)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
 
-    // Build optimization pass pipeline (single graph, no split).
-    // External call instructions are kept in the IR — they are resolved
-    // at prove-time by the preprocessing step.
+    // Build optimization pass pipeline
     let mut passes: Vec<&str> = Vec::new();
     if backend == "halo2" && enable_memory_consistency {
         passes.push("DynamicNDArrayMemoryLowering");
@@ -195,41 +122,29 @@ fn compile_circuit(ast_json: &str, config_json: &str, chips_json: String, extern
     }
 
     let optimized_graph = run_pass_pipeline(base_graph, &passes, mux_threshold);
-    let ir_stmts = optimized_graph.export_stmts();
 
-    let result = serde_json::json!({
-        "ir_stmts": ir_stmts,
-    });
-
-    serde_json::to_string(&result)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e)))
+    Ok(CompiledIR { graph: optimized_graph })
 }
 
 /// Execute a compiled circuit: preprocess (resolve externals) then prove.
-///
-/// Unified entry point for both mock and real proving.
-/// Steps: 1) parse IR + inputs → 2) preprocess (resolve externals) → 3) prove.
+/// Takes a CompiledIR handle directly — no JSON deserialization.
 #[pyfunction]
-#[pyo3(signature = (ir_json, inputs_json, external_callables, backend="mock", params_json=None))]
+#[pyo3(signature = (compiled_ir, inputs_json, external_callables, backend="mock", params_json=None))]
 fn prove_circuit(
     py: Python<'_>,
-    ir_json: &str,
+    compiled_ir: &CompiledIR,
     inputs_json: &str,
     external_callables: &Bound<'_, pyo3::types::PyDict>,
     backend: &str,
     params_json: Option<&str>,
 ) -> PyResult<String> {
-    // 1. Parse IR graph (single graph, may contain external instructions)
-    let ir_data: Vec<serde_json::Value> = serde_json::from_str(ir_json)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e)))?;
-    let ir_graph = IRGraph::import_stmts(&ir_data)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let ir_graph = &compiled_ir.graph;
 
-    // 2. Parse initial witness
+    // Parse initial witness
     let witness: prove::WitnessInput = serde_json::from_str(inputs_json)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Witness JSON parse error: {}", e)))?;
 
-    // 3. Create prover backend + params
+    // Create prover backend + params
     let prover = prove::create_prover_backend(backend)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
@@ -237,39 +152,21 @@ fn prove_circuit(
         serde_json::from_str(pj)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Params JSON parse error: {}", e)))?
     } else {
-        prover.estimate_params(&ir_graph)
+        prover.estimate_params(ir_graph)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
     };
 
-    // 4. Preprocess: resolve external calls in the same IR graph
+    // Preprocess: resolve external calls
     let py_callback = prove::preprocess::py_callback::PyExternalCallback::new(py, external_callables);
     let enriched_witness = prove::preprocess::run_preprocess(
-        &ir_graph, &witness, &params, &py_callback,
+        ir_graph, &witness, &params, &py_callback,
     ).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
-    // 5. Prove the IR with the enriched witness
-    let artifact = prover.prove(&ir_graph, &enriched_witness, &params)
+    // Prove
+    let artifact = prover.prove(ir_graph, &enriched_witness, &params)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
     serde_json::to_string(&artifact)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e)))
-}
-
-/// Estimate circuit parameters for a given IR.
-#[pyfunction]
-#[pyo3(signature = (zk_program_ir_json, backend="mock"))]
-fn estimate_circuit_params(zk_program_ir_json: &str, backend: &str) -> PyResult<String> {
-    let data: Vec<serde_json::Value> = serde_json::from_str(zk_program_ir_json)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e)))?;
-    let graph = IRGraph::import_stmts(&data)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-
-    let prover = prove::create_prover_backend(backend)
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
-    let params = prover.estimate_params(&graph)
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
-
-    serde_json::to_string(&params)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e)))
 }
 
@@ -290,18 +187,32 @@ fn verify_proof_artifact(proof_artifact_json: &str) -> PyResult<String> {
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e)))
 }
 
+/// On-demand IR serialization: CompiledIR → JSON string (for debugging/persistence).
+#[pyfunction]
+fn export_ir_json(compiled_ir: &CompiledIR) -> PyResult<String> {
+    let exported = compiled_ir.graph.export_stmts();
+    serde_json::to_string(&exported)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e)))
+}
+
+/// Deserialize IR from JSON string → CompiledIR handle (for load-from-disk).
+#[pyfunction]
+fn import_ir_json(ir_json: &str) -> PyResult<CompiledIR> {
+    let data: Vec<serde_json::Value> = serde_json::from_str(ir_json)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e)))?;
+    let graph = IRGraph::import_stmts(&data)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    Ok(CompiledIR { graph })
+}
+
 /// The Python module definition for zinnia._zinnia_core
 #[pymodule]
 fn _zinnia_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(hello, m)?)?;
-    m.add_function(wrap_pyfunction!(core_version, m)?)?;
-    m.add_function(wrap_pyfunction!(round_trip_ir_stmts, m)?)?;
-    m.add_function(wrap_pyfunction!(round_trip_dt_descriptor, m)?)?;
-    m.add_function(wrap_pyfunction!(run_optimization_pass, m)?)?;
-    m.add_function(wrap_pyfunction!(generate_ir, m)?)?;
+    m.add_class::<CompiledIR>()?;
     m.add_function(wrap_pyfunction!(compile_circuit, m)?)?;
     m.add_function(wrap_pyfunction!(prove_circuit, m)?)?;
-    m.add_function(wrap_pyfunction!(estimate_circuit_params, m)?)?;
     m.add_function(wrap_pyfunction!(verify_proof_artifact, m)?)?;
+    m.add_function(wrap_pyfunction!(export_ir_json, m)?)?;
+    m.add_function(wrap_pyfunction!(import_ir_json, m)?)?;
     Ok(())
 }

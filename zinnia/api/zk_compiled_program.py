@@ -6,20 +6,20 @@ from zinnia.internal.internal_external_func_object import InternalExternalFuncOb
 
 
 class ZKCompiledProgram:
-    """Result of compiling a ZK circuit. Stores IR as a JSON string (Rust-owned)."""
+    """Result of compiling a ZK circuit. Stores an opaque CompiledIR handle (Rust-owned)."""
 
     def __init__(
         self,
         name: str,
         backend: str,
-        ir_stmts_json: str,
+        compiled_ir,
         program_inputs: List[ZKProgramInput],
         external_funcs: Dict[str, InternalExternalFuncObject],
         eval_data: Dict = None,
     ):
         self.name = name
         self.backend = backend
-        self.ir_stmts_json = ir_stmts_json
+        self._compiled_ir = compiled_ir
         self.program_inputs = program_inputs
         self.external_funcs = external_funcs
         self.eval_data = eval_data or {}
@@ -31,8 +31,9 @@ class ZKCompiledProgram:
         return self.backend
 
     def get_ir_stmts(self) -> list:
-        """Returns the IR statements as a list of dicts."""
-        return json.loads(self.ir_stmts_json)
+        """Returns the IR statements as a list of dicts (on-demand JSON export)."""
+        from zinnia.compile._bridge import export_ir_json
+        return json.loads(export_ir_json(self._compiled_ir))
 
     def get_program_inputs(self) -> List[ZKProgramInput]:
         return self.program_inputs
@@ -104,7 +105,7 @@ class ZKCompiledProgram:
         params_json = json.dumps(params) if params else None
 
         artifact_json = prove_circuit(
-            self.ir_stmts_json,
+            self._compiled_ir,
             json.dumps(witness),
             ext_dict,
             backend,
@@ -121,10 +122,11 @@ class ZKCompiledProgram:
         return result["valid"]
 
     def serialize(self) -> str:
+        from zinnia.compile._bridge import export_ir_json
         return json.dumps({
             "name": self.name,
             "backend": self.backend,
-            "ir_stmts": json.loads(self.ir_stmts_json),
+            "ir_stmts": json.loads(export_ir_json(self._compiled_ir)),
             "program_inputs": [pi.export() for pi in self.program_inputs],
             "external_funcs": [ef.name for ef in self.external_funcs.values()],
             "eval_data": self.eval_data,
@@ -132,6 +134,7 @@ class ZKCompiledProgram:
 
     @staticmethod
     def deserialize(data: str, external_funcs=None) -> 'ZKCompiledProgram':
+        from zinnia.compile._bridge import import_ir_json
         if external_funcs is None:
             external_funcs = []
         payload = json.loads(data)
@@ -145,10 +148,12 @@ class ZKCompiledProgram:
             else:
                 ef_map[ef.name] = ef
 
+        compiled_ir = import_ir_json(json.dumps(payload['ir_stmts']))
+
         return ZKCompiledProgram(
             name=payload['name'],
             backend=payload['backend'],
-            ir_stmts_json=json.dumps(payload['ir_stmts']),
+            compiled_ir=compiled_ir,
             program_inputs=_program_inputs,
             external_funcs=ef_map,
         )

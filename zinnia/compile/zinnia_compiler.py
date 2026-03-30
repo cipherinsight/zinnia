@@ -32,7 +32,8 @@ class ZinniaCompiler:
         ast_dict = transformer.visit(python_ast.body[0])
         time_transform = time.time() - time_checkpoint_s
 
-        # 2. Compile in Rust: IR generation + all optimization passes in one call
+        # 2. Compile in Rust: IR generation + all optimization passes in one call.
+        #    Returns a CompiledIR handle (opaque, no JSON round-trip).
         time_checkpoint_compile_s = time.time()
         config_dict = {
             "backend": self.config.get_backend(),
@@ -60,11 +61,10 @@ class ZinniaCompiler:
             externals_dict[name] = {
                 "return_dt": ext.return_dt,
             }
-        result_json = compile_circuit(
+        compiled_ir = compile_circuit(
             json.dumps(ast_dict), json.dumps(config_dict),
             json.dumps(chips_dict), json.dumps(externals_dict),
         )
-        result = json.loads(result_json)
         time_compile = time.time() - time_checkpoint_compile_s
 
         # 3. Extract program inputs from transformer side-data
@@ -78,7 +78,7 @@ class ZinniaCompiler:
         return ZKCompiledProgram(
             name=name,
             backend=self.config.get_backend(),
-            ir_stmts_json=json.dumps(result["ir_stmts"]),
+            compiled_ir=compiled_ir,
             program_inputs=program_inputs,
             external_funcs=externals,
             eval_data={
