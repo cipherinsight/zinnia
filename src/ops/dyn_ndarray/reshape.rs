@@ -66,9 +66,13 @@ pub fn dyn_transpose(_b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Valu
         })
         .collect();
 
+    // Permute the envelope's dims by the same axis permutation. Dim vars
+    // are preserved (not freshly allocated), so any unifications established
+    // before the transpose stay valid after.
+    let new_dims: Vec<crate::types::Dim> = perm.iter().map(|&p| data.envelope.dims[p]).collect();
+    let envelope = crate::types::Envelope::new(new_dims);
     Value::DynamicNDArray(DynamicNDArrayData {
-        max_length: data.max_length,
-        max_rank: data.max_rank,
+        envelope,
         dtype: data.dtype,
         elements: data.elements.clone(), // same underlying storage
         meta: DynArrayMeta {

@@ -1,3 +1,4 @@
+use super::envelope::Envelope;
 use super::zinnia_type::{NumberType, ZinniaType};
 use super::scalar::ScalarValue;
 use super::value::Value;
@@ -40,14 +41,32 @@ pub struct DynArrayMeta {
 // ---------------------------------------------------------------------------
 
 /// Storage for DynamicNDArray values (extends NDArrayData with metadata).
+///
+/// The compile-time shape envelope (per-axis Static/Dynamic bounds with
+/// symbolic dim variables for unification) lives in [`Envelope`]. The
+/// previous `(max_length, max_rank)` fields have been replaced — callers
+/// can recover them via [`DynamicNDArrayData::max_length`] and
+/// [`DynamicNDArrayData::max_rank`].
 #[derive(Debug, Clone)]
 pub struct DynamicNDArrayData {
-    pub max_length: usize,
-    pub max_rank: usize,
+    /// Compile-time shape envelope (per-axis bounds + dim variables).
+    pub envelope: Envelope,
     pub dtype: NumberType,
-    /// Flat storage of element values. Length = max_length.
+    /// Flat storage of element values. Length = `envelope.max_total()`.
     pub elements: Vec<ScalarValue<i64>>,
     pub meta: DynArrayMeta,
+}
+
+impl DynamicNDArrayData {
+    /// Worst-case total element count, derived from the envelope.
+    pub fn max_length(&self) -> usize {
+        self.envelope.max_total()
+    }
+
+    /// Compile-time fixed rank, derived from the envelope.
+    pub fn max_rank(&self) -> usize {
+        self.envelope.rank()
+    }
 }
 
 // ---------------------------------------------------------------------------

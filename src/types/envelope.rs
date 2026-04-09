@@ -188,6 +188,14 @@ impl Envelope {
     pub fn is_scalar(&self) -> bool {
         self.dims.is_empty()
     }
+
+    /// Build an envelope from a known static shape, allocating one fresh
+    /// dim var per axis. Convenience for migration / promotion paths where
+    /// the runtime length is known to equal the static length.
+    pub fn from_static_shape(table: &mut DimTable, shape: &[usize]) -> Self {
+        let dims = shape.iter().map(|&n| Dim::new_static(table, n)).collect();
+        Envelope { dims }
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────

@@ -31,9 +31,10 @@ pub fn dyn_fill(
     let elements = vec![fill_sv; max_length];
 
     let strides = dyn_row_major_strides(&shape);
+    let _ = max_rank; // shape.len() carries the same info now
+    let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &shape);
     Value::DynamicNDArray(DynamicNDArrayData {
-        max_length,
-        max_rank,
+        envelope,
         dtype,
         elements,
         meta: DynArrayMeta {
@@ -41,7 +42,7 @@ pub fn dyn_fill(
             logical_offset: 0,
             logical_strides: strides,
             runtime_length: ScalarValue::new(Some(max_length as i64), None),
-            runtime_rank: ScalarValue::new(Some(max_rank as i64), None),
+            runtime_rank: ScalarValue::new(Some(shape.len() as i64), None),
             runtime_shape: shape
                 .iter()
                 .map(|&s| ScalarValue::new(Some(s as i64), None))
@@ -100,9 +101,9 @@ pub fn dyn_eye(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
         }
     }
 
+    let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &shape);
     Value::DynamicNDArray(DynamicNDArrayData {
-        max_length,
-        max_rank: 2,
+        envelope,
         dtype,
         elements,
         meta: DynArrayMeta {

@@ -157,9 +157,10 @@ pub fn dyn_aggregate_axis(
     }
 
     let out_strides_meta = dyn_row_major_strides(&out_shape);
+    let _ = out_numel;
+    let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &out_shape);
     Value::DynamicNDArray(DynamicNDArrayData {
-        max_length: out_numel,
-        max_rank: out_shape.len(),
+        envelope,
         dtype: out_dtype,
         elements: out_elements,
         meta: DynArrayMeta {

@@ -14,6 +14,7 @@ pub type StmtId = u32;
 pub use zinnia_type::{AnnotationArg, NumberType, ZinniaType};
 pub use scalar::{ScalarValue, StringValue};
 pub use composite::{CompositeData, DynArrayMeta, DynamicNDArrayData, NDArrayData};
+pub use envelope::{broadcast_envelopes, Dim, DimTable, DimVar, Envelope};
 pub use value::Value;
 
 /// Represents a slice index used inside an `array[…]` subscript.

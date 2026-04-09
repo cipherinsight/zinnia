@@ -104,7 +104,7 @@ impl IRGenerator {
             // Simple value ops
             "astype" => metadata::dyn_astype(&mut self.builder, &data, args),
             "flatten" => metadata::dyn_flatten_to_list(&data),
-            "flat" => metadata::dyn_flat(&data),
+            "flat" => metadata::dyn_flat(&mut self.builder, &data),
             "tolist" => metadata::dyn_tolist(&data),
             "T" => reshape::dyn_transpose(&mut self.builder, &data, &[]),
             "transpose" => {

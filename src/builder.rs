@@ -40,6 +40,10 @@ pub struct IRBuilder {
     next_segment_id: u32,
     /// Next available array ID for dynamic ndarray metadata.
     next_array_id: u32,
+    /// Global union-find table over dim variables for dynamic ndarray
+    /// envelopes. Lives once per compilation; all envelopes refer to vars
+    /// in this single namespace.
+    pub dim_table: crate::types::DimTable,
 }
 
 impl Default for IRBuilder {
@@ -55,6 +59,7 @@ impl IRBuilder {
             stmts: Vec::new(),
             next_segment_id: 0,
             next_array_id: 0,
+            dim_table: crate::types::DimTable::new(),
         }
     }
 

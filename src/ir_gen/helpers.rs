@@ -287,9 +287,18 @@ impl IRGenerator {
                 );
 
                 let strides = crate::ops::dyn_ndarray::dyn_row_major_strides(&[*max_length]);
+                // Inputs come in with a single dynamic dim of unknown
+                // length 0..=max_length. The richer per-axis annotation
+                // syntax that would let users express tighter bounds is
+                // future work; for now we degrade to one Dynamic dim.
+                let envelope = crate::types::Envelope::new(vec![crate::types::Dim::new_dynamic(
+                    &mut self.builder.dim_table,
+                    0,
+                    *max_length,
+                )]);
+                let _ = max_rank;
                 Value::DynamicNDArray(crate::types::DynamicNDArrayData {
-                    max_length: *max_length,
-                    max_rank: *max_rank,
+                    envelope,
                     dtype: *dtype,
                     elements,
                     meta: crate::types::DynArrayMeta {

@@ -138,8 +138,7 @@ pub fn dyn_astype(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) 
         .collect();
 
     Value::DynamicNDArray(DynamicNDArrayData {
-        max_length: data.max_length,
-        max_rank: data.max_rank,
+        envelope: data.envelope.clone(),
         dtype: new_dtype,
         elements: new_elements,
         meta: data.meta.clone(),
@@ -155,15 +154,19 @@ pub fn dyn_flatten_to_list(data: &DynamicNDArrayData) -> Value {
     })
 }
 
-pub fn dyn_flat(data: &DynamicNDArrayData) -> Value {
+pub fn dyn_flat(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
     let flat = dyn_flatten_values(data);
+    let max_length = data.max_length();
+    // Flatten to a single dim of the same total max bound. Always Static
+    // here because flatten loses any min-bound information from the
+    // individual axes (we'd need a full intersection to recover it).
+    let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &[max_length]);
     Value::DynamicNDArray(DynamicNDArrayData {
-        max_length: data.max_length,
-        max_rank: 1,
+        envelope,
         dtype: data.dtype,
         elements: flat,
         meta: DynArrayMeta {
-            logical_shape: vec![data.max_length],
+            logical_shape: vec![max_length],
             logical_offset: 0,
             logical_strides: vec![1],
             runtime_length: data.meta.runtime_length.clone(),

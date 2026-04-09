@@ -39,8 +39,8 @@ impl Value {
             },
             Value::DynamicNDArray(data) => ZinniaType::DynamicNDArray {
                 dtype: data.dtype,
-                max_length: data.max_length,
-                max_rank: data.max_rank,
+                max_length: data.max_length(),
+                max_rank: data.max_rank(),
             },
             Value::List(data) => ZinniaType::List {
                 elements: data.elements_type.clone(),

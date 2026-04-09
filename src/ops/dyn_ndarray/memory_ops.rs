@@ -23,7 +23,7 @@ pub fn dyn_filter(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) 
         _ => panic!("filter: mask must be array-like"),
     };
 
-    let max_len = data.max_length;
+    let max_len = data.max_length();
 
     // Build output via compaction with write pointer
     let mut write_ptr = b.ir_constant_int(0);
@@ -63,9 +63,15 @@ pub fn dyn_filter(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) 
     let new_elements: Vec<ScalarValue<i64>> =
         out_values.iter().map(|v| value_to_scalar_i64(v)).collect();
 
+    // After filter, the runtime length is unknown (depends on the mask) but
+    // bounded by the input's max. Reflect that as a Dynamic dim 0..=max_len.
+    let envelope = crate::types::Envelope::new(vec![crate::types::Dim::new_dynamic(
+        &mut b.dim_table,
+        0,
+        max_len,
+    )]);
     Value::DynamicNDArray(DynamicNDArrayData {
-        max_length: max_len,
-        max_rank: 1,
+        envelope,
         dtype: data.dtype,
         elements: new_elements,
         meta: DynArrayMeta {
@@ -83,7 +89,7 @@ pub fn dyn_filter(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) 
 
 /// DynamicNDArray.repeat(repeats, axis=...)
 pub fn dyn_repeat(
-    _b: &mut IRBuilder,
+    b: &mut IRBuilder,
     data: &DynamicNDArrayData,
     args: &[Value],
     kwargs: &HashMap<String, Value>,
@@ -110,9 +116,9 @@ pub fn dyn_repeat(
             }
         }
         let new_len = new_elements.len();
+        let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &[new_len]);
         Value::DynamicNDArray(DynamicNDArrayData {
-            max_length: new_len,
-            max_rank: 1,
+            envelope,
             dtype: data.dtype,
             elements: new_elements,
             meta: DynArrayMeta {
@@ -135,9 +141,9 @@ pub fn dyn_repeat(
             }
         }
         let new_len = new_elements.len();
+        let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &[new_len]);
         Value::DynamicNDArray(DynamicNDArrayData {
-            max_length: new_len,
-            max_rank: 1,
+            envelope,
             dtype: data.dtype,
             elements: new_elements,
             meta: DynArrayMeta {
@@ -156,7 +162,7 @@ pub fn dyn_repeat(
 
 /// DynamicNDArray.concatenate(arrays, axis=0)
 pub fn dyn_concatenate(
-    _b: &mut IRBuilder,
+    b: &mut IRBuilder,
     args: &[Value],
     kwargs: &HashMap<String, Value>,
 ) -> Value {
@@ -247,9 +253,11 @@ pub fn dyn_concatenate(
         out_elements.push(elem);
     }
 
+    let _ = ndim;
+    let _ = out_numel;
+    let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &out_shape);
     Value::DynamicNDArray(DynamicNDArrayData {
-        max_length: out_numel,
-        max_rank: ndim,
+        envelope,
         dtype,
         elements: out_elements,
         meta: DynArrayMeta {
@@ -257,7 +265,7 @@ pub fn dyn_concatenate(
             logical_offset: 0,
             logical_strides: out_strides.clone(),
             runtime_length: ScalarValue::new(Some(out_numel as i64), None),
-            runtime_rank: ScalarValue::new(Some(ndim as i64), None),
+            runtime_rank: ScalarValue::new(Some(out_shape.len() as i64), None),
             runtime_shape: out_shape
                 .iter()
                 .map(|&s| ScalarValue::new(Some(s as i64), None))
@@ -273,7 +281,7 @@ pub fn dyn_concatenate(
 
 /// DynamicNDArray.stack(arrays, axis=0)
 pub fn dyn_stack(
-    _b: &mut IRBuilder,
+    b: &mut IRBuilder,
     args: &[Value],
     kwargs: &HashMap<String, Value>,
 ) -> Value {
@@ -340,9 +348,11 @@ pub fn dyn_stack(
         out_elements.push(elem);
     }
 
+    let _ = out_numel;
+    let _ = out_ndim;
+    let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &out_shape);
     Value::DynamicNDArray(DynamicNDArrayData {
-        max_length: out_numel,
-        max_rank: out_ndim,
+        envelope,
         dtype,
         elements: out_elements,
         meta: DynArrayMeta {
@@ -350,7 +360,7 @@ pub fn dyn_stack(
             logical_offset: 0,
             logical_strides: out_strides.clone(),
             runtime_length: ScalarValue::new(Some(out_numel as i64), None),
-            runtime_rank: ScalarValue::new(Some(out_ndim as i64), None),
+            runtime_rank: ScalarValue::new(Some(out_shape.len() as i64), None),
             runtime_shape: out_shape
                 .iter()
                 .map(|&s| ScalarValue::new(Some(s as i64), None))
