@@ -234,6 +234,70 @@ impl IRGenerator {
             (Some("np"), "allclose") => crate::ops::static_ndarray_ops::np_allclose(&mut self.builder, &visited_args, &_visited_kwargs),
             (Some("np"), "concatenate") => crate::ops::static_ndarray_ops::np_concatenate(&mut self.builder, &visited_args, &_visited_kwargs),
             (Some("np"), "stack") => crate::ops::static_ndarray_ops::np_stack(&mut self.builder, &visited_args, &_visited_kwargs),
+            (Some("np"), "vstack") => crate::ops::static_ndarray_ops::np_vstack(&mut self.builder, &visited_args),
+            (Some("np"), "row_stack") => crate::ops::static_ndarray_ops::np_row_stack(&mut self.builder, &visited_args),
+            (Some("np"), "hstack") => crate::ops::static_ndarray_ops::np_hstack(&mut self.builder, &visited_args),
+            (Some("np"), "dstack") => crate::ops::static_ndarray_ops::np_dstack(&mut self.builder, &visited_args),
+            (Some("np"), "column_stack") => crate::ops::static_ndarray_ops::np_column_stack(&mut self.builder, &visited_args),
+            (Some("np"), "swapaxes") => {
+                let val = visited_args.first().cloned().unwrap_or(Value::None);
+                crate::ops::static_ndarray_ops::ndarray_swapaxes(&mut self.builder, &val, &visited_args[1..])
+            }
+            (Some("np"), "moveaxis") => {
+                let val = visited_args.first().cloned().unwrap_or(Value::None);
+                crate::ops::static_ndarray_ops::ndarray_moveaxis(&mut self.builder, &val, &visited_args[1..])
+            }
+            (Some("np"), "transpose") => {
+                let val = visited_args.first().cloned().unwrap_or(Value::None);
+                crate::helpers::ndarray::ndarray_transpose(&mut self.builder, &val, &visited_args[1..])
+            }
+            (Some("np"), "flip") => crate::ops::static_ndarray_ops::np_flip(&mut self.builder, &visited_args, &_visited_kwargs),
+            (Some("np"), "flipud") => crate::ops::static_ndarray_ops::np_flipud(&mut self.builder, &visited_args),
+            (Some("np"), "fliplr") => crate::ops::static_ndarray_ops::np_fliplr(&mut self.builder, &visited_args),
+            (Some("np"), "rot90") => crate::ops::static_ndarray_ops::np_rot90(&mut self.builder, &visited_args, &_visited_kwargs),
+            (Some("np"), "squeeze") => crate::ops::static_ndarray_ops::np_squeeze(&mut self.builder, &visited_args, &_visited_kwargs),
+            (Some("np"), "expand_dims") => crate::ops::static_ndarray_ops::np_expand_dims(&mut self.builder, &visited_args),
+            (Some("np"), "broadcast_to") => crate::ops::static_ndarray_ops::np_broadcast_to(&mut self.builder, &visited_args),
+            (Some("np"), "atleast_1d") => crate::ops::static_ndarray_ops::np_atleast_nd(&mut self.builder, &visited_args, 1),
+            (Some("np"), "atleast_2d") => crate::ops::static_ndarray_ops::np_atleast_nd(&mut self.builder, &visited_args, 2),
+            (Some("np"), "atleast_3d") => crate::ops::static_ndarray_ops::np_atleast_nd(&mut self.builder, &visited_args, 3),
+            (Some("np"), "tile") => crate::ops::static_ndarray_ops::np_tile(&mut self.builder, &visited_args),
+            (Some("np"), "split") => crate::ops::static_ndarray_ops::np_split(&mut self.builder, &visited_args, &_visited_kwargs),
+            (Some("np"), "array_split") => crate::ops::static_ndarray_ops::np_array_split(&mut self.builder, &visited_args, &_visited_kwargs),
+            (Some("np"), "hsplit") => crate::ops::static_ndarray_ops::np_hsplit(&mut self.builder, &visited_args),
+            (Some("np"), "vsplit") => crate::ops::static_ndarray_ops::np_vsplit(&mut self.builder, &visited_args),
+            (Some("np"), "dsplit") => crate::ops::static_ndarray_ops::np_dsplit(&mut self.builder, &visited_args),
+            (Some("np"), "block") => {
+                // Block depth must be measured from the *AST*, not the
+                // visited Value: after Python list literals have been turned
+                // into `Value::List`, they are indistinguishable from
+                // ndarray axes. Walk the leftmost path of the original AST,
+                // counting only Python list/tuple literals.
+                fn ast_block_depth(node: &ASTNode) -> usize {
+                    match node {
+                        ASTNode::ASTSquareBrackets(sb) => {
+                            if sb.values.is_empty() { 1 }
+                            else { 1 + ast_block_depth(&sb.values[0]) }
+                        }
+                        ASTNode::ASTParenthesis(p) => {
+                            if p.values.is_empty() { 1 }
+                            else { 1 + ast_block_depth(&p.values[0]) }
+                        }
+                        _ => 0,
+                    }
+                }
+                let depth = n.args.first().map(ast_block_depth).unwrap_or(0);
+                let val = visited_args.first().cloned().unwrap_or(Value::None);
+                crate::ops::static_ndarray_ops::np_block_with_depth(&val, depth)
+            }
+            (Some("np"), "reshape") => {
+                let val = visited_args.first().cloned().unwrap_or(Value::None);
+                crate::ops::static_ndarray_ops::ndarray_reshape(&mut self.builder, &val, &visited_args[1..])
+            }
+            (Some("np"), "repeat") => {
+                let val = visited_args.first().cloned().unwrap_or(Value::None);
+                crate::ops::static_ndarray_ops::ndarray_repeat(&mut self.builder, &val, &visited_args[1..], &_visited_kwargs)
+            }
 
             // ── DynamicNDArray class methods ────────────────────────────
             (Some("DynamicNDArray"), "zeros") | (Some("zinnia"), "zeros") => {
@@ -448,6 +512,16 @@ impl IRGenerator {
             (Some(var), "repeat") if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
                 crate::ops::static_ndarray_ops::ndarray_repeat(&mut self.builder,&val, &visited_args, &_visited_kwargs)
+            }
+            (Some(var), "swapaxes") if self.ctx.exists(var) => {
+                let val = self.ctx.get(var).unwrap_or(Value::None);
+                crate::ops::static_ndarray_ops::ndarray_swapaxes(&mut self.builder, &val, &visited_args)
+            }
+            (Some(var), "squeeze") if self.ctx.exists(var) => {
+                let val = self.ctx.get(var).unwrap_or(Value::None);
+                let mut all_args: Vec<Value> = vec![val];
+                all_args.extend(visited_args.iter().cloned());
+                crate::ops::static_ndarray_ops::np_squeeze(&mut self.builder, &all_args, &_visited_kwargs)
             }
             (Some(var), "filter") if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);

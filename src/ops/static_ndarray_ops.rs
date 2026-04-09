@@ -384,127 +384,134 @@ pub fn np_allclose(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, V
     result
 }
 
+/// Recursive concatenation along an arbitrary axis. At axis 0 we splice the
+/// outer lists; at axis k > 0 we recurse into each outer position with
+/// axis k − 1. All input arrays must have matching shapes except along the
+/// concatenation axis (caller is expected to validate).
+fn concat_recursive(arrays: &[Value], axis: usize) -> Value {
+    if axis == 0 {
+        let mut all_values = Vec::new();
+        let mut all_types = Vec::new();
+        for arr in arrays {
+            match arr {
+                Value::List(d) | Value::Tuple(d) => {
+                    all_values.extend(d.values.clone());
+                    all_types.extend(d.elements_type.clone());
+                }
+                v => {
+                    all_values.push(v.clone());
+                    all_types.push(v.zinnia_type());
+                }
+            }
+        }
+        return Value::List(CompositeData { elements_type: all_types, values: all_values });
+    }
+    let first = match &arrays[0] {
+        Value::List(d) | Value::Tuple(d) => d,
+        _ => panic!("concatenate: cannot apply axis > 0 to a 0-D value"),
+    };
+    let outer_len = first.values.len();
+    let mut rows = Vec::with_capacity(outer_len);
+    for i in 0..outer_len {
+        let inner: Vec<Value> = arrays
+            .iter()
+            .map(|a| match a {
+                Value::List(d) | Value::Tuple(d) => d.values[i].clone(),
+                _ => panic!("concatenate: arrays must have matching ranks"),
+            })
+            .collect();
+        rows.push(concat_recursive(&inner, axis - 1));
+    }
+    let types = rows.iter().map(|v| v.zinnia_type()).collect();
+    Value::List(CompositeData { elements_type: types, values: rows })
+}
+
 pub fn np_concatenate(_b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
-    let axis = kwargs.get("axis")
+    let raw_axis = kwargs
+        .get("axis")
         .or_else(|| args.get(1))
         .and_then(|v| v.int_val())
         .unwrap_or(0);
 
-    if let Some(Value::List(data) | Value::Tuple(data)) = args.first() {
-        // Validate axis bounds
-        if !data.values.is_empty() {
-            let ndim = crate::helpers::composite::get_composite_shape(&data.values[0]).len();
-            let resolved_axis = if axis < 0 { ndim as i64 + axis } else { axis };
-            if resolved_axis < 0 || resolved_axis >= ndim as i64 {
-                panic!("axis {} is out of bounds for array with {} dimensions", axis, ndim);
-            }
-        }
-        if axis == 0 {
-            // Concatenate along axis 0: just flatten one level
-            let mut all_values = Vec::new();
-            let mut all_types = Vec::new();
-            for arr in &data.values {
-                match arr {
-                    Value::List(d) | Value::Tuple(d) => {
-                        all_values.extend(d.values.clone());
-                        all_types.extend(d.elements_type.clone());
-                    }
-                    _ => { all_values.push(arr.clone()); all_types.push(arr.zinnia_type()); }
-                }
-            }
-            Value::List(CompositeData { elements_type: all_types, values: all_values })
-        } else if axis == 1 {
-            // Concatenate along axis 1: merge inner rows
-            // [[1,2],[3,4]] + [[5,6],[7,8]] axis=1 → [[1,2,5,6],[3,4,7,8]]
-            if data.values.is_empty() { return Value::None; }
-            let num_arrays = data.values.len();
-            // Get number of rows from first array
-            let first = &data.values[0];
-            if let Value::List(first_data) | Value::Tuple(first_data) = first {
-                let nrows = first_data.values.len();
-                let mut result_rows = Vec::new();
-                for row_idx in 0..nrows {
-                    let mut row_values = Vec::new();
-                    let mut row_types = Vec::new();
-                    for arr_idx in 0..num_arrays {
-                        if let Value::List(arr_data) | Value::Tuple(arr_data) = &data.values[arr_idx] {
-                            if row_idx < arr_data.values.len() {
-                                match &arr_data.values[row_idx] {
-                                    Value::List(rd) | Value::Tuple(rd) => {
-                                        row_values.extend(rd.values.clone());
-                                        row_types.extend(rd.elements_type.clone());
-                                    }
-                                    v => { row_values.push(v.clone()); row_types.push(v.zinnia_type()); }
-                                }
-                            }
-                        }
-                    }
-                    result_rows.push(Value::List(CompositeData { elements_type: row_types, values: row_values }));
-                }
-                let types = result_rows.iter().map(|v| v.zinnia_type()).collect();
-                Value::List(CompositeData { elements_type: types, values: result_rows })
-            } else {
-                Value::None
-            }
-        } else {
-            Value::None
-        }
-    } else {
-        Value::None
+    let data = match args.first() {
+        Some(Value::List(d)) | Some(Value::Tuple(d)) => d,
+        _ => return Value::None,
+    };
+    if data.values.is_empty() {
+        return Value::None;
     }
+
+    let ndim = crate::helpers::composite::get_composite_shape(&data.values[0]).len();
+    let resolved = if raw_axis < 0 { ndim as i64 + raw_axis } else { raw_axis };
+    if resolved < 0 || resolved >= ndim as i64 {
+        panic!(
+            "axis {} is out of bounds for array with {} dimensions",
+            raw_axis, ndim
+        );
+    }
+
+    concat_recursive(&data.values, resolved as usize)
+}
+
+/// Recursive stack along an arbitrary new axis. At axis 0 we wrap the input
+/// arrays as the outer list directly. At axis k > 0 we walk the *first* axis
+/// of the input arrays (which all have matching shapes) and recurse with
+/// axis k − 1. The recursion bottoms out either in axis-0 wrap or in scalars.
+fn stack_recursive(arrays: &[Value], axis: usize) -> Value {
+    if axis == 0 {
+        let types = arrays.iter().map(|v| v.zinnia_type()).collect();
+        return Value::List(CompositeData {
+            elements_type: types,
+            values: arrays.to_vec(),
+        });
+    }
+    let first = match &arrays[0] {
+        Value::List(d) | Value::Tuple(d) => d,
+        _ => panic!("stack: cannot stack at axis > input rank"),
+    };
+    let outer_len = first.values.len();
+    let mut rows = Vec::with_capacity(outer_len);
+    for i in 0..outer_len {
+        let inner: Vec<Value> = arrays
+            .iter()
+            .map(|a| match a {
+                Value::List(d) | Value::Tuple(d) => d.values[i].clone(),
+                _ => panic!("stack: all input arrays must have the same rank"),
+            })
+            .collect();
+        rows.push(stack_recursive(&inner, axis - 1));
+    }
+    let types = rows.iter().map(|v| v.zinnia_type()).collect();
+    Value::List(CompositeData { elements_type: types, values: rows })
 }
 
 pub fn np_stack(_b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
-    // np.stack(arrays, axis=0) — stack arrays along a new axis
-    let axis = kwargs.get("axis")
+    let raw_axis = kwargs
+        .get("axis")
         .or_else(|| args.get(1))
         .and_then(|v| v.int_val())
         .unwrap_or(0);
 
-    if let Some(Value::List(data) | Value::Tuple(data)) = args.first() {
-        // Validate axis bounds
-        if !data.values.is_empty() {
-            let ndim = crate::helpers::composite::get_composite_shape(&data.values[0]).len() + 1;
-            let resolved_axis = if axis < 0 { ndim as i64 + axis } else { axis };
-            if resolved_axis < 0 || resolved_axis >= ndim as i64 {
-                panic!("axis {} is out of bounds for array of dimension {}", axis, ndim - 1);
-            }
-        }
-        if axis == 0 {
-            // Stack along axis 0: just wrap arrays as rows
-            let types = data.values.iter().map(|v| v.zinnia_type()).collect();
-            Value::List(CompositeData { elements_type: types, values: data.values.clone() })
-        } else if axis == 1 {
-            // Stack along axis 1: transpose-like — zip elements from each array
-            // e.g., stack([[1,2,3], [4,5,6]], axis=1) = [[1,4],[2,5],[3,6]]
-            if let Some(Value::List(first) | Value::Tuple(first)) = data.values.first() {
-                let n_elements = first.values.len();
-                let mut result = Vec::new();
-                for i in 0..n_elements {
-                    let mut row = Vec::new();
-                    for arr in &data.values {
-                        if let Value::List(d) | Value::Tuple(d) = arr {
-                            if i < d.values.len() {
-                                row.push(d.values[i].clone());
-                            }
-                        }
-                    }
-                    let types = row.iter().map(|v| v.zinnia_type()).collect();
-                    result.push(Value::List(CompositeData { elements_type: types, values: row }));
-                }
-                let types = result.iter().map(|v| v.zinnia_type()).collect();
-                Value::List(CompositeData { elements_type: types, values: result })
-            } else {
-                Value::None
-            }
-        } else {
-            // Higher axes — not common, fall back to axis=0
-            let types = data.values.iter().map(|v| v.zinnia_type()).collect();
-            Value::List(CompositeData { elements_type: types, values: data.values.clone() })
-        }
-    } else {
-        Value::None
+    let data = match args.first() {
+        Some(Value::List(d)) | Some(Value::Tuple(d)) => d,
+        _ => return Value::None,
+    };
+    if data.values.is_empty() {
+        return Value::None;
     }
+
+    // Stack inserts a new axis, so the result rank is input_rank + 1.
+    let ndim = crate::helpers::composite::get_composite_shape(&data.values[0]).len() + 1;
+    let resolved = if raw_axis < 0 { ndim as i64 + raw_axis } else { raw_axis };
+    if resolved < 0 || resolved >= ndim as i64 {
+        panic!(
+            "axis {} is out of bounds for array of dimension {}",
+            raw_axis,
+            ndim - 1
+        );
+    }
+
+    stack_recursive(&data.values, resolved as usize)
 }
 
 pub fn build_ndarray_from_flat(b: &mut IRBuilder, values: Vec<Value>, types: Vec<ZinniaType>, shape: &[usize]) -> Value {
@@ -800,4 +807,774 @@ pub fn builtin_enumerate(b: &mut IRBuilder, iter_val: &Value) -> Value {
         }
         _ => Value::None,
     }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Shape-manipulation helpers (swapaxes / flip / squeeze / expand_dims /
+// broadcast_to / atleast_Nd / tile / vstack / hstack / dstack /
+// column_stack / row_stack)
+// ────────────────────────────────────────────────────────────────────────
+
+/// Resolve a possibly-negative axis against a given rank, panicking on out
+/// of bounds. Used by all the shape-manipulation helpers below for a
+/// consistent error message.
+fn resolve_axis(axis: i64, ndim: usize, op: &str) -> usize {
+    let resolved = if axis < 0 { ndim as i64 + axis } else { axis };
+    if resolved < 0 || resolved >= ndim as i64 {
+        panic!(
+            "{}: axis {} is out of bounds for array of rank {}",
+            op, axis, ndim
+        );
+    }
+    resolved as usize
+}
+
+/// Build a constant Integer Value from a usize.
+fn const_int(b: &mut IRBuilder, n: usize) -> Value {
+    b.ir_constant_int(n as i64)
+}
+
+/// `np.swapaxes(arr, a1, a2)` — swap two axes.
+pub fn ndarray_swapaxes(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value {
+    let shape = crate::helpers::composite::get_composite_shape(val);
+    let ndim = shape.len();
+    assert!(args.len() >= 2, "swapaxes: requires two axis arguments");
+    let a1 = resolve_axis(
+        args[0].int_val().expect("swapaxes: axis must be a constant int"),
+        ndim,
+        "swapaxes",
+    );
+    let a2 = resolve_axis(
+        args[1].int_val().expect("swapaxes: axis must be a constant int"),
+        ndim,
+        "swapaxes",
+    );
+    let mut order: Vec<usize> = (0..ndim).collect();
+    order.swap(a1, a2);
+    let axes_vals: Vec<Value> = order.iter().map(|&a| const_int(b, a)).collect();
+    let axes_tuple = Value::Tuple(CompositeData {
+        elements_type: vec![ZinniaType::Integer; ndim],
+        values: axes_vals,
+    });
+    crate::helpers::ndarray::ndarray_transpose(b, val, &[axes_tuple])
+}
+
+/// Reverse `val`'s elements along axis `axis`. Other axes keep order.
+fn flip_along(val: &Value, axis: usize) -> Value {
+    if axis == 0 {
+        match val {
+            Value::List(d) | Value::Tuple(d) => {
+                let new_vals: Vec<Value> = d.values.iter().rev().cloned().collect();
+                let new_types = new_vals.iter().map(|v| v.zinnia_type()).collect();
+                Value::List(CompositeData {
+                    elements_type: new_types,
+                    values: new_vals,
+                })
+            }
+            _ => val.clone(),
+        }
+    } else {
+        match val {
+            Value::List(d) | Value::Tuple(d) => {
+                let new_vals: Vec<Value> =
+                    d.values.iter().map(|v| flip_along(v, axis - 1)).collect();
+                let new_types = new_vals.iter().map(|v| v.zinnia_type()).collect();
+                Value::List(CompositeData {
+                    elements_type: new_types,
+                    values: new_vals,
+                })
+            }
+            _ => val.clone(),
+        }
+    }
+}
+
+/// `np.flip(arr, axis=None)` — reverse along the given axis (or all axes
+/// when no axis is specified).
+pub fn np_flip(_b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+    let val = args.first().expect("flip: requires an array argument");
+    let shape = crate::helpers::composite::get_composite_shape(val);
+    let ndim = shape.len();
+    let axis_val = kwargs.get("axis").or_else(|| args.get(1));
+    let axes: Vec<usize> = match axis_val {
+        Some(Value::None) | None => (0..ndim).collect(),
+        Some(Value::List(d)) | Some(Value::Tuple(d)) => d
+            .values
+            .iter()
+            .map(|v| {
+                resolve_axis(
+                    v.int_val().expect("flip: axis values must be constant ints"),
+                    ndim,
+                    "flip",
+                )
+            })
+            .collect(),
+        Some(a) => vec![resolve_axis(
+            a.int_val().expect("flip: axis must be a constant int"),
+            ndim,
+            "flip",
+        )],
+    };
+    let mut out = val.clone();
+    for ax in axes {
+        out = flip_along(&out, ax);
+    }
+    out
+}
+
+/// `np.flipud(arr)` — flip along axis 0.
+pub fn np_flipud(_b: &mut IRBuilder, args: &[Value]) -> Value {
+    let val = args.first().expect("flipud: requires an array argument");
+    let shape = crate::helpers::composite::get_composite_shape(val);
+    if shape.is_empty() {
+        panic!("flipud: input must be at least 1-D");
+    }
+    flip_along(val, 0)
+}
+
+/// `np.fliplr(arr)` — flip along axis 1 (requires ndim ≥ 2).
+pub fn np_fliplr(_b: &mut IRBuilder, args: &[Value]) -> Value {
+    let val = args.first().expect("fliplr: requires an array argument");
+    let shape = crate::helpers::composite::get_composite_shape(val);
+    if shape.len() < 2 {
+        panic!("fliplr: input must be at least 2-D");
+    }
+    flip_along(val, 1)
+}
+
+/// `np.rot90(arr, k=1, axes=(0, 1))` — rotate 90° counter-clockwise k times
+/// in the plane spanned by `axes`. Each k=1 rotation is `flip(axes[1])`
+/// then `swapaxes(axes[0], axes[1])`, matching NumPy's reference.
+pub fn np_rot90(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+    let val = args.first().expect("rot90: requires an array argument");
+    let shape = crate::helpers::composite::get_composite_shape(val);
+    let ndim = shape.len();
+    if ndim < 2 {
+        panic!("rot90: input must be at least 2-D");
+    }
+    let k = kwargs
+        .get("k")
+        .or_else(|| args.get(1))
+        .and_then(|v| v.int_val())
+        .unwrap_or(1);
+    let axes_arg = kwargs.get("axes").or_else(|| args.get(2));
+    let (a0, a1) = match axes_arg {
+        Some(Value::Tuple(d)) | Some(Value::List(d)) if d.values.len() == 2 => {
+            let a = resolve_axis(d.values[0].int_val().unwrap_or(0), ndim, "rot90");
+            let bb = resolve_axis(d.values[1].int_val().unwrap_or(1), ndim, "rot90");
+            (a, bb)
+        }
+        _ => (0usize, 1usize),
+    };
+    if a0 == a1 {
+        panic!("rot90: axes must be different");
+    }
+    let k = ((k % 4) + 4) % 4;
+    let mut out = val.clone();
+    for _ in 0..k {
+        out = flip_along(&out, a1);
+        let mut order: Vec<usize> = (0..ndim).collect();
+        order.swap(a0, a1);
+        let axes_vals: Vec<Value> = order.iter().map(|&a| const_int(b, a)).collect();
+        let axes_tuple = Value::Tuple(CompositeData {
+            elements_type: vec![ZinniaType::Integer; ndim],
+            values: axes_vals,
+        });
+        out = crate::helpers::ndarray::ndarray_transpose(b, &out, &[axes_tuple]);
+    }
+    out
+}
+
+/// `np.squeeze(arr, axis=None)` — drop axes of length 1.
+pub fn np_squeeze(_b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+    let val = args.first().expect("squeeze: requires an array argument");
+    let shape = crate::helpers::composite::get_composite_shape(val);
+    let ndim = shape.len();
+    let axis_val = kwargs.get("axis").or_else(|| args.get(1));
+
+    let target_axes: Vec<usize> = match axis_val {
+        Some(Value::None) | None => shape
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &d)| if d == 1 { Some(i) } else { None })
+            .collect(),
+        Some(Value::Tuple(d)) | Some(Value::List(d)) => d
+            .values
+            .iter()
+            .map(|v| {
+                resolve_axis(
+                    v.int_val().expect("squeeze: axis must be a constant int"),
+                    ndim,
+                    "squeeze",
+                )
+            })
+            .collect(),
+        Some(a) => vec![resolve_axis(
+            a.int_val().expect("squeeze: axis must be a constant int"),
+            ndim,
+            "squeeze",
+        )],
+    };
+    for &ax in &target_axes {
+        if shape[ax] != 1 {
+            panic!(
+                "squeeze: cannot select an axis to squeeze out which has size not equal to one (axis {})",
+                ax
+            );
+        }
+    }
+    if target_axes.is_empty() {
+        return val.clone();
+    }
+    let new_shape: Vec<usize> = shape
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &d)| if target_axes.contains(&i) { None } else { Some(d) })
+        .collect();
+    let flat = crate::helpers::composite::flatten_composite(val);
+    if new_shape.is_empty() {
+        return flat.into_iter().next().unwrap_or(Value::None);
+    }
+    let types = flat.iter().map(|v| v.zinnia_type()).collect();
+    crate::helpers::composite::build_nested_value(flat, types, &new_shape)
+}
+
+/// `np.expand_dims(arr, axis)` — insert a new axis of length 1 at `axis`.
+pub fn np_expand_dims(_b: &mut IRBuilder, args: &[Value]) -> Value {
+    let val = args.first().expect("expand_dims: requires an array argument");
+    let shape = crate::helpers::composite::get_composite_shape(val);
+    let ndim = shape.len();
+    let axis = args
+        .get(1)
+        .and_then(|v| v.int_val())
+        .expect("expand_dims: axis must be a constant int");
+    let new_ndim = ndim + 1;
+    let resolved = if axis < 0 { new_ndim as i64 + axis } else { axis };
+    if resolved < 0 || resolved >= new_ndim as i64 {
+        panic!(
+            "expand_dims: axis {} is out of bounds for array of rank {}",
+            axis, new_ndim
+        );
+    }
+    let pos = resolved as usize;
+    fn insert_at(val: &Value, pos: usize) -> Value {
+        if pos == 0 {
+            Value::List(CompositeData {
+                elements_type: vec![val.zinnia_type()],
+                values: vec![val.clone()],
+            })
+        } else {
+            match val {
+                Value::List(d) | Value::Tuple(d) => {
+                    let new_vals: Vec<Value> =
+                        d.values.iter().map(|v| insert_at(v, pos - 1)).collect();
+                    let new_types = new_vals.iter().map(|v| v.zinnia_type()).collect();
+                    Value::List(CompositeData {
+                        elements_type: new_types,
+                        values: new_vals,
+                    })
+                }
+                _ => val.clone(),
+            }
+        }
+    }
+    insert_at(val, pos)
+}
+
+/// `np.broadcast_to(arr, shape)` — materialize the broadcast to a target
+/// shape. Thin wrapper around the broadcasting helper.
+pub fn np_broadcast_to(_b: &mut IRBuilder, args: &[Value]) -> Value {
+    let val = args.first().expect("broadcast_to: requires an array argument");
+    let shape_arg = args.get(1).expect("broadcast_to: requires a shape argument");
+    let target: Vec<usize> = match shape_arg {
+        Value::Tuple(d) | Value::List(d) => d
+            .values
+            .iter()
+            .map(|v| {
+                v.int_val()
+                    .expect("broadcast_to: shape elements must be constant ints")
+                    as usize
+            })
+            .collect(),
+        Value::Integer(_) => vec![shape_arg.int_val().unwrap() as usize],
+        _ => panic!("broadcast_to: invalid shape argument"),
+    };
+    let src_shape = crate::helpers::composite::get_composite_shape(val);
+    match crate::helpers::broadcast::broadcast_shapes(&src_shape, &target) {
+        Some(s) if s == target => {}
+        _ => panic!(
+            "broadcast_to: shape {:?} cannot be broadcast to {:?}",
+            src_shape, target
+        ),
+    }
+    crate::helpers::broadcast::materialize_to_shape(val, &target)
+}
+
+/// `np.atleast_1d/2d/3d(arr)` — prepend unit axes until rank ≥ n.
+pub fn np_atleast_nd(_b: &mut IRBuilder, args: &[Value], n: usize) -> Value {
+    let val = args.first().expect("atleast_Nd: requires an array argument");
+    let shape = crate::helpers::composite::get_composite_shape(val);
+    if shape.len() >= n {
+        return val.clone();
+    }
+    let mut out = val.clone();
+    for _ in 0..(n - shape.len()) {
+        out = Value::List(CompositeData {
+            elements_type: vec![out.zinnia_type()],
+            values: vec![out],
+        });
+    }
+    out
+}
+
+/// `np.tile(arr, reps)` — repeat `arr` according to `reps`.
+pub fn np_tile(_b: &mut IRBuilder, args: &[Value]) -> Value {
+    let val = args.first().expect("tile: requires an array argument");
+    let reps_arg = args.get(1).expect("tile: requires a reps argument");
+    let reps: Vec<usize> = match reps_arg {
+        Value::Tuple(d) | Value::List(d) => d
+            .values
+            .iter()
+            .map(|v| {
+                v.int_val()
+                    .expect("tile: reps elements must be constant ints")
+                    .max(0) as usize
+            })
+            .collect(),
+        Value::Integer(_) => vec![reps_arg.int_val().unwrap().max(0) as usize],
+        _ => panic!("tile: invalid reps argument"),
+    };
+    let src_shape = crate::helpers::composite::get_composite_shape(val);
+    let rank = src_shape.len().max(reps.len());
+    let mut padded_shape = vec![1usize; rank - src_shape.len()];
+    padded_shape.extend_from_slice(&src_shape);
+    let mut padded_reps = vec![1usize; rank - reps.len()];
+    padded_reps.extend_from_slice(&reps);
+
+    // Promote val to padded rank by prepending unit axes if needed.
+    let mut promoted = val.clone();
+    for _ in 0..(rank - src_shape.len()) {
+        promoted = Value::List(CompositeData {
+            elements_type: vec![promoted.zinnia_type()],
+            values: vec![promoted],
+        });
+    }
+
+    let target_shape: Vec<usize> = padded_shape
+        .iter()
+        .zip(padded_reps.iter())
+        .map(|(s, r)| s * r)
+        .collect();
+
+    let total: usize = target_shape.iter().product();
+    let mut out_strides = vec![1usize; rank];
+    for i in (0..rank.saturating_sub(1)).rev() {
+        out_strides[i] = out_strides[i + 1] * target_shape[i + 1];
+    }
+    let mut src_strides = vec![1usize; rank];
+    for i in (0..rank.saturating_sub(1)).rev() {
+        src_strides[i] = src_strides[i + 1] * padded_shape[i + 1];
+    }
+    let flat_src = crate::helpers::composite::flatten_composite(&promoted);
+    let mut out_flat: Vec<Value> = Vec::with_capacity(total);
+    for out_idx in 0..total {
+        let mut remainder = out_idx;
+        let mut src_flat = 0usize;
+        for d in 0..rank {
+            let coord = remainder / out_strides[d];
+            remainder %= out_strides[d];
+            let src_coord = coord % padded_shape[d];
+            src_flat += src_coord * src_strides[d];
+        }
+        out_flat.push(flat_src[src_flat].clone());
+    }
+    let types = out_flat.iter().map(|v| v.zinnia_type()).collect();
+    crate::helpers::composite::build_nested_value(out_flat, types, &target_shape)
+}
+
+// ── stack convenience wrappers ─────────────────────────────────────────
+
+/// Promote a 1-D array to a 2-D row (`(N,)` → `(1, N)`); leave higher-rank
+/// arrays untouched. Used by vstack/row_stack.
+fn promote_to_row(val: &Value) -> Value {
+    let shape = crate::helpers::composite::get_composite_shape(val);
+    if shape.len() < 2 {
+        Value::List(CompositeData {
+            elements_type: vec![val.zinnia_type()],
+            values: vec![val.clone()],
+        })
+    } else {
+        val.clone()
+    }
+}
+
+/// Promote a 1-D array to a 2-D column (`(N,)` → `(N, 1)`).
+fn promote_to_column(val: &Value) -> Value {
+    let shape = crate::helpers::composite::get_composite_shape(val);
+    if shape.len() == 1 {
+        if let Value::List(d) | Value::Tuple(d) = val {
+            let new_vals: Vec<Value> = d
+                .values
+                .iter()
+                .map(|v| {
+                    Value::List(CompositeData {
+                        elements_type: vec![v.zinnia_type()],
+                        values: vec![v.clone()],
+                    })
+                })
+                .collect();
+            let types = new_vals.iter().map(|v| v.zinnia_type()).collect();
+            return Value::List(CompositeData {
+                elements_type: types,
+                values: new_vals,
+            });
+        }
+    }
+    val.clone()
+}
+
+/// `np.vstack(arrays)` — stack along axis 0, promoting 1-D inputs to rows.
+pub fn np_vstack(_b: &mut IRBuilder, args: &[Value]) -> Value {
+    let arrays = match args.first() {
+        Some(Value::List(d)) | Some(Value::Tuple(d)) => d,
+        _ => return Value::None,
+    };
+    let promoted: Vec<Value> = arrays.values.iter().map(promote_to_row).collect();
+    concat_recursive(&promoted, 0)
+}
+
+/// `np.hstack(arrays)` — concatenate along axis 1 for ≥2-D inputs, or along
+/// axis 0 for 1-D inputs (NumPy convention).
+pub fn np_hstack(_b: &mut IRBuilder, args: &[Value]) -> Value {
+    let arrays = match args.first() {
+        Some(Value::List(d)) | Some(Value::Tuple(d)) => d,
+        _ => return Value::None,
+    };
+    let any_multi = arrays
+        .values
+        .iter()
+        .any(|v| crate::helpers::composite::get_composite_shape(v).len() >= 2);
+    let axis = if any_multi { 1 } else { 0 };
+    concat_recursive(&arrays.values, axis)
+}
+
+/// `np.dstack(arrays)` — stack along axis 2, promoting lower-rank inputs.
+pub fn np_dstack(b: &mut IRBuilder, args: &[Value]) -> Value {
+    let arrays = match args.first() {
+        Some(Value::List(d)) | Some(Value::Tuple(d)) => d,
+        _ => return Value::None,
+    };
+    let promoted: Vec<Value> = arrays
+        .values
+        .iter()
+        .map(|v| {
+            let shape = crate::helpers::composite::get_composite_shape(v);
+            match shape.len() {
+                1 => {
+                    // (N,) -> (1, N) -> (1, N, 1)
+                    let row = Value::List(CompositeData {
+                        elements_type: vec![v.zinnia_type()],
+                        values: vec![v.clone()],
+                    });
+                    let two = b.ir_constant_int(2);
+                    np_expand_dims(b, &[row, two])
+                }
+                2 => {
+                    let two = b.ir_constant_int(2);
+                    np_expand_dims(b, &[v.clone(), two])
+                }
+                _ => v.clone(),
+            }
+        })
+        .collect();
+    concat_recursive(&promoted, 2)
+}
+
+/// `np.column_stack(arrays)` — 1-D arrays become columns of a 2-D output.
+pub fn np_column_stack(_b: &mut IRBuilder, args: &[Value]) -> Value {
+    let arrays = match args.first() {
+        Some(Value::List(d)) | Some(Value::Tuple(d)) => d,
+        _ => return Value::None,
+    };
+    let promoted: Vec<Value> = arrays.values.iter().map(promote_to_column).collect();
+    concat_recursive(&promoted, 1)
+}
+
+/// `np.row_stack(arrays)` — alias of vstack.
+pub fn np_row_stack(b: &mut IRBuilder, args: &[Value]) -> Value {
+    np_vstack(b, args)
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Splitting family (split / array_split / hsplit / vsplit / dsplit)
+// ────────────────────────────────────────────────────────────────────────
+
+/// Take the slice `start..stop` of `val` along axis `axis`. Other axes are
+/// kept intact. Used by all the splitting helpers below.
+fn slice_along_axis(val: &Value, axis: usize, start: usize, stop: usize) -> Value {
+    if axis == 0 {
+        match val {
+            Value::List(d) | Value::Tuple(d) => {
+                let new_vals: Vec<Value> = d.values[start..stop].to_vec();
+                let new_types = new_vals.iter().map(|v| v.zinnia_type()).collect();
+                Value::List(CompositeData {
+                    elements_type: new_types,
+                    values: new_vals,
+                })
+            }
+            _ => val.clone(),
+        }
+    } else {
+        match val {
+            Value::List(d) | Value::Tuple(d) => {
+                let new_vals: Vec<Value> = d
+                    .values
+                    .iter()
+                    .map(|v| slice_along_axis(v, axis - 1, start, stop))
+                    .collect();
+                let new_types = new_vals.iter().map(|v| v.zinnia_type()).collect();
+                Value::List(CompositeData {
+                    elements_type: new_types,
+                    values: new_vals,
+                })
+            }
+            _ => val.clone(),
+        }
+    }
+}
+
+/// Compute the section boundaries (cumulative sizes) for `np.split` and
+/// `np.array_split`. For `array_split`, when `n` does not evenly divide
+/// `length`, the first `length % n` sections get one extra element each
+/// (matching NumPy).
+fn compute_split_boundaries(
+    length: usize,
+    sections: &Value,
+    allow_uneven: bool,
+) -> Vec<(usize, usize)> {
+    match sections {
+        Value::Integer(_) => {
+            let n = sections
+                .int_val()
+                .expect("split: sections must be a constant int")
+                as usize;
+            if n == 0 {
+                panic!("split: number of sections must be > 0");
+            }
+            if !allow_uneven && length % n != 0 {
+                panic!(
+                    "split: array of length {} cannot be split into {} equal sections",
+                    length, n
+                );
+            }
+            let base = length / n;
+            let extras = length % n;
+            let mut out = Vec::with_capacity(n);
+            let mut cursor = 0usize;
+            for i in 0..n {
+                let sz = base + if i < extras { 1 } else { 0 };
+                out.push((cursor, cursor + sz));
+                cursor += sz;
+            }
+            out
+        }
+        Value::List(d) | Value::Tuple(d) => {
+            // Index list: split *at* these indices.
+            let mut indices: Vec<usize> = d
+                .values
+                .iter()
+                .map(|v| {
+                    let i = v
+                        .int_val()
+                        .expect("split: index entries must be constant ints");
+                    i.max(0).min(length as i64) as usize
+                })
+                .collect();
+            indices.push(length);
+            let mut out = Vec::with_capacity(indices.len());
+            let mut prev = 0usize;
+            for &i in &indices {
+                out.push((prev, i.max(prev)));
+                prev = i.max(prev);
+            }
+            out
+        }
+        _ => panic!("split: sections must be an int or a list of indices"),
+    }
+}
+
+/// Shared body for `np.split` / `np.array_split` along an explicit axis.
+fn split_impl(
+    val: &Value,
+    sections: &Value,
+    axis: i64,
+    allow_uneven: bool,
+    op: &str,
+) -> Value {
+    let shape = crate::helpers::composite::get_composite_shape(val);
+    let ndim = shape.len();
+    if ndim == 0 {
+        panic!("{}: cannot split a 0-D value", op);
+    }
+    let ax = resolve_axis(axis, ndim, op);
+    let length = shape[ax];
+    let bounds = compute_split_boundaries(length, sections, allow_uneven);
+    let parts: Vec<Value> = bounds
+        .into_iter()
+        .map(|(s, e)| slice_along_axis(val, ax, s, e))
+        .collect();
+    let types = parts.iter().map(|v| v.zinnia_type()).collect();
+    Value::List(CompositeData {
+        elements_type: types,
+        values: parts,
+    })
+}
+
+/// `np.split(arr, sections, axis=0)` — equal-section split (errors if the
+/// sections don't divide evenly).
+pub fn np_split(_b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+    let val = args.first().expect("split: requires an array argument");
+    let sections = args.get(1).expect("split: requires a sections argument");
+    let axis = kwargs
+        .get("axis")
+        .or_else(|| args.get(2))
+        .and_then(|v| v.int_val())
+        .unwrap_or(0);
+    split_impl(val, sections, axis, false, "split")
+}
+
+/// `np.array_split(arr, sections, axis=0)` — like split but allows uneven
+/// sections; the first `length % n` sections get one extra element.
+pub fn np_array_split(
+    _b: &mut IRBuilder,
+    args: &[Value],
+    kwargs: &HashMap<String, Value>,
+) -> Value {
+    let val = args.first().expect("array_split: requires an array argument");
+    let sections = args.get(1).expect("array_split: requires a sections argument");
+    let axis = kwargs
+        .get("axis")
+        .or_else(|| args.get(2))
+        .and_then(|v| v.int_val())
+        .unwrap_or(0);
+    split_impl(val, sections, axis, true, "array_split")
+}
+
+/// `np.hsplit(arr, sections)` — split along axis 1 for ≥2-D, axis 0 for 1-D.
+pub fn np_hsplit(_b: &mut IRBuilder, args: &[Value]) -> Value {
+    let val = args.first().expect("hsplit: requires an array argument");
+    let sections = args.get(1).expect("hsplit: requires a sections argument");
+    let shape = crate::helpers::composite::get_composite_shape(val);
+    let axis = if shape.len() >= 2 { 1 } else { 0 };
+    split_impl(val, sections, axis, false, "hsplit")
+}
+
+/// `np.vsplit(arr, sections)` — split along axis 0 (requires ≥2-D).
+pub fn np_vsplit(_b: &mut IRBuilder, args: &[Value]) -> Value {
+    let val = args.first().expect("vsplit: requires an array argument");
+    let sections = args.get(1).expect("vsplit: requires a sections argument");
+    let shape = crate::helpers::composite::get_composite_shape(val);
+    if shape.len() < 2 {
+        panic!("vsplit: input must be at least 2-D");
+    }
+    split_impl(val, sections, 0, false, "vsplit")
+}
+
+/// `np.dsplit(arr, sections)` — split along axis 2 (requires ≥3-D).
+pub fn np_dsplit(_b: &mut IRBuilder, args: &[Value]) -> Value {
+    let val = args.first().expect("dsplit: requires an array argument");
+    let sections = args.get(1).expect("dsplit: requires a sections argument");
+    let shape = crate::helpers::composite::get_composite_shape(val);
+    if shape.len() < 3 {
+        panic!("dsplit: input must be at least 3-D");
+    }
+    split_impl(val, sections, 2, false, "dsplit")
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// np.block — recursive nested concatenation
+// ────────────────────────────────────────────────────────────────────────
+
+/// Recursive worker for `np.block`. At each block level (going from the
+/// outermost level inward), we recurse on each child with `block_depth − 1`,
+/// then concat the results along the appropriate axis.
+///
+/// The axis follows NumPy's "negative axis from the result rank" rule: at
+/// the outermost level we concat along axis `result_ndim − block_depth`; at
+/// the innermost block level we concat along axis `result_ndim − 1`.
+fn block_recursive(val: &Value, block_depth: usize, result_ndim: usize) -> Value {
+    if block_depth == 0 {
+        return val.clone();
+    }
+    let children: Vec<Value> = match val {
+        Value::List(d) | Value::Tuple(d) => d
+            .values
+            .iter()
+            .map(|c| block_recursive(c, block_depth - 1, result_ndim))
+            .collect(),
+        _ => return val.clone(),
+    };
+    let axis = result_ndim - block_depth;
+    concat_recursive(&children, axis)
+}
+
+/// Walk every leaf in the nested block structure at the given depth. Used to
+/// validate that all leaves share a rank.
+fn collect_block_leaves(val: &Value, block_depth: usize) -> Vec<Value> {
+    if block_depth == 0 {
+        return vec![val.clone()];
+    }
+    match val {
+        Value::List(d) | Value::Tuple(d) => {
+            let mut all = Vec::new();
+            for child in &d.values {
+                all.extend(collect_block_leaves(child, block_depth - 1));
+            }
+            all
+        }
+        _ => vec![val.clone()],
+    }
+}
+
+/// `np.block(arrays, block_depth)` — recursive nested concatenation. The
+/// block depth must be supplied by the caller (typically computed from the
+/// AST nesting in `ir_gen/named_attr.rs`, since after a Python list literal
+/// has been visited into a `Value::List` we can no longer distinguish "a
+/// nested block of arrays" from "a single high-rank ndarray").
+///
+/// All leaf arrays must share the same rank, and that rank must be ≥
+/// `block_depth`. NumPy auto-promotes mixed-rank leaves via `atleast_Nd`;
+/// that case is currently out of scope and produces a hard error.
+pub fn np_block_with_depth(val: &Value, block_depth: usize) -> Value {
+    if block_depth == 0 {
+        return val.clone();
+    }
+
+    let leaves = collect_block_leaves(val, block_depth);
+    if leaves.is_empty() {
+        return val.clone();
+    }
+    let first_rank = crate::helpers::composite::get_composite_shape(&leaves[0]).len();
+    for leaf in &leaves {
+        let r = crate::helpers::composite::get_composite_shape(leaf).len();
+        if r != first_rank {
+            panic!(
+                "block: all leaf arrays must currently have the same rank \
+                 (got {} and {}). Mixed-rank block (NumPy auto-promotes via \
+                 atleast_Nd) is not yet supported on static ndarrays.",
+                first_rank, r
+            );
+        }
+    }
+    if first_rank < block_depth {
+        panic!(
+            "block: leaf arrays of rank {} cannot be combined into a block \
+             of nesting depth {}. Promote them with np.atleast_Nd first, or \
+             use np.stack / np.concatenate directly.",
+            first_rank, block_depth
+        );
+    }
+
+    let result_ndim = first_rank.max(block_depth);
+    block_recursive(val, block_depth, result_ndim)
 }
