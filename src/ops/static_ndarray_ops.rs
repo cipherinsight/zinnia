@@ -1306,6 +1306,456 @@ pub fn np_row_stack(b: &mut IRBuilder, args: &[Value]) -> Value {
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// Element-wise math: round / floor / ceil / trunc / reciprocal / where /
+// clip. None of these have a dedicated IR primitive yet, so they are
+// expressed in terms of existing ops (floor_div, sign, select, etc).
+// ────────────────────────────────────────────────────────────────────────
+
+/// Recursively apply `scalar` to every leaf in `val`. Used by all the
+/// element-wise wrappers below — keeps the leaf-walking boilerplate in
+/// one place.
+fn vectorize_unary<F: FnMut(&mut IRBuilder, &Value) -> Value>(
+    b: &mut IRBuilder,
+    val: &Value,
+    f: &mut F,
+) -> Value {
+    match val {
+        Value::List(d) | Value::Tuple(d) => {
+            let vals: Vec<Value> =
+                d.values.iter().map(|v| vectorize_unary(b, v, f)).collect();
+            let types = vals.iter().map(|v| v.zinnia_type()).collect();
+            Value::List(CompositeData {
+                elements_type: types,
+                values: vals,
+            })
+        }
+        _ => f(b, val),
+    }
+}
+
+/// `np.floor(x)` — round towards negative infinity. For floats this is
+/// `floor_div(x, 1.0)`; integers and booleans pass through unchanged.
+pub fn np_floor(b: &mut IRBuilder, args: &[Value]) -> Value {
+    let val = args.first().expect("floor: requires an argument");
+    vectorize_unary(b, val, &mut |b, x| match x {
+        Value::Float(_) => {
+            let one = b.ir_constant_float(1.0);
+            b.ir_floor_div_f(x, &one)
+        }
+        Value::Integer(_) | Value::Boolean(_) => x.clone(),
+        _ => panic!("floor: unsupported type {:?}", x.zinnia_type()),
+    })
+}
+
+/// `np.ceil(x)` — round towards positive infinity. Implemented as
+/// `-floor(-x)`.
+pub fn np_ceil(b: &mut IRBuilder, args: &[Value]) -> Value {
+    let val = args.first().expect("ceil: requires an argument");
+    vectorize_unary(b, val, &mut |b, x| match x {
+        Value::Float(_) => {
+            let zero = b.ir_constant_float(0.0);
+            let one = b.ir_constant_float(1.0);
+            let neg = b.ir_sub_f(&zero, x);
+            let floored = b.ir_floor_div_f(&neg, &one);
+            b.ir_sub_f(&zero, &floored)
+        }
+        Value::Integer(_) | Value::Boolean(_) => x.clone(),
+        _ => panic!("ceil: unsupported type {:?}", x.zinnia_type()),
+    })
+}
+
+/// `np.trunc(x)` — round towards zero. Implemented as `select(x >= 0,
+/// floor(x), ceil(x))`.
+pub fn np_trunc(b: &mut IRBuilder, args: &[Value]) -> Value {
+    let val = args.first().expect("trunc: requires an argument");
+    vectorize_unary(b, val, &mut |b, x| match x {
+        Value::Float(_) => {
+            let zero = b.ir_constant_float(0.0);
+            let one = b.ir_constant_float(1.0);
+            // floor branch
+            let floor_x = b.ir_floor_div_f(x, &one);
+            // ceil branch (= -floor(-x))
+            let neg = b.ir_sub_f(&zero, x);
+            let neg_floor = b.ir_floor_div_f(&neg, &one);
+            let ceil_x = b.ir_sub_f(&zero, &neg_floor);
+            let nonneg = b.ir_greater_than_or_equal_f(x, &zero);
+            b.ir_select_f(&nonneg, &floor_x, &ceil_x)
+        }
+        Value::Integer(_) | Value::Boolean(_) => x.clone(),
+        _ => panic!("trunc: unsupported type {:?}", x.zinnia_type()),
+    })
+}
+
+/// `np.round(x)` — half-away-from-zero (NumPy uses banker's rounding which
+/// requires extra primitives we don't have; half-away-from-zero is a
+/// reasonable common-case substitute). Implemented as `floor(x + 0.5)` for
+/// non-negative x and `-floor(-x + 0.5)` for negative x.
+pub fn np_round(b: &mut IRBuilder, args: &[Value]) -> Value {
+    let val = args.first().expect("round: requires an argument");
+    vectorize_unary(b, val, &mut |b, x| match x {
+        Value::Float(_) => {
+            let zero = b.ir_constant_float(0.0);
+            let half = b.ir_constant_float(0.5);
+            let one = b.ir_constant_float(1.0);
+            // pos branch: floor(x + 0.5)
+            let pos_in = b.ir_add_f(x, &half);
+            let pos_out = b.ir_floor_div_f(&pos_in, &one);
+            // neg branch: -floor(-x + 0.5)
+            let neg = b.ir_sub_f(&zero, x);
+            let neg_in = b.ir_add_f(&neg, &half);
+            let neg_floor = b.ir_floor_div_f(&neg_in, &one);
+            let neg_out = b.ir_sub_f(&zero, &neg_floor);
+            let nonneg = b.ir_greater_than_or_equal_f(x, &zero);
+            b.ir_select_f(&nonneg, &pos_out, &neg_out)
+        }
+        Value::Integer(_) | Value::Boolean(_) => x.clone(),
+        _ => panic!("round: unsupported type {:?}", x.zinnia_type()),
+    })
+}
+
+/// `np.reciprocal(x)` — `1 / x`. Result is always a float.
+pub fn np_reciprocal(b: &mut IRBuilder, args: &[Value]) -> Value {
+    let val = args.first().expect("reciprocal: requires an argument");
+    vectorize_unary(b, val, &mut |b, x| {
+        let xf = match x {
+            Value::Float(_) => x.clone(),
+            _ => b.ir_float_cast(x),
+        };
+        let one = b.ir_constant_float(1.0);
+        b.ir_div_f(&one, &xf)
+    })
+}
+
+/// `np.where(cond, x, y)` — element-wise ternary select. All three args
+/// are broadcast to a common shape, then a per-element select fires.
+pub fn np_where(b: &mut IRBuilder, args: &[Value]) -> Value {
+    if args.len() < 3 {
+        panic!("where: requires three arguments (cond, x, y)");
+    }
+    let cond = &args[0];
+    let x = &args[1];
+    let y = &args[2];
+    let cs = crate::helpers::composite::get_composite_shape(cond);
+    let xs = crate::helpers::composite::get_composite_shape(x);
+    let ys = crate::helpers::composite::get_composite_shape(y);
+    // Broadcast cond/x first, then that result with y.
+    let cx = crate::helpers::broadcast::broadcast_shapes(&cs, &xs).unwrap_or_else(|| {
+        panic!("where: shapes {:?} and {:?} not broadcast compatible", cs, xs)
+    });
+    let target = crate::helpers::broadcast::broadcast_shapes(&cx, &ys).unwrap_or_else(|| {
+        panic!("where: shapes {:?} and {:?} not broadcast compatible", cx, ys)
+    });
+    let cond_b = crate::helpers::broadcast::materialize_to_shape(cond, &target);
+    let x_b = crate::helpers::broadcast::materialize_to_shape(x, &target);
+    let y_b = crate::helpers::broadcast::materialize_to_shape(y, &target);
+    fn rec(b: &mut IRBuilder, c: &Value, x: &Value, y: &Value) -> Value {
+        match (c, x, y) {
+            (
+                Value::List(cd) | Value::Tuple(cd),
+                Value::List(xd) | Value::Tuple(xd),
+                Value::List(yd) | Value::Tuple(yd),
+            ) => {
+                let vals: Vec<Value> = cd
+                    .values
+                    .iter()
+                    .zip(xd.values.iter())
+                    .zip(yd.values.iter())
+                    .map(|((cv, xv), yv)| rec(b, cv, xv, yv))
+                    .collect();
+                let types = vals.iter().map(|v| v.zinnia_type()).collect();
+                Value::List(CompositeData {
+                    elements_type: types,
+                    values: vals,
+                })
+            }
+            _ => crate::helpers::value_ops::select_value(b, c, x, y),
+        }
+    }
+    rec(b, &cond_b, &x_b, &y_b)
+}
+
+/// `np.clip(arr, lo, hi)` — element-wise clamp. Implemented as
+/// `where(arr < lo, lo, where(arr > hi, hi, arr))`. lo / hi may be scalars
+/// or broadcast-compatible arrays.
+pub fn np_clip(b: &mut IRBuilder, args: &[Value]) -> Value {
+    if args.len() < 3 {
+        panic!("clip: requires three arguments (arr, a_min, a_max)");
+    }
+    let arr = &args[0];
+    let lo = &args[1];
+    let hi = &args[2];
+    // arr.clip(lo, hi) ≡ minimum(maximum(arr, lo), hi)
+    let lower = crate::helpers::value_ops::apply_binary_op(b, "lt", arr, lo);
+    let after_lower = np_where(b, &[lower, lo.clone(), arr.clone()]);
+    let upper = crate::helpers::value_ops::apply_binary_op(b, "gt", &after_lower, hi);
+    np_where(b, &[upper, hi.clone(), after_lower])
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Reductions: mean / var / std / cumsum / cumprod (with axis support)
+// ────────────────────────────────────────────────────────────────────────
+
+/// Reduce along axis 0 of `items` — i.e. given N input arrays of the same
+/// shape, walk them in lockstep and apply `op` element-wise across the N at
+/// every leaf position. The result has the inner shape (one rank lower than
+/// the outer collection).
+fn reduce_along_axis_0(b: &mut IRBuilder, op: &str, items: &[Value]) -> Value {
+    if items.is_empty() {
+        return Value::None;
+    }
+    let first = &items[0];
+    match first {
+        Value::List(d) | Value::Tuple(d) => {
+            let inner_len = d.values.len();
+            let mut out = Vec::with_capacity(inner_len);
+            for i in 0..inner_len {
+                let mut inner_items: Vec<Value> = Vec::with_capacity(items.len());
+                for it in items {
+                    if let Value::List(dd) | Value::Tuple(dd) = it {
+                        inner_items.push(dd.values[i].clone());
+                    }
+                }
+                out.push(reduce_along_axis_0(b, op, &inner_items));
+            }
+            let types = out.iter().map(|v| v.zinnia_type()).collect();
+            Value::List(CompositeData {
+                elements_type: types,
+                values: out,
+            })
+        }
+        _ => {
+            let lst = Value::List(CompositeData {
+                elements_type: items.iter().map(|v| v.zinnia_type()).collect(),
+                values: items.to_vec(),
+            });
+            crate::helpers::ndarray::builtin_reduce(b, op, &lst)
+        }
+    }
+}
+
+/// General axis-aware reduction for arbitrary axis. Replaces the old
+/// hard-coded axis 0/1 logic.
+fn reduce_axis_general(b: &mut IRBuilder, op: &str, val: &Value, axis: usize) -> Value {
+    if axis == 0 {
+        if let Value::List(d) | Value::Tuple(d) = val {
+            return reduce_along_axis_0(b, op, &d.values);
+        }
+        return crate::helpers::ndarray::builtin_reduce(b, op, val);
+    }
+    match val {
+        Value::List(d) | Value::Tuple(d) => {
+            let new_vals: Vec<Value> = d
+                .values
+                .iter()
+                .map(|v| reduce_axis_general(b, op, v, axis - 1))
+                .collect();
+            let types = new_vals.iter().map(|v| v.zinnia_type()).collect();
+            Value::List(CompositeData {
+                elements_type: types,
+                values: new_vals,
+            })
+        }
+        _ => crate::helpers::ndarray::builtin_reduce(b, op, val),
+    }
+}
+
+/// Public entry point preserving the old `reduce_with_axis` name. Resolves
+/// negative axes here so callers don't have to.
+pub fn reduce_with_axis_general(b: &mut IRBuilder, op: &str, val: &Value, axis: i64) -> Value {
+    let ndim = crate::helpers::composite::get_composite_shape(val).len();
+    if ndim == 0 {
+        return crate::helpers::ndarray::builtin_reduce(b, op, val);
+    }
+    let resolved = if axis < 0 { ndim as i64 + axis } else { axis };
+    if resolved < 0 || resolved >= ndim as i64 {
+        panic!(
+            "reduce: axis {} is out of bounds for array of rank {}",
+            axis, ndim
+        );
+    }
+    reduce_axis_general(b, op, val, resolved as usize)
+}
+
+/// Cast a scalar value to float, leaving floats untouched.
+fn ensure_scalar_float(b: &mut IRBuilder, v: &Value) -> Value {
+    match v {
+        Value::Float(_) => v.clone(),
+        _ => b.ir_float_cast(v),
+    }
+}
+
+/// `np.mean(arr, axis=None)` — element-wise mean. With no axis, the result
+/// is a scalar; with an axis, the result has rank one less.
+pub fn np_mean(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+    let val = args.first().expect("mean: requires an argument");
+    let axis = kwargs
+        .get("axis")
+        .or_else(|| args.get(1))
+        .and_then(|v| v.int_val());
+
+    let shape = crate::helpers::composite::get_composite_shape(val);
+    if let Some(ax) = axis {
+        let ndim = shape.len();
+        let resolved = if ax < 0 { ndim as i64 + ax } else { ax };
+        if resolved < 0 || resolved >= ndim as i64 {
+            panic!("mean: axis {} is out of bounds for array of rank {}", ax, ndim);
+        }
+        let n = shape[resolved as usize];
+        let summed = reduce_axis_general(b, "sum", val, resolved as usize);
+        let n_val = b.ir_constant_float(n as f64);
+        // Vectorized division
+        vectorize_unary(b, &summed, &mut |b, x| {
+            let xf = ensure_scalar_float(b, x);
+            b.ir_div_f(&xf, &n_val)
+        })
+    } else {
+        let total: usize = shape.iter().product::<usize>().max(1);
+        let total_sum = crate::helpers::ndarray::builtin_reduce(b, "sum", val);
+        let total_f = ensure_scalar_float(b, &total_sum);
+        let n_val = b.ir_constant_float(total as f64);
+        b.ir_div_f(&total_f, &n_val)
+    }
+}
+
+/// Compute element-wise `(x - m) ** 2` where `m` is broadcast against `x`.
+fn squared_deviation(b: &mut IRBuilder, x: &Value, m: &Value) -> Value {
+    let diff = crate::helpers::value_ops::apply_binary_op(b, "sub", x, m);
+    crate::helpers::value_ops::apply_binary_op(b, "mul", &diff, &diff)
+}
+
+/// `np.var(arr, axis=None)` — population variance (ddof=0). NumPy supports
+/// `ddof` but we keep things simple for now and pin ddof=0.
+pub fn np_var(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+    let val = args.first().expect("var: requires an argument");
+    let axis = kwargs
+        .get("axis")
+        .or_else(|| args.get(1))
+        .and_then(|v| v.int_val());
+
+    let mean = np_mean(b, args, kwargs);
+    if let Some(ax) = axis {
+        // Need to reinsert the reduced axis as length 1 so the broadcast
+        // arithmetic works. Easiest: expand_dims at the resolved axis.
+        let shape = crate::helpers::composite::get_composite_shape(val);
+        let ndim = shape.len();
+        let resolved = if ax < 0 { ndim as i64 + ax } else { ax };
+        let axis_const = b.ir_constant_int(resolved);
+        let mean_expanded = np_expand_dims(b, &[mean.clone(), axis_const]);
+        let sq = squared_deviation(b, val, &mean_expanded);
+        let sq_sum_args = vec![sq.clone()];
+        let mut sq_sum_kwargs = HashMap::new();
+        sq_sum_kwargs.insert(
+            "axis".to_string(),
+            b.ir_constant_int(resolved),
+        );
+        np_mean(b, &sq_sum_args, &sq_sum_kwargs)
+    } else {
+        let sq = squared_deviation(b, val, &mean);
+        np_mean(b, &[sq], &HashMap::new())
+    }
+}
+
+/// `np.std(arr, axis=None)` — population standard deviation = sqrt(var).
+pub fn np_std(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+    let v = np_var(b, args, kwargs);
+    vectorize_unary(b, &v, &mut |b, x| {
+        let xf = ensure_scalar_float(b, x);
+        b.ir_sqrt_f(&xf)
+    })
+}
+
+/// Inclusive prefix scan along axis 0 of `val`, applying `op` (`add` or
+/// `mul`). Used by cumsum/cumprod.
+fn cumulative_axis_0(b: &mut IRBuilder, op: &str, val: &Value) -> Value {
+    let outer = match val {
+        Value::List(d) | Value::Tuple(d) => d,
+        _ => return val.clone(),
+    };
+    if outer.values.is_empty() {
+        return val.clone();
+    }
+    let mut out: Vec<Value> = Vec::with_capacity(outer.values.len());
+    out.push(outer.values[0].clone());
+    for i in 1..outer.values.len() {
+        let prev = out.last().cloned().unwrap();
+        let next = crate::helpers::value_ops::apply_binary_op(b, op, &prev, &outer.values[i]);
+        out.push(next);
+    }
+    let types = out.iter().map(|v| v.zinnia_type()).collect();
+    Value::List(CompositeData {
+        elements_type: types,
+        values: out,
+    })
+}
+
+/// Recursive scan along an arbitrary axis. At axis 0 we run the prefix
+/// scan; at axis > 0 we recurse into each outer child.
+fn cumulative_axis_general(b: &mut IRBuilder, op: &str, val: &Value, axis: usize) -> Value {
+    if axis == 0 {
+        return cumulative_axis_0(b, op, val);
+    }
+    match val {
+        Value::List(d) | Value::Tuple(d) => {
+            let new_vals: Vec<Value> = d
+                .values
+                .iter()
+                .map(|v| cumulative_axis_general(b, op, v, axis - 1))
+                .collect();
+            let types = new_vals.iter().map(|v| v.zinnia_type()).collect();
+            Value::List(CompositeData {
+                elements_type: types,
+                values: new_vals,
+            })
+        }
+        _ => val.clone(),
+    }
+}
+
+/// `np.cumsum(arr, axis=None)` / `np.cumprod(arr, axis=None)`. Without an
+/// axis, NumPy flattens first then scans, returning a 1-D result.
+pub fn np_cumulative(
+    b: &mut IRBuilder,
+    args: &[Value],
+    kwargs: &HashMap<String, Value>,
+    op: &str,
+) -> Value {
+    let val = args.first().expect("cumulative: requires an argument");
+    let axis = kwargs
+        .get("axis")
+        .or_else(|| args.get(1))
+        .and_then(|v| v.int_val());
+
+    if let Some(ax) = axis {
+        let ndim = crate::helpers::composite::get_composite_shape(val).len();
+        let resolved = if ax < 0 { ndim as i64 + ax } else { ax };
+        if resolved < 0 || resolved >= ndim as i64 {
+            panic!(
+                "{}: axis {} is out of bounds for array of rank {}",
+                op, ax, ndim
+            );
+        }
+        cumulative_axis_general(b, op, val, resolved as usize)
+    } else {
+        // Flatten then scan along the new axis 0.
+        let flat = crate::helpers::composite::flatten_composite(val);
+        let types: Vec<crate::types::ZinniaType> = flat.iter().map(|v| v.zinnia_type()).collect();
+        let flat_val = Value::List(CompositeData {
+            elements_type: types,
+            values: flat,
+        });
+        cumulative_axis_0(b, op, &flat_val)
+    }
+}
+
+pub fn np_cumsum(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+    np_cumulative(b, args, kwargs, "add")
+}
+
+pub fn np_cumprod(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+    np_cumulative(b, args, kwargs, "mul")
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // Splitting family (split / array_split / hsplit / vsplit / dsplit)
 // ────────────────────────────────────────────────────────────────────────
 

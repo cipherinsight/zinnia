@@ -267,6 +267,18 @@ impl IRGenerator {
             (Some("np"), "hsplit") => crate::ops::static_ndarray_ops::np_hsplit(&mut self.builder, &visited_args),
             (Some("np"), "vsplit") => crate::ops::static_ndarray_ops::np_vsplit(&mut self.builder, &visited_args),
             (Some("np"), "dsplit") => crate::ops::static_ndarray_ops::np_dsplit(&mut self.builder, &visited_args),
+            (Some("np"), "floor") => crate::ops::static_ndarray_ops::np_floor(&mut self.builder, &visited_args),
+            (Some("np"), "ceil") => crate::ops::static_ndarray_ops::np_ceil(&mut self.builder, &visited_args),
+            (Some("np"), "trunc") => crate::ops::static_ndarray_ops::np_trunc(&mut self.builder, &visited_args),
+            (Some("np"), "round") => crate::ops::static_ndarray_ops::np_round(&mut self.builder, &visited_args),
+            (Some("np"), "reciprocal") => crate::ops::static_ndarray_ops::np_reciprocal(&mut self.builder, &visited_args),
+            (Some("np"), "where") => crate::ops::static_ndarray_ops::np_where(&mut self.builder, &visited_args),
+            (Some("np"), "clip") => crate::ops::static_ndarray_ops::np_clip(&mut self.builder, &visited_args),
+            (Some("np"), "mean") => crate::ops::static_ndarray_ops::np_mean(&mut self.builder, &visited_args, &_visited_kwargs),
+            (Some("np"), "var") => crate::ops::static_ndarray_ops::np_var(&mut self.builder, &visited_args, &_visited_kwargs),
+            (Some("np"), "std") => crate::ops::static_ndarray_ops::np_std(&mut self.builder, &visited_args, &_visited_kwargs),
+            (Some("np"), "cumsum") => crate::ops::static_ndarray_ops::np_cumsum(&mut self.builder, &visited_args, &_visited_kwargs),
+            (Some("np"), "cumprod") => crate::ops::static_ndarray_ops::np_cumprod(&mut self.builder, &visited_args, &_visited_kwargs),
             (Some("np"), "block") => {
                 // Block depth must be measured from the *AST*, not the
                 // visited Value: after Python list literals have been turned
@@ -517,6 +529,36 @@ impl IRGenerator {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
                 crate::ops::static_ndarray_ops::ndarray_swapaxes(&mut self.builder, &val, &visited_args)
             }
+            (Some(var), "mean") if self.ctx.exists(var) => {
+                let val = self.ctx.get(var).unwrap_or(Value::None);
+                let mut all_args = vec![val];
+                all_args.extend(visited_args.iter().cloned());
+                crate::ops::static_ndarray_ops::np_mean(&mut self.builder, &all_args, &_visited_kwargs)
+            }
+            (Some(var), "var") if self.ctx.exists(var) => {
+                let val = self.ctx.get(var).unwrap_or(Value::None);
+                let mut all_args = vec![val];
+                all_args.extend(visited_args.iter().cloned());
+                crate::ops::static_ndarray_ops::np_var(&mut self.builder, &all_args, &_visited_kwargs)
+            }
+            (Some(var), "std") if self.ctx.exists(var) => {
+                let val = self.ctx.get(var).unwrap_or(Value::None);
+                let mut all_args = vec![val];
+                all_args.extend(visited_args.iter().cloned());
+                crate::ops::static_ndarray_ops::np_std(&mut self.builder, &all_args, &_visited_kwargs)
+            }
+            (Some(var), "cumsum") if self.ctx.exists(var) => {
+                let val = self.ctx.get(var).unwrap_or(Value::None);
+                let mut all_args = vec![val];
+                all_args.extend(visited_args.iter().cloned());
+                crate::ops::static_ndarray_ops::np_cumsum(&mut self.builder, &all_args, &_visited_kwargs)
+            }
+            (Some(var), "cumprod") if self.ctx.exists(var) => {
+                let val = self.ctx.get(var).unwrap_or(Value::None);
+                let mut all_args = vec![val];
+                all_args.extend(visited_args.iter().cloned());
+                crate::ops::static_ndarray_ops::np_cumprod(&mut self.builder, &all_args, &_visited_kwargs)
+            }
             (Some(var), "squeeze") if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
                 let mut all_args: Vec<Value> = vec![val];
@@ -526,6 +568,128 @@ impl IRGenerator {
             (Some(var), "filter") if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
                 crate::ops::static_ndarray_ops::ndarray_filter(&mut self.builder,&val, &visited_args)
+            }
+
+            // ── np.* fallback to the np_like registry ───────────────────
+            //
+            // Anything under the `np` namespace that wasn't matched by an
+            // explicit arm above falls through to the registry, where the
+            // `define_np_*` macros (now vectorized) handle ops like np.sqrt,
+            // np.exp, np.sin, np.abs, np.minimum, np.equal, etc. Positional
+            // args are mapped to the macro-expected `x` / `x1` / `x2`
+            // kwargs.
+            //
+            // For unary ops invoked on a composite value, we centrally
+            // vectorize by walking leaves and re-dispatching at each one.
+            // This fixes hand-rolled ops (np.negative, np.sign,
+            // np.positive, np.logical_not, np.abs/absolute/fabs, …) which
+            // don't use the auto-vectorizing macro.
+            (Some("np"), name) | (Some("zinnia"), name) => {
+                fn dispatch_scalar(
+                    builder: &mut crate::builder::IRBuilder,
+                    name: &str,
+                    kwargs: std::collections::HashMap<String, Value>,
+                ) -> Option<Value> {
+                    let op_args = crate::ops::OpArgs::new(kwargs);
+                    crate::ops::registry::build_op(
+                        name,
+                        Some(crate::ops::registry::OpNamespace::Np),
+                        builder,
+                        &op_args,
+                    )
+                }
+                fn vectorize_unary_np(
+                    builder: &mut crate::builder::IRBuilder,
+                    name: &str,
+                    base_kwargs: &std::collections::HashMap<String, Value>,
+                    x: &Value,
+                ) -> Value {
+                    match x {
+                        Value::List(d) | Value::Tuple(d) => {
+                            let vals: Vec<Value> = d
+                                .values
+                                .iter()
+                                .map(|v| vectorize_unary_np(builder, name, base_kwargs, v))
+                                .collect();
+                            let types = vals.iter().map(|v| v.zinnia_type()).collect();
+                            Value::List(CompositeData {
+                                elements_type: types,
+                                values: vals,
+                            })
+                        }
+                        _ => {
+                            let mut kw = base_kwargs.clone();
+                            kw.insert("x".to_string(), x.clone());
+                            dispatch_scalar(builder, name, kw)
+                                .unwrap_or_else(|| panic!("np.{} is not implemented", name))
+                        }
+                    }
+                }
+
+                // Mapping for binary ops to the short names accepted by
+                // `apply_binary_op`. Used for centralized binary
+                // vectorization below.
+                let binary_apply_name: Option<&str> = match member {
+                    "add" => Some("add"),
+                    "subtract" => Some("sub"),
+                    "multiply" => Some("mul"),
+                    "divide" => Some("div"),
+                    "floor_divide" => Some("floor_div"),
+                    "mod" | "fmod" => Some("mod"),
+                    "power" | "pow" => Some("pow"),
+                    "equal" => Some("eq"),
+                    "not_equal" => Some("ne"),
+                    "less" => Some("lt"),
+                    "less_equal" => Some("lte"),
+                    "greater" => Some("gt"),
+                    "greater_equal" => Some("gte"),
+                    "logical_and" => Some("and"),
+                    "logical_or" => Some("or"),
+                    _ => None,
+                };
+
+                let result = if visited_args.len() == 1
+                    && matches!(visited_args[0], Value::List(_) | Value::Tuple(_))
+                {
+                    // Centralized unary vectorization.
+                    Some(vectorize_unary_np(
+                        &mut self.builder,
+                        member,
+                        &_visited_kwargs,
+                        &visited_args[0],
+                    ))
+                } else if visited_args.len() == 2
+                    && (matches!(visited_args[0], Value::List(_) | Value::Tuple(_))
+                        || matches!(visited_args[1], Value::List(_) | Value::Tuple(_)))
+                    && binary_apply_name.is_some()
+                {
+                    // Centralized binary vectorization for composite operands.
+                    // Falls through to `apply_binary_op` which already does
+                    // shape-broadcasting and dtype promotion.
+                    Some(crate::helpers::value_ops::apply_binary_op(
+                        &mut self.builder,
+                        binary_apply_name.unwrap(),
+                        &visited_args[0],
+                        &visited_args[1],
+                    ))
+                } else {
+                    let mut all_kwargs = _visited_kwargs.clone();
+                    if visited_args.len() == 1 {
+                        all_kwargs
+                            .entry("x".to_string())
+                            .or_insert_with(|| visited_args[0].clone());
+                    } else {
+                        for (i, v) in visited_args.iter().enumerate() {
+                            let key = format!("x{}", i + 1);
+                            all_kwargs.entry(key).or_insert_with(|| v.clone());
+                        }
+                    }
+                    dispatch_scalar(&mut self.builder, member, all_kwargs)
+                };
+                match result {
+                    Some(v) => v,
+                    None => panic!("np.{} is not implemented", name),
+                }
             }
 
             // ── Chip calls (no target or target not a known variable) ─

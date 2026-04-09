@@ -1,6 +1,115 @@
 //! NumPy-like operators: np.add, np.subtract, np.multiply, np.divide, etc.
 //! Most np_like ops are thin wrappers that delegate to the core arithmetic/math ops.
 //! Ports `zinnia/op_def/np_like/` (74 files).
+//!
+//! Vectorization: when invoked on composite values (List/Tuple), the binary
+//! and comparison ops fall through to `apply_binary_op` (which already does
+//! shape-level broadcasting), and the unary-math ops walk leaves recursively.
+//! Composite-aware behaviour is added by the macros below — individual op
+//! files don't need to know about it.
+
+/// Map an `np.<op>` name (as accepted by the np_like macros) to the short
+/// op name expected by `helpers::value_ops::apply_binary_op`. Falls back on
+/// the input string when the names already match.
+pub(crate) fn np_op_name_to_apply_op(np_name: &str) -> &'static str {
+    match np_name {
+        "add" => "add",
+        "subtract" => "sub",
+        "multiply" => "mul",
+        "divide" => "div",
+        "floor_divide" => "floor_div",
+        "mod" => "mod",
+        "fmod" => "mod",
+        "power" => "pow",
+        "pow" => "pow",
+        "equal" => "eq",
+        "not_equal" => "ne",
+        "less" => "lt",
+        "less_equal" => "lte",
+        "greater" => "gt",
+        "greater_equal" => "gte",
+        "logical_and" => "and",
+        "logical_or" => "or",
+        other => panic!("np_op_name_to_apply_op: no mapping for `{}`", other),
+    }
+}
+
+/// Element-wise minimum/maximum that vectorizes over composites by
+/// recursing into matching positions. Used by `define_np_minmax` when
+/// either operand is a composite.
+pub(crate) fn vectorize_minmax(
+    builder: &mut crate::builder::IRBuilder,
+    x1: &crate::types::Value,
+    x2: &crate::types::Value,
+    int_cmp: fn(&mut crate::builder::IRBuilder, &crate::types::Value, &crate::types::Value) -> crate::types::Value,
+    float_cmp: fn(&mut crate::builder::IRBuilder, &crate::types::Value, &crate::types::Value) -> crate::types::Value,
+) -> crate::types::Value {
+    use crate::types::{CompositeData, Value};
+    // Broadcast first so both operands have the same shape, then walk in
+    // lockstep.
+    let lshape = crate::helpers::composite::get_composite_shape(x1);
+    let rshape = crate::helpers::composite::get_composite_shape(x2);
+    let (l, r) = if lshape == rshape {
+        (x1.clone(), x2.clone())
+    } else if let Some(target) = crate::helpers::broadcast::broadcast_shapes(&lshape, &rshape) {
+        (
+            crate::helpers::broadcast::materialize_to_shape(x1, &target),
+            crate::helpers::broadcast::materialize_to_shape(x2, &target),
+        )
+    } else {
+        panic!(
+            "minimum/maximum: shapes {:?} and {:?} are not broadcast compatible",
+            lshape, rshape
+        );
+    };
+    fn rec(
+        builder: &mut crate::builder::IRBuilder,
+        a: &Value,
+        b: &Value,
+        int_cmp: fn(&mut crate::builder::IRBuilder, &Value, &Value) -> Value,
+        float_cmp: fn(&mut crate::builder::IRBuilder, &Value, &Value) -> Value,
+    ) -> Value {
+        match (a, b) {
+            (Value::List(da), Value::List(db))
+            | (Value::List(da), Value::Tuple(db))
+            | (Value::Tuple(da), Value::List(db))
+            | (Value::Tuple(da), Value::Tuple(db)) => {
+                let vals: Vec<Value> = da
+                    .values
+                    .iter()
+                    .zip(db.values.iter())
+                    .map(|(av, bv)| rec(builder, av, bv, int_cmp, float_cmp))
+                    .collect();
+                let types = vals.iter().map(|v| v.zinnia_type()).collect();
+                Value::List(CompositeData {
+                    elements_type: types,
+                    values: vals,
+                })
+            }
+            _ => {
+                let use_float = matches!(a, Value::Float(_)) || matches!(b, Value::Float(_));
+                if use_float {
+                    let af = if matches!(a, Value::Float(_)) {
+                        a.clone()
+                    } else {
+                        builder.ir_float_cast(a)
+                    };
+                    let bf = if matches!(b, Value::Float(_)) {
+                        b.clone()
+                    } else {
+                        builder.ir_float_cast(b)
+                    };
+                    let cond = float_cmp(builder, &af, &bf);
+                    builder.ir_select_f(&cond, &af, &bf)
+                } else {
+                    let cond = int_cmp(builder, a, b);
+                    builder.ir_select_i(&cond, a, b)
+                }
+            }
+        }
+    }
+    rec(builder, &l, &r, int_cmp, float_cmp)
+}
 
 macro_rules! define_np_arith {
     ($name:ident, $op_name:expr, $sig:expr, $int_method:ident, $float_method:ident) => {
@@ -22,6 +131,19 @@ macro_rules! define_np_arith {
                     return crate::ops::dispatch_binary_numeric(
                         builder, x1, x2,
                         crate::builder::IRBuilder::$int_method, crate::builder::IRBuilder::$float_method,
+                    );
+                }
+                // Vectorize over composites: fall through to apply_binary_op
+                // which already handles broadcasting + element-wise dispatch.
+                use crate::types::Value;
+                if matches!(x1, Value::List(_) | Value::Tuple(_))
+                    || matches!(x2, Value::List(_) | Value::Tuple(_))
+                {
+                    return crate::helpers::value_ops::apply_binary_op(
+                        builder,
+                        crate::ops::np_like::np_op_name_to_apply_op($op_name),
+                        x1,
+                        x2,
                     );
                 }
                 panic!("{}: unsupported types", $sig);
@@ -53,6 +175,17 @@ macro_rules! define_np_compare {
                         crate::builder::IRBuilder::$int_method, crate::builder::IRBuilder::$float_method,
                     );
                 }
+                use crate::types::Value;
+                if matches!(x1, Value::List(_) | Value::Tuple(_))
+                    || matches!(x2, Value::List(_) | Value::Tuple(_))
+                {
+                    return crate::helpers::value_ops::apply_binary_op(
+                        builder,
+                        crate::ops::np_like::np_op_name_to_apply_op($op_name),
+                        x1,
+                        x2,
+                    );
+                }
                 panic!("{}: unsupported types", $sig);
             }
         }
@@ -66,20 +199,35 @@ macro_rules! define_np_unary_math {
         impl $name {
             const PARAMS: [crate::ops::ParamEntry; 1] = [crate::ops::ParamEntry::required("x")];
         }
-        impl crate::ops::Op for $name {
-            fn name(&self) -> &'static str { $op_name }
-            fn signature(&self) -> &'static str { $sig }
-            fn params(&self) -> &[crate::ops::ParamEntry] { &Self::PARAMS }
-            fn build(&self, builder: &mut crate::builder::IRBuilder, args: &crate::ops::OpArgs) -> crate::types::Value {
-                let x = args.require("x");
+        impl $name {
+            // Recursively walk composites and apply the scalar op at the
+            // leaves. Inlined inside the impl so the macro substitution can
+            // reference the captured `$float_method` and `$sig`.
+            fn apply_scalar(builder: &mut crate::builder::IRBuilder, x: &crate::types::Value) -> crate::types::Value {
+                use crate::types::{Value, CompositeData};
                 match x {
-                    crate::types::Value::Float(_) => builder.$float_method(x),
-                    crate::types::Value::Integer(_) | crate::types::Value::Boolean(_) => {
+                    Value::List(d) | Value::Tuple(d) => {
+                        let vals: Vec<Value> = d.values.iter()
+                            .map(|v| Self::apply_scalar(builder, v))
+                            .collect();
+                        let types = vals.iter().map(|v| v.zinnia_type()).collect();
+                        Value::List(CompositeData { elements_type: types, values: vals })
+                    }
+                    Value::Float(_) => builder.$float_method(x),
+                    Value::Integer(_) | Value::Boolean(_) => {
                         let xf = builder.ir_float_cast(x);
                         builder.$float_method(&xf)
                     }
                     _ => panic!("{}: unsupported type {:?}", $sig, x.zinnia_type()),
                 }
+            }
+        }
+        impl crate::ops::Op for $name {
+            fn name(&self) -> &'static str { $op_name }
+            fn signature(&self) -> &'static str { $sig }
+            fn params(&self) -> &[crate::ops::ParamEntry] { &Self::PARAMS }
+            fn build(&self, builder: &mut crate::builder::IRBuilder, args: &crate::ops::OpArgs) -> crate::types::Value {
+                Self::apply_scalar(builder, args.require("x"))
             }
         }
     };
@@ -123,6 +271,17 @@ macro_rules! define_np_minmax {
                         let x2f = builder.ir_float_cast(x2);
                         let cond = builder.$float_cmp(x1, &x2f);
                         builder.ir_select_f(&cond, x1, &x2f)
+                    }
+                    (a, b) if matches!(a, crate::types::Value::List(_) | crate::types::Value::Tuple(_))
+                        || matches!(b, crate::types::Value::List(_) | crate::types::Value::Tuple(_)) =>
+                    {
+                        // Vectorize over composites by recursing through
+                        // shape-broadcast leaves.
+                        crate::ops::np_like::vectorize_minmax(
+                            builder, a, b,
+                            crate::builder::IRBuilder::$int_cmp,
+                            crate::builder::IRBuilder::$float_cmp,
+                        )
                     }
                     _ => panic!("{}: unsupported types", $sig),
                 }

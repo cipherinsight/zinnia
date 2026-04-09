@@ -379,11 +379,17 @@ pub fn builtin_reduce(b: &mut IRBuilder, op: &str, val: &Value) -> Value {
             _ => Value::None,
         };
     }
+    // Are any of the leaves floats? If so, the accumulator must use the
+    // float ops; otherwise we'd silently feed floats into ir_add_i etc.
+    // and corrupt the IR. We route everything through `apply_binary_op`
+    // which already handles int/float promotion correctly.
+    let any_float = elements.iter().any(|v| matches!(v, Value::Float(_)));
+    let _ = any_float;
     match op {
         "sum" => {
             let mut acc = elements[0].clone();
             for elem in &elements[1..] {
-                acc = b.ir_add_i(&acc, elem);
+                acc = crate::helpers::value_ops::apply_binary_op(b, "add", &acc, elem);
             }
             acc
         }
@@ -406,23 +412,23 @@ pub fn builtin_reduce(b: &mut IRBuilder, op: &str, val: &Value) -> Value {
         "min" => {
             let mut acc = elements[0].clone();
             for elem in &elements[1..] {
-                let cond = b.ir_less_than_i(&acc, elem);
-                acc = b.ir_select_i(&cond, &acc, elem);
+                let cond = crate::helpers::value_ops::apply_binary_op(b, "lt", &acc, elem);
+                acc = crate::helpers::value_ops::select_value(b, &cond, &acc, elem);
             }
             acc
         }
         "max" => {
             let mut acc = elements[0].clone();
             for elem in &elements[1..] {
-                let cond = b.ir_greater_than_i(&acc, elem);
-                acc = b.ir_select_i(&cond, &acc, elem);
+                let cond = crate::helpers::value_ops::apply_binary_op(b, "gt", &acc, elem);
+                acc = crate::helpers::value_ops::select_value(b, &cond, &acc, elem);
             }
             acc
         }
         "prod" => {
             let mut acc = elements[0].clone();
             for elem in &elements[1..] {
-                acc = b.ir_mul_i(&acc, elem);
+                acc = crate::helpers::value_ops::apply_binary_op(b, "mul", &acc, elem);
             }
             acc
         }

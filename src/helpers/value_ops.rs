@@ -128,11 +128,65 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
             _ => {}
         }
     }
-    // Composite comparison: handle eq/ne/lt/lte/gt/gte for composites
+    // Composite comparison: handle eq/ne/lt/lte/gt/gte for composites.
+    //
+    // NumPy-style element-wise comparison fires when both sides are
+    // *numeric* composites (purely numeric leaves) with broadcast-compatible
+    // shapes — in that case the result is an ndarray of booleans, not a
+    // single scalar bool. This is the same heuristic used by the binary
+    // arithmetic broadcast path so the two stay consistent.
+    //
+    // For non-numeric composites (heterogeneous Python lists, lists of
+    // strings, tuples of mixed types, etc.) we keep the existing
+    // lexicographic-and-reduce semantics handled by `composite_comparison`,
+    // which is closer to Python's `list == list` behaviour.
     if matches!(op, "eq" | "ne" | "lt" | "lte" | "gt" | "gte") {
         match (lhs, rhs) {
-            (Value::List(ld), Value::List(rd)) | (Value::Tuple(ld), Value::List(rd))
-            | (Value::List(ld), Value::Tuple(rd)) | (Value::Tuple(ld), Value::Tuple(rd)) => {
+            (Value::List(ld), Value::List(rd))
+            | (Value::Tuple(ld), Value::List(rd))
+            | (Value::List(ld), Value::Tuple(rd))
+            | (Value::Tuple(ld), Value::Tuple(rd)) => {
+                if is_numeric_composite(lhs) && is_numeric_composite(rhs) {
+                    let lshape = crate::helpers::composite::get_composite_shape(lhs);
+                    let rshape = crate::helpers::composite::get_composite_shape(rhs);
+                    if let Some(out_shape) =
+                        crate::helpers::broadcast::broadcast_shapes(&lshape, &rshape)
+                    {
+                        let l = if lshape == out_shape {
+                            lhs.clone()
+                        } else {
+                            crate::helpers::broadcast::materialize_to_shape(lhs, &out_shape)
+                        };
+                        let r = if rshape == out_shape {
+                            rhs.clone()
+                        } else {
+                            crate::helpers::broadcast::materialize_to_shape(rhs, &out_shape)
+                        };
+                        // Walk element-wise directly. We can't just recurse
+                        // back through `apply_binary_op` on the whole
+                        // composites here, because when the shapes already
+                        // match the broadcast is a no-op and we'd re-enter
+                        // this same branch forever.
+                        let (l_data, r_data) = match (&l, &r) {
+                            (Value::List(a), Value::List(b))
+                            | (Value::List(a), Value::Tuple(b))
+                            | (Value::Tuple(a), Value::List(b))
+                            | (Value::Tuple(a), Value::Tuple(b)) => (a.clone(), b.clone()),
+                            _ => unreachable!("numeric composites guaranteed by check above"),
+                        };
+                        let results: Vec<Value> = l_data
+                            .values
+                            .iter()
+                            .zip(r_data.values.iter())
+                            .map(|(lv, rv)| apply_binary_op(b, op, lv, rv))
+                            .collect();
+                        let types = results.iter().map(|v| v.zinnia_type()).collect();
+                        return Value::List(CompositeData {
+                            elements_type: types,
+                            values: results,
+                        });
+                    }
+                }
                 return composite_comparison(b, op, ld, rd);
             }
             _ => {}
