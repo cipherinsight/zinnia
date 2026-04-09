@@ -1,4 +1,4 @@
-//! NumPy-style broadcasting for static (compile-time inferrable) ndarrays.
+//! Static-ndarray materialization for broadcasting.
 //!
 //! Static ndarrays in Zinnia are represented as nested `Value::List`/`Value::Tuple`
 //! whose shape is fully known at IR-generation time. Broadcasting therefore
@@ -8,40 +8,15 @@
 //! Per project decision: static broadcasting only **materializes** — we do not
 //! play stride tricks. The nested-list representation makes the materialized
 //! form trivial to construct via `composite::build_nested_value`.
+//!
+//! The pure shape arithmetic (`broadcast_shapes`, etc.) lives in
+//! [`super::shape_arith`]. This module re-exports `broadcast_shapes` for
+//! backwards compatibility with existing call sites.
 
 use super::composite;
 use crate::types::Value;
 
-/// Compute the NumPy broadcast of two shapes.
-///
-/// Returns the broadcast shape on success. Returns `None` if the shapes are
-/// not broadcast-compatible. Scalars are represented as the empty shape `[]`.
-///
-/// Rules (NumPy):
-/// - Right-align the two shape vectors (pad the shorter on the left with 1s).
-/// - For each axis, the dims must be equal, or one of them must be 1.
-/// - The broadcast dim is the max of the two.
-pub fn broadcast_shapes(a: &[usize], b: &[usize]) -> Option<Vec<usize>> {
-    let rank = a.len().max(b.len());
-    let mut out = Vec::with_capacity(rank);
-    for i in 0..rank {
-        // Right-aligned: index from the tail.
-        let da = if i < a.len() { a[a.len() - 1 - i] } else { 1 };
-        let db = if i < b.len() { b[b.len() - 1 - i] } else { 1 };
-        let dim = if da == db {
-            da
-        } else if da == 1 {
-            db
-        } else if db == 1 {
-            da
-        } else {
-            return None;
-        };
-        out.push(dim);
-    }
-    out.reverse();
-    Some(out)
-}
+pub use super::shape_arith::broadcast_shapes;
 
 /// Materialize a static composite value into the given `target_shape` by
 /// tiling axes of size 1 (and prepending unit axes when the source has lower

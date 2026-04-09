@@ -27,36 +27,19 @@ pub enum DynAggKind {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Utility functions (pure computation, no IR emission)
+// Utility functions (pure shape computation)
 // ═══════════════════════════════════════════════════════════════════════════
+//
+// The bodies of these utilities have moved to `helpers::shape_arith` so the
+// static and dynamic ndarray surfaces can share them. The `dyn_*` names are
+// kept as aliases here so existing call sites don't change. Phase 1
+// (envelope migration) will retire the aliases in favour of direct uses of
+// `shape_arith::*`.
 
-/// Compute row-major strides from shape.
-pub fn dyn_row_major_strides(shape: &[usize]) -> Vec<usize> {
-    let mut strides = vec![1usize; shape.len()];
-    for i in (0..shape.len().saturating_sub(1)).rev() {
-        strides[i] = strides[i + 1] * shape[i + 1];
-    }
-    strides
-}
-
-/// Decode a linear index into multi-dimensional coordinates.
-pub fn dyn_decode_coords(linear: usize, shape: &[usize], strides: &[usize]) -> Vec<usize> {
-    shape
-        .iter()
-        .zip(strides.iter())
-        .map(|(&dim, &stride)| (linear / stride) % dim)
-        .collect()
-}
-
-/// Encode multi-dimensional coordinates into a linear index.
-pub fn dyn_encode_coords(coords: &[usize], strides: &[usize]) -> usize {
-    coords.iter().zip(strides.iter()).map(|(&c, &s)| c * s).sum()
-}
-
-/// Product of shape dimensions.
-pub fn dyn_num_elements(shape: &[usize]) -> usize {
-    shape.iter().product()
-}
+pub use crate::helpers::shape_arith::{
+    decode_coords as dyn_decode_coords, encode_coords as dyn_encode_coords,
+    num_elements as dyn_num_elements, row_major_strides as dyn_row_major_strides,
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Helper: convert between Value and ScalarValue<i64>

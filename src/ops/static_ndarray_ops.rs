@@ -815,19 +815,9 @@ pub fn builtin_enumerate(b: &mut IRBuilder, iter_val: &Value) -> Value {
 // column_stack / row_stack)
 // ────────────────────────────────────────────────────────────────────────
 
-/// Resolve a possibly-negative axis against a given rank, panicking on out
-/// of bounds. Used by all the shape-manipulation helpers below for a
-/// consistent error message.
-fn resolve_axis(axis: i64, ndim: usize, op: &str) -> usize {
-    let resolved = if axis < 0 { ndim as i64 + axis } else { axis };
-    if resolved < 0 || resolved >= ndim as i64 {
-        panic!(
-            "{}: axis {} is out of bounds for array of rank {}",
-            op, axis, ndim
-        );
-    }
-    resolved as usize
-}
+// `resolve_axis` lives in `helpers::shape_arith`. Re-export under the local
+// path so the rest of this file can call it unqualified, exactly as before.
+use crate::helpers::shape_arith::resolve_axis;
 
 /// Build a constant Integer Value from a usize.
 fn const_int(b: &mut IRBuilder, n: usize) -> Value {

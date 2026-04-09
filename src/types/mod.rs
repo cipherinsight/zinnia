@@ -2,6 +2,7 @@ pub mod zinnia_type;
 pub mod scalar;
 pub mod composite;
 pub mod value;
+pub mod envelope;
 
 #[cfg(test)]
 mod tests;
