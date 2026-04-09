@@ -67,16 +67,29 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
                     let types = results.iter().map(|v| v.zinnia_type()).collect();
                     return Value::List(CompositeData { elements_type: types, values: results });
                 }
-                // Different-length composites: concatenation (Python list behavior)
-                let mut values = ld.values.clone();
-                values.extend(rd.values.clone());
-                let types = values.iter().map(|v| v.zinnia_type()).collect();
-                let is_tuple = matches!(lhs, Value::Tuple(_));
-                return if is_tuple {
-                    Value::Tuple(CompositeData { elements_type: types, values })
-                } else {
-                    Value::List(CompositeData { elements_type: types, values })
-                };
+                // Different-length composites: by default this is Python
+                // list concatenation. But if both operands look like
+                // ndarrays (purely numeric leaves) AND their shapes are
+                // broadcast-compatible, the user means NumPy element-wise
+                // addition, not concatenation. In that case fall out of
+                // this branch and let the shared broadcasting arm further
+                // down handle it.
+                let lshape = crate::helpers::composite::get_composite_shape(lhs);
+                let rshape = crate::helpers::composite::get_composite_shape(rhs);
+                let both_numeric = is_numeric_composite(lhs) && is_numeric_composite(rhs);
+                if !(both_numeric
+                    && crate::helpers::broadcast::broadcast_shapes(&lshape, &rshape).is_some())
+                {
+                    let mut values = ld.values.clone();
+                    values.extend(rd.values.clone());
+                    let types = values.iter().map(|v| v.zinnia_type()).collect();
+                    let is_tuple = matches!(lhs, Value::Tuple(_));
+                    return if is_tuple {
+                        Value::Tuple(CompositeData { elements_type: types, values })
+                    } else {
+                        Value::List(CompositeData { elements_type: types, values })
+                    };
+                }
             }
             _ => {}
         }
@@ -136,6 +149,37 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
                 .collect();
             let types = results.iter().map(|v| v.zinnia_type()).collect();
             return Value::List(CompositeData { elements_type: types, values: results });
+        }
+        // Shape-level broadcasting: both composites, mismatched shapes that are
+        // broadcast-compatible (NumPy semantics). Materialize both operands to
+        // the broadcast shape, then recurse — the equal-length arm above will
+        // handle the actual element-wise op.
+        //
+        // This deliberately fires only for *arithmetic* ops on composite ↔
+        // composite. Pure list/tuple `+` concatenation and `*` repetition were
+        // already handled near the top of this function, so by the time we get
+        // here those cases are out of scope. Composite comparison (`eq`/`lt`/…)
+        // is dispatched even earlier and is intentionally left untouched —
+        // Python lexicographic comparison semantics are preserved.
+        // `mat_mul` is excluded — matmul has its own shape rules and error
+        // reporting in `static_ndarray_ops::matmul`, reached via the scalar
+        // fallback below.
+        (Value::List(_) | Value::Tuple(_), Value::List(_) | Value::Tuple(_)) if op != "mat_mul" => {
+            let lshape = crate::helpers::composite::get_composite_shape(lhs);
+            let rshape = crate::helpers::composite::get_composite_shape(rhs);
+            if let Some(out_shape) = crate::helpers::broadcast::broadcast_shapes(&lshape, &rshape) {
+                if out_shape != lshape || out_shape != rshape {
+                    let l_mat = crate::helpers::broadcast::materialize_to_shape(lhs, &out_shape);
+                    let r_mat = crate::helpers::broadcast::materialize_to_shape(rhs, &out_shape);
+                    return apply_binary_op(b, op, &l_mat, &r_mat);
+                }
+                // Same shape but different lengths? Shouldn't happen — fall through.
+            } else {
+                panic!(
+                    "operands could not be broadcast together with shapes {:?} {:?}",
+                    lshape, rshape
+                );
+            }
         }
         // Broadcasting: scalar op composite
         (_, Value::List(rd)) | (_, Value::Tuple(rd)) if lhs.is_number() => {
@@ -368,6 +412,20 @@ pub fn dynamic_list_set_item(b: &mut IRBuilder, data: &CompositeData, idx: &Valu
             new_values.push(read_val);
         }
         Value::List(CompositeData { elements_type: new_types, values: new_values })
+    }
+}
+
+/// Returns true if `val` is a composite (or scalar) whose every leaf is a
+/// numeric value (Integer/Float/Boolean). Used to distinguish "ndarray-like"
+/// composites from heterogeneous Python lists, so we can pick NumPy-style
+/// broadcasting vs. Python list concatenation in the binary-op dispatcher.
+pub fn is_numeric_composite(val: &Value) -> bool {
+    match val {
+        Value::List(data) | Value::Tuple(data) => {
+            data.values.iter().all(is_numeric_composite)
+        }
+        Value::Integer(_) | Value::Float(_) | Value::Boolean(_) => true,
+        _ => false,
     }
 }
 

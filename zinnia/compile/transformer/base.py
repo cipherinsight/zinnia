@@ -463,6 +463,23 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
 
     def visit_slice_key(self, node):
         constant_none = {"__class__": "ASTConstantNone"}
+        ellipsis_sentinel = {"__class__": "ASTSliceEllipsis"}
+        newaxis_sentinel = {"__class__": "ASTSliceNewAxis"}
+
+        def _slice_key_elt(elt):
+            # `...` -> ellipsis sentinel.
+            if isinstance(elt, ast.Constant) and elt.value is Ellipsis:
+                return ellipsis_sentinel
+            # `None` literal -> np.newaxis.
+            if isinstance(elt, ast.Constant) and elt.value is None:
+                return newaxis_sentinel
+            # `np.newaxis` -> np.newaxis. We accept any attribute access whose
+            # attribute name is `newaxis`; resolving the actual numpy module is
+            # not worth the trouble for what is, by convention, a sentinel.
+            if isinstance(elt, ast.Attribute) and elt.attr == "newaxis":
+                return newaxis_sentinel
+            return self.visit_expr(elt)
+
         if isinstance(node, ast.Slice):
             lo = self.visit_expr(node.lower) if node.lower is not None else constant_none
             hi = self.visit_expr(node.upper) if node.upper is not None else constant_none
@@ -477,9 +494,9 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
                     step = self.visit_expr(elt.step) if elt.step is not None else constant_none
                     slicing_data.append([lo, hi, step])
                 else:
-                    slicing_data.append(self.visit_expr(elt))
+                    slicing_data.append(_slice_key_elt(elt))
             return {"__class__": "ASTSlice", "data": slicing_data}
-        return {"__class__": "ASTSlice", "data": [self.visit_expr(node)]}
+        return {"__class__": "ASTSlice", "data": [_slice_key_elt(node)]}
 
     def visit_assign_target(self, node, starred=False):
         if isinstance(node, ast.Name):

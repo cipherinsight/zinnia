@@ -278,6 +278,31 @@ impl IRGenerator {
 
         match &val {
             Value::List(data) | Value::Tuple(data) => {
+                // Advanced indexing: `array[bool_mask]` or `array[idx_array]`
+                // where the index itself is a static-shape composite. Try to
+                // resolve at compile time; on shape/typing errors return Err
+                // which we surface as a hard error to the user.
+                if slice_values.len() == 1 {
+                    if let SliceIndex::Single(idx_value) = &slice_values[0] {
+                        if matches!(idx_value, Value::List(_) | Value::Tuple(_)) {
+                            match crate::helpers::ndarray::try_advanced_index_static(data, idx_value) {
+                                Ok(Some(result)) => return result,
+                                Ok(Option::None) => {} // not advanced indexing — fall through
+                                Err(msg) => panic!("{}", msg),
+                            }
+                        }
+                    }
+                }
+
+                // Single Ellipsis (`array[...]`) — selects the whole array.
+                // Single NewAxis (`array[None]`) — wraps in a length-1 outer axis.
+                // Both fall through to the multi-dim handler so the same code
+                // does the work in one place.
+                if slice_values.len() == 1
+                    && matches!(slice_values[0], SliceIndex::Ellipsis | SliceIndex::NewAxis)
+                {
+                    return crate::helpers::ndarray::multidim_subscript(&mut self.builder, data, &slice_values);
+                }
                 if slice_values.len() == 1 {
                     let idx_val = &slice_values[0];
                     match idx_val {
@@ -299,6 +324,11 @@ impl IRGenerator {
                             // Range slicing on list/tuple
                             self.list_slice_range(&val, data, idx_val)
                         }
+                        SliceIndex::Ellipsis | SliceIndex::NewAxis => {
+                            // Already handled by the early-return above; this
+                            // arm exists only to satisfy match exhaustiveness.
+                            unreachable!()
+                        }
                     }
                 } else {
                     // Multi-dimensional ndarray-style indexing
@@ -313,6 +343,20 @@ impl IRGenerator {
     pub(crate) fn eval_slice_indices(&mut self, slice: &ASTSlice) -> Vec<SliceIndex> {
         let mut indices = Vec::new();
         for d in &slice.data {
+            // Sentinel objects emitted by visit_slice_key for `...` and
+            // `np.newaxis` / `None`. We check by `__class__` field before the
+            // generic ASTNode parse so they are never confused with a real
+            // expression.
+            if let Some(cls) = d.get("__class__").and_then(|v| v.as_str()) {
+                if cls == "ASTSliceEllipsis" {
+                    indices.push(SliceIndex::Ellipsis);
+                    continue;
+                }
+                if cls == "ASTSliceNewAxis" {
+                    indices.push(SliceIndex::NewAxis);
+                    continue;
+                }
+            }
             if d.is_array() {
                 // Range slice [start, stop, step]
                 let arr = d.as_array().unwrap();

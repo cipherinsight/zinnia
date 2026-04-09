@@ -111,9 +111,183 @@ pub fn ndarray_argmax_argmin(b: &mut IRBuilder, val: &Value, _args: &[Value], is
     best_idx
 }
 
+/// True if every leaf of `val` is a compile-time-constant boolean.
+fn all_const_bool(val: &Value) -> bool {
+    match val {
+        Value::List(d) | Value::Tuple(d) => !d.values.is_empty() && d.values.iter().all(all_const_bool),
+        Value::Boolean(_) => val.bool_val().is_some(),
+        _ => false,
+    }
+}
+
+/// True if every leaf of `val` is a compile-time-constant integer
+/// (booleans excluded — those should be routed to boolean masking).
+fn all_const_int_strict(val: &Value) -> bool {
+    match val {
+        Value::List(d) | Value::Tuple(d) => !d.values.is_empty() && d.values.iter().all(all_const_int_strict),
+        Value::Integer(_) => val.int_val().is_some(),
+        _ => false,
+    }
+}
+
+/// Static boolean masking: `data[mask]` where `mask` is a static-shape ndarray
+/// of compile-time-known booleans. Same-shape only — prefix masking is left
+/// for the future bounded-dynamic envelope work.
+///
+/// Returns Err with a descriptive message on shape mismatch; the caller is
+/// expected to forward that to the user as a hard error.
+pub fn boolean_mask_static(data: &Value, mask: &Value) -> Result<Value, String> {
+    let dshape = super::composite::get_composite_shape(data);
+    let mshape = super::composite::get_composite_shape(mask);
+    if dshape != mshape {
+        return Err(format!(
+            "boolean mask shape {:?} must match array shape {:?} (prefix masks not yet supported)",
+            mshape, dshape
+        ));
+    }
+    let data_flat = super::composite::flatten_composite(data);
+    let mask_flat = super::composite::flatten_composite(mask);
+    let mut selected: Vec<Value> = Vec::new();
+    for (d, m) in data_flat.into_iter().zip(mask_flat.iter()) {
+        if m.bool_val() == Some(true) {
+            selected.push(d);
+        }
+    }
+    let types = selected.iter().map(|v| v.zinnia_type()).collect();
+    Ok(Value::List(CompositeData { elements_type: types, values: selected }))
+}
+
+/// Static fancy indexing along axis 0: `data[idx_array]` where `idx_array` is
+/// a static-shape ndarray of compile-time-known integers. The result has
+/// shape `idx_array.shape + data.shape[1:]` (NumPy semantics).
+pub fn fancy_index_static(data: &CompositeData, idx_array: &Value) -> Result<Value, String> {
+    fn walk(data: &CompositeData, idx: &Value) -> Result<Value, String> {
+        match idx {
+            Value::List(d) | Value::Tuple(d) => {
+                let mut out = Vec::with_capacity(d.values.len());
+                for v in &d.values {
+                    out.push(walk(data, v)?);
+                }
+                let types = out.iter().map(|v| v.zinnia_type()).collect();
+                Ok(Value::List(CompositeData { elements_type: types, values: out }))
+            }
+            _ => {
+                let i = idx.int_val().ok_or_else(|| {
+                    "fancy index value is not compile-time constant".to_string()
+                })?;
+                let len = data.values.len() as i64;
+                let i = if i < 0 { len + i } else { i };
+                if i < 0 || i >= len {
+                    return Err(format!(
+                        "index {} out of bounds for axis 0 with size {}",
+                        idx.int_val().unwrap(),
+                        data.values.len()
+                    ));
+                }
+                Ok(data.values[i as usize].clone())
+            }
+        }
+    }
+    walk(data, idx_array)
+}
+
+/// Try to dispatch a single-axis composite index as boolean masking or fancy
+/// indexing. Returns:
+/// - `Ok(Some(value))` on success
+/// - `Ok(None)` if the index doesn't look like an advanced index at all
+///   (e.g. a heterogeneous list — caller should keep its existing handling)
+/// - `Err(msg)` if the index *looks* like advanced indexing but isn't
+///   compile-time resolvable; caller should hard-error with `msg`.
+pub fn try_advanced_index_static(
+    data: &CompositeData,
+    idx: &Value,
+) -> Result<Option<Value>, String> {
+    match idx {
+        Value::List(_) | Value::Tuple(_) => {}
+        _ => return Ok(None),
+    }
+    if all_const_bool(idx) {
+        return boolean_mask_static(&Value::List(data.clone()), idx).map(Some);
+    }
+    if all_const_int_strict(idx) {
+        return fancy_index_static(data, idx).map(Some);
+    }
+    // Looks like an array-valued index but its leaves aren't compile-time
+    // resolvable as either bools or ints. This is the case the user said to
+    // hard-error on, with a "to be implemented" hint.
+    Err(
+        "array-valued indices (boolean masking / fancy indexing) currently \
+         require compile-time-constant index values. Non-constant cases \
+         (to be implemented: lowering to dynamic ndarray)."
+            .into(),
+    )
+}
+
+/// Apply trailing `np.newaxis` markers to a scalar value, wrapping it in
+/// nested length-1 lists. Any non-NewAxis index here is a usage error.
+fn apply_trailing_to_scalar(scalar: Value, indices: &[SliceIndex]) -> Value {
+    let mut current = scalar;
+    for idx in indices.iter().rev() {
+        match idx {
+            SliceIndex::NewAxis => {
+                let t = current.zinnia_type();
+                current = Value::List(CompositeData {
+                    elements_type: vec![t],
+                    values: vec![current],
+                });
+            }
+            SliceIndex::Ellipsis => {
+                // `...` at a scalar dim is a no-op (zero remaining axes).
+            }
+            _ => {
+                panic!("too many indices for array: subscript indexes a scalar value");
+            }
+        }
+    }
+    current
+}
+
 pub fn multidim_subscript(b: &mut IRBuilder, data: &CompositeData, indices: &[SliceIndex]) -> Value {
     if indices.is_empty() {
         return Value::List(data.clone());
+    }
+
+    // Expand a single Ellipsis (`...`) into the right number of full-range
+    // slices, based on the source rank.
+    if indices.iter().any(|i| matches!(i, SliceIndex::Ellipsis)) {
+        let shape = super::composite::get_composite_shape(&Value::List(data.clone()));
+        let consumed: usize = indices
+            .iter()
+            .filter(|i| matches!(i, SliceIndex::Single(_) | SliceIndex::Range(_, _, _)))
+            .count();
+        let num_colons = shape.len().saturating_sub(consumed);
+        let mut expanded: Vec<SliceIndex> = Vec::with_capacity(indices.len() - 1 + num_colons);
+        let mut seen_ellipsis = false;
+        for idx in indices {
+            match idx {
+                SliceIndex::Ellipsis if !seen_ellipsis => {
+                    seen_ellipsis = true;
+                    for _ in 0..num_colons {
+                        expanded.push(SliceIndex::Range(None, None, None));
+                    }
+                }
+                SliceIndex::Ellipsis => {
+                    panic!("an index can only have a single ellipsis ('...')");
+                }
+                other => expanded.push(other.clone()),
+            }
+        }
+        return multidim_subscript(b, data, &expanded);
+    }
+
+    // `np.newaxis` / `None`: insert a unit-length axis here without consuming
+    // a source dimension. The remaining indices apply to the same `data`.
+    if matches!(&indices[0], SliceIndex::NewAxis) {
+        let inner = multidim_subscript(b, data, &indices[1..]);
+        return Value::List(CompositeData {
+            elements_type: vec![inner.zinnia_type()],
+            values: vec![inner],
+        });
     }
 
     match &indices[0] {
@@ -131,7 +305,7 @@ pub fn multidim_subscript(b: &mut IRBuilder, data: &CompositeData, indices: &[Sl
                     Value::List(inner) | Value::Tuple(inner) => {
                         multidim_subscript(b, inner, &indices[1..])
                     }
-                    _ => data.values[i].clone(),
+                    _ => apply_trailing_to_scalar(data.values[i].clone(), &indices[1..]),
                 }
             } else {
                 // Dynamic index
@@ -176,7 +350,7 @@ pub fn multidim_subscript(b: &mut IRBuilder, data: &CompositeData, indices: &[Sl
                             Value::List(inner) | Value::Tuple(inner) => {
                                 selected.push(multidim_subscript(b, inner, &indices[1..]));
                             }
-                            _ => selected.push(data.values[i].clone()),
+                            _ => selected.push(apply_trailing_to_scalar(data.values[i].clone(), &indices[1..])),
                         }
                     }
                 }
@@ -185,6 +359,11 @@ pub fn multidim_subscript(b: &mut IRBuilder, data: &CompositeData, indices: &[Sl
             let types = selected.iter().map(|v| v.zinnia_type()).collect();
             Value::List(CompositeData { elements_type: types, values: selected })
         }
+        // Ellipsis and NewAxis are handled above (at function entry); reaching
+        // them here means a logic bug.
+        SliceIndex::Ellipsis | SliceIndex::NewAxis => unreachable!(
+            "Ellipsis / NewAxis should have been handled before the main match"
+        ),
     }
 }
 
