@@ -312,22 +312,32 @@ pub fn multidim_subscript(b: &mut IRBuilder, data: &CompositeData, indices: &[Sl
                 if indices.len() == 1 {
                     return crate::helpers::value_ops::dynamic_list_subscript(b, data, idx_value);
                 }
-                // Dynamic index with further dimensions: select from each possible row
-                // For each possible index value, apply the remaining indices
-                let mut results: Vec<Value> = Vec::new();
+                // Dynamic index with further dimensions: apply the remaining
+                // indices to each possible row, then mux on the dynamic index.
+                // We can't use `dynamic_list_subscript` here because the
+                // per-row results may themselves be composites (e.g. when a
+                // remaining index is a Range), and `dynamic_list_subscript`
+                // uses scalar `ir_select_i` which doesn't traverse lists.
+                // Use `select_value`, which recurses through composites.
+                let n = data.values.len();
+                if n == 0 {
+                    return Value::None;
+                }
+                let mut per_row_results: Vec<Value> = Vec::with_capacity(n);
                 for elem in &data.values {
                     if let Value::List(inner) | Value::Tuple(inner) = elem {
-                        results.push(multidim_subscript(b, inner, &indices[1..]));
+                        per_row_results.push(multidim_subscript(b, inner, &indices[1..]));
                     } else {
-                        results.push(elem.clone());
+                        per_row_results.push(elem.clone());
                     }
                 }
-                // Now select from results using the dynamic index
-                let result_data = CompositeData {
-                    elements_type: results.iter().map(|v| v.zinnia_type()).collect(),
-                    values: results,
-                };
-                crate::helpers::value_ops::dynamic_list_subscript(b, &result_data, idx_value)
+                let mut acc = per_row_results.last().unwrap().clone();
+                for i in (0..n - 1).rev() {
+                    let const_i = b.ir_constant_int(i as i64);
+                    let cmp = b.ir_equal_i(idx_value, &const_i);
+                    acc = crate::helpers::value_ops::select_value(b, &cmp, &per_row_results[i], &acc);
+                }
+                acc
             }
         }
         SliceIndex::Range(start, stop, step) => {

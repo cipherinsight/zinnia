@@ -76,49 +76,47 @@ impl IRGenerator {
                         if indices.len() == 1 {
                             // Single dynamic index on flat list
                             return crate::helpers::value_ops::dynamic_list_set_item(&mut self.builder, data, idx_val, &value);
-                        } else {
-                            // Multi-dim dynamic index: compute linear address
-                            // For array[x, y] where array is [[...], [...], ...]:
-                            // Flatten array, compute addr = x * ncols + y, set at addr
-                            let shape = crate::helpers::composite::get_composite_shape(&current);
-                            let flat = crate::helpers::composite::flatten_composite(&current);
-                            if flat.is_empty() { return current; }
-
-                            // Compute linear address from multi-dim indices
-                            let mut strides = vec![1usize; shape.len()];
-                            for i in (0..shape.len() - 1).rev() {
-                                strides[i] = strides[i + 1] * shape[i + 1];
-                            }
-
-                            let mut linear_addr = self.builder.ir_constant_int(0);
-                            // Process all indices (current + remaining)
-                            let all_idx_vals: Vec<&Value> = std::iter::once(idx_val)
-                                .chain(indices[1..].iter().filter_map(|si| {
-                                    if let SliceIndex::Single(v) = si { Some(v) } else { None }
-                                }))
-                                .collect();
-
-                            for (dim, &iv) in all_idx_vals.iter().enumerate() {
-                                if dim < strides.len() {
-                                    let stride_const = self.builder.ir_constant_int(strides[dim] as i64);
-                                    let term = self.builder.ir_mul_i(iv, &stride_const);
-                                    linear_addr = self.builder.ir_add_i(&linear_addr, &term);
-                                }
-                            }
-
-                            let flat_data = CompositeData {
-                                elements_type: flat.iter().map(|v| v.zinnia_type()).collect(),
-                                values: flat,
-                            };
-                            let updated_flat = crate::helpers::value_ops::dynamic_list_set_item(&mut self.builder, &flat_data, &linear_addr, &value);
-
-                            // Rebuild nested structure from flat
-                            if let Value::List(uf) = &updated_flat {
-                                let rebuilt = crate::helpers::composite::build_nested_value(uf.values.clone(), uf.elements_type.clone(), &shape);
-                                return rebuilt;
-                            }
-                            return updated_flat;
                         }
+                        // Multi-dim assignment with a dynamic outer index and
+                        // *arbitrary* remaining indices (Single or Range,
+                        // possibly mixed). The previous implementation tried
+                        // to linearize the addresses, which dropped Range
+                        // indices on the floor — `arr[x, :] = vec` would
+                        // silently update only one element.
+                        //
+                        // Approach: for each possible position `i` of the
+                        // dynamic outer index, recursively compute "what
+                        // row `i` would look like if x == i", then mux
+                        // between that and the original row using
+                        // (idx_val == i). The recursion delegates back to
+                        // this same function so any mix of Single/Range in
+                        // `indices[1..]` is handled the same way it would be
+                        // handled for a static outer index.
+                        let outer_len = data.values.len();
+                        let mut new_values = Vec::with_capacity(outer_len);
+                        let mut new_types = Vec::with_capacity(outer_len);
+                        for i in 0..outer_len {
+                            let updated_row = self.set_nested_value(
+                                data.values[i].clone(),
+                                &indices[1..],
+                                value.clone(),
+                            );
+                            let const_i = self.builder.ir_constant_int(i as i64);
+                            let cmp = self.builder.ir_equal_i(idx_val, &const_i);
+                            let blended = crate::helpers::value_ops::select_value(
+                                &mut self.builder,
+                                &cmp,
+                                &updated_row,
+                                &data.values[i],
+                            );
+                            new_types.push(blended.zinnia_type());
+                            new_values.push(blended);
+                        }
+                        return if is_tuple {
+                            Value::Tuple(CompositeData { elements_type: new_types, values: new_values })
+                        } else {
+                            Value::List(CompositeData { elements_type: new_types, values: new_values })
+                        };
                     }
                 }
                 // For range slicing assignment
