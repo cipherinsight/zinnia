@@ -286,6 +286,10 @@ impl IRGenerator {
                     arr_id, dtype_name, *max_length as u32, *max_rank as u32,
                 );
 
+                let segment_id = crate::helpers::segment::alloc_and_write(
+                    &mut self.builder, &elements, *dtype,
+                );
+
                 let strides = crate::ops::dyn_ndarray::dyn_row_major_strides(&[*max_length]);
                 // Inputs come in with a single dynamic dim of unknown
                 // length 0..=max_length. The richer per-axis annotation
@@ -300,8 +304,7 @@ impl IRGenerator {
                 Value::DynamicNDArray(crate::types::DynamicNDArrayData {
                     envelope,
                     dtype: *dtype,
-                    elements,
-                    segment_id: None,
+                    segment_id,
                     meta: crate::types::DynArrayMeta {
                         logical_shape: vec![*max_length],
                         logical_offset: 0,

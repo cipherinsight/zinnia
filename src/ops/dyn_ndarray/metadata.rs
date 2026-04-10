@@ -3,10 +3,7 @@ use crate::types::{
     CompositeData, DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value, ZinniaType,
 };
 
-use super::{
-    dyn_decode_coords, dyn_encode_coords, dyn_num_elements, dyn_row_major_strides,
-    scalar_i64_to_value, value_to_scalar_i64,
-};
+use super::value_to_scalar_i64;
 
 use std::collections::HashMap;
 
@@ -18,39 +15,6 @@ pub fn dyn_default_value(b: &mut IRBuilder, dtype: NumberType) -> Value {
         NumberType::Integer => b.ir_constant_int(0),
         NumberType::Float => b.ir_constant_float(0.0),
     }
-}
-
-/// Flatten a DynamicNDArray's elements respecting view metadata (offset, strides, shape).
-pub fn dyn_flatten_values(data: &DynamicNDArrayData) -> Vec<ScalarValue<i64>> {
-    let shape = &data.meta.logical_shape;
-    let strides = &data.meta.logical_strides;
-    let offset = data.meta.logical_offset;
-    let numel = dyn_num_elements(shape);
-
-    if numel == 0 {
-        return vec![];
-    }
-
-    let row_strides = dyn_row_major_strides(shape);
-    let mut result = Vec::with_capacity(numel);
-    for i in 0..numel {
-        let coords = dyn_decode_coords(i, shape, &row_strides);
-        let src_idx = offset + dyn_encode_coords(&coords, strides);
-        if src_idx < data.elements.len() {
-            result.push(data.elements[src_idx].clone());
-        } else {
-            result.push(ScalarValue::new(Some(0), None));
-        }
-    }
-    result
-}
-
-/// Convert a DynamicNDArray's flat elements to Vec<Value>.
-pub fn dyn_elements_to_values(data: &DynamicNDArrayData) -> Vec<Value> {
-    let flat = dyn_flatten_values(data);
-    flat.iter()
-        .map(|elem| scalar_i64_to_value(elem, data.dtype))
-        .collect()
 }
 
 // ── Phase 2: pure metadata ops ────────────────────────────────────
@@ -114,7 +78,7 @@ pub fn dyn_size(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
 
 // ── Phase 2: simple value ops ─────────────────────────────────────
 
-pub fn dyn_astype(b: &mut IRBuilder, data: &mut DynamicNDArrayData, args: &[Value]) -> Value {
+pub fn dyn_astype(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) -> Value {
     let target_float = matches!(args.first(), Some(Value::Class(ZinniaType::Float)));
     let new_dtype = if target_float {
         NumberType::Float
@@ -122,7 +86,7 @@ pub fn dyn_astype(b: &mut IRBuilder, data: &mut DynamicNDArrayData, args: &[Valu
         NumberType::Integer
     };
 
-    let values = crate::helpers::segment::read_all_from_segment(b, data);
+    let values = crate::helpers::segment::read_all(b, data.segment_id, data.max_length());
     let new_elements: Vec<ScalarValue<i64>> = values
         .iter()
         .map(|val| {
@@ -135,19 +99,18 @@ pub fn dyn_astype(b: &mut IRBuilder, data: &mut DynamicNDArrayData, args: &[Valu
         })
         .collect();
 
-    let mut result = DynamicNDArrayData {
+    let segment_id = crate::helpers::segment::alloc_and_write(b, &new_elements, new_dtype);
+    let result = DynamicNDArrayData {
         envelope: data.envelope.clone(),
         dtype: new_dtype,
-        elements: new_elements,
-        segment_id: None,
+        segment_id,
         meta: data.meta.clone(),
     };
-    crate::helpers::segment::ensure_segment(b, &mut result);
     Value::DynamicNDArray(result)
 }
 
-pub fn dyn_flatten_to_list(b: &mut IRBuilder, data: &mut DynamicNDArrayData) -> Value {
-    let values = crate::helpers::segment::read_all_from_segment(b, data);
+pub fn dyn_flatten_to_list(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
+    let values = crate::helpers::segment::read_all(b, data.segment_id, data.max_length());
     let types = values.iter().map(|v| v.zinnia_type()).collect();
     Value::List(CompositeData {
         elements_type: types,
@@ -155,19 +118,19 @@ pub fn dyn_flatten_to_list(b: &mut IRBuilder, data: &mut DynamicNDArrayData) -> 
     })
 }
 
-pub fn dyn_flat(b: &mut IRBuilder, data: &mut DynamicNDArrayData) -> Value {
-    let values = crate::helpers::segment::read_all_from_segment(b, data);
+pub fn dyn_flat(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
+    let values = crate::helpers::segment::read_all(b, data.segment_id, data.max_length());
     let flat: Vec<ScalarValue<i64>> = values.iter().map(|v| value_to_scalar_i64(v)).collect();
     let max_length = data.max_length();
+    let segment_id = crate::helpers::segment::alloc_and_write(b, &flat, data.dtype);
     // Flatten to a single dim of the same total max bound. Always Static
     // here because flatten loses any min-bound information from the
     // individual axes (we'd need a full intersection to recover it).
     let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &[max_length]);
-    let mut result = DynamicNDArrayData {
+    let result = DynamicNDArrayData {
         envelope,
         dtype: data.dtype,
-        elements: flat,
-        segment_id: None,
+        segment_id,
         meta: DynArrayMeta {
             logical_shape: vec![max_length],
             logical_offset: 0,
@@ -179,12 +142,11 @@ pub fn dyn_flat(b: &mut IRBuilder, data: &mut DynamicNDArrayData) -> Value {
             runtime_offset: ScalarValue::new(Some(0), None),
         },
     };
-    crate::helpers::segment::ensure_segment(b, &mut result);
     Value::DynamicNDArray(result)
 }
 
-pub fn dyn_tolist(b: &mut IRBuilder, data: &mut DynamicNDArrayData) -> Value {
-    let flat_values = crate::helpers::segment::read_all_from_segment(b, data);
+pub fn dyn_tolist(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
+    let flat_values = crate::helpers::segment::read_all(b, data.segment_id, data.max_length());
     let shape = &data.meta.logical_shape.clone();
     build_nested_list(&flat_values, shape)
 }

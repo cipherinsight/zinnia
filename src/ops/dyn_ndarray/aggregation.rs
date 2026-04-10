@@ -10,7 +10,7 @@ use super::{
 
 pub fn dyn_aggregate(
     b: &mut IRBuilder,
-    data: &mut DynamicNDArrayData,
+    data: &DynamicNDArrayData,
     axis: Option<&Value>,
     agg: DynAggKind,
 ) -> Value {
@@ -29,8 +29,8 @@ pub fn dyn_aggregate(
 }
 
 /// Full reduction (axis=None): reduce all elements to a scalar.
-pub fn dyn_aggregate_all(b: &mut IRBuilder, data: &mut DynamicNDArrayData, agg: DynAggKind) -> Value {
-    let values = crate::helpers::segment::read_all_from_segment(b, data);
+pub fn dyn_aggregate_all(b: &mut IRBuilder, data: &DynamicNDArrayData, agg: DynAggKind) -> Value {
+    let values = crate::helpers::segment::read_all(b, data.segment_id, data.max_length());
     let numel = dyn_num_elements(&data.meta.logical_shape);
     if numel == 0 {
         return dyn_agg_identity(b, agg, data.dtype);
@@ -61,7 +61,7 @@ pub fn dyn_aggregate_all(b: &mut IRBuilder, data: &mut DynamicNDArrayData, agg: 
 /// Axis reduction: reduce along a specific axis.
 pub fn dyn_aggregate_axis(
     b: &mut IRBuilder,
-    data: &mut DynamicNDArrayData,
+    data: &DynamicNDArrayData,
     axis: i64,
     agg: DynAggKind,
 ) -> Value {
@@ -74,7 +74,7 @@ pub fn dyn_aggregate_axis(
     };
     assert!(ax < ndim, "aggregate axis out of bounds");
 
-    let values = crate::helpers::segment::read_all_from_segment(b, data);
+    let values = crate::helpers::segment::read_all(b, data.segment_id, data.max_length());
     let strides = dyn_row_major_strides(shape);
     let use_float = data.dtype == NumberType::Float
         && !matches!(agg, DynAggKind::All | DynAggKind::Any);
@@ -157,12 +157,12 @@ pub fn dyn_aggregate_axis(
 
     let out_strides_meta = dyn_row_major_strides(&out_shape);
     let _ = out_numel;
+    let segment_id = crate::helpers::segment::alloc_and_write(b, &out_elements, out_dtype);
     let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &out_shape);
-    let mut result = DynamicNDArrayData {
+    let result = DynamicNDArrayData {
         envelope,
         dtype: out_dtype,
-        elements: out_elements,
-        segment_id: None,
+        segment_id,
         meta: DynArrayMeta {
             logical_shape: out_shape.clone(),
             logical_offset: 0,
@@ -180,7 +180,6 @@ pub fn dyn_aggregate_axis(
             runtime_offset: ScalarValue::new(Some(0), None),
         },
     };
-    crate::helpers::segment::ensure_segment(b, &mut result);
     Value::DynamicNDArray(result)
 }
 

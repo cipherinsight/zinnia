@@ -18,7 +18,7 @@
 use crate::builder::IRBuilder;
 use crate::ops::dyn_ndarray::value_to_scalar_i64;
 use crate::types::{
-    Dim, DynArrayMeta, DynamicNDArrayData, Envelope, NumberType, ScalarValue, Value,
+    DynArrayMeta, DynamicNDArrayData, Envelope, NumberType, ScalarValue, Value,
 };
 
 use super::composite::{flatten_composite, get_composite_shape};
@@ -58,11 +58,12 @@ pub fn promote_static_to_dynamic(b: &mut IRBuilder, val: &Value) -> Value {
     let total: usize = shape.iter().product();
     let rank = shape.len();
 
-    let mut dyn_data = DynamicNDArrayData {
+    let segment_id = super::segment::alloc_and_write(b, &elements, dtype);
+
+    let dyn_data = DynamicNDArrayData {
         envelope,
         dtype,
-        elements,
-        segment_id: None,
+        segment_id,
         meta: DynArrayMeta {
             logical_shape: shape.clone(),
             logical_offset: 0,
@@ -80,10 +81,6 @@ pub fn promote_static_to_dynamic(b: &mut IRBuilder, val: &Value) -> Value {
             runtime_offset: ScalarValue::new(Some(0), None),
         },
     };
-
-    // Materialize the elements into a ZKRAM segment so downstream dynamic
-    // ops can read via ir_read_memory.
-    super::segment::ensure_segment(b, &mut dyn_data);
 
     Value::DynamicNDArray(dyn_data)
 }
@@ -123,7 +120,8 @@ mod tests {
         assert_eq!(dyn_data.envelope.rank(), 1);
         assert_eq!(dyn_data.envelope.is_fully_static(), Some(vec![4]));
         assert_eq!(dyn_data.envelope.max_total(), 4);
-        assert_eq!(dyn_data.elements.len(), 4);
+        assert_eq!(dyn_data.max_length(), 4);
+        // segment_id is a valid u32 (0 is a valid first allocation)
         assert_eq!(dyn_data.dtype, NumberType::Integer);
         assert_eq!(dyn_data.meta.logical_shape, vec![4]);
         assert_eq!(dyn_data.meta.runtime_length.static_val, Some(4));
@@ -143,7 +141,8 @@ mod tests {
         };
         assert_eq!(dyn_data.envelope.is_fully_static(), Some(vec![3, 3]));
         assert_eq!(dyn_data.envelope.max_total(), 9);
-        assert_eq!(dyn_data.elements.len(), 9);
+        assert_eq!(dyn_data.max_length(), 9);
+        // segment_id is a valid u32 (0 is a valid first allocation)
         assert_eq!(dyn_data.meta.logical_strides, vec![3, 1]);
     }
 

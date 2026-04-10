@@ -28,16 +28,16 @@ pub fn dyn_fill(
             value_to_scalar_i64(&v)
         }
     };
-    let elements = vec![fill_sv; max_length];
+    let values = vec![fill_sv; max_length];
+    let segment_id = crate::helpers::segment::alloc_and_write(b, &values, dtype);
 
     let strides = dyn_row_major_strides(&shape);
     let _ = max_rank;
     let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &shape);
-    let mut result = DynamicNDArrayData {
+    let result = DynamicNDArrayData {
         envelope,
         dtype,
-        elements,
-        segment_id: None,
+        segment_id,
         meta: DynArrayMeta {
             logical_shape: shape.clone(),
             logical_offset: 0,
@@ -55,7 +55,6 @@ pub fn dyn_fill(
             runtime_offset: ScalarValue::new(Some(0), None),
         },
     };
-    crate::helpers::segment::ensure_segment(b, &mut result);
     Value::DynamicNDArray(result)
 }
 
@@ -97,19 +96,19 @@ pub fn dyn_eye(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
         }
     };
 
-    let mut elements = Vec::with_capacity(max_length);
+    let mut values = Vec::with_capacity(max_length);
     for i in 0..n {
         for j in 0..m {
-            elements.push(if i == j { one.clone() } else { zero.clone() });
+            values.push(if i == j { one.clone() } else { zero.clone() });
         }
     }
+    let segment_id = crate::helpers::segment::alloc_and_write(b, &values, dtype);
 
     let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &shape);
-    let mut result = DynamicNDArrayData {
+    let result = DynamicNDArrayData {
         envelope,
         dtype,
-        elements,
-        segment_id: None,
+        segment_id,
         meta: DynArrayMeta {
             logical_shape: shape.clone(),
             logical_offset: 0,
@@ -127,7 +126,6 @@ pub fn dyn_eye(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
             runtime_offset: ScalarValue::new(Some(0), None),
         },
     };
-    crate::helpers::segment::ensure_segment(b, &mut result);
     Value::DynamicNDArray(result)
 }
 

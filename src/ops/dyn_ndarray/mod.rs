@@ -88,8 +88,8 @@ impl IRGenerator {
         args: &[Value],
         kwargs: &HashMap<String, Value>,
     ) -> Value {
-        // Extract data — we need ownership for some ops
-        let mut data = match &val {
+        // Extract data
+        let data = match &val {
             Value::DynamicNDArray(d) => d.clone(),
             _ => panic!("dispatch_dyn_ndarray_method called on non-DynamicNDArray"),
         };
@@ -102,10 +102,10 @@ impl IRGenerator {
             "size" => metadata::dyn_size(&mut self.builder, &data),
 
             // Simple value ops
-            "astype" => metadata::dyn_astype(&mut self.builder, &mut data, args),
-            "flatten" => metadata::dyn_flatten_to_list(&mut self.builder, &mut data),
-            "flat" => metadata::dyn_flat(&mut self.builder, &mut data),
-            "tolist" => metadata::dyn_tolist(&mut self.builder, &mut data),
+            "astype" => metadata::dyn_astype(&mut self.builder, &data, args),
+            "flatten" => metadata::dyn_flatten_to_list(&mut self.builder, &data),
+            "flat" => metadata::dyn_flat(&mut self.builder, &data),
+            "tolist" => metadata::dyn_tolist(&mut self.builder, &data),
             "T" => reshape::dyn_transpose(&mut self.builder, &data, &[]),
             "transpose" => {
                 let axes_args = if let Some(axes_val) = kwargs.get("axes") {
@@ -120,40 +120,40 @@ impl IRGenerator {
             // Aggregation ops
             "sum" => {
                 let axis = kwargs.get("axis").or_else(|| args.first());
-                aggregation::dyn_aggregate(&mut self.builder, &mut data, axis, DynAggKind::Sum)
+                aggregation::dyn_aggregate(&mut self.builder, &data, axis, DynAggKind::Sum)
             }
             "prod" => {
                 let axis = kwargs.get("axis").or_else(|| args.first());
-                aggregation::dyn_aggregate(&mut self.builder, &mut data, axis, DynAggKind::Prod)
+                aggregation::dyn_aggregate(&mut self.builder, &data, axis, DynAggKind::Prod)
             }
             "max" => {
                 let axis = kwargs.get("axis").or_else(|| args.first());
-                aggregation::dyn_aggregate(&mut self.builder, &mut data, axis, DynAggKind::Max)
+                aggregation::dyn_aggregate(&mut self.builder, &data, axis, DynAggKind::Max)
             }
             "min" => {
                 let axis = kwargs.get("axis").or_else(|| args.first());
-                aggregation::dyn_aggregate(&mut self.builder, &mut data, axis, DynAggKind::Min)
+                aggregation::dyn_aggregate(&mut self.builder, &data, axis, DynAggKind::Min)
             }
             "all" => {
                 let axis = kwargs.get("axis").or_else(|| args.first());
-                aggregation::dyn_aggregate(&mut self.builder, &mut data, axis, DynAggKind::All)
+                aggregation::dyn_aggregate(&mut self.builder, &data, axis, DynAggKind::All)
             }
             "any" => {
                 let axis = kwargs.get("axis").or_else(|| args.first());
-                aggregation::dyn_aggregate(&mut self.builder, &mut data, axis, DynAggKind::Any)
+                aggregation::dyn_aggregate(&mut self.builder, &data, axis, DynAggKind::Any)
             }
             "argmax" => {
                 let axis = kwargs.get("axis").or_else(|| args.first());
-                aggregation::dyn_aggregate(&mut self.builder, &mut data, axis, DynAggKind::Argmax)
+                aggregation::dyn_aggregate(&mut self.builder, &data, axis, DynAggKind::Argmax)
             }
             "argmin" => {
                 let axis = kwargs.get("axis").or_else(|| args.first());
-                aggregation::dyn_aggregate(&mut self.builder, &mut data, axis, DynAggKind::Argmin)
+                aggregation::dyn_aggregate(&mut self.builder, &data, axis, DynAggKind::Argmin)
             }
 
             // Memory-heavy ops
-            "filter" => memory_ops::dyn_filter(&mut self.builder, &mut data, args),
-            "repeat" => memory_ops::dyn_repeat(&mut self.builder, &mut data, args, kwargs),
+            "filter" => memory_ops::dyn_filter(&mut self.builder, &data, args),
+            "repeat" => memory_ops::dyn_repeat(&mut self.builder, &data, args, kwargs),
 
             _ => panic!(
                 "DynamicNDArray.{} not yet implemented in Rust IR generator",
