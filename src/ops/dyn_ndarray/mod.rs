@@ -117,6 +117,7 @@ impl IRGenerator {
                 reshape::dyn_transpose(&mut self.builder, &data, &axes_args)
             }
             "moveaxis" => reshape::dyn_moveaxis(&mut self.builder, &data, args),
+            "reshape" => reshape::dyn_reshape(&mut self.builder, &data, args),
 
             // Aggregation ops
             "sum" => {

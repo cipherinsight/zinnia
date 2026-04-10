@@ -41,12 +41,8 @@ pub fn moveaxis(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value {
 
 /// Unified reshape.
 pub fn reshape(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value {
-    if let Value::DynamicNDArray(_) = val {
-        panic!(
-            "DynamicNDArray.reshape is not yet implemented. \
-             Reshape requires a segment-layout transformation that \
-             is planned for Phase C (runtime coordinate decode)."
-        );
+    if let Value::DynamicNDArray(d) = val {
+        return crate::ops::dyn_ndarray::reshape::dyn_reshape(b, d, args);
     }
 
     let has_dynamic = args.iter().any(|a| match a {
@@ -55,14 +51,11 @@ pub fn reshape(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value {
     });
 
     if has_dynamic {
-        panic!(
-            "reshape with dynamic shape elements requires DynamicNDArray \
-             support (not yet implemented). All shape elements must be \
-             compile-time constants for static arrays."
-        );
+        let d = promote(b, val);
+        crate::ops::dyn_ndarray::reshape::dyn_reshape(b, &d, args)
+    } else {
+        crate::ops::static_ndarray_ops::ndarray_reshape(b, val, args)
     }
-
-    crate::ops::static_ndarray_ops::ndarray_reshape(b, val, args)
 }
 
 /// Unified swapaxes.

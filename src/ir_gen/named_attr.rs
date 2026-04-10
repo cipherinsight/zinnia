@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::ast::*;
-use crate::types::{CompositeData, Value, ZinniaType};
+use crate::types::{CompositeData, ScalarValue, Value, ZinniaType};
 
 use super::IRGenerator;
 
@@ -29,6 +29,16 @@ impl IRGenerator {
 
         let target = n.target.as_deref();
         let member = n.member.as_str();
+
+        // Helper: check if the first arg is a list/tuple containing DynamicNDArrays.
+        fn has_dynamic_array_in_list(args: &[Value]) -> bool {
+            match args.first() {
+                Some(Value::List(cd)) | Some(Value::Tuple(cd)) => {
+                    cd.values.iter().any(|v| matches!(v, Value::DynamicNDArray(_)))
+                }
+                _ => false,
+            }
+        }
 
         match (target, member) {
             // ── Built-in functions (no target) ─────────────────────────
@@ -232,8 +242,20 @@ impl IRGenerator {
             (Some("np"), "arange") => crate::ops::static_ndarray_ops::np_arange(&mut self.builder, &visited_args),
             (Some("np"), "linspace") => crate::ops::static_ndarray_ops::np_linspace(&mut self.builder, &visited_args, &_visited_kwargs),
             (Some("np"), "allclose") => crate::ops::static_ndarray_ops::np_allclose(&mut self.builder, &visited_args, &_visited_kwargs),
-            (Some("np"), "concatenate") => crate::ops::static_ndarray_ops::np_concatenate(&mut self.builder, &visited_args, &_visited_kwargs),
-            (Some("np"), "stack") => crate::ops::static_ndarray_ops::np_stack(&mut self.builder, &visited_args, &_visited_kwargs),
+            (Some("np"), "concatenate") => {
+                if has_dynamic_array_in_list(&visited_args) {
+                    crate::ops::dyn_ndarray::memory_ops::dyn_concatenate(&mut self.builder, &visited_args, &_visited_kwargs)
+                } else {
+                    crate::ops::static_ndarray_ops::np_concatenate(&mut self.builder, &visited_args, &_visited_kwargs)
+                }
+            }
+            (Some("np"), "stack") => {
+                if has_dynamic_array_in_list(&visited_args) {
+                    crate::ops::dyn_ndarray::memory_ops::dyn_stack(&mut self.builder, &visited_args, &_visited_kwargs)
+                } else {
+                    crate::ops::static_ndarray_ops::np_stack(&mut self.builder, &visited_args, &_visited_kwargs)
+                }
+            }
             (Some("np"), "vstack") => crate::ops::static_ndarray_ops::np_vstack(&mut self.builder, &visited_args),
             (Some("np"), "row_stack") => crate::ops::static_ndarray_ops::np_row_stack(&mut self.builder, &visited_args),
             (Some("np"), "hstack") => crate::ops::static_ndarray_ops::np_hstack(&mut self.builder, &visited_args),
@@ -262,11 +284,69 @@ impl IRGenerator {
             (Some("np"), "atleast_2d") => crate::ops::static_ndarray_ops::np_atleast_nd(&mut self.builder, &visited_args, 2),
             (Some("np"), "atleast_3d") => crate::ops::static_ndarray_ops::np_atleast_nd(&mut self.builder, &visited_args, 3),
             (Some("np"), "tile") => crate::ops::static_ndarray_ops::np_tile(&mut self.builder, &visited_args),
-            (Some("np"), "split") => crate::ops::static_ndarray_ops::np_split(&mut self.builder, &visited_args, &_visited_kwargs),
-            (Some("np"), "array_split") => crate::ops::static_ndarray_ops::np_array_split(&mut self.builder, &visited_args, &_visited_kwargs),
-            (Some("np"), "hsplit") => crate::ops::static_ndarray_ops::np_hsplit(&mut self.builder, &visited_args),
-            (Some("np"), "vsplit") => crate::ops::static_ndarray_ops::np_vsplit(&mut self.builder, &visited_args),
-            (Some("np"), "dsplit") => crate::ops::static_ndarray_ops::np_dsplit(&mut self.builder, &visited_args),
+            (Some("np"), "split") => {
+                if matches!(visited_args.first(), Some(Value::DynamicNDArray(_))) {
+                    let data = match &visited_args[0] {
+                        Value::DynamicNDArray(d) => d.clone(),
+                        _ => unreachable!(),
+                    };
+                    crate::ops::dyn_ndarray::memory_ops::dyn_split(&mut self.builder, &data, &visited_args[1..], &_visited_kwargs)
+                } else {
+                    crate::ops::static_ndarray_ops::np_split(&mut self.builder, &visited_args, &_visited_kwargs)
+                }
+            }
+            (Some("np"), "array_split") => {
+                if matches!(visited_args.first(), Some(Value::DynamicNDArray(_))) {
+                    let data = match &visited_args[0] {
+                        Value::DynamicNDArray(d) => d.clone(),
+                        _ => unreachable!(),
+                    };
+                    crate::ops::dyn_ndarray::memory_ops::dyn_array_split(&mut self.builder, &data, &visited_args[1..], &_visited_kwargs)
+                } else {
+                    crate::ops::static_ndarray_ops::np_array_split(&mut self.builder, &visited_args, &_visited_kwargs)
+                }
+            }
+            (Some("np"), "hsplit") => {
+                if matches!(visited_args.first(), Some(Value::DynamicNDArray(_))) {
+                    let data = match &visited_args[0] {
+                        Value::DynamicNDArray(d) => d.clone(),
+                        _ => unreachable!(),
+                    };
+                    let ndim = data.meta.logical_shape.len();
+                    let ax = if ndim == 1 { 0i64 } else { 1i64 };
+                    let mut kw = _visited_kwargs.clone();
+                    kw.insert("axis".to_string(), Value::Integer(ScalarValue::new(Some(ax), None)));
+                    crate::ops::dyn_ndarray::memory_ops::dyn_split(&mut self.builder, &data, &visited_args[1..], &kw)
+                } else {
+                    crate::ops::static_ndarray_ops::np_hsplit(&mut self.builder, &visited_args)
+                }
+            }
+            (Some("np"), "vsplit") => {
+                if matches!(visited_args.first(), Some(Value::DynamicNDArray(_))) {
+                    let data = match &visited_args[0] {
+                        Value::DynamicNDArray(d) => d.clone(),
+                        _ => unreachable!(),
+                    };
+                    let mut kw = _visited_kwargs.clone();
+                    kw.insert("axis".to_string(), Value::Integer(ScalarValue::new(Some(0), None)));
+                    crate::ops::dyn_ndarray::memory_ops::dyn_split(&mut self.builder, &data, &visited_args[1..], &kw)
+                } else {
+                    crate::ops::static_ndarray_ops::np_vsplit(&mut self.builder, &visited_args)
+                }
+            }
+            (Some("np"), "dsplit") => {
+                if matches!(visited_args.first(), Some(Value::DynamicNDArray(_))) {
+                    let data = match &visited_args[0] {
+                        Value::DynamicNDArray(d) => d.clone(),
+                        _ => unreachable!(),
+                    };
+                    let mut kw = _visited_kwargs.clone();
+                    kw.insert("axis".to_string(), Value::Integer(ScalarValue::new(Some(2), None)));
+                    crate::ops::dyn_ndarray::memory_ops::dyn_split(&mut self.builder, &data, &visited_args[1..], &kw)
+                } else {
+                    crate::ops::static_ndarray_ops::np_dsplit(&mut self.builder, &visited_args)
+                }
+            }
             (Some("np"), "floor") => crate::ops::static_ndarray_ops::np_floor(&mut self.builder, &visited_args),
             (Some("np"), "ceil") => crate::ops::static_ndarray_ops::np_ceil(&mut self.builder, &visited_args),
             (Some("np"), "trunc") => crate::ops::static_ndarray_ops::np_trunc(&mut self.builder, &visited_args),
