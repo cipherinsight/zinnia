@@ -680,6 +680,17 @@ impl IRGenerator {
                                     }
                                 }
                             }
+                            // Check for slice assignment: any Range index.
+                            let has_range = indices.iter().any(|idx|
+                                matches!(idx, crate::types::SliceIndex::Range(_, _, _))
+                            );
+                            if has_range {
+                                let result = crate::helpers::array_ops::dyn_setitem_slice(
+                                    &mut self.builder, d, &indices, &value,
+                                );
+                                self.ctx.set(var_name, result);
+                                return;
+                            }
                             crate::helpers::array_ops::dyn_setitem(
                                 &mut self.builder, d, &indices, &value,
                             )

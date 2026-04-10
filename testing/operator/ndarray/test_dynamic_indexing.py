@@ -419,6 +419,70 @@ def test_2d_dynamic_range_range():
     assert foo()
 
 
+# ── Slice assignment ─────────────────────────────────────────────────────
+
+def test_slice_assign_1d_static():
+    """dyn[1:3] = [99, 88]"""
+    @zk_circuit
+    def foo():
+        a = np.promote_to_dynamic(np.asarray([1, 2, 3, 4, 5]))
+        a[1:3] = np.asarray([99, 88])
+        # [1, 99, 88, 4, 5] → sum = 197
+        assert a.sum() == 197
+
+    assert foo()
+
+
+def test_slice_assign_1d_scalar():
+    """dyn[1:4] = 0 (scalar broadcast)"""
+    @zk_circuit
+    def foo():
+        a = np.promote_to_dynamic(np.asarray([10, 20, 30, 40, 50]))
+        a[1:4] = 0
+        # [10, 0, 0, 0, 50] → sum = 60
+        assert a.sum() == 60
+
+    assert foo()
+
+
+def test_slice_assign_2d_row_range():
+    """dyn[1:3] = [[90, 91, 92], [93, 94, 95]] on a 3x3 array."""
+    @zk_circuit
+    def foo():
+        a = np.promote_to_dynamic(np.asarray([[1, 2, 3], [4, 5, 6], [7, 8, 9]]))
+        a[1:3] = np.asarray([[90, 91, 92], [93, 94, 95]])
+        # [[1,2,3],[90,91,92],[93,94,95]] → sum = 1+2+3+90+91+92+93+94+95 = 561
+        assert a.sum() == 561
+
+    assert foo()
+
+
+def test_slice_assign_2d_column():
+    """dyn[:, 1] = [77, 88] — assign to a column."""
+    @zk_circuit
+    def foo():
+        a = np.promote_to_dynamic(np.asarray([[1, 2, 3], [4, 5, 6]]))
+        a[:, 1] = np.asarray([77, 88])
+        # [[1,77,3],[4,88,6]] → sum = 1+77+3+4+88+6 = 179
+        assert a.sum() == 179
+
+    assert foo()
+
+
+def test_slice_assign_dynamic_bounds():
+    """dyn[x:y] = scalar with dynamic bounds."""
+    @zk_circuit
+    def foo():
+        a = np.promote_to_dynamic(np.asarray([1, 2, 3, 4, 5]))
+        start = np.promote_to_dynamic(np.asarray([1])).sum()  # = 1
+        stop = np.promote_to_dynamic(np.asarray([4])).sum()   # = 4
+        a[start:stop] = 0
+        # [1, 0, 0, 0, 5] → sum = 6
+        assert a.sum() == 6
+
+    assert foo()
+
+
 # ── Boolean masking ──────────────────────────────────────────────────────
 
 def test_boolean_mask_static():
