@@ -58,10 +58,11 @@ pub fn promote_static_to_dynamic(b: &mut IRBuilder, val: &Value) -> Value {
     let total: usize = shape.iter().product();
     let rank = shape.len();
 
-    Value::DynamicNDArray(DynamicNDArrayData {
+    let mut dyn_data = DynamicNDArrayData {
         envelope,
         dtype,
         elements,
+        segment_id: None,
         meta: DynArrayMeta {
             logical_shape: shape.clone(),
             logical_offset: 0,
@@ -78,7 +79,13 @@ pub fn promote_static_to_dynamic(b: &mut IRBuilder, val: &Value) -> Value {
                 .collect(),
             runtime_offset: ScalarValue::new(Some(0), None),
         },
-    })
+    };
+
+    // Materialize the elements into a ZKRAM segment so downstream dynamic
+    // ops can read via ir_read_memory.
+    super::segment::ensure_segment(b, &mut dyn_data);
+
+    Value::DynamicNDArray(dyn_data)
 }
 
 // ────────────────────────────────────────────────────────────────────────

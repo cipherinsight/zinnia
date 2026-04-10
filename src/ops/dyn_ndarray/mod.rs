@@ -89,7 +89,7 @@ impl IRGenerator {
         kwargs: &HashMap<String, Value>,
     ) -> Value {
         // Extract data — we need ownership for some ops
-        let data = match &val {
+        let mut data = match &val {
             Value::DynamicNDArray(d) => d.clone(),
             _ => panic!("dispatch_dyn_ndarray_method called on non-DynamicNDArray"),
         };
@@ -152,7 +152,7 @@ impl IRGenerator {
             }
 
             // Memory-heavy ops
-            "filter" => memory_ops::dyn_filter(&mut self.builder, &data, args),
+            "filter" => memory_ops::dyn_filter(&mut self.builder, &mut data, args),
             "repeat" => memory_ops::dyn_repeat(&mut self.builder, &data, args, kwargs),
 
             _ => panic!(

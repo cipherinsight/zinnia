@@ -163,6 +163,7 @@ pub fn dyn_aggregate_axis(
         envelope,
         dtype: out_dtype,
         elements: out_elements,
+        segment_id: None,
         meta: DynArrayMeta {
             logical_shape: out_shape.clone(),
             logical_offset: 0,

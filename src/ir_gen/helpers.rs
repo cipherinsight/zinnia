@@ -301,6 +301,7 @@ impl IRGenerator {
                     envelope,
                     dtype: *dtype,
                     elements,
+                    segment_id: None,
                     meta: crate::types::DynArrayMeta {
                         logical_shape: vec![*max_length],
                         logical_offset: 0,

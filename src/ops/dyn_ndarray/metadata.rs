@@ -141,6 +141,7 @@ pub fn dyn_astype(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) 
         envelope: data.envelope.clone(),
         dtype: new_dtype,
         elements: new_elements,
+        segment_id: None,
         meta: data.meta.clone(),
     })
 }
@@ -165,6 +166,7 @@ pub fn dyn_flat(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
         envelope,
         dtype: data.dtype,
         elements: flat,
+        segment_id: None,
         meta: DynArrayMeta {
             logical_shape: vec![max_length],
             logical_offset: 0,

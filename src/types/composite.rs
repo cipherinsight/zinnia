@@ -53,7 +53,16 @@ pub struct DynamicNDArrayData {
     pub envelope: Envelope,
     pub dtype: NumberType,
     /// Flat storage of element values. Length = `envelope.max_total()`.
+    /// This is the compile-time cache; it coexists with the optional
+    /// ZKRAM segment below during the transition period. Static ndarrays
+    /// will always keep this; dynamic ops will gradually migrate to
+    /// segment-based reads and writes.
     pub elements: Vec<ScalarValue<i64>>,
+    /// ZKRAM segment ID, if this array's payload has been materialized
+    /// to a memory segment. `None` for arrays that only live in the
+    /// compile-time `elements` Vec (e.g. statically-constructed arrays
+    /// before any dynamic op touches them).
+    pub segment_id: Option<u32>,
     pub meta: DynArrayMeta,
 }
 

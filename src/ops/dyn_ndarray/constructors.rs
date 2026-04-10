@@ -37,6 +37,7 @@ pub fn dyn_fill(
         envelope,
         dtype,
         elements,
+        segment_id: None,
         meta: DynArrayMeta {
             logical_shape: shape.clone(),
             logical_offset: 0,
@@ -106,6 +107,7 @@ pub fn dyn_eye(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
         envelope,
         dtype,
         elements,
+        segment_id: None,
         meta: DynArrayMeta {
             logical_shape: shape.clone(),
             logical_offset: 0,

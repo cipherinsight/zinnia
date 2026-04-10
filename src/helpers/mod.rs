@@ -4,3 +4,4 @@ pub mod ndarray;
 pub mod broadcast;
 pub mod shape_arith;
 pub mod promote;
+pub mod segment;

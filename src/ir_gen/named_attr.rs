@@ -279,6 +279,10 @@ impl IRGenerator {
             (Some("np"), "std") => crate::ops::static_ndarray_ops::np_std(&mut self.builder, &visited_args, &_visited_kwargs),
             (Some("np"), "cumsum") => crate::ops::static_ndarray_ops::np_cumsum(&mut self.builder, &visited_args, &_visited_kwargs),
             (Some("np"), "cumprod") => crate::ops::static_ndarray_ops::np_cumprod(&mut self.builder, &visited_args, &_visited_kwargs),
+            (Some("np"), "promote_to_dynamic") => {
+                let val = visited_args.first().cloned().unwrap_or(Value::None);
+                crate::helpers::promote::promote_static_to_dynamic(&mut self.builder, &val)
+            }
             (Some("np"), "block") => {
                 // Block depth must be measured from the *AST*, not the
                 // visited Value: after Python list literals have been turned

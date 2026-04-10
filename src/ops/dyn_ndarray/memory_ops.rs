@@ -10,11 +10,24 @@ use super::{
     value_to_scalar_i64,
 };
 
-pub fn dyn_filter(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) -> Value {
+pub fn dyn_filter(b: &mut IRBuilder, data: &mut DynamicNDArrayData, args: &[Value]) -> Value {
     let mask = args
         .first()
         .expect("filter: requires a mask argument");
-    let elements = super::metadata::dyn_elements_to_values(data);
+    // Read input elements from ZKRAM segment if available, else from the
+    // compile-time cache. This is the first dynamic op to actually exercise
+    // the segment read path.
+    let elements: Vec<Value> = if let Some(_seg) = data.segment_id {
+        let seg = crate::helpers::segment::ensure_segment(b, data);
+        (0..data.max_length())
+            .map(|i| {
+                let addr = b.ir_constant_int(i as i64);
+                crate::helpers::segment::read_segment(b, seg, &addr)
+            })
+            .collect()
+    } else {
+        super::metadata::dyn_elements_to_values(data)
+    };
 
     // Get mask elements
     let mask_elements: Vec<Value> = match mask {
@@ -70,10 +83,11 @@ pub fn dyn_filter(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) 
         0,
         max_len,
     )]);
-    Value::DynamicNDArray(DynamicNDArrayData {
+    let mut result = DynamicNDArrayData {
         envelope,
         dtype: data.dtype,
         elements: new_elements,
+        segment_id: None,
         meta: DynArrayMeta {
             logical_shape: vec![max_len],
             logical_offset: 0,
@@ -84,7 +98,11 @@ pub fn dyn_filter(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) 
             runtime_strides: vec![ScalarValue::new(Some(1), None)],
             runtime_offset: ScalarValue::new(Some(0), None),
         },
-    })
+    };
+    // Materialize the output to a ZKRAM segment so downstream ops can
+    // read via ir_read_memory.
+    crate::helpers::segment::ensure_segment(b, &mut result);
+    Value::DynamicNDArray(result)
 }
 
 /// DynamicNDArray.repeat(repeats, axis=...)
@@ -121,6 +139,7 @@ pub fn dyn_repeat(
             envelope,
             dtype: data.dtype,
             elements: new_elements,
+            segment_id: None,
             meta: DynArrayMeta {
                 logical_shape: vec![new_len],
                 logical_offset: 0,
@@ -146,6 +165,7 @@ pub fn dyn_repeat(
             envelope,
             dtype: data.dtype,
             elements: new_elements,
+            segment_id: None,
             meta: DynArrayMeta {
                 logical_shape: vec![new_len],
                 logical_offset: 0,
@@ -260,6 +280,7 @@ pub fn dyn_concatenate(
         envelope,
         dtype,
         elements: out_elements,
+        segment_id: None,
         meta: DynArrayMeta {
             logical_shape: out_shape.clone(),
             logical_offset: 0,
@@ -355,6 +376,7 @@ pub fn dyn_stack(
         envelope,
         dtype,
         elements: out_elements,
+        segment_id: None,
         meta: DynArrayMeta {
             logical_shape: out_shape.clone(),
             logical_offset: 0,
