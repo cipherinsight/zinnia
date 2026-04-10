@@ -22,7 +22,7 @@ pub fn dyn_filter(b: &mut IRBuilder, data: &mut DynamicNDArrayData, args: &[Valu
         (0..data.max_length())
             .map(|i| {
                 let addr = b.ir_constant_int(i as i64);
-                crate::helpers::segment::read_segment(b, seg, &addr)
+                b.ir_read_memory(seg, &addr)
             })
             .collect()
     } else {
