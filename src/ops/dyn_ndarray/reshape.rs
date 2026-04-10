@@ -70,7 +70,8 @@ pub fn dyn_transpose(_b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Valu
     // are preserved (not freshly allocated), so any unifications established
     // before the transpose stay valid after.
     let new_dims: Vec<crate::types::Dim> = perm.iter().map(|&p| data.envelope.dims[p]).collect();
-    let envelope = crate::types::Envelope::new(new_dims);
+    // Shape-preserving: total_bound is conserved from source (§3.2).
+    let envelope = crate::types::Envelope::new_with_bound(new_dims, data.envelope.total_bound);
     Value::DynamicNDArray(DynamicNDArrayData {
         envelope,
         dtype: data.dtype,

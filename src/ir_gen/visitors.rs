@@ -248,6 +248,33 @@ impl IRGenerator {
                 let types = results.iter().map(|v| v.zinnia_type()).collect();
                 Value::List(CompositeData { elements_type: types, values: results })
             }
+            Value::DynamicNDArray(d) => {
+                match op {
+                    "usub" => {
+                        let out_dtype = d.dtype;
+                        crate::ops::dyn_ndarray::binary::dyn_unary_op(
+                            &mut self.builder, d, out_dtype,
+                            |b, v| {
+                                if matches!(v, Value::Float(_)) {
+                                    let zero = b.ir_constant_float(0.0);
+                                    b.ir_sub_f(&zero, v)
+                                } else {
+                                    let zero = b.ir_constant_int(0);
+                                    b.ir_sub_i(&zero, v)
+                                }
+                            },
+                        )
+                    }
+                    "not" => {
+                        crate::ops::dyn_ndarray::binary::dyn_unary_op(
+                            &mut self.builder, d, crate::types::NumberType::Integer,
+                            |b, v| b.ir_logical_not(v),
+                        )
+                    }
+                    "uadd" => operand.clone(),
+                    _ => panic!("Unknown unary operator for DynamicNDArray: {}", op),
+                }
+            }
             _ => match op {
                 "not" => self.builder.ir_logical_not(operand),
                 "usub" => {
@@ -334,6 +361,9 @@ impl IRGenerator {
                     // Multi-dimensional ndarray-style indexing
                     crate::helpers::ndarray::multidim_subscript(&mut self.builder, data, &slice_values)
                 }
+            }
+            Value::DynamicNDArray(d) => {
+                crate::helpers::array_ops::dyn_subscript(&mut self.builder, d, &slice_values)
             }
             _ => Value::None,
         }
@@ -637,7 +667,25 @@ impl IRGenerator {
                         if matches!(&current, Value::Tuple(_)) {
                             panic!("'tuple' object does not support item assignment");
                         }
-                        let updated = self.set_nested_value(current, &indices, value);
+                        let updated = if let Value::DynamicNDArray(d) = &current {
+                            // Check for boolean mask assignment: dyn[mask] = x
+                            if indices.len() == 1 {
+                                if let crate::types::SliceIndex::Single(mask_val) = &indices[0] {
+                                    if crate::helpers::array_ops::is_boolean_mask(mask_val) {
+                                        let result = crate::helpers::array_ops::dyn_setitem_mask(
+                                            &mut self.builder, d, mask_val, &value,
+                                        );
+                                        self.ctx.set(var_name, result);
+                                        return;
+                                    }
+                                }
+                            }
+                            crate::helpers::array_ops::dyn_setitem(
+                                &mut self.builder, d, &indices, &value,
+                            )
+                        } else {
+                            self.set_nested_value(current, &indices, value)
+                        };
                         self.ctx.set(var_name, updated);
                     }
                 }

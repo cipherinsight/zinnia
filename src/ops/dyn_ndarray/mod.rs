@@ -13,6 +13,7 @@ pub mod constructors;
 pub mod reshape;
 pub mod aggregation;
 pub mod memory_ops;
+pub mod binary;
 
 #[derive(Debug, Clone, Copy)]
 pub enum DynAggKind {

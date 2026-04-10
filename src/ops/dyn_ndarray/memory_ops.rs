@@ -29,53 +29,49 @@ pub fn dyn_filter(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) 
 
     let max_len = data.max_length();
 
-    // Build output via compaction with write pointer
+    // Allocate output segment pre-filled with defaults.
+    let default_val = super::metadata::dyn_default_value(b, data.dtype);
+    let default_sv = value_to_scalar_i64(&default_val);
+    let default_elements = vec![default_sv; max_len];
+    let segment_id = crate::helpers::segment::alloc_and_write(b, &default_elements, data.dtype);
+
+    // Compaction via ZKRAM write pointer: for each input element, if mask
+    // is true, write the element at write_ptr and advance. If false, write
+    // a default at write_ptr (will be overwritten by the next kept element).
+    // O(N) writes instead of O(N²) selects.
     let mut write_ptr = b.ir_constant_int(0);
-    let mut out_values: Vec<Value> = (0..max_len)
-        .map(|_| super::metadata::dyn_default_value(b, data.dtype))
-        .collect();
 
     for i in 0..max_len.min(elements.len()) {
-        // Get mask value (or default false)
         let mask_val = if i < mask_elements.len() {
             mask_elements[i].clone()
         } else {
             b.ir_constant_int(0)
         };
-        // Check if mask is truthy
         let keep = b.ir_bool_cast(&mask_val);
 
-        // Conditionally place element at write_ptr position
-        for j in 0..max_len {
-            let j_const = b.ir_constant_int(j as i64);
-            let is_target = b.ir_equal_i(&write_ptr, &j_const);
-            let should_write = b.ir_logical_and(&keep, &is_target);
-            out_values[j] = if data.dtype == NumberType::Float {
-                b.ir_select_f(&should_write, &elements[i], &out_values[j])
-            } else {
-                b.ir_select_i(&should_write, &elements[i], &out_values[j])
-            };
-        }
+        // Write element or default at write_ptr. Non-kept writes are
+        // harmless — they'll be overwritten by the next kept element or
+        // sit beyond runtime_length.
+        let val_to_write = if data.dtype == NumberType::Float {
+            b.ir_select_f(&keep, &elements[i], &default_val)
+        } else {
+            b.ir_select_i(&keep, &elements[i], &default_val)
+        };
+        b.ir_write_memory(segment_id, &write_ptr, &val_to_write);
 
-        // Increment write_ptr if keep
+        // Advance write_ptr only when keep is true.
         let one = b.ir_constant_int(1);
         let zero = b.ir_constant_int(0);
         let inc = b.ir_select_i(&keep, &one, &zero);
         write_ptr = b.ir_add_i(&write_ptr, &inc);
     }
 
-    let new_elements: Vec<ScalarValue<i64>> =
-        out_values.iter().map(|v| value_to_scalar_i64(v)).collect();
-
-    let segment_id = crate::helpers::segment::alloc_and_write(b, &new_elements, data.dtype);
-
     // After filter, the runtime length is unknown (depends on the mask) but
-    // bounded by the input's max. Reflect that as a Dynamic dim 0..=max_len.
-    let envelope = crate::types::Envelope::new(vec![crate::types::Dim::new_dynamic(
-        &mut b.dim_table,
-        0,
-        max_len,
-    )]);
+    // bounded by the input's max. total_bound conserved from source (§3.8).
+    let envelope = crate::types::Envelope::new_with_bound(
+        vec![crate::types::Dim::new_dynamic(&mut b.dim_table, 0, max_len)],
+        data.envelope.total_bound,
+    );
     let result = DynamicNDArrayData {
         envelope,
         dtype: data.dtype,

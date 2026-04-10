@@ -371,42 +371,21 @@ impl IRGenerator {
             }
 
             // ── Method calls on expr attributes ────────────────────────
-            (Some(var), "sum") if self.ctx.exists(var) => {
+            //
+            // Unified ops: each entry point handles static/dynamic internally.
+            (Some(var), method @ ("sum" | "any" | "all" | "prod" | "min" | "max")) if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
-                let axis = _visited_kwargs.get("axis").or_else(|| visited_args.first()).and_then(|v| v.int_val());
-                if let Some(ax) = axis {
-                    crate::ops::static_ndarray_ops::reduce_with_axis(&mut self.builder,"sum", &val, ax)
-                } else {
-                    crate::helpers::ndarray::builtin_reduce(&mut self.builder, "sum", &val)
-                }
-            }
-            (Some(var), "any") if self.ctx.exists(var) => {
-                let val = self.ctx.get(var).unwrap_or(Value::None);
-                let axis = _visited_kwargs.get("axis").or_else(|| visited_args.first()).and_then(|v| v.int_val());
-                if let Some(ax) = axis {
-                    crate::ops::static_ndarray_ops::reduce_with_axis(&mut self.builder,"any", &val, ax)
-                } else {
-                    crate::helpers::ndarray::builtin_reduce(&mut self.builder, "any", &val)
-                }
-            }
-            (Some(var), "all") if self.ctx.exists(var) => {
-                let val = self.ctx.get(var).unwrap_or(Value::None);
-                let axis = _visited_kwargs.get("axis").or_else(|| visited_args.first()).and_then(|v| v.int_val());
-                if let Some(ax) = axis {
-                    crate::ops::static_ndarray_ops::reduce_with_axis(&mut self.builder,"all", &val, ax)
-                } else {
-                    crate::helpers::ndarray::builtin_reduce(&mut self.builder, "all", &val)
-                }
+                let axis_arg = _visited_kwargs.get("axis").or_else(|| visited_args.first());
+                crate::helpers::array_ops::reduce(&mut self.builder, method, &val, axis_arg)
             }
             (Some(var), "transpose") if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
-                // Check for axes keyword argument
                 let args = if let Some(axes_val) = _visited_kwargs.get("axes") {
                     vec![axes_val.clone()]
                 } else {
                     visited_args.clone()
                 };
-                crate::helpers::ndarray::ndarray_transpose(&mut self.builder, &val, &args)
+                crate::helpers::array_ops::transpose(&mut self.builder, &val, &args)
             }
             (Some(var), "T") if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
@@ -425,23 +404,10 @@ impl IRGenerator {
                 };
                 self.cast_composite(&val, target_float)
             }
-            (Some(var), "argmax") if self.ctx.exists(var) => {
+            (Some(var), method @ ("argmax" | "argmin")) if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
-                let axis = _visited_kwargs.get("axis").or_else(|| visited_args.first()).and_then(|v| v.int_val());
-                if let Some(ax) = axis {
-                    crate::ops::static_ndarray_ops::ndarray_argmax_argmin_with_axis(&mut self.builder,&val, ax, true)
-                } else {
-                    crate::helpers::ndarray::ndarray_argmax_argmin(&mut self.builder, &val, &visited_args, true)
-                }
-            }
-            (Some(var), "argmin") if self.ctx.exists(var) => {
-                let val = self.ctx.get(var).unwrap_or(Value::None);
-                let axis = _visited_kwargs.get("axis").or_else(|| visited_args.first()).and_then(|v| v.int_val());
-                if let Some(ax) = axis {
-                    crate::ops::static_ndarray_ops::ndarray_argmax_argmin_with_axis(&mut self.builder,&val, ax, false)
-                } else {
-                    crate::helpers::ndarray::ndarray_argmax_argmin(&mut self.builder, &val, &visited_args, false)
-                }
+                let axis_arg = _visited_kwargs.get("axis").or_else(|| visited_args.first());
+                crate::helpers::array_ops::argmax_argmin(&mut self.builder, &val, axis_arg, method == "argmax")
             }
 
             // ── NDArray property access ──────────────────────────────
@@ -463,33 +429,6 @@ impl IRGenerator {
                     Value::Class(ZinniaType::Float)
                 } else {
                     Value::Class(ZinniaType::Integer)
-                }
-            }
-            (Some(var), "min") if self.ctx.exists(var) => {
-                let val = self.ctx.get(var).unwrap_or(Value::None);
-                let axis = _visited_kwargs.get("axis").or_else(|| visited_args.first()).and_then(|v| v.int_val());
-                if let Some(ax) = axis {
-                    crate::ops::static_ndarray_ops::reduce_with_axis(&mut self.builder,"min", &val, ax)
-                } else {
-                    crate::helpers::ndarray::builtin_reduce(&mut self.builder, "min", &val)
-                }
-            }
-            (Some(var), "max") if self.ctx.exists(var) => {
-                let val = self.ctx.get(var).unwrap_or(Value::None);
-                let axis = _visited_kwargs.get("axis").or_else(|| visited_args.first()).and_then(|v| v.int_val());
-                if let Some(ax) = axis {
-                    crate::ops::static_ndarray_ops::reduce_with_axis(&mut self.builder,"max", &val, ax)
-                } else {
-                    crate::helpers::ndarray::builtin_reduce(&mut self.builder, "max", &val)
-                }
-            }
-            (Some(var), "prod") if self.ctx.exists(var) => {
-                let val = self.ctx.get(var).unwrap_or(Value::None);
-                let axis = _visited_kwargs.get("axis").or_else(|| visited_args.first()).and_then(|v| v.int_val());
-                if let Some(ax) = axis {
-                    crate::ops::static_ndarray_ops::reduce_with_axis(&mut self.builder,"prod", &val, ax)
-                } else {
-                    crate::helpers::ndarray::builtin_reduce(&mut self.builder, "prod", &val)
                 }
             }
 
@@ -519,19 +458,19 @@ impl IRGenerator {
             }
             (Some(var), "reshape") if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
-                crate::ops::static_ndarray_ops::ndarray_reshape(&mut self.builder,&val, &visited_args)
+                crate::helpers::array_ops::reshape(&mut self.builder, &val, &visited_args)
             }
             (Some(var), "moveaxis") if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
-                crate::ops::static_ndarray_ops::ndarray_moveaxis(&mut self.builder,&val, &visited_args)
+                crate::helpers::array_ops::moveaxis(&mut self.builder, &val, &visited_args)
             }
             (Some(var), "repeat") if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
-                crate::ops::static_ndarray_ops::ndarray_repeat(&mut self.builder,&val, &visited_args, &_visited_kwargs)
+                crate::helpers::array_ops::repeat(&mut self.builder, &val, &visited_args, &_visited_kwargs)
             }
             (Some(var), "swapaxes") if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
-                crate::ops::static_ndarray_ops::ndarray_swapaxes(&mut self.builder, &val, &visited_args)
+                crate::helpers::array_ops::swapaxes(&mut self.builder, &val, &visited_args)
             }
             (Some(var), "mean") if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
@@ -571,7 +510,7 @@ impl IRGenerator {
             }
             (Some(var), "filter") if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
-                crate::ops::static_ndarray_ops::ndarray_filter(&mut self.builder,&val, &visited_args)
+                crate::helpers::array_ops::filter(&mut self.builder, &val, &visited_args)
             }
 
             // ── np.* fallback to the np_like registry ───────────────────
@@ -621,6 +560,20 @@ impl IRGenerator {
                                 values: vals,
                             })
                         }
+                        Value::DynamicNDArray(d) => {
+                            let out_dtype = d.dtype;
+                            let name_owned = name.to_string();
+                            let kw_clone = base_kwargs.clone();
+                            crate::ops::dyn_ndarray::binary::dyn_unary_op(
+                                builder, d, out_dtype,
+                                move |b, v| {
+                                    let mut kw = kw_clone.clone();
+                                    kw.insert("x".to_string(), v.clone());
+                                    dispatch_scalar(b, &name_owned, kw)
+                                        .unwrap_or_else(|| panic!("np.{} is not implemented", name_owned))
+                                },
+                            )
+                        }
                         _ => {
                             let mut kw = base_kwargs.clone();
                             kw.insert("x".to_string(), x.clone());
@@ -653,7 +606,7 @@ impl IRGenerator {
                 };
 
                 let result = if visited_args.len() == 1
-                    && matches!(visited_args[0], Value::List(_) | Value::Tuple(_))
+                    && matches!(visited_args[0], Value::List(_) | Value::Tuple(_) | Value::DynamicNDArray(_))
                 {
                     // Centralized unary vectorization.
                     Some(vectorize_unary_np(
@@ -663,8 +616,8 @@ impl IRGenerator {
                         &visited_args[0],
                     ))
                 } else if visited_args.len() == 2
-                    && (matches!(visited_args[0], Value::List(_) | Value::Tuple(_))
-                        || matches!(visited_args[1], Value::List(_) | Value::Tuple(_)))
+                    && (matches!(visited_args[0], Value::List(_) | Value::Tuple(_) | Value::DynamicNDArray(_))
+                        || matches!(visited_args[1], Value::List(_) | Value::Tuple(_) | Value::DynamicNDArray(_)))
                     && binary_apply_name.is_some()
                 {
                     // Centralized binary vectorization for composite operands.
@@ -746,16 +699,21 @@ impl IRGenerator {
         }
 
         match n.member.as_str() {
-            "sum" => crate::helpers::ndarray::builtin_reduce(&mut self.builder, "sum", &target),
-            "any" => crate::helpers::ndarray::builtin_reduce(&mut self.builder, "any", &target),
-            "all" => crate::helpers::ndarray::builtin_reduce(&mut self.builder, "all", &target),
+            method @ ("sum" | "any" | "all" | "prod" | "min" | "max") => {
+                let axis_arg = visited_kwargs.get("axis").or_else(|| visited_args.first());
+                crate::helpers::array_ops::reduce(&mut self.builder, method, &target, axis_arg)
+            }
+            method @ ("argmax" | "argmin") => {
+                let axis_arg = visited_kwargs.get("axis").or_else(|| visited_args.first());
+                crate::helpers::array_ops::argmax_argmin(&mut self.builder, &target, axis_arg, method == "argmax")
+            }
             "transpose" => {
                 let args = if let Some(axes_val) = visited_kwargs.get("axes") {
                     vec![axes_val.clone()]
                 } else {
                     visited_args.clone()
                 };
-                crate::helpers::ndarray::ndarray_transpose(&mut self.builder, &target, &args)
+                crate::helpers::array_ops::transpose(&mut self.builder, &target, &args)
             }
             "T" => crate::helpers::ndarray::ndarray_transpose(&mut self.builder, &target, &[]),
             "tolist" => target,
@@ -767,11 +725,6 @@ impl IRGenerator {
                 };
                 self.cast_composite(&target, target_float)
             }
-            "argmax" => crate::helpers::ndarray::ndarray_argmax_argmin(&mut self.builder, &target, &visited_args, true),
-            "argmin" => crate::helpers::ndarray::ndarray_argmax_argmin(&mut self.builder, &target, &visited_args, false),
-            "prod" => crate::helpers::ndarray::builtin_reduce(&mut self.builder, "prod", &target),
-            "min" => crate::helpers::ndarray::builtin_reduce(&mut self.builder, "min", &target),
-            "max" => crate::helpers::ndarray::builtin_reduce(&mut self.builder, "max", &target),
             "ndim" => {
                 let shape = crate::helpers::composite::get_composite_shape(&target);
                 self.builder.ir_constant_int(shape.len() as i64)
@@ -786,10 +739,10 @@ impl IRGenerator {
                 let types = flat.iter().map(|v| v.zinnia_type()).collect();
                 Value::List(CompositeData { elements_type: types, values: flat })
             }
-            "reshape" => crate::ops::static_ndarray_ops::ndarray_reshape(&mut self.builder,&target, &visited_args),
-            "moveaxis" => crate::ops::static_ndarray_ops::ndarray_moveaxis(&mut self.builder,&target, &visited_args),
-            "repeat" => crate::ops::static_ndarray_ops::ndarray_repeat(&mut self.builder,&target, &visited_args, &visited_kwargs),
-            "filter" => crate::ops::static_ndarray_ops::ndarray_filter(&mut self.builder,&target, &visited_args),
+            "reshape" => crate::helpers::array_ops::reshape(&mut self.builder, &target, &visited_args),
+            "moveaxis" => crate::helpers::array_ops::moveaxis(&mut self.builder, &target, &visited_args),
+            "repeat" => crate::helpers::array_ops::repeat(&mut self.builder, &target, &visited_args, &visited_kwargs),
+            "filter" => crate::helpers::array_ops::filter(&mut self.builder, &target, &visited_args),
             "shape" => {
                 let shape = crate::helpers::composite::get_composite_shape(&target);
                 let shape_vals: Vec<Value> = shape.iter()

@@ -292,14 +292,15 @@ impl IRGenerator {
 
                 let strides = crate::ops::dyn_ndarray::dyn_row_major_strides(&[*max_length]);
                 // Inputs come in with a single dynamic dim of unknown
-                // length 0..=max_length. The richer per-axis annotation
-                // syntax that would let users express tighter bounds is
-                // future work; for now we degrade to one Dynamic dim.
-                let envelope = crate::types::Envelope::new(vec![crate::types::Dim::new_dynamic(
-                    &mut self.builder.dim_table,
-                    0,
+                // length 0..=max_length. total_bound = max_length (§3.1).
+                let envelope = crate::types::Envelope::new_with_bound(
+                    vec![crate::types::Dim::new_dynamic(
+                        &mut self.builder.dim_table,
+                        0,
+                        *max_length,
+                    )],
                     *max_length,
-                )]);
+                );
                 let _ = max_rank;
                 Value::DynamicNDArray(crate::types::DynamicNDArrayData {
                     envelope,
@@ -345,4 +346,5 @@ impl IRGenerator {
         // Direct ZinniaType serde format: "Integer", {"NDArray": {...}}, etc.
         serde_json::from_value::<ZinniaType>(dt_json.clone()).unwrap_or(ZinniaType::Integer)
     }
+
 }

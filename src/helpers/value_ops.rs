@@ -53,6 +53,38 @@ pub fn to_scalar_bool(b: &mut IRBuilder, val: &Value) -> Value {
 
 /// Apply a binary operation, with element-wise support for composite types.
 pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) -> Value {
+    // ── DynamicNDArray dispatch ──────────────────────────────────────
+    // When either operand is a DynamicNDArray, promote the other and
+    // dispatch to the dynamic binary op.
+    match (lhs, rhs) {
+        (Value::DynamicNDArray(ld), Value::DynamicNDArray(rd)) => {
+            return crate::ops::dyn_ndarray::binary::dyn_binary_op(b, op, ld, rd);
+        }
+        (Value::DynamicNDArray(d), other) | (other, Value::DynamicNDArray(d))
+            if other.is_number() =>
+        {
+            let scalar_is_lhs = matches!(lhs, Value::Integer(_) | Value::Float(_) | Value::Boolean(_));
+            return crate::ops::dyn_ndarray::binary::dyn_scalar_binary_op(
+                b, op, other, d, scalar_is_lhs,
+            );
+        }
+        (Value::DynamicNDArray(d), other) | (other, Value::DynamicNDArray(d)) => {
+            // Static composite + dynamic: promote static to dynamic first.
+            let promoted = crate::helpers::promote::promote_static_to_dynamic(b, other);
+            let pd = match &promoted {
+                Value::DynamicNDArray(pd) => pd,
+                _ => unreachable!("promote always returns DynamicNDArray"),
+            };
+            let lhs_is_dyn = matches!(lhs, Value::DynamicNDArray(_));
+            return if lhs_is_dyn {
+                crate::ops::dyn_ndarray::binary::dyn_binary_op(b, op, d, pd)
+            } else {
+                crate::ops::dyn_ndarray::binary::dyn_binary_op(b, op, pd, d)
+            };
+        }
+        _ => {}
+    }
+
     // List/tuple concatenation via `+` (only for different-length composites
     // or when both are pure integer lists — same-length composites do element-wise)
     if op == "add" {

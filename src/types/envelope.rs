@@ -150,28 +150,67 @@ impl Dim {
 
 /// Compile-time shape envelope for a (possibly dynamic) ndarray. Rank is
 /// fixed at envelope construction time.
-#[derive(Clone, Debug, Default)]
+///
+/// `total_bound` is the cross-axis upper bound on the total element count
+/// (the `T` from ROADMAP/04-lazy-views.md §2). It may be tighter than the
+/// product of per-axis maxima when cross-axis constraints are known (e.g.,
+/// an input declared with `max_length = 100` reshaped to 2-D keeps
+/// `total_bound = 100` even though each axis could individually be up to
+/// 100).
+#[derive(Clone, Debug)]
 pub struct Envelope {
     pub dims: Vec<Dim>,
+    pub total_bound: usize,
+}
+
+impl Default for Envelope {
+    fn default() -> Self {
+        Envelope {
+            dims: Vec::new(),
+            total_bound: 1,
+        }
+    }
 }
 
 impl Envelope {
+    /// Construct an envelope from dims. `total_bound` defaults to the
+    /// product of per-axis maxima (the loosest valid bound).
     pub fn new(dims: Vec<Dim>) -> Self {
-        Envelope { dims }
+        let total_bound = if dims.is_empty() {
+            1
+        } else {
+            dims.iter().map(|d| d.max).product()
+        };
+        Envelope { dims, total_bound }
     }
 
-    /// 0-D scalar envelope (rank 0).
+    /// Construct an envelope with an explicit cross-axis total bound that
+    /// is tighter than the per-axis product.
+    pub fn new_with_bound(dims: Vec<Dim>, total_bound: usize) -> Self {
+        Envelope { dims, total_bound }
+    }
+
+    /// 0-D scalar envelope (rank 0, total_bound = 1).
     pub fn scalar() -> Self {
-        Envelope { dims: Vec::new() }
+        Envelope {
+            dims: Vec::new(),
+            total_bound: 1,
+        }
     }
 
     pub fn rank(&self) -> usize {
         self.dims.len()
     }
 
-    /// Worst-case total element count (product of `max`).
+    /// Worst-case total element count, respecting the cross-axis
+    /// `total_bound`. Returns `min(∏ dim.max, total_bound)`.
     pub fn max_total(&self) -> usize {
-        self.dims.iter().map(|d| d.max).product()
+        let product: usize = if self.dims.is_empty() {
+            1
+        } else {
+            self.dims.iter().map(|d| d.max).product()
+        };
+        product.min(self.total_bound)
     }
 
     /// Best-case total element count (product of `min`).
@@ -190,11 +229,12 @@ impl Envelope {
     }
 
     /// Build an envelope from a known static shape, allocating one fresh
-    /// dim var per axis. Convenience for migration / promotion paths where
-    /// the runtime length is known to equal the static length.
+    /// dim var per axis. `total_bound` is set to the product of the shape
+    /// (exact, since all dims are static).
     pub fn from_static_shape(table: &mut DimTable, shape: &[usize]) -> Self {
-        let dims = shape.iter().map(|&n| Dim::new_static(table, n)).collect();
-        Envelope { dims }
+        let dims: Vec<Dim> = shape.iter().map(|&n| Dim::new_static(table, n)).collect();
+        let total_bound = if shape.is_empty() { 1 } else { shape.iter().product() };
+        Envelope { dims, total_bound }
     }
 }
 
@@ -235,17 +275,45 @@ pub fn broadcast_envelopes(
     let rank = a.rank().max(b.rank());
     let mut out_dims: Vec<Dim> = Vec::with_capacity(rank);
 
+    // Track a-only and b-only broadcast factors for total_bound computation.
+    // a-only factor: product of output dims at positions where b has size 1
+    //                (or b doesn't extend to that rank).
+    // b-only factor: symmetric.
+    let mut a_only_factor: usize = 1;
+    let mut b_only_factor: usize = 1;
+    let mut has_shared_axis = false;
+
     for i in 0..rank {
         // Right-aligned indexing: axis `i` from the back of each operand.
         let a_axis = if i < a.rank() { Some(a.rank() - 1 - i) } else { None };
         let b_axis = if i < b.rank() { Some(b.rank() - 1 - i) } else { None };
 
         let dim = match (a_axis, b_axis) {
-            (Some(ai), None) => a.dims[ai],
-            (None, Some(bi)) => b.dims[bi],
+            (Some(ai), None) => {
+                // a extends beyond b's rank: this is an a-only axis.
+                // b implicitly has size 1 here.
+                b_only_factor *= a.dims[ai].max;
+                a.dims[ai]
+            }
+            (None, Some(bi)) => {
+                // b extends beyond a's rank: b-only axis.
+                a_only_factor *= b.dims[bi].max;
+                b.dims[bi]
+            }
             (Some(ai), Some(bi)) => {
                 let x = a.dims[ai];
                 let y = b.dims[bi];
+                // Classify: if one is static 1, the other is a-only or b-only.
+                if x.is_static() == Some(1) && y.is_static() != Some(1) {
+                    // a has 1 here → b-only axis (a broadcasts)
+                    a_only_factor *= y.max;
+                } else if y.is_static() == Some(1) && x.is_static() != Some(1) {
+                    // b has 1 here → a-only axis (b broadcasts)
+                    b_only_factor *= x.max;
+                } else {
+                    // Shared axis (both non-1, or both 1)
+                    has_shared_axis = true;
+                }
                 broadcast_one_dim(table, x, y, i)?
             }
             (None, None) => unreachable!(),
@@ -254,7 +322,22 @@ pub fn broadcast_envelopes(
     }
 
     out_dims.reverse();
-    Ok(Envelope::new(out_dims))
+
+    // Compute output total_bound per §3.3/§3.4:
+    // - If no broadcast (a_only_factor == 1 && b_only_factor == 1): same-shape.
+    //   T_out = min(T_a, T_b).
+    // - If broadcast with a-only or b-only axes:
+    //   T_out = min(T_a * a_only_factor, T_b * b_only_factor).
+    //   a_only_factor is the product of b-only dims (which multiply a's elements).
+    //   b_only_factor is the product of a-only dims (which multiply b's elements).
+    //   (Naming: a_only_factor means "factor applied to T_a" — the dims that
+    //   are new to a, coming from b's broadcast axes.)
+    let _ = has_shared_axis;
+    let t_a_contrib = a.total_bound.saturating_mul(a_only_factor);
+    let t_b_contrib = b.total_bound.saturating_mul(b_only_factor);
+    let total_bound = t_a_contrib.min(t_b_contrib);
+
+    Ok(Envelope::new_with_bound(out_dims, total_bound))
 }
 
 /// Apply the per-axis broadcast rule. `axis_from_back` is purely for the
@@ -585,5 +668,121 @@ mod tests {
         let b = static_envelope(&mut t, &[3, 4]);
         let out = broadcast_envelopes(&mut t, &a, &b).unwrap();
         assert_eq!(out.is_fully_static(), Some(vec![3, 4]));
+    }
+
+    // ── total_bound ─────────────────────────────────────────────────
+
+    #[test]
+    fn total_bound_static_envelope() {
+        let mut t = DimTable::new();
+        let e = Envelope::from_static_shape(&mut t, &[3, 4]);
+        assert_eq!(e.total_bound, 12);
+        assert_eq!(e.max_total(), 12);
+    }
+
+    #[test]
+    fn total_bound_scalar() {
+        let e = Envelope::scalar();
+        assert_eq!(e.total_bound, 1);
+        assert_eq!(e.max_total(), 1);
+    }
+
+    #[test]
+    fn total_bound_tighter_than_product() {
+        // Simulate a reshaped input: per-axis max is 100 each, but
+        // total_bound is 100 (from the original max_length).
+        let mut t = DimTable::new();
+        let e = Envelope::new_with_bound(
+            vec![
+                Dim::new_dynamic(&mut t, 0, 100),
+                Dim::new_dynamic(&mut t, 0, 100),
+            ],
+            100,
+        );
+        // Per-axis product would be 10,000, but total_bound caps it.
+        assert_eq!(e.max_total(), 100);
+        assert_eq!(e.total_bound, 100);
+    }
+
+    #[test]
+    fn total_bound_broadcast_same_shape() {
+        // Same-shape broadcast: T_out = min(T_a, T_b).
+        let mut t = DimTable::new();
+        let a = Envelope::new_with_bound(
+            vec![Dim::new_dynamic(&mut t, 0, 100)],
+            80,
+        );
+        let b = Envelope::new_with_bound(
+            vec![Dim::new_dynamic(&mut t, 0, 100)],
+            60,
+        );
+        let out = broadcast_envelopes(&mut t, &a, &b).unwrap();
+        // No a-only or b-only axes, so T_out = min(80, 60) = 60.
+        assert_eq!(out.total_bound, 60);
+        assert_eq!(out.max_total(), 60);
+    }
+
+    #[test]
+    fn total_bound_broadcast_with_static_one() {
+        // [D, 1] + [1, 3] → [D, 3]. b-only factor = D_max, a-only factor = 3.
+        // T_out = min(T_a * 3, T_b * D_max) = min(100 * 3, 3 * 100) = 300.
+        let mut t = DimTable::new();
+        let a = Envelope::new_with_bound(
+            vec![
+                Dim::new_dynamic(&mut t, 0, 100),
+                Dim::new_static(&mut t, 1),
+            ],
+            100,
+        );
+        let b = Envelope::new_with_bound(
+            vec![
+                Dim::new_static(&mut t, 1),
+                Dim::new_static(&mut t, 3),
+            ],
+            3,
+        );
+        let out = broadcast_envelopes(&mut t, &a, &b).unwrap();
+        assert_eq!(out.rank(), 2);
+        // a-only factor (from b's perspective): the static 3 from b
+        // b-only factor (from a's perspective): D_max = 100 from a
+        // T_out = min(T_a * a_only_factor, T_b * b_only_factor)
+        //       = min(100 * 3, 3 * 100) = 300
+        assert_eq!(out.total_bound, 300);
+    }
+
+    #[test]
+    fn total_bound_broadcast_rank_expansion() {
+        // [D] + [3, D'] → [3, D_unified]. b-only factor = 1, a-only factor = 3.
+        // axis 1 (from right): D vs D' → shared (unified)
+        // axis 0 (from right): only b → b contributes static 3
+        // a_only_factor = 3 (b's axis 0 is added to a), b_only_factor = 1
+        // T_out = min(T_a * 3, T_b * 1) = min(300, 30) = 30
+        let mut t = DimTable::new();
+        let a = Envelope::new_with_bound(
+            vec![Dim::new_dynamic(&mut t, 0, 100)],
+            100,
+        );
+        let b = Envelope::new_with_bound(
+            vec![
+                Dim::new_static(&mut t, 3),
+                Dim::new_dynamic(&mut t, 0, 100),
+            ],
+            30,
+        );
+        let out = broadcast_envelopes(&mut t, &a, &b).unwrap();
+        assert_eq!(out.rank(), 2);
+        assert_eq!(out.total_bound, 30);
+    }
+
+    #[test]
+    fn total_bound_preserved_through_new() {
+        // Envelope::new() sets total_bound = product of dim.max.
+        let mut t = DimTable::new();
+        let e = Envelope::new(vec![
+            Dim::new_static(&mut t, 3),
+            Dim::new_static(&mut t, 4),
+        ]);
+        assert_eq!(e.total_bound, 12);
+        assert_eq!(e.max_total(), 12);
     }
 }
