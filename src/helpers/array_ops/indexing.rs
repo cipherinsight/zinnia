@@ -374,82 +374,31 @@ fn dyn_subscript_multidim(
 }
 
 /// Handle multi-dim subscript when axis `dyn_ax` has a dynamic Range.
-/// 1. Apply the dynamic range on axis `dyn_ax` via axis-0 trick
-///    (transpose dyn_ax to front, slice axis 0, transpose back).
-/// 2. Build remaining indices (with dyn_ax removed/replaced) and recurse.
+/// Slices the dynamic axis directly (no transpose), then recurses with
+/// the remaining indices on the sliced result.
 fn dyn_subscript_with_dynamic_axis(
     b: &mut IRBuilder,
     data: &DynamicNDArrayData,
     indices: &[SliceIndex],
     dyn_ax: usize,
 ) -> Value {
-    let rank = data.envelope.rank();
-
-    // Extract the dynamic range.
     let (start, stop, step) = match &indices[dyn_ax] {
         SliceIndex::Range(s, e, st) => (s.as_ref(), e.as_ref(), st.as_ref()),
         _ => unreachable!(),
     };
 
-    // If dyn_ax == 0, we can slice directly.
-    // Otherwise, transpose dyn_ax to position 0, slice, transpose back.
-    let (sliced, axis_was_transposed) = if dyn_ax == 0 {
-        let s = dyn_slice_axis0(b, data, start, stop, step);
-        (s, false)
-    } else {
-        // Transpose: move dyn_ax to position 0.
-        let mut perm: Vec<usize> = (0..rank).collect();
-        perm.remove(dyn_ax);
-        perm.insert(0, dyn_ax);
-        let perm_vals: Vec<Value> = perm.iter().map(|&p|
-            Value::Integer(ScalarValue::new(Some(p as i64), None))
-        ).collect();
-        let perm_list = Value::List(crate::types::CompositeData {
-            elements_type: vec![crate::types::ZinniaType::Integer; rank],
-            values: perm_vals,
-        });
-        let transposed = crate::ops::dyn_ndarray::reshape::dyn_transpose(b, data, &[perm_list]);
-        let t_data = match &transposed {
-            Value::DynamicNDArray(d) => d,
-            _ => unreachable!(),
-        };
+    let sliced = dyn_slice_axis(b, data, dyn_ax, start, stop, step);
 
-        // Slice axis 0 of the transposed array.
-        let sliced = dyn_slice_axis0(b, t_data, start, stop, step);
-        let s_data = match &sliced {
-            Value::DynamicNDArray(d) => d,
-            _ => unreachable!(),
-        };
-
-        // Transpose back: inverse permutation.
-        let mut inv_perm = vec![0usize; rank];
-        for (i, &p) in perm.iter().enumerate() {
-            inv_perm[p] = i;
-        }
-        let inv_vals: Vec<Value> = inv_perm.iter().map(|&p|
-            Value::Integer(ScalarValue::new(Some(p as i64), None))
-        ).collect();
-        let inv_list = Value::List(crate::types::CompositeData {
-            elements_type: vec![crate::types::ZinniaType::Integer; rank],
-            values: inv_vals,
-        });
-        let back = crate::ops::dyn_ndarray::reshape::dyn_transpose(b, s_data, &[inv_list]);
-        (back, true)
-    };
-
-    // Build remaining indices: replace the dynamic Range with a full range `:`.
+    // Build remaining indices: replace the dynamic Range with full range `:`.
     let remaining: Vec<SliceIndex> = indices.iter().enumerate().map(|(i, idx)| {
         if i == dyn_ax {
-            // Already sliced — use full range to keep this axis.
             SliceIndex::Range(None, None, None)
         } else {
             idx.clone()
         }
     }).collect();
 
-    // Check if remaining indices are all trivial (full ranges or need processing).
     let all_trivial = remaining.iter().all(|idx| match idx {
-        SliceIndex::Range(None, None, None) => true,
         SliceIndex::Range(s, e, st) => {
             matches!(s, None | Some(Value::None)) &&
             matches!(e, None | Some(Value::None)) &&
@@ -462,12 +411,167 @@ fn dyn_subscript_with_dynamic_axis(
         return sliced;
     }
 
-    // Recurse with remaining indices on the sliced result.
     let s_data = match &sliced {
         Value::DynamicNDArray(d) => d,
         _ => unreachable!(),
     };
     dyn_subscript(b, s_data, &remaining)
+}
+
+/// Slice along any axis of a multi-dim array with dynamic bounds.
+/// No transpose — computes source addresses directly using the axis stride.
+///
+/// For each output element, the source address is:
+///   base_from_other_axes + (start + slice_idx * step) * stride[axis]
+/// where other axes use their full coordinate ranges.
+fn dyn_slice_axis(
+    b: &mut IRBuilder,
+    data: &DynamicNDArrayData,
+    axis: usize,
+    start: Option<&Value>,
+    stop: Option<&Value>,
+    step: Option<&Value>,
+) -> Value {
+    let shape = &data.meta.logical_shape;
+    let strides = &data.meta.logical_strides;
+    let rank = shape.len();
+
+    if rank == 1 {
+        return dyn_slice_1d(b, data, start, stop, step);
+    }
+
+    let axis_len = shape[axis];
+    let axis_stride = strides[axis];
+    let max_slice_len = axis_len; // upper bound on output size along this axis
+
+    fn val_to_ir(b: &mut IRBuilder, v: Option<&Value>, default: i64) -> Value {
+        match v {
+            Some(val) if !matches!(val, Value::None) => {
+                if let Some(s) = val.int_val() { b.ir_constant_int(s) } else { val.clone() }
+            }
+            _ => b.ir_constant_int(default),
+        }
+    }
+    let start_ir = val_to_ir(b, start, 0);
+    let stop_ir = val_to_ir(b, stop, axis_len as i64);
+    let step_ir = val_to_ir(b, step, 1);
+
+    // Output shape: same as input but with the sliced axis replaced by max_slice_len.
+    let mut out_shape = shape.clone();
+    out_shape[axis] = max_slice_len;
+
+    // Build coordinate ranges for non-sliced axes.
+    let other_axes: Vec<(usize, Vec<usize>)> = (0..rank)
+        .filter(|&ax| ax != axis)
+        .map(|ax| (ax, (0..shape[ax]).collect()))
+        .collect();
+
+    // Total output = product of all dims in out_shape.
+    let out_total: usize = out_shape.iter().product();
+    let out_strides = row_major_strides(&out_shape);
+
+    let default_val = crate::ops::dyn_ndarray::metadata::dyn_default_value(b, data.dtype);
+    let zero = b.ir_constant_int(0);
+    let axis_len_val = b.ir_constant_int(axis_len as i64);
+    let axis_stride_val = b.ir_constant_int(axis_stride as i64);
+
+    let mut out_elements = Vec::with_capacity(out_total);
+
+    for flat_out in 0..out_total {
+        let out_coords = crate::helpers::shape_arith::decode_coords(flat_out, &out_shape, &out_strides);
+
+        // The coordinate along the sliced axis is the slice index.
+        let slice_idx = out_coords[axis];
+        let slice_idx_val = b.ir_constant_int(slice_idx as i64);
+
+        // Source index along the sliced axis: start + slice_idx * step.
+        let offset = b.ir_mul_i(&slice_idx_val, &step_ir);
+        let src_axis_idx = b.ir_add_i(&start_ir, &offset);
+
+        // In-bounds check.
+        let ge_zero = b.ir_greater_than_or_equal_i(&src_axis_idx, &zero);
+        let lt_len = b.ir_less_than_i(&src_axis_idx, &axis_len_val);
+        let in_range = b.ir_logical_and(&ge_zero, &lt_len);
+
+        let step_pos = b.ir_greater_than_i(&step_ir, &zero);
+        let lt_stop = b.ir_less_than_i(&src_axis_idx, &stop_ir);
+        let gt_stop = b.ir_greater_than_i(&src_axis_idx, &stop_ir);
+        let stop_ok = b.ir_select_i(&step_pos, &lt_stop, &gt_stop);
+        let stop_bool = b.ir_bool_cast(&stop_ok);
+        let in_bounds = b.ir_logical_and(&in_range, &stop_bool);
+
+        // Clamp for safe read.
+        let max_idx = b.ir_constant_int(axis_len as i64 - 1);
+        let is_neg = b.ir_less_than_i(&src_axis_idx, &zero);
+        let is_over = b.ir_greater_than_i(&src_axis_idx, &max_idx);
+        let clamped_hi = b.ir_select_i(&is_over, &max_idx, &src_axis_idx);
+        let clamped = b.ir_select_i(&is_neg, &zero, &clamped_hi);
+
+        // Compute full source flat address: other axes at their coords + clamped axis.
+        let mut addr_static: i64 = 0;
+        for &(ax, _) in &other_axes {
+            addr_static += out_coords[ax] as i64 * strides[ax] as i64;
+        }
+        let other_offset = b.ir_constant_int(addr_static);
+        let axis_contrib = b.ir_mul_i(&clamped, &axis_stride_val);
+        let addr = b.ir_add_i(&other_offset, &axis_contrib);
+
+        let elem = b.ir_read_memory(data.segment_id, &addr);
+        let masked = if data.dtype == NumberType::Float {
+            b.ir_select_f(&in_bounds, &elem, &default_val)
+        } else {
+            b.ir_select_i(&in_bounds, &elem, &default_val)
+        };
+        out_elements.push(crate::ops::dyn_ndarray::value_to_scalar_i64(&masked));
+    }
+
+    // Runtime length along sliced axis.
+    let step_pos_2 = b.ir_greater_than_i(&step_ir, &zero);
+    let s_m_s = b.ir_sub_i(&stop_ir, &start_ir);
+    let s_m_s2 = b.ir_sub_i(&start_ir, &stop_ir);
+    let diff = b.ir_select_i(&step_pos_2, &s_m_s, &s_m_s2);
+    let neg_step = b.ir_sub_i(&zero, &step_ir);
+    let abs_step = b.ir_select_i(&step_pos_2, &step_ir, &neg_step);
+    let diff_pos = b.ir_greater_than_i(&diff, &zero);
+    let one = b.ir_constant_int(1);
+    let abs_step_m1 = b.ir_sub_i(&abs_step, &one);
+    let numerator = b.ir_add_i(&diff, &abs_step_m1);
+    let divided = b.ir_div_i(&numerator, &abs_step);
+    let runtime_axis_len = b.ir_select_i(&diff_pos, &divided, &zero);
+
+    // Build output metadata.
+    let segment_id = crate::helpers::segment::alloc_and_write(b, &out_elements, data.dtype);
+
+    let mut dims: Vec<crate::types::Dim> = Vec::with_capacity(rank);
+    let mut rt_shape: Vec<ScalarValue<i64>> = Vec::with_capacity(rank);
+    for ax in 0..rank {
+        if ax == axis {
+            dims.push(crate::types::Dim::new_dynamic(&mut b.dim_table, 0, max_slice_len));
+            rt_shape.push(crate::ops::dyn_ndarray::value_to_scalar_i64(&runtime_axis_len));
+        } else {
+            dims.push(crate::types::Dim::new_static(&mut b.dim_table, shape[ax]));
+            rt_shape.push(ScalarValue::new(Some(shape[ax] as i64), None));
+        }
+    }
+    let envelope = crate::types::Envelope::new_with_bound(dims, out_total.min(data.envelope.total_bound));
+
+    // Runtime total length.
+    let other_product: i64 = (0..rank).filter(|&ax| ax != axis).map(|ax| shape[ax] as i64).product();
+    let other_prod_val = b.ir_constant_int(other_product);
+    let runtime_length = b.ir_mul_i(&runtime_axis_len, &other_prod_val);
+    let runtime_len_sv = crate::ops::dyn_ndarray::value_to_scalar_i64(&runtime_length);
+
+    Value::DynamicNDArray(DynamicNDArrayData {
+        envelope, dtype: data.dtype, segment_id,
+        meta: DynArrayMeta {
+            logical_shape: out_shape.clone(), logical_offset: 0, logical_strides: out_strides.clone(),
+            runtime_length: runtime_len_sv,
+            runtime_rank: ScalarValue::new(Some(rank as i64), None),
+            runtime_shape: rt_shape,
+            runtime_strides: out_strides.iter().map(|&s| ScalarValue::new(Some(s as i64), None)).collect(),
+            runtime_offset: ScalarValue::new(Some(0), None),
+        },
+    })
 }
 
 /// Static multi-dim subscript: all Range bounds are compile-time known.
@@ -577,203 +681,6 @@ fn dyn_subscript_multidim_static(
     })
 }
 
-/// Slice along axis 0 of a multi-dim array: select rows start:stop:step.
-/// For rank-1, delegates to dyn_slice_1d. For rank-N, reads selected rows
-/// and packs them into a new (N-dim) array.
-fn dyn_slice_axis0(
-    b: &mut IRBuilder,
-    data: &DynamicNDArrayData,
-    start: Option<&Value>,
-    stop: Option<&Value>,
-    step: Option<&Value>,
-) -> Value {
-    let rank = data.envelope.rank();
-    if rank == 1 {
-        return dyn_slice_1d(b, data, start, stop, step);
-    }
-
-    let axis0_len = data.meta.logical_shape[0];
-    let row_stride = data.meta.logical_strides[0];
-    let row_shape: Vec<usize> = data.meta.logical_shape[1..].to_vec();
-    let row_size: usize = row_shape.iter().product();
-
-    // Determine which rows to select — static or dynamic.
-    let static_val = |v: Option<&Value>| -> Option<i64> {
-        v.and_then(|val| if matches!(val, Value::None) { None } else { val.int_val() })
-    };
-    let is_present = |v: Option<&Value>| -> bool {
-        matches!(v, Some(val) if !matches!(val, Value::None))
-    };
-
-    let start_s = static_val(start);
-    let stop_s = static_val(stop);
-    let step_s = static_val(step);
-
-    let all_static = (!is_present(start) || start_s.is_some())
-        && (!is_present(stop) || stop_s.is_some())
-        && (!is_present(step) || step_s.is_some());
-
-    if all_static {
-        // Static path: compute row indices at compile time.
-        let len = axis0_len as i64;
-        let s = start_s.unwrap_or(0);
-        let e = stop_s.unwrap_or(len);
-        let st = step_s.unwrap_or(1);
-        let s = if s < 0 { (len + s).max(0) } else { s.min(len) };
-        let e = if e < 0 { (len + e).max(0) } else { e.min(len) };
-        assert!(st != 0);
-
-        let mut row_indices: Vec<i64> = Vec::new();
-        if st > 0 {
-            let mut i = s;
-            while i < e { row_indices.push(i); i += st; }
-        } else {
-            let mut i = s;
-            while i > e { row_indices.push(i); i += st; }
-        }
-
-        let num_rows = row_indices.len();
-        let out_total = num_rows * row_size;
-        let mut out_elements = Vec::with_capacity(out_total);
-
-        for &row_i in &row_indices {
-            let base = row_i * row_stride as i64;
-            for j in 0..row_size {
-                let addr = b.ir_constant_int(base + j as i64);
-                let elem = b.ir_read_memory(data.segment_id, &addr);
-                out_elements.push(crate::ops::dyn_ndarray::value_to_scalar_i64(&elem));
-            }
-        }
-
-        let mut out_shape = vec![num_rows];
-        out_shape.extend(&row_shape);
-        let out_strides = row_major_strides(&out_shape);
-        let segment_id = crate::helpers::segment::alloc_and_write(b, &out_elements, data.dtype);
-        let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &out_shape);
-
-        return Value::DynamicNDArray(DynamicNDArrayData {
-            envelope, dtype: data.dtype, segment_id,
-            meta: DynArrayMeta {
-                logical_shape: out_shape.clone(), logical_offset: 0, logical_strides: out_strides.clone(),
-                runtime_length: ScalarValue::new(Some(out_total as i64), None),
-                runtime_rank: ScalarValue::new(Some(out_shape.len() as i64), None),
-                runtime_shape: out_shape.iter().map(|&s| ScalarValue::new(Some(s as i64), None)).collect(),
-                runtime_strides: out_strides.iter().map(|&s| ScalarValue::new(Some(s as i64), None)).collect(),
-                runtime_offset: ScalarValue::new(Some(0), None),
-            },
-        });
-    }
-
-    // Dynamic path: pad-and-mask, selecting up to axis0_len rows.
-    let max_rows = axis0_len;
-    let max_out_total = max_rows * row_size;
-
-    fn val_to_ir(b: &mut IRBuilder, v: Option<&Value>, default: i64) -> Value {
-        match v {
-            Some(val) if !matches!(val, Value::None) => {
-                if let Some(s) = val.int_val() { b.ir_constant_int(s) } else { val.clone() }
-            }
-            _ => b.ir_constant_int(default),
-        }
-    }
-    let start_ir = val_to_ir(b, start, 0);
-    let stop_ir = val_to_ir(b, stop, axis0_len as i64);
-    let step_ir = val_to_ir(b, step, 1);
-
-    let default_val = crate::ops::dyn_ndarray::metadata::dyn_default_value(b, data.dtype);
-    let zero = b.ir_constant_int(0);
-    let len_val = b.ir_constant_int(axis0_len as i64);
-    let mut out_elements = Vec::with_capacity(max_out_total);
-
-    for row_i in 0..max_rows {
-        let i_const = b.ir_constant_int(row_i as i64);
-        let offset = b.ir_mul_i(&i_const, &step_ir);
-        let src_row = b.ir_add_i(&start_ir, &offset);
-
-        // In-bounds check (same as dyn_slice_1d).
-        let ge_zero = b.ir_greater_than_or_equal_i(&src_row, &zero);
-        let lt_len = b.ir_less_than_i(&src_row, &len_val);
-        let in_range = b.ir_logical_and(&ge_zero, &lt_len);
-
-        let step_pos = b.ir_greater_than_i(&step_ir, &zero);
-        let lt_stop = b.ir_less_than_i(&src_row, &stop_ir);
-        let gt_stop = b.ir_greater_than_i(&src_row, &stop_ir);
-        let stop_ok = b.ir_select_i(&step_pos, &lt_stop, &gt_stop);
-        let stop_bool = b.ir_bool_cast(&stop_ok);
-        let in_bounds = b.ir_logical_and(&in_range, &stop_bool);
-
-        // Clamp row index for safe read.
-        let max_row = b.ir_constant_int(axis0_len as i64 - 1);
-        let is_neg = b.ir_less_than_i(&src_row, &zero);
-        let is_over = b.ir_greater_than_i(&src_row, &max_row);
-        let clamped_hi = b.ir_select_i(&is_over, &max_row, &src_row);
-        let clamped_row = b.ir_select_i(&is_neg, &zero, &clamped_hi);
-
-        // Read all elements in this row, masked.
-        let row_stride_val = b.ir_constant_int(row_stride as i64);
-        let base = b.ir_mul_i(&clamped_row, &row_stride_val);
-
-        for j in 0..row_size {
-            let offset = b.ir_constant_int(j as i64);
-            let addr = b.ir_add_i(&base, &offset);
-            let elem = b.ir_read_memory(data.segment_id, &addr);
-            let masked = if data.dtype == NumberType::Float {
-                b.ir_select_f(&in_bounds, &elem, &default_val)
-            } else {
-                b.ir_select_i(&in_bounds, &elem, &default_val)
-            };
-            out_elements.push(crate::ops::dyn_ndarray::value_to_scalar_i64(&masked));
-        }
-    }
-
-    // runtime row count
-    let step_pos_2 = b.ir_greater_than_i(&step_ir, &zero);
-    let s_m_s = b.ir_sub_i(&stop_ir, &start_ir);
-    let s_m_s2 = b.ir_sub_i(&start_ir, &stop_ir);
-    let diff = b.ir_select_i(&step_pos_2, &s_m_s, &s_m_s2);
-    let neg_step = b.ir_sub_i(&zero, &step_ir);
-    let abs_step = b.ir_select_i(&step_pos_2, &step_ir, &neg_step);
-    let diff_pos = b.ir_greater_than_i(&diff, &zero);
-    let one = b.ir_constant_int(1);
-    let abs_step_m1 = b.ir_sub_i(&abs_step, &one);
-    let numerator = b.ir_add_i(&diff, &abs_step_m1);
-    let divided = b.ir_div_i(&numerator, &abs_step);
-    let runtime_rows = b.ir_select_i(&diff_pos, &divided, &zero);
-    let row_size_val = b.ir_constant_int(row_size as i64);
-    let runtime_length = b.ir_mul_i(&runtime_rows, &row_size_val);
-
-    let mut out_shape = vec![max_rows];
-    out_shape.extend(&row_shape);
-    let out_strides = row_major_strides(&out_shape);
-    let segment_id = crate::helpers::segment::alloc_and_write(b, &out_elements, data.dtype);
-
-    let mut dims: Vec<crate::types::Dim> = vec![
-        crate::types::Dim::new_dynamic(&mut b.dim_table, 0, max_rows),
-    ];
-    for &s in &row_shape {
-        dims.push(crate::types::Dim::new_static(&mut b.dim_table, s));
-    }
-    let envelope = crate::types::Envelope::new_with_bound(dims, max_out_total.min(data.envelope.total_bound));
-
-    let runtime_len_sv = crate::ops::dyn_ndarray::value_to_scalar_i64(&runtime_length);
-    let runtime_rows_sv = crate::ops::dyn_ndarray::value_to_scalar_i64(&runtime_rows);
-    let mut rt_shape = vec![runtime_rows_sv];
-    for &s in &row_shape {
-        rt_shape.push(ScalarValue::new(Some(s as i64), None));
-    }
-
-    Value::DynamicNDArray(DynamicNDArrayData {
-        envelope, dtype: data.dtype, segment_id,
-        meta: DynArrayMeta {
-            logical_shape: out_shape.clone(), logical_offset: 0, logical_strides: out_strides.clone(),
-            runtime_length: runtime_len_sv,
-            runtime_rank: ScalarValue::new(Some(out_shape.len() as i64), None),
-            runtime_shape: rt_shape,
-            runtime_strides: out_strides.iter().map(|&s| ScalarValue::new(Some(s as i64), None)).collect(),
-            runtime_offset: ScalarValue::new(Some(0), None),
-        },
-    })
-}
 
 // ── Fancy indexing ──────────────────────────────────────────────────────
 
