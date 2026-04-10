@@ -369,6 +369,56 @@ def test_fancy_then_sum():
     assert foo()
 
 
+# ── Multi-dim slicing with mixed static/dynamic ─────────────────────────
+
+def test_2d_static_range_single():
+    """dyn[0:2, 1] — static range + static single."""
+    @zk_circuit
+    def foo():
+        a = np.promote_to_dynamic(np.asarray([[1, 2, 3], [4, 5, 6], [7, 8, 9]]))
+        result = a[0:2, 1]  # rows 0-1, col 1 → [2, 5]
+        assert result.sum() == 7
+
+    assert foo()
+
+
+def test_2d_dynamic_range_single():
+    """dyn[x:y, j] — dynamic range + static single."""
+    @zk_circuit
+    def foo():
+        a = np.promote_to_dynamic(np.asarray([[1, 2, 3], [4, 5, 6], [7, 8, 9]]))
+        start = np.promote_to_dynamic(np.asarray([0])).sum()  # = 0
+        stop = np.promote_to_dynamic(np.asarray([2])).sum()   # = 2
+        result = a[start:stop, 1]  # rows 0-1, col 1 → [2, 5]
+        assert result.sum() == 7
+
+    assert foo()
+
+
+def test_2d_range_range_static():
+    """dyn[0:2, 1:3] — two static ranges."""
+    @zk_circuit
+    def foo():
+        a = np.promote_to_dynamic(np.asarray([[1, 2, 3], [4, 5, 6], [7, 8, 9]]))
+        result = a[0:2, 1:3]  # [[2,3],[5,6]] → sum = 16
+        assert result.sum() == 16
+
+    assert foo()
+
+
+def test_2d_dynamic_range_range():
+    """dyn[x:y, 0:2] — dynamic on axis 0, static on axis 1."""
+    @zk_circuit
+    def foo():
+        a = np.promote_to_dynamic(np.asarray([[10, 20, 30], [40, 50, 60], [70, 80, 90]]))
+        start = np.promote_to_dynamic(np.asarray([1])).sum()  # = 1
+        stop = np.promote_to_dynamic(np.asarray([3])).sum()   # = 3
+        result = a[start:stop, 0:2]  # [[40,50],[70,80]] → sum = 240
+        assert result.sum() == 240
+
+    assert foo()
+
+
 # ── Boolean masking ──────────────────────────────────────────────────────
 
 def test_boolean_mask_static():
