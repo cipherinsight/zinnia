@@ -31,6 +31,19 @@ pub fn materialize_to_segment(b: &mut IRBuilder, data: &DynamicNDArrayData) -> u
     seg
 }
 
+/// Read all elements from a `DynamicNDArrayData`'s ZKRAM segment as
+/// `Value`s. Ensures the segment exists first (materializes if needed).
+pub fn read_all_from_segment(b: &mut IRBuilder, data: &mut DynamicNDArrayData) -> Vec<crate::types::Value> {
+    let seg = ensure_segment(b, data);
+    let max_len = data.max_length();
+    (0..max_len)
+        .map(|i| {
+            let addr = b.ir_constant_int(i as i64);
+            b.ir_read_memory(seg, &addr)
+        })
+        .collect()
+}
+
 /// Ensure a `DynamicNDArrayData` has a ZKRAM segment. If it already has
 /// one, return it. Otherwise materialize and set `data.segment_id`.
 pub fn ensure_segment(b: &mut IRBuilder, data: &mut DynamicNDArrayData) -> u32 {

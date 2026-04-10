@@ -29,10 +29,14 @@ pub fn dyn_filter(b: &mut IRBuilder, data: &mut DynamicNDArrayData, args: &[Valu
         super::metadata::dyn_elements_to_values(data)
     };
 
-    // Get mask elements
-    let mask_elements: Vec<Value> = match mask {
-        Value::DynamicNDArray(md) => super::metadata::dyn_elements_to_values(md),
-        Value::List(cd) | Value::Tuple(cd) => cd.values.clone(),
+    // Get mask elements — from segment if dynamic, from composite if static.
+    let mask_elements: Vec<Value> = match mask.clone() {
+        Value::DynamicNDArray(mut md) => {
+            crate::helpers::segment::read_all_from_segment(b, &mut md)
+        }
+        Value::List(cd) | Value::Tuple(cd) => {
+            crate::helpers::composite::flatten_composite(mask)
+        }
         _ => panic!("filter: mask must be array-like"),
     };
 
@@ -108,7 +112,7 @@ pub fn dyn_filter(b: &mut IRBuilder, data: &mut DynamicNDArrayData, args: &[Valu
 /// DynamicNDArray.repeat(repeats, axis=...)
 pub fn dyn_repeat(
     b: &mut IRBuilder,
-    data: &DynamicNDArrayData,
+    data: &mut DynamicNDArrayData,
     args: &[Value],
     kwargs: &HashMap<String, Value>,
 ) -> Value {
@@ -121,21 +125,22 @@ pub fn dyn_repeat(
         .or_else(|| args.get(1))
         .and_then(|v| v.int_val());
 
-    let flat = super::metadata::dyn_flatten_values(data);
+    let values = crate::helpers::segment::read_all_from_segment(b, data);
     let numel = dyn_num_elements(&data.meta.logical_shape);
 
     if let Some(_ax) = axis {
         // For axis-specific repeat, flatten first, repeat, return 1D
         // (full axis support would need coordinate transforms)
         let mut new_elements = Vec::new();
-        for elem in flat.iter().take(numel) {
+        for val in values.iter().take(numel) {
+            let sv = value_to_scalar_i64(val);
             for _ in 0..repeats {
-                new_elements.push(elem.clone());
+                new_elements.push(sv.clone());
             }
         }
         let new_len = new_elements.len();
         let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &[new_len]);
-        Value::DynamicNDArray(DynamicNDArrayData {
+        let mut result = DynamicNDArrayData {
             envelope,
             dtype: data.dtype,
             elements: new_elements,
@@ -150,18 +155,21 @@ pub fn dyn_repeat(
                 runtime_strides: vec![ScalarValue::new(Some(1), None)],
                 runtime_offset: ScalarValue::new(Some(0), None),
             },
-        })
+        };
+        crate::helpers::segment::ensure_segment(b, &mut result);
+        Value::DynamicNDArray(result)
     } else {
         // No axis: flatten then repeat each element
         let mut new_elements = Vec::new();
-        for elem in flat.iter().take(numel) {
+        for val in values.iter().take(numel) {
+            let sv = value_to_scalar_i64(val);
             for _ in 0..repeats {
-                new_elements.push(elem.clone());
+                new_elements.push(sv.clone());
             }
         }
         let new_len = new_elements.len();
         let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &[new_len]);
-        Value::DynamicNDArray(DynamicNDArrayData {
+        let mut result = DynamicNDArrayData {
             envelope,
             dtype: data.dtype,
             elements: new_elements,
@@ -176,7 +184,9 @@ pub fn dyn_repeat(
                 runtime_strides: vec![ScalarValue::new(Some(1), None)],
                 runtime_offset: ScalarValue::new(Some(0), None),
             },
-        })
+        };
+        crate::helpers::segment::ensure_segment(b, &mut result);
+        Value::DynamicNDArray(result)
     }
 }
 
@@ -189,17 +199,21 @@ pub fn dyn_concatenate(
     let arrays_val = args
         .first()
         .expect("concatenate: requires arrays argument");
-    let arrays: Vec<&DynamicNDArrayData> = match arrays_val {
+    let mut arrays: Vec<DynamicNDArrayData> = match arrays_val {
         Value::List(cd) | Value::Tuple(cd) => cd
             .values
             .iter()
             .map(|v| match v {
-                Value::DynamicNDArray(d) => d,
+                Value::DynamicNDArray(d) => d.clone(),
                 _ => panic!("concatenate: all elements must be DynamicNDArray"),
             })
             .collect(),
         _ => panic!("concatenate: first arg must be list/tuple of arrays"),
     };
+    // Ensure all sources have segments
+    for arr in arrays.iter_mut() {
+        crate::helpers::segment::ensure_segment(b, arr);
+    }
     if arrays.is_empty() {
         return Value::None;
     }
@@ -259,24 +273,21 @@ pub fn dyn_concatenate(
         let mut src_coords = out_coords.clone();
         src_coords[ax] -= axis_offsets[src_idx];
 
-        // Read from source
-        let src = arrays[src_idx];
+        // Read from source segment
+        let src = &arrays[src_idx];
         let src_strides = dyn_row_major_strides(&src.meta.logical_shape);
         let src_flat = dyn_encode_coords(&src_coords, &src_strides);
         let src_linear = src.meta.logical_offset + src_flat;
-
-        let elem = if src_linear < src.elements.len() {
-            src.elements[src_linear].clone()
-        } else {
-            ScalarValue::new(Some(0), None)
-        };
-        out_elements.push(elem);
+        let src_seg = src.segment_id.expect("concatenate: source must have segment");
+        let addr = b.ir_constant_int(src_linear as i64);
+        let elem_val = b.ir_read_memory(src_seg, &addr);
+        out_elements.push(value_to_scalar_i64(&elem_val));
     }
 
     let _ = ndim;
     let _ = out_numel;
     let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &out_shape);
-    Value::DynamicNDArray(DynamicNDArrayData {
+    let mut result = DynamicNDArrayData {
         envelope,
         dtype,
         elements: out_elements,
@@ -297,7 +308,9 @@ pub fn dyn_concatenate(
                 .collect(),
             runtime_offset: ScalarValue::new(Some(0), None),
         },
-    })
+    };
+    crate::helpers::segment::ensure_segment(b, &mut result);
+    Value::DynamicNDArray(result)
 }
 
 /// DynamicNDArray.stack(arrays, axis=0)
@@ -309,17 +322,20 @@ pub fn dyn_stack(
     let arrays_val = args
         .first()
         .expect("stack: requires arrays argument");
-    let arrays: Vec<&DynamicNDArrayData> = match arrays_val {
+    let mut arrays: Vec<DynamicNDArrayData> = match arrays_val {
         Value::List(cd) | Value::Tuple(cd) => cd
             .values
             .iter()
             .map(|v| match v {
-                Value::DynamicNDArray(d) => d,
+                Value::DynamicNDArray(d) => d.clone(),
                 _ => panic!("stack: all elements must be DynamicNDArray"),
             })
             .collect(),
         _ => panic!("stack: first arg must be list/tuple of arrays"),
     };
+    for arr in arrays.iter_mut() {
+        crate::helpers::segment::ensure_segment(b, arr);
+    }
     if arrays.is_empty() {
         return Value::None;
     }
@@ -357,22 +373,19 @@ pub fn dyn_stack(
         let mut src_coords: Vec<usize> = out_coords.clone();
         src_coords.remove(ax);
 
-        let src = arrays[src_idx];
+        let src = &arrays[src_idx];
         let src_strides = dyn_row_major_strides(&src.meta.logical_shape);
         let src_linear = src.meta.logical_offset + dyn_encode_coords(&src_coords, &src_strides);
-
-        let elem = if src_linear < src.elements.len() {
-            src.elements[src_linear].clone()
-        } else {
-            ScalarValue::new(Some(0), None)
-        };
-        out_elements.push(elem);
+        let src_seg = src.segment_id.expect("stack: source must have segment");
+        let addr = b.ir_constant_int(src_linear as i64);
+        let elem_val = b.ir_read_memory(src_seg, &addr);
+        out_elements.push(value_to_scalar_i64(&elem_val));
     }
 
     let _ = out_numel;
     let _ = out_ndim;
     let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &out_shape);
-    Value::DynamicNDArray(DynamicNDArrayData {
+    let mut result = DynamicNDArrayData {
         envelope,
         dtype,
         elements: out_elements,
@@ -393,5 +406,7 @@ pub fn dyn_stack(
                 .collect(),
             runtime_offset: ScalarValue::new(Some(0), None),
         },
-    })
+    };
+    crate::helpers::segment::ensure_segment(b, &mut result);
+    Value::DynamicNDArray(result)
 }

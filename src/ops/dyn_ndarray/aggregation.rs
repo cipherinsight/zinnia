@@ -10,7 +10,7 @@ use super::{
 
 pub fn dyn_aggregate(
     b: &mut IRBuilder,
-    data: &DynamicNDArrayData,
+    data: &mut DynamicNDArrayData,
     axis: Option<&Value>,
     agg: DynAggKind,
 ) -> Value {
@@ -29,8 +29,8 @@ pub fn dyn_aggregate(
 }
 
 /// Full reduction (axis=None): reduce all elements to a scalar.
-pub fn dyn_aggregate_all(b: &mut IRBuilder, data: &DynamicNDArrayData, agg: DynAggKind) -> Value {
-    let flat = super::metadata::dyn_flatten_values(data);
+pub fn dyn_aggregate_all(b: &mut IRBuilder, data: &mut DynamicNDArrayData, agg: DynAggKind) -> Value {
+    let values = crate::helpers::segment::read_all_from_segment(b, data);
     let numel = dyn_num_elements(&data.meta.logical_shape);
     if numel == 0 {
         return dyn_agg_identity(b, agg, data.dtype);
@@ -39,12 +39,11 @@ pub fn dyn_aggregate_all(b: &mut IRBuilder, data: &DynamicNDArrayData, agg: DynA
     let use_float = data.dtype == NumberType::Float
         && !matches!(agg, DynAggKind::All | DynAggKind::Any);
 
-    let first_val = scalar_i64_to_value(&flat[0], data.dtype);
-    let mut acc = first_val.clone();
+    let mut acc = values[0].clone();
     let mut acc_idx = b.ir_constant_int(0);
 
-    for i in 1..numel.min(flat.len()) {
-        let elem = scalar_i64_to_value(&flat[i], data.dtype);
+    for i in 1..numel.min(values.len()) {
+        let elem = values[i].clone();
         let idx_val = b.ir_constant_int(i as i64);
         let (new_acc, new_idx) =
             dyn_agg_step(b, &acc, &acc_idx, &elem, &idx_val, agg, use_float);
@@ -62,11 +61,11 @@ pub fn dyn_aggregate_all(b: &mut IRBuilder, data: &DynamicNDArrayData, agg: DynA
 /// Axis reduction: reduce along a specific axis.
 pub fn dyn_aggregate_axis(
     b: &mut IRBuilder,
-    data: &DynamicNDArrayData,
+    data: &mut DynamicNDArrayData,
     axis: i64,
     agg: DynAggKind,
 ) -> Value {
-    let shape = &data.meta.logical_shape;
+    let shape = &data.meta.logical_shape.clone();
     let ndim = shape.len();
     let ax = if axis < 0 {
         (ndim as i64 + axis) as usize
@@ -75,7 +74,7 @@ pub fn dyn_aggregate_axis(
     };
     assert!(ax < ndim, "aggregate axis out of bounds");
 
-    let flat = super::metadata::dyn_flatten_values(data);
+    let values = crate::helpers::segment::read_all_from_segment(b, data);
     let strides = dyn_row_major_strides(shape);
     let use_float = data.dtype == NumberType::Float
         && !matches!(agg, DynAggKind::All | DynAggKind::Any);
@@ -111,8 +110,8 @@ pub fn dyn_aggregate_axis(
 
         // Initialize accumulator with first element along axis
         let first_src_idx = dyn_encode_coords(&in_coords, &strides);
-        let first_elem = if first_src_idx < flat.len() {
-            scalar_i64_to_value(&flat[first_src_idx], data.dtype)
+        let first_elem = if first_src_idx < values.len() {
+            values[first_src_idx].clone()
         } else {
             super::metadata::dyn_default_value(b, data.dtype)
         };
@@ -124,8 +123,8 @@ pub fn dyn_aggregate_axis(
         for k in 1..axis_dim {
             in_coords[ax] = k;
             let src_idx = dyn_encode_coords(&in_coords, &strides);
-            let elem = if src_idx < flat.len() {
-                scalar_i64_to_value(&flat[src_idx], data.dtype)
+            let elem = if src_idx < values.len() {
+                values[src_idx].clone()
             } else {
                 super::metadata::dyn_default_value(b, data.dtype)
             };
@@ -159,7 +158,7 @@ pub fn dyn_aggregate_axis(
     let out_strides_meta = dyn_row_major_strides(&out_shape);
     let _ = out_numel;
     let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &out_shape);
-    Value::DynamicNDArray(DynamicNDArrayData {
+    let mut result = DynamicNDArrayData {
         envelope,
         dtype: out_dtype,
         elements: out_elements,
@@ -180,7 +179,9 @@ pub fn dyn_aggregate_axis(
                 .collect(),
             runtime_offset: ScalarValue::new(Some(0), None),
         },
-    })
+    };
+    crate::helpers::segment::ensure_segment(b, &mut result);
+    Value::DynamicNDArray(result)
 }
 
 /// One step of the accumulator for a given aggregation kind.

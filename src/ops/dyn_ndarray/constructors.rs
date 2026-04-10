@@ -31,9 +31,9 @@ pub fn dyn_fill(
     let elements = vec![fill_sv; max_length];
 
     let strides = dyn_row_major_strides(&shape);
-    let _ = max_rank; // shape.len() carries the same info now
+    let _ = max_rank;
     let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &shape);
-    Value::DynamicNDArray(DynamicNDArrayData {
+    let mut result = DynamicNDArrayData {
         envelope,
         dtype,
         elements,
@@ -54,7 +54,9 @@ pub fn dyn_fill(
                 .collect(),
             runtime_offset: ScalarValue::new(Some(0), None),
         },
-    })
+    };
+    crate::helpers::segment::ensure_segment(b, &mut result);
+    Value::DynamicNDArray(result)
 }
 
 /// DynamicNDArray.eye(N, M=None, dtype=...)
@@ -103,7 +105,7 @@ pub fn dyn_eye(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
     }
 
     let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &shape);
-    Value::DynamicNDArray(DynamicNDArrayData {
+    let mut result = DynamicNDArrayData {
         envelope,
         dtype,
         elements,
@@ -124,7 +126,9 @@ pub fn dyn_eye(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
                 .collect(),
             runtime_offset: ScalarValue::new(Some(0), None),
         },
-    })
+    };
+    crate::helpers::segment::ensure_segment(b, &mut result);
+    Value::DynamicNDArray(result)
 }
 
 pub fn parse_shape_arg(val: &Value) -> Vec<usize> {

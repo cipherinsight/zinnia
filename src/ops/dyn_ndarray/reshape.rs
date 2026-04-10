@@ -75,7 +75,7 @@ pub fn dyn_transpose(_b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Valu
         envelope,
         dtype: data.dtype,
         elements: data.elements.clone(), // same underlying storage
-        segment_id: None,
+        segment_id: data.segment_id,    // same underlying segment (view op)
         meta: DynArrayMeta {
             logical_shape: new_shape,
             logical_offset: data.meta.logical_offset,
