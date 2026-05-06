@@ -12,6 +12,7 @@ _TYPE_ALIASES = {
     "Integer": "Integer", "int": "Integer", "Int": "Integer", "integer": "Integer",
     "Boolean": "Integer", "bool": "Integer", "Bool": "Integer", "boolean": "Integer",
     "Float": "Float", "float": "Float",
+    "Complex": "Complex", "complex": "Complex",
     "String": "String", "str": "String",
     "None": "None",
     "Class": "Class",
@@ -23,7 +24,7 @@ _TYPE_ALIASES = {
 }
 
 # Scalar types that need no arguments.
-_SCALAR_TYPES = {"Integer", "Float", "Boolean", "String", "None", "Class"}
+_SCALAR_TYPES = {"Integer", "Float", "Boolean", "Complex", "String", "None", "Class"}
 
 
 def make_type_dict(dbg, typename, args=None):
@@ -46,6 +47,13 @@ def make_type_dict(dbg, typename, args=None):
         if len(args) < 2:
             raise InvalidAnnotationException(dbg, "NDArray requires at least 2 arguments (dtype and shape dimensions).")
         dtype = args[0]
+        if dtype == "Complex":
+            raise InvalidAnnotationException(
+                dbg,
+                "Annotation `NDArray[Complex, ...]` is not yet supported. "
+                "Complex scalars work; complex ndarrays are tracked in "
+                "compiler.complex-ndarray-ops.",
+            )
         shape = []
         for a in args[1:]:
             if not isinstance(a, int):

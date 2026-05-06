@@ -215,6 +215,7 @@ impl IRGenerator {
                        | "intp" | "uintp" | "long" | "byte" | "short" | "intc" | "uintc" | "ubyte"
                        | "ushort" | "longlong" | "ulonglong") => Value::Class(ZinniaType::Integer),
             (Some("np"), "bool_") => Value::Class(ZinniaType::Boolean),
+            (Some("np"), "complex64" | "complex128" | "complex256" | "csingle" | "cdouble" | "clongdouble") => Value::Class(ZinniaType::Complex),
             // numpy / math mathematical constants
             (Some("np"), "pi") | (Some("math"), "pi") => self.builder.ir_constant_float(std::f64::consts::PI),
             (Some("np"), "e") | (Some("math"), "e") => self.builder.ir_constant_float(std::f64::consts::E),

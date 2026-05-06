@@ -10,6 +10,9 @@ Integer = int
 integer = int
 Int = int
 Float = float
+# Complex scalars are first-class in @zk_circuit annotations.
+# At the IR layer they are lowered as a 2-tuple (real, imag) of Float.
+Complex = complex
 Tuple = tuple
 List = list
 

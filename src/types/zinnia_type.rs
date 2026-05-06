@@ -24,6 +24,11 @@ pub enum ZinniaType {
     Integer,
     Float,
     Boolean,
+    /// Complex scalar. Lowered at the IR layer as a 2-tuple of Float
+    /// (real, imag). The type tag carries the metadata that the underlying
+    /// Tuple([Float, Float]) is a complex number, so `apply_binary_op` and
+    /// other paths can dispatch correctly.
+    Complex,
     String,
     None,
     Class,
@@ -53,6 +58,7 @@ impl fmt::Display for ZinniaType {
             ZinniaType::Integer => write!(f, "Integer"),
             ZinniaType::Float => write!(f, "Float"),
             ZinniaType::Boolean => write!(f, "Boolean"),
+            ZinniaType::Complex => write!(f, "Complex"),
             ZinniaType::String => write!(f, "String"),
             ZinniaType::None => write!(f, "None"),
             ZinniaType::Class => write!(f, "Class"),
@@ -79,12 +85,17 @@ impl fmt::Display for ZinniaType {
 }
 
 impl ZinniaType {
-    /// Returns true if this type is a numeric type (Integer, Float, or Boolean).
+    /// Returns true if this type is a numeric type (Integer, Float, Boolean, or Complex).
     pub fn is_number(&self) -> bool {
         matches!(
             self,
-            ZinniaType::Integer | ZinniaType::Float | ZinniaType::Boolean
+            ZinniaType::Integer | ZinniaType::Float | ZinniaType::Boolean | ZinniaType::Complex
         )
+    }
+
+    /// Returns true if this type is a complex scalar.
+    pub fn is_complex(&self) -> bool {
+        matches!(self, ZinniaType::Complex)
     }
 
     /// Returns true if this type is an integer-like type (Integer or Boolean).
@@ -148,6 +159,7 @@ impl ZinniaType {
                 Ok(ZinniaType::Integer)
             }
             "Float" | "float" => Ok(ZinniaType::Float),
+            "Complex" | "complex" => Ok(ZinniaType::Complex),
             "String" | "str" => Ok(ZinniaType::String),
             "None" => Ok(ZinniaType::None),
             "Class" => Ok(ZinniaType::Class),
@@ -196,6 +208,13 @@ impl ZinniaType {
                 let dtype = match &args[0] {
                     AnnotationArg::Type(ZinniaType::Integer) => NumberType::Integer,
                     AnnotationArg::Type(ZinniaType::Float) => NumberType::Float,
+                    AnnotationArg::Type(ZinniaType::Complex) => {
+                        return Err(
+                            "Annotation `NDArray[Complex, ...]` is not yet supported. \
+                             Complex scalars work; complex ndarrays are tracked in \
+                             compiler.complex-ndarray-ops.".to_string()
+                        )
+                    }
                     _ => {
                         return Err(
                             "Annotation `NDArray` missing a required argument dtype".to_string()
@@ -278,6 +297,7 @@ impl ZinniaType {
             ZinniaType::Integer => vec!["Integer", "int", "Int", "integer"],
             ZinniaType::Float => vec!["Float", "float"],
             ZinniaType::Boolean => vec!["Boolean", "bool", "Bool", "boolean"],
+            ZinniaType::Complex => vec!["Complex", "complex"],
             ZinniaType::String => vec!["String", "str"],
             ZinniaType::None => vec!["None"],
             ZinniaType::Class => vec!["Class"],
@@ -295,6 +315,7 @@ impl ZinniaType {
             ZinniaType::Integer => "Integer",
             ZinniaType::Float => "Float",
             ZinniaType::Boolean => "Boolean",
+            ZinniaType::Complex => "Complex",
             ZinniaType::String => "String",
             ZinniaType::None => "None",
             ZinniaType::Class => "Class",

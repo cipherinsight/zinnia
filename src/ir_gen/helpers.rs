@@ -331,14 +331,18 @@ impl IRGenerator {
 
 
     pub(crate) fn register_global_datatypes(&mut self) {
-        // Register Float and Integer as class values
+        // Register Float, Integer, and Complex as class values
         let float_class = Value::Class(ZinniaType::Float);
         let int_class = Value::Class(ZinniaType::Integer);
+        let complex_class = Value::Class(ZinniaType::Complex);
         for name in &["Float", "float"] {
             self.ctx.set(name, float_class.clone());
         }
         for name in &["Integer", "int", "Int", "integer", "Boolean", "bool", "Bool", "boolean"] {
             self.ctx.set(name, int_class.clone());
+        }
+        for name in &["Complex", "complex"] {
+            self.ctx.set(name, complex_class.clone());
         }
     }
 
