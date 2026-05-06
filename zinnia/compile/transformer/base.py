@@ -290,6 +290,9 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
             return {"__class__": "ASTConstantInteger", "value": node.value}
         elif isinstance(node.value, float):
             return {"__class__": "ASTConstantFloat", "value": node.value}
+        elif isinstance(node.value, complex):
+            return {"__class__": "ASTConstantComplex",
+                    "real": float(node.value.real), "imag": float(node.value.imag)}
         elif isinstance(node.value, str):
             return {"__class__": "ASTConstantString", "value": node.value}
         raise UnsupportedConstantLiteralException(dbg_info, f"Invalid constant value `{node.value}` in circuit")

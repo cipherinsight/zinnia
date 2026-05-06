@@ -159,6 +159,19 @@ impl IRGenerator {
             ASTNode::ASTConstantFloat(n) => self.builder.ir_constant_float(n.value),
             ASTNode::ASTConstantInteger(n) => self.builder.ir_constant_int(n.value),
             ASTNode::ASTConstantBoolean(n) => self.builder.ir_constant_bool(n.value),
+            ASTNode::ASTConstantComplex(n) => {
+                let real = self.builder.ir_constant_float(n.real);
+                let imag = self.builder.ir_constant_float(n.imag);
+                let real_sv = match real {
+                    crate::types::Value::Float(s) => s,
+                    _ => unreachable!("ir_constant_float returns Value::Float"),
+                };
+                let imag_sv = match imag {
+                    crate::types::Value::Float(s) => s,
+                    _ => unreachable!("ir_constant_float returns Value::Float"),
+                };
+                crate::types::Value::Complex { real: real_sv, imag: imag_sv }
+            }
             ASTNode::ASTConstantNone(_) => Value::None,
             ASTNode::ASTConstantString(n) => self.builder.ir_constant_str(n.value.clone()),
             ASTNode::ASTSquareBrackets(n) => self.visit_square_brackets(n),

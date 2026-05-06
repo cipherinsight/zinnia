@@ -54,6 +54,7 @@ pub enum ASTNode {
     ASTConstantFloat(ASTConstantFloat),
     ASTConstantInteger(ASTConstantInteger),
     ASTConstantBoolean(ASTConstantBoolean),
+    ASTConstantComplex(ASTConstantComplex),
     ASTConstantNone(ASTConstantNone),
     ASTConstantString(ASTConstantString),
     ASTSquareBrackets(ASTSquareBrackets),
@@ -296,6 +297,14 @@ pub struct ASTConstantInteger {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ASTConstantBoolean {
     pub value: bool,
+    #[serde(default)]
+    pub dbg: Option<DebugInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ASTConstantComplex {
+    pub real: f64,
+    pub imag: f64,
     #[serde(default)]
     pub dbg: Option<DebugInfo>,
 }

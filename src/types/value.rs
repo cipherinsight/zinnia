@@ -13,6 +13,13 @@ pub enum Value {
     String(StringValue),
     None,
     Class(ZinniaType),
+    /// Complex scalar — stored as two Float ScalarValues at the IR layer
+    /// but tagged as `ZinniaType::Complex` so dispatch (arithmetic,
+    /// reductions, …) can route correctly. See compiler.complex-* cards.
+    Complex {
+        real: ScalarValue<f64>,
+        imag: ScalarValue<f64>,
+    },
     NDArray(NDArrayData),
     DynamicNDArray(DynamicNDArrayData),
     List(CompositeData),
@@ -33,6 +40,7 @@ impl Value {
             Value::String(_) => ZinniaType::String,
             Value::None => ZinniaType::None,
             Value::Class(inner_type) => inner_type.clone(),
+            Value::Complex { .. } => ZinniaType::Complex,
             Value::NDArray(data) => ZinniaType::NDArray {
                 shape: data.shape.clone(),
                 dtype: data.dtype,
