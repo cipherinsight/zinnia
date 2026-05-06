@@ -97,15 +97,18 @@ impl IRGenerator {
 
         let iter_val = self.visit(&n.iter_expr);
 
-        // P1 segarr boundary: convert StaticArray to legacy List view first.
-        let iter_val = if matches!(iter_val, Value::StaticArray { .. }) {
-            crate::helpers::static_array::to_value_list(&mut self.builder, &iter_val)
-        } else {
-            iter_val
-        };
-
-        // Extract the iterable elements
+        // P2 segarr-read-paths: iterate StaticArray natively. Each iteration
+        // returns either a leaf (1-D source) or a (D-1)-rank StaticArray
+        // view (≥2-D source). Avoids the legacy `to_value_list` shim.
         let elements: Vec<Value> = match &iter_val {
+            Value::StaticArray { shape, .. } => {
+                let n_iter = shape[0];
+                (0..n_iter)
+                    .map(|i| crate::helpers::static_array_read::iter_element(
+                        &mut self.builder, &iter_val, i,
+                    ))
+                    .collect()
+            }
             Value::List(data) | Value::Tuple(data) => data.values.clone(),
             _ => {
                 panic!("'{}' object is not iterable", iter_val.zinnia_type());
@@ -342,14 +345,17 @@ impl IRGenerator {
 
     pub(crate) fn visit_subscript(&mut self, n: &ASTSubscriptExp) -> Value {
         let val = self.visit(&n.val);
-        // P1 segarr boundary: convert StaticArray to legacy List view first.
-        let val = if matches!(val, Value::StaticArray { .. }) {
-            crate::helpers::static_array::to_value_list(&mut self.builder, &val)
-        } else {
-            val
-        };
         // Evaluate slice indices by visiting them as AST nodes
         let slice_values = self.eval_slice_indices(&n.slicing);
+
+        // P2 segarr-read-paths: native StaticArray dispatch BEFORE the
+        // legacy boundary shim. Element / view / slice / multi-dim reads
+        // operate directly on the segment without materialising a List.
+        if matches!(val, Value::StaticArray { .. }) {
+            return crate::helpers::static_array_read::static_array_subscript(
+                &mut self.builder, &val, &slice_values,
+            );
+        }
 
         match &val {
             Value::List(data) | Value::Tuple(data) => {
@@ -584,14 +590,17 @@ impl IRGenerator {
         let gen = &generators[idx];
         let iter_val = self.visit(&gen.iter_expr);
 
-        // P1 segarr boundary: convert StaticArray to legacy List view first.
-        let iter_val = if matches!(iter_val, Value::StaticArray { .. }) {
-            crate::helpers::static_array::to_value_list(&mut self.builder, &iter_val)
-        } else {
-            iter_val
-        };
-
+        // P2 segarr-read-paths: iterate StaticArray natively (per-iteration
+        // leaf or (D-1)-rank view).
         let elements: Vec<Value> = match &iter_val {
+            Value::StaticArray { shape, .. } => {
+                let n_iter = shape[0];
+                (0..n_iter)
+                    .map(|i| crate::helpers::static_array_read::iter_element(
+                        &mut self.builder, &iter_val, i,
+                    ))
+                    .collect()
+            }
             Value::List(data) | Value::Tuple(data) => data.values.clone(),
             _ => return,
         };
@@ -663,6 +672,15 @@ impl IRGenerator {
                 }
             }
             ASTNode::ASTTupleAssignTarget(t) => {
+                // P2 segarr: a StaticArray bound to an unpacking target
+                // (e.g. `for a, b in arr2d:` where `arr2d` is a 2-D
+                // segment-backed array) must be materialised to a List so
+                // the unpacking machinery can iterate its elements.
+                let value = if matches!(&value, Value::StaticArray { .. }) {
+                    crate::helpers::static_array::to_value_list(&mut self.builder, &value)
+                } else {
+                    value
+                };
                 if let Value::Tuple(data) | Value::List(data) = &value {
                     // Check for starred target — the `star` flag is on ASTNameAssignTarget
                     let star_idx = t.targets.iter().position(|tgt| is_starred_target(tgt));
@@ -711,6 +729,12 @@ impl IRGenerator {
                 }
             }
             ASTNode::ASTListAssignTarget(t) => {
+                // P2 segarr: same materialisation as the tuple case above.
+                let value = if matches!(&value, Value::StaticArray { .. }) {
+                    crate::helpers::static_array::to_value_list(&mut self.builder, &value)
+                } else {
+                    value
+                };
                 if let Value::Tuple(data) | Value::List(data) = &value {
                     for (i, tgt) in t.targets.iter().enumerate() {
                         if i < data.values.len() {

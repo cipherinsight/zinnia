@@ -6,4 +6,5 @@ pub mod shape_arith;
 pub mod promote;
 pub mod segment;
 pub mod static_array;
+pub mod static_array_read;
 pub mod array_ops;
