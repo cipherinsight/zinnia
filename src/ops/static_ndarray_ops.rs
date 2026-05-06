@@ -420,6 +420,12 @@ fn diff_once(b: &mut IRBuilder, x: &Value) -> Value {
 
 /// Outer product of two 1-D composites: `result[i][j] = a[i] * b[j]`.
 pub fn np_outer(b: &mut IRBuilder, args: &[Value]) -> Value {
+    np_outer_op(b, args, "mul")
+}
+
+/// Generalized outer-product over a binary op. `np.add.outer`, `np.subtract.outer`,
+/// etc. are routed here from the named-attr dispatcher.
+pub fn np_outer_op(b: &mut IRBuilder, args: &[Value], op: &str) -> Value {
     let a = match args.first() {
         Some(v) => v,
         None => return Value::None,
@@ -428,14 +434,14 @@ pub fn np_outer(b: &mut IRBuilder, args: &[Value]) -> Value {
         Some(v) => v,
         None => return Value::None,
     };
-    // Flatten inputs to 1-D (numpy.outer flattens automatically).
+    // Flatten inputs to 1-D (numpy.<op>.outer flattens automatically).
     let a_flat = crate::helpers::composite::flatten_composite(a);
     let b_flat = crate::helpers::composite::flatten_composite(bv);
     let mut rows = Vec::with_capacity(a_flat.len());
     for ai in &a_flat {
         let mut row = Vec::with_capacity(b_flat.len());
         for bj in &b_flat {
-            row.push(crate::helpers::value_ops::apply_binary_op(b, "mul", ai, bj));
+            row.push(crate::helpers::value_ops::apply_binary_op(b, op, ai, bj));
         }
         let row_types = row.iter().map(|v| v.zinnia_type()).collect();
         rows.push(Value::List(CompositeData { elements_type: row_types, values: row }));

@@ -455,6 +455,20 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
         dbg_info = self.get_dbg(node)
         args = [self.visit_expr(arg) for arg in node.args]
         kwargs = {kwarg.arg: self.visit_expr(kwarg.value) for kwarg in node.keywords}
+        # numpy ufunc methods: `np.<binop>.outer(a, b)` — rewrite to a
+        # bare call `np.<binop>_outer(a, b)` so the dispatcher in the
+        # IR generator sees a flat (target, member) pair.
+        if (
+            isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Attribute)
+            and isinstance(node.func.value.value, ast.Name)
+            and node.func.value.value.id == "np"
+            and node.func.attr in ("outer",)
+        ):
+            binop = node.func.value.attr
+            return {"__class__": "ASTNamedAttribute",
+                    "target": "np", "member": f"{binop}_{node.func.attr}",
+                    "args": args, "kwargs": kwargs}
         if isinstance(node.func, ast.Attribute):
             if isinstance(node.func.value, ast.Name):
                 return {"__class__": "ASTNamedAttribute",
