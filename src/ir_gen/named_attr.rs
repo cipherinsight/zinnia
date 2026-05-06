@@ -752,6 +752,91 @@ impl IRGenerator {
                                 },
                             )
                         }
+                        Value::Complex { real, imag } => {
+                            // Complex transcendentals via Euler / standard identities,
+                            // built on the existing real Float trig+exp+sqrt gates.
+                            let re = Value::Float(real.clone());
+                            let im = Value::Float(imag.clone());
+                            match name {
+                                "exp" => {
+                                    // exp(a + bi) = e^a * (cos(b) + i*sin(b))
+                                    let exp_a = builder.ir_exp_f(&re);
+                                    let cos_b = builder.ir_cos_f(&im);
+                                    let sin_b = builder.ir_sin_f(&im);
+                                    let r = builder.ir_mul_f(&exp_a, &cos_b);
+                                    let i = builder.ir_mul_f(&exp_a, &sin_b);
+                                    let r_sv = match r { Value::Float(s) => s, _ => unreachable!() };
+                                    let i_sv = match i { Value::Float(s) => s, _ => unreachable!() };
+                                    Value::Complex { real: r_sv, imag: i_sv }
+                                }
+                                "sin" => {
+                                    // sin(a + bi) = sin(a)*cosh(b) + i*cos(a)*sinh(b)
+                                    let sa = builder.ir_sin_f(&re);
+                                    let ca = builder.ir_cos_f(&re);
+                                    let cb = builder.ir_cosh_f(&im);
+                                    let sb = builder.ir_sinh_f(&im);
+                                    let r = builder.ir_mul_f(&sa, &cb);
+                                    let i = builder.ir_mul_f(&ca, &sb);
+                                    let r_sv = match r { Value::Float(s) => s, _ => unreachable!() };
+                                    let i_sv = match i { Value::Float(s) => s, _ => unreachable!() };
+                                    Value::Complex { real: r_sv, imag: i_sv }
+                                }
+                                "cos" => {
+                                    // cos(a + bi) = cos(a)*cosh(b) - i*sin(a)*sinh(b)
+                                    let ca = builder.ir_cos_f(&re);
+                                    let sa = builder.ir_sin_f(&re);
+                                    let cb = builder.ir_cosh_f(&im);
+                                    let sb = builder.ir_sinh_f(&im);
+                                    let r = builder.ir_mul_f(&ca, &cb);
+                                    let prod_sa_sb = builder.ir_mul_f(&sa, &sb);
+                                    let zero = builder.ir_constant_float(0.0);
+                                    let i_neg = builder.ir_sub_f(&zero, &prod_sa_sb);
+                                    let r_sv = match r { Value::Float(s) => s, _ => unreachable!() };
+                                    let i_sv = match i_neg { Value::Float(s) => s, _ => unreachable!() };
+                                    Value::Complex { real: r_sv, imag: i_sv }
+                                }
+                                "sqrt" => {
+                                    // sqrt(z) where z = a + bi:
+                                    // |z| = sqrt(a² + b²); when im == 0 and re ≥ 0, fall back
+                                    // to real sqrt with imag=0.
+                                    // Polar form: sqrt(|z|) * (cos(arg/2) + i*sin(arg/2))
+                                    // Implemented via the formula:
+                                    //   r = sqrt((|z| + a) / 2)
+                                    //   s = sign(b) * sqrt((|z| - a) / 2)
+                                    let aa = builder.ir_mul_f(&re, &re);
+                                    let bb = builder.ir_mul_f(&im, &im);
+                                    let mod_sq = builder.ir_add_f(&aa, &bb);
+                                    let modulus = builder.ir_sqrt_f(&mod_sq);
+                                    let two = builder.ir_constant_float(2.0);
+                                    let mod_plus_a = builder.ir_add_f(&modulus, &re);
+                                    let mod_minus_a = builder.ir_sub_f(&modulus, &re);
+                                    let half_plus = builder.ir_div_f(&mod_plus_a, &two);
+                                    let half_minus = builder.ir_div_f(&mod_minus_a, &two);
+                                    let r = builder.ir_sqrt_f(&half_plus);
+                                    let s_abs = builder.ir_sqrt_f(&half_minus);
+                                    // Sign of imag: if b >= 0 then +s_abs else -s_abs.
+                                    let zero = builder.ir_constant_float(0.0);
+                                    let pos = builder.ir_greater_than_or_equal_f(&im, &zero);
+                                    let neg_s = builder.ir_sub_f(&zero, &s_abs);
+                                    let s = builder.ir_select_f(&pos, &s_abs, &neg_s);
+                                    let r_sv = match r { Value::Float(sv) => sv, _ => unreachable!() };
+                                    let s_sv = match s { Value::Float(sv) => sv, _ => unreachable!() };
+                                    Value::Complex { real: r_sv, imag: s_sv }
+                                }
+                                "log" => {
+                                    // log(a + bi) = log(|z|) + i*arg(z) where arg = atan2(b, a)
+                                    // Skip until atan2 lands on the real path; fall through
+                                    // to scalar dispatch which will panic.
+                                    let mut kw = base_kwargs.clone();
+                                    kw.insert("x".to_string(), x.clone());
+                                    dispatch_scalar(builder, name, kw)
+                                        .unwrap_or_else(|| panic!("np.{} on Complex is not yet implemented", name))
+                                }
+                                _ => {
+                                    panic!("np.{} on Complex is not yet implemented (compiler.complex-transcendentals scope)", name)
+                                }
+                            }
+                        }
                         _ => {
                             let mut kw = base_kwargs.clone();
                             kw.insert("x".to_string(), x.clone());
@@ -784,7 +869,7 @@ impl IRGenerator {
                 };
 
                 let result = if visited_args.len() == 1
-                    && matches!(visited_args[0], Value::List(_) | Value::Tuple(_) | Value::DynamicNDArray(_))
+                    && matches!(visited_args[0], Value::List(_) | Value::Tuple(_) | Value::DynamicNDArray(_) | Value::Complex { .. })
                 {
                     // Centralized unary vectorization.
                     Some(vectorize_unary_np(
