@@ -52,3 +52,32 @@ def test_reshape_two_runtime_dims():
     assert foo(arr, 4, 3)
     # 5 * 2 = 10 != 12 → unsat
     assert not foo(arr, 5, 2)
+
+
+def test_reshape_runtime_followed_by_full_slice():
+    # Regression for compiler.dyn-ndarray-slice-uses-runtime-shape: after
+    # reshape with runtime dims, a full-range slice + setitem must not
+    # over-count target elements (was: panic with 4096 vs 16).
+    @zk_circuit
+    def foo(x: NDArray[Integer, 2, 4], a: int, b: int):
+        out = x.reshape(a, b)
+        out[:, :] = out[:, :]  # round-trip slice; compile path is the test
+        assert True
+
+    arr = np.asarray([[1, 2, 3, 4], [5, 6, 7, 8]])
+    assert foo(arr, 2, 4)
+    assert foo(arr, 4, 2)
+    assert foo(arr, 8, 1)
+
+
+def test_reshape_runtime_followed_by_partial_slice():
+    @zk_circuit
+    def foo(x: NDArray[Integer, 2, 4], a: int, b: int, k: int):
+        out = x.reshape(a, b)
+        # Partial slice along the second axis with a runtime stop.
+        out[:, :k] = out[:, :k]
+        assert True
+
+    arr = np.asarray([[1, 2, 3, 4], [5, 6, 7, 8]])
+    assert foo(arr, 2, 4, 2)
+    assert foo(arr, 4, 2, 1)

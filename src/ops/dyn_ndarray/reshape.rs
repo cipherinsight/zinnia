@@ -158,17 +158,29 @@ fn dyn_reshape_runtime(
 ) -> Value {
     let n_dims = dim_args.len();
 
-    // Build runtime_shape: keep static_val for constants, ptr for runtime.
+    // Build runtime_shape (carries the actual values, possibly with ptr) and
+    // logical_shape (compile-time skeleton). The KEY INVARIANT we maintain:
+    //   prod(logical_shape) == total_bound
+    // so downstream ops that consult logical_shape (e.g. allocate / iterate
+    // over slice positions) don't over-count beyond the source storage.
+    //
+    // For each runtime dim we pick logical size 1, then place the entire
+    // total_bound in the first runtime axis. (If all dims are constants their
+    // product already equals total_bound by the assert below.)
     let mut runtime_shape: Vec<ScalarValue<i64>> = Vec::with_capacity(n_dims);
     let mut shape_values: Vec<Value> = Vec::with_capacity(n_dims);
     let mut logical_shape: Vec<usize> = Vec::with_capacity(n_dims);
-    for arg in dim_args {
+    let mut const_product: usize = 1;
+    let mut runtime_axes: Vec<usize> = Vec::new();
+    for (axis, arg) in dim_args.iter().enumerate() {
         match arg.int_val() {
             Some(c) => {
                 assert!(c > 0, "reshape: dimensions must be positive");
                 runtime_shape.push(ScalarValue::new(Some(c), None));
                 shape_values.push(b.ir_constant_int(c));
                 logical_shape.push(c as usize);
+                const_product = const_product.checked_mul(c as usize)
+                    .expect("reshape: const dim product overflow");
             }
             None => {
                 let scalar = match arg {
@@ -180,11 +192,22 @@ fn dyn_reshape_runtime(
                 };
                 runtime_shape.push(scalar.clone());
                 shape_values.push(Value::Integer(scalar));
-                // Over-approximate: any single runtime dim could be at most
-                // old_total (when all other dims are 1).
-                logical_shape.push(old_total);
+                // Tentatively 1; we'll redistribute total_bound to the first
+                // runtime axis below.
+                logical_shape.push(1);
+                runtime_axes.push(axis);
             }
         }
+    }
+    if !runtime_axes.is_empty() {
+        assert!(
+            const_product > 0 && old_total % const_product == 0,
+            "reshape: const dims ({:?}) don't divide source total {}",
+            const_product, old_total,
+        );
+        // Place all the runtime variability into the first runtime axis so
+        // prod(logical_shape) == old_total.
+        logical_shape[runtime_axes[0]] = old_total / const_product;
     }
 
     // Assert prod(runtime_shape) == old_total at proof time.
