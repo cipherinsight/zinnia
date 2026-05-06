@@ -257,10 +257,15 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
             _ => {}
         }
     }
-    // List/tuple repetition via `*`
+    // List/tuple repetition via `*` (Python `[1,2] * 3` → `[1,2,1,2,1,2]`).
+    // Only fires for *non-numeric* composites — numeric composites are
+    // ndarrays, where `scalar * arr` means elementwise multiplication and
+    // is handled by the broadcasting arm below.
     if op == "mul" {
         match (lhs, rhs) {
-            (Value::List(ld), _) | (Value::Tuple(ld), _) if rhs.int_val().is_some() => {
+            (Value::List(ld), _) | (Value::Tuple(ld), _)
+                if rhs.int_val().is_some() && !is_numeric_composite(lhs) =>
+            {
                 let n = rhs.int_val().unwrap().max(0) as usize;
                 let mut values = Vec::new();
                 for _ in 0..n {
@@ -274,7 +279,9 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
                     Value::List(CompositeData { elements_type: types, values })
                 };
             }
-            (_, Value::List(rd)) | (_, Value::Tuple(rd)) if lhs.int_val().is_some() => {
+            (_, Value::List(rd)) | (_, Value::Tuple(rd))
+                if lhs.int_val().is_some() && !is_numeric_composite(rhs) =>
+            {
                 let n = lhs.int_val().unwrap().max(0) as usize;
                 let mut values = Vec::new();
                 for _ in 0..n {

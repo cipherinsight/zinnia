@@ -266,10 +266,22 @@ pub fn np_fill(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
     // np.zeros(shape, dtype=...) / np.ones(shape, dtype=...) / np.empty(shape, dtype=...)
     let shape = if let Some(arg) = args.first() {
         match arg {
-            Value::Integer(_) => vec![arg.int_val().unwrap_or(0) as usize],
-            Value::Tuple(data) => data.values.iter().map(|v| v.int_val().unwrap_or(0) as usize).collect(),
-            Value::List(data) => data.values.iter().map(|v| v.int_val().unwrap_or(0) as usize).collect(),
-            _ => vec![0],
+            Value::Integer(_) => vec![arg.int_val().expect(
+                "np.zeros/ones/empty: shape must be a compile-time constant int (got runtime value)"
+            ) as usize],
+            Value::Tuple(data) => data.values.iter().enumerate().map(|(i, v)| {
+                v.int_val().unwrap_or_else(|| panic!(
+                    "np.zeros/ones/empty: shape element at axis {} must be a compile-time constant int (got runtime value)",
+                    i
+                )) as usize
+            }).collect(),
+            Value::List(data) => data.values.iter().enumerate().map(|(i, v)| {
+                v.int_val().unwrap_or_else(|| panic!(
+                    "np.zeros/ones/empty: shape element at axis {} must be a compile-time constant int (got runtime value)",
+                    i
+                )) as usize
+            }).collect(),
+            _ => panic!("np.zeros/ones/empty: shape must be int, tuple, or list (got {:?})", arg.zinnia_type()),
         }
     } else {
         return Value::None;
