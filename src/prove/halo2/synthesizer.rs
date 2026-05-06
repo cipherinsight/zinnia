@@ -250,6 +250,149 @@ impl Halo2Synthesizer {
         self.offset += 1;
         self.bin_gate("sub", &zero_cell, a, -a.value, "neg")
     }
+
+    /// Constrain that `a == b` (i.e., a - b == 0) using the is_zero gadget
+    /// and an assert that the result equals 1.
+    fn constrain_equal_cells(&mut self, a: &Halo2CellRef, b: &Halo2CellRef, ann: &str) {
+        let diff = self.bin_gate("sub", a, b, a.value - b.value, ann);
+        let iz = self.is_zero_gadget(&diff);
+        // assert iz == 1
+        let row = self.offset;
+        self.rec_sel("assert");
+        let _ = self.rec_advice(0, iz.value, &format!("{}_assert", ann));
+        self.rec_copy(&iz, 0, row);
+        self.offset += 1;
+    }
+
+    /// Bit-decompose a 64-bit signed integer cell using two's-complement encoding.
+    ///
+    /// Returns 64 bit cells `b[0..64]` constrained such that:
+    /// - each `b[i] ∈ {0, 1}` (via `bit` gate);
+    /// - `Σ_{i=0}^{62} b[i] * 2^i − b[63] * 2^63 = val`  (Fp equation).
+    ///
+    /// The signed-aware recomposition avoids needing the field-element value to
+    /// fit in [0, 2^64); negative values whose Fp encoding is P − |v| still
+    /// match the formula when b[63] is the sign bit.
+    fn bit_decompose_64(&mut self, val: &Halo2CellRef) -> [Halo2CellRef; 64] {
+        const N: usize = 64;
+        let v_i64 = kernel::fp_to_i64(val.value);
+        let v_u64 = v_i64 as u64;
+
+        // 1. Witness bits and constrain each to be in {0, 1}.
+        let mut bits: Vec<Halo2CellRef> = Vec::with_capacity(N);
+        for i in 0..N {
+            let b = ((v_u64 >> i) & 1) as u64;
+            let b_fp = Fp::from(b);
+            let bit_cell = self.rec_advice(0, b_fp, &format!("bit_{}", i));
+            self.offset += 1;
+            self.constrain_bit(&bit_cell);
+            bits.push(bit_cell);
+        }
+
+        // 2. Allocate `pow2 = 1` and pin it via the `assert` gate (s * (1 - a) = 0).
+        let mut pow2 = self.rec_advice(0, Fp::one(), "p2_init");
+        self.offset += 1;
+        let row = self.offset;
+        self.rec_sel("assert");
+        let _ = self.rec_advice(0, pow2.value, "p2_init_assert");
+        self.rec_copy(&pow2, 0, row);
+        self.offset += 1;
+
+        // 3. acc = pow2 * bits[0] = bits[0]  (via mul gate; pow2 is pinned to 1)
+        let mut acc = self.bin_gate(
+            "mul", &pow2, &bits[0], pow2.value * bits[0].value, "decomp_acc0",
+        );
+
+        // 4. For i in 1..63: pow2 *= 2 (doubling = add gate); acc += pow2 * bits[i]
+        for i in 1..(N - 1) {
+            pow2 = self.bin_gate(
+                "add", &pow2, &pow2, pow2.value + pow2.value, &format!("p2_{}", i),
+            );
+            acc = self.constrained_mul_add(&pow2, &bits[i], &acc);
+        }
+
+        // 5. For i = 63 (sign bit): pow2 = 2^63, then acc -= pow2 * bits[63].
+        pow2 = self.bin_gate(
+            "add", &pow2, &pow2, pow2.value + pow2.value, "p2_63",
+        );
+        let high = self.bin_gate(
+            "mul", &pow2, &bits[N - 1], pow2.value * bits[N - 1].value, "high_term",
+        );
+        let final_val = self.bin_gate(
+            "sub", &acc, &high, acc.value - high.value, "decomp_final",
+        );
+
+        // 6. Constrain final_val == val.
+        self.constrain_equal_cells(&final_val, val, "decomp_eq");
+
+        bits.try_into().expect("64 bits collected")
+    }
+
+    /// Recompose 64 bit cells back into a signed two's-complement integer cell.
+    /// The bits are NOT re-constrained to {0,1} — caller is responsible if they
+    /// were freshly constructed (e.g., XOR per-bit: caller already constrained).
+    fn bit_recompose_64(&mut self, bits: &[Halo2CellRef; 64], ann: &str) -> Halo2CellRef {
+        const N: usize = 64;
+        // pow2 = 1 (pinned via assert), acc = pow2 * bits[0]
+        let mut pow2 = self.rec_advice(0, Fp::one(), &format!("{}_p2_init", ann));
+        self.offset += 1;
+        let row = self.offset;
+        self.rec_sel("assert");
+        let _ = self.rec_advice(0, pow2.value, &format!("{}_p2_init_assert", ann));
+        self.rec_copy(&pow2, 0, row);
+        self.offset += 1;
+
+        let mut acc = self.bin_gate(
+            "mul", &pow2, &bits[0], pow2.value * bits[0].value, &format!("{}_acc0", ann),
+        );
+        for i in 1..(N - 1) {
+            pow2 = self.bin_gate(
+                "add", &pow2, &pow2, pow2.value + pow2.value, &format!("{}_p2_{}", ann, i),
+            );
+            acc = self.constrained_mul_add(&pow2, &bits[i], &acc);
+        }
+        pow2 = self.bin_gate(
+            "add", &pow2, &pow2, pow2.value + pow2.value, &format!("{}_p2_63", ann),
+        );
+        let high = self.bin_gate(
+            "mul", &pow2, &bits[N - 1], pow2.value * bits[N - 1].value, &format!("{}_high", ann),
+        );
+        self.bin_gate(
+            "sub", &acc, &high, acc.value - high.value, &format!("{}_final", ann),
+        )
+    }
+
+    /// Per-bit AND: `c = a * b` for two bit cells (uses `bool_and` gate which is
+    /// the same as `mul`, but the dedicated selector documents intent).
+    fn bit_and_per_bit(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Halo2CellRef {
+        self.bin_gate("bool_and", a, b, a.value * b.value, "and_bit")
+    }
+
+    /// Per-bit OR: `c = a + b - a*b` via the `bool_or` gate.
+    fn bit_or_per_bit(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Halo2CellRef {
+        self.bin_gate("bool_or", a, b, a.value + b.value - a.value * b.value, "or_bit")
+    }
+
+    /// Per-bit XOR: `c = a + b - 2*a*b`. Composed as `(a + b) - 2*(a*b)` using
+    /// add/mul/sub gates (no dedicated XOR gate exists today).
+    fn bit_xor_per_bit(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Halo2CellRef {
+        let ab = self.bin_gate("mul", a, b, a.value * b.value, "xor_ab");
+        let two_ab = self.bin_gate("add", &ab, &ab, ab.value + ab.value, "xor_2ab");
+        let sum = self.bin_gate("add", a, b, a.value + b.value, "xor_sum");
+        self.bin_gate("sub", &sum, &two_ab, sum.value - two_ab.value, "xor_bit")
+    }
+
+    /// Per-bit NOT: `c = 1 - a` via the `bool_not` gate.
+    /// `bool_not` reads advice[0]=a and advice[2]=c (advice[1] unused).
+    fn bit_not_per_bit(&mut self, a: &Halo2CellRef) -> Halo2CellRef {
+        let row = self.offset;
+        self.rec_sel("bool_not");
+        let _ = self.rec_advice(0, a.value, "not_a");
+        self.rec_copy(a, 0, row);
+        let cc = self.rec_advice(2, Fp::one() - a.value, "not_c");
+        self.offset += 1;
+        cc
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -359,27 +502,105 @@ impl Synthesizer for Halo2Synthesizer {
         Ok(abs_cell)
     }
 
-    // ── Integer bitwise ───────────────────────────────────────────────
-    // Halo2 lowering would need a bit-decomposition gadget per operand.
-    // For now, return a synthesis error so the mock backend works while
-    // halo2 is tracked in a follow-up card (compiler.bitwise-halo2-lowering).
-    fn bit_and_i(&mut self, _a: &Halo2CellRef, _b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        Err(ProvingError::synthesis("bit_and: halo2 lowering not yet implemented (use mock backend)"))
+    // ── Integer bitwise (constrained via 64-bit two's-complement decomposition) ──
+    // Each operand is bit-decomposed; per-bit ops run through the bool gates
+    // (mul/add/sub for XOR); recomposition reuses the same chain.
+    //
+    // Cost per binary op: ~3*64 (decompose) + 64 (per-bit) + 3*64 (recompose)
+    //                   ≈ 320 constraints; XOR doubles per-bit term.
+    //
+    // Shifts only support compile-time-constant shift counts (the count must
+    // be encoded in the IR ConstantInt, otherwise the gate structure recorded
+    // at keygen time would not match the proof-time witness). Dynamic shifts
+    // are tracked separately.
+    fn bit_and_i(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
+        let abits = self.bit_decompose_64(a);
+        let bbits = self.bit_decompose_64(b);
+        let cbits: Vec<Halo2CellRef> = (0..64)
+            .map(|i| self.bit_and_per_bit(&abits[i], &bbits[i]))
+            .collect();
+        let cbits: [Halo2CellRef; 64] = cbits.try_into().expect("64 bits");
+        Ok(self.bit_recompose_64(&cbits, "and_out"))
     }
-    fn bit_or_i(&mut self, _a: &Halo2CellRef, _b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        Err(ProvingError::synthesis("bit_or: halo2 lowering not yet implemented (use mock backend)"))
+
+    fn bit_or_i(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
+        let abits = self.bit_decompose_64(a);
+        let bbits = self.bit_decompose_64(b);
+        let cbits: Vec<Halo2CellRef> = (0..64)
+            .map(|i| self.bit_or_per_bit(&abits[i], &bbits[i]))
+            .collect();
+        let cbits: [Halo2CellRef; 64] = cbits.try_into().expect("64 bits");
+        Ok(self.bit_recompose_64(&cbits, "or_out"))
     }
-    fn bit_xor_i(&mut self, _a: &Halo2CellRef, _b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        Err(ProvingError::synthesis("bit_xor: halo2 lowering not yet implemented (use mock backend)"))
+
+    fn bit_xor_i(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
+        let abits = self.bit_decompose_64(a);
+        let bbits = self.bit_decompose_64(b);
+        let cbits: Vec<Halo2CellRef> = (0..64)
+            .map(|i| self.bit_xor_per_bit(&abits[i], &bbits[i]))
+            .collect();
+        let cbits: [Halo2CellRef; 64] = cbits.try_into().expect("64 bits");
+        Ok(self.bit_recompose_64(&cbits, "xor_out"))
     }
-    fn shl_i(&mut self, _a: &Halo2CellRef, _b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        Err(ProvingError::synthesis("shl: halo2 lowering not yet implemented (use mock backend)"))
+
+    fn bit_not_i(&mut self, a: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
+        let abits = self.bit_decompose_64(a);
+        let cbits: Vec<Halo2CellRef> = (0..64)
+            .map(|i| self.bit_not_per_bit(&abits[i]))
+            .collect();
+        let cbits: [Halo2CellRef; 64] = cbits.try_into().expect("64 bits");
+        Ok(self.bit_recompose_64(&cbits, "not_out"))
     }
-    fn shr_i(&mut self, _a: &Halo2CellRef, _b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        Err(ProvingError::synthesis("shr: halo2 lowering not yet implemented (use mock backend)"))
+
+    fn shl_i(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
+        // Shift count must be a compile-time constant in [0, 64). The synthesizer
+        // is invoked at both keygen (witness=None, b.value=0) and proof time;
+        // gate structure is fixed at keygen, so a runtime-varying b is unsound.
+        // Constrain `b == n` with an explicit equality gadget so any drift fails.
+        let n = kernel::fp_to_i64(b.value);
+        if !(0..64).contains(&n) {
+            return Err(ProvingError::synthesis(
+                "shl: shift count must be in [0, 64); dynamic counts not supported under halo2",
+            ));
+        }
+        let n = n as usize;
+        let n_const = self.constant_int(n as i64)?;
+        self.constrain_equal_cells(b, &n_const, "shl_n");
+
+        let abits = self.bit_decompose_64(a);
+        let zero_cell = self.constant_int(0)?;
+        // result_bits[i] = abits[i - n] for i >= n, else 0
+        let mut cbits: Vec<Halo2CellRef> = Vec::with_capacity(64);
+        for i in 0..64 {
+            if i < n { cbits.push(zero_cell.clone()); }
+            else     { cbits.push(abits[i - n].clone()); }
+        }
+        let cbits: [Halo2CellRef; 64] = cbits.try_into().expect("64 bits");
+        Ok(self.bit_recompose_64(&cbits, "shl_out"))
     }
-    fn bit_not_i(&mut self, _a: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        Err(ProvingError::synthesis("bit_not: halo2 lowering not yet implemented (use mock backend)"))
+
+    fn shr_i(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
+        // Same constant-shift restriction as shl_i.
+        let n = kernel::fp_to_i64(b.value);
+        if !(0..64).contains(&n) {
+            return Err(ProvingError::synthesis(
+                "shr: shift count must be in [0, 64); dynamic counts not supported under halo2",
+            ));
+        }
+        let n = n as usize;
+        let n_const = self.constant_int(n as i64)?;
+        self.constrain_equal_cells(b, &n_const, "shr_n");
+
+        let abits = self.bit_decompose_64(a);
+        // Python's right-shift on signed ints is arithmetic (sign-extending).
+        // result_bits[i] = abits[i + n] for i + n < 64, else abits[63] (sign bit).
+        let mut cbits: Vec<Halo2CellRef> = Vec::with_capacity(64);
+        for i in 0..64 {
+            if i + n < 64 { cbits.push(abits[i + n].clone()); }
+            else          { cbits.push(abits[63].clone()); }
+        }
+        let cbits: [Halo2CellRef; 64] = cbits.try_into().expect("64 bits");
+        Ok(self.bit_recompose_64(&cbits, "shr_out"))
     }
     fn sign_i(&mut self, a: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
         // sign = (1 - is_zero) * (1 - 2*is_neg)

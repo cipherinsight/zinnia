@@ -282,3 +282,104 @@ fn test_float_mul_constrained() {
     let params = ProvingParams { k: 6, ..Default::default() };
     mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
+
+// ── Bitwise ops (constrained via 64-bit two's-complement decomposition) ──
+
+#[test]
+fn test_bit_and_const() {
+    let ir = make_graph(vec![
+        (IR::ConstantInt { value: 0b1100 }, vec![]),
+        (IR::ConstantInt { value: 0b1010 }, vec![]),
+        (IR::BitAndI, vec![0, 1]),
+        (IR::ConstantInt { value: 0b1000 }, vec![]),
+        (IR::EqI, vec![2, 3]),
+        (IR::Assert, vec![4]),
+    ]);
+    let params = ProvingParams { k: 14, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
+}
+
+#[test]
+fn test_bit_or_const() {
+    let ir = make_graph(vec![
+        (IR::ConstantInt { value: 0b1100 }, vec![]),
+        (IR::ConstantInt { value: 0b1010 }, vec![]),
+        (IR::BitOrI, vec![0, 1]),
+        (IR::ConstantInt { value: 0b1110 }, vec![]),
+        (IR::EqI, vec![2, 3]),
+        (IR::Assert, vec![4]),
+    ]);
+    let params = ProvingParams { k: 14, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
+}
+
+#[test]
+fn test_bit_xor_const() {
+    let ir = make_graph(vec![
+        (IR::ConstantInt { value: 0b1100 }, vec![]),
+        (IR::ConstantInt { value: 0b1010 }, vec![]),
+        (IR::BitXorI, vec![0, 1]),
+        (IR::ConstantInt { value: 0b0110 }, vec![]),
+        (IR::EqI, vec![2, 3]),
+        (IR::Assert, vec![4]),
+    ]);
+    let params = ProvingParams { k: 14, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
+}
+
+#[test]
+fn test_bit_not_const() {
+    // ~5 = -6 under two's-complement i64 semantics.
+    let ir = make_graph(vec![
+        (IR::ConstantInt { value: 5 }, vec![]),
+        (IR::BitNotI, vec![0]),
+        (IR::ConstantInt { value: -6 }, vec![]),
+        (IR::EqI, vec![1, 2]),
+        (IR::Assert, vec![3]),
+    ]);
+    let params = ProvingParams { k: 14, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
+}
+
+#[test]
+fn test_shl_const() {
+    let ir = make_graph(vec![
+        (IR::ConstantInt { value: 1 }, vec![]),
+        (IR::ConstantInt { value: 4 }, vec![]),
+        (IR::ShlI, vec![0, 1]),
+        (IR::ConstantInt { value: 16 }, vec![]),
+        (IR::EqI, vec![2, 3]),
+        (IR::Assert, vec![4]),
+    ]);
+    let params = ProvingParams { k: 14, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
+}
+
+#[test]
+fn test_shr_const() {
+    let ir = make_graph(vec![
+        (IR::ConstantInt { value: 16 }, vec![]),
+        (IR::ConstantInt { value: 2 }, vec![]),
+        (IR::ShrI, vec![0, 1]),
+        (IR::ConstantInt { value: 4 }, vec![]),
+        (IR::EqI, vec![2, 3]),
+        (IR::Assert, vec![4]),
+    ]);
+    let params = ProvingParams { k: 14, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
+}
+
+#[test]
+fn test_bitwise_with_negative() {
+    // -1 & 0xF = 0xF (the low 4 bits of -1 are all set).
+    let ir = make_graph(vec![
+        (IR::ConstantInt { value: -1 }, vec![]),
+        (IR::ConstantInt { value: 0xF }, vec![]),
+        (IR::BitAndI, vec![0, 1]),
+        (IR::ConstantInt { value: 0xF }, vec![]),
+        (IR::EqI, vec![2, 3]),
+        (IR::Assert, vec![4]),
+    ]);
+    let params = ProvingParams { k: 14, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
+}
