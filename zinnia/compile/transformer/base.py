@@ -108,7 +108,7 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
             return "uadd"
         elif isinstance(node, ast.Pow):
             return "pow"
-        raise UnsupportedOperatorException(self.get_dbg(node), f"Invalid operator {type(node.op).__name__} in circuit.")
+        raise UnsupportedOperatorException(self.get_dbg(node), f"Invalid operator {type(node).__name__} in circuit.")
 
     def get_comp_op_name_from_node(self, node) -> str:
         if isinstance(node, ast.GtE):

@@ -1,0 +1,25 @@
+# Source: Pythran tests/cases/ccopy.py
+# Original #pythran export: CCOPY(int, complex list, int, complex list, int)
+# Migration notes: complex types likely unsupported.
+from zinnia import *
+
+
+@zk_circuit
+def CCOPY(N: int, CX: list, INCX: int, CY: list, INCY: int):
+    if N <= 0:
+        pass
+    if (INCX == 1 and INCY == 1):
+        for I in range(N):
+            CY[I] = CX[I]
+    else:
+        IX = 0
+        IY = 0
+        if (INCX < 0):
+            IX = (-N + 1) * INCX
+        if (INCY < 0):
+            IY = (-N + 1) * INCY
+        for I in range(N):
+            CY[IY] = CX[IX]
+            IX = IX + INCX
+            IY = IY + INCY
+    pass

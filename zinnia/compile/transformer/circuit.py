@@ -11,7 +11,15 @@ class ZinniaCircuitASTTransformer(ZinniaBaseASTTransformer):
         self.program_inputs_data = []
 
     def get_dbg(self, node) -> DebugInfo:
-        return DebugInfo(self.method_name, self.source_code, True, node.lineno, node.col_offset, node.end_lineno, node.end_col_offset)
+        # Operator-class AST nodes (ast.BitAnd, ast.NotIn, etc.) have
+        # `_attributes = ()` per CPython grammar and do NOT carry source
+        # location attributes. Fall back to 0 so that emitting a diagnostic
+        # for an unsupported operator doesn't itself crash with AttributeError.
+        return DebugInfo(self.method_name, self.source_code, True,
+                         getattr(node, 'lineno', 0),
+                         getattr(node, 'col_offset', 0),
+                         getattr(node, 'end_lineno', 0),
+                         getattr(node, 'end_col_offset', 0))
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
         dbg_info = self.get_dbg(node)

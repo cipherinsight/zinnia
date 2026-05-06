@@ -219,7 +219,7 @@ pub fn reduce_with_axis(b: &mut IRBuilder, op: &str, val: &Value, axis: i64) -> 
 // ── Numpy-like helpers ────────────────────────────────────────────
 
 pub fn np_fill(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>, fill_value: i64) -> Value {
-    // np.zeros(shape, dtype=...) / np.ones(shape, dtype=...)
+    // np.zeros(shape, dtype=...) / np.ones(shape, dtype=...) / np.empty(shape, dtype=...)
     let shape = if let Some(arg) = args.first() {
         match arg {
             Value::Integer(_) => vec![arg.int_val().unwrap_or(0) as usize],
@@ -231,6 +231,34 @@ pub fn np_fill(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
         return Value::None;
     };
     let use_float = matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Float)));
+    let total: usize = shape.iter().product();
+    let (fill, elem_type) = if use_float {
+        (b.ir_constant_float(fill_value as f64), ZinniaType::Float)
+    } else {
+        (b.ir_constant_int(fill_value), ZinniaType::Integer)
+    };
+    let values = vec![fill; total];
+    let types = vec![elem_type; total];
+    build_ndarray_from_flat(b, values, types, &shape)
+}
+
+pub fn np_fill_like(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>, fill_value: i64) -> Value {
+    // np.empty_like(x) / np.zeros_like(x) / np.ones_like(x)
+    // Shape is taken from x; dtype defaults to x's dtype, overridable via dtype= kwarg.
+    let x = match args.first() {
+        Some(v) => v,
+        None => return Value::None,
+    };
+    let shape = crate::helpers::composite::get_composite_shape(x);
+    let use_float = if let Some(Value::Class(ZinniaType::Float)) = kwargs.get("dtype") {
+        true
+    } else if matches!(kwargs.get("dtype"), Some(Value::Class(_))) {
+        false
+    } else {
+        crate::helpers::composite::flatten_composite(x)
+            .iter()
+            .any(|v| matches!(v.zinnia_type(), ZinniaType::Float))
+    };
     let total: usize = shape.iter().product();
     let (fill, elem_type) = if use_float {
         (b.ir_constant_float(fill_value as f64), ZinniaType::Float)

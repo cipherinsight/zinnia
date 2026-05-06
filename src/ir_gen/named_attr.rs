@@ -209,7 +209,16 @@ impl IRGenerator {
             }
 
             // ── np.* (numpy-like operations) ───────────────────────────
-            (Some("np"), "asarray") => {
+            // numpy dtype aliases — collapse width into ZinniaType (Float / Integer / Boolean)
+            (Some("np"), "float16" | "float32" | "float64" | "double" | "single" | "half" | "longdouble") => Value::Class(ZinniaType::Float),
+            (Some("np"), "int8" | "int16" | "int32" | "int64" | "uint8" | "uint16" | "uint32" | "uint64"
+                       | "intp" | "uintp" | "long" | "byte" | "short" | "intc" | "uintc" | "ubyte"
+                       | "ushort" | "longlong" | "ulonglong") => Value::Class(ZinniaType::Integer),
+            (Some("np"), "bool_") => Value::Class(ZinniaType::Boolean),
+            // numpy / math mathematical constants
+            (Some("np"), "pi") | (Some("math"), "pi") => self.builder.ir_constant_float(std::f64::consts::PI),
+            (Some("np"), "e") | (Some("math"), "e") => self.builder.ir_constant_float(std::f64::consts::E),
+            (Some("np"), "asarray" | "array") => {
                 // np.asarray(x) — pass through if already a composite
                 if !visited_args.is_empty() {
                     let val = &visited_args[0];
@@ -238,7 +247,27 @@ impl IRGenerator {
             }
             (Some("np"), "zeros") => crate::ops::static_ndarray_ops::np_fill(&mut self.builder, &visited_args, &_visited_kwargs, 0),
             (Some("np"), "ones") => crate::ops::static_ndarray_ops::np_fill(&mut self.builder, &visited_args, &_visited_kwargs, 1),
-            (Some("np"), "identity") => crate::ops::static_ndarray_ops::np_identity(&mut self.builder, &visited_args),
+            (Some("np"), "empty" | "ndarray") => crate::ops::static_ndarray_ops::np_fill(&mut self.builder, &visited_args, &_visited_kwargs, 0),
+            (Some("np"), "zeros_like") => crate::ops::static_ndarray_ops::np_fill_like(&mut self.builder, &visited_args, &_visited_kwargs, 0),
+            (Some("np"), "ones_like") => crate::ops::static_ndarray_ops::np_fill_like(&mut self.builder, &visited_args, &_visited_kwargs, 1),
+            (Some("np"), "empty_like") => crate::ops::static_ndarray_ops::np_fill_like(&mut self.builder, &visited_args, &_visited_kwargs, 0),
+            (Some("np"), "identity" | "eye") => crate::ops::static_ndarray_ops::np_identity(&mut self.builder, &visited_args),
+            // numpy reduction aliases — forward to the existing reduce/argmax_argmin path used by x.sum() / x.argmin()
+            (Some("np"), method @ ("sum" | "prod" | "min" | "max" | "any" | "all" | "mean")) => {
+                let val = visited_args.first().cloned().unwrap_or(Value::None);
+                let axis_arg = _visited_kwargs.get("axis").or_else(|| visited_args.get(1));
+                crate::helpers::array_ops::reduce(&mut self.builder, method, &val, axis_arg)
+            }
+            (Some("np"), method @ ("argmax" | "argmin")) => {
+                let val = visited_args.first().cloned().unwrap_or(Value::None);
+                let axis_arg = _visited_kwargs.get("axis").or_else(|| visited_args.get(1));
+                crate::helpers::array_ops::argmax_argmin(&mut self.builder, &val, axis_arg, method == "argmax")
+            }
+            (Some("np"), "dot" | "matmul") => {
+                let lhs = visited_args.first().cloned().unwrap_or(Value::None);
+                let rhs = visited_args.get(1).cloned().unwrap_or(Value::None);
+                crate::ops::static_ndarray_ops::matmul(&mut self.builder, &lhs, &rhs)
+            }
             (Some("np"), "arange") => crate::ops::static_ndarray_ops::np_arange(&mut self.builder, &visited_args),
             (Some("np"), "linspace") => crate::ops::static_ndarray_ops::np_linspace(&mut self.builder, &visited_args, &_visited_kwargs),
             (Some("np"), "allclose") => crate::ops::static_ndarray_ops::np_allclose(&mut self.builder, &visited_args, &_visited_kwargs),
