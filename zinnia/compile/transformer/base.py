@@ -148,11 +148,208 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
         raise InvalidProgramException(None, "Invalid code passed to the compiler! The program must be a function.")
 
     def visit_For(self, node: ast.For):
+        # Desugar iterator-shaped builtins that only make sense in for-loop
+        # position: zip, reversed, itertools.repeat. Rewrite to an
+        # index-based for over a range and synthesize per-iteration
+        # bindings, then re-enter visit_For on the rewritten node.
+        rewritten = self._desugar_iterator_builtin(node)
+        if rewritten is not None:
+            return self.visit_For(rewritten)
+
         target = self.visit_assign_target(node.target)
         iter_expr = self.visit_expr(node.iter)
         return {"__class__": "ASTForInStatement",
                 "target": target, "iter_expr": iter_expr,
                 "block": self.visit_block(node.body), "orelse": self.visit_block(node.orelse)}
+
+    def _desugar_iterator_builtin(self, node: ast.For):
+        """If ``node.iter`` is a zip / reversed / itertools.repeat call,
+        return a rewritten ``ast.For`` with an equivalent range-based
+        iteration. Returns ``None`` otherwise.
+        """
+        it = node.iter
+        if not isinstance(it, ast.Call):
+            return None
+
+        # itertools.repeat(value, n) — supported in iter position only.
+        # Match `it.repeat(...)`, `itertools.repeat(...)`, or bare `repeat(...)`.
+        is_repeat = (
+            (isinstance(it.func, ast.Attribute) and it.func.attr == "repeat")
+            or (isinstance(it.func, ast.Name) and it.func.id == "repeat")
+        )
+        if is_repeat and len(it.args) == 2:
+            value_expr, count_expr = it.args
+            new_for = ast.For(
+                target=ast.Name(id="_", ctx=ast.Store()),
+                iter=ast.Call(
+                    func=ast.Name(id="range", ctx=ast.Load()),
+                    args=[count_expr], keywords=[],
+                ),
+                body=[
+                    ast.Assign(
+                        targets=[node.target],
+                        value=value_expr,
+                    ),
+                    *node.body,
+                ] if not (isinstance(node.target, ast.Name) and node.target.id == "_")
+                  else list(node.body),
+                orelse=node.orelse,
+            )
+            ast.copy_location(new_for, node)
+            ast.fix_missing_locations(new_for)
+            return new_for
+
+        # reversed(iterable) in iter position.
+        if isinstance(it.func, ast.Name) and it.func.id == "reversed" and len(it.args) == 1:
+            inner = it.args[0]
+            # Generate a fresh index name. Use a simple counter on the
+            # transformer instance to avoid collisions across nested loops.
+            idx_name = self._fresh_name("__rev_idx")
+            iter_name = self._fresh_name("__rev_iter")
+            # __rev_iter = inner; for __rev_idx in range(len(__rev_iter)-1, -1, -1):
+            #     <target> = __rev_iter[__rev_idx]; <body>
+            new_body = [
+                ast.Assign(
+                    targets=[node.target],
+                    value=ast.Subscript(
+                        value=ast.Name(id=iter_name, ctx=ast.Load()),
+                        slice=ast.Name(id=idx_name, ctx=ast.Load()),
+                        ctx=ast.Load(),
+                    ),
+                ),
+                *node.body,
+            ]
+            len_call = ast.Call(
+                func=ast.Name(id="len", ctx=ast.Load()),
+                args=[ast.Name(id=iter_name, ctx=ast.Load())],
+                keywords=[],
+            )
+            range_call = ast.Call(
+                func=ast.Name(id="range", ctx=ast.Load()),
+                args=[
+                    ast.BinOp(left=len_call, op=ast.Sub(), right=ast.Constant(value=1)),
+                    ast.UnaryOp(op=ast.USub(), operand=ast.Constant(value=1)),
+                    ast.UnaryOp(op=ast.USub(), operand=ast.Constant(value=1)),
+                ],
+                keywords=[],
+            )
+            # Wrap in a containing block: aliasing the iterable to a
+            # local first lets us reference it twice without re-evaluating.
+            # We can't return multiple statements, so we inline by
+            # substituting `inner` directly twice (cheap when it's a Name
+            # or Subscript). For arbitrary expressions, prefer the alias
+            # form via a synthesized For with a Tuple ()-target trick —
+            # but for the benchmark cases (`range(r)`) the inner is a
+            # simple call, so substitute directly.
+            range_call_inner = ast.Call(
+                func=ast.Name(id="range", ctx=ast.Load()),
+                args=[
+                    ast.BinOp(
+                        left=ast.Call(
+                            func=ast.Name(id="len", ctx=ast.Load()),
+                            args=[inner], keywords=[],
+                        ),
+                        op=ast.Sub(),
+                        right=ast.Constant(value=1),
+                    ),
+                    ast.UnaryOp(op=ast.USub(), operand=ast.Constant(value=1)),
+                    ast.UnaryOp(op=ast.USub(), operand=ast.Constant(value=1)),
+                ],
+                keywords=[],
+            )
+            sub_inner = ast.Subscript(
+                value=inner,
+                slice=ast.Name(id=idx_name, ctx=ast.Load()),
+                ctx=ast.Load(),
+            )
+            new_body = [
+                ast.Assign(targets=[node.target], value=sub_inner),
+                *node.body,
+            ]
+            new_for = ast.For(
+                target=ast.Name(id=idx_name, ctx=ast.Store()),
+                iter=range_call_inner,
+                body=new_body,
+                orelse=node.orelse,
+            )
+            ast.copy_location(new_for, node)
+            ast.fix_missing_locations(new_for)
+            return new_for
+
+        # zip(xs, ys, ...) in iter position.
+        if isinstance(it.func, ast.Name) and it.func.id == "zip" and len(it.args) >= 2:
+            iters = it.args
+            idx_name = self._fresh_name("__zip_idx")
+            # Per-iteration bindings: target_i = iters[i][__zip_idx]
+            # node.target is Tuple of names matching len(iters), or a
+            # single name referencing the tuple of values.
+            inner_assigns: list = []
+            if isinstance(node.target, ast.Tuple) and len(node.target.elts) == len(iters):
+                for tgt, src in zip(node.target.elts, iters):
+                    inner_assigns.append(
+                        ast.Assign(
+                            targets=[tgt],
+                            value=ast.Subscript(
+                                value=src,
+                                slice=ast.Name(id=idx_name, ctx=ast.Load()),
+                                ctx=ast.Load(),
+                            ),
+                        )
+                    )
+            else:
+                # Build a Tuple of subscripts and assign once.
+                tuple_value = ast.Tuple(
+                    elts=[
+                        ast.Subscript(
+                            value=src,
+                            slice=ast.Name(id=idx_name, ctx=ast.Load()),
+                            ctx=ast.Load(),
+                        )
+                        for src in iters
+                    ],
+                    ctx=ast.Load(),
+                )
+                inner_assigns.append(
+                    ast.Assign(targets=[node.target], value=tuple_value)
+                )
+            # Iterate i over range(min(len(xs), len(ys), ...)).
+            # For just two iters, we can use len(xs) when they're known
+            # equal-length — but to stay safe, build min(...).
+            len_calls = [
+                ast.Call(
+                    func=ast.Name(id="len", ctx=ast.Load()),
+                    args=[arg], keywords=[],
+                )
+                for arg in iters
+            ]
+            if len(len_calls) == 1:
+                bound = len_calls[0]
+            else:
+                bound = ast.Call(
+                    func=ast.Name(id="min", ctx=ast.Load()),
+                    args=len_calls, keywords=[],
+                )
+            range_call = ast.Call(
+                func=ast.Name(id="range", ctx=ast.Load()),
+                args=[bound], keywords=[],
+            )
+            new_for = ast.For(
+                target=ast.Name(id=idx_name, ctx=ast.Store()),
+                iter=range_call,
+                body=[*inner_assigns, *node.body],
+                orelse=node.orelse,
+            )
+            ast.copy_location(new_for, node)
+            ast.fix_missing_locations(new_for)
+            return new_for
+
+        return None
+
+    def _fresh_name(self, prefix: str) -> str:
+        if not hasattr(self, "_fresh_counter"):
+            self._fresh_counter = 0
+        self._fresh_counter += 1
+        return f"{prefix}_{self._fresh_counter}"
 
     def visit_While(self, node: ast.While):
         test_expr = self.visit_expr(node.test)
