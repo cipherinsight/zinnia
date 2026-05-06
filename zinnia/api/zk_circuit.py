@@ -82,10 +82,11 @@ class ZKCircuit:
             chips = []
         func_name = method.__name__
         if func_name == '__zk_circuit_annotator_inner':
-            # The @zk_circuit decorator captures source_code and method_name
-            # in its closure. Extract them.
+            # The @zk_circuit decorator captures source_code, method_name,
+            # and any lifted nested-def chip sources in its closure.
             _source_code = None
             _method_name = None
+            _lifted_chip_sources = None
             if method.__closure__:
                 for cell in method.__closure__:
                     contents = cell.cell_contents
@@ -93,8 +94,17 @@ class ZKCircuit:
                         _source_code = contents
                     elif isinstance(contents, str) and '\n' not in contents:
                         _method_name = contents
+                    elif isinstance(contents, list) and contents and \
+                            all(isinstance(t, tuple) and len(t) == 2
+                                and isinstance(t[0], str) and isinstance(t[1], str)
+                                for t in contents):
+                        _lifted_chip_sources = contents
             if _source_code is not None and _method_name is not None:
-                return ZKCircuit(_method_name, _source_code, chips, externals, config)
+                merged_chips = list(chips)
+                if _lifted_chip_sources:
+                    for chip_name, chip_src in _lifted_chip_sources:
+                        merged_chips.append(ZKChip.from_source(chip_name, chip_src))
+                return ZKCircuit(_method_name, _source_code, merged_chips, externals, config)
             # Fallback: try to find the original callable
             for cell in method.__closure__:
                 contents = cell.cell_contents
@@ -179,9 +189,12 @@ def zk_circuit(method, config: ZinniaConfig = ZinniaConfig()):
     from zinnia.compile.module_constants import (
         extract_module_constants, substitute_module_constants,
     )
+    from zinnia.compile.nested_def_lift import autolift_nested_defs
     raw_source = inspect.getsource(method)
     module_consts = extract_module_constants(method)
     source_code = substitute_module_constants(raw_source, module_consts)
+    module_globals = getattr(method, "__globals__", {}) or {}
+    source_code, _lifted_chip_sources = autolift_nested_defs(source_code, module_globals)
     method_name = method.__name__
 
     def __zk_circuit_annotator_inner(*args, **kwargs):
@@ -192,6 +205,8 @@ def zk_circuit(method, config: ZinniaConfig = ZinniaConfig()):
                 defined_chips.append(val)
             elif isinstance(val, ZKExternalFunc):
                 defined_externals.append(val)
+        for chip_name, chip_src in _lifted_chip_sources:
+            defined_chips.append(ZKChip.from_source(chip_name, chip_src))
         circuit = ZKCircuit(method_name, source_code, defined_chips, defined_externals, config)
         return circuit(*args)
     return __zk_circuit_annotator_inner

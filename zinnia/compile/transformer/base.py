@@ -164,6 +164,14 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
         test = self.visit_expr(node.test)
         return {"__class__": "ASTAssertStatement", "expr": test}
 
+    def visit_Raise(self, node: ast.Raise):
+        # `raise X(msg)` lowers to `assert False` so mock raises and the
+        # constraint system emits unsatisfiable. The path condition (already
+        # tracked by visit_assert) ensures the failure only fires on paths
+        # that would have actually raised.
+        false_const = {"__class__": "ASTConstantBoolean", "value": False}
+        return {"__class__": "ASTAssertStatement", "expr": false_const}
+
     def visit_Pass(self, node: ast.Pass):
         return {"__class__": "ASTPassStatement"}
 
@@ -386,6 +394,26 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
                 parsed_stmt = self.visit_Return(stmt)
             elif isinstance(stmt, ast.Expr):
                 parsed_stmt = {"__class__": "ASTExprStatement", "expr": self.visit_expr(stmt.value)}
+            elif isinstance(stmt, ast.Raise):
+                parsed_stmt = self.visit_Raise(stmt)
+            elif isinstance(stmt, ast.FunctionDef):
+                # Pure inner defs are auto-lifted to chips by autolift_nested_defs
+                # before the transformer sees them. If we still see one here,
+                # it's either a closure (captures outer-function locals) or
+                # missing parameter/return annotations.
+                missing_anno = (
+                    any(a.annotation is None for a in stmt.args.args)
+                    or stmt.returns is None
+                )
+                hint = (
+                    "Either annotate all parameters and the return type so it can be auto-lifted as a @zk_chip, or move it to module level."
+                    if missing_anno
+                    else "It captures variables from the outer function. Move it to module level and pass any captured values as arguments, decorating it with @zk_chip."
+                )
+                raise InvalidCircuitStatementException(
+                    dbg_info,
+                    f"nested `def {stmt.name}` cannot be defined inside a circuit body. {hint}"
+                )
             else:
                 raise InvalidCircuitStatementException(dbg_info, f"Invalid circuit statement defined: {type(stmt)}.")
             stmts.append(parsed_stmt)
