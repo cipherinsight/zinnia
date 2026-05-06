@@ -300,6 +300,23 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
 }
 
 pub fn apply_scalar_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) -> Value {
+    // Bitwise operators are defined only on integers / booleans. Reject
+    // float operands with a clear panic before the float-promotion branch
+    // (Python's & / ^ / | on float raises TypeError).
+    if matches!(op, "bit_and" | "bit_or" | "bit_xor" | "shl" | "shr") {
+        if matches!(lhs, Value::Float(_)) || matches!(rhs, Value::Float(_)) {
+            panic!("Bitwise operator `{}` requires integer/boolean operands, got float", op);
+        }
+        return match op {
+            "bit_and" => b.ir_bit_and_i(lhs, rhs),
+            "bit_or" => b.ir_bit_or_i(lhs, rhs),
+            "bit_xor" => b.ir_bit_xor_i(lhs, rhs),
+            "shl" => b.ir_shl_i(lhs, rhs),
+            "shr" => b.ir_shr_i(lhs, rhs),
+            _ => unreachable!(),
+        };
+    }
+
     let use_float = matches!(lhs, Value::Float(_)) || matches!(rhs, Value::Float(_));
     if use_float {
         // Implicit cast: ensure both operands are float

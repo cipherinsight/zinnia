@@ -145,6 +145,37 @@ impl<'a> Preprocessor<'a> {
             }
             IR::InvI => Ok(Some(args[0].invert().unwrap_or(Fp::zero()))),
 
+            // Integer bitwise (preprocess: native i64)
+            IR::BitAndI => {
+                let av = kernel::fp_to_i64(args[0]);
+                let bv = kernel::fp_to_i64(args[1]);
+                Ok(Some(kernel::i64_to_fp(av & bv)))
+            }
+            IR::BitOrI => {
+                let av = kernel::fp_to_i64(args[0]);
+                let bv = kernel::fp_to_i64(args[1]);
+                Ok(Some(kernel::i64_to_fp(av | bv)))
+            }
+            IR::BitXorI => {
+                let av = kernel::fp_to_i64(args[0]);
+                let bv = kernel::fp_to_i64(args[1]);
+                Ok(Some(kernel::i64_to_fp(av ^ bv)))
+            }
+            IR::ShlI => {
+                let av = kernel::fp_to_i64(args[0]);
+                let bv = kernel::fp_to_i64(args[1]).max(0).min(63) as u32;
+                Ok(Some(kernel::i64_to_fp(av.wrapping_shl(bv))))
+            }
+            IR::ShrI => {
+                let av = kernel::fp_to_i64(args[0]);
+                let bv = kernel::fp_to_i64(args[1]).max(0).min(63) as u32;
+                Ok(Some(kernel::i64_to_fp(av.wrapping_shr(bv))))
+            }
+            IR::BitNotI => {
+                let av = kernel::fp_to_i64(args[0]);
+                Ok(Some(kernel::i64_to_fp(!av)))
+            }
+
             // Float arithmetic
             IR::AddF => Ok(Some(args[0] + args[1])),
             IR::SubF => Ok(Some(args[0] - args[1])),

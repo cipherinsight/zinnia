@@ -271,6 +271,12 @@ impl IRGenerator {
                             |b, v| b.ir_logical_not(v),
                         )
                     }
+                    "invert" => {
+                        crate::ops::dyn_ndarray::binary::dyn_unary_op(
+                            &mut self.builder, d, crate::types::NumberType::Integer,
+                            |b, v| b.ir_bit_not_i(v),
+                        )
+                    }
                     "uadd" => operand.clone(),
                     _ => panic!("Unknown unary operator for DynamicNDArray: {}", op),
                 }
@@ -287,6 +293,12 @@ impl IRGenerator {
                     }
                 }
                 "uadd" => operand.clone(),
+                "invert" => {
+                    if matches!(operand, Value::Float(_)) {
+                        panic!("Bitwise NOT (~) requires an integer/boolean operand, got float");
+                    }
+                    self.builder.ir_bit_not_i(operand)
+                }
                 _ => panic!("Unknown unary operator: {}", op),
             }
         }

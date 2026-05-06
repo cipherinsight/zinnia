@@ -58,6 +58,14 @@ pub fn interpret_ir<S: Synthesizer>(
             IR::SignI => Some(synth.sign_i(&args[0])?),
             IR::InvI => Some(synth.inv_i(&args[0])?),
 
+            // ── Integer bitwise ───────────────────────────────────────
+            IR::BitAndI => Some(synth.bit_and_i(&args[0], &args[1])?),
+            IR::BitOrI => Some(synth.bit_or_i(&args[0], &args[1])?),
+            IR::BitXorI => Some(synth.bit_xor_i(&args[0], &args[1])?),
+            IR::ShlI => Some(synth.shl_i(&args[0], &args[1])?),
+            IR::ShrI => Some(synth.shr_i(&args[0], &args[1])?),
+            IR::BitNotI => Some(synth.bit_not_i(&args[0])?),
+
             // ── Float arithmetic ──────────────────────────────────────
             IR::AddF => Some(synth.add_f(&args[0], &args[1])?),
             IR::SubF => Some(synth.sub_f(&args[0], &args[1])?),

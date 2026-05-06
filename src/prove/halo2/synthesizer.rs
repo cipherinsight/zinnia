@@ -358,6 +358,29 @@ impl Synthesizer for Halo2Synthesizer {
         let (abs_cell, _) = self.signed_decompose(a);
         Ok(abs_cell)
     }
+
+    // ── Integer bitwise ───────────────────────────────────────────────
+    // Halo2 lowering would need a bit-decomposition gadget per operand.
+    // For now, return a synthesis error so the mock backend works while
+    // halo2 is tracked in a follow-up card (compiler.bitwise-halo2-lowering).
+    fn bit_and_i(&mut self, _a: &Halo2CellRef, _b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
+        Err(ProvingError::synthesis("bit_and: halo2 lowering not yet implemented (use mock backend)"))
+    }
+    fn bit_or_i(&mut self, _a: &Halo2CellRef, _b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
+        Err(ProvingError::synthesis("bit_or: halo2 lowering not yet implemented (use mock backend)"))
+    }
+    fn bit_xor_i(&mut self, _a: &Halo2CellRef, _b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
+        Err(ProvingError::synthesis("bit_xor: halo2 lowering not yet implemented (use mock backend)"))
+    }
+    fn shl_i(&mut self, _a: &Halo2CellRef, _b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
+        Err(ProvingError::synthesis("shl: halo2 lowering not yet implemented (use mock backend)"))
+    }
+    fn shr_i(&mut self, _a: &Halo2CellRef, _b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
+        Err(ProvingError::synthesis("shr: halo2 lowering not yet implemented (use mock backend)"))
+    }
+    fn bit_not_i(&mut self, _a: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
+        Err(ProvingError::synthesis("bit_not: halo2 lowering not yet implemented (use mock backend)"))
+    }
     fn sign_i(&mut self, a: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
         // sign = (1 - is_zero) * (1 - 2*is_neg)
         // Compute each part with constrained gates.

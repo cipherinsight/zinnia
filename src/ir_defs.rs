@@ -32,6 +32,14 @@ pub enum IR {
     SignI,
     InvI,
 
+    // ── Integer bitwise ───────────────────────────────────────────────
+    BitAndI,
+    BitOrI,
+    BitXorI,
+    ShlI,
+    ShrI,
+    BitNotI,
+
     // ── Float arithmetic ──────────────────────────────────────────────
     AddF,
     SubF,
@@ -214,6 +222,12 @@ impl IR {
             IR::AbsI => "abs_i".to_string(),
             IR::SignI => "sign_i".to_string(),
             IR::InvI => "inv_i".to_string(),
+            IR::BitAndI => "bit_and_i".to_string(),
+            IR::BitOrI => "bit_or_i".to_string(),
+            IR::BitXorI => "bit_xor_i".to_string(),
+            IR::ShlI => "shl_i".to_string(),
+            IR::ShrI => "shr_i".to_string(),
+            IR::BitNotI => "bit_not_i".to_string(),
 
             // Float arithmetic
             IR::AddF => "add_f".to_string(),
@@ -420,6 +434,12 @@ impl IR {
             IR::AbsI => "AbsIIR",
             IR::SignI => "SignIIR",
             IR::InvI => "InvIIR",
+            IR::BitAndI => "BitAndIIR",
+            IR::BitOrI => "BitOrIIR",
+            IR::BitXorI => "BitXorIIR",
+            IR::ShlI => "ShlIIR",
+            IR::ShrI => "ShrIIR",
+            IR::BitNotI => "BitNotIIR",
             IR::AddF => "AddFIR",
             IR::SubF => "SubFIR",
             IR::MulF => "MulFIR",

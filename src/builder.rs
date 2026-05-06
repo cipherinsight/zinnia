@@ -176,6 +176,16 @@ impl IRBuilder {
         ir_inv_i  => IR::InvI,
     );
 
+    // Integer bitwise
+    ir_binary!(
+        ir_bit_and_i => IR::BitAndI,
+        ir_bit_or_i  => IR::BitOrI,
+        ir_bit_xor_i => IR::BitXorI,
+        ir_shl_i     => IR::ShlI,
+        ir_shr_i     => IR::ShrI,
+    );
+    ir_unary!(ir_bit_not_i => IR::BitNotI);
+
     // Float arithmetic
     ir_binary!(
         ir_add_f       => IR::AddF,
@@ -412,6 +422,20 @@ fn build_ir(ir: &IR, ir_id: StmtId, args: &[Value]) -> (Value, IRStatement) {
                 None
             }
         }),
+
+        // ── Integer bitwise ───────────────────────────────────────
+        IR::BitAndI => int_binary_ir(ir, ir_id, args, |a, b| Some(a & b)),
+        IR::BitOrI  => int_binary_ir(ir, ir_id, args, |a, b| Some(a | b)),
+        IR::BitXorI => int_binary_ir(ir, ir_id, args, |a, b| Some(a ^ b)),
+        IR::ShlI    => int_binary_ir(ir, ir_id, args, |a, b| {
+            let shift = b.max(0).min(63) as u32;
+            Some(a.wrapping_shl(shift))
+        }),
+        IR::ShrI    => int_binary_ir(ir, ir_id, args, |a, b| {
+            let shift = b.max(0).min(63) as u32;
+            Some(a.wrapping_shr(shift))
+        }),
+        IR::BitNotI => int_unary_ir(ir, ir_id, args, |a| Some(!a)),
 
         // ── Integer unary arithmetic ──────────────────────────────
         IR::AbsI => int_unary_ir(ir, ir_id, args, |a| Some(a.abs())),

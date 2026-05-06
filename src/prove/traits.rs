@@ -69,6 +69,15 @@ pub trait Synthesizer {
     fn sign_i(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
     fn inv_i(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
 
+    // ── Integer bitwise ───────────────────────────────────────────────
+
+    fn bit_and_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
+    fn bit_or_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
+    fn bit_xor_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
+    fn shl_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
+    fn shr_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
+    fn bit_not_i(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
+
     // ── Float arithmetic (fixed-point) ────────────────────────────────
 
     fn add_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;

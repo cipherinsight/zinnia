@@ -108,6 +108,18 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
             return "uadd"
         elif isinstance(node, ast.Pow):
             return "pow"
+        elif isinstance(node, ast.BitAnd):
+            return "bit_and"
+        elif isinstance(node, ast.BitOr):
+            return "bit_or"
+        elif isinstance(node, ast.BitXor):
+            return "bit_xor"
+        elif isinstance(node, ast.LShift):
+            return "shl"
+        elif isinstance(node, ast.RShift):
+            return "shr"
+        elif isinstance(node, ast.Invert):
+            return "invert"
         raise UnsupportedOperatorException(self.get_dbg(node), f"Invalid operator {type(node).__name__} in circuit.")
 
     def get_comp_op_name_from_node(self, node) -> str:

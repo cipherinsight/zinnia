@@ -148,6 +148,45 @@ impl Synthesizer for MockSynthesizer {
         Ok(MockCell(a.fp().invert().unwrap_or(Fp::zero())))
     }
 
+    // ── Integer bitwise (mock: native i64) ────────────────────────────
+
+    fn bit_and_i(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
+        let av = kernel::fp_to_i64(a.fp());
+        let bv = kernel::fp_to_i64(b.fp());
+        Ok(MockCell(kernel::i64_to_fp(av & bv)))
+    }
+
+    fn bit_or_i(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
+        let av = kernel::fp_to_i64(a.fp());
+        let bv = kernel::fp_to_i64(b.fp());
+        Ok(MockCell(kernel::i64_to_fp(av | bv)))
+    }
+
+    fn bit_xor_i(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
+        let av = kernel::fp_to_i64(a.fp());
+        let bv = kernel::fp_to_i64(b.fp());
+        Ok(MockCell(kernel::i64_to_fp(av ^ bv)))
+    }
+
+    fn shl_i(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
+        let av = kernel::fp_to_i64(a.fp());
+        let bv = kernel::fp_to_i64(b.fp());
+        let shift = bv.max(0).min(63) as u32;
+        Ok(MockCell(kernel::i64_to_fp(av.wrapping_shl(shift))))
+    }
+
+    fn shr_i(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
+        let av = kernel::fp_to_i64(a.fp());
+        let bv = kernel::fp_to_i64(b.fp());
+        let shift = bv.max(0).min(63) as u32;
+        Ok(MockCell(kernel::i64_to_fp(av.wrapping_shr(shift))))
+    }
+
+    fn bit_not_i(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {
+        let av = kernel::fp_to_i64(a.fp());
+        Ok(MockCell(kernel::i64_to_fp(!av)))
+    }
+
     // ── Float arithmetic (fixed-point, same as halo2) ─────────────────
 
     fn add_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
