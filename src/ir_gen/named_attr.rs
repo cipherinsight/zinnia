@@ -75,6 +75,15 @@ impl IRGenerator {
                             let types = results.iter().map(|v| v.zinnia_type()).collect();
                             Value::List(CompositeData { elements_type: types, values: results })
                         }
+                        // |a + bi| = sqrt(a^2 + b^2)
+                        Value::Complex { real, imag } => {
+                            let r = Value::Float(real.clone());
+                            let i = Value::Float(imag.clone());
+                            let rr = self.builder.ir_mul_f(&r, &r);
+                            let ii = self.builder.ir_mul_f(&i, &i);
+                            let sum = self.builder.ir_add_f(&rr, &ii);
+                            self.builder.ir_sqrt_f(&sum)
+                        }
                         v => self.builder.ir_abs_i(v),
                     }
                 } else {
@@ -216,6 +225,24 @@ impl IRGenerator {
                        | "ushort" | "longlong" | "ulonglong") => Value::Class(ZinniaType::Integer),
             (Some("np"), "bool_") => Value::Class(ZinniaType::Boolean),
             (Some("np"), "complex64" | "complex128" | "complex256" | "csingle" | "cdouble" | "clongdouble") => Value::Class(ZinniaType::Complex),
+            // Complex helpers
+            (Some("np"), "conj" | "conjugate") => {
+                let v = visited_args.first().cloned().unwrap_or(Value::None);
+                match v {
+                    Value::Complex { real, imag } => {
+                        // (a + bi) -> (a - bi)
+                        let zero = self.builder.ir_constant_float(0.0);
+                        let neg_imag = self.builder.ir_sub_f(&zero, &Value::Float(imag));
+                        let ni = match neg_imag {
+                            Value::Float(s) => s,
+                            _ => unreachable!(),
+                        };
+                        Value::Complex { real, imag: ni }
+                    }
+                    // For real inputs, conj is the identity.
+                    other => other,
+                }
+            }
             // numpy / math mathematical constants
             (Some("np"), "pi") | (Some("math"), "pi") => self.builder.ir_constant_float(std::f64::consts::PI),
             (Some("np"), "e") | (Some("math"), "e") => self.builder.ir_constant_float(std::f64::consts::E),
@@ -475,6 +502,44 @@ impl IRGenerator {
             }
             (Some(var), "insert") if self.ctx.exists(var) => {
                 self.list_method_insert(var, &visited_args)
+            }
+
+            // ── Complex .real / .imag / .conjugate accessors ──────────
+            (Some(var), "real")
+                if self.ctx.exists(var)
+                    && matches!(self.ctx.get(var), Some(Value::Complex { .. })) =>
+            {
+                if let Some(Value::Complex { real, .. }) = self.ctx.get(var) {
+                    Value::Float(real)
+                } else {
+                    unreachable!()
+                }
+            }
+            (Some(var), "imag")
+                if self.ctx.exists(var)
+                    && matches!(self.ctx.get(var), Some(Value::Complex { .. })) =>
+            {
+                if let Some(Value::Complex { imag, .. }) = self.ctx.get(var) {
+                    Value::Float(imag)
+                } else {
+                    unreachable!()
+                }
+            }
+            (Some(var), "conjugate")
+                if self.ctx.exists(var)
+                    && matches!(self.ctx.get(var), Some(Value::Complex { .. })) =>
+            {
+                if let Some(Value::Complex { real, imag }) = self.ctx.get(var) {
+                    let zero = self.builder.ir_constant_float(0.0);
+                    let neg_imag = self.builder.ir_sub_f(&zero, &Value::Float(imag));
+                    let ni = match neg_imag {
+                        Value::Float(s) => s,
+                        _ => unreachable!(),
+                    };
+                    Value::Complex { real, imag: ni }
+                } else {
+                    unreachable!()
+                }
             }
 
             // ── DynamicNDArray method dispatch ────────────────────────
