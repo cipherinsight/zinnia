@@ -142,6 +142,87 @@ pub fn dyn_moveaxis(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]
     dyn_transpose(b, data, &[axes_tuple])
 }
 
+/// Reshape with one or more runtime-int shape elements. The source must
+/// have a statically-known total element count (used as `total_bound`).
+/// At runtime, the product of the supplied dim values must equal the
+/// source total — enforced via a circuit assertion.
+///
+/// `logical_shape` is over-approximated: each runtime dim is recorded as
+/// `old_total` (the loosest upper bound implied by the source). Downstream
+/// ops that need true per-dim bounds should consult `runtime_shape`.
+fn dyn_reshape_runtime(
+    b: &mut IRBuilder,
+    data: &DynamicNDArrayData,
+    dim_args: &[&Value],
+    old_total: usize,
+) -> Value {
+    let n_dims = dim_args.len();
+
+    // Build runtime_shape: keep static_val for constants, ptr for runtime.
+    let mut runtime_shape: Vec<ScalarValue<i64>> = Vec::with_capacity(n_dims);
+    let mut shape_values: Vec<Value> = Vec::with_capacity(n_dims);
+    let mut logical_shape: Vec<usize> = Vec::with_capacity(n_dims);
+    for arg in dim_args {
+        match arg.int_val() {
+            Some(c) => {
+                assert!(c > 0, "reshape: dimensions must be positive");
+                runtime_shape.push(ScalarValue::new(Some(c), None));
+                shape_values.push(b.ir_constant_int(c));
+                logical_shape.push(c as usize);
+            }
+            None => {
+                let scalar = match arg {
+                    Value::Integer(s) => s.clone(),
+                    other => match b.ir_int_cast(other) {
+                        Value::Integer(s) => s,
+                        _ => unreachable!("ir_int_cast returns Value::Integer"),
+                    },
+                };
+                runtime_shape.push(scalar.clone());
+                shape_values.push(Value::Integer(scalar));
+                // Over-approximate: any single runtime dim could be at most
+                // old_total (when all other dims are 1).
+                logical_shape.push(old_total);
+            }
+        }
+    }
+
+    // Assert prod(runtime_shape) == old_total at proof time.
+    let mut prod = b.ir_constant_int(1);
+    for v in &shape_values {
+        prod = b.ir_mul_i(&prod, v);
+    }
+    let bound = b.ir_constant_int(old_total as i64);
+    let eq = b.ir_equal_i(&prod, &bound);
+    b.ir_assert(&eq);
+
+    let new_strides = row_major_strides(&logical_shape);
+    let new_dims: Vec<crate::types::Dim> = logical_shape
+        .iter()
+        .map(|&s| crate::types::Dim::new_static(&mut b.dim_table, s))
+        .collect();
+    let envelope = crate::types::Envelope::new_with_bound(new_dims, old_total);
+
+    Value::DynamicNDArray(DynamicNDArrayData {
+        envelope,
+        dtype: data.dtype,
+        segment_id: data.segment_id, // segment is contiguous; reuse
+        meta: DynArrayMeta {
+            logical_shape,
+            logical_offset: 0,
+            logical_strides: new_strides.clone(),
+            runtime_length: ScalarValue::new(Some(old_total as i64), None),
+            runtime_rank: ScalarValue::new(Some(n_dims as i64), None),
+            runtime_shape,
+            runtime_strides: new_strides
+                .iter()
+                .map(|&s| ScalarValue::new(Some(s as i64), None))
+                .collect(),
+            runtime_offset: ScalarValue::new(Some(0), None),
+        },
+    })
+}
+
 /// Reshape a dynamic array to a new static shape.
 ///
 /// Since transpose now materializes, every array is always contiguous
@@ -152,31 +233,35 @@ pub fn dyn_moveaxis(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]
 /// `product(new_shape) == product(old_shape)`. One dimension may be -1
 /// to infer from the remainder.
 pub fn dyn_reshape(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) -> Value {
-    // Parse target shape from args (single tuple/list, or multiple int args).
-    let raw_shape: Vec<i64> = if args.len() == 1 {
+    // Collect target shape as either constant ints or runtime Values.
+    // `Some(c)` = compile-time constant, `None(v)` = runtime value (carry the Value through).
+    let dim_args: Vec<&Value> = if args.len() == 1 {
         match &args[0] {
-            Value::Tuple(d) | Value::List(d) => d
-                .values
-                .iter()
-                .map(|v| {
-                    v.int_val()
-                        .expect("reshape: all shape elements must be compile-time constants")
-                })
-                .collect(),
-            v => vec![v
-                .int_val()
-                .expect("reshape: shape element must be compile-time constant")],
+            Value::Tuple(d) | Value::List(d) => d.values.iter().collect(),
+            v => vec![v],
         }
     } else {
-        args.iter()
-            .map(|v| {
-                v.int_val()
-                    .expect("reshape: all shape elements must be compile-time constants")
-            })
-            .collect()
+        args.iter().collect()
     };
 
+    let any_runtime = dim_args.iter().any(|v| v.int_val().is_none());
     let old_total: usize = data.meta.logical_shape.iter().product();
+
+    // Runtime-dim path: source must have a statically-known total (i.e. it's a
+    // promoted static array, or a dyn array with bounded total). Lower to a
+    // DynamicNDArray with `total_bound = old_total` and runtime shape carried
+    // as ScalarValues. Emit an assert that prod(runtime_shape) == total_bound.
+    if any_runtime {
+        return dyn_reshape_runtime(b, data, &dim_args, old_total);
+    }
+
+    let raw_shape: Vec<i64> = dim_args
+        .iter()
+        .map(|v| {
+            v.int_val()
+                .expect("reshape: all shape elements must be compile-time constants")
+        })
+        .collect();
 
     // Handle -1 inference.
     let neg_count = raw_shape.iter().filter(|&&d| d == -1).count();
