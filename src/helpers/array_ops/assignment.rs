@@ -401,5 +401,8 @@ fn cast_to_dtype(b: &mut IRBuilder, v: &Value, dtype: NumberType) -> Value {
         NumberType::Integer => {
             if matches!(v, Value::Integer(_)) { v.clone() } else { b.ir_int_cast(v) }
         }
+        NumberType::Complex => panic!(
+            "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
+        ),
     }
 }

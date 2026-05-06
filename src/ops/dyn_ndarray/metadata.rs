@@ -14,6 +14,9 @@ pub fn dyn_default_value(b: &mut IRBuilder, dtype: NumberType) -> Value {
     match dtype {
         NumberType::Integer => b.ir_constant_int(0),
         NumberType::Float => b.ir_constant_float(0.0),
+        NumberType::Complex => panic!(
+            "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
+        ),
     }
 }
 
@@ -27,6 +30,7 @@ pub fn dyn_dtype(data: &DynamicNDArrayData) -> Value {
     match data.dtype {
         NumberType::Integer => Value::Class(ZinniaType::Integer),
         NumberType::Float => Value::Class(ZinniaType::Float),
+        NumberType::Complex => Value::Class(ZinniaType::Complex),
     }
 }
 

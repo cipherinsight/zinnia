@@ -221,6 +221,9 @@ fn cast_element(b: &mut IRBuilder, val: &Value, src_dtype: NumberType, dst_dtype
     let casted = match dst_dtype {
         NumberType::Float => b.ir_float_cast(val),
         NumberType::Integer => b.ir_int_cast(val),
+        NumberType::Complex => panic!(
+            "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
+        ),
     };
     value_to_scalar_i64(&casted)
 }
@@ -441,6 +444,9 @@ pub fn dyn_concatenate(
                     match out_dtype {
                         NumberType::Float => b.ir_float_cast(&src_val),
                         NumberType::Integer => b.ir_int_cast(&src_val),
+                        NumberType::Complex => panic!(
+                            "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
+                        ),
                     }
                 };
 
@@ -610,6 +616,9 @@ pub fn dyn_stack(
                 match out_dtype {
                     NumberType::Float => b.ir_float_cast(&src_val),
                     NumberType::Integer => b.ir_int_cast(&src_val),
+                    NumberType::Complex => panic!(
+                        "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
+                    ),
                 }
             };
 

@@ -27,19 +27,28 @@ pub fn matmul(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
     let rhs_flat = crate::helpers::composite::flatten_composite(rhs);
     let use_float = lhs_flat.iter().any(|v| matches!(v, Value::Float(_)))
         || rhs_flat.iter().any(|v| matches!(v, Value::Float(_)));
+    let use_complex = lhs_flat.iter().any(|v| matches!(v, Value::Complex { .. }))
+        || rhs_flat.iter().any(|v| matches!(v, Value::Complex { .. }));
 
     if let (Value::List(ld), Value::List(rd)) = (lhs, rhs) {
         if rhs_shape.len() == 1 {
             // Matrix @ vector or vector @ vector
             if lhs_shape.len() == 1 {
                 // 1D @ 1D: dot product → scalar
+                if use_complex {
+                    return matmul_dot_complex(b, &ld.values, &rd.values);
+                }
                 return matmul_dot(b, &ld.values, &rd.values, use_float);
             }
             // 2D @ 1D: each row dot product with vector → 1D
             let mut results = Vec::new();
             for row in &ld.values {
                 if let Value::List(row_data) | Value::Tuple(row_data) = row {
-                    results.push(matmul_dot(b, &row_data.values, &rd.values, use_float));
+                    if use_complex {
+                        results.push(matmul_dot_complex(b, &row_data.values, &rd.values));
+                    } else {
+                        results.push(matmul_dot(b, &row_data.values, &rd.values, use_float));
+                    }
                 }
             }
             let types = results.iter().map(|v| v.zinnia_type()).collect();
@@ -60,6 +69,18 @@ pub fn matmul(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
                 };
                 let mut row_vals = Vec::new();
                 for j in 0..n {
+                    if use_complex {
+                        // Build a column-vector view by collecting rhs[*][j].
+                        let col: Vec<Value> = (0..k).map(|kk| {
+                            let rhs_row = match &rd.values[kk] {
+                                Value::List(r) | Value::Tuple(r) => &r.values,
+                                _ => panic!("matmul: expected 2D array"),
+                            };
+                            rhs_row[j].clone()
+                        }).collect();
+                        row_vals.push(matmul_dot_complex(b, lhs_row, &col));
+                        continue;
+                    }
                     // Compute dot product of lhs row i with rhs column j
                     let zero = if use_float {
                         b.ir_constant_float(0.0)
@@ -97,6 +118,29 @@ pub fn matmul(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
 
     // Fallback: scalar multiply
     crate::helpers::value_ops::apply_binary_op(b, "mul", lhs, rhs)
+}
+
+/// Complex dot product: Σ aᵢ * bᵢ over Complex operands using
+/// apply_binary_op so component-wise math goes through the existing
+/// complex-arithmetic dispatch.
+pub fn matmul_dot_complex(b: &mut IRBuilder, a: &[Value], bv: &[Value]) -> Value {
+    let zero_re = b.ir_constant_float(0.0);
+    let zero_im = b.ir_constant_float(0.0);
+    let r = match zero_re {
+        Value::Float(s) => s,
+        _ => unreachable!(),
+    };
+    let i = match zero_im {
+        Value::Float(s) => s,
+        _ => unreachable!(),
+    };
+    let mut acc = Value::Complex { real: r, imag: i };
+    let n = a.len().min(bv.len());
+    for k in 0..n {
+        let prod = crate::helpers::value_ops::apply_binary_op(b, "mul", &a[k], &bv[k]);
+        acc = crate::helpers::value_ops::apply_binary_op(b, "add", &acc, &prod);
+    }
+    acc
 }
 
 /// Dot product helper for matmul.
@@ -230,8 +274,26 @@ pub fn np_fill(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
     } else {
         return Value::None;
     };
-    let use_float = matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Float)));
     let total: usize = shape.iter().product();
+
+    // Complex dtype: produce a List of Value::Complex initialized to (fill, 0).
+    if matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Complex))) {
+        let real = b.ir_constant_float(fill_value as f64);
+        let imag = b.ir_constant_float(0.0);
+        let r = match real {
+            Value::Float(s) => s,
+            _ => unreachable!("ir_constant_float returns Value::Float"),
+        };
+        let i = match imag {
+            Value::Float(s) => s,
+            _ => unreachable!("ir_constant_float returns Value::Float"),
+        };
+        let values = vec![Value::Complex { real: r, imag: i }; total];
+        let types = vec![ZinniaType::Complex; total];
+        return build_ndarray_from_flat(b, values, types, &shape);
+    }
+
+    let use_float = matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Float)));
     let (fill, elem_type) = if use_float {
         (b.ir_constant_float(fill_value as f64), ZinniaType::Float)
     } else {

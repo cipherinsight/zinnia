@@ -72,6 +72,9 @@ pub fn scalar_i64_to_value(elem: &ScalarValue<i64>, dtype: NumberType) -> Value 
                 elem.ptr,
             ))
         }
+        NumberType::Complex => panic!(
+            "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
+        ),
     }
 }
 

@@ -286,6 +286,9 @@ pub fn dyn_agg_identity(b: &mut IRBuilder, agg: DynAggKind, dtype: NumberType) -
         DynAggKind::Prod => match dtype {
             NumberType::Integer => b.ir_constant_int(1),
             NumberType::Float => b.ir_constant_float(1.0),
+            NumberType::Complex => panic!(
+                "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
+            ),
         },
         DynAggKind::All => b.ir_constant_bool(true),
         DynAggKind::Any => b.ir_constant_bool(false),

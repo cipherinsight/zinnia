@@ -1,11 +1,27 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// Discriminant for numeric element types (Integer or Float).
+/// Discriminant for numeric element types (Integer, Float, or Complex).
+///
+/// `Complex` is a logical dtype: storage in an `NDArrayData` is still a
+/// flat `Vec<ScalarValue<i64>>`, but each logical element occupies two
+/// consecutive cells (real, imag — both encoded as fixed-point Floats).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NumberType {
     Integer,
     Float,
+    Complex,
+}
+
+impl NumberType {
+    /// Underlying storage cells per logical element.
+    /// 1 for Integer/Float, 2 for Complex (real, imag).
+    pub fn cells_per_element(&self) -> usize {
+        match self {
+            NumberType::Complex => 2,
+            _ => 1,
+        }
+    }
 }
 
 impl fmt::Display for NumberType {
@@ -13,6 +29,7 @@ impl fmt::Display for NumberType {
         match self {
             NumberType::Integer => write!(f, "Integer"),
             NumberType::Float => write!(f, "Float"),
+            NumberType::Complex => write!(f, "Complex"),
         }
     }
 }
@@ -208,13 +225,7 @@ impl ZinniaType {
                 let dtype = match &args[0] {
                     AnnotationArg::Type(ZinniaType::Integer) => NumberType::Integer,
                     AnnotationArg::Type(ZinniaType::Float) => NumberType::Float,
-                    AnnotationArg::Type(ZinniaType::Complex) => {
-                        return Err(
-                            "Annotation `NDArray[Complex, ...]` is not yet supported. \
-                             Complex scalars work; complex ndarrays are tracked in \
-                             compiler.complex-ndarray-ops.".to_string()
-                        )
-                    }
+                    AnnotationArg::Type(ZinniaType::Complex) => NumberType::Complex,
                     _ => {
                         return Err(
                             "Annotation `NDArray` missing a required argument dtype".to_string()
@@ -244,6 +255,7 @@ impl ZinniaType {
                 let dtype = match &args[0] {
                     AnnotationArg::Type(ZinniaType::Integer) => NumberType::Integer,
                     AnnotationArg::Type(ZinniaType::Float) => NumberType::Float,
+                    AnnotationArg::Type(ZinniaType::Complex) => NumberType::Complex,
                     _ => {
                         return Err(
                             "Unsupported `DynamicNDArray` dtype".to_string()

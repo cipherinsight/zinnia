@@ -893,6 +893,24 @@ impl IRGenerator {
             );
         }
 
+        // Complex .real / .imag / .conjugate accessors on any expression.
+        if let Value::Complex { real, imag } = &target {
+            match n.member.as_str() {
+                "real" => return Value::Float(real.clone()),
+                "imag" => return Value::Float(imag.clone()),
+                "conjugate" => {
+                    let zero = self.builder.ir_constant_float(0.0);
+                    let neg_imag = self.builder.ir_sub_f(&zero, &Value::Float(imag.clone()));
+                    let ni = match neg_imag {
+                        Value::Float(s) => s,
+                        _ => unreachable!(),
+                    };
+                    return Value::Complex { real: real.clone(), imag: ni };
+                }
+                _ => {}
+            }
+        }
+
         match n.member.as_str() {
             method @ ("sum" | "any" | "all" | "prod" | "min" | "max") => {
                 let axis_arg = visited_kwargs.get("axis").or_else(|| visited_args.first());

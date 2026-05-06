@@ -200,6 +200,25 @@ impl IRGenerator {
                 let path = InputPath::new(param_name, segments);
                 self.builder.ir_read_float(path, is_public)
             }
+            ZinniaType::Complex => {
+                // Encode a complex input as a 2-element list [real, imag]
+                // at the same input path. The runtime supplies pairs.
+                let mut real_segs = segments.clone();
+                real_segs.push(PathSegment::Index(0));
+                let real_val = self.builder.ir_read_float(InputPath::new(param_name, real_segs), is_public);
+                let mut imag_segs = segments;
+                imag_segs.push(PathSegment::Index(1));
+                let imag_val = self.builder.ir_read_float(InputPath::new(param_name, imag_segs), is_public);
+                let r = match real_val {
+                    Value::Float(s) => s,
+                    _ => unreachable!("ir_read_float returns Value::Float"),
+                };
+                let i = match imag_val {
+                    Value::Float(s) => s,
+                    _ => unreachable!("ir_read_float returns Value::Float"),
+                };
+                Value::Complex { real: r, imag: i }
+            }
             ZinniaType::PoseidonHashed { dtype } => {
                 // Read the hash value at segments ++ [Hash]
                 let mut hash_segs = segments.clone();
@@ -227,6 +246,7 @@ impl IRGenerator {
                 let inner_dt = match dtype {
                     crate::types::NumberType::Integer => ZinniaType::Integer,
                     crate::types::NumberType::Float => ZinniaType::Float,
+                    crate::types::NumberType::Complex => ZinniaType::Complex,
                 };
                 let mut values = Vec::new();
                 for flat_idx in 0..total {
@@ -266,6 +286,9 @@ impl IRGenerator {
                 let inner_dt = match dtype {
                     crate::types::NumberType::Integer => ZinniaType::Integer,
                     crate::types::NumberType::Float => ZinniaType::Float,
+                    crate::types::NumberType::Complex => panic!(
+                        "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
+                    ),
                 };
                 // Read flat payload elements
                 let mut elements = Vec::new();
@@ -281,6 +304,7 @@ impl IRGenerator {
                 let dtype_name = match dtype {
                     crate::types::NumberType::Integer => "int".to_string(),
                     crate::types::NumberType::Float => "float".to_string(),
+                    crate::types::NumberType::Complex => unreachable!("Complex DynamicNDArray rejected above"),
                 };
                 self.builder.ir_allocate_dynamic_ndarray_meta(
                     arr_id, dtype_name, *max_length as u32, *max_rank as u32,

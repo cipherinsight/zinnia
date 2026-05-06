@@ -47,13 +47,6 @@ def make_type_dict(dbg, typename, args=None):
         if len(args) < 2:
             raise InvalidAnnotationException(dbg, "NDArray requires at least 2 arguments (dtype and shape dimensions).")
         dtype = args[0]
-        if dtype == "Complex":
-            raise InvalidAnnotationException(
-                dbg,
-                "Annotation `NDArray[Complex, ...]` is not yet supported. "
-                "Complex scalars work; complex ndarrays are tracked in "
-                "compiler.complex-ndarray-ops.",
-            )
         shape = []
         for a in args[1:]:
             if not isinstance(a, int):
@@ -275,7 +268,13 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
     def visit_Attribute(self, node: ast.Attribute):
         if isinstance(node.value, ast.Name):
             return {"__class__": "ASTNamedAttribute", "target": node.value.id, "member": node.attr}
-        return {"__class__": "ASTNamedAttribute", "target": None, "member": node.attr}
+        # Non-Name target (e.g., `arr[0].real`, `(a+b).imag`): preserve the
+        # target expression so the IR generator can dispatch via
+        # visit_expr_attr instead of dropping the target.
+        return {"__class__": "ASTExprAttribute",
+                "target": self.visit_expr(node.value),
+                "member": node.attr,
+                "args": [], "kwargs": {}}
 
     def visit_Name(self, node: ast.Name):
         return {"__class__": "ASTLoad", "name": node.id}

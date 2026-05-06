@@ -27,6 +27,9 @@ pub fn dyn_fill(
             let v = b.ir_constant_float(fill_value as f64);
             value_to_scalar_i64(&v)
         }
+        NumberType::Complex => panic!(
+            "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
+        ),
     };
     let values = vec![fill_sv; max_length];
     let segment_id = crate::helpers::segment::alloc_and_write(b, &values, dtype);
@@ -84,6 +87,9 @@ pub fn dyn_eye(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
             let v = b.ir_constant_float(0.0);
             value_to_scalar_i64(&v)
         }
+        NumberType::Complex => panic!(
+            "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
+        ),
     };
     let one = match dtype {
         NumberType::Integer => {
@@ -94,6 +100,9 @@ pub fn dyn_eye(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
             let v = b.ir_constant_float(1.0);
             value_to_scalar_i64(&v)
         }
+        NumberType::Complex => panic!(
+            "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
+        ),
     };
 
     let mut values = Vec::with_capacity(max_length);

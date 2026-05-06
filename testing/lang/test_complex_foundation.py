@@ -36,13 +36,11 @@ def test_np_complex_dtype_aliases_resolve():
     ZKCircuit.from_method(foo).compile()
 
 
-def test_ndarray_complex_is_rejected_with_clear_error():
+def test_ndarray_complex_now_supported_after_ndarray_ops_card():
+    """The deferred case from this card was lifted by
+    compiler.complex-ndarray-ops; keep as a smoke regression."""
     @zk_circuit
     def foo(arr: NDArray[Complex, 4]):
-        pass
+        _ = arr[0]
 
-    with pytest.raises(ZinniaException) as exc_info:
-        ZKCircuit.from_method(foo).compile()
-    msg = str(exc_info.value)
-    assert "Complex" in msg
-    assert "complex-ndarray-ops" in msg
+    ZKCircuit.from_method(foo).compile()

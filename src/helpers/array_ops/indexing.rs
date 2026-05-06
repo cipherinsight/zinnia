@@ -111,6 +111,9 @@ fn dyn_getitem_element(
             raw.ptr(),
         )),
         NumberType::Integer => raw,
+        NumberType::Complex => panic!(
+            "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
+        ),
     }
 }
 
