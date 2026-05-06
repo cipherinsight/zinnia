@@ -231,8 +231,14 @@ impl IRGenerator {
                 inner_segs.push(PathSegment::Inner);
                 let inner_val = self.read_input_value(dtype, param_name, inner_segs, is_public);
 
-                // Compute hash of flattened inner values and assert equality
-                let flat = crate::helpers::composite::flatten_composite(&inner_val);
+                // Compute hash of flattened inner values and assert equality.
+                // P1 segarr: use the builder-aware flattener so a StaticArray
+                // inner value (e.g. PoseidonHashed[NDArray[...]]) materialises
+                // via the segment payload before hashing.
+                let flat = crate::helpers::composite::flatten_composite_with_builder(
+                    &mut self.builder,
+                    &inner_val,
+                );
                 let computed_hash = self.builder.ir_poseidon_hash(&flat);
                 let eq = self.builder.ir_equal_hash(&computed_hash, &hash_val);
                 let bc = self.builder.ir_bool_cast(&eq);
@@ -254,9 +260,23 @@ impl IRGenerator {
                     sub_segs.push(PathSegment::Index(flat_idx as u32));
                     values.push(self.read_input_value(&inner_dt, param_name, sub_segs, is_public));
                 }
-                // Build nested structure from flat values
-                let types = values.iter().map(|v| v.zinnia_type()).collect();
-                crate::helpers::composite::build_nested_value(values, types, shape)
+                // P1 segarr-foundation: numeric NDArray params become
+                // segment-backed `Value::StaticArray`. Complex stays on the
+                // legacy nested-List path until P5a.
+                match dtype {
+                    crate::types::NumberType::Integer | crate::types::NumberType::Float => {
+                        crate::helpers::static_array::build_static_array_from_flat(
+                            &mut self.builder,
+                            values,
+                            shape.clone(),
+                            *dtype,
+                        )
+                    }
+                    crate::types::NumberType::Complex => {
+                        let types = values.iter().map(|v| v.zinnia_type()).collect();
+                        crate::helpers::composite::build_nested_value(values, types, shape)
+                    }
+                }
             }
             ZinniaType::List { elements } => {
                 let mut values = Vec::new();

@@ -1,4 +1,4 @@
-use super::zinnia_type::ZinniaType;
+use super::zinnia_type::{NumberType, ZinniaType};
 use super::scalar::{ScalarValue, StringValue};
 use super::composite::{CompositeData, NDArrayData, DynamicNDArrayData};
 use super::StmtId;
@@ -22,6 +22,22 @@ pub enum Value {
     },
     NDArray(NDArrayData),
     DynamicNDArray(DynamicNDArrayData),
+    /// Static-shape numeric array backed by a flat ZKRAM segment.
+    ///
+    /// P1 of `compiler.epic-segment-native-static-arrays`: the segment-native
+    /// representation that replaces nested `Value::List` for purely-numeric
+    /// arrays. Static-index access compiles to a direct wire reference, and
+    /// dynamic-index access is a single zkRAM op (lands in P2/P3).
+    ///
+    /// Layout: row-major, the same conventions as `DynamicNDArrayData`.
+    /// `offset` lets a future view variant share an underlying segment.
+    StaticArray {
+        dtype: NumberType,
+        shape: Vec<usize>,
+        segment_id: u32,
+        strides: Vec<usize>,
+        offset: usize,
+    },
     List(CompositeData),
     Tuple(CompositeData),
     PoseidonHashed {
@@ -49,6 +65,10 @@ impl Value {
                 dtype: data.dtype,
                 max_length: data.max_length(),
                 max_rank: data.max_rank(),
+            },
+            Value::StaticArray { dtype, shape, .. } => ZinniaType::NDArray {
+                shape: shape.clone(),
+                dtype: *dtype,
             },
             Value::List(data) => ZinniaType::List {
                 elements: data.elements_type.clone(),
@@ -87,7 +107,10 @@ impl Value {
 
     /// Returns true if this value is an NDArray or DynamicNDArray.
     pub fn is_ndarray(&self) -> bool {
-        matches!(self, Value::NDArray(_) | Value::DynamicNDArray(_))
+        matches!(
+            self,
+            Value::NDArray(_) | Value::DynamicNDArray(_) | Value::StaticArray { .. }
+        )
     }
 
     /// Returns the compile-time integer value, if known.

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::ir::{IRGraph, IRStatement};
 use crate::ir_defs::IR;
 use crate::types::{ScalarValue, StmtId, StringValue, Value};
@@ -44,6 +46,13 @@ pub struct IRBuilder {
     /// envelopes. Lives once per compilation; all envelopes refer to vars
     /// in this single namespace.
     pub dim_table: crate::types::DimTable,
+    /// P1 segarr-foundation: side cache mapping a `Value::StaticArray`'s
+    /// `segment_id` to the original payload wires written into it. The
+    /// `to_value_list` shim looks values up here instead of issuing N
+    /// `ir_read_memory` ops per lookup, which keeps the boundary cheap
+    /// while ops are still being migrated. Once P6 lands and the legacy
+    /// path goes away, this cache (and the shim) go with it.
+    pub static_array_payload: HashMap<u32, Vec<Value>>,
 }
 
 impl Default for IRBuilder {
@@ -60,6 +69,7 @@ impl IRBuilder {
             next_segment_id: 0,
             next_array_id: 0,
             dim_table: crate::types::DimTable::new(),
+            static_array_payload: HashMap::new(),
         }
     }
 

@@ -1,12 +1,38 @@
 use crate::types::{CompositeData, Value, ZinniaType};
 
 /// Recursively flatten a composite (List/Tuple) into a flat vector of leaf values.
+///
+/// `Value::StaticArray` is *not* flattened here — flattening would require an
+/// `IRBuilder` to read from the segment. Use [`flatten_composite_with_builder`]
+/// when a StaticArray may appear, or convert it to a list first via
+/// `helpers::static_array::to_value_list`.
 pub fn flatten_composite(val: &Value) -> Vec<Value> {
     match val {
         Value::List(data) | Value::Tuple(data) => {
             let mut flat = Vec::new();
             for v in &data.values {
                 flat.extend(flatten_composite(v));
+            }
+            flat
+        }
+        other => vec![other.clone()],
+    }
+}
+
+/// Variant of [`flatten_composite`] that accepts `Value::StaticArray` by
+/// materialising the segment payload first. Use at op boundaries that may
+/// see segment-backed numeric arrays — recurses through `List` / `Tuple`
+/// nesting.
+pub fn flatten_composite_with_builder(b: &mut crate::builder::IRBuilder, val: &Value) -> Vec<Value> {
+    match val {
+        Value::StaticArray { .. } => {
+            let lst = crate::helpers::static_array::to_value_list(b, val);
+            flatten_composite_with_builder(b, &lst)
+        }
+        Value::List(data) | Value::Tuple(data) => {
+            let mut flat = Vec::new();
+            for v in &data.values {
+                flat.extend(flatten_composite_with_builder(b, v));
             }
             flat
         }
@@ -40,6 +66,7 @@ pub fn get_composite_shape(val: &Value) -> Vec<usize> {
             shape
         }
         Value::NDArray(nd) => nd.shape.clone(),
+        Value::StaticArray { shape, .. } => shape.clone(),
         _ => vec![],
     }
 }

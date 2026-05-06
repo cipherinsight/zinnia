@@ -9,6 +9,12 @@ use crate::types::{CompositeData, ScalarValue, Value, ZinniaType};
 
 /// Conditional select: if cond { tv } else { fv }, with element-wise support.
 pub fn select_value(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> Value {
+    // P1 segarr boundary: convert StaticArray to legacy List view first.
+    if matches!(tv, Value::StaticArray { .. }) || matches!(fv, Value::StaticArray { .. }) {
+        let tv_n = crate::helpers::static_array::to_value_list(b, tv);
+        let fv_n = crate::helpers::static_array::to_value_list(b, fv);
+        return select_value(b, cond, &tv_n, &fv_n);
+    }
     match (tv, fv) {
         (Value::List(td), Value::List(fd)) if td.values.len() == fd.values.len() => {
             let results: Vec<Value> = td.values.iter().zip(fd.values.iter())
@@ -182,6 +188,17 @@ pub fn to_scalar_bool(b: &mut IRBuilder, val: &Value) -> Value {
 
 /// Apply a binary operation, with element-wise support for composite types.
 pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) -> Value {
+    // ── StaticArray boundary shim ────────────────────────────────────
+    // P1 of compiler.epic-segment-native-static-arrays: legacy ops still
+    // consume `Value::List` for numeric arrays. Materialise any
+    // segment-backed StaticArray into a nested List before running the
+    // existing dispatch.
+    if matches!(lhs, Value::StaticArray { .. }) || matches!(rhs, Value::StaticArray { .. }) {
+        let lhs_n = crate::helpers::static_array::to_value_list(b, lhs);
+        let rhs_n = crate::helpers::static_array::to_value_list(b, rhs);
+        return apply_binary_op(b, op, &lhs_n, &rhs_n);
+    }
+
     // ── Complex dispatch ─────────────────────────────────────────────
     // If either operand is Complex (and the other is a numeric scalar or
     // also Complex), route to component-wise complex arithmetic.

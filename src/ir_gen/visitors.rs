@@ -97,6 +97,13 @@ impl IRGenerator {
 
         let iter_val = self.visit(&n.iter_expr);
 
+        // P1 segarr boundary: convert StaticArray to legacy List view first.
+        let iter_val = if matches!(iter_val, Value::StaticArray { .. }) {
+            crate::helpers::static_array::to_value_list(&mut self.builder, &iter_val)
+        } else {
+            iter_val
+        };
+
         // Extract the iterable elements
         let elements: Vec<Value> = match &iter_val {
             Value::List(data) | Value::Tuple(data) => data.values.clone(),
@@ -240,6 +247,11 @@ impl IRGenerator {
 
     /// Apply a unary operation, with element-wise support for composite types.
     pub(crate) fn apply_unary_op(&mut self, op: &str, operand: &Value) -> Value {
+        // P1 segarr boundary: convert StaticArray to legacy List view first.
+        if matches!(operand, Value::StaticArray { .. }) {
+            let lst = crate::helpers::static_array::to_value_list(&mut self.builder, operand);
+            return self.apply_unary_op(op, &lst);
+        }
         match operand {
             Value::List(data) | Value::Tuple(data) => {
                 let results: Vec<Value> = data.values.iter()
@@ -330,6 +342,12 @@ impl IRGenerator {
 
     pub(crate) fn visit_subscript(&mut self, n: &ASTSubscriptExp) -> Value {
         let val = self.visit(&n.val);
+        // P1 segarr boundary: convert StaticArray to legacy List view first.
+        let val = if matches!(val, Value::StaticArray { .. }) {
+            crate::helpers::static_array::to_value_list(&mut self.builder, &val)
+        } else {
+            val
+        };
         // Evaluate slice indices by visiting them as AST nodes
         let slice_values = self.eval_slice_indices(&n.slicing);
 
@@ -499,10 +517,18 @@ impl IRGenerator {
             }
         }
         let types: Vec<ZinniaType> = values.iter().map(|v| v.zinnia_type()).collect();
-        Value::List(CompositeData {
+        let lst = Value::List(CompositeData {
             elements_type: types,
             values,
-        })
+        });
+        // P1 segarr-foundation: list literals of pure numeric leaves become
+        // segment-backed `Value::StaticArray`. Heterogeneous lists, lists of
+        // strings, lists of arrays, etc. stay on the legacy List path.
+        if let Some(sa) = crate::helpers::static_array::to_static_array(&mut self.builder, &lst) {
+            sa
+        } else {
+            lst
+        }
     }
 
     pub(crate) fn visit_parenthesis(&mut self, n: &ASTParenthesis) -> Value {
@@ -557,6 +583,13 @@ impl IRGenerator {
 
         let gen = &generators[idx];
         let iter_val = self.visit(&gen.iter_expr);
+
+        // P1 segarr boundary: convert StaticArray to legacy List view first.
+        let iter_val = if matches!(iter_val, Value::StaticArray { .. }) {
+            crate::helpers::static_array::to_value_list(&mut self.builder, &iter_val)
+        } else {
+            iter_val
+        };
 
         let elements: Vec<Value> = match &iter_val {
             Value::List(data) | Value::Tuple(data) => data.values.clone(),
@@ -697,6 +730,15 @@ impl IRGenerator {
                         if matches!(&current, Value::Tuple(_)) {
                             panic!("'tuple' object does not support item assignment");
                         }
+                        // P1 segarr boundary: setitem stays on legacy path
+                        // (write paths are P3). Materialise StaticArray to a
+                        // nested List and treat the binding as the legacy
+                        // representation from now on.
+                        let current = if matches!(&current, Value::StaticArray { .. }) {
+                            crate::helpers::static_array::to_value_list(&mut self.builder, &current)
+                        } else {
+                            current
+                        };
                         let updated = if let Value::DynamicNDArray(d) = &current {
                             // Check for boolean mask assignment: dyn[mask] = x
                             if indices.len() == 1 {

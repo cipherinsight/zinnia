@@ -306,14 +306,14 @@ pub fn np_fill(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
     }
 
     let use_float = matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Float)));
-    let (fill, elem_type) = if use_float {
-        (b.ir_constant_float(fill_value as f64), ZinniaType::Float)
+    let (fill, dtype) = if use_float {
+        (b.ir_constant_float(fill_value as f64), crate::types::NumberType::Float)
     } else {
-        (b.ir_constant_int(fill_value), ZinniaType::Integer)
+        (b.ir_constant_int(fill_value), crate::types::NumberType::Integer)
     };
     let values = vec![fill; total];
-    let types = vec![elem_type; total];
-    build_ndarray_from_flat(b, values, types, &shape)
+    // P1 segarr-foundation: numeric constructors emit Value::StaticArray.
+    crate::helpers::static_array::build_static_array_from_flat(b, values, shape, dtype)
 }
 
 pub fn np_fill_like(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>, fill_value: i64) -> Value {
@@ -334,31 +334,34 @@ pub fn np_fill_like(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, 
             .any(|v| matches!(v.zinnia_type(), ZinniaType::Float))
     };
     let total: usize = shape.iter().product();
-    let (fill, elem_type) = if use_float {
-        (b.ir_constant_float(fill_value as f64), ZinniaType::Float)
+    let (fill, dtype) = if use_float {
+        (b.ir_constant_float(fill_value as f64), crate::types::NumberType::Float)
     } else {
-        (b.ir_constant_int(fill_value), ZinniaType::Integer)
+        (b.ir_constant_int(fill_value), crate::types::NumberType::Integer)
     };
     let values = vec![fill; total];
-    let types = vec![elem_type; total];
-    build_ndarray_from_flat(b, values, types, &shape)
+    // P1 segarr-foundation: numeric constructors emit Value::StaticArray.
+    crate::helpers::static_array::build_static_array_from_flat(b, values, shape, dtype)
 }
 
 pub fn np_identity(b: &mut IRBuilder, args: &[Value]) -> Value {
     let n = args.first().and_then(|a| a.int_val()).unwrap_or(0) as usize;
     let zero = b.ir_constant_int(0);
     let one = b.ir_constant_int(1);
-    let mut rows = Vec::new();
+    // Build the flat row-major payload, then hand off to the segment-backed
+    // constructor (P1 segarr-foundation).
+    let mut flat = Vec::with_capacity(n * n);
     for i in 0..n {
-        let mut row_vals = Vec::new();
         for j in 0..n {
-            row_vals.push(if i == j { one.clone() } else { zero.clone() });
+            flat.push(if i == j { one.clone() } else { zero.clone() });
         }
-        let row_types = vec![ZinniaType::Integer; n];
-        rows.push(Value::List(CompositeData { elements_type: row_types, values: row_vals }));
     }
-    let types = rows.iter().map(|v| v.zinnia_type()).collect();
-    Value::List(CompositeData { elements_type: types, values: rows })
+    crate::helpers::static_array::build_static_array_from_flat(
+        b,
+        flat,
+        vec![n, n],
+        crate::types::NumberType::Integer,
+    )
 }
 
 /// Element-wise square: x * x
@@ -451,7 +454,27 @@ pub fn np_outer_op(b: &mut IRBuilder, args: &[Value], op: &str) -> Value {
 }
 
 pub fn np_arange(b: &mut IRBuilder, args: &[Value]) -> Value {
-    builtin_range(b, args)
+    // np.arange always returns a numeric ndarray — emit as StaticArray.
+    let (start, stop, step) = match args.len() {
+        1 => (0i64, args[0].int_val().unwrap_or(0), 1i64),
+        2 => (args[0].int_val().unwrap_or(0), args[1].int_val().unwrap_or(0), 1i64),
+        3 => (args[0].int_val().unwrap_or(0), args[1].int_val().unwrap_or(0), args[2].int_val().unwrap_or(1)),
+        _ => return Value::None,
+    };
+    if step == 0 { return Value::None; }
+    let mut values = Vec::new();
+    let mut i = start;
+    while (step > 0 && i < stop) || (step < 0 && i > stop) {
+        values.push(b.ir_constant_int(i));
+        i += step;
+    }
+    let len = values.len();
+    crate::helpers::static_array::build_static_array_from_flat(
+        b,
+        values,
+        vec![len],
+        crate::types::NumberType::Integer,
+    )
 }
 
 pub fn np_linspace(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
@@ -461,14 +484,14 @@ pub fn np_linspace(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, V
     let num = args.get(2).and_then(|v| v.int_val()).or_else(|| kwargs.get("num").and_then(|v| v.int_val())).unwrap_or(50) as usize;
     let endpoint = kwargs.get("endpoint").and_then(|v| v.bool_val()).unwrap_or(true);
     let use_int = matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Integer)));
+    let dtype = if use_int { crate::types::NumberType::Integer } else { crate::types::NumberType::Float };
 
     if num == 0 {
-        return Value::List(CompositeData { elements_type: vec![], values: vec![] });
+        return crate::helpers::static_array::build_static_array_from_flat(b, vec![], vec![0], dtype);
     }
     if num == 1 {
         let v = if use_int { b.ir_constant_int(start as i64) } else { b.ir_constant_float(start) };
-        let t = if use_int { ZinniaType::Integer } else { ZinniaType::Float };
-        return Value::List(CompositeData { elements_type: vec![t], values: vec![v] });
+        return crate::helpers::static_array::build_static_array_from_flat(b, vec![v], vec![1], dtype);
     }
 
     let divisor = if endpoint { (num - 1) as f64 } else { num as f64 };
@@ -482,9 +505,8 @@ pub fn np_linspace(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, V
             values.push(b.ir_constant_float(fval));
         }
     }
-    let elem_type = if use_int { ZinniaType::Integer } else { ZinniaType::Float };
-    let types = vec![elem_type; values.len()];
-    Value::List(CompositeData { elements_type: types, values })
+    let len = values.len();
+    crate::helpers::static_array::build_static_array_from_flat(b, values, vec![len], dtype)
 }
 
 pub fn np_allclose(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
