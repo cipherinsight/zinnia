@@ -33,12 +33,12 @@ def test_complex_param_passthrough_compiles():
     ZKCircuit.from_method(foo).compile()
 
 
-def test_arithmetic_on_complex_literal_still_fails_until_next_card():
-    """Arithmetic involving a complex literal is the next card's territory."""
+def test_literal_followed_by_simple_arithmetic_now_works():
+    """The deferred arithmetic case from this card's original scope was lifted
+    by compiler.complex-arithmetic. Keep as a smoke regression."""
     @zk_circuit
     def foo():
-        c = 1j + 1   # arithmetic on complex — not yet supported
+        c = 1j + 1
         _ = c
 
-    with pytest.raises(Exception):
-        ZKCircuit.from_method(foo).compile()
+    ZKCircuit.from_method(foo).compile()

@@ -5,7 +5,7 @@
 //! `&mut IRBuilder` as an explicit parameter instead of `&mut self`.
 
 use crate::builder::IRBuilder;
-use crate::types::{CompositeData, Value, ZinniaType};
+use crate::types::{CompositeData, ScalarValue, Value, ZinniaType};
 
 /// Conditional select: if cond { tv } else { fv }, with element-wise support.
 pub fn select_value(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> Value {
@@ -33,6 +33,126 @@ pub fn select_value(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> 
     }
 }
 
+/// Promote any of {Complex, Float, Integer, Boolean} into a (real_f, imag_f)
+/// pair of `Value::Float` ScalarValues that can feed into ir_*_f gates.
+fn unpack_to_complex_parts(b: &mut IRBuilder, val: &Value) -> (Value, Value) {
+    match val {
+        Value::Complex { real, imag } => (
+            Value::Float(real.clone()),
+            Value::Float(imag.clone()),
+        ),
+        Value::Float(_) => (val.clone(), b.ir_constant_float(0.0)),
+        Value::Integer(_) | Value::Boolean(_) => {
+            let real = b.ir_float_cast(val);
+            let imag = b.ir_constant_float(0.0);
+            (real, imag)
+        }
+        _ => panic!(
+            "Cannot promote value of type {} to Complex",
+            val.zinnia_type()
+        ),
+    }
+}
+
+fn pack_complex(real: Value, imag: Value) -> Value {
+    let r = match real {
+        Value::Float(s) => s,
+        _ => panic!("complex real part must be a Float ScalarValue"),
+    };
+    let i = match imag {
+        Value::Float(s) => s,
+        _ => panic!("complex imag part must be a Float ScalarValue"),
+    };
+    Value::Complex { real: r, imag: i }
+}
+
+/// Component-wise binary arithmetic on Complex operands. Each operand is
+/// promoted to a 2-tuple of Floats; the result is repackaged as
+/// `Value::Complex` (or, for `eq` / `ne`, a single boolean cell).
+pub fn apply_complex_binary_op(
+    b: &mut IRBuilder,
+    op: &str,
+    lhs: &Value,
+    rhs: &Value,
+) -> Value {
+    let (la, lb) = unpack_to_complex_parts(b, lhs);
+    let (ra, rb) = unpack_to_complex_parts(b, rhs);
+
+    match op {
+        "add" => {
+            let real = b.ir_add_f(&la, &ra);
+            let imag = b.ir_add_f(&lb, &rb);
+            pack_complex(real, imag)
+        }
+        "sub" => {
+            let real = b.ir_sub_f(&la, &ra);
+            let imag = b.ir_sub_f(&lb, &rb);
+            pack_complex(real, imag)
+        }
+        "mul" => {
+            // (a + bi)(c + di) = (ac − bd) + (ad + bc)i
+            let ac = b.ir_mul_f(&la, &ra);
+            let bd = b.ir_mul_f(&lb, &rb);
+            let ad = b.ir_mul_f(&la, &rb);
+            let bc = b.ir_mul_f(&lb, &ra);
+            let real = b.ir_sub_f(&ac, &bd);
+            let imag = b.ir_add_f(&ad, &bc);
+            pack_complex(real, imag)
+        }
+        "div" => {
+            // (a + bi)/(c + di) = ((ac + bd) + (bc − ad)i) / (c² + d²)
+            let ac = b.ir_mul_f(&la, &ra);
+            let bd = b.ir_mul_f(&lb, &rb);
+            let ad = b.ir_mul_f(&la, &rb);
+            let bc = b.ir_mul_f(&lb, &ra);
+            let real_num = b.ir_add_f(&ac, &bd);
+            let imag_num = b.ir_sub_f(&bc, &ad);
+            let cc = b.ir_mul_f(&ra, &ra);
+            let dd = b.ir_mul_f(&rb, &rb);
+            let denom = b.ir_add_f(&cc, &dd);
+            let real = b.ir_div_f(&real_num, &denom);
+            let imag = b.ir_div_f(&imag_num, &denom);
+            pack_complex(real, imag)
+        }
+        "eq" => {
+            let r_eq = b.ir_equal_f(&la, &ra);
+            let i_eq = b.ir_equal_f(&lb, &rb);
+            b.ir_logical_and(&r_eq, &i_eq)
+        }
+        "ne" => {
+            let r_ne = b.ir_not_equal_f(&la, &ra);
+            let i_ne = b.ir_not_equal_f(&lb, &rb);
+            b.ir_logical_or(&r_ne, &i_ne)
+        }
+        "pow" => {
+            // Integer-exponent power via repeated multiplication; arbitrary
+            // exponents (transcendental) are tracked in
+            // compiler.complex-transcendentals.
+            let exp = match rhs.int_val() {
+                Some(n) if n >= 0 => n as u32,
+                Some(_) => panic!("Complex pow with negative integer exponent not yet supported"),
+                None => panic!(
+                    "Complex pow requires a compile-time integer exponent; \
+                     arbitrary complex powers are tracked in compiler.complex-transcendentals"
+                ),
+            };
+            // Start with 1 + 0i.
+            let one = b.ir_constant_float(1.0);
+            let zero = b.ir_constant_float(0.0);
+            let mut acc = pack_complex(one, zero);
+            for _ in 0..exp {
+                acc = apply_complex_binary_op(b, "mul", &acc, lhs);
+            }
+            acc
+        }
+        "lt" | "lte" | "gt" | "gte" => panic!(
+            "Ordering comparison `{}` is not defined on Complex (numpy raises TypeError)",
+            op
+        ),
+        _ => panic!("Unsupported complex binary operator: {}", op),
+    }
+}
+
 /// Convert a value to a scalar boolean, reducing composites via AND.
 pub fn to_scalar_bool(b: &mut IRBuilder, val: &Value) -> Value {
     match val {
@@ -53,6 +173,17 @@ pub fn to_scalar_bool(b: &mut IRBuilder, val: &Value) -> Value {
 
 /// Apply a binary operation, with element-wise support for composite types.
 pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) -> Value {
+    // ── Complex dispatch ─────────────────────────────────────────────
+    // If either operand is Complex (and the other is a numeric scalar or
+    // also Complex), route to component-wise complex arithmetic.
+    if matches!(lhs, Value::Complex { .. }) || matches!(rhs, Value::Complex { .. }) {
+        let lhs_promotable = matches!(lhs, Value::Complex { .. } | Value::Float(_) | Value::Integer(_) | Value::Boolean(_));
+        let rhs_promotable = matches!(rhs, Value::Complex { .. } | Value::Float(_) | Value::Integer(_) | Value::Boolean(_));
+        if lhs_promotable && rhs_promotable {
+            return apply_complex_binary_op(b, op, lhs, rhs);
+        }
+    }
+
     // ── DynamicNDArray dispatch ──────────────────────────────────────
     // When either operand is a DynamicNDArray, promote the other and
     // dispatch to the dynamic binary op.

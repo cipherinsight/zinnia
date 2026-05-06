@@ -281,6 +281,24 @@ impl IRGenerator {
                     _ => panic!("Unknown unary operator for DynamicNDArray: {}", op),
                 }
             }
+            Value::Complex { real, imag } => match op {
+                "usub" => {
+                    let zero = self.builder.ir_constant_float(0.0);
+                    let neg_real = self.builder.ir_sub_f(&zero, &Value::Float(real.clone()));
+                    let neg_imag = self.builder.ir_sub_f(&zero, &Value::Float(imag.clone()));
+                    let nr = match neg_real {
+                        Value::Float(s) => s,
+                        _ => unreachable!(),
+                    };
+                    let ni = match neg_imag {
+                        Value::Float(s) => s,
+                        _ => unreachable!(),
+                    };
+                    Value::Complex { real: nr, imag: ni }
+                }
+                "uadd" => operand.clone(),
+                _ => panic!("Unsupported unary operator on Complex: {}", op),
+            }
             _ => match op {
                 "not" => self.builder.ir_logical_not(operand),
                 "usub" => {
