@@ -29,6 +29,15 @@ pub fn select_value(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> 
         (Value::List(_) | Value::Tuple(_), _) | (_, Value::List(_) | Value::Tuple(_)) => {
             tv.clone()
         }
+        // Complex (2-cell) values: select per component. Promote any
+        // numeric scalar on either side to Complex first.
+        (Value::Complex { .. }, _) | (_, Value::Complex { .. }) => {
+            let (tr, ti) = unpack_to_complex_parts(b, tv);
+            let (fr, fi) = unpack_to_complex_parts(b, fv);
+            let real = b.ir_select_f(cond, &tr, &fr);
+            let imag = b.ir_select_f(cond, &ti, &fi);
+            pack_complex(real, imag)
+        }
         _ => b.ir_select_i(cond, tv, fv),
     }
 }
@@ -579,6 +588,23 @@ pub fn dynamic_list_subscript(b: &mut IRBuilder, data: &CompositeData, idx: &Val
     }
     let n = data.values.len();
 
+    // Composite or Complex element type: ir_select_i can't accept these
+    // (it expects a single ptr per arg). Dispatch to select_value, which
+    // handles List/Tuple recursion and Complex per-component selection.
+    let needs_composite_select = matches!(
+        data.values.first(),
+        Some(Value::List(_) | Value::Tuple(_) | Value::Complex { .. })
+    );
+    if needs_composite_select {
+        let mut result = data.values.last().unwrap().clone();
+        for i in (0..n - 1).rev() {
+            let const_i = b.ir_constant_int(i as i64);
+            let cmp = b.ir_equal_i(idx, &const_i);
+            result = select_value(b, &cmp, &data.values[i], &result);
+        }
+        return result;
+    }
+
     if n < 100 {
         // Mux path: SelectI chain
         let mut result = data.values.last().unwrap().clone();
@@ -612,6 +638,28 @@ pub fn dynamic_list_set_item(b: &mut IRBuilder, data: &CompositeData, idx: &Valu
     let n = data.values.len();
     if n == 0 {
         return Value::List(data.clone());
+    }
+
+    // Composite or Complex elements: dispatch to select_value, which
+    // handles List/Tuple recursion and Complex per-component selection.
+    let needs_composite_select = matches!(
+        value,
+        Value::List(_) | Value::Tuple(_) | Value::Complex { .. }
+    ) || matches!(
+        data.values.first(),
+        Some(Value::List(_) | Value::Tuple(_) | Value::Complex { .. })
+    );
+    if needs_composite_select {
+        let mut new_values = Vec::with_capacity(n);
+        let mut new_types = Vec::with_capacity(n);
+        for i in 0..n {
+            let const_i = b.ir_constant_int(i as i64);
+            let cmp = b.ir_equal_i(idx, &const_i);
+            let selected = select_value(b, &cmp, value, &data.values[i]);
+            new_types.push(selected.zinnia_type());
+            new_values.push(selected);
+        }
+        return Value::List(CompositeData { elements_type: new_types, values: new_values });
     }
 
     if n < 100 {

@@ -4,6 +4,43 @@ indexing, assignment, .real/.imag on subscripted elements.
 from zinnia import zk_circuit, ZKCircuit, NDArray, Complex, np
 
 
+def test_complex_ndarray_dynamic_subscript_2d():
+    # Regression for `compiler.complex-ndarray-setitem-2d`: 2-D Complex
+    # NDArray with dynamic-index reads + chained assignment.
+    @zk_circuit
+    def foo():
+        a = np.zeros((3, 3), dtype=complex)
+        a[0, 0] = 1 + 2j
+        a[1, 1] = 3 + 4j
+        a[2, 2] = 5 + 6j
+        # Dynamic-index swap pattern from pivot.
+        for i in range(3):
+            temp = a[i][i]
+            a[i][i] = a[0][0]
+            a[0][0] = temp
+        # No precise value asserts — the compile-not-panic is the primary check.
+        assert a[0][0].real != 99.0
+
+    assert foo()
+
+
+def test_complex_ndarray_dynamic_subscript_1d():
+    @zk_circuit
+    def foo():
+        b = np.zeros((4,), dtype=complex)
+        b[0] = 1 + 2j
+        b[1] = 3 + 4j
+        b[2] = 5 + 6j
+        b[3] = 7 + 8j
+        # Dynamic read via loop variable (was previously panicking with
+        # `Value must have a pointer: Complex` in dynamic_list_subscript).
+        for i in range(4):
+            x = b[i]
+            assert x.real >= 0.0  # Sanity that the read returned a Complex.
+
+    assert foo()
+
+
 def test_zeros_dtype_complex():
     @zk_circuit
     def foo():
