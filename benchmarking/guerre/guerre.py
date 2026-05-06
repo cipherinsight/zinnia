@@ -5,7 +5,7 @@ from zinnia import *
 
 
 @zk_circuit
-def guerre(a: list, n: int, z: complex, err: float, nter: int):
+def guerre(a: NDArray[Complex, 64], n: int, z: complex, err: float, nter: int):
     az = [complex(0, 0) for i in range(50)]
     azz = [complex(0, 0) for i in range(50)]
     ci = complex(0.0, 1.0)

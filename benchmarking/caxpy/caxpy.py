@@ -5,7 +5,7 @@ from zinnia import *
 
 
 @zk_circuit
-def CAXPY(N: int, CA: complex, CX: list, INCX: int, CY: list, INCY: int):
+def CAXPY(N: int, CA: complex, CX: NDArray[Complex, 64], INCX: int, CY: NDArray[Complex, 64], INCY: int):
     if N <= 0:
         pass
     if (abs(CA) == 0.0E+0):

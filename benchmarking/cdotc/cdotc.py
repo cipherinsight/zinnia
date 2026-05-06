@@ -5,7 +5,7 @@ from zinnia import *
 
 
 @zk_circuit
-def CDOTC(N: int, CX: list, INCX: int, CY: list, INCY: int):
+def CDOTC(N: int, CX: NDArray[Complex, 64], INCX: int, CY: NDArray[Complex, 64], INCY: int):
     CTEMP = complex(0.0, 0.0)
     CDOTC = complex(0.0, 0.0)
     if (N <= 0):

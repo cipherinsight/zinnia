@@ -5,7 +5,7 @@ from zinnia import *
 
 
 @zk_circuit
-def pivot(n: int, i: int, a: list, b: list):
+def pivot(n: int, i: int, a: NDArray[Complex, 16, 16], b: NDArray[Complex, 64]):
     i0 = i
     amp0 = abs(a[i - 1][i - 1])
     for j in range(i + 1, n + 1):

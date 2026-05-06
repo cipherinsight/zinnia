@@ -65,6 +65,25 @@ impl IRGenerator {
                     self.builder.ir_bool_cast(&visited_args[0])
                 }
             }
+            (None, "complex") => {
+                // complex() / complex(re) / complex(re, im) — Python's built-in.
+                let real_v = visited_args.first().cloned().unwrap_or_else(|| self.builder.ir_constant_float(0.0));
+                let imag_v = visited_args.get(1).cloned().unwrap_or_else(|| self.builder.ir_constant_float(0.0));
+                // Promote real and imag to Float (allow int / float / complex inputs).
+                let real_f = match &real_v {
+                    Value::Float(_) => real_v.clone(),
+                    Value::Complex { real, .. } => Value::Float(real.clone()),
+                    _ => self.builder.ir_float_cast(&real_v),
+                };
+                let imag_f = match &imag_v {
+                    Value::Float(_) => imag_v.clone(),
+                    Value::Complex { imag, .. } => Value::Float(imag.clone()),
+                    _ => self.builder.ir_float_cast(&imag_v),
+                };
+                let r = match real_f { Value::Float(s) => s, _ => unreachable!() };
+                let i = match imag_f { Value::Float(s) => s, _ => unreachable!() };
+                Value::Complex { real: r, imag: i }
+            }
             (None, "abs") => {
                 if !visited_args.is_empty() {
                     match &visited_args[0] {

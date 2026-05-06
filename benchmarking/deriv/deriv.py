@@ -5,7 +5,7 @@ from zinnia import *
 
 
 @zk_circuit
-def deriv(n: int, sig: float, alp: complex, dg: list, dh1: list, dh3: list, bin: list, nu: float):
+def deriv(n: int, sig: float, alp: complex, dg: NDArray[Complex, 64], dh1: NDArray[Complex, 64], dh3: NDArray[Complex, 64], bin: NDArray[Complex, 16, 16], nu: float):
     dh2 = [complex(0, 0) for _ in dh1]
     ci = complex(0.0, 1.0)
     dh1[0] = complex(0.5, 0) * ci * complex(sig, 0)
