@@ -24,12 +24,17 @@ class ZKChip:
     @staticmethod
     def from_method(method) -> 'ZKChip':
         from zinnia.api.zk_external_func import ZKExternalFunc
+        from zinnia.compile.module_constants import (
+            extract_module_constants, substitute_module_constants,
+        )
 
         if isinstance(method, ZKChip):
             return method
         if isinstance(method, ZKExternalFunc):
             raise ZinniaException('Cannot convert a ZKExternalFunc into ZKChip.')
-        source_code = inspect.getsource(method)
+        raw_source = inspect.getsource(method)
+        module_consts = extract_module_constants(method)
+        source_code = substitute_module_constants(raw_source, module_consts)
         method_name = method.__name__
         return ZKChip(method_name, source_code)
 
@@ -44,6 +49,11 @@ class ZKChip:
 
 
 def zk_chip(method):
-    source_code = inspect.getsource(method)
+    from zinnia.compile.module_constants import (
+        extract_module_constants, substitute_module_constants,
+    )
+    raw_source = inspect.getsource(method)
+    module_consts = extract_module_constants(method)
+    source_code = substitute_module_constants(raw_source, module_consts)
     method_name = method.__name__
     return ZKChip(method_name, source_code)

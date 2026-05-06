@@ -268,6 +268,9 @@ impl IRGenerator {
                 let rhs = visited_args.get(1).cloned().unwrap_or(Value::None);
                 crate::ops::static_ndarray_ops::matmul(&mut self.builder, &lhs, &rhs)
             }
+            (Some("np"), "square") => crate::ops::static_ndarray_ops::np_square(&mut self.builder, &visited_args),
+            (Some("np"), "diff") => crate::ops::static_ndarray_ops::np_diff(&mut self.builder, &visited_args),
+            (Some("np"), "outer") => crate::ops::static_ndarray_ops::np_outer(&mut self.builder, &visited_args),
             (Some("np"), "arange") => crate::ops::static_ndarray_ops::np_arange(&mut self.builder, &visited_args),
             (Some("np"), "linspace") => crate::ops::static_ndarray_ops::np_linspace(&mut self.builder, &visited_args, &_visited_kwargs),
             (Some("np"), "allclose") => crate::ops::static_ndarray_ops::np_allclose(&mut self.builder, &visited_args, &_visited_kwargs),
@@ -636,7 +639,7 @@ impl IRGenerator {
             // This fixes hand-rolled ops (np.negative, np.sign,
             // np.positive, np.logical_not, np.abs/absolute/fabs, …) which
             // don't use the auto-vectorizing macro.
-            (Some("np"), name) | (Some("zinnia"), name) => {
+            (Some("np"), name) | (Some("zinnia"), name) | (Some("math"), name) => {
                 fn dispatch_scalar(
                     builder: &mut crate::builder::IRBuilder,
                     name: &str,
@@ -770,6 +773,23 @@ impl IRGenerator {
 
             // ── Fallback ───────────────────────────────────────────────
             _ => {
+                if target.is_none() {
+                    // Bare name call like `foo(...)` that didn't match any
+                    // builtin / chip / external. Most common cause is a
+                    // user-defined helper that isn't decorated with @zk_chip.
+                    let mut chip_names: Vec<&str> =
+                        self.registered_chips.keys().map(|s| s.as_str()).collect();
+                    chip_names.sort();
+                    let chips_hint = if chip_names.is_empty() {
+                        "no @zk_chip helpers are registered in this module".to_string()
+                    } else {
+                        format!("registered chips: {}", chip_names.join(", "))
+                    };
+                    panic!(
+                        "Unknown function `{}` in @zk_circuit. If `{}` is a helper you defined, decorate it with @zk_chip (or @zk_external for off-circuit witness functions). {}",
+                        member, member, chips_hint
+                    )
+                }
                 panic!(
                     "Named attribute `{}.{}` not yet implemented in Rust IR generator",
                     target.unwrap_or(""),

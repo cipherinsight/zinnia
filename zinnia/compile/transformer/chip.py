@@ -43,7 +43,13 @@ class ZinniaChipASTTransformer(ZinniaBaseASTTransformer):
 
     def visit_arguments(self, node):
         results = []
-        for arg in node.args:
+        # ``ast.FunctionDef.args.defaults`` is the list of default values for
+        # the *last* N positional args (where N == len(defaults)). Pair them
+        # with their args by right-aligning.
+        positional = list(node.args)
+        defaults = list(node.defaults)
+        n_no_default = len(positional) - len(defaults)
+        for i, arg in enumerate(positional):
             dbg_info = self.get_dbg(arg)
             name: str = arg.arg
             if arg.annotation is None:
@@ -55,9 +61,17 @@ class ZinniaChipASTTransformer(ZinniaBaseASTTransformer):
                     "kind": annotation["kind"],
                     "dt": annotation["dt"],
                 }
+            default_dict = None
+            if i >= n_no_default:
+                default_node = defaults[i - n_no_default]
+                # Defaults are evaluated at decorator time in Python; for
+                # zinnia chips we only support literal defaults and unary-negated
+                # literals so they can become a constant Value at compile time.
+                default_dict = self.visit_expr(default_node)
             results.append({
                 "__class__": "ASTChipInput",
                 "name": name,
                 "annotation": annotation_dict,
+                "default": default_dict,
             })
         return results

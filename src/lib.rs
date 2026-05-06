@@ -68,7 +68,7 @@ fn compile_circuit(ast_json: &str, config_json: &str, chips_json: String, extern
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Config JSON parse error: {}", e)))?;
 
     let loop_limit = config["loop_limit"].as_u64().unwrap_or(1000) as u32;
-    let recursion_limit = config["recursion_limit"].as_u64().unwrap_or(100) as u32;
+    let recursion_limit = config["recursion_limit"].as_u64().unwrap_or(16) as u32;
     let backend = config["backend"].as_str().unwrap_or("halo2");
     let enable_memory_consistency = config["enable_memory_consistency"].as_bool().unwrap_or(false);
     let mux_threshold = config.get("mux_threshold")

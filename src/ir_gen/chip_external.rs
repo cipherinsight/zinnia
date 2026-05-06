@@ -6,22 +6,28 @@ use crate::types::{Value, ZinniaType};
 use super::IRGenerator;
 
 impl IRGenerator {
-    pub(crate) fn visit_chip_call(&mut self, name: &str, args: &[Value], _kwargs: &HashMap<String, Value>) -> Value {
+    pub(crate) fn visit_chip_call(&mut self, name: &str, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
         let chip = self.registered_chips.get(name).cloned();
         let chip = match chip {
             Some(c) => c,
             None => return Value::None,
         };
 
-        // Check recursion limit
+        // Check recursion limit. Exceeding the limit indicates either a
+        // genuinely too-deep recursion or — far more commonly — an
+        // exponentially-branching recursion (e.g. naive fibonacci) that
+        // would cause the unroller to hang silently. Fail fast with a
+        // clear error so the user can either raise the limit or rewrite.
         if self.recursion_depth >= self.config.recursion_limit {
-            // Return a placeholder value
-            let return_dt = self.parse_dt_descriptor(&chip.return_dt);
-            return match return_dt {
-                ZinniaType::Integer | ZinniaType::Boolean => self.builder.ir_constant_int(0),
-                ZinniaType::Float => self.builder.ir_constant_float(0.0),
-                _ => Value::None,
-            };
+            panic!(
+                "RecursionLimitExceededError: recursion limit ({}) exceeded while inlining @zk_chip `{}`. \
+                Each recursive call into a chip is unrolled at compile time; if your chip recurses with \
+                multiple call sites per level (e.g. fibo(n-1) + fibo(n-2)), the unrolled depth grows \
+                exponentially. Either reduce the recursion in the chip body or raise \
+                ZinniaConfig.recursion_limit (current default is intentionally small).",
+                self.config.recursion_limit,
+                name,
+            );
         }
 
         // Parse chip AST
@@ -39,10 +45,17 @@ impl IRGenerator {
         self.ctx.chip_enter(return_dt, None);
         self.recursion_depth += 1;
 
-        // Bind arguments
+        // Bind arguments. Positional args first, then kwargs by name, then
+        // fall back to the chip's ``def f(x, epsilon=1e-6)``-style default
+        // expressions for any args that the call site omitted.
         for (i, inp) in chip_node.inputs.iter().enumerate() {
             if i < args.len() {
                 self.ctx.set(&inp.name, args[i].clone());
+            } else if let Some(kv) = kwargs.get(&inp.name) {
+                self.ctx.set(&inp.name, kv.clone());
+            } else if let Some(default_node) = &inp.default {
+                let default_value = self.visit(default_node);
+                self.ctx.set(&inp.name, default_value);
             }
         }
 

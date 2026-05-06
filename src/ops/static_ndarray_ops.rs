@@ -287,6 +287,89 @@ pub fn np_identity(b: &mut IRBuilder, args: &[Value]) -> Value {
     Value::List(CompositeData { elements_type: types, values: rows })
 }
 
+/// Element-wise square: x * x
+pub fn np_square(b: &mut IRBuilder, args: &[Value]) -> Value {
+    let x = match args.first() {
+        Some(v) => v,
+        None => return Value::None,
+    };
+    elementwise_binary(b, "mul", x, x)
+}
+
+/// Discrete difference along the last axis: `out[i] = x[i+1] - x[i]` over 1-D
+/// composites, recursively applied to inner axes for higher-rank arrays.
+pub fn np_diff(b: &mut IRBuilder, args: &[Value]) -> Value {
+    let x = match args.first() {
+        Some(v) => v,
+        None => return Value::None,
+    };
+    let n = match args.get(1).and_then(|v| v.int_val()) {
+        Some(n) => n.max(0) as usize,
+        None => 1,
+    };
+    let mut current = x.clone();
+    for _ in 0..n {
+        current = diff_once(b, &current);
+    }
+    current
+}
+
+fn diff_once(b: &mut IRBuilder, x: &Value) -> Value {
+    match x {
+        Value::List(data) | Value::Tuple(data) => {
+            // If inner elements are themselves composites, recurse on each row;
+            // numpy's np.diff defaults to the last axis.
+            if let Some(first) = data.values.first() {
+                if matches!(first, Value::List(_) | Value::Tuple(_)) {
+                    let rows: Vec<Value> = data.values.iter().map(|row| diff_once(b, row)).collect();
+                    let types = rows.iter().map(|v| v.zinnia_type()).collect();
+                    return Value::List(CompositeData { elements_type: types, values: rows });
+                }
+            }
+            // Scalar-element 1-D: pairwise differences.
+            if data.values.len() < 2 {
+                let types: Vec<ZinniaType> = vec![];
+                return Value::List(CompositeData { elements_type: types, values: vec![] });
+            }
+            let mut out = Vec::with_capacity(data.values.len() - 1);
+            for i in 0..data.values.len() - 1 {
+                out.push(crate::helpers::value_ops::apply_binary_op(
+                    b, "sub", &data.values[i + 1], &data.values[i],
+                ));
+            }
+            let types = out.iter().map(|v| v.zinnia_type()).collect();
+            Value::List(CompositeData { elements_type: types, values: out })
+        }
+        _ => x.clone(),
+    }
+}
+
+/// Outer product of two 1-D composites: `result[i][j] = a[i] * b[j]`.
+pub fn np_outer(b: &mut IRBuilder, args: &[Value]) -> Value {
+    let a = match args.first() {
+        Some(v) => v,
+        None => return Value::None,
+    };
+    let bv = match args.get(1) {
+        Some(v) => v,
+        None => return Value::None,
+    };
+    // Flatten inputs to 1-D (numpy.outer flattens automatically).
+    let a_flat = crate::helpers::composite::flatten_composite(a);
+    let b_flat = crate::helpers::composite::flatten_composite(bv);
+    let mut rows = Vec::with_capacity(a_flat.len());
+    for ai in &a_flat {
+        let mut row = Vec::with_capacity(b_flat.len());
+        for bj in &b_flat {
+            row.push(crate::helpers::value_ops::apply_binary_op(b, "mul", ai, bj));
+        }
+        let row_types = row.iter().map(|v| v.zinnia_type()).collect();
+        rows.push(Value::List(CompositeData { elements_type: row_types, values: row }));
+    }
+    let types = rows.iter().map(|v| v.zinnia_type()).collect();
+    Value::List(CompositeData { elements_type: types, values: rows })
+}
+
 pub fn np_arange(b: &mut IRBuilder, args: &[Value]) -> Value {
     builtin_range(b, args)
 }

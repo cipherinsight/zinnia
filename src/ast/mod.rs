@@ -118,6 +118,11 @@ pub struct ASTChipInput {
     pub name: String,
     #[serde(default)]
     pub annotation: Option<ASTAnnotation>,
+    /// Default-value expression for this argument, used when a chip is
+    /// invoked without supplying this positional argument. ``None`` if the
+    /// argument has no default.
+    #[serde(default)]
+    pub default: Option<Box<ASTNode>>,
     #[serde(default)]
     pub dbg: Option<DebugInfo>,
 }

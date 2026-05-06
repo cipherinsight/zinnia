@@ -176,7 +176,12 @@ class ZKCircuit:
 
 
 def zk_circuit(method, config: ZinniaConfig = ZinniaConfig()):
-    source_code = inspect.getsource(method)
+    from zinnia.compile.module_constants import (
+        extract_module_constants, substitute_module_constants,
+    )
+    raw_source = inspect.getsource(method)
+    module_consts = extract_module_constants(method)
+    source_code = substitute_module_constants(raw_source, module_consts)
     method_name = method.__name__
 
     def __zk_circuit_annotator_inner(*args, **kwargs):

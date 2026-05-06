@@ -25,7 +25,7 @@ from zinnia import ZKCircuit, ZinniaConfig
 
 config = ZinniaConfig(
     backend=ZinniaConfig.BACKEND_HALO2,
-    recursion_limit=100,
+    recursion_limit=16,
     loop_limit=1000,
     enable_memory_consistency=False,
 )
@@ -38,7 +38,7 @@ circuit = ZKCircuit.from_method(my_func, config=config)
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `backend` | `str` | `BACKEND_HALO2` | Target proof system backend. |
-| `recursion_limit` | `int` | `100` | Maximum recursion depth for chip calls. |
+| `recursion_limit` | `int` | `16` | Maximum recursion depth for chip calls. Exceeding this raises `RecursionLimitExceededError` at compile time. |
 | `loop_limit` | `int` | `1000` | Maximum number of loop iterations. |
 | `mock_config` | `MockExecConfig` | `MockExecConfig()` | Settings for mock execution. |
 | `optimization_config` | `OptimizationConfig` | `OptimizationConfig()` | Compiler optimization passes. |
@@ -51,7 +51,7 @@ With no arguments, `ZinniaConfig()` uses all defaults:
 ```python
 config = ZinniaConfig()
 # backend = "halo2"
-# recursion_limit = 100
+# recursion_limit = 16
 # loop_limit = 1000
 # mock_config = MockExecConfig(float_tolerance=1e-6)
 # optimization_config = OptimizationConfig(all passes enabled)
@@ -94,8 +94,12 @@ config = ZinniaConfig(
 ```
 
 - **`recursion_limit`** -- Maximum depth of recursive chip calls. If a chip calls itself
-  (or a chain of chips recurses), the compiler stops unrolling at this depth. Must be a
-  positive integer.
+  (or a chain of chips recurses), the compiler raises `RecursionLimitExceededError`
+  at this depth, naming the offending chip. The default (16) is intentionally small:
+  a branching recursion such as `fibo(n-1) + fibo(n-2)` produces `2**depth` unrolled
+  calls, so a too-large limit silently hangs the compiler. Raise this explicitly only
+  when you have a single-call recursion that needs deeper bounded unrolling.
+  Must be a positive integer.
 - **`loop_limit`** -- Maximum number of iterations for any single loop. The compiler
   statically unrolls loops up to this bound. Must be a positive integer.
 
