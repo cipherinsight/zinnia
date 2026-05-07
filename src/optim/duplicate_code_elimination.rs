@@ -12,10 +12,22 @@ pub struct DuplicateCodeElimination;
 impl IRPass for DuplicateCodeElimination {
     fn exec(&self, ir_graph: IRGraph) -> IRGraph {
         // Phase 1: identify duplicates
+        //
+        // `ReadMemory` and `WriteMemory` carry order dependence and must
+        // not be deduplicated — two `ReadMemory` ops at the same address
+        // are NOT equivalent if a `WriteMemory` to that segment happened
+        // in between (read-after-write hazard exposed by P3 segarr-write
+        // paths). Other fixed ops (e.g. ReadInteger reading a fixed input
+        // path, Assert) remain dedupable: they're either pure-input or
+        // are kept by `is_fixed` from being eliminated entirely.
         let mut to_be_replaced: HashMap<StmtId, StmtId> = HashMap::new();
         let mut seen: Vec<(IR, Vec<StmtId>, StmtId)> = Vec::new();
 
         for stmt in &ir_graph.stmts {
+            if matches!(stmt.ir, IR::ReadMemory { .. } | IR::WriteMemory { .. }) {
+                // Memory ops never dedupe — order matters.
+                continue;
+            }
             let mut existing = None;
             for (ir, args, id) in &seen {
                 if *ir == stmt.ir && *args == stmt.arguments {

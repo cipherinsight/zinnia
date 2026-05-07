@@ -540,7 +540,21 @@ impl IRGenerator {
                 self.list_method_clear(var)
             }
             (Some(var), "copy") if self.ctx.exists(var) => {
-                self.ctx.get(var).unwrap_or(Value::None)
+                let v = self.ctx.get(var).unwrap_or(Value::None);
+                // For Value::StaticArray, .copy() must clone the underlying
+                // segment so subsequent mutations don't alias back to the
+                // source. Without this, P3 segment-shared writes would
+                // mutate both the original and the copy.
+                if let Value::StaticArray { .. } = &v {
+                    let lst = crate::helpers::static_array::to_value_list(&mut self.builder, &v);
+                    if let Some(sa) = crate::helpers::static_array::to_static_array(&mut self.builder, &lst) {
+                        sa
+                    } else {
+                        lst
+                    }
+                } else {
+                    v
+                }
             }
             (Some(var), "reverse") if self.ctx.exists(var) => {
                 self.list_method_reverse(var)

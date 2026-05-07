@@ -745,6 +745,27 @@ impl IRGenerator {
             }
             ASTNode::ASTSubscriptAssignTarget(t) => {
                 // Subscript assignment: e.g. array[0, 1] = value or lst[0] = value
+                // P3 segarr-write-paths: chained subscript writes
+                // (`a[i][j] = v`) parse as a nested ASTSubscriptExp target.
+                // For StaticArray, the inner subscript yields a view sharing
+                // the underlying segment, so a setitem into the view writes
+                // through to the source segment. No rebind needed.
+                if let ASTNode::ASTSubscriptExp(_) = &*t.target {
+                    let inner_val = self.visit(&t.target);
+                    let indices = self.eval_slice_indices(&t.slicing);
+                    if let Value::StaticArray { .. } = &inner_val {
+                        let has_new_axis = indices.iter().any(|i| matches!(i, crate::types::SliceIndex::NewAxis));
+                        if !has_new_axis {
+                            crate::helpers::static_array_write::static_array_setitem(
+                                &mut self.builder, &inner_val, &indices, &value,
+                            );
+                            return;
+                        }
+                    }
+                    // Fall through to legacy chained-subscript handling
+                    // (which is currently a no-op for non-StaticArray
+                    // chains). This preserves prior behaviour.
+                }
                 // Get the variable name from target
                 if let ASTNode::ASTLoad(load) = &*t.target {
                     let var_name = &load.name;
@@ -754,15 +775,29 @@ impl IRGenerator {
                         if matches!(&current, Value::Tuple(_)) {
                             panic!("'tuple' object does not support item assignment");
                         }
-                        // P1 segarr boundary: setitem stays on legacy path
-                        // (write paths are P3). Materialise StaticArray to a
-                        // nested List and treat the binding as the legacy
-                        // representation from now on.
-                        let current = if matches!(&current, Value::StaticArray { .. }) {
-                            crate::helpers::static_array::to_value_list(&mut self.builder, &current)
-                        } else {
-                            current
-                        };
+                        // P3 segarr-write-paths: native StaticArray writes
+                        // run through `static_array_write::static_array_setitem`,
+                        // emitting a single `ir_write_memory` per cell instead
+                        // of the legacy O(N) mux chain. Element / multi-dim /
+                        // slice / chained-view writes all land here.
+                        if let Value::StaticArray { .. } = &current {
+                            // NewAxis on a setitem target is rare; defer to
+                            // legacy via materialisation.
+                            let has_new_axis = indices.iter().any(|i| matches!(i, crate::types::SliceIndex::NewAxis));
+                            if !has_new_axis {
+                                let updated = crate::helpers::static_array_write::static_array_setitem(
+                                    &mut self.builder, &current, &indices, &value,
+                                );
+                                self.ctx.set(var_name, updated);
+                                return;
+                            }
+                            // NewAxis fallback path: materialise then run
+                            // legacy.
+                            let current = crate::helpers::static_array::to_value_list(&mut self.builder, &current);
+                            let updated = self.set_nested_value(current, &indices, value);
+                            self.ctx.set(var_name, updated);
+                            return;
+                        }
                         let updated = if let Value::DynamicNDArray(d) = &current {
                             // Check for boolean mask assignment: dyn[mask] = x
                             if indices.len() == 1 {
