@@ -1,0 +1,1448 @@
+operators:
+  add:
+    kind: binary
+    spellings: ["+", "np.add"]
+    modes: ["static", "dynamic", "mixed"]
+    dtypes: ["int"]
+    shapes:
+      - id: same_1d
+        lhs: [3]
+        rhs: [3]
+      - id: scalar_rhs
+        lhs: [2, 3]
+        rhs: scalar
+      - id: lower_rank_rhs
+        lhs: [2, 3]
+        rhs: [3]
+      - id: singleton_axes
+        lhs: [3, 1]
+        rhs: [1, 4]
+    expected: pass
+    tags: ["broadcast", "elementwise"]
+
+  subtract:
+    kind: binary
+    spellings: ["-", "np.subtract"]
+    modes: ["static", "dynamic", "mixed"]
+    dtypes: ["int"]
+    shapes:
+      - id: same_1d
+        lhs: [3]
+        rhs: [3]
+      - id: scalar_rhs
+        lhs: [2, 3]
+        rhs: scalar
+    expected: pass
+    tags: ["broadcast", "elementwise"]
+
+  multiply:
+    kind: binary
+    spellings: ["*", "np.multiply"]
+    modes: ["static", "dynamic", "mixed"]
+    dtypes: ["int"]
+    shapes:
+      - id: same_1d
+        lhs: [3]
+        rhs: [3]
+      - id: singleton_axes
+        lhs: [3, 1]
+        rhs: [1, 4]
+    expected: pass
+    tags: ["broadcast", "elementwise"]
+
+  divide:
+    kind: binary
+    spellings: ["/"]
+    modes: ["static", "dynamic"]
+    dtypes: ["int"]
+    shapes:
+      - id: same_1d_exact
+        lhs: [3]
+        rhs: [3]
+    expected: pass
+    tags: ["elementwise"]
+
+  comparisons:
+    kind: binary
+    spellings: ["==", "!=", "<", "<=", ">", ">=", "np.equal", "np.less"]
+    modes: ["static", "dynamic", "mixed"]
+    dtypes: ["int"]
+    shapes:
+      - id: same_1d
+        lhs: [4]
+        rhs: [4]
+      - id: scalar_rhs
+        lhs: [2, 3]
+        rhs: scalar
+    expected: pass
+    tags: ["comparison", "elementwise"]
+
+  comparisons_migration:
+    kind: binary
+    spellings: ["!=", "<"]
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: int_vs_float_less
+        spellings: ["<"]
+        lhs_value: [1, 2, 3]
+        rhs_value: [1.5, 2.5, 3.5]
+        rhs_dtype_override: float
+        replaces: "testing/operator/ndarray/test_ndarray_compare.py::test_ndarray_compare_different_dtype_1"
+      - id: int_vs_float_not_equal
+        spellings: ["!="]
+        lhs_value: [1, 2, 3]
+        rhs_value: [1.5, 2.5, 3.5]
+        rhs_dtype_override: float
+        replaces: "testing/operator/ndarray/test_ndarray_compare.py::test_ndarray_compare_different_dtype_2"
+      - id: int_vs_list_not_equal
+        spellings: ["!="]
+        lhs_value: [1, 2, 3]
+        rhs_literal: [1.5, 2.5, 3.5]
+        replaces: "testing/operator/ndarray/test_ndarray_compare.py::test_ndarray_compare_different_dtype_3"
+    expected: pass
+    tags: ["comparison", "migration"]
+
+  incompatible_broadcast:
+    kind: binary
+    spellings: ["+"]
+    modes: ["static", "dynamic"]
+    dtypes: ["int"]
+    shapes:
+      - id: incompatible_1d
+        lhs: [2]
+        rhs: [3]
+    expected: reject
+    tags: ["broadcast", "reject"]
+
+  asarray_invalid:
+    kind: constructor
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: ragged_nested
+        source_expr: "np.asarray([1, 2.3, [1, 2.3]])"
+        expected: reject
+        reason: "Ragged nested sequences should be rejected"
+        replaces: "testing/operator/ndarray/test_asarray.py::test_asarray_bad_array"
+    expected: reject
+    tags: ["constructor", "reject", "migration"]
+
+  indexing:
+    kind: indexing
+    modes: ["static", "dynamic"]
+    dtypes: ["int"]
+    shapes:
+      - id: positive_scalar
+        input: [3, 4]
+        index: "[1, 2]"
+      - id: negative_scalar
+        input: [3, 4]
+        index: "[-1, -2]"
+      - id: omitted_bounds_slice
+        input: [3, 4]
+        index: "[:, 1:]"
+      - id: negative_step
+        input: [5]
+        index: "[::-1]"
+      - id: multi_axis_slice_scalar
+        input: [3, 4]
+        index: "[1, :]"
+      - id: ellipsis
+        input: [2, 3, 4]
+        index: "[..., 1]"
+      - id: newaxis
+        input: [3]
+        index: "[None, :]"
+      - id: boolean_mask
+        input: [4]
+        index: "[np.asarray([True, False, True, False])]"
+      - id: integer_fancy
+        input: [4]
+        index: "[np.asarray([2, 0])]"
+    expected: pass
+    tags: ["indexing"]
+
+  indexing_migration:
+    kind: indexing
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: constants_grid_scalar
+        input_value: [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+        index: "[0, 0]"
+        replaces: "testing/operator/ndarray/test_get_item.py::test_get_single_item_by_constants"
+      - id: identity_scalar
+        input_expr: "np.identity(10)"
+        index: "[3, 3]"
+        replaces: "testing/operator/ndarray/test_get_item.py::test_get_single_item_by_non_constants"
+      - id: row_slice
+        input_value: [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+        index: "[1, :]"
+        replaces: "testing/operator/ndarray/test_get_item.py::test_get_item_by_slice"
+      - id: column_slice
+        input_value: [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+        index: "[:, 2]"
+        replaces: "testing/operator/ndarray/test_get_item.py::test_get_item_by_slice"
+    expected: pass
+    tags: ["indexing", "migration"]
+
+  dynamic_paired_fancy_indexing:
+    kind: indexing
+    modes: ["dynamic"]
+    dtypes: ["int"]
+    shapes:
+      - id: paired_integer_arrays
+        input: [3, 4]
+        index: "[np.promote_to_dynamic(np.asarray([0, 2])), np.promote_to_dynamic(np.asarray([1, 3]))]"
+    expected: pass
+    tags: ["indexing"]
+
+  reshape:
+    kind: shape
+    spellings: ["method", "np.reshape"]
+    modes: ["static", "dynamic"]
+    dtypes: ["int"]
+    shapes:
+      - id: two_by_three_to_three_by_two
+        input: [2, 3]
+        newshape: [3, 2]
+      - id: infer_flat
+        input: [2, 3]
+        newshape: [-1]
+    expected: pass
+    tags: ["shape", "order-sensitive"]
+
+  transpose:
+    kind: shape
+    spellings: [".T", "np.transpose", "method"]
+    modes: ["static", "dynamic"]
+    dtypes: ["int"]
+    shapes:
+      - id: two_dim
+        input: [2, 3]
+      - id: three_dim
+        input: [2, 3, 4]
+    expected: pass
+    tags: ["shape", "order-sensitive"]
+
+  transpose_migration:
+    kind: shape
+    spellings: [".T", "method"]
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: one_dim_T
+        family: transpose
+        input_value: [1, 2, 3, 4, 5, 6]
+        replaces: "testing/operator/ndarray/test_T_transpose.py::test_T_1_dim"
+      - id: two_dim_T
+        family: transpose
+        input_value: [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+        replaces: "testing/operator/ndarray/test_T_transpose.py::test_T_2_dim"
+      - id: three_dim_T
+        family: transpose
+        input_value:
+          - [[1, 2], [3, 4]]
+          - [[5, 6], [7, 8]]
+          - [[9, 10], [11, 12]]
+        replaces: "testing/operator/ndarray/test_T_transpose.py::test_T_3_dim"
+      - id: three_dim_axes_identity
+        family: transpose
+        input_value:
+          - [[1, 2], [3, 4]]
+          - [[5, 6], [7, 8]]
+        axes: [0, 1, 2]
+        replaces: "testing/operator/ndarray/test_T_transpose.py::test_transpose_3_dim_axes_specified"
+      - id: three_dim_axes_reversed
+        family: transpose
+        input_value:
+          - [[1, 2], [3, 4]]
+          - [[5, 6], [7, 8]]
+        axes: [2, 1, 0]
+        replaces: "testing/operator/ndarray/test_T_transpose.py::test_transpose_3_dim_axes_specified"
+      - id: three_dim_negative_axes
+        family: transpose
+        input_value:
+          - [[1, 2], [3, 4]]
+          - [[5, 6], [7, 8]]
+        axes: [-1, -3, -2]
+        replaces: "testing/operator/ndarray/test_T_transpose.py::test_transpose_negative_axes"
+    expected: pass
+    tags: ["shape", "migration"]
+
+  transpose_invalid_axes:
+    kind: shape
+    spellings: ["method"]
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: duplicate_axes
+        family: transpose
+        input_value:
+          - [[1, 2], [3, 4]]
+          - [[5, 6], [7, 8]]
+        axes: [2, 2, 2]
+        expected: reject
+        reason: "Transpose axes must form a permutation"
+        replaces: "testing/operator/ndarray/test_T_transpose.py::test_transpose_3_dim_axes_specified_error"
+      - id: too_many_axes
+        family: transpose
+        input_value:
+          - [[1, 2], [3, 4]]
+          - [[5, 6], [7, 8]]
+        axes: [0, 1, 2, 3]
+        expected: reject
+        reason: "Transpose axes length must match rank"
+        replaces: "testing/operator/ndarray/test_T_transpose.py::test_transpose_3_dim_axes_specified_error"
+      - id: invalid_axis_value
+        family: transpose
+        input_value:
+          - [[1, 2], [3, 4]]
+          - [[5, 6], [7, 8]]
+        axes: [5, 6, 7]
+        expected: reject
+        reason: "Transpose axis values must be within bounds"
+        replaces: "testing/operator/ndarray/test_T_transpose.py::test_transpose_3_dim_axes_specified_error"
+    expected: reject
+    tags: ["shape", "reject", "migration"]
+
+  expand_dims:
+    kind: shape
+    spellings: ["np.expand_dims"]
+    modes: ["static", "dynamic"]
+    dtypes: ["int"]
+    shapes:
+      - id: front
+        input: [3]
+        axis: 0
+      - id: back
+        input: [3]
+        axis: -1
+    expected: pass
+    tags: ["shape"]
+
+  squeeze:
+    kind: shape
+    spellings: ["np.squeeze"]
+    modes: ["static", "dynamic"]
+    dtypes: ["int"]
+    shapes:
+      - id: all
+        input: [1, 3, 1]
+      - id: axis
+        input: [1, 3, 1]
+        axis: 0
+    expected: pass
+    tags: ["shape"]
+
+  reductions:
+    kind: reduction
+    spellings: ["sum", "max", "min", "any", "all", "argmax", "argmin"]
+    modes: ["static", "dynamic"]
+    dtypes: ["int", "bool"]
+    shapes:
+      - id: axis_none
+        input: [2, 3]
+        axis: null
+      - id: axis_positive
+        input: [2, 3]
+        axis: 1
+      - id: axis_negative
+        input: [2, 3]
+        axis: -1
+    expected: pass
+    tags: ["reduction"]
+
+  sum_migration:
+    kind: reduction
+    spellings: ["sum"]
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: sum_vector
+        input_value: [1, 2, 3, 4, 5]
+        axis: null
+        replaces: "testing/operator/ndarray/test_sum.py::test_sum"
+      - id: sum_matrix_axis0
+        input_value: [[1, 2, 3], [4, 5, 6]]
+        axis: 0
+        assertion_mode: tolist
+        replaces: "testing/operator/ndarray/test_sum.py::test_sum_over_axis"
+      - id: sum_matrix_axis1
+        input_value: [[1, 2, 3], [4, 5, 6]]
+        axis: 1
+        assertion_mode: tolist
+        replaces: "testing/operator/ndarray/test_sum.py::test_sum_over_axis"
+      - id: sum_matrix_axis_none
+        input_value: [[1, 2, 3], [4, 5, 6]]
+        axis: null
+        replaces: "testing/operator/ndarray/test_sum.py::test_sum_over_axis_default"
+    expected: pass
+    tags: ["reduction", "migration"]
+
+  any_migration:
+    kind: reduction
+    spellings: ["any"]
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: any_bool_true
+        input_value: [True, True, True, False, False]
+        axis: null
+        dtype_override: bool
+        replaces: "testing/operator/ndarray/test_any_all.py::test_any_2"
+      - id: any_axis0
+        input_value: [[True, False, True], [True, False, False]]
+        axis: 0
+        dtype_override: bool
+        assertion_mode: tolist
+        replaces: "testing/operator/ndarray/test_any_all.py::test_any_with_axis_2"
+    expected: pass
+    tags: ["reduction", "migration"]
+
+  all_migration:
+    kind: reduction
+    spellings: ["all"]
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: all_bool_false
+        input_value: [True, True, True, False, False]
+        axis: null
+        dtype_override: bool
+        replaces: "testing/operator/ndarray/test_any_all.py::test_all_2"
+      - id: all_axis1
+        input_value: [[True, False, True], [True, False, False]]
+        axis: 1
+        dtype_override: bool
+        assertion_mode: tolist
+        replaces: "testing/operator/ndarray/test_any_all.py::test_all_with_axis_2"
+    expected: pass
+    tags: ["reduction", "migration"]
+
+  argmax_migration:
+    kind: reduction
+    spellings: ["argmax"]
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: argmax_vector
+        input_value: [1, 2, 3, 4, 5]
+        axis: null
+        replaces: "testing/operator/ndarray/test_argmax_argmin.py::test_argmax"
+      - id: argmax_axis0
+        input_value: [[1, 2, 3], [4, 5, 6]]
+        axis: 0
+        assertion_mode: tolist
+        replaces: "testing/operator/ndarray/test_argmax_argmin.py::test_argmax_with_axis"
+      - id: argmax_axis_none
+        input_value: [[1, 2, 3], [4, 5, 6]]
+        axis: null
+        replaces: "testing/operator/ndarray/test_argmax_argmin.py::test_argmax_with_multidim_array"
+    expected: pass
+    tags: ["reduction", "migration"]
+
+  argmin_migration:
+    kind: reduction
+    spellings: ["argmin"]
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: argmin_vector
+        input_value: [1, 2, 3, 4, 5]
+        axis: null
+        replaces: "testing/operator/ndarray/test_argmax_argmin.py::test_argmin"
+      - id: argmin_axis1
+        input_value: [[1, 2, 3], [4, 5, 6]]
+        axis: 1
+        assertion_mode: tolist
+        replaces: "testing/operator/ndarray/test_argmax_argmin.py::test_argmin_with_axis"
+      - id: argmin_axis_none
+        input_value: [[1, 2, 3], [4, 5, 6]]
+        axis: null
+        replaces: "testing/operator/ndarray/test_argmax_argmin.py::test_argmin_with_multidim_array"
+    expected: pass
+    tags: ["reduction", "migration"]
+
+  mutation:
+    kind: mutation
+    modes: ["static", "dynamic"]
+    dtypes: ["int"]
+    shapes:
+      - id: scalar_setitem
+        input: [3, 3]
+        target: "[1, 2]"
+        value: 77
+      - id: slice_setitem
+        input: [3, 3]
+        target: "[1, :]"
+        value: [20, 21, 22]
+      - id: rhs_scalar_broadcast
+        input: [3, 3]
+        target: "[:, 1]"
+        value: 9
+    expected: pass
+    tags: ["mutation"]
+
+  mutation_migration:
+    kind: mutation
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: constants_grid_build
+        input_expr: "np.zeros((3, 3), dtype=int)"
+        target: "[0, 0]"
+        value: 1
+        replaces: "testing/operator/ndarray/test_set_item.py::test_set_single_item_by_constants_1"
+      - id: variable_single_item
+        input_expr: "np.zeros((4, 4), dtype=int)"
+        target: "[2, 1]"
+        value: 1
+        replaces: "testing/operator/ndarray/test_set_item.py::test_set_single_item_by_variable"
+      - id: slice_assign_row
+        input_expr: "np.zeros((3, 3), dtype=int)"
+        target: "[1, :]"
+        value: [4, 5, 6]
+        replaces: "testing/operator/ndarray/test_set_item.py::test_set_item_by_slice"
+      - id: int_dtype_slice_from_float
+        input_expr: "np.zeros((3, 3), dtype=int)"
+        target: "[0, :]"
+        value: [1.2, 2.1, 3.0]
+        assert_dtype: int
+        replaces: "testing/operator/ndarray/test_set_item.py::test_set_item_by_different_dtype_1"
+      - id: float_dtype_slice_from_int
+        input_expr: "np.zeros((3, 3), dtype=float)"
+        target: "[0, :]"
+        value: [1, 2, 3]
+        assert_dtype: float
+        replaces: "testing/operator/ndarray/test_set_item.py::test_set_item_by_different_dtype_2"
+      - id: int_dtype_scalar_from_float
+        input_expr: "np.zeros((3, 3), dtype=int)"
+        target: "[1, 1]"
+        value: 3.3
+        assert_dtype: int
+        replaces: "testing/operator/ndarray/test_set_item.py::test_set_single_item_by_different_dtype_1"
+      - id: float_dtype_scalar_from_int
+        input_expr: "np.zeros((3, 3), dtype=float)"
+        target: "[1, 1]"
+        value: 3
+        assert_dtype: float
+        replaces: "testing/operator/ndarray/test_set_item.py::test_set_single_item_by_different_dtype_2"
+      - id: row_scalar_broadcast
+        input_expr: "np.zeros((3, 3), dtype=int)"
+        target: "[0, :]"
+        value: 1
+        replaces: "testing/operator/ndarray/test_set_item.py::test_set_item_by_broadcasting"
+      - id: skipped_nested_view_write
+        input_expr: "np.zeros((3, 3), dtype=int)"
+        target: "[0][0]"
+        value: 1
+        expected: xfail
+        reason: "Nested NDArrayView setitem is still a known limitation"
+        replaces: "testing/operator/ndarray/test_set_item.py::test_set_single_item_by_constants_2"
+    expected: pass
+    tags: ["mutation", "migration"]
+
+  dynamic_mutation_migration:
+    kind: mutation
+    modes: ["dynamic"]
+    dtypes: ["int"]
+    shapes:
+      - id: dynamic_row_full_slice_write
+        input_expr: "np.zeros((4, 4), dtype=int)"
+        target: "[np.promote_to_dynamic(np.asarray([2])).sum(), :]"
+        value: [1, 2, 3, 4]
+        replaces: "testing/operator/ndarray/test_set_item_dynamic.py::test_dynamic_row_full_slice_write"
+      - id: dynamic_row_scalar_broadcast
+        input_expr: "np.zeros((4, 4), dtype=int)"
+        target: "[np.promote_to_dynamic(np.asarray([2])).sum(), :]"
+        value: 7
+        replaces: "testing/operator/ndarray/test_set_item_dynamic.py::test_dynamic_row_full_slice_scalar_broadcast"
+      - id: dynamic_row_partial_slice
+        input_expr: "np.zeros((4, 4), dtype=int)"
+        target: "[np.promote_to_dynamic(np.asarray([2])).sum(), 1:3]"
+        value: [9, 8]
+        replaces: "testing/operator/ndarray/test_set_item_dynamic.py::test_dynamic_row_partial_slice_write"
+      - id: dynamic_row_dynamic_col
+        input_expr: "np.zeros((4, 4), dtype=int)"
+        target: "[np.promote_to_dynamic(np.asarray([2])).sum(), np.promote_to_dynamic(np.asarray([1])).sum()]"
+        value: 42
+        replaces: "testing/operator/ndarray/test_set_item_dynamic.py::test_dynamic_row_dynamic_col_still_works"
+    expected: pass
+    tags: ["mutation", "migration", "dynamic-index"]
+
+  dynamic_index_setitem:
+    kind: mutation
+    modes: ["dynamic"]
+    dtypes: ["int"]
+    shapes:
+      - id: dynamic_scalar_index
+        input: [3, 3]
+        target: "[np.promote_to_dynamic(np.asarray([1])).sum(), 2]"
+        value: 77
+    expected: pass
+    tags: ["mutation", "dynamic-index"]
+
+  linspace_migration:
+    kind: linspace
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: simple_float_endpoint
+        start: 0
+        stop: 1
+        num: 9
+        dtype: float
+        endpoint: true
+        assertion_mode: tolist
+        replaces: "testing/operator/ndarray/test_linspace.py::test_simple_linspace"
+      - id: simple_int_no_endpoint
+        start: 0
+        stop: 10
+        num: 10
+        dtype: int
+        endpoint: false
+        assertion_mode: tolist
+        replaces: "testing/operator/ndarray/test_linspace.py::test_simple_linspace"
+      - id: complex_axis_2
+        start: [[0, 0], [0, 0]]
+        stop: 1
+        num: 11
+        axis: 2
+        dtype: float
+        endpoint: true
+        assertion_mode: tolist
+        replaces: "testing/operator/ndarray/test_linspace.py::test_complex_linspace"
+      - id: complex_axis_1
+        start: [[0, 0], [0, 0]]
+        stop: 1
+        num: 10
+        axis: 1
+        dtype: float
+        endpoint: true
+        assertion_mode: tolist
+        replaces: "testing/operator/ndarray/test_linspace.py::test_complex_linspace"
+      - id: complex_axis_2_no_endpoint
+        start: [[0, 0], [0, 0]]
+        stop: 1
+        num: 9
+        axis: 2
+        dtype: float
+        endpoint: false
+        assertion_mode: tolist
+        replaces: "testing/operator/ndarray/test_linspace.py::test_complex_linspace"
+    expected: pass
+    tags: ["constructor", "migration"]
+
+  asarray:
+    kind: constructor
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: one_dim_int
+        value: [1, 2]
+        assert_dtype: int
+        replaces: "testing/operator/ndarray/test_asarray.py::test_asarray_1"
+      - id: nested_three_by_two_by_two
+        value:
+          - [[1, 2], [3, 4]]
+          - [[5, 6], [7, 8]]
+          - [[9, 10], [11, 12]]
+        replaces: "testing/operator/ndarray/test_asarray.py::test_asarray_2"
+      - id: nested_mixed_sequence
+        value:
+          - [[1, 2], [1, 2]]
+          - [[1, 2], [1, 2]]
+          - [[1, 2], [1, 2]]
+        replaces: "testing/operator/ndarray/test_asarray.py::test_asarray_3"
+      - id: dtype_inference_int
+        value: [1, 2]
+        assert_dtype: int
+        replaces: "testing/operator/ndarray/test_asarray.py::test_asarray_dtype_inference_1"
+      - id: dtype_inference_float
+        value: [1, 2.3]
+        assert_dtype: float
+        replaces: "testing/operator/ndarray/test_asarray.py::test_asarray_dtype_inference_2"
+      - id: from_ndarray
+        source_expr: "np.asarray(np.asarray([1, 2.3]))"
+        assert_dtype: float
+        replaces: "testing/operator/ndarray/test_asarray.py::test_asarray_from_ndarray"
+      - id: dtype_int_truncates_float
+        value: [1.5, 2.5]
+        dtype: int
+        assert_dtype: int
+        replaces: "testing/operator/ndarray/test_asarray.py::test_asarray_with_dtype"
+    expected: pass
+    tags: ["constructor", "migration"]
+
+  arange:
+    kind: constructor
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: stop
+        args: [10]
+        replaces: "testing/operator/ndarray/test_arange.py::test_simple_arange_1"
+      - id: start_stop_step
+        args: [0, 10, 2]
+        replaces: "testing/operator/ndarray/test_arange.py::test_simple_arange_2"
+      - id: float_dtype
+        args: [0, 10, 2]
+        dtype: float
+        assertion_mode: tolist
+        replaces: "testing/operator/ndarray/test_arange.py::test_simple_arange_3"
+      - id: int_dtype_fractional_step
+        args: [0, 1, 0.5]
+        dtype: int
+        assertion_mode: tolist
+        replaces: "testing/operator/ndarray/test_arange.py::test_simple_arange_4"
+    expected: pass
+    tags: ["constructor", "migration"]
+
+  astype:
+    kind: unary
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: int_to_float
+        value: [1, 2]
+        input_dtype: int
+        to: float
+        assert_dtype: float
+        replaces: "testing/operator/ndarray/test_astype.py::test_astype_1"
+      - id: float_to_float
+        value: [1.5, 2.5]
+        input_dtype: float
+        to: float
+        assert_dtype: float
+        replaces: "testing/operator/ndarray/test_astype.py::test_astype_2"
+      - id: float_to_int
+        value: [1.5, 2.5]
+        input_dtype: float
+        to: int
+        assert_dtype: int
+        replaces: "testing/operator/ndarray/test_astype.py::test_astype_3"
+    expected: pass
+    tags: ["dtype", "migration"]
+
+  tolist:
+    kind: unary
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: zeros_two_by_two
+        input_expr: "np.zeros((2, 2), int)"
+        replaces: "testing/operator/ndarray/test_tolist.py::test_to_list_1"
+      - id: identity_three
+        input_expr: "np.identity(3, int)"
+        replaces: "testing/operator/ndarray/test_tolist.py::test_to_list_2"
+    expected: pass
+    tags: ["conversion", "migration"]
+
+  concatenate_invalid_axis:
+    kind: join
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: axis_too_negative
+        inputs: [[2, 2], [2, 2]]
+        input_dtypes: ["int", "int"]
+        axis: -3
+        expected: reject
+        reason: "Concatenate axis below lower bound should be rejected"
+        replaces: "testing/operator/ndarray/test_concatenate.py::test_concat_invalid_axis"
+      - id: axis_too_positive
+        inputs: [[2, 2], [2, 2]]
+        input_dtypes: ["int", "int"]
+        axis: 2
+        expected: reject
+        reason: "Concatenate axis above upper bound should be rejected"
+        replaces: "testing/operator/ndarray/test_concatenate.py::test_concat_invalid_axis"
+    expected: reject
+    tags: ["join", "reject", "migration"]
+
+  concatenate:
+    kind: join
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: axis_zero
+        inputs: [[2, 2], [2, 2]]
+        input_dtypes: ["int", "int"]
+        axis: 0
+        replaces: "testing/operator/ndarray/test_concatenate.py::test_concat"
+      - id: axis_one
+        inputs: [[2, 2], [2, 2]]
+        input_dtypes: ["int", "int"]
+        axis: 1
+        replaces: "testing/operator/ndarray/test_concatenate.py::test_concat"
+      - id: dtype_promotion
+        inputs: [[2, 2], [2, 2]]
+        input_dtypes: ["int", "float"]
+        axis: 0
+        replaces: "testing/operator/ndarray/test_concatenate.py::test_concat_different_type"
+    expected: pass
+    tags: ["join", "migration"]
+
+  stack_invalid_axis:
+    kind: join
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: axis_too_positive
+        inputs: [[3], [3]]
+        input_dtypes: ["int", "int"]
+        axis: 2
+        expected: reject
+        reason: "Stack axis above upper bound should be rejected"
+        replaces: "testing/operator/ndarray/test_stack.py::test_stack_axis_out_of_bound"
+      - id: axis_too_negative
+        inputs: [[3], [3]]
+        input_dtypes: ["int", "int"]
+        axis: -3
+        expected: reject
+        reason: "Stack axis below lower bound should be rejected"
+        replaces: "testing/operator/ndarray/test_stack.py::test_stack_axis_out_of_bound"
+    expected: reject
+    tags: ["join", "reject", "migration"]
+
+  stack:
+    kind: join
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: axis_zero
+        inputs: [[3], [3]]
+        input_dtypes: ["int", "int"]
+        axis: 0
+        replaces: "testing/operator/ndarray/test_stack.py::test_stack"
+      - id: axis_one
+        inputs: [[3], [3]]
+        input_dtypes: ["int", "int"]
+        axis: 1
+        replaces: "testing/operator/ndarray/test_stack.py::test_stack"
+      - id: dtype_promotion_axis_zero
+        inputs: [[3], [3]]
+        input_dtypes: ["int", "float"]
+        axis: 0
+        replaces: "testing/operator/ndarray/test_stack.py::test_stack_different_type"
+      - id: dtype_promotion_axis_one
+        inputs: [[3], [3]]
+        input_dtypes: ["int", "float"]
+        axis: 1
+        replaces: "testing/operator/ndarray/test_stack.py::test_stack_different_type"
+    expected: pass
+    tags: ["join", "migration"]
+
+  slice_extras_migration:
+    kind: indexing
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: ellipsis_last_column
+        input_value: [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+        index: "[..., -1]"
+        replaces: "testing/operator/ndarray/test_slice_extras.py::test_ellipsis_picks_last_column"
+      - id: ellipsis_first_row
+        input_value: [[1, 2, 3], [4, 5, 6]]
+        index: "[0, ...]"
+        replaces: "testing/operator/ndarray/test_slice_extras.py::test_ellipsis_picks_first_row"
+      - id: ellipsis_full_array
+        input_value: [[1, 2], [3, 4]]
+        index: "[...]"
+        replaces: "testing/operator/ndarray/test_slice_extras.py::test_ellipsis_alone_is_full_array"
+      - id: ellipsis_three_dim_middle
+        input_value:
+          - [[1, 2], [3, 4]]
+          - [[5, 6], [7, 8]]
+        index: "[1, ..., 0]"
+        replaces: "testing/operator/ndarray/test_slice_extras.py::test_ellipsis_three_dim_middle"
+      - id: newaxis_front
+        input_value: [1, 2, 3]
+        index: "[None, :]"
+        replaces: "testing/operator/ndarray/test_slice_extras.py::test_newaxis_at_front"
+      - id: newaxis_back
+        input_value: [1, 2, 3]
+        index: "[:, None]"
+        replaces: "testing/operator/ndarray/test_slice_extras.py::test_newaxis_at_back"
+      - id: newaxis_attribute_front
+        input_value: [1, 2, 3]
+        index: "[np.newaxis, :]"
+        replaces: "testing/operator/ndarray/test_slice_extras.py::test_newaxis_via_np_newaxis_attribute"
+      - id: newaxis_two_dim
+        input_value: [[1, 2], [3, 4]]
+        index: "[:, None, :]"
+        replaces: "testing/operator/ndarray/test_slice_extras.py::test_newaxis_two_dim"
+      - id: newaxis_then_ellipsis
+        input_value: [[1, 2], [3, 4]]
+        index: "[None, ...]"
+        replaces: "testing/operator/ndarray/test_slice_extras.py::test_newaxis_then_ellipsis"
+    expected: pass
+    tags: ["indexing", "migration"]
+
+  advanced_indexing_migration:
+    kind: indexing
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: boolean_mask_1d
+        input_value: [10, 20, 30, 40, 50]
+        index: "[np.asarray([True, False, True, False, True])]"
+        replaces: "testing/operator/ndarray/test_advanced_indexing.py::test_boolean_mask_1d"
+      - id: boolean_mask_2d_full_shape
+        input_value: [[1, 2, 3], [4, 5, 6]]
+        index: "[np.asarray([[True, False, True], [False, True, False]])]"
+        replaces: "testing/operator/ndarray/test_advanced_indexing.py::test_boolean_mask_2d_full_shape"
+      - id: boolean_mask_all_false
+        input_value: [1, 2, 3]
+        index: "[np.asarray([False, False, False])]"
+        replaces: "testing/operator/ndarray/test_advanced_indexing.py::test_boolean_mask_all_false"
+      - id: fancy_index_1d
+        input_value: [10, 20, 30, 40, 50]
+        index: "[np.asarray([0, 2, 4])]"
+        replaces: "testing/operator/ndarray/test_advanced_indexing.py::test_fancy_index_1d"
+      - id: fancy_index_with_repeats
+        input_value: [100, 200, 300]
+        index: "[np.asarray([0, 0, 1, 2, 2, 2])]"
+        replaces: "testing/operator/ndarray/test_advanced_indexing.py::test_fancy_index_with_repeats"
+      - id: fancy_index_picks_rows
+        input_value: [[1, 2], [3, 4], [5, 6], [7, 8]]
+        index: "[np.asarray([0, 2])]"
+        replaces: "testing/operator/ndarray/test_advanced_indexing.py::test_fancy_index_picks_rows"
+      - id: fancy_index_negative
+        input_value: [10, 20, 30, 40]
+        index: "[np.asarray([-1, -2])]"
+        replaces: "testing/operator/ndarray/test_advanced_indexing.py::test_fancy_index_negative"
+      - id: fancy_index_2d_index_shape_preserved
+        input_value: [10, 20, 30, 40]
+        index: "[np.asarray([[0, 1], [2, 3]])]"
+        replaces: "testing/operator/ndarray/test_advanced_indexing.py::test_fancy_index_2d_index_shape_preserved"
+    expected: pass
+    tags: ["indexing", "migration"]
+
+  scenario_migration:
+    kind: scenario
+    modes: ["static", "dynamic"]
+    dtypes: ["int"]
+    shapes:
+      - id: static_newaxis_enables_outer_product
+        spellings: ["default"]
+        modes: ["static"]
+        rank_from: [3]
+        setup:
+          - "a = np.asarray([1, 2, 3])"
+          - "b = np.asarray([10, 20, 30, 40])"
+        source_expr: "a[:, None] * b[None, :]"
+        oracle_expr: "np.asarray([1, 2, 3])[:, None] * np.asarray([10, 20, 30, 40])[None, :]"
+        replaces: "testing/operator/ndarray/test_slice_extras.py::test_newaxis_enables_outer_product_via_broadcast"
+      - id: static_broadcast_then_sum
+        spellings: ["default"]
+        modes: ["static"]
+        rank_from: [2, 1]
+        setup:
+          - "col = np.asarray([[1], [2], [3]])"
+          - "row = np.asarray([[10, 20, 30, 40]])"
+        source_expr: "(col + row).sum()"
+        oracle_expr: "(np.asarray([[1], [2], [3]]) + np.asarray([[10, 20, 30, 40]])).sum()"
+        replaces: "testing/operator/ndarray/test_static_composition.py::test_broadcast_then_sum"
+      - id: static_slice_then_broadcast
+        spellings: ["default"]
+        modes: ["static"]
+        rank_from: [3, 4]
+        setup:
+          - "a = np.asarray([[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]])"
+          - "row = a[0, :]"
+          - "col = a[:, 0]"
+        source_expr: "col[:, None] * row[None, :]"
+        oracle_expr: "np.asarray([1, 5, 9])[:, None] * np.asarray([1, 2, 3, 4])[None, :]"
+        replaces: "testing/operator/ndarray/test_static_composition.py::test_slice_then_broadcast"
+      - id: static_newaxis_then_broadcast_then_sum
+        spellings: ["default"]
+        modes: ["static"]
+        rank_from: [4]
+        setup:
+          - "a = np.asarray([1, 2, 4, 7])"
+        source_expr: "(a[:, None] - a[None, :]).sum()"
+        oracle_expr: "(np.asarray([1, 2, 4, 7])[:, None] - np.asarray([1, 2, 4, 7])[None, :]).sum()"
+        replaces: "testing/operator/ndarray/test_static_composition.py::test_newaxis_then_broadcast_then_sum"
+      - id: static_transpose_then_broadcast
+        spellings: ["default"]
+        modes: ["static"]
+        rank_from: [2, 3]
+        setup:
+          - "a = np.asarray([[1, 2, 3], [4, 5, 6]])"
+          - "b = a.T"
+        source_expr: "b * np.asarray([10, 100])"
+        oracle_expr: "np.asarray([[1, 2, 3], [4, 5, 6]]).T * np.asarray([10, 100])"
+        replaces: "testing/operator/ndarray/test_static_composition.py::test_transpose_then_broadcast"
+      - id: static_ellipsis_then_arithmetic
+        spellings: ["default"]
+        modes: ["static"]
+        rank_from: [2, 2, 2]
+        setup:
+          - "a = np.asarray([[[1, 2], [3, 4]], [[5, 6], [7, 8]]])"
+        source_expr: "a[1, ..., 1] + 100"
+        oracle_expr: "np.asarray([[[1, 2], [3, 4]], [[5, 6], [7, 8]]])[1, ..., 1] + 100"
+        replaces: "testing/operator/ndarray/test_static_composition.py::test_ellipsis_then_arithmetic"
+      - id: static_fancy_index_then_broadcast
+        spellings: ["default"]
+        modes: ["static"]
+        rank_from: [4]
+        setup:
+          - "a = np.asarray([10, 20, 30, 40])"
+          - "idx = np.asarray([0, 2])"
+          - "picked = a[idx]"
+        source_expr: "picked + np.asarray([1, 2])"
+        oracle_expr: "np.asarray([10, 20, 30, 40])[np.asarray([0, 2])] + np.asarray([1, 2])"
+        replaces: "testing/operator/ndarray/test_static_composition.py::test_fancy_index_then_broadcast"
+      - id: static_boolean_mask_then_sum
+        spellings: ["default"]
+        modes: ["static"]
+        rank_from: [5]
+        setup:
+          - "a = np.asarray([1, 2, 3, 4, 5])"
+          - "mask = np.asarray([True, False, True, False, True])"
+        source_expr: "a[mask].sum()"
+        oracle_expr: "np.asarray([1, 2, 3, 4, 5])[np.asarray([True, False, True, False, True])].sum()"
+        replaces: "testing/operator/ndarray/test_static_composition.py::test_boolean_mask_then_sum"
+      - id: dynamic_filter_sum
+        spellings: ["default"]
+        modes: ["dynamic"]
+        rank_from: [5]
+        setup:
+          - "a = np.asarray([10, 20, 30, 40, 50])"
+          - "dyn_a = np.promote_to_dynamic(a)"
+          - "mask = np.asarray([True, False, True, False, True])"
+        source_expr: "dyn_a.filter(mask).sum()"
+        oracle_expr: "np.asarray([10, 20, 30, 40, 50])[np.asarray([True, False, True, False, True])].sum()"
+        replaces: "testing/operator/ndarray/test_dynamic_filter.py::test_dynamic_filter_sum"
+      - id: dynamic_filter_all_true
+        spellings: ["default"]
+        modes: ["dynamic"]
+        rank_from: [4]
+        setup:
+          - "a = np.asarray([1, 2, 3, 4])"
+          - "dyn_a = np.promote_to_dynamic(a)"
+          - "mask = np.asarray([True, True, True, True])"
+        source_expr: "dyn_a.filter(mask).sum()"
+        oracle_expr: "np.asarray([1, 2, 3, 4])[np.asarray([True, True, True, True])].sum()"
+        replaces: "testing/operator/ndarray/test_dynamic_filter.py::test_dynamic_filter_all_true"
+      - id: dynamic_filter_all_false
+        spellings: ["default"]
+        modes: ["dynamic"]
+        rank_from: [4]
+        setup:
+          - "a = np.asarray([1, 2, 3, 4])"
+          - "dyn_a = np.promote_to_dynamic(a)"
+          - "mask = np.asarray([False, False, False, False])"
+        source_expr: "dyn_a.filter(mask).sum()"
+        oracle_expr: "np.asarray([1, 2, 3, 4])[np.asarray([False, False, False, False])].sum()"
+        replaces: "testing/operator/ndarray/test_dynamic_filter.py::test_dynamic_filter_all_false"
+      - id: dynamic_row_full_slice_read
+        spellings: ["default"]
+        modes: ["static"]
+        rank_from: [4, 4]
+        circuit_args: ["x: int"]
+        arg_names: ["x"]
+        setup:
+          - "array = np.asarray([[10, 20, 30, 40], [50, 60, 70, 80], [90, 100, 110, 120], [130, 140, 150, 160]])"
+        source_expr: "array[x, :]"
+        oracle_expr: "np.asarray([[10, 20, 30, 40], [50, 60, 70, 80], [90, 100, 110, 120], [130, 140, 150, 160]])[x, :]"
+        prove_args: [0]
+        replaces: "testing/operator/ndarray/test_set_item_dynamic.py::test_dynamic_row_full_slice_read"
+      - id: dynamic_row_full_slice_read_then_compare
+        spellings: ["default"]
+        modes: ["static"]
+        rank_from: [4, 4]
+        circuit_args: ["x: int"]
+        arg_names: ["x"]
+        setup:
+          - "array = np.zeros((4, 4), dtype=int)"
+          - "array[x, :] = [1, 2, 3, 4]"
+        source_expr: "array"
+        oracle_expr: "(lambda arr: (arr.__setitem__((x, slice(None)), [1, 2, 3, 4]), arr)[1])(np.zeros((4, 4), dtype=int))"
+        prove_args: [0]
+        replaces: "testing/operator/ndarray/test_set_item_dynamic.py::test_dynamic_row_full_slice_read_then_compare"
+    expected: pass
+    tags: ["scenario", "migration", "composition"]
+
+  broadcasting_migration:
+    kind: scenario
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: scalar_plus_array
+        rank_from: [2, 3]
+        setup:
+          - "a = np.asarray([[1, 2, 3], [4, 5, 6]])"
+        source_expr: "a + 10"
+        replaces: "testing/operator/ndarray/test_broadcasting.py::test_scalar_plus_array"
+      - id: array_minus_scalar
+        rank_from: [4]
+        setup:
+          - "a = np.asarray([1, 2, 3, 4])"
+        source_expr: "a - 1"
+        replaces: "testing/operator/ndarray/test_broadcasting.py::test_array_minus_scalar"
+      - id: column_plus_row_outer
+        rank_from: [3, 1]
+        setup:
+          - "col = np.asarray([[1], [2], [3]])"
+          - "row = np.asarray([[10, 20, 30, 40]])"
+        source_expr: "col + row"
+        replaces: "testing/operator/ndarray/test_broadcasting.py::test_column_plus_row_outer"
+      - id: lower_rank_left_pads_with_ones
+        rank_from: [2, 3]
+        setup:
+          - "mat = np.asarray([[1, 2, 3], [4, 5, 6]])"
+          - "vec = np.asarray([10, 20, 30])"
+        source_expr: "mat + vec"
+        replaces: "testing/operator/ndarray/test_broadcasting.py::test_lower_rank_left_pads_with_ones"
+      - id: broadcast_three_dimensions
+        rank_from: [2, 1, 3]
+        setup:
+          - "a = np.asarray([[[1, 2, 3]], [[4, 5, 6]]])"
+          - "b = np.asarray([[[10], [20], [30], [40]]])"
+        source_expr: "a + b"
+        replaces: "testing/operator/ndarray/test_broadcasting.py::test_broadcast_three_dimensions"
+      - id: broadcast_multiplication
+        rank_from: [3, 1]
+        setup:
+          - "col = np.asarray([[2], [3], [5]])"
+          - "row = np.asarray([[1, 10, 100]])"
+        source_expr: "col * row"
+        replaces: "testing/operator/ndarray/test_broadcasting.py::test_broadcast_multiplication"
+      - id: broadcast_int_float_promotion
+        rank_from: [2, 1]
+        setup:
+          - "col = np.asarray([[1], [2]])"
+          - "row = np.asarray([[0.5, 1.5, 2.5]])"
+        source_expr: "col * row"
+        replaces: "testing/operator/ndarray/test_broadcasting.py::test_broadcast_int_float_promotion"
+      - id: broadcast_then_reduce
+        rank_from: [3, 1]
+        setup:
+          - "col = np.asarray([[1], [2], [3]])"
+          - "row = np.asarray([[1, 1, 1, 1]])"
+        source_expr: "(col * row).sum()"
+        replaces: "testing/operator/ndarray/test_broadcasting.py::test_broadcast_then_reduce"
+    expected: pass
+    tags: ["scenario", "migration", "broadcast"]
+
+  shape_manipulation_migration:
+    kind: scenario
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: concatenate_axis_minus_one
+        rank_from: [2, 2]
+        setup:
+          - "a = np.asarray([[1, 2], [3, 4]])"
+          - "b = np.asarray([[5, 6], [7, 8]])"
+        source_expr: "np.concatenate([a, b], axis=-1)"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_concatenate_axis_minus_one"
+      - id: concatenate_axis_2_three_d
+        rank_from: [1, 2, 2]
+        setup:
+          - "a = np.asarray([[[1, 2], [3, 4]]])"
+          - "b = np.asarray([[[5, 6], [7, 8]]])"
+        source_expr: "np.concatenate([a, b], axis=2)"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_concatenate_axis_2_three_d"
+      - id: stack_axis_2_three_d
+        rank_from: [2, 2]
+        setup:
+          - "a = np.asarray([[1, 2], [3, 4]])"
+          - "b = np.asarray([[5, 6], [7, 8]])"
+        source_expr: "np.stack([a, b], axis=2)"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_stack_axis_2_three_d"
+      - id: stack_negative_axis
+        rank_from: [3]
+        setup:
+          - "a = np.asarray([1, 2, 3])"
+          - "b = np.asarray([4, 5, 6])"
+        source_expr: "np.stack([a, b], axis=-1)"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_stack_negative_axis"
+      - id: swapaxes_2d
+        rank_from: [2, 3]
+        setup:
+          - "a = np.asarray([[1, 2, 3], [4, 5, 6]])"
+        source_expr: "np.swapaxes(a, 0, 1)"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_swapaxes_2d"
+      - id: swapaxes_method_3d
+        rank_from: [2, 2, 2]
+        setup:
+          - "a = np.asarray([[[1, 2], [3, 4]], [[5, 6], [7, 8]]])"
+        source_expr: "a.swapaxes(0, 2)"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_swapaxes_method_3d"
+      - id: moveaxis_basic
+        rank_from: [1, 2, 3]
+        setup:
+          - "a = np.asarray([[[1, 2, 3], [4, 5, 6]]])"
+        source_expr: "np.moveaxis(a, 0, 2)"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_moveaxis_basic"
+      - id: transpose_function_form
+        rank_from: [2, 3]
+        setup:
+          - "a = np.asarray([[1, 2, 3], [4, 5, 6]])"
+        source_expr: "np.transpose(a)"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_transpose_function_form"
+      - id: flip_default_all_axes
+        rank_from: [2, 3]
+        setup:
+          - "a = np.asarray([[1, 2, 3], [4, 5, 6]])"
+        source_expr: "np.flip(a)"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_flip_default_all_axes"
+      - id: flip_axis_0
+        rank_from: [2, 3]
+        setup:
+          - "a = np.asarray([[1, 2, 3], [4, 5, 6]])"
+        source_expr: "np.flip(a, axis=0)"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_flip_axis_0"
+      - id: flip_axis_1
+        rank_from: [2, 3]
+        setup:
+          - "a = np.asarray([[1, 2, 3], [4, 5, 6]])"
+        source_expr: "np.flip(a, axis=1)"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_flip_axis_1"
+      - id: flipud_fliplr
+        rank_from: [2, 2]
+        setup:
+          - "a = np.asarray([[1, 2], [3, 4]])"
+        source_expr: "(np.flipud(a), np.fliplr(a))"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_flipud_fliplr"
+      - id: rot90_once
+        rank_from: [2, 2]
+        setup:
+          - "a = np.asarray([[1, 2], [3, 4]])"
+        source_expr: "np.rot90(a)"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_rot90_once"
+      - id: rot90_four_times_is_identity
+        rank_from: [3, 3]
+        setup:
+          - "a = np.asarray([[1, 2, 3], [4, 5, 6], [7, 8, 9]])"
+        source_expr: "np.rot90(a, k=4)"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_rot90_four_times_is_identity"
+      - id: squeeze_all
+        rank_from: [1, 1, 3]
+        setup:
+          - "a = np.asarray([[[1, 2, 3]]])"
+        source_expr: "np.squeeze(a)"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_squeeze_all"
+      - id: squeeze_specific_axis
+        rank_from: [1, 3, 1]
+        setup:
+          - "a = np.asarray([[[1], [2], [3]]])"
+        source_expr: "np.squeeze(a, axis=0)"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_squeeze_specific_axis"
+      - id: expand_dims_front_and_back
+        rank_from: [3]
+        setup:
+          - "a = np.asarray([1, 2, 3])"
+        source_expr: "(np.expand_dims(a, 0), np.expand_dims(a, 1))"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_expand_dims_front_and_back"
+      - id: broadcast_to_basic
+        rank_from: [3]
+        setup:
+          - "a = np.asarray([1, 2, 3])"
+        source_expr: "np.broadcast_to(a, (4, 3))"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_broadcast_to_basic"
+      - id: atleast_2d_promotes_1d
+        rank_from: [3]
+        setup:
+          - "a = np.asarray([1, 2, 3])"
+        source_expr: "np.atleast_2d(a)"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_atleast_2d_promotes_1d"
+      - id: atleast_3d_promotes_1d
+        rank_from: [3]
+        setup:
+          - "a = np.asarray([1, 2, 3])"
+        source_expr: "np.atleast_3d(a)"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_atleast_3d_promotes_1d"
+      - id: tile_int_reps_1d
+        rank_from: [3]
+        setup:
+          - "a = np.asarray([1, 2, 3])"
+        source_expr: "np.tile(a, 3)"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_tile_int_reps_1d"
+      - id: tile_tuple_reps_2d
+        rank_from: [2, 2]
+        setup:
+          - "a = np.asarray([[1, 2], [3, 4]])"
+        source_expr: "np.tile(a, (2, 3))"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_tile_tuple_reps_2d"
+      - id: tile_promotes_lower_rank
+        rank_from: [3]
+        setup:
+          - "a = np.asarray([1, 2, 3])"
+        source_expr: "np.tile(a, (2, 1))"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_tile_promotes_lower_rank"
+      - id: repeat_no_axis_flattens
+        rank_from: [2, 2]
+        setup:
+          - "a = np.asarray([[1, 2], [3, 4]])"
+        source_expr: "a.repeat(2)"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_repeat_no_axis_flattens"
+      - id: repeat_axis_0
+        rank_from: [2, 2]
+        setup:
+          - "a = np.asarray([[1, 2], [3, 4]])"
+        source_expr: "a.repeat(2, axis=0)"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_repeat_axis_0"
+      - id: reshape_with_minus_one
+        rank_from: [2, 3]
+        setup:
+          - "a = np.asarray([[1, 2, 3], [4, 5, 6]])"
+        source_expr: "a.reshape(3, -1)"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_reshape_with_minus_one"
+      - id: vstack_1d_inputs
+        rank_from: [3]
+        setup:
+          - "a = np.asarray([1, 2, 3])"
+          - "b = np.asarray([4, 5, 6])"
+        source_expr: "np.vstack([a, b])"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_vstack_1d_inputs"
+      - id: vstack_2d_inputs
+        rank_from: [2, 2]
+        setup:
+          - "a = np.asarray([[1, 2], [3, 4]])"
+          - "b = np.asarray([[5, 6], [7, 8]])"
+        source_expr: "np.vstack([a, b])"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_vstack_2d_inputs"
+      - id: hstack_1d_inputs
+        rank_from: [3]
+        setup:
+          - "a = np.asarray([1, 2, 3])"
+          - "b = np.asarray([4, 5, 6])"
+        source_expr: "np.hstack([a, b])"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_hstack_1d_inputs"
+      - id: hstack_2d_inputs
+        rank_from: [2, 2]
+        setup:
+          - "a = np.asarray([[1, 2], [3, 4]])"
+          - "b = np.asarray([[5, 6], [7, 8]])"
+        source_expr: "np.hstack([a, b])"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_hstack_2d_inputs"
+      - id: column_stack_1d_inputs
+        rank_from: [3]
+        setup:
+          - "a = np.asarray([1, 2, 3])"
+          - "b = np.asarray([4, 5, 6])"
+        source_expr: "np.column_stack([a, b])"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_column_stack_1d_inputs"
+      - id: row_stack_alias
+        rank_from: [3]
+        setup:
+          - "a = np.asarray([1, 2, 3])"
+          - "b = np.asarray([4, 5, 6])"
+        source_expr: "np.row_stack([a, b])"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_row_stack_alias"
+      - id: dstack_1d_inputs
+        rank_from: [3]
+        setup:
+          - "a = np.asarray([1, 2, 3])"
+          - "b = np.asarray([4, 5, 6])"
+        source_expr: "np.dstack([a, b])"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_dstack_1d_inputs"
+      - id: dstack_2d_inputs
+        rank_from: [2, 2]
+        setup:
+          - "a = np.asarray([[1, 2], [3, 4]])"
+          - "b = np.asarray([[5, 6], [7, 8]])"
+        source_expr: "np.dstack([a, b])"
+        replaces: "testing/operator/ndarray/test_shape_manipulation.py::test_dstack_2d_inputs"
+    expected: pass
+    tags: ["scenario", "migration", "shape"]
+
+  split_and_block_migration:
+    kind: scenario
+    modes: ["static"]
+    dtypes: ["int"]
+    shapes:
+      - id: split_equal_sections_1d
+        rank_from: [6]
+        setup:
+          - "a = np.asarray([1, 2, 3, 4, 5, 6])"
+        source_expr: "np.split(a, 3)"
+        replaces: "testing/operator/ndarray/test_split_and_block.py::test_split_equal_sections_1d"
+      - id: split_indices_list_1d
+        rank_from: [5]
+        setup:
+          - "a = np.asarray([10, 20, 30, 40, 50])"
+        source_expr: "np.split(a, [2, 4])"
+        replaces: "testing/operator/ndarray/test_split_and_block.py::test_split_indices_list_1d"
+      - id: split_axis_1
+        rank_from: [2, 4]
+        setup:
+          - "a = np.asarray([[1, 2, 3, 4], [5, 6, 7, 8]])"
+        source_expr: "np.split(a, 2, axis=1)"
+        replaces: "testing/operator/ndarray/test_split_and_block.py::test_split_axis_1"
+      - id: array_split_uneven
+        rank_from: [10]
+        setup:
+          - "a = np.asarray([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])"
+        source_expr: "np.array_split(a, 3)"
+        replaces: "testing/operator/ndarray/test_split_and_block.py::test_array_split_uneven"
+      - id: array_split_more_sections_than_elems
+        rank_from: [3]
+        setup:
+          - "a = np.asarray([1, 2, 3])"
+        source_expr: "np.array_split(a, 5)"
+        replaces: "testing/operator/ndarray/test_split_and_block.py::test_array_split_more_sections_than_elems"
+      - id: hsplit_2d
+        rank_from: [2, 4]
+        setup:
+          - "a = np.asarray([[1, 2, 3, 4], [5, 6, 7, 8]])"
+        source_expr: "np.hsplit(a, 2)"
+        replaces: "testing/operator/ndarray/test_split_and_block.py::test_hsplit_2d"
+      - id: hsplit_1d_falls_back_to_axis_0
+        rank_from: [4]
+        setup:
+          - "a = np.asarray([1, 2, 3, 4])"
+        source_expr: "np.hsplit(a, 2)"
+        replaces: "testing/operator/ndarray/test_split_and_block.py::test_hsplit_1d_falls_back_to_axis_0"
+      - id: vsplit_2d
+        rank_from: [4, 2]
+        setup:
+          - "a = np.asarray([[1, 2], [3, 4], [5, 6], [7, 8]])"
+        source_expr: "np.vsplit(a, 2)"
+        replaces: "testing/operator/ndarray/test_split_and_block.py::test_vsplit_2d"
+      - id: dsplit_3d
+        rank_from: [2, 2, 4]
+        setup:
+          - "a = np.asarray([[[1, 2, 3, 4], [5, 6, 7, 8]], [[9, 10, 11, 12], [13, 14, 15, 16]]])"
+        source_expr: "np.dsplit(a, 2)"
+        replaces: "testing/operator/ndarray/test_split_and_block.py::test_dsplit_3d"
+      - id: block_2x2_2d_leaves
+        rank_from: [2, 2]
+        setup:
+          - "A = np.asarray([[1, 2], [3, 4]])"
+          - "B = np.asarray([[5, 6], [7, 8]])"
+          - "C = np.asarray([[9, 10], [11, 12]])"
+          - "D = np.asarray([[13, 14], [15, 16]])"
+        source_expr: "np.block([[A, B], [C, D]])"
+        replaces: "testing/operator/ndarray/test_split_and_block.py::test_block_2x2_2d_leaves"
+      - id: block_1x2_hstack_equivalent
+        rank_from: [2, 2]
+        setup:
+          - "A = np.asarray([[1, 2], [3, 4]])"
+          - "B = np.asarray([[5, 6], [7, 8]])"
+        source_expr: "np.block([[A, B]])"
+        replaces: "testing/operator/ndarray/test_split_and_block.py::test_block_1x2_hstack_equivalent"
+      - id: block_2x1_vstack_equivalent
+        rank_from: [2, 2]
+        setup:
+          - "A = np.asarray([[1, 2], [3, 4]])"
+          - "B = np.asarray([[5, 6], [7, 8]])"
+        source_expr: "np.block([[A], [B]])"
+        replaces: "testing/operator/ndarray/test_split_and_block.py::test_block_2x1_vstack_equivalent"
+      - id: block_three_deep_3d
+        rank_from: [1, 1, 2]
+        setup:
+          - "A = np.asarray([[[1, 2]]])"
+          - "B = np.asarray([[[3, 4]]])"
+          - "C = np.asarray([[[5, 6]]])"
+          - "D = np.asarray([[[7, 8]]])"
+        source_expr: "np.block([[[A, B]], [[C, D]]])"
+        replaces: "testing/operator/ndarray/test_split_and_block.py::test_block_three_deep_3d"
+    expected: pass
+    tags: ["scenario", "migration", "split-block"]
