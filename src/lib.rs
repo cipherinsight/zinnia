@@ -69,12 +69,23 @@ fn compile_circuit(ast_json: &str, config_json: &str, chips_json: String, extern
 
     let loop_limit = config["loop_limit"].as_u64().unwrap_or(1000) as u32;
     let recursion_limit = config["recursion_limit"].as_u64().unwrap_or(16) as u32;
-    // P1 SMT-resolver knobs. Default: enabled, 500 ms timeout. A future P3
-    // commit will swap the default resolver from StaticOnlyResolver to
-    // SmtResolver and start honouring these.
-    let smt_enable = config.get("smt_enable")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
+    // P3 SMT-resolver knobs. Default: enabled (LayeredResolver::range_then_smt
+    // is the active resolver), 500 ms timeout. The `ZINNIA_SMT_ENABLE` env
+    // var is the safety-net override — set it to `0` / `false` / `off` to
+    // force `StaticOnlyResolver` (today's pre-P3 behaviour) without editing
+    // config JSON. Useful for the benchmark sweep and for bisecting any
+    // future SMT-induced regression.
+    let smt_enable_env = std::env::var("ZINNIA_SMT_ENABLE")
+        .ok()
+        .map(|s| {
+            let s = s.trim().to_ascii_lowercase();
+            !matches!(s.as_str(), "0" | "false" | "off" | "no")
+        });
+    let smt_enable = smt_enable_env.unwrap_or_else(|| {
+        config.get("smt_enable")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+    });
     let smt_query_timeout_ms = config.get("smt_query_timeout_ms")
         .and_then(|v| v.as_u64())
         .unwrap_or(500);

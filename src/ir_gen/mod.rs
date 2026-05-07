@@ -7,6 +7,7 @@ use crate::ast::*;
 use crate::builder::IRBuilder;
 use crate::ir::IRGraph;
 use crate::ir_ctx::IRContext;
+use crate::optim::resolver::{LayeredResolver, Resolver, StaticOnlyResolver};
 use crate::types::Value;
 
 mod visitors;
@@ -93,8 +94,20 @@ pub struct IRGenerator {
 
 impl IRGenerator {
     pub fn new(config: IRGenConfig) -> Self {
+        let mut builder = IRBuilder::new();
+        // P3: flip the default resolver from `StaticOnlyResolver` to the
+        // layered `range → SMT` pipeline when `cfg.smt_enable` is true.
+        // Falls back to `StaticOnlyResolver` (today's pre-P3 behaviour)
+        // when the flag is off — the safety net for diagnosing whether
+        // SMT introduces a regression.
+        let resolver: Box<dyn Resolver> = if config.smt_enable {
+            Box::new(LayeredResolver::range_then_smt())
+        } else {
+            Box::new(StaticOnlyResolver::new())
+        };
+        builder.set_resolver(resolver);
         Self {
-            builder: IRBuilder::new(),
+            builder,
             ctx: IRContext::new(),
             config,
             registered_chips: HashMap::new(),
@@ -107,7 +120,21 @@ impl IRGenerator {
     /// Main entry point: generate an IRGraph from an AST circuit.
     pub fn generate(mut self, ast: &ASTCircuit) -> IRGraph {
         self.visit_circuit(ast);
-        self.builder.export_ir_graph()
+        let smt_enable = self.config.smt_enable;
+        let mut graph = self.builder.export_ir_graph();
+        // P3: also propagate the resolver choice onto the resulting
+        // `IRGraph` so optim passes that consult the resolver (e.g.
+        // through `IRGraph::split_resolver_and_stmts`) see the same
+        // policy as the AST→IR phase. Per P1's option (b), each phase
+        // owns its own resolver / cache; we just ensure the choice
+        // matches the config.
+        let resolver: Box<dyn Resolver> = if smt_enable {
+            Box::new(LayeredResolver::range_then_smt())
+        } else {
+            Box::new(StaticOnlyResolver::new())
+        };
+        graph.set_resolver(resolver);
+        graph
     }
 
     /// Generate from a JSON string (the bridge entry point).
