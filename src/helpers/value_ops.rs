@@ -445,11 +445,15 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
             _ => {}
         }
     }
-    // Element-wise: both composite with matching length (for arithmetic ops)
+    // Element-wise: both composite with matching length (for arithmetic ops).
+    // `mat_mul` is excluded — even when the two operands happen to share a
+    // top-level length they have matmul shape semantics, not element-wise.
+    // (E.g. (8,) @ (8, 7) — both have outermost length 8 but the result is
+    // (7,), not 8 element-wise scalar matmuls.)
     match (lhs, rhs) {
         (Value::List(ld), Value::List(rd)) | (Value::Tuple(ld), Value::List(rd))
         | (Value::List(ld), Value::Tuple(rd)) | (Value::Tuple(ld), Value::Tuple(rd))
-            if ld.values.len() == rd.values.len() =>
+            if ld.values.len() == rd.values.len() && op != "mat_mul" =>
         {
             let results: Vec<Value> = ld.values.iter().zip(rd.values.iter())
                 .map(|(l, r)| apply_binary_op(b, op, l, r))

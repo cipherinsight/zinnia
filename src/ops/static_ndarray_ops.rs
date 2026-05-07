@@ -55,6 +55,33 @@ pub fn matmul(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
             return Value::List(CompositeData { elements_type: types, values: results });
         }
 
+        if lhs_shape.len() == 1 && rhs_shape.len() == 2 {
+            // 1D @ 2D: numpy prepends a leading 1 to lhs, multiplies,
+            // then drops the prepended axis. (8,) @ (8, 7) → (1, 8) @ (8, 7)
+            // = (1, 7) → (7,). Compute one row of dot products against each
+            // column of rhs.
+            let n = rhs_shape[1];
+            let k = lhs_shape[0]; // = rhs_shape[0]
+            let mut row_vals = Vec::with_capacity(n);
+            for j in 0..n {
+                let col: Vec<Value> = (0..k).map(|kk| {
+                    let rhs_row = match &rd.values[kk] {
+                        Value::List(r) | Value::Tuple(r) => &r.values,
+                        _ => panic!("matmul: expected 2D array"),
+                    };
+                    rhs_row[j].clone()
+                }).collect();
+                let dot = if use_complex {
+                    matmul_dot_complex(b, &ld.values, &col)
+                } else {
+                    matmul_dot(b, &ld.values, &col, use_float)
+                };
+                row_vals.push(dot);
+            }
+            let types = row_vals.iter().map(|v| v.zinnia_type()).collect();
+            return Value::List(CompositeData { elements_type: types, values: row_vals });
+        }
+
         if lhs_shape.len() == 2 && rhs_shape.len() == 2 {
             // 2D @ 2D: full matrix multiply
             let m = lhs_shape[0]; // rows of lhs
