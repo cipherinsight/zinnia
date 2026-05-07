@@ -141,6 +141,150 @@ impl Resolver for StaticOnlyResolver {
 }
 
 // ---------------------------------------------------------------------------
+// LayeredResolver — composition of resolvers, cheap-first dispatch
+// ---------------------------------------------------------------------------
+//
+// P2 — the layered-resolver pattern from the epic spec (design principle 1:
+// "cheap analyses first, SMT as backstop"). Holds a list of `Box<dyn Resolver>`
+// layers; on each query, walks them in order and returns the first
+// `Some(_)` answer.
+//
+// Typical composition for the full epic: `range → static → SMT`. P2 ships
+// the construction and a `range_then_smt` helper. Wiring it in as the
+// default `IRBuilder` / `IRGraph` resolver is P3.
+//
+// `on_ir_mutated` fans out to every layer so each one's invalidation policy
+// fires.
+
+/// A pipeline of resolvers, queried in order. First `Some(_)` wins.
+pub struct LayeredResolver {
+    layers: Vec<Box<dyn Resolver>>,
+}
+
+impl std::fmt::Debug for LayeredResolver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LayeredResolver")
+            .field("num_layers", &self.layers.len())
+            .finish()
+    }
+}
+
+impl LayeredResolver {
+    /// Build a pipeline from an explicit list of layers.
+    pub fn new(layers: Vec<Box<dyn Resolver>>) -> Self {
+        Self { layers }
+    }
+
+    /// The canonical P2 composition: `RangeResolver → SmtResolver`.
+    /// Intended consumer for P3+. Range handles the bounded-loop-index /
+    /// modular / mask cases; SMT handles symbolic relations range can't see
+    /// (e.g., `select(x == 5, 100, 100)` where the cond depends on a free
+    /// variable).
+    pub fn range_then_smt() -> Self {
+        Self::new(vec![
+            Box::new(crate::optim::range::RangeResolver::new()),
+            Box::new(SmtResolver::new()),
+        ])
+    }
+}
+
+impl Resolver for LayeredResolver {
+    fn resolve_int(&mut self, val: &Value) -> Option<i64> {
+        for layer in self.layers.iter_mut() {
+            if let Some(n) = layer.resolve_int(val) {
+                return Some(n);
+            }
+        }
+        None
+    }
+
+    fn resolve_bool(&mut self, val: &Value) -> Option<bool> {
+        for layer in self.layers.iter_mut() {
+            if let Some(b) = layer.resolve_bool(val) {
+                return Some(b);
+            }
+        }
+        None
+    }
+
+    fn resolve_max(&mut self, val: &Value) -> Option<i64> {
+        for layer in self.layers.iter_mut() {
+            if let Some(n) = layer.resolve_max(val) {
+                return Some(n);
+            }
+        }
+        None
+    }
+
+    fn resolve_min(&mut self, val: &Value) -> Option<i64> {
+        for layer in self.layers.iter_mut() {
+            if let Some(n) = layer.resolve_min(val) {
+                return Some(n);
+            }
+        }
+        None
+    }
+
+    fn resolve_int_with_stmts(
+        &mut self,
+        val: &Value,
+        stmts: &[IRStatement],
+    ) -> Option<i64> {
+        for layer in self.layers.iter_mut() {
+            if let Some(n) = layer.resolve_int_with_stmts(val, stmts) {
+                return Some(n);
+            }
+        }
+        None
+    }
+
+    fn resolve_bool_with_stmts(
+        &mut self,
+        val: &Value,
+        stmts: &[IRStatement],
+    ) -> Option<bool> {
+        for layer in self.layers.iter_mut() {
+            if let Some(b) = layer.resolve_bool_with_stmts(val, stmts) {
+                return Some(b);
+            }
+        }
+        None
+    }
+
+    fn resolve_max_with_stmts(
+        &mut self,
+        val: &Value,
+        stmts: &[IRStatement],
+    ) -> Option<i64> {
+        for layer in self.layers.iter_mut() {
+            if let Some(n) = layer.resolve_max_with_stmts(val, stmts) {
+                return Some(n);
+            }
+        }
+        None
+    }
+
+    fn resolve_min_with_stmts(
+        &mut self,
+        val: &Value,
+        stmts: &[IRStatement],
+    ) -> Option<i64> {
+        for layer in self.layers.iter_mut() {
+            if let Some(n) = layer.resolve_min_with_stmts(val, stmts) {
+                return Some(n);
+            }
+        }
+        None
+    }
+
+    fn on_ir_mutated(&mut self, affected: &[StmtId]) {
+        for layer in self.layers.iter_mut() {
+            layer.on_ir_mutated(affected);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SmtResolver
 // ---------------------------------------------------------------------------
 //
@@ -1045,5 +1189,171 @@ mod tests {
     fn smt_resolver_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<SmtResolver>();
+    }
+
+    // ---------------------------------------------------------------
+    // LayeredResolver tests (P2 commit 4)
+    // ---------------------------------------------------------------
+
+    use crate::optim::range::RangeResolver;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// Test-only counter-tracking resolver. Wraps an inner resolver and
+    /// increments a shared counter on every `_with_stmts` call. Used to
+    /// verify the layered resolver's "answers first" behaviour.
+    struct CountingResolver {
+        inner: Box<dyn Resolver>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl Resolver for CountingResolver {
+        fn resolve_int(&mut self, val: &Value) -> Option<i64> {
+            self.inner.resolve_int(val)
+        }
+        fn resolve_bool(&mut self, val: &Value) -> Option<bool> {
+            self.inner.resolve_bool(val)
+        }
+        fn resolve_max(&mut self, val: &Value) -> Option<i64> {
+            self.inner.resolve_max(val)
+        }
+        fn resolve_min(&mut self, val: &Value) -> Option<i64> {
+            self.inner.resolve_min(val)
+        }
+        fn resolve_int_with_stmts(
+            &mut self,
+            val: &Value,
+            stmts: &[IRStatement],
+        ) -> Option<i64> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.inner.resolve_int_with_stmts(val, stmts)
+        }
+        fn resolve_bool_with_stmts(
+            &mut self,
+            val: &Value,
+            stmts: &[IRStatement],
+        ) -> Option<bool> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.inner.resolve_bool_with_stmts(val, stmts)
+        }
+        fn resolve_max_with_stmts(
+            &mut self,
+            val: &Value,
+            stmts: &[IRStatement],
+        ) -> Option<i64> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.inner.resolve_max_with_stmts(val, stmts)
+        }
+        fn resolve_min_with_stmts(
+            &mut self,
+            val: &Value,
+            stmts: &[IRStatement],
+        ) -> Option<i64> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.inner.resolve_min_with_stmts(val, stmts)
+        }
+        fn on_ir_mutated(&mut self, affected: &[StmtId]) {
+            self.inner.on_ir_mutated(affected);
+        }
+    }
+
+    /// When the range layer answers a query, the SMT layer is never
+    /// consulted. Construct a `select(c, 7, 7)` (range resolves to 7,
+    /// SMT *would* also resolve, but should be skipped). The counting
+    /// SMT layer's call-count must be 0.
+    #[test]
+    fn layered_range_answers_first() {
+        let stmts = vec![
+            IRStatement::new(
+                0,
+                IR::ReadInteger {
+                    path: InputPath::new("c", vec![]),
+                    is_public: false,
+                },
+                vec![],
+                None,
+            ),
+            IRStatement::new(1, IR::ConstantInt { value: 7 }, vec![], None),
+            IRStatement::new(2, IR::ConstantInt { value: 7 }, vec![], None),
+            IRStatement::new(3, IR::SelectI, vec![0, 1, 2], None),
+        ];
+        let v = runtime_int(3);
+
+        let smt_calls = Arc::new(AtomicUsize::new(0));
+        let counting_smt = CountingResolver {
+            inner: Box::new(SmtResolver::new()),
+            calls: Arc::clone(&smt_calls),
+        };
+        let mut layered = LayeredResolver::new(vec![
+            Box::new(RangeResolver::new()),
+            Box::new(counting_smt),
+        ]);
+
+        assert_eq!(layered.resolve_int_with_stmts(&v, &stmts), Some(7));
+        // Range answered → SMT was never called.
+        assert_eq!(smt_calls.load(Ordering::SeqCst), 0);
+    }
+
+    /// When range can't resolve, the layered resolver falls through to
+    /// SMT. Construct `select(x == x, 7, 9)`: range only sees `[7, 9]`
+    /// (no point) since it doesn't reason about the cond's tautology.
+    /// SMT proves `x == x` is always true → result is 7. The counting
+    /// SMT layer's call-count must be ≥ 1.
+    #[test]
+    fn layered_falls_through_to_smt() {
+        let stmts = vec![
+            IRStatement::new(
+                0,
+                IR::ReadInteger {
+                    path: InputPath::new("x", vec![]),
+                    is_public: false,
+                },
+                vec![],
+                None,
+            ),
+            IRStatement::new(1, IR::EqI, vec![0, 0], None), // x == x → true
+            IRStatement::new(2, IR::ConstantInt { value: 7 }, vec![], None),
+            IRStatement::new(3, IR::ConstantInt { value: 9 }, vec![], None),
+            IRStatement::new(4, IR::SelectI, vec![1, 2, 3], None),
+        ];
+        let v = runtime_int(4);
+
+        let smt_calls = Arc::new(AtomicUsize::new(0));
+        let counting_smt = CountingResolver {
+            inner: Box::new(SmtResolver::new()),
+            calls: Arc::clone(&smt_calls),
+        };
+        let mut layered = LayeredResolver::new(vec![
+            Box::new(RangeResolver::new()),
+            Box::new(counting_smt),
+        ]);
+        assert_eq!(layered.resolve_int_with_stmts(&v, &stmts), Some(7));
+        // SMT was consulted (range couldn't tell which branch).
+        assert!(smt_calls.load(Ordering::SeqCst) >= 1);
+    }
+
+    /// When neither layer can resolve (a free variable), the layered
+    /// resolver returns None.
+    #[test]
+    fn layered_returns_none_when_neither_resolves() {
+        let stmts = vec![IRStatement::new(
+            0,
+            IR::ReadInteger {
+                path: InputPath::new("x", vec![]),
+                is_public: false,
+            },
+            vec![],
+            None,
+        )];
+        let v = runtime_int(0);
+        let mut layered = LayeredResolver::range_then_smt();
+        assert_eq!(layered.resolve_int_with_stmts(&v, &stmts), None);
+    }
+
+    /// `LayeredResolver` is Send + Sync.
+    #[test]
+    fn layered_resolver_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<LayeredResolver>();
     }
 }

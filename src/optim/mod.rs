@@ -27,8 +27,8 @@ pub use memory_trace_injection::MemoryTraceInjection;
 pub use pattern_match_optim::PatternMatchOptim;
 pub use range::{IntInterval, RangeResolver};
 pub use resolver::{
-    require_static_int, Resolver, SiteKind, SmtResolver, StaticInt,
-    StaticOnlyResolver,
+    require_static_int, LayeredResolver, Resolver, SiteKind, SmtResolver,
+    StaticInt, StaticOnlyResolver,
 };
 pub use smt_encoding::{IROp, SmtEncodingCtx, Z3Term};
 
