@@ -262,6 +262,16 @@ impl IntInterval {
 // i128-saturating helpers
 // ---------------------------------------------------------------------------
 
+/// Saturating absolute value: `i64::MIN.abs()` overflows, saturate to
+/// `i64::MAX`.
+fn sat_abs(a: i64) -> i64 {
+    if a == i64::MIN {
+        i64::MAX
+    } else {
+        a.abs()
+    }
+}
+
 /// Saturating multiply `i64 * i64 -> i64`, computed in i128 and clamped.
 fn sat_mul(a: i64, b: i64) -> i64 {
     let p = (a as i128) * (b as i128);
@@ -376,6 +386,78 @@ impl RangeResolver {
             IR::AddI => self.binop(stmt, stmts, IntInterval::add),
             IR::SubI => self.binop(stmt, stmts, IntInterval::sub),
             IR::MulI => self.binop(stmt, stmts, IntInterval::mul),
+            IR::DivI => self.binop(stmt, stmts, IntInterval::div),
+            IR::FloorDivI => self.binop(stmt, stmts, IntInterval::floor_div),
+            IR::ModI => self.binop(stmt, stmts, IntInterval::modulo),
+
+            // Bitwise --------------------------------------------------
+            IR::BitAndI => self.binop(stmt, stmts, IntInterval::bitand),
+            IR::BitOrI => {
+                // For non-negative operands, `a | b <= a + b` (no carry can
+                // overshoot). Use saturating add as the upper bound.
+                if stmt.arguments.len() == 2 {
+                    let a = self.interval_of(stmt.arguments[0], stmts);
+                    let b = self.interval_of(stmt.arguments[1], stmts);
+                    if a.min >= 0 && b.min >= 0 {
+                        IntInterval {
+                            min: a.min.max(b.min),
+                            max: a.max.saturating_add(b.max),
+                        }
+                    } else {
+                        IntInterval::unbounded()
+                    }
+                } else {
+                    IntInterval::unbounded()
+                }
+            }
+
+            // Casts ----------------------------------------------------
+            // bool→int: domain is [0, 1]. int→bool: also [0, 1] when
+            // we ask for the int interval of the bool. Both go to
+            // bool_domain.
+            IR::IntCast => IntInterval::bool_domain(),
+            IR::BoolCast => IntInterval::bool_domain(),
+
+            // Unary integer arms ---------------------------------------
+            // AbsI: result is [0, max(|min|, |max|)]; saturating handles
+            // i64::MIN's |x|.
+            IR::AbsI => {
+                if stmt.arguments.len() == 1 {
+                    let a = self.interval_of(stmt.arguments[0], stmts);
+                    let lo = if a.contains(0) {
+                        0
+                    } else {
+                        sat_abs(a.min).min(sat_abs(a.max))
+                    };
+                    let hi = sat_abs(a.min).max(sat_abs(a.max));
+                    IntInterval { min: lo, max: hi }
+                } else {
+                    IntInterval::unbounded()
+                }
+            }
+            // SignI returns -1, 0, or 1 — clamp to that domain.
+            IR::SignI => {
+                if stmt.arguments.len() == 1 {
+                    let a = self.interval_of(stmt.arguments[0], stmts);
+                    let lo = if a.min < 0 {
+                        -1
+                    } else if a.min == 0 {
+                        0
+                    } else {
+                        1
+                    };
+                    let hi = if a.max > 0 {
+                        1
+                    } else if a.max == 0 {
+                        0
+                    } else {
+                        -1
+                    };
+                    IntInterval { min: lo, max: hi }
+                } else {
+                    IntInterval::unbounded()
+                }
+            }
 
             // Selection (commit 2 covers SelectI) ----------------------
             IR::SelectI => {
@@ -804,5 +886,89 @@ mod tests {
     fn range_resolver_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<RangeResolver>();
+    }
+
+    // -----------------------------------------------------------------
+    // RangeResolver tests (commit 3 — modular / mask / clamp arms)
+    // -----------------------------------------------------------------
+
+    /// The headline win for range analysis: `(i * 7) % 64` with
+    /// `i ∈ [0, 63]` — this is the canonical loop-index-into-mod-table
+    /// pattern. SMT *can* prove the result is in [0, 63] but pays
+    /// milliseconds; range proves it for free, so the layered resolver
+    /// (range → SMT) skips the Z3 call entirely. We model
+    /// `i ∈ [0, 63]` via `select(c, 0, 63)` since Range can't yet ingest
+    /// arbitrary path conditions; the test still demonstrates the
+    /// cascading propagation through MulI then ModI.
+    #[test]
+    fn range_modular_index_pattern() {
+        let stmts = vec![
+            // stmt0..3: build i ∈ [0, 63] via select(c, 0, 63).
+            IRStatement::new(
+                0,
+                IR::ReadInteger {
+                    path: InputPath::new("c", vec![]),
+                    is_public: false,
+                },
+                vec![],
+                None,
+            ),
+            IRStatement::new(1, IR::ConstantInt { value: 0 }, vec![], None),
+            IRStatement::new(2, IR::ConstantInt { value: 63 }, vec![], None),
+            IRStatement::new(3, IR::SelectI, vec![0, 1, 2], None), // [0, 63]
+            // stmt4: 7. stmt5: i * 7 → [0, 441].
+            IRStatement::new(4, IR::ConstantInt { value: 7 }, vec![], None),
+            IRStatement::new(5, IR::MulI, vec![3, 4], None),
+            // stmt6: 64. stmt7: (i*7) % 64 → [0, 63].
+            IRStatement::new(6, IR::ConstantInt { value: 64 }, vec![], None),
+            IRStatement::new(7, IR::ModI, vec![5, 6], None),
+        ];
+        let v = runtime_int(7);
+        let mut r = RangeResolver::new();
+        // Result is [0, 63] — bounded above by 63, below by 0.
+        assert_eq!(r.resolve_max_with_stmts(&v, &stmts), Some(63));
+        assert_eq!(r.resolve_min_with_stmts(&v, &stmts), Some(0));
+        // Not a point, so resolve_int returns None.
+        assert_eq!(r.resolve_int_with_stmts(&v, &stmts), None);
+    }
+
+    /// `BitAndI([0, 100], 7)` — mask analysis: result bounded by 7.
+    #[test]
+    fn range_bitand_mask_bounds_result() {
+        let stmts = vec![
+            IRStatement::new(
+                0,
+                IR::ReadInteger {
+                    path: InputPath::new("c", vec![]),
+                    is_public: false,
+                },
+                vec![],
+                None,
+            ),
+            IRStatement::new(1, IR::ConstantInt { value: 0 }, vec![], None),
+            IRStatement::new(2, IR::ConstantInt { value: 100 }, vec![], None),
+            IRStatement::new(3, IR::SelectI, vec![0, 1, 2], None), // [0, 100]
+            IRStatement::new(4, IR::ConstantInt { value: 7 }, vec![], None),
+            IRStatement::new(5, IR::BitAndI, vec![3, 4], None), // [0, 7]
+        ];
+        let v = runtime_int(5);
+        let mut r = RangeResolver::new();
+        assert_eq!(r.resolve_max_with_stmts(&v, &stmts), Some(7));
+        assert_eq!(r.resolve_min_with_stmts(&v, &stmts), Some(0));
+    }
+
+    /// `FloorDivI(constant 16, constant 4)` resolves to a point. Verifies
+    /// the floor-div arm wires through; with both operands constant, the
+    /// 4-corner endpoints all collapse to 4.
+    #[test]
+    fn range_floor_div_constant_resolves() {
+        let stmts = vec![
+            IRStatement::new(0, IR::ConstantInt { value: 16 }, vec![], None),
+            IRStatement::new(1, IR::ConstantInt { value: 4 }, vec![], None),
+            IRStatement::new(2, IR::FloorDivI, vec![0, 1], None), // [4, 4]
+        ];
+        let v = runtime_int(2);
+        let mut r = RangeResolver::new();
+        assert_eq!(r.resolve_int_with_stmts(&v, &stmts), Some(4));
     }
 }
