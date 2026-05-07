@@ -86,7 +86,7 @@ fn materialise_to_flat(b: &mut IRBuilder, val: &Value) -> Vec<Value> {
     // only correct for contiguous views. Compute strided cell reads by hand
     // when the view is non-contiguous.
     let (shape, strides, offset, _segment_id, dtype) = match val {
-        Value::StaticArray { shape, strides, offset, segment_id, dtype } => {
+        Value::StaticArray { shape, strides, offset, segment_id, dtype, .. } => {
             (shape.clone(), strides.clone(), *offset, *segment_id, *dtype)
         }
         _ => panic!("materialise_to_flat: expected StaticArray"),
@@ -203,15 +203,12 @@ pub fn try_apply_reshape(
     val: &Value,
     args: &[Value],
 ) -> Option<Value> {
-    let (dtype, shape, segment_id, strides, offset) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset } => {
-            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset)
+    let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
+        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id } => {
+            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
         }
         _ => return None,
     };
-    if matches!(dtype, NumberType::Complex) {
-        return None;
-    }
     let total: usize = shape.iter().product();
     let target = parse_reshape_target(args, total)?;
     let target_total: usize = target.iter().product();
@@ -229,6 +226,7 @@ pub fn try_apply_reshape(
         segment_id,
         strides: strides.clone(),
         offset,
+        imag_segment_id: imag_seg,
     }) {
         let new_strides = row_major_strides(&target);
         return Some(Value::StaticArray {
@@ -237,9 +235,27 @@ pub fn try_apply_reshape(
             segment_id,
             strides: new_strides,
             offset,
+            imag_segment_id: imag_seg,
         });
     }
     // Non-contiguous view: materialise into a fresh segment.
+    if dtype == NumberType::Complex {
+        // Component-wise materialise. payload_cells/materialise_to_flat
+        // returns Value::Complex cells; split, then rebuild.
+        let cells = materialise_to_flat(b, val);
+        let mut reals = Vec::with_capacity(cells.len());
+        let mut imags = Vec::with_capacity(cells.len());
+        for c in cells {
+            match c {
+                Value::Complex { real, imag } => {
+                    reals.push(Value::Float(real));
+                    imags.push(Value::Float(imag));
+                }
+                _ => unreachable!("Complex StaticArray cell expected"),
+            }
+        }
+        return Some(crate::helpers::static_array::build_static_array_from_flat_complex(b, reals, imags, target));
+    }
     let flat = materialise_to_flat(b, val);
     Some(build_static_array_from_flat(b, flat, target, dtype))
 }
@@ -300,7 +316,7 @@ fn parse_transpose_perm(args: &[Value], ndim: usize) -> Option<Vec<usize>> {
 /// Mirrors `dyn_transpose`'s policy.
 fn transpose_materialise(b: &mut IRBuilder, val: &Value, perm: &[usize]) -> Value {
     let (dtype, shape, _segment_id, strides, offset) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset } => {
+        Value::StaticArray { dtype, shape, segment_id, strides, offset, .. } => {
             (*dtype, shape.clone(), *segment_id, strides.clone(), *offset)
         }
         _ => unreachable!(),
@@ -334,6 +350,20 @@ fn transpose_materialise(b: &mut IRBuilder, val: &Value, perm: &[usize]) -> Valu
         }
         out.push(src_flat[src_lin].clone());
     }
+    if dtype == NumberType::Complex {
+        let mut reals = Vec::with_capacity(out.len());
+        let mut imags = Vec::with_capacity(out.len());
+        for c in out {
+            match c {
+                Value::Complex { real, imag } => {
+                    reals.push(Value::Float(real));
+                    imags.push(Value::Float(imag));
+                }
+                _ => unreachable!("Complex StaticArray cell expected"),
+            }
+        }
+        return crate::helpers::static_array::build_static_array_from_flat_complex(b, reals, imags, new_shape);
+    }
     build_static_array_from_flat(b, out, new_shape, dtype)
 }
 
@@ -348,9 +378,7 @@ pub fn try_apply_transpose(
         Value::StaticArray { dtype, .. } => *dtype,
         _ => return None,
     };
-    if matches!(dtype, NumberType::Complex) {
-        return None;
-    }
+    let _ = dtype;
     let shape = shape_of(val);
     let ndim = shape.len();
     if ndim <= 1 {
@@ -371,9 +399,7 @@ pub fn try_apply_moveaxis(
         Value::StaticArray { dtype, .. } => *dtype,
         _ => return None,
     };
-    if matches!(dtype, NumberType::Complex) {
-        return None;
-    }
+    let _ = dtype;
     if args.len() < 2 {
         return None;
     }
@@ -406,15 +432,12 @@ pub fn try_apply_expand_dims(
     val: &Value,
     axis_arg: Option<&Value>,
 ) -> Option<Value> {
-    let (dtype, shape, segment_id, strides, offset) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset } => {
-            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset)
+    let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
+        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id } => {
+            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
         }
         _ => return None,
     };
-    if matches!(dtype, NumberType::Complex) {
-        return None;
-    }
     let axis_raw = axis_arg?.int_val()?;
     let new_ndim = shape.len() + 1;
     let resolved = if axis_raw < 0 { new_ndim as i64 + axis_raw } else { axis_raw };
@@ -436,6 +459,7 @@ pub fn try_apply_expand_dims(
         segment_id,
         strides: new_strides,
         offset,
+        imag_segment_id: imag_seg,
     })
 }
 
@@ -447,15 +471,12 @@ pub fn try_apply_squeeze(
     val: &Value,
     axis_arg: Option<&Value>,
 ) -> Option<Value> {
-    let (dtype, shape, segment_id, strides, offset) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset } => {
-            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset)
+    let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
+        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id } => {
+            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
         }
         _ => return None,
     };
-    if matches!(dtype, NumberType::Complex) {
-        return None;
-    }
     let ndim = shape.len();
 
     let target_axes: Vec<usize> = match axis_arg {
@@ -511,6 +532,10 @@ pub fn try_apply_squeeze(
                 return Some(cached[offset].clone());
             }
         }
+        if dtype == NumberType::Complex {
+            let im = imag_seg.expect("Complex StaticArray missing imag_segment_id");
+            return Some(crate::helpers::static_array_read::read_complex_leaf(_b, segment_id, im, offset));
+        }
         let addr = _b.ir_constant_int(offset as i64);
         let raw = _b.ir_read_memory(segment_id, &addr);
         return Some(crate::ops::dyn_ndarray::scalar_i64_to_value(
@@ -524,21 +549,19 @@ pub fn try_apply_squeeze(
         segment_id,
         strides: new_strides,
         offset,
+        imag_segment_id: imag_seg,
     })
 }
 
 /// Try to apply `flatten` / `ravel` natively. For contiguous source: pure
 /// metadata. For non-contiguous: materialise.
 pub fn try_apply_flatten(b: &mut IRBuilder, val: &Value) -> Option<Value> {
-    let (dtype, shape, segment_id, _strides, offset) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset } => {
-            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset)
+    let (dtype, shape, segment_id, _strides, offset, imag_seg) = match val {
+        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id } => {
+            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
         }
         _ => return None,
     };
-    if matches!(dtype, NumberType::Complex) {
-        return None;
-    }
     let total: usize = shape.iter().product();
     if is_contiguous(val) {
         return Some(Value::StaticArray {
@@ -547,9 +570,25 @@ pub fn try_apply_flatten(b: &mut IRBuilder, val: &Value) -> Option<Value> {
             segment_id,
             strides: vec![1],
             offset,
+            imag_segment_id: imag_seg,
         });
     }
     // Non-contiguous: materialise into fresh contiguous segment.
+    if dtype == NumberType::Complex {
+        let cells = materialise_to_flat(b, val);
+        let mut reals = Vec::with_capacity(cells.len());
+        let mut imags = Vec::with_capacity(cells.len());
+        for c in cells {
+            match c {
+                Value::Complex { real, imag } => {
+                    reals.push(Value::Float(real));
+                    imags.push(Value::Float(imag));
+                }
+                _ => unreachable!(),
+            }
+        }
+        return Some(crate::helpers::static_array::build_static_array_from_flat_complex(b, reals, imags, vec![total]));
+    }
     let flat = materialise_to_flat(b, val);
     Some(build_static_array_from_flat(b, flat, vec![total], dtype))
 }
@@ -589,10 +628,12 @@ pub fn try_apply_concatenate(
     let mut arrays: Vec<Value> = Vec::with_capacity(inputs.len());
     for v in &inputs {
         let arr = coerce_to_static_array(b, v)?;
-        if matches!(arr, Value::StaticArray { dtype: NumberType::Complex, .. }) {
-            return None;
-        }
         arrays.push(arr);
+    }
+    let has_complex = arrays.iter().any(|a| matches!(a, Value::StaticArray { dtype: NumberType::Complex, .. }));
+    let all_complex = arrays.iter().all(|a| matches!(a, Value::StaticArray { dtype: NumberType::Complex, .. }));
+    if has_complex && !all_complex {
+        return None;
     }
 
     let first_shape = shape_of(&arrays[0]);
@@ -623,10 +664,14 @@ pub fn try_apply_concatenate(
 
     // Promote dtype: any Float input → Float output.
     let mut out_dtype = NumberType::Integer;
-    for arr in &arrays {
-        if matches!(dtype_of(arr), NumberType::Float) {
-            out_dtype = NumberType::Float;
-            break;
+    if all_complex {
+        out_dtype = NumberType::Complex;
+    } else {
+        for arr in &arrays {
+            if matches!(dtype_of(arr), NumberType::Float) {
+                out_dtype = NumberType::Float;
+                break;
+            }
         }
     }
 
@@ -675,6 +720,20 @@ pub fn try_apply_concatenate(
         let cell = inputs_flat[input_idx][src_lin].clone();
         out_flat.push(promote_cell_dtype(b, &cell, out_dtype));
     }
+    if out_dtype == NumberType::Complex {
+        let mut reals = Vec::with_capacity(out_flat.len());
+        let mut imags = Vec::with_capacity(out_flat.len());
+        for c in out_flat {
+            match c {
+                Value::Complex { real, imag } => {
+                    reals.push(Value::Float(real));
+                    imags.push(Value::Float(imag));
+                }
+                _ => unreachable!("Complex concat: cell must be Complex"),
+            }
+        }
+        return Some(crate::helpers::static_array::build_static_array_from_flat_complex(b, reals, imags, out_shape));
+    }
     Some(build_static_array_from_flat(b, out_flat, out_shape, out_dtype))
 }
 
@@ -704,11 +763,11 @@ pub fn try_apply_stack(
     let mut arrays: Vec<Value> = Vec::with_capacity(inputs.len());
     for v in &inputs {
         let arr = coerce_to_static_array(b, v)?;
-        if matches!(arr, Value::StaticArray { dtype: NumberType::Complex, .. }) {
-            return None;
-        }
         arrays.push(arr);
     }
+    let has_complex = arrays.iter().any(|a| matches!(a, Value::StaticArray { dtype: NumberType::Complex, .. }));
+    let all_complex = arrays.iter().all(|a| matches!(a, Value::StaticArray { dtype: NumberType::Complex, .. }));
+    if has_complex && !all_complex { return None; }
 
     let first_shape = shape_of(&arrays[0]);
     let ndim = first_shape.len();
@@ -728,10 +787,14 @@ pub fn try_apply_stack(
 
     // Promote dtype.
     let mut out_dtype = NumberType::Integer;
-    for arr in &arrays {
-        if matches!(dtype_of(arr), NumberType::Float) {
-            out_dtype = NumberType::Float;
-            break;
+    if all_complex {
+        out_dtype = NumberType::Complex;
+    } else {
+        for arr in &arrays {
+            if matches!(dtype_of(arr), NumberType::Float) {
+                out_dtype = NumberType::Float;
+                break;
+            }
         }
     }
 
@@ -758,6 +821,20 @@ pub fn try_apply_stack(
         }
         let cell = inputs_flat[input_idx][src_lin].clone();
         out_flat.push(promote_cell_dtype(b, &cell, out_dtype));
+    }
+    if out_dtype == NumberType::Complex {
+        let mut reals = Vec::with_capacity(out_flat.len());
+        let mut imags = Vec::with_capacity(out_flat.len());
+        for c in out_flat {
+            match c {
+                Value::Complex { real, imag } => {
+                    reals.push(Value::Float(real));
+                    imags.push(Value::Float(imag));
+                }
+                _ => unreachable!("Complex stack: cell must be Complex"),
+            }
+        }
+        return Some(crate::helpers::static_array::build_static_array_from_flat_complex(b, reals, imags, out_shape));
     }
     Some(build_static_array_from_flat(b, out_flat, out_shape, out_dtype))
 }

@@ -123,6 +123,11 @@ impl IRGenerator {
             }
             (None, "abs") => {
                 if !visited_args.is_empty() {
+                    let arg_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
+                    // P5a: Complex StaticArray → fresh Float StaticArray.
+                    if let Value::StaticArray { dtype: crate::types::NumberType::Complex, .. } = &arg_orig {
+                        return crate::helpers::static_array_complex::np_abs_complex_static_array(&mut self.builder, &arg_orig);
+                    }
                     match &visited_args[0] {
                         Value::List(data) | Value::Tuple(data) => {
                             let results: Vec<Value> = data.values.iter()
@@ -283,7 +288,7 @@ impl IRGenerator {
             (Some("np"), "complex64" | "complex128" | "complex256" | "csingle" | "cdouble" | "clongdouble") => Value::Class(ZinniaType::Complex),
             // Complex helpers
             (Some("np"), "conj" | "conjugate") => {
-                let v = visited_args.first().cloned().unwrap_or(Value::None);
+                let v = visited_args_orig.first().cloned().unwrap_or(Value::None);
                 match v {
                     Value::Complex { real, imag } => {
                         // (a + bi) -> (a - bi)
@@ -295,7 +300,44 @@ impl IRGenerator {
                         };
                         Value::Complex { real, imag: ni }
                     }
+                    // P5a: Complex StaticArray → fresh imag segment with negated values; share real segment.
+                    Value::StaticArray { dtype: crate::types::NumberType::Complex, .. } => {
+                        crate::helpers::static_array_complex::np_conj_static_array(&mut self.builder, &v)
+                    }
                     // For real inputs, conj is the identity.
+                    other => other,
+                }
+            }
+            (Some("np"), "real") => {
+                let v = visited_args_orig.first().cloned().unwrap_or(Value::None);
+                match v {
+                    Value::Complex { real, .. } => Value::Float(real),
+                    Value::StaticArray { dtype: crate::types::NumberType::Complex, .. } => {
+                        crate::helpers::static_array_complex::np_real_static_array(&mut self.builder, &v)
+                    }
+                    // For real inputs, real is the identity.
+                    other => other,
+                }
+            }
+            (Some("np"), "imag") => {
+                let v = visited_args_orig.first().cloned().unwrap_or(Value::None);
+                match v {
+                    Value::Complex { imag, .. } => Value::Float(imag),
+                    Value::StaticArray { dtype: crate::types::NumberType::Complex, .. } => {
+                        crate::helpers::static_array_complex::np_imag_static_array(&mut self.builder, &v)
+                    }
+                    // For real inputs, imag is zero of same shape.
+                    Value::StaticArray { shape, .. } => {
+                        let total: usize = shape.iter().product();
+                        let zero = self.builder.ir_constant_float(0.0);
+                        crate::helpers::static_array::build_static_array_from_flat(
+                            &mut self.builder,
+                            vec![zero; total],
+                            shape,
+                            crate::types::NumberType::Float,
+                        )
+                    }
+                    Value::Integer(_) | Value::Float(_) | Value::Boolean(_) => self.builder.ir_constant_float(0.0),
                     other => other,
                 }
             }
@@ -769,6 +811,28 @@ impl IRGenerator {
                     unreachable!()
                 }
             }
+            // P5a: same accessors on a Complex StaticArray operand.
+            (Some(var), "real")
+                if self.ctx.exists(var)
+                    && matches!(self.ctx.get(var), Some(Value::StaticArray { dtype: crate::types::NumberType::Complex, .. })) =>
+            {
+                let v = self.ctx.get(var).unwrap();
+                crate::helpers::static_array_complex::np_real_static_array(&mut self.builder, &v)
+            }
+            (Some(var), "imag")
+                if self.ctx.exists(var)
+                    && matches!(self.ctx.get(var), Some(Value::StaticArray { dtype: crate::types::NumberType::Complex, .. })) =>
+            {
+                let v = self.ctx.get(var).unwrap();
+                crate::helpers::static_array_complex::np_imag_static_array(&mut self.builder, &v)
+            }
+            (Some(var), "conjugate")
+                if self.ctx.exists(var)
+                    && matches!(self.ctx.get(var), Some(Value::StaticArray { dtype: crate::types::NumberType::Complex, .. })) =>
+            {
+                let v = self.ctx.get(var).unwrap();
+                crate::helpers::static_array_complex::np_conj_static_array(&mut self.builder, &v)
+            }
 
             // ── DynamicNDArray method dispatch ────────────────────────
             (Some(var), method) if self.ctx.exists(var) && matches!(self.ctx.get(var), Some(Value::DynamicNDArray(_))) => {
@@ -1234,7 +1298,19 @@ impl IRGenerator {
                     _ => None,
                 };
 
+                // P5a: np.abs/absolute/fabs on a Complex StaticArray → fresh
+                // Float StaticArray. Other np.* unary ops on Complex
+                // StaticArray fall through to legacy path via deep_to_value_list
+                // (for now; native vectorization is a follow-up).
                 let result = if visited_args.len() == 1
+                    && matches!(visited_args_orig.first(), Some(Value::StaticArray { dtype: crate::types::NumberType::Complex, .. }))
+                    && matches!(member, "abs" | "absolute" | "fabs")
+                {
+                    let arr = visited_args_orig[0].clone();
+                    Some(crate::helpers::static_array_complex::np_abs_complex_static_array(
+                        &mut self.builder, &arr,
+                    ))
+                } else if visited_args.len() == 1
                     && matches!(visited_args[0], Value::List(_) | Value::Tuple(_) | Value::DynamicNDArray(_) | Value::Complex { .. })
                 {
                     // Centralized unary vectorization.

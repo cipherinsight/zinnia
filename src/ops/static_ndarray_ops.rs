@@ -288,21 +288,15 @@ pub fn np_fill(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
     };
     let total: usize = shape.iter().product();
 
-    // Complex dtype: produce a List of Value::Complex initialized to (fill, 0).
+    // Complex dtype: produce a Complex StaticArray (dual-segment).
     if matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Complex))) {
-        let real = b.ir_constant_float(fill_value as f64);
-        let imag = b.ir_constant_float(0.0);
-        let r = match real {
-            Value::Float(s) => s,
-            _ => unreachable!("ir_constant_float returns Value::Float"),
-        };
-        let i = match imag {
-            Value::Float(s) => s,
-            _ => unreachable!("ir_constant_float returns Value::Float"),
-        };
-        let values = vec![Value::Complex { real: r, imag: i }; total];
-        let types = vec![ZinniaType::Complex; total];
-        return build_ndarray_from_flat(b, values, types, &shape);
+        let real_fill = b.ir_constant_float(fill_value as f64);
+        let imag_fill = b.ir_constant_float(0.0);
+        let reals = vec![real_fill; total];
+        let imags = vec![imag_fill; total];
+        return crate::helpers::static_array::build_static_array_from_flat_complex(
+            b, reals, imags, shape,
+        );
     }
 
     let use_float = matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Float)));
@@ -323,17 +317,46 @@ pub fn np_fill_like(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, 
         Some(v) => v,
         None => return Value::None,
     };
-    let shape = crate::helpers::composite::get_composite_shape(x);
+    let shape = if let Value::StaticArray { shape, .. } = x {
+        shape.clone()
+    } else {
+        crate::helpers::composite::get_composite_shape(x)
+    };
+    // Detect Complex dtype: explicit dtype=complex or x is a Complex array.
+    let is_complex = if let Some(Value::Class(ZinniaType::Complex)) = kwargs.get("dtype") {
+        true
+    } else if matches!(kwargs.get("dtype"), Some(Value::Class(_))) {
+        false
+    } else {
+        match x {
+            Value::StaticArray { dtype: crate::types::NumberType::Complex, .. } => true,
+            _ => crate::helpers::composite::flatten_composite(x)
+                .iter()
+                .any(|v| matches!(v.zinnia_type(), ZinniaType::Complex)),
+        }
+    };
+    let total: usize = shape.iter().product();
+    if is_complex {
+        let real_fill = b.ir_constant_float(fill_value as f64);
+        let imag_fill = b.ir_constant_float(0.0);
+        let reals = vec![real_fill; total];
+        let imags = vec![imag_fill; total];
+        return crate::helpers::static_array::build_static_array_from_flat_complex(
+            b, reals, imags, shape,
+        );
+    }
     let use_float = if let Some(Value::Class(ZinniaType::Float)) = kwargs.get("dtype") {
         true
     } else if matches!(kwargs.get("dtype"), Some(Value::Class(_))) {
         false
     } else {
-        crate::helpers::composite::flatten_composite(x)
-            .iter()
-            .any(|v| matches!(v.zinnia_type(), ZinniaType::Float))
+        match x {
+            Value::StaticArray { dtype: crate::types::NumberType::Float, .. } => true,
+            _ => crate::helpers::composite::flatten_composite(x)
+                .iter()
+                .any(|v| matches!(v.zinnia_type(), ZinniaType::Float)),
+        }
     };
-    let total: usize = shape.iter().product();
     let (fill, dtype) = if use_float {
         (b.ir_constant_float(fill_value as f64), crate::types::NumberType::Float)
     } else {

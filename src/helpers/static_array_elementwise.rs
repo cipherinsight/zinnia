@@ -46,14 +46,15 @@ use super::value_ops::apply_scalar_binary_op;
 /// cell. Caller passes the visible shape (so we know how many cells the
 /// view sees).
 pub fn payload_cells(b: &mut IRBuilder, arr: &Value) -> Vec<Value> {
-    let (dtype, shape, segment_id, _strides, offset) = match arr {
+    let (dtype, shape, segment_id, _strides, offset, imag_seg) = match arr {
         Value::StaticArray {
             dtype,
             shape,
             segment_id,
             strides,
             offset,
-        } => (*dtype, shape.clone(), *segment_id, strides.clone(), *offset),
+            imag_segment_id,
+        } => (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id),
         _ => panic!("payload_cells: expected Value::StaticArray"),
     };
     let total: usize = shape.iter().product();
@@ -66,6 +67,14 @@ pub fn payload_cells(b: &mut IRBuilder, arr: &Value) -> Vec<Value> {
             .collect();
     }
     // Fallback: read every cell from the segment.
+    if dtype == NumberType::Complex {
+        let im_seg = imag_seg.expect("Complex StaticArray missing imag_segment_id");
+        let mut tmp = Vec::with_capacity(total);
+        for i in 0..total {
+            tmp.push(crate::helpers::static_array_read::read_complex_leaf(b, segment_id, im_seg, offset + i));
+        }
+        return tmp;
+    }
     let mut tmp = Vec::with_capacity(total);
     for i in 0..total {
         let addr = b.ir_constant_int((offset + i) as i64);
@@ -157,20 +166,33 @@ pub fn try_apply_binary_op(
         return None;
     }
 
-    // Refuse Complex on either side (StaticArray of Complex isn't a thing
-    // today; complex scalar + StaticArray defers to legacy until P5a).
+    // P5a: Complex StaticArray support (dual-segment). Either side may be
+    // Complex; promote to Complex output cells.
     let lhs_dtype = match lhs {
         Value::StaticArray { dtype, .. } => Some(*dtype),
+        Value::Complex { .. } => Some(NumberType::Complex),
         _ => dtype_of_scalar(lhs),
     };
     let rhs_dtype = match rhs {
         Value::StaticArray { dtype, .. } => Some(*dtype),
+        Value::Complex { .. } => Some(NumberType::Complex),
         _ => dtype_of_scalar(rhs),
     };
-    if matches!(lhs_dtype, Some(NumberType::Complex))
-        || matches!(rhs_dtype, Some(NumberType::Complex))
-    {
-        return None;
+    let any_complex =
+        matches!(lhs_dtype, Some(NumberType::Complex)) || matches!(rhs_dtype, Some(NumberType::Complex));
+    if any_complex {
+        // Reject ordering comparisons on Complex (numpy raises TypeError).
+        if matches!(op, "lt" | "lte" | "gt" | "gte") {
+            return None; // let caller's apply_binary_op surface the panic via apply_complex_binary_op
+        }
+    }
+
+    let dispatch_complex = any_complex
+        && matches!(lhs, Value::StaticArray { .. } | Value::Complex { .. } | Value::Float(_) | Value::Integer(_) | Value::Boolean(_))
+        && matches!(rhs, Value::StaticArray { .. } | Value::Complex { .. } | Value::Float(_) | Value::Integer(_) | Value::Boolean(_));
+
+    if dispatch_complex {
+        return try_apply_complex_binary_op(b, op, lhs, rhs);
     }
 
     match (lhs, rhs) {
@@ -225,6 +247,84 @@ pub fn try_apply_binary_op(
     }
 }
 
+/// Native binary op dispatch for Complex StaticArray operands. Each operand
+/// is either a Complex StaticArray, a Complex scalar, or a numeric scalar to
+/// be promoted to Complex per cell.
+fn try_apply_complex_binary_op(
+    b: &mut IRBuilder,
+    op: &str,
+    lhs: &Value,
+    rhs: &Value,
+) -> Option<Value> {
+    // Determine output shape (broadcast).
+    let lhs_shape = match lhs {
+        Value::StaticArray { shape, .. } => Some(shape.clone()),
+        _ => None,
+    };
+    let rhs_shape = match rhs {
+        Value::StaticArray { shape, .. } => Some(shape.clone()),
+        _ => None,
+    };
+    let out_shape = match (&lhs_shape, &rhs_shape) {
+        (Some(ls), Some(rs)) => match broadcast_shapes(ls, rs) {
+            Some(s) => s,
+            None => panic!(
+                "operands could not be broadcast together with shapes {:?} {:?}",
+                ls, rs
+            ),
+        },
+        (Some(s), None) | (None, Some(s)) => s.clone(),
+        (None, None) => return None, // both scalars — caller handles
+    };
+    let total: usize = out_shape.iter().product();
+    let out_strides = row_major_strides(&out_shape);
+
+    // Pull cells (or single-cell vec) per side.
+    let lhs_cells: Vec<Value> = match lhs {
+        Value::StaticArray { .. } => payload_cells(b, lhs),
+        _ => vec![lhs.clone()],
+    };
+    let rhs_cells: Vec<Value> = match rhs {
+        Value::StaticArray { .. } => payload_cells(b, rhs),
+        _ => vec![rhs.clone()],
+    };
+
+    let lhs_indexer = lhs_shape.as_ref().map(|s| make_broadcast_indexer(s, &out_shape));
+    let rhs_indexer = rhs_shape.as_ref().map(|s| make_broadcast_indexer(s, &out_shape));
+
+    // For comparisons (eq / ne) the output is Boolean per cell — produce a
+    // Boolean StaticArray. For other ops the output is Complex per cell.
+    let yields_bool = matches!(op, "eq" | "ne");
+
+    if yields_bool {
+        let mut out: Vec<Value> = Vec::with_capacity(total);
+        for flat in 0..total {
+            let coords = decode_coords(flat, &out_shape, &out_strides);
+            let l = match &lhs_indexer { Some(idx) => &lhs_cells[idx.flat_index(&coords)], None => &lhs_cells[0] };
+            let r = match &rhs_indexer { Some(idx) => &rhs_cells[idx.flat_index(&coords)], None => &rhs_cells[0] };
+            out.push(crate::helpers::value_ops::apply_complex_binary_op(b, op, l, r));
+        }
+        return Some(build_static_array_from_flat(b, out, out_shape, NumberType::Integer));
+    }
+
+    let mut reals: Vec<Value> = Vec::with_capacity(total);
+    let mut imags: Vec<Value> = Vec::with_capacity(total);
+    for flat in 0..total {
+        let coords = decode_coords(flat, &out_shape, &out_strides);
+        let l = match &lhs_indexer { Some(idx) => &lhs_cells[idx.flat_index(&coords)], None => &lhs_cells[0] };
+        let r = match &rhs_indexer { Some(idx) => &rhs_cells[idx.flat_index(&coords)], None => &rhs_cells[0] };
+        let result = crate::helpers::value_ops::apply_complex_binary_op(b, op, l, r);
+        match result {
+            Value::Complex { real, imag } => {
+                reals.push(Value::Float(real));
+                imags.push(Value::Float(imag));
+            }
+            _ => unreachable!("apply_complex_binary_op for non-comparison op must return Complex"),
+        }
+    }
+    Some(crate::helpers::static_array::build_static_array_from_flat_complex(b, reals, imags, out_shape))
+}
+
 /// Try to apply a unary op natively on a `Value::StaticArray`. Returns
 /// `Some(result)` for the migrated unary set (`usub`, `uadd`, `not`,
 /// `invert`); `None` otherwise. The caller falls back to the legacy path
@@ -239,8 +339,27 @@ pub fn try_apply_unary_op(
         _ => return None,
     };
     if matches!(arr_dtype, NumberType::Complex) {
-        // Complex StaticArray isn't constructed today; defer to legacy.
-        return None;
+        // Native unary on Complex StaticArray.
+        match op {
+            "uadd" => return Some(operand.clone()),
+            "usub" => {
+                let arr_shape = shape_of_static_array(operand);
+                let cells = payload_cells(b, operand);
+                let mut reals = Vec::with_capacity(cells.len());
+                let mut imags = Vec::with_capacity(cells.len());
+                let zero = b.ir_constant_float(0.0);
+                for c in cells {
+                    let (r, i) = crate::helpers::value_ops::unpack_value_to_complex_parts(b, &c);
+                    let nr = b.ir_sub_f(&zero, &r);
+                    let ni = b.ir_sub_f(&zero, &i);
+                    reals.push(nr);
+                    imags.push(ni);
+                }
+                return Some(crate::helpers::static_array::build_static_array_from_flat_complex(b, reals, imags, arr_shape));
+            }
+            // not/invert undefined on Complex.
+            _ => return None,
+        }
     }
 
     match op {

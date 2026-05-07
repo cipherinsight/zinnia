@@ -31,12 +31,23 @@ pub enum Value {
     ///
     /// Layout: row-major, the same conventions as `DynamicNDArrayData`.
     /// `offset` lets a future view variant share an underlying segment.
+    ///
+    /// **P5a — Complex dtype**: Complex arrays carry a *second* segment for
+    /// the imaginary parts (`imag_segment_id`). Both segments share `shape`,
+    /// `strides`, and `offset` and are addressed in lockstep. A single
+    /// `segment_id` cannot represent two-cell-per-element layouts cheaply;
+    /// using two parallel segments keeps the storage and addressing logic
+    /// uniform across dtypes (one cell == one segment slot, Complex just
+    /// needs two parallel segments). Non-Complex dtypes carry `None`.
     StaticArray {
         dtype: NumberType,
         shape: Vec<usize>,
         segment_id: u32,
         strides: Vec<usize>,
         offset: usize,
+        /// `Some(seg)` only when `dtype == NumberType::Complex`. Holds the
+        /// imaginary-part segment for dual-segment Complex arrays.
+        imag_segment_id: Option<u32>,
     },
     List(CompositeData),
     Tuple(CompositeData),

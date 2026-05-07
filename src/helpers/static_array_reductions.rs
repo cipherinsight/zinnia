@@ -121,6 +121,26 @@ fn mean_from_sum(b: &mut IRBuilder, total_sum: &Value, n: usize) -> Value {
     b.ir_div_f(&total_f, &n_val)
 }
 
+/// Fold a slice of Complex cells with the given binary op (`add` for sum or
+/// `mul` for prod) using the existing component-wise complex IR.
+fn complex_reduce_cells(b: &mut IRBuilder, bin_op: &str, cells: &[Value]) -> Value {
+    if cells.is_empty() {
+        let zero = b.ir_constant_float(0.0);
+        let one = b.ir_constant_float(1.0);
+        let (rr, ii) = if bin_op == "add" {
+            (zero.clone(), zero)
+        } else {
+            (one, zero)
+        };
+        return crate::helpers::value_ops::pack_complex_value(rr, ii);
+    }
+    let mut acc = cells[0].clone();
+    for c in &cells[1..] {
+        acc = crate::helpers::value_ops::apply_complex_binary_op(b, bin_op, &acc, c);
+    }
+    acc
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // Whole-array reductions
 // ────────────────────────────────────────────────────────────────────────
@@ -393,9 +413,29 @@ pub fn try_apply_reduce(
     if !matches!(op, "sum" | "prod" | "min" | "max" | "mean" | "any" | "all") {
         return None;
     }
-    // Complex StaticArray isn't constructed today; defer to legacy.
     if matches!(dtype_of(val), NumberType::Complex) {
-        return None;
+        // Reject reductions that aren't well-defined on Complex.
+        if matches!(op, "min" | "max" | "any" | "all") {
+            panic!(
+                "Reduction `{}` is not defined on Complex (numpy raises TypeError)",
+                op
+            );
+        }
+        // Whole-array sum / prod / mean: walk Complex cells, fold with the
+        // existing component-wise complex IR.
+        let cells = payload_cells(b, val);
+        if op == "mean" {
+            let n: usize = shape_of(val).iter().product::<usize>().max(1);
+            let s = complex_reduce_cells(b, "add", &cells);
+            // Divide both components by n (real division).
+            let n_val = b.ir_constant_float(n as f64);
+            let (sr, si) = crate::helpers::value_ops::unpack_value_to_complex_parts(b, &s);
+            let mr = b.ir_div_f(&sr, &n_val);
+            let mi = b.ir_div_f(&si, &n_val);
+            return Some(crate::helpers::value_ops::pack_complex_value(mr, mi));
+        }
+        let bin_op = if op == "sum" { "add" } else { "mul" };
+        return Some(complex_reduce_cells(b, bin_op, &cells));
     }
 
     // Extract a static int axis, if any.
@@ -442,7 +482,9 @@ pub fn try_apply_argmax_argmin(
         return None;
     }
     if matches!(dtype_of(val), NumberType::Complex) {
-        return None;
+        panic!(
+            "argmax / argmin is not defined on Complex (no canonical ordering; numpy raises TypeError)"
+        );
     }
     let axis_int: Option<i64> = match axis_arg {
         None => None,

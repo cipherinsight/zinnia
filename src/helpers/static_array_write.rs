@@ -70,8 +70,15 @@ fn cast_to_dtype(b: &mut IRBuilder, v: &Value, dtype: NumberType) -> Value {
                 b.ir_int_cast(v)
             }
         }
+        // Complex casting is component-aware. For non-Complex sources we
+        // promote via `unpack_to_complex_parts`. For Complex sources we pass
+        // through. The dispatch in `static_array_setitem` for Complex dtype
+        // splits the write into two per-component segment writes; this
+        // helper is *only* called by the per-component (Float) path, never
+        // with `dtype == Complex`. We surface a clear panic if it ever does.
         NumberType::Complex => panic!(
-            "StaticArray of Complex is not yet supported (compiler.segarr-complex-dtype scope)"
+            "cast_to_dtype(Complex) is not used for dual-segment StaticArray writes; \
+             component-level writes use NumberType::Float per cell"
         ),
     }
 }
@@ -140,9 +147,9 @@ pub fn static_array_setitem(
     indices: &[SliceIndex],
     value: &Value,
 ) -> Value {
-    let (dtype, shape, segment_id, strides, offset) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset } => {
-            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset)
+    let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
+        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id } => {
+            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
         }
         _ => panic!("static_array_setitem: expected Value::StaticArray"),
     };
@@ -303,15 +310,97 @@ pub fn static_array_setitem(
                 }
             }
         }
+        if dtype == NumberType::Complex {
+            return complex_slice_setitem_via_list(b, val, indices, value);
+        }
         return static_array_slice_setitem(
             b, val, dtype, &shape, segment_id, &strides, offset, indices, value,
         );
     }
 
     // All-Single indices.
+    if dtype == NumberType::Complex {
+        return complex_element_setitem(
+            b, val, &shape, segment_id, imag_seg.expect("Complex StaticArray missing imag_segment_id"),
+            &strides, offset, indices, value,
+        );
+    }
     static_array_element_setitem(
         b, val, dtype, &shape, segment_id, &strides, offset, indices, value,
     )
+}
+
+/// Component-wise element setitem for a dual-segment Complex StaticArray.
+/// Promotes the value to (real_f, imag_f) parts, then writes to the real
+/// segment and imag segment at the same address.
+#[allow(clippy::too_many_arguments)]
+fn complex_element_setitem(
+    b: &mut IRBuilder,
+    val: &Value,
+    shape: &[usize],
+    real_seg: u32,
+    imag_seg: u32,
+    strides: &[usize],
+    offset: usize,
+    indices: &[SliceIndex],
+    value: &Value,
+) -> Value {
+    // Pull out per-component (real_f, imag_f) Float wires.
+    let (re_v, im_v) = crate::helpers::value_ops::unpack_value_to_complex_parts(b, value);
+    // Convert each SliceIndex::Single into a Value (we already vetted this is
+    // an all-Single setitem at the dispatcher).
+    let idx_vals: Vec<Value> = indices.iter().map(|s| match s {
+        SliceIndex::Single(v) => v.clone(),
+        _ => unreachable!("complex_element_setitem expects all-Single indices"),
+    }).collect();
+
+    // Static fast path: known offset → both component writes are direct.
+    let all_static = idx_vals.iter().all(|v| v.int_val().is_some());
+    if all_static && idx_vals.len() == shape.len() {
+        let mut flat: i64 = offset as i64;
+        for (ax, v) in idx_vals.iter().enumerate() {
+            let i = v.int_val().unwrap();
+            let i = if i < 0 { shape[ax] as i64 + i } else { i };
+            flat += i * strides[ax] as i64;
+        }
+        let addr = b.ir_constant_int(flat);
+        b.ir_write_memory(real_seg, &addr, &re_v);
+        b.ir_write_memory(imag_seg, &addr, &im_v);
+        // Update cache cell to a Value::Complex made from the new parts.
+        let abs = flat as usize;
+        let new_complex = match (&re_v, &im_v) {
+            (Value::Float(r), Value::Float(im)) => Value::Complex { real: r.clone(), imag: im.clone() },
+            _ => unreachable!(),
+        };
+        cache_set_cell(b, real_seg, abs, new_complex);
+        return val.clone();
+    }
+    // Dynamic: drop the cache, then issue two parallel ir_write_memory ops.
+    let addr = compute_addr(b, offset, strides, &idx_vals, shape);
+    b.ir_write_memory(real_seg, &addr, &re_v);
+    b.ir_write_memory(imag_seg, &addr, &im_v);
+    cache_invalidate(b, real_seg);
+    val.clone()
+}
+
+/// Slice setitem for Complex StaticArray. Routes through materialise →
+/// list-based set_nested_value → rebind. Mirrors the legacy Complex slice
+/// behaviour; segment-write fidelity for slice writes on Complex is
+/// covered by the round-trip cache (the result is rebuilt as a fresh
+/// Complex StaticArray when possible).
+fn complex_slice_setitem_via_list(
+    b: &mut IRBuilder,
+    val: &Value,
+    indices: &[SliceIndex],
+    value: &Value,
+) -> Value {
+    let lst = super::static_array::to_value_list(b, val);
+    let value_lst = if let Value::StaticArray { .. } = value {
+        super::static_array::to_value_list(b, value)
+    } else {
+        value.clone()
+    };
+    legacy_set_nested(b, &lst, indices, &value_lst)
 }
 
 /// Fallback used only when an exotic index (NewAxis) is encountered on a
@@ -364,7 +453,7 @@ fn slice_setitem_via_legacy(
     value: &Value,
 ) -> Value {
     let (dtype, shape, segment_id, _strides, offset) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset } => {
+        Value::StaticArray { dtype, shape, segment_id, strides, offset, .. } => {
             (*dtype, shape.clone(), *segment_id, strides.clone(), *offset)
         }
         _ => unreachable!("slice_setitem_via_legacy: expected StaticArray"),

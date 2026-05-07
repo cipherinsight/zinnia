@@ -68,6 +68,19 @@ pub fn select_value(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> 
     }
 }
 
+/// Public re-export of `unpack_to_complex_parts` for use by the segment-
+/// native Complex paths (P5a). Same semantics: returns a (real_f, imag_f)
+/// pair of `Value::Float` ScalarValues for any of {Complex, Float, Integer,
+/// Boolean}.
+pub fn unpack_value_to_complex_parts(b: &mut IRBuilder, val: &Value) -> (Value, Value) {
+    unpack_to_complex_parts(b, val)
+}
+
+/// Public re-export of `pack_complex` for the segment-native Complex paths.
+pub fn pack_complex_value(real: Value, imag: Value) -> Value {
+    pack_complex(real, imag)
+}
+
 /// Promote any of {Complex, Float, Integer, Boolean} into a (real_f, imag_f)
 /// pair of `Value::Float` ScalarValues that can feed into ir_*_f gates.
 fn unpack_to_complex_parts(b: &mut IRBuilder, val: &Value) -> (Value, Value) {

@@ -21,15 +21,24 @@ use super::segment::alloc_and_write;
 use super::shape_arith::row_major_strides;
 
 /// Determine whether a value is a (possibly-nested) composite of purely
-/// numeric leaves (Integer / Float / Boolean — Complex is excluded for now;
-/// see P5a). Heterogeneous lists, lists containing strings, lists of arrays,
-/// etc. all return `false`.
+/// numeric leaves (Integer / Float / Boolean / Complex — P5a admits Complex).
+/// Heterogeneous lists, lists containing strings, lists of arrays, etc. all
+/// return `false`.
 fn is_pure_numeric_composite(val: &Value) -> bool {
     match val {
         Value::List(d) | Value::Tuple(d) => {
             !d.values.is_empty() && d.values.iter().all(is_pure_numeric_composite)
         }
-        Value::Integer(_) | Value::Float(_) | Value::Boolean(_) => true,
+        Value::Integer(_) | Value::Float(_) | Value::Boolean(_) | Value::Complex { .. } => true,
+        _ => false,
+    }
+}
+
+/// Returns true if any leaf in the composite is `Value::Complex`.
+fn composite_has_complex(val: &Value) -> bool {
+    match val {
+        Value::Complex { .. } => true,
+        Value::List(d) | Value::Tuple(d) => d.values.iter().any(composite_has_complex),
         _ => false,
     }
 }
@@ -38,7 +47,9 @@ fn is_pure_numeric_composite(val: &Value) -> bool {
 /// otherwise `Integer` (Boolean folds into Integer storage).
 fn infer_numeric_dtype(val: &Value) -> NumberType {
     let leaves = flatten_composite(val);
-    if leaves.iter().any(|v| matches!(v, Value::Float(_))) {
+    if leaves.iter().any(|v| matches!(v, Value::Complex { .. })) {
+        NumberType::Complex
+    } else if leaves.iter().any(|v| matches!(v, Value::Float(_))) {
         NumberType::Float
     } else {
         NumberType::Integer
@@ -74,6 +85,60 @@ pub fn build_static_array_from_flat(
         segment_id,
         strides,
         offset: 0,
+        imag_segment_id: None,
+    }
+}
+
+/// Build a Complex `Value::StaticArray` from precomputed flat real and imag
+/// payloads (same length) and shape. Allocates two parallel segments and
+/// caches the original Complex wires under the *real* segment id (cache
+/// representation A — see P5a card / segarr-complex-dtype README).
+pub fn build_static_array_from_flat_complex(
+    b: &mut IRBuilder,
+    real_flat: Vec<Value>,
+    imag_flat: Vec<Value>,
+    shape: Vec<usize>,
+) -> Value {
+    assert_eq!(real_flat.len(), imag_flat.len());
+    let real_cells: Vec<ScalarValue<i64>> = real_flat.iter().map(value_to_scalar_i64).collect();
+    let imag_cells: Vec<ScalarValue<i64>> = imag_flat.iter().map(value_to_scalar_i64).collect();
+    let real_seg = build_segment_for_payload(b, &real_cells, NumberType::Float);
+    let imag_seg = build_segment_for_payload(b, &imag_cells, NumberType::Float);
+    let strides = row_major_strides(&shape);
+
+    // Cache representation (A): one entry keyed on the *real* segment_id,
+    // holding `Vec<Value::Complex>` so payload_cells / to_value_list lookups
+    // see the original Complex scalars.
+    let complex_cells: Vec<Value> = real_flat
+        .iter()
+        .zip(imag_flat.iter())
+        .map(|(re, im)| {
+            let r_sv = match re {
+                Value::Float(s) => s.clone(),
+                _ => {
+                    let f = b.ir_float_cast(re);
+                    match f { Value::Float(s) => s, _ => unreachable!() }
+                }
+            };
+            let i_sv = match im {
+                Value::Float(s) => s.clone(),
+                _ => {
+                    let f = b.ir_float_cast(im);
+                    match f { Value::Float(s) => s, _ => unreachable!() }
+                }
+            };
+            Value::Complex { real: r_sv, imag: i_sv }
+        })
+        .collect();
+    b.static_array_payload.insert(real_seg, complex_cells);
+
+    Value::StaticArray {
+        dtype: NumberType::Complex,
+        shape,
+        segment_id: real_seg,
+        strides,
+        offset: 0,
+        imag_segment_id: Some(imag_seg),
     }
 }
 
@@ -120,6 +185,30 @@ pub fn to_static_array(b: &mut IRBuilder, val: &Value) -> Option<Value> {
     let shape = get_composite_shape(val);
     let dtype = infer_numeric_dtype(val);
     let flat = flatten_composite(val);
+    if dtype == NumberType::Complex {
+        // Promote each leaf to Value::Complex, then split into reals / imags.
+        let mut reals = Vec::with_capacity(flat.len());
+        let mut imags = Vec::with_capacity(flat.len());
+        for leaf in &flat {
+            match leaf {
+                Value::Complex { real, imag } => {
+                    reals.push(Value::Float(real.clone()));
+                    imags.push(Value::Float(imag.clone()));
+                }
+                Value::Float(s) => {
+                    reals.push(Value::Float(s.clone()));
+                    imags.push(b.ir_constant_float(0.0));
+                }
+                Value::Integer(_) | Value::Boolean(_) => {
+                    let r = b.ir_float_cast(leaf);
+                    reals.push(r);
+                    imags.push(b.ir_constant_float(0.0));
+                }
+                _ => unreachable!("is_pure_numeric_composite already guarded leaf types"),
+            }
+        }
+        return Some(build_static_array_from_flat_complex(b, reals, imags, shape));
+    }
     Some(build_static_array_from_flat(b, flat, shape, dtype))
 }
 
@@ -154,14 +243,15 @@ pub fn deep_to_value_list(b: &mut IRBuilder, val: &Value) -> Value {
 /// time constants they would have seen if the array had been built as a
 /// `Value::List` to begin with.
 pub fn to_value_list(b: &mut IRBuilder, val: &Value) -> Value {
-    let (dtype, shape, segment_id, _strides, offset) = match val {
+    let (dtype, shape, segment_id, _strides, offset, imag_seg) = match val {
         Value::StaticArray {
             dtype,
             shape,
             segment_id,
             strides,
             offset,
-        } => (*dtype, shape.clone(), *segment_id, strides.clone(), *offset),
+            imag_segment_id,
+        } => (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id),
         _ => return val.clone(),
     };
     let total: usize = shape.iter().product();
@@ -176,6 +266,14 @@ pub fn to_value_list(b: &mut IRBuilder, val: &Value) -> Value {
             .take(total)
             .cloned()
             .collect()
+    } else if dtype == NumberType::Complex {
+        // P5a: dual-segment fallback for Complex when cache was invalidated.
+        let im_seg = imag_seg.expect("Complex StaticArray missing imag_segment_id");
+        let mut tmp = Vec::with_capacity(total);
+        for i in 0..total {
+            tmp.push(super::static_array_read::read_complex_leaf(b, segment_id, im_seg, offset + i));
+        }
+        tmp
     } else {
         // Fallback: materialise via segment reads (only relevant for
         // StaticArrays created without cache registration).

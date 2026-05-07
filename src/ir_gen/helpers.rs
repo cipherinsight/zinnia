@@ -261,8 +261,8 @@ impl IRGenerator {
                     values.push(self.read_input_value(&inner_dt, param_name, sub_segs, is_public));
                 }
                 // P1 segarr-foundation: numeric NDArray params become
-                // segment-backed `Value::StaticArray`. Complex stays on the
-                // legacy nested-List path until P5a.
+                // segment-backed `Value::StaticArray`. P5a adds Complex via a
+                // dual-segment StaticArray.
                 match dtype {
                     crate::types::NumberType::Integer | crate::types::NumberType::Float => {
                         crate::helpers::static_array::build_static_array_from_flat(
@@ -273,8 +273,24 @@ impl IRGenerator {
                         )
                     }
                     crate::types::NumberType::Complex => {
-                        let types = values.iter().map(|v| v.zinnia_type()).collect();
-                        crate::helpers::composite::build_nested_value(values, types, shape)
+                        // Split each Complex element into (real, imag) Floats.
+                        let mut reals = Vec::with_capacity(values.len());
+                        let mut imags = Vec::with_capacity(values.len());
+                        for v in values {
+                            match v {
+                                Value::Complex { real, imag } => {
+                                    reals.push(Value::Float(real));
+                                    imags.push(Value::Float(imag));
+                                }
+                                _ => unreachable!("Complex NDArray param: leaf must be Value::Complex"),
+                            }
+                        }
+                        crate::helpers::static_array::build_static_array_from_flat_complex(
+                            &mut self.builder,
+                            reals,
+                            imags,
+                            shape.clone(),
+                        )
                     }
                 }
             }

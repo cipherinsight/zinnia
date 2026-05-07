@@ -109,9 +109,9 @@ fn compute_addr(
 /// Mirrors the responsibilities of `dyn_subscript` for `DynamicNDArray`, but
 /// stays on the StaticArray representation when it can.
 pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIndex]) -> Value {
-    let (dtype, shape, segment_id, strides, offset) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset } => {
-            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset)
+    let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
+        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id } => {
+            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
         }
         _ => panic!("static_array_subscript: expected Value::StaticArray"),
     };
@@ -176,9 +176,15 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
                 let i = if i < 0 { shape[ax] as i64 + i } else { i };
                 flat += i * strides[ax] as i64;
             }
+            if dtype == NumberType::Complex {
+                return read_complex_leaf(b, segment_id, imag_seg.expect("Complex StaticArray missing imag_segment_id"), offset + flat as usize);
+            }
             return read_leaf_at_flat(b, segment_id, offset, flat as usize, dtype);
         }
         let addr = compute_addr(b, offset, &strides, &idx_vals, &shape);
+        if dtype == NumberType::Complex {
+            return read_complex_leaf_dynamic(b, segment_id, imag_seg.expect("Complex StaticArray missing imag_segment_id"), &addr);
+        }
         return read_leaf_at_dynamic(b, segment_id, &addr, dtype);
     }
 
@@ -188,6 +194,9 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
             SliceIndex::Single(v) => {
                 if let Some(i) = v.int_val() {
                     let i = if i < 0 { shape[0] as i64 + i } else { i };
+                    if dtype == NumberType::Complex {
+                        return read_complex_leaf(b, segment_id, imag_seg.expect("Complex StaticArray missing imag_segment_id"), offset + i as usize * strides[0]);
+                    }
                     return read_leaf_at_flat(b, segment_id, offset, i as usize, dtype);
                 }
                 // Dynamic 1-D: address = offset + i.
@@ -196,6 +205,9 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
                 let stride_val = b.ir_constant_int(strides[0] as i64);
                 let scaled = b.ir_mul_i(v, &stride_val);
                 let addr = b.ir_add_i(&off_val, &scaled);
+                if dtype == NumberType::Complex {
+                    return read_complex_leaf_dynamic(b, segment_id, imag_seg.expect("Complex StaticArray missing imag_segment_id"), &addr);
+                }
                 return read_leaf_at_dynamic(b, segment_id, &addr, dtype);
             }
             SliceIndex::Range(s, e, st) => {
@@ -224,13 +236,14 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
                         segment_id,
                         strides: new_strides,
                         offset: new_offset,
+                        imag_segment_id: imag_seg,
                     };
                 }
                 // Dynamic axis-0 index: materialise the row into a fresh
                 // contiguous segment. We can't represent a dynamic-offset
                 // view in the StaticArray variant.
                 return materialise_axis0_dynamic_row(
-                    b, dtype, &shape, segment_id, &strides, offset, v,
+                    b, dtype, &shape, segment_id, imag_seg, &strides, offset, v,
                 );
             }
             SliceIndex::Range(s, e, st) => {
@@ -302,12 +315,17 @@ fn slice_axis_static_or_dynamic_1d(
     if st == 1 && strides[0] == 1 {
         let out_len = (e - s).max(0) as usize;
         let new_offset = offset + s as usize;
+        // Preserve dual-segment imag for Complex views.
+        let imag_seg = if let Value::StaticArray { imag_segment_id, .. } = src {
+            *imag_segment_id
+        } else { None };
         return Value::StaticArray {
             dtype,
             shape: vec![out_len],
             segment_id,
             strides: vec![strides[0]],
             offset: new_offset,
+            imag_segment_id: imag_seg,
         };
     }
 
@@ -321,6 +339,23 @@ fn slice_axis_static_or_dynamic_1d(
         while i > e { indices.push(i); i += st; }
     }
     let out_len = indices.len();
+    if dtype == NumberType::Complex {
+        let imag_seg = if let Value::StaticArray { imag_segment_id, .. } = src {
+            imag_segment_id.expect("Complex StaticArray missing imag_segment_id")
+        } else { unreachable!() };
+        let mut reals: Vec<Value> = Vec::with_capacity(out_len);
+        let mut imags: Vec<Value> = Vec::with_capacity(out_len);
+        for src_i in &indices {
+            let flat = (*src_i as usize) * strides[0];
+            let abs = offset + flat;
+            let leaf = read_complex_leaf(b, segment_id, imag_seg, abs);
+            if let Value::Complex { real, imag } = leaf {
+                reals.push(Value::Float(real));
+                imags.push(Value::Float(imag));
+            }
+        }
+        return super::static_array::build_static_array_from_flat_complex(b, reals, imags, vec![out_len]);
+    }
     let mut leaves: Vec<Value> = Vec::with_capacity(out_len);
     for src_i in &indices {
         let flat = (*src_i as usize) * strides[0];
@@ -453,12 +488,16 @@ fn slice_axis(
         let mut new_shape = shape.to_vec();
         new_shape[0] = out_len;
         let new_offset = offset + (s as usize) * strides[0];
+        let imag_seg = if let Value::StaticArray { imag_segment_id, .. } = src {
+            *imag_segment_id
+        } else { None };
         return Value::StaticArray {
             dtype,
             shape: new_shape,
             segment_id,
             strides: strides.to_vec(),
             offset: new_offset,
+            imag_segment_id: imag_seg,
         };
     }
 
@@ -579,12 +618,14 @@ fn materialise_dynamic_axis_slice(
     super::static_array::build_static_array_from_flat(b, leaves, new_shape, dtype)
 }
 
-/// Materialise a single dynamic-axis-0 row into a fresh segment.
+/// Materialise a single dynamic-axis-0 row into a fresh segment. For Complex
+/// dtype, two parallel reads/writes per element across the dual segments.
 fn materialise_axis0_dynamic_row(
     b: &mut IRBuilder,
     dtype: NumberType,
     shape: &[usize],
     segment_id: u32,
+    imag_seg: Option<u32>,
     strides: &[usize],
     offset: usize,
     idx: &Value,
@@ -596,6 +637,23 @@ fn materialise_axis0_dynamic_row(
     let offset_val = b.ir_constant_int(offset as i64);
     let base = b.ir_mul_i(idx, &stride_val);
     let base = b.ir_add_i(&offset_val, &base);
+
+    if dtype == NumberType::Complex {
+        let imag_seg = imag_seg.expect("Complex StaticArray missing imag_segment_id");
+        let mut real_leaves: Vec<Value> = Vec::with_capacity(row_total);
+        let mut imag_leaves: Vec<Value> = Vec::with_capacity(row_total);
+        for j in 0..row_total {
+            let off2 = b.ir_constant_int(j as i64);
+            let addr = b.ir_add_i(&base, &off2);
+            let r = b.ir_read_memory(segment_id, &addr);
+            let im = b.ir_read_memory(imag_seg, &addr);
+            real_leaves.push(scalar_i64_to_value(&value_to_scalar_i64(&r), NumberType::Float));
+            imag_leaves.push(scalar_i64_to_value(&value_to_scalar_i64(&im), NumberType::Float));
+        }
+        return super::static_array::build_static_array_from_flat_complex(
+            b, real_leaves, imag_leaves, row_shape,
+        );
+    }
 
     let mut leaves: Vec<Value> = Vec::with_capacity(row_total);
     for j in 0..row_total {
@@ -614,9 +672,9 @@ fn multidim_subscript_static_array(
     val: &Value,
     indices: &[SliceIndex],
 ) -> Value {
-    let (dtype, shape, segment_id, strides, offset) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset } => {
-            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset)
+    let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
+        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id } => {
+            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
         }
         _ => unreachable!(),
     };
@@ -743,16 +801,40 @@ fn multidim_subscript_static_array(
             // Fully static address (after relative-to-segment normalisation).
             // src_flat is already absolute (offset baked into static_base).
             let flat_idx = src_flat as usize;
-            // read_leaf_at_flat takes a base+rel; pass abs as 0+abs.
-            leaves.push(read_leaf_at_flat(b, segment_id, 0, flat_idx, dtype));
+            if dtype == NumberType::Complex {
+                let im = imag_seg.expect("Complex StaticArray missing imag_segment_id");
+                leaves.push(read_complex_leaf(b, segment_id, im, flat_idx));
+            } else {
+                // read_leaf_at_flat takes a base+rel; pass abs as 0+abs.
+                leaves.push(read_leaf_at_flat(b, segment_id, 0, flat_idx, dtype));
+            }
         } else {
             let static_part = b.ir_constant_int(src_flat);
             let mut acc = static_part;
             for p in &dynamic_parts {
                 acc = b.ir_add_i(&acc, p);
             }
-            leaves.push(read_leaf_at_dynamic(b, segment_id, &acc, dtype));
+            if dtype == NumberType::Complex {
+                let im = imag_seg.expect("Complex StaticArray missing imag_segment_id");
+                leaves.push(read_complex_leaf_dynamic(b, segment_id, im, &acc));
+            } else {
+                leaves.push(read_leaf_at_dynamic(b, segment_id, &acc, dtype));
+            }
         }
+    }
+    if dtype == NumberType::Complex {
+        let mut reals: Vec<Value> = Vec::with_capacity(leaves.len());
+        let mut imags: Vec<Value> = Vec::with_capacity(leaves.len());
+        for v in leaves {
+            match v {
+                Value::Complex { real, imag } => {
+                    reals.push(Value::Float(real));
+                    imags.push(Value::Float(imag));
+                }
+                _ => unreachable!(),
+            }
+        }
+        return super::static_array::build_static_array_from_flat_complex(b, reals, imags, out_shape);
     }
     super::static_array::build_static_array_from_flat(b, leaves, out_shape, dtype)
 }
@@ -772,16 +854,20 @@ enum AxisSel {
 /// `i`. For a ≥2-D array this is a (D-1)-rank `Value::StaticArray` view
 /// sharing the same segment.
 pub fn iter_element(b: &mut IRBuilder, arr: &Value, i: usize) -> Value {
-    let (dtype, shape, segment_id, strides, offset) = match arr {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset } => {
-            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset)
+    let (dtype, shape, segment_id, strides, offset, imag_seg) = match arr {
+        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id } => {
+            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
         }
         _ => panic!("iter_element: expected StaticArray"),
     };
     if shape.len() == 1 {
+        // For Complex 1-D, return Value::Complex {real, imag}.
+        if dtype == NumberType::Complex {
+            return read_complex_leaf(b, segment_id, imag_seg.expect("Complex array missing imag_segment_id"), offset + i * strides[0]);
+        }
         return read_leaf_at_flat(b, segment_id, offset, i * strides[0], dtype);
     }
-    // ≥2-D → view sharing segment.
+    // ≥2-D → view sharing segment(s).
     let new_shape = shape[1..].to_vec();
     let new_strides = strides[1..].to_vec();
     let new_offset = offset + i * strides[0];
@@ -791,5 +877,54 @@ pub fn iter_element(b: &mut IRBuilder, arr: &Value, i: usize) -> Value {
         segment_id,
         strides: new_strides,
         offset: new_offset,
+        imag_segment_id: imag_seg,
     }
+}
+
+/// Read a single Complex element from a dual-segment Complex StaticArray at
+/// the given absolute flat offset. Prefers cached Value::Complex wires.
+pub fn read_complex_leaf(
+    b: &mut IRBuilder,
+    real_seg: u32,
+    imag_seg: u32,
+    abs_offset: usize,
+) -> Value {
+    if let Some(cached) = b.static_array_payload.get(&real_seg) {
+        if abs_offset < cached.len() {
+            // Cache (rep A) holds Value::Complex directly.
+            return cached[abs_offset].clone();
+        }
+    }
+    let addr = b.ir_constant_int(abs_offset as i64);
+    let real_raw = b.ir_read_memory(real_seg, &addr);
+    let imag_raw = b.ir_read_memory(imag_seg, &addr);
+    let real_sv = match scalar_i64_to_value(&value_to_scalar_i64(&real_raw), NumberType::Float) {
+        Value::Float(s) => s,
+        _ => unreachable!(),
+    };
+    let imag_sv = match scalar_i64_to_value(&value_to_scalar_i64(&imag_raw), NumberType::Float) {
+        Value::Float(s) => s,
+        _ => unreachable!(),
+    };
+    Value::Complex { real: real_sv, imag: imag_sv }
+}
+
+/// Read a Complex element at a runtime address (sum of `offset + sum_k(idx*stride)`).
+pub fn read_complex_leaf_dynamic(
+    b: &mut IRBuilder,
+    real_seg: u32,
+    imag_seg: u32,
+    addr: &Value,
+) -> Value {
+    let real_raw = b.ir_read_memory(real_seg, addr);
+    let imag_raw = b.ir_read_memory(imag_seg, addr);
+    let real_sv = match scalar_i64_to_value(&value_to_scalar_i64(&real_raw), NumberType::Float) {
+        Value::Float(s) => s,
+        _ => unreachable!(),
+    };
+    let imag_sv = match scalar_i64_to_value(&value_to_scalar_i64(&imag_raw), NumberType::Float) {
+        Value::Float(s) => s,
+        _ => unreachable!(),
+    };
+    Value::Complex { real: real_sv, imag: imag_sv }
 }
