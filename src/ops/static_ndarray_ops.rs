@@ -887,9 +887,11 @@ pub fn ndarray_moveaxis(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value
 
 /// NDArray repeat: repeat array elements along an axis.
 pub fn ndarray_repeat(b: &mut IRBuilder, val: &Value, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
-    let repeats = args.first()
-        .and_then(|v| v.int_val())
-        .expect("repeat: repeats must be a constant integer");
+    let repeats_arg = args.first()
+        .expect("repeat: repeats argument required");
+    let repeats: i64 = require_static_int(b, repeats_arg, SiteKind::RepeatCount, None)
+        .unwrap_or_else(|e| panic!("{}", e.message))
+        .into();
     let axis = kwargs.get("axis")
         .or_else(|| args.get(1))
         .and_then(|v| v.int_val());
@@ -1417,7 +1419,7 @@ pub fn np_atleast_nd(_b: &mut IRBuilder, args: &[Value], n: usize) -> Value {
 }
 
 /// `np.tile(arr, reps)` — repeat `arr` according to `reps`.
-pub fn np_tile(_b: &mut IRBuilder, args: &[Value]) -> Value {
+pub fn np_tile(b: &mut IRBuilder, args: &[Value]) -> Value {
     let val = args.first().expect("tile: requires an array argument");
     let reps_arg = args.get(1).expect("tile: requires a reps argument");
     let reps: Vec<usize> = match reps_arg {
@@ -1425,12 +1427,18 @@ pub fn np_tile(_b: &mut IRBuilder, args: &[Value]) -> Value {
             .values
             .iter()
             .map(|v| {
-                v.int_val()
-                    .expect("tile: reps elements must be constant ints")
-                    .max(0) as usize
+                let n: i64 = require_static_int(b, v, SiteKind::RepeatCount, None)
+                    .unwrap_or_else(|e| panic!("{}", e.message))
+                    .into();
+                n.max(0) as usize
             })
             .collect(),
-        Value::Integer(_) => vec![reps_arg.int_val().unwrap().max(0) as usize],
+        Value::Integer(_) => {
+            let n: i64 = require_static_int(b, reps_arg, SiteKind::RepeatCount, None)
+                .unwrap_or_else(|e| panic!("{}", e.message))
+                .into();
+            vec![n.max(0) as usize]
+        }
         _ => panic!("tile: invalid reps argument"),
     };
     let src_shape = crate::helpers::composite::get_composite_shape(val);
