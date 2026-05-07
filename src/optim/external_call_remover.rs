@@ -15,6 +15,9 @@ impl IRPass for ExternalCallRemover {
             .map(|s| s.stmt_id)
             .collect();
         ir_graph.remove_stmt_bunch(&to_remove);
+        // P0 seam: signal mutation to the resolver. No-op today via
+        // StaticOnlyResolver; P1 uses this for cache invalidation.
+        ir_graph.resolver_mut().on_ir_mutated(&[]);
         ir_graph
     }
 }

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ir_defs::IR;
+use crate::optim::resolver::{Resolver, StaticOnlyResolver};
 use crate::types::StmtId;
 
 // ---------------------------------------------------------------------------
@@ -90,6 +91,14 @@ pub struct IRGraph {
     pub in_links: Vec<Vec<StmtId>>,
     /// out_links[i] = list of stmt IDs that reference stmt i
     pub out_links: Vec<Vec<StmtId>>,
+    /// P0 SMT-resolver seam: the active [`Resolver`] for "must be a
+    /// compile-time constant" queries during the optim pipeline. Optim
+    /// passes that mutate the IR call `resolver_mut().on_ir_mutated(&[])`
+    /// at the end of `exec`. The default is [`StaticOnlyResolver`], whose
+    /// `on_ir_mutated` is a no-op — so today's behaviour is unchanged.
+    /// P1 swaps in `SmtResolver`, which uses the hook for cache
+    /// invalidation. See `src/optim/resolver.rs`.
+    resolver: Box<dyn Resolver>,
 }
 
 impl IRGraph {
@@ -102,9 +111,27 @@ impl IRGraph {
             out_d: Vec::new(),
             in_links: Vec::new(),
             out_links: Vec::new(),
+            resolver: Box::new(StaticOnlyResolver::new()),
         };
         graph.update_graph(stmts);
         graph
+    }
+
+    /// Borrow the active [`Resolver`].
+    pub fn resolver(&self) -> &dyn Resolver {
+        &*self.resolver
+    }
+
+    /// Borrow the active [`Resolver`] mutably. Optim passes that mutate the
+    /// IR call this and invoke `on_ir_mutated(&[])` at the end of `exec` so
+    /// future stateful resolvers (P1's `SmtResolver`) can invalidate caches.
+    pub fn resolver_mut(&mut self) -> &mut dyn Resolver {
+        &mut *self.resolver
+    }
+
+    /// Swap in a different [`Resolver`] implementation. Reserved for P1+.
+    pub fn set_resolver(&mut self, r: Box<dyn Resolver>) {
+        self.resolver = r;
     }
 
     /// Replace the statement list and recompute all adjacency information.

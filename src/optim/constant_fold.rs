@@ -60,6 +60,10 @@ impl IRPass for ConstantFold {
             value_lookup.insert(stmt.stmt_id, new_val);
         }
 
-        builder.export_ir_graph()
+        let mut new_graph = builder.export_ir_graph();
+        // P0 seam: signal mutation to the resolver. No-op today via
+        // StaticOnlyResolver; P1 uses this for cache invalidation.
+        new_graph.resolver_mut().on_ir_mutated(&[]);
+        new_graph
     }
 }

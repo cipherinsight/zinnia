@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::ir::{IRGraph, IRStatement};
 use crate::ir_defs::IR;
+use crate::optim::resolver::{Resolver, StaticOnlyResolver};
 use crate::types::{ScalarValue, StmtId, StringValue, Value};
 
 macro_rules! ir_binary {
@@ -53,6 +54,12 @@ pub struct IRBuilder {
     /// while ops are still being migrated. Once P6 lands and the legacy
     /// path goes away, this cache (and the shim) go with it.
     pub static_array_payload: HashMap<u32, Vec<Value>>,
+    /// P0 SMT-resolver seam: the [`Resolver`] every "must be a compile-time
+    /// constant" call site routes through. Default is [`StaticOnlyResolver`]
+    /// (delegates to `Value::int_val`/`bool_val`), so today's behaviour is
+    /// unchanged. P1 swaps in `SmtResolver`, P2 layers in `RangeResolver`,
+    /// without consumer changes. See `src/optim/resolver.rs`.
+    resolver: Box<dyn Resolver>,
 }
 
 impl Default for IRBuilder {
@@ -70,7 +77,26 @@ impl IRBuilder {
             next_array_id: 0,
             dim_table: crate::types::DimTable::new(),
             static_array_payload: HashMap::new(),
+            resolver: Box::new(StaticOnlyResolver::new()),
         }
+    }
+
+    /// Borrow the active [`Resolver`] (immutable side; rarely used).
+    pub fn resolver(&self) -> &dyn Resolver {
+        &*self.resolver
+    }
+
+    /// Borrow the active [`Resolver`] mutably. The `&mut` receiver is
+    /// required because P1's SMT resolver memoises per-ptr query results.
+    pub fn resolver_mut(&mut self) -> &mut dyn Resolver {
+        &mut *self.resolver
+    }
+
+    /// Swap in a different [`Resolver`] implementation. Not used in P0
+    /// (the default is [`StaticOnlyResolver`]); P1's `SmtResolver` and
+    /// P2's `RangeResolver` plug in here.
+    pub fn set_resolver(&mut self, r: Box<dyn Resolver>) {
+        self.resolver = r;
     }
 
     /// Allocate a unique memory segment ID.

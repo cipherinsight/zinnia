@@ -8,6 +8,8 @@ mod dyn_ndarray_meta_assert;
 mod external_call_remover;
 mod memory_trace_injection;
 mod pattern_match_optim;
+pub mod resolver;
+pub mod smt_encoding;
 
 #[cfg(test)]
 mod tests;
@@ -22,6 +24,10 @@ pub use dyn_ndarray_meta_assert::DynamicNDArrayMetaAssertInjection;
 pub use external_call_remover::ExternalCallRemover;
 pub use memory_trace_injection::MemoryTraceInjection;
 pub use pattern_match_optim::PatternMatchOptim;
+pub use resolver::{
+    require_static_int, Resolver, SiteKind, StaticInt, StaticOnlyResolver,
+};
+pub use smt_encoding::{IROp, SmtEncodingCtx, Z3Term};
 
 use crate::ir::IRGraph;
 

@@ -40,6 +40,9 @@ impl IRPass for AlwaysSatisfiedElimination {
         }
 
         ir_graph.remove_stmt_bunch(&to_eliminate);
+        // P0 seam: signal mutation to the resolver. No-op today via
+        // StaticOnlyResolver; P1 uses this for cache invalidation.
+        ir_graph.resolver_mut().on_ir_mutated(&[]);
         ir_graph
     }
 }

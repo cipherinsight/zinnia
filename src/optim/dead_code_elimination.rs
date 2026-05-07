@@ -31,6 +31,10 @@ impl IRPass for DeadCodeElimination {
         }
 
         ir_graph.remove_stmt_bunch(&to_eliminate);
+        // P0 seam: signal "something possibly changed" to the resolver.
+        // Default StaticOnlyResolver is a no-op; P1's SmtResolver uses
+        // this for cache invalidation.
+        ir_graph.resolver_mut().on_ir_mutated(&[]);
         ir_graph
     }
 }
