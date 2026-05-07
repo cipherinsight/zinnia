@@ -8,6 +8,7 @@ mod dyn_ndarray_meta_assert;
 mod external_call_remover;
 mod memory_trace_injection;
 mod pattern_match_optim;
+pub mod range;
 pub mod resolver;
 pub mod smt_encoding;
 
