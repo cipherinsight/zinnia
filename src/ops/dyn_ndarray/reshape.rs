@@ -1,5 +1,6 @@
 use crate::builder::IRBuilder;
 use crate::helpers::shape_arith::row_major_strides;
+use crate::optim::resolver::{require_static_int, SiteKind};
 use crate::types::{
     CompositeData, DynArrayMeta, DynamicNDArrayData, ScalarValue, Value, ZinniaType,
 };
@@ -281,8 +282,9 @@ pub fn dyn_reshape(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value])
     let raw_shape: Vec<i64> = dim_args
         .iter()
         .map(|v| {
-            v.int_val()
-                .expect("reshape: all shape elements must be compile-time constants")
+            require_static_int(b, v, SiteKind::ReshapeDim, None)
+                .unwrap_or_else(|e| panic!("{}", e.message))
+                .into()
         })
         .collect();
 

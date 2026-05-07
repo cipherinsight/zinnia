@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::builder::IRBuilder;
+use crate::optim::resolver::{require_static_int, SiteKind};
 use crate::types::{CompositeData, Value, ZinniaType};
 
 pub fn matmul(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
@@ -804,13 +805,28 @@ pub fn ndarray_reshape(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value 
     let new_shape: Vec<usize> = if args.len() == 1 {
         match &args[0] {
             Value::Tuple(data) | Value::List(data) => {
-                data.values.iter().map(|v| v.int_val().expect("reshape: shape elements must be constant ints") as usize).collect()
+                data.values.iter().map(|v| {
+                    let n: i64 = require_static_int(b, v, SiteKind::ReshapeDim, None)
+                        .unwrap_or_else(|e| panic!("{}", e.message))
+                        .into();
+                    n as usize
+                }).collect()
             }
-            Value::Integer(_) => vec![args[0].int_val().unwrap() as usize],
+            Value::Integer(_) => {
+                let n: i64 = require_static_int(b, &args[0], SiteKind::ReshapeDim, None)
+                    .unwrap_or_else(|e| panic!("{}", e.message))
+                    .into();
+                vec![n as usize]
+            }
             _ => panic!("reshape: invalid shape argument"),
         }
     } else {
-        args.iter().map(|v| v.int_val().expect("reshape: shape elements must be constant ints") as usize).collect()
+        args.iter().map(|v| {
+            let n: i64 = require_static_int(b, v, SiteKind::ReshapeDim, None)
+                .unwrap_or_else(|e| panic!("{}", e.message))
+                .into();
+            n as usize
+        }).collect()
     };
 
     // Handle -1 (infer one dimension)
