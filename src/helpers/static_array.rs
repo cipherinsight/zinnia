@@ -217,6 +217,12 @@ pub fn to_static_array(b: &mut IRBuilder, val: &Value) -> Option<Value> {
 /// receives a List of arrays and any of its inner elements may be a
 /// segment-backed StaticArray. Non-StaticArray values pass through.
 pub fn deep_to_value_list(b: &mut IRBuilder, val: &Value) -> Value {
+    // P6 fast path: skip the recursive walk and return the value untouched
+    // when there's no segment-backed array hiding inside. The common case
+    // for the boundary shim is "no StaticArray here, do nothing".
+    if !contains_static_array(val) {
+        return val.clone();
+    }
     match val {
         Value::StaticArray { .. } => to_value_list(b, val),
         Value::List(data) => {
@@ -230,6 +236,19 @@ pub fn deep_to_value_list(b: &mut IRBuilder, val: &Value) -> Value {
             Value::Tuple(CompositeData { elements_type: new_types, values: new_vals })
         }
         _ => val.clone(),
+    }
+}
+
+/// Returns true if `val` is a `StaticArray` or contains one anywhere in a
+/// nested `List` / `Tuple`. P6: used to avoid the deep clone in
+/// [`deep_to_value_list`] when there's nothing segment-backed to materialise.
+fn contains_static_array(val: &Value) -> bool {
+    match val {
+        Value::StaticArray { .. } => true,
+        Value::List(data) | Value::Tuple(data) => {
+            data.values.iter().any(contains_static_array)
+        }
+        _ => false,
     }
 }
 

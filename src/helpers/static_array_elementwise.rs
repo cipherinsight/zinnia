@@ -34,7 +34,7 @@ use crate::types::{NumberType, Value};
 
 use super::broadcast::broadcast_shapes;
 use super::shape_arith::{decode_coords, row_major_strides};
-use super::static_array::{build_static_array_from_flat, to_value_list};
+use super::static_array::build_static_array_from_flat;
 use super::value_ops::apply_scalar_binary_op;
 
 // ────────────────────────────────────────────────────────────────────────
@@ -545,16 +545,11 @@ fn make_broadcast_indexer(src_shape: &[usize], out_shape: &[usize]) -> Broadcast
 // ────────────────────────────────────────────────────────────────────────
 // Boundary helper
 // ────────────────────────────────────────────────────────────────────────
-
-/// Catch-all for ops where we can't (or shouldn't) handle natively but at
-/// least one operand is a `Value::StaticArray`. Materialises both sides via
-/// `to_value_list` so the legacy dispatcher works. Used by the boundary
-/// shim in `apply_binary_op` after `try_apply_binary_op` returns `None`.
-pub fn materialise_pair(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> (Value, Value) {
-    let l = to_value_list(b, lhs);
-    let r = to_value_list(b, rhs);
-    (l, r)
-}
+//
+// P6: the previous `materialise_pair` boundary helper was unused — the
+// `apply_binary_op` shim in `value_ops.rs` calls `to_value_list` directly
+// per operand. Removed to drop the unused dependency on `to_value_list`
+// from this module.
 
 // ────────────────────────────────────────────────────────────────────────
 // Tests
