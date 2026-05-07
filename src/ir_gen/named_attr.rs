@@ -65,6 +65,17 @@ impl IRGenerator {
                 _ => false,
             }
         }
+        // P4c: helper to detect StaticArray inputs in a list/tuple — used to
+        // decide whether to route concatenate/stack/etc. through the native
+        // path before falling back to the legacy nested-List handlers.
+        fn list_contains_static_array(arg: &Value) -> bool {
+            match arg {
+                Value::List(cd) | Value::Tuple(cd) => {
+                    cd.values.iter().any(|v| matches!(v, Value::StaticArray { .. }))
+                }
+                _ => false,
+            }
+        }
 
         match (target, member) {
             // ── Built-in functions (no target) ─────────────────────────
@@ -399,6 +410,20 @@ impl IRGenerator {
                 if has_dynamic_array_in_list(&visited_args) {
                     crate::ops::dyn_ndarray::memory_ops::dyn_concatenate(&mut self.builder, &visited_args, &_visited_kwargs)
                 } else {
+                    // P4c: native StaticArray dispatch — uses orig args (un-converted).
+                    let raw_axis = visited_kwargs_orig.get("axis")
+                        .or_else(|| visited_args_orig.get(1))
+                        .and_then(|v| v.int_val())
+                        .unwrap_or(0);
+                    if let Some(arrays_arg) = visited_args_orig.first() {
+                        if list_contains_static_array(arrays_arg) {
+                            if let Some(out) = crate::helpers::static_array_shape::try_apply_concatenate(
+                                &mut self.builder, arrays_arg, raw_axis,
+                            ) {
+                                return out;
+                            }
+                        }
+                    }
                     crate::ops::static_ndarray_ops::np_concatenate(&mut self.builder, &visited_args, &_visited_kwargs)
                 }
             }
@@ -406,23 +431,90 @@ impl IRGenerator {
                 if has_dynamic_array_in_list(&visited_args) {
                     crate::ops::dyn_ndarray::memory_ops::dyn_stack(&mut self.builder, &visited_args, &_visited_kwargs)
                 } else {
+                    // P4c: native StaticArray dispatch.
+                    let raw_axis = visited_kwargs_orig.get("axis")
+                        .or_else(|| visited_args_orig.get(1))
+                        .and_then(|v| v.int_val())
+                        .unwrap_or(0);
+                    if let Some(arrays_arg) = visited_args_orig.first() {
+                        if list_contains_static_array(arrays_arg) {
+                            if let Some(out) = crate::helpers::static_array_shape::try_apply_stack(
+                                &mut self.builder, arrays_arg, raw_axis,
+                            ) {
+                                return out;
+                            }
+                        }
+                    }
                     crate::ops::static_ndarray_ops::np_stack(&mut self.builder, &visited_args, &_visited_kwargs)
                 }
             }
-            (Some("np"), "vstack") => crate::ops::static_ndarray_ops::np_vstack(&mut self.builder, &visited_args),
+            (Some("np"), "vstack") => {
+                // P4c: native StaticArray dispatch.
+                if let Some(arrays_arg) = visited_args_orig.first() {
+                    if list_contains_static_array(arrays_arg) {
+                        if let Some(out) = crate::helpers::static_array_shape::try_apply_vstack(
+                            &mut self.builder, arrays_arg,
+                        ) {
+                            return out;
+                        }
+                    }
+                }
+                crate::ops::static_ndarray_ops::np_vstack(&mut self.builder, &visited_args)
+            }
             (Some("np"), "row_stack") => crate::ops::static_ndarray_ops::np_row_stack(&mut self.builder, &visited_args),
-            (Some("np"), "hstack") => crate::ops::static_ndarray_ops::np_hstack(&mut self.builder, &visited_args),
+            (Some("np"), "hstack") => {
+                // P4c: native StaticArray dispatch.
+                if let Some(arrays_arg) = visited_args_orig.first() {
+                    if list_contains_static_array(arrays_arg) {
+                        if let Some(out) = crate::helpers::static_array_shape::try_apply_hstack(
+                            &mut self.builder, arrays_arg,
+                        ) {
+                            return out;
+                        }
+                    }
+                }
+                crate::ops::static_ndarray_ops::np_hstack(&mut self.builder, &visited_args)
+            }
             (Some("np"), "dstack") => crate::ops::static_ndarray_ops::np_dstack(&mut self.builder, &visited_args),
-            (Some("np"), "column_stack") => crate::ops::static_ndarray_ops::np_column_stack(&mut self.builder, &visited_args),
+            (Some("np"), "column_stack") => {
+                // P4c: native StaticArray dispatch.
+                if let Some(arrays_arg) = visited_args_orig.first() {
+                    if list_contains_static_array(arrays_arg) {
+                        if let Some(out) = crate::helpers::static_array_shape::try_apply_column_stack(
+                            &mut self.builder, arrays_arg,
+                        ) {
+                            return out;
+                        }
+                    }
+                }
+                crate::ops::static_ndarray_ops::np_column_stack(&mut self.builder, &visited_args)
+            }
             (Some("np"), "swapaxes") => {
                 let val = visited_args.first().cloned().unwrap_or(Value::None);
                 crate::ops::static_ndarray_ops::ndarray_swapaxes(&mut self.builder, &val, &visited_args[1..])
             }
             (Some("np"), "moveaxis") => {
+                // P4c: native StaticArray dispatch via array_ops::moveaxis fast-path,
+                // using the un-converted orig args.
+                let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
+                if matches!(val_orig, Value::StaticArray { .. }) {
+                    return crate::helpers::array_ops::moveaxis(
+                        &mut self.builder, &val_orig, &visited_args_orig[1..],
+                    );
+                }
                 let val = visited_args.first().cloned().unwrap_or(Value::None);
                 crate::ops::static_ndarray_ops::ndarray_moveaxis(&mut self.builder, &val, &visited_args[1..])
             }
             (Some("np"), "transpose") => {
+                // P4c: native StaticArray dispatch.
+                let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
+                if matches!(val_orig, Value::StaticArray { .. }) {
+                    if let Some(out) = crate::helpers::static_array_shape::try_apply_transpose(
+                        &mut self.builder, &val_orig, &visited_args_orig[1..],
+                    ) {
+                        return out;
+                    }
+                }
                 let val = visited_args.first().cloned().unwrap_or(Value::None);
                 crate::helpers::ndarray::ndarray_transpose(&mut self.builder, &val, &visited_args[1..])
             }
@@ -430,8 +522,30 @@ impl IRGenerator {
             (Some("np"), "flipud") => crate::ops::static_ndarray_ops::np_flipud(&mut self.builder, &visited_args),
             (Some("np"), "fliplr") => crate::ops::static_ndarray_ops::np_fliplr(&mut self.builder, &visited_args),
             (Some("np"), "rot90") => crate::ops::static_ndarray_ops::np_rot90(&mut self.builder, &visited_args, &_visited_kwargs),
-            (Some("np"), "squeeze") => crate::ops::static_ndarray_ops::np_squeeze(&mut self.builder, &visited_args, &_visited_kwargs),
-            (Some("np"), "expand_dims") => crate::ops::static_ndarray_ops::np_expand_dims(&mut self.builder, &visited_args),
+            (Some("np"), "squeeze") => {
+                let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
+                if matches!(val_orig, Value::StaticArray { .. }) {
+                    let axis_arg = visited_kwargs_orig.get("axis").or_else(|| visited_args_orig.get(1));
+                    if let Some(out) = crate::helpers::static_array_shape::try_apply_squeeze(
+                        &mut self.builder, &val_orig, axis_arg,
+                    ) {
+                        return out;
+                    }
+                }
+                crate::ops::static_ndarray_ops::np_squeeze(&mut self.builder, &visited_args, &_visited_kwargs)
+            }
+            (Some("np"), "expand_dims") => {
+                let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
+                if matches!(val_orig, Value::StaticArray { .. }) {
+                    let axis_arg = visited_args_orig.get(1);
+                    if let Some(out) = crate::helpers::static_array_shape::try_apply_expand_dims(
+                        &mut self.builder, &val_orig, axis_arg,
+                    ) {
+                        return out;
+                    }
+                }
+                crate::ops::static_ndarray_ops::np_expand_dims(&mut self.builder, &visited_args)
+            }
             (Some("np"), "broadcast_to") => crate::ops::static_ndarray_ops::np_broadcast_to(&mut self.builder, &visited_args),
             (Some("np"), "atleast_1d") => crate::ops::static_ndarray_ops::np_atleast_nd(&mut self.builder, &visited_args, 1),
             (Some("np"), "atleast_2d") => crate::ops::static_ndarray_ops::np_atleast_nd(&mut self.builder, &visited_args, 2),
@@ -540,6 +654,13 @@ impl IRGenerator {
                 crate::ops::static_ndarray_ops::np_block_with_depth(&val, depth)
             }
             (Some("np"), "reshape") => {
+                // P4c: native StaticArray dispatch via array_ops::reshape fast-path.
+                let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
+                if matches!(val_orig, Value::StaticArray { .. }) {
+                    return crate::helpers::array_ops::reshape(
+                        &mut self.builder, &val_orig, &visited_args_orig[1..],
+                    );
+                }
                 let val = visited_args.first().cloned().unwrap_or(Value::None);
                 crate::ops::static_ndarray_ops::ndarray_reshape(&mut self.builder, &val, &visited_args[1..])
             }
@@ -684,17 +805,33 @@ impl IRGenerator {
             }
             (Some(var), "transpose") if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
-                // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
                 let args = if let Some(axes_val) = _visited_kwargs.get("axes") {
                     vec![axes_val.clone()]
                 } else {
                     visited_args.clone()
                 };
+                // P4c: native StaticArray dispatch.
+                if matches!(val, Value::StaticArray { .. }) {
+                    if let Some(out) = crate::helpers::static_array_shape::try_apply_transpose(
+                        &mut self.builder, &val, &args,
+                    ) {
+                        return out;
+                    }
+                }
+                // P1 segarr boundary: normalize StaticArray to legacy List view.
+                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
                 crate::helpers::array_ops::transpose(&mut self.builder, &val, &args)
             }
             (Some(var), "T") if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
+                // P4c: native StaticArray dispatch.
+                if matches!(val, Value::StaticArray { .. }) {
+                    if let Some(out) = crate::helpers::static_array_shape::try_apply_transpose(
+                        &mut self.builder, &val, &[],
+                    ) {
+                        return out;
+                    }
+                }
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
                 let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
                 crate::helpers::ndarray::ndarray_transpose(&mut self.builder, &val, &[])
@@ -784,6 +921,14 @@ impl IRGenerator {
             }
             (Some(var), "flatten") if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
+                // P4c: native StaticArray dispatch.
+                if matches!(val, Value::StaticArray { .. }) {
+                    if let Some(out) = crate::helpers::static_array_shape::try_apply_flatten(
+                        &mut self.builder, &val,
+                    ) {
+                        return out;
+                    }
+                }
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
                 let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
                 let flat = crate::helpers::composite::flatten_composite(&val);
@@ -800,12 +945,21 @@ impl IRGenerator {
             }
             (Some(var), "reshape") if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
+                // P4c: native StaticArray dispatch (delegates to array_ops::reshape
+                // which has its own StaticArray fast-path before the legacy fallback).
+                if matches!(val, Value::StaticArray { .. }) {
+                    return crate::helpers::array_ops::reshape(&mut self.builder, &val, &visited_args);
+                }
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
                 let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
                 crate::helpers::array_ops::reshape(&mut self.builder, &val, &visited_args)
             }
             (Some(var), "moveaxis") if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
+                // P4c: native StaticArray dispatch through array_ops::moveaxis.
+                if matches!(val, Value::StaticArray { .. }) {
+                    return crate::helpers::array_ops::moveaxis(&mut self.builder, &val, &visited_args);
+                }
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
                 let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
                 crate::helpers::array_ops::moveaxis(&mut self.builder, &val, &visited_args)
@@ -881,6 +1035,15 @@ impl IRGenerator {
             }
             (Some(var), "squeeze") if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
+                // P4c: native StaticArray dispatch.
+                if matches!(val, Value::StaticArray { .. }) {
+                    let axis_arg = _visited_kwargs.get("axis").or_else(|| visited_args.first());
+                    if let Some(out) = crate::helpers::static_array_shape::try_apply_squeeze(
+                        &mut self.builder, &val, axis_arg,
+                    ) {
+                        return out;
+                    }
+                }
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
                 let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
                 let mut all_args: Vec<Value> = vec![val];
@@ -1278,9 +1441,27 @@ impl IRGenerator {
                 } else {
                     visited_args.clone()
                 };
+                // P4c: native StaticArray dispatch.
+                if matches!(target_orig, Value::StaticArray { .. }) {
+                    if let Some(out) = crate::helpers::static_array_shape::try_apply_transpose(
+                        &mut self.builder, &target_orig, &args,
+                    ) {
+                        return out;
+                    }
+                }
                 crate::helpers::array_ops::transpose(&mut self.builder, &target, &args)
             }
-            "T" => crate::helpers::ndarray::ndarray_transpose(&mut self.builder, &target, &[]),
+            "T" => {
+                // P4c: native StaticArray dispatch.
+                if matches!(target_orig, Value::StaticArray { .. }) {
+                    if let Some(out) = crate::helpers::static_array_shape::try_apply_transpose(
+                        &mut self.builder, &target_orig, &[],
+                    ) {
+                        return out;
+                    }
+                }
+                crate::helpers::ndarray::ndarray_transpose(&mut self.builder, &target, &[])
+            }
             "tolist" => target,
             "astype" => {
                 let target_float = if let Some(Value::Class(ZinniaType::Float)) = visited_args.first() {
@@ -1300,12 +1481,32 @@ impl IRGenerator {
                 self.builder.ir_constant_int(total as i64)
             }
             "flatten" | "flat" => {
+                // P4c: native StaticArray dispatch.
+                if matches!(target_orig, Value::StaticArray { .. }) {
+                    if let Some(out) = crate::helpers::static_array_shape::try_apply_flatten(
+                        &mut self.builder, &target_orig,
+                    ) {
+                        return out;
+                    }
+                }
                 let flat = crate::helpers::composite::flatten_composite(&target);
                 let types = flat.iter().map(|v| v.zinnia_type()).collect();
                 Value::List(CompositeData { elements_type: types, values: flat })
             }
-            "reshape" => crate::helpers::array_ops::reshape(&mut self.builder, &target, &visited_args),
-            "moveaxis" => crate::helpers::array_ops::moveaxis(&mut self.builder, &target, &visited_args),
+            "reshape" => {
+                // P4c: native StaticArray dispatch.
+                if matches!(target_orig, Value::StaticArray { .. }) {
+                    return crate::helpers::array_ops::reshape(&mut self.builder, &target_orig, &visited_args);
+                }
+                crate::helpers::array_ops::reshape(&mut self.builder, &target, &visited_args)
+            }
+            "moveaxis" => {
+                // P4c: native StaticArray dispatch.
+                if matches!(target_orig, Value::StaticArray { .. }) {
+                    return crate::helpers::array_ops::moveaxis(&mut self.builder, &target_orig, &visited_args);
+                }
+                crate::helpers::array_ops::moveaxis(&mut self.builder, &target, &visited_args)
+            }
             "repeat" => crate::helpers::array_ops::repeat(&mut self.builder, &target, &visited_args, &visited_kwargs),
             "filter" => crate::helpers::array_ops::filter(&mut self.builder, &target, &visited_args),
             "shape" => {

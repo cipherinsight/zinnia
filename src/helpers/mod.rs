@@ -10,4 +10,5 @@ pub mod static_array_read;
 pub mod static_array_write;
 pub mod static_array_elementwise;
 pub mod static_array_reductions;
+pub mod static_array_shape;
 pub mod array_ops;
