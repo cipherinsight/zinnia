@@ -303,6 +303,245 @@ fn sat_div_floor(a: i64, b: i64) -> i64 {
 }
 
 // ---------------------------------------------------------------------------
+// RangeResolver
+// ---------------------------------------------------------------------------
+//
+// Forward-walks the IR DAG to compute an [`IntInterval`] per ptr, caching
+// results behind a `Mutex` so the outer `RangeResolver` can stay
+// `Send + Sync` (required because `IRGraph` is held by a `#[pyclass]`).
+//
+// The cache holds intervals (not just resolved points) so that downstream
+// queries on the same wire short-circuit, *and* so dependent ops can read
+// the bounds of an unbounded-result wire without re-walking. `on_ir_mutated`
+// blows the cache wholesale (P5 may refine).
+//
+// Why per-ptr is sound: each statement in the IR has a stable identity; an
+// op's interval is determined by the intervals of its arguments which are
+// themselves keyed by ptr. No path-condition refinement happens here (that's
+// P5+ per spec).
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+use crate::ir::IRStatement;
+use crate::ir_defs::IR;
+use crate::optim::resolver::Resolver;
+use crate::types::{StmtId, Value};
+
+/// Range-analysis [`Resolver`]. See module-level comment for design.
+#[derive(Debug, Default)]
+pub struct RangeResolver {
+    cache: Mutex<HashMap<StmtId, IntInterval>>,
+}
+
+impl RangeResolver {
+    pub fn new() -> Self {
+        Self {
+            cache: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Test / telemetry helper: number of cached interval entries. P5 will
+    /// surface this for the "how often did range answer first" metric.
+    pub fn cache_size(&self) -> usize {
+        self.cache.lock().unwrap().len()
+    }
+
+    /// Compute (and cache) the [`IntInterval`] for the wire at `ptr`. Walks
+    /// arguments recursively. Unknown / off-the-int-path IR ops fall through
+    /// to [`IntInterval::unbounded`], which is the conservative
+    /// over-approximation.
+    fn interval_of(&self, ptr: StmtId, stmts: &[IRStatement]) -> IntInterval {
+        // Fast cache lookup.
+        if let Some(cached) = self.cache.lock().unwrap().get(&ptr).copied() {
+            return cached;
+        }
+
+        // Defensive bounds check — out-of-range ptr (shouldn't happen in
+        // practice; the resolver was given the wrong stmt slice) yields the
+        // safe over-approximation.
+        let stmt = match stmts.get(ptr as usize) {
+            Some(s) => s,
+            None => return IntInterval::unbounded(),
+        };
+
+        let interval = match &stmt.ir {
+            // Constants ------------------------------------------------
+            IR::ConstantInt { value } => IntInterval::point(*value),
+            IR::ConstantBool { value } => {
+                IntInterval::point(if *value { 1 } else { 0 })
+            }
+
+            // Arithmetic -----------------------------------------------
+            IR::AddI => self.binop(stmt, stmts, IntInterval::add),
+            IR::SubI => self.binop(stmt, stmts, IntInterval::sub),
+            IR::MulI => self.binop(stmt, stmts, IntInterval::mul),
+
+            // Selection (commit 2 covers SelectI) ----------------------
+            IR::SelectI => {
+                if stmt.arguments.len() == 3 {
+                    let t = self.interval_of(stmt.arguments[1], stmts);
+                    let f = self.interval_of(stmt.arguments[2], stmts);
+                    IntInterval::select(t, f)
+                } else {
+                    IntInterval::unbounded()
+                }
+            }
+
+            // Logical: always boolean-projected → [0, 1] ----------------
+            IR::LogicalAnd | IR::LogicalOr | IR::LogicalNot => {
+                IntInterval::bool_domain()
+            }
+
+            // Comparisons project to bool: [0, 1] -----------------------
+            IR::EqI
+            | IR::NeI
+            | IR::LtI
+            | IR::LteI
+            | IR::GtI
+            | IR::GteI
+            | IR::EqF
+            | IR::NeF
+            | IR::LtF
+            | IR::LteF
+            | IR::GtF
+            | IR::GteF
+            | IR::EqHash => IntInterval::bool_domain(),
+
+            // SelectB returns a bool; project to [0, 1].
+            IR::SelectB => IntInterval::bool_domain(),
+
+            // Everything else falls through to commit 3 / unbounded.
+            _ => IntInterval::unbounded(),
+        };
+
+        self.cache.lock().unwrap().insert(ptr, interval);
+        interval
+    }
+
+    /// Helper to compute a binary op's interval given its two arguments.
+    fn binop(
+        &self,
+        stmt: &IRStatement,
+        stmts: &[IRStatement],
+        f: fn(IntInterval, IntInterval) -> IntInterval,
+    ) -> IntInterval {
+        if stmt.arguments.len() != 2 {
+            return IntInterval::unbounded();
+        }
+        let a = self.interval_of(stmt.arguments[0], stmts);
+        let b = self.interval_of(stmt.arguments[1], stmts);
+        f(a, b)
+    }
+}
+
+impl Resolver for RangeResolver {
+    /// Without `&[IRStatement]` we can't walk the DAG; fall back to
+    /// `static_val`. Call sites should route through
+    /// `resolve_int_with_stmts` (the IRBuilder/IRGraph split-borrow helper
+    /// already does this for the `require_static_int` chokepoint).
+    fn resolve_int(&mut self, val: &Value) -> Option<i64> {
+        val.int_val()
+    }
+
+    fn resolve_bool(&mut self, val: &Value) -> Option<bool> {
+        val.bool_val()
+    }
+
+    fn resolve_max(&mut self, val: &Value) -> Option<i64> {
+        val.int_val()
+    }
+
+    fn resolve_min(&mut self, val: &Value) -> Option<i64> {
+        val.int_val()
+    }
+
+    fn resolve_int_with_stmts(
+        &mut self,
+        val: &Value,
+        stmts: &[IRStatement],
+    ) -> Option<i64> {
+        // Fast path 1: static-val.
+        if let Some(n) = val.int_val() {
+            return Some(n);
+        }
+        // Fast path 2: walk the interval and report a point if we got one.
+        let ptr = val.ptr()?;
+        let interval = self.interval_of(ptr, stmts);
+        if interval.is_point() {
+            Some(interval.min)
+        } else {
+            None
+        }
+    }
+
+    /// P2 is integer-only — we don't refine booleans through interval
+    /// analysis. Call sites that need bool resolution fall through to a
+    /// later layer (SmtResolver in the layered composition). One trivial
+    /// shortcut: when both ints are point-and-equal we can return that
+    /// projected to bool — but that's already covered by `resolve_int`'s
+    /// `[0, 1]` arms returning `Some(0)` or `Some(1)`. We mirror it here
+    /// to keep the bool API symmetric.
+    fn resolve_bool_with_stmts(
+        &mut self,
+        val: &Value,
+        stmts: &[IRStatement],
+    ) -> Option<bool> {
+        if let Some(b) = val.bool_val() {
+            return Some(b);
+        }
+        let ptr = val.ptr()?;
+        let interval = self.interval_of(ptr, stmts);
+        // Only resolve to bool if the wire is a [0, 1]-domain wire that
+        // collapsed to a single point.
+        if interval.is_point() && (interval.min == 0 || interval.min == 1) {
+            Some(interval.min == 1)
+        } else {
+            None
+        }
+    }
+
+    fn resolve_max_with_stmts(
+        &mut self,
+        val: &Value,
+        stmts: &[IRStatement],
+    ) -> Option<i64> {
+        if let Some(n) = val.int_val() {
+            return Some(n);
+        }
+        let ptr = val.ptr()?;
+        let interval = self.interval_of(ptr, stmts);
+        if interval.max == i64::MAX {
+            None
+        } else {
+            Some(interval.max)
+        }
+    }
+
+    fn resolve_min_with_stmts(
+        &mut self,
+        val: &Value,
+        stmts: &[IRStatement],
+    ) -> Option<i64> {
+        if let Some(n) = val.int_val() {
+            return Some(n);
+        }
+        let ptr = val.ptr()?;
+        let interval = self.interval_of(ptr, stmts);
+        if interval.min == i64::MIN {
+            None
+        } else {
+            Some(interval.min)
+        }
+    }
+
+    fn on_ir_mutated(&mut self, _affected: &[StmtId]) {
+        // P2 conservative: blow the cache. P5 may refine to precise ids.
+        self.cache.lock().unwrap().clear();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -363,5 +602,207 @@ mod tests {
             IntInterval::intersect(iv(0, 5), iv(10, 20)),
             IntInterval::unbounded()
         );
+    }
+
+    // -----------------------------------------------------------------
+    // RangeResolver tests (commit 2 — cheap arms)
+    // -----------------------------------------------------------------
+
+    use crate::circuit_input::InputPath;
+    use crate::types::ScalarValue;
+
+    /// Helper: Value::Integer with runtime-only ptr.
+    fn runtime_int(stmt_id: StmtId) -> Value {
+        Value::Integer(ScalarValue::runtime(stmt_id))
+    }
+
+    /// `select(c, 7, 7)` collapses to `7` regardless of `c` — this is the
+    /// canonical case the static_val path can't handle but range can: both
+    /// branches have the same point interval, so the union is also a
+    /// point.
+    #[test]
+    fn range_select_unifies_branches() {
+        // stmt0 = ReadInteger("c") (free cond, here projected to int via
+        //          a comparison… but for this test we just need a free
+        //          ptr at index 0). For simplicity we use ReadInteger as
+        //          the "cond" placeholder; the resolver doesn't read it.
+        // stmt1 = ConstantInt(7), stmt2 = ConstantInt(7),
+        // stmt3 = SelectI(stmt0, stmt1, stmt2).
+        let stmts = vec![
+            IRStatement::new(
+                0,
+                IR::ReadInteger {
+                    path: InputPath::new("c", vec![]),
+                    is_public: false,
+                },
+                vec![],
+                None,
+            ),
+            IRStatement::new(1, IR::ConstantInt { value: 7 }, vec![], None),
+            IRStatement::new(2, IR::ConstantInt { value: 7 }, vec![], None),
+            IRStatement::new(3, IR::SelectI, vec![0, 1, 2], None),
+        ];
+        let v = runtime_int(3);
+        let mut r = RangeResolver::new();
+        assert_eq!(r.resolve_int_with_stmts(&v, &stmts), Some(7));
+    }
+
+    /// `AddI(free, free)` where both operands are unbounded — the sum is
+    /// unbounded and resolve_int returns None.
+    #[test]
+    fn range_unbounded_returns_none() {
+        let stmts = vec![
+            IRStatement::new(
+                0,
+                IR::ReadInteger {
+                    path: InputPath::new("x", vec![]),
+                    is_public: false,
+                },
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                IR::ReadInteger {
+                    path: InputPath::new("y", vec![]),
+                    is_public: false,
+                },
+                vec![],
+                None,
+            ),
+            IRStatement::new(2, IR::AddI, vec![0, 1], None),
+        ];
+        let v = runtime_int(2);
+        let mut r = RangeResolver::new();
+        assert_eq!(r.resolve_int_with_stmts(&v, &stmts), None);
+        // resolve_max / resolve_min on the unbounded result also return
+        // None (we don't fabricate i64::MAX as an answer).
+        assert_eq!(r.resolve_max_with_stmts(&v, &stmts), None);
+        assert_eq!(r.resolve_min_with_stmts(&v, &stmts), None);
+    }
+
+    /// `MulI([2,2], [3,5])` — `[2,2]` is a constant, `[3,5]` is the union
+    /// of two select branches. Range computes max=10, min=6.
+    #[test]
+    fn range_resolve_max_returns_endpoint() {
+        // Build a wire whose interval is [3, 5] via `select(c, 3, 5)`.
+        // Then multiply by 2 (constant) and ask for resolve_max.
+        let stmts = vec![
+            IRStatement::new(
+                0,
+                IR::ReadInteger {
+                    path: InputPath::new("c", vec![]),
+                    is_public: false,
+                },
+                vec![],
+                None,
+            ),
+            IRStatement::new(1, IR::ConstantInt { value: 3 }, vec![], None),
+            IRStatement::new(2, IR::ConstantInt { value: 5 }, vec![], None),
+            IRStatement::new(3, IR::SelectI, vec![0, 1, 2], None), // [3, 5]
+            IRStatement::new(4, IR::ConstantInt { value: 2 }, vec![], None),
+            IRStatement::new(5, IR::MulI, vec![3, 4], None), // [6, 10]
+        ];
+        let v = runtime_int(5);
+        let mut r = RangeResolver::new();
+        assert_eq!(r.resolve_max_with_stmts(&v, &stmts), Some(10));
+        assert_eq!(r.resolve_min_with_stmts(&v, &stmts), Some(6));
+        // Not a point, so resolve_int still returns None.
+        assert_eq!(r.resolve_int_with_stmts(&v, &stmts), None);
+    }
+
+    /// `AddI(constant 3, constant 4)` — both operands collapse to point
+    /// intervals and the sum is a point. resolve_int returns Some(7).
+    /// (static_val could fold this when constructed via the IRBuilder, but
+    /// here we hand-build IRStatements without static_val on the wire, so
+    /// only the range walker proves it.)
+    #[test]
+    fn range_resolves_constant_add() {
+        let stmts = vec![
+            IRStatement::new(0, IR::ConstantInt { value: 3 }, vec![], None),
+            IRStatement::new(1, IR::ConstantInt { value: 4 }, vec![], None),
+            IRStatement::new(2, IR::AddI, vec![0, 1], None),
+        ];
+        // Build a Value::Integer with no static_val but ptr=2.
+        let v = runtime_int(2);
+        let mut r = RangeResolver::new();
+        assert_eq!(r.resolve_int_with_stmts(&v, &stmts), Some(7));
+    }
+
+    /// Calling resolve twice on the same wire should hit the cache the
+    /// second time. We verify by counting cache entries.
+    #[test]
+    fn range_caches_intervals() {
+        let stmts = vec![
+            IRStatement::new(0, IR::ConstantInt { value: 3 }, vec![], None),
+            IRStatement::new(1, IR::ConstantInt { value: 4 }, vec![], None),
+            IRStatement::new(2, IR::AddI, vec![0, 1], None),
+        ];
+        let v = runtime_int(2);
+        let mut r = RangeResolver::new();
+        assert_eq!(r.cache_size(), 0);
+        let _ = r.resolve_int_with_stmts(&v, &stmts);
+        // Cache holds intervals for stmts 0, 1, 2.
+        assert_eq!(r.cache_size(), 3);
+        let _ = r.resolve_int_with_stmts(&v, &stmts);
+        // No new entries on the second call.
+        assert_eq!(r.cache_size(), 3);
+    }
+
+    /// `on_ir_mutated` clears the cache (P2 conservative).
+    #[test]
+    fn range_on_ir_mutated_clears_cache() {
+        let stmts = vec![
+            IRStatement::new(0, IR::ConstantInt { value: 3 }, vec![], None),
+            IRStatement::new(1, IR::ConstantInt { value: 4 }, vec![], None),
+            IRStatement::new(2, IR::AddI, vec![0, 1], None),
+        ];
+        let v = runtime_int(2);
+        let mut r = RangeResolver::new();
+        let _ = r.resolve_int_with_stmts(&v, &stmts);
+        assert!(r.cache_size() > 0);
+        r.on_ir_mutated(&[]);
+        assert_eq!(r.cache_size(), 0);
+    }
+
+    /// Logical / comparison ops are bool-projected: result interval is
+    /// always [0, 1], so resolve_max == 1 and resolve_min == 0.
+    #[test]
+    fn range_bool_projected_ops_are_zero_one() {
+        let stmts = vec![
+            IRStatement::new(
+                0,
+                IR::ReadInteger {
+                    path: InputPath::new("x", vec![]),
+                    is_public: false,
+                },
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                IR::ReadInteger {
+                    path: InputPath::new("y", vec![]),
+                    is_public: false,
+                },
+                vec![],
+                None,
+            ),
+            IRStatement::new(2, IR::LtI, vec![0, 1], None),
+        ];
+        // The result of LtI is a Boolean wire; range projects to [0, 1].
+        let v = Value::Boolean(ScalarValue::runtime(2));
+        let mut r = RangeResolver::new();
+        // We're going to ask via the int interface here (the bool wire is
+        // bound to a ptr; resolve_max_with_stmts is the public entry).
+        assert_eq!(r.resolve_max_with_stmts(&v, &stmts), Some(1));
+        assert_eq!(r.resolve_min_with_stmts(&v, &stmts), Some(0));
+    }
+
+    /// RangeResolver is `Send + Sync` (required by the Resolver trait).
+    #[test]
+    fn range_resolver_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<RangeResolver>();
     }
 }
