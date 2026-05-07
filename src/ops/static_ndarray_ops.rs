@@ -294,20 +294,23 @@ pub fn np_fill(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
     // np.zeros(shape, dtype=...) / np.ones(shape, dtype=...) / np.empty(shape, dtype=...)
     let shape = if let Some(arg) = args.first() {
         match arg {
-            Value::Integer(_) => vec![arg.int_val().expect(
-                "np.zeros/ones/empty: shape must be a compile-time constant int (got runtime value)"
-            ) as usize],
+            Value::Integer(_) => {
+                let n: i64 = require_static_int(b, arg, SiteKind::ShapeAxis(0), None)
+                    .unwrap_or_else(|e| panic!("{}", e.message))
+                    .into();
+                vec![n as usize]
+            }
             Value::Tuple(data) => data.values.iter().enumerate().map(|(i, v)| {
-                v.int_val().unwrap_or_else(|| panic!(
-                    "np.zeros/ones/empty: shape element at axis {} must be a compile-time constant int (got runtime value)",
-                    i
-                )) as usize
+                let n: i64 = require_static_int(b, v, SiteKind::ShapeAxis(i), None)
+                    .unwrap_or_else(|e| panic!("{}", e.message))
+                    .into();
+                n as usize
             }).collect(),
             Value::List(data) => data.values.iter().enumerate().map(|(i, v)| {
-                v.int_val().unwrap_or_else(|| panic!(
-                    "np.zeros/ones/empty: shape element at axis {} must be a compile-time constant int (got runtime value)",
-                    i
-                )) as usize
+                let n: i64 = require_static_int(b, v, SiteKind::ShapeAxis(i), None)
+                    .unwrap_or_else(|e| panic!("{}", e.message))
+                    .into();
+                n as usize
             }).collect(),
             _ => panic!("np.zeros/ones/empty: shape must be int, tuple, or list (got {:?})", arg.zinnia_type()),
         }
@@ -1384,20 +1387,27 @@ pub fn np_expand_dims(b: &mut IRBuilder, args: &[Value]) -> Value {
 
 /// `np.broadcast_to(arr, shape)` — materialize the broadcast to a target
 /// shape. Thin wrapper around the broadcasting helper.
-pub fn np_broadcast_to(_b: &mut IRBuilder, args: &[Value]) -> Value {
+pub fn np_broadcast_to(b: &mut IRBuilder, args: &[Value]) -> Value {
     let val = args.first().expect("broadcast_to: requires an array argument");
     let shape_arg = args.get(1).expect("broadcast_to: requires a shape argument");
     let target: Vec<usize> = match shape_arg {
         Value::Tuple(d) | Value::List(d) => d
             .values
             .iter()
-            .map(|v| {
-                v.int_val()
-                    .expect("broadcast_to: shape elements must be constant ints")
-                    as usize
+            .enumerate()
+            .map(|(i, v)| {
+                let n: i64 = require_static_int(b, v, SiteKind::ShapeAxis(i), None)
+                    .unwrap_or_else(|e| panic!("{}", e.message))
+                    .into();
+                n as usize
             })
             .collect(),
-        Value::Integer(_) => vec![shape_arg.int_val().unwrap() as usize],
+        Value::Integer(_) => {
+            let n: i64 = require_static_int(b, shape_arg, SiteKind::ShapeAxis(0), None)
+                .unwrap_or_else(|e| panic!("{}", e.message))
+                .into();
+            vec![n as usize]
+        }
         _ => panic!("broadcast_to: invalid shape argument"),
     };
     let src_shape = crate::helpers::composite::get_composite_shape(val);

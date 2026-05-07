@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::builder::IRBuilder;
+use crate::optim::resolver::{require_static_int, SiteKind};
 use crate::types::{
     DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value, ZinniaType,
 };
@@ -13,7 +14,7 @@ pub fn dyn_fill(
     kwargs: &HashMap<String, Value>,
     fill_value: i64,
 ) -> Value {
-    let shape = parse_shape_arg(args.first().expect("zeros/ones: requires shape arg"));
+    let shape = parse_shape_arg(b, args.first().expect("zeros/ones: requires shape arg"));
     let dtype = parse_dtype_kwarg(kwargs);
     let max_length: usize = shape.iter().product();
     let max_rank = shape.len();
@@ -138,14 +139,25 @@ pub fn dyn_eye(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
     Value::DynamicNDArray(result)
 }
 
-pub fn parse_shape_arg(val: &Value) -> Vec<usize> {
+pub fn parse_shape_arg(b: &mut IRBuilder, val: &Value) -> Vec<usize> {
     match val {
         Value::Tuple(data) | Value::List(data) => data
             .values
             .iter()
-            .map(|v| v.int_val().expect("shape element must be constant int") as usize)
+            .enumerate()
+            .map(|(i, v)| {
+                let n: i64 = require_static_int(b, v, SiteKind::ShapeAxis(i), None)
+                    .unwrap_or_else(|e| panic!("{}", e.message))
+                    .into();
+                n as usize
+            })
             .collect(),
-        Value::Integer(_) => vec![val.int_val().unwrap() as usize],
+        Value::Integer(_) => {
+            let n: i64 = require_static_int(b, val, SiteKind::ShapeAxis(0), None)
+                .unwrap_or_else(|e| panic!("{}", e.message))
+                .into();
+            vec![n as usize]
+        }
         _ => panic!("shape must be tuple, list, or int"),
     }
 }
