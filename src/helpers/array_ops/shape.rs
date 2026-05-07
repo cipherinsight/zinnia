@@ -1,6 +1,7 @@
 //! Unified shape operations (transpose, moveaxis, reshape, swapaxes).
 
 use crate::builder::IRBuilder;
+use crate::optim::resolver::{require_static_int, SiteKind};
 use crate::types::Value;
 
 use super::promote;
@@ -89,8 +90,14 @@ pub fn reshape(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value {
 pub fn swapaxes(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value {
     if let Value::DynamicNDArray(d) = val {
         let ndim = d.envelope.rank();
-        let a0 = args[0].int_val().expect("swapaxes: axis must be constant for dynamic arrays") as usize;
-        let a1 = args[1].int_val().expect("swapaxes: axis must be constant for dynamic arrays") as usize;
+        let a0_i: i64 = require_static_int(b, &args[0], SiteKind::Axis, None)
+            .unwrap_or_else(|e| panic!("{}", e.message))
+            .into();
+        let a1_i: i64 = require_static_int(b, &args[1], SiteKind::Axis, None)
+            .unwrap_or_else(|e| panic!("{}", e.message))
+            .into();
+        let a0 = a0_i as usize;
+        let a1 = a1_i as usize;
         let perm: Vec<Value> = (0..ndim).map(|i| {
             let j = if i == a0 { a1 } else if i == a1 { a0 } else { i };
             Value::Integer(crate::types::ScalarValue::new(Some(j as i64), None))

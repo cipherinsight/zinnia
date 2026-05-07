@@ -862,11 +862,15 @@ pub fn ndarray_moveaxis(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value
     assert!(args.len() >= 2, "moveaxis: requires source and destination arguments");
 
     let src = {
-        let s = args[0].int_val().expect("moveaxis: source must be constant int");
+        let s: i64 = require_static_int(b, &args[0], SiteKind::Axis, None)
+            .unwrap_or_else(|e| panic!("{}", e.message))
+            .into();
         if s < 0 { (ndim as i64 + s) as usize } else { s as usize }
     };
     let dst = {
-        let d = args[1].int_val().expect("moveaxis: destination must be constant int");
+        let d: i64 = require_static_int(b, &args[1], SiteKind::Axis, None)
+            .unwrap_or_else(|e| panic!("{}", e.message))
+            .into();
         if d < 0 { (ndim as i64 + d) as usize } else { d as usize }
     };
     assert!(src < ndim && dst < ndim, "moveaxis: axis out of bounds");
@@ -1131,12 +1135,16 @@ pub fn ndarray_swapaxes(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value
     let ndim = shape.len();
     assert!(args.len() >= 2, "swapaxes: requires two axis arguments");
     let a1 = resolve_axis(
-        args[0].int_val().expect("swapaxes: axis must be a constant int"),
+        require_static_int(b, &args[0], SiteKind::Axis, None)
+            .unwrap_or_else(|e| panic!("{}", e.message))
+            .into(),
         ndim,
         "swapaxes",
     );
     let a2 = resolve_axis(
-        args[1].int_val().expect("swapaxes: axis must be a constant int"),
+        require_static_int(b, &args[1], SiteKind::Axis, None)
+            .unwrap_or_else(|e| panic!("{}", e.message))
+            .into(),
         ndim,
         "swapaxes",
     );
@@ -1182,7 +1190,7 @@ fn flip_along(val: &Value, axis: usize) -> Value {
 
 /// `np.flip(arr, axis=None)` — reverse along the given axis (or all axes
 /// when no axis is specified).
-pub fn np_flip(_b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+pub fn np_flip(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
     let val = args.first().expect("flip: requires an array argument");
     let shape = crate::helpers::composite::get_composite_shape(val);
     let ndim = shape.len();
@@ -1193,18 +1201,18 @@ pub fn np_flip(_b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Valu
             .values
             .iter()
             .map(|v| {
-                resolve_axis(
-                    v.int_val().expect("flip: axis values must be constant ints"),
-                    ndim,
-                    "flip",
-                )
+                let n: i64 = require_static_int(b, v, SiteKind::Axis, None)
+                    .unwrap_or_else(|e| panic!("{}", e.message))
+                    .into();
+                resolve_axis(n, ndim, "flip")
             })
             .collect(),
-        Some(a) => vec![resolve_axis(
-            a.int_val().expect("flip: axis must be a constant int"),
-            ndim,
-            "flip",
-        )],
+        Some(a) => {
+            let n: i64 = require_static_int(b, a, SiteKind::Axis, None)
+                .unwrap_or_else(|e| panic!("{}", e.message))
+                .into();
+            vec![resolve_axis(n, ndim, "flip")]
+        }
     };
     let mut out = val.clone();
     for ax in axes {
@@ -1277,7 +1285,7 @@ pub fn np_rot90(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Valu
 }
 
 /// `np.squeeze(arr, axis=None)` — drop axes of length 1.
-pub fn np_squeeze(_b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+pub fn np_squeeze(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
     let val = args.first().expect("squeeze: requires an array argument");
     let shape = crate::helpers::composite::get_composite_shape(val);
     let ndim = shape.len();
@@ -1293,18 +1301,18 @@ pub fn np_squeeze(_b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, V
             .values
             .iter()
             .map(|v| {
-                resolve_axis(
-                    v.int_val().expect("squeeze: axis must be a constant int"),
-                    ndim,
-                    "squeeze",
-                )
+                let n: i64 = require_static_int(b, v, SiteKind::Axis, None)
+                    .unwrap_or_else(|e| panic!("{}", e.message))
+                    .into();
+                resolve_axis(n, ndim, "squeeze")
             })
             .collect(),
-        Some(a) => vec![resolve_axis(
-            a.int_val().expect("squeeze: axis must be a constant int"),
-            ndim,
-            "squeeze",
-        )],
+        Some(a) => {
+            let n: i64 = require_static_int(b, a, SiteKind::Axis, None)
+                .unwrap_or_else(|e| panic!("{}", e.message))
+                .into();
+            vec![resolve_axis(n, ndim, "squeeze")]
+        }
     };
     for &ax in &target_axes {
         if shape[ax] != 1 {
@@ -1331,14 +1339,16 @@ pub fn np_squeeze(_b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, V
 }
 
 /// `np.expand_dims(arr, axis)` — insert a new axis of length 1 at `axis`.
-pub fn np_expand_dims(_b: &mut IRBuilder, args: &[Value]) -> Value {
+pub fn np_expand_dims(b: &mut IRBuilder, args: &[Value]) -> Value {
     let val = args.first().expect("expand_dims: requires an array argument");
     let shape = crate::helpers::composite::get_composite_shape(val);
     let ndim = shape.len();
-    let axis = args
+    let axis_arg = args
         .get(1)
-        .and_then(|v| v.int_val())
-        .expect("expand_dims: axis must be a constant int");
+        .expect("expand_dims: axis argument required");
+    let axis: i64 = require_static_int(b, axis_arg, SiteKind::NewAxisPosition, None)
+        .unwrap_or_else(|e| panic!("{}", e.message))
+        .into();
     let new_ndim = ndim + 1;
     let resolved = if axis < 0 { new_ndim as i64 + axis } else { axis };
     if resolved < 0 || resolved >= new_ndim as i64 {

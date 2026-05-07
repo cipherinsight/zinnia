@@ -34,7 +34,9 @@ pub fn dyn_transpose(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value
                 .values
                 .iter()
                 .map(|v| {
-                    let a = v.int_val().expect("transpose: axes must be constant ints");
+                    let a: i64 = require_static_int(b, v, SiteKind::Axis, None)
+                        .unwrap_or_else(|e| panic!("{}", e.message))
+                        .into();
                     let resolved = if a < 0 { ndim as i64 + a } else { a };
                     resolved as usize
                 })
@@ -42,7 +44,9 @@ pub fn dyn_transpose(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value
         } else {
             args.iter()
                 .map(|v| {
-                    let a = v.int_val().expect("transpose: axes must be constant ints");
+                    let a: i64 = require_static_int(b, v, SiteKind::Axis, None)
+                        .unwrap_or_else(|e| panic!("{}", e.message))
+                        .into();
                     let resolved = if a < 0 { ndim as i64 + a } else { a };
                     resolved as usize
                 })
@@ -115,15 +119,15 @@ pub fn dyn_moveaxis(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]
     assert!(args.len() >= 2, "moveaxis: requires source and destination");
 
     let src = {
-        let s = args[0]
-            .int_val()
-            .expect("moveaxis: source must be constant int");
+        let s: i64 = require_static_int(b, &args[0], SiteKind::Axis, None)
+            .unwrap_or_else(|e| panic!("{}", e.message))
+            .into();
         if s < 0 { (ndim as i64 + s) as usize } else { s as usize }
     };
     let dst = {
-        let d = args[1]
-            .int_val()
-            .expect("moveaxis: destination must be constant int");
+        let d: i64 = require_static_int(b, &args[1], SiteKind::Axis, None)
+            .unwrap_or_else(|e| panic!("{}", e.message))
+            .into();
         if d < 0 { (ndim as i64 + d) as usize } else { d as usize }
     };
     assert!(src < ndim && dst < ndim, "moveaxis: axis out of bounds");
