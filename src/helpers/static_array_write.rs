@@ -52,7 +52,20 @@ fn cast_to_dtype(b: &mut IRBuilder, v: &Value, dtype: NumberType) -> Value {
             if matches!(v, Value::Integer(_)) {
                 v.clone()
             } else if matches!(v, Value::Boolean(_)) {
-                b.ir_int_cast(v)
+                // `ir_int_cast` reads `float_val()` for inference, so it
+                // loses Boolean compile-time values. Build the Integer
+                // wire and explicitly carry over the static_val so the
+                // cached cell's `int_val()` stays compile-time-resolvable.
+                // Without this, `[True] * limit` followed by `a[i] = False`
+                // strips the static `False` and breaks downstream control
+                // flow (range / enumerate over the cell's truthiness).
+                let casted = b.ir_int_cast(v);
+                if let (Value::Integer(mut s), Some(b_val)) = (casted.clone(), v.bool_val()) {
+                    s.static_val = Some(if b_val { 1 } else { 0 });
+                    Value::Integer(s)
+                } else {
+                    casted
+                }
             } else {
                 b.ir_int_cast(v)
             }

@@ -8,4 +8,5 @@ pub mod segment;
 pub mod static_array;
 pub mod static_array_read;
 pub mod static_array_write;
+pub mod static_array_elementwise;
 pub mod array_ops;

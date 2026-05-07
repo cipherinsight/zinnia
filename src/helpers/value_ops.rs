@@ -9,7 +9,27 @@ use crate::types::{CompositeData, ScalarValue, Value, ZinniaType};
 
 /// Conditional select: if cond { tv } else { fv }, with element-wise support.
 pub fn select_value(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> Value {
-    // P1 segarr boundary: convert StaticArray to legacy List view first.
+    // P4a: native StaticArray + StaticArray select. Both sides same shape
+    // and same dtype → per-cell select into a fresh segment-backed result.
+    // Mismatched shapes / dtypes / one-sided StaticArray fall through to
+    // the legacy materialised path.
+    if let (Value::StaticArray { dtype: tdt, shape: ts, .. },
+            Value::StaticArray { dtype: fdt, shape: fs, .. }) = (tv, fv) {
+        if ts == fs && tdt == fdt && !matches!(tdt, crate::types::NumberType::Complex) {
+            let shape = ts.clone();
+            let dtype = *tdt;
+            let t_cells = crate::helpers::static_array_elementwise::payload_cells(b, tv);
+            let f_cells = crate::helpers::static_array_elementwise::payload_cells(b, fv);
+            let total: usize = shape.iter().product();
+            let mut out: Vec<Value> = Vec::with_capacity(total);
+            for i in 0..total {
+                out.push(select_value(b, cond, &t_cells[i], &f_cells[i]));
+            }
+            return crate::helpers::static_array::build_static_array_from_flat(
+                b, out, shape, dtype,
+            );
+        }
+    }
     if matches!(tv, Value::StaticArray { .. }) || matches!(fv, Value::StaticArray { .. }) {
         let tv_n = crate::helpers::static_array::to_value_list(b, tv);
         let fv_n = crate::helpers::static_array::to_value_list(b, fv);
@@ -182,18 +202,42 @@ pub fn to_scalar_bool(b: &mut IRBuilder, val: &Value) -> Value {
             }
             acc
         }
+        // P4a: a `Value::StaticArray` reaches here when an elementwise
+        // comparison was native and the result is being used as a
+        // condition / assertion. Reduce via AND over the cached payload —
+        // matches the legacy List path's semantics.
+        Value::StaticArray { .. } => {
+            let cells = crate::helpers::static_array_elementwise::payload_cells(b, val);
+            if cells.is_empty() {
+                return b.ir_constant_bool(true);
+            }
+            let mut acc = to_scalar_bool(b, &cells[0]);
+            for elem in &cells[1..] {
+                let elem_bool = to_scalar_bool(b, elem);
+                acc = b.ir_logical_and(&acc, &elem_bool);
+            }
+            acc
+        }
         _ => b.ir_bool_cast(val),
     }
 }
 
 /// Apply a binary operation, with element-wise support for composite types.
 pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) -> Value {
-    // ── StaticArray boundary shim ────────────────────────────────────
-    // P1 of compiler.epic-segment-native-static-arrays: legacy ops still
-    // consume `Value::List` for numeric arrays. Materialise any
-    // segment-backed StaticArray into a nested List before running the
-    // existing dispatch.
+    // ── StaticArray native dispatch (P4a) ────────────────────────────
+    // For two StaticArrays (or one StaticArray + numeric scalar), apply
+    // the elementwise op on the segment-backed payload. Falls back to
+    // `None` for ops we haven't migrated (e.g. `mat_mul`) or for residual
+    // cases (StaticArray + List, Complex on either side, …).
     if matches!(lhs, Value::StaticArray { .. }) || matches!(rhs, Value::StaticArray { .. }) {
+        if let Some(out) =
+            crate::helpers::static_array_elementwise::try_apply_binary_op(b, op, lhs, rhs)
+        {
+            return out;
+        }
+        // Residual: materialise to nested List and re-dispatch through the
+        // legacy path. Covers StaticArray meeting a non-numeric List, the
+        // matmul route, etc.
         let lhs_n = crate::helpers::static_array::to_value_list(b, lhs);
         let rhs_n = crate::helpers::static_array::to_value_list(b, rhs);
         return apply_binary_op(b, op, &lhs_n, &rhs_n);

@@ -37,6 +37,18 @@ impl IRGenerator {
                 }
             }
         }
+        // P4a: same guard for the segment-backed `Value::StaticArray`. After
+        // the constructor migration, `np.ones((2, 2))`-style values land here
+        // as `StaticArray`s instead of nested `List`s; a multi-D condition
+        // must still raise rather than silently reducing.
+        if let Value::StaticArray { shape, .. } = &cond_val {
+            if shape.iter().product::<usize>() > 1 && shape.len() > 1 {
+                panic!(
+                    "The truth value of an array with more than one element is ambiguous. \
+                     Use a.any() or a.all()"
+                );
+            }
+        }
         let true_cond = crate::helpers::value_ops::to_scalar_bool(&mut self.builder, &cond_val);
         let false_cond = self.builder.ir_logical_not(&true_cond);
 
@@ -250,8 +262,15 @@ impl IRGenerator {
 
     /// Apply a unary operation, with element-wise support for composite types.
     pub(crate) fn apply_unary_op(&mut self, op: &str, operand: &Value) -> Value {
-        // P1 segarr boundary: convert StaticArray to legacy List view first.
+        // P4a: native StaticArray unary dispatch. Falls back to the legacy
+        // materialised path for unsupported ops (we only migrated
+        // `usub`, `uadd`, `not`, `invert`).
         if matches!(operand, Value::StaticArray { .. }) {
+            if let Some(out) = crate::helpers::static_array_elementwise::try_apply_unary_op(
+                &mut self.builder, op, operand,
+            ) {
+                return out;
+            }
             let lst = crate::helpers::static_array::to_value_list(&mut self.builder, operand);
             return self.apply_unary_op(op, &lst);
         }
@@ -351,7 +370,20 @@ impl IRGenerator {
         // P2 segarr-read-paths: native StaticArray dispatch BEFORE the
         // legacy boundary shim. Element / view / slice / multi-dim reads
         // operate directly on the segment without materialising a List.
+        // Composite-index cases (boolean masking / fancy indexing) are
+        // not yet migrated — for a StaticArray index value we materialise
+        // it to a List so the existing `static_array_subscript` ensure_ptr
+        // semantics (lossy: takes the first cell) match P3 behaviour. A
+        // proper boolean-mask path on StaticArray lives in P5b.
         if matches!(val, Value::StaticArray { .. }) {
+            let slice_values: Vec<SliceIndex> = slice_values.into_iter().map(|si| match si {
+                SliceIndex::Single(iv) if matches!(iv, Value::StaticArray { .. }) => {
+                    SliceIndex::Single(
+                        crate::helpers::static_array::to_value_list(&mut self.builder, &iv),
+                    )
+                }
+                other => other,
+            }).collect();
             return crate::helpers::static_array_read::static_array_subscript(
                 &mut self.builder, &val, &slice_values,
             );

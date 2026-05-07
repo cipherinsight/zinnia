@@ -1018,6 +1018,26 @@ pub fn builtin_enumerate(b: &mut IRBuilder, iter_val: &Value) -> Value {
             let types = result.iter().map(|v| v.zinnia_type()).collect();
             Value::List(CompositeData { elements_type: types, values: result })
         }
+        // P4a follow-up: `enumerate` over a segment-backed StaticArray.
+        // We mirror the iteration semantics of `for x in arr` by yielding
+        // a `(idx, leaf-or-view)` tuple per outer-axis position.
+        Value::StaticArray { shape, .. } => {
+            if shape.is_empty() {
+                return Value::None;
+            }
+            let n_iter = shape[0];
+            let mut result = Vec::with_capacity(n_iter);
+            for i in 0..n_iter {
+                let elem = crate::helpers::static_array_read::iter_element(b, iter_val, i);
+                let idx = b.ir_constant_int(i as i64);
+                result.push(Value::Tuple(CompositeData {
+                    elements_type: vec![ZinniaType::Integer, elem.zinnia_type()],
+                    values: vec![idx, elem],
+                }));
+            }
+            let types = result.iter().map(|v| v.zinnia_type()).collect();
+            Value::List(CompositeData { elements_type: types, values: result })
+        }
         _ => Value::None,
     }
 }
