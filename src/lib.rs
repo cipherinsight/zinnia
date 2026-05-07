@@ -69,12 +69,14 @@ fn compile_circuit(ast_json: &str, config_json: &str, chips_json: String, extern
 
     let loop_limit = config["loop_limit"].as_u64().unwrap_or(1000) as u32;
     let recursion_limit = config["recursion_limit"].as_u64().unwrap_or(16) as u32;
-    // P3 SMT-resolver knobs. Default: enabled (LayeredResolver::range_then_smt
-    // is the active resolver), 500 ms timeout. The `ZINNIA_SMT_ENABLE` env
-    // var is the safety-net override — set it to `0` / `false` / `off` to
-    // force `StaticOnlyResolver` (today's pre-P3 behaviour) without editing
-    // config JSON. Useful for the benchmark sweep and for bisecting any
-    // future SMT-induced regression.
+    // P3 SMT-resolver knobs. **Default: disabled** —
+    // `StaticOnlyResolver` (today's pre-P3 behaviour). The wiring exists,
+    // and `ZINNIA_SMT_ENABLE=1` (or `smt_enable: true` in config JSON)
+    // flips on `LayeredResolver::range_then_smt`. P3's sweep measured a
+    // +1 coverage win against >5× compile-time slowdowns on 12/104 dual-
+    // pass benchmarks; per spec that's a halt condition, so we keep the
+    // default off until the slowdown is rooted out (P5 work). The env
+    // var also accepts `0`/`false`/`off`/`no` for explicit-off.
     let smt_enable_env = std::env::var("ZINNIA_SMT_ENABLE")
         .ok()
         .map(|s| {
@@ -84,7 +86,7 @@ fn compile_circuit(ast_json: &str, config_json: &str, chips_json: String, extern
     let smt_enable = smt_enable_env.unwrap_or_else(|| {
         config.get("smt_enable")
             .and_then(|v| v.as_bool())
-            .unwrap_or(true)
+            .unwrap_or(false)
     });
     let smt_query_timeout_ms = config.get("smt_query_timeout_ms")
         .and_then(|v| v.as_u64())

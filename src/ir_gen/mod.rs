@@ -44,12 +44,18 @@ pub use crate::types::SliceIndex;
 pub struct IRGenConfig {
     pub loop_limit: u32,
     pub recursion_limit: u32,
-    /// P1 SMT-resolver foundation knob. **NOT** "is SmtResolver the
-    /// default" — the default resolver is still `StaticOnlyResolver`
-    /// (flipping that is P3 work). When `false`, an SmtResolver
-    /// constructed via `SmtResolver::new().with_disabled(!smt_enable)`
-    /// returns `None` after the static-val fast path. The flag exists so
-    /// users can A/B test SMT impact once the resolver is the default.
+    /// SMT-resolver toggle. When `true`, `IRGenerator::new` installs
+    /// [`crate::optim::resolver::LayeredResolver::range_then_smt`]; when
+    /// `false`, [`crate::optim::resolver::StaticOnlyResolver`] (the pre-P3
+    /// behaviour). P3 wired the toggle but the **default is `false`**:
+    /// the benchmark sweep at the time of the flip showed a `+1` net
+    /// coverage gain (`grayscott` flips TIMEOUT→PASS) but **>5× compile-
+    /// time slowdowns on 12 / 104 dual-pass benchmarks** (peak 66× on
+    /// `guerre`, 25× on `perm`). Per the spec exit criterion ("all
+    /// current tests pass + measurable coverage gain — don't sacrifice
+    /// the first for the second") that is a halt condition.
+    /// Flip back to `true` once the slowdown root cause is identified
+    /// (likely SMT-layer cost on hot-path queries; see P5 telemetry).
     pub smt_enable: bool,
     /// Per-query Z3 timeout in milliseconds. Default 500 ms (paper's
     /// recommendation). Lower = faster compile, weaker reasoning. Higher
@@ -62,7 +68,9 @@ impl Default for IRGenConfig {
         Self {
             loop_limit: 256,
             recursion_limit: 16,
-            smt_enable: true,
+            // See struct docs: held at `false` until the P3 compile-time
+            // regression is resolved.
+            smt_enable: false,
             smt_query_timeout_ms: 500,
         }
     }
