@@ -92,6 +92,16 @@ impl IRBuilder {
         &mut *self.resolver
     }
 
+    /// Hand out `&mut dyn Resolver` and `&[IRStatement]` simultaneously
+    /// from the same `&mut IRBuilder`. The `_with_stmts` family of trait
+    /// methods route through this so the SMT resolver can walk the IR
+    /// without the borrow-checker forbidding the joint borrow.
+    pub fn split_resolver_and_stmts(
+        &mut self,
+    ) -> (&mut dyn Resolver, &[IRStatement]) {
+        (&mut *self.resolver, &self.stmts)
+    }
+
     /// Swap in a different [`Resolver`] implementation. Not used in P0
     /// (the default is [`StaticOnlyResolver`]); P1's `SmtResolver` and
     /// P2's `RangeResolver` plug in here.

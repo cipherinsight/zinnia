@@ -25,7 +25,8 @@ pub use external_call_remover::ExternalCallRemover;
 pub use memory_trace_injection::MemoryTraceInjection;
 pub use pattern_match_optim::PatternMatchOptim;
 pub use resolver::{
-    require_static_int, Resolver, SiteKind, StaticInt, StaticOnlyResolver,
+    require_static_int, Resolver, SiteKind, SmtResolver, StaticInt,
+    StaticOnlyResolver,
 };
 pub use smt_encoding::{IROp, SmtEncodingCtx, Z3Term};
 

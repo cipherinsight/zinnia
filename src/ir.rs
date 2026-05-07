@@ -129,6 +129,16 @@ impl IRGraph {
         &mut *self.resolver
     }
 
+    /// Hand out `&mut dyn Resolver` and `&[IRStatement]` simultaneously
+    /// from the same `&mut IRGraph`. P1's `SmtResolver` walks the IR via
+    /// the resolver's `_with_stmts` trait methods; this is the chokepoint
+    /// optim passes use when they need full-power SMT discharge.
+    pub fn split_resolver_and_stmts(
+        &mut self,
+    ) -> (&mut dyn Resolver, &[IRStatement]) {
+        (&mut *self.resolver, &self.stmts)
+    }
+
     /// Swap in a different [`Resolver`] implementation. Reserved for P1+.
     pub fn set_resolver(&mut self, r: Box<dyn Resolver>) {
         self.resolver = r;

@@ -20,6 +20,7 @@
 
 use crate::ast::DebugInfo;
 use crate::error::ZinniaError;
+use crate::ir::IRStatement;
 use crate::types::{StmtId, Value};
 
 // ---------------------------------------------------------------------------
@@ -55,6 +56,50 @@ pub trait Resolver: Send + Sync {
 
     /// Lower bound on `val` if provable.
     fn resolve_min(&mut self, val: &Value) -> Option<i64>;
+
+    /// Resolve `val` to a compile-time integer, with the IR statement vector
+    /// available for traversal. P1's `SmtResolver` overrides this and walks
+    /// the dependency graph; resolvers that don't care about the IR (i.e.
+    /// [`StaticOnlyResolver`]) just delegate to the static-val variant.
+    ///
+    /// Why a separate method instead of putting `&[IRStatement]` on every
+    /// `resolve_*`: the trait is invoked through `IRBuilder::resolver_mut()`,
+    /// which currently exposes `&mut dyn Resolver` on its own. The
+    /// `_with_stmts` variants are wired through a dedicated chokepoint
+    /// (`IRBuilder::split_resolver_and_stmts`) so the borrow-checker can
+    /// hand out `&mut resolver` and `&[IRStatement]` simultaneously without
+    /// a churning API change at every call site.
+    fn resolve_int_with_stmts(
+        &mut self,
+        val: &Value,
+        _stmts: &[IRStatement],
+    ) -> Option<i64> {
+        self.resolve_int(val)
+    }
+
+    fn resolve_bool_with_stmts(
+        &mut self,
+        val: &Value,
+        _stmts: &[IRStatement],
+    ) -> Option<bool> {
+        self.resolve_bool(val)
+    }
+
+    fn resolve_max_with_stmts(
+        &mut self,
+        val: &Value,
+        _stmts: &[IRStatement],
+    ) -> Option<i64> {
+        self.resolve_max(val)
+    }
+
+    fn resolve_min_with_stmts(
+        &mut self,
+        val: &Value,
+        _stmts: &[IRStatement],
+    ) -> Option<i64> {
+        self.resolve_min(val)
+    }
 
     /// Cache-invalidation hook called by IR-mutating optim passes.
     ///
@@ -92,6 +137,486 @@ impl Resolver for StaticOnlyResolver {
 
     fn resolve_min(&mut self, val: &Value) -> Option<i64> {
         val.int_val()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SmtResolver
+// ---------------------------------------------------------------------------
+//
+// P1 — discharges constancy / max / min queries via Z3 when the cheap
+// `static_val` fast path can't.
+//
+// ## Design overview
+//
+// * Per-ptr cache (`HashMap<StmtId, ResolvedValue>`). Both `Int(n)` /
+//   `Bool(b)` resolutions and `Unknown` outcomes are cached so a repeat
+//   query on the same wire is free. `on_ir_mutated` clears the cache (P1
+//   conservative; P5 may refine).
+//
+// * Lazy formula construction. Every `resolve_*` query traverses the
+//   reverse-reachability subgraph rooted at `val.ptr()` and encodes only
+//   those statements as Z3 constraints — never the whole graph. Reference:
+//   the old Python `_build_smt_constraints_for(ptr)`.
+//
+// * Time budget. Each Z3 query sets the solver's `timeout` parameter
+//   (default 500 ms; configurable via `SmtResolver::with_timeout`). On Z3
+//   `unknown` we cache `Unknown` and return `None`.
+//
+// * Disable flag. `with_disabled(true)` makes every query return `None`
+//   after the static_val fast path. Lets users diagnose whether SMT is the
+//   compile-time bottleneck.
+//
+// * Cached resolutions encoded as literals. When the reverse-reachability
+//   walk encounters a statement whose ptr is already in the cache, it
+//   emits the cached constant as a Z3 literal instead of recursing — keeps
+//   formulas small (paper "encode cached resolutions as literals").
+//
+// ## Z3 lifetime / Send+Sync
+//
+// `z3` 0.20 uses an implicit thread-local `Context`. The solver, all asts,
+// etc. are bound to that context — but the context itself is a `Rc`, and
+// `Rc` is `!Send + !Sync`. Our `Resolver` trait requires `Send + Sync`
+// (because `IRGraph` is held by a `#[pyclass]`). The way out:
+//
+// * `SmtResolver` does NOT store any Z3 state across calls. Each query
+//   constructs a fresh `Solver` (cheap), encodes the formula, runs it,
+//   discards the solver. No `Rc<Context>` ever crosses a method boundary.
+//
+// * The "single Z3 context per compilation" requirement from the spec is
+//   satisfied implicitly: z3 0.20's thread-local context is created lazily
+//   on first use per thread. Compilation is single-threaded, so all
+//   queries from the same compilation share one thread-local context.
+//   Per-query setup cost is minimal (Z3 reuses the context's symbol pool
+//   etc.).
+//
+// * Only the cache and the per-resolver knobs (timeout, disabled, counter)
+//   live in the resolver across calls. All `Send + Sync`.
+//
+// ## IRBuilder/IRGraph handoff (option (b))
+//
+// Each phase of compilation has its own `SmtResolver` (or none). Per the
+// spec's "(b) Each phase has its own SmtResolver with its own cache.
+// Caches don't migrate." This is acceptable for P1; P3+ may share state if
+// profiling shows the cost matters.
+//
+// The IR-graph is passed in via the `_with_stmts` trait methods (see the
+// trait definition above). `IRBuilder::split_resolver_and_stmts(&mut)`
+// and `IRGraph::split_resolver_and_stmts(&mut)` are the chokepoints.
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+/// One cached resolution outcome for a wire's ptr.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ResolvedValue {
+    Int(i64),
+    Bool(bool),
+    /// Proved unresolvable (timeout, non-unique model, or off-the-int-path
+    /// IR op). Cached so we don't re-query Z3 on the same ptr.
+    Unknown,
+}
+
+/// Inner resolver state, guarded by a Mutex so the outer `SmtResolver` can
+/// be `Send + Sync`. The Mutex is only contended in pathological multi-
+/// thread reentry; in single-threaded compilation it's a near-free CAS.
+#[derive(Debug, Default)]
+struct SmtResolverInner {
+    cache: HashMap<StmtId, ResolvedValue>,
+}
+
+/// Z3-backed [`Resolver`].
+#[derive(Debug)]
+pub struct SmtResolver {
+    inner: Mutex<SmtResolverInner>,
+    timeout_ms: u64,
+    disabled: bool,
+}
+
+impl Default for SmtResolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SmtResolver {
+    /// Build a resolver with default knobs (500 ms timeout, enabled).
+    pub fn new() -> Self {
+        Self {
+            inner: Mutex::new(SmtResolverInner::default()),
+            timeout_ms: 500,
+            disabled: false,
+        }
+    }
+
+    /// Override the per-query Z3 timeout.
+    pub fn with_timeout(mut self, ms: u64) -> Self {
+        self.timeout_ms = ms;
+        self
+    }
+
+    /// Force every query to return `None` (after the static-val fast
+    /// path). Lets users diagnose whether SMT is the compile-time
+    /// bottleneck.
+    pub fn with_disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    /// Resolve `val` against the supplied IR statements. The
+    /// dispatch is shared by `resolve_int_with_stmts` /
+    /// `resolve_bool_with_stmts`, and parameterized over the expected
+    /// outcome type.
+    fn resolve_inner(
+        &mut self,
+        val: &Value,
+        stmts: &[IRStatement],
+        want_bool: bool,
+    ) -> Option<ResolvedValue> {
+        // Fast path 1: static-val.
+        if !want_bool {
+            if let Some(n) = val.int_val() {
+                return Some(ResolvedValue::Int(n));
+            }
+        } else if let Some(b) = val.bool_val() {
+            return Some(ResolvedValue::Bool(b));
+        }
+
+        // Fast path 2: ptr-cache hit.
+        let ptr = val.ptr()?;
+        {
+            let inner = self.inner.lock().unwrap();
+            if let Some(cached) = inner.cache.get(&ptr) {
+                return Some(*cached);
+            }
+        }
+
+        // Disable flag: short-circuit to Unknown after the static-val
+        // fast path. Cache + return.
+        if self.disabled {
+            self.cache_outcome(ptr, ResolvedValue::Unknown);
+            return Some(ResolvedValue::Unknown);
+        }
+
+        // Build the formula via reverse-reachability.
+        let outcome = smt_query(
+            ptr,
+            stmts,
+            &self.inner.lock().unwrap().cache,
+            self.timeout_ms,
+            want_bool,
+        );
+
+        let resolved = outcome.unwrap_or(ResolvedValue::Unknown);
+        self.cache_outcome(ptr, resolved);
+        Some(resolved)
+    }
+
+    fn cache_outcome(&self, ptr: StmtId, value: ResolvedValue) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.cache.insert(ptr, value);
+    }
+
+    /// Test-only: count of cached entries. Used by the cache-hit test.
+    #[cfg(test)]
+    pub fn cache_size(&self) -> usize {
+        self.inner.lock().unwrap().cache.len()
+    }
+}
+
+impl Resolver for SmtResolver {
+    /// Without `&[IRStatement]` we can't walk the IR — fall back to
+    /// `static_val`. P3+ call sites should route through
+    /// `resolve_int_with_stmts` / the IRBuilder split-borrow helper.
+    fn resolve_int(&mut self, val: &Value) -> Option<i64> {
+        val.int_val()
+    }
+
+    fn resolve_bool(&mut self, val: &Value) -> Option<bool> {
+        val.bool_val()
+    }
+
+    fn resolve_max(&mut self, val: &Value) -> Option<i64> {
+        val.int_val()
+    }
+
+    fn resolve_min(&mut self, val: &Value) -> Option<i64> {
+        val.int_val()
+    }
+
+    fn resolve_int_with_stmts(
+        &mut self,
+        val: &Value,
+        stmts: &[IRStatement],
+    ) -> Option<i64> {
+        match self.resolve_inner(val, stmts, /*want_bool=*/ false)? {
+            ResolvedValue::Int(n) => Some(n),
+            ResolvedValue::Bool(b) => Some(if b { 1 } else { 0 }),
+            ResolvedValue::Unknown => None,
+        }
+    }
+
+    fn resolve_bool_with_stmts(
+        &mut self,
+        val: &Value,
+        stmts: &[IRStatement],
+    ) -> Option<bool> {
+        match self.resolve_inner(val, stmts, /*want_bool=*/ true)? {
+            ResolvedValue::Bool(b) => Some(b),
+            ResolvedValue::Int(n) => Some(n != 0),
+            ResolvedValue::Unknown => None,
+        }
+    }
+
+    fn resolve_max_with_stmts(
+        &mut self,
+        val: &Value,
+        stmts: &[IRStatement],
+    ) -> Option<i64> {
+        // Static-val first.
+        if let Some(n) = val.int_val() {
+            return Some(n);
+        }
+
+        // Cache hit short-circuits to the resolved point (max of a
+        // unique value is the value).
+        let ptr = val.ptr()?;
+        {
+            let inner = self.inner.lock().unwrap();
+            if let Some(ResolvedValue::Int(n)) = inner.cache.get(&ptr) {
+                return Some(*n);
+            }
+        }
+
+        if self.disabled {
+            return None;
+        }
+
+        smt_extreme(ptr, stmts, &self.inner.lock().unwrap().cache, self.timeout_ms, /*max=*/ true)
+    }
+
+    fn resolve_min_with_stmts(
+        &mut self,
+        val: &Value,
+        stmts: &[IRStatement],
+    ) -> Option<i64> {
+        if let Some(n) = val.int_val() {
+            return Some(n);
+        }
+        let ptr = val.ptr()?;
+        {
+            let inner = self.inner.lock().unwrap();
+            if let Some(ResolvedValue::Int(n)) = inner.cache.get(&ptr) {
+                return Some(*n);
+            }
+        }
+        if self.disabled {
+            return None;
+        }
+        smt_extreme(ptr, stmts, &self.inner.lock().unwrap().cache, self.timeout_ms, /*max=*/ false)
+    }
+
+    fn on_ir_mutated(&mut self, _affected: &[StmtId]) {
+        // P1 conservative: blow the entire cache. P5 may refine to precise
+        // ids when profiling shows the cache-rebuild cost matters.
+        self.inner.lock().unwrap().cache.clear();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Reverse-reachability walk + Z3 query — free functions to avoid borrow
+// nesting issues with `&self` and the cache lock.
+// ---------------------------------------------------------------------------
+
+/// Build a Z3 formula constraining the wire at `root` and check whether it
+/// has a unique value. Returns `Some(ResolvedValue::Int|Bool)` if Z3 proves
+/// uniqueness within the time budget; `None` on timeout / non-unique.
+///
+/// Mirrors the "find a model, then add `expr != that_value` and re-check"
+/// pattern from the old Python `SMTUtils.resolve_expr`.
+fn smt_query(
+    root: StmtId,
+    stmts: &[IRStatement],
+    cache: &HashMap<StmtId, ResolvedValue>,
+    timeout_ms: u64,
+    want_bool: bool,
+) -> Option<ResolvedValue> {
+    use z3::ast::Ast;
+
+    let solver = z3::Solver::new();
+    {
+        let mut params = z3::Params::new();
+        // Z3's standard "timeout" parameter, in milliseconds.
+        params.set_u32("timeout", timeout_ms.min(u32::MAX as u64) as u32);
+        solver.set_params(&params);
+    }
+
+    // Encode the reverse-reachable subgraph from `root`.
+    let mut walker = Walker::new(stmts, cache);
+    let root_term = walker.encode(root)?;
+    for c in walker.constraints {
+        solver.assert(&c);
+    }
+
+    match solver.check() {
+        z3::SatResult::Sat => {
+            // Got a model; ask if `root != model_value` is satisfiable. If
+            // unsat, the value is unique → return it.
+            let model = solver.get_model()?;
+            match (&root_term, want_bool) {
+                (crate::optim::smt_encoding::Z3Term::Int(int), false) => {
+                    let v = model.eval(int, true)?;
+                    let n = v.as_i64()?;
+                    solver.assert(&int._eq(&z3::ast::Int::from_i64(n)).not());
+                    if solver.check() == z3::SatResult::Unsat {
+                        Some(ResolvedValue::Int(n))
+                    } else {
+                        None
+                    }
+                }
+                (crate::optim::smt_encoding::Z3Term::Int(int), true) => {
+                    // Wanted bool, but root is Int. Use `int != 0` as the
+                    // bool projection.
+                    let zero = z3::ast::Int::from_i64(0);
+                    let bool_proj = int._eq(&zero).not();
+                    let v = model.eval(&bool_proj, true)?;
+                    let b = v.as_bool()?;
+                    solver.assert(&bool_proj._eq(&z3::ast::Bool::from_bool(b)).not());
+                    if solver.check() == z3::SatResult::Unsat {
+                        Some(ResolvedValue::Bool(b))
+                    } else {
+                        None
+                    }
+                }
+                (crate::optim::smt_encoding::Z3Term::Bool(b_ast), _) => {
+                    let v = model.eval(b_ast, true)?;
+                    let b = v.as_bool()?;
+                    solver.assert(&b_ast._eq(&z3::ast::Bool::from_bool(b)).not());
+                    if solver.check() == z3::SatResult::Unsat {
+                        if want_bool {
+                            Some(ResolvedValue::Bool(b))
+                        } else {
+                            Some(ResolvedValue::Int(if b { 1 } else { 0 }))
+                        }
+                    } else {
+                        None
+                    }
+                }
+            }
+        }
+        z3::SatResult::Unsat | z3::SatResult::Unknown => None,
+    }
+}
+
+/// Discharge an `Optimize` query: maximise (or minimise) the wire at
+/// `root` over the constraints from its reverse-reachable subgraph.
+fn smt_extreme(
+    root: StmtId,
+    stmts: &[IRStatement],
+    cache: &HashMap<StmtId, ResolvedValue>,
+    timeout_ms: u64,
+    maximise: bool,
+) -> Option<i64> {
+    let opt = z3::Optimize::new();
+    {
+        let mut params = z3::Params::new();
+        params.set_u32("timeout", timeout_ms.min(u32::MAX as u64) as u32);
+        opt.set_params(&params);
+    }
+
+    let mut walker = Walker::new(stmts, cache);
+    let root_term = walker.encode(root)?;
+    for c in walker.constraints {
+        opt.assert(&c);
+    }
+
+    let int = match root_term {
+        crate::optim::smt_encoding::Z3Term::Int(i) => i,
+        crate::optim::smt_encoding::Z3Term::Bool(b) => {
+            // Project bool→int(0/1) so the Optimize objective makes sense.
+            b.ite(&z3::ast::Int::from_i64(1), &z3::ast::Int::from_i64(0))
+        }
+    };
+    if maximise {
+        opt.maximize(&int);
+    } else {
+        opt.minimize(&int);
+    }
+    match opt.check(&[]) {
+        z3::SatResult::Sat => {
+            let model = opt.get_model()?;
+            let v = model.eval(&int, true)?;
+            v.as_i64()
+        }
+        z3::SatResult::Unsat | z3::SatResult::Unknown => None,
+    }
+}
+
+/// Reverse-reachability walker. Translates IR → Z3 terms via the
+/// `IROp::smt_encode` trait, threading a cache so cached resolutions
+/// become literals (paper "encode cached resolutions as literals").
+struct Walker<'a> {
+    stmts: &'a [IRStatement],
+    cache: &'a HashMap<StmtId, ResolvedValue>,
+    encoded: HashMap<StmtId, crate::optim::smt_encoding::Z3Term>,
+    constraints: Vec<z3::ast::Bool>,
+    enc_ctx: crate::optim::smt_encoding::SmtEncodingCtx,
+}
+
+impl<'a> Walker<'a> {
+    fn new(
+        stmts: &'a [IRStatement],
+        cache: &'a HashMap<StmtId, ResolvedValue>,
+    ) -> Self {
+        Self {
+            stmts,
+            cache,
+            encoded: HashMap::new(),
+            constraints: Vec::new(),
+            enc_ctx: crate::optim::smt_encoding::SmtEncodingCtx::new(),
+        }
+    }
+
+    /// Encode the wire at `ptr`, recursively encoding its dependencies.
+    /// Returns the Z3 term that *represents* the wire's value. Each ptr
+    /// is encoded at most once per query.
+    fn encode(
+        &mut self,
+        ptr: StmtId,
+    ) -> Option<crate::optim::smt_encoding::Z3Term> {
+        if let Some(t) = self.encoded.get(&ptr) {
+            return Some(t.clone());
+        }
+
+        // Cached resolution → emit a literal.
+        if let Some(rv) = self.cache.get(&ptr) {
+            let term = match rv {
+                ResolvedValue::Int(n) => {
+                    crate::optim::smt_encoding::Z3Term::Int(z3::ast::Int::from_i64(*n))
+                }
+                ResolvedValue::Bool(b) => {
+                    crate::optim::smt_encoding::Z3Term::Bool(z3::ast::Bool::from_bool(*b))
+                }
+                ResolvedValue::Unknown => {
+                    // No info; mint a fresh symbolic.
+                    self.enc_ctx.fresh_unconstrained()
+                }
+            };
+            self.encoded.insert(ptr, term.clone());
+            return Some(term);
+        }
+
+        let stmt = self.stmts.get(ptr as usize)?;
+        // Recurse on arguments.
+        let mut arg_terms: Vec<crate::optim::smt_encoding::Z3Term> = Vec::new();
+        for &arg in &stmt.arguments {
+            arg_terms.push(self.encode(arg)?);
+        }
+        // Encode this op.
+        use crate::optim::smt_encoding::IROp;
+        let term = stmt.ir.smt_encode(&mut self.enc_ctx, &arg_terms);
+        self.encoded.insert(ptr, term.clone());
+        Some(term)
     }
 }
 
@@ -259,7 +784,8 @@ pub fn require_static_int(
     site: SiteKind,
     dbg: Option<&DebugInfo>,
 ) -> Result<StaticInt, ZinniaError> {
-    match b.resolver_mut().resolve_int(val) {
+    let (resolver, stmts) = b.split_resolver_and_stmts();
+    match resolver.resolve_int_with_stmts(val, stmts) {
         Some(n) => Ok(StaticInt(n)),
         None => Err(ZinniaError {
             message: format_diagnostic(site, dbg),
