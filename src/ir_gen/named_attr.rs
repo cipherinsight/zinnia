@@ -41,6 +41,12 @@ impl IRGenerator {
         // ops migrate to the segment representation natively (P2 onward),
         // each migrated op opts out by pattern-matching `Value::StaticArray`
         // before this conversion fires.
+        //
+        // P4b: keep the un-converted args around so the migrated reduction
+        // entry points can route through `static_array_reductions` directly
+        // on the StaticArray representation.
+        let visited_args_orig: Vec<Value> = visited_args.clone();
+        let visited_kwargs_orig: HashMap<String, Value> = _visited_kwargs.clone();
         let visited_args: Vec<Value> = visited_args
             .iter()
             .map(|v| crate::helpers::static_array::deep_to_value_list(&mut self.builder, v))
@@ -329,11 +335,47 @@ impl IRGenerator {
             (Some("np"), "identity" | "eye") => crate::ops::static_ndarray_ops::np_identity(&mut self.builder, &visited_args),
             // numpy reduction aliases — forward to the existing reduce/argmax_argmin path used by x.sum() / x.argmin()
             (Some("np"), method @ ("sum" | "prod" | "min" | "max" | "any" | "all" | "mean")) => {
+                // P4b: native StaticArray dispatch before the legacy boundary.
+                let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
+                let axis_arg_orig = visited_kwargs_orig
+                    .get("axis")
+                    .or_else(|| visited_args_orig.get(1));
+                let keepdims = visited_kwargs_orig
+                    .get("keepdims")
+                    .and_then(|v| v.bool_val())
+                    .unwrap_or(false);
+                if let Some(out) = crate::helpers::static_array_reductions::try_apply_reduce(
+                    &mut self.builder,
+                    method,
+                    &val_orig,
+                    axis_arg_orig,
+                    keepdims,
+                ) {
+                    return out;
+                }
                 let val = visited_args.first().cloned().unwrap_or(Value::None);
                 let axis_arg = _visited_kwargs.get("axis").or_else(|| visited_args.get(1));
                 crate::helpers::array_ops::reduce(&mut self.builder, method, &val, axis_arg)
             }
             (Some("np"), method @ ("argmax" | "argmin")) => {
+                // P4b: native StaticArray dispatch before the legacy boundary.
+                let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
+                let axis_arg_orig = visited_kwargs_orig
+                    .get("axis")
+                    .or_else(|| visited_args_orig.get(1));
+                let keepdims = visited_kwargs_orig
+                    .get("keepdims")
+                    .and_then(|v| v.bool_val())
+                    .unwrap_or(false);
+                if let Some(out) = crate::helpers::static_array_reductions::try_apply_argmax_argmin(
+                    &mut self.builder,
+                    &val_orig,
+                    axis_arg_orig,
+                    method == "argmax",
+                    keepdims,
+                ) {
+                    return out;
+                }
                 let val = visited_args.first().cloned().unwrap_or(Value::None);
                 let axis_arg = _visited_kwargs.get("axis").or_else(|| visited_args.get(1));
                 crate::helpers::array_ops::argmax_argmin(&mut self.builder, &val, axis_arg, method == "argmax")
@@ -618,6 +660,23 @@ impl IRGenerator {
             // Unified ops: each entry point handles static/dynamic internally.
             (Some(var), method @ ("sum" | "any" | "all" | "prod" | "min" | "max")) if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
+                // P4b: native StaticArray dispatch before the legacy boundary.
+                let axis_arg_orig = visited_kwargs_orig
+                    .get("axis")
+                    .or_else(|| visited_args_orig.first());
+                let keepdims = visited_kwargs_orig
+                    .get("keepdims")
+                    .and_then(|v| v.bool_val())
+                    .unwrap_or(false);
+                if let Some(out) = crate::helpers::static_array_reductions::try_apply_reduce(
+                    &mut self.builder,
+                    method,
+                    &val,
+                    axis_arg_orig,
+                    keepdims,
+                ) {
+                    return out;
+                }
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
                 let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
                 let axis_arg = _visited_kwargs.get("axis").or_else(|| visited_args.first());
@@ -658,6 +717,23 @@ impl IRGenerator {
             }
             (Some(var), method @ ("argmax" | "argmin")) if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
+                // P4b: native StaticArray dispatch before the legacy boundary.
+                let axis_arg_orig = visited_kwargs_orig
+                    .get("axis")
+                    .or_else(|| visited_args_orig.first());
+                let keepdims = visited_kwargs_orig
+                    .get("keepdims")
+                    .and_then(|v| v.bool_val())
+                    .unwrap_or(false);
+                if let Some(out) = crate::helpers::static_array_reductions::try_apply_argmax_argmin(
+                    &mut self.builder,
+                    &val,
+                    axis_arg_orig,
+                    method == "argmax",
+                    keepdims,
+                ) {
+                    return out;
+                }
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
                 let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
                 let axis_arg = _visited_kwargs.get("axis").or_else(|| visited_args.first());
@@ -748,6 +824,23 @@ impl IRGenerator {
             }
             (Some(var), "mean") if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
+                // P4b: native StaticArray dispatch before the legacy boundary.
+                let axis_arg_orig = visited_kwargs_orig
+                    .get("axis")
+                    .or_else(|| visited_args_orig.first());
+                let keepdims = visited_kwargs_orig
+                    .get("keepdims")
+                    .and_then(|v| v.bool_val())
+                    .unwrap_or(false);
+                if let Some(out) = crate::helpers::static_array_reductions::try_apply_reduce(
+                    &mut self.builder,
+                    "mean",
+                    &val,
+                    axis_arg_orig,
+                    keepdims,
+                ) {
+                    return out;
+                }
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
                 let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
                 let mut all_args = vec![val];
@@ -1084,6 +1177,14 @@ impl IRGenerator {
         // P1 segarr boundary: convert StaticArray target / args to legacy List
         // view before legacy method dispatch. See `visit_named_attr` for the
         // explanation.
+        //
+        // P4b: keep the un-converted target / args / kwargs around so the
+        // migrated reduction entry points can route through
+        // `static_array_reductions` directly on the StaticArray
+        // representation.
+        let target_orig = target.clone();
+        let visited_args_orig: Vec<Value> = visited_args.clone();
+        let visited_kwargs_orig: HashMap<String, Value> = visited_kwargs.clone();
         let target = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &target);
         let visited_args: Vec<Value> = visited_args
             .iter()
@@ -1120,11 +1221,54 @@ impl IRGenerator {
         }
 
         match n.member.as_str() {
-            method @ ("sum" | "any" | "all" | "prod" | "min" | "max") => {
+            method @ ("sum" | "any" | "all" | "prod" | "min" | "max" | "mean") => {
+                // P4b: native StaticArray dispatch before the legacy boundary.
+                let axis_arg_orig = visited_kwargs_orig
+                    .get("axis")
+                    .or_else(|| visited_args_orig.first());
+                let keepdims = visited_kwargs_orig
+                    .get("keepdims")
+                    .and_then(|v| v.bool_val())
+                    .unwrap_or(false);
+                if let Some(out) = crate::helpers::static_array_reductions::try_apply_reduce(
+                    &mut self.builder,
+                    method,
+                    &target_orig,
+                    axis_arg_orig,
+                    keepdims,
+                ) {
+                    return out;
+                }
+                if method == "mean" {
+                    let mut all_args = vec![target.clone()];
+                    all_args.extend(visited_args.iter().cloned());
+                    return crate::ops::static_ndarray_ops::np_mean(
+                        &mut self.builder,
+                        &all_args,
+                        &visited_kwargs,
+                    );
+                }
                 let axis_arg = visited_kwargs.get("axis").or_else(|| visited_args.first());
                 crate::helpers::array_ops::reduce(&mut self.builder, method, &target, axis_arg)
             }
             method @ ("argmax" | "argmin") => {
+                // P4b: native StaticArray dispatch before the legacy boundary.
+                let axis_arg_orig = visited_kwargs_orig
+                    .get("axis")
+                    .or_else(|| visited_args_orig.first());
+                let keepdims = visited_kwargs_orig
+                    .get("keepdims")
+                    .and_then(|v| v.bool_val())
+                    .unwrap_or(false);
+                if let Some(out) = crate::helpers::static_array_reductions::try_apply_argmax_argmin(
+                    &mut self.builder,
+                    &target_orig,
+                    axis_arg_orig,
+                    method == "argmax",
+                    keepdims,
+                ) {
+                    return out;
+                }
                 let axis_arg = visited_kwargs.get("axis").or_else(|| visited_args.first());
                 crate::helpers::array_ops::argmax_argmin(&mut self.builder, &target, axis_arg, method == "argmax")
             }
