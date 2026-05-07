@@ -1,5 +1,6 @@
 use crate::builder::IRBuilder;
 use crate::ops::{Op, OpArgs, ParamEntry};
+use crate::optim::resolver::{require_static_int, SiteKind};
 use crate::types::Value;
 
 pub struct RangeOp;
@@ -23,15 +24,21 @@ impl Op for RangeOp {
 
         // All range arguments must be statically known integers.
         let (start, stop, step) = if let Some(stop_v) = stop_opt {
-            let s = start_val.int_val().expect("range: start must be a constant integer");
-            let e = stop_v.int_val().expect("range: stop must be a constant integer");
+            let s: i64 = require_static_int(builder, start_val, SiteKind::RangeStart, None)
+                .unwrap_or_else(|e| panic!("{}", e.message))
+                .into();
+            let e: i64 = require_static_int(builder, stop_v, SiteKind::RangeStop, None)
+                .unwrap_or_else(|e| panic!("{}", e.message))
+                .into();
             let st = step_opt
                 .and_then(|v| v.int_val())
                 .unwrap_or(1);
             (s, e, st)
         } else {
             // range(stop) — start=0, stop=start_val
-            let e = start_val.int_val().expect("range: stop must be a constant integer");
+            let e: i64 = require_static_int(builder, start_val, SiteKind::RangeStop, None)
+                .unwrap_or_else(|e| panic!("{}", e.message))
+                .into();
             (0, e, 1)
         };
 
