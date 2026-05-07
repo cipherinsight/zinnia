@@ -370,12 +370,30 @@ impl IRGenerator {
         // P2 segarr-read-paths: native StaticArray dispatch BEFORE the
         // legacy boundary shim. Element / view / slice / multi-dim reads
         // operate directly on the segment without materialising a List.
-        // Composite-index cases (boolean masking / fancy indexing) are
-        // not yet migrated — for a StaticArray index value we materialise
-        // it to a List so the existing `static_array_subscript` ensure_ptr
-        // semantics (lossy: takes the first cell) match P3 behaviour. A
-        // proper boolean-mask path on StaticArray lives in P5b.
+        //
+        // P5b: boolean-mask read on StaticArray dispatches to the native
+        // mask path BEFORE the materialise-index shim below, so the cached
+        // Boolean cells stay live.
         if matches!(val, Value::StaticArray { .. }) {
+            if slice_values.len() == 1 {
+                if let SliceIndex::Single(idx_val) = &slice_values[0] {
+                    if matches!(idx_val, Value::StaticArray { .. })
+                        && crate::helpers::static_array_mask::is_boolean_mask_static_array(
+                            &mut self.builder, idx_val,
+                        )
+                    {
+                        if let Some(out) =
+                            crate::helpers::static_array_mask::try_apply_boolean_mask_read(
+                                &mut self.builder, &val, idx_val,
+                            )
+                        {
+                            return out;
+                        }
+                    }
+                }
+            }
+            // Fall back to converting StaticArray indices to lists for
+            // the existing fancy-index path (see P4a notes).
             let slice_values: Vec<SliceIndex> = slice_values.into_iter().map(|si| match si {
                 SliceIndex::Single(iv) if matches!(iv, Value::StaticArray { .. }) => {
                     SliceIndex::Single(
@@ -813,6 +831,29 @@ impl IRGenerator {
                         // of the legacy O(N) mux chain. Element / multi-dim /
                         // slice / chained-view writes all land here.
                         if let Value::StaticArray { .. } = &current {
+                            // P5b: boolean-mask write on a StaticArray
+                            // (`arr[mask] = v`). Dispatch before the
+                            // generic setitem so the cached Boolean cells
+                            // are seen, not materialised to a List that
+                            // collapses the bool/int distinction.
+                            if indices.len() == 1 {
+                                if let crate::types::SliceIndex::Single(mask_val) = &indices[0] {
+                                    if matches!(mask_val, Value::StaticArray { .. })
+                                        && crate::helpers::static_array_mask::is_boolean_mask_static_array(
+                                            &mut self.builder, mask_val,
+                                        )
+                                    {
+                                        if let Some(updated) =
+                                            crate::helpers::static_array_mask::try_apply_boolean_mask_write(
+                                                &mut self.builder, &current, mask_val, &value,
+                                            )
+                                        {
+                                            self.ctx.set(var_name, updated);
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
                             // NewAxis on a setitem target is rare; defer to
                             // legacy via materialisation.
                             let has_new_axis = indices.iter().any(|i| matches!(i, crate::types::SliceIndex::NewAxis));

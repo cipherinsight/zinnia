@@ -468,7 +468,16 @@ fn unary_array(
                 if matches!(v, Value::Float(_)) {
                     panic!("Bitwise NOT (~) requires an integer/boolean operand, got float");
                 }
-                b.ir_bit_not_i(v)
+                // P5b: numpy semantics — `~bool_array` is logical NOT, not
+                // two's-complement bit_not. For Boolean cells call
+                // `ir_logical_not` so `~True == False` (matches numpy and
+                // keeps the result as a Boolean wire, preserving boolean-
+                // mask semantics for chained operations).
+                if matches!(v, Value::Boolean(_)) {
+                    b.ir_logical_not(v)
+                } else {
+                    b.ir_bit_not_i(v)
+                }
             }
             _ => unreachable!("unary_array called with unsupported op {}", op),
         };

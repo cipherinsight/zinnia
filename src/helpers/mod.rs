@@ -12,4 +12,5 @@ pub mod static_array_elementwise;
 pub mod static_array_reductions;
 pub mod static_array_shape;
 pub mod static_array_complex;
+pub mod static_array_mask;
 pub mod array_ops;
