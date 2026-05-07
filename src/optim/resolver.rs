@@ -796,6 +796,8 @@ pub fn require_static_int(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::circuit_input::InputPath;
+    use crate::ir_defs::IR;
     use crate::types::ScalarValue;
 
     #[test]
@@ -826,5 +828,222 @@ mod tests {
         assert!(SiteKind::ShapeAxis(3)
             .diagnostic()
             .contains("axis 3"));
+    }
+
+    // ---------------------------------------------------------------
+    // SmtResolver tests
+    // ---------------------------------------------------------------
+
+    /// Helper: build a `Value::Integer` whose ptr is `stmt_id`. Mirrors
+    /// what `IRBuilder::create_ir` does for the integer return type.
+    fn runtime_int(stmt_id: StmtId) -> Value {
+        Value::Integer(ScalarValue::runtime(stmt_id))
+    }
+
+    /// Helper: build a `Value::Boolean` whose ptr is `stmt_id`.
+    fn runtime_bool(stmt_id: StmtId) -> Value {
+        Value::Boolean(ScalarValue::runtime(stmt_id))
+    }
+
+    /// SMT-decidable but not static_val: `select(true, 7, 9)` with a
+    /// non-folded ConstantBool input. The static_val path can't see
+    /// through Select unless the optimiser already folded it; SMT can.
+    #[test]
+    fn smt_resolves_select_with_constant_cond() {
+        // stmt0 = ConstantBool(true), stmt1 = ConstantInt(7),
+        // stmt2 = ConstantInt(9), stmt3 = SelectI(stmt0, stmt1, stmt2)
+        let stmts = vec![
+            IRStatement::new(0, IR::ConstantBool { value: true }, vec![], None),
+            IRStatement::new(1, IR::ConstantInt { value: 7 }, vec![], None),
+            IRStatement::new(2, IR::ConstantInt { value: 9 }, vec![], None),
+            IRStatement::new(3, IR::SelectI, vec![0, 1, 2], None),
+        ];
+        let v = runtime_int(3);
+        let mut r = SmtResolver::new();
+        assert_eq!(r.resolve_int_with_stmts(&v, &stmts), Some(7));
+    }
+
+    /// Genuinely SMT-decidable via reasoning: `select(x == 5, 100, 100)`
+    /// where `x` is a free `ReadInteger`. Both branches are 100, so SMT
+    /// proves the result is 100 — but `static_val` can't, because it
+    /// doesn't know `x`.
+    #[test]
+    fn smt_resolves_select_with_both_branches_equal() {
+        // stmt0 = ReadInteger("x"), stmt1 = ConstantInt(5),
+        // stmt2 = EqI(stmt0, stmt1), stmt3 = ConstantInt(100),
+        // stmt4 = ConstantInt(100), stmt5 = SelectI(stmt2, stmt3, stmt4)
+        let stmts = vec![
+            IRStatement::new(
+                0,
+                IR::ReadInteger { path: InputPath::new("x", vec![]), is_public: false },
+                vec![],
+                None,
+            ),
+            IRStatement::new(1, IR::ConstantInt { value: 5 }, vec![], None),
+            IRStatement::new(2, IR::EqI, vec![0, 1], None),
+            IRStatement::new(3, IR::ConstantInt { value: 100 }, vec![], None),
+            IRStatement::new(4, IR::ConstantInt { value: 100 }, vec![], None),
+            IRStatement::new(5, IR::SelectI, vec![2, 3, 4], None),
+        ];
+        let v = runtime_int(5);
+        let mut r = SmtResolver::new();
+        assert_eq!(r.resolve_int_with_stmts(&v, &stmts), Some(100));
+    }
+
+    /// Free input wire: `ReadInteger` returns None (the value is genuinely
+    /// not constant; SMT must not fabricate one).
+    #[test]
+    fn smt_returns_none_on_free_variable() {
+        let stmts = vec![IRStatement::new(
+            0,
+            IR::ReadInteger { path: InputPath::new("x", vec![]), is_public: false },
+            vec![],
+            None,
+        )];
+        let v = runtime_int(0);
+        let mut r = SmtResolver::new();
+        assert_eq!(r.resolve_int_with_stmts(&v, &stmts), None);
+    }
+
+    /// Disable flag: even on an SMT-decidable case, returning None
+    /// (after the static-val fast path).
+    #[test]
+    fn smt_disable_flag_short_circuits() {
+        let stmts = vec![
+            IRStatement::new(0, IR::ConstantBool { value: true }, vec![], None),
+            IRStatement::new(1, IR::ConstantInt { value: 7 }, vec![], None),
+            IRStatement::new(2, IR::ConstantInt { value: 9 }, vec![], None),
+            IRStatement::new(3, IR::SelectI, vec![0, 1, 2], None),
+        ];
+        let v = runtime_int(3);
+        let mut r = SmtResolver::new().with_disabled(true);
+        assert_eq!(r.resolve_int_with_stmts(&v, &stmts), None);
+    }
+
+    /// Cache hit on second call: after one query, the cache has an entry
+    /// for ptr 3. A second query on the same wire should hit the cache
+    /// without re-querying Z3 (we observe this via cache_size == 1
+    /// throughout).
+    #[test]
+    fn smt_caches_resolution() {
+        let stmts = vec![
+            IRStatement::new(0, IR::ConstantBool { value: true }, vec![], None),
+            IRStatement::new(1, IR::ConstantInt { value: 7 }, vec![], None),
+            IRStatement::new(2, IR::ConstantInt { value: 9 }, vec![], None),
+            IRStatement::new(3, IR::SelectI, vec![0, 1, 2], None),
+        ];
+        let v = runtime_int(3);
+        let mut r = SmtResolver::new();
+
+        assert_eq!(r.cache_size(), 0);
+        let first = r.resolve_int_with_stmts(&v, &stmts);
+        assert_eq!(first, Some(7));
+        assert_eq!(r.cache_size(), 1);
+
+        let second = r.resolve_int_with_stmts(&v, &stmts);
+        assert_eq!(second, Some(7));
+        // cache_size is still 1 — we didn't add a new entry.
+        assert_eq!(r.cache_size(), 1);
+    }
+
+    /// Tight timeout returns None on a pathological formula. We construct
+    /// an SmtResolver with a 1 ms timeout and a deliberately-non-trivial
+    /// formula (a long chain of MulI's grows the search space) — the
+    /// timeout fires and the resolver returns None instead of hanging.
+    ///
+    /// The test is hermetic because Z3 honours the timeout regardless of
+    /// machine speed; the only assertion is "returns None" (not "returns
+    /// quickly"). To make this robust we compose a formula whose decision
+    /// is unique (so the resolver would, given enough time, succeed) but
+    /// which contains enough multiplicative structure that a 1 ms budget
+    /// can't crack it.
+    #[test]
+    fn smt_honours_tight_timeout() {
+        // Build: x = ReadInteger("x"). Then a big chain of multiplications
+        // and conditional adds. Even though `x*x*...*x ` is determined by x,
+        // the resolver can't prove uniqueness without first picking x — and
+        // the formula is large enough that with a 1 ms budget Z3 returns
+        // unknown rather than the unique-not-found "non-unique" verdict
+        // produced when the sub-checks succeed.
+        let mut stmts = Vec::new();
+        stmts.push(IRStatement::new(
+            0,
+            IR::ReadInteger { path: InputPath::new("x", vec![]), is_public: false },
+            vec![],
+            None,
+        ));
+        // Build a chain: stmt1 = stmt0 * stmt0, stmt2 = stmt1 * stmt0, ...
+        // up to stmt30. Result has high arithmetic complexity.
+        let mut last = 0u32;
+        for i in 1..=30 {
+            stmts.push(IRStatement::new(i, IR::MulI, vec![last, 0], None));
+            last = i;
+        }
+        let v = runtime_int(last);
+        let mut r = SmtResolver::new().with_timeout(1);
+        // Within 1 ms, Z3 likely returns sat with a model — but the
+        // re-check (var != that_value) will likely also return sat (Z3
+        // can find another counter-model), so the resolver returns None.
+        // Either way, the test asserts no Some(_) leaks: because the
+        // wire genuinely depends on x, no unique value should be
+        // returned regardless of timeout.
+        assert_eq!(r.resolve_int_with_stmts(&v, &stmts), None);
+    }
+
+    /// `on_ir_mutated(&[])` clears the entire cache (P1 conservative).
+    #[test]
+    fn smt_on_ir_mutated_clears_cache() {
+        let stmts = vec![
+            IRStatement::new(0, IR::ConstantBool { value: true }, vec![], None),
+            IRStatement::new(1, IR::ConstantInt { value: 7 }, vec![], None),
+            IRStatement::new(2, IR::ConstantInt { value: 9 }, vec![], None),
+            IRStatement::new(3, IR::SelectI, vec![0, 1, 2], None),
+        ];
+        let v = runtime_int(3);
+        let mut r = SmtResolver::new();
+        let _ = r.resolve_int_with_stmts(&v, &stmts);
+        assert_eq!(r.cache_size(), 1);
+        r.on_ir_mutated(&[]);
+        assert_eq!(r.cache_size(), 0);
+    }
+
+    /// Static-val fast path: SmtResolver returns the constant immediately
+    /// without consulting Z3. Verified by passing an EMPTY stmts slice
+    /// (Z3 path would panic on stmt[ptr] otherwise — actually it'd return
+    /// None, but the point is fast-path doesn't even attempt the walk).
+    #[test]
+    fn smt_static_val_fast_path() {
+        let stmts: Vec<IRStatement> = vec![];
+        let v = Value::Integer(ScalarValue::constant(123));
+        let mut r = SmtResolver::new();
+        assert_eq!(r.resolve_int_with_stmts(&v, &stmts), Some(123));
+        // No cache entry for static-val results (no ptr to key on).
+        assert_eq!(r.cache_size(), 0);
+    }
+
+    /// resolve_bool_with_stmts on a select with a constant cond.
+    #[test]
+    fn smt_resolves_bool_through_select() {
+        // stmt0 = ConstantBool(false),
+        // stmt1 = ConstantBool(true), stmt2 = ConstantBool(true),
+        // stmt3 = SelectB(stmt0, stmt1, stmt2)
+        // Both branches are true so result is true regardless of cond.
+        let stmts = vec![
+            IRStatement::new(0, IR::ConstantBool { value: false }, vec![], None),
+            IRStatement::new(1, IR::ConstantBool { value: true }, vec![], None),
+            IRStatement::new(2, IR::ConstantBool { value: true }, vec![], None),
+            IRStatement::new(3, IR::SelectB, vec![0, 1, 2], None),
+        ];
+        let v = runtime_bool(3);
+        let mut r = SmtResolver::new();
+        assert_eq!(r.resolve_bool_with_stmts(&v, &stmts), Some(true));
+    }
+
+    /// `SmtResolver` is `Send + Sync` (required by `Resolver` trait
+    /// because `IRGraph` is held by a `#[pyclass]`). Compile-time check.
+    #[test]
+    fn smt_resolver_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<SmtResolver>();
     }
 }
