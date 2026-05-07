@@ -2095,16 +2095,17 @@ fn slice_along_axis(val: &Value, axis: usize, start: usize, stop: usize) -> Valu
 /// `length`, the first `length % n` sections get one extra element each
 /// (matching NumPy).
 fn compute_split_boundaries(
+    b: &mut IRBuilder,
     length: usize,
     sections: &Value,
     allow_uneven: bool,
 ) -> Vec<(usize, usize)> {
     match sections {
         Value::Integer(_) => {
-            let n = sections
-                .int_val()
-                .expect("split: sections must be a constant int")
-                as usize;
+            let n: i64 = require_static_int(b, sections, SiteKind::SplitSections, None)
+                .unwrap_or_else(|e| panic!("{}", e.message))
+                .into();
+            let n = n as usize;
             if n == 0 {
                 panic!("split: number of sections must be > 0");
             }
@@ -2131,9 +2132,9 @@ fn compute_split_boundaries(
                 .values
                 .iter()
                 .map(|v| {
-                    let i = v
-                        .int_val()
-                        .expect("split: index entries must be constant ints");
+                    let i: i64 = require_static_int(b, v, SiteKind::SplitSections, None)
+                        .unwrap_or_else(|e| panic!("{}", e.message))
+                        .into();
                     i.max(0).min(length as i64) as usize
                 })
                 .collect();
@@ -2152,6 +2153,7 @@ fn compute_split_boundaries(
 
 /// Shared body for `np.split` / `np.array_split` along an explicit axis.
 fn split_impl(
+    b: &mut IRBuilder,
     val: &Value,
     sections: &Value,
     axis: i64,
@@ -2165,7 +2167,7 @@ fn split_impl(
     }
     let ax = resolve_axis(axis, ndim, op);
     let length = shape[ax];
-    let bounds = compute_split_boundaries(length, sections, allow_uneven);
+    let bounds = compute_split_boundaries(b, length, sections, allow_uneven);
     let parts: Vec<Value> = bounds
         .into_iter()
         .map(|(s, e)| slice_along_axis(val, ax, s, e))
@@ -2179,7 +2181,7 @@ fn split_impl(
 
 /// `np.split(arr, sections, axis=0)` — equal-section split (errors if the
 /// sections don't divide evenly).
-pub fn np_split(_b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+pub fn np_split(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
     let val = args.first().expect("split: requires an array argument");
     let sections = args.get(1).expect("split: requires a sections argument");
     let axis = kwargs
@@ -2187,13 +2189,13 @@ pub fn np_split(_b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Val
         .or_else(|| args.get(2))
         .and_then(|v| v.int_val())
         .unwrap_or(0);
-    split_impl(val, sections, axis, false, "split")
+    split_impl(b, val, sections, axis, false, "split")
 }
 
 /// `np.array_split(arr, sections, axis=0)` — like split but allows uneven
 /// sections; the first `length % n` sections get one extra element.
 pub fn np_array_split(
-    _b: &mut IRBuilder,
+    b: &mut IRBuilder,
     args: &[Value],
     kwargs: &HashMap<String, Value>,
 ) -> Value {
@@ -2204,38 +2206,38 @@ pub fn np_array_split(
         .or_else(|| args.get(2))
         .and_then(|v| v.int_val())
         .unwrap_or(0);
-    split_impl(val, sections, axis, true, "array_split")
+    split_impl(b, val, sections, axis, true, "array_split")
 }
 
 /// `np.hsplit(arr, sections)` — split along axis 1 for ≥2-D, axis 0 for 1-D.
-pub fn np_hsplit(_b: &mut IRBuilder, args: &[Value]) -> Value {
+pub fn np_hsplit(b: &mut IRBuilder, args: &[Value]) -> Value {
     let val = args.first().expect("hsplit: requires an array argument");
     let sections = args.get(1).expect("hsplit: requires a sections argument");
     let shape = crate::helpers::composite::get_composite_shape(val);
     let axis = if shape.len() >= 2 { 1 } else { 0 };
-    split_impl(val, sections, axis, false, "hsplit")
+    split_impl(b, val, sections, axis, false, "hsplit")
 }
 
 /// `np.vsplit(arr, sections)` — split along axis 0 (requires ≥2-D).
-pub fn np_vsplit(_b: &mut IRBuilder, args: &[Value]) -> Value {
+pub fn np_vsplit(b: &mut IRBuilder, args: &[Value]) -> Value {
     let val = args.first().expect("vsplit: requires an array argument");
     let sections = args.get(1).expect("vsplit: requires a sections argument");
     let shape = crate::helpers::composite::get_composite_shape(val);
     if shape.len() < 2 {
         panic!("vsplit: input must be at least 2-D");
     }
-    split_impl(val, sections, 0, false, "vsplit")
+    split_impl(b, val, sections, 0, false, "vsplit")
 }
 
 /// `np.dsplit(arr, sections)` — split along axis 2 (requires ≥3-D).
-pub fn np_dsplit(_b: &mut IRBuilder, args: &[Value]) -> Value {
+pub fn np_dsplit(b: &mut IRBuilder, args: &[Value]) -> Value {
     let val = args.first().expect("dsplit: requires an array argument");
     let sections = args.get(1).expect("dsplit: requires a sections argument");
     let shape = crate::helpers::composite::get_composite_shape(val);
     if shape.len() < 3 {
         panic!("dsplit: input must be at least 3-D");
     }
-    split_impl(val, sections, 2, false, "dsplit")
+    split_impl(b, val, sections, 2, false, "dsplit")
 }
 
 // ────────────────────────────────────────────────────────────────────────
