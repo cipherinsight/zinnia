@@ -23,6 +23,16 @@ num-integer = "0.1"
 halo2_proofs = { version = "0.3", features = ["dev-graph"], optional = true }
 pasta_curves = { version = "0.5", optional = true }
 rand = { version = "0.8", optional = true }
+# P1 SMT-resolver foundation. The 0.20 line is the latest stable on
+# crates.io as of 2026-05-07. We deliberately do NOT enable the
+# `bundled` feature: it builds libz3 from source, which adds ~5 min to
+# `cargo build` from a clean checkout. We instead link against the
+# system libz3 (Homebrew on macOS, apt/yum on Linux). The build will
+# fail with a clear `pkg-config` error if libz3 is not installed; the
+# README install step covers that. If reproducibility ever forces us
+# back to vendored builds, flip the feature to `["bundled"]` and accept
+# the build-time cost.
+z3 = "0.20"
 
 [dev-dependencies]
 pyo3 = { version = "0.23", features = ["auto-initialize"] }

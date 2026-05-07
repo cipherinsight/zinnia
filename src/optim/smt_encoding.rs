@@ -214,3 +214,36 @@ impl IROp for IR {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    /// Smoke test: confirm the `z3` crate is on the dep graph, links, and
+    /// can prove a trivial arithmetic identity. Not wired to anything else
+    /// in the compiler — its only purpose is to fail loudly if the dep
+    /// version we picked doesn't link on this platform.
+    ///
+    /// Note: z3 0.20 uses an implicit thread-local `Context`. There is no
+    /// explicit `Context` borrow on `Solver::new()`, `Int::from_i64()`,
+    /// `Int::add()`, etc. — they all consult the thread-local. This is
+    /// the API we'll use throughout the resolver.
+    #[test]
+    fn z3_dep_smoke_test_two_plus_three_is_five() {
+        use z3::ast::{Ast, Int};
+        use z3::{SatResult, Solver};
+
+        let solver = Solver::new();
+
+        let two = Int::from_i64(2);
+        let three = Int::from_i64(3);
+        let five = Int::from_i64(5);
+        let sum = &two + &three;
+
+        // Try to find a counter-example to "2 + 3 == 5". There is none.
+        solver.assert(sum._eq(&five).not());
+        assert_eq!(solver.check(), SatResult::Unsat);
+    }
+}
