@@ -32,10 +32,28 @@ pub(super) fn is_starred_target(node: &ASTNode) -> bool {
 pub use crate::types::SliceIndex;
 
 /// Configuration for the IR generator.
+///
+/// Note: this is the natural Rust-side home for compile-time knobs. The
+/// `ZinniaConfig` struct found via `grep ZinniaConfig` is the *halo2
+/// circuit* config (column / gate layout) — an unrelated concept; not the
+/// place for compile knobs. The kanban spec's `ZinniaConfig::smt_*` knobs
+/// land here because `IRGenConfig` is what `lib.rs::compile_circuit`
+/// already plumbs through from the JSON input on the Python side.
 #[derive(Debug, Clone)]
 pub struct IRGenConfig {
     pub loop_limit: u32,
     pub recursion_limit: u32,
+    /// P1 SMT-resolver foundation knob. **NOT** "is SmtResolver the
+    /// default" — the default resolver is still `StaticOnlyResolver`
+    /// (flipping that is P3 work). When `false`, an SmtResolver
+    /// constructed via `SmtResolver::new().with_disabled(!smt_enable)`
+    /// returns `None` after the static-val fast path. The flag exists so
+    /// users can A/B test SMT impact once the resolver is the default.
+    pub smt_enable: bool,
+    /// Per-query Z3 timeout in milliseconds. Default 500 ms (paper's
+    /// recommendation). Lower = faster compile, weaker reasoning. Higher
+    /// = slower compile, stronger reasoning.
+    pub smt_query_timeout_ms: u64,
 }
 
 impl Default for IRGenConfig {
@@ -43,6 +61,8 @@ impl Default for IRGenConfig {
         Self {
             loop_limit: 256,
             recursion_limit: 16,
+            smt_enable: true,
+            smt_query_timeout_ms: 500,
         }
     }
 }

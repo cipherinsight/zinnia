@@ -69,6 +69,15 @@ fn compile_circuit(ast_json: &str, config_json: &str, chips_json: String, extern
 
     let loop_limit = config["loop_limit"].as_u64().unwrap_or(1000) as u32;
     let recursion_limit = config["recursion_limit"].as_u64().unwrap_or(16) as u32;
+    // P1 SMT-resolver knobs. Default: enabled, 500 ms timeout. A future P3
+    // commit will swap the default resolver from StaticOnlyResolver to
+    // SmtResolver and start honouring these.
+    let smt_enable = config.get("smt_enable")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let smt_query_timeout_ms = config.get("smt_query_timeout_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(500);
     let backend = config["backend"].as_str().unwrap_or("halo2");
     let enable_memory_consistency = config["enable_memory_consistency"].as_bool().unwrap_or(false);
     let mux_threshold = config.get("mux_threshold")
@@ -94,6 +103,8 @@ fn compile_circuit(ast_json: &str, config_json: &str, chips_json: String, extern
     let ir_config = IRGenConfig {
         loop_limit,
         recursion_limit,
+        smt_enable,
+        smt_query_timeout_ms,
     };
     let base_graph = IRGenerator::generate_from_json_with_chips(ir_config.clone(), ast_json, &chips, &externals)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
