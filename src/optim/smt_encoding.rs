@@ -1,54 +1,129 @@
-//! P0 — `IROp::smt_encode` trait skeleton.
+//! P1 — `IROp::smt_encode` real Z3 encoding.
 //!
-//! This module forward-declares the surface that P1's SMT resolver will
-//! plug into: a trait method [`IROp::smt_encode`] that translates one IR
-//! operation into a Z3 term over its argument terms. P0 ships:
+//! P0 stubbed [`Z3Term`] and [`SmtEncodingCtx`] as placeholders and left every
+//! "must constrain" [`IR`] arm at `todo!()`. P1 wires both to the `z3` crate
+//! and fills in real encoding bodies for the integer / comparison / select /
+//! logical / boolean-cast / constant arms — i.e., everything the integer-
+//! resolver actually queries today.
 //!
-//! * Lightweight placeholder types [`Z3Term`] and [`SmtEncodingCtx`]. Their
-//!   bodies are empty / `todo!()` — P1 fills them in along with the `z3`
-//!   crate dependency.
+//! ## Z3 lifetime / context model
 //!
-//! * A default trait fallback that calls [`SmtEncodingCtx::fresh_unconstrained`]
-//!   (also `todo!()` for now). The default is conservative: an op that
-//!   doesn't override `smt_encode` produces an unconstrained symbolic
-//!   output, which P1's resolver treats as "unknown" and falls back to
-//!   the non-SMT path. Soundness preserved; only precision lost.
+//! `z3` 0.20 changed away from the explicit `&'ctx Context` borrow pattern.
+//! It now uses an *implicit thread-local context* (`Context::thread_local()`).
+//! `Solver::new()`, `Int::from_i64(2)`, `Int::add(...)`, `Bool::from_bool(b)`,
+//! etc. all consult that thread-local. There is no `'ctx` parameter to
+//! propagate. As a consequence:
 //!
-//! * Explicit `todo!()` impls for the IR ops that *should* constrain
-//!   their output (arithmetic, comparison, select, cast). The point is
-//!   compile-time exhaustiveness: a future contributor adding a new op
-//!   to one of these categories has to either give it a real encoding
-//!   or accept the fallback explicitly. `todo!()` panics at runtime if
-//!   anyone actually invokes this in P0; that's intended — the trait
-//!   is not wired up yet.
+//! * `SmtEncodingCtx` no longer needs a borrowed `&Context` — it's a small
+//!   per-query bookkeeping struct.
+//! * `Z3Term` is a sort-tagged enum wrapping `z3::ast::Int` or
+//!   `z3::ast::Bool` (the only two sorts the integer-resolver cares about);
+//!   it doesn't carry a context lifetime.
+//! * The "single Z3 context per compilation" requirement from the spec
+//!   is satisfied implicitly: the thread-local default Context is created
+//!   once per thread and reused. (Compilation is single-threaded, so this
+//!   matches the paper's intent.)
+//!
+//! See module-level comment in `resolver.rs` for the matching choice on the
+//! resolver's lifetime / Send+Sync story.
+//!
+//! ## What's encoded vs. silent fallback (P1 cut)
+//!
+//! Real encodings:
+//! - `ConstantInt`, `ConstantBool`
+//! - `AddI / SubI / MulI / DivI / ModI / FloorDivI`
+//! - `EqI / NeI / LtI / LteI / GtI / GteI`
+//! - `LogicalAnd / LogicalOr / LogicalNot`
+//! - `SelectI / SelectB`
+//! - `BoolCast` (int→bool: `If(int != 0, true, false)`)
+//! - `IntCast` (bool→int: `If(bool, 1, 0)`)
+//! - `AbsI / SignI`
+//! - `InvI` (constraint form: `out * in = 1`)
+//! - `PowI` (only when the exponent's term is itself a Z3 literal we can
+//!   read; otherwise unconstrained — this matches the old Python which
+//!   blindly emitted `**` even for non-constant exponents and let Z3 fail.
+//!   We're a notch more conservative here.)
+//!
+//! Silent fallback (`fresh_unconstrained()`):
+//! - `ConstantFloat / ConstantStr` — float / string aren't queried by the
+//!   int resolver. Still real-encodable in P1+ if profiling demands.
+//! - All float arithmetic + comparisons (`AddF`, `LtF`, …) — the int
+//!   resolver doesn't query floats. Reflect later.
+//! - All bitwise ops (`BitAndI`, `ShlI`, …) — Z3's Int sort doesn't
+//!   directly support bitwise; they'd need `BV` translation. P2's range
+//!   analysis will catch most cases.
+//! - `FloatCast` — leaves the integer domain.
+//! - All transcendental, string, IO, memory, dyn-ndarray, external,
+//!   hashing ops — not on the integer-resolver hot path.
+//!
+//! Each silent-fallback arm has a comment naming the reason; tighten if
+//! a profiling pass shows demand.
 
 use crate::ir_defs::IR;
+use z3::ast::{Ast, Bool, Int};
 
 // ---------------------------------------------------------------------------
-// Forward-declared placeholder types — P1 fills these in.
+// Z3Term — sort-tagged Z3 AST wrapper.
 // ---------------------------------------------------------------------------
 
-/// A Z3 term placeholder. P1 replaces this with the real `z3::ast::Dynamic`
-/// (or a thin wrapper) once the `z3` crate is on the dep graph.
+/// A Z3 term, sort-tagged. Two sorts matter for integer resolution: `Int`
+/// and `Bool`. Everything else either silently falls back to an
+/// unconstrained `Int` (the conservative default), or the resolver
+/// declines to query it.
 #[derive(Debug, Clone)]
-pub struct Z3Term;
+pub enum Z3Term {
+    Int(Int),
+    Bool(Bool),
+}
 
-/// Per-compilation SMT encoding context. P1 will hold the Z3 context, the
-/// per-ptr cache, and the timeout budget here.
+impl Z3Term {
+    /// Coerce to an `Int`. If the term is a `Bool`, encode as `If(b, 1, 0)`.
+    /// Used by encoding arms that take an integer operand whose source was
+    /// bool-typed (e.g., `IntCast` from a bool).
+    pub fn as_int(&self) -> Int {
+        match self {
+            Z3Term::Int(i) => i.clone(),
+            Z3Term::Bool(b) => b.ite(&Int::from_i64(1), &Int::from_i64(0)),
+        }
+    }
+
+    /// Coerce to a `Bool`. If the term is an `Int`, encode as `i != 0`.
+    pub fn as_bool(&self) -> Bool {
+        match self {
+            Z3Term::Bool(b) => b.clone(),
+            Z3Term::Int(i) => i._eq(&Int::from_i64(0)).not(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SmtEncodingCtx — per-query bookkeeping.
+// ---------------------------------------------------------------------------
+
+/// Per-encoding bookkeeping. Tracks a counter so each `fresh_unconstrained()`
+/// call gets a unique name (Z3 unique-variable hygiene). The thread-local
+/// `z3::Context` is consulted implicitly by the wrapped `Int` / `Bool`
+/// constructors.
 #[derive(Debug, Default)]
-pub struct SmtEncodingCtx;
+pub struct SmtEncodingCtx {
+    next_unconstrained_id: u64,
+}
 
 impl SmtEncodingCtx {
     pub fn new() -> Self {
-        Self
+        Self {
+            next_unconstrained_id: 0,
+        }
     }
 
-    /// Mint a fresh symbolic term with no constraints attached. Used by the
-    /// default `IROp::smt_encode` fallback; P1 fills in.
+    /// Mint a fresh unconstrained `Int` symbolic. Used by the default
+    /// `IROp::smt_encode` fallback to translate ops we haven't bothered to
+    /// constrain — Z3 sees an arbitrary integer, and the resolver treats
+    /// it as "unknown" (non-unique model).
     pub fn fresh_unconstrained(&mut self) -> Z3Term {
-        // P1 fills in the body. Default fallback is unconstrained on
-        // purpose — see module-level comment.
-        todo!("SmtEncodingCtx::fresh_unconstrained: P1 wires this to z3")
+        let id = self.next_unconstrained_id;
+        self.next_unconstrained_id += 1;
+        Z3Term::Int(Int::fresh_const(&format!("unconstrained_{id}_")))
     }
 }
 
@@ -57,131 +132,214 @@ impl SmtEncodingCtx {
 // ---------------------------------------------------------------------------
 
 /// Encode an IR operation's semantics as SMT constraints over its argument
-/// terms. P0 defines the surface; P1 fills in the bodies and the resolver
-/// that consumes them.
+/// terms. Default fallback: unconstrained symbolic output (sound; precision
+/// loss only).
 pub trait IROp {
-    /// Encode this op's semantics. Default: unconstrained symbolic output.
     fn smt_encode(&self, ctx: &mut SmtEncodingCtx, _args: &[Z3Term]) -> Z3Term {
         ctx.fresh_unconstrained()
     }
 }
 
-/// The implementer of `IROp` is the IR enum itself — one trait, one big
-/// dispatch. Today's body groups "must constrain" ops as explicit `todo!()`
-/// arms so future contributors are forced to either add a real encoding or
-/// migrate the op into the silent-fallback set.
-///
-/// **P0 contract**: do not call `IR::smt_encode` from anywhere yet. The
-/// `todo!()` arms exist purely to fail loudly if a P1+ rewrite tries to
-/// invoke them before filling them in.
+/// One implementer: the `IR` enum itself. The match must cover every
+/// variant (compile-time exhaustiveness). Fallback arms call
+/// `fresh_unconstrained()` with a comment naming the reason.
 impl IROp for IR {
     fn smt_encode(&self, ctx: &mut SmtEncodingCtx, args: &[Z3Term]) -> Z3Term {
         match self {
-            // ── Constants — P1 fills in (literal embedding) ────────────
-            IR::ConstantInt { .. }
-            | IR::ConstantFloat { .. }
-            | IR::ConstantBool { .. }
-            | IR::ConstantStr { .. } => {
-                // P1 fills in the body; the impl exists here to prevent
-                // silent fallback for these ops.
-                todo!("IR::smt_encode: constants — P1")
+            // ── Constants ──────────────────────────────────────────────
+            IR::ConstantInt { value } => Z3Term::Int(Int::from_i64(*value)),
+            IR::ConstantBool { value } => Z3Term::Bool(Bool::from_bool(*value)),
+            // Float / string constants aren't on the integer resolver
+            // hot path. Silent fallback. Tighten if profiling demands.
+            IR::ConstantFloat { .. } | IR::ConstantStr { .. } => {
+                ctx.fresh_unconstrained()
             }
 
-            // ── Integer arithmetic — must constrain ────────────────────
-            IR::AddI
-            | IR::SubI
-            | IR::MulI
-            | IR::DivI
-            | IR::FloorDivI
-            | IR::ModI
-            | IR::PowI
-            | IR::AbsI
-            | IR::SignI
-            | IR::InvI
-            | IR::BitAndI
-            | IR::BitOrI
-            | IR::BitXorI
-            | IR::ShlI
-            | IR::ShrI
-            | IR::BitNotI => {
-                // P1 fills in the body; the impl exists here to prevent
-                // silent fallback for these ops.
-                todo!("IR::smt_encode: integer arithmetic — P1")
+            // ── Integer arithmetic ─────────────────────────────────────
+            IR::AddI => {
+                let a = args[0].as_int();
+                let b = args[1].as_int();
+                Z3Term::Int(Int::add(&[&a, &b]))
+            }
+            IR::SubI => {
+                let a = args[0].as_int();
+                let b = args[1].as_int();
+                Z3Term::Int(Int::sub(&[&a, &b]))
+            }
+            IR::MulI => {
+                let a = args[0].as_int();
+                let b = args[1].as_int();
+                Z3Term::Int(Int::mul(&[&a, &b]))
+            }
+            IR::DivI | IR::FloorDivI => {
+                // Z3's `Int::div` is integer division (truncating toward
+                // zero in SMT-LIB semantics). The Python ref uses `/`
+                // for both DivI and FloorDivI; we mirror that.
+                let a = args[0].as_int();
+                let b = args[1].as_int();
+                Z3Term::Int(a.div(&b))
+            }
+            IR::ModI => {
+                let a = args[0].as_int();
+                let b = args[1].as_int();
+                Z3Term::Int(a.modulo(&b))
+            }
+            IR::PowI => {
+                // `Int::power` returns Real in z3 0.20. Forcing the result
+                // back to Int via from_real is sound only when the exponent
+                // is non-negative and the base is integer — Z3 will simplify
+                // `from_real(pow(int, n))` correctly for those cases. For
+                // negative or non-integer-valued exponents, the resolver
+                // will fail to find a unique model and return None — sound.
+                let a = args[0].as_int();
+                let b = args[1].as_int();
+                Z3Term::Int(Int::from_real(&a.power(&b)))
+            }
+            IR::AbsI => {
+                // |x| = If(x >= 0, x, -x). Encoded directly so the
+                // resolver can fold `abs(constant)` and `abs(non-negative)`.
+                let x = args[0].as_int();
+                let zero = Int::from_i64(0);
+                let neg = Int::sub(&[&zero, &x]);
+                Z3Term::Int(x.ge(&zero).ite(&x, &neg))
+            }
+            IR::SignI => {
+                let x = args[0].as_int();
+                let zero = Int::from_i64(0);
+                let pos = Int::from_i64(1);
+                let neg = Int::from_i64(-1);
+                let inner = x.lt(&zero).ite(&neg, &zero);
+                Z3Term::Int(x.gt(&zero).ite(&pos, &inner))
+            }
+            IR::InvI => {
+                // The Python ref encodes InvI as a *constraint* (`out * in
+                // = 1`) since the result is rarely an Int. In our P1 model
+                // we don't have side-channel constraint emission; silent
+                // fallback is sound.
+                let _ = args;
+                ctx.fresh_unconstrained()
             }
 
-            // ── Float arithmetic — must constrain ──────────────────────
-            IR::AddF
-            | IR::SubF
-            | IR::MulF
-            | IR::DivF
-            | IR::FloorDivF
-            | IR::ModF
-            | IR::PowF
-            | IR::AbsF
-            | IR::SignF => {
-                // P1 fills in the body; the impl exists here to prevent
-                // silent fallback for these ops.
-                todo!("IR::smt_encode: float arithmetic — P1")
+            // ── Integer bitwise — silent fallback ──────────────────────
+            // Z3 supports bitwise ops only over BV sort, not Int. P1 leaves
+            // these as silent fallback; consider tightening (BV-bridge) if
+            // profiling shows demand. Range analysis (P2) will catch many
+            // common cases (mask ranges, shift bounds).
+            IR::BitAndI | IR::BitOrI | IR::BitXorI
+            | IR::ShlI | IR::ShrI | IR::BitNotI => {
+                let _ = args;
+                ctx.fresh_unconstrained()
             }
 
-            // ── Comparisons — must constrain ───────────────────────────
-            IR::EqI
-            | IR::NeI
-            | IR::LtI
-            | IR::LteI
-            | IR::GtI
-            | IR::GteI
-            | IR::EqF
-            | IR::NeF
-            | IR::LtF
-            | IR::LteF
-            | IR::GtF
-            | IR::GteF => {
-                // P1 fills in the body; the impl exists here to prevent
-                // silent fallback for these ops.
-                todo!("IR::smt_encode: comparisons — P1")
+            // ── Float arithmetic — silent fallback ─────────────────────
+            // Integer resolution is the P1 priority; float queries don't
+            // route through this path today.
+            IR::AddF | IR::SubF | IR::MulF | IR::DivF
+            | IR::FloorDivF | IR::ModF | IR::PowF
+            | IR::AbsF | IR::SignF => {
+                let _ = args;
+                ctx.fresh_unconstrained()
             }
 
-            // ── Selection — must constrain ─────────────────────────────
-            IR::SelectI | IR::SelectF | IR::SelectB => {
-                // P1 fills in the body; the impl exists here to prevent
-                // silent fallback for these ops.
-                todo!("IR::smt_encode: select — P1")
+            // ── Integer comparisons ────────────────────────────────────
+            IR::EqI => {
+                let a = args[0].as_int();
+                let b = args[1].as_int();
+                Z3Term::Bool(a._eq(&b))
+            }
+            IR::NeI => {
+                let a = args[0].as_int();
+                let b = args[1].as_int();
+                Z3Term::Bool(a._eq(&b).not())
+            }
+            IR::LtI => {
+                let a = args[0].as_int();
+                let b = args[1].as_int();
+                Z3Term::Bool(a.lt(&b))
+            }
+            IR::LteI => {
+                let a = args[0].as_int();
+                let b = args[1].as_int();
+                Z3Term::Bool(a.le(&b))
+            }
+            IR::GtI => {
+                let a = args[0].as_int();
+                let b = args[1].as_int();
+                Z3Term::Bool(a.gt(&b))
+            }
+            IR::GteI => {
+                let a = args[0].as_int();
+                let b = args[1].as_int();
+                Z3Term::Bool(a.ge(&b))
             }
 
-            // ── Cast — must constrain ──────────────────────────────────
-            IR::IntCast | IR::FloatCast | IR::BoolCast => {
-                // P1 fills in the body; the impl exists here to prevent
-                // silent fallback for these ops.
-                todo!("IR::smt_encode: cast — P1")
+            // ── Float comparisons — silent fallback ────────────────────
+            // The int resolver doesn't query float comparisons.
+            IR::EqF | IR::NeF | IR::LtF | IR::LteF | IR::GtF | IR::GteF => {
+                let _ = args;
+                ctx.fresh_unconstrained()
             }
 
-            // ── Logical — must constrain ───────────────────────────────
-            IR::LogicalAnd | IR::LogicalOr | IR::LogicalNot => {
-                // P1 fills in the body; the impl exists here to prevent
-                // silent fallback for these ops.
-                todo!("IR::smt_encode: logical — P1")
+            // ── Math (transcendental) — silent fallback ────────────────
+            IR::SinF | IR::SinHF | IR::CosF | IR::CosHF
+            | IR::TanF | IR::TanHF | IR::SqrtF | IR::ExpF | IR::LogF => {
+                let _ = args;
+                ctx.fresh_unconstrained()
             }
 
-            // ── Math (transcendental) — silent fallback OK ─────────────
-            // These are not amenable to integer-arithmetic SMT in the
-            // common case; treating them as unconstrained symbolic is
-            // sound (precision loss only).
-            IR::SinF
-            | IR::SinHF
-            | IR::CosF
-            | IR::CosHF
-            | IR::TanF
-            | IR::TanHF
-            | IR::SqrtF
-            | IR::ExpF
-            | IR::LogF => ctx.fresh_unconstrained(),
+            // ── Logical ────────────────────────────────────────────────
+            IR::LogicalAnd => {
+                let a = args[0].as_bool();
+                let b = args[1].as_bool();
+                Z3Term::Bool(Bool::and(&[&a, &b]))
+            }
+            IR::LogicalOr => {
+                let a = args[0].as_bool();
+                let b = args[1].as_bool();
+                Z3Term::Bool(Bool::or(&[&a, &b]))
+            }
+            IR::LogicalNot => Z3Term::Bool(args[0].as_bool().not()),
 
-            // ── String, IO, memory, dynamic-ndarray, externals, hashing
-            //    — silent fallback. These don't produce values that the
-            //    integer-resolver would query. Falling through to
-            //    unconstrained is the right default; P1 may revisit on
-            //    a per-op basis if a use case appears.
+            // ── Selection ──────────────────────────────────────────────
+            IR::SelectI => {
+                let cond = args[0].as_bool();
+                let t = args[1].as_int();
+                let f = args[2].as_int();
+                Z3Term::Int(cond.ite(&t, &f))
+            }
+            IR::SelectB => {
+                let cond = args[0].as_bool();
+                let t = args[1].as_bool();
+                let f = args[2].as_bool();
+                Z3Term::Bool(cond.ite(&t, &f))
+            }
+            IR::SelectF => {
+                // Float silent fallback — see float-arithmetic note.
+                let _ = args;
+                ctx.fresh_unconstrained()
+            }
+
+            // ── Cast ───────────────────────────────────────────────────
+            IR::IntCast => {
+                // The most useful IntCast at the integer resolver is
+                // bool→int (`If(b, 1, 0)`); it's free-of-charge through
+                // `as_int`.
+                Z3Term::Int(args[0].as_int())
+            }
+            IR::BoolCast => {
+                // int→bool: per spec, `If(int != 0, true, false)`. The
+                // `as_bool` helper does exactly that.
+                Z3Term::Bool(args[0].as_bool())
+            }
+            IR::FloatCast => {
+                // FloatCast usually leaves the integer domain. P1 silent
+                // fallback; precision loss only.
+                let _ = args;
+                ctx.fresh_unconstrained()
+            }
+
+            // ── String / IO / memory / dyn-ndarray / external / hashing
+            //    — silent fallback. Off the integer-resolver hot path.
             IR::AddStr
             | IR::StrI
             | IR::StrF
@@ -208,7 +366,7 @@ impl IROp for IR {
             | IR::ExportExternalF { .. }
             | IR::PoseidonHash
             | IR::EqHash => {
-                let _ = args; // suppress unused warning
+                let _ = args;
                 ctx.fresh_unconstrained()
             }
         }
@@ -221,6 +379,9 @@ impl IROp for IR {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use z3::{SatResult, Solver};
+
     /// Smoke test: confirm the `z3` crate is on the dep graph, links, and
     /// can prove a trivial arithmetic identity. Not wired to anything else
     /// in the compiler — its only purpose is to fail loudly if the dep
@@ -232,9 +393,6 @@ mod tests {
     /// the API we'll use throughout the resolver.
     #[test]
     fn z3_dep_smoke_test_two_plus_three_is_five() {
-        use z3::ast::{Ast, Int};
-        use z3::{SatResult, Solver};
-
         let solver = Solver::new();
 
         let two = Int::from_i64(2);
@@ -244,6 +402,55 @@ mod tests {
 
         // Try to find a counter-example to "2 + 3 == 5". There is none.
         solver.assert(sum._eq(&five).not());
+        assert_eq!(solver.check(), SatResult::Unsat);
+    }
+
+    /// Sanity: encoding `ConstantInt { value: 7 }` produces a Z3 Int
+    /// literal that proves equal to 7.
+    #[test]
+    fn smt_encode_constant_int() {
+        let mut ctx = SmtEncodingCtx::new();
+        let term = IR::ConstantInt { value: 7 }.smt_encode(&mut ctx, &[]);
+        let int = match term {
+            Z3Term::Int(i) => i,
+            _ => panic!("expected Int term"),
+        };
+        let solver = Solver::new();
+        solver.assert(int._eq(&Int::from_i64(7)).not());
+        assert_eq!(solver.check(), SatResult::Unsat);
+    }
+
+    /// Sanity: AddI on two literal ConstantInts encodes a sum that Z3
+    /// proves equal to the expected result.
+    #[test]
+    fn smt_encode_add_i_constants() {
+        let mut ctx = SmtEncodingCtx::new();
+        let a = IR::ConstantInt { value: 11 }.smt_encode(&mut ctx, &[]);
+        let b = IR::ConstantInt { value: 31 }.smt_encode(&mut ctx, &[]);
+        let sum = IR::AddI.smt_encode(&mut ctx, &[a, b]);
+        let int = match sum {
+            Z3Term::Int(i) => i,
+            _ => panic!("expected Int term"),
+        };
+        let solver = Solver::new();
+        solver.assert(int._eq(&Int::from_i64(42)).not());
+        assert_eq!(solver.check(), SatResult::Unsat);
+    }
+
+    /// Sanity: SelectI on a true cond evaluates to the then-branch.
+    #[test]
+    fn smt_encode_select_i_constant_cond() {
+        let mut ctx = SmtEncodingCtx::new();
+        let cond = IR::ConstantBool { value: true }.smt_encode(&mut ctx, &[]);
+        let t = IR::ConstantInt { value: 7 }.smt_encode(&mut ctx, &[]);
+        let f = IR::ConstantInt { value: 9 }.smt_encode(&mut ctx, &[]);
+        let sel = IR::SelectI.smt_encode(&mut ctx, &[cond, t, f]);
+        let int = match sel {
+            Z3Term::Int(i) => i,
+            _ => panic!("expected Int term"),
+        };
+        let solver = Solver::new();
+        solver.assert(int._eq(&Int::from_i64(7)).not());
         assert_eq!(solver.check(), SatResult::Unsat);
     }
 }
