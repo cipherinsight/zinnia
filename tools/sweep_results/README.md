@@ -11,6 +11,23 @@ baseline that future SMT-resolver tuning iterations diff against.
 | `p3_layered_on.json` | on (no mitigations) | 6 | 2376 s | 105 / 2 / 74 |
 | `p5_round1_serial_off.json` | off | 1 | 151 s | 105 / 2 / 74 |
 | `p5_round1_serial_on.json` | on (100 ms timeout, 4096 formula cap) | 1 | 150 s | 105 / 2 / 74 |
+| `p4_round1_serial_off.json` | off, P4 consumers wired | 1 | 150 s | **104 / 2 / 75** |
+| `p4_round1_serial_on.json` | on, P4 consumers wired | 1 | 211 s | **104 / 2 / 75** |
+
+## P4 round 1 — net negative
+
+P4 round 1 wired two consumers of the resolver:
+- **While-loop early termination** (`fd1e9e5`) — call `resolve_bool(guard)` after each unrolled iteration in `visit_while`; break on `Some(false)`.
+- **AlwaysSatisfiedElimination upgrade** (`ea17474`) — drop assertions when the resolver proves them; raise a compile-time error when proven false.
+
+The expected wins did not materialise:
+
+- **0 of 5 headline sort benchmarks moved** — `insertion_sort` still TIMEOUT, others still FAIL on unrelated issues. The resolver returns `None` for guards that read array elements (`list2[j-1] > save`); range and SMT layers can't reason about heap reads without symbolic representation of array contents (out of scope for this epic).
+- **−1 PASS regression** — `factorize_naive/factorize_naive.py` flipped PASS → FAIL because it uses Python's `assert False, "unreachable"` idiom at the end of `while True:`. After Zinnia's bounded unrolling, the assertion's path condition is feasible, so AlwaysSatisfiedElimination's new `Some(false)` arm correctly proves it unsatisfiable and emits a hard error. Pre-P4 the assertion was kept and would have fired at runtime.
+- **+41 % aggregate compile-time slowdown on-mode** (149 s → 211 s). Hot benchmarks: `mulmod` 0.08 s → 12.5 s (155×), `guerre` 1.3 s → 47 s (35×), `primes_sieve2` 0.07 s → 1.05 s (14×). The cost is per-iteration `resolve_bool` calls in tight while-loops × `loop_limit` (~1000) iterations × N nested loops. Even when `resolve_bool` quickly returns `None` via the static-val fast path, the call-site overhead dominates these benchmarks' previously sub-second compiles.
+- **off-mode also regressed** to 104/2/75 because the AlwaysSatisfiedElimination upgrade fires regardless of `smt_enable` (the constant-fold path catches the `assert False` literal before the resolver is consulted).
+
+The P4 commits stay reachable in git history. Without further work, they're a strict regression — and the user-visible compile-time hit is real. P4 should be revisited when (a) a more powerful resolver or path-condition refinement lifts the sort-benchmark guards, and/or (b) the per-iteration `resolve_bool` overhead is mitigated (e.g., skip when the guard hasn't changed since the last iteration, or only fire when range analysis already produced bounds).
 
 ## What the data shows
 
