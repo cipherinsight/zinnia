@@ -81,14 +81,18 @@ fn compile_circuit(ast_json: &str, config_json: &str, chips_json: String, extern
 
     let loop_limit = config["loop_limit"].as_u64().unwrap_or(1000) as u32;
     let recursion_limit = config["recursion_limit"].as_u64().unwrap_or(16) as u32;
-    // P3 SMT-resolver knobs. **Default: disabled** —
-    // `StaticOnlyResolver` (today's pre-P3 behaviour). The wiring exists,
-    // and `ZINNIA_SMT_ENABLE=1` (or `smt_enable: true` in config JSON)
-    // flips on `LayeredResolver::range_then_smt`. P3's sweep measured a
-    // +1 coverage win against >5× compile-time slowdowns on 12/104 dual-
-    // pass benchmarks; per spec that's a halt condition, so we keep the
-    // default off until the slowdown is rooted out (P5 work). The env
-    // var also accepts `0`/`false`/`off`/`no` for explicit-off.
+    // SMT resolver knobs. **Default: enabled** — `LayeredResolver::range_then_smt`,
+    // which routes every `require_static_int` query through static_val → range
+    // analysis → SMT in that order. P5 round 1 (commit 427a913) re-measured
+    // the on-vs-off compile-time delta with a serial sweep and found 0.99×
+    // aggregate, 1.05× worst case (within run-to-run noise). The earlier
+    // P3 readings of 25× aggregate / 66× worst case (a52fe45) were a
+    // process-pool contention artifact, not real SMT cost. The defensive
+    // mitigations (100 ms query timeout, 4096-statement formula cap from
+    // c75f3fb) bound the future worst case if a consumer reaches the SMT
+    // layer with a hard formula. `ZINNIA_SMT_ENABLE=0` (or `smt_enable: false`
+    // in config JSON) flips back to `StaticOnlyResolver` byte-for-byte —
+    // the safety net.
     let smt_enable_env = std::env::var("ZINNIA_SMT_ENABLE")
         .ok()
         .map(|s| {
@@ -98,7 +102,7 @@ fn compile_circuit(ast_json: &str, config_json: &str, chips_json: String, extern
     let smt_enable = smt_enable_env.unwrap_or_else(|| {
         config.get("smt_enable")
             .and_then(|v| v.as_bool())
-            .unwrap_or(false)
+            .unwrap_or(true)
     });
     let smt_query_timeout_ms = std::env::var("ZINNIA_SMT_QUERY_TIMEOUT_MS")
         .ok()
