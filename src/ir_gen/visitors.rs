@@ -164,6 +164,19 @@ impl IRGenerator {
         let mut loop_quota = self.config.loop_limit + 1;
         self.ctx.loop_enter();
 
+        // P4 round 1.5: per-iteration `resolve_bool` calls in tight while
+        // loops are the dominant overhead in round-1's +41% slowdown. Guard
+        // the layered resolver behind two cheap checks:
+        //   (1) `bool_val()` / `int_val()` — O(1) static-val cache lookup.
+        //   (2) Guard `ptr()` memoization — if the guard's StmtId is the
+        //       same as the previous iteration's, the IR DAG underneath it
+        //       is identical (statements are append-only, never mutated),
+        //       so the resolver would return the same answer. Reuse the
+        //       previously cached resolution instead of re-running the
+        //       layered resolver.
+        let mut prev_guard_ptr: Option<crate::types::StmtId> = None;
+        let mut prev_resolver_result: Option<bool> = None;
+
         loop {
             self.ctx.loop_reiter(&mut self.builder);
             let test = self.visit(&n.test_expr);
@@ -184,13 +197,33 @@ impl IRGenerator {
             // to false against the post-iteration environment, exit the
             // unroll loop immediately so we don't pay symbolic-execution
             // cost on the unreached iterations.
-            let test_static = test_bool
+            //
+            // P4 round 1.5: only consult the resolver when the guard is
+            // (a) not statically known via `bool_val`/`int_val`, AND
+            // (b) the guard's StmtId changed since the last iteration.
+            // Track the resolver's result across iterations so a cached
+            // answer can still drive the early-exit on subsequent iters.
+            let static_fast = test_bool
                 .bool_val()
-                .or_else(|| test_bool.int_val().map(|v| v != 0))
-                .or_else(|| {
+                .or_else(|| test_bool.int_val().map(|v| v != 0));
+
+            let test_static = if let Some(b) = static_fast {
+                Some(b)
+            } else {
+                let cur_ptr = test_bool.ptr();
+                if cur_ptr.is_some() && cur_ptr == prev_guard_ptr {
+                    // Same guard StmtId as last iter — IR is monotonic,
+                    // so the resolver would return the same answer.
+                    prev_resolver_result
+                } else {
                     let (resolver, stmts) = self.builder.split_resolver_and_stmts();
-                    resolver.resolve_bool_with_stmts(&test_bool, stmts)
-                });
+                    let resolved = resolver.resolve_bool_with_stmts(&test_bool, stmts);
+                    prev_guard_ptr = cur_ptr;
+                    prev_resolver_result = resolved;
+                    resolved
+                }
+            };
+
             if test_static == Some(false) {
                 break;
             }

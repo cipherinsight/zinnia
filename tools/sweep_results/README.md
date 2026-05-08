@@ -13,6 +13,8 @@ baseline that future SMT-resolver tuning iterations diff against.
 | `p5_round1_serial_on.json` | on (100 ms timeout, 4096 formula cap) | 1 | 150 s | 105 / 2 / 74 |
 | `p4_round1_serial_off.json` | off, P4 consumers wired | 1 | 150 s | **104 / 2 / 75** |
 | `p4_round1_serial_on.json` | on, P4 consumers wired | 1 | 211 s | **104 / 2 / 75** |
+| `p4_round1_5_serial_off.json` | off, round-1.5 visit_while fast-path | 1 | 152 s | 104 / 2 / 75 |
+| `p4_round1_5_serial_on.json` | on, round-1.5 visit_while fast-path | 1 | 211 s | 104 / 2 / 75 |
 
 ## P4 round 1 — net negative
 
