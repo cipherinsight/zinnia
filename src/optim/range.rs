@@ -331,24 +331,50 @@ fn sat_div_floor(a: i64, b: i64) -> i64 {
 // P5+ per spec).
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use crate::ir::IRStatement;
 use crate::ir_defs::IR;
 use crate::optim::resolver::Resolver;
+use crate::optim::telemetry::SmtTelemetry;
 use crate::types::{StmtId, Value};
 
 /// Range-analysis [`Resolver`]. See module-level comment for design.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct RangeResolver {
     cache: Mutex<HashMap<StmtId, IntInterval>>,
+    /// P5 telemetry. Shared with the SMT layer when constructed via
+    /// `LayeredResolver::with_telemetry` so a single summary reflects the
+    /// whole pipeline.
+    telemetry: Arc<SmtTelemetry>,
+}
+
+impl Default for RangeResolver {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RangeResolver {
     pub fn new() -> Self {
         Self {
             cache: Mutex::new(HashMap::new()),
+            telemetry: SmtTelemetry::new(),
         }
+    }
+
+    /// Swap in a shared telemetry handle (used by the layered constructor
+    /// so range and SMT counters share one summary).
+    pub fn with_telemetry(mut self, telemetry: Arc<SmtTelemetry>) -> Self {
+        self.telemetry = telemetry;
+        self
+    }
+
+    /// Borrow the telemetry handle.
+    pub fn telemetry(&self) -> Arc<SmtTelemetry> {
+        Arc::clone(&self.telemetry)
     }
 
     /// Test / telemetry helper: number of cached interval entries. P5 will
@@ -549,8 +575,11 @@ impl Resolver for RangeResolver {
         }
         // Fast path 2: walk the interval and report a point if we got one.
         let ptr = val.ptr()?;
+        let t0 = Instant::now();
         let interval = self.interval_of(ptr, stmts);
+        self.telemetry.record_range_duration(t0.elapsed());
         if interval.is_point() {
+            self.telemetry.queries_range_hit.fetch_add(1, Ordering::Relaxed);
             Some(interval.min)
         } else {
             None
@@ -573,10 +602,13 @@ impl Resolver for RangeResolver {
             return Some(b);
         }
         let ptr = val.ptr()?;
+        let t0 = Instant::now();
         let interval = self.interval_of(ptr, stmts);
+        self.telemetry.record_range_duration(t0.elapsed());
         // Only resolve to bool if the wire is a [0, 1]-domain wire that
         // collapsed to a single point.
         if interval.is_point() && (interval.min == 0 || interval.min == 1) {
+            self.telemetry.queries_range_hit.fetch_add(1, Ordering::Relaxed);
             Some(interval.min == 1)
         } else {
             None
@@ -592,10 +624,13 @@ impl Resolver for RangeResolver {
             return Some(n);
         }
         let ptr = val.ptr()?;
+        let t0 = Instant::now();
         let interval = self.interval_of(ptr, stmts);
+        self.telemetry.record_range_duration(t0.elapsed());
         if interval.max == i64::MAX {
             None
         } else {
+            self.telemetry.queries_range_hit.fetch_add(1, Ordering::Relaxed);
             Some(interval.max)
         }
     }
@@ -609,10 +644,13 @@ impl Resolver for RangeResolver {
             return Some(n);
         }
         let ptr = val.ptr()?;
+        let t0 = Instant::now();
         let interval = self.interval_of(ptr, stmts);
+        self.telemetry.record_range_duration(t0.elapsed());
         if interval.min == i64::MIN {
             None
         } else {
+            self.telemetry.queries_range_hit.fetch_add(1, Ordering::Relaxed);
             Some(interval.min)
         }
     }
@@ -620,6 +658,12 @@ impl Resolver for RangeResolver {
     fn on_ir_mutated(&mut self, _affected: &[StmtId]) {
         // P2 conservative: blow the cache. P5 may refine to precise ids.
         self.cache.lock().unwrap().clear();
+    }
+
+    fn telemetry_handle(
+        &self,
+    ) -> Option<std::sync::Arc<crate::optim::telemetry::SmtTelemetry>> {
+        Some(Arc::clone(&self.telemetry))
     }
 }
 

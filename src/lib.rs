@@ -88,9 +88,27 @@ fn compile_circuit(ast_json: &str, config_json: &str, chips_json: String, extern
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
     });
-    let smt_query_timeout_ms = config.get("smt_query_timeout_ms")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(500);
+    let smt_query_timeout_ms = std::env::var("ZINNIA_SMT_QUERY_TIMEOUT_MS")
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or_else(|| {
+            config.get("smt_query_timeout_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(500)
+        });
+    // P5: opt-in stderr dump of the SMT-pipeline telemetry summary at the
+    // end of compilation. Useful for the worst-case profiling sweep.
+    let smt_log_telemetry = std::env::var("ZINNIA_SMT_LOG_TELEMETRY")
+        .ok()
+        .map(|s| {
+            let s = s.trim().to_ascii_lowercase();
+            !matches!(s.as_str(), "0" | "false" | "off" | "no" | "")
+        })
+        .unwrap_or_else(|| {
+            config.get("smt_log_telemetry")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        });
     let backend = config["backend"].as_str().unwrap_or("halo2");
     let enable_memory_consistency = config["enable_memory_consistency"].as_bool().unwrap_or(false);
     let mux_threshold = config.get("mux_threshold")
@@ -118,6 +136,7 @@ fn compile_circuit(ast_json: &str, config_json: &str, chips_json: String, extern
         recursion_limit,
         smt_enable,
         smt_query_timeout_ms,
+        smt_log_telemetry,
     };
     let base_graph = IRGenerator::generate_from_json_with_chips(ir_config.clone(), ast_json, &chips, &externals)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
@@ -147,6 +166,20 @@ fn compile_circuit(ast_json: &str, config_json: &str, chips_json: String, extern
     }
 
     let optimized_graph = run_pass_pipeline(base_graph, &passes, mux_threshold);
+
+    // P5: end-of-compilation telemetry dump (when enabled). We surface
+    // both the AST→IR phase and the optim-phase summaries since each
+    // phase has its own resolver / cache (P1 option (b)).
+    if smt_log_telemetry {
+        if let Some(t) = optimized_graph.astgen_telemetry() {
+            eprintln!("[zinnia-smt] AST→IR phase {}", t.summary());
+        }
+        if let Some(t) = optimized_graph.resolver_telemetry() {
+            // Snapshot cache size before printing.
+            t.note_cache_size(0); // optim-phase cache size unknown here
+            eprintln!("[zinnia-smt] optim phase {}", t.summary());
+        }
+    }
 
     Ok(CompiledIR { graph: optimized_graph })
 }

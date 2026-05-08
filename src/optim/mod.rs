@@ -11,6 +11,7 @@ mod pattern_match_optim;
 pub mod range;
 pub mod resolver;
 pub mod smt_encoding;
+pub mod telemetry;
 
 #[cfg(test)]
 mod tests;
@@ -31,6 +32,7 @@ pub use resolver::{
     StaticInt, StaticOnlyResolver,
 };
 pub use smt_encoding::{IROp, SmtEncodingCtx, Z3Term};
+pub use telemetry::SmtTelemetry;
 
 use crate::ir::IRGraph;
 

@@ -99,6 +99,12 @@ pub struct IRGraph {
     /// P1 swaps in `SmtResolver`, which uses the hook for cache
     /// invalidation. See `src/optim/resolver.rs`.
     resolver: Box<dyn Resolver>,
+    /// P5: telemetry handle from the AST→IR phase, snapshotted before the
+    /// builder was consumed. Lets `compile_circuit` log the AST→IR
+    /// counters even though that phase's resolver no longer exists.
+    /// `None` when the upstream resolver had no telemetry (e.g., the
+    /// `StaticOnlyResolver` default with `smt_enable=false`).
+    astgen_telemetry: Option<std::sync::Arc<crate::optim::telemetry::SmtTelemetry>>,
 }
 
 impl IRGraph {
@@ -112,9 +118,33 @@ impl IRGraph {
             in_links: Vec::new(),
             out_links: Vec::new(),
             resolver: Box::new(StaticOnlyResolver::new()),
+            astgen_telemetry: None,
         };
         graph.update_graph(stmts);
         graph
+    }
+
+    /// Stash an AST→IR-phase telemetry handle on the graph (P5). Read by
+    /// `compile_circuit` for the end-of-compilation summary.
+    pub fn set_astgen_telemetry(
+        &mut self,
+        t: std::sync::Arc<crate::optim::telemetry::SmtTelemetry>,
+    ) {
+        self.astgen_telemetry = Some(t);
+    }
+
+    /// Return the AST→IR-phase telemetry handle if one was attached.
+    pub fn astgen_telemetry(
+        &self,
+    ) -> Option<std::sync::Arc<crate::optim::telemetry::SmtTelemetry>> {
+        self.astgen_telemetry.as_ref().map(std::sync::Arc::clone)
+    }
+
+    /// Optim-phase resolver telemetry, when the active resolver has one.
+    pub fn resolver_telemetry(
+        &self,
+    ) -> Option<std::sync::Arc<crate::optim::telemetry::SmtTelemetry>> {
+        self.resolver.telemetry_handle()
     }
 
     /// Borrow the active [`Resolver`].
@@ -264,7 +294,11 @@ impl IRGraph {
 
 impl Clone for IRGraph {
     fn clone(&self) -> Self {
-        IRGraph::new(self.stmts.clone())
+        let mut g = IRGraph::new(self.stmts.clone());
+        if let Some(t) = self.astgen_telemetry.as_ref() {
+            g.astgen_telemetry = Some(std::sync::Arc::clone(t));
+        }
+        g
     }
 }
 

@@ -61,6 +61,12 @@ pub struct IRGenConfig {
     /// recommendation). Lower = faster compile, weaker reasoning. Higher
     /// = slower compile, stronger reasoning.
     pub smt_query_timeout_ms: u64,
+    /// P5 telemetry knob. When `true`, the compiler logs
+    /// `SmtTelemetry::summary()` to stderr at end of compilation. Default
+    /// `false`. Wire-only — the counters are always collected (their cost
+    /// is a handful of `AtomicUsize::fetch_add`s per query); this flag
+    /// only controls whether we print the summary.
+    pub smt_log_telemetry: bool,
 }
 
 impl Default for IRGenConfig {
@@ -72,6 +78,7 @@ impl Default for IRGenConfig {
             // regression is resolved.
             smt_enable: false,
             smt_query_timeout_ms: 500,
+            smt_log_telemetry: false,
         }
     }
 }
@@ -109,7 +116,9 @@ impl IRGenerator {
         // when the flag is off — the safety net for diagnosing whether
         // SMT introduces a regression.
         let resolver: Box<dyn Resolver> = if config.smt_enable {
-            Box::new(LayeredResolver::range_then_smt())
+            Box::new(LayeredResolver::range_then_smt_with_timeout(
+                config.smt_query_timeout_ms,
+            ))
         } else {
             Box::new(StaticOnlyResolver::new())
         };
@@ -129,6 +138,13 @@ impl IRGenerator {
     pub fn generate(mut self, ast: &ASTCircuit) -> IRGraph {
         self.visit_circuit(ast);
         let smt_enable = self.config.smt_enable;
+        let timeout_ms = self.config.smt_query_timeout_ms;
+        // Snapshot the AST→IR-phase telemetry before exporting the graph.
+        // Per P1 option (b) each phase has its own resolver / cache, but
+        // the telemetry handle the optim phase will use is a fresh one;
+        // we surface the AST→IR snapshot so the end-of-compile summary
+        // includes it.
+        let astgen_telemetry = self.builder.resolver_telemetry();
         let mut graph = self.builder.export_ir_graph();
         // P3: also propagate the resolver choice onto the resulting
         // `IRGraph` so optim passes that consult the resolver (e.g.
@@ -137,11 +153,14 @@ impl IRGenerator {
         // owns its own resolver / cache; we just ensure the choice
         // matches the config.
         let resolver: Box<dyn Resolver> = if smt_enable {
-            Box::new(LayeredResolver::range_then_smt())
+            Box::new(LayeredResolver::range_then_smt_with_timeout(timeout_ms))
         } else {
             Box::new(StaticOnlyResolver::new())
         };
         graph.set_resolver(resolver);
+        if let Some(t) = astgen_telemetry {
+            graph.set_astgen_telemetry(t);
+        }
         graph
     }
 

@@ -107,6 +107,16 @@ pub trait Resolver: Send + Sync {
     /// slice is the conservative "everything possibly mutated" signal —
     /// P0 uses this default everywhere; P5 may refine to precise ids.
     fn on_ir_mutated(&mut self, _affected: &[StmtId]) {}
+
+    /// P5: expose the SMT-pipeline telemetry handle, when the resolver
+    /// has one. Layered/Range/Smt resolvers return Some; StaticOnly
+    /// returns None. The handle is `Arc`'d, so callers can hold it past
+    /// the resolver's lifetime to print a summary at end of compilation.
+    fn telemetry_handle(
+        &self,
+    ) -> Option<std::sync::Arc<crate::optim::telemetry::SmtTelemetry>> {
+        None
+    }
 }
 
 /// The default `Resolver`: no-op cache, delegates straight to the existing
@@ -159,6 +169,11 @@ impl Resolver for StaticOnlyResolver {
 /// A pipeline of resolvers, queried in order. First `Some(_)` wins.
 pub struct LayeredResolver {
     layers: Vec<Box<dyn Resolver>>,
+    /// P5 telemetry, accumulating cross-layer counters. Constructed by
+    /// `range_then_smt` (so the range and SMT layers share one). Public
+    /// constructors `new` / `new_with_telemetry` let callers wire it
+    /// however they like.
+    telemetry: std::sync::Arc<crate::optim::telemetry::SmtTelemetry>,
 }
 
 impl std::fmt::Debug for LayeredResolver {
@@ -170,9 +185,25 @@ impl std::fmt::Debug for LayeredResolver {
 }
 
 impl LayeredResolver {
-    /// Build a pipeline from an explicit list of layers.
+    /// Build a pipeline from an explicit list of layers. The telemetry
+    /// stays disconnected from the sub-layers (each layer keeps its own).
+    /// For shared telemetry across layers, use `range_then_smt` or
+    /// `new_with_telemetry`.
     pub fn new(layers: Vec<Box<dyn Resolver>>) -> Self {
-        Self { layers }
+        Self {
+            layers,
+            telemetry: crate::optim::telemetry::SmtTelemetry::new(),
+        }
+    }
+
+    /// Build a pipeline with an explicit shared telemetry. Caller is
+    /// responsible for wiring the same telemetry into each sub-layer (via
+    /// `RangeResolver::with_telemetry` / `SmtResolver::with_telemetry`).
+    pub fn new_with_telemetry(
+        layers: Vec<Box<dyn Resolver>>,
+        telemetry: std::sync::Arc<crate::optim::telemetry::SmtTelemetry>,
+    ) -> Self {
+        Self { layers, telemetry }
     }
 
     /// The canonical P2 composition: `RangeResolver → SmtResolver`.
@@ -180,11 +211,33 @@ impl LayeredResolver {
     /// modular / mask cases; SMT handles symbolic relations range can't see
     /// (e.g., `select(x == 5, 100, 100)` where the cond depends on a free
     /// variable).
+    ///
+    /// Both sub-layers share one telemetry handle so the end-of-compilation
+    /// summary covers the whole pipeline.
     pub fn range_then_smt() -> Self {
-        Self::new(vec![
-            Box::new(crate::optim::range::RangeResolver::new()),
-            Box::new(SmtResolver::new()),
-        ])
+        Self::range_then_smt_with_timeout(500)
+    }
+
+    /// Same as `range_then_smt` but with an explicit Z3 per-query timeout
+    /// (ms). P5 uses this so callers can tighten the budget without first
+    /// constructing the SMT layer manually.
+    pub fn range_then_smt_with_timeout(timeout_ms: u64) -> Self {
+        let telemetry = crate::optim::telemetry::SmtTelemetry::new();
+        let range = crate::optim::range::RangeResolver::new()
+            .with_telemetry(std::sync::Arc::clone(&telemetry));
+        let smt = SmtResolver::new()
+            .with_timeout(timeout_ms)
+            .with_telemetry(std::sync::Arc::clone(&telemetry));
+        Self::new_with_telemetry(
+            vec![Box::new(range), Box::new(smt)],
+            telemetry,
+        )
+    }
+
+    /// Borrow the shared telemetry handle. Used by the compile entry-point
+    /// to surface the summary to stderr at end of compilation.
+    pub fn telemetry(&self) -> std::sync::Arc<crate::optim::telemetry::SmtTelemetry> {
+        std::sync::Arc::clone(&self.telemetry)
     }
 }
 
@@ -230,6 +283,13 @@ impl Resolver for LayeredResolver {
         val: &Value,
         stmts: &[IRStatement],
     ) -> Option<i64> {
+        use std::sync::atomic::Ordering;
+        self.telemetry.queries_total.fetch_add(1, Ordering::Relaxed);
+        if val.int_val().is_some() {
+            self.telemetry
+                .queries_static_val_hit
+                .fetch_add(1, Ordering::Relaxed);
+        }
         for layer in self.layers.iter_mut() {
             if let Some(n) = layer.resolve_int_with_stmts(val, stmts) {
                 return Some(n);
@@ -243,6 +303,13 @@ impl Resolver for LayeredResolver {
         val: &Value,
         stmts: &[IRStatement],
     ) -> Option<bool> {
+        use std::sync::atomic::Ordering;
+        self.telemetry.queries_total.fetch_add(1, Ordering::Relaxed);
+        if val.bool_val().is_some() {
+            self.telemetry
+                .queries_static_val_hit
+                .fetch_add(1, Ordering::Relaxed);
+        }
         for layer in self.layers.iter_mut() {
             if let Some(b) = layer.resolve_bool_with_stmts(val, stmts) {
                 return Some(b);
@@ -256,6 +323,13 @@ impl Resolver for LayeredResolver {
         val: &Value,
         stmts: &[IRStatement],
     ) -> Option<i64> {
+        use std::sync::atomic::Ordering;
+        self.telemetry.queries_total.fetch_add(1, Ordering::Relaxed);
+        if val.int_val().is_some() {
+            self.telemetry
+                .queries_static_val_hit
+                .fetch_add(1, Ordering::Relaxed);
+        }
         for layer in self.layers.iter_mut() {
             if let Some(n) = layer.resolve_max_with_stmts(val, stmts) {
                 return Some(n);
@@ -269,6 +343,13 @@ impl Resolver for LayeredResolver {
         val: &Value,
         stmts: &[IRStatement],
     ) -> Option<i64> {
+        use std::sync::atomic::Ordering;
+        self.telemetry.queries_total.fetch_add(1, Ordering::Relaxed);
+        if val.int_val().is_some() {
+            self.telemetry
+                .queries_static_val_hit
+                .fetch_add(1, Ordering::Relaxed);
+        }
         for layer in self.layers.iter_mut() {
             if let Some(n) = layer.resolve_min_with_stmts(val, stmts) {
                 return Some(n);
@@ -281,6 +362,12 @@ impl Resolver for LayeredResolver {
         for layer in self.layers.iter_mut() {
             layer.on_ir_mutated(affected);
         }
+    }
+
+    fn telemetry_handle(
+        &self,
+    ) -> Option<std::sync::Arc<crate::optim::telemetry::SmtTelemetry>> {
+        Some(std::sync::Arc::clone(&self.telemetry))
     }
 }
 
@@ -349,7 +436,11 @@ impl Resolver for LayeredResolver {
 // and `IRGraph::split_resolver_and_stmts(&mut)` are the chokepoints.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+
+use crate::optim::telemetry::SmtTelemetry;
 
 /// One cached resolution outcome for a wire's ptr.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -375,6 +466,11 @@ pub struct SmtResolver {
     inner: Mutex<SmtResolverInner>,
     timeout_ms: u64,
     disabled: bool,
+    /// P5 telemetry. Shared across the layered resolver so range and SMT
+    /// counters land in one summary. Defaults to a fresh, isolated
+    /// instance (so an `SmtResolver` constructed in a test sees its own
+    /// counters).
+    telemetry: Arc<SmtTelemetry>,
 }
 
 impl Default for SmtResolver {
@@ -390,6 +486,7 @@ impl SmtResolver {
             inner: Mutex::new(SmtResolverInner::default()),
             timeout_ms: 500,
             disabled: false,
+            telemetry: SmtTelemetry::new(),
         }
     }
 
@@ -407,6 +504,19 @@ impl SmtResolver {
         self
     }
 
+    /// Swap in a shared telemetry. Used by `LayeredResolver::with_telemetry`
+    /// so range and SMT counters end up in the same summary.
+    pub fn with_telemetry(mut self, telemetry: Arc<SmtTelemetry>) -> Self {
+        self.telemetry = telemetry;
+        self
+    }
+
+    /// Borrow the shared telemetry handle (e.g. for end-of-compilation
+    /// snapshotting).
+    pub fn telemetry(&self) -> Arc<SmtTelemetry> {
+        Arc::clone(&self.telemetry)
+    }
+
     /// Resolve `val` against the supplied IR statements. The
     /// dispatch is shared by `resolve_int_with_stmts` /
     /// `resolve_bool_with_stmts`, and parameterized over the expected
@@ -417,6 +527,11 @@ impl SmtResolver {
         stmts: &[IRStatement],
         want_bool: bool,
     ) -> Option<ResolvedValue> {
+        // Note: `queries_total` and `queries_static_val_hit` are counted at
+        // the LayeredResolver level so they don't double-count when the
+        // range layer also touches them. SmtResolver only records the
+        // SMT-specific counters below.
+
         // Fast path 1: static-val.
         if !want_bool {
             if let Some(n) = val.int_val() {
@@ -431,6 +546,7 @@ impl SmtResolver {
         {
             let inner = self.inner.lock().unwrap();
             if let Some(cached) = inner.cache.get(&ptr) {
+                self.telemetry.queries_cache_hit.fetch_add(1, Ordering::Relaxed);
                 return Some(*cached);
             }
         }
@@ -438,18 +554,42 @@ impl SmtResolver {
         // Disable flag: short-circuit to Unknown after the static-val
         // fast path. Cache + return.
         if self.disabled {
+            self.telemetry.queries_skipped_disabled.fetch_add(1, Ordering::Relaxed);
             self.cache_outcome(ptr, ResolvedValue::Unknown);
             return Some(ResolvedValue::Unknown);
         }
 
-        // Build the formula via reverse-reachability.
-        let outcome = smt_query(
+        // Build the formula via reverse-reachability. Time it for the
+        // duration histogram + total-time counter.
+        let t0 = Instant::now();
+        let (outcome, formula_size) = smt_query(
             ptr,
             stmts,
             &self.inner.lock().unwrap().cache,
             self.timeout_ms,
             want_bool,
         );
+        let dur = t0.elapsed();
+        self.telemetry.record_smt_duration(dur);
+        self.telemetry.note_formula_size(formula_size);
+
+        match &outcome {
+            Some(ResolvedValue::Int(_)) | Some(ResolvedValue::Bool(_)) => {
+                self.telemetry.queries_smt_resolved.fetch_add(1, Ordering::Relaxed);
+            }
+            Some(ResolvedValue::Unknown) | None => {
+                self.telemetry.queries_smt_unknown.fetch_add(1, Ordering::Relaxed);
+                // Heuristic: if the wall time is ≥ 90 % of the configured
+                // budget, treat it as a timeout for the dedicated counter.
+                // Z3's `unknown` doesn't distinguish timeout vs other
+                // give-ups via the public API, but the duration is a
+                // strong signal in practice.
+                let budget_ns = (self.timeout_ms as u128) * 1_000_000;
+                if budget_ns > 0 && dur.as_nanos() * 10 >= budget_ns * 9 {
+                    self.telemetry.queries_smt_timeout.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
 
         let resolved = outcome.unwrap_or(ResolvedValue::Unknown);
         self.cache_outcome(ptr, resolved);
@@ -528,15 +668,36 @@ impl Resolver for SmtResolver {
         {
             let inner = self.inner.lock().unwrap();
             if let Some(ResolvedValue::Int(n)) = inner.cache.get(&ptr) {
+                self.telemetry.queries_cache_hit.fetch_add(1, Ordering::Relaxed);
                 return Some(*n);
             }
         }
 
         if self.disabled {
+            self.telemetry.queries_skipped_disabled.fetch_add(1, Ordering::Relaxed);
             return None;
         }
 
-        smt_extreme(ptr, stmts, &self.inner.lock().unwrap().cache, self.timeout_ms, /*max=*/ true)
+        let t0 = Instant::now();
+        let (resolved, formula_size, oversized) = smt_extreme(
+            ptr,
+            stmts,
+            &self.inner.lock().unwrap().cache,
+            self.timeout_ms,
+            /*max=*/ true,
+            None,
+        );
+        let dur = t0.elapsed();
+        self.telemetry.record_smt_duration(dur);
+        self.telemetry.note_formula_size(formula_size);
+        if oversized {
+            self.telemetry.queries_skipped_oversized.fetch_add(1, Ordering::Relaxed);
+        } else if resolved.is_some() {
+            self.telemetry.queries_smt_resolved.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.telemetry.queries_smt_unknown.fetch_add(1, Ordering::Relaxed);
+        }
+        resolved
     }
 
     fn resolve_min_with_stmts(
@@ -551,19 +712,46 @@ impl Resolver for SmtResolver {
         {
             let inner = self.inner.lock().unwrap();
             if let Some(ResolvedValue::Int(n)) = inner.cache.get(&ptr) {
+                self.telemetry.queries_cache_hit.fetch_add(1, Ordering::Relaxed);
                 return Some(*n);
             }
         }
         if self.disabled {
+            self.telemetry.queries_skipped_disabled.fetch_add(1, Ordering::Relaxed);
             return None;
         }
-        smt_extreme(ptr, stmts, &self.inner.lock().unwrap().cache, self.timeout_ms, /*max=*/ false)
+        let t0 = Instant::now();
+        let (resolved, formula_size, oversized) = smt_extreme(
+            ptr,
+            stmts,
+            &self.inner.lock().unwrap().cache,
+            self.timeout_ms,
+            /*max=*/ false,
+            None,
+        );
+        let dur = t0.elapsed();
+        self.telemetry.record_smt_duration(dur);
+        self.telemetry.note_formula_size(formula_size);
+        if oversized {
+            self.telemetry.queries_skipped_oversized.fetch_add(1, Ordering::Relaxed);
+        } else if resolved.is_some() {
+            self.telemetry.queries_smt_resolved.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.telemetry.queries_smt_unknown.fetch_add(1, Ordering::Relaxed);
+        }
+        resolved
     }
 
     fn on_ir_mutated(&mut self, _affected: &[StmtId]) {
         // P1 conservative: blow the entire cache. P5 may refine to precise
         // ids when profiling shows the cache-rebuild cost matters.
         self.inner.lock().unwrap().cache.clear();
+    }
+
+    fn telemetry_handle(
+        &self,
+    ) -> Option<std::sync::Arc<crate::optim::telemetry::SmtTelemetry>> {
+        Some(Arc::clone(&self.telemetry))
     }
 }
 
@@ -572,20 +760,73 @@ impl Resolver for SmtResolver {
 // nesting issues with `&self` and the cache lock.
 // ---------------------------------------------------------------------------
 
+/// Outcome categorisation for `smt_query`. Wraps the resolved value (or the
+/// reason we didn't resolve) plus the formula size (statement count walked).
+struct SmtQueryOut {
+    resolved: Option<ResolvedValue>,
+    /// Number of distinct IR statements visited by the walker. Used to
+    /// populate `largest_formula_size` in the telemetry; also reflected
+    /// in the early-abort path when a formula-size budget is set.
+    formula_size: usize,
+    /// True if the walker aborted because the formula exceeded
+    /// `max_formula_size`. Lets the caller bump `queries_skipped_oversized`.
+    oversized: bool,
+}
+
 /// Build a Z3 formula constraining the wire at `root` and check whether it
 /// has a unique value. Returns `Some(ResolvedValue::Int|Bool)` if Z3 proves
 /// uniqueness within the time budget; `None` on timeout / non-unique.
 ///
 /// Mirrors the "find a model, then add `expr != that_value` and re-check"
 /// pattern from the old Python `SMTUtils.resolve_expr`.
+///
+/// Returns `(resolution, formula_size)`. The size is the count of distinct
+/// IR statements visited by the reverse-reachability walk.
 fn smt_query(
     root: StmtId,
     stmts: &[IRStatement],
     cache: &HashMap<StmtId, ResolvedValue>,
     timeout_ms: u64,
     want_bool: bool,
-) -> Option<ResolvedValue> {
+) -> (Option<ResolvedValue>, usize) {
+    let out = smt_query_with_budget(root, stmts, cache, timeout_ms, want_bool, None);
+    (out.resolved, out.formula_size)
+}
+
+/// Same as [`smt_query`] but with an optional cap on formula size. When the
+/// reverse-reachability walk exceeds `max_formula_size` IR statements, the
+/// walker aborts and the resolver returns `None` — paying only the walk cost,
+/// not Z3 time, on the heaviest queries.
+fn smt_query_with_budget(
+    root: StmtId,
+    stmts: &[IRStatement],
+    cache: &HashMap<StmtId, ResolvedValue>,
+    timeout_ms: u64,
+    want_bool: bool,
+    max_formula_size: Option<usize>,
+) -> SmtQueryOut {
     use z3::ast::Ast;
+
+    let mut walker = Walker::new(stmts, cache);
+    walker.max_size = max_formula_size;
+    let root_term = match walker.encode(root) {
+        Some(t) => t,
+        None => {
+            return SmtQueryOut {
+                resolved: None,
+                formula_size: walker.encoded.len(),
+                oversized: walker.aborted_oversized,
+            };
+        }
+    };
+    let formula_size = walker.encoded.len();
+    if walker.aborted_oversized {
+        return SmtQueryOut {
+            resolved: None,
+            formula_size,
+            oversized: true,
+        };
+    }
 
     let solver = z3::Solver::new();
     {
@@ -594,82 +835,96 @@ fn smt_query(
         params.set_u32("timeout", timeout_ms.min(u32::MAX as u64) as u32);
         solver.set_params(&params);
     }
-
-    // Encode the reverse-reachable subgraph from `root`.
-    let mut walker = Walker::new(stmts, cache);
-    let root_term = walker.encode(root)?;
     for c in walker.constraints {
         solver.assert(&c);
     }
 
-    match solver.check() {
+    let resolved = match solver.check() {
         z3::SatResult::Sat => {
             // Got a model; ask if `root != model_value` is satisfiable. If
             // unsat, the value is unique → return it.
-            let model = solver.get_model()?;
-            match (&root_term, want_bool) {
-                (crate::optim::smt_encoding::Z3Term::Int(int), false) => {
-                    let v = model.eval(int, true)?;
-                    let n = v.as_i64()?;
-                    solver.assert(&int._eq(&z3::ast::Int::from_i64(n)).not());
-                    if solver.check() == z3::SatResult::Unsat {
-                        Some(ResolvedValue::Int(n))
-                    } else {
-                        None
+            solver.get_model().and_then(|model| {
+                match (&root_term, want_bool) {
+                    (crate::optim::smt_encoding::Z3Term::Int(int), false) => {
+                        let v = model.eval(int, true)?;
+                        let n = v.as_i64()?;
+                        solver.assert(&int._eq(&z3::ast::Int::from_i64(n)).not());
+                        if solver.check() == z3::SatResult::Unsat {
+                            Some(ResolvedValue::Int(n))
+                        } else {
+                            None
+                        }
                     }
-                }
-                (crate::optim::smt_encoding::Z3Term::Int(int), true) => {
-                    // Wanted bool, but root is Int. Use `int != 0` as the
-                    // bool projection.
-                    let zero = z3::ast::Int::from_i64(0);
-                    let bool_proj = int._eq(&zero).not();
-                    let v = model.eval(&bool_proj, true)?;
-                    let b = v.as_bool()?;
-                    solver.assert(&bool_proj._eq(&z3::ast::Bool::from_bool(b)).not());
-                    if solver.check() == z3::SatResult::Unsat {
-                        Some(ResolvedValue::Bool(b))
-                    } else {
-                        None
-                    }
-                }
-                (crate::optim::smt_encoding::Z3Term::Bool(b_ast), _) => {
-                    let v = model.eval(b_ast, true)?;
-                    let b = v.as_bool()?;
-                    solver.assert(&b_ast._eq(&z3::ast::Bool::from_bool(b)).not());
-                    if solver.check() == z3::SatResult::Unsat {
-                        if want_bool {
+                    (crate::optim::smt_encoding::Z3Term::Int(int), true) => {
+                        // Wanted bool, but root is Int. Use `int != 0` as the
+                        // bool projection.
+                        let zero = z3::ast::Int::from_i64(0);
+                        let bool_proj = int._eq(&zero).not();
+                        let v = model.eval(&bool_proj, true)?;
+                        let b = v.as_bool()?;
+                        solver.assert(&bool_proj._eq(&z3::ast::Bool::from_bool(b)).not());
+                        if solver.check() == z3::SatResult::Unsat {
                             Some(ResolvedValue::Bool(b))
                         } else {
-                            Some(ResolvedValue::Int(if b { 1 } else { 0 }))
+                            None
                         }
-                    } else {
-                        None
+                    }
+                    (crate::optim::smt_encoding::Z3Term::Bool(b_ast), _) => {
+                        let v = model.eval(b_ast, true)?;
+                        let b = v.as_bool()?;
+                        solver.assert(&b_ast._eq(&z3::ast::Bool::from_bool(b)).not());
+                        if solver.check() == z3::SatResult::Unsat {
+                            if want_bool {
+                                Some(ResolvedValue::Bool(b))
+                            } else {
+                                Some(ResolvedValue::Int(if b { 1 } else { 0 }))
+                            }
+                        } else {
+                            None
+                        }
                     }
                 }
-            }
+            })
         }
         z3::SatResult::Unsat | z3::SatResult::Unknown => None,
+    };
+    SmtQueryOut {
+        resolved,
+        formula_size,
+        oversized: false,
     }
 }
 
 /// Discharge an `Optimize` query: maximise (or minimise) the wire at
 /// `root` over the constraints from its reverse-reachable subgraph.
+///
+/// Returns `(resolution, formula_size, oversized?)` so the caller can
+/// surface telemetry signals.
 fn smt_extreme(
     root: StmtId,
     stmts: &[IRStatement],
     cache: &HashMap<StmtId, ResolvedValue>,
     timeout_ms: u64,
     maximise: bool,
-) -> Option<i64> {
+    max_formula_size: Option<usize>,
+) -> (Option<i64>, usize, bool) {
+    let mut walker = Walker::new(stmts, cache);
+    walker.max_size = max_formula_size;
+    let root_term = match walker.encode(root) {
+        Some(t) => t,
+        None => return (None, walker.encoded.len(), walker.aborted_oversized),
+    };
+    let formula_size = walker.encoded.len();
+    if walker.aborted_oversized {
+        return (None, formula_size, true);
+    }
+
     let opt = z3::Optimize::new();
     {
         let mut params = z3::Params::new();
         params.set_u32("timeout", timeout_ms.min(u32::MAX as u64) as u32);
         opt.set_params(&params);
     }
-
-    let mut walker = Walker::new(stmts, cache);
-    let root_term = walker.encode(root)?;
     for c in walker.constraints {
         opt.assert(&c);
     }
@@ -686,14 +941,15 @@ fn smt_extreme(
     } else {
         opt.minimize(&int);
     }
-    match opt.check(&[]) {
+    let resolved = match opt.check(&[]) {
         z3::SatResult::Sat => {
-            let model = opt.get_model()?;
-            let v = model.eval(&int, true)?;
-            v.as_i64()
+            opt.get_model()
+                .and_then(|model| model.eval(&int, true))
+                .and_then(|v| v.as_i64())
         }
         z3::SatResult::Unsat | z3::SatResult::Unknown => None,
-    }
+    };
+    (resolved, formula_size, false)
 }
 
 /// Reverse-reachability walker. Translates IR → Z3 terms via the
@@ -705,6 +961,12 @@ struct Walker<'a> {
     encoded: HashMap<StmtId, crate::optim::smt_encoding::Z3Term>,
     constraints: Vec<z3::ast::Bool>,
     enc_ctx: crate::optim::smt_encoding::SmtEncodingCtx,
+    /// P5 commit 3: optional cap on the number of distinct IR statements
+    /// the walk visits before giving up. None = unbounded (legacy).
+    max_size: Option<usize>,
+    /// Set when the walk hit `max_size` and aborted. The `encoded.len()`
+    /// at that point is the snapshot we surface as `formula_size`.
+    aborted_oversized: bool,
 }
 
 impl<'a> Walker<'a> {
@@ -718,6 +980,8 @@ impl<'a> Walker<'a> {
             encoded: HashMap::new(),
             constraints: Vec::new(),
             enc_ctx: crate::optim::smt_encoding::SmtEncodingCtx::new(),
+            max_size: None,
+            aborted_oversized: false,
         }
     }
 
@@ -748,6 +1012,16 @@ impl<'a> Walker<'a> {
             };
             self.encoded.insert(ptr, term.clone());
             return Some(term);
+        }
+
+        // Formula-size budget: abort early when we'd exceed the cap. We
+        // check *before* recursing into a new statement so the abort
+        // cost is bounded by the recursion depth at the point of trip.
+        if let Some(cap) = self.max_size {
+            if self.encoded.len() >= cap {
+                self.aborted_oversized = true;
+                return None;
+            }
         }
 
         let stmt = self.stmts.get(ptr as usize)?;
@@ -1355,5 +1629,67 @@ mod tests {
     fn layered_resolver_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<LayeredResolver>();
+    }
+
+    // ---------------------------------------------------------------
+    // P5 telemetry tests
+    // ---------------------------------------------------------------
+
+    /// `SmtResolver` increments `queries_smt_unknown` when Z3 can't
+    /// resolve a free variable. The static_val and cache fast-paths
+    /// shouldn't fire.
+    #[test]
+    fn telemetry_smt_unknown_on_free_var() {
+        let stmts = vec![IRStatement::new(
+            0,
+            IR::ReadInteger {
+                path: InputPath::new("x", vec![]),
+                is_public: false,
+            },
+            vec![],
+            None,
+        )];
+        let v = runtime_int(0);
+        let mut r = SmtResolver::new();
+        let t = r.telemetry();
+        assert_eq!(r.resolve_int_with_stmts(&v, &stmts), None);
+        assert_eq!(t.queries_smt_unknown.load(Ordering::SeqCst), 1);
+        assert_eq!(t.queries_smt_resolved.load(Ordering::SeqCst), 0);
+        // The duration histogram has a single entry now (somewhere).
+        let total: usize =
+            (0..crate::optim::telemetry::NUM_DURATION_BUCKETS)
+                .map(|i| t.smt_duration_buckets[i].load(Ordering::SeqCst))
+                .sum();
+        assert_eq!(total, 1);
+    }
+
+    /// `LayeredResolver::range_then_smt` shares one telemetry across the
+    /// range and SMT layers. Construct `select(c, 7, 7)` (range answers
+    /// it). Counters: `queries_total` = 1, `queries_range_hit` = 1,
+    /// `queries_smt_resolved` = 0.
+    #[test]
+    fn telemetry_layered_range_hit_increments_shared_telemetry() {
+        let stmts = vec![
+            IRStatement::new(
+                0,
+                IR::ReadInteger {
+                    path: InputPath::new("c", vec![]),
+                    is_public: false,
+                },
+                vec![],
+                None,
+            ),
+            IRStatement::new(1, IR::ConstantInt { value: 7 }, vec![], None),
+            IRStatement::new(2, IR::ConstantInt { value: 7 }, vec![], None),
+            IRStatement::new(3, IR::SelectI, vec![0, 1, 2], None),
+        ];
+        let v = runtime_int(3);
+        let mut layered = LayeredResolver::range_then_smt();
+        let t = layered.telemetry_handle().unwrap();
+        assert_eq!(layered.resolve_int_with_stmts(&v, &stmts), Some(7));
+        assert_eq!(t.queries_total.load(Ordering::SeqCst), 1);
+        assert_eq!(t.queries_range_hit.load(Ordering::SeqCst), 1);
+        assert_eq!(t.queries_smt_resolved.load(Ordering::SeqCst), 0);
+        assert_eq!(t.queries_smt_unknown.load(Ordering::SeqCst), 0);
     }
 }

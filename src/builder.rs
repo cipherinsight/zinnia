@@ -109,6 +109,14 @@ impl IRBuilder {
         self.resolver = r;
     }
 
+    /// Borrow the resolver's telemetry handle (P5). Returns `None` if the
+    /// active resolver doesn't have one (e.g., `StaticOnlyResolver`).
+    pub fn resolver_telemetry(
+        &self,
+    ) -> Option<std::sync::Arc<crate::optim::telemetry::SmtTelemetry>> {
+        self.resolver.telemetry_handle()
+    }
+
     /// Allocate a unique memory segment ID.
     pub fn alloc_segment_id(&mut self) -> u32 {
         let id = self.next_segment_id;
