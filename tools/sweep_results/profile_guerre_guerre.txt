@@ -1,0 +1,45 @@
+benchmark: benchmarking/guerre/guerre.py
+build: maturin develop (debug, with-telemetry)
+smt_timeout_ms_env: (default=500)
+runs: 3 each, ZINNIA_SMT_ENABLE off vs on, single-process driver
+
+=== compile times (s, single-process driver — no parallel contention) ===
+ZINNIA_SMT_ENABLE=0:  5.98, 5.95, 6.06   (mean ≈ 5.99s)
+ZINNIA_SMT_ENABLE=1:  5.95, 6.62, 6.66   (mean ≈ 6.41s)
+
+=== telemetry (ZINNIA_SMT_ENABLE=1, ZINNIA_SMT_LOG_TELEMETRY=1) ===
+[zinnia-smt] log_enabled=true smt_enable=true timeout_ms=500
+[zinnia-smt] AST→IR phase SmtTelemetry summary:
+  queries_total                = 0
+  queries_static_val_hit       = 0
+  queries_range_hit            = 0
+  queries_smt_resolved         = 0
+  queries_smt_unknown          = 0
+  queries_smt_timeout          = 0
+  queries_cache_hit            = 0 (0.0%)
+  queries_skipped_disabled     = 0
+  queries_skipped_oversized    = 0
+  total_time_in_smt_ms         = 0.0
+  total_time_in_range_ms       = 0.0
+  largest_formula_size         = 0
+  cache_size_at_end            = 0
+  smt_duration_histogram (all buckets): 0
+[zinnia-smt] optim phase: no telemetry handle
+
+=== diagnosis ===
+guerre triggers ZERO `require_static_int` calls during compile, so the
+SMT layer is entirely cold. The on/off delta on a single-process driver
+is well within run-to-run noise — the canonical claim of "66× slowdown
+on guerre" from `tools/sweep_results/p3_layered_on.json` does NOT
+reproduce against the same compiler commit when measured one process at
+a time. Most plausible cause for the historical reading: process-pool
+contention (sweep_benchmarks.py runs cpu_count // 2 ≈ 6 workers in
+parallel; one heavyweight benchmark like perm or guerre running while
+others are compiling can stretch wall-clock disproportionately). The
+SMT pipeline itself is uninvolved.
+
+The optim-phase resolver is rebuilt by every IRPass via
+`builder.export_ir_graph()` (the freshly-built graph has the default
+StaticOnlyResolver), so optim-phase queries through this benchmark also
+run at zero. AST→IR phase telemetry survives across optim passes via
+the `astgen_telemetry` slot wired in lib.rs's `run_pass_pipeline`.

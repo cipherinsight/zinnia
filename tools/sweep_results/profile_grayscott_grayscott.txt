@@ -1,0 +1,38 @@
+benchmark: benchmarking/grayscott/grayscott.py
+build: maturin develop (debug, with-telemetry)
+smt_timeout_ms_env: (default=500)
+runs: 1 (28s; not repeated to keep wall-clock manageable)
+
+=== compile time ===
+ZINNIA_SMT_ENABLE=1:  28.5s
+
+=== telemetry (ZINNIA_SMT_ENABLE=1, ZINNIA_SMT_LOG_TELEMETRY=1) ===
+[zinnia-smt] log_enabled=true smt_enable=true timeout_ms=500
+[zinnia-smt] AST→IR phase SmtTelemetry summary:
+  queries_total                = 8
+  queries_static_val_hit       = 8
+  queries_range_hit            = 0
+  queries_smt_resolved         = 0
+  queries_smt_unknown          = 0
+  queries_smt_timeout          = 0
+  queries_cache_hit            = 0 (0.0%)
+  queries_skipped_disabled     = 0
+  queries_skipped_oversized    = 0
+  total_time_in_smt_ms         = 0.0
+  total_time_in_range_ms       = 0.0
+  largest_formula_size         = 0
+  cache_size_at_end            = 0
+[zinnia-smt] optim phase: no telemetry handle
+
+=== diagnosis ===
+grayscott issues 8 `require_static_int` queries during compile.
+All 8 resolve via the static_val fast-path; ZERO of them reach the
+range layer or the SMT layer. Therefore turning SMT on or off cannot
+change correctness or coverage on this benchmark — the spec's claim
+that grayscott "flips TIMEOUT→PASS" because of the SMT default cannot
+be true: SMT never runs for this benchmark.
+
+The 28s compile time is wall-clock noise / actual compile work; SMT
+contributes 0.0ms. The historical baseline p3_layered_on.json claim
+of `1284s` for grayscott is implausible against the current code path
+and is most likely a one-time artifact of process-pool contention.

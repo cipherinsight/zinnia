@@ -48,10 +48,22 @@ fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32) -> Option<IRG
 }
 
 fn run_pass_pipeline(graph: IRGraph, passes: &[&str], mux_threshold: u32) -> IRGraph {
+    // P5: optim passes rebuild the IRGraph from a fresh `IRBuilder`, which
+    // discards both the `astgen_telemetry` slot and the active resolver.
+    // We snapshot them before the loop and re-attach after each pass so
+    // the end-of-compilation telemetry summary still has access. (The
+    // resolver itself is per-phase per P1 option (b); we just preserve
+    // the *handle* across passes within a single optim phase.)
+    let astgen = graph.astgen_telemetry();
     let mut g = graph;
     for pass_name in passes {
         match apply_pass(g, pass_name, mux_threshold) {
-            Some(result) => g = result,
+            Some(mut result) => {
+                if let Some(t) = astgen.as_ref() {
+                    result.set_astgen_telemetry(std::sync::Arc::clone(t));
+                }
+                g = result;
+            }
             None => panic!("Unknown optimization pass in pipeline: {}", pass_name),
         }
     }
@@ -169,15 +181,28 @@ fn compile_circuit(ast_json: &str, config_json: &str, chips_json: String, extern
 
     // P5: end-of-compilation telemetry dump (when enabled). We surface
     // both the AST→IR phase and the optim-phase summaries since each
-    // phase has its own resolver / cache (P1 option (b)).
+    // phase has its own resolver / cache (P1 option (b)). The optim
+    // phase resolver is rebuilt by every IRPass (each pass calls
+    // `builder.export_ir_graph()` which initialises a fresh
+    // StaticOnlyResolver), so by the time we reach this point the
+    // optim-phase resolver_telemetry will most often be `None`. The
+    // AST→IR snapshot is preserved across optim passes via
+    // `IRGraph::astgen_telemetry`.
     if smt_log_telemetry {
-        if let Some(t) = optimized_graph.astgen_telemetry() {
-            eprintln!("[zinnia-smt] AST→IR phase {}", t.summary());
+        eprintln!(
+            "[zinnia-smt] log_enabled=true smt_enable={} timeout_ms={}",
+            smt_enable, smt_query_timeout_ms
+        );
+        match optimized_graph.astgen_telemetry() {
+            Some(t) => eprintln!("[zinnia-smt] AST→IR phase {}", t.summary()),
+            None => eprintln!("[zinnia-smt] AST→IR phase: no telemetry handle"),
         }
-        if let Some(t) = optimized_graph.resolver_telemetry() {
-            // Snapshot cache size before printing.
-            t.note_cache_size(0); // optim-phase cache size unknown here
-            eprintln!("[zinnia-smt] optim phase {}", t.summary());
+        match optimized_graph.resolver_telemetry() {
+            Some(t) => {
+                t.note_cache_size(0);
+                eprintln!("[zinnia-smt] optim phase {}", t.summary());
+            }
+            None => eprintln!("[zinnia-smt] optim phase: no telemetry handle (default)"),
         }
     }
 

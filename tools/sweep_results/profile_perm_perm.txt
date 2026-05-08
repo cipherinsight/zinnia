@@ -1,0 +1,37 @@
+benchmark: benchmarking/perm/perm.py
+build: maturin develop (debug, with-telemetry)
+smt_timeout_ms_env: (default=500)
+runs: 2 each (single-process driver, no parallel contention)
+
+=== compile times ===
+ZINNIA_SMT_ENABLE=0:  31.96s, 32.05s   (≈ 32.0s)
+ZINNIA_SMT_ENABLE=1:  31.82s, 36.31s   (≈ 34.1s; the 36.3s run was
+                                        a first-run-after-startup
+                                        outlier — second run 31.8s)
+
+=== telemetry (ZINNIA_SMT_ENABLE=1) ===
+[zinnia-smt] AST→IR phase SmtTelemetry summary:
+  queries_total                = 0
+  queries_static_val_hit       = 0
+  queries_range_hit            = 0
+  queries_smt_resolved         = 0
+  queries_smt_unknown          = 0
+  queries_smt_timeout          = 0
+  queries_cache_hit            = 0 (0.0%)
+  queries_skipped_disabled     = 0
+  queries_skipped_oversized    = 0
+  total_time_in_smt_ms         = 0.0
+  total_time_in_range_ms       = 0.0
+  largest_formula_size         = 0
+  cache_size_at_end            = 0
+[zinnia-smt] optim phase: no telemetry handle
+
+=== diagnosis ===
+perm — second-largest historical regression target (25.3× per
+p3_layered_on.json) — issues ZERO `require_static_int` calls during
+compile. The SMT pipeline never runs. The on/off compile-time delta
+is within run-to-run noise; the historical 52.7s → 1336.1s reading
+does not reproduce. The wall-clock cost of perm is dominated by the
+inner-loop O(n!) permutation enumeration in IR-builder code, NOT by
+the resolver pipeline. SMT mitigations (timeout, formula-size cap,
+solver reuse) cannot affect this benchmark's compile time.

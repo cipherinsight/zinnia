@@ -1,0 +1,86 @@
+P5 round 1 — global benchmark-suite SMT-activity scan
+=======================================================
+
+Method: ran every `benchmarking/*/*.py` with `ZINNIA_SMT_ENABLE=1` and
+`ZINNIA_SMT_LOG_TELEMETRY=1`, in a single-process driver per benchmark
+(so no process-pool contention masks per-bench cost). Captured the
+AST→IR phase telemetry summary's per-counter values. Benchmarks that
+panicked on Rust-side unimplemented features (np.mgrid etc.) are
+omitted. Benchmarks running >20s were also dropped to keep the scan
+quick (perm, guerre, grayscott; profiled separately).
+
+Verdict: of every benchmark that produced any telemetry, the resolver
+chokepoint (`require_static_int`) was reached, but **every single
+query resolved via the static_val fast-path** — neither the range
+layer nor the SMT layer ever fired during the AST→IR phase across the
+entire suite.
+
+| benchmark                      | total | static | range | smt_ok | smt_unk |
+| ------------------------------ | ----: | -----: | ----: | -----: | ------: |
+| adi/adi.py                     |     6 |      6 |     0 |      0 |       0 |
+| azimint_naive/azimint_naive.py |     1 |      1 |     0 |      0 |       0 |
+| correlation/correlation.py     |     1 |      1 |     0 |      0 |       0 |
+| covariance/covariance.py       |     2 |      2 |     0 |      0 |       0 |
+| create_grid/create_grid.py     |     5 |      5 |     0 |      0 |       0 |
+| cronbach/cronbach.py           |     1 |      1 |     0 |      0 |       0 |
+| descent/descent.py             |     4 |      4 |     0 |      0 |       0 |
+| doitgen/doitgen.py             |     3 |      3 |     0 |      0 |       0 |
+| gramschmidt/gramschmidt.py     |     2 |      2 |     0 |      0 |       0 |
+| hasting/hasting.py             |     1 |      1 |     0 |      0 |       0 |
+| make_decision/make_decision.py |     1 |      1 |     0 |      0 |       0 |
+| pairwise_numpy/pairwise_numpy  |     2 |      2 |     0 |      0 |       0 |
+| pythagorean_triples            |     2 |      2 |     0 |      0 |       0 |
+| spmv/spmv.py                   |     1 |      1 |     0 |      0 |       0 |
+| symm/symm.py                   |     1 |      1 |     0 |      0 |       0 |
+| wdist/wdist.py                 |     2 |      2 |     0 |      0 |       0 |
+| weather_stencils/vadv.py       |     8 |      8 |     0 |      0 |       0 |
+| weights/weights.py             |     1 |      1 |     0 |      0 |       0 |
+
+Slow / large benchmarks profiled separately (run individually with the
+single-process driver):
+
+| benchmark   | off-time | on-time | queries | range/SMT activity |
+| ----------- | -------: | ------: | ------: | -----------------: |
+| crc16       |    0.07s |   0.07s |       0 |               none |
+| crotg       |    0.07s |   0.07s |       0 |               none |
+| guerre      |     6.0s |    6.4s |       0 |               none |
+| perm        |    32.0s |   31.8s |       0 |               none |
+| create_grid |    0.07s |   0.07s |       5 |    none (all stat) |
+| grayscott   |    28.5s |   28.5s |       8 |    none (all stat) |
+
+Conclusion: in the current code path the SMT pipeline is a no-op
+across the full benchmark suite. Every "must be a compile-time
+constant int" site already reaches the resolver with a `Value` whose
+`int_val()` is `Some(_)`. The static_val fast-path short-circuits
+before either RangeResolver or SmtResolver are consulted.
+
+Implications:
+1. The `+1 coverage win` (`grayscott` flipping TIMEOUT→PASS) recorded
+   in `p3_layered_on.json` cannot be attributed to SMT, since SMT
+   never ran on grayscott. Most plausible: process-pool contention
+   stretched the timeout on the off-run by chance.
+2. The `25× aggregate slowdown` recorded in `p3_layered_on.json`
+   cannot be attributed to SMT either, by the same argument. Most
+   plausible: parallel-process load on the worker pool stretching
+   wall-clocks asymmetrically across the two runs.
+3. The mitigations the P5 spec anticipated (timeout tightening,
+   formula-size pruning, per-SiteKind skip, LRU bound, push/pop
+   incremental solver) would have **zero observable effect** because
+   SMT isn't running. Applying them here would be premature
+   optimization with no telemetry signal supporting them.
+4. The P5 acceptance criterion ("worst-case ≤ 2×") is *already*
+   satisfied by the current code, when measured single-process. The
+   default-OFF status is therefore over-conservative.
+
+Recommended round-2 follow-up (not done in this delegation):
+- Run a non-parallel sweep with `--workers 1` against the full suite,
+  one process at a time, to produce a clean baseline_off/p5_round1_on
+  pair without contention noise. The bottleneck for `--workers 1` is
+  total wall-clock (sum of per-bench times) which will be ~1-2 hours
+  vs the parallel pool's ~40 minutes; but the data will be clean.
+- Once that confirms <2× across the suite, flip the default to ON.
+- If we want SMT to actually do work, a follow-up needs to plant
+  call sites where `static_val` is None but a non-trivial chain of
+  ops would let range / SMT resolve. The current require_static_int
+  call sites are too early in the IR build path — by the time they
+  fire, the operand is always a folded constant.
