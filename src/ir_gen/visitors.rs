@@ -175,7 +175,22 @@ impl IRGenerator {
                 break;
             }
 
-            let test_static = test_bool.bool_val().or_else(|| test_bool.int_val().map(|v| v != 0));
+            // P4 round 1: route the guard resolution through the active
+            // Resolver (instead of only the value's static_val cache). Static
+            // bools / ints stay on the cheap `bool_val` / `int_val` path; for
+            // a symbolic guard the LayeredResolver gets a shot at proving it
+            // const via the range layer or SMT. This is the paper's
+            // While-Step / While-Exit rules: if the guard provably evaluates
+            // to false against the post-iteration environment, exit the
+            // unroll loop immediately so we don't pay symbolic-execution
+            // cost on the unreached iterations.
+            let test_static = test_bool
+                .bool_val()
+                .or_else(|| test_bool.int_val().map(|v| v != 0))
+                .or_else(|| {
+                    let (resolver, stmts) = self.builder.split_resolver_and_stmts();
+                    resolver.resolve_bool_with_stmts(&test_bool, stmts)
+                });
             if test_static == Some(false) {
                 break;
             }
