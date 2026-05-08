@@ -79,6 +79,20 @@ pub struct SmtTelemetry {
     pub largest_formula_size: AtomicUsize,
     /// Cache occupancy when `summary()` is called. Snapshot, not running.
     pub cache_size_at_end: AtomicUsize,
+
+    // -- AlwaysSatisfiedElimination counters (P4 round 1) -------------
+    /// `assert(cond)` removed because constant-folding proved `cond` true
+    /// — the pre-P4 path. Cheap (no resolver invocation).
+    pub assertions_eliminated_const_fold: AtomicUsize,
+    /// `assert(cond)` removed because the resolver (range / SMT)
+    /// proved `cond` true. P4 round 1 — counts how many times we paid
+    /// resolver cost and got a productive elimination.
+    pub assertions_eliminated_resolver: AtomicUsize,
+    /// `assert(cond)` whose `cond` was provably false at compile time.
+    /// We turn these into compile-time errors; the counter is bumped
+    /// before the error is raised (so it shows up in telemetry even on
+    /// the failing path). P4 round 1.
+    pub assertions_provably_false: AtomicUsize,
 }
 
 impl SmtTelemetry {
@@ -128,6 +142,9 @@ impl SmtTelemetry {
         let range_ns = self.total_time_in_range_ns.load(Ordering::Relaxed);
         let largest = self.largest_formula_size.load(Ordering::Relaxed);
         let cache_at_end = self.cache_size_at_end.load(Ordering::Relaxed);
+        let asserts_const = self.assertions_eliminated_const_fold.load(Ordering::Relaxed);
+        let asserts_resolver = self.assertions_eliminated_resolver.load(Ordering::Relaxed);
+        let asserts_false = self.assertions_provably_false.load(Ordering::Relaxed);
 
         // Cache hit % (over total queries).
         let cache_pct = if total > 0 {
@@ -154,6 +171,9 @@ impl SmtTelemetry {
                             range_ns as f64 / 1e6));
         s.push_str(&format!("  largest_formula_size         = {}\n", largest));
         s.push_str(&format!("  cache_size_at_end            = {}\n", cache_at_end));
+        s.push_str(&format!("  assertions_eliminated_const  = {}\n", asserts_const));
+        s.push_str(&format!("  assertions_eliminated_solver = {}\n", asserts_resolver));
+        s.push_str(&format!("  assertions_provably_false    = {}\n", asserts_false));
 
         // Histogram.
         s.push_str("  smt_duration_histogram:\n");
