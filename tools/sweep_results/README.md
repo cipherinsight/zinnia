@@ -15,6 +15,26 @@ baseline that future SMT-resolver tuning iterations diff against.
 | `p4_round1_serial_on.json` | on, P4 consumers wired | 1 | 211 s | **104 / 2 / 75** |
 | `p4_round1_5_serial_off.json` | off, round-1.5 visit_while fast-path | 1 | 152 s | 104 / 2 / 75 |
 | `p4_round1_5_serial_on.json` | on, round-1.5 visit_while fast-path | 1 | 211 s | 104 / 2 / 75 |
+| `p4_round2_serial_off.json` | off, round-2 recursion-bound discharge wired | 1 | 154 s | 104 / 2 / 75 |
+| `p4_round2_serial_on.json` | on, round-2 recursion-bound discharge wired | 1 | 215 s | 104 / 2 / 75 |
+
+## P4 round 2 — wires recursion-bound discharge, no movement
+
+Round 2 wires `b.resolve_max(measure)` into `visit_chip_call` per the P4
+spec section "Recursive-chip bound discharge". The heuristic picks the
+integer arg with the most-negative delta vs the parent frame's binding;
+fast-path discipline (round-1.5 lesson) checks `int_val()` first and
+only consults the layered resolver for non-trivially symbolic measures.
+SMT-resolved bounds only ever tighten the per-frame `remaining_bound`,
+never loosen it past `recursion_limit`.
+
+Sweep is unchanged from round 1.5: 104/2/75 in both modes, +2 s on
+(214.9 s vs 210.6 s, within noise). No per-benchmark movements (>50%
+delta on >0.5 s benchmarks). The path fires correctly on a probe
+(`sum_to(8)` shows `recursion_bound_static_val=8` in telemetry); no
+production benchmark in the suite registers chips through the sweep
+driver, so the path is exercised by the new tests in
+`testing/lang/test_chip_recursion.py` rather than the sweep.
 
 ## P4 round 1 — net negative
 

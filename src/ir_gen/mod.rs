@@ -115,6 +115,35 @@ pub struct IRGenerator {
     registered_externals: HashMap<String, RegisteredExternal>,
     recursion_depth: u32,
     next_external_store_idx: u32,
+    /// P4 round 2 — per-active-call snapshot of integer-arg bindings,
+    /// keyed by chip name. When `visit_chip_call("foo", args, …)` runs
+    /// and finds a prior frame with the same name, that frame is the
+    /// parent of a recursive call: we diff `args[i]` against the
+    /// snapshotted parent value to pick the recursion measure.
+    /// `int_args[i]` is `None` when the i-th input parameter wasn't
+    /// integer-valued (so the heuristic skips it).
+    pub(crate) chip_call_stack: Vec<ChipCallFrame>,
+}
+
+/// One entry in [`IRGenerator::chip_call_stack`]. See round-2 doc on
+/// `chip_call_stack` for semantics.
+#[derive(Debug, Clone)]
+pub(crate) struct ChipCallFrame {
+    pub chip_name: String,
+    /// One slot per chip-input parameter. `Some(n)` if the bound value
+    /// was an integer with a known compile-time int_val; `None`
+    /// otherwise (non-integer parameter, or symbolic int with no
+    /// static_val cache hit). Used by the recursion-measure heuristic
+    /// in `visit_chip_call`.
+    pub int_args: Vec<Option<i64>>,
+    /// Forward-looking depth allowance for this frame and any
+    /// recursive-call descendants of it. Initialised at entry to
+    /// `min(parent.remaining_bound - 1, freshly_resolved_bound)`,
+    /// always `≤ recursion_limit`. A descendant recursive call panics
+    /// if its parent's `remaining_bound == 0`. Non-recursive entries
+    /// (no prior same-name frame) start at `recursion_limit` — today's
+    /// behaviour, no tightening.
+    pub remaining_bound: u32,
 }
 
 impl IRGenerator {
@@ -142,6 +171,7 @@ impl IRGenerator {
             registered_externals: HashMap::new(),
             recursion_depth: 0,
             next_external_store_idx: 1,
+            chip_call_stack: Vec::new(),
         }
     }
 

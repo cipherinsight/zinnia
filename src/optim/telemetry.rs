@@ -93,6 +93,20 @@ pub struct SmtTelemetry {
     /// before the error is raised (so it shows up in telemetry even on
     /// the failing path). P4 round 1.
     pub assertions_provably_false: AtomicUsize,
+
+    // -- Recursive-chip bound discharge counters (P4 round 2) ---------
+    /// Recursive chip call where the measure was a literal int — bound
+    /// proved by `int_val()` without consulting the resolver.
+    pub recursion_bound_static_val: AtomicUsize,
+    /// Recursive chip call where `resolve_max(measure)` returned `Some(n)`.
+    /// We tightened the per-call unroll cap to `min(n, recursion_limit)`.
+    pub recursion_bound_resolver_proved: AtomicUsize,
+    /// Recursive chip call where the heuristic could not pick a measure
+    /// (no integer arg decreased across the call). Falls back to the
+    /// hard `recursion_limit` budget. High counter values suggest the
+    /// heuristic needs a user-side `# zinnia: recursion_measure=...`
+    /// pragma escape hatch.
+    pub recursion_no_measure_found: AtomicUsize,
 }
 
 impl SmtTelemetry {
@@ -145,6 +159,9 @@ impl SmtTelemetry {
         let asserts_const = self.assertions_eliminated_const_fold.load(Ordering::Relaxed);
         let asserts_resolver = self.assertions_eliminated_resolver.load(Ordering::Relaxed);
         let asserts_false = self.assertions_provably_false.load(Ordering::Relaxed);
+        let rec_static = self.recursion_bound_static_val.load(Ordering::Relaxed);
+        let rec_resolver = self.recursion_bound_resolver_proved.load(Ordering::Relaxed);
+        let rec_no_measure = self.recursion_no_measure_found.load(Ordering::Relaxed);
 
         // Cache hit % (over total queries).
         let cache_pct = if total > 0 {
@@ -174,6 +191,9 @@ impl SmtTelemetry {
         s.push_str(&format!("  assertions_eliminated_const  = {}\n", asserts_const));
         s.push_str(&format!("  assertions_eliminated_solver = {}\n", asserts_resolver));
         s.push_str(&format!("  assertions_provably_false    = {}\n", asserts_false));
+        s.push_str(&format!("  recursion_bound_static_val   = {}\n", rec_static));
+        s.push_str(&format!("  recursion_bound_resolver     = {}\n", rec_resolver));
+        s.push_str(&format!("  recursion_no_measure_found   = {}\n", rec_no_measure));
 
         // Histogram.
         s.push_str("  smt_duration_histogram:\n");
