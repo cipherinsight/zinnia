@@ -57,10 +57,19 @@ pub struct IRGenConfig {
     /// Flip back to `true` once the slowdown root cause is identified
     /// (likely SMT-layer cost on hot-path queries; see P5 telemetry).
     pub smt_enable: bool,
-    /// Per-query Z3 timeout in milliseconds. Default 500 ms (paper's
-    /// recommendation). Lower = faster compile, weaker reasoning. Higher
-    /// = slower compile, stronger reasoning.
+    /// Per-query Z3 timeout in milliseconds. Default 100 ms (P5
+    /// commit 3: tightened from 500 ms — the AST→IR-phase telemetry
+    /// across the whole benchmark suite shows zero SMT queries, but if
+    /// future call sites do reach the SMT layer, a 100 ms ceiling caps
+    /// the worst-case at < 2× of the suite's current quietest fail
+    /// budget. Lower = faster compile, weaker reasoning. Higher =
+    /// slower compile, stronger reasoning.
     pub smt_query_timeout_ms: u64,
+    /// Maximum number of IR statements the reverse-reachability walk
+    /// will visit per SMT query before aborting (returning `None` and
+    /// counting the query as `queries_skipped_oversized` in telemetry).
+    /// Default 4096 per spec. P5 commit 3.
+    pub smt_max_formula_size: usize,
     /// P5 telemetry knob. When `true`, the compiler logs
     /// `SmtTelemetry::summary()` to stderr at end of compilation. Default
     /// `false`. Wire-only — the counters are always collected (their cost
@@ -77,7 +86,8 @@ impl Default for IRGenConfig {
             // See struct docs: held at `false` until the P3 compile-time
             // regression is resolved.
             smt_enable: false,
-            smt_query_timeout_ms: 500,
+            smt_query_timeout_ms: 100,
+            smt_max_formula_size: 4096,
             smt_log_telemetry: false,
         }
     }
@@ -116,8 +126,9 @@ impl IRGenerator {
         // when the flag is off — the safety net for diagnosing whether
         // SMT introduces a regression.
         let resolver: Box<dyn Resolver> = if config.smt_enable {
-            Box::new(LayeredResolver::range_then_smt_with_timeout(
+            Box::new(LayeredResolver::range_then_smt_with_budget(
                 config.smt_query_timeout_ms,
+                config.smt_max_formula_size,
             ))
         } else {
             Box::new(StaticOnlyResolver::new())
@@ -139,6 +150,7 @@ impl IRGenerator {
         self.visit_circuit(ast);
         let smt_enable = self.config.smt_enable;
         let timeout_ms = self.config.smt_query_timeout_ms;
+        let max_formula_size = self.config.smt_max_formula_size;
         // Snapshot the AST→IR-phase telemetry before exporting the graph.
         // Per P1 option (b) each phase has its own resolver / cache, but
         // the telemetry handle the optim phase will use is a fresh one;
@@ -153,7 +165,10 @@ impl IRGenerator {
         // owns its own resolver / cache; we just ensure the choice
         // matches the config.
         let resolver: Box<dyn Resolver> = if smt_enable {
-            Box::new(LayeredResolver::range_then_smt_with_timeout(timeout_ms))
+            Box::new(LayeredResolver::range_then_smt_with_budget(
+                timeout_ms,
+                max_formula_size,
+            ))
         } else {
             Box::new(StaticOnlyResolver::new())
         };

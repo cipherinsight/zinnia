@@ -222,11 +222,26 @@ impl LayeredResolver {
     /// (ms). P5 uses this so callers can tighten the budget without first
     /// constructing the SMT layer manually.
     pub fn range_then_smt_with_timeout(timeout_ms: u64) -> Self {
+        Self::range_then_smt_with_budget(timeout_ms, usize::MAX)
+    }
+
+    /// Same as `range_then_smt_with_timeout` but with an additional cap on
+    /// the per-query formula size (number of IR statements visited by the
+    /// reverse-reachability walk). Beyond this cap the walk aborts and the
+    /// SmtResolver returns None — counted as `queries_skipped_oversized`
+    /// in telemetry. P5 commit 3 uses this so callers can configure a
+    /// pragmatic budget that bounds the worst-case query without changing
+    /// the timeout.
+    pub fn range_then_smt_with_budget(
+        timeout_ms: u64,
+        max_formula_size: usize,
+    ) -> Self {
         let telemetry = crate::optim::telemetry::SmtTelemetry::new();
         let range = crate::optim::range::RangeResolver::new()
             .with_telemetry(std::sync::Arc::clone(&telemetry));
         let smt = SmtResolver::new()
             .with_timeout(timeout_ms)
+            .with_max_formula_size(max_formula_size)
             .with_telemetry(std::sync::Arc::clone(&telemetry));
         Self::new_with_telemetry(
             vec![Box::new(range), Box::new(smt)],
@@ -466,6 +481,12 @@ pub struct SmtResolver {
     inner: Mutex<SmtResolverInner>,
     timeout_ms: u64,
     disabled: bool,
+    /// P5 commit 3: cap on the number of IR statements the reverse-
+    /// reachability walk visits per query. `usize::MAX` = unbounded
+    /// (legacy P1 behaviour). When the cap is hit the walk aborts and
+    /// the resolver returns `None`, counted as
+    /// `queries_skipped_oversized` in telemetry.
+    max_formula_size: usize,
     /// P5 telemetry. Shared across the layered resolver so range and SMT
     /// counters land in one summary. Defaults to a fresh, isolated
     /// instance (so an `SmtResolver` constructed in a test sees its own
@@ -480,12 +501,17 @@ impl Default for SmtResolver {
 }
 
 impl SmtResolver {
-    /// Build a resolver with default knobs (500 ms timeout, enabled).
+    /// Build a resolver with default knobs (P5: 100 ms timeout, no
+    /// formula-size cap, enabled). Note: the IRGenConfig default for
+    /// `smt_query_timeout_ms` matches; tests that construct an
+    /// `SmtResolver` directly inherit this. If you need the legacy
+    /// 500 ms budget for a test, call `.with_timeout(500)`.
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(SmtResolverInner::default()),
-            timeout_ms: 500,
+            timeout_ms: 100,
             disabled: false,
+            max_formula_size: usize::MAX,
             telemetry: SmtTelemetry::new(),
         }
     }
@@ -493,6 +519,13 @@ impl SmtResolver {
     /// Override the per-query Z3 timeout.
     pub fn with_timeout(mut self, ms: u64) -> Self {
         self.timeout_ms = ms;
+        self
+    }
+
+    /// P5 commit 3: cap the per-query reverse-reachability walk at
+    /// `n` IR statements. Larger formulas abort early.
+    pub fn with_max_formula_size(mut self, n: usize) -> Self {
+        self.max_formula_size = n;
         self
     }
 
@@ -562,36 +595,48 @@ impl SmtResolver {
         // Build the formula via reverse-reachability. Time it for the
         // duration histogram + total-time counter.
         let t0 = Instant::now();
-        let (outcome, formula_size) = smt_query(
+        let max_size = if self.max_formula_size == usize::MAX {
+            None
+        } else {
+            Some(self.max_formula_size)
+        };
+        let qout = smt_query_with_budget(
             ptr,
             stmts,
             &self.inner.lock().unwrap().cache,
             self.timeout_ms,
             want_bool,
+            max_size,
         );
         let dur = t0.elapsed();
         self.telemetry.record_smt_duration(dur);
-        self.telemetry.note_formula_size(formula_size);
+        self.telemetry.note_formula_size(qout.formula_size);
 
-        match &outcome {
-            Some(ResolvedValue::Int(_)) | Some(ResolvedValue::Bool(_)) => {
-                self.telemetry.queries_smt_resolved.fetch_add(1, Ordering::Relaxed);
-            }
-            Some(ResolvedValue::Unknown) | None => {
-                self.telemetry.queries_smt_unknown.fetch_add(1, Ordering::Relaxed);
-                // Heuristic: if the wall time is ≥ 90 % of the configured
-                // budget, treat it as a timeout for the dedicated counter.
-                // Z3's `unknown` doesn't distinguish timeout vs other
-                // give-ups via the public API, but the duration is a
-                // strong signal in practice.
-                let budget_ns = (self.timeout_ms as u128) * 1_000_000;
-                if budget_ns > 0 && dur.as_nanos() * 10 >= budget_ns * 9 {
-                    self.telemetry.queries_smt_timeout.fetch_add(1, Ordering::Relaxed);
+        if qout.oversized {
+            self.telemetry
+                .queries_skipped_oversized
+                .fetch_add(1, Ordering::Relaxed);
+        } else {
+            match &qout.resolved {
+                Some(ResolvedValue::Int(_)) | Some(ResolvedValue::Bool(_)) => {
+                    self.telemetry.queries_smt_resolved.fetch_add(1, Ordering::Relaxed);
+                }
+                Some(ResolvedValue::Unknown) | None => {
+                    self.telemetry.queries_smt_unknown.fetch_add(1, Ordering::Relaxed);
+                    // Heuristic: if the wall time is ≥ 90 % of the configured
+                    // budget, treat it as a timeout for the dedicated counter.
+                    // Z3's `unknown` doesn't distinguish timeout vs other
+                    // give-ups via the public API, but the duration is a
+                    // strong signal in practice.
+                    let budget_ns = (self.timeout_ms as u128) * 1_000_000;
+                    if budget_ns > 0 && dur.as_nanos() * 10 >= budget_ns * 9 {
+                        self.telemetry.queries_smt_timeout.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
             }
         }
 
-        let resolved = outcome.unwrap_or(ResolvedValue::Unknown);
+        let resolved = qout.resolved.unwrap_or(ResolvedValue::Unknown);
         self.cache_outcome(ptr, resolved);
         Some(resolved)
     }
@@ -678,6 +723,11 @@ impl Resolver for SmtResolver {
             return None;
         }
 
+        let max_size = if self.max_formula_size == usize::MAX {
+            None
+        } else {
+            Some(self.max_formula_size)
+        };
         let t0 = Instant::now();
         let (resolved, formula_size, oversized) = smt_extreme(
             ptr,
@@ -685,7 +735,7 @@ impl Resolver for SmtResolver {
             &self.inner.lock().unwrap().cache,
             self.timeout_ms,
             /*max=*/ true,
-            None,
+            max_size,
         );
         let dur = t0.elapsed();
         self.telemetry.record_smt_duration(dur);
@@ -720,6 +770,11 @@ impl Resolver for SmtResolver {
             self.telemetry.queries_skipped_disabled.fetch_add(1, Ordering::Relaxed);
             return None;
         }
+        let max_size = if self.max_formula_size == usize::MAX {
+            None
+        } else {
+            Some(self.max_formula_size)
+        };
         let t0 = Instant::now();
         let (resolved, formula_size, oversized) = smt_extreme(
             ptr,
@@ -727,7 +782,7 @@ impl Resolver for SmtResolver {
             &self.inner.lock().unwrap().cache,
             self.timeout_ms,
             /*max=*/ false,
-            None,
+            max_size,
         );
         let dur = t0.elapsed();
         self.telemetry.record_smt_duration(dur);
@@ -814,12 +869,12 @@ fn smt_query_with_budget(
         None => {
             return SmtQueryOut {
                 resolved: None,
-                formula_size: walker.encoded.len(),
+                formula_size: walker.visited,
                 oversized: walker.aborted_oversized,
             };
         }
     };
-    let formula_size = walker.encoded.len();
+    let formula_size = walker.visited;
     if walker.aborted_oversized {
         return SmtQueryOut {
             resolved: None,
@@ -912,9 +967,9 @@ fn smt_extreme(
     walker.max_size = max_formula_size;
     let root_term = match walker.encode(root) {
         Some(t) => t,
-        None => return (None, walker.encoded.len(), walker.aborted_oversized),
+        None => return (None, walker.visited, walker.aborted_oversized),
     };
-    let formula_size = walker.encoded.len();
+    let formula_size = walker.visited;
     if walker.aborted_oversized {
         return (None, formula_size, true);
     }
@@ -964,6 +1019,12 @@ struct Walker<'a> {
     /// P5 commit 3: optional cap on the number of distinct IR statements
     /// the walk visits before giving up. None = unbounded (legacy).
     max_size: Option<usize>,
+    /// Number of statements the walker has *visited* so far this query
+    /// (i.e., `encode(ptr)` calls that didn't short-circuit on the
+    /// already-encoded or already-cached fast-paths). Counts pre-recursion
+    /// so a deep chain trips the cap before unwinding finishes the
+    /// inserts. Compared against `max_size`.
+    visited: usize,
     /// Set when the walk hit `max_size` and aborted. The `encoded.len()`
     /// at that point is the snapshot we surface as `formula_size`.
     aborted_oversized: bool,
@@ -981,6 +1042,7 @@ impl<'a> Walker<'a> {
             constraints: Vec::new(),
             enc_ctx: crate::optim::smt_encoding::SmtEncodingCtx::new(),
             max_size: None,
+            visited: 0,
             aborted_oversized: false,
         }
     }
@@ -1014,11 +1076,14 @@ impl<'a> Walker<'a> {
             return Some(term);
         }
 
-        // Formula-size budget: abort early when we'd exceed the cap. We
-        // check *before* recursing into a new statement so the abort
-        // cost is bounded by the recursion depth at the point of trip.
+        // Formula-size budget: abort early when we'd exceed the cap.
+        // Counted at *visit time* (pre-recursion) so a deep chain trips
+        // the cap before unwinding finishes the inserts; using
+        // `encoded.len()` instead would only trip after all leaves have
+        // returned, defeating the bound.
+        self.visited += 1;
         if let Some(cap) = self.max_size {
-            if self.encoded.len() >= cap {
+            if self.visited > cap {
                 self.aborted_oversized = true;
                 return None;
             }
@@ -1661,6 +1726,70 @@ mod tests {
                 .map(|i| t.smt_duration_buckets[i].load(Ordering::SeqCst))
                 .sum();
         assert_eq!(total, 1);
+    }
+
+    /// P5 commit 3: `with_max_formula_size` triggers the oversized
+    /// short-circuit when a formula's reverse-reachability walk would
+    /// exceed the cap. The resolver returns None and the
+    /// `queries_skipped_oversized` counter ticks. Verifies the cap is
+    /// wired through `resolve_int_with_stmts` to the walker.
+    #[test]
+    fn smt_max_formula_size_aborts_oversized_walk() {
+        // Construct a 5-statement chain (Constant → MulI → MulI → MulI →
+        // MulI). With max_formula_size = 2 the walker aborts before
+        // encoding the root, so the resolver returns None and the
+        // oversized counter increments.
+        let stmts = vec![
+            IRStatement::new(
+                0,
+                IR::ReadInteger {
+                    path: InputPath::new("x", vec![]),
+                    is_public: false,
+                },
+                vec![],
+                None,
+            ),
+            IRStatement::new(1, IR::MulI, vec![0, 0], None),
+            IRStatement::new(2, IR::MulI, vec![1, 0], None),
+            IRStatement::new(3, IR::MulI, vec![2, 0], None),
+            IRStatement::new(4, IR::MulI, vec![3, 0], None),
+        ];
+        let v = runtime_int(4);
+        let mut r = SmtResolver::new().with_max_formula_size(2);
+        let t = r.telemetry();
+        assert_eq!(r.resolve_int_with_stmts(&v, &stmts), None);
+        assert_eq!(t.queries_skipped_oversized.load(Ordering::SeqCst), 1);
+        // The "smt_unknown" counter must NOT have incremented — we
+        // never hit the solver, the walk aborted first.
+        assert_eq!(t.queries_smt_unknown.load(Ordering::SeqCst), 0);
+        assert_eq!(t.queries_smt_resolved.load(Ordering::SeqCst), 0);
+    }
+
+    /// P5 commit 3: a 1ms timeout on a moderately-complex formula
+    /// returns None instead of resolving the unique value. (The legacy
+    /// `smt_honours_tight_timeout` test already covers this; this
+    /// duplicates with the explicit "via the new mitigation knob"
+    /// framing.)
+    #[test]
+    fn smt_tight_timeout_via_with_timeout_mitigation() {
+        let mut stmts = Vec::new();
+        stmts.push(IRStatement::new(
+            0,
+            IR::ReadInteger {
+                path: InputPath::new("x", vec![]),
+                is_public: false,
+            },
+            vec![],
+            None,
+        ));
+        let mut last = 0u32;
+        for i in 1..=20 {
+            stmts.push(IRStatement::new(i, IR::MulI, vec![last, 0], None));
+            last = i;
+        }
+        let v = runtime_int(last);
+        let mut r = SmtResolver::new().with_timeout(1);
+        assert_eq!(r.resolve_int_with_stmts(&v, &stmts), None);
     }
 
     /// `LayeredResolver::range_then_smt` shares one telemetry across the

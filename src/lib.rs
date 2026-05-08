@@ -106,7 +106,16 @@ fn compile_circuit(ast_json: &str, config_json: &str, chips_json: String, extern
         .unwrap_or_else(|| {
             config.get("smt_query_timeout_ms")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(500)
+                .unwrap_or(100)
+        });
+    let smt_max_formula_size = std::env::var("ZINNIA_SMT_MAX_FORMULA_SIZE")
+        .ok()
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .unwrap_or_else(|| {
+            config.get("smt_max_formula_size")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize)
+                .unwrap_or(4096)
         });
     // P5: opt-in stderr dump of the SMT-pipeline telemetry summary at the
     // end of compilation. Useful for the worst-case profiling sweep.
@@ -148,6 +157,7 @@ fn compile_circuit(ast_json: &str, config_json: &str, chips_json: String, extern
         recursion_limit,
         smt_enable,
         smt_query_timeout_ms,
+        smt_max_formula_size,
         smt_log_telemetry,
     };
     let base_graph = IRGenerator::generate_from_json_with_chips(ir_config.clone(), ast_json, &chips, &externals)
