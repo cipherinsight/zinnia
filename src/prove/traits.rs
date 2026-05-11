@@ -119,6 +119,8 @@ pub trait Synthesizer {
     fn sqrt_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
     fn exp_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
     fn log_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
+    fn arccos_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
+    fn arctan2_f(&mut self, y: &Self::CellRef, x: &Self::CellRef) -> Result<Self::CellRef, ProvingError>;
 
     // ── Boolean logic ─────────────────────────────────────────────────
 

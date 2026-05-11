@@ -1,17 +1,17 @@
 # Source: NPBench nbody (nbody_numpy.py)
 # Original signature: nbody(mass, pos, vel, N, Nt, dt, G, softening) — mass (N,1), pos/vel (N,3) float arrays.
 # Migration notes:
-#   - N, Nt hoisted to module-level constants. N from the "S" preset (25) shrunk to 16; NT shrunk to 4.
+#   - N, Nt hoisted to module-level constants. N from the "S" preset (25); NT = tEnd/dt = 2.0/0.05 = 40.
 #   - Helpers getAcc and getEnergy kept as plain functions (no decorator).
 #   - Uses np.hstack, np.triu, boolean mask in-place writes (inv_r3[inv_r3 > 0] = ...) — some ops may be unsupported.
 from zinnia import *
 
-N = 16
-NT = 4
+N = 25
+NT = 40
 
 
 @zk_chip
-def getAcc(pos, mass, G, softening) -> NDArray[Float, 16, 3]:
+def getAcc(pos, mass, G, softening) -> NDArray[Float, 25, 3]:
     """
     Calculate the acceleration on each particle due to Newton's Law
     pos  is an N x 3 matrix of positions
@@ -83,8 +83,8 @@ def getEnergy(pos, vel, mass, G) -> Tuple[Float, Float]:
 
 
 @zk_circuit
-def nbody(mass: NDArray[Float, 16, 1], pos: NDArray[Float, 16, 3],
-          vel: NDArray[Float, 16, 3], dt: float, G: float, softening: float):
+def nbody(mass: NDArray[Float, 25, 1], pos: NDArray[Float, 25, 3],
+          vel: NDArray[Float, 25, 3], dt: float, G: float, softening: float):
 
     # Convert to Center-of-Mass frame
     vel -= np.mean(mass * vel, axis=0) / np.mean(mass)
@@ -93,14 +93,14 @@ def nbody(mass: NDArray[Float, 16, 1], pos: NDArray[Float, 16, 3],
     acc = getAcc(pos, mass, G, softening)
 
     # calculate initial energy of system
-    KE = np.ndarray(4 + 1, dtype=np.float64)
-    PE = np.ndarray(4 + 1, dtype=np.float64)
+    KE = np.ndarray(NT + 1, dtype=np.float64)
+    PE = np.ndarray(NT + 1, dtype=np.float64)
     KE[0], PE[0] = getEnergy(pos, vel, mass, G)
 
     t = 0.0
 
     # Simulation Main Loop
-    for i in range(4):
+    for i in range(NT):
         # (1/2) kick
         vel += acc * dt / 2.0
 

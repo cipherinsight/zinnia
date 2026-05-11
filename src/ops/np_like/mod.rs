@@ -234,6 +234,91 @@ macro_rules! define_np_unary_math {
 }
 pub(crate) use define_np_unary_math;
 
+macro_rules! define_np_binary_math {
+    ($name:ident, $op_name:expr, $sig:expr, $float_method:ident) => {
+        pub struct $name;
+        impl $name {
+            const PARAMS: [crate::ops::ParamEntry; 2] = [
+                crate::ops::ParamEntry::required("x1"),
+                crate::ops::ParamEntry::required("x2"),
+            ];
+            fn apply_scalar(
+                builder: &mut crate::builder::IRBuilder,
+                a: &crate::types::Value,
+                b: &crate::types::Value,
+            ) -> crate::types::Value {
+                use crate::types::Value;
+                let af = if matches!(a, Value::Float(_)) {
+                    a.clone()
+                } else {
+                    builder.ir_float_cast(a)
+                };
+                let bf = if matches!(b, Value::Float(_)) {
+                    b.clone()
+                } else {
+                    builder.ir_float_cast(b)
+                };
+                builder.$float_method(&af, &bf)
+            }
+            fn apply(
+                builder: &mut crate::builder::IRBuilder,
+                a: &crate::types::Value,
+                b: &crate::types::Value,
+            ) -> crate::types::Value {
+                use crate::types::{CompositeData, Value};
+                let lshape = crate::helpers::composite::get_composite_shape(a);
+                let rshape = crate::helpers::composite::get_composite_shape(b);
+                if !lshape.is_empty() || !rshape.is_empty() {
+                    let target = crate::helpers::broadcast::broadcast_shapes(&lshape, &rshape)
+                        .unwrap_or_else(|| panic!(
+                            "{}: shapes {:?} and {:?} are not broadcast compatible",
+                            $sig, lshape, rshape));
+                    let l = if lshape == target {
+                        a.clone()
+                    } else {
+                        crate::helpers::broadcast::materialize_to_shape(a, &target)
+                    };
+                    let r = if rshape == target {
+                        b.clone()
+                    } else {
+                        crate::helpers::broadcast::materialize_to_shape(b, &target)
+                    };
+                    let (ld, rd) = match (&l, &r) {
+                        (Value::List(ld), Value::List(rd))
+                        | (Value::List(ld), Value::Tuple(rd))
+                        | (Value::Tuple(ld), Value::List(rd))
+                        | (Value::Tuple(ld), Value::Tuple(rd)) => (ld.clone(), rd.clone()),
+                        _ => unreachable!("composites guaranteed by shape check"),
+                    };
+                    let vals: Vec<Value> = ld
+                        .values
+                        .iter()
+                        .zip(rd.values.iter())
+                        .map(|(av, bv)| Self::apply(builder, av, bv))
+                        .collect();
+                    let types = vals.iter().map(|v| v.zinnia_type()).collect();
+                    return Value::List(CompositeData {
+                        elements_type: types,
+                        values: vals,
+                    });
+                }
+                Self::apply_scalar(builder, a, b)
+            }
+        }
+        impl crate::ops::Op for $name {
+            fn name(&self) -> &'static str { $op_name }
+            fn signature(&self) -> &'static str { $sig }
+            fn params(&self) -> &[crate::ops::ParamEntry] { &Self::PARAMS }
+            fn build(&self, builder: &mut crate::builder::IRBuilder, args: &crate::ops::OpArgs) -> crate::types::Value {
+                let x1 = args.require("x1");
+                let x2 = args.require("x2");
+                Self::apply(builder, x1, x2)
+            }
+        }
+    };
+}
+pub(crate) use define_np_binary_math;
+
 macro_rules! define_np_minmax {
     ($name:ident, $op_name:expr, $sig:expr, $int_cmp:ident, $float_cmp:ident) => {
         pub struct $name;
@@ -319,6 +404,8 @@ pub mod np_tan;
 pub mod np_sinh;
 pub mod np_cosh;
 pub mod np_tanh;
+pub mod np_arccos;
+pub mod np_arctan2;
 pub mod np_abs;
 pub mod np_absolute;
 pub mod np_fabs;
@@ -358,6 +445,8 @@ pub use np_tan::NpTanOp;
 pub use np_sinh::NpSinHOp;
 pub use np_cosh::NpCosHOp;
 pub use np_tanh::NpTanHOp;
+pub use np_arccos::NpArcCosOp;
+pub use np_arctan2::NpArcTan2Op;
 pub use np_abs::NpAbsOp;
 pub use np_absolute::NpAbsoluteOp;
 pub use np_fabs::NpFAbsOp;

@@ -5,16 +5,16 @@
 #   - NI, NJ, NK, NL, NM hoisted as module-level shape constants.
 from zinnia import *
 
-NI = 8
-NJ = 8
-NK = 8
-NL = 8
-NM = 8
+NI = 800
+NJ = 850
+NK = 900
+NL = 950
+NM = 1000
 
 
 @zk_circuit
-def k3mm(A: NDArray[Float, 8, 8],
-         B: NDArray[Float, 8, 8],
-         C: NDArray[Float, 8, 8],
-         D: NDArray[Float, 8, 8]):
+def k3mm(A: NDArray[Float, 800, 900],
+         B: NDArray[Float, 900, 850],
+         C: NDArray[Float, 850, 1000],
+         D: NDArray[Float, 1000, 950]):
     _zinnia_result = A @ B @ C @ D

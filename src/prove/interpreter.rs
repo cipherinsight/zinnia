@@ -103,6 +103,8 @@ pub fn interpret_ir<S: Synthesizer>(
             IR::SqrtF => Some(synth.sqrt_f(&args[0])?),
             IR::ExpF => Some(synth.exp_f(&args[0])?),
             IR::LogF => Some(synth.log_f(&args[0])?),
+            IR::ArcCosF => Some(synth.arccos_f(&args[0])?),
+            IR::ArcTan2F => Some(synth.arctan2_f(&args[0], &args[1])?),
 
             // ── Boolean logic ─────────────────────────────────────────
             IR::LogicalAnd => Some(synth.logical_and(&args[0], &args[1])?),

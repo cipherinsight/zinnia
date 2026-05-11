@@ -77,6 +77,8 @@ pub enum IR {
     SqrtF,
     ExpF,
     LogF,
+    ArcCosF,
+    ArcTan2F,
 
     // ── Logical ───────────────────────────────────────────────────────
     LogicalAnd,
@@ -266,6 +268,8 @@ impl IR {
             IR::SqrtF => "sqrt_f".to_string(),
             IR::ExpF => "exp_f".to_string(),
             IR::LogF => "log_f".to_string(),
+            IR::ArcCosF => "arccos_f".to_string(),
+            IR::ArcTan2F => "arctan2_f".to_string(),
 
             // Logical
             IR::LogicalAnd => "logical_and".to_string(),
@@ -470,6 +474,8 @@ impl IR {
             IR::SqrtF => "SqrtFIR",
             IR::ExpF => "ExpFIR",
             IR::LogF => "LogFIR",
+            IR::ArcCosF => "ArcCosFIR",
+            IR::ArcTan2F => "ArcTan2FIR",
             IR::LogicalAnd => "LogicalAndIR",
             IR::LogicalOr => "LogicalOrIR",
             IR::LogicalNot => "LogicalNotIR",
@@ -697,6 +703,8 @@ impl IR {
             "SqrtFIR" => Ok(IR::SqrtF),
             "ExpFIR" => Ok(IR::ExpF),
             "LogFIR" => Ok(IR::LogF),
+            "ArcCosFIR" => Ok(IR::ArcCosF),
+            "ArcTan2FIR" => Ok(IR::ArcTan2F),
 
             "LogicalAndIR" => Ok(IR::LogicalAnd),
             "LogicalOrIR" => Ok(IR::LogicalOr),

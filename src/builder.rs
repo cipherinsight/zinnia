@@ -304,6 +304,11 @@ impl IRBuilder {
         ir_sqrt_f => IR::SqrtF,
         ir_exp_f  => IR::ExpF,
         ir_log_f  => IR::LogF,
+        ir_arccos_f => IR::ArcCosF,
+    );
+
+    ir_binary!(
+        ir_arctan2_f => IR::ArcTan2F,
     );
 
     // Assert & expose
@@ -548,6 +553,8 @@ fn build_ir(ir: &IR, ir_id: StmtId, args: &[Value]) -> (Value, IRStatement) {
         IR::SqrtF => float_unary_ir(ir, ir_id, args, |a| a.sqrt()),
         IR::ExpF => float_unary_ir(ir, ir_id, args, |a| a.exp()),
         IR::LogF => float_unary_ir(ir, ir_id, args, |a| a.ln()),
+        IR::ArcCosF => float_unary_ir(ir, ir_id, args, |a| a.acos()),
+        IR::ArcTan2F => float_binary_ir(ir, ir_id, args, |a, b| a.atan2(b)),
 
         // ── Logical ───────────────────────────────────────────────
         IR::LogicalAnd => {

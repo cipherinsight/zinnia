@@ -219,6 +219,8 @@ impl<'a> Preprocessor<'a> {
             IR::SqrtF => Ok(Some(kernel::fp_sqrt(args[0], prec))),
             IR::ExpF => Ok(Some(kernel::fp_exp(args[0], prec))),
             IR::LogF => Ok(Some(kernel::fp_log(args[0], prec))),
+            IR::ArcCosF => Ok(Some(kernel::fp_arccos(args[0], prec))),
+            IR::ArcTan2F => Ok(Some(kernel::fp_atan2(args[0], args[1], prec))),
 
             // Logic
             IR::LogicalAnd => Ok(Some(if args[0] != Fp::zero() && args[1] != Fp::zero() { Fp::one() } else { Fp::zero() })),

@@ -7,26 +7,22 @@ import random
 from functools import reduce
 
 
-@zk_chip
-def calculateCentroid(cluster) -> List[Float]:
+def calculateCentroid(cluster):
     reduce_coord = lambda i: reduce(lambda x, p: x + p[i], cluster, 0.0)
     centroid_coords = [reduce_coord(i) / len(cluster) for i in range(len(cluster[0]))]
     return centroid_coords
 
 
-@zk_chip
-def getDistance(a, b) -> Float:
+def getDistance(a, b):
     ret = reduce(lambda x, y: x + pow((a[y] - b[y]), 2), range(len(a)), 0.0)
     return math.sqrt(ret)
 
 
-@zk_chip
-def makeRandomPoint(n, lower, upper) -> List[Float]:
+def makeRandomPoint(n, lower, upper):
     return [random.uniform(lower, upper) for i in range(n)]
 
 
-@zk_chip
-def kmeans(points, k, cutoff) -> List[List[Float]]:
+def kmeans(points, k, cutoff):
     initial = random.sample(points, k)
     clusters = [[p] for p in initial]
     centroids = [calculateCentroid(c) for c in clusters]

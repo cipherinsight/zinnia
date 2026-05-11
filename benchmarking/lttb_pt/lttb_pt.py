@@ -5,7 +5,8 @@ from zinnia import *
 N = 64
 
 
-def _areas_of_triangles(a, bs, c):
+@zk_chip
+def _areas_of_triangles(a, bs, c) -> NDArray[Float, 64]:
     bs_minus_a = bs - a
     a_minus_bs = a - bs
     return 0.5 * abs(

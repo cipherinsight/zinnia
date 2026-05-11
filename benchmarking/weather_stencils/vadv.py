@@ -2,13 +2,13 @@
 # Original signature: vadv(utens_stage, u_stage, wcon, u_pos, utens, dtr_stage) —
 #   utens_stage, u_stage, u_pos, utens are (I, J, K); wcon is (I+1, J, K); dtr_stage is a float scalar.
 # Migration notes:
-#   - I, J, K hoisted to module-level constants; from "S" preset (I=J=60, K=40) shrunk to I=J=K=8.
+#   - I, J, K hoisted to module-level constants; from "S" preset (I=J=60, K=40).
 #   - BET_M, BET_P kept as module-level constants (matches the original).
 from zinnia import *
 
-I = 8
-J = 8
-K = 8
+I = 60
+J = 60
+K = 40
 
 # Sample constants
 BET_M = 0.5
@@ -16,11 +16,11 @@ BET_P = 0.5
 
 
 @zk_circuit
-def vadv(utens_stage: NDArray[Float, 8, 8, 8],
-         u_stage: NDArray[Float, 8, 8, 8],
-         wcon: NDArray[Float, 9, 8, 8],
-         u_pos: NDArray[Float, 8, 8, 8],
-         utens: NDArray[Float, 8, 8, 8],
+def vadv(utens_stage: NDArray[Float, 60, 60, 40],
+         u_stage: NDArray[Float, 60, 60, 40],
+         wcon: NDArray[Float, 61, 60, 40],
+         u_pos: NDArray[Float, 60, 60, 40],
+         utens: NDArray[Float, 60, 60, 40],
          dtr_stage: float):
     I, J, K = utens_stage.shape[0], utens_stage.shape[1], utens_stage.shape[2]
     ccol = np.ndarray((I, J, K), dtype=utens_stage.dtype)

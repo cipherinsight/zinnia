@@ -4,10 +4,10 @@
 #   - M, N hoisted as module-level shape constants.
 from zinnia import *
 
-M = 8
-N = 8
+M = 4000
+N = 5000
 
 
 @zk_circuit
-def bicg(A: NDArray[Float, 8, 8], p: NDArray[Float, 8], r: NDArray[Float, 8]):
+def bicg(A: NDArray[Float, 5000, 4000], p: NDArray[Float, 4000], r: NDArray[Float, 5000]):
     _zinnia_result = r @ A, A @ p

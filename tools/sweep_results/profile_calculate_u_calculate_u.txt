@@ -1,0 +1,42 @@
+benchmark: benchmarking/calculate_u/calculate_u.py
+timed_out: False
+wall_clock_s: 10.44
+smt_timeout_ms_env: (unset, default=500)
+--- stdout ---
+PASS elapsed=10.07s
+
+--- stderr ---
+[zinnia-smt] log_enabled=true smt_enable=true timeout_ms=100
+[zinnia-smt] AST→IR phase SmtTelemetry summary:
+  queries_total                = 1000
+  queries_static_val_hit       = 0
+  queries_range_hit            = 0
+  queries_smt_resolved         = 0
+  queries_smt_unknown          = 683
+  queries_smt_timeout          = 1
+  queries_cache_hit            = 0 (0.0%)
+  queries_skipped_disabled     = 0
+  queries_skipped_oversized    = 317
+  total_time_in_smt_ms         = 2693.4
+  total_time_in_range_ms       = 0.4
+  largest_formula_size         = 4097
+  cache_size_at_end            = 0
+  assertions_eliminated_const  = 0
+  assertions_eliminated_solver = 0
+  assertions_provably_false    = 0
+  recursion_bound_static_val   = 0
+  recursion_bound_resolver     = 0
+  recursion_no_measure_found   = 0
+  smt_duration_histogram:
+           0..=1µs: 0
+        1µs..=10µs: 0
+       10µs..=100µs: 0
+      100µs..=1ms: 174
+        1ms..=10ms: 825
+       10ms..=100ms: 0
+      100ms..=1s: 1
+          >1s: 0
+  smt_p95_bucket               = 4 (1ms..=10ms)
+
+[zinnia-smt] optim phase: no telemetry handle (default)
+  compiled timeloop in 9.99s

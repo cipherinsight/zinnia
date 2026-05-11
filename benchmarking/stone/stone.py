@@ -4,7 +4,8 @@ from zinnia import *
 from math import sin as DSIN, cos as DCOS, atan as DATAN, log as DLOG, exp as DEXP, sqrt as DSQRT
 
 
-def PA(E, T, T2):
+@zk_chip
+def PA(E, T, T2) -> None:
     J = 0
     while J < 6:
         E[0] = (E[0] + E[1] + E[2] - E[3]) * T
@@ -14,13 +15,15 @@ def PA(E, T, T2):
         J += 1
 
 
-def P0(E1, J, K, L):
+@zk_chip
+def P0(E1, J, K, L) -> None:
     E1[J - 1] = E1[K - 1]
     E1[K - 1] = E1[L - 1]
     E1[L - 1] = E1[J - 1]
 
 
-def P3(X, Y, T, T2):
+@zk_chip
+def P3(X, Y, T, T2) -> Float:
     X1 = X
     Y1 = Y
     X1 = T * (X1 + Y1)

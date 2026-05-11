@@ -1,0 +1,39 @@
+benchmark: benchmarking/_histogram/_histogram.py
+timed_out: False
+wall_clock_s: 0.06
+smt_timeout_ms_env: (unset, default=500)
+--- stdout ---
+
+--- stderr ---
+
+thread '<unnamed>' (75691885) panicked at src/ir_gen/named_attr.rs:1386:17:
+Named attribute `weights.ravel` not yet implemented in Rust IR generator
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+Traceback (most recent call last):
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/api/zk_circuit.py", line 139, in compile
+    self.program = ZinniaCompiler(self.config).compile(
+                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self.source, self.name,
+        ^^^^^^^^^^^^^^^^^^^^^^^
+        {k: v.to_internal_object() for k, v in self.chips.items()},
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        {k: v.to_internal_object() for k, v in self.externals.items()},
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/compile/zinnia_compiler.py", line 64, in compile
+    compiled_ir = compile_circuit(
+        json.dumps(ast_dict), json.dumps(config_dict),
+        json.dumps(chips_dict), json.dumps(externals_dict),
+    )
+pyo3_runtime.PanicException: Named attribute `weights.ravel` not yet implemented in Rust IR generator
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<string>", line 28, in <module>
+    circuit.compile()
+    ~~~~~~~~~~~~~~~^^
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/api/zk_circuit.py", line 152, in compile
+    raise ZinniaException(str(e))
+zinnia.debug.exception.base.ZinniaException: Named attribute `weights.ravel` not yet implemented in Rust IR generator

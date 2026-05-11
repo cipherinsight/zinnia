@@ -1,0 +1,49 @@
+benchmark: benchmarking/arc_distance_list/arc_distance_list.py
+timed_out: False
+wall_clock_s: 0.07
+smt_timeout_ms_env: (unset, default=500)
+--- stdout ---
+
+--- stderr ---
+Traceback (most recent call last):
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/api/zk_circuit.py", line 139, in compile
+    self.program = ZinniaCompiler(self.config).compile(
+                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self.source, self.name,
+        ^^^^^^^^^^^^^^^^^^^^^^^
+        {k: v.to_internal_object() for k, v in self.chips.items()},
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        {k: v.to_internal_object() for k, v in self.externals.items()},
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/compile/zinnia_compiler.py", line 32, in compile
+    ast_dict = transformer.visit(python_ast.body[0])
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/compile/transformer/base.py", line 147, in visit
+    return self.visit_FunctionDef(node)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/compile/transformer/circuit.py", line 26, in visit_FunctionDef
+    args = self.visit_arguments(node.args)
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/compile/transformer/circuit.py", line 38, in visit_arguments
+    annotation = self.visit_annotation(arg.annotation, name)
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/compile/transformer/base.py", line 723, in visit_annotation
+    return {"kind": kind, "dt": _inner_parser(node)}
+                                ~~~~~~~~~~~~~^^^^^^
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/compile/transformer/base.py", line 689, in _inner_parser
+    return make_type_dict(self.get_dbg(_n), _n.id)
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/compile/transformer/base.py", line 67, in make_type_dict
+    raise InvalidAnnotationException(dbg, "List requires at least 1 argument.")
+zinnia.debug.exception.transforming.InvalidAnnotationException: List requires at least 1 argument.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<string>", line 28, in <module>
+    circuit.compile()
+    ~~~~~~~~~~~~~~~^^
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/api/zk_circuit.py", line 145, in compile
+    raise prettify_exception(e)
+zinnia.debug.exception.base.ZinniaException:   In method "arc_distance_list", line 2
+    def arc_distance_list(a: list, b: list):
+                             ^^^^
+InvalidAnnotationException: List requires at least 1 argument.

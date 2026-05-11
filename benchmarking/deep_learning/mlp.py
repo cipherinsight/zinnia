@@ -2,15 +2,15 @@
 # Original signature: mlp(input, w1, b1, w2, b2, w3, b3) — input (N, C_in); weights wi/biases bi.
 # Migration notes:
 #   - C_in, N, S0, S1, S2 hoisted to module-level constants.
-#   - From "S" preset (C_in=3, N=8, S0=30000, S1=2000, S2=2000) shrunk to S0=S1=S2=16 for tractability.
+#   - From "S" preset (C_in=3, N=8, S0=30000, S1=2000, S2=2000).
 #   - Helpers (relu, softmax) kept as plain functions (no decorator).
 from zinnia import *
 
 C_IN = 3
 N = 8
-S0 = 16
-S1 = 16
-S2 = 16
+S0 = 30000
+S1 = 2000
+S2 = 2000
 
 
 @zk_chip
@@ -30,9 +30,9 @@ def softmax(x) -> NDArray[Float, 1]:
 # 3-layer MLP
 @zk_circuit
 def mlp(input: NDArray[Float, 8, 3],
-        w1: NDArray[Float, 3, 16], b1: NDArray[Float, 16],
-        w2: NDArray[Float, 16, 16], b2: NDArray[Float, 16],
-        w3: NDArray[Float, 16, 16], b3: NDArray[Float, 16]):
+        w1: NDArray[Float, 3, 30000], b1: NDArray[Float, 30000],
+        w2: NDArray[Float, 30000, 2000], b2: NDArray[Float, 2000],
+        w3: NDArray[Float, 2000, 2000], b3: NDArray[Float, 2000]):
     x = relu(input @ w1 + b1)
     x = relu(x @ w2 + b2)
     x = softmax(x @ w3 + b3)  # Softmax call can be omitted if necessary

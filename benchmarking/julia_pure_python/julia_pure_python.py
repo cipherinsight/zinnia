@@ -1,7 +1,7 @@
 # Source: Pythran tests/cases/julia_pure_python.py
 # Original #pythran export: compute_julia(float, float, int, float?, float?, int?)
-# Migration notes: time() call removed; defaults preserved.
 from zinnia import *
+from time import time
 
 
 def kernel(zr, zi, cr, ci, lim, cutoff):
@@ -16,7 +16,8 @@ def kernel(zr, zi, cr, ci, lim, cutoff):
 def compute_julia(cr: float, ci: float, N: int, bound: float = 1.5, lim: float = 1000., cutoff: int = 1000000):
     julia = np.empty((N, N), np.uint32)
     grid_x = np.linspace(-bound, bound, N)
+    t0 = time()
     for i, x in enumerate(grid_x):
         for j, y in enumerate(grid_x):
             julia[i, j] = kernel(x, y, cr, ci, lim, cutoff)
-    _zinnia_result = julia
+    _zinnia_result = julia, time() - t0

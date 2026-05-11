@@ -3,7 +3,8 @@
 from zinnia import *
 
 
-def physics(masspoints, dt, plunk, which):
+@zk_chip
+def physics(masspoints, dt, plunk, which) -> None:
     ppos = masspoints[1]
     cpos = masspoints[0]
     N = cpos.shape[0]

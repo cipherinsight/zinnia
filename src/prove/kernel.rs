@@ -55,6 +55,28 @@ pub const LOG2_COEFS: [f64; 15] = [
     -3.1937385492842112,
 ];
 
+/// atan(x) on [-1, 1], degree 15 (Chebyshev least-squares fit).
+/// Max absolute error ≈ 4.3e-8 over the input range.
+/// Even-indexed coefficients are near-zero (atan is odd).
+pub const ATAN_COEFS: [f64; 16] = [
+    3.8945708106325862e-17,
+    9.9999924908801763e-01,
+    -9.0995364618408146e-16,
+    -3.3329538038525558e-01,
+    2.0198596716501640e-14,
+    1.9943081188176748e-01,
+    -1.3380112780080282e-13,
+    -1.3892041201045824e-01,
+    4.0128381341663972e-13,
+    9.6016563957688830e-02,
+    -6.0766088433310415e-13,
+    -5.5381697876382932e-02,
+    4.5616807587830846e-13,
+    2.1509254247070526e-02,
+    -1.3555701190010715e-13,
+    -3.9602572342678811e-03,
+];
+
 /// sin(x) on [0, pi), degree 14.
 pub const SIN_COEFS: [f64; 15] = [
     -1.1008071636607462e-11,
@@ -333,6 +355,19 @@ pub fn fp_tanh(x: Fp, precision_bits: u32) -> Fp {
     let s = fp_sinh(x, precision_bits);
     let c = fp_cosh(x, precision_bits);
     fp_div_prescale(s, c, precision_bits)
+}
+
+/// Compute atan2(y, x) using native f64 math on the dequantized values.
+pub fn fp_atan2(y: Fp, x: Fp, precision_bits: u32) -> Fp {
+    let yv = dequantize_from_fp(y, precision_bits);
+    let xv = dequantize_from_fp(x, precision_bits);
+    quantize_to_fp(yv.atan2(xv), precision_bits)
+}
+
+/// Compute arccos(x) using native f64 math on the dequantized value.
+pub fn fp_arccos(x: Fp, precision_bits: u32) -> Fp {
+    let v = dequantize_from_fp(x, precision_bits);
+    quantize_to_fp(v.acos(), precision_bits)
 }
 
 /// Simplified Poseidon permutation (4 rounds, t=3).

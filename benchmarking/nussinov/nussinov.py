@@ -6,7 +6,7 @@
 #     may or may not be supported; left as-is per "do not rewrite the algorithm").
 from zinnia import *
 
-N = 16
+N = 40
 
 
 @zk_chip
@@ -18,16 +18,16 @@ def match(b1, b2) -> Integer:
 
 
 @zk_circuit
-def nussinov(seq: NDArray[Integer, 16]):
-    table = np.zeros((16, 16), np.int32)
+def nussinov(seq: NDArray[Integer, 40]):
+    table = np.zeros((N, N), np.int32)
 
-    for i in range(16 - 1, -1, -1):
-        for j in range(i + 1, 16):
+    for i in range(N - 1, -1, -1):
+        for j in range(i + 1, N):
             if j - 1 >= 0:
                 table[i, j] = max(table[i, j], table[i, j - 1])
-            if i + 1 < 16:
+            if i + 1 < N:
                 table[i, j] = max(table[i, j], table[i + 1, j])
-            if j - 1 >= 0 and i + 1 < 16:
+            if j - 1 >= 0 and i + 1 < N:
                 if i < j - 1:
                     table[i,
                           j] = max(table[i, j],

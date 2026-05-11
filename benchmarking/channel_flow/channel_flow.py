@@ -1,17 +1,17 @@
 # Source: NPBench channel_flow (channel_flow_numpy.py)
 # Original signature: channel_flow(nit, u, v, dt, dx, dy, p, rho, nu, F) — u, v, p are (ny, nx) float arrays.
 # Migration notes:
-#   - nit hoisted to a module-level constant; NX, NY from the "S" preset (61) shrunk to 16; NIT shrunk to 2.
+#   - nit hoisted to a module-level constant; NX, NY from the "S" preset (61); NIT=5.
 #   - Helpers build_up_b and pressure_poisson_periodic kept as plain functions (no decorator).
 from zinnia import *
 
-NX = 16
-NY = 16
-NIT = 2
+NX = 61
+NY = 61
+NIT = 5
 
 
 @zk_chip
-def build_up_b(rho, dt, dx, dy, u, v) -> NDArray[Float, 16, 16]:
+def build_up_b(rho, dt, dx, dy, u, v) -> NDArray[Float, 61, 61]:
     b = np.zeros_like(u)
     b[1:-1,
       1:-1] = (rho * (1 / dt * ((u[1:-1, 2:] - u[1:-1, 0:-2]) / (2 * dx) +
@@ -69,8 +69,8 @@ def pressure_poisson_periodic(p, dx, dy, b) -> None:
 
 
 @zk_circuit
-def channel_flow(u: NDArray[Float, 16, 16], v: NDArray[Float, 16, 16],
-                 p: NDArray[Float, 16, 16],
+def channel_flow(u: NDArray[Float, 61, 61], v: NDArray[Float, 61, 61],
+                 p: NDArray[Float, 61, 61],
                  dt: float, dx: float, dy: float, rho: float, nu: float, F: float):
     udiff = 1
     stepcount = 0

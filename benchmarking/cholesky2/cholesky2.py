@@ -6,9 +6,9 @@
 #     but recipe says copy verbatim (failures are interesting data).
 from zinnia import *
 
-N = 8
+N = 1000
 
 
 @zk_circuit
-def cholesky2(A: NDArray[Float, 8, 8]):
+def cholesky2(A: NDArray[Float, 1000, 1000]):
     A[:] = np.linalg.cholesky(A) + np.triu(A, k=1)

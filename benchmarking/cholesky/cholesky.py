@@ -5,13 +5,13 @@
 #   - Body uses A.shape[0] which we replace with N for static loop bounds.
 from zinnia import *
 
-N = 8
+N = 100
 
 
 @zk_circuit
-def cholesky(A: NDArray[Float, 8, 8]):
+def cholesky(A: NDArray[Float, 100, 100]):
     A[0, 0] = np.sqrt(A[0, 0])
-    for i in range(1, 8):
+    for i in range(1, N):
         for j in range(i):
             A[i, j] -= np.dot(A[i, :j], A[j, :j])
             A[i, j] /= A[j, j]

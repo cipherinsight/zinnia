@@ -3,21 +3,21 @@
 #   input (N, H, W, C_in), weights (K, K, C_in, C_out), bias (C_out,) float arrays.
 # Migration notes:
 #   - All shape params (N, H, W, K, C_in, C_out) hoisted to module-level constants.
-#   - From "S" preset (N=8, C_in=3, C_out=16, K=2, H=W=32) shrunk to H=W=16, C_out=8 (others fit).
+#   - From "S" preset (N=8, C_in=3, C_out=16, K=2, H=W=32).
 #   - Helper conv2d kept as a plain function (no decorator).
 from zinnia import *
 
 N = 8
-H = 16
-W = 16
+H = 32
+W = 32
 K = 2
 C_IN = 3
-C_OUT = 8
+C_OUT = 16
 
 
 # Deep learning convolutional operator (stride = 1)
 @zk_chip
-def conv2d(input, weights) -> NDArray[Float, 8, 15, 15, 8]:
+def conv2d(input, weights) -> NDArray[Float, 8, 31, 31, 16]:
     K = weights.shape[0]  # Assuming square kernel
     N = input.shape[0]
     H_out = input.shape[1] - K + 1
@@ -38,7 +38,7 @@ def conv2d(input, weights) -> NDArray[Float, 8, 15, 15, 8]:
 
 
 @zk_circuit
-def conv2d_bias(input: NDArray[Float, 8, 16, 16, 3],
-                weights: NDArray[Float, 2, 2, 3, 8],
-                bias: NDArray[Float, 8]):
+def conv2d_bias(input: NDArray[Float, 8, 32, 32, 3],
+                weights: NDArray[Float, 2, 2, 3, 16],
+                bias: NDArray[Float, 16]):
     _zinnia_result = conv2d(input, weights) + bias

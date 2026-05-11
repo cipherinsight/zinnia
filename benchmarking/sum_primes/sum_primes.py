@@ -4,7 +4,8 @@ from zinnia import *
 import math
 
 
-def isprime(n):
+@zk_chip
+def isprime(n) -> Boolean:
     if n < 2:
         return False
     if n == 2:

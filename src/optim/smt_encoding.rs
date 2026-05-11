@@ -282,7 +282,8 @@ impl IROp for IR {
 
             // ── Math (transcendental) — silent fallback ────────────────
             IR::SinF | IR::SinHF | IR::CosF | IR::CosHF
-            | IR::TanF | IR::TanHF | IR::SqrtF | IR::ExpF | IR::LogF => {
+            | IR::TanF | IR::TanHF | IR::SqrtF | IR::ExpF | IR::LogF
+            | IR::ArcCosF | IR::ArcTan2F => {
                 let _ = args;
                 ctx.fresh_unconstrained()
             }

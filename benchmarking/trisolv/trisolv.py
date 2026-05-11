@@ -5,12 +5,12 @@
 #   - x.shape[0] replaced with N for static loop bound.
 from zinnia import *
 
-N = 16
+N = 2000
 
 
 @zk_circuit
-def trisolv(L: NDArray[Float, 16, 16],
-            x: NDArray[Float, 16],
-            b: NDArray[Float, 16]):
-    for i in range(16):
+def trisolv(L: NDArray[Float, 2000, 2000],
+            x: NDArray[Float, 2000],
+            b: NDArray[Float, 2000]):
+    for i in range(N):
         x[i] = (b[i] - L[i, :i] @ x[:i]) / L[i, i]

@@ -1,0 +1,42 @@
+benchmark: benchmarking/build_system/build_system.py
+timed_out: False
+wall_clock_s: 0.14
+smt_timeout_ms_env: (unset, default=500)
+--- stdout ---
+
+--- stderr ---
+Traceback (most recent call last):
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/api/zk_circuit.py", line 139, in compile
+    self.program = ZinniaCompiler(self.config).compile(
+                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self.source, self.name,
+        ^^^^^^^^^^^^^^^^^^^^^^^
+        {k: v.to_internal_object() for k, v in self.chips.items()},
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        {k: v.to_internal_object() for k, v in self.externals.items()},
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/compile/zinnia_compiler.py", line 32, in compile
+    ast_dict = transformer.visit(python_ast.body[0])
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/compile/transformer/base.py", line 147, in visit
+    return self.visit_FunctionDef(node)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/compile/transformer/circuit.py", line 26, in visit_FunctionDef
+    args = self.visit_arguments(node.args)
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/compile/transformer/circuit.py", line 37, in visit_arguments
+    raise InvalidCircuitInputException(dbg, "Circuit input must be annotated, e.g. `x: Public[Integer]` or `x: Private[Float]` or `x: Integer`.")
+zinnia.debug.exception.transforming.InvalidCircuitInputException: Circuit input must be annotated, e.g. `x: Public[Integer]` or `x: Private[Float]` or `x: Integer`.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<string>", line 28, in <module>
+    circuit.compile()
+    ~~~~~~~~~~~~~~~^^
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/api/zk_circuit.py", line 145, in compile
+    raise prettify_exception(e)
+zinnia.debug.exception.base.ZinniaException:   In method "build_system", line 2
+    def build_system(x: NDArray[Float, 8, 4], y: NDArray[Float, 8, 4], powers: NDArray[Integer, 4, 4], xp):
+                                                                                                       ^^
+InvalidCircuitInputException: Circuit input must be annotated, e.g. `x: Public[Integer]` or `x: Private[Float]` or `x: Integer`.

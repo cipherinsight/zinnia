@@ -4,11 +4,13 @@ from zinnia import *
 import math
 
 
-def _cross_product(x0, y0, x1, y1, x2, y2):
+@zk_chip
+def _cross_product(x0, y0, x1, y1, x2, y2) -> Float:
     return (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0)
 
 
-def make_circumcircle(a, b, c):
+@zk_chip
+def make_circumcircle(a, b, c) -> Tuple[Float, Float, Float]:
     ox = (min(a[0], b[0], c[0]) + max(a[0], b[0], c[0])) / 2.0
     oy = (min(a[1], b[1], c[1]) + max(a[1], b[1], c[1])) / 2.0
     ax = a[0] - ox; ay = a[1] - oy
@@ -25,7 +27,8 @@ def make_circumcircle(a, b, c):
     return (x, y, max(ra, rb, rc))
 
 
-def make_diameter(a, b):
+@zk_chip
+def make_diameter(a, b) -> Tuple[Float, Float, Float]:
     cx = (a[0] + b[0]) / 2.0
     cy = (a[1] + b[1]) / 2.0
     r0 = math.hypot(cx - a[0], cy - a[1])
@@ -33,7 +36,8 @@ def make_diameter(a, b):
     return (cx, cy, max(r0, r1))
 
 
-def is_in_circle(c, p):
+@zk_chip
+def is_in_circle(c, p) -> Boolean:
     return math.hypot(p[0] - c[0], p[1] - c[1]) <= c[2] * (1 + 1e-14)
 
 

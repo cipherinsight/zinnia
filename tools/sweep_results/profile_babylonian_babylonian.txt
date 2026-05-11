@@ -1,0 +1,47 @@
+benchmark: benchmarking/babylonian/babylonian.py
+timed_out: False
+wall_clock_s: 0.23
+smt_timeout_ms_env: (unset, default=500)
+--- stdout ---
+
+--- stderr ---
+Traceback (most recent call last):
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/api/zk_circuit.py", line 139, in compile
+    self.program = ZinniaCompiler(self.config).compile(
+                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self.source, self.name,
+        ^^^^^^^^^^^^^^^^^^^^^^^
+        {k: v.to_internal_object() for k, v in self.chips.items()},
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        {k: v.to_internal_object() for k, v in self.externals.items()},
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/compile/zinnia_compiler.py", line 32, in compile
+    ast_dict = transformer.visit(python_ast.body[0])
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/compile/transformer/base.py", line 147, in visit
+    return self.visit_FunctionDef(node)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/compile/transformer/circuit.py", line 29, in visit_FunctionDef
+    return {"__class__": "ASTCircuit", "block": self.visit_block(node.body), "inputs": args}
+                                                ~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/compile/transformer/base.py", line 587, in visit_block
+    parsed_stmt = self.visit_Assign(stmt)
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/compile/transformer/base.py", line 381, in visit_Assign
+    expr = self.visit_expr(node.value)
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/compile/transformer/base.py", line 670, in visit_expr
+    raise UnsupportedLangFeatureException(dbg_info, f"Expression transformation rule for {type(node)} is not implemented.")
+zinnia.debug.exception.transforming.UnsupportedLangFeatureException: Expression transformation rule for <class 'ast.Set'> is not implemented.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<string>", line 28, in <module>
+    circuit.compile()
+    ~~~~~~~~~~~~~~~^^
+  File "/Users/zhantong/Projects/zinnia-project/zinnia-src/zinnia/api/zk_circuit.py", line 145, in compile
+    raise prettify_exception(e)
+zinnia.debug.exception.base.ZinniaException:   In method "is_square", line 4
+        seen = {x}
+               ^^^
+UnsupportedLangFeatureException: Expression transformation rule for <class 'ast.Set'> is not implemented.

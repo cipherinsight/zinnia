@@ -6,7 +6,8 @@ M = 4
 N = 4
 
 
-def sigmoid(z):
+@zk_chip
+def sigmoid(z) -> Float:
     return 1 / (1 + np.exp(-z))
 
 

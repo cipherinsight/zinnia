@@ -16,8 +16,9 @@
 //! returns, so the summary is consistent w.r.t. the "first Some wins" layered
 //! semantics.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// Number of histogram buckets for SMT query durations.
@@ -107,6 +108,18 @@ pub struct SmtTelemetry {
     /// heuristic needs a user-side `# zinnia: recursion_measure=...`
     /// pragma escape hatch.
     pub recursion_no_measure_found: AtomicUsize,
+
+    // -- Per-chokepoint telemetry (item #7 of smt-invocation-load-bearing) -
+    /// Per-`SiteKind` invocation counts. Bumped by `require_static_int`
+    /// and `probe_in_range` (the new dyn-index chokepoint), tagged by
+    /// `SiteKind::short_name()`. The bool tracks whether the chokepoint
+    /// reached the SMT layer (i.e. the global `queries_smt_resolved` or
+    /// `queries_smt_unknown` counter was bumped while the chokepoint was
+    /// active). The two maps together give attribution: which sites are
+    /// hot, and which of those actually engage SMT.
+    pub chokepoint_invocations: Mutex<HashMap<&'static str, u64>>,
+    pub chokepoint_smt_engagements: Mutex<HashMap<&'static str, u64>>,
+    pub chokepoint_resolved: Mutex<HashMap<&'static str, u64>>,
 }
 
 impl SmtTelemetry {
@@ -139,6 +152,30 @@ impl SmtTelemetry {
     /// Snapshot a final cache occupancy.
     pub fn note_cache_size(&self, size: usize) {
         self.cache_size_at_end.store(size, Ordering::Relaxed);
+    }
+
+    /// Record one chokepoint invocation, tagged by `SiteKind::short_name()`.
+    /// Item #7 of the smt-invocation-load-bearing card.
+    pub fn record_chokepoint_invocation(&self, site_name: &'static str) {
+        let mut map = self.chokepoint_invocations.lock().unwrap();
+        *map.entry(site_name).or_insert(0) += 1;
+    }
+
+    /// Record that the chokepoint reached the SMT layer (the delta in
+    /// `queries_smt_resolved + queries_smt_unknown` was > 0). Called by
+    /// `require_static_int` / `probe_in_range` after they capture before /
+    /// after counts around the resolver query.
+    pub fn record_chokepoint_smt_engagement(&self, site_name: &'static str) {
+        let mut map = self.chokepoint_smt_engagements.lock().unwrap();
+        *map.entry(site_name).or_insert(0) += 1;
+    }
+
+    /// Record that the chokepoint successfully resolved the value (any
+    /// layer — static_val / range / SMT). Bumped when the resolver
+    /// returned `Some`.
+    pub fn record_chokepoint_resolved(&self, site_name: &'static str) {
+        let mut map = self.chokepoint_resolved.lock().unwrap();
+        *map.entry(site_name).or_insert(0) += 1;
     }
 
     /// Human-readable dump for stderr at end of compilation.
@@ -229,6 +266,25 @@ impl SmtTelemetry {
             }
             s.push_str(&format!("  smt_p95_bucket               = {} ({})\n",
                                 p95_bucket, labels[p95_bucket].trim()));
+        }
+
+        // Per-chokepoint breakdown.
+        let invocations = self.chokepoint_invocations.lock().unwrap();
+        let engagements = self.chokepoint_smt_engagements.lock().unwrap();
+        let resolved = self.chokepoint_resolved.lock().unwrap();
+        if !invocations.is_empty() {
+            s.push_str("  chokepoint_breakdown:\n");
+            let mut keys: Vec<_> = invocations.keys().collect();
+            keys.sort();
+            for k in keys {
+                let n = invocations.get(k).copied().unwrap_or(0);
+                let e = engagements.get(k).copied().unwrap_or(0);
+                let r = resolved.get(k).copied().unwrap_or(0);
+                s.push_str(&format!(
+                    "    {:32}invocations={} resolved={} smt_engaged={}\n",
+                    k, n, r, e
+                ));
+            }
         }
 
         s

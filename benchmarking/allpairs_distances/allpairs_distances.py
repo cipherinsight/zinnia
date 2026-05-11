@@ -3,7 +3,8 @@
 from zinnia import *
 
 
-def dists(X, Y):
+@zk_chip
+def dists(X, Y) -> NDArray[Float, 200, 600]:
     return np.array([[np.sum((x - y) ** 2) for x in X] for y in Y])
 
 

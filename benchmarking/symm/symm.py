@@ -6,19 +6,19 @@
 #   - C.shape[0]/[1] replaced with M, N for static loop bounds.
 from zinnia import *
 
-M = 8
-N = 8
+M = 40
+N = 50
 
 
 @zk_circuit
 def symm(alpha: float, beta: float,
-         C: NDArray[Float, 8, 8],
-         A: NDArray[Float, 8, 8],
-         B: NDArray[Float, 8, 8]):
-    temp2 = np.empty((8,), dtype=C.dtype)
+         C: NDArray[Float, 40, 50],
+         A: NDArray[Float, 40, 40],
+         B: NDArray[Float, 40, 50]):
+    temp2 = np.empty((N,), dtype=C.dtype)
     C *= beta
-    for i in range(8):
-        for j in range(8):
+    for i in range(M):
+        for j in range(N):
             C[:i, j] += alpha * B[i, j] * A[i, :i]
             temp2[j] = B[:i, j] @ A[i, :i]
         C[i, :] += alpha * B[i, :] * A[i, i] + alpha * temp2

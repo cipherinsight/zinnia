@@ -3,7 +3,8 @@
 from zinnia import *
 
 
-def update(u):
+@zk_chip
+def update(u) -> None:
     dx = 0.1
     dy = 0.1
     dx2 = dx * dx

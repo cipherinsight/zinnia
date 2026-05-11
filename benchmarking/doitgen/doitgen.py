@@ -4,11 +4,11 @@
 #   - NR, NQ, NP hoisted as module-level shape constants.
 from zinnia import *
 
-NR = 8
-NQ = 8
-NP = 8
+NR = 60
+NQ = 60
+NP = 128
 
 
 @zk_circuit
-def doitgen(A: NDArray[Float, 8, 8, 8], C4: NDArray[Float, 8, 8]):
-    A[:] = np.reshape(np.reshape(A, (8, 8, 1, 8)) @ C4, (8, 8, 8))
+def doitgen(A: NDArray[Float, 60, 60, 128], C4: NDArray[Float, 128, 128]):
+    A[:] = np.reshape(np.reshape(A, (NR, NQ, 1, NP)) @ C4, (NR, NQ, NP))

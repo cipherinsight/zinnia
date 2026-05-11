@@ -2,14 +2,14 @@
 # Original signature: cavity_flow(nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu) — u, v, p are (ny, nx) float arrays.
 # Migration notes:
 #   - nx, ny, nt, nit hoisted to module-level constants (ZK shapes / loop bounds must be static).
-#   - NX, NY picked from the "S" preset (61) shrunk to 16; NT shrunk to 4; NIT shrunk to 2.
+#   - NX, NY picked from the "S" preset (61); NT=25; NIT=5.
 #   - Helpers build_up_b and pressure_poisson kept as plain functions (no decorator).
 from zinnia import *
 
-NX = 16
-NY = 16
-NT = 4
-NIT = 2
+NX = 61
+NY = 61
+NT = 25
+NIT = 5
 
 
 @zk_chip
@@ -43,14 +43,14 @@ def pressure_poisson(p, dx, dy, b) -> None:
 
 
 @zk_circuit
-def cavity_flow(u: NDArray[Float, 16, 16], v: NDArray[Float, 16, 16],
-                p: NDArray[Float, 16, 16],
+def cavity_flow(u: NDArray[Float, 61, 61], v: NDArray[Float, 61, 61],
+                p: NDArray[Float, 61, 61],
                 dt: float, dx: float, dy: float, rho: float, nu: float):
     un = np.empty_like(u)
     vn = np.empty_like(v)
-    b = np.zeros((16, 16))
+    b = np.zeros((NY, NX))
 
-    for n in range(4):
+    for n in range(NT):
         un = u.copy()
         vn = v.copy()
 

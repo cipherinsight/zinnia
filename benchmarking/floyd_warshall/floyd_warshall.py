@@ -6,10 +6,10 @@
 #   - np.add.outer is likely unsupported but kept verbatim.
 from zinnia import *
 
-N = 16
+N = 200
 
 
 @zk_circuit
-def floyd_warshall(path: NDArray[Integer, 16, 16]):
-    for k in range(16):
+def floyd_warshall(path: NDArray[Integer, 200, 200]):
+    for k in range(N):
         path[:] = np.minimum(path[:], np.add.outer(path[:, k], path[k, :]))

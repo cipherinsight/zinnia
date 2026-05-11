@@ -32,9 +32,9 @@ def apply_filter(E, wx):
 
 
 @zk_circuit
-def train_equaliser(E: NDArray[Float, 2, 32], TrSyms: int, Niter: int, os: int, mu: float,
-                    wx: NDArray[Float, 2, 2, 8], modes: NDArray[Integer, 2],
-                    adaptive: bool, symbols: NDArray[Float, 2, 4], method: str):
+def train_equaliser(E: NDArray[Complex, 2, 32], TrSyms: int, Niter: int, os: int, mu: float,
+                    wx: NDArray[Complex, 2, 2, 8], modes: NDArray[Integer, 2],
+                    adaptive: bool, symbols: NDArray[Complex, 2, 4], method: str):
     if method == "cma":
         errorfct = cma_error
     else:

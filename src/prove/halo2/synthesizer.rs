@@ -18,7 +18,7 @@ use pasta_curves::group::ff::PrimeField;
 
 use crate::prove::error::ProvingError;
 use crate::prove::halo2::config::ZinniaConfig;
-use crate::prove::kernel::{self, Field, EXP2_COEFS, LOG2_COEFS, SIN_COEFS};
+use crate::prove::kernel::{self, Field, ATAN_COEFS, EXP2_COEFS, LOG2_COEFS, SIN_COEFS};
 use crate::prove::traits::Synthesizer;
 use crate::prove::types::ProvingParams;
 use crate::circuit_input::{ResolvedWitness, InputPath};
@@ -805,6 +805,60 @@ impl Synthesizer for Halo2Synthesizer {
         let s = self.sinh_f(a)?;
         let c = self.cosh_f(a)?;
         self.div_f(&s, &c)
+    }
+
+    /// arctan2(y, x): compute the angle of the vector (x, y) in [-π, π].
+    ///
+    /// Strategy: range-reduce to atan(t) with t ∈ [0, 1] via the swap-and-divide
+    /// trick — pick t = min(|x|, |y|) / max(|x|, |y|) — then apply the ATAN_COEFS
+    /// Remez polynomial. Quadrant correction adds compile-time-known π offsets
+    /// via constrained add/sub and select gates.
+    fn arctan2_f(&mut self, y: &Halo2CellRef, x: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
+        // Absolute values and signs.
+        let (abs_y, neg_y) = self.signed_decompose(y);
+        let (abs_x, neg_x) = self.signed_decompose(x);
+
+        // swap = (abs_y > abs_x): use t = abs_x / abs_y instead, then a = π/2 - poly(t).
+        let swap = self.gt_f(&abs_y, &abs_x)?;
+        let num = self.select(&swap, &abs_x, &abs_y)?;
+        let den = self.select(&swap, &abs_y, &abs_x)?;
+
+        // Avoid division by zero when both x and y are zero: bias den with a
+        // tiny constant. The witness value for (0,0) will then evaluate the
+        // polynomial at 0, giving 0 — matching f64::atan2(0, 0) = 0.
+        let epsilon = self.constant_float(1.0e-30)?;
+        let den_safe = self.add_f(&den, &epsilon)?;
+        let t = self.div_f(&num, &den_safe)?;
+
+        // Polynomial atan(t) on [0, 1].
+        let coefs: Vec<Fp> = ATAN_COEFS.iter().map(|c| self.quantize_fp(*c)).collect();
+        let poly_atan = self.poly_eval_horner(&t, &coefs);
+
+        // a0 = swap ? π/2 - poly_atan : poly_atan  (angle in [0, π/2])
+        let half_pi = self.constant_float(std::f64::consts::FRAC_PI_2)?;
+        let half_pi_minus = self.sub_f(&half_pi, &poly_atan)?;
+        let a0 = self.select(&swap, &half_pi_minus, &poly_atan)?;
+
+        // Quadrant adjust for x < 0: a1 = neg_x ? π - a0 : a0  (angle in [0, π])
+        let pi = self.constant_float(std::f64::consts::PI)?;
+        let pi_minus = self.sub_f(&pi, &a0)?;
+        let a1 = self.select(&neg_x, &pi_minus, &a0)?;
+
+        // Sign for y < 0: a2 = neg_y ? -a1 : a1   (angle in [-π, π])
+        let zero = self.constant_float(0.0)?;
+        let neg_a1 = self.sub_f(&zero, &a1)?;
+        self.select(&neg_y, &neg_a1, &a1)
+    }
+
+    /// arccos(x) for x ∈ [-1, 1]: range is [0, π].
+    /// Implemented as atan2(sqrt(1 - x²), x), which is well-defined across the
+    /// full domain and reuses the existing sqrt_f and arctan2_f infrastructure.
+    fn arccos_f(&mut self, a: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
+        let one = self.constant_float(1.0)?;
+        let aa = self.mul_f(a, a)?;
+        let one_minus_aa = self.sub_f(&one, &aa)?;
+        let s = self.sqrt_f(&one_minus_aa)?;
+        self.arctan2_f(&s, a)
     }
 
     // ── Boolean logic (constrained via gates) ─────────────────────────

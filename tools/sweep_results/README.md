@@ -17,6 +17,8 @@ baseline that future SMT-resolver tuning iterations diff against.
 | `p4_round1_5_serial_on.json` | on, round-1.5 visit_while fast-path | 1 | 211 s | 104 / 2 / 75 |
 | `p4_round2_serial_off.json` | off, round-2 recursion-bound discharge wired | 1 | 154 s | 104 / 2 / 75 |
 | `p4_round2_serial_on.json` | on, round-2 recursion-bound discharge wired | 1 | 215 s | 104 / 2 / 75 |
+| `helper_autodiscovery_serial_on.json` | on, np-transcendentals + module-global chip auto-discovery (60 s wall) | 1 | 623 s | 116 / 8 / 57 |
+| `helper_autodiscovery_serial_on_30min.json` | on, same as above with 30 min retry on the 8 timeouts | 1 | 623 s + retries | **119 / 3 / 59** |
 
 ## P4 round 2 — wires recursion-bound discharge, no movement
 

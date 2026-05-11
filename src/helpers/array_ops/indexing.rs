@@ -104,6 +104,12 @@ fn dyn_getitem_element(
     indices: &[SliceIndex],
 ) -> Value {
     let addr = compute_flat_addr(b, data, indices);
+    let _ = crate::optim::resolver::probe_in_range(
+        b,
+        &addr,
+        0,
+        data.envelope.total_bound as i64,
+    );
     let raw = b.ir_read_memory(data.segment_id, &addr);
     match data.dtype {
         NumberType::Float => Value::Float(ScalarValue::new(

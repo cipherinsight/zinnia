@@ -5,20 +5,20 @@
 #   - A.shape[0]/A.shape[1] replaced with M / N for static loop bounds.
 from zinnia import *
 
-M = 8
-N = 8
+M = 70
+N = 60
 
 
 @zk_circuit
-def gramschmidt(A: NDArray[Float, 8, 8]):
+def gramschmidt(A: NDArray[Float, 70, 60]):
     Q = np.zeros_like(A)
-    R = np.zeros((8, 8), dtype=A.dtype)
+    R = np.zeros((N, N), dtype=A.dtype)
 
-    for k in range(8):
+    for k in range(N):
         nrm = np.dot(A[:, k], A[:, k])
         R[k, k] = np.sqrt(nrm)
         Q[:, k] = A[:, k] / R[k, k]
-        for j in range(k + 1, 8):
+        for j in range(k + 1, N):
             R[k, j] = np.dot(Q[:, k], A[:, j])
             A[:, j] -= Q[:, k] * R[k, j]
 

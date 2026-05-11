@@ -6,10 +6,10 @@
 #   - Body uses np.cov which is likely unsupported but kept verbatim.
 from zinnia import *
 
-M = 8
-N = 8
+M = 500
+N = 600
 
 
 @zk_circuit
-def covariance2(float_n: float, data: NDArray[Float, 8, 8]):
+def covariance2(float_n: float, data: NDArray[Float, 600, 500]):
     _zinnia_result = np.cov(np.transpose(data))

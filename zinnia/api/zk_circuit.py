@@ -87,6 +87,7 @@ class ZKCircuit:
             _source_code = None
             _method_name = None
             _lifted_chip_sources = None
+            _decorated_method = None
             if method.__closure__:
                 for cell in method.__closure__:
                     contents = cell.cell_contents
@@ -99,12 +100,28 @@ class ZKCircuit:
                                 and isinstance(t[0], str) and isinstance(t[1], str)
                                 for t in contents):
                         _lifted_chip_sources = contents
+                    elif callable(contents) and not isinstance(contents, type):
+                        _decorated_method = contents
             if _source_code is not None and _method_name is not None:
                 merged_chips = list(chips)
+                merged_externals = list(externals) if externals else []
+                seen_chip_ids = {id(c) for c in merged_chips if isinstance(c, ZKChip)}
+                seen_external_ids = {id(e) for e in merged_externals if isinstance(e, ZKExternalFunc)}
+                # Scan the decorated method's module globals — same as
+                # `__zk_circuit_annotator_inner` does on direct invocation. This
+                # is the path used by the sweep harness via from_method().
+                module_globals = (getattr(_decorated_method, "__globals__", {}) or {}) if _decorated_method else {}
+                for _, val in module_globals.items():
+                    if isinstance(val, ZKChip) and id(val) not in seen_chip_ids:
+                        merged_chips.append(val)
+                        seen_chip_ids.add(id(val))
+                    elif isinstance(val, ZKExternalFunc) and id(val) not in seen_external_ids:
+                        merged_externals.append(val)
+                        seen_external_ids.add(id(val))
                 if _lifted_chip_sources:
                     for chip_name, chip_src in _lifted_chip_sources:
                         merged_chips.append(ZKChip.from_source(chip_name, chip_src))
-                return ZKCircuit(_method_name, _source_code, merged_chips, externals, config)
+                return ZKCircuit(_method_name, _source_code, merged_chips, merged_externals or None, config)
             # Fallback: try to find the original callable
             for cell in method.__closure__:
                 contents = cell.cell_contents
@@ -196,15 +213,39 @@ def zk_circuit(method, config: ZinniaConfig = ZinniaConfig()):
     module_globals = getattr(method, "__globals__", {}) or {}
     source_code, _lifted_chip_sources = autolift_nested_defs(source_code, module_globals)
     method_name = method.__name__
+    # Capture the original method so the closure exposes both its source and
+    # its __globals__ — `ZKCircuit.from_method` walks the closure to discover
+    # module-level @zk_chip / @zk_external helpers without needing the caller
+    # to pass them explicitly.
+    _decorated_method = method
+    _ = _decorated_method  # ensure the closure cell exists (closures capture by reference only when referenced inside the inner)
 
     def __zk_circuit_annotator_inner(*args, **kwargs):
+        # Reference _decorated_method so it becomes part of the closure
+        # `from_method` can find via __closure__.
+        _capture_method_ref = _decorated_method
         defined_chips: List[ZKChip] = []
         defined_externals: List[ZKExternalFunc] = []
-        for key, val in inspect.currentframe().f_back.f_locals.items():
-            if isinstance(val, ZKChip):
+        seen_chip_ids: set = set()
+        seen_external_ids: set = set()
+        # Scan the decorated method's module globals first — that's where
+        # benchmark sources put their @zk_chip helpers.
+        for _, val in module_globals.items():
+            if isinstance(val, ZKChip) and id(val) not in seen_chip_ids:
                 defined_chips.append(val)
-            elif isinstance(val, ZKExternalFunc):
+                seen_chip_ids.add(id(val))
+            elif isinstance(val, ZKExternalFunc) and id(val) not in seen_external_ids:
                 defined_externals.append(val)
+                seen_external_ids.add(id(val))
+        # Also scan the caller's locals, for tests/notebooks that define
+        # helpers inline.
+        for _, val in inspect.currentframe().f_back.f_locals.items():
+            if isinstance(val, ZKChip) and id(val) not in seen_chip_ids:
+                defined_chips.append(val)
+                seen_chip_ids.add(id(val))
+            elif isinstance(val, ZKExternalFunc) and id(val) not in seen_external_ids:
+                defined_externals.append(val)
+                seen_external_ids.add(id(val))
         for chip_name, chip_src in _lifted_chip_sources:
             defined_chips.append(ZKChip.from_source(chip_name, chip_src))
         circuit = ZKCircuit(method_name, source_code, defined_chips, defined_externals, config)

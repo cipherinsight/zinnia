@@ -4,14 +4,16 @@ from zinnia import *
 import math
 
 
-def window_floor(idx, radius):
+@zk_chip
+def window_floor(idx, radius) -> Integer:
     if radius > idx:
         return 0
     else:
         return idx - radius
 
 
-def window_ceil(idx, ceil, radius):
+@zk_chip
+def window_ceil(idx, ceil, radius) -> Integer:
     if idx + radius > ceil:
         return ceil
     else:

@@ -5,16 +5,16 @@
 #   - float_n is a data-valued scalar -> kept as float param.
 from zinnia import *
 
-M = 8
-N = 8
+M = 500
+N = 600
 
 
 @zk_circuit
-def covariance(float_n: float, data: NDArray[Float, 8, 8]):
+def covariance(float_n: float, data: NDArray[Float, 600, 500]):
     mean = np.mean(data, axis=0)
     data -= mean
-    cov = np.zeros((8, 8), dtype=data.dtype)
-    for i in range(8):
-        cov[i:8, i] = cov[i, i:8] = data[:, i] @ data[:, i:8] / (float_n - 1.0)
+    cov = np.zeros((M, M), dtype=data.dtype)
+    for i in range(M):
+        cov[i:M, i] = cov[i, i:M] = data[:, i] @ data[:, i:M] / (float_n - 1.0)
 
     _zinnia_result = cov

@@ -6,19 +6,19 @@
 #   - Boolean fancy assignment (stddev[stddev <= 0.1] = 1.0) likely unsupported.
 from zinnia import *
 
-M = 8
-N = 8
+M = 500
+N = 600
 
 
 @zk_circuit
-def correlation(float_n: float, data: NDArray[Float, 8, 8]):
+def correlation(float_n: float, data: NDArray[Float, 600, 500]):
     mean = np.mean(data, axis=0)
     stddev = np.std(data, axis=0)
     stddev[stddev <= 0.1] = 1.0
     data -= mean
     data /= np.sqrt(float_n) * stddev
-    corr = np.eye(8, dtype=data.dtype)
-    for i in range(8 - 1):
-        corr[i + 1:8, i] = corr[i, i + 1:8] = data[:, i] @ data[:, i + 1:8]
+    corr = np.eye(M, dtype=data.dtype)
+    for i in range(M - 1):
+        corr[i + 1:M, i] = corr[i, i + 1:M] = data[:, i] @ data[:, i + 1:M]
 
     _zinnia_result = corr

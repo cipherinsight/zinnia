@@ -60,12 +60,23 @@ fn read_leaf_at_flat(
 
 /// Read a single leaf at a runtime address. Always emits one
 /// `ir_read_memory` op.
+///
+/// Also runs a `SiteKind::DynamicIndexBound` probe against the resolver
+/// (item #4 of the `smt-invocation-load-bearing` card). The probe is
+/// informational — soundness is enforced at prove time by the memory-trace
+/// permutation argument — but it surfaces SMT engagement on production
+/// patterns where the index is a runtime computation whose bound is
+/// nonetheless decidable (binary search, modular indexing, etc.). The
+/// telemetry counters `chokepoint_invocations["dyn_index_bound"]` and
+/// `chokepoint_smt_engagements["dyn_index_bound"]` track the load.
 fn read_leaf_at_dynamic(
     b: &mut IRBuilder,
     segment_id: u32,
     addr: &Value,
     dtype: NumberType,
+    total_size: usize,
 ) -> Value {
+    let _ = crate::optim::resolver::probe_in_range(b, addr, 0, total_size as i64);
     let raw = b.ir_read_memory(segment_id, addr);
     scalar_i64_to_value(&value_to_scalar_i64(&raw), dtype)
 }
@@ -185,7 +196,8 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
         if dtype == NumberType::Complex {
             return read_complex_leaf_dynamic(b, segment_id, imag_seg.expect("Complex StaticArray missing imag_segment_id"), &addr);
         }
-        return read_leaf_at_dynamic(b, segment_id, &addr, dtype);
+        let total: usize = shape.iter().product();
+        return read_leaf_at_dynamic(b, segment_id, &addr, dtype, offset + total);
     }
 
     // ── Single-index, ndim==1 → leaf or panic
@@ -208,7 +220,8 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
                 if dtype == NumberType::Complex {
                     return read_complex_leaf_dynamic(b, segment_id, imag_seg.expect("Complex StaticArray missing imag_segment_id"), &addr);
                 }
-                return read_leaf_at_dynamic(b, segment_id, &addr, dtype);
+                let total: usize = shape.iter().product();
+                return read_leaf_at_dynamic(b, segment_id, &addr, dtype, offset + total);
             }
             SliceIndex::Range(s, e, st) => {
                 return slice_axis_static_or_dynamic_1d(
@@ -818,7 +831,8 @@ fn multidim_subscript_static_array(
                 let im = imag_seg.expect("Complex StaticArray missing imag_segment_id");
                 leaves.push(read_complex_leaf_dynamic(b, segment_id, im, &acc));
             } else {
-                leaves.push(read_leaf_at_dynamic(b, segment_id, &acc, dtype));
+                let src_total: usize = shape.iter().product();
+                leaves.push(read_leaf_at_dynamic(b, segment_id, &acc, dtype, offset + src_total));
             }
         }
     }

@@ -4,13 +4,13 @@
 #   - TSTEPS, N hoisted as module-level constants.
 from zinnia import *
 
-TSTEPS = 5
-N = 8
+TSTEPS = 25
+N = 25
 
 
 @zk_circuit
-def heat_3d(A: NDArray[Float, 8, 8, 8], B: NDArray[Float, 8, 8, 8]):
-    for t in range(1, 5):
+def heat_3d(A: NDArray[Float, 25, 25, 25], B: NDArray[Float, 25, 25, 25]):
+    for t in range(1, TSTEPS):
         B[1:-1, 1:-1,
           1:-1] = (0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] +
                             A[:-2, 1:-1, 1:-1]) + 0.125 *

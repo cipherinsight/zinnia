@@ -8,7 +8,8 @@ M = 8
 N = 16
 
 
-def phi0(x):
+@zk_chip
+def phi0(x) -> Float:
     x = abs(x)
     if (x < 9.08e-5):
         return 10
@@ -16,18 +17,21 @@ def phi0(x):
         return -log(tanh(x / 2))
 
 
-def G(Lq):
+@zk_chip
+def G(Lq) -> Float:
     X = sum(phi0(e) for e in Lq)
     s = np.prod(np.sign(Lq))
     return s * phi0(X)
 
 
-def BinaryProduct(X, Y):
+@zk_chip
+def BinaryProduct(X, Y) -> NDArray[Integer, 16]:
     A = X.dot(Y)
     return A % 2
 
 
-def InCode(H, x):
+@zk_chip
+def InCode(H, x) -> Boolean:
     return (BinaryProduct(H, x) == 0).all()
 
 

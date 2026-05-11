@@ -5,14 +5,14 @@
 #   - alpha, beta are float values, kept as float params.
 from zinnia import *
 
-NI = 8
-NJ = 8
-NK = 8
+NI = 1000
+NJ = 1100
+NK = 1200
 
 
 @zk_circuit
 def gemm(alpha: float, beta: float,
-         C: NDArray[Float, 8, 8],
-         A: NDArray[Float, 8, 8],
-         B: NDArray[Float, 8, 8]):
+         C: NDArray[Float, 1000, 1100],
+         A: NDArray[Float, 1000, 1200],
+         B: NDArray[Float, 1200, 1100]):
     C[:] = alpha * A @ B + beta * C

@@ -129,6 +129,8 @@ fn build_np_op(name: &str, builder: &mut IRBuilder, args: &OpArgs) -> Option<Val
         "sinh" => np_like::NpSinHOp.build(builder, args),
         "cosh" => np_like::NpCosHOp.build(builder, args),
         "tanh" => np_like::NpTanHOp.build(builder, args),
+        "arccos" | "acos" => np_like::NpArcCosOp.build(builder, args),
+        "arctan2" | "atan2" => np_like::NpArcTan2Op.build(builder, args),
         "abs" => np_like::NpAbsOp.build(builder, args),
         "absolute" => np_like::NpAbsoluteOp.build(builder, args),
         "fabs" => np_like::NpFAbsOp.build(builder, args),

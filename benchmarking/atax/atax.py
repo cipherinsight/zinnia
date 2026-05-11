@@ -4,10 +4,10 @@
 #   - M, N hoisted as module-level shape constants (small for circuit tractability).
 from zinnia import *
 
-M = 8
-N = 8
+M = 4000
+N = 5000
 
 
 @zk_circuit
-def atax(A: NDArray[Float, 8, 8], x: NDArray[Float, 8]):
+def atax(A: NDArray[Float, 4000, 5000], x: NDArray[Float, 5000]):
     _zinnia_result = (A @ x) @ A

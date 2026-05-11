@@ -3,7 +3,8 @@
 from zinnia import *
 
 
-def pivot(n, i, a, b):
+@zk_chip
+def pivot(n, i, a, b) -> None:
     i0 = i
     amp0 = abs(a[i - 1][i - 1])
     for j in range(i + 1, n + 1):

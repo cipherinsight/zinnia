@@ -6,15 +6,15 @@
 #   - A.shape[0]/[1] replaced with N, M for static loop bounds.
 from zinnia import *
 
-M = 8
-N = 8
+M = 50
+N = 70
 
 
 @zk_circuit
 def syrk(alpha: float, beta: float,
-         C: NDArray[Float, 8, 8],
-         A: NDArray[Float, 8, 8]):
-    for i in range(8):
+         C: NDArray[Float, 70, 70],
+         A: NDArray[Float, 70, 50]):
+    for i in range(N):
         C[i, :i + 1] *= beta
-        for k in range(8):
+        for k in range(M):
             C[i, :i + 1] += alpha * A[i, k] * A[:i + 1, k]

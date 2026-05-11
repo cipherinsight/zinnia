@@ -2,18 +2,18 @@
 # Original signature: hdiff(in_field, out_field, coeff) — in_field is (I+4, J+4, K),
 #   out_field and coeff are (I, J, K) float arrays.
 # Migration notes:
-#   - I, J, K hoisted to module-level constants; from "S" preset (I=J=64, K=60) shrunk to I=J=K=8.
+#   - I, J, K hoisted to module-level constants; from "S" preset (I=J=64, K=60).
 from zinnia import *
 
-I = 8
-J = 8
-K = 8
+I = 64
+J = 64
+K = 60
 
 
 @zk_circuit
-def hdiff(in_field: NDArray[Float, 12, 12, 8],
-          out_field: NDArray[Float, 8, 8, 8],
-          coeff: NDArray[Float, 8, 8, 8]):
+def hdiff(in_field: NDArray[Float, 68, 68, 60],
+          out_field: NDArray[Float, 64, 64, 60],
+          coeff: NDArray[Float, 64, 64, 60]):
     I, J, K = out_field.shape[0], out_field.shape[1], out_field.shape[2]
     lap_field = 4.0 * in_field[1:I + 3, 1:J + 3, :] - (
         in_field[2:I + 4, 1:J + 3, :] + in_field[0:I + 2, 1:J + 3, :] +

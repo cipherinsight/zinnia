@@ -3,7 +3,8 @@
 from zinnia import *
 
 
-def is_prime(n):
+@zk_chip
+def is_prime(n) -> Boolean:
     return all((n % j > 0) for j in range(2, n))
 
 

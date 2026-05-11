@@ -6,16 +6,16 @@
 #   - alpha, beta kept as float params.
 from zinnia import *
 
-NI = 8
-NJ = 8
-NK = 8
-NL = 8
+NI = 800
+NJ = 850
+NK = 900
+NL = 950
 
 
 @zk_circuit
 def k2mm(alpha: float, beta: float,
-         A: NDArray[Float, 8, 8],
-         B: NDArray[Float, 8, 8],
-         C: NDArray[Float, 8, 8],
-         D: NDArray[Float, 8, 8]):
+         A: NDArray[Float, 800, 900],
+         B: NDArray[Float, 900, 850],
+         C: NDArray[Float, 850, 950],
+         D: NDArray[Float, 800, 950]):
     D[:] = alpha * A @ B @ C + beta * D

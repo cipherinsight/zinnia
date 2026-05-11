@@ -1,6 +1,5 @@
 # Source: Pythran tests/cases/fft.py
 # Original #pythran export: fft(complex[])
-# Migration notes: complex types likely unsupported.
 from zinnia import *
 import math
 
@@ -8,7 +7,7 @@ N = 64
 
 
 @zk_circuit
-def fft(x: NDArray[Float, 64]):
+def fft(x: NDArray[Complex, 64]):
     N = x.shape[0]
     if N == 1:
         _zinnia_result = np.array(x)

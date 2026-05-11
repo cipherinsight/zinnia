@@ -5,17 +5,17 @@
 #   - TMAX, NX, NY hoisted as module-level constants.
 from zinnia import *
 
-TMAX = 5
-NX = 16
-NY = 16
+TMAX = 20
+NX = 200
+NY = 220
 
 
 @zk_circuit
-def fdtd_2d(ex: NDArray[Float, 16, 16],
-            ey: NDArray[Float, 16, 16],
-            hz: NDArray[Float, 16, 16],
-            _fict_: NDArray[Float, 5]):
-    for t in range(5):
+def fdtd_2d(ex: NDArray[Float, 200, 220],
+            ey: NDArray[Float, 200, 220],
+            hz: NDArray[Float, 200, 220],
+            _fict_: NDArray[Float, 20]):
+    for t in range(TMAX):
         ey[0, :] = _fict_[t]
         ey[1:, :] -= 0.5 * (hz[1:, :] - hz[:-1, :])
         ex[:, 1:] -= 0.5 * (hz[:, 1:] - hz[:, :-1])

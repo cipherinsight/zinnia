@@ -3,15 +3,15 @@
 #   input (N, H, W, C1); conv1 (1,1,C1,C2); conv2 (3,3,C2,C2); conv3 (1,1,C2,C1).
 # Migration notes:
 #   - N, H, W, C1, C2 hoisted to module-level constants.
-#   - From "S" preset (N=8, W=H=14, C1=32, C2=8) shrunk to H=W=8, C1=8, C2=4.
+#   - From "S" preset (N=8, W=H=14, C1=32, C2=8).
 #   - Helpers (relu, conv2d, batchnorm2d) kept as plain functions (no decorator).
 from zinnia import *
 
 N = 8
-H = 8
-W = 8
-C1 = 8
-C2 = 4
+H = 14
+W = 14
+C1 = 32
+C2 = 8
 
 
 @zk_chip
@@ -52,10 +52,10 @@ def batchnorm2d(x, eps=1e-5) -> NDArray[Float, 1]:
 # Bottleneck residual block (after initial convolution, without downsampling)
 # in the ResNet-50 CNN (inference)
 @zk_circuit
-def resnet(input: NDArray[Float, 8, 8, 8, 8],
-           conv1: NDArray[Float, 1, 1, 8, 4],
-           conv2: NDArray[Float, 3, 3, 4, 4],
-           conv3: NDArray[Float, 1, 1, 4, 8]):
+def resnet(input: NDArray[Float, 8, 14, 14, 32],
+           conv1: NDArray[Float, 1, 1, 32, 8],
+           conv2: NDArray[Float, 3, 3, 8, 8],
+           conv3: NDArray[Float, 1, 1, 8, 32]):
     # Pad output of first convolution for second convolution
     padded = np.zeros((input.shape[0], input.shape[1] + 2, input.shape[2] + 2,
                        conv1.shape[3]))

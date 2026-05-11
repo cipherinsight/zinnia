@@ -16,6 +16,15 @@ pub fn dyn_setitem(
     value: &Value,
 ) -> Value {
     let addr = compute_flat_addr(b, data, indices);
+    // `SiteKind::DynamicIndexBound` probe (item #4 of the
+    // smt-invocation-load-bearing card). Informational — the memory-trace
+    // permutation argument enforces soundness at prove time.
+    let _ = crate::optim::resolver::probe_in_range(
+        b,
+        &addr,
+        0,
+        data.envelope.total_bound as i64,
+    );
 
     let write_val = cast_to_dtype(b, value, data.dtype);
     b.ir_write_memory(data.segment_id, &addr, &write_val);

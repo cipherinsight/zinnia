@@ -3,7 +3,8 @@
 from zinnia import *
 
 
-def dists(X, Y):
+@zk_chip
+def dists(X, Y) -> NDArray[Float, 500, 200]:
     result = np.zeros((X.shape[0], Y.shape[0]), X.dtype)
     for i in range(X.shape[0]):
         for j in range(Y.shape[0]):

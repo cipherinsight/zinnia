@@ -1178,12 +1178,43 @@ pub enum SiteKind {
     NewAxisPosition,
     /// `num` argument of `np.linspace`.
     LinspaceNum,
+    /// Dynamic-array index bound check: address used with `ReadMemory` /
+    /// `WriteMemory` must lie in `[0, segment_size)`. Today's wiring is
+    /// informational — the memory-trace permutation argument enforces
+    /// soundness at prove time — but the chokepoint surfaces SMT engagement
+    /// on production-natural patterns where indices are runtime values
+    /// whose bounds are nonetheless provable. Item #4 of the
+    /// `smt-invocation-load-bearing` card.
+    DynamicIndexBound,
     /// Anything not yet enumerated. The string is a short site label;
     /// promote it to a named variant if it recurs.
     Other(&'static str),
 }
 
 impl SiteKind {
+    /// Stable short identifier used as the key in
+    /// `SmtTelemetry::chokepoint_invocations`. Must be `&'static str`
+    /// because the map's keys live for the program's lifetime.
+    pub fn short_name(&self) -> &'static str {
+        match self {
+            SiteKind::ShapeAxis(_) => "shape_axis",
+            SiteKind::SliceStart => "slice_start",
+            SiteKind::SliceStop => "slice_stop",
+            SiteKind::SliceStep => "slice_step",
+            SiteKind::RangeStart => "range_start",
+            SiteKind::RangeStop => "range_stop",
+            SiteKind::RangeStep => "range_step",
+            SiteKind::ReshapeDim => "reshape_dim",
+            SiteKind::RepeatCount => "repeat_count",
+            SiteKind::SplitSections => "split_sections",
+            SiteKind::Axis => "axis",
+            SiteKind::NewAxisPosition => "new_axis_position",
+            SiteKind::LinspaceNum => "linspace_num",
+            SiteKind::DynamicIndexBound => "dyn_index_bound",
+            SiteKind::Other(label) => label,
+        }
+    }
+
     /// Render a human-readable diagnostic for a "this must be a compile-time
     /// constant int" rejection at this site. One source of truth for the
     /// wording.
@@ -1230,6 +1261,9 @@ impl SiteKind {
             SiteKind::LinspaceNum => {
                 "linspace `num` must be a compile-time constant int".to_string()
             }
+            SiteKind::DynamicIndexBound => {
+                "dynamic array index could not be proved in-bounds at compile time".to_string()
+            }
             SiteKind::Other(label) => {
                 format!("{} must be a compile-time constant int", label)
             }
@@ -1267,13 +1301,99 @@ pub fn require_static_int(
     site: SiteKind,
     dbg: Option<&DebugInfo>,
 ) -> Result<StaticInt, ZinniaError> {
+    use std::sync::atomic::Ordering;
+    let site_name = site.short_name();
     let (resolver, stmts) = b.split_resolver_and_stmts();
-    match resolver.resolve_int_with_stmts(val, stmts) {
+    // Capture telemetry handle + before-counts so we can attribute SMT
+    // engagement to this chokepoint without changing the Resolver API.
+    let tel = resolver.telemetry_handle();
+    let smt_before = tel.as_ref().map(|t| {
+        t.queries_smt_resolved.load(Ordering::Relaxed)
+            + t.queries_smt_unknown.load(Ordering::Relaxed)
+    });
+    if let Some(t) = tel.as_ref() {
+        t.record_chokepoint_invocation(site_name);
+    }
+    let result = resolver.resolve_int_with_stmts(val, stmts);
+    if let (Some(t), Some(before)) = (tel.as_ref(), smt_before) {
+        let smt_after = t.queries_smt_resolved.load(Ordering::Relaxed)
+            + t.queries_smt_unknown.load(Ordering::Relaxed);
+        if smt_after > before {
+            t.record_chokepoint_smt_engagement(site_name);
+        }
+        if result.is_some() {
+            t.record_chokepoint_resolved(site_name);
+        }
+    }
+    match result {
         Some(n) => Ok(StaticInt(n)),
         None => Err(ZinniaError {
             message: format_diagnostic(site, dbg),
         }),
     }
+}
+
+/// Informational in-bound probe for dynamic array indices.
+///
+/// Item #4 of the `smt-invocation-load-bearing` card. Asks the resolver
+/// whether `idx ∈ [lo, hi)` is provable; records telemetry tagged with
+/// `SiteKind::DynamicIndexBound` regardless of outcome. Does NOT panic
+/// on failure — soundness is enforced at prove time by the memory-trace
+/// permutation argument. The probe exists to surface SMT engagement on
+/// production-natural patterns (binary search, modular indexing, etc.)
+/// where indices are runtime but bounds are nonetheless decidable.
+///
+/// Returns `true` if both `resolve_max(idx) < hi` and `resolve_min(idx)
+/// >= lo` were proved by some layer (static_val / range / SMT).
+pub fn probe_in_range(
+    b: &mut crate::builder::IRBuilder,
+    idx: &Value,
+    lo: i64,
+    hi: i64,
+) -> bool {
+    use std::sync::atomic::Ordering;
+    let site_name = SiteKind::DynamicIndexBound.short_name();
+
+    // Cheap escape: literal integer.
+    if let Some(n) = idx.int_val() {
+        let in_range = lo <= n && n < hi;
+        // We still record the invocation so telemetry shows the call site
+        // exists, but skip the resolver round-trip for the literal case.
+        let (resolver, _stmts) = b.split_resolver_and_stmts();
+        if let Some(t) = resolver.telemetry_handle() {
+            t.record_chokepoint_invocation(site_name);
+            if in_range {
+                t.record_chokepoint_resolved(site_name);
+            }
+        }
+        return in_range;
+    }
+
+    let (resolver, stmts) = b.split_resolver_and_stmts();
+    let tel = resolver.telemetry_handle();
+    let smt_before = tel.as_ref().map(|t| {
+        t.queries_smt_resolved.load(Ordering::Relaxed)
+            + t.queries_smt_unknown.load(Ordering::Relaxed)
+    });
+    if let Some(t) = tel.as_ref() {
+        t.record_chokepoint_invocation(site_name);
+    }
+
+    let upper = resolver.resolve_max_with_stmts(idx, stmts);
+    let lower = resolver.resolve_min_with_stmts(idx, stmts);
+    let in_range = upper.map_or(false, |u| u < hi) && lower.map_or(false, |l| l >= lo);
+
+    if let (Some(t), Some(before)) = (tel.as_ref(), smt_before) {
+        let smt_after = t.queries_smt_resolved.load(Ordering::Relaxed)
+            + t.queries_smt_unknown.load(Ordering::Relaxed);
+        if smt_after > before {
+            t.record_chokepoint_smt_engagement(site_name);
+        }
+        if in_range {
+            t.record_chokepoint_resolved(site_name);
+        }
+    }
+    in_range
 }
 
 #[cfg(test)]

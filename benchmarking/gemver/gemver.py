@@ -6,16 +6,16 @@
 #   - alpha, beta kept as float params.
 from zinnia import *
 
-N = 16
+N = 1000
 
 
 @zk_circuit
 def gemver(alpha: float, beta: float,
-           A: NDArray[Float, 16, 16],
-           u1: NDArray[Float, 16], v1: NDArray[Float, 16],
-           u2: NDArray[Float, 16], v2: NDArray[Float, 16],
-           w: NDArray[Float, 16], x: NDArray[Float, 16],
-           y: NDArray[Float, 16], z: NDArray[Float, 16]):
+           A: NDArray[Float, 1000, 1000],
+           u1: NDArray[Float, 1000], v1: NDArray[Float, 1000],
+           u2: NDArray[Float, 1000], v2: NDArray[Float, 1000],
+           w: NDArray[Float, 1000], x: NDArray[Float, 1000],
+           y: NDArray[Float, 1000], z: NDArray[Float, 1000]):
     A += np.outer(u1, v1) + np.outer(u2, v2)
     x += beta * y @ A + z
     w += alpha * A @ x

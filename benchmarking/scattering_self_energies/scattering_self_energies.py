@@ -3,7 +3,7 @@
 # Migration notes:
 #   - All loop bounds (Nkz, NE, Nqz, Nw, NA, NB, N3D, Norb) hoisted to module-level constants.
 #   - Values from the "S" preset, kept small as-is (already <= 8 except NA=6, fits the <=32 budget).
-#   - Original arrays are complex; migrated as Float (Zinnia has no complex). Indices remain Integer.
+#   - Original arrays are complex128; restored Complex types.
 from zinnia import *
 
 NKZ = 2
@@ -18,10 +18,10 @@ NORB = 3
 
 @zk_circuit
 def scattering_self_energies(neigh_idx: NDArray[Integer, 6, 2],
-                             dH: NDArray[Float, 6, 2, 2, 3, 3],
-                             G: NDArray[Float, 2, 4, 6, 3, 3],
-                             D: NDArray[Float, 2, 2, 6, 2, 2, 2],
-                             Sigma: NDArray[Float, 2, 4, 6, 3, 3]):
+                             dH: NDArray[Complex, 6, 2, 2, 3, 3],
+                             G: NDArray[Complex, 2, 4, 6, 3, 3],
+                             D: NDArray[Complex, 2, 2, 6, 2, 2, 2],
+                             Sigma: NDArray[Complex, 2, 4, 6, 3, 3]):
 
     for k in range(G.shape[0]):
         for E in range(G.shape[1]):

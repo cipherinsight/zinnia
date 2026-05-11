@@ -306,6 +306,14 @@ impl Synthesizer for MockSynthesizer {
         Ok(MockCell(kernel::fp_log(a.fp(), self.prec())))
     }
 
+    fn arccos_f(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {
+        Ok(MockCell(kernel::fp_arccos(a.fp(), self.prec())))
+    }
+
+    fn arctan2_f(&mut self, y: &MockCell, x: &MockCell) -> Result<MockCell, ProvingError> {
+        Ok(MockCell(kernel::fp_atan2(y.fp(), x.fp(), self.prec())))
+    }
+
     // ── Boolean logic ─────────────────────────────────────────────────
 
     fn logical_and(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
