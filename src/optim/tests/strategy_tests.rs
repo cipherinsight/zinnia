@@ -424,6 +424,62 @@ mod tests {
         );
     }
 
+    /// REGRESSION (Phase 3a fuzz, 2026-05-15 differential run): the legacy
+    /// `np.mean` path on a `Value::List` of cos outputs collapsed to
+    /// `Value::None` because [`builtin_reduce`] had no `"mean"` arm. The
+    /// `Value::None` was then materialised as constant `0` via
+    /// [`IRBuilder::ensure_ptr`] (see `src/builder.rs:719-722`), so a
+    /// downstream `out - 0.175 > -0.001` constant-folded to
+    /// `ConstantBool(false)` and tripped the always-satisfied-elimination
+    /// panic at `src/optim/always_satisfied_elimination.rs:137`.
+    ///
+    /// Repro path: `np.mean(np.cos(x*x+1.0))` for an
+    /// `NDArray[Float, 2]` input — the cos output is a `Value::List`, so
+    /// the StaticArray native dispatch in `try_apply_reduce` returns
+    /// `None` and the named-attr handler USED to fall through to
+    /// `helpers::array_ops::reduce` which routes "mean" into
+    /// `builtin_reduce(b, "mean", val)` (which had no `"mean"` arm and
+    /// returned `Value::None`).
+    ///
+    /// Fix (deshadow `mean` from the catch-all arm at
+    /// `src/ir_gen/named_attr.rs:394`): the named-attr handler now routes
+    /// `np.mean(...)` to the dedicated `np_mean` handler, which calls
+    /// `lower_mean_generic` and emits a real `DivF`. This test exercises
+    /// that path on a `Value::List` of floats (mirroring the cos output
+    /// shape) and asserts the result is a real float `Value`, not
+    /// `Value::None`.
+    #[test]
+    fn np_mean_on_list_of_floats_returns_real_value() {
+        use crate::types::CompositeData;
+        let mut b = IRBuilder::new();
+        let leaves: Vec<Value> = (0..4)
+            .map(|i| b.ir_constant_float(0.25 * (i as f64)))
+            .collect();
+        let types = leaves.iter().map(|v| v.zinnia_type()).collect();
+        let lst = Value::List(CompositeData::new(types, leaves));
+        let kwargs: std::collections::HashMap<String, Value> =
+            std::collections::HashMap::new();
+        let result = crate::ops::static_ndarray_ops::np_mean(
+            &mut b,
+            &[lst],
+            &kwargs,
+        );
+        assert!(
+            !matches!(result, Value::None),
+            "np_mean on a list of floats must return a real Value (not None) — \
+             the named-attr dispatcher must reach np_mean for np.mean(...) so \
+             downstream `out - C` does not see Value::None and constant-fold \
+             the assert to false. See fuzz report \
+             tools/fuzz_reports/20260515-002952/0007-compile_failure-B.json."
+        );
+        assert!(
+            matches!(result, Value::Float(_)),
+            "np_mean over a Float list must produce a Value::Float scalar; \
+             got {:?}",
+            result
+        );
+    }
+
     // ── Group 5e: np_where arm-elision strategy dispatch ────────────────
     //
     // Plant `forall_eq_const(cond_vid, k)` on a boolean cond list and

@@ -391,7 +391,7 @@ impl IRGenerator {
             (Some("np"), "empty_like") => crate::ops::static_ndarray_ops::np_fill_like(&mut self.builder, &visited_args, &_visited_kwargs, 0),
             (Some("np"), "identity" | "eye") => crate::ops::static_ndarray_ops::np_identity(&mut self.builder, &visited_args),
             // numpy reduction aliases — forward to the existing reduce/argmax_argmin path used by x.sum() / x.argmin()
-            (Some("np"), method @ ("sum" | "prod" | "min" | "max" | "any" | "all" | "mean")) => {
+            (Some("np"), method @ ("sum" | "prod" | "min" | "max" | "any" | "all")) => {
                 // P4b: native StaticArray dispatch before the legacy boundary.
                 let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
                 let axis_arg_orig = visited_kwargs_orig
