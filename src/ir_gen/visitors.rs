@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::types::{CompositeData, Value, ZinniaType};
+use crate::types::{CompositeData, Value, ValueId, ZinniaType};
 
 use super::{is_starred_target, IRGenerator, SliceIndex};
 
@@ -58,27 +58,47 @@ impl IRGenerator {
         // True branch
         let mut scope_true_ret_guaranteed = false;
         let mut scope_true_term_guaranteed = false;
+        let mut then_fact_scope: Option<crate::optim::predicates::FactScope> = None;
         if true_static.is_none() || true_static == Some(true) {
             self.ctx.if_enter(true_cond.clone(), &mut self.builder);
+            self.builder.facts.enter(
+                crate::optim::predicates::ScopeKind::Conditional,
+                None,
+            );
             for stmt in &n.t_block {
                 self.visit(stmt);
             }
             scope_true_ret_guaranteed = self.ctx.check_return_guaranteed();
             scope_true_term_guaranteed = self.ctx.check_loop_terminated_guaranteed();
             let _scope_true = self.ctx.if_leave();
+            then_fact_scope = Some(self.builder.facts.leave());
         }
 
         // False branch
         let mut scope_false_ret_guaranteed = false;
         let mut scope_false_term_guaranteed = false;
+        let mut else_fact_scope: Option<crate::optim::predicates::FactScope> = None;
         if false_static.is_none() || false_static == Some(true) {
             self.ctx.if_enter(false_cond.clone(), &mut self.builder);
+            self.builder.facts.enter(
+                crate::optim::predicates::ScopeKind::Conditional,
+                None,
+            );
             for stmt in &n.f_block {
                 self.visit(stmt);
             }
             scope_false_ret_guaranteed = self.ctx.check_return_guaranteed();
             scope_false_term_guaranteed = self.ctx.check_loop_terminated_guaranteed();
             let _scope_false = self.ctx.if_leave();
+            else_fact_scope = Some(self.builder.facts.leave());
+        }
+
+        // Branch join: keep facts common to both arms (intersect-only —
+        // arm-only facts are dropped, which is sound. Guarded-implication
+        // merging is deferred to the resolver-prove-api card when proper
+        // path-condition tracking is in place).
+        if let (Some(t), Some(e)) = (then_fact_scope, else_fact_scope) {
+            self.builder.facts.merge_branches_intersect_only(t, e);
         }
 
         // Update return guarantee
@@ -129,6 +149,10 @@ impl IRGenerator {
 
         // Unroll the loop: for each element, bind the target variable and run the block
         self.ctx.loop_enter();
+        self.builder.facts.enter(
+            crate::optim::predicates::ScopeKind::Loop,
+            None,
+        );
         for elem in &elements {
             self.ctx.loop_reiter(&mut self.builder);
 
@@ -154,6 +178,7 @@ impl IRGenerator {
         }
 
         self.ctx.loop_leave();
+        let _loop_facts = self.builder.facts.leave();
     }
 
     pub(crate) fn visit_while(&mut self, n: &ASTWhileStatement) {
@@ -163,6 +188,10 @@ impl IRGenerator {
 
         let mut loop_quota = self.config.loop_limit + 1;
         self.ctx.loop_enter();
+        self.builder.facts.enter(
+            crate::optim::predicates::ScopeKind::Loop,
+            None,
+        );
 
         // P4 round 1.5: per-iteration `resolve_bool` calls in tight while
         // loops are the dominant overhead in round-1's +41% slowdown. Guard
@@ -210,7 +239,7 @@ impl IRGenerator {
             let test_static = if let Some(b) = static_fast {
                 Some(b)
             } else {
-                let cur_ptr = test_bool.ptr();
+                let cur_ptr = test_bool.stmt_id();
                 if cur_ptr.is_some() && cur_ptr == prev_guard_ptr {
                     // Same guard StmtId as last iter — IR is monotonic,
                     // so the resolver would return the same answer.
@@ -248,6 +277,7 @@ impl IRGenerator {
         }
 
         self.ctx.loop_leave();
+        let _while_facts = self.builder.facts.leave();
     }
 
     pub(crate) fn visit_break(&mut self) {
@@ -328,7 +358,7 @@ impl IRGenerator {
                     .map(|v| self.apply_unary_op(op, v))
                     .collect();
                 let types = results.iter().map(|v| v.zinnia_type()).collect();
-                Value::List(CompositeData { elements_type: types, values: results })
+                Value::List(CompositeData { elements_type: types, values: results, value_id: ValueId::next() })
             }
             Value::DynamicNDArray(d) => {
                 match op {
@@ -450,9 +480,18 @@ impl IRGenerator {
                 }
                 other => other,
             }).collect();
-            return crate::helpers::static_array_read::static_array_subscript(
+            let out = crate::helpers::static_array_read::static_array_subscript(
                 &mut self.builder, &val, &slice_values,
             );
+            // Group 5c (E-axis): content fact relay for gather of a
+            // `forall_eq_const(arr, k)` input. Idempotent w.r.t. any inner
+            // relays already fired by slice helpers.
+            if let (Some(in_vid), Some(out_vid)) = (val.value_id(), out.value_id()) {
+                crate::optim::resolver::relay_forall_eq_const_from_input(
+                    &mut self.builder, in_vid, out_vid,
+                );
+            }
+            return out;
         }
 
         match &val {
@@ -465,7 +504,19 @@ impl IRGenerator {
                     if let SliceIndex::Single(idx_value) = &slice_values[0] {
                         if matches!(idx_value, Value::List(_) | Value::Tuple(_)) {
                             match crate::helpers::ndarray::try_advanced_index_static(data, idx_value) {
-                                Ok(Some(result)) => return result,
+                                Ok(Some(result)) => {
+                                    // Group 5c (E-axis): content fact relay for
+                                    // gather (boolean mask or fancy index) of a
+                                    // `forall_eq_const(arr, k)` input.
+                                    if let (Some(in_vid), Some(out_vid)) =
+                                        (val.value_id(), result.value_id())
+                                    {
+                                        crate::optim::resolver::relay_forall_eq_const_from_input(
+                                            &mut self.builder, in_vid, out_vid,
+                                        );
+                                    }
+                                    return result;
+                                }
                                 Ok(Option::None) => {} // not advanced indexing — fall through
                                 Err(msg) => panic!("{}", msg),
                             }
@@ -599,7 +650,7 @@ impl IRGenerator {
                 i += step_val;
             }
             let types = result_values.iter().map(|v| v.zinnia_type()).collect();
-            Value::List(CompositeData { elements_type: types, values: result_values })
+            Value::List(CompositeData { elements_type: types, values: result_values, value_id: ValueId::next() })
         } else {
             Value::None
         }
@@ -624,6 +675,8 @@ impl IRGenerator {
         let lst = Value::List(CompositeData {
             elements_type: types,
             values,
+        
+            value_id: ValueId::next(),
         });
         // P1 segarr-foundation: list literals of pure numeric leaves become
         // segment-backed `Value::StaticArray`. Heterogeneous lists, lists of
@@ -654,12 +707,14 @@ impl IRGenerator {
         Value::Tuple(CompositeData {
             elements_type: types,
             values,
+        
+            value_id: ValueId::next(),
         })
     }
 
     pub(crate) fn visit_generator_exp(&mut self, n: &ASTGeneratorExp) -> Value {
         if n.generators.is_empty() {
-            return Value::List(CompositeData { elements_type: vec![], values: vec![] });
+            return Value::List(CompositeData { elements_type: vec![], values: vec![], value_id: ValueId::next() });
         }
 
         let mut result_values = Vec::new();
@@ -667,9 +722,9 @@ impl IRGenerator {
 
         let types: Vec<ZinniaType> = result_values.iter().map(|v| v.zinnia_type()).collect();
         if n.kind == "list" {
-            Value::List(CompositeData { elements_type: types, values: result_values })
+            Value::List(CompositeData { elements_type: types, values: result_values, value_id: ValueId::next() })
         } else {
-            Value::Tuple(CompositeData { elements_type: types, values: result_values })
+            Value::Tuple(CompositeData { elements_type: types, values: result_values, value_id: ValueId::next() })
         }
     }
 
@@ -799,7 +854,7 @@ impl IRGenerator {
                         let star_count = n_values - n_before - n_after;
                         let star_values: Vec<Value> = data.values[n_before..n_before + star_count].to_vec();
                         let star_types = star_values.iter().map(|v| v.zinnia_type()).collect();
-                        let star_list = Value::List(CompositeData { elements_type: star_types, values: star_values });
+                        let star_list = Value::List(CompositeData { elements_type: star_types, values: star_values, value_id: ValueId::next() });
                         // Assign to the starred target directly (star flag is on the target itself)
                         self.do_recursive_assign(&t.targets[si], star_list, conditional_select);
                         // Assign after-star targets

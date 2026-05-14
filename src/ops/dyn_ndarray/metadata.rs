@@ -1,5 +1,5 @@
 use crate::builder::IRBuilder;
-use crate::types::{
+use crate::types::{ValueId, 
     CompositeData, DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value, ZinniaType,
 };
 
@@ -40,7 +40,7 @@ pub fn dyn_shape(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
         // 1D: use runtime_length if available (dynamic), else constant
         let len_val = if let Some(v) = data.meta.runtime_length.static_val {
             b.ir_constant_int(v)
-        } else if let Some(ptr) = data.meta.runtime_length.ptr {
+        } else if let Some(ptr) = data.meta.runtime_length.stmt_id {
             Value::Integer(ScalarValue::new(None, Some(ptr)))
         } else {
             b.ir_constant_int(shape[0] as i64)
@@ -49,6 +49,8 @@ pub fn dyn_shape(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
         Value::Tuple(CompositeData {
             elements_type: types,
             values: vec![len_val],
+        
+            value_id: ValueId::next(),
         })
     } else {
         let vals: Vec<Value> = shape
@@ -59,6 +61,8 @@ pub fn dyn_shape(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
         Value::Tuple(CompositeData {
             elements_type: types,
             values: vals,
+        
+            value_id: ValueId::next(),
         })
     }
 }
@@ -69,7 +73,7 @@ pub fn dyn_size(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
         // 1D: return runtime_length if dynamic
         if let Some(v) = data.meta.runtime_length.static_val {
             b.ir_constant_int(v)
-        } else if let Some(ptr) = data.meta.runtime_length.ptr {
+        } else if let Some(ptr) = data.meta.runtime_length.stmt_id {
             Value::Integer(ScalarValue::new(None, Some(ptr)))
         } else {
             b.ir_constant_int(shape[0] as i64)
@@ -109,6 +113,7 @@ pub fn dyn_astype(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) 
         dtype: new_dtype,
         segment_id,
         meta: data.meta.clone(),
+        value_id: ValueId::next(),
     };
     Value::DynamicNDArray(result)
 }
@@ -119,6 +124,8 @@ pub fn dyn_flatten_to_list(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Valu
     Value::List(CompositeData {
         elements_type: types,
         values,
+    
+        value_id: ValueId::next(),
     })
 }
 
@@ -145,6 +152,7 @@ pub fn dyn_flat(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
             runtime_strides: vec![ScalarValue::new(Some(1), None)],
             runtime_offset: ScalarValue::new(Some(0), None),
         },
+        value_id: ValueId::next(),
     };
     Value::DynamicNDArray(result)
 }
@@ -164,6 +172,8 @@ pub fn build_nested_list(flat: &[Value], shape: &[usize]) -> Value {
         return Value::List(CompositeData {
             elements_type: types,
             values: vals,
+        
+            value_id: ValueId::next(),
         });
     }
     let inner_size: usize = shape[1..].iter().product();
@@ -175,6 +185,8 @@ pub fn build_nested_list(flat: &[Value], shape: &[usize]) -> Value {
     Value::List(CompositeData {
         elements_type: row_types,
         values: rows,
+    
+        value_id: ValueId::next(),
     })
 }
 

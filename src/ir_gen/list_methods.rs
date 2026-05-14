@@ -1,4 +1,4 @@
-use crate::types::{CompositeData, Value};
+use crate::types::{CompositeData, Value, ValueId};
 
 use super::IRGenerator;
 
@@ -83,7 +83,7 @@ impl IRGenerator {
                         new_values.push(shifted);
                         new_types.push(data.elements_type[i].clone());
                     }
-                    let new_list = Value::List(CompositeData { elements_type: new_types, values: new_values });
+                    let new_list = Value::List(CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() });
                     self.ctx.set(var, new_list);
                 }
                 return popped;
@@ -142,7 +142,7 @@ impl IRGenerator {
                 self.builder.ir_assert(&found);
 
                 // Update the list variable with the shorter list
-                let new_list = Value::List(CompositeData { elements_type: new_types, values: new_values });
+                let new_list = Value::List(CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() });
                 self.ctx.set(var, new_list);
             }
         }
@@ -150,7 +150,7 @@ impl IRGenerator {
     }
 
     pub(crate) fn list_method_clear(&mut self, var: &str) -> Value {
-        self.ctx.set(var, Value::List(CompositeData { elements_type: vec![], values: vec![] }));
+        self.ctx.set(var, Value::List(CompositeData { elements_type: vec![], values: vec![], value_id: ValueId::next() }));
         Value::None
     }
 

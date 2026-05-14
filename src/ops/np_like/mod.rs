@@ -44,7 +44,7 @@ pub(crate) fn vectorize_minmax(
     int_cmp: fn(&mut crate::builder::IRBuilder, &crate::types::Value, &crate::types::Value) -> crate::types::Value,
     float_cmp: fn(&mut crate::builder::IRBuilder, &crate::types::Value, &crate::types::Value) -> crate::types::Value,
 ) -> crate::types::Value {
-    use crate::types::{CompositeData, Value};
+    use crate::types::{CompositeData, Value, ValueId};
     // Broadcast first so both operands have the same shape, then walk in
     // lockstep.
     let lshape = crate::helpers::composite::get_composite_shape(x1);
@@ -84,6 +84,8 @@ pub(crate) fn vectorize_minmax(
                 Value::List(CompositeData {
                     elements_type: types,
                     values: vals,
+                
+                    value_id: ValueId::next(),
                 })
             }
             _ => {
@@ -204,14 +206,14 @@ macro_rules! define_np_unary_math {
             // leaves. Inlined inside the impl so the macro substitution can
             // reference the captured `$float_method` and `$sig`.
             fn apply_scalar(builder: &mut crate::builder::IRBuilder, x: &crate::types::Value) -> crate::types::Value {
-                use crate::types::{Value, CompositeData};
+                use crate::types::{Value, CompositeData, ValueId};
                 match x {
                     Value::List(d) | Value::Tuple(d) => {
                         let vals: Vec<Value> = d.values.iter()
                             .map(|v| Self::apply_scalar(builder, v))
                             .collect();
                         let types = vals.iter().map(|v| v.zinnia_type()).collect();
-                        Value::List(CompositeData { elements_type: types, values: vals })
+                        Value::List(CompositeData { elements_type: types, values: vals, value_id: ValueId::next() })
                     }
                     Value::Float(_) => builder.$float_method(x),
                     Value::Integer(_) | Value::Boolean(_) => {
@@ -265,7 +267,7 @@ macro_rules! define_np_binary_math {
                 a: &crate::types::Value,
                 b: &crate::types::Value,
             ) -> crate::types::Value {
-                use crate::types::{CompositeData, Value};
+                use crate::types::{CompositeData, Value, ValueId};
                 let lshape = crate::helpers::composite::get_composite_shape(a);
                 let rshape = crate::helpers::composite::get_composite_shape(b);
                 if !lshape.is_empty() || !rshape.is_empty() {
@@ -300,6 +302,8 @@ macro_rules! define_np_binary_math {
                     return Value::List(CompositeData {
                         elements_type: types,
                         values: vals,
+                    
+                        value_id: ValueId::next(),
                     });
                 }
                 Self::apply_scalar(builder, a, b)

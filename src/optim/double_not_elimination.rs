@@ -25,13 +25,13 @@ impl IRPass for DoubleNotElimination {
 
             let result = if matches!(stmt.ir, IR::LogicalNot) {
                 let operand = &ir_args[0];
-                if let Some(ptr) = operand.ptr() {
+                if let Some(ptr) = operand.stmt_id() {
                     if let Some(orig) = not_original.get(&ptr) {
                         // Double negation — eliminate
                         orig.clone()
                     } else {
                         let new_val = builder.create_ir(&stmt.ir, &ir_args);
-                        if let Some(new_ptr) = new_val.ptr() {
+                        if let Some(new_ptr) = new_val.stmt_id() {
                             not_original.insert(new_ptr, operand.clone());
                         }
                         new_val

@@ -202,7 +202,23 @@ class ZKCircuit:
         return self.name
 
 
-def zk_circuit(method, config: ZinniaConfig = ZinniaConfig()):
+def zk_circuit(method=None, *, config: ZinniaConfig = ZinniaConfig(), requires=None):
+    # Support both ``@zk_circuit`` (bare) and ``@zk_circuit(requires=[...],
+    # config=...)`` (factory) forms. In the factory form ``method`` is None
+    # at the first call; we return a decorator that re-enters ``zk_circuit``
+    # with the captured kwargs once the method shows up.
+    #
+    # ``requires`` is consumed at compile time by the AST transformer which
+    # walks the function's ``decorator_list`` and recognises
+    # ``@zk_circuit(requires=[...])`` syntactically. The kwarg is accepted
+    # here so the runtime decorator does not error when the factory form is
+    # used; the AST transformer is the source of truth for precondition
+    # extraction.
+    if method is None:
+        def _factory(m):
+            return zk_circuit(m, config=config, requires=requires)
+        return _factory
+    _ = requires  # silence unused-kwarg; AST transformer reads it instead.
     from zinnia.compile.module_constants import (
         extract_module_constants, substitute_module_constants,
     )

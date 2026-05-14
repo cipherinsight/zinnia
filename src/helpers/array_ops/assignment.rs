@@ -1,11 +1,11 @@
 //! Dynamic array element and masked assignment.
 
 use crate::builder::IRBuilder;
-use crate::types::{
+use crate::types::{ValueId, 
     DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, SliceIndex, Value,
 };
 
-use super::indexing::compute_flat_addr;
+use super::indexing::{compute_flat_addr, select_stride_mode, stride_value, StrideMode};
 
 /// Single element assignment: dyn[i] = x or dyn[i, j] = x.
 /// In-place write via `ir_write_memory` — O(1).
@@ -16,14 +16,15 @@ pub fn dyn_setitem(
     value: &Value,
 ) -> Value {
     let addr = compute_flat_addr(b, data, indices);
-    // `SiteKind::DynamicIndexBound` probe (item #4 of the
-    // smt-invocation-load-bearing card). Informational — the memory-trace
-    // permutation argument enforces soundness at prove time.
-    let _ = crate::optim::resolver::probe_in_range(
+    // Load-bearing index-in-range discharge (Group 5a). Phase E policy:
+    // literal-out-of-range panics, Disproved panics, Unknown emits a
+    // witness check (lenient) or panics (`ZINNIA_OP_REQUIRES_STRICT=1`).
+    crate::optim::resolver::discharge_index_in_range(
         b,
         &addr,
         0,
         data.envelope.total_bound as i64,
+        "dyn_setitem",
     );
 
     let write_val = cast_to_dtype(b, value, data.dtype);
@@ -101,6 +102,7 @@ pub fn dyn_setitem_mask(
         dtype: data.dtype,
         segment_id,
         meta: data.meta.clone(),
+        value_id: ValueId::next(),
     })
 }
 
@@ -114,7 +116,7 @@ pub fn dyn_setitem_slice(
     value: &Value,
 ) -> Value {
     let shape = &data.meta.logical_shape;
-    let strides = &data.meta.logical_strides;
+    let mode = select_stride_mode(data);
     let rank = shape.len();
 
     // Build the set of target positions: for each index, compute the
@@ -266,36 +268,67 @@ pub fn dyn_setitem_slice(
     let value_strides = crate::helpers::shape_arith::row_major_strides(&value_shape);
 
     if !has_dynamic_range {
-        // All static: iterate over all target positions and write.
+        // All static: iterate over all target positions and write. In
+        // literal-stride mode the entire address folds at compile time;
+        // in symbolic-runtime mode we emit one `ir_mul_i` per axis against
+        // the compact buffer's `runtime_strides`.
         for val_flat in 0..value_total {
             let val_coords = crate::helpers::shape_arith::decode_coords(val_flat, &value_shape, &value_strides);
 
-            // Compute target flat address.
-            let mut addr_static: i64 = 0;
-            let mut val_coord_idx = 0;
-
-            for spec in &axis_specs {
-                match &spec.coords {
-                    AxisCoords::Single(v) => {
-                        if let Some(i) = v.int_val() {
-                            let i = if i < 0 { shape[spec.src_axis] as i64 + i } else { i };
-                            addr_static += i * strides[spec.src_axis] as i64;
-                        } else {
-                            // Dynamic single index — need IR arithmetic.
-                            // For simplicity, fall through to the dynamic path below.
-                            panic!("slice assignment with dynamic single index + static range not yet optimized");
+            let addr = match &mode {
+                StrideMode::LiteralLogical(strides) => {
+                    let mut addr_static: i64 = 0;
+                    let mut val_coord_idx = 0;
+                    for spec in &axis_specs {
+                        match &spec.coords {
+                            AxisCoords::Single(v) => {
+                                if let Some(i) = v.int_val() {
+                                    let i = if i < 0 { shape[spec.src_axis] as i64 + i } else { i };
+                                    addr_static += i * strides[spec.src_axis] as i64;
+                                } else {
+                                    panic!("slice assignment with dynamic single index + static range not yet optimized");
+                                }
+                            }
+                            AxisCoords::Static(coords) => {
+                                let coord = coords[val_coords[val_coord_idx]];
+                                addr_static += coord as i64 * strides[spec.src_axis] as i64;
+                                val_coord_idx += 1;
+                            }
+                            AxisCoords::Dynamic { .. } => unreachable!("checked above"),
                         }
                     }
-                    AxisCoords::Static(coords) => {
-                        let coord = coords[val_coords[val_coord_idx]];
-                        addr_static += coord as i64 * strides[spec.src_axis] as i64;
-                        val_coord_idx += 1;
-                    }
-                    AxisCoords::Dynamic { .. } => unreachable!("checked above"),
+                    b.ir_constant_int(addr_static)
                 }
-            }
-
-            let addr = b.ir_constant_int(addr_static);
+                StrideMode::SymbolicRuntime(_) => {
+                    let mut acc: Option<Value> = None;
+                    let mut val_coord_idx = 0;
+                    for spec in &axis_specs {
+                        let coord_val = match &spec.coords {
+                            AxisCoords::Single(v) => {
+                                if let Some(i) = v.int_val() {
+                                    let i = if i < 0 { shape[spec.src_axis] as i64 + i } else { i };
+                                    b.ir_constant_int(i)
+                                } else {
+                                    v.clone()
+                                }
+                            }
+                            AxisCoords::Static(coords) => {
+                                let coord = coords[val_coords[val_coord_idx]];
+                                val_coord_idx += 1;
+                                b.ir_constant_int(coord as i64)
+                            }
+                            AxisCoords::Dynamic { .. } => unreachable!("checked above"),
+                        };
+                        let stride_v = stride_value(b, &mode, spec.src_axis);
+                        let contrib = b.ir_mul_i(&coord_val, &stride_v);
+                        acc = Some(match acc.take() {
+                            None => contrib,
+                            Some(prev) => b.ir_add_i(&prev, &contrib),
+                        });
+                    }
+                    acc.unwrap_or_else(|| b.ir_constant_int(0))
+                }
+            };
             let write_val = if value_is_scalar {
                 cast_to_dtype(b, value, data.dtype)
             } else {
@@ -315,20 +348,43 @@ pub fn dyn_setitem_slice(
             let mut val_coord_idx = 0;
 
             for spec in &axis_specs {
-                let stride = strides[spec.src_axis] as i64;
+                let (stride_lit, stride_v): (i64, Value) = match &mode {
+                    StrideMode::LiteralLogical(strides) => {
+                        let s = strides[spec.src_axis] as i64;
+                        (s, b.ir_constant_int(s))
+                    }
+                    StrideMode::SymbolicRuntime(_) => {
+                        // Symbolic stride: force the entire axis into the
+                        // dynamic-parts list via `ir_mul_i` so the
+                        // address-folding loop below sees no compile-time
+                        // contribution from this axis. We pass `0` for the
+                        // literal sentinel to ensure no folding happens.
+                        (0, stride_value(b, &mode, spec.src_axis))
+                    }
+                };
+                let use_symbolic = matches!(mode, StrideMode::SymbolicRuntime(_));
                 match &spec.coords {
                     AxisCoords::Single(v) => {
                         if let Some(i) = v.int_val() {
                             let i = if i < 0 { shape[spec.src_axis] as i64 + i } else { i };
-                            addr_parts_static += i * stride;
+                            if use_symbolic {
+                                let i_val = b.ir_constant_int(i);
+                                addr_parts_dynamic.push(b.ir_mul_i(&i_val, &stride_v));
+                            } else {
+                                addr_parts_static += i * stride_lit;
+                            }
                         } else {
-                            let stride_val = b.ir_constant_int(stride);
-                            addr_parts_dynamic.push(b.ir_mul_i(v, &stride_val));
+                            addr_parts_dynamic.push(b.ir_mul_i(v, &stride_v));
                         }
                     }
                     AxisCoords::Static(coords) => {
                         let coord = coords[val_coords[val_coord_idx]];
-                        addr_parts_static += coord as i64 * stride;
+                        if use_symbolic {
+                            let c_val = b.ir_constant_int(coord as i64);
+                            addr_parts_dynamic.push(b.ir_mul_i(&c_val, &stride_v));
+                        } else {
+                            addr_parts_static += coord as i64 * stride_lit;
+                        }
                         val_coord_idx += 1;
                     }
                     AxisCoords::Dynamic { start, stop, step, max_len, axis_len } => {
@@ -359,11 +415,11 @@ pub fn dyn_setitem_slice(
                         let clamped_hi = b.ir_select_i(&is_over, &max_idx, &src_idx);
                         let clamped = b.ir_select_i(&is_neg, &zero, &clamped_hi);
 
-                        let stride_val = b.ir_constant_int(stride);
-                        addr_parts_dynamic.push(b.ir_mul_i(&clamped, &stride_val));
+                        addr_parts_dynamic.push(b.ir_mul_i(&clamped, &stride_v));
                         val_coord_idx += 1;
                     }
                 }
+                let _ = stride_lit; // silence unused when symbolic
             }
 
             // Compute address.

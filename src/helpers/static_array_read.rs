@@ -28,7 +28,7 @@
 
 use crate::builder::IRBuilder;
 use crate::ops::dyn_ndarray::{scalar_i64_to_value, value_to_scalar_i64};
-use crate::types::{NumberType, ScalarValue, SliceIndex, Value};
+use crate::types::{NumberType, ScalarValue, SliceIndex, Value, ValueId};
 
 use super::shape_arith::{decode_coords, row_major_strides};
 
@@ -61,14 +61,11 @@ fn read_leaf_at_flat(
 /// Read a single leaf at a runtime address. Always emits one
 /// `ir_read_memory` op.
 ///
-/// Also runs a `SiteKind::DynamicIndexBound` probe against the resolver
-/// (item #4 of the `smt-invocation-load-bearing` card). The probe is
-/// informational — soundness is enforced at prove time by the memory-trace
-/// permutation argument — but it surfaces SMT engagement on production
-/// patterns where the index is a runtime computation whose bound is
-/// nonetheless decidable (binary search, modular indexing, etc.). The
-/// telemetry counters `chokepoint_invocations["dyn_index_bound"]` and
-/// `chokepoint_smt_engagements["dyn_index_bound"]` track the load.
+/// Runs Group 5a's `discharge_index_in_range` against the dynamic
+/// address: a literal out of `[0, total_size)` panics at compile time,
+/// a Disproved discharge panics, and Unknown emits a witness assertion
+/// under lenient mode (panics under `ZINNIA_OP_REQUIRES_STRICT=1`). The
+/// memory-trace permutation argument remains the prover-side backstop.
 fn read_leaf_at_dynamic(
     b: &mut IRBuilder,
     segment_id: u32,
@@ -76,7 +73,16 @@ fn read_leaf_at_dynamic(
     dtype: NumberType,
     total_size: usize,
 ) -> Value {
-    let _ = crate::optim::resolver::probe_in_range(b, addr, 0, total_size as i64);
+    // Load-bearing index-in-range discharge (Group 5a). Replaces the
+    // informational `probe_in_range` with Phase E enforcement at the
+    // static-array dynamic-read chokepoint.
+    crate::optim::resolver::discharge_index_in_range(
+        b,
+        addr,
+        0,
+        total_size as i64,
+        "static_array_read",
+    );
     let raw = b.ir_read_memory(segment_id, addr);
     scalar_i64_to_value(&value_to_scalar_i64(&raw), dtype)
 }
@@ -121,7 +127,7 @@ fn compute_addr(
 /// stays on the StaticArray representation when it can.
 pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIndex]) -> Value {
     let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id } => {
+        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id, value_id: _ } => {
             (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
         }
         _ => panic!("static_array_subscript: expected Value::StaticArray"),
@@ -250,6 +256,7 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
                         strides: new_strides,
                         offset: new_offset,
                         imag_segment_id: imag_seg,
+                        value_id: ValueId::next(),
                     };
                 }
                 // Dynamic axis-0 index: materialise the row into a fresh
@@ -308,73 +315,79 @@ fn slice_axis_static_or_dynamic_1d(
         && (!is_present(stop) || e_static.is_some())
         && (!is_present(step) || st_static.is_some());
 
-    if !all_static {
+    let out = if !all_static {
         // Dynamic bounds → materialise.
-        return materialise_dynamic_1d_slice(
+        materialise_dynamic_1d_slice(
             b, dtype, len, segment_id, strides[0], offset,
             start, stop, step,
-        );
-    }
-
-    let len_i = len as i64;
-    let s = s_static.unwrap_or(0);
-    let e = e_static.unwrap_or(len_i);
-    let st = st_static.unwrap_or(1);
-    let s = if s < 0 { (len_i + s).max(0) } else { s.min(len_i) };
-    let e = if e < 0 { (len_i + e).max(0) } else { e.min(len_i) };
-    assert!(st != 0, "slice step cannot be zero");
-
-    // Contiguous step=1 slab → view.
-    if st == 1 && strides[0] == 1 {
-        let out_len = (e - s).max(0) as usize;
-        let new_offset = offset + s as usize;
-        // Preserve dual-segment imag for Complex views.
-        let imag_seg = if let Value::StaticArray { imag_segment_id, .. } = src {
-            *imag_segment_id
-        } else { None };
-        return Value::StaticArray {
-            dtype,
-            shape: vec![out_len],
-            segment_id,
-            strides: vec![strides[0]],
-            offset: new_offset,
-            imag_segment_id: imag_seg,
-        };
-    }
-
-    // Non-contiguous: materialise.
-    let mut indices: Vec<i64> = Vec::new();
-    if st > 0 {
-        let mut i = s;
-        while i < e { indices.push(i); i += st; }
+        )
     } else {
-        let mut i = s;
-        while i > e { indices.push(i); i += st; }
-    }
-    let out_len = indices.len();
-    if dtype == NumberType::Complex {
-        let imag_seg = if let Value::StaticArray { imag_segment_id, .. } = src {
-            imag_segment_id.expect("Complex StaticArray missing imag_segment_id")
-        } else { unreachable!() };
-        let mut reals: Vec<Value> = Vec::with_capacity(out_len);
-        let mut imags: Vec<Value> = Vec::with_capacity(out_len);
-        for src_i in &indices {
-            let flat = (*src_i as usize) * strides[0];
-            let abs = offset + flat;
-            let leaf = read_complex_leaf(b, segment_id, imag_seg, abs);
-            if let Value::Complex { real, imag } = leaf {
-                reals.push(Value::Float(real));
-                imags.push(Value::Float(imag));
+        let len_i = len as i64;
+        let s = s_static.unwrap_or(0);
+        let e = e_static.unwrap_or(len_i);
+        let st = st_static.unwrap_or(1);
+        let s = if s < 0 { (len_i + s).max(0) } else { s.min(len_i) };
+        let e = if e < 0 { (len_i + e).max(0) } else { e.min(len_i) };
+        assert!(st != 0, "slice step cannot be zero");
+
+        if st == 1 && strides[0] == 1 {
+            // Contiguous step=1 slab → view.
+            let out_len = (e - s).max(0) as usize;
+            let new_offset = offset + s as usize;
+            // Preserve dual-segment imag for Complex views.
+            let imag_seg = if let Value::StaticArray { imag_segment_id, .. } = src {
+                *imag_segment_id
+            } else { None };
+            Value::StaticArray {
+                dtype,
+                shape: vec![out_len],
+                segment_id,
+                strides: vec![strides[0]],
+                offset: new_offset,
+                imag_segment_id: imag_seg,
+                value_id: ValueId::next(),
+            }
+        } else {
+            // Non-contiguous: materialise.
+            let mut indices: Vec<i64> = Vec::new();
+            if st > 0 {
+                let mut i = s;
+                while i < e { indices.push(i); i += st; }
+            } else {
+                let mut i = s;
+                while i > e { indices.push(i); i += st; }
+            }
+            let out_len = indices.len();
+            if dtype == NumberType::Complex {
+                let imag_seg = if let Value::StaticArray { imag_segment_id, .. } = src {
+                    imag_segment_id.expect("Complex StaticArray missing imag_segment_id")
+                } else { unreachable!() };
+                let mut reals: Vec<Value> = Vec::with_capacity(out_len);
+                let mut imags: Vec<Value> = Vec::with_capacity(out_len);
+                for src_i in &indices {
+                    let flat = (*src_i as usize) * strides[0];
+                    let abs = offset + flat;
+                    let leaf = read_complex_leaf(b, segment_id, imag_seg, abs);
+                    if let Value::Complex { real, imag } = leaf {
+                        reals.push(Value::Float(real));
+                        imags.push(Value::Float(imag));
+                    }
+                }
+                super::static_array::build_static_array_from_flat_complex(b, reals, imags, vec![out_len])
+            } else {
+                let mut leaves: Vec<Value> = Vec::with_capacity(out_len);
+                for src_i in &indices {
+                    let flat = (*src_i as usize) * strides[0];
+                    leaves.push(read_leaf_at_flat(b, segment_id, offset, flat, dtype));
+                }
+                super::static_array::build_static_array_from_flat(b, leaves, vec![out_len], dtype)
             }
         }
-        return super::static_array::build_static_array_from_flat_complex(b, reals, imags, vec![out_len]);
+    };
+    if let (Some(in_vid), Some(out_vid)) = (src.value_id(), out.value_id()) {
+        crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
     }
-    let mut leaves: Vec<Value> = Vec::with_capacity(out_len);
-    for src_i in &indices {
-        let flat = (*src_i as usize) * strides[0];
-        leaves.push(read_leaf_at_flat(b, segment_id, offset, flat, dtype));
-    }
-    super::static_array::build_static_array_from_flat(b, leaves, vec![out_len], dtype)
+    out
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -463,6 +476,8 @@ fn slice_axis(
     step: Option<&Value>,
 ) -> Value {
     if shape.len() == 1 {
+        // The inner 1-D helper already emits the content-relay on return,
+        // so don't double-relay here.
         return slice_axis_static_or_dynamic_1d(
             b, src, dtype, shape.to_vec(), segment_id, strides.to_vec(), offset,
             start, stop, step,
@@ -481,69 +496,74 @@ fn slice_axis(
         && (!is_present(stop) || e_static.is_some())
         && (!is_present(step) || st_static.is_some());
 
-    if !all_static {
-        return materialise_dynamic_axis_slice(
+    let out = if !all_static {
+        materialise_dynamic_axis_slice(
             b, dtype, shape, segment_id, strides, offset, axis, start, stop, step,
-        );
-    }
-
-    let len_i = shape[axis] as i64;
-    let s = s_static.unwrap_or(0);
-    let e = e_static.unwrap_or(len_i);
-    let st = st_static.unwrap_or(1);
-    let s = if s < 0 { (len_i + s).max(0) } else { s.min(len_i) };
-    let e = if e < 0 { (len_i + e).max(0) } else { e.min(len_i) };
-    assert!(st != 0, "slice step cannot be zero");
-
-    if st == 1 && axis == 0 {
-        // Slice along axis 0 with step 1: contiguous view.
-        let out_len = (e - s).max(0) as usize;
-        let mut new_shape = shape.to_vec();
-        new_shape[0] = out_len;
-        let new_offset = offset + (s as usize) * strides[0];
-        let imag_seg = if let Value::StaticArray { imag_segment_id, .. } = src {
-            *imag_segment_id
-        } else { None };
-        return Value::StaticArray {
-            dtype,
-            shape: new_shape,
-            segment_id,
-            strides: strides.to_vec(),
-            offset: new_offset,
-            imag_segment_id: imag_seg,
-        };
-    }
-
-    // Non-contiguous along this axis OR slicing inner axis: materialise.
-    let mut indices: Vec<i64> = Vec::new();
-    if st > 0 {
-        let mut i = s;
-        while i < e { indices.push(i); i += st; }
+        )
     } else {
-        let mut i = s;
-        while i > e { indices.push(i); i += st; }
-    }
-    let out_axis_len = indices.len();
-    let mut new_shape = shape.to_vec();
-    new_shape[axis] = out_axis_len;
-    let total: usize = new_shape.iter().product();
-    let new_strides = row_major_strides(&new_shape);
+        let len_i = shape[axis] as i64;
+        let s = s_static.unwrap_or(0);
+        let e = e_static.unwrap_or(len_i);
+        let st = st_static.unwrap_or(1);
+        let s = if s < 0 { (len_i + s).max(0) } else { s.min(len_i) };
+        let e = if e < 0 { (len_i + e).max(0) } else { e.min(len_i) };
+        assert!(st != 0, "slice step cannot be zero");
 
-    let mut leaves: Vec<Value> = Vec::with_capacity(total);
-    for flat_out in 0..total {
-        let coords = decode_coords(flat_out, &new_shape, &new_strides);
-        let mut src_flat: usize = 0;
-        for ax in 0..shape.len() {
-            let src_coord = if ax == axis {
-                indices[coords[ax]] as usize
+        if st == 1 && axis == 0 {
+            // Slice along axis 0 with step 1: contiguous view.
+            let out_len = (e - s).max(0) as usize;
+            let mut new_shape = shape.to_vec();
+            new_shape[0] = out_len;
+            let new_offset = offset + (s as usize) * strides[0];
+            let imag_seg = if let Value::StaticArray { imag_segment_id, .. } = src {
+                *imag_segment_id
+            } else { None };
+            Value::StaticArray {
+                dtype,
+                shape: new_shape,
+                segment_id,
+                strides: strides.to_vec(),
+                offset: new_offset,
+                imag_segment_id: imag_seg,
+                value_id: ValueId::next(),
+            }
+        } else {
+            // Non-contiguous along this axis OR slicing inner axis: materialise.
+            let mut indices: Vec<i64> = Vec::new();
+            if st > 0 {
+                let mut i = s;
+                while i < e { indices.push(i); i += st; }
             } else {
-                coords[ax]
-            };
-            src_flat += src_coord * strides[ax];
+                let mut i = s;
+                while i > e { indices.push(i); i += st; }
+            }
+            let out_axis_len = indices.len();
+            let mut new_shape = shape.to_vec();
+            new_shape[axis] = out_axis_len;
+            let total: usize = new_shape.iter().product();
+            let new_strides = row_major_strides(&new_shape);
+
+            let mut leaves: Vec<Value> = Vec::with_capacity(total);
+            for flat_out in 0..total {
+                let coords = decode_coords(flat_out, &new_shape, &new_strides);
+                let mut src_flat: usize = 0;
+                for ax in 0..shape.len() {
+                    let src_coord = if ax == axis {
+                        indices[coords[ax]] as usize
+                    } else {
+                        coords[ax]
+                    };
+                    src_flat += src_coord * strides[ax];
+                }
+                leaves.push(read_leaf_at_flat(b, segment_id, offset, src_flat, dtype));
+            }
+            super::static_array::build_static_array_from_flat(b, leaves, new_shape, dtype)
         }
-        leaves.push(read_leaf_at_flat(b, segment_id, offset, src_flat, dtype));
+    };
+    if let (Some(in_vid), Some(out_vid)) = (src.value_id(), out.value_id()) {
+        crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
     }
-    super::static_array::build_static_array_from_flat(b, leaves, new_shape, dtype)
+    out
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -686,7 +706,7 @@ fn multidim_subscript_static_array(
     indices: &[SliceIndex],
 ) -> Value {
     let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id } => {
+        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id, value_id: _ } => {
             (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
         }
         _ => unreachable!(),
@@ -869,7 +889,7 @@ enum AxisSel {
 /// sharing the same segment.
 pub fn iter_element(b: &mut IRBuilder, arr: &Value, i: usize) -> Value {
     let (dtype, shape, segment_id, strides, offset, imag_seg) = match arr {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id } => {
+        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id, value_id: _ } => {
             (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
         }
         _ => panic!("iter_element: expected StaticArray"),
@@ -892,6 +912,7 @@ pub fn iter_element(b: &mut IRBuilder, arr: &Value, i: usize) -> Value {
         strides: new_strides,
         offset: new_offset,
         imag_segment_id: imag_seg,
+        value_id: ValueId::next(),
     }
 }
 

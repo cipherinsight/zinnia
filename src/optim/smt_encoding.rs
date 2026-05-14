@@ -60,38 +60,51 @@
 //! a profiling pass shows demand.
 
 use crate::ir_defs::IR;
-use z3::ast::{Ast, Bool, Int};
+use z3::ast::{Ast, Bool, Int, Real};
 
 // ---------------------------------------------------------------------------
 // Z3Term — sort-tagged Z3 AST wrapper.
 // ---------------------------------------------------------------------------
 
-/// A Z3 term, sort-tagged. Two sorts matter for integer resolution: `Int`
-/// and `Bool`. Everything else either silently falls back to an
-/// unconstrained `Int` (the conservative default), or the resolver
-/// declines to query it.
+/// A Z3 term, sort-tagged. Three sorts: `Int`, `Bool`, `Real`. Integer
+/// resolution stays on `Int`; bool reasoning on `Bool`; float contracts
+/// (compiler.float-contracts) operate on `Real`. Mixed-sort comparisons
+/// coerce via `as_int` / `as_real` / `as_bool`.
 #[derive(Debug, Clone)]
 pub enum Z3Term {
     Int(Int),
     Bool(Bool),
+    Real(Real),
 }
 
 impl Z3Term {
     /// Coerce to an `Int`. If the term is a `Bool`, encode as `If(b, 1, 0)`.
-    /// Used by encoding arms that take an integer operand whose source was
-    /// bool-typed (e.g., `IntCast` from a bool).
+    /// If the term is a `Real`, truncate via Z3's `to_int` (floor toward 0).
     pub fn as_int(&self) -> Int {
         match self {
             Z3Term::Int(i) => i.clone(),
             Z3Term::Bool(b) => b.ite(&Int::from_i64(1), &Int::from_i64(0)),
+            Z3Term::Real(r) => r.to_int(),
         }
     }
 
-    /// Coerce to a `Bool`. If the term is an `Int`, encode as `i != 0`.
+    /// Coerce to a `Bool`. If the term is an `Int`, encode as `i != 0`. If
+    /// the term is a `Real`, encode as `r != 0.0`.
     pub fn as_bool(&self) -> Bool {
         match self {
             Z3Term::Bool(b) => b.clone(),
             Z3Term::Int(i) => i._eq(&Int::from_i64(0)).not(),
+            Z3Term::Real(r) => r._eq(&Real::from_real(0, 1)).not(),
+        }
+    }
+
+    /// Coerce to a `Real`. Int → Real by `Int::to_real`; Bool by
+    /// `b.ite(1.0, 0.0)`.
+    pub fn as_real(&self) -> Real {
+        match self {
+            Z3Term::Real(r) => r.clone(),
+            Z3Term::Int(i) => Real::from_int(i),
+            Z3Term::Bool(b) => b.ite(&Real::from_real(1, 1), &Real::from_real(0, 1)),
         }
     }
 }
@@ -104,16 +117,28 @@ impl Z3Term {
 /// call gets a unique name (Z3 unique-variable hygiene). The thread-local
 /// `z3::Context` is consulted implicitly by the wrapped `Int` / `Bool`
 /// constructors.
+///
+/// Also tracks structural-predicate meta-facts injected during this
+/// encoding so a predicate's universal axioms (e.g., `nnz(v) >= 0`) are
+/// asserted at most once per query even if the predicate atom is
+/// referenced repeatedly.
 #[derive(Debug, Default)]
 pub struct SmtEncodingCtx {
     next_unconstrained_id: u64,
+    /// Set of predicate kinds whose meta-facts have already been injected
+    /// during this encoding. Keyed by `kind` string — the foundation card's
+    /// dedup granularity is per-(predicate, build). Later cards (per-instance
+    /// substitution) may refine this.
+    injected_meta_kinds: std::collections::HashSet<String>,
+    /// Accumulator of meta-fact `Bool` constraints injected by this
+    /// encoding. The resolver conjoins these into the assembled formula
+    /// before calling Z3.
+    pub meta_facts: Vec<Bool>,
 }
 
 impl SmtEncodingCtx {
     pub fn new() -> Self {
-        Self {
-            next_unconstrained_id: 0,
-        }
+        Self::default()
     }
 
     /// Mint a fresh unconstrained `Int` symbolic. Used by the default
@@ -124,6 +149,26 @@ impl SmtEncodingCtx {
         let id = self.next_unconstrained_id;
         self.next_unconstrained_id += 1;
         Z3Term::Int(Int::fresh_const(&format!("unconstrained_{id}_")))
+    }
+
+    /// Inject the universal meta-facts for a registered structural
+    /// predicate into this encoding. Deduplicated by predicate `kind` so
+    /// repeated references within one query do not multiply the formula.
+    /// Returns `true` if any facts were appended, `false` if the kind was
+    /// already injected.
+    pub fn inject_meta_facts(&mut self, kind: &str, facts: Vec<Bool>) -> bool {
+        if self.injected_meta_kinds.contains(kind) {
+            return false;
+        }
+        self.injected_meta_kinds.insert(kind.to_string());
+        self.meta_facts.extend(facts);
+        true
+    }
+
+    /// True if a meta-fact set for the given predicate kind has been
+    /// injected during this encoding.
+    pub fn has_injected(&self, kind: &str) -> bool {
+        self.injected_meta_kinds.contains(kind)
     }
 }
 
@@ -338,6 +383,21 @@ impl IROp for IR {
                 let _ = args;
                 ctx.fresh_unconstrained()
             }
+
+            // Structural-predicate atoms have a real encoding (registered
+            // per kind in `optim::predicates`); they inject meta-facts into
+            // the context as a side effect and return a Bool term.
+            IR::StructuralPredicate { .. } => {
+                crate::optim::predicates::smt_encode_structural_predicate(self, ctx)
+            }
+
+            // Scalar precondition: the discharger collects these
+            // separately and lowers the ContractTerm via
+            // `formula::lower_bool`. The per-statement encoding path
+            // here is unused (the atom has no operands) — return a
+            // fresh unconstrained so any incidental query through this
+            // arm degrades gracefully.
+            IR::ScalarPrecondition { .. } => ctx.fresh_unconstrained(),
 
             // ── String / IO / memory / dyn-ndarray / external / hashing
             //    — silent fallback. Off the integer-resolver hot path.

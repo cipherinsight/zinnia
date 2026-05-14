@@ -15,7 +15,7 @@ fn make_graph(stmts: Vec<(IR, Vec<u32>)>) -> IRGraph {
     let ir_stmts: Vec<IRStatement> = stmts
         .into_iter()
         .enumerate()
-        .map(|(i, (ir, args))| IRStatement::new(i as u32, ir, args, None))
+        .map(|(i, (ir, args))| IRStatement::new(i as u32, crate::types::ValueId::next(), ir, args, vec![], None))
         .collect();
     IRGraph::new(ir_stmts)
 }

@@ -52,11 +52,11 @@ pub fn value_to_scalar_i64(val: &Value) -> ScalarValue<i64> {
         Value::Integer(sv) => sv.clone(),
         Value::Boolean(sv) => ScalarValue::new(
             sv.static_val.map(|b| if b { 1 } else { 0 }),
-            sv.ptr,
+            sv.stmt_id,
         ),
         Value::Float(sv) => ScalarValue::new(
             sv.static_val.map(|f| f as i64),
-            sv.ptr,
+            sv.stmt_id,
         ),
         _ => ScalarValue::new(None, None),
     }
@@ -69,7 +69,7 @@ pub fn scalar_i64_to_value(elem: &ScalarValue<i64>, dtype: NumberType) -> Value 
         NumberType::Float => {
             Value::Float(ScalarValue::new(
                 elem.static_val.map(|v| v as f64),
-                elem.ptr,
+                elem.stmt_id,
             ))
         }
         NumberType::Complex => panic!(

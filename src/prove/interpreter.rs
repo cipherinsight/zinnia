@@ -155,6 +155,17 @@ pub fn interpret_ir<S: Synthesizer>(
                 None
             }
 
+            // ── Structural-predicate precondition (inert at prove time) ──
+            // The IR carries the precondition payload for the SMT layer;
+            // the prover treats it as a no-op (no stack args, no result).
+            IR::StructuralPredicate { .. } => None,
+
+            // ── Scalar precondition (inert at prove time) ────────────
+            // Proof-time enforcement lives in the separate IR emitted
+            // by `witness::lower_precondition_to_ir`. This atom itself
+            // carries only the compile-time fact for the SMT layer.
+            IR::ScalarPrecondition { .. } => None,
+
             // ── Memory operations ─────────────────────────────────────
             IR::AllocateMemory {
                 segment_id,

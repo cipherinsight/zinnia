@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::ast::*;
-use crate::types::{CompositeData, ScalarValue, Value, ZinniaType};
+use crate::types::{CompositeData, ScalarValue, Value, ValueId, ZinniaType};
 
 use super::IRGenerator;
 
@@ -134,7 +134,7 @@ impl IRGenerator {
                                 .map(|v| self.builder.ir_abs_i(v))
                                 .collect();
                             let types = results.iter().map(|v| v.zinnia_type()).collect();
-                            Value::List(CompositeData { elements_type: types, values: results })
+                            Value::List(CompositeData { elements_type: types, values: results, value_id: ValueId::next() })
                         }
                         // |a + bi| = sqrt(a^2 + b^2)
                         Value::Complex { real, imag } => {
@@ -246,7 +246,7 @@ impl IRGenerator {
             (None, "list") => {
                 // list(iterable) — convert to list, or empty list
                 if visited_args.is_empty() {
-                    Value::List(CompositeData { elements_type: vec![], values: vec![] })
+                    Value::List(CompositeData { elements_type: vec![], values: vec![], value_id: ValueId::next() })
                 } else {
                     match &visited_args[0] {
                         Value::List(_) => visited_args[0].clone(),
@@ -254,6 +254,8 @@ impl IRGenerator {
                             Value::List(CompositeData {
                                 elements_type: data.elements_type.clone(),
                                 values: data.values.clone(),
+                            
+                                value_id: ValueId::next(),
                             })
                         }
                         _ => visited_args[0].clone(),
@@ -263,7 +265,7 @@ impl IRGenerator {
             (None, "tuple") => {
                 // tuple(iterable) — convert to tuple, or empty tuple
                 if visited_args.is_empty() {
-                    Value::Tuple(CompositeData { elements_type: vec![], values: vec![] })
+                    Value::Tuple(CompositeData { elements_type: vec![], values: vec![], value_id: ValueId::next() })
                 } else {
                     match &visited_args[0] {
                         Value::Tuple(_) => visited_args[0].clone(),
@@ -271,6 +273,8 @@ impl IRGenerator {
                             Value::Tuple(CompositeData {
                                 elements_type: data.elements_type.clone(),
                                 values: data.values.clone(),
+                            
+                                value_id: ValueId::next(),
                             })
                         }
                         _ => visited_args[0].clone(),
@@ -593,6 +597,46 @@ impl IRGenerator {
             (Some("np"), "atleast_2d") => crate::ops::static_ndarray_ops::np_atleast_nd(&mut self.builder, &visited_args, 2),
             (Some("np"), "atleast_3d") => crate::ops::static_ndarray_ops::np_atleast_nd(&mut self.builder, &visited_args, 3),
             (Some("np"), "tile") => crate::ops::static_ndarray_ops::np_tile(&mut self.builder, &visited_args),
+            (Some("np"), "take") => {
+                // np.take(arr, indices, axis=None). For now we support the
+                // default-axis case on a 1-D source, or explicit axis=0 — the
+                // semantics that compose with `fancy_index_static`. Multi-D
+                // flatten-then-take and arbitrary axes are TBD.
+                let arr = visited_args.first().cloned().unwrap_or(Value::None);
+                let indices = visited_args.get(1).cloned().unwrap_or(Value::None);
+                let axis_raw = _visited_kwargs.get("axis")
+                    .or_else(|| visited_args.get(2));
+                let axis_is_default = match axis_raw {
+                    None => true,
+                    Some(Value::None) => true,
+                    _ => false,
+                };
+                let axis_val = axis_raw.and_then(|v| v.int_val()).unwrap_or(0);
+                let data = match &arr {
+                    Value::List(d) | Value::Tuple(d) => d.clone(),
+                    _ => panic!("np.take: first argument must be a static-shape array"),
+                };
+                // Default-axis path on a 1-D source matches axis=0; for
+                // multi-D `axis=None` we'd need to flatten first.
+                let is_1d = data.values.iter().all(|v| !matches!(v, Value::List(_) | Value::Tuple(_)));
+                if !axis_is_default && axis_val != 0 {
+                    panic!("np.take with axis != 0 is not yet implemented");
+                }
+                if axis_is_default && !is_1d {
+                    panic!("np.take on multi-dimensional arrays with axis=None (flatten) is not yet implemented");
+                }
+                let out = match crate::helpers::ndarray::fancy_index_static(&data, &indices) {
+                    Ok(v) => v,
+                    Err(msg) => panic!("np.take: {}", msg),
+                };
+                // Group 5c (E-axis): content fact relay.
+                if let (Some(in_vid), Some(out_vid)) = (arr.value_id(), out.value_id()) {
+                    crate::optim::resolver::relay_forall_eq_const_from_input(
+                        &mut self.builder, in_vid, out_vid,
+                    );
+                }
+                out
+            }
             (Some("np"), "split") => {
                 if matches!(visited_args.first(), Some(Value::DynamicNDArray(_))) {
                     let data = match &visited_args[0] {
@@ -951,7 +995,7 @@ impl IRGenerator {
                     .map(|&s| Value::Integer(crate::types::ScalarValue::new(Some(s as i64), None)))
                     .collect();
                 let types = vec![ZinniaType::Integer; shape_vals.len()];
-                Value::Tuple(CompositeData { elements_type: types, values: shape_vals })
+                Value::Tuple(CompositeData { elements_type: types, values: shape_vals, value_id: ValueId::next() })
             }
             (Some(var), "dtype") if self.ctx.exists(var) => {
                 // Infer dtype from element types
@@ -984,28 +1028,36 @@ impl IRGenerator {
                 self.builder.ir_constant_int(total as i64)
             }
             (Some(var), "flatten") if self.ctx.exists(var) => {
-                let val = self.ctx.get(var).unwrap_or(Value::None);
+                let val_orig = self.ctx.get(var).unwrap_or(Value::None);
                 // P4c: native StaticArray dispatch.
-                if matches!(val, Value::StaticArray { .. }) {
+                if matches!(val_orig, Value::StaticArray { .. }) {
                     if let Some(out) = crate::helpers::static_array_shape::try_apply_flatten(
-                        &mut self.builder, &val,
+                        &mut self.builder, &val_orig,
                     ) {
                         return out;
                     }
                 }
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val_orig);
                 let flat = crate::helpers::composite::flatten_composite(&val);
                 let types = flat.iter().map(|v| v.zinnia_type()).collect();
-                Value::List(CompositeData { elements_type: types, values: flat })
+                let out = Value::List(CompositeData { elements_type: types, values: flat, value_id: ValueId::next() });
+                if let (Some(in_vid), Some(out_vid)) = (val_orig.value_id(), out.value_id()) {
+                    crate::optim::resolver::relay_forall_eq_const_from_input(&mut self.builder, in_vid, out_vid);
+                }
+                out
             }
             (Some(var), "flat") if self.ctx.exists(var) => {
-                let val = self.ctx.get(var).unwrap_or(Value::None);
+                let val_orig = self.ctx.get(var).unwrap_or(Value::None);
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val_orig);
                 let flat = crate::helpers::composite::flatten_composite(&val);
                 let types = flat.iter().map(|v| v.zinnia_type()).collect();
-                Value::List(CompositeData { elements_type: types, values: flat })
+                let out = Value::List(CompositeData { elements_type: types, values: flat, value_id: ValueId::next() });
+                if let (Some(in_vid), Some(out_vid)) = (val_orig.value_id(), out.value_id()) {
+                    crate::optim::resolver::relay_forall_eq_const_from_input(&mut self.builder, in_vid, out_vid);
+                }
+                out
             }
             (Some(var), "reshape") if self.ctx.exists(var) => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
@@ -1166,6 +1218,8 @@ impl IRGenerator {
                             Value::List(CompositeData {
                                 elements_type: types,
                                 values: vals,
+                            
+                                value_id: ValueId::next(),
                             })
                         }
                         Value::DynamicNDArray(d) => {
@@ -1567,7 +1621,11 @@ impl IRGenerator {
                 }
                 let flat = crate::helpers::composite::flatten_composite(&target);
                 let types = flat.iter().map(|v| v.zinnia_type()).collect();
-                Value::List(CompositeData { elements_type: types, values: flat })
+                let out = Value::List(CompositeData { elements_type: types, values: flat, value_id: ValueId::next() });
+                if let (Some(in_vid), Some(out_vid)) = (target_orig.value_id(), out.value_id()) {
+                    crate::optim::resolver::relay_forall_eq_const_from_input(&mut self.builder, in_vid, out_vid);
+                }
+                out
             }
             "reshape" => {
                 // P4c: native StaticArray dispatch.
@@ -1591,7 +1649,7 @@ impl IRGenerator {
                     .map(|&s| Value::Integer(crate::types::ScalarValue::new(Some(s as i64), None)))
                     .collect();
                 let types = vec![ZinniaType::Integer; shape_vals.len()];
-                Value::Tuple(CompositeData { elements_type: types, values: shape_vals })
+                Value::Tuple(CompositeData { elements_type: types, values: shape_vals, value_id: ValueId::next() })
             }
             "dtype" => {
                 let flat = crate::helpers::composite::flatten_composite(&target);

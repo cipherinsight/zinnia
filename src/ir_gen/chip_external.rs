@@ -169,6 +169,10 @@ impl IRGenerator {
         // Enter chip scope
         let return_dt = self.parse_dt_descriptor(&chip.return_dt);
         self.ctx.chip_enter(return_dt, None);
+        self.builder.facts.enter(
+            crate::optim::predicates::ScopeKind::Chip,
+            None,
+        );
         self.recursion_depth += 1;
 
         // Bind arguments. Positional args first, then kwargs by name, then
@@ -223,6 +227,7 @@ impl IRGenerator {
         }
 
         self.ctx.chip_leave();
+        let _chip_facts = self.builder.facts.leave();
         self.recursion_depth -= 1;
         self.chip_call_stack.pop();
 

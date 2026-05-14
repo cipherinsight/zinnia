@@ -1,4 +1,4 @@
-use crate::types::{CompositeData, Value, ZinniaType};
+use crate::types::{CompositeData, Value, ValueId, ZinniaType};
 
 /// Recursively flatten a composite (List/Tuple) into a flat vector of leaf values.
 ///
@@ -77,6 +77,8 @@ pub fn build_nested_value(flat: Vec<Value>, flat_types: Vec<ZinniaType>, shape: 
         return Value::List(CompositeData {
             elements_type: flat_types,
             values: flat,
+        
+            value_id: ValueId::next(),
         });
     }
     let inner_size: usize = shape[1..].iter().product();
@@ -89,5 +91,7 @@ pub fn build_nested_value(flat: Vec<Value>, flat_types: Vec<ZinniaType>, shape: 
     Value::List(CompositeData {
         elements_type: row_types,
         values: rows,
+    
+        value_id: ValueId::next(),
     })
 }

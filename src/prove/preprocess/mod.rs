@@ -243,6 +243,8 @@ impl<'a> Preprocessor<'a> {
             // No-ops
             IR::AddStr | IR::StrI | IR::StrF | IR::Print => Ok(None),
             IR::Assert | IR::ExposePublicI | IR::ExposePublicF => Ok(None),
+            IR::StructuralPredicate { .. } => Ok(None),
+            IR::ScalarPrecondition { .. } => Ok(None),
             IR::MemoryTraceEmit { .. } | IR::MemoryTraceSeal => Ok(None),
             IR::WitnessDynamicNDArrayMeta { .. } | IR::AssertDynamicNDArrayMeta { .. } => Ok(None),
 
@@ -340,7 +342,7 @@ mod tests {
         let ir_stmts: Vec<IRStatement> = stmts
             .into_iter()
             .enumerate()
-            .map(|(i, (ir, args))| IRStatement::new(i as u32, ir, args, None))
+            .map(|(i, (ir, args))| IRStatement::new(i as u32, crate::types::ValueId::next(), ir, args, vec![], None))
             .collect();
         IRGraph::new(ir_stmts)
     }

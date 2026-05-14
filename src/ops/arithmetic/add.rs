@@ -1,6 +1,6 @@
 use crate::builder::IRBuilder;
 use crate::ops::{dispatch_binary_numeric, Op, OpArgs, ParamEntry};
-use crate::types::Value;
+use crate::types::{Value, ValueId};
 
 pub struct AddOp;
 
@@ -31,14 +31,14 @@ impl Op for AddOp {
                 types.extend(rd.elements_type.clone());
                 let mut vals = ld.values.clone();
                 vals.extend(rd.values.clone());
-                return Value::List(crate::types::CompositeData { elements_type: types, values: vals });
+                return Value::List(crate::types::CompositeData { elements_type: types, values: vals, value_id: ValueId::next() });
             }
             (Value::Tuple(ld), Value::Tuple(rd)) => {
                 let mut types = ld.elements_type.clone();
                 types.extend(rd.elements_type.clone());
                 let mut vals = ld.values.clone();
                 vals.extend(rd.values.clone());
-                return Value::Tuple(crate::types::CompositeData { elements_type: types, values: vals });
+                return Value::Tuple(crate::types::CompositeData { elements_type: types, values: vals, value_id: ValueId::next() });
             }
             _ => {}
         }

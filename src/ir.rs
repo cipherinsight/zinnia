@@ -1,8 +1,10 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::ir_defs::IR;
 use crate::optim::resolver::{Resolver, StaticOnlyResolver};
-use crate::types::StmtId;
+use crate::types::{StmtId, ValueId};
 
 // ---------------------------------------------------------------------------
 // DebugInfo
@@ -22,25 +24,46 @@ pub struct DebugInfo {
 
 /// A single IR statement in the compilation pipeline.
 /// Mirrors Python `IRStatement` from `zinnia/compile/ir/ir_stmt.py`.
+///
+/// `stmt_id` is the IR-layer position (== index in the `IRGraph::stmts`
+/// vec). `value_id` is the identity of the `Value` this statement
+/// produces (compiler.value-id-and-fact-leaves).
+///
+/// **Phase 3 — dual-view arguments.** `arguments` retains its `Vec<StmtId>`
+/// shape so existing optim passes (constant-folding, DCE, duplicate
+/// elimination, etc.) and the SMT walker can keep using direct
+/// `stmts[arg as usize]` indexing. `arg_values` is the parallel
+/// `Vec<ValueId>` view: the same arguments expressed in the
+/// compilation-layer identity space. Fact-aware code (the resolver-prove
+/// path, future refinement-type forward propagation) reads `arg_values`
+/// so it never has to drop down to `stmt_id`. Each entry at index `i` in
+/// `arg_values` is the `value_id` of the IR statement at
+/// `arguments[i]`.
 #[derive(Debug, Clone)]
 pub struct IRStatement {
     pub stmt_id: StmtId,
+    pub value_id: ValueId,
     pub ir: IR,
     pub arguments: Vec<StmtId>,
+    pub arg_values: Vec<ValueId>,
     pub dbg: Option<DebugInfo>,
 }
 
 impl IRStatement {
     pub fn new(
         stmt_id: StmtId,
+        value_id: ValueId,
         ir: IR,
         arguments: Vec<StmtId>,
+        arg_values: Vec<ValueId>,
         dbg: Option<DebugInfo>,
     ) -> Self {
         Self {
             stmt_id,
+            value_id,
             ir,
             arguments,
+            arg_values,
             dbg,
         }
     }
@@ -55,6 +78,8 @@ impl IRStatement {
     }
 
     /// Deserialize from the Python IRStatement.export() format.
+    /// Mints a fresh `value_id`; `arg_values` is filled later by
+    /// `IRGraph::import_stmts` once each stmt's `value_id` is known.
     pub fn import_from(data: &serde_json::Value) -> Result<Self, String> {
         let stmt_id = data["stmt_id"]
             .as_u64()
@@ -68,8 +93,10 @@ impl IRStatement {
             .collect();
         Ok(IRStatement {
             stmt_id,
+            value_id: ValueId::next(),
             ir,
             arguments,
+            arg_values: Vec::new(),
             dbg: None,
         })
     }
@@ -83,11 +110,19 @@ impl IRStatement {
 /// Mirrors Python `IRGraph` from `zinnia/compile/ir/ir_graph.py`.
 pub struct IRGraph {
     pub stmts: Vec<IRStatement>,
+    /// `ValueId → StmtId` (= index in `stmts`) lookup. Built and
+    /// maintained by `update_graph` after Phase 3
+    /// (compiler.value-id-and-fact-leaves) switched `arguments` to
+    /// reference Values via `ValueId`. Walkers consult this to translate
+    /// each argument's ValueId back to an IR-layer position when they
+    /// need direct indexed access.
+    pub value_to_stmt: HashMap<ValueId, StmtId>,
     /// in_d[i] = number of arguments stmt i depends on
     pub in_d: Vec<u32>,
     /// out_d[i] = number of stmts that reference stmt i
     pub out_d: Vec<u32>,
-    /// in_links[i] = arguments of stmt i (same as stmts[i].arguments)
+    /// in_links[i] = arguments of stmt i (in stmt_id space, derived from
+    /// `arguments` via `value_to_stmt`).
     pub in_links: Vec<Vec<StmtId>>,
     /// out_links[i] = list of stmt IDs that reference stmt i
     pub out_links: Vec<Vec<StmtId>>,
@@ -113,6 +148,7 @@ impl IRGraph {
     pub fn new(stmts: Vec<IRStatement>) -> Self {
         let mut graph = IRGraph {
             stmts: Vec::new(),
+            value_to_stmt: HashMap::new(),
             in_d: Vec::new(),
             out_d: Vec::new(),
             in_links: Vec::new(),
@@ -175,7 +211,10 @@ impl IRGraph {
     }
 
     /// Replace the statement list and recompute all adjacency information.
-    pub fn update_graph(&mut self, stmts: Vec<IRStatement>) {
+    /// Builds `value_to_stmt` from each statement's `value_id` and
+    /// fills any empty `arg_values` by translating `arguments` (stmt_id
+    /// space) via that map.
+    pub fn update_graph(&mut self, mut stmts: Vec<IRStatement>) {
         let n = stmts.len();
 
         // Validate that stmt_id == index
@@ -185,6 +224,28 @@ impl IRGraph {
                 "Statement at index {} has stmt_id {}",
                 i, stmt.stmt_id
             );
+        }
+
+        // Build ValueId → StmtId map for downstream consumers and to
+        // fill any imported statements' empty arg_values.
+        let mut value_to_stmt: HashMap<ValueId, StmtId> = HashMap::with_capacity(n);
+        for stmt in &stmts {
+            value_to_stmt.insert(stmt.value_id, stmt.stmt_id);
+        }
+
+        // Backfill arg_values for statements loaded via import (where
+        // only `arguments` was filled). At-construction-time statements
+        // already have both fields set by `IRBuilder::create_ir`.
+        let stmt_value_ids: Vec<ValueId> =
+            stmts.iter().map(|s| s.value_id).collect();
+        for stmt in stmts.iter_mut() {
+            if stmt.arg_values.is_empty() && !stmt.arguments.is_empty() {
+                stmt.arg_values = stmt
+                    .arguments
+                    .iter()
+                    .filter_map(|sid| stmt_value_ids.get(*sid as usize).copied())
+                    .collect();
+            }
         }
 
         let mut in_d = vec![0u32; n];
@@ -199,9 +260,11 @@ impl IRGraph {
             }
         }
 
-        let in_links: Vec<Vec<StmtId>> = stmts.iter().map(|s| s.arguments.clone()).collect();
+        let in_links: Vec<Vec<StmtId>> =
+            stmts.iter().map(|s| s.arguments.clone()).collect();
 
         self.stmts = stmts;
+        self.value_to_stmt = value_to_stmt;
         self.in_d = in_d;
         self.out_d = out_d;
         self.in_links = in_links;
@@ -239,6 +302,9 @@ impl IRGraph {
     }
 
     /// Remove a batch of statements and re-index all remaining statements.
+    /// `arguments` (stmt_id space) is remapped through `id_mapping`;
+    /// `arg_values` (value_id space) is stable across stmt_id renumbering
+    /// and needs no remapping.
     pub fn remove_stmt_bunch(&mut self, indices: &[StmtId]) {
         let index_set: std::collections::HashSet<StmtId> =
             indices.iter().copied().collect();
@@ -257,11 +323,11 @@ impl IRGraph {
             }
         }
 
-        // Remap arguments
         for stmt in &mut new_stmts {
             for arg in &mut stmt.arguments {
                 *arg = id_mapping[arg];
             }
+            // arg_values is in ValueId space — stable, no remap needed.
         }
 
         self.update_graph(new_stmts);
@@ -272,7 +338,9 @@ impl IRGraph {
         self.stmts.iter().map(|s| s.export()).collect()
     }
 
-    /// Import from a list of exported statement dicts.
+    /// Import from a list of exported statement dicts. Imported
+    /// statements have only `arguments` (stmt_ids) populated;
+    /// `update_graph` fills `arg_values` and the value_to_stmt map.
     pub fn import_stmts(data: &[serde_json::Value]) -> Result<Self, String> {
         let mut stmts = Vec::with_capacity(data.len());
         for d in data {
@@ -313,10 +381,13 @@ mod tests {
 
     fn make_test_graph() -> IRGraph {
         // Build: stmt0 = constant_int(10), stmt1 = constant_int(20), stmt2 = add_i(stmt0, stmt1)
+        let v0 = ValueId::next();
+        let v1 = ValueId::next();
+        let v2 = ValueId::next();
         let stmts = vec![
-            IRStatement::new(0, IR::ConstantInt { value: 10 }, vec![], None),
-            IRStatement::new(1, IR::ConstantInt { value: 20 }, vec![], None),
-            IRStatement::new(2, IR::AddI, vec![0, 1], None),
+            IRStatement::new(0, v0, IR::ConstantInt { value: 10 }, vec![], vec![], None),
+            IRStatement::new(1, v1, IR::ConstantInt { value: 20 }, vec![], vec![], None),
+            IRStatement::new(2, v2, IR::AddI, vec![0, 1], vec![v0, v1], None),
         ];
         IRGraph::new(stmts)
     }
@@ -346,16 +417,18 @@ mod tests {
 
     #[test]
     fn test_remove_stmt() {
-        // stmt0 = const(10), stmt1 = const(20) [unused], stmt2 = const(30), stmt3 = add(stmt0, stmt2)
+        let v0 = ValueId::next();
+        let v1 = ValueId::next();
+        let v2 = ValueId::next();
+        let v3 = ValueId::next();
         let stmts = vec![
-            IRStatement::new(0, IR::ConstantInt { value: 10 }, vec![], None),
-            IRStatement::new(1, IR::ConstantInt { value: 20 }, vec![], None),
-            IRStatement::new(2, IR::ConstantInt { value: 30 }, vec![], None),
-            IRStatement::new(3, IR::AddI, vec![0, 2], None),
+            IRStatement::new(0, v0, IR::ConstantInt { value: 10 }, vec![], vec![], None),
+            IRStatement::new(1, v1, IR::ConstantInt { value: 20 }, vec![], vec![], None),
+            IRStatement::new(2, v2, IR::ConstantInt { value: 30 }, vec![], vec![], None),
+            IRStatement::new(3, v3, IR::AddI, vec![0, 2], vec![v0, v2], None),
         ];
         let mut graph = IRGraph::new(stmts);
 
-        // Remove unused stmt1
         graph.remove_stmt(1);
 
         assert_eq!(graph.len(), 3);
@@ -365,45 +438,52 @@ mod tests {
         assert_eq!(graph.stmts[1].ir, IR::ConstantInt { value: 30 });
         assert_eq!(graph.stmts[2].stmt_id, 2);
         assert_eq!(graph.stmts[2].ir, IR::AddI);
+        // arguments (stmt_id space) remap to the new positions [0, 1].
         assert_eq!(graph.stmts[2].arguments, vec![0, 1]);
+        // arg_values (value_id space) is stable — v0 and v2 unchanged.
+        assert_eq!(graph.stmts[2].arg_values, vec![v0, v2]);
     }
 
     #[test]
     fn test_remove_unreferenced_stmt() {
-        // stmt0 = const(10), stmt1 = const(20), stmt2 = const(30), stmt3 = add(stmt0, stmt2)
+        let v0 = ValueId::next();
+        let v1 = ValueId::next();
+        let v2 = ValueId::next();
+        let v3 = ValueId::next();
         let stmts = vec![
-            IRStatement::new(0, IR::ConstantInt { value: 10 }, vec![], None),
-            IRStatement::new(1, IR::ConstantInt { value: 20 }, vec![], None),
-            IRStatement::new(2, IR::ConstantInt { value: 30 }, vec![], None),
-            IRStatement::new(3, IR::AddI, vec![0, 2], None),
+            IRStatement::new(0, v0, IR::ConstantInt { value: 10 }, vec![], vec![], None),
+            IRStatement::new(1, v1, IR::ConstantInt { value: 20 }, vec![], vec![], None),
+            IRStatement::new(2, v2, IR::ConstantInt { value: 30 }, vec![], vec![], None),
+            IRStatement::new(3, v3, IR::AddI, vec![0, 2], vec![v0, v2], None),
         ];
         let mut graph = IRGraph::new(stmts);
 
-        // Remove stmt1 (unused constant 20)
         graph.remove_stmt(1);
 
         assert_eq!(graph.len(), 3);
-        // Old stmt0 -> new id 0
         assert_eq!(graph.stmts[0].ir, IR::ConstantInt { value: 10 });
-        // Old stmt2 -> new id 1
         assert_eq!(graph.stmts[1].ir, IR::ConstantInt { value: 30 });
-        // Old stmt3 -> new id 2, args remapped: [0, 2] -> [0, 1]
         assert_eq!(graph.stmts[2].ir, IR::AddI);
         assert_eq!(graph.stmts[2].arguments, vec![0, 1]);
+        assert_eq!(graph.stmts[2].arg_values, vec![v0, v2]);
     }
 
     #[test]
     fn test_remove_stmt_bunch() {
+        let v0 = ValueId::next();
+        let v1 = ValueId::next();
+        let v2 = ValueId::next();
+        let v3 = ValueId::next();
+        let v4 = ValueId::next();
         let stmts = vec![
-            IRStatement::new(0, IR::ConstantInt { value: 1 }, vec![], None),
-            IRStatement::new(1, IR::ConstantInt { value: 2 }, vec![], None),
-            IRStatement::new(2, IR::ConstantInt { value: 3 }, vec![], None),
-            IRStatement::new(3, IR::ConstantInt { value: 4 }, vec![], None),
-            IRStatement::new(4, IR::AddI, vec![0, 3], None),
+            IRStatement::new(0, v0, IR::ConstantInt { value: 1 }, vec![], vec![], None),
+            IRStatement::new(1, v1, IR::ConstantInt { value: 2 }, vec![], vec![], None),
+            IRStatement::new(2, v2, IR::ConstantInt { value: 3 }, vec![], vec![], None),
+            IRStatement::new(3, v3, IR::ConstantInt { value: 4 }, vec![], vec![], None),
+            IRStatement::new(4, v4, IR::AddI, vec![0, 3], vec![v0, v3], None),
         ];
         let mut graph = IRGraph::new(stmts);
 
-        // Remove stmts 1 and 2
         graph.remove_stmt_bunch(&[1, 2]);
 
         assert_eq!(graph.len(), 3);
@@ -411,6 +491,7 @@ mod tests {
         assert_eq!(graph.stmts[1].ir, IR::ConstantInt { value: 4 });
         assert_eq!(graph.stmts[2].ir, IR::AddI);
         assert_eq!(graph.stmts[2].arguments, vec![0, 1]);
+        assert_eq!(graph.stmts[2].arg_values, vec![v0, v3]);
     }
 
     #[test]

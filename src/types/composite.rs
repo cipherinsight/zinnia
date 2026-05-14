@@ -2,6 +2,7 @@ use super::envelope::Envelope;
 use super::zinnia_type::{NumberType, ZinniaType};
 use super::scalar::ScalarValue;
 use super::value::Value;
+use super::ValueId;
 
 
 /// Flat storage for NDArray values.
@@ -56,6 +57,10 @@ pub struct DynamicNDArrayData {
     /// reads go through `ir_read_memory`, writes through `ir_write_memory`.
     pub segment_id: u32,
     pub meta: DynArrayMeta,
+    /// Compilation-layer identity of the *whole tensor* (as opposed to
+    /// any of its sub-ptrs). Minted at materialisation; preserved by
+    /// `Clone` and by view-style ops that share segment storage.
+    pub value_id: ValueId,
 }
 
 impl DynamicNDArrayData {
@@ -75,8 +80,31 @@ impl DynamicNDArrayData {
 // ---------------------------------------------------------------------------
 
 /// Storage for List and Tuple composite values.
+///
+/// Carries a `value_id` minted at construction so static composites can
+/// participate in fact-anchoring (compiler.value-list-tuple-value-id).
+/// No `PartialEq` impl: nothing in the codebase compares `CompositeData`
+/// values for structural equality, and `Value` (the element type) is
+/// not itself `PartialEq`. If equality becomes needed later, follow the
+/// `ScalarValue` convention and exclude `value_id`.
 #[derive(Debug, Clone)]
 pub struct CompositeData {
     pub elements_type: Vec<ZinniaType>,
     pub values: Vec<Value>,
+    /// Compilation-layer identity of this composite. Minted fresh at
+    /// every construction site (via `ValueId::next()`); preserved across
+    /// `Clone`. The preferred construction path is
+    /// [`CompositeData::new`].
+    pub value_id: ValueId,
+}
+
+impl CompositeData {
+    /// Preferred construction path. Mints a fresh `value_id`.
+    pub fn new(elements_type: Vec<ZinniaType>, values: Vec<Value>) -> Self {
+        Self {
+            elements_type,
+            values,
+            value_id: ValueId::next(),
+        }
+    }
 }

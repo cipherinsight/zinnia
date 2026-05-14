@@ -1,7 +1,7 @@
 use super::zinnia_type::{NumberType, ZinniaType};
 use super::scalar::{ScalarValue, StringValue};
 use super::composite::{CompositeData, NDArrayData, DynamicNDArrayData};
-use super::StmtId;
+use super::{StmtId, ValueId};
 
 /// The unified value enum representing all Zinnia values during compilation.
 /// Merges the Python Value hierarchy + DTDescriptor into a single tagged union.
@@ -48,6 +48,11 @@ pub enum Value {
         /// `Some(seg)` only when `dtype == NumberType::Complex`. Holds the
         /// imaginary-part segment for dual-segment Complex arrays.
         imag_segment_id: Option<u32>,
+        /// Compilation-layer identity. Fresh at every construction site
+        /// (via `ValueId::next()`); preserved by Clone. View-style ops
+        /// that share segment storage mint a fresh value_id by default,
+        /// matching the DynamicNDArrayData and CompositeData convention.
+        value_id: ValueId,
     },
     List(CompositeData),
     Tuple(CompositeData),
@@ -93,16 +98,38 @@ impl Value {
         }
     }
 
-    /// Returns the IR statement pointer for atomic values, if available.
-    pub fn ptr(&self) -> Option<StmtId> {
+    /// Returns the IR statement ID for atomic values, if available.
+    /// (Phase 2 — renamed from `ptr` to disambiguate IR-statement identity
+    /// from the C/C++ "pointer" connotation.)
+    pub fn stmt_id(&self) -> Option<StmtId> {
         match self {
-            Value::Integer(s) => s.ptr,
-            Value::Float(s) => s.ptr,
-            Value::Boolean(s) => s.ptr,
-            Value::String(s) => Some(s.ptr),
+            Value::Integer(s) => s.stmt_id,
+            Value::Float(s) => s.stmt_id,
+            Value::Boolean(s) => s.stmt_id,
+            Value::String(s) => Some(s.stmt_id),
             Value::None => Option::None,
             Value::Class(_) => Option::None,
             _ => Option::None,
+        }
+    }
+
+    /// Returns the compilation-layer identity of this Value, if defined
+    /// (compiler.value-id-and-fact-leaves). Scalars and dyn ndarrays
+    /// carry one; pure-type or pure-name Values (None / Class / String /
+    /// composites without an explicit identity) return `None`.
+    pub fn value_id(&self) -> Option<ValueId> {
+        match self {
+            Value::Integer(s) => Some(s.value_id),
+            Value::Float(s) => Some(s.value_id),
+            Value::Boolean(s) => Some(s.value_id),
+            Value::DynamicNDArray(d) => Some(d.value_id),
+            // Composite scalars: complex carries two scalar Values; we
+            // expose only the real part's identity (analogous to what
+            // `stmt_id()` does for similar composites).
+            Value::Complex { real, .. } => Some(real.value_id),
+            Value::List(d) | Value::Tuple(d) => Some(d.value_id),
+            Value::StaticArray { value_id, .. } => Some(*value_id),
+            _ => None,
         }
     }
 

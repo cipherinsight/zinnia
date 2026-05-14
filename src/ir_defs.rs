@@ -126,6 +126,31 @@ pub enum IR {
     ExposePublicI,
     ExposePublicF,
 
+    // ── Structural-predicate precondition (inert) ─────────────────────
+    // Compile-time fact emitted by @requires / @zk_circuit(requires=[...]).
+    // No stack operands, no result; later SMT-foundation cards consume the
+    // payload. Treated as `fixed` (never DCE'd) so the surface card's
+    // IR-dump round-trip can observe it.
+    StructuralPredicate {
+        kind: String,
+        args: Vec<String>,
+        op: Option<String>,
+        bound: Option<String>,
+    },
+
+    // ── Scalar precondition (inert) ───────────────────────────────────
+    // Compile-time fact carrying a serialized `ContractTerm` payload.
+    // Emitted by ir-gen for scalar / arithmetic / logical preconditions
+    // (`@requires(lambda k: 0 <= k <= 1024)` etc.). The discharger
+    // lowers the term via `formula::lower_bool` and asserts on the Z3
+    // solver; the contract-to-IR lowering via
+    // `witness::lower_precondition_to_ir` wraps the result in `IR::Assert`.
+    // The IR atom itself is inert (no stack args, no result) and
+    // `is_fixed` so DCE leaves it alone.
+    ScalarPrecondition {
+        term_json: String,
+    },
+
     // ── Memory operations ─────────────────────────────────────────────
     AllocateMemory {
         segment_id: u32,
@@ -311,6 +336,20 @@ impl IR {
             IR::ExposePublicI => "expose_public_i".to_string(),
             IR::ExposePublicF => "expose_public_f".to_string(),
 
+            // Structural-predicate precondition
+            IR::StructuralPredicate { kind, args, op, bound } => {
+                let args_str = args.join(",");
+                let op_str = op.as_deref().unwrap_or("");
+                let bound_str = bound.as_deref().unwrap_or("");
+                format!("structural_predicate[{}][{}][{}][{}]",
+                        kind, args_str, op_str, bound_str)
+            }
+
+            // Scalar precondition (term-tree carrying the payload)
+            IR::ScalarPrecondition { term_json } => {
+                format!("scalar_precondition[{}]", term_json)
+            }
+
             // Memory
             IR::AllocateMemory {
                 segment_id,
@@ -387,6 +426,8 @@ impl IR {
             // Hash
             IR::PoseidonHash => "poseidon_hash".to_string(),
             IR::EqHash => "eq_hash".to_string(),
+
+            // (StructuralPredicate handled in the Assert/expose block above)
         }
     }
 
@@ -397,6 +438,8 @@ impl IR {
         matches!(
             self,
             IR::Assert
+                | IR::StructuralPredicate { .. }
+                | IR::ScalarPrecondition { .. }
                 | IR::Print
                 | IR::ExposePublicI
                 | IR::ExposePublicF
@@ -494,6 +537,8 @@ impl IR {
             IR::ReadExternalResult { .. } => "ReadExternalResultIR",
             IR::Print => "PrintIR",
             IR::Assert => "AssertIR",
+            IR::StructuralPredicate { .. } => "StructuralPredicateIR",
+            IR::ScalarPrecondition { .. } => "ScalarPreconditionIR",
             IR::ExposePublicI => "ExposePublicIIR",
             IR::ExposePublicF => "ExposePublicFIR",
             IR::AllocateMemory { .. } => "AllocateMemoryIR",
@@ -612,6 +657,17 @@ impl IR {
                 "for_which": for_which,
                 "key": key,
                 "indices": indices,
+            }),
+
+            IR::StructuralPredicate { kind, args, op, bound } => serde_json::json!({
+                "kind": kind,
+                "args": args,
+                "op": op,
+                "bound": bound,
+            }),
+
+            IR::ScalarPrecondition { term_json } => serde_json::json!({
+                "term_json": term_json,
             }),
 
             // All parameterless IRs export empty dicts
@@ -756,6 +812,20 @@ impl IR {
             "PrintIR" => Ok(IR::Print),
 
             "AssertIR" => Ok(IR::Assert),
+            "StructuralPredicateIR" => {
+                let kind = data["kind"].as_str().unwrap_or("").to_string();
+                let args: Vec<String> = data["args"]
+                    .as_array()
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                let op = data.get("op").and_then(|v| v.as_str()).map(String::from);
+                let bound = data.get("bound").and_then(|v| v.as_str()).map(String::from);
+                Ok(IR::StructuralPredicate { kind, args, op, bound })
+            }
+            "ScalarPreconditionIR" => {
+                let term_json = data["term_json"].as_str().unwrap_or("").to_string();
+                Ok(IR::ScalarPrecondition { term_json })
+            }
             "ExposePublicIIR" => Ok(IR::ExposePublicI),
             "ExposePublicFIR" => Ok(IR::ExposePublicF),
 

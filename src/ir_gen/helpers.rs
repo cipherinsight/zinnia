@@ -1,4 +1,4 @@
-use crate::types::{CompositeData, Value, ZinniaType};
+use crate::types::{ValueId, CompositeData, Value, ZinniaType};
 
 use super::{IRGenerator, SliceIndex};
 
@@ -12,9 +12,9 @@ impl IRGenerator {
                     .collect();
                 let new_types = new_values.iter().map(|v| v.zinnia_type()).collect();
                 if is_tuple {
-                    Value::Tuple(CompositeData { elements_type: new_types, values: new_values })
+                    Value::Tuple(CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() })
                 } else {
-                    Value::List(CompositeData { elements_type: new_types, values: new_values })
+                    Value::List(CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() })
                 }
             }
             Value::Integer(_) | Value::Boolean(_) if to_float => {
@@ -66,9 +66,9 @@ impl IRGenerator {
                                 new_types[idx] = new_values[idx].zinnia_type();
                             }
                             return if is_tuple {
-                                Value::Tuple(CompositeData { elements_type: new_types, values: new_values })
+                                Value::Tuple(CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() })
                             } else {
-                                Value::List(CompositeData { elements_type: new_types, values: new_values })
+                                Value::List(CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() })
                             };
                         }
                     } else {
@@ -113,9 +113,9 @@ impl IRGenerator {
                             new_values.push(blended);
                         }
                         return if is_tuple {
-                            Value::Tuple(CompositeData { elements_type: new_types, values: new_values })
+                            Value::Tuple(CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() })
                         } else {
-                            Value::List(CompositeData { elements_type: new_types, values: new_values })
+                            Value::List(CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() })
                         };
                     }
                 }
@@ -171,9 +171,9 @@ impl IRGenerator {
                         }
                     }
                     return if is_tuple {
-                        Value::Tuple(CompositeData { elements_type: new_types, values: new_values })
+                        Value::Tuple(CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() })
                     } else {
-                        Value::List(CompositeData { elements_type: new_types, values: new_values })
+                        Value::List(CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() })
                     };
                 }
                 current
@@ -304,7 +304,7 @@ impl IRGenerator {
                     types.push(val.zinnia_type());
                     values.push(val);
                 }
-                Value::List(CompositeData { elements_type: types, values })
+                Value::List(CompositeData { elements_type: types, values, value_id: ValueId::next() })
             }
             ZinniaType::Tuple { elements } => {
                 let mut values = Vec::new();
@@ -316,7 +316,7 @@ impl IRGenerator {
                     types.push(val.zinnia_type());
                     values.push(val);
                 }
-                Value::Tuple(CompositeData { elements_type: types, values })
+                Value::Tuple(CompositeData { elements_type: types, values, value_id: ValueId::next() })
             }
             ZinniaType::DynamicNDArray { dtype, max_length, max_rank } => {
                 let inner_dt = match dtype {
@@ -380,6 +380,7 @@ impl IRGenerator {
                             .collect(),
                         runtime_offset: crate::types::ScalarValue::new(Some(0), None),
                     },
+                    value_id: ValueId::next(),
                 })
             }
             _ => {

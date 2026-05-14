@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::builder::IRBuilder;
-use crate::types::{
+use crate::types::{ValueId, 
     DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value,
 };
 
@@ -72,6 +72,7 @@ pub fn dyn_filter(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) 
         vec![crate::types::Dim::new_dynamic(&mut b.dim_table, 0, max_len)],
         data.envelope.total_bound,
     );
+    let runtime_length_sv = value_to_scalar_i64(&write_ptr);
     let result = DynamicNDArrayData {
         envelope,
         dtype: data.dtype,
@@ -80,13 +81,33 @@ pub fn dyn_filter(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) 
             logical_shape: vec![max_len],
             logical_offset: 0,
             logical_strides: vec![1],
-            runtime_length: value_to_scalar_i64(&write_ptr),
+            runtime_length: runtime_length_sv.clone(),
             runtime_rank: ScalarValue::new(Some(1), None),
-            runtime_shape: vec![value_to_scalar_i64(&write_ptr)],
+            runtime_shape: vec![runtime_length_sv.clone()],
             runtime_strides: vec![ScalarValue::new(Some(1), None)],
             runtime_offset: ScalarValue::new(Some(0), None),
         },
+        value_id: ValueId::next(),
     };
+
+    // Op contract for `dyn_filter` (compiler.op-contract-content):
+    // (a) registry-driven postcondition `Var(Output) >= 0`, and
+    // (b) call-site-local upper-bound fact `Var(Output) <= max_len`.
+    // The static upper bound depends on the call-site value of `max_len`,
+    // so it can't live in the pure registry template — we splice it in
+    // directly.
+    {
+        let len_vid = runtime_length_sv.value_id;
+        b.fire_contract("dyn_filter", len_vid, &HashMap::new());
+        use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
+        let upper = ContractTerm::Cmp {
+            op: CmpOp::Le,
+            lhs: Box::new(ContractTerm::Var(ContractVar::Value(len_vid))),
+            rhs: Box::new(ContractTerm::LitInt(max_len as i64)),
+        };
+        b.facts.insert_for(len_vid, upper);
+    }
+
     Value::DynamicNDArray(result)
 }
 
@@ -109,7 +130,7 @@ pub fn dyn_repeat(
     let values = crate::helpers::segment::read_all(b, data.segment_id, data.max_length());
     let numel = dyn_num_elements(&data.meta.logical_shape);
 
-    if let Some(_ax) = axis {
+    let result = if let Some(_ax) = axis {
         // For axis-specific repeat, flatten first, repeat, return 1D
         // (full axis support would need coordinate transforms)
         let mut new_elements = Vec::new();
@@ -122,7 +143,7 @@ pub fn dyn_repeat(
         let new_len = new_elements.len();
         let segment_id = crate::helpers::segment::alloc_and_write(b, &new_elements, data.dtype);
         let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &[new_len]);
-        let result = DynamicNDArrayData {
+        DynamicNDArrayData {
             envelope,
             dtype: data.dtype,
             segment_id,
@@ -136,8 +157,8 @@ pub fn dyn_repeat(
                 runtime_strides: vec![ScalarValue::new(Some(1), None)],
                 runtime_offset: ScalarValue::new(Some(0), None),
             },
-        };
-        Value::DynamicNDArray(result)
+            value_id: ValueId::next(),
+        }
     } else {
         // No axis: flatten then repeat each element
         let mut new_elements = Vec::new();
@@ -150,7 +171,7 @@ pub fn dyn_repeat(
         let new_len = new_elements.len();
         let segment_id = crate::helpers::segment::alloc_and_write(b, &new_elements, data.dtype);
         let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &[new_len]);
-        let result = DynamicNDArrayData {
+        DynamicNDArrayData {
             envelope,
             dtype: data.dtype,
             segment_id,
@@ -164,9 +185,13 @@ pub fn dyn_repeat(
                 runtime_strides: vec![ScalarValue::new(Some(1), None)],
                 runtime_offset: ScalarValue::new(Some(0), None),
             },
-        };
-        Value::DynamicNDArray(result)
-    }
+            value_id: ValueId::next(),
+        }
+    };
+    let out_vid = result.value_id;
+    let out = Value::DynamicNDArray(result);
+    crate::optim::resolver::relay_forall_eq_const_from_input(b, data.value_id, out_vid);
+    out
 }
 
 /// Coerce a Value to a 1-D DynamicNDArrayData for concat/stack scalar support.
@@ -197,6 +222,7 @@ fn coerce_to_dyn(b: &mut IRBuilder, v: &Value) -> DynamicNDArrayData {
                     runtime_strides: vec![ScalarValue::new(Some(1), None)],
                     runtime_offset: ScalarValue::new(Some(0), None),
                 },
+                value_id: ValueId::next(),
             }
         }
         _ => panic!("concatenate/stack: unsupported element type {:?}", v.zinnia_type()),
@@ -288,6 +314,7 @@ pub fn dyn_concatenate(
                             runtime_strides: vec![ScalarValue::new(Some(1), None)],
                             runtime_offset: ScalarValue::new(Some(0), None),
                         },
+                        value_id: ValueId::next(),
                     }
                 }
             })
@@ -383,6 +410,11 @@ pub fn dyn_concatenate(
 
     let mut cumulative_offset = b.ir_constant_int(0);
     let mut runtime_concat_len = b.ir_constant_int(0);
+    // For the multi-formal contract upgrade (compiler.op-contracts-non-walkable-batch):
+    // track each input's runtime axis length as a ContractTerm so we can
+    // emit `len(out) == sum(arg_lens) * other_product` after the loop.
+    let mut arg_len_terms: Vec<crate::optim::predicates::formula::ContractTerm> =
+        Vec::with_capacity(arrays.len());
 
     for (k, arr) in arrays.iter().enumerate() {
         let src_shape = &arr.meta.logical_shape;
@@ -395,7 +427,7 @@ pub fn dyn_concatenate(
         let runtime_ax_len: Value = if let Some(sv) = arr.meta.runtime_shape.get(ax) {
             if let Some(s) = sv.static_val {
                 b.ir_constant_int(s)
-            } else if let Some(ptr) = sv.ptr {
+            } else if let Some(ptr) = sv.stmt_id {
                 Value::Integer(ScalarValue::new(None, Some(ptr)))
             } else {
                 b.ir_constant_int(src_max_ax as i64)
@@ -403,6 +435,18 @@ pub fn dyn_concatenate(
         } else {
             b.ir_constant_int(src_max_ax as i64)
         };
+        // Capture this input's runtime-length term for the contract fact.
+        {
+            use crate::optim::predicates::formula::{ContractTerm, ContractVar};
+            let term = if let Some(s) = runtime_ax_len.int_val() {
+                ContractTerm::LitInt(s)
+            } else if let Some(vid) = runtime_ax_len.value_id() {
+                ContractTerm::Var(ContractVar::Value(vid))
+            } else {
+                ContractTerm::LitInt(src_max_ax as i64)
+            };
+            arg_len_terms.push(term);
+        }
 
         for i in 0..src_max_ax {
             let i_val = b.ir_constant_int(i as i64);
@@ -490,6 +534,70 @@ pub fn dyn_concatenate(
         runtime_shape[ax] = value_to_scalar_i64(&runtime_concat_len);
     }
 
+    let runtime_length_sv = value_to_scalar_i64(&runtime_length);
+
+    // Op contract for `dyn_concatenate` (compiler.op-contract-content
+    // base + compiler.op-contracts-non-walkable-batch upgrade):
+    //
+    // (a) registry-driven postcondition `Var(Output) >= 0`;
+    // (b) call-site-built multi-formal fact
+    //     `len(out) == (arg0_len + arg1_len + ... + argN-1_len) * other_product`.
+    //
+    // The base fact stays in the registry (template-shape, fixed). The
+    // length-sum fact's arity depends on the number of inputs at the
+    // call site, so the term is built here over the per-input runtime
+    // axis-length ptrs/literals captured during the write loop. Anchored
+    // on the runtime-length SSA ptr.
+    //
+    // Soundness for the length-sum equality: the IR computes
+    //   runtime_length = (Σ runtime_ax_len_k) * other_product
+    // (see `runtime_concat_len` accumulator + the final `b.ir_mul_i`
+    // above). Each `runtime_ax_len_k` is the k-th input's runtime axis
+    // length on the concatenated axis. The contract fact mirrors that
+    // arithmetic identity exactly; consumers reading it avoid paying the
+    // full IR walk to rediscover the same relation.
+    {
+        let len_vid = runtime_length_sv.value_id;
+        b.fire_contract("dyn_concatenate", len_vid, &HashMap::new());
+
+        use crate::optim::predicates::formula::{
+            ArithOp, CmpOp, ContractTerm, ContractVar,
+        };
+        let sum_term: ContractTerm = if arg_len_terms.is_empty() {
+            ContractTerm::LitInt(0)
+        } else {
+            let mut iter = arg_len_terms.into_iter();
+            let first = iter.next().unwrap();
+            iter.fold(first, |acc, t| ContractTerm::Arith {
+                op: ArithOp::Add,
+                lhs: Box::new(acc),
+                rhs: Box::new(t),
+            })
+        };
+        let rhs_term = ContractTerm::Arith {
+            op: ArithOp::Mul,
+            lhs: Box::new(sum_term),
+            rhs: Box::new(ContractTerm::LitInt(other_product as i64)),
+        };
+        let equality = ContractTerm::Cmp {
+            op: CmpOp::Eq,
+            lhs: Box::new(ContractTerm::Var(ContractVar::Value(len_vid))),
+            rhs: Box::new(rhs_term),
+        };
+        b.facts.insert_for(len_vid, equality);
+    }
+
+    let out_value_id = ValueId::next();
+    let input_vids: Vec<crate::types::ValueId> =
+        raw_values.iter().filter_map(|v| v.value_id()).collect();
+    if input_vids.len() == raw_values.len() {
+        crate::optim::resolver::relay_forall_eq_const_from_all_inputs(
+            b,
+            &input_vids,
+            out_value_id,
+        );
+    }
+
     Value::DynamicNDArray(DynamicNDArrayData {
         envelope,
         dtype: out_dtype,
@@ -498,7 +606,7 @@ pub fn dyn_concatenate(
             logical_shape: out_shape.clone(),
             logical_offset: 0,
             logical_strides: out_strides.clone(),
-            runtime_length: value_to_scalar_i64(&runtime_length),
+            runtime_length: runtime_length_sv,
             runtime_rank: ScalarValue::new(Some(ndim as i64), None),
             runtime_shape,
             runtime_strides: out_strides
@@ -507,6 +615,7 @@ pub fn dyn_concatenate(
                 .collect(),
             runtime_offset: ScalarValue::new(Some(0), None),
         },
+        value_id: out_value_id,
     })
 }
 
@@ -594,7 +703,7 @@ pub fn dyn_stack(
         // Runtime length for this input (may be dynamic).
         let runtime_len: Value = if let Some(sv) = &arr.meta.runtime_length.static_val {
             b.ir_constant_int(*sv)
-        } else if let Some(ptr) = arr.meta.runtime_length.ptr {
+        } else if let Some(ptr) = arr.meta.runtime_length.stmt_id {
             Value::Integer(ScalarValue::new(None, Some(ptr)))
         } else {
             b.ir_constant_int(src_numel as i64)
@@ -661,12 +770,23 @@ pub fn dyn_stack(
     let num_arr_val = b.ir_constant_int(num_arrays as i64);
     let input_runtime_len = if let Some(sv) = &arrays[0].meta.runtime_length.static_val {
         b.ir_constant_int(*sv)
-    } else if let Some(ptr) = arrays[0].meta.runtime_length.ptr {
+    } else if let Some(ptr) = arrays[0].meta.runtime_length.stmt_id {
         Value::Integer(ScalarValue::new(None, Some(ptr)))
     } else {
         b.ir_constant_int(src_max_numel as i64)
     };
     let runtime_length = b.ir_mul_i(&num_arr_val, &input_runtime_len);
+
+    let out_value_id = ValueId::next();
+    let input_vids: Vec<crate::types::ValueId> =
+        raw_values.iter().filter_map(|v| v.value_id()).collect();
+    if input_vids.len() == raw_values.len() {
+        crate::optim::resolver::relay_forall_eq_const_from_all_inputs(
+            b,
+            &input_vids,
+            out_value_id,
+        );
+    }
 
     Value::DynamicNDArray(DynamicNDArrayData {
         envelope,
@@ -685,6 +805,7 @@ pub fn dyn_stack(
                 .collect(),
             runtime_offset: ScalarValue::new(Some(0), None),
         },
+        value_id: out_value_id,
     })
 }
 
@@ -841,6 +962,7 @@ fn dyn_split_impl(
                         .collect(),
                     runtime_offset: ScalarValue::new(Some(0), None),
                 },
+                value_id: ValueId::next(),
             }));
         }
     } else {
@@ -1001,6 +1123,7 @@ fn dyn_split_impl(
                         .collect(),
                     runtime_offset: ScalarValue::new(Some(0), None),
                 },
+                value_id: ValueId::next(),
             }));
         }
     }
@@ -1009,5 +1132,7 @@ fn dyn_split_impl(
     Value::List(crate::types::CompositeData {
         elements_type: types,
         values: result_arrays,
+    
+        value_id: ValueId::next(),
     })
 }

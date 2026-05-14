@@ -71,7 +71,7 @@ impl PatternMatchOptim {
         if tv.int_val() == fv.int_val() && fv.int_val().is_some() {
             return b.ir_constant_int(tv.int_val().unwrap());
         }
-        if tv.ptr() == fv.ptr() && tv.ptr().is_some() {
+        if tv.stmt_id() == fv.stmt_id() && tv.stmt_id().is_some() {
             return tv.clone();
         }
         if tv.int_val() == Some(1) && fv.int_val() == Some(0) {
@@ -100,7 +100,7 @@ impl PatternMatchOptim {
         if tv.bool_val() == fv.bool_val() && fv.bool_val().is_some() {
             return b.ir_constant_bool(tv.bool_val().unwrap());
         }
-        if tv.ptr() == fv.ptr() && tv.ptr().is_some() {
+        if tv.stmt_id() == fv.stmt_id() && tv.stmt_id().is_some() {
             return tv.clone();
         }
         if tv.bool_val() == Some(true) && fv.bool_val() == Some(false) {
@@ -135,7 +135,7 @@ impl PatternMatchOptim {
         if tv.float_val() == fv.float_val() && fv.float_val().is_some() {
             return b.ir_constant_float(tv.float_val().unwrap());
         }
-        if tv.ptr() == fv.ptr() && tv.ptr().is_some() {
+        if tv.stmt_id() == fv.stmt_id() && tv.stmt_id().is_some() {
             return tv.clone();
         }
         let cv = cond.bool_val().or_else(|| cond.int_val().map(|v| v != 0));
@@ -221,7 +221,7 @@ impl PatternMatchOptim {
     fn optimize_same_ptr_cmp(
         &self, b: &mut IRBuilder, ir: &IR, args: &[Value], result_if_same: bool,
     ) -> Value {
-        if args[0].ptr() == args[1].ptr() && args[0].ptr().is_some() {
+        if args[0].stmt_id() == args[1].stmt_id() && args[0].stmt_id().is_some() {
             return b.ir_constant_bool(result_if_same);
         }
         b.create_ir(ir, args)

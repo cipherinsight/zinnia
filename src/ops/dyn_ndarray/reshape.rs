@@ -1,7 +1,7 @@
 use crate::builder::IRBuilder;
 use crate::helpers::shape_arith::row_major_strides;
-use crate::optim::resolver::{require_static_int, SiteKind};
-use crate::types::{
+use crate::optim::resolver::{require_provable_static_int, SiteKind};
+use crate::types::{ValueId, 
     CompositeData, DynArrayMeta, DynamicNDArrayData, ScalarValue, Value, ZinniaType,
 };
 
@@ -34,9 +34,7 @@ pub fn dyn_transpose(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value
                 .values
                 .iter()
                 .map(|v| {
-                    let a: i64 = require_static_int(b, v, SiteKind::Axis, None)
-                        .unwrap_or_else(|e| panic!("{}", e.message))
-                        .into();
+                    let a: i64 = require_provable_static_int(b, v, SiteKind::Axis);
                     let resolved = if a < 0 { ndim as i64 + a } else { a };
                     resolved as usize
                 })
@@ -44,9 +42,7 @@ pub fn dyn_transpose(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value
         } else {
             args.iter()
                 .map(|v| {
-                    let a: i64 = require_static_int(b, v, SiteKind::Axis, None)
-                        .unwrap_or_else(|e| panic!("{}", e.message))
-                        .into();
+                    let a: i64 = require_provable_static_int(b, v, SiteKind::Axis);
                     let resolved = if a < 0 { ndim as i64 + a } else { a };
                     resolved as usize
                 })
@@ -111,6 +107,7 @@ pub fn dyn_transpose(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value
                 .collect(),
             runtime_offset: ScalarValue::new(Some(0), None),
         },
+        value_id: ValueId::next(),
     })
 }
 
@@ -119,15 +116,11 @@ pub fn dyn_moveaxis(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]
     assert!(args.len() >= 2, "moveaxis: requires source and destination");
 
     let src = {
-        let s: i64 = require_static_int(b, &args[0], SiteKind::Axis, None)
-            .unwrap_or_else(|e| panic!("{}", e.message))
-            .into();
+        let s: i64 = require_provable_static_int(b, &args[0], SiteKind::Axis);
         if s < 0 { (ndim as i64 + s) as usize } else { s as usize }
     };
     let dst = {
-        let d: i64 = require_static_int(b, &args[1], SiteKind::Axis, None)
-            .unwrap_or_else(|e| panic!("{}", e.message))
-            .into();
+        let d: i64 = require_provable_static_int(b, &args[1], SiteKind::Axis);
         if d < 0 { (ndim as i64 + d) as usize } else { d as usize }
     };
     assert!(src < ndim && dst < ndim, "moveaxis: axis out of bounds");
@@ -143,6 +136,8 @@ pub fn dyn_moveaxis(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]
     let axes_tuple = Value::Tuple(CompositeData {
         elements_type: vec![ZinniaType::Integer; order.len()],
         values: axes_val,
+    
+        value_id: ValueId::next(),
     });
     dyn_transpose(b, data, &[axes_tuple])
 }
@@ -248,6 +243,7 @@ fn dyn_reshape_runtime(
                 .collect(),
             runtime_offset: ScalarValue::new(Some(0), None),
         },
+        value_id: ValueId::next(),
     })
 }
 
@@ -285,11 +281,7 @@ pub fn dyn_reshape(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value])
 
     let raw_shape: Vec<i64> = dim_args
         .iter()
-        .map(|v| {
-            require_static_int(b, v, SiteKind::ReshapeDim, None)
-                .unwrap_or_else(|e| panic!("{}", e.message))
-                .into()
-        })
+        .map(|v| require_provable_static_int(b, v, SiteKind::ReshapeDim))
         .collect();
 
     // Handle -1 inference.
@@ -360,5 +352,6 @@ pub fn dyn_reshape(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value])
                 .collect(),
             runtime_offset: ScalarValue::new(Some(0), None),
         },
+        value_id: ValueId::next(),
     })
 }

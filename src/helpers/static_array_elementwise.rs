@@ -54,6 +54,7 @@ pub fn payload_cells(b: &mut IRBuilder, arr: &Value) -> Vec<Value> {
             strides,
             offset,
             imag_segment_id,
+            value_id: _,
         } => (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id),
         _ => panic!("payload_cells: expected Value::StaticArray"),
     };
@@ -558,13 +559,15 @@ fn make_broadcast_indexer(src_shape: &[usize], out_shape: &[usize]) -> Broadcast
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::CompositeData;
+    use crate::types::{CompositeData, ValueId};
 
     fn list_of(values: Vec<Value>) -> Value {
         let types = values.iter().map(|v| v.zinnia_type()).collect();
         Value::List(CompositeData {
             elements_type: types,
             values,
+        
+            value_id: ValueId::next(),
         })
     }
 

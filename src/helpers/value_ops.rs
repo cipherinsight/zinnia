@@ -5,7 +5,7 @@
 //! `&mut IRBuilder` as an explicit parameter instead of `&mut self`.
 
 use crate::builder::IRBuilder;
-use crate::types::{CompositeData, ScalarValue, Value, ZinniaType};
+use crate::types::{CompositeData, ScalarValue, Value, ValueId, ZinniaType};
 
 /// Conditional select: if cond { tv } else { fv }, with element-wise support.
 pub fn select_value(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> Value {
@@ -41,14 +41,14 @@ pub fn select_value(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> 
                 .map(|(t, f)| select_value(b, cond, t, f))
                 .collect();
             let types = results.iter().map(|v| v.zinnia_type()).collect();
-            Value::List(CompositeData { elements_type: types, values: results })
+            Value::List(CompositeData { elements_type: types, values: results, value_id: ValueId::next() })
         }
         (Value::Tuple(td), Value::Tuple(fd)) if td.values.len() == fd.values.len() => {
             let results: Vec<Value> = td.values.iter().zip(fd.values.iter())
                 .map(|(t, f)| select_value(b, cond, t, f))
                 .collect();
             let types = results.iter().map(|v| v.zinnia_type()).collect();
-            Value::Tuple(CompositeData { elements_type: types, values: results })
+            Value::Tuple(CompositeData { elements_type: types, values: results, value_id: ValueId::next() })
         }
         // If types don't match (e.g., list vs scalar), just use the true value
         // (can't do conditional select across different structures)
@@ -311,7 +311,7 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
                         .map(|(l, r)| apply_binary_op(b, "add", l, r))
                         .collect();
                     let types = results.iter().map(|v| v.zinnia_type()).collect();
-                    return Value::List(CompositeData { elements_type: types, values: results });
+                    return Value::List(CompositeData { elements_type: types, values: results, value_id: ValueId::next() });
                 }
                 // Different-length composites: by default this is Python
                 // list concatenation. But if both operands look like
@@ -331,9 +331,9 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
                     let types = values.iter().map(|v| v.zinnia_type()).collect();
                     let is_tuple = matches!(lhs, Value::Tuple(_));
                     return if is_tuple {
-                        Value::Tuple(CompositeData { elements_type: types, values })
+                        Value::Tuple(CompositeData { elements_type: types, values, value_id: ValueId::next() })
                     } else {
-                        Value::List(CompositeData { elements_type: types, values })
+                        Value::List(CompositeData { elements_type: types, values, value_id: ValueId::next() })
                     };
                 }
             }
@@ -357,9 +357,9 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
                 let types = values.iter().map(|v| v.zinnia_type()).collect();
                 let is_tuple = matches!(lhs, Value::Tuple(_));
                 return if is_tuple {
-                    Value::Tuple(CompositeData { elements_type: types, values })
+                    Value::Tuple(CompositeData { elements_type: types, values, value_id: ValueId::next() })
                 } else {
-                    Value::List(CompositeData { elements_type: types, values })
+                    Value::List(CompositeData { elements_type: types, values, value_id: ValueId::next() })
                 };
             }
             (_, Value::List(rd)) | (_, Value::Tuple(rd))
@@ -373,9 +373,9 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
                 let types = values.iter().map(|v| v.zinnia_type()).collect();
                 let is_tuple = matches!(rhs, Value::Tuple(_));
                 return if is_tuple {
-                    Value::Tuple(CompositeData { elements_type: types, values })
+                    Value::Tuple(CompositeData { elements_type: types, values, value_id: ValueId::next() })
                 } else {
-                    Value::List(CompositeData { elements_type: types, values })
+                    Value::List(CompositeData { elements_type: types, values, value_id: ValueId::next() })
                 };
             }
             _ => {}
@@ -437,6 +437,8 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
                         return Value::List(CompositeData {
                             elements_type: types,
                             values: results,
+                        
+                            value_id: ValueId::next(),
                         });
                     }
                 }
@@ -459,7 +461,7 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
                 .map(|(l, r)| apply_binary_op(b, op, l, r))
                 .collect();
             let types = results.iter().map(|v| v.zinnia_type()).collect();
-            return Value::List(CompositeData { elements_type: types, values: results });
+            return Value::List(CompositeData { elements_type: types, values: results, value_id: ValueId::next() });
         }
         // Shape-level broadcasting: both composites, mismatched shapes that are
         // broadcast-compatible (NumPy semantics). Materialize both operands to
@@ -498,14 +500,14 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
                 .map(|r| apply_binary_op(b, op, lhs, r))
                 .collect();
             let types = results.iter().map(|v| v.zinnia_type()).collect();
-            return Value::List(CompositeData { elements_type: types, values: results });
+            return Value::List(CompositeData { elements_type: types, values: results, value_id: ValueId::next() });
         }
         (Value::List(ld), _) | (Value::Tuple(ld), _) if rhs.is_number() => {
             let results: Vec<Value> = ld.values.iter()
                 .map(|l| apply_binary_op(b, op, l, rhs))
                 .collect();
             let types = results.iter().map(|v| v.zinnia_type()).collect();
-            return Value::List(CompositeData { elements_type: types, values: results });
+            return Value::List(CompositeData { elements_type: types, values: results, value_id: ValueId::next() });
         }
         _ => {}
     }
@@ -642,8 +644,8 @@ pub fn composite_comparison(b: &mut IRBuilder, op: &str, ld: &CompositeData, rd:
             // Handle different lengths: if all common elements are equal
             if ld.values.len() != rd.values.len() {
                 let all_eq = composite_comparison(b, "eq",
-                    &CompositeData { elements_type: ld.elements_type[..min_len].to_vec(), values: ld.values[..min_len].to_vec() },
-                    &CompositeData { elements_type: rd.elements_type[..min_len].to_vec(), values: rd.values[..min_len].to_vec() },
+                    &CompositeData { elements_type: ld.elements_type[..min_len].to_vec(), values: ld.values[..min_len].to_vec(), value_id: ValueId::next() },
+                    &CompositeData { elements_type: rd.elements_type[..min_len].to_vec(), values: rd.values[..min_len].to_vec(), value_id: ValueId::next() },
                 );
                 let all_eq_bool = to_scalar_bool(b, &all_eq);
                 let len_result = match op {
@@ -737,7 +739,7 @@ pub fn dynamic_list_set_item(b: &mut IRBuilder, data: &CompositeData, idx: &Valu
             new_types.push(selected.zinnia_type());
             new_values.push(selected);
         }
-        return Value::List(CompositeData { elements_type: new_types, values: new_values });
+        return Value::List(CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() });
     }
 
     if n < 100 {
@@ -751,7 +753,7 @@ pub fn dynamic_list_set_item(b: &mut IRBuilder, data: &CompositeData, idx: &Valu
             new_types.push(selected.zinnia_type());
             new_values.push(selected);
         }
-        Value::List(CompositeData { elements_type: new_types, values: new_values })
+        Value::List(CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() })
     } else {
         // Memory path: allocate, write all, then overwrite at dynamic index, read all back
         let seg_id = b.alloc_segment_id();
@@ -778,7 +780,7 @@ pub fn dynamic_list_set_item(b: &mut IRBuilder, data: &CompositeData, idx: &Valu
             new_types.push(read_val.zinnia_type());
             new_values.push(read_val);
         }
-        Value::List(CompositeData { elements_type: new_types, values: new_values })
+        Value::List(CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() })
     }
 }
 

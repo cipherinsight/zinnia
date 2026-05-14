@@ -1,6 +1,6 @@
 use crate::builder::IRBuilder;
 use crate::ops::{Op, OpArgs, ParamEntry};
-use crate::types::Value;
+use crate::types::{Value, ValueId};
 
 pub struct ListOp;
 
@@ -19,6 +19,8 @@ impl Op for ListOp {
             Value::Tuple(data) => Value::List(crate::types::CompositeData {
                 elements_type: data.elements_type.clone(),
                 values: data.values.clone(),
+            
+                value_id: ValueId::next(),
             }),
             _ => panic!("list: unsupported type {:?}", x.zinnia_type()),
         }

@@ -40,7 +40,7 @@
 
 use crate::builder::IRBuilder;
 use crate::ops::dyn_ndarray::value_to_scalar_i64;
-use crate::types::{
+use crate::types::{ValueId, 
     DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value,
 };
 
@@ -179,7 +179,7 @@ pub fn try_apply_boolean_mask_write(
     value: &Value,
 ) -> Option<Value> {
     let (arr_dtype, arr_shape, arr_seg, _arr_strides, arr_offset, imag_seg) = match arr {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id } => {
+        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id, value_id: _ } => {
             (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
         }
         _ => return None,
@@ -409,6 +409,7 @@ fn dynamic_mask_read(
             runtime_strides: vec![ScalarValue::new(Some(1), None)],
             runtime_offset: ScalarValue::new(Some(0), None),
         },
+        value_id: ValueId::next(),
     })
 }
 
@@ -426,6 +427,8 @@ mod tests {
         Value::List(CompositeData {
             elements_type: types,
             values,
+        
+            value_id: ValueId::next(),
         })
     }
 

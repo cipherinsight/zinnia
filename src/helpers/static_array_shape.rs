@@ -39,7 +39,7 @@
 use std::collections::HashMap;
 
 use crate::builder::IRBuilder;
-use crate::types::{NumberType, Value};
+use crate::types::{NumberType, Value, ValueId};
 
 use super::shape_arith::{decode_coords, row_major_strides};
 use super::static_array::build_static_array_from_flat;
@@ -204,7 +204,7 @@ pub fn try_apply_reshape(
     args: &[Value],
 ) -> Option<Value> {
     let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id } => {
+        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id, value_id: _ } => {
             (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
         }
         _ => return None,
@@ -220,26 +220,27 @@ pub fn try_apply_reshape(
     }
     // Pure metadata for contiguous views. For non-contiguous ones (rare),
     // materialise into a fresh segment first.
-    if is_contiguous(&Value::StaticArray {
+    let out = if is_contiguous(&Value::StaticArray {
         dtype,
         shape: shape.clone(),
         segment_id,
         strides: strides.clone(),
         offset,
         imag_segment_id: imag_seg,
+        value_id: ValueId::next(),
     }) {
         let new_strides = row_major_strides(&target);
-        return Some(Value::StaticArray {
+        Value::StaticArray {
             dtype,
             shape: target,
             segment_id,
             strides: new_strides,
             offset,
             imag_segment_id: imag_seg,
-        });
-    }
-    // Non-contiguous view: materialise into a fresh segment.
-    if dtype == NumberType::Complex {
+            value_id: ValueId::next(),
+        }
+    } else if dtype == NumberType::Complex {
+        // Non-contiguous view: materialise into a fresh segment.
         // Component-wise materialise. payload_cells/materialise_to_flat
         // returns Value::Complex cells; split, then rebuild.
         let cells = materialise_to_flat(b, val);
@@ -254,10 +255,15 @@ pub fn try_apply_reshape(
                 _ => unreachable!("Complex StaticArray cell expected"),
             }
         }
-        return Some(crate::helpers::static_array::build_static_array_from_flat_complex(b, reals, imags, target));
+        crate::helpers::static_array::build_static_array_from_flat_complex(b, reals, imags, target)
+    } else {
+        let flat = materialise_to_flat(b, val);
+        build_static_array_from_flat(b, flat, target, dtype)
+    };
+    if let (Some(in_vid), Some(out_vid)) = (val.value_id(), out.value_id()) {
+        crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
     }
-    let flat = materialise_to_flat(b, val);
-    Some(build_static_array_from_flat(b, flat, target, dtype))
+    Some(out)
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -385,7 +391,11 @@ pub fn try_apply_transpose(
         return Some(val.clone());
     }
     let perm = parse_transpose_perm(args, ndim)?;
-    Some(transpose_materialise(b, val, &perm))
+    let out = transpose_materialise(b, val, &perm);
+    if let (Some(in_vid), Some(out_vid)) = (val.value_id(), out.value_id()) {
+        crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
+    }
+    Some(out)
 }
 
 /// Try to apply `moveaxis` natively. Returns `Some(result)` for the migrated
@@ -418,7 +428,11 @@ pub fn try_apply_moveaxis(
     // Build permutation: remove src, insert at dst.
     let mut perm: Vec<usize> = (0..ndim).filter(|&i| i != src).collect();
     perm.insert(dst, src);
-    Some(transpose_materialise(b, val, &perm))
+    let out = transpose_materialise(b, val, &perm);
+    if let (Some(in_vid), Some(out_vid)) = (val.value_id(), out.value_id()) {
+        crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
+    }
+    Some(out)
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -433,7 +447,7 @@ pub fn try_apply_expand_dims(
     axis_arg: Option<&Value>,
 ) -> Option<Value> {
     let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id } => {
+        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id, value_id: _ } => {
             (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
         }
         _ => return None,
@@ -453,14 +467,19 @@ pub fn try_apply_expand_dims(
     let mut new_strides = strides.clone();
     // Inserted axis has length 1 → stride is irrelevant. Use 0 for clarity.
     new_strides.insert(pos, 0);
-    Some(Value::StaticArray {
+    let out = Value::StaticArray {
         dtype,
         shape: new_shape,
         segment_id,
         strides: new_strides,
         offset,
         imag_segment_id: imag_seg,
-    })
+        value_id: ValueId::next(),
+    };
+    if let (Some(in_vid), Some(out_vid)) = (val.value_id(), out.value_id()) {
+        crate::optim::resolver::relay_forall_eq_const_from_input(_b, in_vid, out_vid);
+    }
+    Some(out)
 }
 
 /// Try to apply `squeeze` natively. `axis_arg` either drops a single given
@@ -472,7 +491,7 @@ pub fn try_apply_squeeze(
     axis_arg: Option<&Value>,
 ) -> Option<Value> {
     let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id } => {
+        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id, value_id: _ } => {
             (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
         }
         _ => return None,
@@ -525,56 +544,65 @@ pub fn try_apply_squeeze(
             new_strides.push(s);
         }
     }
-    if new_shape.is_empty() {
+    let out = if new_shape.is_empty() {
         // 0-D scalar — read the single cell from the cache or segment.
-        if let Some(cached) = _b.static_array_payload.get(&segment_id) {
-            if offset < cached.len() {
-                return Some(cached[offset].clone());
+        let cached = _b.static_array_payload.get(&segment_id)
+            .and_then(|c| if offset < c.len() { Some(c[offset].clone()) } else { None });
+        match cached {
+            Some(v) => v,
+            None => {
+                if dtype == NumberType::Complex {
+                    let im = imag_seg.expect("Complex StaticArray missing imag_segment_id");
+                    crate::helpers::static_array_read::read_complex_leaf(_b, segment_id, im, offset)
+                } else {
+                    let addr = _b.ir_constant_int(offset as i64);
+                    let raw = _b.ir_read_memory(segment_id, &addr);
+                    crate::ops::dyn_ndarray::scalar_i64_to_value(
+                        &crate::ops::dyn_ndarray::value_to_scalar_i64(&raw),
+                        dtype,
+                    )
+                }
             }
         }
-        if dtype == NumberType::Complex {
-            let im = imag_seg.expect("Complex StaticArray missing imag_segment_id");
-            return Some(crate::helpers::static_array_read::read_complex_leaf(_b, segment_id, im, offset));
-        }
-        let addr = _b.ir_constant_int(offset as i64);
-        let raw = _b.ir_read_memory(segment_id, &addr);
-        return Some(crate::ops::dyn_ndarray::scalar_i64_to_value(
-            &crate::ops::dyn_ndarray::value_to_scalar_i64(&raw),
+    } else {
+        Value::StaticArray {
             dtype,
-        ));
+            shape: new_shape,
+            segment_id,
+            strides: new_strides,
+            offset,
+            imag_segment_id: imag_seg,
+            value_id: ValueId::next(),
+        }
+    };
+    if let (Some(in_vid), Some(out_vid)) = (val.value_id(), out.value_id()) {
+        crate::optim::resolver::relay_forall_eq_const_from_input(_b, in_vid, out_vid);
     }
-    Some(Value::StaticArray {
-        dtype,
-        shape: new_shape,
-        segment_id,
-        strides: new_strides,
-        offset,
-        imag_segment_id: imag_seg,
-    })
+    Some(out)
 }
 
 /// Try to apply `flatten` / `ravel` natively. For contiguous source: pure
 /// metadata. For non-contiguous: materialise.
 pub fn try_apply_flatten(b: &mut IRBuilder, val: &Value) -> Option<Value> {
     let (dtype, shape, segment_id, _strides, offset, imag_seg) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id } => {
+        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id, value_id: _ } => {
             (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
         }
         _ => return None,
     };
     let total: usize = shape.iter().product();
-    if is_contiguous(val) {
-        return Some(Value::StaticArray {
+    let out = if is_contiguous(val) {
+        Value::StaticArray {
             dtype,
             shape: vec![total],
             segment_id,
             strides: vec![1],
             offset,
             imag_segment_id: imag_seg,
-        });
-    }
-    // Non-contiguous: materialise into fresh contiguous segment.
-    if dtype == NumberType::Complex {
+            value_id: ValueId::next(),
+        }
+    } else if dtype == NumberType::Complex {
+        // Non-contiguous: materialise into fresh contiguous segment.
         let cells = materialise_to_flat(b, val);
         let mut reals = Vec::with_capacity(cells.len());
         let mut imags = Vec::with_capacity(cells.len());
@@ -587,10 +615,15 @@ pub fn try_apply_flatten(b: &mut IRBuilder, val: &Value) -> Option<Value> {
                 _ => unreachable!(),
             }
         }
-        return Some(crate::helpers::static_array::build_static_array_from_flat_complex(b, reals, imags, vec![total]));
+        crate::helpers::static_array::build_static_array_from_flat_complex(b, reals, imags, vec![total])
+    } else {
+        let flat = materialise_to_flat(b, val);
+        build_static_array_from_flat(b, flat, vec![total], dtype)
+    };
+    if let (Some(in_vid), Some(out_vid)) = (val.value_id(), out.value_id()) {
+        crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
     }
-    let flat = materialise_to_flat(b, val);
-    Some(build_static_array_from_flat(b, flat, vec![total], dtype))
+    Some(out)
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -887,6 +920,8 @@ pub fn try_apply_vstack(b: &mut IRBuilder, arrays_arg: &Value) -> Option<Value> 
     let promoted_list = Value::List(crate::types::CompositeData {
         elements_type: promoted.iter().map(|v| v.zinnia_type()).collect(),
         values: promoted,
+    
+        value_id: ValueId::next(),
     });
     try_apply_concatenate(b, &promoted_list, 0)
 }
@@ -912,6 +947,8 @@ pub fn try_apply_hstack(b: &mut IRBuilder, arrays_arg: &Value) -> Option<Value> 
     let arrays_list = Value::List(crate::types::CompositeData {
         elements_type: arrays.iter().map(|v| v.zinnia_type()).collect(),
         values: arrays,
+    
+        value_id: ValueId::next(),
     });
     try_apply_concatenate(b, &arrays_list, axis)
 }
@@ -933,6 +970,8 @@ pub fn try_apply_column_stack(b: &mut IRBuilder, arrays_arg: &Value) -> Option<V
     let promoted_list = Value::List(crate::types::CompositeData {
         elements_type: promoted.iter().map(|v| v.zinnia_type()).collect(),
         values: promoted,
+    
+        value_id: ValueId::next(),
     });
     try_apply_concatenate(b, &promoted_list, 1)
 }
@@ -957,6 +996,8 @@ mod tests {
         Value::List(CompositeData {
             elements_type: types,
             values,
+        
+            value_id: ValueId::next(),
         })
     }
 

@@ -512,13 +512,15 @@ pub fn try_apply_argmax_argmin(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::CompositeData;
+    use crate::types::{CompositeData, ValueId};
 
     fn list_of(values: Vec<Value>) -> Value {
         let types = values.iter().map(|v| v.zinnia_type()).collect();
         Value::List(CompositeData {
             elements_type: types,
             values,
+        
+            value_id: ValueId::next(),
         })
     }
 

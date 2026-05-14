@@ -8,9 +8,12 @@ mod dyn_ndarray_meta_assert;
 mod external_call_remover;
 mod memory_trace_injection;
 mod pattern_match_optim;
+pub mod predicates;
+pub mod prove;
 pub mod range;
 pub mod resolver;
 pub mod smt_encoding;
+pub mod strategy;
 pub mod telemetry;
 
 #[cfg(test)]
@@ -28,10 +31,12 @@ pub use memory_trace_injection::MemoryTraceInjection;
 pub use pattern_match_optim::PatternMatchOptim;
 pub use range::{IntInterval, RangeResolver};
 pub use resolver::{
-    require_static_int, LayeredResolver, Resolver, SiteKind, SmtResolver,
+    require_provable_static_int, require_static_int, require_static_or_bounded_int,
+    resolve_int_or_bounded, BoundedInt, LayeredResolver, Resolver, SiteKind, SmtResolver,
     StaticInt, StaticOnlyResolver,
 };
 pub use smt_encoding::{IROp, SmtEncodingCtx, Z3Term};
+pub use strategy::{dispatch_strategy, CostHint, OpStrategy, OpStrategySet};
 pub use telemetry::SmtTelemetry;
 
 use crate::ir::IRGraph;

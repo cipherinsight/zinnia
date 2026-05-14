@@ -17,7 +17,7 @@
 
 use crate::builder::IRBuilder;
 use crate::ops::dyn_ndarray::value_to_scalar_i64;
-use crate::types::{
+use crate::types::{ValueId, 
     DynArrayMeta, DynamicNDArrayData, Envelope, NumberType, ScalarValue, Value,
 };
 
@@ -80,6 +80,7 @@ pub fn promote_static_to_dynamic(b: &mut IRBuilder, val: &Value) -> Value {
                 .collect(),
             runtime_offset: ScalarValue::new(Some(0), None),
         },
+        value_id: ValueId::next(),
     };
 
     Value::DynamicNDArray(dyn_data)
@@ -104,6 +105,8 @@ mod tests {
         Value::List(CompositeData {
             elements_type: types,
             values,
+        
+            value_id: ValueId::next(),
         })
     }
 

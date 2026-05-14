@@ -175,7 +175,7 @@ mod tests {
     fn test_value_creation() {
         let v = Value::Integer(ScalarValue::known(42, 0));
         assert_eq!(v.zinnia_type(), ZinniaType::Integer);
-        assert_eq!(v.ptr(), Some(0));
+        assert_eq!(v.stmt_id(), Some(0));
         assert_eq!(v.int_val(), Some(42));
         assert!(v.is_number());
         assert!(v.is_integer());
@@ -191,7 +191,7 @@ mod tests {
 
         let v = Value::None;
         assert_eq!(v.zinnia_type(), ZinniaType::None);
-        assert_eq!(v.ptr(), Option::None);
+        assert_eq!(v.stmt_id(), Option::None);
     }
 
     #[test]
@@ -200,5 +200,75 @@ mod tests {
         assert_eq!(ZinniaType::Float.number_type(), Some(NumberType::Float));
         assert_eq!(ZinniaType::Boolean.number_type(), Some(NumberType::Integer));
         assert_eq!(ZinniaType::String.number_type(), Option::None);
+    }
+
+    /// `Value::List` and `Value::Tuple` must surface their `CompositeData`'s
+    /// `value_id`, so static composites can anchor facts the same way
+    /// scalars and dyn ndarrays already do
+    /// (compiler.value-list-tuple-value-id).
+    #[test]
+    fn test_value_list_has_value_id_for_fact_anchoring() {
+        let list = Value::List(CompositeData::new(
+            vec![ZinniaType::Integer],
+            vec![Value::Integer(ScalarValue::constant(7))],
+        ));
+        let vid = list
+            .value_id()
+            .expect("Value::List should expose a value_id");
+
+        // Two distinct constructions must yield distinct identities, even
+        // when structurally identical or empty.
+        let list2 = Value::List(CompositeData::new(vec![], vec![]));
+        assert_ne!(vid, list2.value_id().unwrap());
+
+        // Tuples are wired through the same arm.
+        let tup = Value::Tuple(CompositeData::new(vec![], vec![]));
+        assert!(tup.value_id().is_some());
+        assert_ne!(tup.value_id().unwrap(), vid);
+    }
+
+    /// `Value::StaticArray` carries a `value_id` so fact-emission on the
+    /// segment-native static-array path lands in `facts.per_value` and
+    /// becomes provable downstream (compiler.value-static-array-value-id).
+    #[test]
+    fn fact_anchoring_works_on_static_array_value_id() {
+        use crate::optim::predicates::formula::{ContractTerm, ContractVar};
+        use crate::optim::prove::ProveOutcome;
+        use std::collections::HashMap;
+
+        let mut b = crate::builder::IRBuilder::new();
+        let arr = Value::StaticArray {
+            dtype: NumberType::Integer,
+            shape: vec![3],
+            segment_id: 0,
+            strides: vec![1],
+            offset: 0,
+            imag_segment_id: None,
+            value_id: ValueId::next(),
+        };
+        let vid = arr.value_id().expect("static array now has a value_id");
+
+        b.fire_contract("zeros_content", vid, &HashMap::new());
+
+        let q = ContractTerm::PredicateApp {
+            kind: "forall_eq_const".to_string(),
+            args: vec![
+                ContractTerm::Var(ContractVar::Value(vid)),
+                ContractTerm::LitInt(0),
+            ],
+        };
+        assert!(matches!(b.prove(&q), ProveOutcome::Proved));
+
+        // Two distinct constructions must yield distinct identities.
+        let arr2 = Value::StaticArray {
+            dtype: NumberType::Integer,
+            shape: vec![3],
+            segment_id: 0,
+            strides: vec![1],
+            offset: 0,
+            imag_segment_id: None,
+            value_id: ValueId::next(),
+        };
+        assert_ne!(vid, arr2.value_id().unwrap());
     }
 }

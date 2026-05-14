@@ -14,7 +14,7 @@
 
 use crate::builder::IRBuilder;
 use crate::ops::dyn_ndarray::{scalar_i64_to_value, value_to_scalar_i64};
-use crate::types::{CompositeData, NumberType, ScalarValue, Value, ZinniaType};
+use crate::types::{CompositeData, NumberType, ScalarValue, Value, ValueId, ZinniaType};
 
 use super::composite::{flatten_composite, get_composite_shape};
 use super::segment::alloc_and_write;
@@ -86,6 +86,7 @@ pub fn build_static_array_from_flat(
         strides,
         offset: 0,
         imag_segment_id: None,
+        value_id: ValueId::next(),
     }
 }
 
@@ -139,6 +140,7 @@ pub fn build_static_array_from_flat_complex(
         strides,
         offset: 0,
         imag_segment_id: Some(imag_seg),
+        value_id: ValueId::next(),
     }
 }
 
@@ -228,12 +230,12 @@ pub fn deep_to_value_list(b: &mut IRBuilder, val: &Value) -> Value {
         Value::List(data) => {
             let new_vals: Vec<Value> = data.values.iter().map(|v| deep_to_value_list(b, v)).collect();
             let new_types = new_vals.iter().map(|v| v.zinnia_type()).collect();
-            Value::List(CompositeData { elements_type: new_types, values: new_vals })
+            Value::List(CompositeData { elements_type: new_types, values: new_vals, value_id: ValueId::next() })
         }
         Value::Tuple(data) => {
             let new_vals: Vec<Value> = data.values.iter().map(|v| deep_to_value_list(b, v)).collect();
             let new_types = new_vals.iter().map(|v| v.zinnia_type()).collect();
-            Value::Tuple(CompositeData { elements_type: new_types, values: new_vals })
+            Value::Tuple(CompositeData { elements_type: new_types, values: new_vals, value_id: ValueId::next() })
         }
         _ => val.clone(),
     }
@@ -270,6 +272,7 @@ pub fn to_value_list(b: &mut IRBuilder, val: &Value) -> Value {
             strides,
             offset,
             imag_segment_id,
+            value_id: _,
         } => (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id),
         _ => return val.clone(),
     };
@@ -311,6 +314,8 @@ pub fn to_value_list(b: &mut IRBuilder, val: &Value) -> Value {
         return Value::List(CompositeData {
             elements_type: leaf_types,
             values: leaves,
+        
+            value_id: ValueId::next(),
         });
     }
     // Build nested List from flat payload.
@@ -335,6 +340,8 @@ mod tests {
         Value::List(CompositeData {
             elements_type: types,
             values,
+        
+            value_id: ValueId::next(),
         })
     }
 

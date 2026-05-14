@@ -33,6 +33,11 @@ rand = { version = "0.8", optional = true }
 # back to vendored builds, flip the feature to `["bundled"]` and accept
 # the build-time cost.
 z3 = "0.20"
+# Lightweight structured logging. We only use the `debug!` / `info!`
+# macros, so the dependency is essentially zero-cost in default builds
+# (no subscriber attached → events become no-ops). Pulled in directly
+# (it was already transitively present via z3's dependency tree).
+tracing = "0.1"
 
 [dev-dependencies]
 pyo3 = { version = "0.23", features = ["auto-initialize"] }

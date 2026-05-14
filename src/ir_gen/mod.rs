@@ -325,6 +325,126 @@ impl IRGenerator {
 
         self.register_global_datatypes();
 
+        // Emit structural-predicate precondition atoms (compile-time facts
+        // for the SMT layer) plus their witness-time enforcement (real
+        // circuit constraints that the prover must satisfy).
+        for req in &n.requires {
+            self.builder.ir_structural_predicate(
+                req.kind.clone(),
+                req.args.clone(),
+                req.op.clone(),
+                req.bound.clone(),
+            );
+            // Witness-time enforcement: invoke the per-predicate emitter
+            // if one is registered. Closes the soundness gap noted in
+            // `compiler.nnz-witness-enforcement`.
+            if let Some(emitter) =
+                crate::optim::predicates::witness_emitters().get(req.kind.as_str())
+            {
+                let arg_values: Vec<crate::types::Value> = req
+                    .args
+                    .iter()
+                    .map(|name| {
+                        self.ctx
+                            .get(name)
+                            .unwrap_or(crate::types::Value::None)
+                    })
+                    .collect();
+                let bound_value = req.bound.as_ref().and_then(|name| {
+                    self.ctx.get(name).or_else(|| {
+                        // Numeric literal in the precondition (e.g.,
+                        // `nnz(x) <= 1024`). Materialise as a constant.
+                        name.parse::<i64>()
+                            .ok()
+                            .map(|n| self.builder.ir_constant_int(n))
+                    })
+                });
+                (emitter.emit)(
+                    &mut self.builder,
+                    &arg_values,
+                    req.op.as_deref(),
+                    bound_value.as_ref(),
+                );
+            }
+        }
+
+        // Emit scalar-precondition atoms + their witness-time enforcement.
+        // The IR atom carries the serialized ContractTerm for the SMT
+        // layer's discharger; the witness IR (computed via
+        // `lower_precondition_to_ir`) is the prove-time enforcement.
+        for scalar_req in &n.scalar_requires {
+            // Serialize the term to a JSON string for the IR atom payload.
+            let term_json = scalar_req.term.to_string();
+            self.builder.ir_scalar_precondition(term_json);
+
+            // Deserialize ContractTerm from the JSON value and emit the
+            // witness IR. Log + skip on lowering errors (sound omission:
+            // no Assert means no prove-time enforcement; documented in
+            // the card's soundness-gap section).
+            let term: Result<
+                crate::optim::predicates::formula::ContractTerm,
+                _,
+            > = serde_json::from_value(scalar_req.term.clone());
+            let term = match term {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("[scalar-precondition] malformed term: {e}");
+                    continue;
+                }
+            };
+            // Build a closure that resolves `Var(Input(name))` against
+            // the circuit's input bindings. We snapshot input names
+            // up front (from the AST) to avoid borrow-checker issues
+            // when the closure later runs alongside `&mut self.builder`.
+            let mut binds: std::collections::HashMap<String, crate::types::Value> =
+                std::collections::HashMap::new();
+            for inp in &n.inputs {
+                if let Some(v) = self.ctx.get(&inp.name) {
+                    binds.insert(inp.name.clone(), v);
+                }
+            }
+            let lookup = |name: &str| binds.get(name).cloned();
+
+            // Seed the scalar precondition into the FactStack
+            // (compiler.eliminate-free-fact-bucket): substitute every
+            // `Var(Input(name))` leaf with `Var(SsaPtr(p))` against the
+            // parameter's SSA ptr (materialising one via `ensure_ptr` if
+            // a parameter was a pure compile-time constant), then index
+            // the resulting ptr-anchored term under every ptr it
+            // references. Consumers (chokepoint fact-fallback,
+            // `prove`) read `by_ptr[p]` and need not consult a separate
+            // free bucket.
+            let mut inputs_to_values: std::collections::HashMap<String, crate::types::ValueId> =
+                std::collections::HashMap::new();
+            for (name, val) in &binds {
+                let with_ptr = self.builder.ensure_ptr(val);
+                if let Some(vid) = with_ptr.value_id() {
+                    inputs_to_values.insert(name.clone(), vid);
+                }
+            }
+            let bound_term = crate::optim::predicates::substitute_inputs(
+                &term,
+                &inputs_to_values,
+            );
+            let anchors = crate::optim::predicates::collect_value_ids(&bound_term);
+            for anchor in &anchors {
+                self.builder.facts.insert_for(*anchor, bound_term.clone());
+            }
+
+            match crate::optim::predicates::witness::lower_precondition_to_ir(
+                &mut self.builder,
+                &term,
+                &lookup,
+            ) {
+                Ok(bool_val) => {
+                    self.builder.ir_assert(&bool_val);
+                }
+                Err(e) => {
+                    eprintln!("[scalar-precondition] lowering failed: {e}");
+                }
+            }
+        }
+
         for stmt in &n.block {
             self.visit(stmt);
         }

@@ -82,8 +82,46 @@ pub struct ASTCircuit {
     pub block: Vec<ASTNode>,
     #[serde(default)]
     pub inputs: Vec<ASTCircuitInput>,
+    /// Structural-predicate preconditions declared via `@requires(...)` or
+    /// `@zk_circuit(requires=[...])`. Lowered to `IR::StructuralPredicate`
+    /// atoms emitted at the start of the circuit's IR by `ir_gen::visit_circuit`.
+    #[serde(default)]
+    pub requires: Vec<ASTRequires>,
+    /// Scalar / arithmetic / logical preconditions. The `term` field
+    /// is a JSON value matching the serde-derived shape of
+    /// `optim::predicates::formula::ContractTerm`. Lowered to
+    /// `IR::ScalarPrecondition` atoms by `ir_gen::visit_circuit`.
+    #[serde(default)]
+    pub scalar_requires: Vec<ASTScalarRequires>,
     #[serde(default)]
     pub dbg: Option<DebugInfo>,
+}
+
+/// A single structural-predicate precondition. Extracted from the function's
+/// `decorator_list` by `zinnia.compile.transformer._precondition` and emitted
+/// alongside `ASTCircuit`.
+///
+/// The `args` list holds opaque string renderings of each predicate argument
+/// (a parameter name, a numeric literal, or a small arithmetic expression).
+/// `op` and `bound` carry the optional comparison; when omitted the predicate
+/// is unary (e.g., `is_sorted(x)`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ASTRequires {
+    pub kind: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub op: Option<String>,
+    #[serde(default)]
+    pub bound: Option<String>,
+}
+
+/// A scalar / arithmetic / logical precondition carried as an opaque
+/// `ContractTerm` JSON payload. The witness emitter and discharger
+/// deserialize on demand into `optim::predicates::formula::ContractTerm`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ASTScalarRequires {
+    pub term: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

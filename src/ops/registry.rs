@@ -134,6 +134,7 @@ fn build_np_op(name: &str, builder: &mut IRBuilder, args: &OpArgs) -> Option<Val
         "abs" => np_like::NpAbsOp.build(builder, args),
         "absolute" => np_like::NpAbsoluteOp.build(builder, args),
         "fabs" => np_like::NpFAbsOp.build(builder, args),
+        "inv" => math_ops::MathInvOp.build(builder, args),
         "sign" => np_like::NpSignOp.build(builder, args),
         "negative" => np_like::NpNegativeOp.build(builder, args),
         "positive" => np_like::NpPositiveOp.build(builder, args),

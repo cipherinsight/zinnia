@@ -1,6 +1,7 @@
 import ast
 
 from zinnia.compile.transformer.base import ZinniaBaseASTTransformer
+from zinnia.compile.transformer._precondition import extract_preconditions
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.debug.exception import InvalidProgramException, InvalidCircuitInputException
 
@@ -26,7 +27,31 @@ class ZinniaCircuitASTTransformer(ZinniaBaseASTTransformer):
         args = self.visit_arguments(node.args)
         if node.returns is not None:
             raise InvalidProgramException(dbg_info, "Circuit function must not have a return annotation. Note that circuits should not return anything.")
-        return {"__class__": "ASTCircuit", "block": self.visit_block(node.body), "inputs": args}
+        # Extract preconditions and split into structural vs. scalar
+        # buckets. The Rust ASTCircuit has two parallel fields
+        # (`requires` for structural-predicate calls, `scalar_requires`
+        # for ContractTerm-shaped scalar/arithmetic/logical
+        # preconditions); the split is by the spec dict's `__class__`.
+        all_preconditions = extract_preconditions(node, self.source_code, self.method_name)
+        structural = []
+        scalar = []
+        for spec in all_preconditions:
+            cls = spec.get("__class__")
+            if cls == "ASTRequires":
+                structural.append(spec)
+            elif cls == "ASTScalarRequires":
+                scalar.append(spec)
+            else:
+                # Defensive: unexpected spec class. Fall back to
+                # structural to preserve the existing behaviour.
+                structural.append(spec)
+        return {
+            "__class__": "ASTCircuit",
+            "block": self.visit_block(node.body),
+            "inputs": args,
+            "requires": structural,
+            "scalar_requires": scalar,
+        }
 
     def visit_arguments(self, node):
         results = []

@@ -1,7 +1,7 @@
 use crate::builder::IRBuilder;
 use crate::ops::{Op, OpArgs, ParamEntry};
-use crate::optim::resolver::{require_static_int, SiteKind};
-use crate::types::Value;
+use crate::optim::resolver::{require_provable_static_int, SiteKind};
+use crate::types::{Value, ValueId};
 
 pub struct RangeOp;
 
@@ -24,21 +24,15 @@ impl Op for RangeOp {
 
         // All range arguments must be statically known integers.
         let (start, stop, step) = if let Some(stop_v) = stop_opt {
-            let s: i64 = require_static_int(builder, start_val, SiteKind::RangeStart, None)
-                .unwrap_or_else(|e| panic!("{}", e.message))
-                .into();
-            let e: i64 = require_static_int(builder, stop_v, SiteKind::RangeStop, None)
-                .unwrap_or_else(|e| panic!("{}", e.message))
-                .into();
+            let s: i64 = require_provable_static_int(builder, start_val, SiteKind::RangeStart);
+            let e: i64 = require_provable_static_int(builder, stop_v, SiteKind::RangeStop);
             let st = step_opt
                 .and_then(|v| v.int_val())
                 .unwrap_or(1);
             (s, e, st)
         } else {
             // range(stop) — start=0, stop=start_val
-            let e: i64 = require_static_int(builder, start_val, SiteKind::RangeStop, None)
-                .unwrap_or_else(|e| panic!("{}", e.message))
-                .into();
+            let e: i64 = require_provable_static_int(builder, start_val, SiteKind::RangeStop);
             (0, e, 1)
         };
 
@@ -56,6 +50,8 @@ impl Op for RangeOp {
         Value::List(crate::types::CompositeData {
             elements_type: types,
             values,
+        
+            value_id: ValueId::next(),
         })
     }
 }

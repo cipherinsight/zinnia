@@ -7,7 +7,7 @@
 use crate::builder::IRBuilder;
 use crate::helpers::shape_arith::{decode_coords, encode_coords, row_major_strides};
 use crate::helpers::value_ops::apply_scalar_binary_op;
-use crate::types::{
+use crate::types::{ValueId, 
     broadcast_envelopes, DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value,
 };
 
@@ -97,6 +97,7 @@ pub fn dyn_binary_op(
                 .collect(),
             runtime_offset: ScalarValue::new(Some(0), None),
         },
+        value_id: ValueId::next(),
     })
 }
 
@@ -123,6 +124,7 @@ pub fn dyn_unary_op(
         dtype: out_dtype,
         segment_id,
         meta: arr.meta.clone(),
+        value_id: ValueId::next(),
     })
 }
 
@@ -164,6 +166,7 @@ pub fn dyn_scalar_binary_op(
         dtype: out_dtype,
         segment_id,
         meta: arr.meta.clone(),
+        value_id: ValueId::next(),
     })
 }
 
@@ -355,7 +358,7 @@ fn compute_runtime_length(
     // Dynamic: multiply via IR.
     let mut acc = if let Some(v) = runtime_shape[0].static_val {
         b.ir_constant_int(v)
-    } else if let Some(ptr) = runtime_shape[0].ptr {
+    } else if let Some(ptr) = runtime_shape[0].stmt_id {
         Value::Integer(ScalarValue::new(None, Some(ptr)))
     } else {
         b.ir_constant_int(0)
@@ -363,7 +366,7 @@ fn compute_runtime_length(
     for sv in &runtime_shape[1..] {
         let val = if let Some(v) = sv.static_val {
             b.ir_constant_int(v)
-        } else if let Some(ptr) = sv.ptr {
+        } else if let Some(ptr) = sv.stmt_id {
             Value::Integer(ScalarValue::new(None, Some(ptr)))
         } else {
             b.ir_constant_int(0)
@@ -389,6 +392,8 @@ mod tests {
         Value::List(CompositeData {
             elements_type: types,
             values,
+        
+            value_id: ValueId::next(),
         })
     }
 
@@ -572,6 +577,7 @@ mod tests {
                 runtime_strides: vec![ScalarValue::new(Some(1), None), ScalarValue::new(Some(1), None)],
                 runtime_offset: ScalarValue::new(Some(0), None),
             },
+            value_id: ValueId::next(),
         };
         let rhs_data = DynamicNDArrayData {
             envelope: rhs_envelope,
@@ -587,6 +593,7 @@ mod tests {
                 runtime_strides: vec![ScalarValue::new(Some(10), None), ScalarValue::new(Some(1), None)],
                 runtime_offset: ScalarValue::new(Some(0), None),
             },
+            value_id: ValueId::next(),
         };
 
         // This should panic with "dynamic broadcast refused"

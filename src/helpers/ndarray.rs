@@ -1,5 +1,5 @@
 use crate::builder::IRBuilder;
-use crate::types::{CompositeData, SliceIndex, Value, ZinniaType};
+use crate::types::{CompositeData, SliceIndex, Value, ValueId, ZinniaType};
 use super::composite;
 
 pub fn ndarray_transpose(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value {
@@ -96,6 +96,7 @@ pub fn ndarray_transpose(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Valu
 pub fn ndarray_argmax_argmin(b: &mut IRBuilder, val: &Value, _args: &[Value], is_max: bool) -> Value {
     let elements = composite::flatten_composite(val);
     if elements.is_empty() { return b.ir_constant_int(0); }
+    let len_arr = elements.len();
     let mut best_idx = b.ir_constant_int(0);
     let mut best_val = elements[0].clone();
     for (i, elem) in elements.iter().enumerate().skip(1) {
@@ -107,6 +108,14 @@ pub fn ndarray_argmax_argmin(b: &mut IRBuilder, val: &Value, _args: &[Value], is
         let idx_val = b.ir_constant_int(i as i64);
         best_idx = b.ir_select_i(&cond, &idx_val, &best_idx);
         best_val = b.ir_select_i(&cond, elem, &best_val);
+    }
+    if let Some(idx_vid) = best_idx.value_id() {
+        let len_arr_val = b.ir_constant_int(len_arr as i64);
+        if let Some(len_arr_vid) = len_arr_val.value_id() {
+            let mut formals = std::collections::HashMap::new();
+            formals.insert("len_arr".to_string(), len_arr_vid);
+            b.fire_contract("dyn_argextremum", idx_vid, &formals);
+        }
     }
     best_idx
 }
@@ -154,7 +163,7 @@ pub fn boolean_mask_static(data: &Value, mask: &Value) -> Result<Value, String> 
         }
     }
     let types = selected.iter().map(|v| v.zinnia_type()).collect();
-    Ok(Value::List(CompositeData { elements_type: types, values: selected }))
+    Ok(Value::List(CompositeData { elements_type: types, values: selected, value_id: ValueId::next() }))
 }
 
 /// Static fancy indexing along axis 0: `data[idx_array]` where `idx_array` is
@@ -169,7 +178,7 @@ pub fn fancy_index_static(data: &CompositeData, idx_array: &Value) -> Result<Val
                     out.push(walk(data, v)?);
                 }
                 let types = out.iter().map(|v| v.zinnia_type()).collect();
-                Ok(Value::List(CompositeData { elements_type: types, values: out }))
+                Ok(Value::List(CompositeData { elements_type: types, values: out, value_id: ValueId::next() }))
             }
             _ => {
                 let i = idx.int_val().ok_or_else(|| {
@@ -234,6 +243,8 @@ fn apply_trailing_to_scalar(scalar: Value, indices: &[SliceIndex]) -> Value {
                 current = Value::List(CompositeData {
                     elements_type: vec![t],
                     values: vec![current],
+                
+                    value_id: ValueId::next(),
                 });
             }
             SliceIndex::Ellipsis => {
@@ -287,6 +298,8 @@ pub fn multidim_subscript(b: &mut IRBuilder, data: &CompositeData, indices: &[Sl
         return Value::List(CompositeData {
             elements_type: vec![inner.zinnia_type()],
             values: vec![inner],
+        
+            value_id: ValueId::next(),
         });
     }
 
@@ -367,13 +380,150 @@ pub fn multidim_subscript(b: &mut IRBuilder, data: &CompositeData, indices: &[Sl
                 i = (i as i64 + st) as usize;
             }
             let types = selected.iter().map(|v| v.zinnia_type()).collect();
-            Value::List(CompositeData { elements_type: types, values: selected })
+            Value::List(CompositeData { elements_type: types, values: selected, value_id: ValueId::next() })
         }
         // Ellipsis and NewAxis are handled above (at function entry); reaching
         // them here means a logic bug.
         SliceIndex::Ellipsis | SliceIndex::NewAxis => unreachable!(
             "Ellipsis / NewAxis should have been handled before the main match"
         ),
+    }
+}
+
+/// Per-call inputs for the sum/prod strategy sets used by `builtin_reduce`.
+/// Carries the flattened element list, the input array's `value_id` (for
+/// precondition construction), the element count, a float-flag for typed
+/// constant lowering, and the optional per-element ValueIds list used by
+/// the post-sweep interval relay. `Value` is `Clone`, so this struct can
+/// live behind the framework's `fn(&mut IRBuilder, &Inputs) -> Output`
+/// signature.
+pub(crate) struct ReductionInputs {
+    pub elements: Vec<Value>,
+    pub arr_vid: crate::types::ValueId,
+    pub n: i64,
+    pub any_float: bool,
+    pub element_vids: Option<Vec<crate::types::ValueId>>,
+}
+
+fn lower_sum_generic_sweep(b: &mut IRBuilder, inputs: &ReductionInputs) -> Value {
+    let mut acc = inputs.elements[0].clone();
+    for elem in &inputs.elements[1..] {
+        acc = crate::helpers::value_ops::apply_binary_op(b, "add", &acc, elem);
+    }
+    // Per-element interval relay: Output ∈ [N*lo, N*hi].
+    if let (Some(vids), Some(out_vid)) = (inputs.element_vids.as_ref(), acc.value_id()) {
+        crate::optim::resolver::relay_reduction_output_interval_int(
+            b, vids, out_vid, inputs.n,
+        );
+    }
+    acc
+}
+
+/// Strategy A for `sum`: `forall_eq_const(arr, 0)` ⇒ output is constant 0.
+/// Sound because every element equals 0, so `0 + 0 + ... + 0 == 0`.
+fn lower_sum_constant_zero(b: &mut IRBuilder, inputs: &ReductionInputs) -> Value {
+    if inputs.any_float {
+        b.ir_constant_float(0.0)
+    } else {
+        b.ir_constant_int(0)
+    }
+}
+
+/// Strategy B for `sum`: `forall_eq_const(arr, 1)` ⇒ output is constant N.
+/// Sound because every element equals 1, so the sum is N (the element
+/// count). Guarded by `builtin_reduce`'s empty-input short-circuit, so
+/// N >= 1 here.
+fn lower_sum_length_times_one(b: &mut IRBuilder, inputs: &ReductionInputs) -> Value {
+    if inputs.any_float {
+        b.ir_constant_float(inputs.n as f64)
+    } else {
+        b.ir_constant_int(inputs.n)
+    }
+}
+
+fn lower_prod_generic_sweep(b: &mut IRBuilder, inputs: &ReductionInputs) -> Value {
+    let mut acc = inputs.elements[0].clone();
+    for elem in &inputs.elements[1..] {
+        acc = crate::helpers::value_ops::apply_binary_op(b, "mul", &acc, elem);
+    }
+    acc
+}
+
+/// Strategy A for `prod`: `forall_eq_const(arr, 0)` ⇒ output is constant 0.
+/// Sound because `0 * x == 0` for any `x` (and N >= 1 here).
+fn lower_prod_constant_zero(b: &mut IRBuilder, inputs: &ReductionInputs) -> Value {
+    if inputs.any_float {
+        b.ir_constant_float(0.0)
+    } else {
+        b.ir_constant_int(0)
+    }
+}
+
+/// Strategy B for `prod`: `forall_eq_const(arr, 1)` ⇒ output is constant 1.
+/// Sound because `1 * 1 * ... * 1 == 1` for any N >= 1.
+fn lower_prod_constant_one(b: &mut IRBuilder, inputs: &ReductionInputs) -> Value {
+    if inputs.any_float {
+        b.ir_constant_float(1.0)
+    } else {
+        b.ir_constant_int(1)
+    }
+}
+
+/// Build the `OpStrategySet` for sum/prod gated on `forall_eq_const(arr, k)`
+/// for k ∈ {0, 1}. The op author embeds the concrete `arr_vid` in each
+/// precondition; the dispatcher walks declared order and short-circuits
+/// on the first `Proved` outcome.
+fn reduction_strategy_set(
+    arr_vid: crate::types::ValueId,
+    op: &str,
+) -> crate::optim::OpStrategySet<ReductionInputs, Value> {
+    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
+    use crate::optim::{CostHint, OpStrategy, OpStrategySet};
+
+    let pred_eq_k = |k: i64| ContractTerm::PredicateApp {
+        kind: "forall_eq_const".to_string(),
+        args: vec![
+            ContractTerm::Var(ContractVar::Value(arr_vid)),
+            ContractTerm::LitInt(k),
+        ],
+    };
+
+    match op {
+        "sum" => OpStrategySet {
+            strategies: vec![
+                OpStrategy {
+                    name: "forall_eq_const_zero",
+                    precondition: pred_eq_k(0),
+                    cost_hint: CostHint::O1,
+                    lower: lower_sum_constant_zero,
+                },
+                OpStrategy {
+                    name: "forall_eq_const_one",
+                    precondition: pred_eq_k(1),
+                    cost_hint: CostHint::O1,
+                    lower: lower_sum_length_times_one,
+                },
+            ],
+            default: lower_sum_generic_sweep,
+        },
+        "prod" => OpStrategySet {
+            strategies: vec![
+                OpStrategy {
+                    name: "forall_eq_const_zero",
+                    precondition: pred_eq_k(0),
+                    cost_hint: CostHint::O1,
+                    lower: lower_prod_constant_zero,
+                },
+                OpStrategy {
+                    name: "forall_eq_const_one",
+                    precondition: pred_eq_k(1),
+                    cost_hint: CostHint::O1,
+                    lower: lower_prod_constant_one,
+                },
+            ],
+            default: lower_prod_generic_sweep,
+        },
+        _ => unreachable!("reduction_strategy_set called with unsupported op `{}`", op),
     }
 }
 
@@ -394,20 +544,48 @@ pub fn builtin_reduce(b: &mut IRBuilder, op: &str, val: &Value) -> Value {
     // and corrupt the IR. We route everything through `apply_binary_op`
     // which already handles int/float promotion correctly.
     let any_float = elements.iter().any(|v| matches!(v, Value::Float(_)));
-    let _ = any_float;
+    // Collect element ValueIds for the input-fact-relay below. We
+    // gather them up-front because the reduction loop overwrites `acc`
+    // in place. An element without a `value_id` (constant scalar) makes
+    // the whole list ineligible for the relay — bail out by leaving the
+    // slot empty and skipping the relay later.
+    let element_vids: Option<Vec<crate::types::ValueId>> = elements
+        .iter()
+        .map(|v| v.value_id())
+        .collect::<Option<Vec<_>>>();
+    let n_elements = elements.len() as i64;
     match op {
-        "sum" => {
-            let mut acc = elements[0].clone();
-            for elem in &elements[1..] {
-                acc = crate::helpers::value_ops::apply_binary_op(b, "add", &acc, elem);
+        "sum" | "prod" => {
+            let inputs = ReductionInputs {
+                elements: elements.clone(),
+                arr_vid: val.value_id().unwrap_or_else(ValueId::next),
+                n: n_elements,
+                any_float,
+                element_vids: element_vids.clone(),
+            };
+            let op_name: &'static str = if op == "sum" { "sum" } else { "prod" };
+            match val.value_id() {
+                Some(_) => {
+                    let set = reduction_strategy_set(inputs.arr_vid, op_name);
+                    crate::optim::dispatch_strategy(b, op_name, &inputs, &set)
+                }
+                None => {
+                    if op_name == "sum" {
+                        lower_sum_generic_sweep(b, &inputs)
+                    } else {
+                        lower_prod_generic_sweep(b, &inputs)
+                    }
+                }
             }
-            acc
         }
         "any" => {
             let mut acc = crate::helpers::value_ops::to_scalar_bool(b, &elements[0]);
             for elem in &elements[1..] {
                 let bool_val = crate::helpers::value_ops::to_scalar_bool(b, elem);
                 acc = b.ir_logical_or(&acc, &bool_val);
+            }
+            if let Some(vid) = acc.value_id() {
+                b.fire_contract("any", vid, &std::collections::HashMap::new());
             }
             acc
         }
@@ -417,6 +595,9 @@ pub fn builtin_reduce(b: &mut IRBuilder, op: &str, val: &Value) -> Value {
                 let bool_val = crate::helpers::value_ops::to_scalar_bool(b, elem);
                 acc = b.ir_logical_and(&acc, &bool_val);
             }
+            if let Some(vid) = acc.value_id() {
+                b.fire_contract("all", vid, &std::collections::HashMap::new());
+            }
             acc
         }
         "min" => {
@@ -424,6 +605,12 @@ pub fn builtin_reduce(b: &mut IRBuilder, op: &str, val: &Value) -> Value {
             for elem in &elements[1..] {
                 let cond = crate::helpers::value_ops::apply_binary_op(b, "lt", &acc, elem);
                 acc = crate::helpers::value_ops::select_value(b, &cond, &acc, elem);
+            }
+            // Per-element interval relay: Output ∈ [lo, hi] (multiplier 1).
+            if let (Some(vids), Some(out_vid)) = (element_vids.as_ref(), acc.value_id()) {
+                crate::optim::resolver::relay_reduction_output_interval_int(
+                    b, vids, out_vid, 1,
+                );
             }
             acc
         }
@@ -433,12 +620,11 @@ pub fn builtin_reduce(b: &mut IRBuilder, op: &str, val: &Value) -> Value {
                 let cond = crate::helpers::value_ops::apply_binary_op(b, "gt", &acc, elem);
                 acc = crate::helpers::value_ops::select_value(b, &cond, &acc, elem);
             }
-            acc
-        }
-        "prod" => {
-            let mut acc = elements[0].clone();
-            for elem in &elements[1..] {
-                acc = crate::helpers::value_ops::apply_binary_op(b, "mul", &acc, elem);
+            // Per-element interval relay: Output ∈ [lo, hi] (multiplier 1).
+            if let (Some(vids), Some(out_vid)) = (element_vids.as_ref(), acc.value_id()) {
+                crate::optim::resolver::relay_reduction_output_interval_int(
+                    b, vids, out_vid, 1,
+                );
             }
             acc
         }

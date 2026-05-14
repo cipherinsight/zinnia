@@ -34,7 +34,7 @@
 
 use crate::builder::IRBuilder;
 use crate::ops::dyn_ndarray::{scalar_i64_to_value, value_to_scalar_i64};
-use crate::types::{NumberType, ScalarValue, SliceIndex, Value};
+use crate::types::{NumberType, ScalarValue, SliceIndex, Value, ValueId};
 
 use super::shape_arith::{decode_coords, row_major_strides};
 
@@ -148,7 +148,7 @@ pub fn static_array_setitem(
     value: &Value,
 ) -> Value {
     let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id } => {
+        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id, value_id: _ } => {
             (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
         }
         _ => panic!("static_array_setitem: expected Value::StaticArray"),
@@ -525,9 +525,9 @@ fn legacy_set_nested(
                     }
                     new_types[i] = new_values[i].zinnia_type();
                     return if is_tuple {
-                        Value::Tuple(crate::types::CompositeData { elements_type: new_types, values: new_values })
+                        Value::Tuple(crate::types::CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() })
                     } else {
-                        Value::List(crate::types::CompositeData { elements_type: new_types, values: new_values })
+                        Value::List(crate::types::CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() })
                     };
                 }
             }
@@ -580,9 +580,9 @@ fn legacy_set_nested(
                 }
             }
             if is_tuple {
-                Value::Tuple(crate::types::CompositeData { elements_type: new_types, values: new_values })
+                Value::Tuple(crate::types::CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() })
             } else {
-                Value::List(crate::types::CompositeData { elements_type: new_types, values: new_values })
+                Value::List(crate::types::CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() })
             }
         }
         _ => current.clone(),
@@ -1015,6 +1015,8 @@ mod tests {
         Value::List(CompositeData {
             elements_type: types,
             values,
+        
+            value_id: ValueId::next(),
         })
     }
 
