@@ -17,9 +17,14 @@
 //! semantics.
 
 use std::collections::HashMap;
+use std::fs::{File, OpenOptions};
+use std::io::Write;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use crate::types::ValueId;
 
 /// Number of histogram buckets for SMT query durations.
 pub const NUM_DURATION_BUCKETS: usize = 8;
@@ -343,5 +348,380 @@ mod tests {
         let s = t.summary();
         assert!(s.contains("queries_total"));
         assert!(s.contains("smt_duration_histogram"));
+    }
+}
+
+// ===========================================================================
+// Phase 1 verification telemetry — structured-event JSON-Lines sink.
+//
+// Sits parallel to `SmtTelemetry`: the lock-free counter struct above is for
+// resolver hot-path instrumentation; this sink is for per-event programmatic
+// consumption by the A/B harness, differential fuzzer, and the future
+// `zinnia-trace` CLI. The two don't share state; one compile may have both,
+// one, or neither active.
+//
+// Activation: set `ZINNIA_TELEMETRY_DIR=/path/to/dir`. The sink opens a file
+// `<dir>/<pid>-<seq>.jsonl` and writes one JSON object per line. When the env
+// var is unset, `TelemetrySink::from_env()` returns `None` and the caller's
+// `if let Some(sink) = &self.telemetry { sink.emit(...) }` is a single
+// Option-check — zero overhead.
+//
+// Serialization: hand-rolled (no `serde_json::to_string` round-trip) because
+// the event shapes are stable and small, and we want the format dead-obvious
+// for consumers reading the .jsonl files. Strings are escaped for the JSON
+// subset that actually shows up in these events (quote, backslash, control
+// chars).
+// ===========================================================================
+
+/// One structured telemetry event emitted by the compiler. Each variant maps
+/// to a single line in the output `.jsonl` file. Field names in the emitted
+/// JSON match the lowercase variant names plus the field identifiers below
+/// (e.g., `CompileStart` → `"event":"compile_start"`).
+///
+/// The shape is conservative + extensible: new variants are additive (older
+/// consumers ignore unknown `event` values), and existing fields are stable.
+#[derive(Debug, Clone)]
+pub enum TelemetryEvent {
+    /// Marks the start of a compile. `program` is a free-form identifier
+    /// supplied by the caller (file path, test name, hash, …). `timestamp_ns`
+    /// is UNIX-epoch nanoseconds.
+    CompileStart {
+        program: String,
+        timestamp_ns: u64,
+    },
+    /// Emitted by `Builder::discharge_requires` on every op-contract
+    /// precondition check. `outcome` is the `ProveOutcome` Debug-printed
+    /// (`Proved` / `Disproved` / `Unknown`); `mode` distinguishes the
+    /// witness-emission decision branch (`lenient` / `strict` / `none` for
+    /// Proved/Disproved which don't need to emit witness IR).
+    /// `witness_emit` is `true` iff a runtime `IR::Assert` was planted for
+    /// the precondition (only possible under `mode=lenient` and a successful
+    /// generic lowering). `value_ids` are the ValueId leaves referenced by
+    /// the precondition term — handy for the A/B harness to correlate
+    /// discharges with the ops whose inputs they checked.
+    Discharge {
+        op: String,
+        outcome: String,
+        mode: String,
+        witness_emit: bool,
+        value_ids: Vec<u64>,
+    },
+    /// Emitted by `dispatch_strategy` when a gated strategy fires (its
+    /// precondition was Proved and it ran). The default fall-through case
+    /// emits `StrategyDefault` instead, so the two cases are
+    /// programmatically distinguishable.
+    StrategyDispatch {
+        op: String,
+        strategy: String,
+        input_value_ids: Vec<u64>,
+    },
+    /// Emitted by `dispatch_strategy` when no gated strategy's precondition
+    /// proved and the `default` lowering ran. Separate from
+    /// `StrategyDispatch` so an A/B harness can directly count
+    /// "machinery-fired" vs "machinery-fell-through" per op.
+    StrategyDefault { op: String },
+    /// Emitted by `Builder::fire_contract` for each `ensures` fact planted.
+    /// `producer` is the contract name (the op that owns the contract);
+    /// `output_value_id` is the SSA Value the fact anchors on;
+    /// `term_summary` is the Debug-printed `ContractTerm` (one-line text).
+    FactEmit {
+        producer: String,
+        output_value_id: u64,
+        term_summary: String,
+    },
+    /// Marks the end of a compile. `ir_count` is the final IR-statement
+    /// count, `duration_ms` is the wall-clock from the matching CompileStart.
+    /// Pairs 1:1 with a preceding CompileStart for the same `program`.
+    CompileEnd {
+        program: String,
+        ir_count: usize,
+        duration_ms: u64,
+    },
+}
+
+impl TelemetryEvent {
+    /// Serialize the event to a single JSON line, hand-rolled to avoid the
+    /// `serde_json::to_string` round-trip cost (these events are small and
+    /// stable enough that a custom serializer is faster than reflection).
+    /// The output is a valid JSON object terminated by `\n`.
+    pub fn to_jsonl(&self) -> String {
+        let mut s = String::new();
+        match self {
+            TelemetryEvent::CompileStart { program, timestamp_ns } => {
+                s.push_str(r#"{"event":"compile_start","program":""#);
+                push_json_escaped(&mut s, program);
+                s.push_str(r#"","timestamp_ns":"#);
+                s.push_str(&timestamp_ns.to_string());
+                s.push('}');
+            }
+            TelemetryEvent::Discharge {
+                op,
+                outcome,
+                mode,
+                witness_emit,
+                value_ids,
+            } => {
+                s.push_str(r#"{"event":"discharge","op":""#);
+                push_json_escaped(&mut s, op);
+                s.push_str(r#"","outcome":""#);
+                push_json_escaped(&mut s, outcome);
+                s.push_str(r#"","mode":""#);
+                push_json_escaped(&mut s, mode);
+                s.push_str(r#"","witness_emit":"#);
+                s.push_str(if *witness_emit { "true" } else { "false" });
+                s.push_str(r#","value_ids":"#);
+                push_u64_array(&mut s, value_ids);
+                s.push('}');
+            }
+            TelemetryEvent::StrategyDispatch {
+                op,
+                strategy,
+                input_value_ids,
+            } => {
+                s.push_str(r#"{"event":"strategy_dispatch","op":""#);
+                push_json_escaped(&mut s, op);
+                s.push_str(r#"","strategy":""#);
+                push_json_escaped(&mut s, strategy);
+                s.push_str(r#"","input_value_ids":"#);
+                push_u64_array(&mut s, input_value_ids);
+                s.push('}');
+            }
+            TelemetryEvent::StrategyDefault { op } => {
+                s.push_str(r#"{"event":"strategy_default","op":""#);
+                push_json_escaped(&mut s, op);
+                s.push_str(r#""}"#);
+            }
+            TelemetryEvent::FactEmit {
+                producer,
+                output_value_id,
+                term_summary,
+            } => {
+                s.push_str(r#"{"event":"fact_emit","producer":""#);
+                push_json_escaped(&mut s, producer);
+                s.push_str(r#"","output_value_id":"#);
+                s.push_str(&output_value_id.to_string());
+                s.push_str(r#","term_summary":""#);
+                push_json_escaped(&mut s, term_summary);
+                s.push_str(r#""}"#);
+            }
+            TelemetryEvent::CompileEnd {
+                program,
+                ir_count,
+                duration_ms,
+            } => {
+                s.push_str(r#"{"event":"compile_end","program":""#);
+                push_json_escaped(&mut s, program);
+                s.push_str(r#"","ir_count":"#);
+                s.push_str(&ir_count.to_string());
+                s.push_str(r#","duration_ms":"#);
+                s.push_str(&duration_ms.to_string());
+                s.push('}');
+            }
+        }
+        s.push('\n');
+        s
+    }
+}
+
+/// Convenience constructor: build a `Discharge` event from a `ValueId` list
+/// (the in-tree type) rather than raw `u64`s. The discharge sites have
+/// `Vec<ValueId>` in hand; this avoids forcing each call site to map.
+pub fn discharge_event(
+    op: &str,
+    outcome: &str,
+    mode: &str,
+    witness_emit: bool,
+    value_ids: &[ValueId],
+) -> TelemetryEvent {
+    TelemetryEvent::Discharge {
+        op: op.to_string(),
+        outcome: outcome.to_string(),
+        mode: mode.to_string(),
+        witness_emit,
+        value_ids: value_ids.iter().map(|v| v.0).collect(),
+    }
+}
+
+/// Convenience constructor: build a `StrategyDispatch` event from a `ValueId`
+/// slice.
+pub fn strategy_dispatch_event(
+    op: &str,
+    strategy: &str,
+    input_value_ids: &[ValueId],
+) -> TelemetryEvent {
+    TelemetryEvent::StrategyDispatch {
+        op: op.to_string(),
+        strategy: strategy.to_string(),
+        input_value_ids: input_value_ids.iter().map(|v| v.0).collect(),
+    }
+}
+
+/// Append a u64 array literal `[1,2,3]` to `s`.
+fn push_u64_array(s: &mut String, ids: &[u64]) {
+    s.push('[');
+    for (i, v) in ids.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&v.to_string());
+    }
+    s.push(']');
+}
+
+/// Append `raw` to `s` with JSON-string escaping applied. Covers quote,
+/// backslash, and ASCII control chars (0x00–0x1F). Non-ASCII is passed
+/// through as-is (UTF-8 is valid inside a JSON string).
+fn push_json_escaped(s: &mut String, raw: &str) {
+    for c in raw.chars() {
+        match c {
+            '"' => s.push_str("\\\""),
+            '\\' => s.push_str("\\\\"),
+            '\n' => s.push_str("\\n"),
+            '\r' => s.push_str("\\r"),
+            '\t' => s.push_str("\\t"),
+            '\x08' => s.push_str("\\b"),
+            '\x0c' => s.push_str("\\f"),
+            c if (c as u32) < 0x20 => {
+                s.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => s.push(c),
+        }
+    }
+}
+
+/// Process-local sequence counter, used to disambiguate sink output files
+/// when multiple `TelemetrySink`s are constructed inside one process (e.g.,
+/// the test suite running in parallel under one cargo invocation).
+static SINK_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// JSON-Lines structured-event sink. Wraps a `Mutex<File>` so it's
+/// `Send + Sync` and can sit on an `IRBuilder` field shared across helpers.
+///
+/// Constructed via [`TelemetrySink::from_env`]: returns `None` when
+/// `ZINNIA_TELEMETRY_DIR` is unset (the default — zero-cost for production
+/// builds). When the env var is set, the sink opens a fresh file at
+/// `<dir>/<pid>-<seq>.jsonl` for write+append and emits one line per event.
+///
+/// `emit()` swallows I/O errors silently: telemetry must never break a
+/// compile. If the disk fills up mid-run, the user sees a truncated trace,
+/// not a compiler panic.
+pub struct TelemetrySink {
+    file: Mutex<File>,
+    /// Path the sink is writing to. Exposed for tests + diagnostics; not
+    /// used on the hot path.
+    pub path: PathBuf,
+}
+
+impl TelemetrySink {
+    /// Construct a sink from `ZINNIA_TELEMETRY_DIR`, or return `None` if the
+    /// var is unset / empty / unreadable / the directory cannot be created.
+    /// The "cannot create" case is treated as soft-disable rather than a
+    /// panic: telemetry is opt-in observability, not a load-bearing feature.
+    pub fn from_env() -> Option<Arc<Self>> {
+        let dir = std::env::var("ZINNIA_TELEMETRY_DIR").ok()?;
+        if dir.is_empty() {
+            return None;
+        }
+        let dir_path = PathBuf::from(&dir);
+        if let Err(e) = std::fs::create_dir_all(&dir_path) {
+            tracing::debug!(
+                target: "zinnia::telemetry",
+                "TelemetrySink: failed to create dir {dir:?}: {e}"
+            );
+            return None;
+        }
+        let seq = SINK_SEQ.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        let path = dir_path.join(format!("{pid}-{seq}.jsonl"));
+        let file = match OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::debug!(
+                    target: "zinnia::telemetry",
+                    "TelemetrySink: failed to open {path:?}: {e}"
+                );
+                return None;
+            }
+        };
+        Some(Arc::new(Self {
+            file: Mutex::new(file),
+            path,
+        }))
+    }
+
+    /// Emit one event. Writes one JSON line to the underlying file. I/O
+    /// errors are swallowed (telemetry is best-effort — see struct doc).
+    pub fn emit(&self, event: &TelemetryEvent) {
+        let line = event.to_jsonl();
+        if let Ok(mut f) = self.file.lock() {
+            let _ = f.write_all(line.as_bytes());
+        }
+    }
+}
+
+/// Return UNIX-epoch nanoseconds for use in `CompileStart`. Saturates to
+/// 0 if the system clock predates the epoch (impossible in practice).
+pub fn now_unix_ns() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos().min(u64::MAX as u128) as u64)
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod sink_tests {
+    use super::*;
+
+    #[test]
+    fn jsonl_compile_start_is_well_formed() {
+        let ev = TelemetryEvent::CompileStart {
+            program: "foo.py".into(),
+            timestamp_ns: 1234,
+        };
+        let line = ev.to_jsonl();
+        assert!(line.ends_with('\n'));
+        assert!(line.contains(r#""event":"compile_start""#));
+        assert!(line.contains(r#""program":"foo.py""#));
+        assert!(line.contains(r#""timestamp_ns":1234"#));
+    }
+
+    #[test]
+    fn jsonl_discharge_includes_value_ids() {
+        let ev = TelemetryEvent::Discharge {
+            op: "sqrt_f".into(),
+            outcome: "Proved".into(),
+            mode: "none".into(),
+            witness_emit: false,
+            value_ids: vec![42, 43],
+        };
+        let line = ev.to_jsonl();
+        assert!(line.contains(r#""op":"sqrt_f""#));
+        assert!(line.contains(r#""outcome":"Proved""#));
+        assert!(line.contains(r#""mode":"none""#));
+        assert!(line.contains(r#""witness_emit":false"#));
+        assert!(line.contains(r#""value_ids":[42,43]"#));
+    }
+
+    #[test]
+    fn jsonl_strategy_default_minimal_shape() {
+        let ev = TelemetryEvent::StrategyDefault { op: "matmul".into() };
+        let line = ev.to_jsonl();
+        assert_eq!(line, "{\"event\":\"strategy_default\",\"op\":\"matmul\"}\n");
+    }
+
+    #[test]
+    fn jsonl_escapes_quotes_and_backslashes() {
+        let ev = TelemetryEvent::FactEmit {
+            producer: "test".into(),
+            output_value_id: 1,
+            // Embedded quote, backslash, newline must be escaped.
+            term_summary: "a\"b\\c\nd".into(),
+        };
+        let line = ev.to_jsonl();
+        assert!(line.contains(r#""term_summary":"a\"b\\c\nd""#));
     }
 }

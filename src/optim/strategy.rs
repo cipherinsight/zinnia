@@ -124,6 +124,18 @@ pub fn dispatch_strategy<Inputs, Output>(
     inputs: &Inputs,
     set: &OpStrategySet<Inputs, Output>,
 ) -> Output {
+    // A/B-harness kill switch: under `ZINNIA_REQ_DISABLE=1` skip the
+    // gated strategies entirely and always run the default lowering.
+    // Default is sound unconditionally (see `OpStrategySet` doc), so
+    // this is safe; it just stops specialisation.
+    if crate::optim::resolver::req_disabled() {
+        if let Some(sink) = &b.telemetry {
+            sink.emit(&crate::optim::telemetry::TelemetryEvent::StrategyDefault {
+                op: op_name.to_string(),
+            });
+        }
+        return (set.default)(b, inputs);
+    }
     for strat in &set.strategies {
         if matches!(b.prove(&strat.precondition), ProveOutcome::Proved) {
             tracing::debug!(
@@ -132,8 +144,29 @@ pub fn dispatch_strategy<Inputs, Output>(
                 op_name,
                 strat.name,
             );
+            // Structured telemetry mirror of the tracing line. The
+            // precondition term's ValueId leaves are summarized as
+            // input_value_ids so an A/B harness can attribute dispatches
+            // back to specific SSA inputs.
+            if let Some(sink) = &b.telemetry {
+                let value_ids = crate::optim::predicates::collect_value_ids(
+                    &strat.precondition,
+                );
+                sink.emit(&crate::optim::telemetry::strategy_dispatch_event(
+                    op_name,
+                    strat.name,
+                    &value_ids,
+                ));
+            }
             return (strat.lower)(b, inputs);
         }
+    }
+    // No gated strategy fired — record the fall-through so an A/B harness
+    // can directly count machinery-engagement-rate.
+    if let Some(sink) = &b.telemetry {
+        sink.emit(&crate::optim::telemetry::TelemetryEvent::StrategyDefault {
+            op: op_name.to_string(),
+        });
     }
     (set.default)(b, inputs)
 }

@@ -127,6 +127,13 @@ pub struct IRBuilder {
     /// The witness emitter consults this to lower `ContractVar::Value(_)`
     /// leaves back to IR-layer scalar wires. Nothing else reads it.
     pub value_to_stmt: HashMap<crate::types::ValueId, crate::types::StmtId>,
+    /// Structured-event telemetry sink (verification-telemetry-sink card).
+    /// `None` in production unless `ZINNIA_TELEMETRY_DIR` is set; an
+    /// `Option`-check at each emit site keeps the off-path overhead to a
+    /// single conditional. `Arc` so the sink is cheap to share across
+    /// builder clones and helper threads, and `Send + Sync` via the
+    /// inner `Mutex<File>`.
+    pub telemetry: Option<std::sync::Arc<crate::optim::telemetry::TelemetrySink>>,
 }
 
 impl Default for IRBuilder {
@@ -147,7 +154,32 @@ impl IRBuilder {
             resolver: Box::new(StaticOnlyResolver::new()),
             facts: crate::optim::predicates::FactStack::new(),
             value_to_stmt: HashMap::new(),
+            // Activated when `ZINNIA_TELEMETRY_DIR` is set; `None` otherwise.
+            // Reading the env var at construction time means an
+            // `IRBuilder::new()` call after the env var changes won't pick
+            // up the change, but the tests scope the env var around the
+            // builder construction so this matches the desired semantics.
+            telemetry: crate::optim::telemetry::TelemetrySink::from_env(),
         }
+    }
+
+    /// Borrow the structured-event telemetry sink, if one is active. Helper
+    /// for the four `tracing::debug!` sites that pair structured events
+    /// alongside the existing trace lines (verification-telemetry-sink).
+    pub fn telemetry(
+        &self,
+    ) -> Option<&std::sync::Arc<crate::optim::telemetry::TelemetrySink>> {
+        self.telemetry.as_ref()
+    }
+
+    /// Replace the structured-event sink (test hook). Production code uses
+    /// the env-driven `from_env()` path in `new`; tests need to attach a
+    /// sink pointed at a tmp directory after constructing the builder.
+    pub fn set_telemetry(
+        &mut self,
+        sink: Option<std::sync::Arc<crate::optim::telemetry::TelemetrySink>>,
+    ) {
+        self.telemetry = sink;
     }
 
     /// Record the `ValueId → StmtId` mapping for a Value, if both halves
@@ -296,6 +328,16 @@ impl IRBuilder {
                 Some(output_vid),
                 formals,
             );
+            // Structured telemetry: record the per-ensures plant before
+            // moving the fact into the stack (so `term_summary` doesn't
+            // need a re-clone post-insert).
+            if let Some(sink) = &self.telemetry {
+                sink.emit(&crate::optim::telemetry::TelemetryEvent::FactEmit {
+                    producer: name.to_string(),
+                    output_value_id: output_vid.0,
+                    term_summary: format!("{:?}", fact),
+                });
+            }
             self.facts.insert_for(output_vid, fact);
         }
     }
@@ -343,6 +385,13 @@ impl IRBuilder {
                     "op_requires_discharge: op={} outcome=Proved",
                     op_name,
                 );
+                if let Some(sink) = &self.telemetry {
+                    let value_ids =
+                        crate::optim::predicates::collect_value_ids(term);
+                    sink.emit(&crate::optim::telemetry::discharge_event(
+                        op_name, "Proved", "none", false, &value_ids,
+                    ));
+                }
             }
             ProveOutcome::Disproved => {
                 let value_ids =
@@ -352,6 +401,11 @@ impl IRBuilder {
                     "op_requires_discharge: op={} outcome=Disproved (compile error)",
                     op_name,
                 );
+                if let Some(sink) = &self.telemetry {
+                    sink.emit(&crate::optim::telemetry::discharge_event(
+                        op_name, "Disproved", "none", false, &value_ids,
+                    ));
+                }
                 panic!(
                     "op `{op_name}` requires precondition disproved by visible facts: \
                      term={term:?}, value_ids={value_ids:?}"
@@ -366,6 +420,11 @@ impl IRBuilder {
                         "op_requires_discharge: op={} outcome=Unknown mode=strict (compile error)",
                         op_name,
                     );
+                    if let Some(sink) = &self.telemetry {
+                        sink.emit(&crate::optim::telemetry::discharge_event(
+                            op_name, "Unknown", "strict", false, &value_ids,
+                        ));
+                    }
                     panic!(
                         "op `{op_name}` requires precondition not provable from visible facts \
                          (strict mode): term={term:?}, value_ids={value_ids:?}"
@@ -380,6 +439,11 @@ impl IRBuilder {
                         "op_requires_discharge: op={} outcome=Unknown mode=lenient witness_emit=no (compile error)",
                         op_name,
                     );
+                    if let Some(sink) = &self.telemetry {
+                        sink.emit(&crate::optim::telemetry::discharge_event(
+                            op_name, "Unknown", "lenient", false, &value_ids,
+                        ));
+                    }
                     panic!(
                         "op `{op_name}` requires precondition `{term:?}` could not be \
                          lowered to a witness constraint (term likely contains a \
@@ -395,6 +459,13 @@ impl IRBuilder {
                     "op_requires_discharge: op={} outcome=Unknown mode=lenient witness_emit=yes",
                     op_name,
                 );
+                if let Some(sink) = &self.telemetry {
+                    let value_ids =
+                        crate::optim::predicates::collect_value_ids(term);
+                    sink.emit(&crate::optim::telemetry::discharge_event(
+                        op_name, "Unknown", "lenient", true, &value_ids,
+                    ));
+                }
             }
         }
     }

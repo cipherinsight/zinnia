@@ -3993,3 +3993,194 @@ mod group_5c_gather_content {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// `ZINNIA_REQ_DISABLE` A/B-harness kill switch
+// (compiler.verification-ab-disable-harness)
+// ---------------------------------------------------------------------------
+//
+// Mirrors `ZINNIA_OP_REQUIRES_STRICT`'s test pattern: a shared mutex
+// serialises env-mutating tests so concurrent `cargo test` runs don't
+// race on the same env var, and a `Scoped*` RAII guard restores the
+// previous value on drop.
+#[cfg(test)]
+static REQ_DISABLE_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+struct ScopedReqDisable {
+    previous: Option<String>,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl ScopedReqDisable {
+    fn set(value: &str) -> Self {
+        let lock = REQ_DISABLE_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let previous = std::env::var("ZINNIA_REQ_DISABLE").ok();
+        std::env::set_var("ZINNIA_REQ_DISABLE", value);
+        Self { previous, _lock: lock }
+    }
+}
+
+#[cfg(test)]
+impl Drop for ScopedReqDisable {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(v) => std::env::set_var("ZINNIA_REQ_DISABLE", v),
+            None => std::env::remove_var("ZINNIA_REQ_DISABLE"),
+        }
+    }
+}
+
+#[test]
+fn disable_switch_forces_prove_unknown() {
+    use crate::circuit_input::InputPath;
+    use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
+    use crate::optim::prove::ProveOutcome;
+
+    let _guard = ScopedReqDisable::set("1");
+
+    let mut b = crate::builder::IRBuilder::new();
+    let v = b.ir_read_integer(InputPath::new("x", vec![]), false);
+    let v_vid = v.value_id().unwrap();
+    // Plant `v >= 0` so the term would normally be Proved without
+    // the kill switch.
+    b.facts.insert_for(
+        v_vid,
+        ContractTerm::Cmp {
+            op: CmpOp::Ge,
+            lhs: Box::new(ContractTerm::Var(ContractVar::Value(v_vid))),
+            rhs: Box::new(ContractTerm::LitInt(0)),
+        },
+    );
+    let term = ContractTerm::Cmp {
+        op: CmpOp::Ge,
+        lhs: Box::new(ContractTerm::Var(ContractVar::Value(v_vid))),
+        rhs: Box::new(ContractTerm::LitInt(0)),
+    };
+    assert_eq!(
+        b.prove(&term),
+        ProveOutcome::Unknown,
+        "ZINNIA_REQ_DISABLE=1 must force prove() to return Unknown"
+    );
+}
+
+#[test]
+fn disable_switch_skips_strategy_dispatch() {
+    use crate::builder::IRBuilder;
+    use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
+    use crate::optim::{dispatch_strategy, CostHint, OpStrategy, OpStrategySet};
+    use crate::types::ValueId;
+
+    let _guard = ScopedReqDisable::set("1");
+
+    // Plant `vid >= 0`, normally Proved → gated strategy would fire.
+    // With the kill switch, default must run regardless.
+    let mut b = IRBuilder::new();
+    let vid = ValueId::next();
+    let fact = ContractTerm::Cmp {
+        op: CmpOp::Ge,
+        lhs: Box::new(ContractTerm::Var(ContractVar::Value(vid))),
+        rhs: Box::new(ContractTerm::LitInt(0)),
+    };
+    b.facts.insert_for(vid, fact.clone());
+
+    fn gated_lower(_b: &mut IRBuilder, _in: &ValueId) -> &'static str {
+        "gated"
+    }
+    fn default_lower(_b: &mut IRBuilder, _in: &ValueId) -> &'static str {
+        "default"
+    }
+
+    let set: OpStrategySet<ValueId, &'static str> = OpStrategySet {
+        strategies: vec![OpStrategy {
+            name: "gated",
+            precondition: fact,
+            cost_hint: CostHint::O1,
+            lower: gated_lower,
+        }],
+        default: default_lower,
+    };
+    let out = dispatch_strategy(&mut b, "test_op", &vid, &set);
+    assert_eq!(
+        out, "default",
+        "ZINNIA_REQ_DISABLE=1 must skip gated strategies"
+    );
+}
+
+#[test]
+fn disable_switch_preserves_witness_emit() {
+    // SOUNDNESS INVARIANT: with the kill switch on, the discharge_requires
+    // lenient branch still emits the witness check (`IR::Assert`). Without
+    // this, B-mode would compile programs that violate preconditions
+    // silently — exactly the bug the A/B harness was built to surface.
+    use crate::circuit_input::InputPath;
+    use crate::ir_defs::IR;
+    use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
+
+    let _disable = ScopedReqDisable::set("1");
+    // Ensure strict mode is off so we exercise the lenient branch.
+    let _strict = ScopedRequiresStrict::set("0");
+
+    let mut b = crate::builder::IRBuilder::new();
+    let v = b.ir_read_integer(InputPath::new("x", vec![]), false);
+    let v_vid = v.value_id().unwrap();
+    let term = ContractTerm::Cmp {
+        op: CmpOp::Ge,
+        lhs: Box::new(ContractTerm::Var(ContractVar::Value(v_vid))),
+        rhs: Box::new(ContractTerm::LitInt(0)),
+    };
+    let stmt_count_before = b.stmts.len();
+    b.discharge_requires("synth_op", &term);
+    let stmt_count_after = b.stmts.len();
+    assert!(
+        stmt_count_after > stmt_count_before,
+        "kill switch must NOT suppress the lenient witness emit — soundness floor",
+    );
+    let last = b.stmts.last().expect("at least one stmt");
+    assert!(
+        matches!(last.ir, IR::Assert),
+        "witness emit's tail must be IR::Assert; got {:?}",
+        last.ir,
+    );
+}
+
+#[test]
+fn disable_switch_skips_relay() {
+    use crate::circuit_input::InputPath;
+    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
+
+    let _guard = ScopedReqDisable::set("1");
+
+    let mut b = crate::builder::IRBuilder::new();
+    let inp = b.ir_read_integer(InputPath::new("inp", vec![]), false);
+    let out = b.ir_read_integer(InputPath::new("out", vec![]), false);
+    let in_vid = inp.value_id().unwrap();
+    let out_vid = out.value_id().unwrap();
+    // Plant `forall_eq_const(in_vid, 0)` so the relay would normally
+    // see a Proved precondition and emit a content fact on out_vid.
+    b.facts.insert_for(
+        in_vid,
+        ContractTerm::PredicateApp {
+            kind: "forall_eq_const".to_string(),
+            args: vec![
+                ContractTerm::Var(ContractVar::Value(in_vid)),
+                ContractTerm::LitInt(0),
+            ],
+        },
+    );
+    let fired = crate::optim::resolver::relay_forall_eq_const_from_input(
+        &mut b, in_vid, out_vid,
+    );
+    assert!(
+        !fired,
+        "ZINNIA_REQ_DISABLE=1 must make relay_forall_eq_const_from_input no-op"
+    );
+    // And no fact should have been deposited on out_vid.
+    assert!(
+        b.facts.per_value.get(&out_vid).map_or(true, |s: &Vec<_>| s.is_empty()),
+        "kill switch must not relay any fact onto the output",
+    );
+}

@@ -3,3 +3,4 @@
 
 mod passes;
 mod strategy_tests;
+mod telemetry_tests;

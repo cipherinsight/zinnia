@@ -23,6 +23,24 @@ use crate::error::ZinniaError;
 use crate::ir::IRStatement;
 use crate::types::{StmtId, Value};
 
+/// `ZINNIA_REQ_DISABLE=1` is the A/B-harness kill switch for the R/E/Q
+/// machinery: when set, `prove(_)` short-circuits to `Unknown`, the
+/// strategy dispatcher always runs the default lowering, and the
+/// `relay_*` helpers no-op. Mirrors the read pattern of
+/// `op_requires_strict()` in `builder.rs` — a single env lookup per
+/// call, so toggling from a test or harness takes effect immediately.
+///
+/// Soundness invariant: when `prove` is forced to Unknown, the
+/// `discharge_requires` lenient branch still emits the witness check
+/// (`IR::Assert`), so preconditions are enforced at proof time. The
+/// kill switch must never bypass that floor — see the
+/// `disable_switch_preserves_witness_emit` test.
+pub fn req_disabled() -> bool {
+    std::env::var("ZINNIA_REQ_DISABLE")
+        .map(|s| matches!(s.as_str(), "1" | "true" | "TRUE"))
+        .unwrap_or(false)
+}
+
 // ---------------------------------------------------------------------------
 // Resolver trait + StaticOnlyResolver default
 // ---------------------------------------------------------------------------
@@ -1917,6 +1935,9 @@ pub fn relay_sqrt_output_interval(
         BoolOp, CmpOp, ContractFloat, ContractTerm, ContractVar,
     };
 
+    if req_disabled() {
+        return false;
+    }
     let Some((lo, hi)) = derive_float_bounds_from_facts(&b.facts, input_vid) else {
         return false;
     };
@@ -1973,6 +1994,9 @@ pub fn relay_exp_output_interval(
         BoolOp, CmpOp, ContractFloat, ContractTerm, ContractVar,
     };
 
+    if req_disabled() {
+        return false;
+    }
     let Some((lo, hi)) = derive_float_bounds_from_facts(&b.facts, input_vid) else {
         return false;
     };
@@ -2020,6 +2044,9 @@ pub fn relay_log_output_interval(
         BoolOp, CmpOp, ContractFloat, ContractTerm, ContractVar,
     };
 
+    if req_disabled() {
+        return false;
+    }
     let Some((lo, hi)) = derive_float_bounds_from_facts(&b.facts, input_vid) else {
         return false;
     };
@@ -2077,6 +2104,9 @@ pub fn relay_arccos_output_interval(
         BoolOp, CmpOp, ContractFloat, ContractTerm, ContractVar,
     };
 
+    if req_disabled() {
+        return false;
+    }
     let Some((lo, hi)) = derive_float_bounds_from_facts(&b.facts, input_vid) else {
         return false;
     };
@@ -2164,6 +2194,9 @@ pub fn relay_reduction_output_interval_int(
 ) -> bool {
     use crate::optim::predicates::formula::{BoolOp, CmpOp, ContractTerm, ContractVar};
 
+    if req_disabled() {
+        return false;
+    }
     let Some((agg_lo, agg_hi)) = aggregate_element_bounds(&b.facts, element_vids) else {
         return false;
     };
@@ -2591,6 +2624,9 @@ pub fn relay_forall_eq_const_from_input(
     use crate::optim::predicates::formula::{ContractTerm, ContractVar};
     use crate::optim::prove::ProveOutcome;
 
+    if req_disabled() {
+        return false;
+    }
     let pred_zero = ContractTerm::PredicateApp {
         kind: "forall_eq_const".to_string(),
         args: vec![
@@ -2634,6 +2670,9 @@ pub fn relay_forall_eq_const_from_all_inputs(
     use crate::optim::predicates::formula::{ContractTerm, ContractVar};
     use crate::optim::prove::ProveOutcome;
 
+    if req_disabled() {
+        return false;
+    }
     if input_vids.is_empty() {
         return false;
     }

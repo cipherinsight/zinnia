@@ -64,6 +64,14 @@ pub enum ProveOutcome {
 /// to 1000 ms. The same budget applies to both the entailment check and
 /// (if needed) the contradiction check.
 pub fn prove(b: &IRBuilder, term: &ContractTerm) -> ProveOutcome {
+    // A/B-harness kill switch: under `ZINNIA_REQ_DISABLE=1` the prove
+    // layer returns Unknown unconditionally. The discharge_requires
+    // lenient branch then emits the witness check (`IR::Assert`), so
+    // preconditions are still enforced at proof time — the soundness
+    // floor is intact. See `compiler.verification-ab-disable-harness`.
+    if crate::optim::resolver::req_disabled() {
+        return ProveOutcome::Unknown;
+    }
     let facts = b.facts.visible_facts().into_iter().cloned().collect::<Vec<Fact>>();
     let paths = b
         .facts

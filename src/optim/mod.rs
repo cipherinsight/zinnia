@@ -37,7 +37,10 @@ pub use resolver::{
 };
 pub use smt_encoding::{IROp, SmtEncodingCtx, Z3Term};
 pub use strategy::{dispatch_strategy, CostHint, OpStrategy, OpStrategySet};
-pub use telemetry::SmtTelemetry;
+pub use telemetry::{
+    discharge_event, now_unix_ns, strategy_dispatch_event, SmtTelemetry, TelemetryEvent,
+    TelemetrySink,
+};
 
 use crate::ir::IRGraph;
 
