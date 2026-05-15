@@ -2531,6 +2531,32 @@ pub fn probe_in_range(
     in_range
 }
 
+/// Load-bearing Phase-E discharge of a slice bound (`start` or `stop`).
+///
+/// Slice semantics differ from scalar indexing: numpy allows `i == len`
+/// for `arr[i:j]` (an empty trailing slice), so the valid range is the
+/// inclusive `[0, len]`. We forward this to [`discharge_index_in_range`]
+/// as `[0, len + 1)`. `None` / `Value::None` bounds (open ends like
+/// `arr[:j]`) default to `0` or `len` and don't need a discharge.
+///
+/// Used by the dynamic-slice helpers in `static_array_read` and
+/// `array_ops::indexing` to close the slice-OOB witness-miss gap
+/// (compiler.fuzz-finding-v2-slice-oob-witness-miss).
+pub fn discharge_slice_bound(
+    b: &mut crate::builder::IRBuilder,
+    bound: Option<&Value>,
+    len: usize,
+    op_name: &'static str,
+) {
+    let Some(v) = bound else {
+        return;
+    };
+    if matches!(v, Value::None) {
+        return;
+    }
+    discharge_index_in_range(b, v, 0, len as i64 + 1, op_name);
+}
+
 /// Load-bearing Phase-E-style discharge of `lo <= idx < hi` at an
 /// indexing chokepoint (Group 5a).
 ///

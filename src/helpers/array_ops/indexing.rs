@@ -325,6 +325,21 @@ fn dyn_slice_1d(
         return dyn_slice_1d_static(b, data, start_static, stop_static, step_static);
     }
 
+    // Load-bearing slice-bound discharge (compiler.fuzz-finding-v2-slice-oob-witness-miss).
+    // The pad-and-mask path below silently swallows OOB `start` / `stop` —
+    // without an explicit discharge, an OOB witness slips through and
+    // returns `satisfied = True`. Mirrors the scalar dyn-getitem path's
+    // `discharge_index_in_range` call (Group 5a).
+    //
+    // Bound is `envelope.total_bound`, not `logical_shape[0]`, because a
+    // reshape with runtime dims over-approximates `logical_shape` (e.g.
+    // a `(2,4) -> (a,b)` reshape produces `logical_shape = [8, 1]` even
+    // though a valid runtime shape is `(2,4)`). `total_bound` is the
+    // max possible storage extent and matches the scalar dyn-getitem path.
+    let bound = data.envelope.total_bound;
+    crate::optim::resolver::discharge_slice_bound(b, start, bound, "dyn_slice_start");
+    crate::optim::resolver::discharge_slice_bound(b, stop, bound, "dyn_slice_stop");
+
     // Dynamic path: pad-and-mask.
     let max_out_len = len;
 
@@ -568,6 +583,13 @@ fn dyn_slice_axis(
     let mode = select_stride_mode(data);
     let axis_len = shape[axis];
     let max_slice_len = axis_len; // upper bound on output size along this axis
+
+    // Load-bearing slice-bound discharge (compiler.fuzz-finding-v2-slice-oob-witness-miss).
+    // See `dyn_slice_1d` for rationale; multi-dim path uses `total_bound`
+    // for the same reshape over-approximation reason.
+    let bound = data.envelope.total_bound;
+    crate::optim::resolver::discharge_slice_bound(b, start, bound, "dyn_slice_start");
+    crate::optim::resolver::discharge_slice_bound(b, stop, bound, "dyn_slice_stop");
 
     fn val_to_ir(b: &mut IRBuilder, v: Option<&Value>, default: i64) -> Value {
         match v {

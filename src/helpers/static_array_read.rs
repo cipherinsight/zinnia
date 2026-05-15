@@ -404,6 +404,14 @@ fn materialise_dynamic_1d_slice(
 ) -> Value {
     let max_out_len = len;
 
+    // Load-bearing slice-bound discharge (compiler.fuzz-finding-v2-slice-oob-witness-miss).
+    // The internal mask-and-clamp below silently swallows OOB `start` / `stop`
+    // — without an explicit discharge, an OOB witness slips through and
+    // returns `satisfied = True`. Mirrors the scalar arm's
+    // `discharge_index_in_range` (Group 5a) on the dyn-read chokepoint.
+    crate::optim::resolver::discharge_slice_bound(b, start, len, "static_array_slice_start");
+    crate::optim::resolver::discharge_slice_bound(b, stop, len, "static_array_slice_stop");
+
     fn val_to_ir(b: &mut IRBuilder, v: Option<&Value>, default: i64) -> Value {
         match v {
             Some(val) if !matches!(val, Value::None) => {
@@ -581,6 +589,12 @@ fn materialise_dynamic_axis_slice(
 ) -> Value {
     let axis_len = shape[axis];
     let max_axis = axis_len;
+
+    // Load-bearing slice-bound discharge (compiler.fuzz-finding-v2-slice-oob-witness-miss).
+    // See `materialise_dynamic_1d_slice` for rationale; multi-dim path is
+    // analogous, discharging against the length of the sliced axis.
+    crate::optim::resolver::discharge_slice_bound(b, start, axis_len, "static_array_slice_start");
+    crate::optim::resolver::discharge_slice_bound(b, stop, axis_len, "static_array_slice_stop");
 
     fn val_to_ir(b: &mut IRBuilder, v: Option<&Value>, default: i64) -> Value {
         match v {
