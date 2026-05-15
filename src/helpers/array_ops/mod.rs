@@ -8,15 +8,18 @@
 mod reduce;
 mod shape;
 mod memory;
+mod bounded_axis;
+mod boolean_mask;
 mod indexing;
 mod assignment;
 
 pub use reduce::{reduce, argmax_argmin};
 pub use shape::{transpose, moveaxis, reshape, swapaxes};
 pub use memory::{filter, repeat};
-pub use indexing::{dyn_subscript, is_boolean_mask};
-pub(crate) use indexing::bounded_axis_strict;
-pub(crate) use indexing::{select_stride_mode, StrideMode};
+pub use boolean_mask::is_boolean_mask;
+pub use indexing::dyn_subscript;
+pub(crate) use bounded_axis::bounded_axis_strict;
+pub(crate) use bounded_axis::{select_stride_mode, StrideMode};
 pub use assignment::{dyn_setitem, dyn_setitem_mask, dyn_setitem_slice};
 
 use crate::builder::IRBuilder;

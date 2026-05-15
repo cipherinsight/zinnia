@@ -5,7 +5,8 @@ use crate::types::{ValueId,
     DynamicNDArrayData, NumberType, SliceIndex, Value,
 };
 
-use super::indexing::{compute_flat_addr, select_stride_mode, stride_value, StrideMode};
+use super::bounded_axis::{select_stride_mode, stride_value, StrideMode};
+use super::indexing::compute_flat_addr;
 
 /// Single element assignment: dyn[i] = x or dyn[i, j] = x.
 /// In-place write via `ir_write_memory` — O(1).
