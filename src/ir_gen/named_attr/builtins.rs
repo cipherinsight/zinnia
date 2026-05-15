@@ -66,7 +66,7 @@ impl IRGenerator {
                     let arg_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
                     // P5a: Complex StaticArray → fresh Float StaticArray.
                     if let Value::StaticArray { dtype: crate::types::NumberType::Complex, .. } = &arg_orig {
-                        return Some(crate::helpers::static_array_complex::np_abs_complex_static_array(&mut self.builder, &arg_orig));
+                        return Some(crate::helpers::static_array::complex::np_abs_complex_static_array(&mut self.builder, &arg_orig));
                     }
                     match &visited_args[0] {
                         Value::List(data) | Value::Tuple(data) => {

@@ -44,7 +44,7 @@ use crate::types::{ValueId,
     DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value,
 };
 
-use super::static_array_elementwise::payload_cells;
+use super::elementwise::payload_cells;
 
 // ────────────────────────────────────────────────────────────────────────
 // Mask classification
@@ -153,7 +153,7 @@ pub fn try_apply_boolean_mask_read(
             }
         }
         let out_shape = vec![surviving.len()];
-        return Some(super::static_array::build_static_array_from_flat(
+        return Some(super::base::build_static_array_from_flat(
             b, surviving, out_shape, arr_dtype,
         ));
     }
@@ -224,7 +224,7 @@ pub fn try_apply_boolean_mask_write(
             Rhs::TrueCount(cells)
         }
     } else if matches!(value, Value::List(_) | Value::Tuple(_)) {
-        let leaves = super::composite::flatten_composite(value);
+        let leaves = super::super::composite::flatten_composite(value);
         if leaves.len() == total {
             Rhs::FullShape(leaves)
         } else {
@@ -435,13 +435,13 @@ mod tests {
     fn make_1d_int(b: &mut IRBuilder, vals: &[i64]) -> Value {
         let leaves: Vec<Value> = vals.iter().map(|n| b.ir_constant_int(*n)).collect();
         let lst = list_of(leaves);
-        crate::helpers::static_array::to_static_array(b, &lst).unwrap()
+        crate::helpers::static_array::base::to_static_array(b, &lst).unwrap()
     }
 
     fn make_1d_bool(b: &mut IRBuilder, bits: &[bool]) -> Value {
         let leaves: Vec<Value> = bits.iter().map(|x| b.ir_constant_bool(*x)).collect();
         let lst = list_of(leaves);
-        crate::helpers::static_array::to_static_array(b, &lst).unwrap()
+        crate::helpers::static_array::base::to_static_array(b, &lst).unwrap()
     }
 
     #[test]

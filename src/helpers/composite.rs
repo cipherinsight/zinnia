@@ -5,7 +5,7 @@ use crate::types::{CompositeData, Value, ValueId, ZinniaType};
 /// `Value::StaticArray` is *not* flattened here — flattening would require an
 /// `IRBuilder` to read from the segment. Use [`flatten_composite_with_builder`]
 /// when a StaticArray may appear, or convert it to a list first via
-/// `helpers::static_array::to_value_list`.
+/// `helpers::static_array::base::to_value_list`.
 pub fn flatten_composite(val: &Value) -> Vec<Value> {
     match val {
         Value::List(data) | Value::Tuple(data) => {
@@ -26,7 +26,7 @@ pub fn flatten_composite(val: &Value) -> Vec<Value> {
 pub fn flatten_composite_with_builder(b: &mut crate::builder::IRBuilder, val: &Value) -> Vec<Value> {
     match val {
         Value::StaticArray { .. } => {
-            let lst = crate::helpers::static_array::to_value_list(b, val);
+            let lst = crate::helpers::static_array::base::to_value_list(b, val);
             flatten_composite_with_builder(b, &lst)
         }
         Value::List(data) | Value::Tuple(data) => {

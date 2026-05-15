@@ -35,7 +35,7 @@
 use crate::builder::IRBuilder;
 use crate::types::{NumberType, SliceIndex, Value, ValueId};
 
-use super::shape_arith::{decode_coords, row_major_strides};
+use super::super::shape_arith::{decode_coords, row_major_strides};
 
 // ────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -187,7 +187,7 @@ pub fn static_array_setitem(
     // NewAxis or other unusual indices on a setitem target: defer to the
     // legacy List path. Rare for StaticArray writes.
     if indices.iter().any(|i| matches!(i, SliceIndex::NewAxis)) {
-        let lst = super::static_array::to_value_list(b, val);
+        let lst = super::base::to_value_list(b, val);
         // The caller (do_recursive_assign) will run the legacy
         // set_nested_value path. Returning the materialised List signals
         // that path.
@@ -393,9 +393,9 @@ fn complex_slice_setitem_via_list(
     indices: &[SliceIndex],
     value: &Value,
 ) -> Value {
-    let lst = super::static_array::to_value_list(b, val);
+    let lst = super::base::to_value_list(b, val);
     let value_lst = if let Value::StaticArray { .. } = value {
-        super::static_array::to_value_list(b, value)
+        super::base::to_value_list(b, value)
     } else {
         value.clone()
     };
@@ -429,9 +429,9 @@ fn static_array_slice_setitem_via_list(
     indices: &[SliceIndex],
     value: &Value,
 ) -> Value {
-    let lst = super::static_array::to_value_list(b, val);
+    let lst = super::base::to_value_list(b, val);
     let value_lst = if let Value::StaticArray { .. } = value {
-        super::static_array::to_value_list(b, value)
+        super::base::to_value_list(b, value)
     } else {
         value.clone()
     };
@@ -458,12 +458,12 @@ fn slice_setitem_via_legacy(
         _ => unreachable!("slice_setitem_via_legacy: expected StaticArray"),
     };
     // Materialise the source to a nested List.
-    let lst = super::static_array::to_value_list(b, val);
+    let lst = super::base::to_value_list(b, val);
     // Materialise the RHS too — `legacy_set_nested` only handles
     // List/Tuple/scalar. A StaticArray RHS would fall into the wrong
     // (scalar broadcast) branch otherwise.
     let value_lst = if let Value::StaticArray { .. } = value {
-        super::static_array::to_value_list(b, value)
+        super::base::to_value_list(b, value)
     } else {
         value.clone()
     };
@@ -473,7 +473,7 @@ fn slice_setitem_via_legacy(
     // trick is to bake the new payload back into the same segment.
     let updated = legacy_set_nested(b, &lst, indices, &value_lst);
     // Flatten the updated nested list and write back into the segment.
-    let flat = super::composite::flatten_composite(&updated);
+    let flat = super::super::composite::flatten_composite(&updated);
     let total: usize = shape.iter().product();
     if flat.len() != total {
         panic!(
@@ -800,14 +800,14 @@ fn static_array_slice_setitem(
             Value::StaticArray { .. } => {
                 // Use to_value_list to flatten — the cache-aware materialiser
                 // returns the original wires when possible.
-                let flat_list = super::static_array::to_value_list(b, value);
-                super::composite::flatten_composite_with_builder(b, &flat_list)
+                let flat_list = super::base::to_value_list(b, value);
+                super::super::composite::flatten_composite_with_builder(b, &flat_list)
             }
             Value::DynamicNDArray(vd) => {
-                super::segment::read_all(b, vd.segment_id, vd.max_length())
+                super::super::segment::read_all(b, vd.segment_id, vd.max_length())
             }
             Value::List(_) | Value::Tuple(_) => {
-                super::composite::flatten_composite_with_builder(b, value)
+                super::super::composite::flatten_composite_with_builder(b, value)
             }
             _ => panic!("slice assignment: value must be scalar or array-like"),
         }
@@ -1022,11 +1022,11 @@ mod tests {
     fn make_1d(b: &mut IRBuilder, vals: &[i64]) -> Value {
         let leaves: Vec<Value> = vals.iter().map(|n| b.ir_constant_int(*n)).collect();
         let lst = list_of(leaves);
-        super::super::static_array::to_static_array(b, &lst).expect("StaticArray")
+        super::super::base::to_static_array(b, &lst).expect("StaticArray")
     }
 
     fn read_back_1d(b: &mut IRBuilder, val: &Value) -> Vec<Option<i64>> {
-        let lst = super::super::static_array::to_value_list(b, val);
+        let lst = super::super::base::to_value_list(b, val);
         match lst {
             Value::List(d) => d.values.iter().map(|v| v.int_val()).collect(),
             _ => panic!("expected List"),

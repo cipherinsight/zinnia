@@ -62,7 +62,7 @@ pub fn np_fill(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
                         let n: i64 = require_provable_static_int(b, arg, SiteKind::ShapeAxis(0));
                         let fill = b.ir_constant_int(fill_value);
                         let values = vec![fill; n as usize];
-                        let out = crate::helpers::static_array::build_static_array_from_flat(
+                        let out = crate::helpers::static_array::base::build_static_array_from_flat(
                             b,
                             values,
                             vec![n as usize],
@@ -227,7 +227,7 @@ pub fn np_fill(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
         let imag_fill = b.ir_constant_float(0.0);
         let reals = vec![real_fill; total];
         let imags = vec![imag_fill; total];
-        let out = crate::helpers::static_array::build_static_array_from_flat_complex(
+        let out = crate::helpers::static_array::base::build_static_array_from_flat_complex(
             b, reals, imags, shape,
         );
         fire_fill_content_contract(b, &out, fill_value);
@@ -242,7 +242,7 @@ pub fn np_fill(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
     };
     let values = vec![fill; total];
     // P1 segarr-foundation: numeric constructors emit Value::StaticArray.
-    let out = crate::helpers::static_array::build_static_array_from_flat(b, values, shape, dtype);
+    let out = crate::helpers::static_array::base::build_static_array_from_flat(b, values, shape, dtype);
     fire_fill_content_contract(b, &out, fill_value);
     out
 }
@@ -278,7 +278,7 @@ pub fn np_fill_like(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, 
         let imag_fill = b.ir_constant_float(0.0);
         let reals = vec![real_fill; total];
         let imags = vec![imag_fill; total];
-        let out = crate::helpers::static_array::build_static_array_from_flat_complex(
+        let out = crate::helpers::static_array::base::build_static_array_from_flat_complex(
             b, reals, imags, shape,
         );
         fire_fill_content_contract(b, &out, fill_value);
@@ -303,7 +303,7 @@ pub fn np_fill_like(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, 
     };
     let values = vec![fill; total];
     // P1 segarr-foundation: numeric constructors emit Value::StaticArray.
-    let out = crate::helpers::static_array::build_static_array_from_flat(b, values, shape, dtype);
+    let out = crate::helpers::static_array::base::build_static_array_from_flat(b, values, shape, dtype);
     fire_fill_content_contract(b, &out, fill_value);
     out
 }
@@ -333,7 +333,7 @@ pub fn np_identity(b: &mut IRBuilder, args: &[Value]) -> Value {
                     flat.push(if i == j { one.clone() } else { zero.clone() });
                 }
             }
-            let out = crate::helpers::static_array::build_static_array_from_flat(
+            let out = crate::helpers::static_array::base::build_static_array_from_flat(
                 b,
                 flat,
                 vec![n, n],
@@ -584,7 +584,7 @@ fn arange_static(b: &mut IRBuilder, start: i64, stop: i64, step: i64) -> Value {
         i += step;
     }
     let len = values.len();
-    let result = crate::helpers::static_array::build_static_array_from_flat(
+    let result = crate::helpers::static_array::base::build_static_array_from_flat(
         b,
         values,
         vec![len],
@@ -685,11 +685,11 @@ fn np_linspace_static(
     dtype: crate::types::NumberType,
 ) -> Value {
     if num == 0 {
-        return crate::helpers::static_array::build_static_array_from_flat(b, vec![], vec![0], dtype);
+        return crate::helpers::static_array::base::build_static_array_from_flat(b, vec![], vec![0], dtype);
     }
     if num == 1 {
         let v = if use_int { b.ir_constant_int(start as i64) } else { b.ir_constant_float(start) };
-        return crate::helpers::static_array::build_static_array_from_flat(b, vec![v], vec![1], dtype);
+        return crate::helpers::static_array::base::build_static_array_from_flat(b, vec![v], vec![1], dtype);
     }
 
     let divisor = if endpoint { (num - 1) as f64 } else { num as f64 };
@@ -705,7 +705,7 @@ fn np_linspace_static(
     }
     let len = values.len();
     let result =
-        crate::helpers::static_array::build_static_array_from_flat(b, values, vec![len], dtype);
+        crate::helpers::static_array::base::build_static_array_from_flat(b, values, vec![len], dtype);
     // Fire `is_sorted(out)` only when start <= stop (ascending or equal).
     // The fully-static StaticArray path does not carry a value_id today,
     // so the fire is a no-op for the static composite — kept for

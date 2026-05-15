@@ -265,7 +265,7 @@ impl IRGenerator {
                 // dual-segment StaticArray.
                 match dtype {
                     crate::types::NumberType::Integer | crate::types::NumberType::Float => {
-                        crate::helpers::static_array::build_static_array_from_flat(
+                        crate::helpers::static_array::base::build_static_array_from_flat(
                             &mut self.builder,
                             values,
                             shape.clone(),
@@ -285,7 +285,7 @@ impl IRGenerator {
                                 _ => unreachable!("Complex NDArray param: leaf must be Value::Complex"),
                             }
                         }
-                        crate::helpers::static_array::build_static_array_from_flat_complex(
+                        crate::helpers::static_array::base::build_static_array_from_flat_complex(
                             &mut self.builder,
                             reals,
                             imags,

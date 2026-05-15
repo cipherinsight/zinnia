@@ -3279,7 +3279,7 @@ mod group_6_shape_preserving {
                 flat.push(b.ir_constant_int(n));
             }
         }
-        crate::helpers::static_array::build_static_array_from_flat(
+        crate::helpers::static_array::base::build_static_array_from_flat(
             b,
             flat,
             vec![rows.len(), rows[0].len()],
@@ -3290,7 +3290,7 @@ mod group_6_shape_preserving {
     /// Build a 1-D StaticArray of integers.
     fn make_1d_int(b: &mut IRBuilder, vals: &[i64]) -> Value {
         let flat: Vec<Value> = vals.iter().map(|n| b.ir_constant_int(*n)).collect();
-        crate::helpers::static_array::build_static_array_from_flat(
+        crate::helpers::static_array::base::build_static_array_from_flat(
             b,
             flat,
             vec![vals.len()],
@@ -3755,7 +3755,7 @@ mod group_5b_slice_content {
     /// Build a 1-D StaticArray of integers.
     fn make_1d_int(b: &mut IRBuilder, vals: &[i64]) -> Value {
         let flat: Vec<Value> = vals.iter().map(|n| b.ir_constant_int(*n)).collect();
-        crate::helpers::static_array::build_static_array_from_flat(
+        crate::helpers::static_array::base::build_static_array_from_flat(
             b,
             flat,
             vec![vals.len()],
@@ -3809,7 +3809,7 @@ mod group_5b_slice_content {
         plant_forall_eq_const(&mut b, in_vid, 0);
 
         let idx = static_range(&mut b, 2, 5);
-        let out = crate::helpers::static_array_read::static_array_subscript(&mut b, &a, &[idx]);
+        let out = crate::helpers::static_array::read::static_array_subscript(&mut b, &a, &[idx]);
         let out_vid = out.value_id().expect("slice output should have value_id");
         assert_forall_eq_const_proved(&mut b, out_vid, 0);
     }
@@ -3822,7 +3822,7 @@ mod group_5b_slice_content {
         plant_forall_eq_const(&mut b, in_vid, 1);
 
         let idx = static_range(&mut b, 1, 4);
-        let out = crate::helpers::static_array_read::static_array_subscript(&mut b, &a, &[idx]);
+        let out = crate::helpers::static_array::read::static_array_subscript(&mut b, &a, &[idx]);
         let out_vid = out.value_id().expect("slice output should have value_id");
         assert_forall_eq_const_proved(&mut b, out_vid, 1);
     }
@@ -3834,7 +3834,7 @@ mod group_5b_slice_content {
         let mut b = IRBuilder::new();
         let a = make_1d_int(&mut b, &[1, 2, 3, 4, 5, 6]);
         let idx = static_range(&mut b, 1, 4);
-        let out = crate::helpers::static_array_read::static_array_subscript(&mut b, &a, &[idx]);
+        let out = crate::helpers::static_array::read::static_array_subscript(&mut b, &a, &[idx]);
         let out_vid = out.value_id().expect("slice output should have value_id");
         for k in [0i64, 1i64] {
             let query = ContractTerm::PredicateApp {

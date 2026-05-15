@@ -9,7 +9,7 @@ use super::promote;
 /// Helper: materialise StaticArray into a Value::List before legacy paths.
 fn maybe_materialise_static_array(b: &mut IRBuilder, val: &Value) -> Value {
     if matches!(val, Value::StaticArray { .. }) {
-        crate::helpers::static_array::to_value_list(b, val)
+        crate::helpers::static_array::base::to_value_list(b, val)
     } else {
         val.clone()
     }
@@ -30,7 +30,7 @@ pub fn transpose(b: &mut IRBuilder, val: &Value, axes_args: &[Value]) -> Value {
             let d = promote(b, &val_m);
             crate::ops::dyn_ndarray::reshape::dyn_transpose(b, &d, axes_args)
         } else if let Some(out) =
-            crate::helpers::static_array_shape::try_apply_transpose(b, val, axes_args)
+            crate::helpers::static_array::shape::try_apply_transpose(b, val, axes_args)
         {
             // P4c: native StaticArray dispatch before legacy boundary.
             out
@@ -56,7 +56,7 @@ pub fn moveaxis(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value {
             let d = promote(b, &val_m);
             crate::ops::dyn_ndarray::reshape::dyn_moveaxis(b, &d, args)
         } else if let Some(out) =
-            crate::helpers::static_array_shape::try_apply_moveaxis(b, val, args)
+            crate::helpers::static_array::shape::try_apply_moveaxis(b, val, args)
         {
             // P4c: native StaticArray dispatch before legacy boundary.
             out
@@ -86,7 +86,7 @@ pub fn reshape(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value {
             let d = promote(b, &val_m);
             crate::ops::dyn_ndarray::reshape::dyn_reshape(b, &d, args)
         } else if let Some(out) =
-            crate::helpers::static_array_shape::try_apply_reshape(b, val, args)
+            crate::helpers::static_array::shape::try_apply_reshape(b, val, args)
         {
             // P4c: native StaticArray dispatch before legacy boundary.
             out

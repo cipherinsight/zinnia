@@ -18,9 +18,9 @@
 use crate::builder::IRBuilder;
 use crate::types::{NumberType, ScalarValue, Value};
 
-use super::shape_arith::row_major_strides;
-use super::static_array::build_static_array_from_flat;
-use super::static_array_elementwise::payload_cells;
+use super::super::shape_arith::row_major_strides;
+use super::base::build_static_array_from_flat;
+use super::elementwise::payload_cells;
 
 /// `np.real(arr)` for a Complex StaticArray. Returns a Float StaticArray that
 /// shares the source's *real* segment id (no allocation). Cache is rebuilt
@@ -88,7 +88,7 @@ pub fn np_conj_static_array(b: &mut IRBuilder, arr: &Value) -> Value {
         Value::StaticArray { shape, .. } => shape.clone(),
         _ => unreachable!(),
     };
-    super::static_array::build_static_array_from_flat_complex(b, reals, neg_imags, shape)
+    super::base::build_static_array_from_flat_complex(b, reals, neg_imags, shape)
 }
 
 /// `abs(complex_arr)` / `np.abs(complex_arr)` — per-cell |z| = sqrt(re² + im²).

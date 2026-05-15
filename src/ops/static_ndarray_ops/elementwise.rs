@@ -285,7 +285,7 @@ pub fn builtin_enumerate(b: &mut IRBuilder, iter_val: &Value) -> Value {
             let n_iter = shape[0];
             let mut result = Vec::with_capacity(n_iter);
             for i in 0..n_iter {
-                let elem = crate::helpers::static_array_read::iter_element(b, iter_val, i);
+                let elem = crate::helpers::static_array::read::iter_element(b, iter_val, i);
                 let idx = b.ir_constant_int(i as i64);
                 result.push(Value::Tuple(CompositeData {
                     elements_type: vec![ZinniaType::Integer, elem.zinnia_type()],

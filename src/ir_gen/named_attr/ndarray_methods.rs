@@ -69,15 +69,15 @@ impl IRGenerator {
             match member {
                 "real" => {
                     let v = self.ctx.get(var).unwrap();
-                    return Some(crate::helpers::static_array_complex::np_real_static_array(&mut self.builder, &v));
+                    return Some(crate::helpers::static_array::complex::np_real_static_array(&mut self.builder, &v));
                 }
                 "imag" => {
                     let v = self.ctx.get(var).unwrap();
-                    return Some(crate::helpers::static_array_complex::np_imag_static_array(&mut self.builder, &v));
+                    return Some(crate::helpers::static_array::complex::np_imag_static_array(&mut self.builder, &v));
                 }
                 "conjugate" => {
                     let v = self.ctx.get(var).unwrap();
-                    return Some(crate::helpers::static_array_complex::np_conj_static_array(&mut self.builder, &v));
+                    return Some(crate::helpers::static_array::complex::np_conj_static_array(&mut self.builder, &v));
                 }
                 _ => {}
             }
@@ -104,7 +104,7 @@ impl IRGenerator {
                     .get("keepdims")
                     .and_then(|v| v.bool_val())
                     .unwrap_or(false);
-                if let Some(out) = crate::helpers::static_array_reductions::try_apply_reduce(
+                if let Some(out) = crate::helpers::static_array::reductions::try_apply_reduce(
                     &mut self.builder,
                     method,
                     &val,
@@ -114,7 +114,7 @@ impl IRGenerator {
                     return Some(out);
                 }
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
                 let axis_arg = _visited_kwargs.get("axis").or_else(|| visited_args.first());
                 crate::helpers::array_ops::reduce(&mut self.builder, method, &val, axis_arg)
             }
@@ -127,38 +127,38 @@ impl IRGenerator {
                 };
                 // P4c: native StaticArray dispatch.
                 if matches!(val, Value::StaticArray { .. }) {
-                    if let Some(out) = crate::helpers::static_array_shape::try_apply_transpose(
+                    if let Some(out) = crate::helpers::static_array::shape::try_apply_transpose(
                         &mut self.builder, &val, &args,
                     ) {
                         return Some(out);
                     }
                 }
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
                 crate::helpers::array_ops::transpose(&mut self.builder, &val, &args)
             }
             "T" => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
                 // P4c: native StaticArray dispatch.
                 if matches!(val, Value::StaticArray { .. }) {
-                    if let Some(out) = crate::helpers::static_array_shape::try_apply_transpose(
+                    if let Some(out) = crate::helpers::static_array::shape::try_apply_transpose(
                         &mut self.builder, &val, &[],
                     ) {
                         return Some(out);
                     }
                 }
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
                 crate::helpers::ndarray::ndarray_transpose(&mut self.builder, &val, &[])
             }
             "tolist" => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
-                crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val)
+                crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val)
             }
             "astype" => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
                 // Determine target type from the argument (int or float class)
                 let target_float = if let Some(Value::Class(ZinniaType::Float)) = visited_args.first() {
                     true
@@ -178,7 +178,7 @@ impl IRGenerator {
                     .get("keepdims")
                     .and_then(|v| v.bool_val())
                     .unwrap_or(false);
-                if let Some(out) = crate::helpers::static_array_reductions::try_apply_argmax_argmin(
+                if let Some(out) = crate::helpers::static_array::reductions::try_apply_argmax_argmin(
                     &mut self.builder,
                     &val,
                     axis_arg_orig,
@@ -188,7 +188,7 @@ impl IRGenerator {
                     return Some(out);
                 }
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
                 let axis_arg = _visited_kwargs.get("axis").or_else(|| visited_args.first());
                 crate::helpers::array_ops::argmax_argmin(&mut self.builder, &val, axis_arg, method == "argmax")
             }
@@ -197,7 +197,7 @@ impl IRGenerator {
             "shape" => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
                 let shape = crate::helpers::composite::get_composite_shape(&val);
                 let shape_vals: Vec<Value> = shape.iter()
                     .map(|&s| Value::Integer(crate::types::ScalarValue::new(Some(s as i64), None)))
@@ -209,7 +209,7 @@ impl IRGenerator {
                 // Infer dtype from element types
                 let val = self.ctx.get(var).unwrap_or(Value::None);
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
                 let flat = crate::helpers::composite::flatten_composite(&val);
                 let has_float = flat.iter().any(|v| matches!(v, Value::Float(_)));
                 if has_float {
@@ -223,14 +223,14 @@ impl IRGenerator {
             "ndim" => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
                 let shape = crate::helpers::composite::get_composite_shape(&val);
                 self.builder.ir_constant_int(shape.len() as i64)
             }
             "size" => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
                 let shape = crate::helpers::composite::get_composite_shape(&val);
                 let total: usize = shape.iter().product();
                 self.builder.ir_constant_int(total as i64)
@@ -239,14 +239,14 @@ impl IRGenerator {
                 let val_orig = self.ctx.get(var).unwrap_or(Value::None);
                 // P4c: native StaticArray dispatch.
                 if matches!(val_orig, Value::StaticArray { .. }) {
-                    if let Some(out) = crate::helpers::static_array_shape::try_apply_flatten(
+                    if let Some(out) = crate::helpers::static_array::shape::try_apply_flatten(
                         &mut self.builder, &val_orig,
                     ) {
                         return Some(out);
                     }
                 }
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val_orig);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val_orig);
                 let flat = crate::helpers::composite::flatten_composite(&val);
                 let types = flat.iter().map(|v| v.zinnia_type()).collect();
                 let out = Value::List(CompositeData { elements_type: types, values: flat, value_id: ValueId::next() });
@@ -258,7 +258,7 @@ impl IRGenerator {
             "flat" => {
                 let val_orig = self.ctx.get(var).unwrap_or(Value::None);
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val_orig);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val_orig);
                 let flat = crate::helpers::composite::flatten_composite(&val);
                 let types = flat.iter().map(|v| v.zinnia_type()).collect();
                 let out = Value::List(CompositeData { elements_type: types, values: flat, value_id: ValueId::next() });
@@ -275,7 +275,7 @@ impl IRGenerator {
                     return Some(crate::helpers::array_ops::reshape(&mut self.builder, &val, visited_args));
                 }
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
                 crate::helpers::array_ops::reshape(&mut self.builder, &val, visited_args)
             }
             "moveaxis" => {
@@ -285,19 +285,19 @@ impl IRGenerator {
                     return Some(crate::helpers::array_ops::moveaxis(&mut self.builder, &val, visited_args));
                 }
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
                 crate::helpers::array_ops::moveaxis(&mut self.builder, &val, visited_args)
             }
             "repeat" => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
                 crate::helpers::array_ops::repeat(&mut self.builder, &val, visited_args, _visited_kwargs)
             }
             "swapaxes" => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
                 crate::helpers::array_ops::swapaxes(&mut self.builder, &val, visited_args)
             }
             "mean" => {
@@ -310,7 +310,7 @@ impl IRGenerator {
                     .get("keepdims")
                     .and_then(|v| v.bool_val())
                     .unwrap_or(false);
-                if let Some(out) = crate::helpers::static_array_reductions::try_apply_reduce(
+                if let Some(out) = crate::helpers::static_array::reductions::try_apply_reduce(
                     &mut self.builder,
                     "mean",
                     &val,
@@ -320,7 +320,7 @@ impl IRGenerator {
                     return Some(out);
                 }
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
                 let mut all_args = vec![val];
                 all_args.extend(visited_args.iter().cloned());
                 crate::ops::static_ndarray_ops::np_mean(&mut self.builder, &all_args, _visited_kwargs)
@@ -328,7 +328,7 @@ impl IRGenerator {
             "var" => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
                 let mut all_args = vec![val];
                 all_args.extend(visited_args.iter().cloned());
                 crate::ops::static_ndarray_ops::np_var(&mut self.builder, &all_args, _visited_kwargs)
@@ -336,7 +336,7 @@ impl IRGenerator {
             "std" => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
                 let mut all_args = vec![val];
                 all_args.extend(visited_args.iter().cloned());
                 crate::ops::static_ndarray_ops::np_std(&mut self.builder, &all_args, _visited_kwargs)
@@ -344,7 +344,7 @@ impl IRGenerator {
             "cumsum" => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
                 let mut all_args = vec![val];
                 all_args.extend(visited_args.iter().cloned());
                 crate::ops::static_ndarray_ops::np_cumsum(&mut self.builder, &all_args, _visited_kwargs)
@@ -352,7 +352,7 @@ impl IRGenerator {
             "cumprod" => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
                 let mut all_args = vec![val];
                 all_args.extend(visited_args.iter().cloned());
                 crate::ops::static_ndarray_ops::np_cumprod(&mut self.builder, &all_args, _visited_kwargs)
@@ -362,14 +362,14 @@ impl IRGenerator {
                 // P4c: native StaticArray dispatch.
                 if matches!(val, Value::StaticArray { .. }) {
                     let axis_arg = _visited_kwargs.get("axis").or_else(|| visited_args.first());
-                    if let Some(out) = crate::helpers::static_array_shape::try_apply_squeeze(
+                    if let Some(out) = crate::helpers::static_array::shape::try_apply_squeeze(
                         &mut self.builder, &val, axis_arg,
                     ) {
                         return Some(out);
                     }
                 }
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
                 let mut all_args: Vec<Value> = vec![val];
                 all_args.extend(visited_args.iter().cloned());
                 crate::ops::static_ndarray_ops::np_squeeze(&mut self.builder, &all_args, _visited_kwargs)
@@ -377,7 +377,7 @@ impl IRGenerator {
             "filter" => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
                 // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &val);
+                let val = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
                 crate::helpers::array_ops::filter(&mut self.builder, &val, visited_args)
             }
             _ => return None,

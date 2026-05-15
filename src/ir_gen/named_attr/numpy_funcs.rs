@@ -72,7 +72,7 @@ impl IRGenerator {
                     }
                     // P5a: Complex StaticArray → fresh imag segment with negated values; share real segment.
                     Value::StaticArray { dtype: crate::types::NumberType::Complex, .. } => {
-                        crate::helpers::static_array_complex::np_conj_static_array(&mut self.builder, &v)
+                        crate::helpers::static_array::complex::np_conj_static_array(&mut self.builder, &v)
                     }
                     // For real inputs, conj is the identity.
                     other => other,
@@ -83,7 +83,7 @@ impl IRGenerator {
                 match v {
                     Value::Complex { real, .. } => Value::Float(real),
                     Value::StaticArray { dtype: crate::types::NumberType::Complex, .. } => {
-                        crate::helpers::static_array_complex::np_real_static_array(&mut self.builder, &v)
+                        crate::helpers::static_array::complex::np_real_static_array(&mut self.builder, &v)
                     }
                     // For real inputs, real is the identity.
                     other => other,
@@ -94,13 +94,13 @@ impl IRGenerator {
                 match v {
                     Value::Complex { imag, .. } => Value::Float(imag),
                     Value::StaticArray { dtype: crate::types::NumberType::Complex, .. } => {
-                        crate::helpers::static_array_complex::np_imag_static_array(&mut self.builder, &v)
+                        crate::helpers::static_array::complex::np_imag_static_array(&mut self.builder, &v)
                     }
                     // For real inputs, imag is zero of same shape.
                     Value::StaticArray { shape, .. } => {
                         let total: usize = shape.iter().product();
                         let zero = self.builder.ir_constant_float(0.0);
-                        crate::helpers::static_array::build_static_array_from_flat(
+                        crate::helpers::static_array::base::build_static_array_from_flat(
                             &mut self.builder,
                             vec![zero; total],
                             shape,
@@ -140,7 +140,7 @@ impl IRGenerator {
                     // P1 segarr-foundation: numeric Python list/tuple inputs
                     // become segment-backed `Value::StaticArray`. Falls back
                     // to passing through for non-numeric / heterogeneous data.
-                    if let Some(sa) = crate::helpers::static_array::to_static_array(&mut self.builder, &cast_val) {
+                    if let Some(sa) = crate::helpers::static_array::base::to_static_array(&mut self.builder, &cast_val) {
                         sa
                     } else {
                         cast_val
@@ -167,7 +167,7 @@ impl IRGenerator {
                     .get("keepdims")
                     .and_then(|v| v.bool_val())
                     .unwrap_or(false);
-                if let Some(out) = crate::helpers::static_array_reductions::try_apply_reduce(
+                if let Some(out) = crate::helpers::static_array::reductions::try_apply_reduce(
                     &mut self.builder,
                     method,
                     &val_orig,
@@ -190,7 +190,7 @@ impl IRGenerator {
                     .get("keepdims")
                     .and_then(|v| v.bool_val())
                     .unwrap_or(false);
-                if let Some(out) = crate::helpers::static_array_reductions::try_apply_argmax_argmin(
+                if let Some(out) = crate::helpers::static_array::reductions::try_apply_argmax_argmin(
                     &mut self.builder,
                     &val_orig,
                     axis_arg_orig,
@@ -229,7 +229,7 @@ impl IRGenerator {
                         .unwrap_or(0);
                     if let Some(arrays_arg) = visited_args_orig.first() {
                         if list_contains_static_array(arrays_arg) {
-                            if let Some(out) = crate::helpers::static_array_shape::try_apply_concatenate(
+                            if let Some(out) = crate::helpers::static_array::shape::try_apply_concatenate(
                                 &mut self.builder, arrays_arg, raw_axis,
                             ) {
                                 return Some(out);
@@ -250,7 +250,7 @@ impl IRGenerator {
                         .unwrap_or(0);
                     if let Some(arrays_arg) = visited_args_orig.first() {
                         if list_contains_static_array(arrays_arg) {
-                            if let Some(out) = crate::helpers::static_array_shape::try_apply_stack(
+                            if let Some(out) = crate::helpers::static_array::shape::try_apply_stack(
                                 &mut self.builder, arrays_arg, raw_axis,
                             ) {
                                 return Some(out);
@@ -264,7 +264,7 @@ impl IRGenerator {
                 // P4c: native StaticArray dispatch.
                 if let Some(arrays_arg) = visited_args_orig.first() {
                     if list_contains_static_array(arrays_arg) {
-                        if let Some(out) = crate::helpers::static_array_shape::try_apply_vstack(
+                        if let Some(out) = crate::helpers::static_array::shape::try_apply_vstack(
                             &mut self.builder, arrays_arg,
                         ) {
                             return Some(out);
@@ -278,7 +278,7 @@ impl IRGenerator {
                 // P4c: native StaticArray dispatch.
                 if let Some(arrays_arg) = visited_args_orig.first() {
                     if list_contains_static_array(arrays_arg) {
-                        if let Some(out) = crate::helpers::static_array_shape::try_apply_hstack(
+                        if let Some(out) = crate::helpers::static_array::shape::try_apply_hstack(
                             &mut self.builder, arrays_arg,
                         ) {
                             return Some(out);
@@ -292,7 +292,7 @@ impl IRGenerator {
                 // P4c: native StaticArray dispatch.
                 if let Some(arrays_arg) = visited_args_orig.first() {
                     if list_contains_static_array(arrays_arg) {
-                        if let Some(out) = crate::helpers::static_array_shape::try_apply_column_stack(
+                        if let Some(out) = crate::helpers::static_array::shape::try_apply_column_stack(
                             &mut self.builder, arrays_arg,
                         ) {
                             return Some(out);
@@ -321,7 +321,7 @@ impl IRGenerator {
                 // P4c: native StaticArray dispatch.
                 let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
                 if matches!(val_orig, Value::StaticArray { .. }) {
-                    if let Some(out) = crate::helpers::static_array_shape::try_apply_transpose(
+                    if let Some(out) = crate::helpers::static_array::shape::try_apply_transpose(
                         &mut self.builder, &val_orig, &visited_args_orig[1..],
                     ) {
                         return Some(out);
@@ -338,7 +338,7 @@ impl IRGenerator {
                 let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
                 if matches!(val_orig, Value::StaticArray { .. }) {
                     let axis_arg = visited_kwargs_orig.get("axis").or_else(|| visited_args_orig.get(1));
-                    if let Some(out) = crate::helpers::static_array_shape::try_apply_squeeze(
+                    if let Some(out) = crate::helpers::static_array::shape::try_apply_squeeze(
                         &mut self.builder, &val_orig, axis_arg,
                     ) {
                         return Some(out);
@@ -350,7 +350,7 @@ impl IRGenerator {
                 let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
                 if matches!(val_orig, Value::StaticArray { .. }) {
                     let axis_arg = visited_args_orig.get(1);
-                    if let Some(out) = crate::helpers::static_array_shape::try_apply_expand_dims(
+                    if let Some(out) = crate::helpers::static_array::shape::try_apply_expand_dims(
                         &mut self.builder, &val_orig, axis_arg,
                     ) {
                         return Some(out);
@@ -732,7 +732,7 @@ impl IRGenerator {
             && matches!(member, "abs" | "absolute" | "fabs")
         {
             let arr = visited_args_orig[0].clone();
-            Some(crate::helpers::static_array_complex::np_abs_complex_static_array(
+            Some(crate::helpers::static_array::complex::np_abs_complex_static_array(
                 &mut self.builder, &arr,
             ))
         } else if visited_args.len() == 1

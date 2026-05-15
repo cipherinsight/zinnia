@@ -41,9 +41,9 @@ use std::collections::HashMap;
 use crate::builder::IRBuilder;
 use crate::types::{NumberType, Value, ValueId};
 
-use super::shape_arith::{decode_coords, row_major_strides};
-use super::static_array::build_static_array_from_flat;
-use super::static_array_elementwise::payload_cells;
+use super::super::shape_arith::{decode_coords, row_major_strides};
+use super::base::build_static_array_from_flat;
+use super::elementwise::payload_cells;
 
 // ────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -255,7 +255,7 @@ pub fn try_apply_reshape(
                 _ => unreachable!("Complex StaticArray cell expected"),
             }
         }
-        crate::helpers::static_array::build_static_array_from_flat_complex(b, reals, imags, target)
+        crate::helpers::static_array::base::build_static_array_from_flat_complex(b, reals, imags, target)
     } else {
         let flat = materialise_to_flat(b, val);
         build_static_array_from_flat(b, flat, target, dtype)
@@ -368,7 +368,7 @@ fn transpose_materialise(b: &mut IRBuilder, val: &Value, perm: &[usize]) -> Valu
                 _ => unreachable!("Complex StaticArray cell expected"),
             }
         }
-        return crate::helpers::static_array::build_static_array_from_flat_complex(b, reals, imags, new_shape);
+        return crate::helpers::static_array::base::build_static_array_from_flat_complex(b, reals, imags, new_shape);
     }
     build_static_array_from_flat(b, out, new_shape, dtype)
 }
@@ -553,7 +553,7 @@ pub fn try_apply_squeeze(
             None => {
                 if dtype == NumberType::Complex {
                     let im = imag_seg.expect("Complex StaticArray missing imag_segment_id");
-                    crate::helpers::static_array_read::read_complex_leaf(_b, segment_id, im, offset)
+                    crate::helpers::static_array::read::read_complex_leaf(_b, segment_id, im, offset)
                 } else {
                     let addr = _b.ir_constant_int(offset as i64);
                     let raw = _b.ir_read_memory(segment_id, &addr);
@@ -615,7 +615,7 @@ pub fn try_apply_flatten(b: &mut IRBuilder, val: &Value) -> Option<Value> {
                 _ => unreachable!(),
             }
         }
-        crate::helpers::static_array::build_static_array_from_flat_complex(b, reals, imags, vec![total])
+        crate::helpers::static_array::base::build_static_array_from_flat_complex(b, reals, imags, vec![total])
     } else {
         let flat = materialise_to_flat(b, val);
         build_static_array_from_flat(b, flat, vec![total], dtype)
@@ -636,7 +636,7 @@ pub fn try_apply_flatten(b: &mut IRBuilder, val: &Value) -> Option<Value> {
 fn coerce_to_static_array(b: &mut IRBuilder, v: &Value) -> Option<Value> {
     match v {
         Value::StaticArray { .. } => Some(v.clone()),
-        Value::List(_) | Value::Tuple(_) => super::static_array::to_static_array(b, v),
+        Value::List(_) | Value::Tuple(_) => super::base::to_static_array(b, v),
         _ => None,
     }
 }
@@ -765,7 +765,7 @@ pub fn try_apply_concatenate(
                 _ => unreachable!("Complex concat: cell must be Complex"),
             }
         }
-        return Some(crate::helpers::static_array::build_static_array_from_flat_complex(b, reals, imags, out_shape));
+        return Some(crate::helpers::static_array::base::build_static_array_from_flat_complex(b, reals, imags, out_shape));
     }
     Some(build_static_array_from_flat(b, out_flat, out_shape, out_dtype))
 }
@@ -867,7 +867,7 @@ pub fn try_apply_stack(
                 _ => unreachable!("Complex stack: cell must be Complex"),
             }
         }
-        return Some(crate::helpers::static_array::build_static_array_from_flat_complex(b, reals, imags, out_shape));
+        return Some(crate::helpers::static_array::base::build_static_array_from_flat_complex(b, reals, imags, out_shape));
     }
     Some(build_static_array_from_flat(b, out_flat, out_shape, out_dtype))
 }
@@ -1004,7 +1004,7 @@ mod tests {
     fn make_1d_int(b: &mut IRBuilder, vals: &[i64]) -> Value {
         let leaves: Vec<Value> = vals.iter().map(|n| b.ir_constant_int(*n)).collect();
         let lst = list_of(leaves);
-        super::super::static_array::to_static_array(b, &lst).expect("StaticArray")
+        super::super::base::to_static_array(b, &lst).expect("StaticArray")
     }
 
     fn make_2d_int(b: &mut IRBuilder, rows: &[&[i64]]) -> Value {
@@ -1013,7 +1013,7 @@ mod tests {
             .map(|r| list_of(r.iter().map(|n| b.ir_constant_int(*n)).collect()))
             .collect();
         let lst = list_of(row_lists);
-        super::super::static_array::to_static_array(b, &lst).expect("StaticArray")
+        super::super::base::to_static_array(b, &lst).expect("StaticArray")
     }
 
     #[test]
@@ -1194,7 +1194,7 @@ mod tests {
         let mut leaves = Vec::new();
         for v in 0..24 { leaves.push(b.ir_constant_int(v)); }
         let lst = list_of(leaves);
-        let arr = super::super::static_array::build_static_array_from_flat(
+        let arr = super::super::base::build_static_array_from_flat(
             &mut b, match &lst { Value::List(d) => d.values.clone(), _ => unreachable!() },
             vec![2, 3, 4], NumberType::Integer,
         );

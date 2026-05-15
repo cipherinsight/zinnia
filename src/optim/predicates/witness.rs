@@ -219,7 +219,7 @@ fn emit_nnz(
     // Get the per-element values via the static-array helper.
     let elements = match array_val {
         Value::StaticArray { .. } => {
-            let list = crate::helpers::static_array::to_value_list(b, array_val);
+            let list = crate::helpers::static_array::base::to_value_list(b, array_val);
             match list {
                 Value::List(data) => data.values,
                 _ => return, // unsupported shape
@@ -790,7 +790,7 @@ where
 fn collect_elements(b: &mut IRBuilder, val: &Value) -> Option<Vec<Value>> {
     match val {
         Value::StaticArray { .. } => {
-            let list = crate::helpers::static_array::to_value_list(b, val);
+            let list = crate::helpers::static_array::base::to_value_list(b, val);
             match list {
                 Value::List(data) => Some(data.values),
                 _ => None,

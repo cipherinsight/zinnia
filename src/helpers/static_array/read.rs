@@ -30,7 +30,7 @@ use crate::builder::IRBuilder;
 use crate::ops::dyn_ndarray::{scalar_i64_to_value, value_to_scalar_i64};
 use crate::types::{NumberType, SliceIndex, Value, ValueId};
 
-use super::shape_arith::{decode_coords, row_major_strides};
+use super::super::shape_arith::{decode_coords, row_major_strides};
 
 // ────────────────────────────────────────────────────────────────────────
 // Element / row helpers
@@ -165,12 +165,12 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
     // For NewAxis, fall back to materialised List path — `to_value_list`
     // followed by `multidim_subscript`. NewAxis on a StaticArray is rare.
     if indices.iter().any(|i| matches!(i, SliceIndex::NewAxis)) {
-        let lst = super::static_array::to_value_list(b, val);
+        let lst = super::base::to_value_list(b, val);
         let data = match &lst {
             Value::List(d) => d.clone(),
             _ => return lst,
         };
-        return super::ndarray::multidim_subscript(b, &data, indices);
+        return super::super::ndarray::multidim_subscript(b, &data, indices);
     }
 
     // ── Fast path: all-Single, fully-resolved index across all axes →
@@ -382,14 +382,14 @@ fn slice_axis_static_or_dynamic_1d(
                         imags.push(Value::Float(imag));
                     }
                 }
-                super::static_array::build_static_array_from_flat_complex(b, reals, imags, vec![out_len])
+                super::base::build_static_array_from_flat_complex(b, reals, imags, vec![out_len])
             } else {
                 let mut leaves: Vec<Value> = Vec::with_capacity(out_len);
                 for src_i in &indices {
                     let flat = (*src_i as usize) * strides[0];
                     leaves.push(read_leaf_at_flat(b, segment_id, offset, flat, dtype));
                 }
-                super::static_array::build_static_array_from_flat(b, leaves, vec![out_len], dtype)
+                super::base::build_static_array_from_flat(b, leaves, vec![out_len], dtype)
             }
         }
     };
@@ -473,7 +473,7 @@ fn materialise_dynamic_1d_slice(
         leaves.push(scalar_i64_to_value(&value_to_scalar_i64(&masked), dtype));
     }
 
-    super::static_array::build_static_array_from_flat(
+    super::base::build_static_array_from_flat(
         b, leaves, vec![max_out_len], dtype,
     )
 }
@@ -580,7 +580,7 @@ fn slice_axis(
                 }
                 leaves.push(read_leaf_at_flat(b, segment_id, offset, src_flat, dtype));
             }
-            super::static_array::build_static_array_from_flat(b, leaves, new_shape, dtype)
+            super::base::build_static_array_from_flat(b, leaves, new_shape, dtype)
         }
     };
     if let (Some(in_vid), Some(out_vid)) = (src.value_id(), out.value_id()) {
@@ -677,7 +677,7 @@ fn materialise_dynamic_axis_slice(
         };
         leaves.push(scalar_i64_to_value(&value_to_scalar_i64(&masked), dtype));
     }
-    super::static_array::build_static_array_from_flat(b, leaves, new_shape, dtype)
+    super::base::build_static_array_from_flat(b, leaves, new_shape, dtype)
 }
 
 /// Materialise a single dynamic-axis-0 row into a fresh segment. For Complex
@@ -712,7 +712,7 @@ fn materialise_axis0_dynamic_row(
             real_leaves.push(scalar_i64_to_value(&value_to_scalar_i64(&r), NumberType::Float));
             imag_leaves.push(scalar_i64_to_value(&value_to_scalar_i64(&im), NumberType::Float));
         }
-        return super::static_array::build_static_array_from_flat_complex(
+        return super::base::build_static_array_from_flat_complex(
             b, real_leaves, imag_leaves, row_shape,
         );
     }
@@ -724,7 +724,7 @@ fn materialise_axis0_dynamic_row(
         let elem = b.ir_read_memory(segment_id, &addr);
         leaves.push(scalar_i64_to_value(&value_to_scalar_i64(&elem), dtype));
     }
-    super::static_array::build_static_array_from_flat(b, leaves, row_shape, dtype)
+    super::base::build_static_array_from_flat(b, leaves, row_shape, dtype)
 }
 
 /// Multi-axis subscript with mixed Single + Range. This is the general case;
@@ -870,7 +870,7 @@ fn multidim_subscript_static_array(
         }
         // Empty dimension somewhere → empty array.
         let empty: Vec<Value> = Vec::new();
-        return super::static_array::build_static_array_from_flat(b, empty, out_shape, dtype);
+        return super::base::build_static_array_from_flat(b, empty, out_shape, dtype);
     }
 
     let mut leaves: Vec<Value> = Vec::with_capacity(total);
@@ -918,9 +918,9 @@ fn multidim_subscript_static_array(
                 _ => unreachable!(),
             }
         }
-        return super::static_array::build_static_array_from_flat_complex(b, reals, imags, out_shape);
+        return super::base::build_static_array_from_flat_complex(b, reals, imags, out_shape);
     }
-    super::static_array::build_static_array_from_flat(b, leaves, out_shape, dtype)
+    super::base::build_static_array_from_flat(b, leaves, out_shape, dtype)
 }
 
 enum AxisSel {

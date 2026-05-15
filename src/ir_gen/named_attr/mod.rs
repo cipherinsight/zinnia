@@ -72,11 +72,11 @@ impl IRGenerator {
         let visited_kwargs_orig: HashMap<String, Value> = _visited_kwargs.clone();
         let visited_args: Vec<Value> = visited_args
             .iter()
-            .map(|v| crate::helpers::static_array::deep_to_value_list(&mut self.builder, v))
+            .map(|v| crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, v))
             .collect();
         let _visited_kwargs: HashMap<String, Value> = _visited_kwargs
             .into_iter()
-            .map(|(k, v)| (k, crate::helpers::static_array::deep_to_value_list(&mut self.builder, &v)))
+            .map(|(k, v)| (k, crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &v)))
             .collect();
 
         let ctx = DispatchCtx {
@@ -177,14 +177,14 @@ impl IRGenerator {
         let target_orig = target.clone();
         let visited_args_orig: Vec<Value> = visited_args.clone();
         let visited_kwargs_orig: HashMap<String, Value> = visited_kwargs.clone();
-        let target = crate::helpers::static_array::deep_to_value_list(&mut self.builder, &target);
+        let target = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &target);
         let visited_args: Vec<Value> = visited_args
             .iter()
-            .map(|v| crate::helpers::static_array::deep_to_value_list(&mut self.builder, v))
+            .map(|v| crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, v))
             .collect();
         let visited_kwargs: HashMap<String, Value> = visited_kwargs
             .into_iter()
-            .map(|(k, v)| (k, crate::helpers::static_array::deep_to_value_list(&mut self.builder, &v)))
+            .map(|(k, v)| (k, crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &v)))
             .collect();
 
         // DynamicNDArray dispatch — route to dedicated handler
@@ -222,7 +222,7 @@ impl IRGenerator {
                     .get("keepdims")
                     .and_then(|v| v.bool_val())
                     .unwrap_or(false);
-                if let Some(out) = crate::helpers::static_array_reductions::try_apply_reduce(
+                if let Some(out) = crate::helpers::static_array::reductions::try_apply_reduce(
                     &mut self.builder,
                     method,
                     &target_orig,
@@ -252,7 +252,7 @@ impl IRGenerator {
                     .get("keepdims")
                     .and_then(|v| v.bool_val())
                     .unwrap_or(false);
-                if let Some(out) = crate::helpers::static_array_reductions::try_apply_argmax_argmin(
+                if let Some(out) = crate::helpers::static_array::reductions::try_apply_argmax_argmin(
                     &mut self.builder,
                     &target_orig,
                     axis_arg_orig,
@@ -272,7 +272,7 @@ impl IRGenerator {
                 };
                 // P4c: native StaticArray dispatch.
                 if matches!(target_orig, Value::StaticArray { .. }) {
-                    if let Some(out) = crate::helpers::static_array_shape::try_apply_transpose(
+                    if let Some(out) = crate::helpers::static_array::shape::try_apply_transpose(
                         &mut self.builder, &target_orig, &args,
                     ) {
                         return out;
@@ -283,7 +283,7 @@ impl IRGenerator {
             "T" => {
                 // P4c: native StaticArray dispatch.
                 if matches!(target_orig, Value::StaticArray { .. }) {
-                    if let Some(out) = crate::helpers::static_array_shape::try_apply_transpose(
+                    if let Some(out) = crate::helpers::static_array::shape::try_apply_transpose(
                         &mut self.builder, &target_orig, &[],
                     ) {
                         return out;
@@ -312,7 +312,7 @@ impl IRGenerator {
             "flatten" | "flat" => {
                 // P4c: native StaticArray dispatch.
                 if matches!(target_orig, Value::StaticArray { .. }) {
-                    if let Some(out) = crate::helpers::static_array_shape::try_apply_flatten(
+                    if let Some(out) = crate::helpers::static_array::shape::try_apply_flatten(
                         &mut self.builder, &target_orig,
                     ) {
                         return out;

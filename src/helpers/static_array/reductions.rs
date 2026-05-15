@@ -29,9 +29,9 @@
 use crate::builder::IRBuilder;
 use crate::types::{NumberType, Value};
 
-use super::shape_arith::row_major_strides;
-use super::static_array::build_static_array_from_flat;
-use super::static_array_elementwise::payload_cells;
+use super::super::shape_arith::row_major_strides;
+use super::base::build_static_array_from_flat;
+use super::elementwise::payload_cells;
 
 // ────────────────────────────────────────────────────────────────────────
 // Per-cell folding helpers
@@ -55,24 +55,24 @@ fn shape_of(val: &Value) -> Vec<usize> {
 /// scalar leaves (Integer / Float / Boolean).
 fn fold_two(b: &mut IRBuilder, op: &str, acc: &Value, elem: &Value) -> Value {
     match op {
-        "sum" => super::value_ops::apply_binary_op(b, "add", acc, elem),
-        "prod" => super::value_ops::apply_binary_op(b, "mul", acc, elem),
+        "sum" => super::super::value_ops::apply_binary_op(b, "add", acc, elem),
+        "prod" => super::super::value_ops::apply_binary_op(b, "mul", acc, elem),
         "min" => {
-            let cond = super::value_ops::apply_binary_op(b, "lt", acc, elem);
-            super::value_ops::select_value(b, &cond, acc, elem)
+            let cond = super::super::value_ops::apply_binary_op(b, "lt", acc, elem);
+            super::super::value_ops::select_value(b, &cond, acc, elem)
         }
         "max" => {
-            let cond = super::value_ops::apply_binary_op(b, "gt", acc, elem);
-            super::value_ops::select_value(b, &cond, acc, elem)
+            let cond = super::super::value_ops::apply_binary_op(b, "gt", acc, elem);
+            super::super::value_ops::select_value(b, &cond, acc, elem)
         }
         "any" => {
-            let acc_b = super::value_ops::to_scalar_bool(b, acc);
-            let elem_b = super::value_ops::to_scalar_bool(b, elem);
+            let acc_b = super::super::value_ops::to_scalar_bool(b, acc);
+            let elem_b = super::super::value_ops::to_scalar_bool(b, elem);
             b.ir_logical_or(&acc_b, &elem_b)
         }
         "all" => {
-            let acc_b = super::value_ops::to_scalar_bool(b, acc);
-            let elem_b = super::value_ops::to_scalar_bool(b, elem);
+            let acc_b = super::super::value_ops::to_scalar_bool(b, acc);
+            let elem_b = super::super::value_ops::to_scalar_bool(b, elem);
             b.ir_logical_and(&acc_b, &elem_b)
         }
         _ => panic!("fold_two: unsupported op {}", op),
@@ -92,9 +92,9 @@ fn reduce_cells(b: &mut IRBuilder, op: &str, cells: &[Value]) -> Value {
         };
     }
     if matches!(op, "any" | "all") {
-        let mut acc = super::value_ops::to_scalar_bool(b, &cells[0]);
+        let mut acc = super::super::value_ops::to_scalar_bool(b, &cells[0]);
         for elem in &cells[1..] {
-            let elem_b = super::value_ops::to_scalar_bool(b, elem);
+            let elem_b = super::super::value_ops::to_scalar_bool(b, elem);
             acc = if op == "any" {
                 b.ir_logical_or(&acc, &elem_b)
             } else {
@@ -527,7 +527,7 @@ mod tests {
     fn make_1d_int(b: &mut IRBuilder, vals: &[i64]) -> Value {
         let leaves: Vec<Value> = vals.iter().map(|n| b.ir_constant_int(*n)).collect();
         let lst = list_of(leaves);
-        super::super::static_array::to_static_array(b, &lst).expect("StaticArray")
+        super::super::base::to_static_array(b, &lst).expect("StaticArray")
     }
 
     fn make_2d_int(b: &mut IRBuilder, rows: &[&[i64]]) -> Value {
@@ -536,7 +536,7 @@ mod tests {
             .map(|r| list_of(r.iter().map(|n| b.ir_constant_int(*n)).collect()))
             .collect();
         let lst = list_of(row_lists);
-        super::super::static_array::to_static_array(b, &lst).expect("StaticArray")
+        super::super::base::to_static_array(b, &lst).expect("StaticArray")
     }
 
     #[test]

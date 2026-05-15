@@ -136,7 +136,7 @@ impl IRGenerator {
             Value::StaticArray { shape, .. } => {
                 let n_iter = shape[0];
                 (0..n_iter)
-                    .map(|i| crate::helpers::static_array_read::iter_element(
+                    .map(|i| crate::helpers::static_array::read::iter_element(
                         &mut self.builder, &iter_val, i,
                     ))
                     .collect()
@@ -344,12 +344,12 @@ impl IRGenerator {
         // materialised path for unsupported ops (we only migrated
         // `usub`, `uadd`, `not`, `invert`).
         if matches!(operand, Value::StaticArray { .. }) {
-            if let Some(out) = crate::helpers::static_array_elementwise::try_apply_unary_op(
+            if let Some(out) = crate::helpers::static_array::elementwise::try_apply_unary_op(
                 &mut self.builder, op, operand,
             ) {
                 return out;
             }
-            let lst = crate::helpers::static_array::to_value_list(&mut self.builder, operand);
+            let lst = crate::helpers::static_array::base::to_value_list(&mut self.builder, operand);
             return self.apply_unary_op(op, &lst);
         }
         match operand {
@@ -456,12 +456,12 @@ impl IRGenerator {
             if slice_values.len() == 1 {
                 if let SliceIndex::Single(idx_val) = &slice_values[0] {
                     if matches!(idx_val, Value::StaticArray { .. })
-                        && crate::helpers::static_array_mask::is_boolean_mask_static_array(
+                        && crate::helpers::static_array::mask::is_boolean_mask_static_array(
                             &mut self.builder, idx_val,
                         )
                     {
                         if let Some(out) =
-                            crate::helpers::static_array_mask::try_apply_boolean_mask_read(
+                            crate::helpers::static_array::mask::try_apply_boolean_mask_read(
                                 &mut self.builder, &val, idx_val,
                             )
                         {
@@ -475,7 +475,7 @@ impl IRGenerator {
             let slice_values: Vec<SliceIndex> = slice_values.into_iter().map(|si| match si {
                 SliceIndex::Single(iv) if matches!(iv, Value::StaticArray { .. }) => {
                     SliceIndex::Single(
-                        crate::helpers::static_array::to_value_list(&mut self.builder, &iv),
+                        crate::helpers::static_array::base::to_value_list(&mut self.builder, &iv),
                     )
                 }
                 other => other,
@@ -492,7 +492,7 @@ impl IRGenerator {
             if slice_values.len() == 1 {
                 if let SliceIndex::Single(idx_value) = &slice_values[0] {
                     if matches!(idx_value, Value::List(_) | Value::Tuple(_)) {
-                        let val_list = crate::helpers::static_array::to_value_list(
+                        let val_list = crate::helpers::static_array::base::to_value_list(
                             &mut self.builder, &val,
                         );
                         if let Value::List(data) | Value::Tuple(data) = &val_list {
@@ -515,7 +515,7 @@ impl IRGenerator {
                 }
             }
 
-            let out = crate::helpers::static_array_read::static_array_subscript(
+            let out = crate::helpers::static_array::read::static_array_subscript(
                 &mut self.builder, &val, &slice_values,
             );
             // Group 5c (E-axis): content fact relay for gather of a
@@ -716,7 +716,7 @@ impl IRGenerator {
         // P1 segarr-foundation: list literals of pure numeric leaves become
         // segment-backed `Value::StaticArray`. Heterogeneous lists, lists of
         // strings, lists of arrays, etc. stay on the legacy List path.
-        if let Some(sa) = crate::helpers::static_array::to_static_array(&mut self.builder, &lst) {
+        if let Some(sa) = crate::helpers::static_array::base::to_static_array(&mut self.builder, &lst) {
             sa
         } else {
             lst
@@ -784,7 +784,7 @@ impl IRGenerator {
             Value::StaticArray { shape, .. } => {
                 let n_iter = shape[0];
                 (0..n_iter)
-                    .map(|i| crate::helpers::static_array_read::iter_element(
+                    .map(|i| crate::helpers::static_array::read::iter_element(
                         &mut self.builder, &iter_val, i,
                     ))
                     .collect()
@@ -865,7 +865,7 @@ impl IRGenerator {
                 // segment-backed array) must be materialised to a List so
                 // the unpacking machinery can iterate its elements.
                 let value = if matches!(&value, Value::StaticArray { .. }) {
-                    crate::helpers::static_array::to_value_list(&mut self.builder, &value)
+                    crate::helpers::static_array::base::to_value_list(&mut self.builder, &value)
                 } else {
                     value
                 };
@@ -919,7 +919,7 @@ impl IRGenerator {
             ASTNode::ASTListAssignTarget(t) => {
                 // P2 segarr: same materialisation as the tuple case above.
                 let value = if matches!(&value, Value::StaticArray { .. }) {
-                    crate::helpers::static_array::to_value_list(&mut self.builder, &value)
+                    crate::helpers::static_array::base::to_value_list(&mut self.builder, &value)
                 } else {
                     value
                 };
@@ -944,7 +944,7 @@ impl IRGenerator {
                     if let Value::StaticArray { .. } = &inner_val {
                         let has_new_axis = indices.iter().any(|i| matches!(i, crate::types::SliceIndex::NewAxis));
                         if !has_new_axis {
-                            crate::helpers::static_array_write::static_array_setitem(
+                            crate::helpers::static_array::write::static_array_setitem(
                                 &mut self.builder, &inner_val, &indices, &value,
                             );
                             return;
@@ -964,7 +964,7 @@ impl IRGenerator {
                             panic!("'tuple' object does not support item assignment");
                         }
                         // P3 segarr-write-paths: native StaticArray writes
-                        // run through `static_array_write::static_array_setitem`,
+                        // run through `static_array::write::static_array_setitem`,
                         // emitting a single `ir_write_memory` per cell instead
                         // of the legacy O(N) mux chain. Element / multi-dim /
                         // slice / chained-view writes all land here.
@@ -977,12 +977,12 @@ impl IRGenerator {
                             if indices.len() == 1 {
                                 if let crate::types::SliceIndex::Single(mask_val) = &indices[0] {
                                     if matches!(mask_val, Value::StaticArray { .. })
-                                        && crate::helpers::static_array_mask::is_boolean_mask_static_array(
+                                        && crate::helpers::static_array::mask::is_boolean_mask_static_array(
                                             &mut self.builder, mask_val,
                                         )
                                     {
                                         if let Some(updated) =
-                                            crate::helpers::static_array_mask::try_apply_boolean_mask_write(
+                                            crate::helpers::static_array::mask::try_apply_boolean_mask_write(
                                                 &mut self.builder, &current, mask_val, &value,
                                             )
                                         {
@@ -996,7 +996,7 @@ impl IRGenerator {
                             // legacy via materialisation.
                             let has_new_axis = indices.iter().any(|i| matches!(i, crate::types::SliceIndex::NewAxis));
                             if !has_new_axis {
-                                let updated = crate::helpers::static_array_write::static_array_setitem(
+                                let updated = crate::helpers::static_array::write::static_array_setitem(
                                     &mut self.builder, &current, &indices, &value,
                                 );
                                 self.ctx.set(var_name, updated);
@@ -1004,7 +1004,7 @@ impl IRGenerator {
                             }
                             // NewAxis fallback path: materialise then run
                             // legacy.
-                            let current = crate::helpers::static_array::to_value_list(&mut self.builder, &current);
+                            let current = crate::helpers::static_array::base::to_value_list(&mut self.builder, &current);
                             let updated = self.set_nested_value(current, &indices, value);
                             self.ctx.set(var_name, updated);
                             return;

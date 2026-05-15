@@ -32,10 +32,10 @@ use crate::builder::IRBuilder;
 use crate::ops::dyn_ndarray::value_to_scalar_i64;
 use crate::types::{NumberType, Value};
 
-use super::broadcast::broadcast_shapes;
-use super::shape_arith::{decode_coords, row_major_strides};
-use super::static_array::build_static_array_from_flat;
-use super::value_ops::apply_scalar_binary_op;
+use super::super::broadcast::broadcast_shapes;
+use super::super::shape_arith::{decode_coords, row_major_strides};
+use super::base::build_static_array_from_flat;
+use super::super::value_ops::apply_scalar_binary_op;
 
 // ────────────────────────────────────────────────────────────────────────
 // Cell helpers
@@ -72,7 +72,7 @@ pub fn payload_cells(b: &mut IRBuilder, arr: &Value) -> Vec<Value> {
         let im_seg = imag_seg.expect("Complex StaticArray missing imag_segment_id");
         let mut tmp = Vec::with_capacity(total);
         for i in 0..total {
-            tmp.push(crate::helpers::static_array_read::read_complex_leaf(b, segment_id, im_seg, offset + i));
+            tmp.push(crate::helpers::static_array::read::read_complex_leaf(b, segment_id, im_seg, offset + i));
         }
         return tmp;
     }
@@ -323,7 +323,7 @@ fn try_apply_complex_binary_op(
             _ => unreachable!("apply_complex_binary_op for non-comparison op must return Complex"),
         }
     }
-    Some(crate::helpers::static_array::build_static_array_from_flat_complex(b, reals, imags, out_shape))
+    Some(crate::helpers::static_array::base::build_static_array_from_flat_complex(b, reals, imags, out_shape))
 }
 
 /// Try to apply a unary op natively on a `Value::StaticArray`. Returns
@@ -356,7 +356,7 @@ pub fn try_apply_unary_op(
                     reals.push(nr);
                     imags.push(ni);
                 }
-                return Some(crate::helpers::static_array::build_static_array_from_flat_complex(b, reals, imags, arr_shape));
+                return Some(crate::helpers::static_array::base::build_static_array_from_flat_complex(b, reals, imags, arr_shape));
             }
             // not/invert undefined on Complex.
             _ => return None,
@@ -574,7 +574,7 @@ mod tests {
     fn make_1d_int(b: &mut IRBuilder, vals: &[i64]) -> Value {
         let leaves: Vec<Value> = vals.iter().map(|n| b.ir_constant_int(*n)).collect();
         let lst = list_of(leaves);
-        super::super::static_array::to_static_array(b, &lst).expect("StaticArray")
+        super::super::base::to_static_array(b, &lst).expect("StaticArray")
     }
 
     #[test]
@@ -614,12 +614,12 @@ mod tests {
         let row0 = list_of(vec![b.ir_constant_int(1)]);
         let row1 = list_of(vec![b.ir_constant_int(2)]);
         let row2 = list_of(vec![b.ir_constant_int(3)]);
-        let lhs = super::super::static_array::to_static_array(
+        let lhs = super::super::base::to_static_array(
             &mut b, &list_of(vec![row0, row1, row2]),
         ).unwrap();
         // (1, 4)
         let r0 = list_of((0..4).map(|i| b.ir_constant_int(10 + i * 10)).collect());
-        let rhs = super::super::static_array::to_static_array(
+        let rhs = super::super::base::to_static_array(
             &mut b, &list_of(vec![r0]),
         ).unwrap();
         let out = try_apply_binary_op(&mut b, "add", &lhs, &rhs).expect("native path");

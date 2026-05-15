@@ -16,9 +16,9 @@ use crate::builder::IRBuilder;
 use crate::ops::dyn_ndarray::{scalar_i64_to_value, value_to_scalar_i64};
 use crate::types::{CompositeData, NumberType, ScalarValue, Value, ValueId, ZinniaType};
 
-use super::composite::{flatten_composite, get_composite_shape};
-use super::segment::alloc_and_write;
-use super::shape_arith::row_major_strides;
+use super::super::composite::{flatten_composite, get_composite_shape};
+use super::super::segment::alloc_and_write;
+use super::super::shape_arith::row_major_strides;
 
 /// Determine whether a value is a (possibly-nested) composite of purely
 /// numeric leaves (Integer / Float / Boolean / Complex — P5a admits Complex).
@@ -293,7 +293,7 @@ pub fn to_value_list(b: &mut IRBuilder, val: &Value) -> Value {
         let im_seg = imag_seg.expect("Complex StaticArray missing imag_segment_id");
         let mut tmp = Vec::with_capacity(total);
         for i in 0..total {
-            tmp.push(super::static_array_read::read_complex_leaf(b, segment_id, im_seg, offset + i));
+            tmp.push(super::read::read_complex_leaf(b, segment_id, im_seg, offset + i));
         }
         tmp
     } else {
@@ -319,7 +319,7 @@ pub fn to_value_list(b: &mut IRBuilder, val: &Value) -> Value {
         });
     }
     // Build nested List from flat payload.
-    super::composite::build_nested_value(leaves, leaf_types, &shape)
+    super::super::composite::build_nested_value(leaves, leaf_types, &shape)
 }
 
 // ────────────────────────────────────────────────────────────────────────
