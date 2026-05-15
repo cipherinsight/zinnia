@@ -1,11 +1,23 @@
 #!/usr/bin/env python3
 """Phase 3a — minimal viable differential fuzzer for Zinnia.
 
-Generates small numpy-like programs from three shapes:
+Generates small numpy-like programs from nine shapes:
 
     A) scalar reduction over a 1-D integer array
     B) elementwise transcendental + scalar reduction over a 1-D float array
     C) matrix multiplication
+    D) indexing (scalar / slice / fancy / np.take)
+    E) shape-preserving op chains (transpose/reshape/swapaxes/flatten/
+       squeeze/expand_dims) → reduce
+    F) np.where
+    G) concat / stack / vstack / hstack → reduce
+    H) deeper compositions (3-5 ops mixing the above)
+    I) programs with `@requires` Cmp preconditions on scalar inputs;
+       both satisfying and violating inputs are generated. The
+       generator emits an `expected_satisfied` flag; for satisfying
+       inputs that equals True (standard differential check); for
+       violating inputs the witness-check should fire and
+       `satisfied=False` is the expected outcome.
 
 For each generated program:
 
@@ -76,7 +88,7 @@ TIMEOUT_SEC = 30
 # Generator
 # ----------------------------------------------------------------------------
 
-def _gen_shape_a(rng: random.Random) -> tuple[str, dict, str, object]:
+def _gen_shape_a(rng: random.Random) -> tuple[str, dict, str, object, bool]:
     """Shape A: 1-D integer reduction."""
     size = rng.choice(SHAPE_SIZES)
     op = rng.choice(REDUCTIONS_INT)
@@ -93,10 +105,10 @@ def _gen_shape_a(rng: random.Random) -> tuple[str, dict, str, object]:
         f"    out = np.{op}(x)\n"
         f"    assert out == {ref_val}\n"
     )
-    return source, {"x": x.tolist()}, "A", ref_val
+    return source, {"x": x.tolist()}, "A", ref_val, True
 
 
-def _gen_shape_b(rng: random.Random) -> tuple[str, dict, str, object]:
+def _gen_shape_b(rng: random.Random) -> tuple[str, dict, str, object, bool]:
     """Shape B: elementwise float + reduce."""
     size = rng.choice(SHAPE_SIZES)
     elem_op = rng.choice(ELEMENTWISE_FLOAT)
@@ -122,10 +134,10 @@ def _gen_shape_b(rng: random.Random) -> tuple[str, dict, str, object]:
         f"    assert diff < {FLOAT_TOL!r}\n"
         f"    assert diff > {-FLOAT_TOL!r}\n"
     )
-    return source, {"x": x.tolist()}, "B", ref
+    return source, {"x": x.tolist()}, "B", ref, True
 
 
-def _gen_shape_c(rng: random.Random) -> tuple[str, dict, str, object]:
+def _gen_shape_c(rng: random.Random) -> tuple[str, dict, str, object, bool]:
     """Shape C: matmul on float matrices."""
     M = rng.choice(MATMUL_SIZES)
     K = rng.choice(MATMUL_SIZES)
@@ -157,10 +169,477 @@ def _gen_shape_c(rng: random.Random) -> tuple[str, dict, str, object]:
         f"    c = np.matmul(a, b)\n"
         f"{assertions}\n"
     )
-    return source, {"a": a.tolist(), "b": b.tolist()}, "C", c_ref.tolist()
+    return source, {"a": a.tolist(), "b": b.tolist()}, "C", c_ref.tolist(), True
 
 
-SHAPE_GENERATORS = {"A": _gen_shape_a, "B": _gen_shape_b, "C": _gen_shape_c}
+_PROLOGUE = (
+    "from zinnia import zk_circuit, requires\n"
+    "from zinnia.lang.operator import NDArray, Integer, Float\n"
+    "import numpy as np\n"
+    "\n"
+)
+
+
+def _float_assert_lines(expr: str, ref: float, tol: float = FLOAT_TOL) -> str:
+    """Helper: emit `assert |expr - ref| < tol` as two-sided inequality."""
+    return (
+        f"    _d = {expr} - ({ref!r})\n"
+        f"    assert _d < {tol!r}\n"
+        f"    assert _d > {-tol!r}\n"
+    )
+
+
+def _gen_shape_d(rng: random.Random) -> tuple[str, dict, str, object, bool]:
+    """Shape D: indexing."""
+    flavor = rng.choice(["scalar", "slice", "fancy", "take"])
+    is_float = rng.random() < 0.5
+    size = rng.choice([6, 8, 12])
+    if is_float:
+        x = _numpy.array(
+            [rng.uniform(FLOAT_LO, FLOAT_HI) for _ in range(size)],
+            dtype=_numpy.float64,
+        )
+        ann = f"NDArray[Float, {size}]"
+    else:
+        x = _numpy.array(
+            [rng.randint(INT_LO, INT_HI) for _ in range(size)],
+            dtype=_numpy.int64,
+        )
+        ann = f"NDArray[Integer, {size}]"
+
+    if flavor == "scalar":
+        i = rng.randint(0, size - 1)
+        body = f"    out = x[{i}]\n"
+        ref_val = x[i].item()
+        if is_float:
+            asserts = _float_assert_lines("out", float(ref_val))
+        else:
+            asserts = f"    assert out == {int(ref_val)}\n"
+    elif flavor == "slice":
+        start = rng.randint(0, size - 2)
+        stop = rng.randint(start + 1, size)
+        red_op = rng.choice(REDUCTIONS_FLOAT if is_float else REDUCTIONS_INT)
+        body = (
+            f"    sub = x[{start}:{stop}]\n"
+            f"    out = np.{red_op}(sub)\n"
+        )
+        ref = getattr(_numpy, red_op)(x[start:stop])
+        if is_float or red_op == "mean":
+            asserts = _float_assert_lines("out", float(ref))
+            ref_val = float(ref)
+        else:
+            ref_val = int(ref)
+            asserts = f"    assert out == {ref_val}\n"
+    elif flavor == "fancy":
+        k = rng.randint(2, min(4, size))
+        idx = [rng.randint(0, size - 1) for _ in range(k)]
+        red_op = rng.choice(REDUCTIONS_FLOAT if is_float else REDUCTIONS_INT)
+        body = (
+            f"    idx = np.asarray({idx})\n"
+            f"    sub = x[idx]\n"
+            f"    out = np.{red_op}(sub)\n"
+        )
+        ref = getattr(_numpy, red_op)(x[_numpy.asarray(idx)])
+        if is_float or red_op == "mean":
+            asserts = _float_assert_lines("out", float(ref))
+            ref_val = float(ref)
+        else:
+            ref_val = int(ref)
+            asserts = f"    assert out == {ref_val}\n"
+    else:  # take
+        k = rng.randint(2, min(4, size))
+        idx = [rng.randint(0, size - 1) for _ in range(k)]
+        red_op = rng.choice(REDUCTIONS_FLOAT if is_float else REDUCTIONS_INT)
+        body = (
+            f"    idx = np.asarray({idx})\n"
+            f"    sub = np.take(x, idx)\n"
+            f"    out = np.{red_op}(sub)\n"
+        )
+        ref = getattr(_numpy, red_op)(_numpy.take(x, _numpy.asarray(idx)))
+        if is_float or red_op == "mean":
+            asserts = _float_assert_lines("out", float(ref))
+            ref_val = float(ref)
+        else:
+            ref_val = int(ref)
+            asserts = f"    assert out == {ref_val}\n"
+
+    source = (
+        _PROLOGUE
+        + "@zk_circuit\n"
+        + f"def f(x: {ann}):\n"
+        + body
+        + asserts
+    )
+    return source, {"x": x.tolist()}, "D", ref_val, True
+
+
+def _gen_shape_e(rng: random.Random) -> tuple[str, dict, str, object, bool]:
+    """Shape E: shape-preserving op chains on a 2D array → reduce."""
+    M = rng.choice([2, 3, 4])
+    N = rng.choice([2, 3, 4])
+    is_float = rng.random() < 0.5
+    if is_float:
+        a = _numpy.array(
+            [[rng.uniform(FLOAT_LO, FLOAT_HI) for _ in range(N)] for _ in range(M)],
+            dtype=_numpy.float64,
+        )
+        ann = f"NDArray[Float, {M}, {N}]"
+    else:
+        a = _numpy.array(
+            [[rng.randint(INT_LO, INT_HI) for _ in range(N)] for _ in range(M)],
+            dtype=_numpy.int64,
+        )
+        ann = f"NDArray[Integer, {M}, {N}]"
+
+    # Choose one op that's safe given (M,N).
+    op_choices = ["transpose", "swapaxes", "flatten", "reshape"]
+    if M == N:
+        # Reshape squared works fine; nothing exclusive here.
+        pass
+    op = rng.choice(op_choices)
+    if op == "transpose":
+        body = "    y = np.transpose(a)\n"
+        y = _numpy.transpose(a)
+    elif op == "swapaxes":
+        body = "    y = np.swapaxes(a, 0, 1)\n"
+        y = _numpy.swapaxes(a, 0, 1)
+    elif op == "flatten":
+        body = "    y = a.flatten()\n"
+        y = a.flatten()
+    else:  # reshape — flatten to 1-D
+        body = f"    y = np.reshape(a, ({M * N},))\n"
+        y = _numpy.reshape(a, (M * N,))
+
+    # Optional second shape-preserving op chained on top.
+    if rng.random() < 0.5:
+        if y.ndim == 1:
+            body += "    y = np.expand_dims(y, 0)\n"
+            y = _numpy.expand_dims(y, 0)
+        else:
+            body += "    y = np.transpose(y)\n"
+            y = _numpy.transpose(y)
+
+    red_op = rng.choice(REDUCTIONS_FLOAT if is_float else REDUCTIONS_INT)
+    body += f"    out = np.{red_op}(y)\n"
+    ref = getattr(_numpy, red_op)(y)
+    if is_float or red_op == "mean":
+        ref_val = float(ref)
+        asserts = _float_assert_lines("out", ref_val)
+    else:
+        ref_val = int(ref)
+        asserts = f"    assert out == {ref_val}\n"
+    source = (
+        _PROLOGUE
+        + "@zk_circuit\n"
+        + f"def f(a: {ann}):\n"
+        + body
+        + asserts
+    )
+    return source, {"a": a.tolist()}, "E", ref_val, True
+
+
+def _gen_shape_f(rng: random.Random) -> tuple[str, dict, str, object, bool]:
+    """Shape F: np.where(cond, a, b)."""
+    size = rng.choice(SHAPE_SIZES)
+    is_float = rng.random() < 0.5
+    if is_float:
+        a = _numpy.array(
+            [rng.uniform(FLOAT_LO, FLOAT_HI) for _ in range(size)],
+            dtype=_numpy.float64,
+        )
+        b = _numpy.array(
+            [rng.uniform(FLOAT_LO, FLOAT_HI) for _ in range(size)],
+            dtype=_numpy.float64,
+        )
+        ann_a = f"NDArray[Float, {size}]"
+        ann_b = f"NDArray[Float, {size}]"
+    else:
+        a = _numpy.array(
+            [rng.randint(INT_LO, INT_HI) for _ in range(size)],
+            dtype=_numpy.int64,
+        )
+        b = _numpy.array(
+            [rng.randint(INT_LO, INT_HI) for _ in range(size)],
+            dtype=_numpy.int64,
+        )
+        ann_a = f"NDArray[Integer, {size}]"
+        ann_b = f"NDArray[Integer, {size}]"
+
+    # Cond either a literal mask or computed from `a > 0`.
+    if rng.random() < 0.5:
+        cond_src = "a > 0"
+        cond = a > 0
+    else:
+        mask = [rng.choice([True, False]) for _ in range(size)]
+        cond_src = f"np.asarray({mask})"
+        cond = _numpy.asarray(mask)
+
+    red_op = rng.choice(REDUCTIONS_FLOAT if is_float else REDUCTIONS_INT)
+    y = _numpy.where(cond, a, b)
+    ref = getattr(_numpy, red_op)(y)
+    body = (
+        f"    cond = {cond_src}\n"
+        f"    y = np.where(cond, a, b)\n"
+        f"    out = np.{red_op}(y)\n"
+    )
+    if is_float or red_op == "mean":
+        ref_val = float(ref)
+        asserts = _float_assert_lines("out", ref_val)
+    else:
+        ref_val = int(ref)
+        asserts = f"    assert out == {ref_val}\n"
+    source = (
+        _PROLOGUE
+        + "@zk_circuit\n"
+        + f"def f(a: {ann_a}, b: {ann_b}):\n"
+        + body
+        + asserts
+    )
+    return source, {"a": a.tolist(), "b": b.tolist()}, "F", ref_val, True
+
+
+def _gen_shape_g(rng: random.Random) -> tuple[str, dict, str, object, bool]:
+    """Shape G: concat/stack on two 1-D arrays → reduce."""
+    size = rng.choice([2, 3, 4])
+    is_float = rng.random() < 0.5
+    if is_float:
+        a = _numpy.array(
+            [rng.uniform(FLOAT_LO, FLOAT_HI) for _ in range(size)],
+            dtype=_numpy.float64,
+        )
+        b = _numpy.array(
+            [rng.uniform(FLOAT_LO, FLOAT_HI) for _ in range(size)],
+            dtype=_numpy.float64,
+        )
+        ann = f"NDArray[Float, {size}]"
+    else:
+        a = _numpy.array(
+            [rng.randint(INT_LO, INT_HI) for _ in range(size)],
+            dtype=_numpy.int64,
+        )
+        b = _numpy.array(
+            [rng.randint(INT_LO, INT_HI) for _ in range(size)],
+            dtype=_numpy.int64,
+        )
+        ann = f"NDArray[Integer, {size}]"
+
+    op = rng.choice(["concatenate", "stack", "vstack", "hstack"])
+    if op == "concatenate":
+        body = "    y = np.concatenate([a, b])\n"
+        y = _numpy.concatenate([a, b])
+    elif op == "stack":
+        body = "    y = np.stack([a, b])\n"
+        y = _numpy.stack([a, b])
+    elif op == "vstack":
+        body = "    y = np.vstack([a, b])\n"
+        y = _numpy.vstack([a, b])
+    else:  # hstack
+        body = "    y = np.hstack([a, b])\n"
+        y = _numpy.hstack([a, b])
+
+    red_op = rng.choice(REDUCTIONS_FLOAT if is_float else REDUCTIONS_INT)
+    body += f"    out = np.{red_op}(y)\n"
+    ref = getattr(_numpy, red_op)(y)
+    if is_float or red_op == "mean":
+        ref_val = float(ref)
+        asserts = _float_assert_lines("out", ref_val)
+    else:
+        ref_val = int(ref)
+        asserts = f"    assert out == {ref_val}\n"
+
+    source = (
+        _PROLOGUE
+        + "@zk_circuit\n"
+        + f"def f(a: {ann}, b: {ann}):\n"
+        + body
+        + asserts
+    )
+    return source, {"a": a.tolist(), "b": b.tolist()}, "G", ref_val, True
+
+
+def _gen_shape_h(rng: random.Random) -> tuple[str, dict, str, object, bool]:
+    """Shape H: deeper compositions mixing 3-5 ops from D/E/F/G."""
+    # Two parallel arrays for compositional flexibility.
+    M = rng.choice([2, 3, 4])
+    N = rng.choice([2, 3, 4])
+    is_float = rng.random() < 0.5
+    if is_float:
+        a = _numpy.array(
+            [[rng.uniform(FLOAT_LO, FLOAT_HI) for _ in range(N)] for _ in range(M)],
+            dtype=_numpy.float64,
+        )
+        b = _numpy.array(
+            [[rng.uniform(FLOAT_LO, FLOAT_HI) for _ in range(M)] for _ in range(N)],
+            dtype=_numpy.float64,
+        )
+        ann_a = f"NDArray[Float, {M}, {N}]"
+        ann_b = f"NDArray[Float, {N}, {M}]"
+    else:
+        a = _numpy.array(
+            [[rng.randint(INT_LO, INT_HI) for _ in range(N)] for _ in range(M)],
+            dtype=_numpy.int64,
+        )
+        b = _numpy.array(
+            [[rng.randint(INT_LO, INT_HI) for _ in range(M)] for _ in range(N)],
+            dtype=_numpy.int64,
+        )
+        ann_a = f"NDArray[Integer, {M}, {N}]"
+        ann_b = f"NDArray[Integer, {N}, {M}]"
+
+    # Build a chain of 3-5 ops on a (using b inside matmul when chosen).
+    n_ops = rng.randint(3, 5)
+    body_lines: list[str] = ["    y = a\n"]
+    y = a
+    op_pool = ["transpose", "reshape_flatten", "swapaxes", "expand_dims", "squeeze",
+               "matmul_b", "where_self", "slice", "concat_self"]
+
+    for _ in range(n_ops):
+        # Filter ops by current shape compatibility.
+        choices = []
+        if y.ndim == 2:
+            choices += ["transpose", "swapaxes", "reshape_flatten", "matmul_b",
+                        "expand_dims", "where_self"]
+        elif y.ndim == 1:
+            choices += ["expand_dims", "slice", "concat_self", "where_self"]
+        elif y.ndim == 3:
+            choices += ["squeeze", "reshape_flatten"]
+        if not choices:
+            break
+        op = rng.choice(choices)
+        if op == "transpose":
+            body_lines.append("    y = np.transpose(y)\n")
+            y = _numpy.transpose(y)
+        elif op == "swapaxes":
+            body_lines.append("    y = np.swapaxes(y, 0, 1)\n")
+            y = _numpy.swapaxes(y, 0, 1)
+        elif op == "reshape_flatten":
+            body_lines.append(f"    y = np.reshape(y, ({y.size},))\n")
+            y = _numpy.reshape(y, (y.size,))
+        elif op == "matmul_b":
+            # Only valid if y has 2 dims and y.shape[-1] == b.shape[0].
+            if y.ndim == 2 and y.shape[-1] == b.shape[0]:
+                body_lines.append("    y = np.matmul(y, b)\n")
+                y = _numpy.matmul(y, b)
+            else:
+                # Skip — pick a no-op alt.
+                body_lines.append("    y = np.transpose(y)\n")
+                y = _numpy.transpose(y)
+        elif op == "expand_dims":
+            body_lines.append("    y = np.expand_dims(y, 0)\n")
+            y = _numpy.expand_dims(y, 0)
+        elif op == "squeeze":
+            if 1 in y.shape:
+                body_lines.append("    y = np.squeeze(y)\n")
+                y = _numpy.squeeze(y)
+            else:
+                body_lines.append("    y = np.transpose(y)\n")
+                y = _numpy.transpose(y)
+        elif op == "where_self":
+            # Replace negatives with zero.
+            body_lines.append("    y = np.where(y > 0, y, y * 0)\n")
+            y = _numpy.where(y > 0, y, y * 0)
+        elif op == "slice":
+            if y.ndim == 1 and y.shape[0] >= 2:
+                stop = max(2, y.shape[0] // 2 + 1)
+                body_lines.append(f"    y = y[0:{stop}]\n")
+                y = y[0:stop]
+        elif op == "concat_self":
+            if y.ndim == 1:
+                body_lines.append("    y = np.concatenate([y, y])\n")
+                y = _numpy.concatenate([y, y])
+
+    red_op = rng.choice(REDUCTIONS_FLOAT if is_float else REDUCTIONS_INT)
+    body_lines.append(f"    out = np.{red_op}(y)\n")
+    ref = getattr(_numpy, red_op)(y)
+    if is_float or red_op == "mean":
+        ref_val = float(ref)
+        asserts = _float_assert_lines("out", ref_val, tol=1e-2)
+    else:
+        ref_val = int(ref)
+        asserts = f"    assert out == {ref_val}\n"
+
+    source = (
+        _PROLOGUE
+        + "@zk_circuit\n"
+        + f"def f(a: {ann_a}, b: {ann_b}):\n"
+        + "".join(body_lines)
+        + asserts
+    )
+    return source, {"a": a.tolist(), "b": b.tolist()}, "H", ref_val, True
+
+
+def _gen_shape_i(rng: random.Random) -> tuple[str, dict, str, object, bool]:
+    """Shape I: programs with @requires on a scalar input.
+
+    The body uses an op that benefits from a precondition (sqrt for x >= 0,
+    log for x >= 1). Inputs are sampled from a wider range than the
+    precondition allows; whether they satisfy is recorded in
+    `expected_satisfied`.
+    """
+    variant = rng.choice(["sqrt_nonneg", "log_pos", "range_clamp"])
+
+    if variant == "sqrt_nonneg":
+        # Precondition: x >= 0. Input drawn from [-3, 10].
+        x_val = rng.randint(-3, 10)
+        cond_src = "lambda x: x >= 0"
+        satisfies = x_val >= 0
+        # ref is np.sqrt(x) when x >= 0; for violating we still set the assert
+        # against the satisfying-value formula so the precondition-fail path is
+        # the only thing that triggers unsatisfied.
+        ref_val = float(_numpy.sqrt(max(0, x_val)))
+        body = "    y = np.sqrt(x)\n"
+        ann = "x: int"
+    elif variant == "log_pos":
+        # Precondition: x >= 1. Input drawn from [-2, 10].
+        x_val = rng.randint(-2, 10)
+        cond_src = "lambda x: x >= 1"
+        satisfies = x_val >= 1
+        ref_val = float(_numpy.log(max(1, x_val)))
+        body = "    y = np.log(x)\n"
+        ann = "x: int"
+    else:  # range_clamp — a precondition without an op-domain hook.
+        x_val = rng.randint(-20, 20)
+        lo = rng.randint(0, 5)
+        hi = rng.randint(lo + 1, 10)
+        cond_src = f"lambda x: {lo} <= x <= {hi}"
+        satisfies = lo <= x_val <= hi
+        # Body: just emit an assert on a derived value.
+        ref_val = float(x_val * 2)
+        body = "    y = x * 2\n"
+        ann = "x: int"
+
+    # Assert that y is close to ref_val. When satisfies=True, ref_val is the
+    # numpy reference, so the assert holds. When satisfies=False, the prover
+    # should refuse via the @requires witness check; the assert content is
+    # irrelevant (it will never be evaluated for a valid witness).
+    if variant == "range_clamp":
+        # y is an int.
+        asserts = f"    assert y == {int(ref_val)}\n"
+    else:
+        asserts = _float_assert_lines("y", ref_val)
+
+    source = (
+        _PROLOGUE
+        + "@zk_circuit\n"
+        + f"@requires({cond_src})\n"
+        + f"def f({ann}):\n"
+        + body
+        + asserts
+    )
+    return source, {"x": x_val}, "I", ref_val, satisfies
+
+
+SHAPE_GENERATORS = {
+    "A": _gen_shape_a,
+    "B": _gen_shape_b,
+    "C": _gen_shape_c,
+    "D": _gen_shape_d,
+    "E": _gen_shape_e,
+    "F": _gen_shape_f,
+    "G": _gen_shape_g,
+    "H": _gen_shape_h,
+    "I": _gen_shape_i,
+}
 
 
 def gen_program(shape: str, rng: random.Random):
@@ -222,11 +701,21 @@ def _zinnia_child_worker(source: str, inputs_repr: dict, sys_path: list, sys_cwd
         }
         exec(code, g)  # populates g["f"]
         f = g["f"]
-        np_inputs = {k: np.asarray(v) for k, v in inputs_repr.items()}
-        # Argument order: the generator only ever names args `x` or `a, b`.
-        if "x" in np_inputs:
+        # Convert each input — arrays via np.asarray, scalars (int/float) kept
+        # as-is. Pickle round-trip during pipe send preserves the python type.
+        np_inputs: dict = {}
+        for k, v in inputs_repr.items():
+            if isinstance(v, list):
+                np_inputs[k] = np.asarray(v)
+            else:
+                np_inputs[k] = v
+        # Generators use one of: {x}, {a}, {a, b}. Dispatch by key set.
+        keys = set(np_inputs)
+        if keys == {"x"}:
             result = f(np_inputs["x"])
-        elif "a" in np_inputs and "b" in np_inputs:
+        elif keys == {"a"}:
+            result = f(np_inputs["a"])
+        elif keys == {"a", "b"}:
             result = f(np_inputs["a"], np_inputs["b"])
         else:
             raise RuntimeError(f"unknown input shape: {list(np_inputs)}")
@@ -293,19 +782,26 @@ def run_zinnia(source: str, inputs_repr: dict, timeout: float = TIMEOUT_SEC) -> 
 # Comparator
 # ----------------------------------------------------------------------------
 
-def interpret_outcome(zinnia_result: dict) -> tuple[str, str | None]:
+def interpret_outcome(
+    zinnia_result: dict,
+    expected_satisfied: bool = True,
+) -> tuple[str, str | None]:
     """Map a Zinnia child outcome onto one of:
-      ("success", None) — assertion held; ref matched
-      ("divergence", "unsatisfied") — assertion failed; ref didn't match
+      ("success", None) — observed satisfied matches expected
+      ("divergence", <detail>) — observed satisfied differs from expected
       ("compile_failure", <exception_str>)
       ("timeout", None)
       ("crash", <exception_str>)
     """
     status = zinnia_result["status"]
     if status == "ok":
-        if zinnia_result["satisfied"]:
+        observed = bool(zinnia_result["satisfied"])
+        if observed == expected_satisfied:
             return ("success", None)
-        return ("divergence", "assertion-unsatisfied")
+        if expected_satisfied:
+            return ("divergence", "assertion-unsatisfied")
+        # Expected refusal but witness accepted — Phase E discharge failure.
+        return ("divergence", "witness-check-missed")
     if status == "compile_failure":
         return ("compile_failure", zinnia_result.get("exception"))
     if status == "timeout":
@@ -367,8 +863,12 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--iterations", type=int, default=30)
     parser.add_argument("--seed", type=int, default=None)
-    parser.add_argument("--shape", choices=["A", "B", "C"], default=None,
-                        help="restrict generator to a single shape")
+    parser.add_argument(
+        "--shape",
+        choices=list(SHAPE_GENERATORS.keys()),
+        default=None,
+        help="restrict generator to a single shape",
+    )
     parser.add_argument("--timeout", type=float, default=TIMEOUT_SEC)
     args = parser.parse_args(argv)
 
@@ -386,21 +886,34 @@ def main(argv=None) -> int:
         "timeout": 0,
         "crash": 0,
     }
-    per_shape = {"A": dict(summary), "B": dict(summary), "C": dict(summary)}
+    per_shape = {k: dict(summary) for k in SHAPE_GENERATORS.keys()}
+    # Weight the new shapes a little lower than the original A/B/C so the
+    # report retains a decent baseline of the existing surface; I (requires)
+    # is the most expensive (Phase E) so it gets the smallest weight.
+    shape_weights = {
+        "A": 3, "B": 3, "C": 3,
+        "D": 3, "E": 3, "F": 3, "G": 3, "H": 3,
+        "I": 2,
+    }
+    shape_population = list(shape_weights.keys())
+    shape_weight_list = [shape_weights[s] for s in shape_population]
 
     print(f"[fuzz] seed={seed} iterations={args.iterations} report_dir={report_dir}")
     start = time.time()
 
     for i in range(args.iterations):
-        shape = args.shape or rng.choice(["A", "B", "C"])
+        if args.shape:
+            shape = args.shape
+        else:
+            shape = rng.choices(shape_population, weights=shape_weight_list, k=1)[0]
         try:
-            source, inputs, shape_tag, ref_output = gen_program(shape, rng)
+            source, inputs, shape_tag, ref_output, expected_satisfied = gen_program(shape, rng)
         except Exception as e:
             print(f"[fuzz] iter={i} GEN-ERROR shape={shape} {type(e).__name__}: {e}")
             continue
 
         zinnia_result = run_zinnia(source, inputs, timeout=args.timeout)
-        outcome_kind, detail = interpret_outcome(zinnia_result)
+        outcome_kind, detail = interpret_outcome(zinnia_result, expected_satisfied)
 
         summary[outcome_kind] += 1
         per_shape[shape_tag][outcome_kind] += 1
@@ -408,6 +921,7 @@ def main(argv=None) -> int:
         print(
             f"[fuzz] iter={i:04d} shape={shape_tag} "
             f"outcome={outcome_kind}"
+            + (f" expected_sat={expected_satisfied}" if shape_tag == "I" else "")
             + (f" detail={detail}" if detail else "")
         )
 
