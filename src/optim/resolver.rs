@@ -878,8 +878,6 @@ fn smt_query_with_budget(
     want_bool: bool,
     max_formula_size: Option<usize>,
 ) -> SmtQueryOut {
-    use z3::ast::Ast;
-
     let mut walker = Walker::new(stmts, cache);
     walker.max_size = max_formula_size;
     let root_term = match walker.encode(root) {
@@ -993,7 +991,7 @@ fn smt_query_with_budget(
                     (crate::optim::smt_encoding::Z3Term::Int(int), false) => {
                         let v = model.eval(int, true)?;
                         let n = v.as_i64()?;
-                        solver.assert(&int._eq(&z3::ast::Int::from_i64(n)).not());
+                        solver.assert(&int.eq(&z3::ast::Int::from_i64(n)).not());
                         if solver.check() == z3::SatResult::Unsat {
                             Some(ResolvedValue::Int(n))
                         } else {
@@ -1004,10 +1002,10 @@ fn smt_query_with_budget(
                         // Wanted bool, but root is Int. Use `int != 0` as the
                         // bool projection.
                         let zero = z3::ast::Int::from_i64(0);
-                        let bool_proj = int._eq(&zero).not();
+                        let bool_proj = int.eq(&zero).not();
                         let v = model.eval(&bool_proj, true)?;
                         let b = v.as_bool()?;
-                        solver.assert(&bool_proj._eq(&z3::ast::Bool::from_bool(b)).not());
+                        solver.assert(&bool_proj.eq(&z3::ast::Bool::from_bool(b)).not());
                         if solver.check() == z3::SatResult::Unsat {
                             Some(ResolvedValue::Bool(b))
                         } else {
@@ -1017,7 +1015,7 @@ fn smt_query_with_budget(
                     (crate::optim::smt_encoding::Z3Term::Bool(b_ast), _) => {
                         let v = model.eval(b_ast, true)?;
                         let b = v.as_bool()?;
-                        solver.assert(&b_ast._eq(&z3::ast::Bool::from_bool(b)).not());
+                        solver.assert(&b_ast.eq(&z3::ast::Bool::from_bool(b)).not());
                         if solver.check() == z3::SatResult::Unsat {
                             if want_bool {
                                 Some(ResolvedValue::Bool(b))

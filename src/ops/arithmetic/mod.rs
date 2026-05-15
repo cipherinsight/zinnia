@@ -38,7 +38,6 @@ macro_rules! define_binary_arith_op {
         }
     };
 }
-pub(crate) use define_binary_arith_op;
 
 pub mod add;
 pub mod sub;

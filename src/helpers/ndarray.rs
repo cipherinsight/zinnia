@@ -1,8 +1,8 @@
 use crate::builder::IRBuilder;
-use crate::types::{CompositeData, SliceIndex, Value, ValueId, ZinniaType};
+use crate::types::{CompositeData, SliceIndex, Value, ValueId};
 use super::composite;
 
-pub fn ndarray_transpose(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value {
+pub fn ndarray_transpose(_b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value {
     // Determine the shape of the input
     let shape = composite::get_composite_shape(val);
     let ndim = shape.len();

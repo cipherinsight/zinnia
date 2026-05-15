@@ -214,7 +214,7 @@ impl IRGenerator {
 
         // Check if return is guaranteed for non-None return types
         let return_dt_check = self.parse_dt_descriptor(&chip.return_dt);
-        let return_guaranteed = self.ctx.check_return_guaranteed();
+        let _return_guaranteed = self.ctx.check_return_guaranteed();
 
         // Collect return value
         // Collect returns BEFORE leaving chip scope

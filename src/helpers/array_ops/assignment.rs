@@ -1,8 +1,8 @@
 //! Dynamic array element and masked assignment.
 
 use crate::builder::IRBuilder;
-use crate::types::{ValueId, 
-    DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, SliceIndex, Value,
+use crate::types::{ValueId,
+    DynamicNDArrayData, NumberType, SliceIndex, Value,
 };
 
 use super::indexing::{compute_flat_addr, select_stride_mode, stride_value, StrideMode};
@@ -260,7 +260,7 @@ pub fn dyn_setitem_slice(
     }
 
     // Collect the Range/trailing axes for iteration.
-    let range_axes: Vec<(usize, &AxisSpec)> = axis_specs.iter().enumerate()
+    let _range_axes: Vec<(usize, &AxisSpec)> = axis_specs.iter().enumerate()
         .filter(|(_, spec)| !matches!(spec.coords, AxisCoords::Single(_)))
         .collect();
 
@@ -387,7 +387,7 @@ pub fn dyn_setitem_slice(
                         }
                         val_coord_idx += 1;
                     }
-                    AxisCoords::Dynamic { start, stop, step, max_len, axis_len } => {
+                    AxisCoords::Dynamic { start, stop, step, max_len: _, axis_len } => {
                         let idx_in_slice = val_coords[val_coord_idx] as i64;
                         let idx_const = b.ir_constant_int(idx_in_slice);
                         let offset = b.ir_mul_i(&idx_const, step);

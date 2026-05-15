@@ -35,7 +35,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use z3::ast::{Ast, Bool, Int, Real};
+use z3::ast::{Bool, Int, Real};
 
 use crate::optim::smt_encoding::Z3Term;
 use crate::types::ValueId;
@@ -384,8 +384,8 @@ fn lower_bool_inner(
                 let lr = l.as_real();
                 let rr = r.as_real();
                 match op {
-                    CmpOp::Eq => lr._eq(&rr),
-                    CmpOp::Ne => lr._eq(&rr).not(),
+                    CmpOp::Eq => lr.eq(&rr),
+                    CmpOp::Ne => lr.eq(&rr).not(),
                     CmpOp::Lt => lr.lt(&rr),
                     CmpOp::Le => lr.le(&rr),
                     CmpOp::Gt => lr.gt(&rr),
@@ -395,8 +395,8 @@ fn lower_bool_inner(
                 let li = l.as_int();
                 let ri = r.as_int();
                 match op {
-                    CmpOp::Eq => li._eq(&ri),
-                    CmpOp::Ne => li._eq(&ri).not(),
+                    CmpOp::Eq => li.eq(&ri),
+                    CmpOp::Ne => li.eq(&ri).not(),
                     CmpOp::Lt => li.lt(&ri),
                     CmpOp::Le => li.le(&ri),
                     CmpOp::Gt => li.gt(&ri),
@@ -548,7 +548,7 @@ fn f64_to_z3_real(f: f64) -> Real {
     if s.contains('e') || s.contains('E') {
         // Fallback: lossless via bit-pattern is involved; for now,
         // accept slight imprecision via the decimal cast.
-        return Real::from_real_str(&format!("{}", f as i64), "1")
+        return Real::from_rational_str(&format!("{}", f as i64), "1")
             .unwrap_or_else(|| Real::fresh_const("sci_notation_lit_"));
     }
     let (num_str, den_str) = if let Some(dot_idx) = s.find('.') {
@@ -562,7 +562,7 @@ fn f64_to_z3_real(f: f64) -> Real {
     } else {
         (s, "1".to_string())
     };
-    Real::from_real_str(&num_str, &den_str)
+    Real::from_rational_str(&num_str, &den_str)
         .unwrap_or_else(|| Real::fresh_const("malformed_lit_"))
 }
 

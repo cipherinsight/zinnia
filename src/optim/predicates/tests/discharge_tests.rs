@@ -1,6 +1,6 @@
 //! Tests for the discharge orchestrator (`discharge.rs`).
 
-use z3::ast::{Ast, Int};
+use z3::ast::Int;
 
 use crate::circuit_input::InputPath;
 use crate::ir::IRStatement;
@@ -164,7 +164,7 @@ fn collect_predicate_constraints_ties_pred_value_to_scalar_bound() {
     for m in &constraints.meta_facts {
         solver.assert(m);
     }
-    solver.assert(&k_term._eq(&Int::from_i64(5)));
+    solver.assert(&k_term.eq(&Int::from_i64(5)));
     assert_eq!(solver.check(), z3::SatResult::Sat);
 }
 
@@ -277,21 +277,21 @@ fn nnz_length_bound_constrains_k_via_z3() {
 
     // 1) Witness k = 500 is satisfiable.
     solver.push();
-    solver.assert(&k_term._eq(&Int::from_i64(500)));
+    solver.assert(&k_term.eq(&Int::from_i64(500)));
     assert_eq!(solver.check(), z3::SatResult::Sat,
                "k = 500 must be admissible given nnz(x) <= 1024");
     solver.pop(1);
 
     // 2) Witness k = 2000 is UNSAT (Z3 derived the bound).
     solver.push();
-    solver.assert(&k_term._eq(&Int::from_i64(2000)));
+    solver.assert(&k_term.eq(&Int::from_i64(2000)));
     assert_eq!(solver.check(), z3::SatResult::Unsat,
                "k = 2000 must be rejected — the length bound is load-bearing");
     solver.pop(1);
 
     // 3) Witness k = -1 is UNSAT (the >= 0 half of the bound).
     solver.push();
-    solver.assert(&k_term._eq(&Int::from_i64(-1)));
+    solver.assert(&k_term.eq(&Int::from_i64(-1)));
     assert_eq!(solver.check(), z3::SatResult::Unsat,
                "k = -1 must be rejected — nnz is non-negative");
     solver.pop(1);

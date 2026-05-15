@@ -41,7 +41,7 @@
 
 use std::collections::HashMap;
 
-use z3::ast::{Ast, Bool, Int};
+use z3::ast::{Bool, Int};
 
 use crate::circuit_input::PathSegment;
 use crate::ir::IRStatement;
@@ -361,8 +361,8 @@ impl Discharger {
 
 fn compare(lhs: &Int, op: &str, rhs: &Int) -> Option<Bool> {
     Some(match op {
-        "==" => lhs._eq(rhs),
-        "!=" => lhs._eq(rhs).not(),
+        "==" => lhs.eq(rhs),
+        "!=" => lhs.eq(rhs).not(),
         "<" => lhs.lt(rhs),
         "<=" => lhs.le(rhs),
         ">" => lhs.gt(rhs),

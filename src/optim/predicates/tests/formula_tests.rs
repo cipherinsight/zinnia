@@ -1,6 +1,6 @@
 //! Tests for the `ContractTerm` AST + Z3 lowering (`formula.rs`).
 
-use z3::ast::{Ast, Int};
+use z3::ast::Int;
 
 use crate::optim::predicates::{
     lower_bool, ArithOp, CmpOp, ContractTerm, ContractVar, LowerError, Substitution,
@@ -46,19 +46,19 @@ fn lowers_le_chain_via_and() {
 
     // Reject k = -1.
     solver.push();
-    solver.assert(&k_term._eq(&Int::from_i64(-1)));
+    solver.assert(&k_term.eq(&Int::from_i64(-1)));
     assert_eq!(solver.check(), z3::SatResult::Unsat);
     solver.pop(1);
 
     // Reject k = 2000.
     solver.push();
-    solver.assert(&k_term._eq(&Int::from_i64(2000)));
+    solver.assert(&k_term.eq(&Int::from_i64(2000)));
     assert_eq!(solver.check(), z3::SatResult::Unsat);
     solver.pop(1);
 
     // Accept k = 500.
     solver.push();
-    solver.assert(&k_term._eq(&Int::from_i64(500)));
+    solver.assert(&k_term.eq(&Int::from_i64(500)));
     assert_eq!(solver.check(), z3::SatResult::Sat);
     solver.pop(1);
 }
@@ -85,7 +85,7 @@ fn lowers_arithmetic_inside_comparison() {
 
     let solver = z3::Solver::new();
     solver.assert(&out.term);
-    solver.assert(&a._eq(&Int::from_i64(3)));
+    solver.assert(&a.eq(&Int::from_i64(3)));
     assert_eq!(solver.check(), z3::SatResult::Sat);
     let model = solver.get_model().unwrap();
     assert_eq!(model.eval(&b, true).unwrap().as_i64().unwrap(), 4);

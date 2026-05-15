@@ -5,7 +5,7 @@
 //! `&mut IRBuilder` as an explicit parameter instead of `&mut self`.
 
 use crate::builder::IRBuilder;
-use crate::types::{CompositeData, ScalarValue, Value, ValueId, ZinniaType};
+use crate::types::{CompositeData, Value, ValueId};
 
 /// Conditional select: if cond { tv } else { fv }, with element-wise support.
 pub fn select_value(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> Value {
@@ -819,6 +819,7 @@ pub fn ensure_float(b: &mut IRBuilder, val: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::ZinniaType;
 
     /// Regression for the `select_value` float-typing bug
     /// (compiler.fix-prover-kernel-float-sqrt — actual fix is in select_value).

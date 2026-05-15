@@ -416,7 +416,7 @@ pub fn dyn_concatenate(
     let mut arg_len_terms: Vec<crate::optim::predicates::formula::ContractTerm> =
         Vec::with_capacity(arrays.len());
 
-    for (k, arr) in arrays.iter().enumerate() {
+    for (_k, arr) in arrays.iter().enumerate() {
         let src_shape = &arr.meta.logical_shape;
         let src_strides_k = dyn_row_major_strides(src_shape);
         let src_ax_stride = src_strides_k[ax] as i64;
@@ -680,7 +680,7 @@ pub fn dyn_stack(
     let envelope = crate::types::Envelope::new_with_bound(out_dims, total_bound);
 
     // Check if any input has dynamic element count.
-    let has_dynamic_input = arrays.iter().any(|a| {
+    let _has_dynamic_input = arrays.iter().any(|a| {
         a.envelope.dims.iter().any(|d| d.min != d.max)
     });
 

@@ -5,7 +5,7 @@ use crate::ir_defs::IR;
 use crate::prove::mock::MockProverBackend;
 use crate::prove::traits::ProverBackend;
 use crate::prove::types::ProvingParams;
-use crate::circuit_input::{CircuitInputs, InputNode, InputParam, ResolvedWitness, InputPath, PathSegment};
+use crate::circuit_input::{CircuitInputs, InputNode, InputParam, ResolvedWitness, InputPath};
 
 fn empty_resolved(prec: u32) -> ResolvedWitness {
     ResolvedWitness::new(CircuitInputs::new(), prec)

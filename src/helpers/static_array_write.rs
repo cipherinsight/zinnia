@@ -33,8 +33,7 @@
 //! segment is allocated.
 
 use crate::builder::IRBuilder;
-use crate::ops::dyn_ndarray::{scalar_i64_to_value, value_to_scalar_i64};
-use crate::types::{NumberType, ScalarValue, SliceIndex, Value, ValueId};
+use crate::types::{NumberType, SliceIndex, Value, ValueId};
 
 use super::shape_arith::{decode_coords, row_major_strides};
 
@@ -1008,7 +1007,7 @@ fn static_array_slice_setitem(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{CompositeData, ScalarValue, ZinniaType};
+    use crate::types::CompositeData;
 
     fn list_of(values: Vec<Value>) -> Value {
         let types = values.iter().map(|v| v.zinnia_type()).collect();

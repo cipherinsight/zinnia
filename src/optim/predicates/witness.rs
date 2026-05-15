@@ -34,11 +34,9 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use z3::ast::Ast;
-
 use crate::builder::IRBuilder;
 use crate::ir_defs::IR;
-use crate::types::{NumberType, ScalarValue, Value};
+use crate::types::{ScalarValue, Value};
 
 // ---------------------------------------------------------------------------
 // WitnessEmitter

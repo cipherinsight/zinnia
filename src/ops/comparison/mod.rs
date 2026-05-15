@@ -37,7 +37,6 @@ macro_rules! define_compare_op {
         }
     };
 }
-pub(crate) use define_compare_op;
 
 pub mod equal;
 pub mod not_equal;

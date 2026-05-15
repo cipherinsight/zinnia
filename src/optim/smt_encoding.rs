@@ -60,7 +60,7 @@
 //! a profiling pass shows demand.
 
 use crate::ir_defs::IR;
-use z3::ast::{Ast, Bool, Int, Real};
+use z3::ast::{Bool, Int, Real};
 
 // ---------------------------------------------------------------------------
 // Z3Term — sort-tagged Z3 AST wrapper.
@@ -93,8 +93,8 @@ impl Z3Term {
     pub fn as_bool(&self) -> Bool {
         match self {
             Z3Term::Bool(b) => b.clone(),
-            Z3Term::Int(i) => i._eq(&Int::from_i64(0)).not(),
-            Z3Term::Real(r) => r._eq(&Real::from_real(0, 1)).not(),
+            Z3Term::Int(i) => i.eq(&Int::from_i64(0)).not(),
+            Z3Term::Real(r) => r.eq(&Real::from_rational(0, 1)).not(),
         }
     }
 
@@ -104,7 +104,7 @@ impl Z3Term {
         match self {
             Z3Term::Real(r) => r.clone(),
             Z3Term::Int(i) => Real::from_int(i),
-            Z3Term::Bool(b) => b.ite(&Real::from_real(1, 1), &Real::from_real(0, 1)),
+            Z3Term::Bool(b) => b.ite(&Real::from_rational(1, 1), &Real::from_rational(0, 1)),
         }
     }
 }
@@ -290,12 +290,12 @@ impl IROp for IR {
             IR::EqI => {
                 let a = args[0].as_int();
                 let b = args[1].as_int();
-                Z3Term::Bool(a._eq(&b))
+                Z3Term::Bool(a.eq(&b))
             }
             IR::NeI => {
                 let a = args[0].as_int();
                 let b = args[1].as_int();
-                Z3Term::Bool(a._eq(&b).not())
+                Z3Term::Bool(a.eq(&b).not())
             }
             IR::LtI => {
                 let a = args[0].as_int();
@@ -462,7 +462,7 @@ mod tests {
         let sum = &two + &three;
 
         // Try to find a counter-example to "2 + 3 == 5". There is none.
-        solver.assert(sum._eq(&five).not());
+        solver.assert(sum.eq(&five).not());
         assert_eq!(solver.check(), SatResult::Unsat);
     }
 
@@ -477,7 +477,7 @@ mod tests {
             _ => panic!("expected Int term"),
         };
         let solver = Solver::new();
-        solver.assert(int._eq(&Int::from_i64(7)).not());
+        solver.assert(int.eq(&Int::from_i64(7)).not());
         assert_eq!(solver.check(), SatResult::Unsat);
     }
 
@@ -494,7 +494,7 @@ mod tests {
             _ => panic!("expected Int term"),
         };
         let solver = Solver::new();
-        solver.assert(int._eq(&Int::from_i64(42)).not());
+        solver.assert(int.eq(&Int::from_i64(42)).not());
         assert_eq!(solver.check(), SatResult::Unsat);
     }
 
@@ -511,7 +511,7 @@ mod tests {
             _ => panic!("expected Int term"),
         };
         let solver = Solver::new();
-        solver.assert(int._eq(&Int::from_i64(7)).not());
+        solver.assert(int.eq(&Int::from_i64(7)).not());
         assert_eq!(solver.check(), SatResult::Unsat);
     }
 }

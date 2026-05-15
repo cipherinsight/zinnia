@@ -55,7 +55,7 @@ impl IRGenerator {
             if let Some(Value::List(data)) = self.ctx.get(var) {
                 let n = data.values.len();
                 let len_const = self.builder.ir_constant_int(n as i64);
-                let neg_len = self.builder.ir_constant_int(-(n as i64));
+                let _neg_len = self.builder.ir_constant_int(-(n as i64));
 
                 // Normalize negative index: idx = idx < 0 ? idx + len : idx
                 let zero = self.builder.ir_constant_int(0);

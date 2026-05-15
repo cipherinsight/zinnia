@@ -28,7 +28,6 @@ macro_rules! define_math_unary_op {
         }
     };
 }
-pub(crate) use define_math_unary_op;
 
 pub mod math_sin;
 pub mod math_cos;

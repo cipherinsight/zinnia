@@ -148,10 +148,9 @@ fn encode_atom_fresh(
 }
 
 fn compare_z3(lhs: &Int, op: &str, rhs: &Int) -> Option<z3::ast::Bool> {
-    use z3::ast::Ast;
     Some(match op {
-        "==" => lhs._eq(rhs),
-        "!=" => lhs._eq(rhs).not(),
+        "==" => lhs.eq(rhs),
+        "!=" => lhs.eq(rhs).not(),
         "<" => lhs.lt(rhs),
         "<=" => lhs.le(rhs),
         ">" => lhs.gt(rhs),

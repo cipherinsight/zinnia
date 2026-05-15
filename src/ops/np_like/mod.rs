@@ -153,7 +153,6 @@ macro_rules! define_np_arith {
         }
     };
 }
-pub(crate) use define_np_arith;
 
 macro_rules! define_np_compare {
     ($name:ident, $op_name:expr, $sig:expr, $int_method:ident, $float_method:ident) => {
@@ -193,7 +192,6 @@ macro_rules! define_np_compare {
         }
     };
 }
-pub(crate) use define_np_compare;
 
 macro_rules! define_np_unary_math {
     ($name:ident, $op_name:expr, $sig:expr, $float_method:ident) => {
@@ -234,7 +232,6 @@ macro_rules! define_np_unary_math {
         }
     };
 }
-pub(crate) use define_np_unary_math;
 
 macro_rules! define_np_binary_math {
     ($name:ident, $op_name:expr, $sig:expr, $float_method:ident) => {
@@ -321,7 +318,6 @@ macro_rules! define_np_binary_math {
         }
     };
 }
-pub(crate) use define_np_binary_math;
 
 macro_rules! define_np_minmax {
     ($name:ident, $op_name:expr, $sig:expr, $int_cmp:ident, $float_cmp:ident) => {
@@ -378,7 +374,6 @@ macro_rules! define_np_minmax {
         }
     };
 }
-pub(crate) use define_np_minmax;
 
 pub mod np_add;
 pub mod np_subtract;

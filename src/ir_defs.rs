@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::circuit_input::{InputPath, PathSegment};
+use crate::circuit_input::InputPath;
 
 // ---------------------------------------------------------------------------
 // IR enum — all 78 IR instruction types as a single Rust enum
@@ -946,6 +946,7 @@ fn parse_external_key(val: &serde_json::Value) -> Result<ExternalKey, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::circuit_input::PathSegment;
 
     #[test]
     fn test_signatures() {

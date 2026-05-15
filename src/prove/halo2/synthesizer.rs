@@ -14,7 +14,6 @@ use halo2_proofs::{
     plonk::{Error, Selector},
 };
 use pasta_curves::Fp;
-use pasta_curves::group::ff::PrimeField;
 
 use crate::prove::error::ProvingError;
 use crate::prove::halo2::config::ZinniaConfig;
@@ -446,7 +445,7 @@ impl Halo2Synthesizer {
 
     /// Constrained negation: returns -a using sub gate (0 - a = c).
     fn constrained_neg(&mut self, a: &Halo2CellRef) -> Halo2CellRef {
-        let zero = Halo2CellRef { value: Fp::zero(), col_idx: 0, row: 0 };
+        let _zero = Halo2CellRef { value: Fp::zero(), col_idx: 0, row: 0 };
         let zero_cell = self.rec_advice(0, Fp::zero(), "neg_zero");
         self.offset += 1;
         self.bin_gate("sub", &zero_cell, a, -a.value, "neg")

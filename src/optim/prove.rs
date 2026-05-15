@@ -31,7 +31,7 @@
 
 use std::collections::HashMap;
 
-use z3::ast::{Ast, Bool, Int};
+use z3::ast::{Bool, Int};
 
 use crate::builder::IRBuilder;
 use crate::optim::predicates::facts::{Fact, FactScope};
