@@ -323,12 +323,21 @@ fn slice_axis_static_or_dynamic_1d(
         )
     } else {
         let len_i = len as i64;
-        let s = s_static.unwrap_or(0);
-        let e = e_static.unwrap_or(len_i);
         let st = st_static.unwrap_or(1);
-        let s = if s < 0 { (len_i + s).max(0) } else { s.min(len_i) };
-        let e = if e < 0 { (len_i + e).max(0) } else { e.min(len_i) };
         assert!(st != 0, "slice step cannot be zero");
+        // Pythonic slice-bound defaults depend on step sign:
+        //   step > 0 → start=0, stop=len
+        //   step < 0 → start=len-1, stop=-1 (i.e. "before index 0")
+        // For explicit bounds we keep the original Python clamping
+        // (start clamps to [0, len], stop clamps to [0, len]).
+        let s = if is_present(start) {
+            let raw = s_static.unwrap();
+            if raw < 0 { (len_i + raw).max(0) } else { raw.min(len_i) }
+        } else if st > 0 { 0 } else { len_i - 1 };
+        let e = if is_present(stop) {
+            let raw = e_static.unwrap();
+            if raw < 0 { (len_i + raw).max(0) } else { raw.min(len_i) }
+        } else if st > 0 { len_i } else { -1 };
 
         if st == 1 && strides[0] == 1 {
             // Contiguous step=1 slab → view.
@@ -510,12 +519,18 @@ fn slice_axis(
         )
     } else {
         let len_i = shape[axis] as i64;
-        let s = s_static.unwrap_or(0);
-        let e = e_static.unwrap_or(len_i);
         let st = st_static.unwrap_or(1);
-        let s = if s < 0 { (len_i + s).max(0) } else { s.min(len_i) };
-        let e = if e < 0 { (len_i + e).max(0) } else { e.min(len_i) };
         assert!(st != 0, "slice step cannot be zero");
+        // Pythonic slice-bound defaults depend on step sign — see
+        // slice_axis_static_or_dynamic_1d for the parallel logic.
+        let s = if is_present(start) {
+            let raw = s_static.unwrap();
+            if raw < 0 { (len_i + raw).max(0) } else { raw.min(len_i) }
+        } else if st > 0 { 0 } else { len_i - 1 };
+        let e = if is_present(stop) {
+            let raw = e_static.unwrap();
+            if raw < 0 { (len_i + raw).max(0) } else { raw.min(len_i) }
+        } else if st > 0 { len_i } else { -1 };
 
         if st == 1 && axis == 0 {
             // Slice along axis 0 with step 1: contiguous view.
@@ -753,19 +768,40 @@ fn multidim_subscript_static_array(
             }
             SliceIndex::Range(s, e, st) => {
                 let len_i = shape[ax] as i64;
-                let resolve = |v: &Option<Value>, def: i64| -> Option<i64> {
+                let is_absent = |v: &Option<Value>| -> bool {
+                    matches!(v.as_ref(), Some(Value::None) | None)
+                };
+                let int_of = |v: &Option<Value>| -> Option<i64> {
                     match v.as_ref() {
-                        Some(Value::None) | None => Some(def),
+                        Some(Value::None) | None => None,
                         Some(val) => val.int_val(),
                     }
                 };
-                let st_static = resolve(st, 1);
-                let s_static = resolve(s, 0);
-                let e_static = resolve(e, len_i);
-                if let (Some(ss), Some(ee), Some(stst)) = (s_static, e_static, st_static) {
-                    let ss = if ss < 0 { (len_i + ss).max(0) } else { ss.min(len_i) };
-                    let ee = if ee < 0 { (len_i + ee).max(0) } else { ee.min(len_i) };
+                let st_absent = is_absent(st);
+                let s_absent = is_absent(s);
+                let e_absent = is_absent(e);
+                let st_int = int_of(st);
+                let s_int = int_of(s);
+                let e_int = int_of(e);
+                let st_ok = st_absent || st_int.is_some();
+                let s_ok = s_absent || s_int.is_some();
+                let e_ok = e_absent || e_int.is_some();
+                if st_ok && s_ok && e_ok {
+                    let stst = st_int.unwrap_or(1);
                     assert!(stst != 0, "slice step cannot be zero");
+                    // Pythonic defaults depend on step sign.
+                    let ss = if s_absent {
+                        if stst > 0 { 0 } else { len_i - 1 }
+                    } else {
+                        let raw = s_int.unwrap();
+                        if raw < 0 { (len_i + raw).max(0) } else { raw.min(len_i) }
+                    };
+                    let ee = if e_absent {
+                        if stst > 0 { len_i } else { -1 }
+                    } else {
+                        let raw = e_int.unwrap();
+                        if raw < 0 { (len_i + raw).max(0) } else { raw.min(len_i) }
+                    };
                     let mut coords: Vec<usize> = Vec::new();
                     if stst > 0 {
                         let mut i = ss;

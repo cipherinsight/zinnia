@@ -395,9 +395,16 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
             return {"__class__": "ASTAssignStatement",
                     "targets": [self.visit_assign_target(node.target)], "value": bin_op}
         elif isinstance(node.target, ast.Subscript):
-            expr = self.visit_expr(node.value)
-            return {"__class__": "ASTAugAssignStatement",
-                    "targets": [self.visit_assign_target(node.target)], "value": expr, "op_type": op_type}
+            # Desugar `a[i] op= v` to `a[i] = a[i] op v` so the augmented
+            # form routes through the same well-tested code path as the
+            # explicit form. Emitting a distinct ASTAugAssignStatement
+            # for subscript targets produced stale-neighbour reads
+            # (fuzz-finding-v3-aug-assign-subscript).
+            rhs = self.visit_expr(node.value)
+            lhs = self.visit_expr(node.target)
+            bin_op = {"__class__": "ASTBinaryOperator", "operator": op_type, "lhs": lhs, "rhs": rhs}
+            return {"__class__": "ASTAssignStatement",
+                    "targets": [self.visit_assign_target(node.target)], "value": bin_op}
         raise InvalidAssignStatementException(dbg_info,
                                               "The value to be assigned must be an identifier name or subscript.")
 
