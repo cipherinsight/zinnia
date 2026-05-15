@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Phase 3a — minimal viable differential fuzzer for Zinnia.
 
-Generates small numpy-like programs from nine shapes:
+Generates small numpy-like programs from fourteen shapes:
 
     A) scalar reduction over a 1-D integer array
     B) elementwise transcendental + scalar reduction over a 1-D float array
@@ -18,6 +18,18 @@ Generates small numpy-like programs from nine shapes:
        inputs that equals True (standard differential check); for
        violating inputs the witness-check should fire and
        `satisfied=False` is the expected outcome.
+    J) boolean mask indexing (`arr[mask]` for literal or computed mask)
+       reduced to a scalar.
+    K) dynamic-bound indexing — `arr[i]` / `arr[i:j]` where `i`/`j`
+       are scalar function inputs, with `@requires` discharging the
+       bound; also generates violating-input cases (witness check
+       should fire).
+    L) deeper chains (5-8 ops) mixing transpose/reshape/matmul/where/
+       reduce — extends Shape H's depth.
+    M) bitwise / logical chains — `&`, `|`, `^`, `np.logical_and/or`
+       on int / bool arrays → reduce.
+    N) comparison-count chains — `np.sum(x > k)`, `np.sum(logical_and
+       (x>0, x<10))`, etc.
 
 For each generated program:
 
@@ -629,6 +641,384 @@ def _gen_shape_i(rng: random.Random) -> tuple[str, dict, str, object, bool]:
     return source, {"x": x_val}, "I", ref_val, satisfies
 
 
+def _gen_shape_j(rng: random.Random) -> tuple[str, dict, str, object, bool]:
+    """Shape J: boolean mask indexing → reduce.
+
+    Two flavors:
+      - literal mask: `arr[np.asarray([True, False, ...])]`
+      - computed mask: `arr[arr > k]`
+
+    The selected subarray is variable-length, so we always reduce it
+    to a scalar before asserting. If the mask happens to select zero
+    elements, ``np.sum`` is the only reduction guaranteed to be
+    well-defined (== 0), so we restrict to ``sum`` here to avoid
+    spurious unsat from empty-reduction surprises.
+    """
+    size = rng.choice([4, 6, 8])
+    is_float = rng.random() < 0.5
+    if is_float:
+        x = _numpy.array(
+            [rng.uniform(FLOAT_LO, FLOAT_HI) for _ in range(size)],
+            dtype=_numpy.float64,
+        )
+        ann = f"NDArray[Float, {size}]"
+    else:
+        x = _numpy.array(
+            [rng.randint(INT_LO, INT_HI) for _ in range(size)],
+            dtype=_numpy.int64,
+        )
+        ann = f"NDArray[Integer, {size}]"
+
+    flavor = rng.choice(["literal", "computed"])
+    if flavor == "literal":
+        # Force a non-empty mask: at least one True. If random rolled all
+        # False, flip one cell to keep the body well-defined.
+        mask_list = [rng.choice([True, False]) for _ in range(size)]
+        if not any(mask_list):
+            mask_list[rng.randint(0, size - 1)] = True
+        mask = _numpy.asarray(mask_list)
+        body = (
+            f"    mask = np.asarray({mask_list})\n"
+            f"    sub = x[mask]\n"
+            f"    out = np.sum(sub)\n"
+        )
+    else:  # computed: `x > k`
+        k = rng.randint(INT_LO, INT_HI) if not is_float else rng.uniform(FLOAT_LO, FLOAT_HI)
+        mask = x > k
+        # Same well-formedness guard: if k happens to be > max(x), the mask
+        # is empty. Bias k a touch downward to keep at least one True common.
+        if not mask.any():
+            k = float(x.min()) - 1.0 if is_float else int(x.min()) - 1
+            mask = x > k
+        body = (
+            f"    sub = x[x > {k!r}]\n"
+            f"    out = np.sum(sub)\n"
+        )
+
+    sub = x[mask]
+    ref = _numpy.sum(sub)
+    if is_float:
+        ref_val = float(ref)
+        asserts = _float_assert_lines("out", ref_val)
+    else:
+        ref_val = int(ref)
+        asserts = f"    assert out == {ref_val}\n"
+
+    source = (
+        _PROLOGUE
+        + "@zk_circuit\n"
+        + f"def f(x: {ann}):\n"
+        + body
+        + asserts
+    )
+    return source, {"x": x.tolist()}, "J", ref_val, True
+
+
+def _gen_shape_k(rng: random.Random) -> tuple[str, dict, str, object, bool]:
+    """Shape K: dynamic-bound indexing.
+
+    Variants:
+      - `arr[i]` with @requires on i.
+      - `arr[i:j]` with @requires on a single bound (precondition chain
+        is limited to two ops by the spec).
+
+    Half of generated cases use a violating input (with no @requires).
+    Those should produce ``satisfied = False`` because the index-load
+    discharges the bound check, and an out-of-bounds witness can't
+    satisfy it.
+    """
+    size = rng.choice([4, 6, 8])
+    x = _numpy.array(
+        [rng.randint(INT_LO, INT_HI) for _ in range(size)],
+        dtype=_numpy.int64,
+    )
+    ann = f"NDArray[Integer, {size}]"
+
+    # 60/40 satisfying vs violating
+    satisfies = rng.random() < 0.6
+    variant = rng.choice(["scalar", "slice"])
+
+    if variant == "scalar":
+        if satisfies:
+            i = rng.randint(0, size - 1)
+            ref_val = int(x[i])
+            cond_src = f"lambda x, i: 0 <= i < {size}"
+            source_lines = [
+                "@zk_circuit",
+                f"@requires({cond_src})",
+                f"def f(x: {ann}, i: int):",
+                "    out = x[i]",
+                f"    assert out == {ref_val}",
+            ]
+        else:
+            # out-of-bounds index, no @requires
+            i = rng.choice([-1, -3, size, size + 1, size + 3])
+            ref_val = 0  # body would crash in numpy; the assert is irrelevant.
+            source_lines = [
+                "@zk_circuit",
+                f"def f(x: {ann}, i: int):",
+                "    out = x[i]",
+                "    assert out >= -1000000",
+            ]
+        source = _PROLOGUE + "\n".join(source_lines) + "\n"
+        return source, {"x": x.tolist(), "i": i}, "K", ref_val, satisfies
+
+    # slice variant
+    if satisfies:
+        i = rng.randint(0, size - 2)
+        j = rng.randint(i + 1, size)
+        # Single bound `i < j` is the precondition; we'll pin i in range
+        # separately. To avoid the 2-chained-op limit, we split into two.
+        ref_val = int(_numpy.sum(x[i:j]))
+        # Two @requires don't stack in Zinnia (single decorator only). Use
+        # one combined two-op chain that's allowed.
+        cond_src = f"lambda x, i, j: 0 <= i < {size}"
+        source_lines = [
+            "@zk_circuit",
+            f"@requires({cond_src})",
+            f"def f(x: {ann}, i: int, j: int):",
+            "    sub = x[i:j]",
+            "    out = np.sum(sub)",
+            f"    assert out == {ref_val}",
+        ]
+    else:
+        # bad i (e.g. negative), no @requires.
+        # For violating slice we want `i` out of [0, size). Pick j > i
+        # if room remains; otherwise clamp `j = i + 1` so the source
+        # parses (numpy gives an empty slice — the bug we're surfacing
+        # is index discharge, not j's value).
+        i = rng.choice([-3, -2, -1, size, size + 1, size + 2])
+        if i + 1 <= size:
+            j = rng.randint(i + 1, size)
+        else:
+            j = i + 1
+        ref_val = 0
+        source_lines = [
+            "@zk_circuit",
+            f"def f(x: {ann}, i: int, j: int):",
+            "    sub = x[i:j]",
+            "    out = np.sum(sub)",
+            "    assert out >= -1000000",
+        ]
+    source = _PROLOGUE + "\n".join(source_lines) + "\n"
+    # Use {a, b}-shaped key set? We need a 3rd input; extend the runner
+    # below to dispatch by arity. We piggyback on the existing arity
+    # check by passing two arrays — but we don't have a second array
+    # input here. Reuse "x" + scalars in a new dispatch path.
+    return source, {"x": x.tolist(), "i": i, "j": j}, "K", ref_val, satisfies
+
+
+def _gen_shape_l(rng: random.Random) -> tuple[str, dict, str, object, bool]:
+    """Shape L: deeper chains (5-8 ops) — Shape H at greater depth."""
+    M = rng.choice([2, 3, 4])
+    N = rng.choice([2, 3, 4])
+    is_float = rng.random() < 0.5
+    if is_float:
+        a = _numpy.array(
+            [[rng.uniform(FLOAT_LO, FLOAT_HI) for _ in range(N)] for _ in range(M)],
+            dtype=_numpy.float64,
+        )
+        b = _numpy.array(
+            [[rng.uniform(FLOAT_LO, FLOAT_HI) for _ in range(M)] for _ in range(N)],
+            dtype=_numpy.float64,
+        )
+        ann_a = f"NDArray[Float, {M}, {N}]"
+        ann_b = f"NDArray[Float, {N}, {M}]"
+    else:
+        a = _numpy.array(
+            [[rng.randint(INT_LO, INT_HI) for _ in range(N)] for _ in range(M)],
+            dtype=_numpy.int64,
+        )
+        b = _numpy.array(
+            [[rng.randint(INT_LO, INT_HI) for _ in range(M)] for _ in range(N)],
+            dtype=_numpy.int64,
+        )
+        ann_a = f"NDArray[Integer, {M}, {N}]"
+        ann_b = f"NDArray[Integer, {N}, {M}]"
+
+    n_ops = rng.randint(5, 8)
+    body_lines: list[str] = ["    y = a\n"]
+    y = a
+    for _ in range(n_ops):
+        choices = []
+        if y.ndim == 2:
+            choices += ["transpose", "swapaxes", "reshape_flatten", "matmul_b",
+                        "expand_dims", "where_self"]
+        elif y.ndim == 1:
+            choices += ["expand_dims", "slice", "concat_self", "where_self"]
+        elif y.ndim == 3:
+            choices += ["squeeze", "reshape_flatten"]
+        if not choices:
+            break
+        op = rng.choice(choices)
+        if op == "transpose":
+            body_lines.append("    y = np.transpose(y)\n")
+            y = _numpy.transpose(y)
+        elif op == "swapaxes":
+            body_lines.append("    y = np.swapaxes(y, 0, 1)\n")
+            y = _numpy.swapaxes(y, 0, 1)
+        elif op == "reshape_flatten":
+            body_lines.append(f"    y = np.reshape(y, ({y.size},))\n")
+            y = _numpy.reshape(y, (y.size,))
+        elif op == "matmul_b":
+            if y.ndim == 2 and y.shape[-1] == b.shape[0]:
+                body_lines.append("    y = np.matmul(y, b)\n")
+                y = _numpy.matmul(y, b)
+            else:
+                body_lines.append("    y = np.transpose(y)\n")
+                y = _numpy.transpose(y)
+        elif op == "expand_dims":
+            body_lines.append("    y = np.expand_dims(y, 0)\n")
+            y = _numpy.expand_dims(y, 0)
+        elif op == "squeeze":
+            if 1 in y.shape:
+                body_lines.append("    y = np.squeeze(y)\n")
+                y = _numpy.squeeze(y)
+            else:
+                body_lines.append("    y = np.transpose(y)\n")
+                y = _numpy.transpose(y)
+        elif op == "where_self":
+            body_lines.append("    y = np.where(y > 0, y, y * 0)\n")
+            y = _numpy.where(y > 0, y, y * 0)
+        elif op == "slice":
+            if y.ndim == 1 and y.shape[0] >= 2:
+                stop = max(2, y.shape[0] // 2 + 1)
+                body_lines.append(f"    y = y[0:{stop}]\n")
+                y = y[0:stop]
+        elif op == "concat_self":
+            if y.ndim == 1:
+                body_lines.append("    y = np.concatenate([y, y])\n")
+                y = _numpy.concatenate([y, y])
+
+    red_op = rng.choice(REDUCTIONS_FLOAT if is_float else REDUCTIONS_INT)
+    body_lines.append(f"    out = np.{red_op}(y)\n")
+    ref = getattr(_numpy, red_op)(y)
+    if is_float or red_op == "mean":
+        ref_val = float(ref)
+        # Looser tolerance: deeper chains compound float drift.
+        asserts = _float_assert_lines("out", ref_val, tol=1e-2)
+    else:
+        ref_val = int(ref)
+        asserts = f"    assert out == {ref_val}\n"
+
+    source = (
+        _PROLOGUE
+        + "@zk_circuit\n"
+        + f"def f(a: {ann_a}, b: {ann_b}):\n"
+        + "".join(body_lines)
+        + asserts
+    )
+    return source, {"a": a.tolist(), "b": b.tolist()}, "L", ref_val, True
+
+
+def _gen_shape_m(rng: random.Random) -> tuple[str, dict, str, object, bool]:
+    """Shape M: bitwise / logical chains → reduce.
+
+    Picks a binary op out of {&, |, ^, logical_and, logical_or} and
+    composes 1-2 such ops.
+    """
+    size = rng.choice([3, 4, 6])
+    # `np.logical_and/or` take int / bool; `&|^` work on ints. Choose a
+    # mode that determines both the input dtype and the op pool.
+    mode = rng.choice(["int_bitwise", "int_logical", "bool_logical"])
+
+    if mode == "int_bitwise":
+        x = _numpy.array(
+            [rng.randint(INT_LO, INT_HI) for _ in range(size)],
+            dtype=_numpy.int64,
+        )
+        y = _numpy.array(
+            [rng.randint(INT_LO, INT_HI) for _ in range(size)],
+            dtype=_numpy.int64,
+        )
+        ann = f"NDArray[Integer, {size}]"
+        op_src = rng.choice(["x & y", "x | y", "x ^ y"])
+        z = eval(op_src, {"x": x, "y": y})
+        body = f"    z = {op_src}\n    out = np.sum(z)\n"
+    elif mode == "int_logical":
+        x = _numpy.array(
+            [rng.randint(INT_LO, INT_HI) for _ in range(size)],
+            dtype=_numpy.int64,
+        )
+        y = _numpy.array(
+            [rng.randint(INT_LO, INT_HI) for _ in range(size)],
+            dtype=_numpy.int64,
+        )
+        ann = f"NDArray[Integer, {size}]"
+        fn = rng.choice(["logical_and", "logical_or"])
+        z = getattr(_numpy, fn)(x, y)
+        body = f"    z = np.{fn}(x, y)\n    out = np.sum(z)\n"
+    else:  # bool_logical — feed bool arrays as Integer 0/1 inputs
+        x = _numpy.array([rng.choice([0, 1]) for _ in range(size)], dtype=_numpy.int64)
+        y = _numpy.array([rng.choice([0, 1]) for _ in range(size)], dtype=_numpy.int64)
+        ann = f"NDArray[Integer, {size}]"
+        fn = rng.choice(["logical_and", "logical_or"])
+        z = getattr(_numpy, fn)(x, y)
+        body = f"    z = np.{fn}(x, y)\n    out = np.sum(z)\n"
+
+    ref_val = int(_numpy.sum(z))
+    asserts = f"    assert out == {ref_val}\n"
+    source = (
+        _PROLOGUE
+        + "@zk_circuit\n"
+        + f"def f(x: {ann}, y: {ann}):\n"
+        + body
+        + asserts
+    )
+    # The runner dispatches by key set; rename x/y -> a/b to fit the
+    # {a, b} arity bucket.
+    source = source.replace("def f(x: ", "def f(a: ").replace("y: ", "b: ", 1)
+    # Inside the body, rewrite the references too.
+    source = source.replace("x & y", "a & b").replace("x | y", "a | b").replace("x ^ y", "a ^ b")
+    source = source.replace("np.logical_and(x, y)", "np.logical_and(a, b)")
+    source = source.replace("np.logical_or(x, y)", "np.logical_or(a, b)")
+    return source, {"a": x.tolist(), "b": y.tolist()}, "M", ref_val, True
+
+
+def _gen_shape_n(rng: random.Random) -> tuple[str, dict, str, object, bool]:
+    """Shape N: comparison + count.
+
+    Examples:
+      np.sum(x > k)
+      np.sum(np.logical_and(x > lo, x < hi))
+      np.sum((x > 0) & (x < 5))
+    """
+    size = rng.choice([4, 6, 8])
+    x = _numpy.array(
+        [rng.randint(INT_LO, INT_HI) for _ in range(size)],
+        dtype=_numpy.int64,
+    )
+    ann = f"NDArray[Integer, {size}]"
+
+    flavor = rng.choice(["single_cmp", "range_logical", "range_bitwise"])
+    if flavor == "single_cmp":
+        k = rng.randint(INT_LO, INT_HI)
+        cmp_op = rng.choice([">", "<", ">=", "<=", "==", "!="])
+        expr_np = eval(f"x {cmp_op} k", {"x": x, "k": k})
+        body = f"    out = np.sum(x {cmp_op} {k})\n"
+    elif flavor == "range_logical":
+        lo = rng.randint(INT_LO, INT_HI - 1)
+        hi = rng.randint(lo + 1, INT_HI + 1)
+        expr_np = _numpy.logical_and(x > lo, x < hi)
+        body = f"    out = np.sum(np.logical_and(x > {lo}, x < {hi}))\n"
+    else:  # range_bitwise — uses `&` on bool arrays
+        lo = rng.randint(INT_LO, INT_HI - 1)
+        hi = rng.randint(lo + 1, INT_HI + 1)
+        expr_np = (x > lo) & (x < hi)
+        body = f"    out = np.sum((x > {lo}) & (x < {hi}))\n"
+
+    ref_val = int(_numpy.sum(expr_np))
+    asserts = f"    assert out == {ref_val}\n"
+    source = (
+        _PROLOGUE
+        + "@zk_circuit\n"
+        + f"def f(x: {ann}):\n"
+        + body
+        + asserts
+    )
+    return source, {"x": x.tolist()}, "N", ref_val, True
+
+
 SHAPE_GENERATORS = {
     "A": _gen_shape_a,
     "B": _gen_shape_b,
@@ -639,6 +1029,11 @@ SHAPE_GENERATORS = {
     "G": _gen_shape_g,
     "H": _gen_shape_h,
     "I": _gen_shape_i,
+    "J": _gen_shape_j,
+    "K": _gen_shape_k,
+    "L": _gen_shape_l,
+    "M": _gen_shape_m,
+    "N": _gen_shape_n,
 }
 
 
@@ -709,7 +1104,8 @@ def _zinnia_child_worker(source: str, inputs_repr: dict, sys_path: list, sys_cwd
                 np_inputs[k] = np.asarray(v)
             else:
                 np_inputs[k] = v
-        # Generators use one of: {x}, {a}, {a, b}. Dispatch by key set.
+        # Generators use one of: {x}, {a}, {a, b}, {x, i}, {x, i, j}.
+        # Dispatch by key set.
         keys = set(np_inputs)
         if keys == {"x"}:
             result = f(np_inputs["x"])
@@ -717,6 +1113,10 @@ def _zinnia_child_worker(source: str, inputs_repr: dict, sys_path: list, sys_cwd
             result = f(np_inputs["a"])
         elif keys == {"a", "b"}:
             result = f(np_inputs["a"], np_inputs["b"])
+        elif keys == {"x", "i"}:
+            result = f(np_inputs["x"], np_inputs["i"])
+        elif keys == {"x", "i", "j"}:
+            result = f(np_inputs["x"], np_inputs["i"], np_inputs["j"])
         else:
             raise RuntimeError(f"unknown input shape: {list(np_inputs)}")
         satisfied = bool(getattr(result, "satisfied", False))
@@ -891,9 +1291,12 @@ def main(argv=None) -> int:
     # report retains a decent baseline of the existing surface; I (requires)
     # is the most expensive (Phase E) so it gets the smallest weight.
     shape_weights = {
-        "A": 3, "B": 3, "C": 3,
-        "D": 3, "E": 3, "F": 3, "G": 3, "H": 3,
+        "A": 2, "B": 2, "C": 2,
+        "D": 2, "E": 2, "F": 2, "G": 2, "H": 2,
         "I": 2,
+        # v2 shapes: weight the new surface area a bit higher so the
+        # sweep actually exercises them.
+        "J": 3, "K": 3, "L": 3, "M": 3, "N": 3,
     }
     shape_population = list(shape_weights.keys())
     shape_weight_list = [shape_weights[s] for s in shape_population]
