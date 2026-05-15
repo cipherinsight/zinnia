@@ -41,6 +41,14 @@ Generates small numpy-like programs from eighteen shapes:
        fuzz-finding-v3-aug-assign-subscript — so the generator avoids
        it).
     R) `np.cumsum` / `np.diff` / `np.outer` over 1-D arrays → reduce.
+    S) axis-keyed reductions — `np.sum/max/min/mean(arr, axis=k)`
+       on 2-D / 3-D integer arrays. Reference is rank-(n-1); fuzzer
+       asserts element-wise on the reduced result.
+    T) broadcasting — binary op between arrays of different-but-
+       compatible shapes (row, column, outer) → reduce to scalar.
+    U) multi-output programs — 2-4 assertions on independent
+       reductions / element-wise transforms of the same input. Exercises
+       fact-stack interactions across assertions.
 
 For each generated program:
 
@@ -1284,6 +1292,185 @@ def _gen_shape_r(rng: random.Random) -> tuple[str, dict, str, object, bool]:
     return source, {"x": x.tolist()}, "R", ref_val, True
 
 
+def _gen_shape_s(rng: random.Random) -> tuple[str, dict, str, object, bool]:
+    """Shape S: axis-keyed reductions on 2-D / 3-D integer arrays.
+
+    Apply ``np.sum/max/min/mean(arr, axis=k)`` for ``k in {0, 1, -1}``.
+    The result has one rank lower than the input; the fuzzer asserts
+    element-wise on the reduced array (or, for higher-rank results,
+    asserts on every element). `mean` over ints returns float in numpy,
+    so use the ``_float_assert_lines`` tolerance form for that case.
+    """
+    ndim = rng.choice([2, 3])
+    op = rng.choice(["sum", "max", "min", "mean"])
+    if ndim == 2:
+        M = rng.choice([2, 3, 4])
+        N = rng.choice([2, 3, 4])
+        a = _numpy.array(
+            [[rng.randint(INT_LO, INT_HI) for _ in range(N)] for _ in range(M)],
+            dtype=_numpy.int64,
+        )
+        ann = f"NDArray[Integer, {M}, {N}]"
+        axis = rng.choice([0, 1, -1])
+    else:  # 3-D
+        D = rng.choice([2, 3])
+        M = rng.choice([2, 3])
+        N = rng.choice([2, 3])
+        a = _numpy.array(
+            [[[rng.randint(INT_LO, INT_HI) for _ in range(N)] for _ in range(M)]
+             for _ in range(D)],
+            dtype=_numpy.int64,
+        )
+        ann = f"NDArray[Integer, {D}, {M}, {N}]"
+        axis = rng.choice([0, 1, 2, -1])
+
+    ref = getattr(_numpy, op)(a, axis=axis)
+    # ref is an ndarray (rank-(n-1)). Emit one assertion per element.
+    body = f"    out = np.{op}(x, axis={axis})\n"
+    assert_lines: list[str] = []
+    if ref.ndim == 1:
+        for i, v in enumerate(ref.tolist()):
+            if op == "mean":
+                assert_lines.append(f"    _d{i} = out[{i}] - ({float(v)!r})")
+                assert_lines.append(f"    assert _d{i} < {FLOAT_TOL!r}")
+                assert_lines.append(f"    assert _d{i} > {-FLOAT_TOL!r}")
+            else:
+                assert_lines.append(f"    assert out[{i}] == {int(v)}")
+    elif ref.ndim == 2:
+        for i in range(ref.shape[0]):
+            for j in range(ref.shape[1]):
+                v = ref[i, j]
+                if op == "mean":
+                    assert_lines.append(f"    _d{i}_{j} = out[{i}, {j}] - ({float(v)!r})")
+                    assert_lines.append(f"    assert _d{i}_{j} < {FLOAT_TOL!r}")
+                    assert_lines.append(f"    assert _d{i}_{j} > {-FLOAT_TOL!r}")
+                else:
+                    assert_lines.append(f"    assert out[{i}, {j}] == {int(v)}")
+    else:
+        # Shouldn't happen given the rank budget, but degrade gracefully —
+        # reduce-of-reduce to a scalar so the assertion is well-defined.
+        body += f"    s = np.{op if op != 'mean' else 'sum'}(out)\n"
+        s_ref = getattr(_numpy, op if op != "mean" else "sum")(ref)
+        if op == "mean":
+            assert_lines.append(f"    _d = s - ({float(s_ref)!r})")
+            assert_lines.append(f"    assert _d < {FLOAT_TOL!r}")
+            assert_lines.append(f"    assert _d > {-FLOAT_TOL!r}")
+        else:
+            assert_lines.append(f"    assert s == {int(s_ref)}")
+
+    asserts = "\n".join(assert_lines) + "\n"
+    source = (
+        _PROLOGUE
+        + "@zk_circuit\n"
+        + f"def f(x: {ann}):\n"
+        + body
+        + asserts
+    )
+    return source, {"x": a.tolist()}, "S", ref.tolist(), True
+
+
+def _gen_shape_t(rng: random.Random) -> tuple[str, dict, str, object, bool]:
+    """Shape T: broadcasting — two arrays of different-but-compatible
+    shapes; combine elementwise; reduce to scalar.
+
+    Patterns:
+      - ``row``  : ``(M, N) op (N,)``
+      - ``col``  : ``(M, N) op (M, 1)``
+      - ``outer``: ``(M, 1) op (1, N)``
+    """
+    pattern = rng.choice(["row", "col", "outer"])
+    bin_op = rng.choice(["+", "-", "*"])
+    M = rng.choice([2, 3, 4])
+    N = rng.choice([2, 3, 4])
+
+    def _gen_array(shape: tuple[int, ...]) -> _numpy.ndarray:
+        flat = [rng.randint(INT_LO, INT_HI) for _ in range(int(_numpy.prod(shape)))]
+        return _numpy.asarray(flat, dtype=_numpy.int64).reshape(shape)
+
+    if pattern == "row":
+        a = _gen_array((M, N))
+        b = _gen_array((N,))
+        ann_a = f"NDArray[Integer, {M}, {N}]"
+        ann_b = f"NDArray[Integer, {N}]"
+    elif pattern == "col":
+        a = _gen_array((M, N))
+        b = _gen_array((M, 1))
+        ann_a = f"NDArray[Integer, {M}, {N}]"
+        ann_b = f"NDArray[Integer, {M}, 1]"
+    else:  # outer
+        a = _gen_array((M, 1))
+        b = _gen_array((1, N))
+        ann_a = f"NDArray[Integer, {M}, 1]"
+        ann_b = f"NDArray[Integer, 1, {N}]"
+
+    if bin_op == "+":
+        combined = a + b
+    elif bin_op == "-":
+        combined = a - b
+    else:
+        combined = a * b
+    ref_val = int(_numpy.sum(combined))
+
+    body = (
+        f"    out = np.sum(a {bin_op} b)\n"
+    )
+    asserts = f"    assert out == {ref_val}\n"
+    source = (
+        _PROLOGUE
+        + "@zk_circuit\n"
+        + f"def f(a: {ann_a}, b: {ann_b}):\n"
+        + body
+        + asserts
+    )
+    return source, {"a": a.tolist(), "b": b.tolist()}, "T", ref_val, True
+
+
+def _gen_shape_u(rng: random.Random) -> tuple[str, dict, str, object, bool]:
+    """Shape U: multi-output programs — 2-4 assertions on independent
+    reductions / transforms of the same integer input array.
+
+    Tests that multiple per-value facts coexist in the resolver / fact
+    stack without interference.
+    """
+    size = rng.choice([4, 6, 8])
+    x = _numpy.array(
+        [rng.randint(INT_LO, INT_HI) for _ in range(size)],
+        dtype=_numpy.int64,
+    )
+    ann = f"NDArray[Integer, {size}]"
+
+    # Catalogue of per-shape reductions/transforms with integer outputs.
+    # Each entry is (binding_name, source_expr, numpy_value_fn).
+    catalogue: list[tuple[str, str, "callable"]] = [
+        ("a", "np.sum(x)",     lambda arr: int(_numpy.sum(arr))),
+        ("b", "np.max(x)",     lambda arr: int(_numpy.max(arr))),
+        ("c", "np.min(x)",     lambda arr: int(_numpy.min(arr))),
+        ("d", "np.sum(x * x)", lambda arr: int(_numpy.sum(arr * arr))),
+        ("e", "x[0]",          lambda arr: int(arr[0])),
+        ("f", "x[-1]",         lambda arr: int(arr[-1])),
+        ("g", "np.sum(x) - x[0]", lambda arr: int(_numpy.sum(arr) - int(arr[0]))),
+    ]
+    k = rng.randint(2, 4)
+    chosen = rng.sample(catalogue, k=k)
+
+    body_lines: list[str] = []
+    assert_lines: list[str] = []
+    for name, expr, fn in chosen:
+        body_lines.append(f"    {name} = {expr}")
+        assert_lines.append(f"    assert {name} == {fn(x)}")
+    body = "\n".join(body_lines) + "\n"
+    asserts = "\n".join(assert_lines) + "\n"
+    source = (
+        _PROLOGUE
+        + "@zk_circuit\n"
+        + f"def f(x: {ann}):\n"
+        + body
+        + asserts
+    )
+    ref_val = [fn(x) for _, _, fn in chosen]
+    return source, {"x": x.tolist()}, "U", ref_val, True
+
+
 SHAPE_GENERATORS = {
     "A": _gen_shape_a,
     "B": _gen_shape_b,
@@ -1303,6 +1490,9 @@ SHAPE_GENERATORS = {
     "P": _gen_shape_p,
     "Q": _gen_shape_q,
     "R": _gen_shape_r,
+    "S": _gen_shape_s,
+    "T": _gen_shape_t,
+    "U": _gen_shape_u,
 }
 
 
@@ -1568,6 +1758,8 @@ def main(argv=None) -> int:
         "J": 3, "K": 3, "L": 3, "M": 3, "N": 3,
         # v3 shapes: emphasise the new surface again.
         "O": 4, "P": 4, "Q": 4, "R": 4,
+        # v4 shapes: emphasise the newest surface.
+        "S": 4, "T": 4, "U": 4,
     }
     shape_population = list(shape_weights.keys())
     shape_weight_list = [shape_weights[s] for s in shape_population]
