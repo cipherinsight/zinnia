@@ -199,6 +199,20 @@ impl Halo2Synthesizer {
         zc
     }
 
+    /// Truthy bit of `a`: 1 if a ≠ 0, 0 if a = 0. Constrained via `is_zero`
+    /// + `bool_not` gates (`1 - is_zero(a)`). Used by `logical_and` /
+    /// `logical_or` to coerce non-{0,1} operands per numpy/mock semantics.
+    fn truthy_bit(&mut self, a: &Halo2CellRef) -> Halo2CellRef {
+        let iz = self.is_zero_gadget(a);
+        let row = self.offset;
+        self.rec_sel("bool_not");
+        let _ = self.rec_advice(0, iz.value, "truthy_iz");
+        self.rec_copy(&iz, 0, row);
+        let truthy = self.rec_advice(2, Fp::one() - iz.value, "truthy_bit");
+        self.offset += 1;
+        truthy
+    }
+
     /// Constrained signed decomposition: returns (abs, is_neg) where is_neg ∈ {0,1}.
     /// Uses cond_neg gate + bit constraint on the sign.
     fn signed_decompose(&mut self, val: &Halo2CellRef) -> (Halo2CellRef, Halo2CellRef) {
@@ -998,30 +1012,74 @@ impl Synthesizer for Halo2Synthesizer {
     // ── Transcendentals (constrained via Horner polynomial evaluation) ─
 
     fn sin_f(&mut self, a: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        // sin(x) ≈ polynomial on [0, pi), reduce input via modular arithmetic.
-        // Compute: a_abs, reduce mod 2π, evaluate polynomial.
+        // sin(x) via the SIN_COEFS Remez polynomial, fit on [0, π).
+        //
+        // The polynomial is only accurate inside its fit domain — at x = 5 it
+        // already drifts by ~0.04, at x = 6.28 by ~0.86. Naïvely evaluating it
+        // on raw `x` produces witness values that disagree with f64 sin by
+        // more than the brackets users write around `np.sin`, so any bracket
+        // assert downstream fails the MockProver gate.
+        //
+        // Previous implementation used `mod_f(a_abs, 2π)` which chains
+        // `div_f`/`mul_f`/`sub_f` over Q-encoded floats. `div_f` returns the
+        // real quotient (not the integer floor), so `mod_f` collapsed to
+        // `a - (a/b)*b ≈ 0` regardless of input — every sin call returned 0.
+        //
+        // Fix: integer division on the Q-encoded operands gives the floor
+        // directly (matches `kernel::fp_mul_rescale` / `mod_i` pattern).
+        // Reduce by π (not 2π) because the polynomial's fit domain is [0, π),
+        // then carry the quotient's parity into the sign: sin(x + π) = -sin(x).
+        //
+        //   |a|  =  q*π + r,   r ∈ [0, π),  q ∈ ℤ_{≥0}
+        //   sin(a) = (-1)^{q + sign(a)} * poly(r)
+        //
+        // q is bounded by |a| / π; for typical Q32 inputs (|a| < 2^31) this
+        // fits comfortably in i64. Parity is extracted via mod_i with b=2.
         let (a_abs, a_sign) = self.signed_decompose(a);
-        let two_pi = self.constant_float(std::f64::consts::PI * 2.0)?;
-        // a_mod = a_abs mod 2π (constrained via div_mod)
-        let a_mod = self.mod_f(&a_abs, &two_pi)?;
-        // Evaluate sin polynomial (Remez coefficients)
+
+        // Range-reduce |a| mod π. `floor_div_i` and `mod_i` operate on the
+        // i64 interpretations of Q-encoded values, which is exactly integer
+        // floor division on the Q-rep — i.e. floor(|a| / π) and |a| - q*π_q
+        // both in Q-encoding.
+        let pi = self.constant_float(std::f64::consts::PI)?;
+        let q_cell = self.floor_div_i(&a_abs, &pi)?;
+        let r_cell = self.mod_i(&a_abs, &pi)?;
+
+        // q_parity = q mod 2 ∈ {0, 1}.
+        let two_int = self.constant_int(2)?;
+        let q_parity = self.mod_i(&q_cell, &two_int)?;
+
+        // Evaluate sin polynomial (Remez coefficients) on r ∈ [0, π).
         let coefs: Vec<Fp> = SIN_COEFS.iter().map(|c| self.quantize_fp(*c)).collect();
-        let sin_val = self.poly_eval_horner(&a_mod, &coefs);
-        // Apply sign: sin(-x) = -sin(x) via cond_neg
+        let sin_val = self.poly_eval_horner(&r_cell, &coefs);
+
+        // Combined sign: a_sign XOR q_parity. Both are bits, so XOR is
+        // `s1 + s2 - 2*s1*s2`. Built from add/mul/sub gates.
+        let s1_s2 = self.bin_gate("mul", &a_sign, &q_parity, a_sign.value * q_parity.value, "sin_s1s2");
+        let two_s1_s2 = self.bin_gate("add", &s1_s2, &s1_s2, s1_s2.value + s1_s2.value, "sin_2s1s2");
+        let s1_plus_s2 = self.bin_gate("add", &a_sign, &q_parity, a_sign.value + q_parity.value, "sin_s1ps2");
+        let final_sign = self.bin_gate(
+            "sub", &s1_plus_s2, &two_s1_s2, s1_plus_s2.value - two_s1_s2.value, "sin_sign_xor",
+        );
+        // final_sign ∈ {0, 1}: required for cond_neg to produce ±sin_val.
+        self.constrain_bit(&final_sign);
+
+        // Apply combined sign via cond_neg: c = sin_val - 2*final_sign*sin_val.
         let row = self.offset;
         self.rec_sel("cond_neg");
         let _ = self.rec_advice(0, sin_val.value, "sin_val");
         self.rec_copy(&sin_val, 0, row);
-        let _ = self.rec_advice(1, a_sign.value, "sin_sign");
-        self.rec_copy(&a_sign, 1, row);
-        let result_val = if a_sign.value == Fp::one() { -sin_val.value } else { sin_val.value };
+        let _ = self.rec_advice(1, final_sign.value, "sin_sign");
+        self.rec_copy(&final_sign, 1, row);
+        let result_val = if final_sign.value == Fp::one() { -sin_val.value } else { sin_val.value };
         let result = self.rec_advice(2, result_val, "sin_result");
         self.offset += 1;
         Ok(result)
     }
 
     fn cos_f(&mut self, a: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        // cos(x) = sin(x + π/2)
+        // cos(x) = sin(x + π/2). The shift is exact in Q-encoding; `sin_f`
+        // owns the range reduction so cos inherits the fix.
         let half_pi = self.constant_float(std::f64::consts::FRAC_PI_2)?;
         let shifted = self.add_f(a, &half_pi)?;
         self.sin_f(&shifted)
@@ -1174,21 +1232,36 @@ impl Synthesizer for Halo2Synthesizer {
     }
 
     // ── Boolean logic (constrained via gates) ─────────────────────────
+    //
+    // numpy `logical_and`/`logical_or`/`logical_not` use truthiness semantics
+    // (any non-zero value is true). The mock backend mirrors this. The
+    // `bool_and`/`bool_or`/`bool_not` gates here only enforce the algebraic
+    // identity (`c = a*b`, `c = a + b - a*b`, `c = 1 - a`); they do *not*
+    // constrain the operands to {0, 1}. Passing e.g. (5, 3) into the raw gate
+    // would yield 15 / -7 / -4 respectively — divergent from numpy/mock.
+    //
+    // Fix: coerce each operand to its truthy bit via `is_zero_gadget` first.
+    // `is_zero(a) ∈ {0, 1}` by construction, so `1 - is_zero(a)` is the
+    // truthy bit. The gate output is then automatically in {0, 1}.
+    //
+    // Internal callers (`lt_i`, `lte_i`, …) already pass {0, 1} cells, so the
+    // extra coercion is a no-op semantically (just a few extra gates).
 
     fn logical_and(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        Ok(self.bin_gate("bool_and", a, b, a.value * b.value, "and"))
+        let ta = self.truthy_bit(a);
+        let tb = self.truthy_bit(b);
+        Ok(self.bin_gate("bool_and", &ta, &tb, ta.value * tb.value, "and"))
     }
     fn logical_or(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        Ok(self.bin_gate("bool_or", a, b, a.value + b.value - a.value * b.value, "or"))
+        let ta = self.truthy_bit(a);
+        let tb = self.truthy_bit(b);
+        Ok(self.bin_gate("bool_or", &ta, &tb, ta.value + tb.value - ta.value * tb.value, "or"))
     }
     fn logical_not(&mut self, a: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        let row = self.offset;
-        self.rec_sel("bool_not");
-        let _ = self.rec_advice(0, a.value, "not_a");
-        self.rec_copy(a, 0, row);
-        let cc = self.rec_advice(2, Fp::one() - a.value, "not_c");
-        self.offset += 1;
-        Ok(cc)
+        // `not(a)` is exactly `is_zero(a)` — 1 if a = 0, 0 if a ≠ 0. The
+        // previous `c = 1 - a` gate only worked for a ∈ {0, 1}; for arbitrary
+        // truthy a this diverged from numpy/mock semantics.
+        Ok(self.is_zero_gadget(a))
     }
 
     // ── Select (constrained via gate) ─────────────────────────────────

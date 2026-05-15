@@ -450,6 +450,90 @@ fn halo2_sqrt_value_correctness() {
 }
 
 #[test]
+fn halo2_sin_value_correctness() {
+    // The previous `sin_f` evaluated SIN_COEFS (fit on [0, π)) without proper
+    // range reduction. `mod_f(a_abs, 2π)` collapsed to ≈ 0 because `div_f`
+    // returns the real quotient (not floor), so sin always returned ≈ 0 and
+    // any bracket assert downstream failed MockProver. The fix range-reduces
+    // |a| mod π and carries the quotient's parity into the sign.
+    //
+    // Brackets reflect Q32 polynomial precision (~1e-4 inside [0, π), wider
+    // for values that mod-reduce near the endpoints).
+    //   sin(0.1)  ≈ 0.0998  → (0.098, 0.101)
+    //   sin(0.5)  ≈ 0.4794  → (0.477, 0.482)
+    //   sin(1.0)  ≈ 0.8415  → (0.840, 0.843)
+    //   sin(1.5)  ≈ 0.9975  → (0.996, 0.999)
+    //   sin(3.0)  ≈ 0.1411  → (0.139, 0.143)
+    //   sin(-0.5) ≈ -0.4794 → (-0.482, -0.477)  (sign branch)
+    //   sin(6.0)  ≈ -0.2794 → (-0.282, -0.277)  (post-π reduction + parity flip)
+    assert_op_in_bracket(IR::SinF, 0.1, 0.098, 0.101, 14);
+    assert_op_in_bracket(IR::SinF, 0.5, 0.477, 0.482, 14);
+    assert_op_in_bracket(IR::SinF, 1.0, 0.840, 0.843, 14);
+    assert_op_in_bracket(IR::SinF, 1.5, 0.996, 0.999, 14);
+    assert_op_in_bracket(IR::SinF, 3.0, 0.139, 0.143, 14);
+    assert_op_in_bracket(IR::SinF, -0.5, -0.482, -0.477, 14);
+    assert_op_in_bracket(IR::SinF, 6.0, -0.282, -0.277, 14);
+}
+
+#[test]
+fn halo2_cos_value_correctness() {
+    // cos(x) = sin(x + π/2). Inherits the range-reduction fix via sin.
+    //   cos(0.0)  ≈ 1.0    → (0.998, 1.002)
+    //   cos(0.1)  ≈ 0.9950 → (0.993, 0.997)
+    //   cos(0.5)  ≈ 0.8776 → (0.875, 0.880)
+    //   cos(1.0)  ≈ 0.5403 → (0.538, 0.543)
+    //   cos(-0.5) ≈ 0.8776 → (0.875, 0.880)  (even function)
+    //   cos(3.0)  ≈ -0.9900 → (-0.993, -0.987)
+    assert_op_in_bracket(IR::CosF, 0.0, 0.998, 1.002, 14);
+    assert_op_in_bracket(IR::CosF, 0.1, 0.993, 0.997, 14);
+    assert_op_in_bracket(IR::CosF, 0.5, 0.875, 0.880, 14);
+    assert_op_in_bracket(IR::CosF, 1.0, 0.538, 0.543, 14);
+    assert_op_in_bracket(IR::CosF, -0.5, 0.875, 0.880, 14);
+    assert_op_in_bracket(IR::CosF, 3.0, -0.993, -0.987, 14);
+}
+
+/// Build an IR `LogicalAnd`/`LogicalOr` of two integer constants and assert
+/// the boolean result equals `expected` ∈ {0, 1}. Used to verify the halo2
+/// truthy-coercion fix: non-{0,1} operands like (5, 3) must reduce to 1
+/// (numpy/mock semantics), not 15 / -7 / etc.
+fn assert_logical_op_equals(op: IR, a: i64, b: i64, expected: i64, k: u32) {
+    let ir = make_graph(vec![
+        (IR::ConstantInt { value: a }, vec![]),
+        (IR::ConstantInt { value: b }, vec![]),
+        (op, vec![0, 1]),
+        (IR::ConstantInt { value: expected }, vec![]),
+        (IR::EqI, vec![2, 3]),
+        (IR::Assert, vec![4]),
+    ]);
+    let params = ProvingParams { k, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
+}
+
+#[test]
+fn halo2_logical_or_truthiness() {
+    // numpy: np.logical_or(a, b) = (a != 0) | (b != 0). The previous halo2
+    // lowering wired the raw values into `c = a + b - a*b`, producing 15 / -7
+    // for (5, 3) etc. The fix coerces each operand to its truthy bit first.
+    assert_logical_op_equals(IR::LogicalOr, 5, 0, 1, 8);
+    assert_logical_op_equals(IR::LogicalOr, 0, 3, 1, 8);
+    assert_logical_op_equals(IR::LogicalOr, 5, 3, 1, 8);
+    assert_logical_op_equals(IR::LogicalOr, 0, 0, 0, 8);
+    assert_logical_op_equals(IR::LogicalOr, -7, 0, 1, 8);
+    assert_logical_op_equals(IR::LogicalOr, -1, -1, 1, 8);
+}
+
+#[test]
+fn halo2_logical_and_truthiness() {
+    // numpy: np.logical_and(a, b) = (a != 0) & (b != 0).
+    assert_logical_op_equals(IR::LogicalAnd, 5, 0, 0, 8);
+    assert_logical_op_equals(IR::LogicalAnd, 0, 3, 0, 8);
+    assert_logical_op_equals(IR::LogicalAnd, 5, 3, 1, 8);
+    assert_logical_op_equals(IR::LogicalAnd, 0, 0, 0, 8);
+    assert_logical_op_equals(IR::LogicalAnd, -7, 4, 1, 8);
+    assert_logical_op_equals(IR::LogicalAnd, -1, -1, 1, 8);
+}
+
+#[test]
 fn test_bitwise_with_negative() {
     // -1 & 0xF = 0xF (the low 4 bits of -1 are all set).
     let ir = make_graph(vec![
