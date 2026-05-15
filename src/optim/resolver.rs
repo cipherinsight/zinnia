@@ -833,8 +833,9 @@ impl Resolver for SmtResolver {
 // nesting issues with `&self` and the cache lock.
 // ---------------------------------------------------------------------------
 
-/// Outcome categorisation for `smt_query`. Wraps the resolved value (or the
-/// reason we didn't resolve) plus the formula size (statement count walked).
+/// Outcome categorisation for `smt_query_with_budget`. Wraps the resolved
+/// value (or the reason we didn't resolve) plus the formula size (statement
+/// count walked).
 struct SmtQueryOut {
     resolved: Option<ResolvedValue>,
     /// Number of distinct IR statements visited by the walker. Used to
@@ -847,29 +848,15 @@ struct SmtQueryOut {
 }
 
 /// Build a Z3 formula constraining the wire at `root` and check whether it
-/// has a unique value. Returns `Some(ResolvedValue::Int|Bool)` if Z3 proves
-/// uniqueness within the time budget; `None` on timeout / non-unique.
+/// has a unique value, with an optional cap on formula size. Returns
+/// `Some(ResolvedValue::Int|Bool)` if Z3 proves uniqueness within the time
+/// budget; `None` on timeout / non-unique. When the reverse-reachability
+/// walk exceeds `max_formula_size` IR statements, the walker aborts and the
+/// resolver returns `None` — paying only the walk cost, not Z3 time, on the
+/// heaviest queries.
 ///
 /// Mirrors the "find a model, then add `expr != that_value` and re-check"
 /// pattern from the old Python `SMTUtils.resolve_expr`.
-///
-/// Returns `(resolution, formula_size)`. The size is the count of distinct
-/// IR statements visited by the reverse-reachability walk.
-fn smt_query(
-    root: StmtId,
-    stmts: &[IRStatement],
-    cache: &HashMap<StmtId, ResolvedValue>,
-    timeout_ms: u64,
-    want_bool: bool,
-) -> (Option<ResolvedValue>, usize) {
-    let out = smt_query_with_budget(root, stmts, cache, timeout_ms, want_bool, None);
-    (out.resolved, out.formula_size)
-}
-
-/// Same as [`smt_query`] but with an optional cap on formula size. When the
-/// reverse-reachability walk exceeds `max_formula_size` IR statements, the
-/// walker aborts and the resolver returns `None` — paying only the walk cost,
-/// not Z3 time, on the heaviest queries.
 fn smt_query_with_budget(
     root: StmtId,
     stmts: &[IRStatement],

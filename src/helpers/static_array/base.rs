@@ -34,15 +34,6 @@ fn is_pure_numeric_composite(val: &Value) -> bool {
     }
 }
 
-/// Returns true if any leaf in the composite is `Value::Complex`.
-fn composite_has_complex(val: &Value) -> bool {
-    match val {
-        Value::Complex { .. } => true,
-        Value::List(d) | Value::Tuple(d) => d.values.iter().any(composite_has_complex),
-        _ => false,
-    }
-}
-
 /// Infer the dtype for a numeric composite. Any `Float` leaf forces `Float`;
 /// otherwise `Integer` (Boolean folds into Integer storage).
 fn infer_numeric_dtype(val: &Value) -> NumberType {

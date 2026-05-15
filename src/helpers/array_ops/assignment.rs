@@ -136,7 +136,6 @@ pub fn dyn_setitem_slice(
             start: Value,
             stop: Value,
             step: Value,
-            max_len: usize,
             axis_len: usize,
         },
     }
@@ -204,14 +203,12 @@ pub fn dyn_setitem_slice(
                     let start_ir = to_ir(b, start, 0);
                     let stop_ir = to_ir(b, stop, dim);
                     let step_ir = to_ir(b, step, 1);
-                    let max_len = shape[ax];
-                    value_shape.push(max_len);
+                    value_shape.push(shape[ax]);
                     axis_specs.push(AxisSpec {
                         coords: AxisCoords::Dynamic {
                             start: start_ir,
                             stop: stop_ir,
                             step: step_ir,
-                            max_len,
                             axis_len: shape[ax],
                         },
                         src_axis: ax,
@@ -388,7 +385,7 @@ pub fn dyn_setitem_slice(
                         }
                         val_coord_idx += 1;
                     }
-                    AxisCoords::Dynamic { start, stop, step, max_len: _, axis_len } => {
+                    AxisCoords::Dynamic { start, stop, step, axis_len } => {
                         let idx_in_slice = val_coords[val_coord_idx] as i64;
                         let idx_const = b.ir_constant_int(idx_in_slice);
                         let offset = b.ir_mul_i(&idx_const, step);

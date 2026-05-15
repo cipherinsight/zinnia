@@ -1605,10 +1605,6 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
 // Helper functions
 // ---------------------------------------------------------------------------
 
-fn ptr_of(val: &Value) -> StmtId {
-    val.stmt_id().unwrap_or_else(|| panic!("Value must have a pointer: {:?}", val))
-}
-
 fn int_binary_ir(ir_id: StmtId, args: &[Value], op: impl Fn(i64, i64) -> Option<i64>) -> Value {
     let la = args[0].int_val();
     let lb = args[1].int_val();

@@ -238,22 +238,6 @@ fn resolve_dtype(arrays: &[DynamicNDArrayData]) -> NumberType {
     }
 }
 
-/// Cast a read element to the target dtype if needed.
-fn cast_element(b: &mut IRBuilder, val: &Value, src_dtype: NumberType, dst_dtype: NumberType) -> ScalarValue<i64> {
-    if src_dtype == dst_dtype {
-        return value_to_scalar_i64(val);
-    }
-    // Need to cast: int→float or float→int.
-    let casted = match dst_dtype {
-        NumberType::Float => b.ir_float_cast(val),
-        NumberType::Integer => b.ir_int_cast(val),
-        NumberType::Complex => panic!(
-            "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
-        ),
-    };
-    value_to_scalar_i64(&casted)
-}
-
 /// Concatenate dynamic arrays along an existing axis.
 ///
 /// Supports: dtype promotion, axis=None (flatten then concat), scalar inputs.
