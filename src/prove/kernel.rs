@@ -264,23 +264,74 @@ pub fn signed_decompose(v: Fp) -> (Fp, bool) {
 }
 
 /// Fixed-point multiplication with rescaling.
-/// raw = a * b; result = raw / scale; remainder = raw - result * scale.
+///
+/// Computes `result = floor((a * b) / scale)` and `remainder = (a * b) - result * scale`,
+/// where `scale = 2^precision_bits`. Uses i128 integer division (via `div_euclid` /
+/// `rem_euclid`) — NOT field modular inverse. The field-element `scale.invert()`
+/// approach is unsound: for non-trivial products it wraps the prime modulus and
+/// produces a value unrelated to integer division.
+///
+/// `div_euclid` gives `0 <= remainder < scale.abs()`, matching the div_mod gate's
+/// intended remainder-range semantics.
 pub fn fp_mul_rescale(a: Fp, b: Fp, precision_bits: u32) -> (Fp, Fp) {
-    let raw = a * b;
-    let scale = scale_fp(precision_bits);
-    let scale_inv = scale.invert().unwrap();
-    let result = raw * scale_inv;
-    let remainder = raw - result * scale;
-    (result, remainder)
+    let a_signed = fp_to_i64(a) as i128;
+    let b_signed = fp_to_i64(b) as i128;
+    let raw = a_signed * b_signed;
+    let scale = 1i128 << precision_bits;
+    let quotient = raw.div_euclid(scale);
+    let remainder = raw.rem_euclid(scale); // 0 <= remainder < scale
+    let result_fp = i128_to_fp(quotient);
+    let remainder_fp = Fp::from(remainder as u64); // remainder is non-negative and < 2^precision_bits
+    (result_fp, remainder_fp)
 }
 
 /// Fixed-point division with pre-scaling.
-/// result = (a * scale) / b
+///
+/// Computes `result = floor((a * scale) / b)` where `scale = 2^precision_bits`.
+/// Uses i128 integer division so the result is value-correct (the previous
+/// implementation used field modular inverse and produced wrap-around garbage
+/// for non-trivial inputs). For divide-by-zero, returns zero (matching the prior
+/// `b.invert().unwrap_or(Fp::zero())` behavior).
 pub fn fp_div_prescale(a: Fp, b: Fp, precision_bits: u32) -> Fp {
-    let scale = scale_fp(precision_bits);
-    let a_scaled = a * scale;
-    let b_inv = b.invert().unwrap_or(Fp::zero());
-    a_scaled * b_inv
+    let b_signed = fp_to_i64(b) as i128;
+    if b_signed == 0 {
+        return Fp::zero();
+    }
+    let a_signed = fp_to_i64(a) as i128;
+    let scale = 1i128 << precision_bits;
+    let numerator = a_signed * scale;
+    let quotient = numerator.div_euclid(b_signed);
+    i128_to_fp(quotient)
+}
+
+/// Encode a signed i128 as an Fp field element.
+/// Mirrors the encoding used by `quantize` + `quantize_to_fp`: positive values
+/// map to their natural Fp representation; negative values map to `-Fp::from(|v|)`.
+pub fn i128_to_fp(v: i128) -> Fp {
+    if v >= 0 {
+        let u = v as u128;
+        let lo = (u & 0xFFFF_FFFF_FFFF_FFFFu128) as u64;
+        let hi = (u >> 64) as u64;
+        // Fp::from(u64) for lo + Fp::from(u64) * 2^64 for hi.
+        if hi == 0 {
+            Fp::from(lo)
+        } else {
+            let two_pow_64 = Fp::from_u128(1u128 << 64);
+            Fp::from(lo) + Fp::from(hi) * two_pow_64
+        }
+    } else {
+        // -(2^127) is the only i128 whose negation overflows; handle via u128 cast.
+        let u = (v as i128).unsigned_abs();
+        let lo = (u & 0xFFFF_FFFF_FFFF_FFFFu128) as u64;
+        let hi = (u >> 64) as u64;
+        let pos = if hi == 0 {
+            Fp::from(lo)
+        } else {
+            let two_pow_64 = Fp::from_u128(1u128 << 64);
+            Fp::from(lo) + Fp::from(hi) * two_pow_64
+        };
+        -pos
+    }
 }
 
 /// Floor division: returns (quotient, remainder) such that a = b*q + r.
@@ -437,5 +488,165 @@ mod tests {
         // p(x) = 3 + 2*x at x=5 → 13 — precision_bits=0 for raw arithmetic
         let result = horner_eval(Fp::from(5), &[Fp::from(3), Fp::from(2)], 0);
         assert_eq!(result, Fp::from(13));
+    }
+
+    #[test]
+    fn test_i128_to_fp_round_trip() {
+        // Positive, negative, large magnitudes
+        let cases: &[i128] = &[
+            0, 1, -1, 42, -42,
+            (1i128 << 32) - 1,
+            -(1i128 << 32) + 1,
+            (1i128 << 62),
+            -(1i128 << 62),
+            (1i128 << 64),
+            -(1i128 << 64),
+            (1i128 << 100),
+            -(1i128 << 100),
+        ];
+        for &v in cases {
+            let fp = i128_to_fp(v);
+            // For values that fit in i64, fp_to_i64 should round-trip.
+            if v >= i64::MIN as i128 && v <= i64::MAX as i128 {
+                assert_eq!(fp_to_i64(fp), v as i64, "i64-range round-trip failed for {}", v);
+            }
+            // Sign check
+            if v < 0 {
+                assert!(fp_is_negative(fp), "expected negative for {}", v);
+            } else if v > 0 {
+                assert!(!fp_is_negative(fp), "expected non-negative for {}", v);
+            }
+        }
+    }
+
+    #[test]
+    fn fp_mul_rescale_matches_integer_division() {
+        let precision_bits: u32 = 32;
+        let scale = (1i128 << precision_bits) as f64;
+        let pairs: &[(f64, f64)] = &[
+            (1.066508022690349, 1.066508022690349), // the fuzz repro
+            (2.0, 3.0),
+            (-1.5, 2.5),
+            (0.1, 0.1),
+            (1234.5, 0.001),
+            (-2.5264763958797793, 2.5264763958797793),
+            (0.0, 5.0),
+            (5.0, 0.0),
+        ];
+        for &(a, b) in pairs {
+            let aq = quantize_to_fp(a, precision_bits);
+            let bq = quantize_to_fp(b, precision_bits);
+            let (result, _rem) = fp_mul_rescale(aq, bq, precision_bits);
+            let got = dequantize_from_fp(result, precision_bits);
+            let expected = a * b;
+            let err = (got - expected).abs();
+            let one_ulp = 1.0 / scale;
+            // Tolerance: propagated quantization error is bounded by
+            // |b|*ulp(a) + |a|*ulp(b) + 1*ulp(result) plus a small safety factor.
+            let tol = (a.abs() + b.abs() + 4.0) * one_ulp;
+            assert!(
+                err <= tol,
+                "fp_mul_rescale({a}, {b}) -> {got}; expected {expected}; err {err:.2e}, tol {tol:.2e}, ULP {one_ulp:.2e}",
+            );
+        }
+    }
+
+    #[test]
+    fn fp_mul_rescale_remainder_in_range() {
+        let precision_bits: u32 = 32;
+        let scale = 1i128 << precision_bits;
+        let pairs: &[(f64, f64)] = &[
+            (1.066508022690349, 1.066508022690349),
+            (2.0, 3.0),
+            (-1.5, 2.5),
+            (0.1, 0.1),
+            (1234.5, 0.001),
+            (-2.5264763958797793, 2.5264763958797793),
+            (-7.25, -3.5),
+            (1e-3, 1e-3),
+        ];
+        for &(a, b) in pairs {
+            let aq = quantize_to_fp(a, precision_bits);
+            let bq = quantize_to_fp(b, precision_bits);
+            let (_q, rem) = fp_mul_rescale(aq, bq, precision_bits);
+            // remainder should round-trip as a non-negative integer in [0, scale).
+            let rem_i64 = fp_to_i64(rem);
+            assert!(
+                rem_i64 >= 0,
+                "fp_mul_rescale({a}, {b}) remainder {} is negative",
+                rem_i64,
+            );
+            let rem_i128 = rem_i64 as i128;
+            assert!(
+                rem_i128 < scale,
+                "fp_mul_rescale({a}, {b}) remainder {} >= scale {}",
+                rem_i128, scale,
+            );
+        }
+    }
+
+    #[test]
+    fn fp_mul_rescale_div_mod_identity() {
+        // The div_mod gate enforces raw == scale * result + rem in Fp.
+        // Verify this identity holds for our kernel output.
+        let precision_bits: u32 = 32;
+        let scale_fp_val = scale_fp(precision_bits);
+        let pairs: &[(f64, f64)] = &[
+            (1.066508022690349, 1.066508022690349),
+            (-1.5, 2.5),
+            (1234.5, 0.001),
+            (-2.5264763958797793, 2.5264763958797793),
+        ];
+        for &(a, b) in pairs {
+            let aq = quantize_to_fp(a, precision_bits);
+            let bq = quantize_to_fp(b, precision_bits);
+            let raw = aq * bq;
+            let (result, rem) = fp_mul_rescale(aq, bq, precision_bits);
+            let recomputed = scale_fp_val * result + rem;
+            assert_eq!(
+                recomputed, raw,
+                "div_mod identity failed for ({a}, {b})",
+            );
+        }
+    }
+
+    #[test]
+    fn fp_div_prescale_matches_integer_division() {
+        let precision_bits: u32 = 32;
+        let scale = (1i128 << precision_bits) as f64;
+        let pairs: &[(f64, f64)] = &[
+            (1.0, 1.0),
+            (2.0, 3.0),
+            (-1.5, 2.5),
+            (1234.5, 0.001),
+            (1.0, 1.066508022690349),
+            (10.0, -4.0),
+        ];
+        for &(a, b) in pairs {
+            let aq = quantize_to_fp(a, precision_bits);
+            let bq = quantize_to_fp(b, precision_bits);
+            let result = fp_div_prescale(aq, bq, precision_bits);
+            let got = dequantize_from_fp(result, precision_bits);
+            let expected = a / b;
+            let err = (got - expected).abs();
+            // Error is dominated by quantization of `b`: q(b) carries up to 0.5 ULP
+            // absolute, which becomes |a|/b^2 * 0.5 * ulp in the quotient.
+            let one_ulp = 1.0 / scale;
+            let propagated = (a.abs() / (b * b).abs()) * one_ulp + 4.0 * one_ulp;
+            let tol = propagated.max(4.0 * one_ulp);
+            assert!(
+                err <= tol,
+                "fp_div_prescale({a}, {b}) -> {got}; expected {expected}; err {err:.2e}, tol {tol:.2e}",
+            );
+        }
+    }
+
+    #[test]
+    fn fp_div_prescale_div_zero_returns_zero() {
+        let precision_bits: u32 = 32;
+        let aq = quantize_to_fp(5.0, precision_bits);
+        let bq = Fp::zero();
+        let result = fp_div_prescale(aq, bq, precision_bits);
+        assert_eq!(result, Fp::zero());
     }
 }

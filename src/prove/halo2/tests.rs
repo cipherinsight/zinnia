@@ -279,7 +279,9 @@ fn test_float_mul_constrained() {
         (IR::ConstantFloat { value: 2.0 }, vec![]),
         (IR::MulF, vec![0, 1]),
     ]);
-    let params = ProvingParams { k: 6, ..Default::default() };
+    // MulF now emits a precision_bits-wide range-check on the div_mod remainder,
+    // which expands the row count beyond k=6.
+    let params = ProvingParams { k: 8, ..Default::default() };
     mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
 }
 

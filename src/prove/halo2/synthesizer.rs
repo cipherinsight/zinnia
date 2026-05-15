@@ -393,6 +393,57 @@ impl Halo2Synthesizer {
         self.offset += 1;
         cc
     }
+
+    /// Constrain that `val` is in [0, 2^n_bits) by allocating `n_bits` bit cells
+    /// and proving their weighted sum equals `val`. Each bit cell is constrained
+    /// to {0, 1} via the `bit` gate. The final recomposed cell is copy-constrained
+    /// equal to `val`.
+    ///
+    /// Used as the [0, scale) range check on the `mul_f` div_mod remainder.
+    fn range_check_n_bits(&mut self, val: &Halo2CellRef, n_bits: u32, ann: &str) {
+        let n = n_bits as usize;
+        assert!(n > 0 && n <= 63, "range_check_n_bits supports 1..=63 bits");
+        // Decode value to extract bits (assumed non-negative and < 2^n on the
+        // honest path; if not, the bit_recompose==val equality below will fail).
+        let v_i64 = kernel::fp_to_i64(val.value);
+        let v_u64 = v_i64 as u64;
+
+        // 1. Witness bits and constrain each to be in {0, 1}.
+        let mut bits: Vec<Halo2CellRef> = Vec::with_capacity(n);
+        for i in 0..n {
+            let b = ((v_u64 >> i) & 1) as u64;
+            let bit_cell = self.rec_advice(0, Fp::from(b), &format!("{}_bit_{}", ann, i));
+            self.offset += 1;
+            self.constrain_bit(&bit_cell);
+            bits.push(bit_cell);
+        }
+
+        // 2. pow2 = 1 (pinned via assert).
+        let mut pow2 = self.rec_advice(0, Fp::one(), &format!("{}_p2_init", ann));
+        self.offset += 1;
+        let row = self.offset;
+        self.rec_sel("assert");
+        let _ = self.rec_advice(0, pow2.value, &format!("{}_p2_init_assert", ann));
+        self.rec_copy(&pow2, 0, row);
+        self.offset += 1;
+
+        // 3. acc = pow2 * bits[0]
+        let mut acc = self.bin_gate(
+            "mul", &pow2, &bits[0], pow2.value * bits[0].value, &format!("{}_acc0", ann),
+        );
+
+        // 4. For i = 1..n: pow2 *= 2, acc += pow2 * bits[i].
+        for i in 1..n {
+            pow2 = self.bin_gate(
+                "add", &pow2, &pow2, pow2.value + pow2.value, &format!("{}_p2_{}", ann, i),
+            );
+            acc = self.constrained_mul_add(&pow2, &bits[i], &acc);
+        }
+
+        // 5. Constrain acc == val (this is the actual range-check enforcement:
+        //    val equals a weighted sum of bits, so 0 <= val < 2^n).
+        self.constrain_equal_cells(&acc, val, &format!("{}_eq", ann));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -637,27 +688,70 @@ impl Synthesizer for Halo2Synthesizer {
         self.sub_i(a, b)
     }
     fn mul_f(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        // Fixed-point: raw = a*b, result = raw / scale, constrained via div_mod
+        // Fixed-point: raw = a*b, result = raw / scale (integer division),
+        // rem = raw - result*scale, with 0 <= rem < scale.
+        //
+        // Witness values are computed by the shared kernel which uses i128
+        // integer division — NOT the field modular inverse (the previous
+        // implementation used scale.invert() in Fp, which wrapped around the
+        // prime modulus and produced values unrelated to integer division).
+        //
+        // Soundness:
+        //   - div_mod gate enforces: raw == scale * result + rem (in Fp).
+        //   - range-check enforces: rem ∈ [0, scale).
+        // Together, (result, rem) are uniquely determined by raw given scale.
         let raw = self.mul_i(a, b)?;
-        let scale = Fp::from(crate::prove::field::quantization_scale(self.params.precision_bits) as u64);
-        let scale_inv = scale.invert().unwrap();
-        let result_val = raw.value * scale_inv;
-        let rem_val = raw.value - result_val * scale;
+        let precision_bits = self.params.precision_bits;
+        let scale = Fp::from(crate::prove::field::quantization_scale(precision_bits) as u64);
+        let (result_val, rem_val) = kernel::fp_mul_rescale(a.value, b.value, precision_bits);
         let row = self.offset;
         self.rec_sel("div_mod");
         let _ = self.rec_advice(0, raw.value, "mulf_raw");
         self.rec_copy(&raw, 0, row);
         let _ = self.rec_advice(1, scale, "mulf_scale");
         let result_cell = self.rec_advice(2, result_val, "mulf_result");
-        let _ = self.rec_advice(3, rem_val, "mulf_rem");
+        let rem_cell = self.rec_advice(3, rem_val, "mulf_rem");
         self.offset += 1;
+        // Range check: rem ∈ [0, 2^precision_bits) = [0, scale). This closes
+        // the soundness gap where any (result, rem) satisfying the div_mod
+        // equation would otherwise be accepted.
+        self.range_check_n_bits(&rem_cell, precision_bits, "mulf_rem_rc");
         Ok(result_cell)
     }
     fn div_f(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        let scale = crate::prove::field::quantization_scale(self.params.precision_bits) as i64;
-        let scale_cell = self.constant_int(scale)?;
+        // Fixed-point divide: result = floor((a * scale) / b).
+        //
+        // The witness uses the shared kernel `fp_div_prescale` which does i128
+        // integer division (NOT field modular inverse — the previous
+        // implementation composed mul_i + div_i where div_i used b.invert(),
+        // producing field-wrap garbage for non-exact quotients).
+        //
+        // Constraint shape: `div_mod` gate enforces `a_scaled == b * result + rem`,
+        // where a_scaled = a * scale (constrained via mul_i).
+        //
+        // Note: a full soundness fix would also range-check `0 <= rem < |b|`.
+        // |b| is dynamic so this is more involved than the static-`scale` range
+        // check in `mul_f`; deferred to a follow-up. The witness-side correctness
+        // (which is what makes the value-pipeline match the mock backend and
+        // matches integer division) is what this change unblocks.
+        let precision_bits = self.params.precision_bits;
+        let scale_i = crate::prove::field::quantization_scale(precision_bits) as i64;
+        let scale_cell = self.constant_int(scale_i)?;
         let a_scaled = self.mul_i(a, &scale_cell)?;
-        self.div_i(&a_scaled, b)
+        // Witness values via the kernel (correct integer division).
+        let result_val = kernel::fp_div_prescale(a.value, b.value, precision_bits);
+        // rem = a_scaled - b * result (as Fp).
+        let rem_val = a_scaled.value - b.value * result_val;
+        let row = self.offset;
+        self.rec_sel("div_mod");
+        let _ = self.rec_advice(0, a_scaled.value, "divf_a_scaled");
+        self.rec_copy(&a_scaled, 0, row);
+        let _ = self.rec_advice(1, b.value, "divf_b");
+        self.rec_copy(b, 1, row);
+        let result_cell = self.rec_advice(2, result_val, "divf_result");
+        let _ = self.rec_advice(3, rem_val, "divf_rem");
+        self.offset += 1;
+        Ok(result_cell)
     }
     fn floor_div_f(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
         self.div_f(a, b)
