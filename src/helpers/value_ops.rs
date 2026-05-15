@@ -64,7 +64,17 @@ pub fn select_value(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> 
             let imag = b.ir_select_f(cond, &ti, &fi);
             pack_complex(real, imag)
         }
-        _ => b.ir_select_i(cond, tv, fv),
+        _ => {
+            let tv_is_float = matches!(tv, Value::Float(_));
+            let fv_is_float = matches!(fv, Value::Float(_));
+            if tv_is_float || fv_is_float {
+                let tf = ensure_float(b, tv);
+                let ff = ensure_float(b, fv);
+                b.ir_select_f(cond, &tf, &ff)
+            } else {
+                b.ir_select_i(cond, tv, fv)
+            }
+        }
     }
 }
 
@@ -803,5 +813,50 @@ pub fn ensure_float(b: &mut IRBuilder, val: &Value) -> Value {
     match val {
         Value::Float(_) => val.clone(),
         _ => b.ir_float_cast(val),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression for the `select_value` float-typing bug
+    /// (compiler.fix-prover-kernel-float-sqrt — actual fix is in select_value).
+    ///
+    /// Before the fix, two Float operands fell through to the scalar
+    /// `ir_select_i` branch, producing a Value typed as Integer but carrying
+    /// Q32-quantised float bits. A subsequent `apply_binary_op("sub", ...)`
+    /// against a Float rhs then ran `ensure_float` on the mislabelled lhs,
+    /// multiplying its already-quantised cell by another 2^32 and producing a
+    /// ~2^32 scaled garbage value rather than the intended difference.
+    #[test]
+    fn select_value_float_branches_return_float_typed_result() {
+        let mut b = IRBuilder::new();
+        let cond_true = b.ir_constant_bool(true);
+        let cond_false = b.ir_constant_bool(false);
+        let tv = b.ir_constant_float(4.0);
+        let fv = b.ir_constant_float(1.0);
+
+        let r_true = select_value(&mut b, &cond_true, &tv, &fv);
+        let r_false = select_value(&mut b, &cond_false, &tv, &fv);
+
+        // Result must be typed as Float, not Integer. This is the bit the
+        // pre-fix code got wrong.
+        assert!(matches!(r_true, Value::Float(_)));
+        assert!(matches!(r_false, Value::Float(_)));
+        assert_eq!(r_true.zinnia_type(), ZinniaType::Float);
+        assert_eq!(r_false.zinnia_type(), ZinniaType::Float);
+
+        // Constant folding should pick the right branch end-to-end.
+        assert_eq!(r_true.float_val(), Some(4.0));
+        assert_eq!(r_false.float_val(), Some(1.0));
+
+        // The downstream effect: `r_true - 4.0` should be ~0.0, not the
+        // 2^32-scaled garbage the old path produced.
+        let four = b.ir_constant_float(4.0);
+        let diff = apply_binary_op(&mut b, "sub", &r_true, &four);
+        assert!(matches!(diff, Value::Float(_)));
+        let dv = diff.float_val().expect("constant-folded float");
+        assert!(dv.abs() < 1e-9, "expected ~0.0, got {dv}");
     }
 }
