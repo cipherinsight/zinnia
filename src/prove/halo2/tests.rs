@@ -533,6 +533,83 @@ fn halo2_logical_and_truthiness() {
     assert_logical_op_equals(IR::LogicalAnd, -1, -1, 1, 8);
 }
 
+/// Build an IR `(a OP b)` of two float constants and bracket-assert the
+/// result. Mirrors `assert_op_in_bracket` but for binary float ops.
+fn assert_binop_f_in_bracket(op: IR, a: f64, b: f64, lo: f64, hi: f64, k: u32) {
+    let ir = make_graph(vec![
+        (IR::ConstantFloat { value: a }, vec![]),
+        (IR::ConstantFloat { value: b }, vec![]),
+        (op, vec![0, 1]),
+        (IR::ConstantFloat { value: lo }, vec![]),
+        (IR::ConstantFloat { value: hi }, vec![]),
+        (IR::GtF, vec![2, 3]),
+        (IR::LtF, vec![2, 4]),
+        (IR::LogicalAnd, vec![5, 6]),
+        (IR::Assert, vec![7]),
+    ]);
+    let params = ProvingParams { k, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
+}
+
+#[test]
+fn halo2_mod_f_value_correctness() {
+    // The previous `mod_f` was `a - div_f(a, b) * b`. `div_f` returns the
+    // real (not floored) quotient, so this collapsed to `a - a ≈ 0` for any
+    // input — every mod_f call returned ~0 regardless of operands.
+    //
+    // Fix: i64 floor division on Q-encoded operands is exactly floor
+    // division on the underlying floats; `mod_i(a, b)` on Q-rep cells
+    // yields the Q-rep of `a mod b` with numpy floor-mod semantics.
+    //
+    //   mod(7.5, 2.0)   = 1.5    → (1.498, 1.502)
+    //   mod(-1.5, 0.5)  = 0.0    → (-0.002, 0.002)   (exact multiple)
+    //   mod(5.25, 1.5)  = 0.75   → (0.748, 0.752)
+    //   mod(-3.5, 2.0)  = 0.5    → (0.498, 0.502)   (floor-mod, not truncation)
+    //   mod(10.0, 3.0)  = 1.0    → (0.998, 1.002)
+    assert_binop_f_in_bracket(IR::ModF, 7.5, 2.0, 1.498, 1.502, 14);
+    assert_binop_f_in_bracket(IR::ModF, -1.5, 0.5, -0.002, 0.002, 14);
+    assert_binop_f_in_bracket(IR::ModF, 5.25, 1.5, 0.748, 0.752, 14);
+    assert_binop_f_in_bracket(IR::ModF, -3.5, 2.0, 0.498, 0.502, 14);
+    assert_binop_f_in_bracket(IR::ModF, 10.0, 3.0, 0.998, 1.002, 14);
+}
+
+/// Build an IR `select(cond, t, f)` over integer constants and assert the
+/// result equals `expected`. Mirrors `assert_logical_op_equals` but with a
+/// ternary `SelectI`. Used to verify the truthy-bit coercion of `cond`.
+fn assert_select_i_equals(cond: i64, t: i64, f: i64, expected: i64, k: u32) {
+    let ir = make_graph(vec![
+        (IR::ConstantInt { value: cond }, vec![]),
+        (IR::ConstantInt { value: t }, vec![]),
+        (IR::ConstantInt { value: f }, vec![]),
+        (IR::SelectI, vec![0, 1, 2]),
+        (IR::ConstantInt { value: expected }, vec![]),
+        (IR::EqI, vec![3, 4]),
+        (IR::Assert, vec![5]),
+    ]);
+    let params = ProvingParams { k, ..Default::default() };
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
+}
+
+#[test]
+fn halo2_select_non_boolean_cond_truthy() {
+    // numpy `np.where(cond, t, f)` treats any non-zero cond as truthy (returns
+    // t), zero cond as falsy (returns f). The previous halo2 lowering wired
+    // raw cond into `c = cond*(t-f) + f`, so e.g. select(5, 100, 200) yielded
+    // 5*(100-200) + 200 = -300 — divergent from numpy/mock. The fix coerces
+    // cond through `truthy_bit` first.
+    //
+    //   select(5, 100, 200)  → 100  (non-zero truthy)
+    //   select(0, 100, 200)  → 200  (zero falsy)
+    //   select(-7, 100, 200) → 100  (negative is truthy in numpy)
+    //   select(1, 100, 200)  → 100  (already a bit, no-op coercion)
+    //   select(42, -1, -2)   → -1   (truthy with negative branches)
+    assert_select_i_equals(5, 100, 200, 100, 8);
+    assert_select_i_equals(0, 100, 200, 200, 8);
+    assert_select_i_equals(-7, 100, 200, 100, 8);
+    assert_select_i_equals(1, 100, 200, 100, 8);
+    assert_select_i_equals(42, -1, -2, -1, 8);
+}
+
 #[test]
 fn test_bitwise_with_negative() {
     // -1 & 0xF = 0xF (the low 4 bits of -1 are all set).

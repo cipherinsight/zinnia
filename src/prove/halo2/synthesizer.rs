@@ -958,9 +958,16 @@ impl Synthesizer for Halo2Synthesizer {
         self.div_f(a, b)
     }
     fn mod_f(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        let q = self.div_f(a, b)?;
-        let qb = self.mul_f(&q, b)?;
-        self.sub_f(a, &qb)
+        // Previous implementation composed `a - div_f(a, b) * b`. `div_f`
+        // returns the real (not floored) quotient, so this collapsed to
+        // `a - (a/b)*b ≈ 0` regardless of input — every mod_f call returned 0.
+        //
+        // Fix mirrors `sin_f`'s range-reduction: i64 floor division on the
+        // Q-encoded operands is exactly floor division on the underlying
+        // floats (the scale factor cancels in both the quotient's int-floor
+        // and the remainder), so `mod_i(a, b)` on Q-rep cells directly yields
+        // the Q-rep of `a mod b` with the same floor-mod semantics as numpy.
+        self.mod_i(a, b)
     }
     fn pow_f(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
         let log_a = self.log_f(a)?;
@@ -1267,11 +1274,22 @@ impl Synthesizer for Halo2Synthesizer {
     // ── Select (constrained via gate) ─────────────────────────────────
 
     fn select(&mut self, cond: &Halo2CellRef, t: &Halo2CellRef, f: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        let result = cond.value * (t.value - f.value) + f.value;
+        // The select gate enforces `c = cond * (t - f) + f`, which only matches
+        // numpy `np.where` semantics when `cond ∈ {0, 1}`. For non-{0,1} cond
+        // (e.g. cond=5, t=1, f=2 → gate yields -3; numpy yields 1) the output
+        // diverges from mock. Same shape as the logical_or/logical_and bug.
+        //
+        // Fix: coerce `cond` to its truthy bit via `is_zero` + `bool_not`
+        // before wiring it into the gate, matching the truthy-bit pattern
+        // already applied to logical_and/logical_or. Internal callers that
+        // already pass {0, 1} bits (e.g. from comparisons) just incur a few
+        // extra no-op gates.
+        let cond_bit = self.truthy_bit(cond);
+        let result = cond_bit.value * (t.value - f.value) + f.value;
         let row = self.offset;
         self.rec_sel("select");
-        let _ = self.rec_advice(0, cond.value, "sel_cond");
-        self.rec_copy(cond, 0, row);
+        let _ = self.rec_advice(0, cond_bit.value, "sel_cond");
+        self.rec_copy(&cond_bit, 0, row);
         let _ = self.rec_advice(1, t.value, "sel_t");
         self.rec_copy(t, 1, row);
         let _ = self.rec_advice(2, f.value, "sel_f");
