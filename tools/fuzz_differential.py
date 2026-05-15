@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Phase 3a — minimal viable differential fuzzer for Zinnia.
 
-Generates small numpy-like programs from fourteen shapes:
+Generates small numpy-like programs from eighteen shapes:
 
     A) scalar reduction over a 1-D integer array
     B) elementwise transcendental + scalar reduction over a 1-D float array
@@ -30,6 +30,17 @@ Generates small numpy-like programs from fourteen shapes:
        on int / bool arrays → reduce.
     N) comparison-count chains — `np.sum(x > k)`, `np.sum(logical_and
        (x>0, x<10))`, etc.
+    O) multi-dim slicing — `arr[i:j, k:l]`, `arr[:, k]`, `arr[i, :]`,
+       `arr[..., k]` on 2-D / 3-D arrays → reduce.
+    P) step slicing — `arr[::2]`, `arr[1::2]`, `arr[i:j:step]` (positive
+       step) plus explicit reverse `arr[hi:lo:-1]`. Implicit-bound
+       reverse `arr[::-1]` is excluded — it returns satisfied=False
+       (fuzz-finding-v3-implicit-reverse-slice).
+    Q) augmented assignment via explicit form `a[i] = a[i] + v` and
+       `a[i:j] = a[i:j] + arr_v` (the `+=` desugar path is broken —
+       fuzz-finding-v3-aug-assign-subscript — so the generator avoids
+       it).
+    R) `np.cumsum` / `np.diff` / `np.outer` over 1-D arrays → reduce.
 
 For each generated program:
 
@@ -1019,6 +1030,260 @@ def _gen_shape_n(rng: random.Random) -> tuple[str, dict, str, object, bool]:
     return source, {"x": x.tolist()}, "N", ref_val, True
 
 
+def _gen_shape_o(rng: random.Random) -> tuple[str, dict, str, object, bool]:
+    """Shape O: multi-dim slicing on 2-D / 3-D arrays → reduce."""
+    ndim = rng.choice([2, 3])
+    if ndim == 2:
+        M = rng.choice([3, 4, 5])
+        N = rng.choice([3, 4, 5])
+        a = _numpy.array(
+            [[rng.randint(INT_LO, INT_HI) for _ in range(N)] for _ in range(M)],
+            dtype=_numpy.int64,
+        )
+        ann = f"NDArray[Integer, {M}, {N}]"
+        flavor = rng.choice(["both_slice", "row", "col", "ellipsis"])
+        if flavor == "both_slice":
+            i = rng.randint(0, M - 2)
+            j = rng.randint(i + 1, M)
+            k = rng.randint(0, N - 2)
+            l = rng.randint(k + 1, N)
+            body = f"    sub = a[{i}:{j}, {k}:{l}]\n"
+            sub = a[i:j, k:l]
+        elif flavor == "row":
+            i = rng.randint(0, M - 1)
+            body = f"    sub = a[{i}, :]\n"
+            sub = a[i, :]
+        elif flavor == "col":
+            k = rng.randint(0, N - 1)
+            body = f"    sub = a[:, {k}]\n"
+            sub = a[:, k]
+        else:  # ellipsis: a[..., k] = a[:, k] for 2-D
+            k = rng.randint(0, N - 1)
+            body = f"    sub = a[..., {k}]\n"
+            sub = a[..., k]
+    else:  # 3-D
+        D = rng.choice([2, 3])
+        M = rng.choice([2, 3, 4])
+        N = rng.choice([2, 3, 4])
+        a = _numpy.array(
+            [[[rng.randint(INT_LO, INT_HI) for _ in range(N)] for _ in range(M)]
+             for _ in range(D)],
+            dtype=_numpy.int64,
+        )
+        ann = f"NDArray[Integer, {D}, {M}, {N}]"
+        flavor = rng.choice(["face", "edge", "ellipsis_last"])
+        if flavor == "face":
+            d = rng.randint(0, D - 1)
+            body = f"    sub = a[{d}, :, :]\n"
+            sub = a[d, :, :]
+        elif flavor == "edge":
+            d = rng.randint(0, D - 1)
+            i = rng.randint(0, M - 1)
+            body = f"    sub = a[{d}, {i}, :]\n"
+            sub = a[d, i, :]
+        else:  # ellipsis_last
+            k = rng.randint(0, N - 1)
+            body = f"    sub = a[..., {k}]\n"
+            sub = a[..., k]
+
+    red_op = rng.choice(REDUCTIONS_INT)
+    body += f"    out = np.{red_op}(sub)\n"
+    ref_val = int(getattr(_numpy, red_op)(sub))
+    asserts = f"    assert out == {ref_val}\n"
+    source = (
+        _PROLOGUE
+        + "@zk_circuit\n"
+        + f"def f(a: {ann}):\n"
+        + body
+        + asserts
+    )
+    return source, {"a": a.tolist()}, "O", ref_val, True
+
+
+def _gen_shape_p(rng: random.Random) -> tuple[str, dict, str, object, bool]:
+    """Shape P: step slicing on 1-D arrays → reduce.
+
+    Note: implicit-bound reverse `a[::-1]` is excluded (returns
+    satisfied=False — fuzz-finding-v3-implicit-reverse-slice). The
+    explicit-bound reverse form `a[hi:lo:-1]` is included.
+    """
+    size = rng.choice([6, 8, 10, 12])
+    x = _numpy.array(
+        [rng.randint(INT_LO, INT_HI) for _ in range(size)],
+        dtype=_numpy.int64,
+    )
+    ann = f"NDArray[Integer, {size}]"
+
+    flavor = rng.choice(["step_only", "start_step", "full_step", "reverse_explicit"])
+    if flavor == "step_only":
+        step = rng.choice([2, 3])
+        body = f"    sub = x[::{step}]\n"
+        sub = x[::step]
+    elif flavor == "start_step":
+        start = rng.randint(0, 2)
+        step = rng.choice([2, 3])
+        body = f"    sub = x[{start}::{step}]\n"
+        sub = x[start::step]
+    elif flavor == "full_step":
+        start = rng.randint(0, size - 3)
+        stop = rng.randint(start + 2, size)
+        step = rng.choice([2, 3])
+        body = f"    sub = x[{start}:{stop}:{step}]\n"
+        sub = x[start:stop:step]
+    else:  # reverse_explicit — a[hi:lo:-1]
+        hi = rng.randint(2, size - 1)
+        lo = rng.randint(0, hi - 2)
+        body = f"    sub = x[{hi}:{lo}:-1]\n"
+        sub = x[hi:lo:-1]
+
+    red_op = rng.choice(REDUCTIONS_INT)
+    body += f"    out = np.{red_op}(sub)\n"
+    ref_val = int(getattr(_numpy, red_op)(sub))
+    asserts = f"    assert out == {ref_val}\n"
+    source = (
+        _PROLOGUE
+        + "@zk_circuit\n"
+        + f"def f(x: {ann}):\n"
+        + body
+        + asserts
+    )
+    return source, {"x": x.tolist()}, "P", ref_val, True
+
+
+def _gen_shape_q(rng: random.Random) -> tuple[str, dict, str, object, bool]:
+    """Shape Q: augmented assignment via explicit form `a[i] = a[i] + v`.
+
+    Note: the Python `+=` desugar path for subscript targets is broken
+    (fuzz-finding-v3-aug-assign-subscript) — neighbor static reads see
+    stale values. We use the explicit form so Shape Q exercises the
+    write path without colliding with that bug.
+
+    After the write, we sum the array to compare against numpy.
+    """
+    size = rng.choice([4, 6, 8])
+    x = _numpy.array(
+        [rng.randint(INT_LO, INT_HI) for _ in range(size)],
+        dtype=_numpy.int64,
+    )
+    ann = f"NDArray[Integer, {size}]"
+
+    flavor = rng.choice(["scalar_add", "scalar_mul", "slice_add"])
+    x_mut = x.copy()
+    if flavor == "scalar_add":
+        i = rng.randint(0, size - 1)
+        v = rng.randint(-5, 5)
+        body = f"    a[{i}] = a[{i}] + {v}\n"
+        x_mut[i] = x_mut[i] + v
+    elif flavor == "scalar_mul":
+        i = rng.randint(0, size - 1)
+        v = rng.randint(-3, 3)
+        body = f"    a[{i}] = a[{i}] * {v}\n"
+        x_mut[i] = x_mut[i] * v
+    else:  # slice_add
+        i = rng.randint(0, size - 2)
+        j = rng.randint(i + 1, size)
+        v_arr = [rng.randint(-5, 5) for _ in range(j - i)]
+        body = f"    a[{i}:{j}] = a[{i}:{j}] + np.asarray({v_arr})\n"
+        x_mut[i:j] = x_mut[i:j] + _numpy.asarray(v_arr)
+
+    ref_val = int(_numpy.sum(x_mut))
+    body += "    out = np.sum(a)\n"
+    asserts = f"    assert out == {ref_val}\n"
+    source = (
+        _PROLOGUE
+        + "@zk_circuit\n"
+        + f"def f(a: {ann}):\n"
+        + body
+        + asserts
+    )
+    return source, {"a": x.tolist()}, "Q", ref_val, True
+
+
+def _gen_shape_r(rng: random.Random) -> tuple[str, dict, str, object, bool]:
+    """Shape R: np.cumsum / np.diff / np.outer over 1-D arrays."""
+    flavor = rng.choice(["cumsum", "diff", "outer"])
+    is_float = rng.random() < 0.5
+
+    if flavor == "outer":
+        size_a = rng.choice([2, 3, 4])
+        size_b = rng.choice([2, 3, 4])
+        if is_float:
+            a = _numpy.array(
+                [rng.uniform(FLOAT_LO, FLOAT_HI) for _ in range(size_a)],
+                dtype=_numpy.float64,
+            )
+            b = _numpy.array(
+                [rng.uniform(FLOAT_LO, FLOAT_HI) for _ in range(size_b)],
+                dtype=_numpy.float64,
+            )
+            ann_a = f"NDArray[Float, {size_a}]"
+            ann_b = f"NDArray[Float, {size_b}]"
+        else:
+            a = _numpy.array(
+                [rng.randint(INT_LO, INT_HI) for _ in range(size_a)],
+                dtype=_numpy.int64,
+            )
+            b = _numpy.array(
+                [rng.randint(INT_LO, INT_HI) for _ in range(size_b)],
+                dtype=_numpy.int64,
+            )
+            ann_a = f"NDArray[Integer, {size_a}]"
+            ann_b = f"NDArray[Integer, {size_b}]"
+        y = _numpy.outer(a, b)
+        body = "    y = np.outer(a, b)\n    out = np.sum(y)\n"
+        if is_float:
+            ref_val = float(_numpy.sum(y))
+            asserts = _float_assert_lines("out", ref_val)
+        else:
+            ref_val = int(_numpy.sum(y))
+            asserts = f"    assert out == {ref_val}\n"
+        source = (
+            _PROLOGUE
+            + "@zk_circuit\n"
+            + f"def f(a: {ann_a}, b: {ann_b}):\n"
+            + body
+            + asserts
+        )
+        return source, {"a": a.tolist(), "b": b.tolist()}, "R", ref_val, True
+
+    # cumsum / diff path
+    size = rng.choice([4, 6, 8])
+    if is_float:
+        x = _numpy.array(
+            [rng.uniform(FLOAT_LO, FLOAT_HI) for _ in range(size)],
+            dtype=_numpy.float64,
+        )
+        ann = f"NDArray[Float, {size}]"
+    else:
+        x = _numpy.array(
+            [rng.randint(INT_LO, INT_HI) for _ in range(size)],
+            dtype=_numpy.int64,
+        )
+        ann = f"NDArray[Integer, {size}]"
+
+    if flavor == "cumsum":
+        y = _numpy.cumsum(x)
+        body = "    y = np.cumsum(x)\n    out = np.sum(y)\n"
+    else:  # diff
+        y = _numpy.diff(x)
+        body = "    y = np.diff(x)\n    out = np.sum(y)\n"
+
+    if is_float:
+        ref_val = float(_numpy.sum(y))
+        asserts = _float_assert_lines("out", ref_val)
+    else:
+        ref_val = int(_numpy.sum(y))
+        asserts = f"    assert out == {ref_val}\n"
+    source = (
+        _PROLOGUE
+        + "@zk_circuit\n"
+        + f"def f(x: {ann}):\n"
+        + body
+        + asserts
+    )
+    return source, {"x": x.tolist()}, "R", ref_val, True
+
+
 SHAPE_GENERATORS = {
     "A": _gen_shape_a,
     "B": _gen_shape_b,
@@ -1034,6 +1299,10 @@ SHAPE_GENERATORS = {
     "L": _gen_shape_l,
     "M": _gen_shape_m,
     "N": _gen_shape_n,
+    "O": _gen_shape_o,
+    "P": _gen_shape_p,
+    "Q": _gen_shape_q,
+    "R": _gen_shape_r,
 }
 
 
@@ -1297,6 +1566,8 @@ def main(argv=None) -> int:
         # v2 shapes: weight the new surface area a bit higher so the
         # sweep actually exercises them.
         "J": 3, "K": 3, "L": 3, "M": 3, "N": 3,
+        # v3 shapes: emphasise the new surface again.
+        "O": 4, "P": 4, "Q": 4, "R": 4,
     }
     shape_population = list(shape_weights.keys())
     shape_weight_list = [shape_weights[s] for s in shape_population]
