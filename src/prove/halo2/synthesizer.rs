@@ -52,6 +52,10 @@ pub struct Halo2Synthesizer {
     offset: usize,
     ops: Vec<GateOp>,
     public_cells: Vec<(usize, usize, usize)>,
+    /// Field values for each public input, in instance-row order.
+    /// Populated alongside `public_cells` so the prover/verifier can
+    /// reconstruct the instance column without re-walking the IR.
+    public_values: Vec<Fp>,
     instance_row: usize,
     memories: HashMap<u32, Vec<Fp>>,
     memory_init: HashMap<u32, Fp>,
@@ -62,9 +66,17 @@ impl Halo2Synthesizer {
         Self {
             config, witness, params,
             offset: 0, ops: Vec::new(),
-            public_cells: Vec::new(), instance_row: 0,
+            public_cells: Vec::new(),
+            public_values: Vec::new(),
+            instance_row: 0,
             memories: HashMap::new(), memory_init: HashMap::new(),
         }
+    }
+
+    /// Returns the public-input values collected during synthesis,
+    /// in the order they were exposed (matches the instance column layout).
+    pub fn public_values(&self) -> &[Fp] {
+        &self.public_values
     }
 
     pub fn replay_into_region(&self, region: &mut Region<'_, Fp>) -> Result<HashMap<(usize, usize), AssignedCell<Fp, Fp>>, Error> {
@@ -208,29 +220,204 @@ impl Halo2Synthesizer {
         (abs_cell, sign_cell)
     }
 
-    /// Constrained polynomial evaluation via Horner's method using mul_add gates.
-    /// Evaluates p(x) = coefs[0] + x*(coefs[1] + x*(coefs[2] + ...))
-    /// Each step uses one constrained mul_add gate: acc = x*acc_prev + coef.
+    /// Constrained polynomial evaluation via Horner's method, in fixed-point Q
+    /// representation. Both `x` and the coefficients are Q-encoded with
+    /// `params.precision_bits` fractional bits.
+    ///
+    /// **Leading-first coefficient layout** (matching `LOG2_COEFS`, `EXP2_COEFS`,
+    /// `SIN_COEFS`, `ATAN_COEFS`):
+    /// `coefs = [a_{n-1}, a_{n-2}, ..., a_1, a_0]`,
+    /// `p(x) = a_{n-1} x^{n-1} + a_{n-2} x^{n-2} + ... + a_1 x + a_0`.
+    ///
+    /// Recurrence: `acc <- coefs[0]`, then for `i = 1..n`: `acc <- x*acc + coefs[i]`.
+    /// The multiplication is done via `mul_f` so the Q-scale is rescaled at each
+    /// step (otherwise the magnitude of `acc` would explode by one factor of
+    /// `2^precision_bits` per iteration and wrap the field modulus).
+    ///
+    /// Previous versions had two layered defects: the iteration ran constant-
+    /// first while these coefficient arrays are leading-first (so log(2)
+    /// returned -11097 instead of 0.693), and the multiplication used raw
+    /// `mul_add` without Q-rescaling (so the field representation wrapped
+    /// well before reaching the polynomial's leading term). Must stay in sync
+    /// with `kernel::horner_eval`.
     fn poly_eval_horner(&mut self, x: &Halo2CellRef, coefs: &[Fp]) -> Halo2CellRef {
         assert!(!coefs.is_empty());
-        // Start from the highest coefficient
-        let n = coefs.len();
-        // acc = coefs[n-1]
-        let mut acc = self.rec_advice(0, coefs[n - 1], "horner_init");
+
+        // acc = coefs[0] (leading coefficient, already Q-encoded).
+        let mut acc = self.rec_advice(0, coefs[0], "horner_init");
         self.offset += 1;
 
-        // For i = n-2 down to 0: acc = x * acc + coefs[i]
-        for i in (0..n - 1).rev() {
+        // For i = 1..n: acc = x *_Q acc + coefs[i].
+        for i in 1..coefs.len() {
             let coef_cell = self.rec_advice(0, coefs[i], &format!("horner_c{}", i));
             self.offset += 1;
-            // mul_add: x * acc + coef = new_acc
-            acc = self.constrained_mul_add(x, &acc, &coef_cell);
+            // Q-scaled multiplication then in-field addition.
+            let prod = self.mul_f(x, &acc).expect("Q-mul during Horner");
+            acc = self.bin_gate("add", &prod, &coef_cell, prod.value + coef_cell.value, "horner_step");
         }
         acc
     }
 
     fn quantize_fp(&self, v: f64) -> Fp {
         kernel::quantize_to_fp(v, self.params.precision_bits)
+    }
+
+    /// Allocate an unconstrained advice cell holding `value`. Useful for witness-
+    /// only helper values whose correctness is enforced by downstream gates (e.g.
+    /// range checks). The cell is at column 0 of a fresh row.
+    fn witness_cell(&mut self, value: Fp, ann: &str) -> Halo2CellRef {
+        let cell = self.rec_advice(0, value, ann);
+        self.offset += 1;
+        cell
+    }
+
+    /// Range-check: constrain `val ∈ [2 * scale, 4 * scale)` where
+    /// `scale = 2^precision_bits`. Used to enforce the post-range-reduction
+    /// mantissa for `log2` lies in the polynomial's fit domain.
+    ///
+    /// Encoding: assert that `val - 2 * scale` is in `[0, 2 * scale)` via the
+    /// existing n-bit range check (with n = precision_bits + 1).
+    fn range_check_log_mantissa(&mut self, val: &Halo2CellRef, ann: &str) {
+        let precision_bits = self.params.precision_bits;
+        let scale = crate::prove::field::quantization_scale(precision_bits) as i64;
+        let two_scale_cell = self
+            .constant_int(2 * scale)
+            .expect("constant_int for 2*scale");
+        let shifted = self
+            .sub_i(val, &two_scale_cell)
+            .expect("sub_i in range_check_log_mantissa");
+        // shifted ∈ [0, 2*scale) = [0, 2^{precision_bits+1}).
+        self.range_check_n_bits(&shifted, precision_bits + 1, ann);
+    }
+
+    /// Range reduction for `log2`: given a Q-encoded positive `x`, witness an
+    /// integer `k` and a Q-encoded mantissa `m ∈ [2, 4)` such that `x = m * 2^k`
+    /// (in real arithmetic), and return them as constrained cells.
+    ///
+    /// **Soundness caveat** (documented for follow-up): the relationship
+    /// `x = m * 2^k` is enforced only weakly here — `m` is range-checked into
+    /// `[2*scale, 4*scale)` and `k` is provided as a witness, but no explicit
+    /// equation ties `(k, m)` to `x`. A malicious prover that can substitute a
+    /// `(k', m')` pair satisfying the range check on m would change the output.
+    /// However, for any positive `x`, the decomposition into `(k, m ∈ [2, 4))`
+    /// is unique, so an honest prover and the polynomial-evaluation chain still
+    /// produce the correct value. Closing this gap requires a dynamic power-of-
+    /// two gadget (e.g. a select-tree over k candidates or a MSB-position
+    /// gadget); see the diagnosis card for the design sketch.
+    ///
+    /// Returns `(k_cell, m_cell)`. `k_cell` is a signed integer cell (not Q-encoded).
+    fn log2_range_reduce(&mut self, x: &Halo2CellRef) -> (Halo2CellRef, Halo2CellRef) {
+        let precision_bits = self.params.precision_bits;
+        let scale = crate::prove::field::quantization_scale(precision_bits) as i64;
+
+        // Host-side compute (k, m_q).
+        let x_i64 = kernel::fp_to_i64(x.value);
+        // For non-positive x, log is undefined. Use a witness fallback (k=0, m=2)
+        // so synthesis never panics at keygen (x = 0 in that path). The mock
+        // backend's `fp_log` returns NaN-ish behavior on x <= 0; mirroring that
+        // in halo2 would require additional logic, but the polynomial fit
+        // doesn't support it either.
+        let (k_host, m_q_host) = if x_i64 <= 0 {
+            (0i64, 2 * scale)
+        } else {
+            // x_i64 represents x * scale. Find integer k such that
+            // x_q / 2^k ∈ [2 * scale, 4 * scale).
+            // x ∈ [2^k * 2, 2^k * 4) ⇔ floor(log2(x_i64)) ∈ {k + log2(scale) + 1}.
+            // Equivalent: k = (bit-position of MSB of x_i64) - log2(scale) - 1.
+            let msb = 63 - (x_i64 as u64).leading_zeros() as i64; // MSB position in x_i64
+            let k = msb - precision_bits as i64 - 1;
+            // m_q = round(x_i64 / 2^k) — but to keep precision, compute as
+            // x_i64 << (-k) when k < 0, else x_i64 >> k.
+            let m_q = if k >= 0 {
+                x_i64 >> k
+            } else {
+                x_i64 << (-k)
+            };
+            (k, m_q)
+        };
+
+        // Allocate witness cells.
+        let m_cell = self.witness_cell(kernel::i64_to_fp(m_q_host), "log2rr_m");
+        let k_cell = self.witness_cell(kernel::i64_to_fp(k_host), "log2rr_k");
+
+        // Constrain m_q ∈ [2 * scale, 4 * scale).
+        self.range_check_log_mantissa(&m_cell, "log2rr_m_rc");
+
+        (k_cell, m_cell)
+    }
+
+    /// Range reduction for `exp2`: given a Q-encoded `y`, witness an integer
+    /// `i` and a Q-encoded `f ∈ [0, 1)` such that `y = i + f` (in real arithmetic).
+    /// `2^y = 2^i * 2^f`.
+    ///
+    /// **Soundness caveat**: as in `log2_range_reduce`, the relationship is
+    /// enforced via a range check on `f` and the floor-decomposition is the
+    /// unique decomposition for any real y, so an honest prover lands on the
+    /// correct value; explicit constraint linking `(i, f)` back to `y` is
+    /// punted to a follow-up (would need integer addition of `i * scale + f
+    /// == y` as an equality, which IS expressible — see the constraint
+    /// emitted below).
+    ///
+    /// Returns `(i_cell, f_cell)`. `i_cell` is a signed integer (not Q-encoded);
+    /// `f_cell` is Q-encoded fractional part.
+    fn exp2_range_reduce(&mut self, y: &Halo2CellRef) -> (Halo2CellRef, Halo2CellRef) {
+        let precision_bits = self.params.precision_bits;
+        let scale = crate::prove::field::quantization_scale(precision_bits) as i64;
+
+        // Host-side compute (i, f_q). y_i64 = y * scale.
+        let y_i64 = kernel::fp_to_i64(y.value);
+        // Use Euclidean division so the remainder f_q is always in [0, scale).
+        let i_host = y_i64.div_euclid(scale);
+        let f_q_host = y_i64.rem_euclid(scale); // f_q ∈ [0, scale)
+
+        let i_cell = self.witness_cell(kernel::i64_to_fp(i_host), "exp2rr_i");
+        let f_cell = self.witness_cell(kernel::i64_to_fp(f_q_host), "exp2rr_f");
+
+        // Range-check f_q ∈ [0, scale) = [0, 2^precision_bits).
+        self.range_check_n_bits(&f_cell, precision_bits, "exp2rr_f_rc");
+
+        // Constrain: y_q = i * scale + f_q.
+        let scale_cell = self
+            .constant_int(scale)
+            .expect("constant_int for scale");
+        let i_scaled = self
+            .mul_i(&i_cell, &scale_cell)
+            .expect("mul_i in exp2rr");
+        let recomputed = self
+            .add_i(&i_scaled, &f_cell)
+            .expect("add_i in exp2rr");
+        self.constrain_equal_cells(&recomputed, y, "exp2rr_eq");
+
+        (i_cell, f_cell)
+    }
+
+    /// Compute `2^k * x_q` where `k` is a signed-integer witness cell and `x_q`
+    /// is Q-encoded. The result is also Q-encoded.
+    ///
+    /// Implementation: honest-prover witness. The result is computed host-side
+    /// from `k.value` and `x.value` (left-shift on x's signed integer encoding
+    /// for k > 0, right-shift for k < 0) and assigned to a single advice cell.
+    ///
+    /// **Soundness caveat**: there is no constraint binding `result.value` to
+    /// `2^k * x.value`. A malicious prover can substitute any value here. This
+    /// matches the soundness profile of `log2_range_reduce` and `exp2_range_
+    /// reduce`; closing the gap requires a dynamic-shift gadget (select-tree
+    /// over k candidates, MSB-position gadget, or a power-of-two lookup
+    /// chip). Tracked separately — see the diagnosis card for the design.
+    fn mul_by_pow2_witness(&mut self, x: &Halo2CellRef, k: &Halo2CellRef) -> Halo2CellRef {
+        let k_val = kernel::fp_to_i64(k.value);
+        let x_i = kernel::fp_to_i64(x.value);
+        let result_i = if k_val >= 0 {
+            // Saturate the shift count so the host-side computation cannot panic
+            // at keygen time (where x = 0 and k = 0 by default, but a malformed
+            // witness could push k arbitrarily high).
+            let s = k_val.min(62) as u32;
+            x_i.checked_shl(s).unwrap_or(0)
+        } else {
+            let s = (-k_val).min(62) as u32;
+            x_i >> s
+        };
+        self.witness_cell(kernel::i64_to_fp(result_i), "p2w_result")
     }
 
     fn get_witness_fp_path(&self, path: &InputPath) -> Option<Fp> {
@@ -847,28 +1034,59 @@ impl Synthesizer for Halo2Synthesizer {
     }
 
     fn exp_f(&mut self, a: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        // exp(x) = 2^(x / ln2)
+        // exp(x) = 2^(x / ln2). Range-reduce x/ln2 into integer + fractional part,
+        // then evaluate the EXP2_COEFS polynomial (fit on [0, 1)) on the fraction.
+        //
+        //   y      = x / ln(2)            (Q-encoded)
+        //   y      = i + f,    i ∈ ℤ, f ∈ [0, 1)
+        //   exp(x) = 2^y = 2^i * 2^f
+        //
+        // `exp2_range_reduce` witnesses `(i, f)` with `f ∈ [0, scale)` range-
+        // checked and `y_q == i * scale + f_q` constrained. The polynomial
+        // evaluation on f stays inside its fit domain, so the value is correct
+        // to within Q-precision. The `2^i` factor is applied via the witnessed
+        // `mul_by_pow2_witness` helper (see soundness caveat there).
         let ln2 = self.constant_float(2.0f64.ln())?;
-        let x_over_ln2 = self.div_f(a, &ln2)?;
-        // exp2(y): split into int + frac, poly approx on frac
-        // For simplicity and correctness, evaluate exp2 polynomial directly on scaled input
+        let y = self.div_f(a, &ln2)?;
+        let (i_cell, f_cell) = self.exp2_range_reduce(&y);
         let coefs: Vec<Fp> = EXP2_COEFS.iter().map(|c| self.quantize_fp(*c)).collect();
-        let result = self.poly_eval_horner(&x_over_ln2, &coefs);
+        let two_to_f = self.poly_eval_horner(&f_cell, &coefs);
+        let result = self.mul_by_pow2_witness(&two_to_f, &i_cell);
         Ok(result)
     }
 
     fn log_f(&mut self, a: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        // log(x) = log2(x) * ln(2)
-        // Evaluate log2 polynomial (valid on [2, 4), but we use it on the full range
-        // with appropriate normalization)
+        // log(x) = log2(x) * ln(2). Range-reduce x = m * 2^k with m ∈ [2, 4)
+        // so the LOG2_COEFS polynomial (fit on [2, 4)) is evaluated on `m`:
+        //
+        //   log2(x) = k + log2(m)
+        //   log(x)  = (k + log2(m)) * ln(2)
+        //
+        // `log2_range_reduce` witnesses `(k, m_q)` with `m_q ∈ [2*scale, 4*scale)`
+        // range-checked. The mantissa polynomial evaluation is value-correct
+        // within Q-precision; the integer `k` lifts the result by `k * ln(2)`.
+        let (k_cell, m_cell) = self.log2_range_reduce(a);
         let coefs: Vec<Fp> = LOG2_COEFS.iter().map(|c| self.quantize_fp(*c)).collect();
-        let log2_val = self.poly_eval_horner(a, &coefs);
+        let log2_m = self.poly_eval_horner(&m_cell, &coefs);
+
+        // log2(x) = k + log2(m). `k_cell` is a raw integer; lift to Q-scale.
+        let precision_bits = self.params.precision_bits;
+        let scale = crate::prove::field::quantization_scale(precision_bits) as i64;
+        let scale_cell = self.constant_int(scale)?;
+        let k_scaled = self.mul_i(&k_cell, &scale_cell)?;
+        let log2_x = self.add_i(&k_scaled, &log2_m)?;
+
+        // log(x) = log2(x) * ln(2)
         let ln2 = self.constant_float(2.0f64.ln())?;
-        self.mul_f(&log2_val, &ln2)
+        self.mul_f(&log2_x, &ln2)
     }
 
     fn sqrt_f(&mut self, a: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        // sqrt(x) = exp(0.5 * log(x))
+        // sqrt(x) = exp(0.5 * log(x)). With the (now value-correct) log_f and
+        // exp_f the composition produces values within polynomial-Q-precision
+        // tolerance of f64::sqrt. Keeping the compose for now; a direct Newton
+        // iteration over Q-encoded values would tighten precision at the cost
+        // of additional range-reduction logic for the iteration bounds.
         let log_a = self.log_f(a)?;
         let half = self.constant_float(0.5)?;
         let half_log = self.mul_f(&half, &log_a)?;
@@ -1029,6 +1247,7 @@ impl Synthesizer for Halo2Synthesizer {
         let cell = self.rec_advice(0, val, &format!("input_{}", path.display()));
         if is_public {
             self.public_cells.push((0, self.offset, self.instance_row));
+            self.public_values.push(val);
             self.instance_row += 1;
         }
         self.offset += 1;
@@ -1042,6 +1261,7 @@ impl Synthesizer for Halo2Synthesizer {
     }
     fn expose_public(&mut self, a: &Halo2CellRef, _label: &str) -> Result<(), ProvingError> {
         self.public_cells.push((a.col_idx, a.row, self.instance_row));
+        self.public_values.push(a.value);
         self.instance_row += 1;
         Ok(())
     }

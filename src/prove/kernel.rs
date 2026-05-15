@@ -243,13 +243,22 @@ pub fn fp_to_value(v: Fp, is_float: bool, precision_bits: u32) -> Value {
 // Pure computation functions (used by both mock and halo2 synthesizers)
 // ---------------------------------------------------------------------------
 
-/// Evaluate a polynomial via Horner's method: p(x) = coefs[0] + x*(coefs[1] + x*(...))
+/// Evaluate a polynomial via Horner's method, with **leading-first** coefficient
+/// layout: `coefs = [a_{n-1}, a_{n-2}, ..., a_1, a_0]` so that the polynomial is
+/// `p(x) = a_{n-1} * x^{n-1} + a_{n-2} * x^{n-2} + ... + a_1 * x + a_0`.
+///
+/// Recurrence: `acc_0 = coefs[0]`, `acc_{i+1} = x * acc_i + coefs[i+1]`.
 /// All values are Fp field elements in fixed-point representation (scaled by 2^precision_bits).
+///
+/// NOTE: This matches the layout of `LOG2_COEFS`, `EXP2_COEFS`, `SIN_COEFS`, and
+/// `ATAN_COEFS` in this module — they are all stored leading-first. A previous
+/// version of this function iterated in the opposite direction and treated
+/// `coefs[0]` as the constant term, which silently produced wrong values for
+/// the transcendentals (log(2) ≈ -11097 instead of 0.693, etc).
 pub fn horner_eval(x: Fp, coefs: &[Fp], precision_bits: u32) -> Fp {
     assert!(!coefs.is_empty());
-    let n = coefs.len();
-    let mut acc = coefs[n - 1];
-    for i in (0..n - 1).rev() {
+    let mut acc = coefs[0];
+    for i in 1..coefs.len() {
         let (prod, _) = fp_mul_rescale(x, acc, precision_bits);
         acc = prod + coefs[i];
     }
@@ -485,9 +494,65 @@ mod tests {
 
     #[test]
     fn test_horner_eval_linear() {
-        // p(x) = 3 + 2*x at x=5 → 13 — precision_bits=0 for raw arithmetic
-        let result = horner_eval(Fp::from(5), &[Fp::from(3), Fp::from(2)], 0);
+        // Leading-first layout: coefs = [a_1, a_0] for p(x) = a_1*x + a_0.
+        // p(x) = 2*x + 3 at x=5 → 13.
+        let result = horner_eval(Fp::from(5), &[Fp::from(2), Fp::from(3)], 0);
         assert_eq!(result, Fp::from(13));
+    }
+
+    #[test]
+    fn test_horner_eval_log2_in_domain() {
+        // The `LOG2_COEFS` polynomial is fit on [2, 4) — verify the kernel-level
+        // Horner produces the expected log2 values when invoked on inputs in that
+        // domain. This is a regression guard for the leading-first ordering.
+        //
+        // Tolerance: 1e-2 reflects accumulated Q32 truncation across the 14-step
+        // Horner chain. The leading coefficient of `LOG2_COEFS` is ~3e-8, which
+        // quantizes to ~7 bits in Q32 — single-step truncation produces ~5e-3
+        // error at the upper end of [2, 4). For a tighter bound, internal
+        // arithmetic would need to widen to Q48 or Q64.
+        let precision_bits: u32 = 32;
+        let log2_coefs: Vec<Fp> = LOG2_COEFS
+            .iter()
+            .map(|c| quantize_to_fp(*c, precision_bits))
+            .collect();
+        let cases: &[(f64, f64)] = &[
+            (2.0, 1.0),
+            (2.5, (2.5f64).log2()),
+            (3.0, (3.0f64).log2()),
+            (3.5, (3.5f64).log2()),
+        ];
+        for &(x, expected) in cases {
+            let xq = quantize_to_fp(x, precision_bits);
+            let result = horner_eval(xq, &log2_coefs, precision_bits);
+            let got = dequantize_from_fp(result, precision_bits);
+            assert!(
+                (got - expected).abs() < 1e-2,
+                "horner_eval(log2 polynomial, x={x}) = {got}, expected {expected}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_horner_eval_exp2_in_domain() {
+        // `EXP2_COEFS` is fit on [0, 1). Coefficient magnitudes are large enough
+        // that Q32 quantization preserves precision well; this test asserts that.
+        let precision_bits: u32 = 32;
+        let exp2_coefs: Vec<Fp> = EXP2_COEFS
+            .iter()
+            .map(|c| quantize_to_fp(*c, precision_bits))
+            .collect();
+        let cases: &[f64] = &[0.0, 0.1, 0.25, 0.5, 0.75, 0.9];
+        for &x in cases {
+            let xq = quantize_to_fp(x, precision_bits);
+            let result = horner_eval(xq, &exp2_coefs, precision_bits);
+            let got = dequantize_from_fp(result, precision_bits);
+            let expected = 2.0f64.powf(x);
+            assert!(
+                (got - expected).abs() < 1e-4,
+                "horner_eval(exp2 polynomial, x={x}) = {got}, expected {expected}",
+            );
+        }
     }
 
     #[test]
