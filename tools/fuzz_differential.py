@@ -1504,12 +1504,28 @@ def gen_program(shape: str, rng: random.Random):
 # Runner — child process so a panic / hang doesn't kill the orchestrator
 # ----------------------------------------------------------------------------
 
-def _zinnia_child_worker(source: str, inputs_repr: dict, sys_path: list, sys_cwd: str, conn) -> None:
+def _zinnia_child_worker(
+    source: str,
+    inputs_repr: dict,
+    sys_path: list,
+    sys_cwd: str,
+    conn,
+    backend: str = "mock",
+    halo2_params: dict | None = None,
+) -> None:
     """Run inside a `multiprocessing` child. Compiles + executes the
     circuit; reports back via ``conn``.
 
+    For backend="mock": runs the @zk_circuit decorated function directly
+    (which routes through ZKCircuit.__call__ → mock backend → ZKExecResult).
+
+    For backend="halo2": builds a ZKCircuit via ZKCircuit.from_method, calls
+    prove(backend="halo2", params=halo2_params), then verify(). Both prove
+    success AND verify=True are required for satisfied=True. Any other
+    outcome surfaces as either satisfied=False or a compile_failure.
+
     The pipe payload is one of:
-      ("ok", {"satisfied": bool})
+      ("ok", {"satisfied": bool, "extra": dict})
       ("fail", {"kind": "compile_failure", "exception": str})
     """
     try:
@@ -1567,19 +1583,86 @@ def _zinnia_child_worker(source: str, inputs_repr: dict, sys_path: list, sys_cwd
         # Dispatch by key set.
         keys = set(np_inputs)
         if keys == {"x"}:
-            result = f(np_inputs["x"])
+            pos_args = (np_inputs["x"],)
         elif keys == {"a"}:
-            result = f(np_inputs["a"])
+            pos_args = (np_inputs["a"],)
         elif keys == {"a", "b"}:
-            result = f(np_inputs["a"], np_inputs["b"])
+            pos_args = (np_inputs["a"], np_inputs["b"])
         elif keys == {"x", "i"}:
-            result = f(np_inputs["x"], np_inputs["i"])
+            pos_args = (np_inputs["x"], np_inputs["i"])
         elif keys == {"x", "i", "j"}:
-            result = f(np_inputs["x"], np_inputs["i"], np_inputs["j"])
+            pos_args = (np_inputs["x"], np_inputs["i"], np_inputs["j"])
         else:
             raise RuntimeError(f"unknown input shape: {list(np_inputs)}")
-        satisfied = bool(getattr(result, "satisfied", False))
-        conn.send(("ok", {"satisfied": satisfied}))
+
+        if backend == "mock":
+            result = f(*pos_args)
+            satisfied = bool(getattr(result, "satisfied", False))
+            conn.send(("ok", {"satisfied": satisfied, "extra": {}}))
+        elif backend == "halo2":
+            from zinnia.api.zk_circuit import ZKCircuit  # type: ignore
+
+            params = dict(halo2_params or {"k": 14, "precision_bits": 32, "lookup_bits": 8})
+            circuit = ZKCircuit.from_method(f)
+            # If prove() raises (e.g. MockProver::verify refuses unsat
+            # witness), satisfied=False with the exception surfaced as
+            # extra info. If prove() succeeds and verify() returns True,
+            # satisfied=True. If verify() returns False (unexpected if
+            # MockProver gate caught everything), satisfied=False.
+            prove_t0 = time.time()
+            try:
+                proof = circuit.prove(*pos_args, backend="halo2", params=params)
+            except BaseException as pe:  # noqa: BLE001
+                # prove() can fail in three meaningfully-different ways:
+                #   (1) capacity: K too small for the circuit (NotEnoughRows…).
+                #       Operational issue, not a witness disagreement. Surface
+                #       as compile_failure so it doesn't pollute the divergence
+                #       cluster.
+                #   (2) witness unsat: ConstraintNotSatisfied / "Witness does
+                #       not satisfy". Halo2 disagrees with numpy that the
+                #       assertion holds — true divergence, surface as
+                #       satisfied=False (becomes a divergence if expected
+                #       satisfied=True).
+                #   (3) other: bubble up as compile_failure for triage.
+                msg = f"{type(pe).__name__}: {pe}"
+                lower = str(pe).lower()
+                if "notenoughrowsavailable" in lower or "not enough rows" in lower:
+                    # Capacity issue — operational, not a soundness signal.
+                    raise
+                if (
+                    "constraintnotsatisfied" in lower
+                    or "witness does not satisfy" in lower
+                    or "unsatisfied" in lower
+                    or "verify failed" in lower
+                ):
+                    conn.send(("ok", {"satisfied": False, "extra": {"prove_refused": msg}}))
+                    return
+                # Unknown class — surface as compile_failure for triage.
+                raise
+            prove_secs = time.time() - prove_t0
+            try:
+                valid = bool(circuit.verify(proof))
+            except BaseException as ve:  # noqa: BLE001
+                conn.send((
+                    "ok",
+                    {
+                        "satisfied": False,
+                        "extra": {
+                            "verify_error": f"{type(ve).__name__}: {ve}",
+                            "prove_secs": prove_secs,
+                        },
+                    },
+                ))
+                return
+            conn.send((
+                "ok",
+                {
+                    "satisfied": valid,
+                    "extra": {"prove_secs": prove_secs, "verified": valid},
+                },
+            ))
+        else:
+            raise RuntimeError(f"unknown backend: {backend!r}")
     except BaseException as e:  # noqa: BLE001 — PyO3 panics are BaseException
         tb = traceback.format_exc()
         conn.send((
@@ -1597,11 +1680,17 @@ def _zinnia_child_worker(source: str, inputs_repr: dict, sys_path: list, sys_cwd
             pass
 
 
-def run_zinnia(source: str, inputs_repr: dict, timeout: float = TIMEOUT_SEC) -> dict:
+def run_zinnia(
+    source: str,
+    inputs_repr: dict,
+    timeout: float = TIMEOUT_SEC,
+    backend: str = "mock",
+    halo2_params: dict | None = None,
+) -> dict:
     """Run the Zinnia circuit in a watchdog-protected child process.
 
     Returns a dict with at least:
-      {"status": "ok", "satisfied": bool}
+      {"status": "ok", "satisfied": bool, "extra": dict}
       {"status": "compile_failure", "exception": str, "traceback": str}
       {"status": "timeout"}
       {"status": "crash", "exception": str}
@@ -1610,7 +1699,7 @@ def run_zinnia(source: str, inputs_repr: dict, timeout: float = TIMEOUT_SEC) -> 
     parent_conn, child_conn = ctx.Pipe(duplex=False)
     proc = ctx.Process(
         target=_zinnia_child_worker,
-        args=(source, inputs_repr, list(sys.path), os.getcwd(), child_conn),
+        args=(source, inputs_repr, list(sys.path), os.getcwd(), child_conn, backend, halo2_params),
     )
     proc.start()
     child_conn.close()  # parent only reads
@@ -1629,7 +1718,11 @@ def run_zinnia(source: str, inputs_repr: dict, timeout: float = TIMEOUT_SEC) -> 
         except EOFError:
             return {"status": "crash", "exception": f"child died (exitcode={proc.exitcode})"}
         if tag == "ok":
-            return {"status": "ok", "satisfied": payload["satisfied"]}
+            return {
+                "status": "ok",
+                "satisfied": payload["satisfied"],
+                "extra": payload.get("extra", {}),
+            }
         elif tag == "fail":
             return {"status": "compile_failure", **payload}
         else:
@@ -1728,8 +1821,32 @@ def main(argv=None) -> int:
         default=None,
         help="restrict generator to a single shape",
     )
-    parser.add_argument("--timeout", type=float, default=TIMEOUT_SEC)
+    parser.add_argument("--timeout", type=float, default=None,
+                        help="per-program timeout in seconds (default 30 for mock, 90 for halo2)")
+    parser.add_argument(
+        "--backend",
+        choices=["mock", "halo2"],
+        default="mock",
+        help="executor backend; halo2 routes through prove+verify",
+    )
+    parser.add_argument("--halo2-k", type=int, default=14,
+                        help="halo2 K parameter (log2 rows). Default 14.")
+    parser.add_argument("--halo2-precision-bits", type=int, default=32,
+                        help="halo2 fixed-point precision bits. Default 32.")
+    parser.add_argument("--halo2-lookup-bits", type=int, default=8,
+                        help="halo2 lookup table bits. Default 8.")
     args = parser.parse_args(argv)
+
+    if args.timeout is None:
+        args.timeout = 90.0 if args.backend == "halo2" else float(TIMEOUT_SEC)
+
+    halo2_params = None
+    if args.backend == "halo2":
+        halo2_params = {
+            "k": args.halo2_k,
+            "precision_bits": args.halo2_precision_bits,
+            "lookup_bits": args.halo2_lookup_bits,
+        }
 
     seed = args.seed if args.seed is not None else int(time.time())
     rng = random.Random(seed)
@@ -1764,7 +1881,12 @@ def main(argv=None) -> int:
     shape_population = list(shape_weights.keys())
     shape_weight_list = [shape_weights[s] for s in shape_population]
 
-    print(f"[fuzz] seed={seed} iterations={args.iterations} report_dir={report_dir}")
+    print(
+        f"[fuzz] seed={seed} iterations={args.iterations} backend={args.backend} "
+        f"timeout={args.timeout}s report_dir={report_dir}"
+    )
+    if args.backend == "halo2":
+        print(f"[fuzz] halo2_params={halo2_params}")
     start = time.time()
 
     for i in range(args.iterations):
@@ -1778,17 +1900,27 @@ def main(argv=None) -> int:
             print(f"[fuzz] iter={i} GEN-ERROR shape={shape} {type(e).__name__}: {e}")
             continue
 
-        zinnia_result = run_zinnia(source, inputs, timeout=args.timeout)
+        iter_t0 = time.time()
+        zinnia_result = run_zinnia(
+            source, inputs, timeout=args.timeout,
+            backend=args.backend, halo2_params=halo2_params,
+        )
+        iter_secs = time.time() - iter_t0
         outcome_kind, detail = interpret_outcome(zinnia_result, expected_satisfied)
 
         summary[outcome_kind] += 1
         per_shape[shape_tag][outcome_kind] += 1
 
+        extra = zinnia_result.get("extra") or {}
+        extra_bits = ""
+        if extra:
+            extra_bits = " " + " ".join(f"{k}={v}" for k, v in extra.items())
         print(
             f"[fuzz] iter={i:04d} shape={shape_tag} "
-            f"outcome={outcome_kind}"
+            f"outcome={outcome_kind} wall={iter_secs:.1f}s"
             + (f" expected_sat={expected_satisfied}" if shape_tag == "I" else "")
             + (f" detail={detail}" if detail else "")
+            + extra_bits
         )
 
         if outcome_kind != "success":
@@ -1819,6 +1951,8 @@ def main(argv=None) -> int:
         "seed": seed,
         "iterations": args.iterations,
         "elapsed_sec": elapsed,
+        "backend": args.backend,
+        "halo2_params": halo2_params,
         "summary": summary,
         "per_shape": per_shape,
     }, indent=2))
