@@ -480,6 +480,41 @@ impl IRGenerator {
                 }
                 other => other,
             }).collect();
+
+            // Fancy indexing (`arr[idx_array]` where `idx_array` is an
+            // integer composite) is not handled by `static_array_subscript`
+            // — its single-Single path only understands an integer scalar
+            // or a dynamic integer. Detect the composite-index case here
+            // and route through `try_advanced_index_static` on the
+            // materialised List representation, matching the `Value::List`
+            // arm below. Without this, a `List`-shaped index value falls
+            // into the "dynamic 1-D" arm and produces garbage addresses.
+            if slice_values.len() == 1 {
+                if let SliceIndex::Single(idx_value) = &slice_values[0] {
+                    if matches!(idx_value, Value::List(_) | Value::Tuple(_)) {
+                        let val_list = crate::helpers::static_array::to_value_list(
+                            &mut self.builder, &val,
+                        );
+                        if let Value::List(data) | Value::Tuple(data) = &val_list {
+                            match crate::helpers::ndarray::try_advanced_index_static(data, idx_value) {
+                                Ok(Some(result)) => {
+                                    if let (Some(in_vid), Some(out_vid)) =
+                                        (val.value_id(), result.value_id())
+                                    {
+                                        crate::optim::resolver::relay_forall_eq_const_from_input(
+                                            &mut self.builder, in_vid, out_vid,
+                                        );
+                                    }
+                                    return result;
+                                }
+                                Ok(Option::None) => {}
+                                Err(msg) => panic!("{}", msg),
+                            }
+                        }
+                    }
+                }
+            }
+
             let out = crate::helpers::static_array_read::static_array_subscript(
                 &mut self.builder, &val, &slice_values,
             );
