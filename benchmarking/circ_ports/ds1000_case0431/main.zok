@@ -1,0 +1,26 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0431/kernel.py
+// REASON: a.std() requires real square-root (floating-point semantics); ZoKrates field has no sqrt.
+
+const u32 N = 8
+
+def main(field[N] a) -> bool[N]:
+    field sum = 0
+    for u32 i in 0..N do
+        sum = sum + a[i]
+    endfor
+    field mean = sum / N
+    field var_sum = 0
+    for u32 i in 0..N do
+        field d = a[i] - mean
+        var_sum = var_sum + d * d
+    endfor
+    field var = var_sum / N
+    field std = var  // placeholder; no sqrt in ZoKrates
+    field lo = mean - 2 * std
+    field hi = mean + 2 * std
+    bool[N] result = [false; N]
+    for u32 i in 0..N do
+        result[i] = !((a[i] > lo) && (a[i] < hi))
+    endfor
+    return result

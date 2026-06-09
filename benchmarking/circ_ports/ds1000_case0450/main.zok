@@ -1,0 +1,14 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0450/kernel.py
+// REASON: Fancy multi-axis indexing a[:, second.reshape(-1,1), third] lowered to nested loops
+
+def main(field[7][8][9] a, u32[2] second, u32[2] third) -> field[7][2][2]:
+    field[7][2][2] result = [[[0; 2]; 2]; 7]
+    for u32 i in 0..7 do
+        for u32 j in 0..2 do
+            for u32 k in 0..2 do
+                result[i][j][k] = a[i][second[j]][third[k]]
+            endfor
+        endfor
+    endfor
+    return result

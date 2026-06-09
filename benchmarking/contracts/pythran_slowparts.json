@@ -1,0 +1,105 @@
+{
+  "categories": [
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "fprime",
+        "power",
+        "range",
+        "tanh",
+        "zeros"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 19,
+      "line_start": 11,
+      "mutated_params": [],
+      "name": "slowparts",
+      "ops": [
+        "Add",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "d",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "re",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "preDz",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "preWz",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "SRW",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 2,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "RSW",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 2,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "yxV",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "xyU",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "resid",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_slowparts/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_slowparts",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nfrom numpy import zeros, power, tanh\n\n@zk_circuit\ndef slowparts(d: Integer, re: Integer, preDz: Float[Array, 'N<=1024 M<=1024 K<=1024'], preWz: Float[Array, 'N<=1024 M<=1024 K<=1024'], SRW: Float[Array, 'N<=1024 M<=1024'], RSW: Float[Array, 'N<=1024 M<=1024'], yxV: Float[Array, 'N<=1024 M<=1024 K<=1024'], xyU: Float[Array, 'N<=1024 M<=1024 K<=1024'], resid: Integer):\n    \"\"\" computes the linear algebra intensive part of the gradients of the grae\n    \"\"\"\n    fprime = lambda x: 1 - power(tanh(x), 2)\n    partialDU = zeros((d + 1, re, 2 * d, d))\n    for k in range(2 * d):\n        for i in range(d):\n            partialDU[:, :, k, i] = fprime(preDz[k]) * fprime(preWz[i]) * (SRW[i, k] + RSW[i, k]) * yxV[:, :, i]\n    return partialDU",
+  "source_status": "direct"
+}

@@ -1,0 +1,91 @@
+{
+  "categories": [
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "a",
+        "list",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 13,
+      "line_start": 5,
+      "mutated_params": [],
+      "name": "pselect",
+      "ops": [
+        "LtE"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "n",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "n.append"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 17,
+      "line_start": 16,
+      "mutated_params": [],
+      "name": "sel0",
+      "ops": [],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "n",
+          "proposed_annotation": "List[Float]",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "n.append"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 21,
+      "line_start": 20,
+      "mutated_params": [],
+      "name": "sel1",
+      "ops": [],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "n",
+          "proposed_annotation": "List[Float]",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_pselect/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_pselect",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n\n@zk_circuit\n@requires(lambda n: 0 <= n <= 1024)\ndef pselect(n: Integer):\n    l = list()\n    for k in (n, not n):\n        if k:\n            a = sel0\n        else:\n            a = sel1\n        a(l)\n    return l\n\n@zk_chip\ndef sel0(n: List[Float]):\n    n.append(1)\n\n@zk_chip\ndef sel1(n: List[Float]):\n    n.append(2.0)",
+  "source_status": "direct"
+}

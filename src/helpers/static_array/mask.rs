@@ -40,9 +40,7 @@
 
 use crate::builder::IRBuilder;
 use crate::ops::dyn_ndarray::value_to_scalar_i64;
-use crate::types::{ValueId, 
-    DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value,
-};
+use crate::types::{DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value, ValueId};
 
 use super::elementwise::payload_cells;
 
@@ -104,15 +102,14 @@ pub fn is_boolean_mask_static_array(b: &mut IRBuilder, mask: &Value) -> bool {
 /// matching shape AND the mask cells are Boolean wires. The result is
 /// either a `Value::StaticArray` (static mask) or a `Value::DynamicNDArray`
 /// (dynamic mask).
-pub fn try_apply_boolean_mask_read(
-    b: &mut IRBuilder,
-    arr: &Value,
-    mask: &Value,
-) -> Option<Value> {
+pub fn try_apply_boolean_mask_read(b: &mut IRBuilder, arr: &Value, mask: &Value) -> Option<Value> {
     let (arr_dtype, arr_shape, _arr_seg) = match arr {
-        Value::StaticArray { dtype, shape, segment_id, .. } => {
-            (*dtype, shape.clone(), *segment_id)
-        }
+        Value::StaticArray {
+            dtype,
+            shape,
+            segment_id,
+            ..
+        } => (*dtype, shape.clone(), *segment_id),
         _ => return None,
     };
     let mask_shape = match mask {
@@ -122,9 +119,19 @@ pub fn try_apply_boolean_mask_read(
     if !is_boolean_mask_static_array(b, mask) {
         return None;
     }
-    if arr_shape != mask_shape {
-        // numpy raises an IndexError. Surface a clear panic; downstream
-        // callers will see this as a hard compile error.
+    // numpy boolean-mask read accepts a `mask_shape` that is a prefix of
+    // `arr_shape`: the leading axes are *collapsed and filtered* by the
+    // mask, leaving the trailing axes intact. Equal-shape is the special
+    // case where the trailing tail is empty (output is 1-D).
+    //
+    //   arr  : (D0, D1, ..., D_{k-1}, T0, T1, ..., T_{m-1})
+    //   mask : (D0, D1, ..., D_{k-1})
+    //   out  : (true_count, T0, T1, ..., T_{m-1})
+    //
+    // where `true_count ∈ [0, prod(mask_shape)]`. Anything else is a
+    // genuine shape mismatch.
+    let k = mask_shape.len();
+    if k == 0 || k > arr_shape.len() || arr_shape[..k] != mask_shape[..] {
         panic!(
             "boolean index did not match indexed array along dimensions; \
              array shape {:?}, mask shape {:?}",
@@ -138,28 +145,53 @@ pub fn try_apply_boolean_mask_read(
         return None;
     }
 
+    let leading_total: usize = mask_shape.iter().product();
+    let trailing_dims: Vec<usize> = arr_shape[k..].to_vec();
+    let trailing_total: usize = trailing_dims.iter().product();
+
     let arr_cells = payload_cells(b, arr);
     let mask_cells = payload_cells(b, mask);
-    let total: usize = arr_shape.iter().product();
-    debug_assert_eq!(arr_cells.len(), total);
-    debug_assert_eq!(mask_cells.len(), total);
+    debug_assert_eq!(arr_cells.len(), leading_total * trailing_total);
+    debug_assert_eq!(mask_cells.len(), leading_total);
 
     if mask_is_fully_static(&mask_cells) {
-        // Static fast path: surviving cell count known at compile time.
+        // Static fast path: surviving leading-block count is known at
+        // compile time. Concatenate the kept trailing-blocks in order.
         let mut surviving: Vec<Value> = Vec::new();
-        for i in 0..total {
+        let mut kept_leading: usize = 0;
+        for i in 0..leading_total {
             if cell_static_truth(&mask_cells[i]) {
-                surviving.push(arr_cells[i].clone());
+                let base = i * trailing_total;
+                surviving.extend_from_slice(&arr_cells[base..base + trailing_total]);
+                kept_leading += 1;
             }
         }
-        let out_shape = vec![surviving.len()];
+        let mut out_shape = vec![kept_leading];
+        out_shape.extend_from_slice(&trailing_dims);
         return Some(super::base::build_static_array_from_flat(
             b, surviving, out_shape, arr_dtype,
         ));
     }
 
-    // Dynamic mask: produce a DynamicNDArray with total_bound == arr.size.
-    Some(dynamic_mask_read(b, &arr_cells, &mask_cells, arr_dtype, total))
+    // Dynamic mask: produce a DynamicNDArray of shape `(true_count,
+    // *trailing_dims)` with `total_bound == arr.size`. Element bounds
+    // are preserved by the filter (selecting a subset of elements
+    // doesn't change their values), so propagate any known element
+    // bounds from the input array to the output via
+    // `array_in_range` on the new value_id.
+    let input_bounds = super::reductions::read_array_element_bounds(b, arr);
+    let out = dynamic_mask_read(
+        b,
+        &arr_cells,
+        &mask_cells,
+        arr_dtype,
+        leading_total,
+        &trailing_dims,
+    );
+    if let (Some((lo, hi)), Some(out_vid)) = (input_bounds, out.value_id()) {
+        super::reductions::deposit_array_in_range_fact(b, out_vid, lo, hi);
+    }
+    Some(out)
 }
 
 /// Try to apply a boolean-mask write on a `Value::StaticArray`.
@@ -172,6 +204,75 @@ pub fn try_apply_boolean_mask_read(
 /// pattern is data-dependent (any cell could have been overwritten if
 /// the mask is dynamic; even for a static mask the write changes a
 /// compile-time-known subset of cells).
+/// Post-mutation element-bound widening for boolean-mask writes
+/// (`arr[mask] = value`, or `arr[mask] op= delta` after `+=` lowering).
+/// Reads `arr`'s element bounds and `value`'s element bounds, then
+/// deposits `array_in_range(arr.value_id, min(arr_lo, val_lo),
+/// max(arr_hi, val_hi))` so downstream reductions can still see a
+/// sound bound.
+///
+/// Called from the IR-gen visitor's setitem-on-StaticArray dispatch
+/// path so it covers BOTH the fast-path (`try_apply_boolean_mask_write`)
+/// and the fallback `static_array_setitem` path.
+/// Capture pre-mutation element-bound and value-bound information for
+/// a boolean-mask write. Call this BEFORE the write; pair it with
+/// `deposit_mask_write_post` which deposits the widened union on the
+/// post-write SSA value.
+pub struct MaskWritePreBounds {
+    arr_bounds: Option<(i64, i64)>,
+    val_bounds: Option<(i64, i64)>,
+}
+
+pub fn capture_mask_write_pre_bounds(
+    b: &mut IRBuilder,
+    arr: &Value,
+    value: &Value,
+) -> MaskWritePreBounds {
+    let arr_dtype = match arr {
+        Value::StaticArray { dtype, .. } => *dtype,
+        _ => {
+            return MaskWritePreBounds {
+                arr_bounds: None,
+                val_bounds: None,
+            }
+        }
+    };
+    if !matches!(arr_dtype, NumberType::Integer) {
+        return MaskWritePreBounds {
+            arr_bounds: None,
+            val_bounds: None,
+        };
+    }
+    let arr_bounds = super::reductions::read_array_element_bounds(b, arr);
+    let val_bounds = if let Some(n) = value.int_val() {
+        Some((n, n))
+    } else if value.is_number() {
+        b.ask_bounds(value)
+    } else if matches!(value, Value::StaticArray { .. } | Value::DynamicNDArray(_)) {
+        super::reductions::read_array_element_bounds(b, value)
+    } else {
+        None
+    };
+    MaskWritePreBounds {
+        arr_bounds,
+        val_bounds,
+    }
+}
+
+pub fn deposit_mask_write_post(b: &mut IRBuilder, pre: MaskWritePreBounds, updated: &Value) {
+    let MaskWritePreBounds {
+        arr_bounds,
+        val_bounds,
+    } = pre;
+    if let (Some((arr_lo, arr_hi)), Some((val_lo, val_hi))) = (arr_bounds, val_bounds) {
+        if let Some(out_vid) = updated.value_id() {
+            let new_lo = arr_lo.min(val_lo);
+            let new_hi = arr_hi.max(val_hi);
+            super::reductions::deposit_array_in_range_fact(b, out_vid, new_lo, new_hi);
+        }
+    }
+}
+
 pub fn try_apply_boolean_mask_write(
     b: &mut IRBuilder,
     arr: &Value,
@@ -179,9 +280,22 @@ pub fn try_apply_boolean_mask_write(
     value: &Value,
 ) -> Option<Value> {
     let (arr_dtype, arr_shape, arr_seg, _arr_strides, arr_offset, imag_seg) = match arr {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id, value_id: _ } => {
-            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
-        }
+        Value::StaticArray {
+            dtype,
+            shape,
+            segment_id,
+            strides,
+            offset,
+            imag_segment_id,
+            value_id: _,
+        } => (
+            *dtype,
+            shape.clone(),
+            *segment_id,
+            strides.clone(),
+            *offset,
+            *imag_segment_id,
+        ),
         _ => return None,
     };
     let mask_shape = match mask {
@@ -229,6 +343,28 @@ pub fn try_apply_boolean_mask_write(
             Rhs::FullShape(leaves)
         } else {
             Rhs::TrueCount(leaves)
+        }
+    } else if let Value::DynamicNDArray(d) = value {
+        // Aug-assign desugar `a[mask] = a[mask] + v` puts a DynamicNDArray on
+        // the RHS (the gather output, possibly broadcast-added). Materialise
+        // its underlying segment cells in row-major order; if the envelope
+        // matches the array's total cell count, treat as FullShape (each cell
+        // i maps to arr cell i, and the mask gates whether the write fires).
+        let env_total = d.envelope.total_bound;
+        let mut cells = Vec::with_capacity(env_total);
+        for i in 0..env_total {
+            let addr = b.ir_constant_int(i as i64);
+            cells.push(crate::helpers::segment::read_typed(
+                b,
+                d.segment_id,
+                &addr,
+                d.dtype,
+            ));
+        }
+        if env_total == total {
+            Rhs::FullShape(cells)
+        } else {
+            Rhs::TrueCount(cells)
         }
     } else {
         // Unknown RHS shape — punt to legacy path.
@@ -334,7 +470,11 @@ fn ensure_bool(b: &mut IRBuilder, v: &Value) -> Value {
 fn cast_to_dtype(b: &mut IRBuilder, v: &Value, dtype: NumberType) -> Value {
     match dtype {
         NumberType::Float => {
-            if matches!(v, Value::Float(_)) { v.clone() } else { b.ir_float_cast(v) }
+            if matches!(v, Value::Float(_)) {
+                v.clone()
+            } else {
+                b.ir_float_cast(v)
+            }
         }
         NumberType::Integer => {
             if matches!(v, Value::Integer(_)) {
@@ -355,15 +495,23 @@ fn cast_to_dtype(b: &mut IRBuilder, v: &Value, dtype: NumberType) -> Value {
     }
 }
 
-/// Build a DynamicNDArray output from a per-cell mask read where the mask is
+/// Build a DynamicNDArray output from a boolean-mask read where the mask is
 /// not fully compile-time-known. Mirrors `dyn_filter`'s compaction trick.
+///
+/// `leading_total = prod(mask.shape)` rows are scanned; each kept row
+/// contributes a contiguous block of `trailing_total = prod(trailing_dims)`
+/// arr cells to the output. When `trailing_dims` is empty the output
+/// collapses to 1-D and this matches the original equal-shape contract.
 fn dynamic_mask_read(
     b: &mut IRBuilder,
     arr_cells: &[Value],
     mask_cells: &[Value],
     dtype: NumberType,
-    total: usize,
+    leading_total: usize,
+    trailing_dims: &[usize],
 ) -> Value {
+    let trailing_total: usize = trailing_dims.iter().product::<usize>().max(1);
+    let total: usize = leading_total * trailing_total;
     let default_val = match dtype {
         NumberType::Integer => b.ir_constant_int(0),
         NumberType::Float => b.ir_constant_float(0.0),
@@ -373,40 +521,90 @@ fn dynamic_mask_read(
     let default_elements = vec![default_sv; total];
     let segment_id = crate::helpers::segment::alloc_and_write(b, &default_elements, dtype);
 
-    let mut write_ptr = b.ir_constant_int(0);
+    // write_row tracks how many output *rows* we've committed so far. Each
+    // committed row consumes `trailing_total` cells starting at
+    // `write_row * trailing_total`. For the 1-D (no-trailing) case the
+    // per-cell pointer equals the per-row pointer.
+    let mut write_row = b.ir_constant_int(0);
+    let trailing_total_val = b.ir_constant_int(trailing_total as i64);
     let one = b.ir_constant_int(1);
     let zero = b.ir_constant_int(0);
-    for i in 0..total {
+    for i in 0..leading_total {
         let mask_bool = ensure_bool(b, &mask_cells[i]);
-        let cell_cast = cast_to_dtype(b, &arr_cells[i], dtype);
-        let val_to_write = if dtype == NumberType::Float {
-            b.ir_select_f(&mask_bool, &cell_cast, &default_val)
-        } else {
-            b.ir_select_i(&mask_bool, &cell_cast, &default_val)
-        };
-        b.ir_write_memory(segment_id, &write_ptr, &val_to_write);
+        // Base address for the current output row in the flattened
+        // segment. Computed at runtime since `write_row` depends on the
+        // mask. For the 1-D case `trailing_total == 1` and `row_base`
+        // collapses to `write_row` (no extra IR — `ir_mul_i` constant-
+        // folds against the `1` literal when it can).
+        let row_base = b.ir_mul_i(&write_row, &trailing_total_val);
+        for t in 0..trailing_total {
+            let src = &arr_cells[i * trailing_total + t];
+            let cell_cast = cast_to_dtype(b, src, dtype);
+            let val_to_write = if dtype == NumberType::Float {
+                b.ir_select_f(&mask_bool, &cell_cast, &default_val)
+            } else {
+                b.ir_select_i(&mask_bool, &cell_cast, &default_val)
+            };
+            let addr = if t == 0 {
+                row_base.clone()
+            } else {
+                let t_off = b.ir_constant_int(t as i64);
+                b.ir_add_i(&row_base, &t_off)
+            };
+            b.ir_write_memory(segment_id, &addr, &val_to_write);
+        }
         let inc = b.ir_select_i(&mask_bool, &one, &zero);
-        write_ptr = b.ir_add_i(&write_ptr, &inc);
+        write_row = b.ir_add_i(&write_row, &inc);
     }
 
-    let envelope = crate::types::Envelope::new_with_bound(
-        vec![crate::types::Dim::new_dynamic(&mut b.dim_table, 0, total)],
-        total,
-    );
-    let runtime_len = value_to_scalar_i64(&write_ptr);
+    // Envelope: leading dim is dynamic in `[0, leading_total]`; trailing
+    // dims keep their compile-time size.
+    let mut dims = vec![crate::types::Dim::new_dynamic(
+        &mut b.dim_table,
+        0,
+        leading_total,
+    )];
+    for &td in trailing_dims {
+        dims.push(crate::types::Dim::new_static(&mut b.dim_table, td));
+    }
+    let envelope = crate::types::Envelope::new_with_bound(dims, total);
+
+    let runtime_row_count = value_to_scalar_i64(&write_row);
+    let runtime_length_val = if trailing_dims.is_empty() {
+        write_row.clone()
+    } else {
+        b.ir_mul_i(&write_row, &trailing_total_val)
+    };
+    let runtime_length = value_to_scalar_i64(&runtime_length_val);
+
+    // logical shape uses leading_total as the per-axis max (the dynamic
+    // upper bound); trailing dims are their static sizes.
+    let mut logical_shape = vec![leading_total];
+    logical_shape.extend_from_slice(trailing_dims);
+    let logical_strides = crate::helpers::shape_arith::row_major_strides(&logical_shape);
+
+    // runtime_shape: row count for the leading axis, static for the rest.
+    let mut runtime_shape = vec![runtime_row_count];
+    for &td in trailing_dims {
+        runtime_shape.push(ScalarValue::new(Some(td as i64), None));
+    }
+    let runtime_strides: Vec<ScalarValue<i64>> = logical_strides
+        .iter()
+        .map(|&s| ScalarValue::new(Some(s as i64), None))
+        .collect();
 
     Value::DynamicNDArray(DynamicNDArrayData {
         envelope,
         dtype,
         segment_id,
         meta: DynArrayMeta {
-            logical_shape: vec![total],
+            logical_shape,
             logical_offset: 0,
-            logical_strides: vec![1],
-            runtime_length: runtime_len.clone(),
-            runtime_rank: ScalarValue::new(Some(1), None),
-            runtime_shape: vec![runtime_len],
-            runtime_strides: vec![ScalarValue::new(Some(1), None)],
+            logical_strides,
+            runtime_length,
+            runtime_rank: ScalarValue::new(Some((1 + trailing_dims.len()) as i64), None),
+            runtime_shape,
+            runtime_strides,
             runtime_offset: ScalarValue::new(Some(0), None),
         },
         value_id: ValueId::next(),
@@ -427,7 +625,7 @@ mod tests {
         Value::List(CompositeData {
             elements_type: types,
             values,
-        
+
             value_id: ValueId::next(),
         })
     }
@@ -496,5 +694,81 @@ mod tests {
         let arr = make_1d_int(&mut b, &[1, 2, 3]);
         let other_int = make_1d_int(&mut b, &[0, 1, 1]);
         assert!(try_apply_boolean_mask_read(&mut b, &arr, &other_int).is_none());
+    }
+
+    /// 2-D arr with a 1-D leading-axis static mask → StaticArray of shape
+    /// `(kept_rows, trailing)` with the kept rows concatenated in order.
+    #[test]
+    fn static_prefix_mask_read_returns_2d_static_array() {
+        let mut b = IRBuilder::new();
+        // arr shape (3, 2) values: [[10,11],[20,21],[30,31]].
+        let arr_2d = {
+            let leaves: Vec<Value> = [10, 11, 20, 21, 30, 31]
+                .iter()
+                .map(|n| b.ir_constant_int(*n))
+                .collect();
+            crate::helpers::static_array::base::build_static_array_from_flat(
+                &mut b,
+                leaves,
+                vec![3, 2],
+                NumberType::Integer,
+            )
+        };
+        // mask shape (3,) → keep rows 0 and 2.
+        let mask = make_1d_bool(&mut b, &[true, false, true]);
+        let out = try_apply_boolean_mask_read(&mut b, &arr_2d, &mask).expect("native path");
+        match &out {
+            Value::StaticArray { shape, .. } => assert_eq!(*shape, vec![2, 2]),
+            _ => panic!("expected static StaticArray output"),
+        }
+        let cells = payload_cells(&mut b, &out);
+        let folded: Vec<Option<i64>> = cells.iter().map(|v| v.int_val()).collect();
+        assert_eq!(folded, vec![Some(10), Some(11), Some(30), Some(31)]);
+    }
+
+    /// Prefix mask (mask.shape strictly shorter than arr.shape) that
+    /// happens to be fully static still emits a StaticArray (no fallback
+    /// to the DynamicNDArray path).
+    #[test]
+    fn static_mask_with_zero_kept_rows_returns_2d_static_array() {
+        let mut b = IRBuilder::new();
+        let arr_2d = {
+            let leaves: Vec<Value> = [1, 2, 3, 4, 5, 6]
+                .iter()
+                .map(|n| b.ir_constant_int(*n))
+                .collect();
+            crate::helpers::static_array::base::build_static_array_from_flat(
+                &mut b,
+                leaves,
+                vec![3, 2],
+                NumberType::Integer,
+            )
+        };
+        let mask = make_1d_bool(&mut b, &[false, false, false]);
+        let out = try_apply_boolean_mask_read(&mut b, &arr_2d, &mask).expect("native path");
+        match &out {
+            Value::StaticArray { shape, .. } => assert_eq!(*shape, vec![0, 2]),
+            _ => panic!("expected static StaticArray output"),
+        }
+    }
+
+    /// Mask shape that is neither equal to nor a prefix of arr.shape
+    /// must still panic with the numpy-style message.
+    #[test]
+    #[should_panic(expected = "boolean index did not match indexed array")]
+    fn prefix_mismatch_still_panics() {
+        let mut b = IRBuilder::new();
+        let arr_2d = {
+            let leaves: Vec<Value> = (0..6).map(|n| b.ir_constant_int(n)).collect();
+            crate::helpers::static_array::base::build_static_array_from_flat(
+                &mut b,
+                leaves,
+                vec![3, 2],
+                NumberType::Integer,
+            )
+        };
+        // mask (2,) does NOT match arr_shape[..1] == [3].
+        let mask = make_1d_bool(&mut b, &[true, false]);
+        let _ = try_apply_boolean_mask_read(&mut b, &arr_2d, &mask);
     }
 }

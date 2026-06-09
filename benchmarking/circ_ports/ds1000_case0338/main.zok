@@ -1,0 +1,11 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0338/kernel.py
+// REASON: vstack of main diagonal and anti-diagonal of 8x8; lowered to two diagonal loops into a 2x8 array.
+
+def main(field[8][8] a) -> field[2][8]:
+  field[2][8] result = [[0; 8]; 2]
+  for u32 i in 0..8 do
+    result[0][i] = a[i][i]
+    result[1][i] = a[i][7 - i]
+  endfor
+  return result

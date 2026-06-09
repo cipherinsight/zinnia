@@ -7,14 +7,16 @@ use crate::ast::*;
 use crate::builder::IRBuilder;
 use crate::ir::IRGraph;
 use crate::ir_ctx::IRContext;
+use crate::optim::predicates::ContractTerm;
+use crate::optim::prove::{maximize_shape_param, minimize_shape_param};
 use crate::optim::resolver::{LayeredResolver, Resolver, StaticOnlyResolver};
-use crate::types::Value;
+use crate::types::{NumberType, ShapeDim, Value, ZinniaType};
 
-mod visitors;
-mod named_attr;
-mod list_methods;
 mod chip_external;
 mod helpers;
+mod list_methods;
+mod named_attr;
+mod visitors;
 
 #[cfg(test)]
 mod tests;
@@ -96,8 +98,8 @@ impl Default for IRGenConfig {
 /// Registered chip information for the IR generator.
 #[derive(Debug, Clone)]
 pub struct RegisteredChip {
-    pub chip_ast: serde_json::Value,  // The ASTChip dict
-    pub return_dt: serde_json::Value, // Return type descriptor
+    pub chip_ast: serde_json::Value,          // The ASTChip dict
+    pub return_dt: Option<serde_json::Value>, // Return type descriptor
 }
 
 /// Registered external function information for the IR generator.
@@ -123,6 +125,10 @@ pub struct IRGenerator {
     /// `int_args[i]` is `None` when the i-th input parameter wasn't
     /// integer-valued (so the heuristic skips it).
     pub(crate) chip_call_stack: Vec<ChipCallFrame>,
+    pub(crate) for_loop_frames: Vec<ForLoopFrame>,
+    pub(crate) induction_origins: HashMap<String, String>,
+    pub(crate) loop_index_bound_contexts: Vec<LoopIndexBoundContext>,
+    pub(crate) loop_read_reuse_contexts: Vec<LoopReadReuseContext>,
 }
 
 /// One entry in [`IRGenerator::chip_call_stack`]. See round-2 doc on
@@ -144,6 +150,63 @@ pub(crate) struct ChipCallFrame {
     /// (no prior same-name frame) start at `recursion_limit` — today's
     /// behaviour, no tightening.
     pub remaining_bound: u32,
+}
+
+/// IR-gen-local structural loop context. This is deliberately not a resolver
+/// fact or exported IR semantic; it only tightens while unroll quotas for
+/// exact structural patterns.
+#[derive(Debug, Clone)]
+pub(crate) struct ForLoopFrame {
+    pub var_name: String,
+    pub max_bound: u32,
+    pub current_bound: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct LoopIndexBoundContext {
+    pub var_name: String,
+    pub max_bound: u32,
+    pub current_bound: u32,
+    pub positive_guard: bool,
+    pub guard_condition: Option<Value>,
+    pub record_guard_read: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LoopIndexExprKey {
+    Var,
+    MinusOne,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StaticArrayIdentity {
+    pub dtype: NumberType,
+    pub segment_id: u32,
+    pub offset: usize,
+    pub shape: Vec<usize>,
+    pub strides: Vec<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ReusableLoopRead {
+    pub array: StaticArrayIdentity,
+    pub index: LoopIndexExprKey,
+    pub value: Value,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct LoopReadReuseContext {
+    pub candidate: Option<ReusableLoopRead>,
+    pub body_prefix_active: bool,
+}
+
+impl Default for LoopReadReuseContext {
+    fn default() -> Self {
+        Self {
+            candidate: None,
+            body_prefix_active: true,
+        }
+    }
 }
 
 impl IRGenerator {
@@ -172,6 +235,10 @@ impl IRGenerator {
             recursion_depth: 0,
             next_external_store_idx: 1,
             chip_call_stack: Vec::new(),
+            for_loop_frames: Vec::new(),
+            induction_origins: HashMap::new(),
+            loop_index_bound_contexts: Vec::new(),
+            loop_read_reuse_contexts: Vec::new(),
         }
     }
 
@@ -211,8 +278,8 @@ impl IRGenerator {
 
     /// Generate from a JSON string (the bridge entry point).
     pub fn generate_from_json(config: IRGenConfig, ast_json: &str) -> Result<IRGraph, String> {
-        let node: ASTNode = serde_json::from_str(ast_json)
-            .map_err(|e| format!("AST parse error: {}", e))?;
+        let node: ASTNode =
+            serde_json::from_str(ast_json).map_err(|e| format!("AST parse error: {}", e))?;
         match node {
             ASTNode::ASTCircuit(circuit) => {
                 let gen = IRGenerator::new(config);
@@ -229,23 +296,33 @@ impl IRGenerator {
         chips: &HashMap<String, serde_json::Value>,
         externals: &HashMap<String, serde_json::Value>,
     ) -> Result<IRGraph, String> {
-        let node: ASTNode = serde_json::from_str(ast_json)
-            .map_err(|e| format!("AST parse error: {}", e))?;
+        let node: ASTNode =
+            serde_json::from_str(ast_json).map_err(|e| format!("AST parse error: {}", e))?;
         match node {
             ASTNode::ASTCircuit(circuit) => {
                 let mut gen = IRGenerator::new(config);
                 // Register chips
                 for (name, chip_data) in chips {
-                    gen.registered_chips.insert(name.clone(), RegisteredChip {
-                        chip_ast: chip_data["chip_ast"].clone(),
-                        return_dt: chip_data["return_dt"].clone(),
-                    });
+                    gen.registered_chips.insert(
+                        name.clone(),
+                        RegisteredChip {
+                            chip_ast: chip_data["chip_ast"].clone(),
+                            return_dt: if chip_data["return_dt"].is_null() {
+                                None
+                            } else {
+                                Some(chip_data["return_dt"].clone())
+                            },
+                        },
+                    );
                 }
                 // Register externals
                 for (name, ext_data) in externals {
-                    gen.registered_externals.insert(name.clone(), RegisteredExternal {
-                        return_dt: ext_data["return_dt"].clone(),
-                    });
+                    gen.registered_externals.insert(
+                        name.clone(),
+                        RegisteredExternal {
+                            return_dt: ext_data["return_dt"].clone(),
+                        },
+                    );
                 }
                 Ok(gen.generate(&circuit))
             }
@@ -257,16 +334,46 @@ impl IRGenerator {
 
     fn visit(&mut self, node: &ASTNode) -> Value {
         match node {
-            ASTNode::ASTCircuit(n) => { self.visit_circuit(n); Value::None }
-            ASTNode::ASTAssignStatement(n) => { self.visit_assign(n); Value::None }
-            ASTNode::ASTAugAssignStatement(n) => { self.visit_aug_assign(n); Value::None }
-            ASTNode::ASTCondStatement(n) => { self.visit_cond(n); Value::None }
-            ASTNode::ASTForInStatement(n) => { self.visit_for_in(n); Value::None }
-            ASTNode::ASTWhileStatement(n) => { self.visit_while(n); Value::None }
-            ASTNode::ASTBreakStatement(_) => { self.visit_break(); Value::None }
-            ASTNode::ASTContinueStatement(_) => { self.visit_continue(); Value::None }
-            ASTNode::ASTReturnStatement(n) => { self.visit_return(n); Value::None }
-            ASTNode::ASTAssertStatement(n) => { self.visit_assert(n); Value::None }
+            ASTNode::ASTCircuit(n) => {
+                self.visit_circuit(n);
+                Value::None
+            }
+            ASTNode::ASTAssignStatement(n) => {
+                self.visit_assign(n);
+                Value::None
+            }
+            ASTNode::ASTAugAssignStatement(n) => {
+                self.visit_aug_assign(n);
+                Value::None
+            }
+            ASTNode::ASTCondStatement(n) => {
+                self.visit_cond(n);
+                Value::None
+            }
+            ASTNode::ASTForInStatement(n) => {
+                self.visit_for_in(n);
+                Value::None
+            }
+            ASTNode::ASTWhileStatement(n) => {
+                self.visit_while(n);
+                Value::None
+            }
+            ASTNode::ASTBreakStatement(_) => {
+                self.visit_break();
+                Value::None
+            }
+            ASTNode::ASTContinueStatement(_) => {
+                self.visit_continue();
+                Value::None
+            }
+            ASTNode::ASTReturnStatement(n) => {
+                self.visit_return(n);
+                Value::None
+            }
+            ASTNode::ASTAssertStatement(n) => {
+                self.visit_assert(n);
+                Value::None
+            }
             ASTNode::ASTPassStatement(_) => Value::None,
             ASTNode::ASTExprStatement(n) => self.visit(&n.expr),
             ASTNode::ASTBinaryOperator(n) => self.visit_binary_op(n),
@@ -289,7 +396,10 @@ impl IRGenerator {
                     crate::types::Value::Float(s) => s,
                     _ => unreachable!("ir_constant_float returns Value::Float"),
                 };
-                crate::types::Value::Complex { real: real_sv, imag: imag_sv }
+                crate::types::Value::Complex {
+                    real: real_sv,
+                    imag: imag_sv,
+                }
             }
             ASTNode::ASTConstantNone(_) => Value::None,
             ASTNode::ASTConstantString(n) => self.builder.ir_constant_str(n.value.clone()),
@@ -306,7 +416,10 @@ impl IRGenerator {
             | ASTNode::ASTTupleAssignTarget(_)
             | ASTNode::ASTListAssignTarget(_)
             | ASTNode::ASTChip(_) => {
-                panic!("Cannot visit {:?} as expression", std::mem::discriminant(node))
+                panic!(
+                    "Cannot visit {:?} as expression",
+                    std::mem::discriminant(node)
+                )
             }
         }
     }
@@ -314,9 +427,20 @@ impl IRGenerator {
     // ── Circuit ───────────────────────────────────────────────────────
 
     fn visit_circuit(&mut self, n: &ASTCircuit) {
+        let scalar_preconditions = self.scalar_precondition_terms(n);
+        let input_types = self.resolve_input_shape_types(n, &scalar_preconditions);
+
+        let circuit_return_dt = n.return_dt.as_ref().map(|dt| self.parse_dt_descriptor(dt));
+
+        self.ctx
+            .circuit_enter(circuit_return_dt.clone().unwrap_or(ZinniaType::None), None);
+
         // Process inputs
         for (_i, inp) in n.inputs.iter().enumerate() {
-            let dt = self.parse_dt_descriptor(&inp.annotation.dt);
+            let dt = input_types
+                .get(&inp.name)
+                .cloned()
+                .unwrap_or_else(|| self.parse_dt_descriptor(&inp.annotation.dt));
             let kind = inp.annotation.kind.as_deref().unwrap_or("Private");
             let is_public = kind == "Public";
             let val = self.read_input_value(&dt, &inp.name, vec![], is_public);
@@ -344,11 +468,7 @@ impl IRGenerator {
                 let arg_values: Vec<crate::types::Value> = req
                     .args
                     .iter()
-                    .map(|name| {
-                        self.ctx
-                            .get(name)
-                            .unwrap_or(crate::types::Value::None)
-                    })
+                    .map(|name| self.ctx.get(name).unwrap_or(crate::types::Value::None))
                     .collect();
                 let bound_value = req.bound.as_ref().and_then(|name| {
                     self.ctx.get(name).or_else(|| {
@@ -366,6 +486,27 @@ impl IRGenerator {
                     bound_value.as_ref(),
                 );
             }
+            // Op-contract enrichment: also deposit an `array_in_range`
+            // fact on the input array's value_id so derived/mutated
+            // arrays can pick up the bound without relying on the
+            // payload-cache → input-name resolution path (which gets
+            // invalidated by in-place writes / op rewrites).
+            if req.kind == "forall_in_range" && req.args.len() == 3 {
+                if let Some(arr_val) = self.ctx.get(&req.args[0]) {
+                    if let (Some(arr_vid), Ok(lo), Ok(hi)) = (
+                        arr_val.value_id(),
+                        req.args[1].parse::<i64>(),
+                        req.args[2].parse::<i64>(),
+                    ) {
+                        crate::helpers::static_array::reductions::deposit_array_in_range_fact(
+                            &mut self.builder,
+                            arr_vid,
+                            lo,
+                            hi,
+                        );
+                    }
+                }
+            }
         }
 
         // Emit scalar-precondition atoms + their witness-time enforcement.
@@ -373,18 +514,12 @@ impl IRGenerator {
         // layer's discharger; the witness IR (computed via
         // `lower_precondition_to_ir`) is the prove-time enforcement.
         for scalar_req in &n.scalar_requires {
-            // Serialize the term to a JSON string for the IR atom payload.
-            let term_json = scalar_req.term.to_string();
-            self.builder.ir_scalar_precondition(term_json);
-
             // Deserialize ContractTerm from the JSON value and emit the
             // witness IR. Log + skip on lowering errors (sound omission:
             // no Assert means no prove-time enforcement; documented in
             // the card's soundness-gap section).
-            let term: Result<
-                crate::optim::predicates::formula::ContractTerm,
-                _,
-            > = serde_json::from_value(scalar_req.term.clone());
+            let term: Result<crate::optim::predicates::formula::ContractTerm, _> =
+                serde_json::from_value(scalar_req.term.clone());
             let term = match term {
                 Ok(t) => t,
                 Err(e) => {
@@ -392,6 +527,12 @@ impl IRGenerator {
                     continue;
                 }
             };
+            if !crate::optim::predicates::collect_shape_params(&term).is_empty() {
+                continue;
+            }
+            // Serialize the term to a JSON string for the IR atom payload.
+            let term_json = scalar_req.term.to_string();
+            self.builder.ir_scalar_precondition(term_json);
             // Build a closure that resolves `Var(Input(name))` against
             // the circuit's input bindings. We snapshot input names
             // up front (from the AST) to avoid borrow-checker issues
@@ -422,10 +563,7 @@ impl IRGenerator {
                     inputs_to_values.insert(name.clone(), vid);
                 }
             }
-            let bound_term = crate::optim::predicates::substitute_inputs(
-                &term,
-                &inputs_to_values,
-            );
+            let bound_term = crate::optim::predicates::substitute_inputs(&term, &inputs_to_values);
             let anchors = crate::optim::predicates::collect_value_ids(&bound_term);
             for anchor in &anchors {
                 self.builder.facts.insert_for(*anchor, bound_term.clone());
@@ -448,7 +586,267 @@ impl IRGenerator {
         for stmt in &n.block {
             self.visit(stmt);
         }
+
+        let returns = self.ctx.get_returns_with_conditions();
+        let return_guaranteed = self.ctx.check_return_guaranteed();
+        if self.ctx.has_mixed_bare_and_value_returns() {
+            panic!(
+                "Circuit return inference does not allow mixing bare returns with value returns"
+            );
+        }
+        if returns.is_empty() {
+            if circuit_return_dt.is_some() {
+                panic!("Circuit control ends without a return statement");
+            }
+            let _ = self.ctx.circuit_leave();
+            return;
+        }
+        let returns: Vec<(Value, Value)> = returns
+            .into_iter()
+            .filter(|(val, _)| !matches!(val, Value::None))
+            .collect();
+        if returns.is_empty() {
+            if circuit_return_dt.is_some() {
+                panic!("Circuit control ends without a value-returning statement");
+            }
+            let _ = self.ctx.circuit_leave();
+            return;
+        }
+        if !return_guaranteed {
+            if circuit_return_dt.is_some() {
+                panic!("Circuit return annotation requires every path to return");
+            }
+            panic!(
+                "Circuit return inference does not support partial returns without an explicit return annotation"
+            );
+        }
+        let mut result = returns[0].0.clone();
+        for i in 1..returns.len() {
+            let (val, cond) = &returns[i];
+            result = crate::helpers::value_ops::select_value(&mut self.builder, cond, val, &result);
+        }
+        if let Some(return_dt) = circuit_return_dt {
+            if result.zinnia_type() != return_dt {
+                result = self.try_cast_value_to_match(result, &return_dt);
+            }
+            if result.zinnia_type() != return_dt {
+                panic!(
+                    "Circuit return type mismatch: expected {}, got {}",
+                    return_dt,
+                    result.zinnia_type()
+                );
+            }
+        }
+        self.expose_circuit_return_value(&result);
+        let _ = self.ctx.circuit_leave();
+    }
+
+    fn expose_circuit_return_value(&mut self, value: &Value) {
+        match value {
+            Value::Integer(_) | Value::Boolean(_) => {
+                self.builder.ir_expose_public_i(value);
+            }
+            Value::Float(_) => {
+                self.builder.ir_expose_public_f(value);
+            }
+            Value::List(_) | Value::Tuple(_) | Value::StaticArray { .. } => {
+                let flat = crate::helpers::composite::flatten_composite_with_builder(
+                    &mut self.builder,
+                    value,
+                );
+                for leaf in flat {
+                    self.expose_circuit_return_value(&leaf);
+                }
+            }
+            Value::DynamicNDArray(data) => {
+                self.expose_dynamic_ndarray_return(data);
+            }
+            Value::Complex { real, imag } => {
+                self.builder.ir_expose_public_f(&Value::Float(real.clone()));
+                self.builder.ir_expose_public_f(&Value::Float(imag.clone()));
+            }
+            Value::None => {}
+            _ => {
+                panic!(
+                    "Circuit return inference currently does not support public output type {}",
+                    value.zinnia_type()
+                );
+            }
+        }
+    }
+
+    fn expose_dynamic_ndarray_return(&mut self, data: &crate::types::DynamicNDArrayData) {
+        // Metadata-elision: each shape metadata cell that's a
+        // compile-time constant adds ~2 ACIR gates and carries no
+        // information the verifier can't derive from the kernel
+        // signature. Skip those individually; dynamic fields stay
+        // exposed so consumers of variable-shape outputs still see
+        // the runtime extent. Closes the 0301/0302 (+8 each) and
+        // 0303 (+24) residuals.
+        if data.meta.runtime_length.static_val.is_none()
+            || data.meta.runtime_length.static_val.map(|l| l as usize) != Some(data.max_length())
+        {
+            self.builder
+                .ir_expose_public_i(&Value::Integer(data.meta.runtime_length.clone()));
+        }
+        if data.meta.runtime_rank.static_val.is_none() {
+            self.builder
+                .ir_expose_public_i(&Value::Integer(data.meta.runtime_rank.clone()));
+        }
+        for axis in 0..data.max_rank() {
+            let dim = data
+                .meta
+                .runtime_shape
+                .get(axis)
+                .cloned()
+                .unwrap_or_else(|| crate::types::ScalarValue::constant(0));
+            if dim.static_val.is_none() {
+                self.builder.ir_expose_public_i(&Value::Integer(dim));
+            }
+        }
+
+        for i in 0..data.max_length() {
+            let addr = self.builder.ir_constant_int(i as i64);
+            let cell = crate::helpers::segment::read_typed(
+                &mut self.builder,
+                data.segment_id,
+                &addr,
+                data.dtype,
+            );
+            self.expose_circuit_return_value(&cell);
+        }
+    }
+
+    fn scalar_precondition_terms(&self, n: &ASTCircuit) -> Vec<ContractTerm> {
+        n.scalar_requires
+            .iter()
+            .filter_map(|scalar_req| serde_json::from_value(scalar_req.term.clone()).ok())
+            .collect()
+    }
+
+    fn resolve_input_shape_types(
+        &self,
+        n: &ASTCircuit,
+        facts: &[ContractTerm],
+    ) -> HashMap<String, ZinniaType> {
+        let mut out = HashMap::new();
+        for inp in &n.inputs {
+            let dt = self.parse_dt_descriptor(&inp.annotation.dt);
+            let resolved = self.resolve_shape_type(&dt, facts);
+            out.insert(inp.name.clone(), resolved);
+        }
+        out
+    }
+
+    fn resolve_shape_type(&self, dt: &ZinniaType, facts: &[ContractTerm]) -> ZinniaType {
+        match dt {
+            ZinniaType::SymbolicNDArray {
+                shape,
+                dtype,
+                bindings,
+            } => {
+                let mut concrete_shape = Vec::with_capacity(shape.len());
+                let mut max_shape = Vec::with_capacity(shape.len());
+                let mut bounded_total = 1usize;
+                let mut all_exact = true;
+                for dim in shape {
+                    match self.resolve_shape_dim(dim, bindings, facts) {
+                        ResolvedShapeDim::Exact(n) => {
+                            concrete_shape.push(n);
+                            max_shape.push(n);
+                            bounded_total = bounded_total.checked_mul(n).unwrap_or_else(|| {
+                                panic!(
+                                    "symbolic shape bound product overflows usize while resolving {:?}",
+                                    shape
+                                )
+                            });
+                        }
+                        ResolvedShapeDim::Bounded(n) => {
+                            all_exact = false;
+                            max_shape.push(n);
+                            bounded_total = bounded_total.checked_mul(n).unwrap_or_else(|| {
+                                panic!(
+                                    "symbolic shape bound product overflows usize while resolving {:?}",
+                                    shape
+                                )
+                            });
+                        }
+                    }
+                }
+                if all_exact {
+                    ZinniaType::NDArray {
+                        shape: concrete_shape,
+                        dtype: *dtype,
+                    }
+                } else {
+                    ZinniaType::DynamicNDArray {
+                        dtype: *dtype,
+                        max_length: bounded_total,
+                        max_rank: shape.len().max(1),
+                        max_shape: Some(max_shape),
+                    }
+                }
+            }
+            _ => dt.clone(),
+        }
+    }
+
+    fn resolve_shape_dim(
+        &self,
+        dim: &ShapeDim,
+        bindings: &std::collections::BTreeMap<String, usize>,
+        facts: &[ContractTerm],
+    ) -> ResolvedShapeDim {
+        match dim {
+            ShapeDim::Const(n) => ResolvedShapeDim::Exact(*n),
+            ShapeDim::Symbol(expr) => {
+                if let Some(n) = bindings.get(expr) {
+                    return ResolvedShapeDim::Exact(*n);
+                }
+                if let Some(n) = self.solve_shape_exact(expr, facts) {
+                    return ResolvedShapeDim::Exact(n);
+                }
+                if let Some(n) = self.solve_shape_upper(expr, facts) {
+                    return ResolvedShapeDim::Bounded(n);
+                }
+                panic!(
+                    "symbolic shape parameter `{}` must be resolved to an exact value or finite bound before IR generation",
+                    expr
+                )
+            }
+            ShapeDim::Bounded { symbol, upper } => {
+                if let Some(n) = bindings.get(symbol) {
+                    ResolvedShapeDim::Exact(*n)
+                } else {
+                    ResolvedShapeDim::Bounded(*upper)
+                }
+            }
+        }
+    }
+
+    fn solve_shape_exact(&self, symbol: &str, facts: &[ContractTerm]) -> Option<usize> {
+        let min = minimize_shape_param(symbol, facts, 1, self.config.smt_query_timeout_ms)?;
+        let max = maximize_shape_param(symbol, facts, 1, self.config.smt_query_timeout_ms)?;
+        if min == max && min > 0 {
+            Some(min as usize)
+        } else {
+            None
+        }
+    }
+
+    fn solve_shape_upper(&self, symbol: &str, facts: &[ContractTerm]) -> Option<usize> {
+        let max = maximize_shape_param(symbol, facts, 1, self.config.smt_query_timeout_ms)?;
+        if max > 0 {
+            Some(max as usize)
+        } else {
+            None
+        }
     }
 
     // ── Statements ────────────────────────────────────────────────────
+}
+
+enum ResolvedShapeDim {
+    Exact(usize),
+    Bounded(usize),
 }

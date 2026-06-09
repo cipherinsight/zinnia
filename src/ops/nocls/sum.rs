@@ -9,8 +9,12 @@ impl SumOp {
 }
 
 impl Op for SumOp {
-    fn name(&self) -> &'static str { "sum" }
-    fn params(&self) -> &[ParamEntry] { &Self::PARAMS }
+    fn name(&self) -> &'static str {
+        "sum"
+    }
+    fn params(&self) -> &[ParamEntry] {
+        &Self::PARAMS
+    }
 
     fn build(&self, builder: &mut IRBuilder, args: &OpArgs) -> Value {
         let x = args.require("x");
@@ -24,8 +28,11 @@ impl Op for SumOp {
                 let mut acc = data.values[0].clone();
                 for v in &data.values[1..] {
                     acc = crate::ops::dispatch_binary_numeric(
-                        builder, &acc, v,
-                        IRBuilder::ir_add_i, IRBuilder::ir_add_f,
+                        builder,
+                        &acc,
+                        v,
+                        IRBuilder::ir_add_i,
+                        IRBuilder::ir_add_f,
                     );
                 }
                 acc
@@ -37,8 +44,11 @@ impl Op for SumOp {
                 let mut acc = data.values[0].clone();
                 for v in &data.values[1..] {
                     acc = crate::ops::dispatch_binary_numeric(
-                        builder, &acc, v,
-                        IRBuilder::ir_add_i, IRBuilder::ir_add_f,
+                        builder,
+                        &acc,
+                        v,
+                        IRBuilder::ir_add_i,
+                        IRBuilder::ir_add_f,
                     );
                 }
                 acc

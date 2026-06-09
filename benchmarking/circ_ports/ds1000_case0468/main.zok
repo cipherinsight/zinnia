@@ -1,0 +1,18 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0468/kernel.py
+// REASON: Builds a list of variable-shape sub-arrays via slicing arr[xmin:xmax, ymin:ymax]; ZoKrates requires static array shapes
+
+def main(field[4][4] a, u32[2] size) -> field[4][4][3][3]:
+    field[4][4][3][3] result = [[[[0; 3]; 3]; 4]; 4]
+    for u32 j in 0..4 do
+        for u32 i in 0..4 do
+            for u32 di in 0..3 do
+                for u32 dj in 0..3 do
+                    u32 ii = i + di
+                    u32 jj = j + dj
+                    result[j][i][di][dj] = if (ii >= 1) && (jj >= 1) && (ii < 5) && (jj < 5) then a[ii-1][jj-1] else 0 fi
+                endfor
+            endfor
+        endfor
+    endfor
+    return result

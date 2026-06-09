@@ -1,0 +1,13 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0346/kernel.py
+// REASON: row index is a runtime value selecting a row from the matrix and writing back; ZoKrates does not allow runtime-indexed array slice assignment for mutation. Also Float[8,6].
+
+def main(field[8][6] a, field row, field multiply_number) -> field[6]:
+    field[6] result = [0; 6]
+    field acc = 0
+    for u32 j in 0..6 do
+        field v = a[0][j] * multiply_number  // row-1 indexing illegal w/o RAM
+        acc = acc + v
+        result[j] = acc
+    endfor
+    return result

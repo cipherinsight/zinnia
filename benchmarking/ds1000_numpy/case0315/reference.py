@@ -1,0 +1,2 @@
+z = np.any(np.isnan(a), axis = 0)
+a = a[:, ~z]

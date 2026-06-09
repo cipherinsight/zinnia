@@ -1,0 +1,3 @@
+x_new = np.array(x)
+y_new = np.array(y)
+z = x_new + y_new

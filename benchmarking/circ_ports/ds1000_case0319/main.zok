@@ -1,0 +1,26 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0319/kernel.py
+// REASON: inverse-permutation row reorder of 3D array; lowered to nested loops with conditional gather.
+
+def main(field[8][6][8] a, field[8] permutation) -> field[8][6][8]:
+  field[8] c = [0; 8]
+  for u32 i in 0..8 do
+    for u32 k in 0..8 do
+      bool match = (permutation[i] == k)
+      c[k] = if match then i else c[k] fi
+    endfor
+  endfor
+  field[8][6][8] out = [[[0; 8]; 6]; 8]
+  for u32 i in 0..8 do
+    for u32 j in 0..6 do
+      for u32 m in 0..8 do
+        field acc = 0
+        for u32 k in 0..8 do
+          bool match = (c[i] == k)
+          acc = if match then a[k][j][m] else acc fi
+        endfor
+        out[i][j][m] = acc
+      endfor
+    endfor
+  endfor
+  return out

@@ -1,0 +1,130 @@
+{
+  "categories": [
+    "data-dependent-loop",
+    "denominator-obligation",
+    "in-place-mutation",
+    "loop-bounded"
+  ],
+  "diagnostics": [
+    "while loops require a public/padded maximum iteration count."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 17,
+      "line_start": 13,
+      "mutated_params": [
+        "l"
+      ],
+      "name": "swap",
+      "ops": [
+        "NotEq"
+      ],
+      "parameters": [
+        {
+          "mutated": true,
+          "name": "l",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "idx1",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "idx2",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "len",
+        "swap"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": true,
+      "has_while": true,
+      "line_end": 41,
+      "line_start": 20,
+      "mutated_params": [],
+      "name": "partition",
+      "ops": [
+        "Add",
+        "Eq",
+        "FloorDiv",
+        "Gt",
+        "LtE",
+        "NotEq",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "l",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "QuickSort",
+        "l1.append",
+        "l2.append",
+        "len",
+        "partition",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 60,
+      "line_start": 44,
+      "mutated_params": [
+        "l"
+      ],
+      "name": "QuickSort",
+      "ops": [
+        "Add",
+        "Gt"
+      ],
+      "parameters": [
+        {
+          "mutated": true,
+          "name": "l",
+          "proposed_annotation": "Integer[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_another_quicksort/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add an explicit iteration cap or classify as fail-closed until a bound is available.",
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "pythran_another_quicksort",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: data-dependent-loop, denominator-obligation, in-place-mutation, loop-bounded\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: while loops require a public/padded maximum iteration count.\n\n@zk_chip\ndef swap(l: Float[Array, 'N<=1024'], idx1: Float, idx2: Float):\n    if idx1 != idx2:\n        tmp = l[idx1]\n        l[idx1] = l[idx2]\n        l[idx2] = tmp\n\n@zk_chip\ndef partition(l: Float[Array, 'N<=1024']):\n    size = len(l)\n    pivot_idx = size // 2\n    val = l[pivot_idx]\n    idx = size - 1\n    if pivot_idx != idx:\n        swap(l, pivot_idx, idx)\n    idx = idx - 1\n    i = 0\n    while i <= idx:\n        if l[i] > val:\n            while l[idx] > val and idx > i:\n                idx = idx - 1\n            if idx != i:\n                swap(l, i, idx)\n                idx = idx - 1\n            else:\n                break\n        i = i + 1\n    assert idx == i or idx + 1 == i\n    swap(l, i, size - 1)\n    return i\n\n@zk_circuit\ndef QuickSort(l: Integer[Array, 'N<=1024']):\n    size = len(l)\n    if size > 1:\n        idx = partition(l)\n        l1 = []\n        l2 = []\n        for i in range(0, idx):\n            l1.append(l[i])\n        for i in range(idx, size):\n            l2.append(l[i])\n        QuickSort(l1)\n        QuickSort(l2)\n        for i in range(0, len(l1)):\n            l[i] = l1[i]\n        for i in range(0, len(l2)):\n            l[len(l1) + i] = l2[i]\n    return l",
+  "source_status": "direct"
+}

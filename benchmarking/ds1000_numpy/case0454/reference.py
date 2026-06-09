@@ -1,0 +1,2 @@
+linf = np.abs(X).max(axis = 1)
+result = X / linf.reshape(-1, 1)

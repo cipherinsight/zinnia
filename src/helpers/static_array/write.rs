@@ -45,7 +45,11 @@ use super::super::shape_arith::{decode_coords, row_major_strides};
 fn cast_to_dtype(b: &mut IRBuilder, v: &Value, dtype: NumberType) -> Value {
     match dtype {
         NumberType::Float => {
-            if matches!(v, Value::Float(_)) { v.clone() } else { b.ir_float_cast(v) }
+            if matches!(v, Value::Float(_)) {
+                v.clone()
+            } else {
+                b.ir_float_cast(v)
+            }
         }
         NumberType::Integer => {
             if matches!(v, Value::Integer(_)) {
@@ -85,6 +89,9 @@ fn cast_to_dtype(b: &mut IRBuilder, v: &Value, dtype: NumberType) -> Value {
 /// Update the payload cache cell at the given absolute offset to the new
 /// wire. Used after a static-index write so cached-wire reads stay coherent.
 fn cache_set_cell(b: &mut IRBuilder, segment_id: u32, abs_offset: usize, new_val: Value) {
+    if b.static_array_product_provenance.contains_key(&segment_id) {
+        super::base::force_static_array_product_provenance(b, segment_id);
+    }
     if let Some(cells) = b.static_array_payload.get_mut(&segment_id) {
         if abs_offset < cells.len() {
             cells[abs_offset] = new_val;
@@ -97,6 +104,9 @@ fn cache_set_cell(b: &mut IRBuilder, segment_id: u32, abs_offset: usize, new_val
 /// `to_value_list` or `read_leaf_at_flat` will fall through to issuing
 /// `ir_read_memory` ops, which see the up-to-date post-write zkRAM state.
 fn cache_invalidate(b: &mut IRBuilder, segment_id: u32) {
+    if b.static_array_product_provenance.contains_key(&segment_id) {
+        super::base::force_static_array_product_provenance(b, segment_id);
+    }
     b.static_array_payload.remove(&segment_id);
 }
 
@@ -147,9 +157,22 @@ pub fn static_array_setitem(
     value: &Value,
 ) -> Value {
     let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id, value_id: _ } => {
-            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
-        }
+        Value::StaticArray {
+            dtype,
+            shape,
+            segment_id,
+            strides,
+            offset,
+            imag_segment_id,
+            value_id: _,
+        } => (
+            *dtype,
+            shape.clone(),
+            *segment_id,
+            strides.clone(),
+            *offset,
+            *imag_segment_id,
+        ),
         _ => panic!("static_array_setitem: expected Value::StaticArray"),
     };
 
@@ -194,7 +217,50 @@ pub fn static_array_setitem(
         return set_nested_via_list(b, &lst, indices, value);
     }
 
-    let has_range = indices.iter().any(|i| matches!(i, SliceIndex::Range(_, _, _)));
+    let has_range = indices
+        .iter()
+        .any(|i| matches!(i, SliceIndex::Range(_, _, _)));
+
+    // Fancy-index assignment: any axis indexed by an INTEGER StaticArray (or
+    // an integer List/Tuple) is a scatter. NumPy semantics:
+    //   for k in 0..len(idx): val[idx_axis_0[k], idx_axis_1[k], ...] = rhs[k]
+    // Pre-StaticArray, this came through `set_nested_value` on a materialised
+    // List; the segment-write fast-path above didn't recognise it and routed
+    // an array-shaped RHS straight into the scalar setitem, producing
+    // malformed zero-arg IR statements. Dispatch fancy here before falling
+    // through to the scalar / slice paths.
+    //
+    // Boolean StaticArrays are explicitly NOT fancy-index: they're boolean
+    // masks (handled at the visitor P5b path before reaching this dispatcher;
+    // see visitors.rs). Probe each Single-array index via
+    // `is_boolean_mask_static_array` — if any axis index is a bool mask, this
+    // call is NOT fancy-index and we let it fall through to the slice path
+    // (e.g. aug-assign desugar after the visitor's bool-mask attempt declined).
+    let mut any_fancy = false;
+    for i in indices {
+        match i {
+            SliceIndex::Single(v @ Value::StaticArray { .. }) => {
+                if !crate::helpers::static_array::mask::is_boolean_mask_static_array(b, v) {
+                    any_fancy = true;
+                    break;
+                }
+            }
+            SliceIndex::Single(Value::List(d) | Value::Tuple(d)) => {
+                if d.values.iter().any(|v| matches!(v, Value::Integer(_))) {
+                    any_fancy = true;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    if any_fancy {
+        return static_array_fancy_setitem(
+            b, val, dtype, &shape, segment_id, &strides, offset, indices, value,
+        );
+    }
+
+    super::base::materialize_static_array_if_lazy(b, val);
 
     if has_range {
         // Fast-path: when the slice setitem touches a large number of cells
@@ -226,14 +292,17 @@ pub fn static_array_setitem(
             SliceIndex::Single(v) => v.int_val().is_some(),
             _ => true,
         });
-        let all_static_indices = no_dynamic_singles && indices.iter().all(|i| match i {
-            SliceIndex::Range(s, e, st) => {
-                let resolved = |opt: &Option<Value>| matches!(opt, None | Some(Value::None))
-                    || opt.as_ref().and_then(|v| v.int_val()).is_some();
-                resolved(s) && resolved(e) && resolved(st)
-            }
-            _ => true,
-        });
+        let all_static_indices = no_dynamic_singles
+            && indices.iter().all(|i| match i {
+                SliceIndex::Range(s, e, st) => {
+                    let resolved = |opt: &Option<Value>| {
+                        matches!(opt, None | Some(Value::None))
+                            || opt.as_ref().and_then(|v| v.int_val()).is_some()
+                    };
+                    resolved(s) && resolved(e) && resolved(st)
+                }
+                _ => true,
+            });
         if all_static_indices {
             // Compute the static target cell count.
             let mut target_cells: usize = 1;
@@ -251,15 +320,29 @@ pub fn static_array_setitem(
                         let ss = resolve(s, 0);
                         let ee = resolve(e, dim);
                         let stst = resolve(st, 1);
-                        let ss = if ss < 0 { (dim + ss).max(0) } else { ss.min(dim) };
-                        let ee = if ee < 0 { (dim + ee).max(0) } else { ee.min(dim) };
+                        let ss = if ss < 0 {
+                            (dim + ss).max(0)
+                        } else {
+                            ss.min(dim)
+                        };
+                        let ee = if ee < 0 {
+                            (dim + ee).max(0)
+                        } else {
+                            ee.min(dim)
+                        };
                         let mut count = 0usize;
                         if stst > 0 {
                             let mut i = ss;
-                            while i < ee { count += 1; i += stst; }
+                            while i < ee {
+                                count += 1;
+                                i += stst;
+                            }
                         } else if stst < 0 {
                             let mut i = ss;
-                            while i > ee { count += 1; i += stst; }
+                            while i > ee {
+                                count += 1;
+                                i += stst;
+                            }
                         }
                         target_cells *= count;
                     }
@@ -292,7 +375,9 @@ pub fn static_array_setitem(
         // and get correct masking — that's what
         // `test_static_array_2d_slice_runtime_bound` exercises.
         if no_dynamic_singles
-            && indices.iter().any(|i| matches!(i, SliceIndex::Range(_, _, _)))
+            && indices
+                .iter()
+                .any(|i| matches!(i, SliceIndex::Range(_, _, _)))
         {
             let runtime_range = indices.iter().any(|i| match i {
                 SliceIndex::Range(s, e, st) => {
@@ -320,8 +405,15 @@ pub fn static_array_setitem(
     // All-Single indices.
     if dtype == NumberType::Complex {
         return complex_element_setitem(
-            b, val, &shape, segment_id, imag_seg.expect("Complex StaticArray missing imag_segment_id"),
-            &strides, offset, indices, value,
+            b,
+            val,
+            &shape,
+            segment_id,
+            imag_seg.expect("Complex StaticArray missing imag_segment_id"),
+            &strides,
+            offset,
+            indices,
+            value,
         );
     }
     static_array_element_setitem(
@@ -348,10 +440,13 @@ fn complex_element_setitem(
     let (re_v, im_v) = crate::helpers::value_ops::unpack_value_to_complex_parts(b, value);
     // Convert each SliceIndex::Single into a Value (we already vetted this is
     // an all-Single setitem at the dispatcher).
-    let idx_vals: Vec<Value> = indices.iter().map(|s| match s {
-        SliceIndex::Single(v) => v.clone(),
-        _ => unreachable!("complex_element_setitem expects all-Single indices"),
-    }).collect();
+    let idx_vals: Vec<Value> = indices
+        .iter()
+        .map(|s| match s {
+            SliceIndex::Single(v) => v.clone(),
+            _ => unreachable!("complex_element_setitem expects all-Single indices"),
+        })
+        .collect();
 
     // Static fast path: known offset → both component writes are direct.
     let all_static = idx_vals.iter().all(|v| v.int_val().is_some());
@@ -368,7 +463,10 @@ fn complex_element_setitem(
         // Update cache cell to a Value::Complex made from the new parts.
         let abs = flat as usize;
         let new_complex = match (&re_v, &im_v) {
-            (Value::Float(r), Value::Float(im)) => Value::Complex { real: r.clone(), imag: im.clone() },
+            (Value::Float(r), Value::Float(im)) => Value::Complex {
+                real: r.clone(),
+                imag: im.clone(),
+            },
             _ => unreachable!(),
         };
         cache_set_cell(b, real_seg, abs, new_complex);
@@ -452,9 +550,14 @@ fn slice_setitem_via_legacy(
     value: &Value,
 ) -> Value {
     let (dtype, shape, segment_id, _strides, offset) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset, .. } => {
-            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset)
-        }
+        Value::StaticArray {
+            dtype,
+            shape,
+            segment_id,
+            strides,
+            offset,
+            ..
+        } => (*dtype, shape.clone(), *segment_id, strides.clone(), *offset),
         _ => unreachable!("slice_setitem_via_legacy: expected StaticArray"),
     };
     // Materialise the source to a nested List.
@@ -478,7 +581,8 @@ fn slice_setitem_via_legacy(
     if flat.len() != total {
         panic!(
             "slice assignment broadcast fallback: flattened result has {} elements but expected {}",
-            flat.len(), total
+            flat.len(),
+            total
         );
     }
     for (i, leaf) in flat.iter().enumerate() {
@@ -513,7 +617,11 @@ fn legacy_set_nested(
     match &indices[0] {
         SliceIndex::Single(idx_val) => {
             if let Some(i) = idx_val.int_val() {
-                let i = if i < 0 { (data.values.len() as i64 + i) as usize } else { i as usize };
+                let i = if i < 0 {
+                    (data.values.len() as i64 + i) as usize
+                } else {
+                    i as usize
+                };
                 if i < data.values.len() {
                     let mut new_values = data.values.clone();
                     let mut new_types = data.elements_type.clone();
@@ -524,9 +632,17 @@ fn legacy_set_nested(
                     }
                     new_types[i] = new_values[i].zinnia_type();
                     return if is_tuple {
-                        Value::Tuple(crate::types::CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() })
+                        Value::Tuple(crate::types::CompositeData {
+                            elements_type: new_types,
+                            values: new_values,
+                            value_id: ValueId::next(),
+                        })
                     } else {
-                        Value::List(crate::types::CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() })
+                        Value::List(crate::types::CompositeData {
+                            elements_type: new_types,
+                            values: new_values,
+                            value_id: ValueId::next(),
+                        })
                     };
                 }
             }
@@ -537,8 +653,16 @@ fn legacy_set_nested(
             let start_i = start.as_ref().and_then(|v| v.int_val()).unwrap_or(0);
             let stop_i = stop.as_ref().and_then(|v| v.int_val()).unwrap_or(len);
             let step_val = step.as_ref().and_then(|v| v.int_val()).unwrap_or(1);
-            let start_idx = if start_i < 0 { (len + start_i).max(0) } else { start_i.min(len) } as usize;
-            let stop_idx = if stop_i < 0 { (len + stop_i).max(0) } else { stop_i.min(len) } as usize;
+            let start_idx = if start_i < 0 {
+                (len + start_i).max(0)
+            } else {
+                start_i.min(len)
+            } as usize;
+            let stop_idx = if stop_i < 0 {
+                (len + stop_i).max(0)
+            } else {
+                stop_i.min(len)
+            } as usize;
 
             let mut new_values = data.values.clone();
             let mut new_types = data.elements_type.clone();
@@ -547,7 +671,12 @@ fn legacy_set_nested(
                     let mut rhs_idx = 0;
                     let mut i = start_idx;
                     while i < stop_idx && rhs_idx < rhs_data.values.len() {
-                        new_values[i] = legacy_set_nested(b, &new_values[i], &indices[1..], &rhs_data.values[rhs_idx]);
+                        new_values[i] = legacy_set_nested(
+                            b,
+                            &new_values[i],
+                            &indices[1..],
+                            &rhs_data.values[rhs_idx],
+                        );
                         new_types[i] = new_values[i].zinnia_type();
                         rhs_idx += 1;
                         i += step_val as usize;
@@ -579,13 +708,114 @@ fn legacy_set_nested(
                 }
             }
             if is_tuple {
-                Value::Tuple(crate::types::CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() })
+                Value::Tuple(crate::types::CompositeData {
+                    elements_type: new_types,
+                    values: new_values,
+                    value_id: ValueId::next(),
+                })
             } else {
-                Value::List(crate::types::CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() })
+                Value::List(crate::types::CompositeData {
+                    elements_type: new_types,
+                    values: new_values,
+                    value_id: ValueId::next(),
+                })
             }
         }
         _ => current.clone(),
     }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Fancy-index setitem
+// ────────────────────────────────────────────────────────────────────────
+
+/// Extract the per-element Values of an integer index source. Accepts a
+/// StaticArray (segment-backed) or a List/Tuple (composite-backed).
+fn read_index_array_elements(b: &mut IRBuilder, src: &Value) -> Vec<Value> {
+    match src {
+        Value::StaticArray { .. } => {
+            let list = super::base::to_value_list(b, src);
+            match list {
+                Value::List(d) => d.values,
+                _ => vec![],
+            }
+        }
+        Value::List(d) | Value::Tuple(d) => d.values.clone(),
+        _ => vec![],
+    }
+}
+
+/// Scatter writes for fancy-index assignment on a StaticArray destination.
+/// Handles the NumPy semantics:
+///   for k in 0..L: dst[idx_axes[k]] = rhs[k] (or rhs broadcast scalar).
+/// Per-axis indices may mix fancy (array-valued Single) with simple Single
+/// scalars or Range slices; non-fancy axes are carried through unchanged.
+#[allow(clippy::too_many_arguments)]
+fn static_array_fancy_setitem(
+    b: &mut IRBuilder,
+    val: &Value,
+    _dtype: NumberType,
+    _shape: &[usize],
+    _segment_id: u32,
+    _strides: &[usize],
+    _offset: usize,
+    indices: &[SliceIndex],
+    value: &Value,
+) -> Value {
+    // Collect per-axis fancy index materializations; None for non-fancy axes.
+    let mut fancy_arrays: Vec<Option<Vec<Value>>> = Vec::with_capacity(indices.len());
+    let mut fancy_len: Option<usize> = None;
+    for idx in indices {
+        let elems = match idx {
+            SliceIndex::Single(v @ Value::StaticArray { .. })
+            | SliceIndex::Single(v @ Value::List(_))
+            | SliceIndex::Single(v @ Value::Tuple(_)) => Some(read_index_array_elements(b, v)),
+            _ => None,
+        };
+        if let Some(ref es) = elems {
+            if let Some(prev) = fancy_len {
+                assert!(
+                    prev == es.len(),
+                    "fancy-index axes must broadcast: got lengths {} and {}",
+                    prev,
+                    es.len()
+                );
+            } else {
+                fancy_len = Some(es.len());
+            }
+        }
+        fancy_arrays.push(elems);
+    }
+    let l = fancy_len.expect("static_array_fancy_setitem called without a fancy axis");
+
+    // Materialize an array-shaped RHS to per-element Values. Scalar RHS is
+    // broadcast (used `l` times). A length-L 1-D RHS feeds element k per
+    // iteration. Multi-dim RHS (e.g. row-shaped) falls through as the whole
+    // value — downstream setitem dispatches the slice / element write.
+    let value_per_k: Option<Vec<Value>> = match value {
+        Value::StaticArray { shape: vs, .. } if !vs.is_empty() && vs[0] == l && vs.len() == 1 => {
+            Some(read_index_array_elements(b, value))
+        }
+        Value::List(d) | Value::Tuple(d) if d.values.len() == l => Some(d.values.clone()),
+        _ => None,
+    };
+
+    for k in 0..l {
+        let mut k_indices: Vec<SliceIndex> = Vec::with_capacity(indices.len());
+        for (ax, idx) in indices.iter().enumerate() {
+            match &fancy_arrays[ax] {
+                Some(arr) => k_indices.push(SliceIndex::Single(arr[k].clone())),
+                None => k_indices.push(idx.clone()),
+            }
+        }
+        let v_k = match &value_per_k {
+            Some(vs) => vs[k].clone(),
+            None => value.clone(),
+        };
+        let _ = static_array_setitem(b, val, &k_indices, &v_k);
+    }
+
+    val.clone()
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -605,18 +835,20 @@ fn static_array_element_setitem(
     value: &Value,
 ) -> Value {
     // Extract index Values out of SliceIndex::Single.
-    let idx_vals: Vec<Value> = indices.iter().map(|s| match s {
-        SliceIndex::Single(v) => v.clone(),
-        _ => unreachable!("static_array_element_setitem: non-Single index"),
-    }).collect();
+    let idx_vals: Vec<Value> = indices
+        .iter()
+        .map(|s| match s {
+            SliceIndex::Single(v) => v.clone(),
+            _ => unreachable!("static_array_element_setitem: non-Single index"),
+        })
+        .collect();
 
     let rank = shape.len();
 
     // Partial indexing (fewer indices than rank): the LHS targets a row /
     // sub-array. Rewrite as a slice-setitem with trailing full ranges.
     if idx_vals.len() < rank {
-        let mut full: Vec<SliceIndex> = idx_vals.iter().cloned()
-            .map(SliceIndex::Single).collect();
+        let mut full: Vec<SliceIndex> = idx_vals.iter().cloned().map(SliceIndex::Single).collect();
         for _ in idx_vals.len()..rank {
             full.push(SliceIndex::Range(None, None, None));
         }
@@ -628,7 +860,8 @@ fn static_array_element_setitem(
     if idx_vals.len() > rank {
         panic!(
             "too many indices for array: array is {}-dimensional, but {} were indexed",
-            rank, idx_vals.len()
+            rank,
+            idx_vals.len()
         );
     }
 
@@ -704,7 +937,8 @@ fn static_array_slice_setitem(
     if indices.len() > rank {
         panic!(
             "too many indices for array: array is {}-dimensional, but {} were indexed",
-            rank, indices.len()
+            rank,
+            indices.len()
         );
     }
 
@@ -747,10 +981,16 @@ fn static_array_slice_setitem(
                     let mut coords: Vec<usize> = Vec::new();
                     if st > 0 {
                         let mut i = s;
-                        while i < e { coords.push(i as usize); i += st; }
+                        while i < e {
+                            coords.push(i as usize);
+                            i += st;
+                        }
                     } else {
                         let mut i = s;
-                        while i > e { coords.push(i as usize); i += st; }
+                        while i > e {
+                            coords.push(i as usize);
+                            i += st;
+                        }
                     }
                     value_shape.push(coords.len());
                     axis_specs.push((ax, AxisCoords::Static(coords)));
@@ -759,7 +999,11 @@ fn static_array_slice_setitem(
                     fn to_ir(b: &mut IRBuilder, v: &Option<Value>, default: i64) -> Value {
                         match v.as_ref() {
                             Some(val) if !matches!(val, Value::None) => {
-                                if let Some(s) = val.int_val() { b.ir_constant_int(s) } else { val.clone() }
+                                if let Some(s) = val.int_val() {
+                                    b.ir_constant_int(s)
+                                } else {
+                                    val.clone()
+                                }
                             }
                             _ => b.ir_constant_int(default),
                         }
@@ -804,7 +1048,8 @@ fn static_array_slice_setitem(
                 super::super::composite::flatten_composite_with_builder(b, &flat_list)
             }
             Value::DynamicNDArray(vd) => {
-                super::super::segment::read_all(b, vd.segment_id, vd.max_length())
+                let vd_owned = crate::ops::dyn_ndarray::force_contiguous(b, vd);
+                super::super::segment::read_all(b, vd_owned.segment_id, vd_owned.max_length())
             }
             Value::List(_) | Value::Tuple(_) => {
                 super::super::composite::flatten_composite_with_builder(b, value)
@@ -831,7 +1076,9 @@ fn static_array_slice_setitem(
                 panic!(
                     "slice assignment shape mismatch: target slice has shape {:?} ({} elements) \
                      but value has {} elements. Broadcasting in slice assignment is not supported.",
-                    value_shape, value_total, value_elements.len()
+                    value_shape,
+                    value_total,
+                    value_elements.len()
                 );
             }
             // Fall back to legacy path: materialise the LHS to a nested
@@ -864,7 +1111,11 @@ fn static_array_slice_setitem(
                 match spec {
                     AxisCoords::Single(v) => {
                         if let Some(i) = v.int_val() {
-                            let i = if i < 0 { shape[*src_axis] as i64 + i } else { i };
+                            let i = if i < 0 {
+                                shape[*src_axis] as i64 + i
+                            } else {
+                                i
+                            };
                             addr_static += i * stride;
                         } else {
                             had_dynamic_single = true;
@@ -902,7 +1153,10 @@ fn static_array_slice_setitem(
                 cache_set_cell(b, segment_id, addr_static as usize, write_val);
             }
         }
-        if axis_specs.iter().any(|(_, s)| matches!(s, AxisCoords::Single(v) if v.int_val().is_none())) {
+        if axis_specs
+            .iter()
+            .any(|(_, s)| matches!(s, AxisCoords::Single(v) if v.int_val().is_none()))
+        {
             // A dynamic Single index made addresses runtime-only.
             cache_invalidate(b, segment_id);
         }
@@ -922,7 +1176,11 @@ fn static_array_slice_setitem(
                 match spec {
                     AxisCoords::Single(v) => {
                         if let Some(i) = v.int_val() {
-                            let i = if i < 0 { shape[*src_axis] as i64 + i } else { i };
+                            let i = if i < 0 {
+                                shape[*src_axis] as i64 + i
+                            } else {
+                                i
+                            };
                             addr_parts_static += i * stride;
                         } else {
                             let stride_val = b.ir_constant_int(stride);
@@ -934,7 +1192,12 @@ fn static_array_slice_setitem(
                         addr_parts_static += coord as i64 * stride;
                         val_coord_idx += 1;
                     }
-                    AxisCoords::Dynamic { start, stop, step, axis_len } => {
+                    AxisCoords::Dynamic {
+                        start,
+                        stop,
+                        step,
+                        axis_len,
+                    } => {
                         let idx_in_slice = val_coords[val_coord_idx] as i64;
                         let idx_const = b.ir_constant_int(idx_in_slice);
                         let off2 = b.ir_mul_i(&idx_const, step);
@@ -1014,7 +1277,7 @@ mod tests {
         Value::List(CompositeData {
             elements_type: types,
             values,
-        
+
             value_id: ValueId::next(),
         })
     }
@@ -1054,10 +1317,8 @@ mod tests {
             _ => panic!(),
         };
         // simulate a runtime index — fresh wire with no static_val
-        let runtime_idx = b.ir_read_integer(
-            crate::circuit_input::InputPath::new("j", vec![]),
-            true,
-        );
+        let runtime_idx =
+            b.ir_read_integer(crate::circuit_input::InputPath::new("j", vec![]), true);
         let new_val = b.ir_constant_int(77);
         let indices = vec![SliceIndex::Single(runtime_idx)];
         static_array_setitem(&mut b, &arr, &indices, &new_val);

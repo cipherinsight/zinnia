@@ -1,0 +1,12 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0343/kernel.py
+// REASON: X.T.flat (transpose then flat) lowered to explicit column-major loop
+
+def main(field[5][6] X) -> field[30]:
+    field[30] result = [0; 30]
+    for u32 j in 0..6 do
+        for u32 i in 0..5 do
+            result[j * 5 + i] = X[i][j]
+        endfor
+    endfor
+    return result

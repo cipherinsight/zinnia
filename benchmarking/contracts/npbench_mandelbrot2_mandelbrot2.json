@@ -1,0 +1,108 @@
+{
+  "categories": [
+    "complex",
+    "domain-obligation",
+    "loop-bounded"
+  ],
+  "diagnostics": [
+    "Complex kernels require Complex dtype support or a fail-closed classification."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "abs",
+        "len",
+        "np.add",
+        "np.linspace",
+        "np.logical_not",
+        "np.multiply",
+        "np.zeros",
+        "range",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 35,
+      "line_start": 14,
+      "mutated_params": [],
+      "name": "mandelbrot",
+      "ops": [
+        "Add",
+        "Gt",
+        "LtE",
+        "Mult"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "xmin",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "xmax",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "ymin",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "ymax",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "xn",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "yn",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "itermax",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "horizon",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "npbench_mandelbrot2_mandelbrot2/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "npbench_mandelbrot2_mandelbrot2",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: complex, domain-obligation, in-place-mutation, loop-bounded\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.\nimport numpy as np\n\n@zk_circuit\n@requires(lambda xmin, xmax, ymin, ymax, xn, yn, itermax, horizon: 0 <= itermax <= 1024)\ndef mandelbrot(xmin: Float[Array, 'N<=1024'], xmax: Float[Array, 'N<=1024'], ymin: Float[Array, 'N<=1024'], ymax: Float[Array, 'N<=1024'], xn: Complex[Array, 'N<=1024'], yn: Complex[Array, 'N<=1024'], itermax: Integer, horizon: Float=2.0):\n    Xi, Yi = np.mgrid[0:xn, 0:yn]\n    X = np.linspace(xmin, xmax, xn, dtype=np.float64)[Xi]\n    Y = np.linspace(ymin, ymax, yn, dtype=np.float64)[Yi]\n    C = X + Y * 1j\n    N_ = np.zeros(C.shape, dtype=np.int64)\n    Z_ = np.zeros(C.shape, dtype=np.complex128)\n    Xi.shape = Yi.shape = C.shape = xn * yn\n    Z = np.zeros(C.shape, np.complex128)\n    for i in range(itermax):\n        if not len(Z):\n            break\n        np.multiply(Z, Z, Z)\n        np.add(Z, C, Z)\n        I = abs(Z) > horizon\n        N_[Xi[I], Yi[I]] = i + 1\n        Z_[Xi[I], Yi[I]] = Z[I]\n        np.logical_not(I, I)\n        Z = Z[I]\n        Xi, Yi = (Xi[I], Yi[I])\n        C = C[I]\n    return (Z_.T, N_.T)",
+  "source_status": "direct"
+}

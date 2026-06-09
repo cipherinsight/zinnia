@@ -1,0 +1,22 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0417/kernel.py
+// REASON: data[::-1] then reshape(-1, bin_size).mean(axis=1) — runtime bin_size yields data-dependent shape.
+
+const u32 N = 8
+const u32 BIN_MAX = 8
+
+def main(field[N] data, field bin_size) -> field[BIN_MAX]:
+    field[N] rev = [0; N]
+    for u32 i in 0..N do
+        rev[i] = data[N - 1 - i]
+    endfor
+    field[BIN_MAX] result = [0; BIN_MAX]
+    for u32 b in 0..BIN_MAX do
+        field acc = 0
+        for u32 k in 0..BIN_MAX do
+            field idx = b * bin_size + k
+            acc = if k < bin_size then acc + rev[idx] else acc fi
+        endfor
+        result[b] = acc / bin_size
+    endfor
+    return result

@@ -1,0 +1,58 @@
+{
+  "categories": [
+    "denominator-obligation"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "astype",
+        "inRGB.astype",
+        "numpy.exp",
+        "numpy.round",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 23,
+      "line_start": 11,
+      "mutated_params": [],
+      "name": "goodExpoMeasure",
+      "ops": [
+        "Div",
+        "Mult",
+        "NotEq",
+        "Pow",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "inRGB",
+          "proposed_annotation": "Float[Array, 'C<=3 H<=1024 W<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "sigma",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_goodexpomeasure/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites."
+  ],
+  "program": "pythran_goodexpomeasure",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\nimport numpy\n\n@zk_circuit\n@requires(lambda inRGB, sigma: sigma != 0)\ndef goodExpoMeasure(inRGB: Float[Array, 'C<=3 H<=1024 W<=1024'], sigma: Float):\n    \"\"\"\n    Compute the good exposition image quality measure on 1 input image.\n    \"\"\"\n    R = inRGB[0, :, :].astype(numpy.float64)\n    G = inRGB[1, :, :].astype(numpy.float64)\n    B = inRGB[2, :, :].astype(numpy.float64)\n    goodExpoR = numpy.exp(-(R - 128) ** 2 / sigma)\n    goodExpoG = numpy.exp(-(G - 128) ** 2 / sigma)\n    goodExpoB = numpy.exp(-(B - 128) ** 2 / sigma)\n    goodExpo = goodExpoR * goodExpoG * goodExpoB\n    goodExpo = (numpy.round(goodExpo, 2) * (2 ** 8 - 1)).astype(numpy.uint8)\n    return goodExpo",
+  "source_status": "direct"
+}

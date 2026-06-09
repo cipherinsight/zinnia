@@ -9,8 +9,12 @@ impl UAddOp {
 }
 
 impl Op for UAddOp {
-    fn name(&self) -> &'static str { "uadd" }
-    fn params(&self) -> &[ParamEntry] { &Self::PARAMS }
+    fn name(&self) -> &'static str {
+        "uadd"
+    }
+    fn params(&self) -> &[ParamEntry] {
+        &Self::PARAMS
+    }
 
     fn build(&self, _builder: &mut IRBuilder, args: &OpArgs) -> Value {
         args.require("x").clone()

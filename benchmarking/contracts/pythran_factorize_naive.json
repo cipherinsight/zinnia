@@ -1,0 +1,55 @@
+{
+  "categories": [
+    "data-dependent-loop",
+    "denominator-obligation"
+  ],
+  "diagnostics": [
+    "while loops require a public/padded maximum iteration count."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "factors.append",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": true,
+      "has_while": true,
+      "line_end": 35,
+      "line_start": 13,
+      "mutated_params": [],
+      "name": "factorize_naive",
+      "ops": [
+        "Div",
+        "Eq",
+        "Gt",
+        "GtE",
+        "Lt",
+        "LtE",
+        "Mod",
+        "Mult"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "n",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_factorize_naive/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add an explicit iteration cap or classify as fail-closed until a bound is available.",
+    "Add nonzero or positive denominator facts at the exact division/modulo sites."
+  ],
+  "program": "pythran_factorize_naive",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: data-dependent-loop, denominator-obligation, in-place-mutation\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: while loops require a public/padded maximum iteration count.\n\n@zk_circuit\n@requires(lambda n: 0 <= n <= 1024)\ndef factorize_naive(n: Integer):\n    \"\"\" A naive factorization method. Take integer 'n', return list of\n        factors.\n    \"\"\"\n    if n < 2:\n        return []\n    factors = []\n    p = 2\n    while True:\n        if n == 1:\n            return factors\n        r = n % p\n        if r == 0:\n            factors.append(p)\n            n = n / p\n        elif p * p >= n:\n            factors.append(n)\n            return factors\n        elif p > 2:\n            p += 2\n        else:\n            p += 1\n    assert False, 'unreachable'",
+  "source_status": "direct"
+}

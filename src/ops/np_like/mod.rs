@@ -41,8 +41,16 @@ pub(crate) fn vectorize_minmax(
     builder: &mut crate::builder::IRBuilder,
     x1: &crate::types::Value,
     x2: &crate::types::Value,
-    int_cmp: fn(&mut crate::builder::IRBuilder, &crate::types::Value, &crate::types::Value) -> crate::types::Value,
-    float_cmp: fn(&mut crate::builder::IRBuilder, &crate::types::Value, &crate::types::Value) -> crate::types::Value,
+    int_cmp: fn(
+        &mut crate::builder::IRBuilder,
+        &crate::types::Value,
+        &crate::types::Value,
+    ) -> crate::types::Value,
+    float_cmp: fn(
+        &mut crate::builder::IRBuilder,
+        &crate::types::Value,
+        &crate::types::Value,
+    ) -> crate::types::Value,
 ) -> crate::types::Value {
     use crate::types::{CompositeData, Value, ValueId};
     // Broadcast first so both operands have the same shape, then walk in
@@ -84,7 +92,7 @@ pub(crate) fn vectorize_minmax(
                 Value::List(CompositeData {
                     elements_type: types,
                     values: vals,
-                
+
                     value_id: ValueId::next(),
                 })
             }
@@ -123,16 +131,43 @@ macro_rules! define_np_arith {
             ];
         }
         impl crate::ops::Op for $name {
-            fn name(&self) -> &'static str { $op_name }
-            fn signature(&self) -> &'static str { $sig }
-            fn params(&self) -> &[crate::ops::ParamEntry] { &Self::PARAMS }
-            fn build(&self, builder: &mut crate::builder::IRBuilder, args: &crate::ops::OpArgs) -> crate::types::Value {
+            fn name(&self) -> &'static str {
+                $op_name
+            }
+            fn signature(&self) -> &'static str {
+                $sig
+            }
+            fn params(&self) -> &[crate::ops::ParamEntry] {
+                &Self::PARAMS
+            }
+            fn build(
+                &self,
+                builder: &mut crate::builder::IRBuilder,
+                args: &crate::ops::OpArgs,
+            ) -> crate::types::Value {
                 let x1 = args.require("x1");
                 let x2 = args.require("x2");
                 if x1.is_number() && x2.is_number() {
                     return crate::ops::dispatch_binary_numeric(
-                        builder, x1, x2,
-                        crate::builder::IRBuilder::$int_method, crate::builder::IRBuilder::$float_method,
+                        builder,
+                        x1,
+                        x2,
+                        crate::builder::IRBuilder::$int_method,
+                        crate::builder::IRBuilder::$float_method,
+                    );
+                }
+                if matches!(
+                    x1,
+                    crate::types::Value::StaticArray { .. } | crate::types::Value::Complex { .. }
+                ) || matches!(
+                    x2,
+                    crate::types::Value::StaticArray { .. } | crate::types::Value::Complex { .. }
+                ) {
+                    return crate::helpers::value_ops::apply_binary_op(
+                        builder,
+                        crate::ops::np_like::np_op_name_to_apply_op($op_name),
+                        x1,
+                        x2,
                     );
                 }
                 // Vectorize over composites: fall through to apply_binary_op
@@ -164,16 +199,29 @@ macro_rules! define_np_compare {
             ];
         }
         impl crate::ops::Op for $name {
-            fn name(&self) -> &'static str { $op_name }
-            fn signature(&self) -> &'static str { $sig }
-            fn params(&self) -> &[crate::ops::ParamEntry] { &Self::PARAMS }
-            fn build(&self, builder: &mut crate::builder::IRBuilder, args: &crate::ops::OpArgs) -> crate::types::Value {
+            fn name(&self) -> &'static str {
+                $op_name
+            }
+            fn signature(&self) -> &'static str {
+                $sig
+            }
+            fn params(&self) -> &[crate::ops::ParamEntry] {
+                &Self::PARAMS
+            }
+            fn build(
+                &self,
+                builder: &mut crate::builder::IRBuilder,
+                args: &crate::ops::OpArgs,
+            ) -> crate::types::Value {
                 let x1 = args.require("x1");
                 let x2 = args.require("x2");
                 if x1.is_number() && x2.is_number() {
                     return crate::ops::dispatch_binary_numeric(
-                        builder, x1, x2,
-                        crate::builder::IRBuilder::$int_method, crate::builder::IRBuilder::$float_method,
+                        builder,
+                        x1,
+                        x2,
+                        crate::builder::IRBuilder::$int_method,
+                        crate::builder::IRBuilder::$float_method,
                     );
                 }
                 use crate::types::Value;
@@ -203,15 +251,24 @@ macro_rules! define_np_unary_math {
             // Recursively walk composites and apply the scalar op at the
             // leaves. Inlined inside the impl so the macro substitution can
             // reference the captured `$float_method` and `$sig`.
-            fn apply_scalar(builder: &mut crate::builder::IRBuilder, x: &crate::types::Value) -> crate::types::Value {
-                use crate::types::{Value, CompositeData, ValueId};
+            fn apply_scalar(
+                builder: &mut crate::builder::IRBuilder,
+                x: &crate::types::Value,
+            ) -> crate::types::Value {
+                use crate::types::{CompositeData, Value, ValueId};
                 match x {
                     Value::List(d) | Value::Tuple(d) => {
-                        let vals: Vec<Value> = d.values.iter()
+                        let vals: Vec<Value> = d
+                            .values
+                            .iter()
                             .map(|v| Self::apply_scalar(builder, v))
                             .collect();
                         let types = vals.iter().map(|v| v.zinnia_type()).collect();
-                        Value::List(CompositeData { elements_type: types, values: vals, value_id: ValueId::next() })
+                        Value::List(CompositeData {
+                            elements_type: types,
+                            values: vals,
+                            value_id: ValueId::next(),
+                        })
                     }
                     Value::Float(_) => builder.$float_method(x),
                     Value::Integer(_) | Value::Boolean(_) => {
@@ -223,10 +280,20 @@ macro_rules! define_np_unary_math {
             }
         }
         impl crate::ops::Op for $name {
-            fn name(&self) -> &'static str { $op_name }
-            fn signature(&self) -> &'static str { $sig }
-            fn params(&self) -> &[crate::ops::ParamEntry] { &Self::PARAMS }
-            fn build(&self, builder: &mut crate::builder::IRBuilder, args: &crate::ops::OpArgs) -> crate::types::Value {
+            fn name(&self) -> &'static str {
+                $op_name
+            }
+            fn signature(&self) -> &'static str {
+                $sig
+            }
+            fn params(&self) -> &[crate::ops::ParamEntry] {
+                &Self::PARAMS
+            }
+            fn build(
+                &self,
+                builder: &mut crate::builder::IRBuilder,
+                args: &crate::ops::OpArgs,
+            ) -> crate::types::Value {
                 Self::apply_scalar(builder, args.require("x"))
             }
         }
@@ -269,9 +336,12 @@ macro_rules! define_np_binary_math {
                 let rshape = crate::helpers::composite::get_composite_shape(b);
                 if !lshape.is_empty() || !rshape.is_empty() {
                     let target = crate::helpers::broadcast::broadcast_shapes(&lshape, &rshape)
-                        .unwrap_or_else(|| panic!(
-                            "{}: shapes {:?} and {:?} are not broadcast compatible",
-                            $sig, lshape, rshape));
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "{}: shapes {:?} and {:?} are not broadcast compatible",
+                                $sig, lshape, rshape
+                            )
+                        });
                     let l = if lshape == target {
                         a.clone()
                     } else {
@@ -299,7 +369,7 @@ macro_rules! define_np_binary_math {
                     return Value::List(CompositeData {
                         elements_type: types,
                         values: vals,
-                    
+
                         value_id: ValueId::next(),
                     });
                 }
@@ -307,10 +377,20 @@ macro_rules! define_np_binary_math {
             }
         }
         impl crate::ops::Op for $name {
-            fn name(&self) -> &'static str { $op_name }
-            fn signature(&self) -> &'static str { $sig }
-            fn params(&self) -> &[crate::ops::ParamEntry] { &Self::PARAMS }
-            fn build(&self, builder: &mut crate::builder::IRBuilder, args: &crate::ops::OpArgs) -> crate::types::Value {
+            fn name(&self) -> &'static str {
+                $op_name
+            }
+            fn signature(&self) -> &'static str {
+                $sig
+            }
+            fn params(&self) -> &[crate::ops::ParamEntry] {
+                &Self::PARAMS
+            }
+            fn build(
+                &self,
+                builder: &mut crate::builder::IRBuilder,
+                args: &crate::ops::OpArgs,
+            ) -> crate::types::Value {
                 let x1 = args.require("x1");
                 let x2 = args.require("x2");
                 Self::apply(builder, x1, x2)
@@ -329,10 +409,20 @@ macro_rules! define_np_minmax {
             ];
         }
         impl crate::ops::Op for $name {
-            fn name(&self) -> &'static str { $op_name }
-            fn signature(&self) -> &'static str { $sig }
-            fn params(&self) -> &[crate::ops::ParamEntry] { &Self::PARAMS }
-            fn build(&self, builder: &mut crate::builder::IRBuilder, args: &crate::ops::OpArgs) -> crate::types::Value {
+            fn name(&self) -> &'static str {
+                $op_name
+            }
+            fn signature(&self) -> &'static str {
+                $sig
+            }
+            fn params(&self) -> &[crate::ops::ParamEntry] {
+                &Self::PARAMS
+            }
+            fn build(
+                &self,
+                builder: &mut crate::builder::IRBuilder,
+                args: &crate::ops::OpArgs,
+            ) -> crate::types::Value {
                 let x1 = args.require("x1");
                 let x2 = args.require("x2");
                 match (x1, x2) {
@@ -347,23 +437,37 @@ macro_rules! define_np_minmax {
                         let cond = builder.$float_cmp(x1, x2);
                         builder.ir_select_f(&cond, x1, x2)
                     }
-                    (crate::types::Value::Integer(_) | crate::types::Value::Boolean(_), crate::types::Value::Float(_)) => {
+                    (
+                        crate::types::Value::Integer(_) | crate::types::Value::Boolean(_),
+                        crate::types::Value::Float(_),
+                    ) => {
                         let x1f = builder.ir_float_cast(x1);
                         let cond = builder.$float_cmp(&x1f, x2);
                         builder.ir_select_f(&cond, &x1f, x2)
                     }
-                    (crate::types::Value::Float(_), crate::types::Value::Integer(_) | crate::types::Value::Boolean(_)) => {
+                    (
+                        crate::types::Value::Float(_),
+                        crate::types::Value::Integer(_) | crate::types::Value::Boolean(_),
+                    ) => {
                         let x2f = builder.ir_float_cast(x2);
                         let cond = builder.$float_cmp(x1, &x2f);
                         builder.ir_select_f(&cond, x1, &x2f)
                     }
-                    (a, b) if matches!(a, crate::types::Value::List(_) | crate::types::Value::Tuple(_))
-                        || matches!(b, crate::types::Value::List(_) | crate::types::Value::Tuple(_)) =>
+                    (a, b)
+                        if matches!(
+                            a,
+                            crate::types::Value::List(_) | crate::types::Value::Tuple(_)
+                        ) || matches!(
+                            b,
+                            crate::types::Value::List(_) | crate::types::Value::Tuple(_)
+                        ) =>
                     {
                         // Vectorize over composites by recursing through
                         // shape-broadcast leaves.
                         crate::ops::np_like::vectorize_minmax(
-                            builder, a, b,
+                            builder,
+                            a,
+                            b,
                             crate::builder::IRBuilder::$int_cmp,
                             crate::builder::IRBuilder::$float_cmp,
                         )
@@ -375,84 +479,86 @@ macro_rules! define_np_minmax {
     };
 }
 
-pub mod np_add;
-pub mod np_subtract;
-pub mod np_multiply;
-pub mod np_divide;
-pub mod np_floor_divide;
-pub mod np_mod;
-pub mod np_fmod;
-pub mod np_power;
-pub mod np_pow;
-pub mod np_minimum;
-pub mod np_maximum;
-pub mod np_fmin;
-pub mod np_fmax;
-pub mod np_equal;
-pub mod np_not_equal;
-pub mod np_less;
-pub mod np_less_equal;
-pub mod np_greater;
-pub mod np_greater_equal;
-pub mod np_sqrt;
-pub mod np_exp;
-pub mod np_log;
-pub mod np_sin;
-pub mod np_cos;
-pub mod np_tan;
-pub mod np_sinh;
-pub mod np_cosh;
-pub mod np_tanh;
-pub mod np_arccos;
-pub mod np_arctan2;
 pub mod np_abs;
 pub mod np_absolute;
+pub mod np_add;
+pub mod np_arccos;
+pub mod np_arcsin;
+pub mod np_arctan2;
+pub mod np_cos;
+pub mod np_cosh;
+pub mod np_divide;
+pub mod np_equal;
+pub mod np_exp;
 pub mod np_fabs;
-pub mod np_sign;
-pub mod np_negative;
-pub mod np_positive;
-pub mod np_logical_not;
+pub mod np_floor_divide;
+pub mod np_fmax;
+pub mod np_fmin;
+pub mod np_fmod;
+pub mod np_greater;
+pub mod np_greater_equal;
+pub mod np_less;
+pub mod np_less_equal;
+pub mod np_log;
 pub mod np_logical_and;
+pub mod np_logical_not;
 pub mod np_logical_or;
 pub mod np_logical_xor;
+pub mod np_maximum;
+pub mod np_minimum;
+pub mod np_mod;
+pub mod np_multiply;
+pub mod np_negative;
+pub mod np_not_equal;
+pub mod np_positive;
+pub mod np_pow;
+pub mod np_power;
+pub mod np_sign;
+pub mod np_sin;
+pub mod np_sinh;
+pub mod np_sqrt;
+pub mod np_subtract;
+pub mod np_tan;
+pub mod np_tanh;
 
-pub use np_add::NpAddOp;
-pub use np_subtract::NpSubtractOp;
-pub use np_multiply::NpMultiplyOp;
-pub use np_divide::NpDivideOp;
-pub use np_floor_divide::NpFloorDivideOp;
-pub use np_mod::NpModOp;
-pub use np_fmod::NpFModOp;
-pub use np_power::NpPowerOp;
-pub use np_pow::NpPowOp;
-pub use np_minimum::NpMinimumOp;
-pub use np_maximum::NpMaximumOp;
-pub use np_fmin::NpFMinOp;
-pub use np_fmax::NpFMaxOp;
-pub use np_equal::NpEqualOp;
-pub use np_not_equal::NpNotEqualOp;
-pub use np_less::NpLessOp;
-pub use np_less_equal::NpLessEqualOp;
-pub use np_greater::NpGreaterOp;
-pub use np_greater_equal::NpGreaterEqualOp;
-pub use np_sqrt::NpSqrtOp;
-pub use np_exp::NpExpOp;
-pub use np_log::NpLogOp;
-pub use np_sin::NpSinOp;
-pub use np_cos::NpCosOp;
-pub use np_tan::NpTanOp;
-pub use np_sinh::NpSinHOp;
-pub use np_cosh::NpCosHOp;
-pub use np_tanh::NpTanHOp;
-pub use np_arccos::NpArcCosOp;
-pub use np_arctan2::NpArcTan2Op;
 pub use np_abs::NpAbsOp;
 pub use np_absolute::NpAbsoluteOp;
+pub use np_add::NpAddOp;
+pub use np_arccos::NpArcCosOp;
+pub use np_arcsin::NpArcSinOp;
+pub use np_arctan2::NpArcTan2Op;
+pub use np_cos::NpCosOp;
+pub use np_cosh::NpCosHOp;
+pub use np_divide::NpDivideOp;
+pub use np_equal::NpEqualOp;
+pub use np_exp::NpExpOp;
 pub use np_fabs::NpFAbsOp;
-pub use np_sign::NpSignOp;
-pub use np_negative::NpNegativeOp;
-pub use np_positive::NpPositiveOp;
-pub use np_logical_not::NpLogicalNotOp;
+pub use np_floor_divide::NpFloorDivideOp;
+pub use np_fmax::NpFMaxOp;
+pub use np_fmin::NpFMinOp;
+pub use np_fmod::NpFModOp;
+pub use np_greater::NpGreaterOp;
+pub use np_greater_equal::NpGreaterEqualOp;
+pub use np_less::NpLessOp;
+pub use np_less_equal::NpLessEqualOp;
+pub use np_log::NpLogOp;
 pub use np_logical_and::NpLogicalAndOp;
+pub use np_logical_not::NpLogicalNotOp;
 pub use np_logical_or::NpLogicalOrOp;
 pub use np_logical_xor::NpLogicalXorOp;
+pub use np_maximum::NpMaximumOp;
+pub use np_minimum::NpMinimumOp;
+pub use np_mod::NpModOp;
+pub use np_multiply::NpMultiplyOp;
+pub use np_negative::NpNegativeOp;
+pub use np_not_equal::NpNotEqualOp;
+pub use np_positive::NpPositiveOp;
+pub use np_pow::NpPowOp;
+pub use np_power::NpPowerOp;
+pub use np_sign::NpSignOp;
+pub use np_sin::NpSinOp;
+pub use np_sinh::NpSinHOp;
+pub use np_sqrt::NpSqrtOp;
+pub use np_subtract::NpSubtractOp;
+pub use np_tan::NpTanOp;
+pub use np_tanh::NpTanHOp;

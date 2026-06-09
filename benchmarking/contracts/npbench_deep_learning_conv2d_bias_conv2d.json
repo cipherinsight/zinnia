@@ -1,0 +1,93 @@
+{
+  "categories": [
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "np.empty",
+        "np.sum",
+        "range"
+      ],
+      "entry_candidate": false,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 21,
+      "line_start": 11,
+      "mutated_params": [],
+      "name": "conv2d",
+      "ops": [
+        "Add",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "input",
+          "proposed_annotation": "Float[Array, 'N<=1024 H<=1024 W<=1024 C<=256']",
+          "rank_hint": 5,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "weights",
+          "proposed_annotation": "Float[Array, 'K<=256 K<=256 C<=256 F<=256']",
+          "rank_hint": 4,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "conv2d"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 25,
+      "line_start": 24,
+      "mutated_params": [],
+      "name": "conv2d_bias",
+      "ops": [
+        "Add"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "input",
+          "proposed_annotation": "Float[Array, 'N<=1024 H<=1024 W<=1024 C<=256']",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "weights",
+          "proposed_annotation": "Float[Array, 'K<=256 K<=256 C<=256 F<=256']",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "bias",
+          "proposed_annotation": "Float[Array, 'F<=256']",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "npbench_deep_learning_conv2d_bias_conv2d/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "npbench_deep_learning_conv2d_bias_conv2d",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\n\n@zk_chip\ndef conv2d(input: Float[Array, 'N<=1024 H<=1024 W<=1024 C<=256'], weights: Float[Array, 'K<=256 K<=256 C<=256 F<=256']):\n    K = weights.shape[0]\n    N = input.shape[0]\n    H_out = input.shape[1] - K + 1\n    W_out = input.shape[2] - K + 1\n    C_out = weights.shape[3]\n    output = np.empty((N, H_out, W_out, C_out), dtype=np.float32)\n    for i in range(H_out):\n        for j in range(W_out):\n            output[:, i, j, :] = np.sum(input[:, i:i + K, j:j + K, :, np.newaxis] * weights[np.newaxis, :, :, :], axis=(1, 2, 3))\n    return output\n\n@zk_circuit\ndef conv2d_bias(input: Float[Array, 'N<=1024 H<=1024 W<=1024 C<=256'], weights: Float[Array, 'K<=256 K<=256 C<=256 F<=256'], bias: Float[Array, 'F<=256']):\n    return conv2d(input, weights) + bias",
+  "source_status": "direct"
+}

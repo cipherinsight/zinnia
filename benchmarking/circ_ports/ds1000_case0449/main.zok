@@ -1,0 +1,13 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0449/kernel.py
+// REASON: np.vstack of transposes lowered to explicit element-wise copy into stacked array
+
+def main(field[3][4] x_dists, field[3][4] y_dists) -> field[4][3][2]:
+    field[4][3][2] result = [[[0; 2]; 3]; 4]
+    for u32 i in 0..4 do
+        for u32 j in 0..3 do
+            result[i][j][0] = x_dists[j][i]
+            result[i][j][1] = y_dists[j][i]
+        endfor
+    endfor
+    return result

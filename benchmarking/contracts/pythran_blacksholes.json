@@ -1,0 +1,94 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "domain-obligation",
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "abs",
+        "call_result.append",
+        "math.exp",
+        "math.log",
+        "math.sqrt",
+        "put_result.append",
+        "range",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 37,
+      "line_start": 15,
+      "mutated_params": [],
+      "name": "BlackScholes",
+      "ops": [
+        "Add",
+        "Div",
+        "LtE",
+        "Mult",
+        "NotEq",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "stock_price",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "option_strike",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "option_years",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "Riskfree",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "Volatility",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "nb_opt",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_blacksholes/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_blacksholes",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, domain-obligation, in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport math\n\n@zk_circuit\n@requires(lambda stock_price, option_strike, option_years, Riskfree, Volatility, nb_opt: Volatility != 0.0)\n@requires(lambda stock_price, option_strike, option_years, Riskfree, Volatility, nb_opt: 0 <= nb_opt <= 1024)\ndef BlackScholes(stock_price: Float[Array, 'N<=1024'], option_strike: Float[Array, 'N<=1024'], option_years: Float[Array, 'N<=1024'], Riskfree: Float, Volatility: Float, nb_opt: Integer):\n    RSQRT2PI = 1 / math.sqrt(math.pi * 2)\n    A1 = 0.31938153\n    A2 = -0.356563782\n    A3 = 1.781477937\n    A4 = -1.821255978\n    A5 = 1.330274429\n    call_result = []\n    put_result = []\n    for opt in range(0, nb_opt):\n        sqrtT = math.sqrt(option_years[opt])\n        d1 = math.log(stock_price[opt] / option_strike[opt])\n        d1 += (Riskfree + 0.5 * Volatility * Volatility) * option_years[opt]\n        d1 /= Volatility * sqrtT\n        d2 = d1 - Volatility * sqrtT\n        K = 1.0 / (1.0 + 0.2316419 * abs(d1))\n        CNDD1 = RSQRT2PI * math.exp(-0.5 * d1 * d1) * (K * (A1 + K * (A2 + K * (A3 + K * (A4 + K * A5)))))\n        K = 1.0 / (1.0 + 0.2316419 * abs(d2))\n        CNDD2 = RSQRT2PI * math.exp(-0.5 * d2 * d2) * (K * (A1 + K * (A2 + K * (A3 + K * (A4 + K * A5)))))\n        expRT = math.exp(-Riskfree * option_years[opt])\n        call_result.append(stock_price[opt] * CNDD1 - option_strike[opt] * expRT * CNDD2)\n        put_result.append(option_strike[opt] * expRT * (1.0 - CNDD2) - stock_price[opt] * (1.0 - CNDD1))\n    return (call_result, put_result)",
+  "source_status": "direct"
+}

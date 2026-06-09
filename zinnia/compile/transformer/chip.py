@@ -31,15 +31,16 @@ class ZinniaChipASTTransformer(ZinniaBaseASTTransformer):
         args = self.visit_arguments(node.args)
         if node.returns is not None:
             return_anno = self.visit_annotation(node.returns, None)
+            if return_anno["kind"] is not None:
+                raise InvalidAnnotationException(self.get_dbg(node.returns),
+                                                 f"Invalid return annotation for chips. In chips, the return type should NOT be annotated by `Public` or `Private` because chip returns are not inputs. Please remove these specifiers and leave the corresponding datatype only.")
+            return_dt = return_anno["dt"]
+            self.return_dt_full = return_dt
         else:
-            raise InvalidAnnotationException(dbg, "Chip must have a return annotation. Please specify the return type as None if it does not return anything.")
-        if return_anno["kind"] is not None:
-            raise InvalidAnnotationException(self.get_dbg(node.returns),
-                                             f"Invalid return annotation for chips. In chips, the return type should NOT be annotated by `Public` or `Private` because chip returns are not inputs. Please remove these specifiers and leave the corresponding datatype only.")
-        self.return_dt_full = return_anno["dt"]
+            return_dt = None
         return {"__class__": "ASTChip",
                 "block": self.visit_block(node.body), "inputs": args,
-                "return_dt": return_anno["dt"]}
+                "return_dt": return_dt}
 
     def visit_arguments(self, node):
         results = []

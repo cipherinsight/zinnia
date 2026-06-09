@@ -1,4 +1,4 @@
-"""Complex transcendentals: np.exp, np.sin, np.cos, np.sqrt over Value::Complex.
+"""Complex transcendentals: np.exp, np.sin, np.cos, np.sqrt, np.log over Value::Complex.
 
 Built on the existing real-Float trig + exp + sqrt gates via Euler-style
 identities. Vectorized over arrays through `vectorize_unary_np`.
@@ -64,6 +64,36 @@ def test_complex_sqrt_pure_imag():
     ZKCircuit.from_method(foo).compile()
 
 
+def test_complex_log_one():
+    @zk_circuit
+    def foo():
+        z = np.log(1 + 0j)
+        assert z.real == 0.0
+        assert z.imag == 0.0
+
+    assert foo()
+
+
+def test_complex_log_e():
+    @zk_circuit
+    def foo():
+        z = np.log(np.e + 0j)
+        assert z.real == 1.0
+        assert z.imag == 0.0
+
+    assert foo()
+
+
+def test_complex_log_pure_imag():
+    @zk_circuit
+    def foo():
+        z = np.log(1j)
+        assert abs(z.real) < 0.001
+        assert abs(z.imag - np.pi / 2) < 0.001
+
+    assert foo()
+
+
 def test_complex_exp_over_array():
     @zk_circuit
     def foo():
@@ -76,3 +106,19 @@ def test_complex_exp_over_array():
         _ = b[2].imag
 
     ZKCircuit.from_method(foo).compile()
+
+
+def test_complex_log_over_array():
+    @zk_circuit
+    def foo():
+        a = np.zeros((3,), dtype=complex)
+        a[0] = 1 + 0j
+        a[1] = np.e + 0j
+        a[2] = 1j
+        b = np.log(a)
+        assert b[0].real == 0.0
+        assert b[0].imag == 0.0
+        assert b[1].real == 1.0
+        assert abs(b[2].imag - np.pi / 2) < 0.001
+
+    assert foo()

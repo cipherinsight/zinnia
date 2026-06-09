@@ -1,0 +1,18 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0415/kernel.py
+// REASON: reshape(-1, bin_size).max(axis=1) with runtime bin_size -> runtime-dependent shape.
+
+const u32 N = 8
+const u32 BIN_MAX = 8
+
+def main(field[N] data, field bin_size) -> field[BIN_MAX]:
+    field[BIN_MAX] result = [0; BIN_MAX]
+    for u32 b in 0..BIN_MAX do
+        field best = 0
+        for u32 k in 0..BIN_MAX do
+            field idx = b * bin_size + k
+            best = if k < bin_size && data[idx] > best then data[idx] else best fi
+        endfor
+        result[b] = best
+    endfor
+    return result

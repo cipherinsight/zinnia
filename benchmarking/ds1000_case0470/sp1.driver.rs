@@ -1,0 +1,59 @@
+// DS-1000 case 470 — SP1 host driver.
+// Inputs are chosen so the per-index sum is exactly divisible by n=3.
+// a = [1.5, 2.5, 5.0] → sum = 9.0, mean = 3.0; imag = 0.
+
+use clap::Parser;
+use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
+use std::time::Instant;
+
+pub const COMPLEX_MEAN_ELF: &[u8] = include_elf!("complex-mean-program");
+
+#[derive(Parser, Debug)]
+#[clap(author, version, about, long_about = None)]
+struct Args {
+    #[clap(long)] execute: bool,
+    #[clap(long)] prove: bool,
+}
+
+fn main() {
+    sp1_sdk::utils::setup_logger();
+    dotenv::dotenv().ok();
+    let args = Args::parse();
+    if args.execute == args.prove {
+        eprintln!("Error: specify either --execute or --prove");
+        std::process::exit(1);
+    }
+    let client = ProverClient::from_env();
+    let mut stdin = SP1Stdin::new();
+
+    let a: [f64; 3] = [1.5, 2.5, 5.0];
+    for &v in a.iter() {
+        stdin.write(&v);
+    }
+    let claim_re: f64 = 3.0;
+    let claim_im: f64 = 0.0;
+    stdin.write(&claim_re);
+    stdin.write(&claim_im);
+
+    if args.execute {
+        let (_o, report) = client.execute(COMPLEX_MEAN_ELF, &stdin).run().unwrap();
+        println!("executed; cycles: {}", report.total_instruction_count());
+        return;
+    }
+    let (pk, vk) = client.setup(COMPLEX_MEAN_ELF);
+    let start = Instant::now();
+    let proof = client.prove(&pk, &stdin).run().unwrap();
+    println!("Prove time (zk-STARK) (ms): {:?}", start.elapsed().as_millis());
+    proof.save("proof-with-pis-stark.bin").unwrap();
+    let start = Instant::now();
+    client.verify(&proof, &vk).unwrap();
+    println!("Verify time (zk-STARK) (ms): {:?}", start.elapsed().as_millis());
+
+    let start = Instant::now();
+    let proof = client.prove(&pk, &stdin).plonk().run().unwrap();
+    println!("Prove time (zk-SNARK) (ms): {:?}", start.elapsed().as_millis());
+    proof.save("proof-with-pis.bin").unwrap();
+    let start = Instant::now();
+    client.verify(&proof, &vk).unwrap();
+    println!("Verify time (zk-SNARK) (ms): {:?}", start.elapsed().as_millis());
+}

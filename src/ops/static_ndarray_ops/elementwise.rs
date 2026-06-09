@@ -13,14 +13,24 @@ use crate::types::{CompositeData, Value, ValueId, ZinniaType};
 /// Element-wise binary operation on two composites (bypasses list concatenation).
 pub fn elementwise_binary(b: &mut IRBuilder, op: &str, a: &Value, bv: &Value) -> Value {
     match (a, bv) {
-        (Value::List(ad), Value::List(bd)) | (Value::Tuple(ad), Value::List(bd))
-        | (Value::List(ad), Value::Tuple(bd)) | (Value::Tuple(ad), Value::Tuple(bd))
-            if ad.values.len() == bd.values.len() => {
-            let results: Vec<Value> = ad.values.iter().zip(bd.values.iter())
+        (Value::List(ad), Value::List(bd))
+        | (Value::Tuple(ad), Value::List(bd))
+        | (Value::List(ad), Value::Tuple(bd))
+        | (Value::Tuple(ad), Value::Tuple(bd))
+            if ad.values.len() == bd.values.len() =>
+        {
+            let results: Vec<Value> = ad
+                .values
+                .iter()
+                .zip(bd.values.iter())
                 .map(|(x, y)| elementwise_binary(b, op, x, y))
                 .collect();
             let types = results.iter().map(|v| v.zinnia_type()).collect();
-            Value::List(CompositeData { elements_type: types, values: results, value_id: ValueId::next() })
+            Value::List(CompositeData {
+                elements_type: types,
+                values: results,
+                value_id: ValueId::next(),
+            })
         }
         _ => crate::helpers::value_ops::apply_scalar_binary_op(b, op, a, bv),
     }
@@ -29,14 +39,24 @@ pub fn elementwise_binary(b: &mut IRBuilder, op: &str, a: &Value, bv: &Value) ->
 /// Element-wise min or max of two composites.
 pub fn elementwise_minmax(b: &mut IRBuilder, a: &Value, bv: &Value, is_max: bool) -> Value {
     match (a, bv) {
-        (Value::List(ad), Value::List(bd)) | (Value::Tuple(ad), Value::List(bd))
-        | (Value::List(ad), Value::Tuple(bd)) | (Value::Tuple(ad), Value::Tuple(bd))
-            if ad.values.len() == bd.values.len() => {
-            let results: Vec<Value> = ad.values.iter().zip(bd.values.iter())
+        (Value::List(ad), Value::List(bd))
+        | (Value::Tuple(ad), Value::List(bd))
+        | (Value::List(ad), Value::Tuple(bd))
+        | (Value::Tuple(ad), Value::Tuple(bd))
+            if ad.values.len() == bd.values.len() =>
+        {
+            let results: Vec<Value> = ad
+                .values
+                .iter()
+                .zip(bd.values.iter())
                 .map(|(x, y)| elementwise_minmax(b, x, y, is_max))
                 .collect();
             let types = results.iter().map(|v| v.zinnia_type()).collect();
-            Value::List(CompositeData { elements_type: types, values: results, value_id: ValueId::next() })
+            Value::List(CompositeData {
+                elements_type: types,
+                values: results,
+                value_id: ValueId::next(),
+            })
         }
         _ => {
             let cond = if is_max {
@@ -83,24 +103,40 @@ fn diff_once(b: &mut IRBuilder, x: &Value) -> Value {
             // numpy's np.diff defaults to the last axis.
             if let Some(first) = data.values.first() {
                 if matches!(first, Value::List(_) | Value::Tuple(_)) {
-                    let rows: Vec<Value> = data.values.iter().map(|row| diff_once(b, row)).collect();
+                    let rows: Vec<Value> =
+                        data.values.iter().map(|row| diff_once(b, row)).collect();
                     let types = rows.iter().map(|v| v.zinnia_type()).collect();
-                    return Value::List(CompositeData { elements_type: types, values: rows, value_id: ValueId::next() });
+                    return Value::List(CompositeData {
+                        elements_type: types,
+                        values: rows,
+                        value_id: ValueId::next(),
+                    });
                 }
             }
             // Scalar-element 1-D: pairwise differences.
             if data.values.len() < 2 {
                 let types: Vec<ZinniaType> = vec![];
-                return Value::List(CompositeData { elements_type: types, values: vec![], value_id: ValueId::next() });
+                return Value::List(CompositeData {
+                    elements_type: types,
+                    values: vec![],
+                    value_id: ValueId::next(),
+                });
             }
             let mut out = Vec::with_capacity(data.values.len() - 1);
             for i in 0..data.values.len() - 1 {
                 out.push(crate::helpers::value_ops::apply_binary_op(
-                    b, "sub", &data.values[i + 1], &data.values[i],
+                    b,
+                    "sub",
+                    &data.values[i + 1],
+                    &data.values[i],
                 ));
             }
             let types = out.iter().map(|v| v.zinnia_type()).collect();
-            Value::List(CompositeData { elements_type: types, values: out, value_id: ValueId::next() })
+            Value::List(CompositeData {
+                elements_type: types,
+                values: out,
+                value_id: ValueId::next(),
+            })
         }
         _ => x.clone(),
     }
@@ -132,19 +168,36 @@ pub fn np_outer_op(b: &mut IRBuilder, args: &[Value], op: &str) -> Value {
             row.push(crate::helpers::value_ops::apply_binary_op(b, op, ai, bj));
         }
         let row_types = row.iter().map(|v| v.zinnia_type()).collect();
-        rows.push(Value::List(CompositeData { elements_type: row_types, values: row, value_id: ValueId::next() }));
+        rows.push(Value::List(CompositeData {
+            elements_type: row_types,
+            values: row,
+            value_id: ValueId::next(),
+        }));
     }
     let types = rows.iter().map(|v| v.zinnia_type()).collect();
-    Value::List(CompositeData { elements_type: types, values: rows, value_id: ValueId::next() })
+    Value::List(CompositeData {
+        elements_type: types,
+        values: rows,
+        value_id: ValueId::next(),
+    })
 }
 
 pub fn np_allclose(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
     // np.allclose(a, b, rtol=1e-05, atol=1e-08) — check |a - b| <= atol + rtol * |b|
-    if args.len() < 2 { return Value::None; }
+    if args.len() < 2 {
+        return Value::None;
+    }
 
     // Validate argument types
     fn is_valid_allclose_arg(val: &Value) -> bool {
-        matches!(val, Value::Integer(_) | Value::Float(_) | Value::Boolean(_) | Value::List(_) | Value::Tuple(_))
+        matches!(
+            val,
+            Value::Integer(_)
+                | Value::Float(_)
+                | Value::Boolean(_)
+                | Value::List(_)
+                | Value::Tuple(_)
+        )
     }
     if !is_valid_allclose_arg(&args[0]) {
         panic!("Unsupported argument type for `lhs`");
@@ -178,11 +231,13 @@ pub fn np_allclose(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, V
         }
     }
 
-    let rtol = kwargs.get("rtol")
+    let rtol = kwargs
+        .get("rtol")
         .and_then(|v| extract_scalar_float(v))
         .or_else(|| args.get(2).and_then(|v| extract_scalar_float(v)))
         .unwrap_or(default_rtol);
-    let atol = kwargs.get("atol")
+    let atol = kwargs
+        .get("atol")
         .and_then(|v| extract_scalar_float(v))
         .or_else(|| args.get(3).and_then(|v| extract_scalar_float(v)))
         .unwrap_or(default_atol);
@@ -208,8 +263,12 @@ pub fn np_allclose(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, V
     // Since we're in ZK, use static evaluation for compile-time known values
     let mut result = b.ir_constant_bool(true);
     for (a_val, b_val) in a_elems.iter().zip(b_elems.iter()) {
-        let a_f = a_val.float_val().or_else(|| a_val.int_val().map(|i| i as f64));
-        let b_f = b_val.float_val().or_else(|| b_val.int_val().map(|i| i as f64));
+        let a_f = a_val
+            .float_val()
+            .or_else(|| a_val.int_val().map(|i| i as f64));
+        let b_f = b_val
+            .float_val()
+            .or_else(|| b_val.int_val().map(|i| i as f64));
 
         if let (Some(av), Some(bv)) = (a_f, b_f) {
             let diff = (av - bv).abs();
@@ -231,11 +290,21 @@ pub fn np_allclose(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, V
 pub fn builtin_range(b: &mut IRBuilder, args: &[Value]) -> Value {
     let (start, stop, step) = match args.len() {
         1 => (0i64, args[0].int_val().unwrap_or(0), 1i64),
-        2 => (args[0].int_val().unwrap_or(0), args[1].int_val().unwrap_or(0), 1i64),
-        3 => (args[0].int_val().unwrap_or(0), args[1].int_val().unwrap_or(0), args[2].int_val().unwrap_or(1)),
+        2 => (
+            args[0].int_val().unwrap_or(0),
+            args[1].int_val().unwrap_or(0),
+            1i64,
+        ),
+        3 => (
+            args[0].int_val().unwrap_or(0),
+            args[1].int_val().unwrap_or(0),
+            args[2].int_val().unwrap_or(1),
+        ),
         _ => return Value::None,
     };
-    if step == 0 { return Value::None; }
+    if step == 0 {
+        return Value::None;
+    }
     let mut values = Vec::new();
     let mut i = start;
     while (step > 0 && i < stop) || (step < 0 && i > stop) {
@@ -243,15 +312,17 @@ pub fn builtin_range(b: &mut IRBuilder, args: &[Value]) -> Value {
         i += step;
     }
     let types = vec![ZinniaType::Integer; values.len()];
-    Value::List(CompositeData { elements_type: types, values, value_id: ValueId::next() })
+    Value::List(CompositeData {
+        elements_type: types,
+        values,
+        value_id: ValueId::next(),
+    })
 }
 
 pub fn builtin_len(b: &mut IRBuilder, args: &[Value]) -> Value {
     if let Some(val) = args.first() {
         match val {
-            Value::List(data) | Value::Tuple(data) => {
-                b.ir_constant_int(data.values.len() as i64)
-            }
+            Value::List(data) | Value::Tuple(data) => b.ir_constant_int(data.values.len() as i64),
             _ => b.ir_constant_int(0),
         }
     } else {
@@ -273,7 +344,11 @@ pub fn builtin_enumerate(b: &mut IRBuilder, iter_val: &Value) -> Value {
                 }));
             }
             let types = result.iter().map(|v| v.zinnia_type()).collect();
-            Value::List(CompositeData { elements_type: types, values: result, value_id: ValueId::next() })
+            Value::List(CompositeData {
+                elements_type: types,
+                values: result,
+                value_id: ValueId::next(),
+            })
         }
         // P4a follow-up: `enumerate` over a segment-backed StaticArray.
         // We mirror the iteration semantics of `for x in arr` by yielding
@@ -295,7 +370,11 @@ pub fn builtin_enumerate(b: &mut IRBuilder, iter_val: &Value) -> Value {
                 }));
             }
             let types = result.iter().map(|v| v.zinnia_type()).collect();
-            Value::List(CompositeData { elements_type: types, values: result, value_id: ValueId::next() })
+            Value::List(CompositeData {
+                elements_type: types,
+                values: result,
+                value_id: ValueId::next(),
+            })
         }
         _ => Value::None,
     }
@@ -318,8 +397,7 @@ pub(super) fn vectorize_unary<F: FnMut(&mut IRBuilder, &Value) -> Value>(
 ) -> Value {
     match val {
         Value::List(d) | Value::Tuple(d) => {
-            let vals: Vec<Value> =
-                d.values.iter().map(|v| vectorize_unary(b, v, f)).collect();
+            let vals: Vec<Value> = d.values.iter().map(|v| vectorize_unary(b, v, f)).collect();
             let types = vals.iter().map(|v| v.zinnia_type()).collect();
             Value::List(CompositeData {
                 elements_type: types,
@@ -486,9 +564,7 @@ fn lower_where_generic(b: &mut IRBuilder, inp: &WhereInputs) -> Value {
 
 /// Build the `OpStrategySet` for `np.where` gated on
 /// `forall_eq_const(cond, k)` for k ∈ {0, 1}.
-fn where_strategy_set(
-    cond_vid: ValueId,
-) -> crate::optim::OpStrategySet<WhereInputs, Value> {
+fn where_strategy_set(cond_vid: ValueId) -> crate::optim::OpStrategySet<WhereInputs, Value> {
     use crate::optim::predicates::formula::{ContractTerm, ContractVar};
     use crate::optim::{CostHint, OpStrategy, OpStrategySet};
 
@@ -527,6 +603,17 @@ fn where_strategy_set(
 /// `0`) is provable from the visible facts. Otherwise, the default
 /// recursive per-element select runs.
 pub fn np_where(b: &mut IRBuilder, args: &[Value]) -> Value {
+    // `np.where(cond)` 1-arg form returns the indices where `cond` is True.
+    // For the common pattern `a[np.where(cond)] = ...`, the visitor treats the
+    // result as a fancy-index source. The cheapest forwarding here: return
+    // `cond` itself; downstream indexing dispatchers already recognize a
+    // Boolean-array index and route through `try_apply_boolean_mask_*`. This
+    // preserves NumPy semantics for the common case without standing up a
+    // dedicated index-array materialiser.
+    if args.len() == 1 {
+        let _ = b;
+        return args[0].clone();
+    }
     if args.len() < 3 {
         panic!("where: requires three arguments (cond, x, y)");
     }
@@ -538,17 +625,28 @@ pub fn np_where(b: &mut IRBuilder, args: &[Value]) -> Value {
     let ys = crate::helpers::composite::get_composite_shape(y);
     // Broadcast cond/x first, then that result with y.
     let cx = crate::helpers::broadcast::broadcast_shapes(&cs, &xs).unwrap_or_else(|| {
-        panic!("where: shapes {:?} and {:?} not broadcast compatible", cs, xs)
+        panic!(
+            "where: shapes {:?} and {:?} not broadcast compatible",
+            cs, xs
+        )
     });
     let target = crate::helpers::broadcast::broadcast_shapes(&cx, &ys).unwrap_or_else(|| {
-        panic!("where: shapes {:?} and {:?} not broadcast compatible", cx, ys)
+        panic!(
+            "where: shapes {:?} and {:?} not broadcast compatible",
+            cx, ys
+        )
     });
     let cond_b = crate::helpers::broadcast::materialize_to_shape(cond, &target);
     let x_b = crate::helpers::broadcast::materialize_to_shape(x, &target);
     let y_b = crate::helpers::broadcast::materialize_to_shape(y, &target);
     match cond.value_id() {
         Some(cond_vid) => {
-            let inputs = WhereInputs { cond_b, x_b, y_b, cond_vid };
+            let inputs = WhereInputs {
+                cond_b,
+                x_b,
+                y_b,
+                cond_vid,
+            };
             let set = where_strategy_set(inputs.cond_vid);
             crate::optim::dispatch_strategy(b, "where", &inputs, &set)
         }

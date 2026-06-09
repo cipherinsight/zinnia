@@ -56,10 +56,8 @@ mod tests {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
                 .unwrap_or(0);
-            let dir = std::env::temp_dir().join(format!(
-                "zinnia-tel-test-{}-{nonce}",
-                std::process::id()
-            ));
+            let dir = std::env::temp_dir()
+                .join(format!("zinnia-tel-test-{}-{nonce}", std::process::id()));
             std::fs::create_dir_all(&dir).expect("tmp dir creatable");
             std::env::set_var("ZINNIA_TELEMETRY_DIR", &dir);
             Self {
@@ -356,5 +354,4 @@ mod tests {
         }
         assert!(sink.is_none(), "empty env var should yield no sink");
     }
-
 }

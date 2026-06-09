@@ -11,7 +11,14 @@ impl IRPass for ExternalCallRemover {
         let to_remove: Vec<StmtId> = ir_graph
             .stmts
             .iter()
-            .filter(|s| matches!(s.ir, IR::InvokeExternal { .. } | IR::ExportExternalI { .. } | IR::ExportExternalF { .. }))
+            .filter(|s| {
+                matches!(
+                    s.ir,
+                    IR::InvokeExternal { .. }
+                        | IR::ExportExternalI { .. }
+                        | IR::ExportExternalF { .. }
+                )
+            })
             .map(|s| s.stmt_id)
             .collect();
         ir_graph.remove_stmt_bunch(&to_remove);

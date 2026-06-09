@@ -28,14 +28,14 @@
 //! therefore holds the folded values, which the boundary shim returns to
 //! legacy callers when they materialise via `to_value_list`.
 
-use crate::builder::IRBuilder;
+use crate::builder::{IRBuilder, StaticArrayProductProvenance};
 use crate::ops::dyn_ndarray::value_to_scalar_i64;
 use crate::types::{NumberType, Value};
 
 use super::super::broadcast::broadcast_shapes;
 use super::super::shape_arith::{decode_coords, row_major_strides};
-use super::base::build_static_array_from_flat;
 use super::super::value_ops::apply_scalar_binary_op;
+use super::base::{build_static_array_from_flat, build_static_array_product_provenance};
 
 // ────────────────────────────────────────────────────────────────────────
 // Cell helpers
@@ -46,7 +46,7 @@ use super::super::value_ops::apply_scalar_binary_op;
 /// cell. Caller passes the visible shape (so we know how many cells the
 /// view sees).
 pub fn payload_cells(b: &mut IRBuilder, arr: &Value) -> Vec<Value> {
-    let (dtype, shape, segment_id, _strides, offset, imag_seg) = match arr {
+    let (dtype, shape, segment_id, strides, offset, imag_seg) = match arr {
         Value::StaticArray {
             dtype,
             shape,
@@ -55,35 +55,118 @@ pub fn payload_cells(b: &mut IRBuilder, arr: &Value) -> Vec<Value> {
             offset,
             imag_segment_id,
             value_id: _,
-        } => (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id),
+        } => (
+            *dtype,
+            shape.clone(),
+            *segment_id,
+            strides.clone(),
+            *offset,
+            *imag_segment_id,
+        ),
         _ => panic!("payload_cells: expected Value::StaticArray"),
     };
     let total: usize = shape.iter().product();
-    if let Some(cached) = b.static_array_payload.get(&segment_id) {
-        return cached
-            .iter()
-            .skip(offset)
-            .take(total)
-            .cloned()
-            .collect();
+    if b.static_array_product_provenance.contains_key(&segment_id) {
+        super::base::force_static_array_product_provenance(b, segment_id);
     }
-    // Fallback: read every cell from the segment.
+    let contiguous = strides == row_major_strides(&shape);
+    if let Some(cached) = b.static_array_payload.get(&segment_id) {
+        if contiguous {
+            // Fast path: cached cells lie row-major from `offset`.
+            return cached.iter().skip(offset).take(total).cloned().collect();
+        }
+        // Non-contiguous view: walk logical row-major coords, compute the
+        // segment-relative index via the view's strides/offset, gather from
+        // the cache by that absolute index. This handles transpose /
+        // swapaxes / moveaxis lazy views without materialising.
+        let logical_strides = row_major_strides(&shape);
+        let mut out: Vec<Value> = Vec::with_capacity(total);
+        for flat in 0..total {
+            let coords = decode_coords(flat, &shape, &logical_strides);
+            let mut abs: usize = offset;
+            for (ax, &c) in coords.iter().enumerate() {
+                abs += c * strides[ax];
+            }
+            out.push(cached[abs].clone());
+        }
+        return out;
+    }
+    // Fallback: read every cell from the segment via strides/offset.
     if dtype == NumberType::Complex {
         let im_seg = imag_seg.expect("Complex StaticArray missing imag_segment_id");
         let mut tmp = Vec::with_capacity(total);
-        for i in 0..total {
-            tmp.push(crate::helpers::static_array::read::read_complex_leaf(b, segment_id, im_seg, offset + i));
+        if contiguous {
+            for i in 0..total {
+                tmp.push(crate::helpers::static_array::read::read_complex_leaf(
+                    b,
+                    segment_id,
+                    im_seg,
+                    offset + i,
+                ));
+            }
+        } else {
+            let logical_strides = row_major_strides(&shape);
+            for flat in 0..total {
+                let coords = decode_coords(flat, &shape, &logical_strides);
+                let mut abs: usize = offset;
+                for (ax, &c) in coords.iter().enumerate() {
+                    abs += c * strides[ax];
+                }
+                tmp.push(crate::helpers::static_array::read::read_complex_leaf(
+                    b, segment_id, im_seg, abs,
+                ));
+            }
         }
         return tmp;
     }
+    super::base::materialize_static_array_segment(b, segment_id, dtype);
     let mut tmp = Vec::with_capacity(total);
-    for i in 0..total {
-        let addr = b.ir_constant_int((offset + i) as i64);
-        let raw = b.ir_read_memory(segment_id, &addr);
-        let sv = value_to_scalar_i64(&raw);
-        tmp.push(crate::ops::dyn_ndarray::scalar_i64_to_value(&sv, dtype));
+    if contiguous {
+        for i in 0..total {
+            let addr = b.ir_constant_int((offset + i) as i64);
+            let raw = b.ir_read_memory(segment_id, &addr);
+            let sv = value_to_scalar_i64(&raw);
+            tmp.push(crate::ops::dyn_ndarray::scalar_i64_to_value(&sv, dtype));
+        }
+    } else {
+        let logical_strides = row_major_strides(&shape);
+        for flat in 0..total {
+            let coords = decode_coords(flat, &shape, &logical_strides);
+            let mut abs: usize = offset;
+            for (ax, &c) in coords.iter().enumerate() {
+                abs += c * strides[ax];
+            }
+            let addr = b.ir_constant_int(abs as i64);
+            let raw = b.ir_read_memory(segment_id, &addr);
+            let sv = value_to_scalar_i64(&raw);
+            tmp.push(crate::ops::dyn_ndarray::scalar_i64_to_value(&sv, dtype));
+        }
     }
     tmp
+}
+
+pub fn product_provenance_payload_cells(
+    b: &mut IRBuilder,
+    provenance: &StaticArrayProductProvenance,
+) -> Vec<Value> {
+    let total: usize = provenance.out_shape.iter().product();
+    let out_strides = row_major_strides(&provenance.out_shape);
+    let lhs_idx = make_broadcast_indexer(&provenance.lhs_shape, &provenance.out_shape);
+    let rhs_idx = make_broadcast_indexer(&provenance.rhs_shape, &provenance.out_shape);
+
+    let mut out: Vec<Value> = Vec::with_capacity(total);
+    for flat in 0..total {
+        let coords = decode_coords(flat, &provenance.out_shape, &out_strides);
+        let li = lhs_idx.flat_index(&coords);
+        let ri = rhs_idx.flat_index(&coords);
+        out.push(apply_scalar_binary_op(
+            b,
+            "mul",
+            &provenance.lhs_cells[li],
+            &provenance.rhs_cells[ri],
+        ));
+    }
+    out
 }
 
 /// Determine the result dtype for a binary op given two operand dtypes /
@@ -131,7 +214,7 @@ fn is_comparison_op(op: &str) -> bool {
 /// `true` for ops that return a Boolean array regardless of operand dtype.
 /// Comparisons fall in this bucket.
 fn op_yields_boolean(op: &str) -> bool {
-    is_comparison_op(op)
+    is_comparison_op(op) || matches!(op, "and" | "or")
 }
 
 /// `true` for ops we route natively here (binary arithmetic + bitwise +
@@ -140,9 +223,26 @@ fn op_yields_boolean(op: &str) -> bool {
 fn is_native_binary_op(op: &str) -> bool {
     matches!(
         op,
-        "add" | "sub" | "mul" | "div" | "mod" | "pow" | "floor_div"
-        | "bit_and" | "bit_or" | "bit_xor" | "shl" | "shr"
-        | "eq" | "ne" | "lt" | "lte" | "gt" | "gte"
+        "add"
+            | "sub"
+            | "mul"
+            | "div"
+            | "mod"
+            | "pow"
+            | "floor_div"
+            | "and"
+            | "or"
+            | "bit_and"
+            | "bit_or"
+            | "bit_xor"
+            | "shl"
+            | "shr"
+            | "eq"
+            | "ne"
+            | "lt"
+            | "lte"
+            | "gt"
+            | "gte"
     )
 }
 
@@ -157,12 +257,7 @@ fn is_native_binary_op(op: &str) -> bool {
 ///
 /// The result is always a fresh `Value::StaticArray` with the broadcast
 /// output shape (or the scalar-broadcast shape).
-pub fn try_apply_binary_op(
-    b: &mut IRBuilder,
-    op: &str,
-    lhs: &Value,
-    rhs: &Value,
-) -> Option<Value> {
+pub fn try_apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) -> Option<Value> {
     if !is_native_binary_op(op) {
         return None;
     }
@@ -179,8 +274,8 @@ pub fn try_apply_binary_op(
         Value::Complex { .. } => Some(NumberType::Complex),
         _ => dtype_of_scalar(rhs),
     };
-    let any_complex =
-        matches!(lhs_dtype, Some(NumberType::Complex)) || matches!(rhs_dtype, Some(NumberType::Complex));
+    let any_complex = matches!(lhs_dtype, Some(NumberType::Complex))
+        || matches!(rhs_dtype, Some(NumberType::Complex));
     if any_complex {
         // Reject ordering comparisons on Complex (numpy raises TypeError).
         if matches!(op, "lt" | "lte" | "gt" | "gte") {
@@ -189,8 +284,22 @@ pub fn try_apply_binary_op(
     }
 
     let dispatch_complex = any_complex
-        && matches!(lhs, Value::StaticArray { .. } | Value::Complex { .. } | Value::Float(_) | Value::Integer(_) | Value::Boolean(_))
-        && matches!(rhs, Value::StaticArray { .. } | Value::Complex { .. } | Value::Float(_) | Value::Integer(_) | Value::Boolean(_));
+        && matches!(
+            lhs,
+            Value::StaticArray { .. }
+                | Value::Complex { .. }
+                | Value::Float(_)
+                | Value::Integer(_)
+                | Value::Boolean(_)
+        )
+        && matches!(
+            rhs,
+            Value::StaticArray { .. }
+                | Value::Complex { .. }
+                | Value::Float(_)
+                | Value::Integer(_)
+                | Value::Boolean(_)
+        );
 
     if dispatch_complex {
         return try_apply_complex_binary_op(b, op, lhs, rhs);
@@ -230,7 +339,9 @@ pub fn try_apply_binary_op(
             } else {
                 promote_dtype(arr_dtype, scalar_dtype)
             };
-            Some(elementwise_array_scalar(b, op, lhs, rhs, true, &arr_shape, out_dtype))
+            Some(elementwise_array_scalar(
+                b, op, lhs, rhs, true, &arr_shape, out_dtype,
+            ))
         }
         // scalar (numeric) + StaticArray.
         (_, Value::StaticArray { .. }) if lhs.is_number() => {
@@ -242,7 +353,9 @@ pub fn try_apply_binary_op(
             } else {
                 promote_dtype(arr_dtype, scalar_dtype)
             };
-            Some(elementwise_array_scalar(b, op, rhs, lhs, false, &arr_shape, out_dtype))
+            Some(elementwise_array_scalar(
+                b, op, rhs, lhs, false, &arr_shape, out_dtype,
+            ))
         }
         _ => None,
     }
@@ -290,8 +403,12 @@ fn try_apply_complex_binary_op(
         _ => vec![rhs.clone()],
     };
 
-    let lhs_indexer = lhs_shape.as_ref().map(|s| make_broadcast_indexer(s, &out_shape));
-    let rhs_indexer = rhs_shape.as_ref().map(|s| make_broadcast_indexer(s, &out_shape));
+    let lhs_indexer = lhs_shape
+        .as_ref()
+        .map(|s| make_broadcast_indexer(s, &out_shape));
+    let rhs_indexer = rhs_shape
+        .as_ref()
+        .map(|s| make_broadcast_indexer(s, &out_shape));
 
     // For comparisons (eq / ne) the output is Boolean per cell — produce a
     // Boolean StaticArray. For other ops the output is Complex per cell.
@@ -301,19 +418,38 @@ fn try_apply_complex_binary_op(
         let mut out: Vec<Value> = Vec::with_capacity(total);
         for flat in 0..total {
             let coords = decode_coords(flat, &out_shape, &out_strides);
-            let l = match &lhs_indexer { Some(idx) => &lhs_cells[idx.flat_index(&coords)], None => &lhs_cells[0] };
-            let r = match &rhs_indexer { Some(idx) => &rhs_cells[idx.flat_index(&coords)], None => &rhs_cells[0] };
-            out.push(crate::helpers::value_ops::apply_complex_binary_op(b, op, l, r));
+            let l = match &lhs_indexer {
+                Some(idx) => &lhs_cells[idx.flat_index(&coords)],
+                None => &lhs_cells[0],
+            };
+            let r = match &rhs_indexer {
+                Some(idx) => &rhs_cells[idx.flat_index(&coords)],
+                None => &rhs_cells[0],
+            };
+            out.push(crate::helpers::value_ops::apply_complex_binary_op(
+                b, op, l, r,
+            ));
         }
-        return Some(build_static_array_from_flat(b, out, out_shape, NumberType::Integer));
+        return Some(build_static_array_from_flat(
+            b,
+            out,
+            out_shape,
+            NumberType::Integer,
+        ));
     }
 
     let mut reals: Vec<Value> = Vec::with_capacity(total);
     let mut imags: Vec<Value> = Vec::with_capacity(total);
     for flat in 0..total {
         let coords = decode_coords(flat, &out_shape, &out_strides);
-        let l = match &lhs_indexer { Some(idx) => &lhs_cells[idx.flat_index(&coords)], None => &lhs_cells[0] };
-        let r = match &rhs_indexer { Some(idx) => &rhs_cells[idx.flat_index(&coords)], None => &rhs_cells[0] };
+        let l = match &lhs_indexer {
+            Some(idx) => &lhs_cells[idx.flat_index(&coords)],
+            None => &lhs_cells[0],
+        };
+        let r = match &rhs_indexer {
+            Some(idx) => &rhs_cells[idx.flat_index(&coords)],
+            None => &rhs_cells[0],
+        };
         let result = crate::helpers::value_ops::apply_complex_binary_op(b, op, l, r);
         match result {
             Value::Complex { real, imag } => {
@@ -323,18 +459,18 @@ fn try_apply_complex_binary_op(
             _ => unreachable!("apply_complex_binary_op for non-comparison op must return Complex"),
         }
     }
-    Some(crate::helpers::static_array::base::build_static_array_from_flat_complex(b, reals, imags, out_shape))
+    Some(
+        crate::helpers::static_array::base::build_static_array_from_flat_complex(
+            b, reals, imags, out_shape,
+        ),
+    )
 }
 
 /// Try to apply a unary op natively on a `Value::StaticArray`. Returns
 /// `Some(result)` for the migrated unary set (`usub`, `uadd`, `not`,
 /// `invert`); `None` otherwise. The caller falls back to the legacy path
 /// if `None` is returned.
-pub fn try_apply_unary_op(
-    b: &mut IRBuilder,
-    op: &str,
-    operand: &Value,
-) -> Option<Value> {
+pub fn try_apply_unary_op(b: &mut IRBuilder, op: &str, operand: &Value) -> Option<Value> {
     let arr_dtype = match operand {
         Value::StaticArray { dtype, .. } => *dtype,
         _ => return None,
@@ -356,7 +492,11 @@ pub fn try_apply_unary_op(
                     reals.push(nr);
                     imags.push(ni);
                 }
-                return Some(crate::helpers::static_array::base::build_static_array_from_flat_complex(b, reals, imags, arr_shape));
+                return Some(
+                    crate::helpers::static_array::base::build_static_array_from_flat_complex(
+                        b, reals, imags, arr_shape,
+                    ),
+                );
             }
             // not/invert undefined on Complex.
             _ => return None,
@@ -395,6 +535,24 @@ fn elementwise_two_arrays(
 ) -> Value {
     let lhs_cells = payload_cells(b, lhs);
     let rhs_cells = payload_cells(b, rhs);
+
+    if op == "mul"
+        && !matches!(out_dtype, NumberType::Complex)
+        && matches!(lhs, Value::StaticArray { .. })
+        && matches!(rhs, Value::StaticArray { .. })
+    {
+        return build_static_array_product_provenance(
+            b,
+            StaticArrayProductProvenance {
+                lhs_cells,
+                rhs_cells,
+                lhs_shape: lhs_shape.to_vec(),
+                rhs_shape: rhs_shape.to_vec(),
+                out_shape: out_shape.to_vec(),
+                dtype: out_dtype,
+            },
+        );
+    }
 
     let total: usize = out_shape.iter().product();
     let out_strides = row_major_strides(out_shape);
@@ -494,7 +652,7 @@ fn unary_array(
 /// Maps an output coordinate (in the broadcast shape) to a flat source index
 /// into the source array's payload. Uses stride-0 for broadcast (size-1) and
 /// padded leading axes — no source materialisation needed.
-struct BroadcastIndexer {
+pub(super) struct BroadcastIndexer {
     /// Stride into the source's flat payload, indexed by *output* axis. A
     /// stride of 0 means the axis is broadcasted.
     out_axis_strides: Vec<usize>,
@@ -504,7 +662,7 @@ struct BroadcastIndexer {
 }
 
 impl BroadcastIndexer {
-    fn flat_index(&self, out_coords: &[usize]) -> usize {
+    pub(super) fn flat_index(&self, out_coords: &[usize]) -> usize {
         if self.is_scalar_source {
             return 0;
         }
@@ -519,6 +677,13 @@ impl BroadcastIndexer {
 /// Build a `BroadcastIndexer` for a source shape against the target output
 /// shape. Source shape is right-aligned with the output (left-padded with 1s
 /// for missing leading axes).
+pub(super) fn make_product_broadcast_indexer(
+    src_shape: &[usize],
+    out_shape: &[usize],
+) -> BroadcastIndexer {
+    make_broadcast_indexer(src_shape, out_shape)
+}
+
 fn make_broadcast_indexer(src_shape: &[usize], out_shape: &[usize]) -> BroadcastIndexer {
     let rank = out_shape.len();
     let pad = rank - src_shape.len();
@@ -533,7 +698,11 @@ fn make_broadcast_indexer(src_shape: &[usize], out_shape: &[usize]) -> Broadcast
             out_axis_strides[d] = 0;
         } else {
             let sd = d - pad;
-            out_axis_strides[d] = if src_shape[sd] == 1 { 0 } else { src_strides_nat[sd] };
+            out_axis_strides[d] = if src_shape[sd] == 1 {
+                0
+            } else {
+                src_strides_nat[sd]
+            };
         }
     }
     let src_total: usize = src_shape.iter().product();
@@ -566,7 +735,7 @@ mod tests {
         Value::List(CompositeData {
             elements_type: types,
             values,
-        
+
             value_id: ValueId::next(),
         })
     }
@@ -608,20 +777,41 @@ mod tests {
     }
 
     #[test]
+    fn binary_array_product_provenance_forces_to_concrete_payload() {
+        let mut b = IRBuilder::new();
+        let a = make_1d_int(&mut b, &[1, 2, 3]);
+        let c = make_1d_int(&mut b, &[10, 20, 30]);
+        let out = try_apply_binary_op(&mut b, "mul", &a, &c).expect("native path");
+        let segment_id = match &out {
+            Value::StaticArray { segment_id, .. } => *segment_id,
+            _ => panic!("expected StaticArray"),
+        };
+        assert!(b.static_array_product_provenance.contains_key(&segment_id));
+        assert!(b.static_array_payload.get(&segment_id).is_none());
+
+        let cells = payload_cells(&mut b, &out);
+        let folded: Vec<Option<i64>> = cells.iter().map(|v| v.int_val()).collect();
+        assert_eq!(folded, vec![Some(10), Some(40), Some(90)]);
+        assert!(b.static_array_product_provenance.get(&segment_id).is_none());
+        assert!(b.static_array_payload.get(&segment_id).is_some());
+
+        let cells_again = payload_cells(&mut b, &out);
+        let folded_again: Vec<Option<i64>> = cells_again.iter().map(|v| v.int_val()).collect();
+        assert_eq!(folded_again, folded);
+    }
+
+    #[test]
     fn binary_broadcast_3x1_plus_1x4_constant_folds() {
         let mut b = IRBuilder::new();
         // (3, 1)
         let row0 = list_of(vec![b.ir_constant_int(1)]);
         let row1 = list_of(vec![b.ir_constant_int(2)]);
         let row2 = list_of(vec![b.ir_constant_int(3)]);
-        let lhs = super::super::base::to_static_array(
-            &mut b, &list_of(vec![row0, row1, row2]),
-        ).unwrap();
+        let lhs =
+            super::super::base::to_static_array(&mut b, &list_of(vec![row0, row1, row2])).unwrap();
         // (1, 4)
         let r0 = list_of((0..4).map(|i| b.ir_constant_int(10 + i * 10)).collect());
-        let rhs = super::super::base::to_static_array(
-            &mut b, &list_of(vec![r0]),
-        ).unwrap();
+        let rhs = super::super::base::to_static_array(&mut b, &list_of(vec![r0])).unwrap();
         let out = try_apply_binary_op(&mut b, "add", &lhs, &rhs).expect("native path");
         match &out {
             Value::StaticArray { shape, .. } => assert_eq!(*shape, vec![3, 4]),
@@ -671,8 +861,14 @@ mod tests {
         let a = make_1d_int(&mut b, &[1, 2, 3]);
         let out = try_apply_unary_op(&mut b, "uadd", &a).expect("native path");
         match (&a, &out) {
-            (Value::StaticArray { segment_id: a_seg, .. },
-             Value::StaticArray { segment_id: o_seg, .. }) => assert_eq!(a_seg, o_seg),
+            (
+                Value::StaticArray {
+                    segment_id: a_seg, ..
+                },
+                Value::StaticArray {
+                    segment_id: o_seg, ..
+                },
+            ) => assert_eq!(a_seg, o_seg),
             _ => panic!("expected StaticArray"),
         }
     }

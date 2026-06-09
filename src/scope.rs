@@ -43,6 +43,7 @@ impl ValueStore {
 pub enum Scope {
     Master(MasterScopeData),
     Chip(ChipScopeData),
+    Circuit(CircuitScopeData),
     Conditional(ConditionalScopeData),
     Loop(Box<LoopScopeData>),
     Generator(GeneratorScopeData),
@@ -68,7 +69,25 @@ pub struct ChipScopeData {
     pub return_dtype: ZinniaType,
     pub returns_with_conditions: Vec<(Value, Value)>, // (return_value, condition)
     pub calculated_returning_condition: Option<Value>, // BooleanValue
-    pub assertion_condition: Option<Value>,             // BooleanValue
+    pub assertion_condition: Option<Value>,           // BooleanValue
+    pub has_none_return: bool,
+    pub has_value_return: bool,
+}
+
+// ---------------------------------------------------------------------------
+// CircuitScope — top-level circuit scope
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct CircuitScopeData {
+    pub var_table: HashMap<String, ValueStore>,
+    pub return_guaranteed: bool,
+    pub return_dtype: ZinniaType,
+    pub returns_with_conditions: Vec<(Value, Value)>,
+    pub calculated_returning_condition: Option<Value>, // BooleanValue
+    pub assertion_condition: Option<Value>,            // BooleanValue
+    pub has_none_return: bool,
+    pub has_value_return: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -95,8 +114,8 @@ pub struct LoopScopeData {
     pub break_condition: Option<Value>,    // BooleanValue
     pub return_guaranteed: bool,
     pub loop_terminated_guaranteed: bool,
-    pub calculated_looping_condition: Option<Value>,    // BooleanValue
-    pub super_looping_condition: Option<Value>,         // BooleanValue (captured at construction)
+    pub calculated_looping_condition: Option<Value>, // BooleanValue
+    pub super_looping_condition: Option<Value>,      // BooleanValue (captured at construction)
 }
 
 // ---------------------------------------------------------------------------
@@ -120,11 +139,24 @@ impl Scope {
     /// This is handled by IRContext which checks parent first for LoopScope.
     pub fn set_local(&mut self, name: String, store: ValueStore) {
         match self {
-            Scope::Master(d) => { d.var_table.insert(name, store); }
-            Scope::Chip(d) => { d.var_table.insert(name, store); }
-            Scope::Conditional(d) => { d.var_table.insert(name, store); }
-            Scope::Loop(d) => { d.var_table.insert(name, store); }
-            Scope::Generator(d) => { d.var_table.insert(name, store); }
+            Scope::Master(d) => {
+                d.var_table.insert(name, store);
+            }
+            Scope::Chip(d) => {
+                d.var_table.insert(name, store);
+            }
+            Scope::Circuit(d) => {
+                d.var_table.insert(name, store);
+            }
+            Scope::Conditional(d) => {
+                d.var_table.insert(name, store);
+            }
+            Scope::Loop(d) => {
+                d.var_table.insert(name, store);
+            }
+            Scope::Generator(d) => {
+                d.var_table.insert(name, store);
+            }
         }
     }
 
@@ -133,6 +165,7 @@ impl Scope {
         match self {
             Scope::Master(d) => d.var_table.get(name),
             Scope::Chip(d) => d.var_table.get(name),
+            Scope::Circuit(d) => d.var_table.get(name),
             Scope::Conditional(d) => d.var_table.get(name),
             Scope::Loop(d) => d.var_table.get(name),
             Scope::Generator(d) => d.var_table.get(name),
@@ -144,6 +177,7 @@ impl Scope {
         match self {
             Scope::Master(d) => d.var_table.contains_key(name),
             Scope::Chip(d) => d.var_table.contains_key(name),
+            Scope::Circuit(d) => d.var_table.contains_key(name),
             Scope::Conditional(d) => d.var_table.contains_key(name),
             Scope::Loop(d) => d.var_table.contains_key(name),
             Scope::Generator(d) => d.var_table.contains_key(name),
@@ -152,18 +186,21 @@ impl Scope {
 
     /// Whether this scope delegates variable lookup to parent.
     pub fn delegates_to_parent(&self) -> bool {
-        matches!(self, Scope::Conditional(_) | Scope::Loop(_) | Scope::Generator(_))
+        matches!(
+            self,
+            Scope::Conditional(_) | Scope::Loop(_) | Scope::Generator(_)
+        )
     }
 
     /// Whether this scope is a "boundary" (no parent lookup for get/exists).
     pub fn is_boundary(&self) -> bool {
-        matches!(self, Scope::Master(_) | Scope::Chip(_))
+        matches!(self, Scope::Master(_) | Scope::Chip(_) | Scope::Circuit(_))
     }
 
     // ── Control flow conditions ───────────────────────────────────────
 
     pub fn is_in_chip(&self) -> bool {
-        matches!(self, Scope::Chip(_))
+        matches!(self, Scope::Chip(_) | Scope::Circuit(_))
     }
 
     pub fn is_in_loop(&self) -> bool {
@@ -194,6 +231,7 @@ impl Scope {
     pub fn get_returning_condition(&self) -> Option<&Value> {
         match self {
             Scope::Chip(d) => d.calculated_returning_condition.as_ref(),
+            Scope::Circuit(d) => d.calculated_returning_condition.as_ref(),
             _ => None,
         }
     }
@@ -201,6 +239,7 @@ impl Scope {
     pub fn get_assertion_condition(&self) -> Option<&Value> {
         match self {
             Scope::Chip(d) => d.assertion_condition.as_ref(),
+            Scope::Circuit(d) => d.assertion_condition.as_ref(),
             _ => None,
         }
     }
@@ -210,6 +249,7 @@ impl Scope {
     pub fn is_return_guaranteed(&self) -> bool {
         match self {
             Scope::Chip(d) => d.return_guaranteed,
+            Scope::Circuit(d) => d.return_guaranteed,
             Scope::Conditional(d) => d.return_guaranteed,
             Scope::Loop(d) => d.return_guaranteed,
             _ => false,
@@ -219,6 +259,7 @@ impl Scope {
     pub fn set_return_guarantee(&mut self) {
         match self {
             Scope::Chip(d) => d.return_guaranteed = true,
+            Scope::Circuit(d) => d.return_guaranteed = true,
             Scope::Conditional(d) => d.return_guaranteed = true,
             Scope::Loop(d) => d.return_guaranteed = true,
             _ => {}
@@ -244,21 +285,56 @@ impl Scope {
     pub fn get_returns_with_conditions(&self) -> &[(Value, Value)] {
         match self {
             Scope::Chip(d) => &d.returns_with_conditions,
+            Scope::Circuit(d) => &d.returns_with_conditions,
             _ => &[],
+        }
+    }
+
+    pub fn has_mixed_bare_and_value_returns(&self) -> bool {
+        match self {
+            Scope::Chip(d) => d.has_none_return && d.has_value_return,
+            Scope::Circuit(d) => d.has_none_return && d.has_value_return,
+            _ => false,
         }
     }
 
     pub fn get_return_dtype(&self) -> Option<&ZinniaType> {
         match self {
             Scope::Chip(d) => Some(&d.return_dtype),
+            Scope::Circuit(d) => Some(&d.return_dtype),
             _ => None,
         }
     }
 
     /// Register a return value with the given condition. Only valid on ChipScope.
-    pub fn register_return(&mut self, value: Value, condition: Value, builder: &mut IRBuilder) {
+    pub fn register_return(
+        &mut self,
+        value: Value,
+        condition: Value,
+        is_bare_return: bool,
+        builder: &mut IRBuilder,
+    ) {
         if let Scope::Chip(d) = self {
+            let is_none_return = is_bare_return || matches!(value, Value::None);
             d.returns_with_conditions.push((value, condition.clone()));
+            if is_none_return {
+                d.has_none_return = true;
+            } else {
+                d.has_value_return = true;
+            }
+            let not_cond = builder.ir_logical_not(&condition);
+            d.calculated_returning_condition = Some(match &d.calculated_returning_condition {
+                None => not_cond,
+                Some(existing) => builder.ir_logical_and(existing, &not_cond),
+            });
+        } else if let Scope::Circuit(d) = self {
+            let is_none_return = is_bare_return || matches!(value, Value::None);
+            d.returns_with_conditions.push((value, condition.clone()));
+            if is_none_return {
+                d.has_none_return = true;
+            } else {
+                d.has_value_return = true;
+            }
             let not_cond = builder.ir_logical_not(&condition);
             d.calculated_returning_condition = Some(match &d.calculated_returning_condition {
                 None => not_cond,
@@ -329,12 +405,14 @@ impl Scope {
                 d.condition.bool_val().is_none() && d.condition.int_val().is_none()
             }
             Scope::Loop(d) => {
-                let brk_unknown = d.break_condition.as_ref().is_some_and(|v| {
-                    v.bool_val().is_none() || v.bool_val() == Some(false)
-                });
-                let cont_unknown = d.continue_condition.as_ref().is_some_and(|v| {
-                    v.bool_val().is_none() || v.bool_val() == Some(false)
-                });
+                let brk_unknown = d
+                    .break_condition
+                    .as_ref()
+                    .is_some_and(|v| v.bool_val().is_none() || v.bool_val() == Some(false));
+                let cont_unknown = d
+                    .continue_condition
+                    .as_ref()
+                    .is_some_and(|v| v.bool_val().is_none() || v.bool_val() == Some(false));
                 brk_unknown || cont_unknown
             }
             _ => false,
@@ -387,10 +465,12 @@ mod tests {
             returns_with_conditions: Vec::new(),
             calculated_returning_condition: None,
             assertion_condition: None,
+            has_none_return: false,
+            has_value_return: false,
         });
 
         let ret_val = Value::Integer(ScalarValue::known(10, 0));
-        scope.register_return(ret_val, cond, &mut builder);
+        scope.register_return(ret_val, cond, false, &mut builder);
 
         assert_eq!(scope.get_returns_with_conditions().len(), 1);
         assert!(scope.get_returning_condition().is_some());
@@ -411,6 +491,8 @@ mod tests {
             returns_with_conditions: Vec::new(),
             calculated_returning_condition: None,
             assertion_condition: None,
+            has_none_return: false,
+            has_value_return: false,
         });
         assert!(chip.is_in_chip());
         assert!(!chip.is_in_loop());

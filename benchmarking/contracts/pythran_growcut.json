@@ -1,0 +1,177 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "domain-obligation",
+    "in-place-mutation",
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 18,
+      "line_start": 14,
+      "mutated_params": [],
+      "name": "window_floor",
+      "ops": [
+        "Gt",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "idx",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "radius",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 25,
+      "line_start": 21,
+      "mutated_params": [],
+      "name": "window_ceil",
+      "ops": [
+        "Add",
+        "Gt"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "idx",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "ceil",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "radius",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "math.sqrt",
+        "range",
+        "window_ceil",
+        "window_floor"
+      ],
+      "entry_candidate": false,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 54,
+      "line_start": 28,
+      "mutated_params": [
+        "state_next"
+      ],
+      "name": "python_kernel",
+      "ops": [
+        "Add",
+        "Div",
+        "Eq",
+        "Gt",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "image",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "state",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "state_next",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "window_radius",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "np.empty_like",
+        "np.zeros",
+        "python_kernel",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 64,
+      "line_start": 58,
+      "mutated_params": [],
+      "name": "test",
+      "ops": [
+        "LtE"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "N",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_growcut/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "pythran_growcut",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, domain-obligation, in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport math\nimport numpy as np\n\n@zk_chip\ndef window_floor(idx: Float, radius: Float):\n    if radius > idx:\n        return 0\n    else:\n        return idx - radius\n\n@zk_chip\ndef window_ceil(idx: Float, ceil: Float, radius: Float):\n    if idx + radius > ceil:\n        return ceil\n    else:\n        return idx + radius\n\n@zk_chip\ndef python_kernel(image: Float[Array, 'N<=1024 M<=1024 K<=1024'], state: Float[Array, 'N<=1024 M<=1024 K<=1024'], state_next: Float[Array, 'N<=1024 M<=1024 K<=1024'], window_radius: Float):\n    changes = 0\n    sqrt_3 = math.sqrt(3.0)\n    height = image.shape[0]\n    width = image.shape[1]\n    for j in range(width):\n        for i in range(height):\n            winning_colony = state[i, j, 0]\n            defense_strength = state[i, j, 1]\n            for jj in range(window_floor(j, window_radius), window_ceil(j + 1, width, window_radius)):\n                for ii in range(window_floor(i, window_radius), window_ceil(i + 1, height, window_radius)):\n                    if ii == i and jj == j:\n                        continue\n                    d = image[i, j, 0] - image[ii, jj, 0]\n                    s = d * d\n                    for k in range(1, 3):\n                        d = image[i, j, k] - image[ii, jj, k]\n                        s += d * d\n                    gval = 1.0 - math.sqrt(s) / sqrt_3\n                    attack_strength = gval * state[ii, jj, 1]\n                    if attack_strength > defense_strength:\n                        defense_strength = attack_strength\n                        winning_colony = state[ii, jj, 0]\n                        changes += 1\n            state_next[i, j, 0] = winning_colony\n            state_next[i, j, 1] = defense_strength\n    return changes\n\n@zk_circuit\n@requires(lambda N: 0 <= N <= 1024)\ndef test(N: Integer):\n    image = np.zeros((N, N, 3))\n    state = np.zeros((N, N, 2))\n    state_next = np.empty_like(state)\n    state[0, 0, 0] = 1\n    state[0, 0, 1] = 1\n    return python_kernel(image, state, state_next, 10)",
+  "source_status": "direct"
+}

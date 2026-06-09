@@ -1,9 +1,8 @@
 use super::envelope::Envelope;
-use super::zinnia_type::{NumberType, ZinniaType};
 use super::scalar::ScalarValue;
 use super::value::Value;
+use super::zinnia_type::{NumberType, ZinniaType};
 use super::ValueId;
-
 
 /// Flat storage for NDArray values.
 #[derive(Debug, Clone)]
@@ -64,8 +63,15 @@ pub struct DynamicNDArrayData {
 }
 
 impl DynamicNDArrayData {
-    /// Worst-case total element count, derived from the envelope.
+    /// Backing-buffer slot count, derived from the envelope's total bound.
     pub fn max_length(&self) -> usize {
+        self.envelope.total_bound
+    }
+
+    /// Product of per-axis maxima. This can exceed the backing-buffer slot
+    /// count for compact dynamic arrays whose refinement facts establish a
+    /// tighter total bound than the rectangular max-shape product.
+    pub fn max_shape_product(&self) -> usize {
         self.envelope.max_total()
     }
 

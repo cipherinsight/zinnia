@@ -15,11 +15,17 @@ use super::elementwise::vectorize_unary;
 pub fn reduce_with_axis(b: &mut IRBuilder, op: &str, val: &Value, axis: i64) -> Value {
     if let Value::List(outer) | Value::Tuple(outer) = val {
         let ndim = crate::helpers::composite::get_composite_shape(val).len();
-        let axis = if axis < 0 { (ndim as i64 + axis) as usize } else { axis as usize };
+        let axis = if axis < 0 {
+            (ndim as i64 + axis) as usize
+        } else {
+            axis as usize
+        };
 
         if axis == 0 {
             // Reduce along axis 0: for each column position, reduce across rows
-            if outer.values.is_empty() { return Value::None; }
+            if outer.values.is_empty() {
+                return Value::None;
+            }
             // Get the number of columns from the first row
             if let Value::List(first_row) | Value::Tuple(first_row) = &outer.values[0] {
                 let ncols = first_row.values.len();
@@ -43,7 +49,11 @@ pub fn reduce_with_axis(b: &mut IRBuilder, op: &str, val: &Value, axis: i64) -> 
                     results.push(crate::helpers::ndarray::builtin_reduce(b, op, &col_list));
                 }
                 let types = results.iter().map(|v| v.zinnia_type()).collect();
-                Value::List(CompositeData { elements_type: types, values: results, value_id: ValueId::next() })
+                Value::List(CompositeData {
+                    elements_type: types,
+                    values: results,
+                    value_id: ValueId::next(),
+                })
             } else {
                 // If first element is scalar, just reduce the whole thing
                 crate::helpers::ndarray::builtin_reduce(b, op, val)
@@ -55,7 +65,11 @@ pub fn reduce_with_axis(b: &mut IRBuilder, op: &str, val: &Value, axis: i64) -> 
                 results.push(crate::helpers::ndarray::builtin_reduce(b, op, row));
             }
             let types = results.iter().map(|v| v.zinnia_type()).collect();
-            Value::List(CompositeData { elements_type: types, values: results, value_id: ValueId::next() })
+            Value::List(CompositeData {
+                elements_type: types,
+                values: results,
+                value_id: ValueId::next(),
+            })
         } else {
             crate::helpers::ndarray::builtin_reduce(b, op, val)
         }
@@ -178,7 +192,16 @@ fn lower_mean_generic(b: &mut IRBuilder, inputs: &MeanInputs) -> Value {
     let total_sum = crate::helpers::ndarray::builtin_reduce(b, "sum", &inputs.val);
     let total_f = ensure_scalar_float(b, &total_sum);
     let n_val = b.ir_constant_float(total as f64);
-    b.ir_div_f(&total_f, &n_val)
+    let mean = b.ir_div_f(&total_f, &n_val);
+    if let Some(out_vid) = mean.value_id() {
+        crate::optim::resolver::relay_mean_tight_interval_float(
+            b,
+            inputs.arr_vid,
+            total as i64,
+            out_vid,
+        );
+    }
+    mean
 }
 
 /// Strategy A for `mean`: `forall_eq_const(arr, 0)` ⇒ output is `0.0`.
@@ -241,7 +264,10 @@ pub fn np_mean(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
         let ndim = shape.len();
         let resolved = if ax < 0 { ndim as i64 + ax } else { ax };
         if resolved < 0 || resolved >= ndim as i64 {
-            panic!("mean: axis {} is out of bounds for array of rank {}", ax, ndim);
+            panic!(
+                "mean: axis {} is out of bounds for array of rank {}",
+                ax, ndim
+            );
         }
         let n = shape[resolved as usize];
         let summed = reduce_axis_general(b, "sum", val, resolved as usize);
@@ -306,10 +332,7 @@ pub fn np_var(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>
         let sq = squared_deviation(b, val, &mean_expanded);
         let sq_sum_args = vec![sq.clone()];
         let mut sq_sum_kwargs = HashMap::new();
-        sq_sum_kwargs.insert(
-            "axis".to_string(),
-            b.ir_constant_int(resolved),
-        );
+        sq_sum_kwargs.insert("axis".to_string(), b.ir_constant_int(resolved));
         np_mean(b, &sq_sum_args, &sq_sum_kwargs)
     } else {
         let sq = squared_deviation(b, val, &mean);

@@ -7,8 +7,8 @@
 
 use crate::types::{CompositeData, Value, ValueId};
 
-use super::DispatchCtx;
 use super::super::IRGenerator;
+use super::DispatchCtx;
 
 impl IRGenerator {
     pub(crate) fn try_builtin(&mut self, ctx: &DispatchCtx) -> Option<Value> {
@@ -19,7 +19,9 @@ impl IRGenerator {
         let visited_args_orig = ctx.args_orig;
         let member = ctx.member;
         let v = match member {
-            "range" => crate::ops::static_ndarray_ops::builtin_range(&mut self.builder, visited_args),
+            "range" => {
+                crate::ops::static_ndarray_ops::builtin_range(&mut self.builder, visited_args)
+            }
             "len" => crate::ops::static_ndarray_ops::builtin_len(&mut self.builder, visited_args),
             "int" => {
                 if visited_args.is_empty() {
@@ -44,8 +46,14 @@ impl IRGenerator {
             }
             "complex" => {
                 // complex() / complex(re) / complex(re, im) — Python's built-in.
-                let real_v = visited_args.first().cloned().unwrap_or_else(|| self.builder.ir_constant_float(0.0));
-                let imag_v = visited_args.get(1).cloned().unwrap_or_else(|| self.builder.ir_constant_float(0.0));
+                let real_v = visited_args
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| self.builder.ir_constant_float(0.0));
+                let imag_v = visited_args
+                    .get(1)
+                    .cloned()
+                    .unwrap_or_else(|| self.builder.ir_constant_float(0.0));
                 // Promote real and imag to Float (allow int / float / complex inputs).
                 let real_f = match &real_v {
                     Value::Float(_) => real_v.clone(),
@@ -57,24 +65,45 @@ impl IRGenerator {
                     Value::Complex { imag, .. } => Value::Float(imag.clone()),
                     _ => self.builder.ir_float_cast(&imag_v),
                 };
-                let r = match real_f { Value::Float(s) => s, _ => unreachable!() };
-                let i = match imag_f { Value::Float(s) => s, _ => unreachable!() };
+                let r = match real_f {
+                    Value::Float(s) => s,
+                    _ => unreachable!(),
+                };
+                let i = match imag_f {
+                    Value::Float(s) => s,
+                    _ => unreachable!(),
+                };
                 Value::Complex { real: r, imag: i }
             }
             "abs" => {
                 if !visited_args.is_empty() {
                     let arg_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
                     // P5a: Complex StaticArray → fresh Float StaticArray.
-                    if let Value::StaticArray { dtype: crate::types::NumberType::Complex, .. } = &arg_orig {
-                        return Some(crate::helpers::static_array::complex::np_abs_complex_static_array(&mut self.builder, &arg_orig));
+                    if let Value::StaticArray {
+                        dtype: crate::types::NumberType::Complex,
+                        ..
+                    } = &arg_orig
+                    {
+                        return Some(
+                            crate::helpers::static_array::complex::np_abs_complex_static_array(
+                                &mut self.builder,
+                                &arg_orig,
+                            ),
+                        );
                     }
                     match &visited_args[0] {
                         Value::List(data) | Value::Tuple(data) => {
-                            let results: Vec<Value> = data.values.iter()
+                            let results: Vec<Value> = data
+                                .values
+                                .iter()
                                 .map(|v| self.builder.ir_abs_i(v))
                                 .collect();
                             let types = results.iter().map(|v| v.zinnia_type()).collect();
-                            Value::List(CompositeData { elements_type: types, values: results, value_id: ValueId::next() })
+                            Value::List(CompositeData {
+                                elements_type: types,
+                                values: results,
+                                value_id: ValueId::next(),
+                            })
                         }
                         // |a + bi| = sqrt(a^2 + b^2)
                         Value::Complex { real, imag } => {
@@ -119,22 +148,38 @@ impl IRGenerator {
                     // Python sum() iterates over the first level
                     let mut result = if let Value::List(data) | Value::Tuple(data) = iter_val {
                         // Check if elements are composites (2D+ array)
-                        if !data.values.is_empty() && matches!(&data.values[0], Value::List(_) | Value::Tuple(_)) {
+                        if !data.values.is_empty()
+                            && matches!(&data.values[0], Value::List(_) | Value::Tuple(_))
+                        {
                             // Sum over first axis (element-wise add of rows)
                             let mut acc = data.values[0].clone();
                             for row in &data.values[1..] {
-                                acc = crate::ops::static_ndarray_ops::elementwise_binary(&mut self.builder, "add", &acc, row);
+                                acc = crate::ops::static_ndarray_ops::elementwise_binary(
+                                    &mut self.builder,
+                                    "add",
+                                    &acc,
+                                    row,
+                                );
                             }
                             acc
                         } else {
-                            crate::helpers::ndarray::builtin_reduce(&mut self.builder, "sum", iter_val)
+                            crate::helpers::ndarray::builtin_reduce(
+                                &mut self.builder,
+                                "sum",
+                                iter_val,
+                            )
                         }
                     } else {
                         crate::helpers::ndarray::builtin_reduce(&mut self.builder, "sum", iter_val)
                     };
                     // sum(iterable, start) — add start value
                     if let Some(start) = visited_args.get(1) {
-                        result = crate::helpers::value_ops::apply_binary_op(&mut self.builder, "add", start, &result);
+                        result = crate::helpers::value_ops::apply_binary_op(
+                            &mut self.builder,
+                            "add",
+                            start,
+                            &result,
+                        );
                     }
                     result
                 } else {
@@ -146,7 +191,9 @@ impl IRGenerator {
                     // For 2D+ arrays, Python's any()/all() tries to evaluate truth of rows
                     // which is ambiguous for multi-element arrays
                     if let Value::List(data) | Value::Tuple(data) = iter_val {
-                        if !data.values.is_empty() && matches!(&data.values[0], Value::List(_) | Value::Tuple(_)) {
+                        if !data.values.is_empty()
+                            && matches!(&data.values[0], Value::List(_) | Value::Tuple(_))
+                        {
                             panic!("The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()");
                         }
                     }
@@ -156,13 +203,41 @@ impl IRGenerator {
                 }
             }
             "min" | "max" => {
+                // Python's 2+-arg form `min(a, b, ...)` reduces over its
+                // positional args (NOT over a single iterable). Lower via a
+                // chained scalar select so each pair compiles to
+                // `select(lt(a, b), a, b)` / `select(lt(a, b), b, a)`.
+                // Without this branch, the prior code took
+                // `visited_args.first()` only and silently dropped extra
+                // args — turning `min(high, shape[1])` into a no-op clamp
+                // that lets out-of-range witnesses through the slice's
+                // bound discharge.
+                if visited_args.len() >= 2 {
+                    let mut acc = visited_args[0].clone();
+                    for next in &visited_args[1..] {
+                        let lt = self.builder.ir_less_than_i(&acc, next);
+                        acc = if member == "min" {
+                            self.builder.ir_select_i(&lt, &acc, next)
+                        } else {
+                            self.builder.ir_select_i(&lt, next, &acc)
+                        };
+                    }
+                    return Some(acc);
+                }
                 if let Some(iter_val) = visited_args.first() {
                     // For 2D+ arrays, reduce over the first axis
                     if let Value::List(data) | Value::Tuple(data) = iter_val {
-                        if !data.values.is_empty() && matches!(&data.values[0], Value::List(_) | Value::Tuple(_)) {
+                        if !data.values.is_empty()
+                            && matches!(&data.values[0], Value::List(_) | Value::Tuple(_))
+                        {
                             let mut acc = data.values[0].clone();
                             for row in &data.values[1..] {
-                                acc = crate::ops::static_ndarray_ops::elementwise_minmax(&mut self.builder, &acc, row, member == "max");
+                                acc = crate::ops::static_ndarray_ops::elementwise_minmax(
+                                    &mut self.builder,
+                                    &acc,
+                                    row,
+                                    member == "max",
+                                );
                             }
                             return Some(acc);
                         }
@@ -175,10 +250,20 @@ impl IRGenerator {
             "pow" => {
                 if visited_args.len() >= 3 {
                     // pow(base, exp, mod) — modular exponentiation
-                    let base_exp = crate::helpers::value_ops::apply_scalar_binary_op(&mut self.builder, "pow", &visited_args[0], &visited_args[1]);
+                    let base_exp = crate::helpers::value_ops::apply_scalar_binary_op(
+                        &mut self.builder,
+                        "pow",
+                        &visited_args[0],
+                        &visited_args[1],
+                    );
                     self.builder.ir_mod_i(&base_exp, &visited_args[2])
                 } else if visited_args.len() >= 2 {
-                    crate::helpers::value_ops::apply_scalar_binary_op(&mut self.builder, "pow", &visited_args[0], &visited_args[1])
+                    crate::helpers::value_ops::apply_scalar_binary_op(
+                        &mut self.builder,
+                        "pow",
+                        &visited_args[0],
+                        &visited_args[1],
+                    )
                 } else {
                     Value::None
                 }
@@ -186,18 +271,20 @@ impl IRGenerator {
             "list" => {
                 // list(iterable) — convert to list, or empty list
                 if visited_args.is_empty() {
-                    Value::List(CompositeData { elements_type: vec![], values: vec![], value_id: ValueId::next() })
+                    Value::List(CompositeData {
+                        elements_type: vec![],
+                        values: vec![],
+                        value_id: ValueId::next(),
+                    })
                 } else {
                     match &visited_args[0] {
                         Value::List(_) => visited_args[0].clone(),
-                        Value::Tuple(data) => {
-                            Value::List(CompositeData {
-                                elements_type: data.elements_type.clone(),
-                                values: data.values.clone(),
+                        Value::Tuple(data) => Value::List(CompositeData {
+                            elements_type: data.elements_type.clone(),
+                            values: data.values.clone(),
 
-                                value_id: ValueId::next(),
-                            })
-                        }
+                            value_id: ValueId::next(),
+                        }),
                         _ => visited_args[0].clone(),
                     }
                 }
@@ -205,18 +292,20 @@ impl IRGenerator {
             "tuple" => {
                 // tuple(iterable) — convert to tuple, or empty tuple
                 if visited_args.is_empty() {
-                    Value::Tuple(CompositeData { elements_type: vec![], values: vec![], value_id: ValueId::next() })
+                    Value::Tuple(CompositeData {
+                        elements_type: vec![],
+                        values: vec![],
+                        value_id: ValueId::next(),
+                    })
                 } else {
                     match &visited_args[0] {
                         Value::Tuple(_) => visited_args[0].clone(),
-                        Value::List(data) => {
-                            Value::Tuple(CompositeData {
-                                elements_type: data.elements_type.clone(),
-                                values: data.values.clone(),
+                        Value::List(data) => Value::Tuple(CompositeData {
+                            elements_type: data.elements_type.clone(),
+                            values: data.values.clone(),
 
-                                value_id: ValueId::next(),
-                            })
-                        }
+                            value_id: ValueId::next(),
+                        }),
                         _ => visited_args[0].clone(),
                     }
                 }

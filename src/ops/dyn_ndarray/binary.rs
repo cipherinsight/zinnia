@@ -7,8 +7,8 @@
 use crate::builder::IRBuilder;
 use crate::helpers::shape_arith::{decode_coords, encode_coords, row_major_strides};
 use crate::helpers::value_ops::apply_scalar_binary_op;
-use crate::types::{ValueId, 
-    broadcast_envelopes, DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value,
+use crate::types::{
+    broadcast_envelopes, DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value, ValueId,
 };
 
 use super::value_to_scalar_i64;
@@ -33,19 +33,29 @@ pub fn dyn_binary_op(
     // dynamic dims, the static type system gave us nothing — refuse.
     check_broadcast_bound(&lhs.envelope, &rhs.envelope, &out_envelope);
 
-    // 2. Output dtype: float wins; comparisons always produce integer.
+    // 2. Output dtype: complex wins for arithmetic; comparisons produce integer.
     let is_cmp = matches!(op, "eq" | "ne" | "lt" | "lte" | "gt" | "gte");
     let out_dtype = if is_cmp {
         NumberType::Integer
+    } else if lhs.dtype == NumberType::Complex || rhs.dtype == NumberType::Complex {
+        NumberType::Complex
     } else if lhs.dtype == NumberType::Float || rhs.dtype == NumberType::Float {
         NumberType::Float
     } else {
         NumberType::Integer
     };
 
-    // 3. Pre-read source segments.
-    let lhs_vals = crate::helpers::segment::read_all(b, lhs.segment_id, lhs.max_length());
-    let rhs_vals = crate::helpers::segment::read_all(b, rhs.segment_id, rhs.max_length());
+    // 3. Pre-read source segments. Force contiguity so the row-major
+    // indexing below sees cells in logical order even if the source is
+    // a stride-permuted view (e.g. from a lazy `dyn_transpose`).
+    let lhs_owned = super::force_contiguous(b, lhs);
+    let rhs_owned = super::force_contiguous(b, rhs);
+    let lhs = &lhs_owned;
+    let rhs = &rhs_owned;
+    let lhs_vals =
+        crate::helpers::segment::read_all_typed(b, lhs.segment_id, lhs.max_length(), lhs.dtype);
+    let rhs_vals =
+        crate::helpers::segment::read_all_typed(b, rhs.segment_id, rhs.max_length(), rhs.dtype);
 
     // 4. Compute shapes and strides for coordinate remapping.
     let lhs_max_shape: Vec<usize> = lhs.envelope.dims.iter().map(|d| d.max).collect();
@@ -58,7 +68,7 @@ pub fn dyn_binary_op(
     let out_strides = row_major_strides(&out_max_shape);
 
     // 5. Element-wise computation with broadcast coordinate remapping.
-    let mut out_elements: Vec<ScalarValue<i64>> = Vec::with_capacity(out_total);
+    let mut out_elements: Vec<Value> = Vec::with_capacity(out_total);
 
     for flat_idx in 0..out_total {
         let out_coords = decode_coords(flat_idx, &out_max_shape, &out_strides);
@@ -70,11 +80,11 @@ pub fn dyn_binary_op(
         let rhs_val = &rhs_vals[rhs_flat];
 
         let result_val = apply_scalar_binary_op(b, op, lhs_val, rhs_val);
-        out_elements.push(value_to_scalar_i64(&result_val));
+        out_elements.push(result_val);
     }
 
     // 6. Write to fresh segment.
-    let segment_id = crate::helpers::segment::alloc_and_write(b, &out_elements, out_dtype);
+    let segment_id = crate::helpers::segment::alloc_and_write_values(b, &out_elements, out_dtype);
 
     // 7. Build runtime metadata.
     let runtime_shape = build_runtime_shape(&out_envelope, lhs, rhs);
@@ -109,15 +119,18 @@ pub fn dyn_unary_op(
     out_dtype: NumberType,
     apply_fn: impl Fn(&mut IRBuilder, &Value) -> Value,
 ) -> Value {
-    let arr_vals = crate::helpers::segment::read_all(b, arr.segment_id, arr.max_length());
-    let mut out_elements: Vec<ScalarValue<i64>> = Vec::with_capacity(arr_vals.len());
+    let arr_owned = super::force_contiguous(b, arr);
+    let arr = &arr_owned;
+    let arr_vals =
+        crate::helpers::segment::read_all_typed(b, arr.segment_id, arr.max_length(), arr.dtype);
+    let mut out_elements: Vec<Value> = Vec::with_capacity(arr_vals.len());
 
     for val in &arr_vals {
         let result = apply_fn(b, val);
-        out_elements.push(value_to_scalar_i64(&result));
+        out_elements.push(result);
     }
 
-    let segment_id = crate::helpers::segment::alloc_and_write(b, &out_elements, out_dtype);
+    let segment_id = crate::helpers::segment::alloc_and_write_values(b, &out_elements, out_dtype);
 
     Value::DynamicNDArray(DynamicNDArrayData {
         envelope: arr.envelope.clone(),
@@ -138,16 +151,22 @@ pub fn dyn_scalar_binary_op(
 ) -> Value {
     let is_cmp = matches!(op, "eq" | "ne" | "lt" | "lte" | "gt" | "gte");
     let scalar_is_float = matches!(scalar, Value::Float(_));
+    let scalar_is_complex = matches!(scalar, Value::Complex { .. });
     let out_dtype = if is_cmp {
         NumberType::Integer
+    } else if scalar_is_complex || arr.dtype == NumberType::Complex {
+        NumberType::Complex
     } else if scalar_is_float || arr.dtype == NumberType::Float {
         NumberType::Float
     } else {
         NumberType::Integer
     };
 
-    let arr_vals = crate::helpers::segment::read_all(b, arr.segment_id, arr.max_length());
-    let mut out_elements: Vec<ScalarValue<i64>> = Vec::with_capacity(arr_vals.len());
+    let arr_owned = super::force_contiguous(b, arr);
+    let arr = &arr_owned;
+    let arr_vals =
+        crate::helpers::segment::read_all_typed(b, arr.segment_id, arr.max_length(), arr.dtype);
+    let mut out_elements: Vec<Value> = Vec::with_capacity(arr_vals.len());
 
     for arr_val in &arr_vals {
         let result = if scalar_is_lhs {
@@ -155,19 +174,69 @@ pub fn dyn_scalar_binary_op(
         } else {
             apply_scalar_binary_op(b, op, arr_val, scalar)
         };
-        out_elements.push(value_to_scalar_i64(&result));
+        out_elements.push(result);
     }
 
-    let segment_id = crate::helpers::segment::alloc_and_write(b, &out_elements, out_dtype);
+    let segment_id = crate::helpers::segment::alloc_and_write_values(b, &out_elements, out_dtype);
 
     // Scalar broadcast: output envelope = input array's envelope (§3.2).
-    Value::DynamicNDArray(DynamicNDArrayData {
+    let out_val = Value::DynamicNDArray(DynamicNDArrayData {
         envelope: arr.envelope.clone(),
         dtype: out_dtype,
         segment_id,
         meta: arr.meta.clone(),
         value_id: ValueId::next(),
-    })
+    });
+
+    // Element-bound propagation (compiler.op-contract-inplace-mutation):
+    // for arithmetic ops (`add`, `sub`, `mul`) on integer arrays, derive
+    // new element bounds from the input array's bounds combined with
+    // the scalar's bounds. Skip comparisons (output dtype = Integer 0/1
+    // is trivially bounded but it's not informative downstream) and
+    // skip Float/Complex (no integer bound representation today).
+    if matches!(op, "add" | "sub" | "mul") && out_dtype == NumberType::Integer {
+        let scalar_arr = Value::DynamicNDArray(arr.clone());
+        let arr_bounds =
+            crate::helpers::static_array::reductions::read_array_element_bounds(b, &scalar_arr);
+        let scalar_bounds = if let Some(n) = scalar.int_val() {
+            Some((n, n))
+        } else {
+            b.ask_bounds(scalar)
+        };
+        if let (Some((alo, ahi)), Some((slo, shi))) = (arr_bounds, scalar_bounds) {
+            let (xlo, xhi, ylo, yhi) = if scalar_is_lhs {
+                (slo, shi, alo, ahi)
+            } else {
+                (alo, ahi, slo, shi)
+            };
+            let computed = match op {
+                "add" => Some((xlo.checked_add(ylo), xhi.checked_add(yhi))),
+                "sub" => Some((xlo.checked_sub(yhi), xhi.checked_sub(ylo))),
+                "mul" => {
+                    let c1 = xlo.checked_mul(ylo);
+                    let c2 = xlo.checked_mul(yhi);
+                    let c3 = xhi.checked_mul(ylo);
+                    let c4 = xhi.checked_mul(yhi);
+                    match (c1, c2, c3, c4) {
+                        (Some(a), Some(b), Some(c), Some(d)) => {
+                            Some((Some(a.min(b).min(c).min(d)), Some(a.max(b).max(c).max(d))))
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some((Some(new_lo), Some(new_hi))) = computed {
+                if let Some(out_vid) = out_val.value_id() {
+                    crate::helpers::static_array::reductions::deposit_array_in_range_fact(
+                        b, out_vid, new_lo, new_hi,
+                    );
+                }
+            }
+        }
+    }
+
+    out_val
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -267,11 +336,7 @@ fn check_broadcast_bound(
 
 /// Remap output coordinates to a source's coordinate space (handling
 /// broadcast and rank difference), then encode to a flat index.
-fn remap_and_encode(
-    out_coords: &[usize],
-    src_max_shape: &[usize],
-    src_strides: &[usize],
-) -> usize {
+fn remap_and_encode(out_coords: &[usize], src_max_shape: &[usize], src_strides: &[usize]) -> usize {
     if src_max_shape.is_empty() {
         return 0; // scalar source
     }
@@ -392,7 +457,7 @@ mod tests {
         Value::List(CompositeData {
             elements_type: types,
             values,
-        
+
             value_id: ValueId::next(),
         })
     }
@@ -560,8 +625,10 @@ mod tests {
             10,
         );
         let dummy_elements = vec![ScalarValue::new(Some(0), None); 10];
-        let lhs_seg = crate::helpers::segment::alloc_and_write(&mut b, &dummy_elements, NumberType::Integer);
-        let rhs_seg = crate::helpers::segment::alloc_and_write(&mut b, &dummy_elements, NumberType::Integer);
+        let lhs_seg =
+            crate::helpers::segment::alloc_and_write(&mut b, &dummy_elements, NumberType::Integer);
+        let rhs_seg =
+            crate::helpers::segment::alloc_and_write(&mut b, &dummy_elements, NumberType::Integer);
 
         let lhs_data = DynamicNDArrayData {
             envelope: lhs_envelope,
@@ -573,8 +640,14 @@ mod tests {
                 logical_strides: vec![1, 1],
                 runtime_length: ScalarValue::new(None, None),
                 runtime_rank: ScalarValue::new(Some(2), None),
-                runtime_shape: vec![ScalarValue::new(None, None), ScalarValue::new(Some(1), None)],
-                runtime_strides: vec![ScalarValue::new(Some(1), None), ScalarValue::new(Some(1), None)],
+                runtime_shape: vec![
+                    ScalarValue::new(None, None),
+                    ScalarValue::new(Some(1), None),
+                ],
+                runtime_strides: vec![
+                    ScalarValue::new(Some(1), None),
+                    ScalarValue::new(Some(1), None),
+                ],
                 runtime_offset: ScalarValue::new(Some(0), None),
             },
             value_id: ValueId::next(),
@@ -589,8 +662,14 @@ mod tests {
                 logical_strides: vec![10, 1],
                 runtime_length: ScalarValue::new(None, None),
                 runtime_rank: ScalarValue::new(Some(2), None),
-                runtime_shape: vec![ScalarValue::new(Some(1), None), ScalarValue::new(None, None)],
-                runtime_strides: vec![ScalarValue::new(Some(10), None), ScalarValue::new(Some(1), None)],
+                runtime_shape: vec![
+                    ScalarValue::new(Some(1), None),
+                    ScalarValue::new(None, None),
+                ],
+                runtime_strides: vec![
+                    ScalarValue::new(Some(10), None),
+                    ScalarValue::new(Some(1), None),
+                ],
                 runtime_offset: ScalarValue::new(Some(0), None),
             },
             value_id: ValueId::next(),

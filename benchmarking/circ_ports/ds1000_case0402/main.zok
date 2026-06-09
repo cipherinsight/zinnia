@@ -1,0 +1,12 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0402/kernel.py
+// REASON: np.ravel_multi_index(order='F') lowered to explicit Fortran-order stride loop over fixed N=5.
+
+def main(field[5] dims, field[5] index) -> field:
+    field result = 0
+    field stride = 1
+    for u32 i in 0..5 do
+        result = result + index[i] * stride
+        stride = stride * dims[i]
+    endfor
+    return result

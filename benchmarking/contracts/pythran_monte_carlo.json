@@ -1,0 +1,87 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "f",
+        "float",
+        "math.fabs",
+        "math.sin",
+        "range",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 40,
+      "line_start": 14,
+      "mutated_params": [],
+      "name": "montecarlo_integration",
+      "ops": [
+        "Add",
+        "Div",
+        "Gt",
+        "GtE",
+        "Lt",
+        "LtE",
+        "Mod",
+        "Mult",
+        "NotEq",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "xmin",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "xmax",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "numSteps",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "rand",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "randsize",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_monte_carlo/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_monte_carlo",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport math\n\n@zk_circuit\n@requires(lambda xmin, xmax, numSteps, rand, randsize: numSteps != 0)\n@requires(lambda xmin, xmax, numSteps, rand, randsize: randsize != 0)\ndef montecarlo_integration(xmin: Float, xmax: Float, numSteps: Integer, rand: Float[Array, 'N<=1024'], randsize: Integer):\n\n    @zk_chip\n    def f(x: Float):\n        return math.sin(x)\n    ymin = f(xmin)\n    ymax = ymin\n    for i in range(numSteps):\n        x = xmin + (xmax - xmin) * float(i) / numSteps\n        y = f(x)\n        if y < ymin:\n            ymin = y\n        if y > ymax:\n            ymax = y\n    rectArea = (xmax - xmin) * (ymax - ymin)\n    numPoints = numSteps\n    ctr = 0\n    for j in range(numPoints):\n        x = xmin + (xmax - xmin) * rand[j % randsize]\n        y = ymin + (ymax - ymin) * rand[j % randsize]\n        if math.fabs(y) <= math.fabs(f(x)):\n            if f(x) > 0 and y > 0 and (y <= f(x)):\n                ctr += 1\n            if f(x) < 0 and y < 0 and (y >= f(x)):\n                ctr -= 1\n    fnArea = rectArea * float(ctr) / numPoints\n    return fnArea",
+  "source_status": "direct"
+}

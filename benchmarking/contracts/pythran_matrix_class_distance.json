@@ -1,0 +1,71 @@
+{
+  "categories": [
+    "linalg",
+    "loop-bounded"
+  ],
+  "diagnostics": [
+    "np.linalg kernels may stay fail-closed until dynamic/static linalg support is selected."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "np.linalg.norm",
+        "np.sum",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 17,
+      "line_start": 13,
+      "mutated_params": [],
+      "name": "matrix_class_distance",
+      "ops": [
+        "Eq",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "dat",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "dat_filter",
+          "proposed_annotation": "Integer[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "dat_points",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "iterations",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_matrix_class_distance/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Record square/invertible/SPD requirements where the linalg call needs them."
+  ],
+  "program": "pythran_matrix_class_distance",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: in-place-mutation, linalg, loop-bounded\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Record square/invertible/SPD requirements where the linalg call needs them.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: np.linalg kernels may stay fail-closed until support is selected.\nimport numpy as np\n\n@zk_circuit\ndef matrix_class_distance(dat: Float[Array, 'N<=1024 M<=1024'], dat_filter: Integer[Array, 'N<=1024'], dat_points: Float[Array, 'N<=1024 M<=1024'], iterations: Integer):\n    aggregation = 0\n    for i in range(iterations):\n        aggregation += np.sum(np.linalg.norm(dat[dat_filter == i] - dat_points[i], axis=1))\n    return aggregation",
+  "source_status": "direct"
+}

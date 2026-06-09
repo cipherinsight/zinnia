@@ -17,12 +17,25 @@ pub fn matmul(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
     }
 
     let lhs_cols = *lhs_shape.last().unwrap();
-    let rhs_rows = if rhs_shape.len() >= 1 { rhs_shape[0] } else { 1 };
+    let rhs_rows = if rhs_shape.len() >= 1 {
+        rhs_shape[0]
+    } else {
+        1
+    };
 
     if lhs_cols != rhs_rows {
-        panic!("their shapes are not multiply compatible: ({}) and ({})",
-            lhs_shape.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", "),
-            rhs_shape.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", "),
+        panic!(
+            "their shapes are not multiply compatible: ({}) and ({})",
+            lhs_shape
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+            rhs_shape
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
         );
     }
 
@@ -262,7 +275,11 @@ fn matmul_generic(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
                 }
             }
             let types = results.iter().map(|v| v.zinnia_type()).collect();
-            return Value::List(CompositeData { elements_type: types, values: results, value_id: ValueId::next() });
+            return Value::List(CompositeData {
+                elements_type: types,
+                values: results,
+                value_id: ValueId::next(),
+            });
         }
 
         if lhs_shape.len() == 1 && rhs_shape.len() == 2 {
@@ -274,13 +291,15 @@ fn matmul_generic(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
             let k = lhs_shape[0]; // = rhs_shape[0]
             let mut row_vals = Vec::with_capacity(n);
             for j in 0..n {
-                let col: Vec<Value> = (0..k).map(|kk| {
-                    let rhs_row = match &rd.values[kk] {
-                        Value::List(r) | Value::Tuple(r) => &r.values,
-                        _ => panic!("matmul: expected 2D array"),
-                    };
-                    rhs_row[j].clone()
-                }).collect();
+                let col: Vec<Value> = (0..k)
+                    .map(|kk| {
+                        let rhs_row = match &rd.values[kk] {
+                            Value::List(r) | Value::Tuple(r) => &r.values,
+                            _ => panic!("matmul: expected 2D array"),
+                        };
+                        rhs_row[j].clone()
+                    })
+                    .collect();
                 let dot = if use_complex {
                     matmul_dot_complex(b, &ld.values, &col)
                 } else {
@@ -289,7 +308,11 @@ fn matmul_generic(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
                 row_vals.push(dot);
             }
             let types = row_vals.iter().map(|v| v.zinnia_type()).collect();
-            return Value::List(CompositeData { elements_type: types, values: row_vals, value_id: ValueId::next() });
+            return Value::List(CompositeData {
+                elements_type: types,
+                values: row_vals,
+                value_id: ValueId::next(),
+            });
         }
 
         if lhs_shape.len() == 2 && rhs_shape.len() == 2 {
@@ -308,13 +331,15 @@ fn matmul_generic(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
                 for j in 0..n {
                     if use_complex {
                         // Build a column-vector view by collecting rhs[*][j].
-                        let col: Vec<Value> = (0..k).map(|kk| {
-                            let rhs_row = match &rd.values[kk] {
-                                Value::List(r) | Value::Tuple(r) => &r.values,
-                                _ => panic!("matmul: expected 2D array"),
-                            };
-                            rhs_row[j].clone()
-                        }).collect();
+                        let col: Vec<Value> = (0..k)
+                            .map(|kk| {
+                                let rhs_row = match &rd.values[kk] {
+                                    Value::List(r) | Value::Tuple(r) => &r.values,
+                                    _ => panic!("matmul: expected 2D array"),
+                                };
+                                rhs_row[j].clone()
+                            })
+                            .collect();
                         row_vals.push(matmul_dot_complex(b, lhs_row, &col));
                         continue;
                     }
@@ -346,10 +371,18 @@ fn matmul_generic(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
                     row_vals.push(acc);
                 }
                 let rtypes = row_vals.iter().map(|v| v.zinnia_type()).collect();
-                rows.push(Value::List(CompositeData { elements_type: rtypes, values: row_vals, value_id: ValueId::next() }));
+                rows.push(Value::List(CompositeData {
+                    elements_type: rtypes,
+                    values: row_vals,
+                    value_id: ValueId::next(),
+                }));
             }
             let row_types = rows.iter().map(|v| v.zinnia_type()).collect();
-            return Value::List(CompositeData { elements_type: row_types, values: rows, value_id: ValueId::next() });
+            return Value::List(CompositeData {
+                elements_type: row_types,
+                values: rows,
+                value_id: ValueId::next(),
+            });
         }
     }
 

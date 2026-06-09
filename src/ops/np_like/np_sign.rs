@@ -9,9 +9,15 @@ impl NpSignOp {
 }
 
 impl Op for NpSignOp {
-    fn name(&self) -> &'static str { "sign" }
-    fn signature(&self) -> &'static str { "np.sign" }
-    fn params(&self) -> &[ParamEntry] { &Self::PARAMS }
+    fn name(&self) -> &'static str {
+        "sign"
+    }
+    fn signature(&self) -> &'static str {
+        "np.sign"
+    }
+    fn params(&self) -> &[ParamEntry] {
+        &Self::PARAMS
+    }
 
     fn build(&self, builder: &mut IRBuilder, args: &OpArgs) -> Value {
         let x = args.require("x");

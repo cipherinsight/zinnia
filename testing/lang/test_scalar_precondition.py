@@ -67,6 +67,12 @@ def _chained_cmp(k: int):
     pass
 
 
+@zk_circuit
+@requires(lambda x: 0.0 <= x <= 1.0)
+def _float_chained_cmp(x: float):
+    pass
+
+
 def test_chained_comparison_lowers_to_and():
     atoms = _scalar_atoms(_dump_ir(_chained_cmp))
     assert len(atoms) == 1
@@ -83,6 +89,35 @@ def test_chained_comparison_witness_emits_two_comparisons_and_logical_and():
     assert classes.count("LessThanOrEqualIIR") >= 2
     assert "LogicalAndIR" in classes
     assert _assert_count(stmts) >= 1
+
+
+def test_float_chained_comparison_uses_lit_float_terms():
+    atoms = _scalar_atoms(_dump_ir(_float_chained_cmp))
+    assert len(atoms) == 1
+    import json
+    term = json.loads(atoms[0]["term_json"])
+    clauses = term["BoolComb"]["operands"]
+    assert clauses[0]["Cmp"]["lhs"] == {"LitFloat": 0.0}
+    assert clauses[1]["Cmp"]["rhs"] == {"LitFloat": 1.0}
+
+
+def test_float_chained_comparison_witness_emits_float_comparisons():
+    stmts = _dump_ir(_float_chained_cmp)
+    classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
+    assert classes.count("LessThanOrEqualFIR") >= 2
+    assert "LessThanOrEqualIIR" not in classes
+    assert "LogicalAndIR" in classes
+    assert _assert_count(stmts) >= 1
+
+
+def test_int_input_with_float_literal_bound_rejected_cleanly():
+    @zk_circuit
+    @requires(lambda x: 0.0 <= x <= 1.0)
+    def bad(x: int):
+        pass
+
+    with pytest.raises(ZinniaException, match=r"(?i)int-typed|float literal|mixed"):
+        ZKCircuit.from_method(bad).compile()
 
 
 # ── 3. Arithmetic: a + b == c ───────────────────────────────────────────

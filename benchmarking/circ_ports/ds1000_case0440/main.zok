@@ -1,0 +1,18 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0440/kernel.py
+// REASON: np.sqrt(np.diag(mat)) requires real square-root (floating-point semantics); ZoKrates field has no sqrt.
+
+const u32 N = 64
+const u32 M = 64
+const u32 K = 64
+
+def main(field[N][M][K] Y) -> field[M][N]:
+    field[M][N] X = [[0; N]; M]
+    for u32 i in 0..N do
+        for u32 d in 0..M do
+            // CirC rejects: sqrt of Y[i][d][d] is not a field-native operation.
+            field s = Y[i][d][d]  // placeholder for sqrt(Y[i][d][d])
+            X[d][i] = X[d][i] + s
+        endfor
+    endfor
+    return X

@@ -1,0 +1,182 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 14,
+      "line_start": 13,
+      "mutated_params": [],
+      "name": "wrap",
+      "ops": [
+        "Add",
+        "Mod",
+        "NotEq"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "pos",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "offset",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "bound",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "max",
+        "min"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 18,
+      "line_start": 17,
+      "mutated_params": [],
+      "name": "clamp",
+      "ops": [
+        "Add",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "pos",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "offset",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "bound",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "max",
+        "min"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 23,
+      "line_start": 21,
+      "mutated_params": [],
+      "name": "reflect",
+      "ops": [
+        "Add",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "pos",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "offset",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "bound",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "mode",
+        "np.ndindex",
+        "np.ones",
+        "tuple",
+        "zip"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 34,
+      "line_start": 26,
+      "mutated_params": [],
+      "name": "local_maxima",
+      "ops": [
+        "FloorDiv",
+        "LtE",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "data",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "mode",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_nd_local_maxima/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_nd_local_maxima",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\n\n@zk_circuit\n@requires(lambda pos, offset, bound: bound != 0.0)\ndef wrap(pos: Float, offset: Float, bound: Float):\n    return (pos + offset) % bound\n\n@zk_circuit\ndef clamp(pos: Float, offset: Float, bound: Float):\n    return min(bound - 1, max(0, pos + offset))\n\n@zk_circuit\ndef reflect(pos: Float, offset: Float, bound: Float):\n    idx = pos + offset\n    return min(2 * (bound - 1) - idx, max(idx, -idx))\n\n@zk_circuit\ndef local_maxima(data: Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256'], mode: Float=wrap):\n    wsize = data.shape\n    result = np.ones(data.shape, bool)\n    for pos in np.ndindex(data.shape):\n        myval = data[pos]\n        for offset in np.ndindex(wsize):\n            neighbor_idx = tuple((mode(p, o - w // 2, w) for p, o, w in zip(pos, offset, wsize)))\n            result[pos] &= data[neighbor_idx] <= myval\n    return result",
+  "source_status": "direct"
+}

@@ -1,0 +1,47 @@
+{
+  "categories": [
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "len",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 19,
+      "line_start": 9,
+      "mutated_params": [],
+      "name": "bubble_sort",
+      "ops": [
+        "Add",
+        "Eq",
+        "Gt",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "list0",
+          "proposed_annotation": "Integer[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_bubble_sort/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_bubble_sort",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n\n@zk_circuit\ndef bubble_sort(list0: Integer[Array, 'N<=1024']):\n    list1 = [x for x in list0]\n    for i in range(0, len(list1) - 1):\n        swap_test = False\n        for j in range(0, len(list1) - i - 1):\n            if list1[j] > list1[j + 1]:\n                list1[j], list1[j + 1] = (list1[j + 1], list1[j])\n            swap_test = True\n        if swap_test == False:\n            break\n    return list1",
+  "source_status": "direct"
+}

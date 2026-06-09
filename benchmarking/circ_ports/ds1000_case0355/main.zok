@@ -1,0 +1,16 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0355/kernel.py
+// REASON: np.argsort along axis with fancy multi-dimensional witness indexing — requires data-dependent gather and a sort whose permutation depends on witness values; not natively expressible (would need a verified sort network plus runtime indexing).
+
+def main(field[3][3][3] a, field[3][3][3] b) -> field[3][3][3]:
+    // Sketch: argsort along axis 0 then b[sort_idx, j, k]
+    field[3][3][3] c = [[[0; 3]; 3]; 3]
+    for u32 j in 0..3 do
+        for u32 k in 0..3 do
+            for u32 i in 0..3 do
+                // would index b[sort_idx[i][j][k]][j][k]; runtime gather illegal
+                c[i][j][k] = b[i][j][k]
+            endfor
+        endfor
+    endfor
+    return c

@@ -27,6 +27,21 @@ def test_arccos_good_compiles_with_satisfying_requires():
     _ = ZKCircuit.from_method(good).compile()
 
 
+def test_arccos_float_arg_compiles_with_float_literal_requires():
+    """Float-natural domain annotations can use float literal bounds
+    directly; the scalar precondition lowers through LitFloat + LteF.
+    """
+    import numpy as np
+
+    @zk_circuit
+    @requires(lambda x: -1.0 <= x <= 1.0)
+    def good(x: float):
+        y = np.arccos(x)
+        _zinnia_result = y
+
+    _ = ZKCircuit.from_method(good).compile()
+
+
 def test_arccos_bad_compiles_in_lenient_default():
     """Without an annotation, lenient mode emits a witness check and
     compilation still succeeds.

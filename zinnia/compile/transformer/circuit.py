@@ -25,14 +25,28 @@ class ZinniaCircuitASTTransformer(ZinniaBaseASTTransformer):
     def visit_FunctionDef(self, node: ast.FunctionDef):
         dbg_info = self.get_dbg(node)
         args = self.visit_arguments(node.args)
+        return_dt = None
         if node.returns is not None:
-            raise InvalidProgramException(dbg_info, "Circuit function must not have a return annotation. Note that circuits should not return anything.")
+            return_anno = self.visit_annotation(node.returns, None)
+            if return_anno["kind"] is not None:
+                raise InvalidProgramException(
+                    self.get_dbg(node.returns),
+                    "Circuit return type should not be annotated as Public or Private."
+                )
+            return_dt = return_anno["dt"]
+        param_types = {
+            arg["name"]: arg["annotation"]["dt"]
+            for arg in args
+        }
         # Extract preconditions and split into structural vs. scalar
         # buckets. The Rust ASTCircuit has two parallel fields
         # (`requires` for structural-predicate calls, `scalar_requires`
         # for ContractTerm-shaped scalar/arithmetic/logical
         # preconditions); the split is by the spec dict's `__class__`.
-        all_preconditions = extract_preconditions(node, self.source_code, self.method_name)
+        all_preconditions = extract_preconditions(
+            node, self.source_code, self.method_name, param_types,
+            shape_symbol_names=self.shape_symbol_names,
+        )
         structural = []
         scalar = []
         for spec in all_preconditions:
@@ -49,6 +63,7 @@ class ZinniaCircuitASTTransformer(ZinniaBaseASTTransformer):
             "__class__": "ASTCircuit",
             "block": self.visit_block(node.body),
             "inputs": args,
+            "return_dt": return_dt,
             "requires": structural,
             "scalar_requires": scalar,
         }

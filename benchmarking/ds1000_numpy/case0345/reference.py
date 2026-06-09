@@ -1,0 +1,2 @@
+a[:, col-1] *= multiply_number
+result = np.cumsum(a[:, col-1])

@@ -1,0 +1,11 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0335/kernel.py
+// REASON: np.max([a,b,c], axis=0) lowered to per-element 3-way max with conditional comparisons.
+
+def main(field[50] a, field[50] b, field[50] c) -> field[50]:
+  field[50] result = [0; 50]
+  for u32 i in 0..50 do
+    field ab = if a[i] > b[i] then a[i] else b[i] fi
+    result[i] = if ab > c[i] then ab else c[i] fi
+  endfor
+  return result

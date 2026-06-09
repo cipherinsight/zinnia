@@ -1,0 +1,21 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0508/kernel.py
+// REASON: np.argwhere yields a runtime-sized index array and its min/max define a runtime-sized slice - ZoKrates needs compile-time shapes
+
+def main(field[10][10] A) -> field[10][10]:
+    bool[10] row_nonzero = [false; 10]
+    bool[10] col_nonzero = [false; 10]
+    for u32 i in 0..10 do
+        for u32 j in 0..10 do
+            bool nz = A[i][j] != 0
+            row_nonzero[i] = row_nonzero[i] || nz
+            col_nonzero[j] = col_nonzero[j] || nz
+        endfor
+    endfor
+    field[10][10] result = [[0; 10]; 10]
+    for u32 i in 0..10 do
+        for u32 j in 0..10 do
+            result[i][j] = if row_nonzero[i] && col_nonzero[j] then A[i][j] else 0 fi
+        endfor
+    endfor
+    return result

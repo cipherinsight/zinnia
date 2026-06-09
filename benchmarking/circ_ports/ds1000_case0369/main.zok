@@ -1,0 +1,12 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0369/kernel.py
+// REASON: np.isclose(a, a[:,0].reshape(-1,1), atol=0).all() over Integer is exact-equality reduce against the first column
+
+def main(field[3][3] a) -> bool:
+    bool result = true
+    for u32 i in 0..3 do
+        for u32 j in 0..3 do
+            result = result && (a[i][j] == a[i][0])
+        endfor
+    endfor
+    return result

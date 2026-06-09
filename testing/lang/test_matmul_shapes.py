@@ -5,6 +5,42 @@ the wrong shape (`compiler.chained-assignment-dynamic-slice` triage).
 from zinnia import *
 
 
+def test_matmul_symbolic_exact_bindings_concretize_before_operator_lowering():
+    # (N, M) @ (M, K) with exact front-end bindings; the backend sees
+    # only concrete shapes.
+    @zk_circuit
+    def foo(a: Float[Array, "N=2 M=3"], b: Float[Array, "M=3 K=2"]):
+        r = a @ b
+        assert r[0][0] == 22.0
+        assert r[0][1] == 28.0
+        assert r[1][0] == 49.0
+        assert r[1][1] == 64.0
+
+    import numpy as np
+
+    a = np.asarray([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    b = np.asarray([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+    assert foo(a, b)
+
+
+def test_matmul_symbolic_shared_binding_resolves_later_operand():
+    # The first annotation binds M=3; the second reuses M without repeating
+    # the exact value. The front end resolves it before backend lowering.
+    @zk_circuit
+    def foo(a: Float[Array, "N=2 M=3"], b: Float[Array, "M K=2"]):
+        r = a @ b
+        assert r[0][0] == 22.0
+        assert r[0][1] == 28.0
+        assert r[1][0] == 49.0
+        assert r[1][1] == 64.0
+
+    import numpy as np
+
+    a = np.asarray([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    b = np.asarray([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+    assert foo(a, b)
+
+
 def test_matmul_1d_at_2d():
     # numpy: (8,) @ (8, 7) → (7,)
     @zk_circuit

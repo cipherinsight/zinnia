@@ -1,0 +1,17 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0321/kernel.py
+// REASON: argmax + unravel_index lowered to running-max tracking (row,col) over 5x6.
+
+def main(field[5][6] a) -> field[2]:
+  field best = a[0][0]
+  field r = 0
+  field c = 0
+  for u32 i in 0..5 do
+    for u32 j in 0..6 do
+      bool gt = a[i][j] > best
+      best = if gt then a[i][j] else best fi
+      r = if gt then i else r fi
+      c = if gt then j else c fi
+    endfor
+  endfor
+  return [r, c]

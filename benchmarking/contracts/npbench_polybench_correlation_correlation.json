@@ -1,0 +1,75 @@
+{
+  "categories": [
+    "domain-obligation",
+    "in-place-mutation",
+    "loop-bounded",
+    "matmul-dot",
+    "statistics"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "np.eye",
+        "np.mean",
+        "np.sqrt",
+        "np.std",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 22,
+      "line_start": 13,
+      "mutated_params": [
+        "data"
+      ],
+      "name": "kernel",
+      "ops": [
+        "Add",
+        "LtE",
+        "MatMult",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "M",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "float_n",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "data",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 2,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "npbench_polybench_correlation_correlation/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].",
+    "Declare shared matrix/vector dimensions explicitly, e.g. A[N,K] with x[K].",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Record sample-size requirements such as N > 1 and nonzero variance denominators.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "npbench_polybench_correlation_correlation",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: domain-obligation, in-place-mutation, loop-bounded, matmul-dot\n# Expected outcome: compile/prove candidate\n# Precondition: Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].\n# Precondition: Declare shared matrix/vector dimensions explicitly; when not expressible as @requires, encode with matching symbolic annotation names and keep as review obligation.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\n\n@zk_circuit\ndef kernel(M: Integer, float_n: Float, data: Float[Array, 'N<=1024 M<=1024']):\n    mean = np.mean(data, axis=0)\n    stddev = np.std(data, axis=0)\n    stddev[stddev <= 0.1] = 1.0\n    data -= mean\n    data /= np.sqrt(float_n) * stddev\n    corr = np.eye(M, dtype=data.dtype)\n    for i in range(M - 1):\n        corr[i + 1:M, i] = corr[i, i + 1:M] = data[:, i] @ data[:, i + 1:M]\n    return corr",
+  "source_status": "direct"
+}

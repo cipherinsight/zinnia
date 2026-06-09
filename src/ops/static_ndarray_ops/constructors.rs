@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 
 use crate::builder::IRBuilder;
+use crate::optim::predicates::formula::{ContractTerm, ContractVar};
 use crate::optim::resolver::{
     require_provable_static_int, resolve_int_or_bounded, BoundedInt, SiteKind,
 };
@@ -30,7 +31,63 @@ fn fire_fill_content_contract(b: &mut IRBuilder, out: &Value, fill_value: i64) {
     }
 }
 
-pub fn np_fill(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>, fill_value: i64) -> Value {
+fn fire_full_static_content_fact(b: &mut IRBuilder, out: &Value, fill: &Value) {
+    let Some(out_vid) = out.value_id() else {
+        return;
+    };
+    let term = match fill {
+        Value::Integer(_) | Value::Boolean(_) => {
+            let Some(k) = fill.int_val() else {
+                return;
+            };
+            ContractTerm::LitInt(k)
+        }
+        Value::Float(_) => {
+            let Some(k) = fill.float_val() else {
+                return;
+            };
+            ContractTerm::LitFloat(k.into())
+        }
+        _ => return,
+    };
+    b.facts.insert_for(
+        out_vid,
+        ContractTerm::PredicateApp {
+            kind: "forall_eq_const".to_string(),
+            args: vec![ContractTerm::Var(ContractVar::Value(out_vid)), term],
+        },
+    );
+}
+
+fn scalar_fill_for_dtype(
+    b: &mut IRBuilder,
+    fill: &Value,
+    dtype: crate::types::NumberType,
+) -> Value {
+    match dtype {
+        crate::types::NumberType::Integer => match fill {
+            Value::Integer(_) => fill.clone(),
+            Value::Boolean(_) => b.ir_int_cast(fill),
+            Value::Float(_) => b.ir_int_cast(fill),
+            _ => panic!("np.full/full_like: fill_value must be a scalar numeric or boolean value"),
+        },
+        crate::types::NumberType::Float => match fill {
+            Value::Float(_) => fill.clone(),
+            Value::Integer(_) | Value::Boolean(_) => b.ir_float_cast(fill),
+            _ => panic!("np.full/full_like: fill_value must be a scalar numeric or boolean value"),
+        },
+        crate::types::NumberType::Complex => {
+            panic!("np.full/full_like: Complex fill is not yet implemented")
+        }
+    }
+}
+
+pub fn np_fill(
+    b: &mut IRBuilder,
+    args: &[Value],
+    kwargs: &HashMap<String, Value>,
+    fill_value: i64,
+) -> Value {
     // np.zeros(shape, dtype=...) / np.ones(shape, dtype=...) / np.empty(shape, dtype=...)
     let arg = match args.first() {
         Some(a) => a,
@@ -53,26 +110,32 @@ pub fn np_fill(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
                     // active size; `max` is the envelope max from
                     // `resolve_max`. Float dtype falls back to the
                     // existing static path (dyn-ndarray of float is OK).
-                    let dtype = if matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Float))) {
-                        crate::types::NumberType::Float
-                    } else if matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Complex))) {
-                        // Complex dyn-ndarray isn't supported; defer to
-                        // the static path (which will panic if the
-                        // shape isn't statically resolvable).
-                        let n: i64 = require_provable_static_int(b, arg, SiteKind::ShapeAxis(0));
-                        let fill = b.ir_constant_int(fill_value);
-                        let values = vec![fill; n as usize];
-                        let out = crate::helpers::static_array::base::build_static_array_from_flat(
-                            b,
-                            values,
-                            vec![n as usize],
-                            crate::types::NumberType::Integer,
-                        );
-                        fire_fill_content_contract(b, &out, fill_value);
-                        return out;
-                    } else {
-                        crate::types::NumberType::Integer
-                    };
+                    let dtype =
+                        if matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Float))) {
+                            crate::types::NumberType::Float
+                        } else if matches!(
+                            kwargs.get("dtype"),
+                            Some(Value::Class(ZinniaType::Complex))
+                        ) {
+                            // Complex dyn-ndarray isn't supported; defer to
+                            // the static path (which will panic if the
+                            // shape isn't statically resolvable).
+                            let n: i64 =
+                                require_provable_static_int(b, arg, SiteKind::ShapeAxis(0));
+                            let fill = b.ir_constant_int(fill_value);
+                            let values = vec![fill; n as usize];
+                            let out =
+                                crate::helpers::static_array::base::build_static_array_from_flat(
+                                    b,
+                                    values,
+                                    vec![n as usize],
+                                    crate::types::NumberType::Integer,
+                                );
+                            fire_fill_content_contract(b, &out, fill_value);
+                            return out;
+                        } else {
+                            crate::types::NumberType::Integer
+                        };
                     // dyn_fill_with_active itself fires the content contract
                     // (zeros_content / ones_content) when fill_value is 0 or 1.
                     return crate::ops::dyn_ndarray::constructors::dyn_fill_with_active(
@@ -99,10 +162,7 @@ pub fn np_fill(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
             // (uniform fill — buffer is position-independent, so logical-
             // and runtime-strides agree). Complex dtype keeps the static
             // path (dyn-ndarray of Complex is not supported).
-            let is_complex = matches!(
-                kwargs.get("dtype"),
-                Some(Value::Class(ZinniaType::Complex))
-            );
+            let is_complex = matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Complex)));
             let mut max_shape: Vec<usize> = Vec::with_capacity(data.values.len());
             let mut runtime_shape: Vec<Value> = Vec::with_capacity(data.values.len());
             let mut any_bounded = false;
@@ -136,10 +196,8 @@ pub fn np_fill(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
                     },
                     value_to_scalar_i64,
                 };
-                let dtype = if matches!(
-                    kwargs.get("dtype"),
-                    Some(Value::Class(ZinniaType::Float))
-                ) {
+                let dtype = if matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Float)))
+                {
                     crate::types::NumberType::Float
                 } else {
                     crate::types::NumberType::Integer
@@ -151,10 +209,8 @@ pub fn np_fill(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
                     crate::types::NumberType::Complex => unreachable!(),
                 };
                 let fill_sv = value_to_scalar_i64(&fill_v);
-                let runtime_shape_sv: Vec<crate::types::ScalarValue<i64>> = runtime_shape
-                    .iter()
-                    .map(value_to_scalar_i64)
-                    .collect();
+                let runtime_shape_sv: Vec<crate::types::ScalarValue<i64>> =
+                    runtime_shape.iter().map(value_to_scalar_i64).collect();
                 let mut runtime_length = runtime_shape[0].clone();
                 for axis_v in runtime_shape.iter().skip(1) {
                     runtime_length = b.ir_mul_i(&runtime_length, axis_v);
@@ -165,12 +221,7 @@ pub fn np_fill(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
                 // of size `total_bound` instead of `product(max_shape)`.
                 // This unlocks programs like `np.zeros((m, n))` with
                 // `@requires(m * n <= K)` and `K < m_max * n_max`.
-                match resolve_int_or_bounded(
-                    b,
-                    &runtime_length,
-                    SiteKind::ShapeAxis(0),
-                    None,
-                ) {
+                match resolve_int_or_bounded(b, &runtime_length, SiteKind::ShapeAxis(0), None) {
                     BoundedInt::Static(n) => {
                         let n = n.max(0) as usize;
                         if n < max_total {
@@ -217,7 +268,10 @@ pub fn np_fill(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
             }
             max_shape
         }
-        _ => panic!("np.zeros/ones/empty: shape must be int, tuple, or list (got {:?})", arg.zinnia_type()),
+        _ => panic!(
+            "np.zeros/ones/empty: shape must be int, tuple, or list (got {:?})",
+            arg.zinnia_type()
+        ),
     };
     let total: usize = shape.iter().product();
 
@@ -236,18 +290,199 @@ pub fn np_fill(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
 
     let use_float = matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Float)));
     let (fill, dtype) = if use_float {
-        (b.ir_constant_float(fill_value as f64), crate::types::NumberType::Float)
+        (
+            b.ir_constant_float(fill_value as f64),
+            crate::types::NumberType::Float,
+        )
     } else {
-        (b.ir_constant_int(fill_value), crate::types::NumberType::Integer)
+        (
+            b.ir_constant_int(fill_value),
+            crate::types::NumberType::Integer,
+        )
     };
     let values = vec![fill; total];
     // P1 segarr-foundation: numeric constructors emit Value::StaticArray.
-    let out = crate::helpers::static_array::base::build_static_array_from_flat(b, values, shape, dtype);
+    let out =
+        crate::helpers::static_array::base::build_static_array_from_flat(b, values, shape, dtype);
     fire_fill_content_contract(b, &out, fill_value);
     out
 }
 
-pub fn np_fill_like(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>, fill_value: i64) -> Value {
+pub fn np_full(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+    let shape_arg = args
+        .first()
+        .unwrap_or_else(|| panic!("np.full: shape argument required"));
+    let fill_arg = args
+        .get(1)
+        .unwrap_or_else(|| panic!("np.full: fill_value argument required"));
+    if matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Complex))) {
+        panic!("np.full/full_like: Complex fill is not yet implemented");
+    }
+    let use_float = if let Some(Value::Class(ZinniaType::Float)) = kwargs.get("dtype") {
+        true
+    } else if matches!(kwargs.get("dtype"), Some(Value::Class(_))) {
+        false
+    } else {
+        matches!(fill_arg, Value::Float(_))
+    };
+    let fill_value = if use_float {
+        scalar_fill_for_dtype(b, fill_arg, crate::types::NumberType::Float)
+    } else {
+        scalar_fill_for_dtype(b, fill_arg, crate::types::NumberType::Integer)
+    };
+    let dtype = if use_float {
+        crate::types::NumberType::Float
+    } else {
+        crate::types::NumberType::Integer
+    };
+    let out = np_full_with_value(b, shape_arg, &fill_value, dtype);
+    fire_full_static_content_fact(b, &out, &fill_value);
+    out
+}
+
+fn np_full_with_value(
+    b: &mut IRBuilder,
+    shape_arg: &Value,
+    fill_value: &Value,
+    dtype: crate::types::NumberType,
+) -> Value {
+    match shape_arg {
+        Value::Integer(_) => {
+            match resolve_int_or_bounded(b, shape_arg, SiteKind::ShapeAxis(0), None) {
+                BoundedInt::Static(n) => {
+                    let n = n.max(0) as usize;
+                    build_static_full(b, vec![n], fill_value.clone(), dtype)
+                }
+                BoundedInt::Bounded { max, .. } => {
+                    let max = max.max(0) as usize;
+                    dyn_full_with_values(
+                        b,
+                        vec![max],
+                        vec![shape_arg.clone()],
+                        fill_value.clone(),
+                        dtype,
+                    )
+                }
+                BoundedInt::Neither => {
+                    let _: i64 = require_provable_static_int(b, shape_arg, SiteKind::ShapeAxis(0));
+                    unreachable!("require_provable_static_int just panicked above");
+                }
+            }
+        }
+        Value::Tuple(data) | Value::List(data) => {
+            let mut max_shape = Vec::with_capacity(data.values.len());
+            let mut runtime_shape = Vec::with_capacity(data.values.len());
+            let mut any_bounded = false;
+            for (i, v) in data.values.iter().enumerate() {
+                match resolve_int_or_bounded(b, v, SiteKind::ShapeAxis(i), None) {
+                    BoundedInt::Static(n) => {
+                        max_shape.push(n.max(0) as usize);
+                        runtime_shape.push(b.ir_constant_int(n));
+                    }
+                    BoundedInt::Bounded { max, .. } => {
+                        any_bounded = true;
+                        max_shape.push(max.max(0) as usize);
+                        runtime_shape.push(v.clone());
+                    }
+                    BoundedInt::Neither => {
+                        let _: i64 = require_provable_static_int(b, v, SiteKind::ShapeAxis(i));
+                        unreachable!("require_provable_static_int just panicked above");
+                    }
+                }
+            }
+            if any_bounded {
+                dyn_full_with_values(b, max_shape, runtime_shape, fill_value.clone(), dtype)
+            } else {
+                build_static_full(b, max_shape, fill_value.clone(), dtype)
+            }
+        }
+        _ => panic!(
+            "np.full: shape must be int, tuple, or list (got {:?})",
+            shape_arg.zinnia_type()
+        ),
+    }
+}
+
+fn build_static_full(
+    b: &mut IRBuilder,
+    shape: Vec<usize>,
+    fill_value: Value,
+    dtype: crate::types::NumberType,
+) -> Value {
+    let total: usize = shape.iter().product();
+    crate::helpers::static_array::base::build_static_array_from_flat(
+        b,
+        vec![fill_value; total],
+        shape,
+        dtype,
+    )
+}
+
+fn dyn_full_with_values(
+    b: &mut IRBuilder,
+    max_shape: Vec<usize>,
+    runtime_shape: Vec<Value>,
+    fill_value: Value,
+    dtype: crate::types::NumberType,
+) -> Value {
+    use crate::ops::dyn_ndarray::{
+        constructors::{dyn_from_values_with_active_compact, dyn_from_values_with_active_nd},
+        value_to_scalar_i64,
+    };
+    let max_total: usize = max_shape.iter().product();
+    let fill_sv = value_to_scalar_i64(&fill_value);
+    let runtime_shape_sv: Vec<crate::types::ScalarValue<i64>> =
+        runtime_shape.iter().map(value_to_scalar_i64).collect();
+    let mut runtime_length = runtime_shape[0].clone();
+    for axis_v in runtime_shape.iter().skip(1) {
+        runtime_length = b.ir_mul_i(&runtime_length, axis_v);
+    }
+    match resolve_int_or_bounded(b, &runtime_length, SiteKind::ShapeAxis(0), None) {
+        BoundedInt::Static(n) => {
+            let n = n.max(0) as usize;
+            if n < max_total {
+                return dyn_from_values_with_active_compact(
+                    b,
+                    fill_sv,
+                    max_shape,
+                    runtime_shape_sv,
+                    n,
+                    dtype,
+                );
+            }
+        }
+        BoundedInt::Bounded { max, .. } => {
+            let total_bound = (max.max(0) as usize).min(max_total);
+            if total_bound < max_total {
+                return dyn_from_values_with_active_compact(
+                    b,
+                    fill_sv,
+                    max_shape,
+                    runtime_shape_sv,
+                    total_bound,
+                    dtype,
+                );
+            }
+        }
+        BoundedInt::Neither => {}
+    }
+    let values = vec![fill_sv; max_total];
+    dyn_from_values_with_active_nd(
+        b,
+        values,
+        max_shape,
+        runtime_shape_sv,
+        runtime_length,
+        dtype,
+    )
+}
+
+pub fn np_fill_like(
+    b: &mut IRBuilder,
+    args: &[Value],
+    kwargs: &HashMap<String, Value>,
+    fill_value: i64,
+) -> Value {
     // np.empty_like(x) / np.zeros_like(x) / np.ones_like(x)
     // Shape is taken from x; dtype defaults to x's dtype, overridable via dtype= kwarg.
     let x = match args.first() {
@@ -266,7 +501,10 @@ pub fn np_fill_like(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, 
         false
     } else {
         match x {
-            Value::StaticArray { dtype: crate::types::NumberType::Complex, .. } => true,
+            Value::StaticArray {
+                dtype: crate::types::NumberType::Complex,
+                ..
+            } => true,
             _ => crate::helpers::composite::flatten_composite(x)
                 .iter()
                 .any(|v| matches!(v.zinnia_type(), ZinniaType::Complex)),
@@ -290,21 +528,104 @@ pub fn np_fill_like(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, 
         false
     } else {
         match x {
-            Value::StaticArray { dtype: crate::types::NumberType::Float, .. } => true,
+            Value::StaticArray {
+                dtype: crate::types::NumberType::Float,
+                ..
+            } => true,
             _ => crate::helpers::composite::flatten_composite(x)
                 .iter()
                 .any(|v| matches!(v.zinnia_type(), ZinniaType::Float)),
         }
     };
     let (fill, dtype) = if use_float {
-        (b.ir_constant_float(fill_value as f64), crate::types::NumberType::Float)
+        (
+            b.ir_constant_float(fill_value as f64),
+            crate::types::NumberType::Float,
+        )
     } else {
-        (b.ir_constant_int(fill_value), crate::types::NumberType::Integer)
+        (
+            b.ir_constant_int(fill_value),
+            crate::types::NumberType::Integer,
+        )
     };
     let values = vec![fill; total];
     // P1 segarr-foundation: numeric constructors emit Value::StaticArray.
-    let out = crate::helpers::static_array::base::build_static_array_from_flat(b, values, shape, dtype);
+    let out =
+        crate::helpers::static_array::base::build_static_array_from_flat(b, values, shape, dtype);
     fire_fill_content_contract(b, &out, fill_value);
+    out
+}
+
+pub fn np_full_like(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+    let x = args
+        .first()
+        .unwrap_or_else(|| panic!("np.full_like: input argument required"));
+    let fill_arg = args
+        .get(1)
+        .unwrap_or_else(|| panic!("np.full_like: fill_value argument required"));
+    if matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Complex))) {
+        panic!("np.full/full_like: Complex fill is not yet implemented");
+    }
+    let dtype = if let Some(Value::Class(ZinniaType::Float)) = kwargs.get("dtype") {
+        crate::types::NumberType::Float
+    } else if let Some(Value::Class(ZinniaType::Integer)) = kwargs.get("dtype") {
+        crate::types::NumberType::Integer
+    } else {
+        match x {
+            Value::StaticArray { dtype, .. } => *dtype,
+            _ => {
+                if crate::helpers::composite::flatten_composite(x)
+                    .iter()
+                    .any(|v| matches!(v.zinnia_type(), ZinniaType::Float))
+                {
+                    crate::types::NumberType::Float
+                } else {
+                    crate::types::NumberType::Integer
+                }
+            }
+        }
+    };
+    let fill_value = scalar_fill_for_dtype(b, fill_arg, dtype);
+    let shape_arg = match x {
+        Value::StaticArray { shape, .. } => {
+            let values = shape
+                .iter()
+                .map(|&n| b.ir_constant_int(n as i64))
+                .collect::<Vec<_>>();
+            Value::Tuple(crate::types::CompositeData {
+                elements_type: vec![ZinniaType::Integer; values.len()],
+                values,
+                value_id: crate::types::ValueId::next(),
+            })
+        }
+        Value::DynamicNDArray(data) => {
+            let values = data
+                .meta
+                .runtime_shape
+                .iter()
+                .map(|sv| Value::Integer(sv.clone()))
+                .collect::<Vec<_>>();
+            Value::Tuple(crate::types::CompositeData {
+                elements_type: vec![ZinniaType::Integer; values.len()],
+                values,
+                value_id: crate::types::ValueId::next(),
+            })
+        }
+        _ => {
+            let shape = crate::helpers::composite::get_composite_shape(x);
+            let values = shape
+                .iter()
+                .map(|&n| b.ir_constant_int(n as i64))
+                .collect::<Vec<_>>();
+            Value::Tuple(crate::types::CompositeData {
+                elements_type: vec![ZinniaType::Integer; values.len()],
+                values,
+                value_id: crate::types::ValueId::next(),
+            })
+        }
+    };
+    let out = np_full_with_value(b, &shape_arg, &fill_value, dtype);
+    fire_full_static_content_fact(b, &out, &fill_value);
     out
 }
 
@@ -351,8 +672,7 @@ pub fn np_identity(b: &mut IRBuilder, args: &[Value]) -> Value {
             let n_max = max.max(0) as usize;
             let zero = b.ir_constant_int(0);
             let one = b.ir_constant_int(1);
-            let mut values: Vec<crate::types::ScalarValue<i64>> =
-                Vec::with_capacity(n_max * n_max);
+            let mut values: Vec<crate::types::ScalarValue<i64>> = Vec::with_capacity(n_max * n_max);
             for i in 0..n_max {
                 for j in 0..n_max {
                     let v = if i == j { one.clone() } else { zero.clone() };
@@ -374,7 +694,9 @@ pub fn np_identity(b: &mut IRBuilder, args: &[Value]) -> Value {
                 Value::DynamicNDArray(d) => d.meta.runtime_length.value_id,
                 _ => unreachable!(),
             };
-            let n_vid = n_arg.value_id().expect("identity: bounded N must be an SSA scalar");
+            let n_vid = n_arg
+                .value_id()
+                .expect("identity: bounded N must be an SSA scalar");
             let mut formals = std::collections::HashMap::new();
             formals.insert("N".to_string(), n_vid);
             b.fire_contract("dyn_identity", runtime_length_vid, &formals);
@@ -440,11 +762,7 @@ pub fn np_arange(b: &mut IRBuilder, args: &[Value]) -> Value {
                     // is_sorted(out) holds. Fire on the array's value_id
                     // (not the length-bearing scalar).
                     if let Some(vid) = result.value_id() {
-                        b.fire_contract(
-                            "arange_is_sorted",
-                            vid,
-                            &std::collections::HashMap::new(),
-                        );
+                        b.fire_contract("arange_is_sorted", vid, &std::collections::HashMap::new());
                     }
                     result
                 }
@@ -490,11 +808,7 @@ pub fn np_arange(b: &mut IRBuilder, args: &[Value]) -> Value {
                     b.fire_contract("dyn_arange", runtime_length_vid, &formals);
                     // 2-arg form: step is implicit 1 ⇒ always ascending.
                     if let Some(vid) = result.value_id() {
-                        b.fire_contract(
-                            "arange_is_sorted",
-                            vid,
-                            &std::collections::HashMap::new(),
-                        );
+                        b.fire_contract("arange_is_sorted", vid, &std::collections::HashMap::new());
                     }
                     result
                 }
@@ -521,11 +835,7 @@ pub fn np_arange(b: &mut IRBuilder, args: &[Value]) -> Value {
                     }
                     if step < 0 {
                         // Negative-step bounded form is out of scope.
-                        let _: i64 = require_provable_static_int(
-                            b,
-                            stop_val,
-                            SiteKind::RangeStop,
-                        );
+                        let _: i64 = require_provable_static_int(b, stop_val, SiteKind::RangeStop);
                         unreachable!("require_provable_static_int just panicked above");
                     }
                     // Positive step: len_max = ceildiv(max - start, step)
@@ -555,11 +865,7 @@ pub fn np_arange(b: &mut IRBuilder, args: &[Value]) -> Value {
                     // direction check has effectively been made — fire
                     // unconditionally here.
                     if let Some(vid) = result.value_id() {
-                        b.fire_contract(
-                            "arange_is_sorted",
-                            vid,
-                            &std::collections::HashMap::new(),
-                        );
+                        b.fire_contract("arange_is_sorted", vid, &std::collections::HashMap::new());
                     }
                     result
                 }
@@ -602,23 +908,34 @@ fn arange_static(b: &mut IRBuilder, start: i64, stop: i64, step: i64) -> Value {
     // to static arrays, the fact will start landing automatically.
     if step > 0 {
         if let Some(vid) = result.value_id() {
-            b.fire_contract(
-                "arange_is_sorted",
-                vid,
-                &std::collections::HashMap::new(),
-            );
+            b.fire_contract("arange_is_sorted", vid, &std::collections::HashMap::new());
         }
     }
     result
 }
 
 pub fn np_linspace(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
-    if args.len() < 2 { return Value::None; }
-    let start = args[0].float_val().or_else(|| args[0].int_val().map(|v| v as f64)).unwrap_or(0.0);
-    let stop = args[1].float_val().or_else(|| args[1].int_val().map(|v| v as f64)).unwrap_or(0.0);
-    let endpoint = kwargs.get("endpoint").and_then(|v| v.bool_val()).unwrap_or(true);
+    if args.len() < 2 {
+        return Value::None;
+    }
+    let start = args[0]
+        .float_val()
+        .or_else(|| args[0].int_val().map(|v| v as f64))
+        .unwrap_or(0.0);
+    let stop = args[1]
+        .float_val()
+        .or_else(|| args[1].int_val().map(|v| v as f64))
+        .unwrap_or(0.0);
+    let endpoint = kwargs
+        .get("endpoint")
+        .and_then(|v| v.bool_val())
+        .unwrap_or(true);
     let use_int = matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Integer)));
-    let dtype = if use_int { crate::types::NumberType::Integer } else { crate::types::NumberType::Float };
+    let dtype = if use_int {
+        crate::types::NumberType::Integer
+    } else {
+        crate::types::NumberType::Float
+    };
 
     // `num` may be a positional arg, a kwarg, or absent (default 50). Try
     // the bounded-aware dispatch on whichever Value source is provided;
@@ -628,7 +945,15 @@ pub fn np_linspace(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, V
     if let Some(num_arg) = num_val {
         match resolve_int_or_bounded(b, num_arg, SiteKind::LinspaceNum, None) {
             BoundedInt::Static(n) => {
-                return np_linspace_static(b, start, stop, n.max(0) as usize, endpoint, use_int, dtype);
+                return np_linspace_static(
+                    b,
+                    start,
+                    stop,
+                    n.max(0) as usize,
+                    endpoint,
+                    use_int,
+                    dtype,
+                );
             }
             BoundedInt::Bounded { max, .. } => {
                 // Soundness guard: `denom = num - 1` (endpoint=true) or
@@ -654,9 +979,7 @@ pub fn np_linspace(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, V
                     );
                 }
                 let num_max = max.max(0) as usize;
-                return np_linspace_bounded(
-                    b, start, stop, num_arg, num_max, endpoint, use_int,
-                );
+                return np_linspace_bounded(b, start, stop, num_arg, num_max, endpoint, use_int);
             }
             BoundedInt::Neither => {
                 // Fall through to the legacy default-50 path, preserving
@@ -664,7 +987,15 @@ pub fn np_linspace(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, V
                 // can't admit it as bounded either, so try `int_val()`
                 // one last time (handles the constant-folded fallback).
                 if let Some(n) = num_arg.int_val() {
-                    return np_linspace_static(b, start, stop, n.max(0) as usize, endpoint, use_int, dtype);
+                    return np_linspace_static(
+                        b,
+                        start,
+                        stop,
+                        n.max(0) as usize,
+                        endpoint,
+                        use_int,
+                        dtype,
+                    );
                 }
                 let _: i64 = require_provable_static_int(b, num_arg, SiteKind::LinspaceNum);
                 unreachable!("require_provable_static_int just panicked above");
@@ -685,14 +1016,32 @@ fn np_linspace_static(
     dtype: crate::types::NumberType,
 ) -> Value {
     if num == 0 {
-        return crate::helpers::static_array::base::build_static_array_from_flat(b, vec![], vec![0], dtype);
+        return crate::helpers::static_array::base::build_static_array_from_flat(
+            b,
+            vec![],
+            vec![0],
+            dtype,
+        );
     }
     if num == 1 {
-        let v = if use_int { b.ir_constant_int(start as i64) } else { b.ir_constant_float(start) };
-        return crate::helpers::static_array::base::build_static_array_from_flat(b, vec![v], vec![1], dtype);
+        let v = if use_int {
+            b.ir_constant_int(start as i64)
+        } else {
+            b.ir_constant_float(start)
+        };
+        return crate::helpers::static_array::base::build_static_array_from_flat(
+            b,
+            vec![v],
+            vec![1],
+            dtype,
+        );
     }
 
-    let divisor = if endpoint { (num - 1) as f64 } else { num as f64 };
+    let divisor = if endpoint {
+        (num - 1) as f64
+    } else {
+        num as f64
+    };
     let step = (stop - start) / divisor;
     let mut values = Vec::new();
     for i in 0..num {
@@ -704,8 +1053,12 @@ fn np_linspace_static(
         }
     }
     let len = values.len();
-    let result =
-        crate::helpers::static_array::base::build_static_array_from_flat(b, values, vec![len], dtype);
+    let result = crate::helpers::static_array::base::build_static_array_from_flat(
+        b,
+        values,
+        vec![len],
+        dtype,
+    );
     // Fire `is_sorted(out)` only when start <= stop (ascending or equal).
     // The fully-static StaticArray path does not carry a value_id today,
     // so the fire is a no-op for the static composite — kept for
@@ -713,11 +1066,7 @@ fn np_linspace_static(
     // attach identity to static arrays.
     if start <= stop {
         if let Some(vid) = result.value_id() {
-            b.fire_contract(
-                "linspace_is_sorted",
-                vid,
-                &std::collections::HashMap::new(),
-            );
+            b.fire_contract("linspace_is_sorted", vid, &std::collections::HashMap::new());
         }
     }
     result
@@ -732,9 +1081,7 @@ fn np_linspace_bounded(
     endpoint: bool,
     use_int: bool,
 ) -> Value {
-    use crate::ops::dyn_ndarray::{
-        constructors::dyn_from_values_with_active, value_to_scalar_i64,
-    };
+    use crate::ops::dyn_ndarray::{constructors::dyn_from_values_with_active, value_to_scalar_i64};
 
     // Float dtype for the output buffer; integer dtype casts on write.
     let out_dtype = if use_int {
@@ -779,7 +1126,11 @@ fn np_linspace_bounded(
         let i_const_f = b.ir_constant_float(i as f64);
         let offset = b.ir_mul_f(&i_const_f, &step);
         let val_f = b.ir_add_f(&start_const, &offset);
-        let val = if use_int { b.ir_int_cast(&val_f) } else { val_f };
+        let val = if use_int {
+            b.ir_int_cast(&val_f)
+        } else {
+            val_f
+        };
         let i_const_i = b.ir_constant_int(i as i64);
         b.ir_write_memory(segment_id, &i_const_i, &val);
     }
@@ -788,11 +1139,12 @@ fn np_linspace_bounded(
     let runtime_length_sv = value_to_scalar_i64(num_arg);
     let runtime_length_vid = runtime_length_sv.value_id;
     let logical_shape = vec![num_max];
-    let envelope =
-        crate::types::Envelope::from_static_shape(&mut b.dim_table, &logical_shape);
+    let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &logical_shape);
 
     // Fact: runtime_length == num.
-    let num_vid = num_arg.value_id().expect("linspace: bounded num must be an SSA scalar");
+    let num_vid = num_arg
+        .value_id()
+        .expect("linspace: bounded num must be an SSA scalar");
     let mut formals = std::collections::HashMap::new();
     formals.insert("num".to_string(), num_vid);
     b.fire_contract("dyn_linspace", runtime_length_vid, &formals);
@@ -821,11 +1173,7 @@ fn np_linspace_bounded(
     // sequence; we simply skip the fire in that case (no false claim).
     if start <= stop {
         if let Some(vid) = result.value_id() {
-            b.fire_contract(
-                "linspace_is_sorted",
-                vid,
-                &std::collections::HashMap::new(),
-            );
+            b.fire_contract("linspace_is_sorted", vid, &std::collections::HashMap::new());
         }
     }
 

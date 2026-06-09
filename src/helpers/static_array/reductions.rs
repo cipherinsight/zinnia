@@ -30,8 +30,8 @@ use crate::builder::IRBuilder;
 use crate::types::{NumberType, Value};
 
 use super::super::shape_arith::row_major_strides;
-use super::base::build_static_array_from_flat;
-use super::elementwise::payload_cells;
+use super::base::{build_static_array_from_flat, build_static_array_from_flat_complex};
+use super::elementwise::{payload_cells, product_provenance_payload_cells};
 
 // ────────────────────────────────────────────────────────────────────────
 // Per-cell folding helpers
@@ -103,6 +103,17 @@ fn reduce_cells(b: &mut IRBuilder, op: &str, cells: &[Value]) -> Value {
         }
         return acc;
     }
+    if op == "sum" && cells.iter().all(|cell| matches!(cell, Value::Float(_))) {
+        let mut level: Vec<Value> = cells.to_vec();
+        while level.len() > 1 {
+            let mut next = Vec::with_capacity(level.len().div_ceil(4));
+            for chunk in level.chunks(4) {
+                next.push(b.ir_sum_f(chunk));
+            }
+            level = next;
+        }
+        return level.pop().expect("non-empty level");
+    }
     let mut acc = cells[0].clone();
     for elem in &cells[1..] {
         acc = fold_two(b, op, &acc, elem);
@@ -173,6 +184,14 @@ fn resolve_axis(axis: i64, rank: usize) -> usize {
     resolved as usize
 }
 
+fn try_resolve_axis(axis: i64, rank: usize) -> Option<usize> {
+    let resolved = if axis < 0 { rank as i64 + axis } else { axis };
+    if resolved < 0 || resolved >= rank as i64 {
+        return None;
+    }
+    Some(resolved as usize)
+}
+
 /// Compute the axis-reduced output shape (axis dropped, or kept as 1 with
 /// `keepdims=True`).
 fn reduced_shape(shape: &[usize], axis: usize, keepdims: bool) -> Vec<usize> {
@@ -189,19 +208,389 @@ fn reduced_shape(shape: &[usize], axis: usize, keepdims: bool) -> Vec<usize> {
     out
 }
 
+/// Resolve a static scalar/tuple/list axis argument. `None` means whole-array
+/// reduction; `Some(vec)` means a static axis set. Dynamic composite elements,
+/// duplicate axes, and empty tuples fail open to the legacy path.
+fn parse_axis_spec(axis_arg: Option<&Value>, rank: usize) -> Option<Option<Vec<usize>>> {
+    match axis_arg {
+        None | Some(Value::None) => Some(None),
+        Some(Value::Tuple(data)) | Some(Value::List(data)) => {
+            if data.values.is_empty() {
+                return None;
+            }
+            let mut axes = Vec::with_capacity(data.values.len());
+            for v in &data.values {
+                let axis = try_resolve_axis(v.int_val()?, rank)?;
+                if axes.contains(&axis) {
+                    return None;
+                }
+                axes.push(axis);
+            }
+            axes.sort_unstable();
+            Some(Some(axes))
+        }
+        Some(v) => Some(Some(vec![resolve_axis(v.int_val()?, rank)])),
+    }
+}
+
+fn reduced_shape_multi(shape: &[usize], axes: &[usize], keepdims: bool) -> Vec<usize> {
+    let mut out = Vec::with_capacity(shape.len());
+    for (ax, &dim) in shape.iter().enumerate() {
+        if axes.contains(&ax) {
+            if keepdims {
+                out.push(1);
+            }
+        } else {
+            out.push(dim);
+        }
+    }
+    out
+}
+
+fn multi_axis_reduce(
+    b: &mut IRBuilder,
+    op: &str,
+    arr: &Value,
+    axes: &[usize],
+    keepdims: bool,
+) -> Value {
+    if op == "sum" {
+        if let Value::StaticArray {
+            segment_id,
+            offset,
+            dtype,
+            ..
+        } = arr
+        {
+            if *offset == 0 && !matches!(dtype, NumberType::Complex) {
+                if let Some(provenance) = b.static_array_product_provenance.get(segment_id).cloned()
+                {
+                    return multi_axis_reduce_product_sum_provenance(
+                        b,
+                        provenance,
+                        axes,
+                        keepdims,
+                        *segment_id,
+                    );
+                }
+            }
+        }
+    }
+
+    if axes.len() == 1 {
+        return axis_reduce(b, op, arr, axes[0], keepdims);
+    }
+
+    let shape = shape_of(arr);
+    let dtype = dtype_of(arr);
+    let rank = shape.len();
+    if rank == 0 {
+        return whole_array_reduce(b, op, arr);
+    }
+
+    let src_strides = row_major_strides(&shape);
+    let cells = payload_cells(b, arr);
+
+    let out_shape = reduced_shape_multi(&shape, axes, keepdims);
+    let out_total: usize = out_shape.iter().product();
+    let reduced_axes: Vec<usize> = axes.to_vec();
+    let kept_axes: Vec<usize> = (0..rank).filter(|a| !reduced_axes.contains(a)).collect();
+    let kept_strides: Vec<usize> = kept_axes.iter().map(|&a| src_strides[a]).collect();
+    let kept_dims: Vec<usize> = kept_axes.iter().map(|&a| shape[a]).collect();
+    let kept_out_strides = row_major_strides(&kept_dims);
+    let reduced_dims: Vec<usize> = reduced_axes.iter().map(|&a| shape[a]).collect();
+    let reduced_src_strides: Vec<usize> = reduced_axes.iter().map(|&a| src_strides[a]).collect();
+    let reduced_out_strides = row_major_strides(&reduced_dims);
+    let reduced_total: usize = reduced_dims.iter().product();
+
+    let mut out_flat: Vec<Value> = Vec::with_capacity(out_total);
+    for out_idx in 0..out_total {
+        let mut remaining = out_idx;
+        let mut base: usize = 0;
+        for (k, &stride) in kept_out_strides.iter().enumerate() {
+            let coord = if stride == 0 { 0 } else { remaining / stride };
+            remaining %= stride.max(1);
+            base += coord * kept_strides[k];
+        }
+
+        let mut fiber: Vec<Value> = Vec::with_capacity(reduced_total);
+        for red_idx in 0..reduced_total {
+            let mut remaining = red_idx;
+            let mut idx = base;
+            for (k, &stride) in reduced_out_strides.iter().enumerate() {
+                let coord = if stride == 0 { 0 } else { remaining / stride };
+                remaining %= stride.max(1);
+                idx += coord * reduced_src_strides[k];
+            }
+            fiber.push(cells[idx].clone());
+        }
+        out_flat.push(reduce_cells(b, op, &fiber));
+    }
+
+    build_static_array_from_flat(b, out_flat, out_shape, dtype)
+}
+
+fn multi_axis_reduce_product_sum_provenance(
+    b: &mut IRBuilder,
+    provenance: crate::builder::StaticArrayProductProvenance,
+    axes: &[usize],
+    keepdims: bool,
+    source_segment_id: u32,
+) -> Value {
+    let shape = provenance.out_shape.clone();
+    let dtype = provenance.dtype;
+    let rank = shape.len();
+    if rank == 0 {
+        let cells = product_provenance_payload_cells(b, &provenance);
+        b.static_array_payload
+            .insert(source_segment_id, cells.clone());
+        return reduce_cells(b, "sum", &cells);
+    }
+
+    let src_strides = row_major_strides(&shape);
+    let out_shape = reduced_shape_multi(&shape, axes, keepdims);
+    let out_total: usize = out_shape.iter().product();
+    let reduced_axes: Vec<usize> = axes.to_vec();
+    let kept_axes: Vec<usize> = (0..rank).filter(|a| !reduced_axes.contains(a)).collect();
+    let kept_strides: Vec<usize> = kept_axes.iter().map(|&a| src_strides[a]).collect();
+    let kept_dims: Vec<usize> = kept_axes.iter().map(|&a| shape[a]).collect();
+    let kept_out_strides = row_major_strides(&kept_dims);
+    let reduced_dims: Vec<usize> = reduced_axes.iter().map(|&a| shape[a]).collect();
+    let reduced_src_strides: Vec<usize> = reduced_axes.iter().map(|&a| src_strides[a]).collect();
+    let reduced_out_strides = row_major_strides(&reduced_dims);
+    let reduced_total: usize = reduced_dims.iter().product();
+
+    let out_product_strides = row_major_strides(&provenance.out_shape);
+    let lhs_idx = super::elementwise::make_product_broadcast_indexer(
+        &provenance.lhs_shape,
+        &provenance.out_shape,
+    );
+    let rhs_idx = super::elementwise::make_product_broadcast_indexer(
+        &provenance.rhs_shape,
+        &provenance.out_shape,
+    );
+
+    let mut out_flat: Vec<Value> = Vec::with_capacity(out_total);
+    for out_idx in 0..out_total {
+        let mut remaining = out_idx;
+        let mut base: usize = 0;
+        for (k, &stride) in kept_out_strides.iter().enumerate() {
+            let coord = if stride == 0 { 0 } else { remaining / stride };
+            remaining %= stride.max(1);
+            base += coord * kept_strides[k];
+        }
+
+        if dtype == NumberType::Float {
+            let mut pairs: Vec<(Value, Value)> = Vec::with_capacity(reduced_total);
+            for red_idx in 0..reduced_total {
+                let mut remaining = red_idx;
+                let mut idx = base;
+                for (k, &stride) in reduced_out_strides.iter().enumerate() {
+                    let coord = if stride == 0 { 0 } else { remaining / stride };
+                    remaining %= stride.max(1);
+                    idx += coord * reduced_src_strides[k];
+                }
+                let coords = super::super::shape_arith::decode_coords(
+                    idx,
+                    &provenance.out_shape,
+                    &out_product_strides,
+                );
+                let lhs = &provenance.lhs_cells[lhs_idx.flat_index(&coords)];
+                let rhs = &provenance.rhs_cells[rhs_idx.flat_index(&coords)];
+                pairs.push((ensure_float_operand(b, lhs), ensure_float_operand(b, rhs)));
+            }
+            out_flat.push(if pairs.is_empty() {
+                b.ir_constant_float(0.0)
+            } else {
+                b.ir_product_sum_f(&pairs)
+            });
+        } else {
+            let mut fiber: Vec<Value> = Vec::with_capacity(reduced_total);
+            for red_idx in 0..reduced_total {
+                let mut remaining = red_idx;
+                let mut idx = base;
+                for (k, &stride) in reduced_out_strides.iter().enumerate() {
+                    let coord = if stride == 0 { 0 } else { remaining / stride };
+                    remaining %= stride.max(1);
+                    idx += coord * reduced_src_strides[k];
+                }
+                let coords = super::super::shape_arith::decode_coords(
+                    idx,
+                    &provenance.out_shape,
+                    &out_product_strides,
+                );
+                let l = &provenance.lhs_cells[lhs_idx.flat_index(&coords)];
+                let r = &provenance.rhs_cells[rhs_idx.flat_index(&coords)];
+                fiber.push(super::super::value_ops::apply_scalar_binary_op(
+                    b, "mul", l, r,
+                ));
+            }
+            out_flat.push(reduce_cells(b, "sum", &fiber));
+        }
+    }
+
+    build_static_array_from_flat(b, out_flat, out_shape, dtype)
+}
+
+fn ensure_float_operand(b: &mut IRBuilder, value: &Value) -> Value {
+    match value {
+        Value::Float(_) => value.clone(),
+        _ => b.ir_float_cast(value),
+    }
+}
+
+fn fire_var_std_contract_for_output(b: &mut IRBuilder, op: &str, out: &Value, reduced_len: usize) {
+    let len = b.ir_constant_int(reduced_len as i64);
+    let Some(len_vid) = len.value_id() else {
+        return;
+    };
+    let mut formals = std::collections::HashMap::new();
+    formals.insert("len_arr".to_string(), len_vid);
+    match out {
+        Value::StaticArray { .. } => {
+            for cell in payload_cells(b, out) {
+                if let Some(out_vid) = cell.value_id() {
+                    b.fire_contract(op, out_vid, &formals);
+                }
+            }
+        }
+        _ => {
+            if let Some(out_vid) = out.value_id() {
+                b.fire_contract(op, out_vid, &formals);
+            }
+        }
+    }
+}
+
+fn parse_static_ddof(ddof_arg: Option<&Value>) -> i64 {
+    match ddof_arg {
+        None | Some(Value::None) => 0,
+        Some(v) => v
+            .int_val()
+            .unwrap_or_else(|| panic!("var/std: ddof must be a static integer")),
+    }
+}
+
+fn checked_var_divisor(reduced_len: usize, ddof: i64) -> usize {
+    let divisor = reduced_len as i64 - ddof;
+    if divisor <= 0 {
+        panic!(
+            "var/std: invalid ddof {}; reduced length {} gives non-positive divisor",
+            ddof, reduced_len
+        );
+    }
+    divisor as usize
+}
+
+fn variance_from_fiber(b: &mut IRBuilder, fiber: &[Value], ddof: i64) -> Value {
+    let reduced_len = fiber.len();
+    let divisor = checked_var_divisor(reduced_len, ddof);
+    let sum = reduce_cells(b, "sum", fiber);
+    let mean = mean_from_sum(b, &sum, reduced_len);
+    let mut sq: Vec<Value> = Vec::with_capacity(fiber.len());
+    for cell in fiber {
+        let cf = ensure_float_operand(b, cell);
+        let diff = b.ir_sub_f(&cf, &mean);
+        sq.push(b.ir_mul_f(&diff, &diff));
+    }
+    let sq_sum = reduce_cells(b, "sum", &sq);
+    let sq_sum_f = ensure_float_operand(b, &sq_sum);
+    let denom = b.ir_constant_float(divisor as f64);
+    b.ir_div_f(&sq_sum_f, &denom)
+}
+
+fn multi_axis_mean(b: &mut IRBuilder, arr: &Value, axes: &[usize], keepdims: bool) -> Value {
+    if axes.len() == 1 {
+        return axis_mean(b, arr, axes[0], keepdims);
+    }
+
+    let shape = shape_of(arr);
+    let n: usize = axes.iter().map(|&a| shape[a]).product::<usize>().max(1);
+    let summed = multi_axis_reduce(b, "sum", arr, axes, keepdims);
+    let cells = payload_cells(b, &summed);
+    let out_shape = shape_of(&summed);
+    let n_val = b.ir_constant_float(n as f64);
+    let mut out: Vec<Value> = Vec::with_capacity(cells.len());
+    for c in &cells {
+        let cf = match c {
+            Value::Float(_) => c.clone(),
+            _ => b.ir_float_cast(c),
+        };
+        out.push(b.ir_div_f(&cf, &n_val));
+    }
+    build_static_array_from_flat(b, out, out_shape, NumberType::Float)
+}
+
+fn multi_axis_var_std(
+    b: &mut IRBuilder,
+    op: &str,
+    arr: &Value,
+    axes: &[usize],
+    keepdims: bool,
+    ddof: i64,
+) -> Value {
+    let shape = shape_of(arr);
+    let rank = shape.len();
+    if rank == 0 {
+        let cells = payload_cells(b, arr);
+        let var = variance_from_fiber(b, &cells, ddof);
+        let out = if op == "std" { b.ir_sqrt_f(&var) } else { var };
+        fire_var_std_contract_for_output(b, op, &out, cells.len());
+        return out;
+    }
+
+    let src_strides = row_major_strides(&shape);
+    let cells = payload_cells(b, arr);
+    let out_shape = reduced_shape_multi(&shape, axes, keepdims);
+    let out_total: usize = out_shape.iter().product();
+    let reduced_axes: Vec<usize> = axes.to_vec();
+    let kept_axes: Vec<usize> = (0..rank).filter(|a| !reduced_axes.contains(a)).collect();
+    let kept_strides: Vec<usize> = kept_axes.iter().map(|&a| src_strides[a]).collect();
+    let kept_dims: Vec<usize> = kept_axes.iter().map(|&a| shape[a]).collect();
+    let kept_out_strides = row_major_strides(&kept_dims);
+    let reduced_dims: Vec<usize> = reduced_axes.iter().map(|&a| shape[a]).collect();
+    let reduced_src_strides: Vec<usize> = reduced_axes.iter().map(|&a| src_strides[a]).collect();
+    let reduced_out_strides = row_major_strides(&reduced_dims);
+    let reduced_total: usize = reduced_dims.iter().product();
+    checked_var_divisor(reduced_total, ddof);
+
+    let mut out_flat: Vec<Value> = Vec::with_capacity(out_total);
+    for out_idx in 0..out_total {
+        let mut remaining = out_idx;
+        let mut base: usize = 0;
+        for (k, &stride) in kept_out_strides.iter().enumerate() {
+            let coord = if stride == 0 { 0 } else { remaining / stride };
+            remaining %= stride.max(1);
+            base += coord * kept_strides[k];
+        }
+
+        let mut fiber: Vec<Value> = Vec::with_capacity(reduced_total);
+        for red_idx in 0..reduced_total {
+            let mut remaining = red_idx;
+            let mut idx = base;
+            for (k, &stride) in reduced_out_strides.iter().enumerate() {
+                let coord = if stride == 0 { 0 } else { remaining / stride };
+                remaining %= stride.max(1);
+                idx += coord * reduced_src_strides[k];
+            }
+            fiber.push(cells[idx].clone());
+        }
+        let var = variance_from_fiber(b, &fiber, ddof);
+        out_flat.push(if op == "std" { b.ir_sqrt_f(&var) } else { var });
+    }
+
+    let out = build_static_array_from_flat(b, out_flat, out_shape, NumberType::Float);
+    fire_var_std_contract_for_output(b, op, &out, reduced_total);
+    out
+}
+
 /// Per-output-cell, iterate along the reduced axis and fold.
 ///
 /// Implementation policy α (stride-based): for each output coordinate, derive
 /// the corresponding *base* address into the source's flat payload by
 /// summing `coord_k * src_strides[k]` over non-reduced axes; then walk the
 /// reduced axis with `src_strides[axis]` increments and fold the cells.
-fn axis_reduce(
-    b: &mut IRBuilder,
-    op: &str,
-    arr: &Value,
-    axis: usize,
-    keepdims: bool,
-) -> Value {
+fn axis_reduce(b: &mut IRBuilder, op: &str, arr: &Value, axis: usize, keepdims: bool) -> Value {
     let shape = shape_of(arr);
     let dtype = dtype_of(arr);
     let rank = shape.len();
@@ -287,6 +676,83 @@ fn axis_mean(b: &mut IRBuilder, arr: &Value, axis: usize, keepdims: bool) -> Val
     build_static_array_from_flat(b, out, out_shape, NumberType::Float)
 }
 
+/// Complex variant of [`axis_reduce`]. It mirrors the same stride/fiber
+/// traversal, folding each Complex payload cell with component-wise IR and
+/// rebuilding the result as a dual-segment Complex StaticArray.
+fn axis_reduce_complex(
+    b: &mut IRBuilder,
+    bin_op: &str,
+    arr: &Value,
+    axis: usize,
+    keepdims: bool,
+) -> Value {
+    let shape = shape_of(arr);
+    let rank = shape.len();
+    if rank == 0 {
+        let cells = payload_cells(b, arr);
+        return complex_reduce_cells(b, bin_op, &cells);
+    }
+
+    let src_strides = row_major_strides(&shape);
+    let cells = payload_cells(b, arr);
+
+    let out_shape = reduced_shape(&shape, axis, keepdims);
+    let out_total: usize = out_shape.iter().product();
+    let axis_len = shape[axis];
+    let axis_stride = src_strides[axis];
+
+    let kept_axes: Vec<usize> = (0..rank).filter(|&a| a != axis).collect();
+    let kept_strides: Vec<usize> = kept_axes.iter().map(|&a| src_strides[a]).collect();
+    let kept_dims: Vec<usize> = kept_axes.iter().map(|&a| shape[a]).collect();
+    let kept_out_strides = row_major_strides(&kept_dims);
+
+    let mut out_flat: Vec<Value> = Vec::with_capacity(out_total);
+    for out_idx in 0..out_total {
+        let mut remaining = out_idx;
+        let mut base: usize = 0;
+        for (k, &stride) in kept_out_strides.iter().enumerate() {
+            let coord = if stride == 0 { 0 } else { remaining / stride };
+            remaining %= stride.max(1);
+            base += coord * kept_strides[k];
+        }
+
+        let mut fiber: Vec<Value> = Vec::with_capacity(axis_len);
+        for j in 0..axis_len {
+            let idx = base + j * axis_stride;
+            fiber.push(cells[idx].clone());
+        }
+        out_flat.push(complex_reduce_cells(b, bin_op, &fiber));
+    }
+
+    let mut reals = Vec::with_capacity(out_flat.len());
+    let mut imags = Vec::with_capacity(out_flat.len());
+    for c in &out_flat {
+        let (real, imag) = crate::helpers::value_ops::unpack_value_to_complex_parts(b, c);
+        reals.push(real);
+        imags.push(imag);
+    }
+    build_static_array_from_flat_complex(b, reals, imags, out_shape)
+}
+
+fn axis_mean_complex(b: &mut IRBuilder, arr: &Value, axis: usize, keepdims: bool) -> Value {
+    let shape = shape_of(arr);
+    let n = shape[axis];
+    let summed = axis_reduce_complex(b, "add", arr, axis, keepdims);
+    let cells = payload_cells(b, &summed);
+    let out_shape = shape_of(&summed);
+    let n_val = b.ir_constant_float(n as f64);
+
+    let mut reals = Vec::with_capacity(cells.len());
+    let mut imags = Vec::with_capacity(cells.len());
+    for c in &cells {
+        let (sr, si) = crate::helpers::value_ops::unpack_value_to_complex_parts(b, c);
+        reals.push(b.ir_div_f(&sr, &n_val));
+        imags.push(b.ir_div_f(&si, &n_val));
+    }
+
+    build_static_array_from_flat_complex(b, reals, imags, out_shape)
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // Argmax / argmin
 // ────────────────────────────────────────────────────────────────────────
@@ -297,27 +763,60 @@ fn whole_array_argmax_argmin(b: &mut IRBuilder, arr: &Value, is_max: bool) -> Va
         return b.ir_constant_int(0);
     }
     let dtype = dtype_of(arr);
-    let mut best_idx = b.ir_constant_int(0);
-    let mut best_val = cells[0].clone();
-    for (i, elem) in cells.iter().enumerate().skip(1) {
-        let cond = if dtype == NumberType::Float {
-            if is_max {
-                b.ir_greater_than_f(elem, &best_val)
+    let len = cells.len();
+    // Boolean-aware fast path: argmax of `{0,1}` cells is "first index where
+    // elem == 1". The generic body would emit `ir_greater_than_i` per step
+    // (sign-aware range checks ~30 gates each); the bool form needs one mul
+    // per step (NOT/AND/OR). Triggered by `(x==a)&(y==b)).argmax()` patterns.
+    let best_idx = if is_max && cells.iter().all(|c| matches!(c, Value::Boolean(_))) {
+        let mut idx = b.ir_constant_int(0);
+        let mut found = cells[0].clone();
+        for (i, elem) in cells.iter().enumerate().skip(1) {
+            let not_found = b.ir_logical_not(&found);
+            let take = b.ir_logical_and(&not_found, elem);
+            let idx_val = b.ir_constant_int(i as i64);
+            idx = b.ir_select_i(&take, &idx_val, &idx);
+            found = b.ir_logical_or(&found, elem);
+        }
+        idx
+    } else {
+        let mut idx = b.ir_constant_int(0);
+        let mut best_val = cells[0].clone();
+        for (i, elem) in cells.iter().enumerate().skip(1) {
+            let cond = if dtype == NumberType::Float {
+                if is_max {
+                    b.ir_greater_than_f(elem, &best_val)
+                } else {
+                    b.ir_less_than_f(elem, &best_val)
+                }
+            } else if is_max {
+                b.ir_greater_than_i(elem, &best_val)
             } else {
-                b.ir_less_than_f(elem, &best_val)
-            }
-        } else if is_max {
-            b.ir_greater_than_i(elem, &best_val)
-        } else {
-            b.ir_less_than_i(elem, &best_val)
-        };
-        let idx_val = b.ir_constant_int(i as i64);
-        best_idx = b.ir_select_i(&cond, &idx_val, &best_idx);
-        best_val = if dtype == NumberType::Float {
-            b.ir_select_f(&cond, elem, &best_val)
-        } else {
-            b.ir_select_i(&cond, elem, &best_val)
-        };
+                b.ir_less_than_i(elem, &best_val)
+            };
+            let idx_val = b.ir_constant_int(i as i64);
+            idx = b.ir_select_i(&cond, &idx_val, &idx);
+            best_val = if dtype == NumberType::Float {
+                b.ir_select_f(&cond, elem, &best_val)
+            } else {
+                b.ir_select_i(&cond, elem, &best_val)
+            };
+        }
+        idx
+    };
+    // Publish `0 <= best_idx < len` via the registered `dyn_argextremum`
+    // contract so downstream `discharge_index_in_range(best_idx, 0, len)`
+    // calls (e.g. `arr[arr.argmax()]`) prove the bound from facts instead
+    // of emitting a u128 range assert. Without this, kernels like 0480
+    // pay the ~2700-gate u128 lookup-table cost for an index that's
+    // structurally bounded by the argmax loop.
+    if let Some(idx_vid) = best_idx.value_id() {
+        let len_arr_val = b.ir_constant_int(len as i64);
+        if let Some(len_arr_vid) = len_arr_val.value_id() {
+            let mut formals = std::collections::HashMap::new();
+            formals.insert("len_arr".to_string(), len_arr_vid);
+            b.fire_contract("dyn_argextremum", idx_vid, &formals);
+        }
     }
     best_idx
 }
@@ -400,6 +899,181 @@ fn axis_argmax_argmin(
 ///
 /// `axis_arg` follows the named-attr convention: `None` or `Value::None`
 /// means whole-array reduction; an integer means axis-aware.
+/// If the input `arr` is a StaticArray whose cells trace back to a
+/// single input parameter (via `IR::ReadInteger` / `ReadFloat` with
+/// `path.segments = [Index(_)]`), return that parameter's name.
+/// Used to bind reduction outputs to `@requires(forall(<name>, ...))`
+/// preconditions for element-bound propagation.
+fn input_param_name_of_static_array(b: &IRBuilder, arr: &Value) -> Option<String> {
+    use crate::circuit_input::PathSegment;
+    use crate::ir_defs::IR;
+    let seg = match arr {
+        Value::StaticArray { segment_id, .. } => *segment_id,
+        _ => return None,
+    };
+    let cached = b.static_array_payload.get(&seg)?;
+    let first = cached.first()?;
+    let stmt_id = first.value_id().and_then(|_| first.stmt_id())?;
+    let stmt = b.stmts.get(stmt_id as usize)?;
+    let path = match &stmt.ir {
+        IR::ReadInteger { path, .. } | IR::ReadFloat { path, .. } => path,
+        _ => return None,
+    };
+    if !matches!(path.segments.first(), Some(PathSegment::Index(_))) {
+        return None;
+    }
+    Some(path.param.clone())
+}
+
+/// Propagate `forall(<input>, in_range/lt_bound/is_nonneg)` element
+/// bounds to a reduction's scalar output, by depositing `Cmp` facts on
+/// the output's `value_id`. Currently fires for `min`/`max` only —
+/// those preserve element bounds exactly (output is one of the input
+/// elements). Other reductions (`sum`, `mean`, etc.) need different
+/// bound rules and are out of scope for this first cut.
+/// Read the tightest known element bounds for an array `Value`, drawing
+/// from BOTH (a) `@requires(forall(input_name, in_range/lt_bound/
+/// is_nonneg))` structural-predicate atoms attached to the input name
+/// the array traces back to, and (b) `PredicateApp { kind:
+/// "array_in_range", args: [Var(Value(arr_vid)), lo, hi] }` facts
+/// deposited on the array's `value_id` by other ops (e.g. the in-place
+/// mutation contract, the boolean-mask-read pass-through).
+///
+/// Returns `(lo, hi)` if either source provides a bound; if both
+/// provide bounds, the tightest intersection is returned.
+pub(crate) fn read_array_element_bounds(b: &IRBuilder, arr: &Value) -> Option<(i64, i64)> {
+    use crate::ir_defs::IR;
+    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
+
+    let arr_vid = arr.value_id();
+    let input_name = input_param_name_of_static_array(b, arr);
+
+    let mut lo: Option<i64> = None;
+    let mut hi: Option<i64> = None;
+
+    // (a) Structural-predicate scan (works for original input arrays
+    // whose payload cache is still populated).
+    if let Some(ref name) = input_name {
+        for s in &b.stmts {
+            if let IR::StructuralPredicate { kind, args, .. } = &s.ir {
+                if args.first().map(|s| s.as_str()) != Some(name.as_str()) {
+                    continue;
+                }
+                match kind.as_str() {
+                    "forall_in_range" if args.len() == 3 => {
+                        if let (Ok(l), Ok(h)) = (args[1].parse::<i64>(), args[2].parse::<i64>()) {
+                            lo = Some(lo.map_or(l, |x| x.max(l)));
+                            hi = Some(hi.map_or(h, |x| x.min(h)));
+                        }
+                    }
+                    "forall_lt_bound" if args.len() == 2 => {
+                        if let Ok(h) = args[1].parse::<i64>() {
+                            let new_hi = h - 1;
+                            hi = Some(hi.map_or(new_hi, |x| x.min(new_hi)));
+                        }
+                    }
+                    "forall_is_nonneg" if args.len() == 1 => {
+                        lo = Some(lo.map_or(0, |x| x.max(0)));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // (b) array_in_range fact scan keyed on the array's value_id.
+    // Works for derived / in-place-mutated arrays whose origin can't
+    // be traced back to a single input name.
+    if let Some(vid) = arr_vid {
+        for fact in b.facts.visible_facts() {
+            if let ContractTerm::PredicateApp { kind, args } = fact {
+                if kind != "array_in_range" || args.len() != 3 {
+                    continue;
+                }
+                let matches_vid = matches!(
+                    &args[0],
+                    ContractTerm::Var(ContractVar::Value(v)) if *v == vid
+                );
+                if !matches_vid {
+                    continue;
+                }
+                if let (ContractTerm::LitInt(l), ContractTerm::LitInt(h)) = (&args[1], &args[2]) {
+                    lo = Some(lo.map_or(*l, |x| x.max(*l)));
+                    hi = Some(hi.map_or(*h, |x| x.min(*h)));
+                }
+            }
+        }
+    }
+
+    match (lo, hi) {
+        (Some(l), Some(h)) if l <= h => Some((l, h)),
+        _ => None,
+    }
+}
+
+/// Deposit an `array_in_range(arr_vid, lo, hi)` fact on `arr_vid`'s
+/// FactStack entry. Idempotent — duplicate facts are filtered out by
+/// `prove` consumers via the connectivity fast-path's set semantics.
+pub(crate) fn deposit_array_in_range_fact(
+    b: &mut IRBuilder,
+    arr_vid: crate::types::ValueId,
+    lo: i64,
+    hi: i64,
+) {
+    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
+    b.facts.insert_for(
+        arr_vid,
+        ContractTerm::PredicateApp {
+            kind: "array_in_range".to_string(),
+            args: vec![
+                ContractTerm::Var(ContractVar::Value(arr_vid)),
+                ContractTerm::LitInt(lo),
+                ContractTerm::LitInt(hi),
+            ],
+        },
+    );
+}
+
+fn propagate_forall_bounds_to_reduction_output(
+    b: &mut IRBuilder,
+    op: &str,
+    input: &Value,
+    output: &Value,
+) {
+    use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
+    if !matches!(op, "min" | "max") {
+        return;
+    }
+    let out_vid = match output.value_id() {
+        Some(v) => v,
+        None => return,
+    };
+    let (lo, hi) = match read_array_element_bounds(b, input) {
+        Some((l, h)) => (Some(l), Some(h)),
+        None => return,
+    };
+    if let Some(l) = lo {
+        b.facts.insert_for(
+            out_vid,
+            ContractTerm::Cmp {
+                op: CmpOp::Ge,
+                lhs: Box::new(ContractTerm::Var(ContractVar::Value(out_vid))),
+                rhs: Box::new(ContractTerm::LitInt(l)),
+            },
+        );
+    }
+    if let Some(h) = hi {
+        b.facts.insert_for(
+            out_vid,
+            ContractTerm::Cmp {
+                op: CmpOp::Le,
+                lhs: Box::new(ContractTerm::Var(ContractVar::Value(out_vid))),
+                rhs: Box::new(ContractTerm::LitInt(h)),
+            },
+        );
+    }
+}
+
 pub fn try_apply_reduce(
     b: &mut IRBuilder,
     op: &str,
@@ -421,6 +1095,22 @@ pub fn try_apply_reduce(
                 op
             );
         }
+        let shape = shape_of(val);
+        let axis_spec = parse_axis_spec(axis_arg, shape.len())?;
+        if let Some(axes) = axis_spec {
+            if axes.len() != 1 {
+                return None;
+            }
+            if shape.is_empty() {
+                return Some(whole_array_reduce(b, op, val));
+            }
+            let axis = axes[0];
+            if op == "mean" {
+                return Some(axis_mean_complex(b, val, axis, keepdims));
+            }
+            let bin_op = if op == "sum" { "add" } else { "mul" };
+            return Some(axis_reduce_complex(b, bin_op, val, axis, keepdims));
+        }
         // Whole-array sum / prod / mean: walk Complex cells, fold with the
         // existing component-wise complex IR.
         let cells = payload_cells(b, val);
@@ -438,35 +1128,67 @@ pub fn try_apply_reduce(
         return Some(complex_reduce_cells(b, bin_op, &cells));
     }
 
-    // Extract a static int axis, if any.
-    let axis_int: Option<i64> = match axis_arg {
-        None => None,
-        Some(Value::None) => None,
-        Some(v) => match v.int_val() {
-            Some(i) => Some(i),
-            // Non-static axis: defer to legacy.
-            None => return None,
-        },
-    };
-
-    if let Some(ax) = axis_int {
-        let shape = shape_of(val);
+    let shape = shape_of(val);
+    let axis_spec = parse_axis_spec(axis_arg, shape.len())?;
+    if let Some(axes) = axis_spec {
         if shape.is_empty() {
             // 0-rank: ignore axis (numpy errors, but match legacy lenience).
             return Some(whole_array_reduce(b, op, val));
         }
-        let axis = resolve_axis(ax, shape.len());
         if op == "mean" {
-            return Some(axis_mean(b, val, axis, keepdims));
+            return Some(multi_axis_mean(b, val, &axes, keepdims));
         }
-        return Some(axis_reduce(b, op, val, axis, keepdims));
+        return Some(multi_axis_reduce(b, op, val, &axes, keepdims));
     }
 
     // Whole-array.
     if op == "mean" {
         return Some(whole_array_mean(b, val));
     }
-    Some(whole_array_reduce(b, op, val))
+    let out = whole_array_reduce(b, op, val);
+    // Op-contract enrichment: for min/max, propagate `forall(input,
+    // in_range/lt_bound/is_nonneg)` element bounds from the input's
+    // @requires precondition onto the output scalar. This is what
+    // lets `np.zeros(np.amax(x)+1)` compile when the user annotates
+    // `@requires(forall(x, in_range(0, K)))`. See
+    // `compiler.op-contract-forall-to-reduction-output`.
+    propagate_forall_bounds_to_reduction_output(b, op, val, &out);
+    Some(out)
+}
+
+/// Try to apply `np.var` / `np.std` natively on a `Value::StaticArray`.
+/// `ddof` must be statically known; every output cell uses the reduced
+/// fiber length, not the flattened input length, for its divisor contract.
+pub fn try_apply_var_std(
+    b: &mut IRBuilder,
+    op: &str,
+    val: &Value,
+    axis_arg: Option<&Value>,
+    ddof_arg: Option<&Value>,
+    keepdims: bool,
+) -> Option<Value> {
+    if !matches!(val, Value::StaticArray { .. }) {
+        return None;
+    }
+    if !matches!(op, "var" | "std") {
+        return None;
+    }
+    if matches!(dtype_of(val), NumberType::Complex) {
+        panic!("{}: Complex StaticArray input is deferred", op);
+    }
+
+    let shape = shape_of(val);
+    let axis_spec = parse_axis_spec(axis_arg, shape.len()).unwrap_or_else(|| {
+        panic!(
+            "{}: axis must be a static integer or tuple/list of static integers",
+            op
+        )
+    });
+    let ddof = parse_static_ddof(ddof_arg);
+    let axes = axis_spec.unwrap_or_else(|| (0..shape.len()).collect());
+    let reduced_len = axes.iter().map(|&a| shape[a]).product::<usize>().max(1);
+    checked_var_divisor(reduced_len, ddof);
+    Some(multi_axis_var_std(b, op, val, &axes, keepdims, ddof))
 }
 
 /// Try to apply argmax / argmin natively on a `Value::StaticArray`. Same
@@ -512,6 +1234,7 @@ pub fn try_apply_argmax_argmin(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ir_defs::IR;
     use crate::types::{CompositeData, ValueId};
 
     fn list_of(values: Vec<Value>) -> Value {
@@ -519,7 +1242,7 @@ mod tests {
         Value::List(CompositeData {
             elements_type: types,
             values,
-        
+
             value_id: ValueId::next(),
         })
     }
@@ -537,6 +1260,64 @@ mod tests {
             .collect();
         let lst = list_of(row_lists);
         super::super::base::to_static_array(b, &lst).expect("StaticArray")
+    }
+
+    fn make_2d_complex(b: &mut IRBuilder, rows: &[&[(f64, f64)]]) -> Value {
+        let row_lists: Vec<Value> = rows
+            .iter()
+            .map(|r| {
+                list_of(
+                    r.iter()
+                        .map(|(re, im)| {
+                            crate::helpers::value_ops::pack_complex_value(
+                                b.ir_constant_float(*re),
+                                b.ir_constant_float(*im),
+                            )
+                        })
+                        .collect(),
+                )
+            })
+            .collect();
+        let lst = list_of(row_lists);
+        super::super::base::to_static_array(b, &lst).expect("StaticArray")
+    }
+
+    fn make_4d_float(b: &mut IRBuilder, shape: [usize; 4]) -> Value {
+        let total: usize = shape.iter().product();
+        let flat: Vec<Value> = (0..total)
+            .map(|i| b.ir_constant_float((i + 1) as f64))
+            .collect();
+        build_static_array_from_flat(b, flat, shape.to_vec(), NumberType::Float)
+    }
+
+    fn tuple_of(values: Vec<Value>) -> Value {
+        let types = values.iter().map(|v| v.zinnia_type()).collect();
+        Value::Tuple(CompositeData {
+            elements_type: types,
+            values,
+            value_id: ValueId::next(),
+        })
+    }
+
+    fn complex_static_vals(b: &mut IRBuilder, val: &Value) -> Vec<(Option<f64>, Option<f64>)> {
+        match val {
+            Value::StaticArray {
+                dtype,
+                imag_segment_id,
+                ..
+            } => {
+                assert_eq!(*dtype, NumberType::Complex);
+                assert!(imag_segment_id.is_some());
+            }
+            _ => panic!("expected Complex StaticArray"),
+        }
+        payload_cells(b, val)
+            .iter()
+            .map(|c| match c {
+                Value::Complex { real, imag } => (real.static_val, imag.static_val),
+                _ => panic!("expected Complex cell"),
+            })
+            .collect()
     }
 
     #[test]
@@ -644,6 +1425,260 @@ mod tests {
             Value::StaticArray { shape, .. } => assert_eq!(*shape, vec![1, 3]),
             _ => panic!("expected StaticArray"),
         }
+    }
+
+    #[test]
+    fn multi_axis_float_sum_reduces_tuple_axes_without_axis_shift() {
+        let mut b = IRBuilder::new();
+        let a = make_4d_float(&mut b, [2, 2, 3, 4]);
+        let axis = tuple_of(vec![
+            b.ir_constant_int(1),
+            b.ir_constant_int(2),
+            b.ir_constant_int(3),
+        ]);
+        let out = try_apply_reduce(&mut b, "sum", &a, Some(&axis), false).expect("native");
+        match &out {
+            Value::StaticArray { shape, dtype, .. } => {
+                assert_eq!(*shape, vec![2]);
+                assert_eq!(*dtype, NumberType::Float);
+            }
+            _ => panic!("expected StaticArray"),
+        }
+        let vals: Vec<Option<f64>> = payload_cells(&mut b, &out)
+            .iter()
+            .map(|c| c.float_val())
+            .collect();
+        assert_eq!(vals, vec![Some(300.0), Some(876.0)]);
+    }
+
+    #[test]
+    fn multi_axis_float_sum_keepdims_preserves_original_rank() {
+        let mut b = IRBuilder::new();
+        let a = make_4d_float(&mut b, [2, 2, 3, 4]);
+        let axis = tuple_of(vec![b.ir_constant_int(1), b.ir_constant_int(-1)]);
+        let out = try_apply_reduce(&mut b, "sum", &a, Some(&axis), true).expect("native");
+        match &out {
+            Value::StaticArray { shape, dtype, .. } => {
+                assert_eq!(*shape, vec![2, 1, 3, 1]);
+                assert_eq!(*dtype, NumberType::Float);
+            }
+            _ => panic!("expected StaticArray"),
+        }
+        let vals: Vec<Option<f64>> = payload_cells(&mut b, &out)
+            .iter()
+            .map(|c| c.float_val())
+            .collect();
+        assert_eq!(
+            vals,
+            vec![
+                Some(68.0),
+                Some(100.0),
+                Some(132.0),
+                Some(260.0),
+                Some(292.0),
+                Some(324.0)
+            ]
+        );
+    }
+
+    #[test]
+    fn multi_axis_sum_consumes_product_provenance_without_materializing_product_payload() {
+        let mut b = IRBuilder::new();
+        let a = make_4d_float(&mut b, [1, 2, 2, 2]);
+        let weights = make_4d_float(&mut b, [1, 2, 2, 2]);
+        let product = crate::helpers::static_array::elementwise::try_apply_binary_op(
+            &mut b, "mul", &a, &weights,
+        )
+        .expect("native");
+        let product_segment = match &product {
+            Value::StaticArray { segment_id, .. } => segment_id,
+            _ => panic!("expected StaticArray"),
+        };
+        assert!(b
+            .static_array_product_provenance
+            .contains_key(&product_segment));
+        let axis = tuple_of(vec![
+            b.ir_constant_int(1),
+            b.ir_constant_int(2),
+            b.ir_constant_int(3),
+        ]);
+        let out = try_apply_reduce(&mut b, "sum", &product, Some(&axis), false).expect("native");
+        assert!(b
+            .static_array_product_provenance
+            .contains_key(&product_segment));
+        assert!(b.static_array_payload.get(&product_segment).is_none());
+        assert!(!b.stmts.iter().any(|stmt| matches!(stmt.ir, IR::MulF)));
+        let product_sum_stmt = b
+            .stmts
+            .iter()
+            .find(|stmt| matches!(stmt.ir, IR::ProductSumF { .. }))
+            .expect("expected ProductSumF for Float product-provenance sum");
+        assert_eq!(product_sum_stmt.ir, IR::ProductSumF { len: 8 });
+        assert_eq!(product_sum_stmt.arguments.len(), 16);
+        let arg_values: Vec<f64> = product_sum_stmt
+            .arguments
+            .iter()
+            .map(|arg| match b.stmts[*arg as usize].ir {
+                IR::ConstantFloat { value } => value,
+                ref other => panic!("expected ConstantFloat operand, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            arg_values,
+            vec![1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 5.0, 5.0, 6.0, 6.0, 7.0, 7.0, 8.0, 8.0]
+        );
+        match &out {
+            Value::StaticArray { shape, dtype, .. } => {
+                assert_eq!(*shape, vec![1]);
+                assert_eq!(*dtype, NumberType::Float);
+            }
+            _ => panic!("expected StaticArray"),
+        }
+        let vals: Vec<Option<f64>> = payload_cells(&mut b, &out)
+            .iter()
+            .map(|c| c.float_val())
+            .collect();
+        assert_eq!(vals, vec![None]);
+    }
+
+    #[test]
+    fn product_provenance_snapshots_operand_cells_before_later_write() {
+        let mut b = IRBuilder::new();
+        let a = make_2d_int(&mut b, &[&[1, 2], &[3, 4]]);
+        let weights = make_2d_int(&mut b, &[&[10, 20], &[30, 40]]);
+        let product = crate::helpers::static_array::elementwise::try_apply_binary_op(
+            &mut b, "mul", &a, &weights,
+        )
+        .expect("native");
+        let idx = vec![
+            crate::types::SliceIndex::Single(b.ir_constant_int(0)),
+            crate::types::SliceIndex::Single(b.ir_constant_int(0)),
+        ];
+        let replacement = b.ir_constant_int(99);
+        crate::helpers::static_array::write::static_array_setitem(&mut b, &a, &idx, &replacement);
+
+        let axis = tuple_of(vec![b.ir_constant_int(0), b.ir_constant_int(1)]);
+        let out = try_apply_reduce(&mut b, "sum", &product, Some(&axis), false).expect("native");
+        assert!(!b
+            .stmts
+            .iter()
+            .any(|stmt| matches!(stmt.ir, IR::ProductSumF { .. })));
+        let vals: Vec<Option<i64>> = payload_cells(&mut b, &out)
+            .iter()
+            .map(|c| c.int_val())
+            .collect();
+        assert_eq!(vals, vec![Some(300)]);
+    }
+
+    #[test]
+    fn fused_sum_does_not_consume_product_for_later_force() {
+        let mut b = IRBuilder::new();
+        let a = make_2d_int(&mut b, &[&[1, 2], &[3, 4]]);
+        let weights = make_2d_int(&mut b, &[&[10, 20], &[30, 40]]);
+        let product = crate::helpers::static_array::elementwise::try_apply_binary_op(
+            &mut b, "mul", &a, &weights,
+        )
+        .expect("native");
+        let axis = tuple_of(vec![b.ir_constant_int(0), b.ir_constant_int(1)]);
+        let _sum = try_apply_reduce(&mut b, "sum", &product, Some(&axis), false).expect("native");
+
+        let product_cells = payload_cells(&mut b, &product);
+        let vals: Vec<Option<i64>> = product_cells.iter().map(|c| c.int_val()).collect();
+        assert_eq!(vals, vec![Some(10), Some(40), Some(90), Some(160)]);
+    }
+
+    #[test]
+    fn newaxis_static_array_view_feeds_product_provenance() {
+        let mut b = IRBuilder::new();
+        let a = make_2d_int(&mut b, &[&[1, 2], &[3, 4]]);
+        let weights = make_2d_int(&mut b, &[&[10, 20], &[30, 40]]);
+        let new_axis = crate::types::SliceIndex::NewAxis;
+        let full = crate::types::SliceIndex::Range(None, None, None);
+        let a_view = crate::helpers::static_array::read::static_array_subscript(
+            &mut b,
+            &a,
+            &[full.clone(), full.clone(), new_axis.clone()],
+        );
+        let w_view = crate::helpers::static_array::read::static_array_subscript(
+            &mut b,
+            &weights,
+            &[new_axis, full.clone(), full],
+        );
+        match &a_view {
+            Value::StaticArray { shape, strides, .. } => {
+                assert_eq!(*shape, vec![2, 2, 1]);
+                assert_eq!(*strides, vec![2, 1, 0]);
+            }
+            _ => panic!("expected StaticArray view"),
+        }
+        let product = crate::helpers::static_array::elementwise::try_apply_binary_op(
+            &mut b, "mul", &a_view, &w_view,
+        )
+        .expect("native");
+        match &product {
+            Value::StaticArray {
+                segment_id, shape, ..
+            } => {
+                assert_eq!(*shape, vec![2, 2, 2]);
+                assert!(b.static_array_product_provenance.contains_key(segment_id));
+            }
+            _ => panic!("expected StaticArray product"),
+        }
+    }
+
+    #[test]
+    fn multi_axis_reduce_fails_open_for_duplicate_or_dynamic_axis() {
+        let mut b = IRBuilder::new();
+        let a = make_4d_float(&mut b, [2, 2, 3, 4]);
+        let dup_axis = tuple_of(vec![b.ir_constant_int(1), b.ir_constant_int(-3)]);
+        assert!(try_apply_reduce(&mut b, "sum", &a, Some(&dup_axis), false).is_none());
+
+        let dyn_axis = Value::Integer(crate::types::ScalarValue::new(None, None));
+        let dynamic_axis = tuple_of(vec![b.ir_constant_int(1), dyn_axis]);
+        assert!(try_apply_reduce(&mut b, "sum", &a, Some(&dynamic_axis), false).is_none());
+    }
+
+    #[test]
+    fn complex_axis_sum_uses_native_static_array_path() {
+        let mut b = IRBuilder::new();
+        let a = make_2d_complex(
+            &mut b,
+            &[&[(1.0, 2.0), (3.0, 4.0)], &[(5.0, 6.0), (7.0, 8.0)]],
+        );
+        let axis = b.ir_constant_int(0);
+        let out = try_apply_reduce(&mut b, "sum", &a, Some(&axis), false).expect("native");
+        match &out {
+            Value::StaticArray { shape, .. } => assert_eq!(*shape, vec![2]),
+            _ => panic!("expected StaticArray"),
+        }
+        let cells = payload_cells(&mut b, &out);
+        let vals: Vec<(Option<f64>, Option<f64>)> = cells
+            .iter()
+            .map(|c| match c {
+                Value::Complex { real, imag } => (real.static_val, imag.static_val),
+                _ => panic!("expected Complex cell"),
+            })
+            .collect();
+        assert_eq!(vals, vec![(Some(6.0), Some(8.0)), (Some(10.0), Some(12.0))]);
+    }
+
+    #[test]
+    fn complex_axis_mean_keepdims_uses_native_static_array_path() {
+        let mut b = IRBuilder::new();
+        let a = make_2d_complex(
+            &mut b,
+            &[&[(1.0, 2.0), (3.0, 4.0)], &[(5.0, 6.0), (7.0, 8.0)]],
+        );
+        let axis = b.ir_constant_int(1);
+        let out = try_apply_reduce(&mut b, "mean", &a, Some(&axis), true).expect("native");
+        match &out {
+            Value::StaticArray { shape, .. } => assert_eq!(*shape, vec![2, 1]),
+            _ => panic!("expected StaticArray"),
+        }
+        assert_eq!(
+            complex_static_vals(&mut b, &out),
+            vec![(Some(2.0), Some(3.0)), (Some(6.0), Some(7.0))]
+        );
     }
 
     #[test]

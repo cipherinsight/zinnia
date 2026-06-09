@@ -1,0 +1,80 @@
+{
+  "categories": [
+    "in-place-mutation",
+    "loop-bounded",
+    "matmul-dot"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 24,
+      "line_start": 12,
+      "mutated_params": [
+        "Sigma"
+      ],
+      "name": "scattering_self_energies",
+      "ops": [
+        "GtE",
+        "MatMult",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "neigh_idx",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 2,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "dH",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "G",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "D",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256 R<=256 C<=256']",
+          "rank_hint": 6,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "Sigma",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "npbench_scattering_self_energies_scattering_self_energies/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Declare shared matrix/vector dimensions explicitly, e.g. A[N,K] with x[K].",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "npbench_scattering_self_energies_scattering_self_energies",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: in-place-mutation, loop-bounded, matmul-dot\n# Expected outcome: compile/prove candidate\n# Precondition: Declare shared matrix/vector dimensions explicitly; when not expressible as @requires, encode with matching symbolic annotation names and keep as review obligation.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\n\n@zk_circuit\ndef scattering_self_energies(neigh_idx: Float[Array, 'N<=1024 M<=1024'], dH: Float[Array, 'N<=1024 M<=1024 K<=1024'], G: Float[Array, 'N<=1024 M<=1024 K<=1024'], D: Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256 R<=256 C<=256'], Sigma: Float[Array, 'N<=1024 M<=1024 K<=1024']):\n    for k in range(G.shape[0]):\n        for E in range(G.shape[1]):\n            for q in range(D.shape[0]):\n                for w in range(D.shape[1]):\n                    for i in range(D.shape[-2]):\n                        for j in range(D.shape[-1]):\n                            for a in range(neigh_idx.shape[0]):\n                                for b in range(neigh_idx.shape[1]):\n                                    if E - w >= 0:\n                                        dHG = G[k, E - w, neigh_idx[a, b]] @ dH[a, b, i]\n                                        dHD = dH[a, b, j] * D[q, w, a, b, i, j]\n                                        Sigma[k, E, a] += dHG @ dHD",
+  "source_status": "direct"
+}

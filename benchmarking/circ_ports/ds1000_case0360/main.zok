@@ -1,0 +1,12 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0360/kernel.py
+// REASON: np.delete row 2 of a 4x4 lowered to explicit row copy
+
+def main(field[4][4] a) -> field[3][4]:
+    field[3][4] result = [[0; 4]; 3]
+    for u32 j in 0..4 do
+        result[0][j] = a[0][j]
+        result[1][j] = a[1][j]
+        result[2][j] = a[3][j]
+    endfor
+    return result

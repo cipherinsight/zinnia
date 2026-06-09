@@ -1,0 +1,223 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "loop-bounded",
+    "matmul-dot"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "np.maximum"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 6,
+      "line_start": 5,
+      "mutated_params": [],
+      "name": "relu",
+      "ops": [],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "x",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "np.empty",
+        "np.sum",
+        "range"
+      ],
+      "entry_candidate": false,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 19,
+      "line_start": 9,
+      "mutated_params": [],
+      "name": "conv2d",
+      "ops": [
+        "Add",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "input",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256']",
+          "rank_hint": 5,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "weights",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 4,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "np.empty",
+        "np.max",
+        "range"
+      ],
+      "entry_candidate": false,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 27,
+      "line_start": 22,
+      "mutated_params": [],
+      "name": "maxpool2d",
+      "ops": [
+        "Add",
+        "FloorDiv",
+        "Mult"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "x",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256']",
+          "rank_hint": 4,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "conv2d",
+        "maxpool2d",
+        "np.reshape",
+        "relu"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 38,
+      "line_start": 30,
+      "mutated_params": [],
+      "name": "lenet5",
+      "ops": [
+        "Add",
+        "MatMult"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "input",
+          "proposed_annotation": "Float[Array, 'N<=1024 H<=1024 W<=1024 C<=256']",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "conv1",
+          "proposed_annotation": "Float[Array, 'K<=256 K<=256 C<=256 F1<=256']",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "conv1bias",
+          "proposed_annotation": "Float[Array, 'F1<=256']",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "conv2",
+          "proposed_annotation": "Float[Array, 'K2<=256 K2<=256 F1<=256 F2<=256']",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "conv2bias",
+          "proposed_annotation": "Float[Array, 'F2<=256']",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "fc1w",
+          "proposed_annotation": "Float[Array, 'C0<=1024 C1<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "fc1b",
+          "proposed_annotation": "Float[Array, 'C1<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "fc2w",
+          "proposed_annotation": "Float[Array, 'C1<=1024 C2<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "fc2b",
+          "proposed_annotation": "Float[Array, 'C2<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "fc3w",
+          "proposed_annotation": "Float[Array, 'C2<=1024 C3<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "fc3b",
+          "proposed_annotation": "Float[Array, 'C3<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "N",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "C_before_fc1",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "npbench_deep_learning_lenet_lenet/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Declare shared matrix/vector dimensions explicitly, e.g. A[N,K] with x[K].",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "npbench_deep_learning_lenet_lenet",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\nimport numpy as np\n\n@zk_chip\ndef relu(x: Float[Array, 'N<=1024']):\n    return np.maximum(x, 0)\n\n@zk_chip\ndef conv2d(input: Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256'], weights: Float[Array, 'N<=1024 M<=1024 K<=1024']):\n    K = weights.shape[0]\n    N = input.shape[0]\n    H_out = input.shape[1] - K + 1\n    W_out = input.shape[2] - K + 1\n    C_out = weights.shape[3]\n    output = np.empty((N, H_out, W_out, C_out), dtype=np.float32)\n    for i in range(H_out):\n        for j in range(W_out):\n            output[:, i, j, :] = np.sum(input[:, i:i + K, j:j + K, :, np.newaxis] * weights[np.newaxis, :, :, :], axis=(1, 2, 3))\n    return output\n\n@zk_chip\ndef maxpool2d(x: Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256']):\n    output = np.empty([x.shape[0], x.shape[1] // 2, x.shape[2] // 2, x.shape[3]], dtype=x.dtype)\n    for i in range(x.shape[1] // 2):\n        for j in range(x.shape[2] // 2):\n            output[:, i, j, :] = np.max(x[:, 2 * i:2 * i + 2, 2 * j:2 * j + 2, :], axis=(1, 2))\n    return output\n\n@zk_circuit\ndef lenet5(input: Float[Array, 'N<=1024 H<=1024 W<=1024 C<=256'], conv1: Float[Array, 'K<=256 K<=256 C<=256 F1<=256'], conv1bias: Float[Array, 'F1<=256'], conv2: Float[Array, 'K2<=256 K2<=256 F1<=256 F2<=256'], conv2bias: Float[Array, 'F2<=256'], fc1w: Float[Array, 'C0<=1024 C1<=1024'], fc1b: Float[Array, 'C1<=1024'], fc2w: Float[Array, 'C1<=1024 C2<=1024'], fc2b: Float[Array, 'C2<=1024'], fc3w: Float[Array, 'C2<=1024 C3<=1024'], fc3b: Float[Array, 'C3<=1024'], N: Integer, C_before_fc1: Integer):\n    x = relu(conv2d(input, conv1) + conv1bias)\n    x = maxpool2d(x)\n    x = relu(conv2d(x, conv2) + conv2bias)\n    x = maxpool2d(x)\n    x = np.reshape(x, (N, C_before_fc1))\n    x = relu(x @ fc1w + fc1b)\n    x = relu(x @ fc2w + fc2b)\n    return x @ fc3w + fc3b",
+  "source_status": "direct"
+}

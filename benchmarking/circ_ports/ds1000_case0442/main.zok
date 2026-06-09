@@ -1,0 +1,20 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0442/kernel.py
+// REASON: A[~np.in1d(A,B)] boolean-mask read produces a dynamic-length array.
+
+const u32 NA = 20
+const u32 NB = 3
+
+def main(field[NA] A, field[NB] B) -> field[NA]:
+    field[NA] result = [0; NA]
+    u32 cnt = 0
+    for u32 i in 0..NA do
+        bool in_b = false
+        for u32 j in 0..NB do
+            in_b = in_b || (A[i] == B[j])
+        endfor
+        bool keep = !in_b
+        result[cnt] = if keep then A[i] else result[cnt] fi
+        cnt = if keep then cnt + 1 else cnt fi
+    endfor
+    return result

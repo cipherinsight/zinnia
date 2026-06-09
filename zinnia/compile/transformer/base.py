@@ -17,6 +17,7 @@ _TYPE_ALIASES = {
     "None": "None",
     "Class": "Class",
     "NDArray": "NDArray",
+    "SymbolicNDArray": "SymbolicNDArray",
     "DynamicNDArray": "DynamicNDArray",
     "List": "List", "list": "List",
     "Tuple": "Tuple", "tuple": "Tuple",
@@ -25,6 +26,85 @@ _TYPE_ALIASES = {
 
 # Scalar types that need no arguments.
 _SCALAR_TYPES = {"Integer", "Float", "Boolean", "Complex", "String", "None", "Class"}
+_DTYPE_FRONT_ALIASES = {
+    "Float": "Float",
+    "Int": "Integer",
+    "Integer": "Integer",
+    "Bool": "Boolean",
+    "Boolean": "Boolean",
+    "Complex": "Complex",
+}
+
+
+def _parse_shape_expr_token(token: str):
+    tree = ast.parse(token, mode="eval")
+
+    def conv(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, int) and not isinstance(node.value, bool):
+            return ("const", node.value)
+        if isinstance(node, ast.Name) and node.id.isidentifier():
+            return ("symbol", node.id)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            return ("neg", conv(node.operand))
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.FloorDiv)):
+            op = {
+                ast.Add: "+",
+                ast.Sub: "-",
+                ast.Mult: "*",
+                ast.FloorDiv: "//",
+            }[type(node.op)]
+            return (op, conv(node.left), conv(node.right))
+        raise ValueError(f"unsupported shape expression `{token}`")
+
+    return conv(tree.body)
+
+
+def _eval_shape_expr(expr, bindings: dict[str, int]):
+    kind = expr[0]
+    if kind == "const":
+        return expr[1]
+    if kind == "symbol":
+        return bindings.get(expr[1])
+    if kind == "neg":
+        val = _eval_shape_expr(expr[1], bindings)
+        return None if val is None else -val
+    lhs = _eval_shape_expr(expr[1], bindings)
+    rhs = _eval_shape_expr(expr[2], bindings)
+    if lhs is None or rhs is None:
+        return None
+    if kind == "+":
+        return lhs + rhs
+    if kind == "-":
+        return lhs - rhs
+    if kind == "*":
+        return lhs * rhs
+    if kind == "//":
+        if rhs == 0:
+            raise ValueError("shape expression divides by zero")
+        return lhs // rhs
+    raise ValueError(f"unknown shape expression operator `{kind}`")
+
+
+def _shape_expr_symbols(expr) -> set[str]:
+    kind = expr[0]
+    if kind == "symbol":
+        return {expr[1]}
+    if kind in {"const"}:
+        return set()
+    if kind == "neg":
+        return _shape_expr_symbols(expr[1])
+    return _shape_expr_symbols(expr[1]) | _shape_expr_symbols(expr[2])
+
+
+def _shape_expr_to_string(expr) -> str:
+    kind = expr[0]
+    if kind == "const":
+        return str(expr[1])
+    if kind == "symbol":
+        return expr[1]
+    if kind == "neg":
+        return f"-{_shape_expr_to_string(expr[1])}"
+    return f"{_shape_expr_to_string(expr[1])}{kind}{_shape_expr_to_string(expr[2])}"
 
 
 def make_type_dict(dbg, typename, args=None):
@@ -53,6 +133,35 @@ def make_type_dict(dbg, typename, args=None):
                 raise InvalidAnnotationException(dbg, "NDArray shape dimensions must be integers.")
             shape.append(a)
         return {"NDArray": {"shape": shape, "dtype": dtype}}
+
+    if variant == "SymbolicNDArray":
+        if len(args) < 2:
+            raise InvalidAnnotationException(dbg, "SymbolicNDArray requires at least 2 arguments (dtype and shape dimensions).")
+        dtype = args[0]
+        shape = []
+        bindings = {}
+        for a in args[1:]:
+            if isinstance(a, int):
+                shape.append(a)
+            elif isinstance(a, str) and a.isidentifier():
+                shape.append(a)
+            elif isinstance(a, tuple) and len(a) == 2 and isinstance(a[0], str) and isinstance(a[1], int):
+                shape.append(a[0])
+                bindings[a[0]] = a[1]
+            elif (
+                isinstance(a, tuple)
+                and len(a) == 3
+                and a[0] == "bound"
+                and isinstance(a[1], str)
+                and isinstance(a[2], int)
+            ):
+                shape.append({"symbol": a[1], "upper": a[2]})
+            else:
+                raise InvalidAnnotationException(
+                    dbg,
+                    "SymbolicNDArray shape dimensions must be integers, unresolved symbols, exact bindings, or bounded symbols."
+                )
+        return {"SymbolicNDArray": {"shape": shape, "dtype": dtype, "bindings": bindings}}
 
     if variant == "DynamicNDArray":
         if len(args) != 3:
@@ -85,6 +194,9 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
         super().__init__()
         self.source_code = source_code
         self.method_name = method_name
+        self.shape_symbol_bindings = {}
+        self.shape_symbol_names = set()
+        self.shape_symbol_bounds = {}
 
     def get_op_name_from_node(self, node) -> str:
         if isinstance(node, ast.Add):
@@ -136,6 +248,10 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
             return "eq"
         elif isinstance(node, ast.NotEq):
             return "ne"
+        elif isinstance(node, ast.In):
+            return "in"
+        elif isinstance(node, ast.NotIn):
+            return "not_in"
         raise UnsupportedOperatorException(self.get_dbg(node),
                                            f"Invalid compare operator {type(node).__name__} in circuit.")
 
@@ -462,20 +578,29 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
         dbg_info = self.get_dbg(node)
         args = [self.visit_expr(arg) for arg in node.args]
         kwargs = {kwarg.arg: self.visit_expr(kwarg.value) for kwarg in node.keywords}
-        # numpy ufunc methods: `np.<binop>.outer(a, b)` — rewrite to a
-        # bare call `np.<binop>_outer(a, b)` so the dispatcher in the
-        # IR generator sees a flat (target, member) pair.
+        # numpy ufunc methods: rewrite to a bare call so the dispatcher in
+        # the IR generator sees a flat (target, member) pair.
         if (
             isinstance(node.func, ast.Attribute)
             and isinstance(node.func.value, ast.Attribute)
             and isinstance(node.func.value.value, ast.Name)
             and node.func.value.value.id == "np"
-            and node.func.attr in ("outer",)
         ):
             binop = node.func.value.attr
-            return {"__class__": "ASTNamedAttribute",
-                    "target": "np", "member": f"{binop}_{node.func.attr}",
-                    "args": args, "kwargs": kwargs}
+            if node.func.attr in ("outer",):
+                return {"__class__": "ASTNamedAttribute",
+                        "target": "np", "member": f"{binop}_{node.func.attr}",
+                        "args": args, "kwargs": kwargs}
+            if node.func.attr == "reduce" and binop in ("add", "multiply"):
+                member = "sum" if binop == "add" else "prod"
+                # NumPy ufunc.reduce defaults axis to 0, while np.sum/prod
+                # default to axis=None. Preserve ufunc semantics when the
+                # call did not spell axis positionally or by keyword.
+                if len(args) == 1 and "axis" not in kwargs:
+                    kwargs = {**kwargs, "axis": {"__class__": "ASTConstantInteger", "value": 0}}
+                return {"__class__": "ASTNamedAttribute",
+                        "target": "np", "member": member,
+                        "args": args, "kwargs": kwargs}
         if isinstance(node.func, ast.Attribute):
             if isinstance(node.func.value, ast.Name):
                 return {"__class__": "ASTNamedAttribute",
@@ -612,21 +737,39 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
                 parsed_stmt = self.visit_Return(stmt)
             elif isinstance(stmt, ast.Expr):
                 parsed_stmt = {"__class__": "ASTExprStatement", "expr": self.visit_expr(stmt.value)}
+            elif isinstance(stmt, ast.Import) or isinstance(stmt, ast.ImportFrom):
+                # In-circuit imports are runtime no-ops once the module-level
+                # Python function has loaded. Keep them so generated benchmark
+                # snippets like `import copy; copy.deepcopy(x)` can lower to
+                # their supported call semantics.
+                parsed_stmt = {"__class__": "ASTPassStatement"}
             elif isinstance(stmt, ast.Raise):
                 parsed_stmt = self.visit_Raise(stmt)
+            elif isinstance(stmt, ast.Try) or (
+                hasattr(ast, "TryStar") and isinstance(stmt, ast.TryStar)
+            ):
+                # `try` / `except` (including `try/except/else`, `try/finally`,
+                # and PEP 654 `try/except*`) has no clean ZK lowering:
+                # exception control flow in the constraint system would just
+                # be an unsatisfiable branch with no recovery path, and the
+                # implicit nature of exception handling makes it easy to
+                # introduce length-hiding / selector-privacy leaks by
+                # accident. Reject at transform time and point the user at an
+                # explicit `if` guard or out-of-circuit validation.
+                raise InvalidCircuitStatementException(
+                    dbg_info,
+                    "`try` / `except` is not supported inside `@zk_circuit`. "
+                    "Use an `if` guard for the recoverable case "
+                    "(`if <condition>: <fallback> else: <body>`), "
+                    "or move the validation outside the circuit."
+                )
             elif isinstance(stmt, ast.FunctionDef):
                 # Pure inner defs are auto-lifted to chips by autolift_nested_defs
                 # before the transformer sees them. If we still see one here,
                 # it's either a closure (captures outer-function locals) or
-                # missing parameter/return annotations.
-                missing_anno = (
-                    any(a.annotation is None for a in stmt.args.args)
-                    or stmt.returns is None
-                )
+                # otherwise not safe to auto-lift.
                 hint = (
-                    "Either annotate all parameters and the return type so it can be auto-lifted as a @zk_chip, or move it to module level."
-                    if missing_anno
-                    else "It captures variables from the outer function. Move it to module level and pass any captured values as arguments, decorating it with @zk_chip."
+                    "It captures variables from the outer function. Move it to module level and pass any captured values as arguments, decorating it with @zk_chip."
                 )
                 raise InvalidCircuitStatementException(
                     dbg_info,
@@ -672,6 +815,26 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
             return self.visit_FormattedValue(node)
         elif isinstance(node, ast.Starred):
             return self.visit_Starred(node)
+        elif isinstance(node, ast.Lambda):
+            dbg_info = self.get_dbg(node)
+            raise UnsupportedLangFeatureException(
+                dbg_info,
+                "Lambda expressions are not supported inside @zk_circuit. "
+                "Define a named helper function or inline the expression instead."
+            )
+        elif isinstance(node, ast.Set):
+            dbg_info = self.get_dbg(node)
+            raise UnsupportedLangFeatureException(
+                dbg_info,
+                "Set literals are not supported inside @zk_circuit because circuits have no set type. "
+                "Use a list or tuple for finite membership checks instead."
+            )
+        elif isinstance(node, ast.Dict):
+            dbg_info = self.get_dbg(node)
+            raise UnsupportedLangFeatureException(
+                dbg_info,
+                "Dict literals are not supported inside @zk_circuit because mapping types are unsupported in circuits."
+            )
         else:
             dbg_info = self.get_dbg(node)
             raise UnsupportedLangFeatureException(dbg_info, f"Expression transformation rule for {type(node)} is not implemented.")
@@ -691,7 +854,208 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
                 kind = "Private"
                 node = node.slice
 
+        def _parse_literal_shape_string(dbg, shape_value: str, marker_name: str) -> list[int]:
+            if not isinstance(shape_value, str):
+                raise InvalidAnnotationException(
+                    dbg,
+                    error_msg + " Dtype-front tensor annotations require a string shape, e.g. `Float[Array, \"2 3\"]`."
+                )
+            dims = shape_value.split()
+            if not dims:
+                raise InvalidAnnotationException(dbg, error_msg + " Tensor shape string must not be empty.")
+            parsed = []
+            for dim in dims:
+                if dim.isdecimal():
+                    value = int(dim)
+                    if value <= 0:
+                        raise InvalidAnnotationException(dbg, error_msg + " Tensor shape dimensions must be positive integers.")
+                    parsed.append(value)
+                    continue
+                if marker_name == "Array" and "=" in dim:
+                    name, value_text = dim.split("=", 1)
+                    if name.isidentifier() and value_text.isdecimal():
+                        value = int(value_text)
+                        if value <= 0:
+                            raise InvalidAnnotationException(
+                                dbg,
+                                error_msg + " Tensor shape dimensions must be positive integers."
+                            )
+                        parsed.append((name, value))
+                        continue
+                if marker_name == "Array" and "<=" in dim:
+                    name, bound_text = dim.split("<=", 1)
+                    if name.isidentifier():
+                        try:
+                            bound = _eval_shape_expr(_parse_shape_expr_token(bound_text), self.shape_symbol_bindings)
+                        except ValueError as exc:
+                            raise InvalidAnnotationException(dbg, error_msg + f" {exc}") from exc
+                        if bound is None:
+                            raise InvalidAnnotationException(
+                                dbg,
+                                error_msg + f" Bounded shape expression `{dim}` could not be reduced to a public upper bound."
+                            )
+                        if bound <= 0:
+                            raise InvalidAnnotationException(
+                                dbg,
+                                error_msg + " Tensor shape upper bounds must be positive integers."
+                            )
+                        self.shape_symbol_names.add(name)
+                        self.shape_symbol_bounds[name] = bound
+                        parsed.append(("bound", name, bound))
+                        continue
+                if marker_name == "Array":
+                    try:
+                        expr = _parse_shape_expr_token(dim)
+                    except ValueError as exc:
+                        raise InvalidAnnotationException(dbg, error_msg + f" {exc}") from exc
+                    value = _eval_shape_expr(expr, self.shape_symbol_bindings)
+                    if value is not None:
+                        if value <= 0:
+                            raise InvalidAnnotationException(
+                                dbg,
+                                error_msg + " Tensor shape dimensions must be positive integers."
+                        )
+                        parsed.append(value)
+                        continue
+                    if isinstance(expr, tuple) and len(expr) == 2 and expr[0] == "symbol":
+                        self.shape_symbol_names.add(expr[1])
+                        parsed.append(expr[1])
+                        continue
+                    for symbol in _shape_expr_symbols(expr):
+                        self.shape_symbol_names.add(symbol)
+                    parsed.append(_shape_expr_to_string(expr))
+                    continue
+                raise InvalidAnnotationException(
+                    dbg,
+                    error_msg + f" `{marker_name}` annotations are recognized, but DynArray/Vec and bounded symbolic shapes are deferred in the literal-static v1 slice."
+                )
+            return parsed
+
+        def _parse_dynarray_bound_string(dbg, shape_value: str) -> tuple[int, int]:
+            if not isinstance(shape_value, str):
+                raise InvalidAnnotationException(
+                    dbg,
+                    error_msg + " DynArray annotations require a bound string, e.g. `Float[DynArray, \"N<=1024\"]`."
+                )
+            dims = shape_value.split()
+            if len(dims) != 1:
+                raise InvalidAnnotationException(
+                    dbg,
+                    error_msg + " DynArray input annotations currently support one bounded dimension, e.g. `Float[DynArray, \"N<=1024\"]`."
+                )
+            dim = dims[0]
+            if "<=" not in dim:
+                if dim.isidentifier():
+                    self.shape_symbol_names.add(dim)
+                    return ("symbol", dim), 1
+                raise InvalidAnnotationException(
+                    dbg,
+                    error_msg + " DynArray dimensions must provide a symbol or an upper bound, e.g. `N` or `N<=1024`."
+                )
+            name, bound_text = dim.split("<=", 1)
+            if not name.isidentifier():
+                raise InvalidAnnotationException(
+                    dbg,
+                    error_msg + " DynArray bounds must have the form `Name<=positive_bound`."
+                )
+            try:
+                bound = _eval_shape_expr(_parse_shape_expr_token(bound_text), self.shape_symbol_bindings)
+            except ValueError as exc:
+                raise InvalidAnnotationException(dbg, error_msg + f" {exc}") from exc
+            if bound is None:
+                raise InvalidAnnotationException(
+                    dbg,
+                    error_msg + f" DynArray bound expression `{bound_text}` could not be reduced to a public upper bound."
+                )
+            if bound <= 0:
+                raise InvalidAnnotationException(
+                    dbg,
+                    error_msg + " DynArray upper bounds must be positive integers."
+                )
+            self.shape_symbol_names.add(name)
+            self.shape_symbol_bounds[name] = bound
+            return bound, 1
+
+        def _parse_dtype_front_tensor(_n):
+            if (
+                not isinstance(_n, ast.Subscript)
+                or not isinstance(_n.value, ast.Name)
+                or _n.value.id not in _DTYPE_FRONT_ALIASES
+            ):
+                return None
+            if not isinstance(_n.slice, ast.Tuple) or len(_n.slice.elts) != 2:
+                raise InvalidAnnotationException(
+                    self.get_dbg(_n),
+                    error_msg + " Dtype-front tensor annotations use `DType[Array, \"shape\"]`."
+                )
+            marker_node, shape_node = _n.slice.elts
+            if not isinstance(marker_node, ast.Name):
+                raise InvalidAnnotationException(self.get_dbg(_n), error_msg)
+            marker_name = marker_node.id
+            if marker_name == "DynArray":
+                if not isinstance(shape_node, ast.Constant):
+                    raise InvalidAnnotationException(self.get_dbg(shape_node), error_msg)
+                max_length, max_rank = _parse_dynarray_bound_string(
+                    self.get_dbg(shape_node), shape_node.value
+                )
+                dtype = make_type_dict(self.get_dbg(_n.value), _DTYPE_FRONT_ALIASES[_n.value.id])
+                if isinstance(max_length, tuple) and max_length[0] == "symbol":
+                    return make_type_dict(
+                        self.get_dbg(_n),
+                        "SymbolicNDArray",
+                        tuple([dtype, max_length[1]]),
+                    )
+                return make_type_dict(
+                    self.get_dbg(_n),
+                    "DynamicNDArray",
+                    tuple([dtype, max_length, max_rank]),
+                )
+            if marker_name != "Array":
+                raise InvalidAnnotationException(
+                    self.get_dbg(marker_node),
+                    error_msg + f" `{marker_name}` annotations are recognized, but DynArray/Vec and bounded symbolic shapes are deferred in the literal-static v1 slice."
+                )
+            if not isinstance(shape_node, ast.Constant):
+                raise InvalidAnnotationException(self.get_dbg(shape_node), error_msg)
+            shape = _parse_literal_shape_string(self.get_dbg(shape_node), shape_node.value, marker_name)
+            dtype = make_type_dict(self.get_dbg(_n.value), _DTYPE_FRONT_ALIASES[_n.value.id])
+            typename = "SymbolicNDArray" if any(not isinstance(d, int) for d in shape) else "NDArray"
+            return make_type_dict(self.get_dbg(_n), typename, tuple([dtype, *shape]))
+
+        def _reject_deferred_vec(_n):
+            if isinstance(_n, ast.Subscript) and isinstance(_n.value, ast.Name) and _n.value.id == "Vec":
+                raise InvalidAnnotationException(
+                    self.get_dbg(_n),
+                    error_msg + " `Vec[...]` annotations are recognized, but sized homogeneous list lowering is deferred in the literal-static v1 slice."
+                )
+
+        def _resolve_symbolic_bindings(dt):
+            if not isinstance(dt, dict) or "SymbolicNDArray" not in dt:
+                return dt
+            data = dict(dt["SymbolicNDArray"])
+            bindings = dict(data.get("bindings") or {})
+            for dim in data["shape"]:
+                if isinstance(dim, str):
+                    self.shape_symbol_names.update(_shape_expr_symbols(_parse_shape_expr_token(dim)))
+            for dim in data["shape"]:
+                if isinstance(dim, str) and dim not in bindings and dim in self.shape_symbol_bindings:
+                    bindings[dim] = self.shape_symbol_bindings[dim]
+            for symbol, value in bindings.items():
+                known = self.shape_symbol_bindings.get(symbol)
+                if known is not None and known != value:
+                    raise InvalidAnnotationException(
+                        self.get_dbg(node),
+                        error_msg + f" Conflicting exact shape bindings for `{symbol}`: {known} vs {value}."
+                    )
+                self.shape_symbol_bindings[symbol] = value
+            data["bindings"] = bindings
+            return {"SymbolicNDArray": data}
+
         def _inner_parser(_n):
+            dtype_front = _parse_dtype_front_tensor(_n)
+            if dtype_front is not None:
+                return dtype_front
+            _reject_deferred_vec(_n)
             if isinstance(_n, ast.Name):
                 return make_type_dict(self.get_dbg(_n), _n.id)
             elif isinstance(_n, ast.Subscript):
@@ -727,7 +1091,7 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
                     self.get_dbg(_n), error_msg + f" Constant value {_n.value} is not supported as an annotation.")
             raise InvalidAnnotationException(self.get_dbg(_n), error_msg)
 
-        return {"kind": kind, "dt": _inner_parser(node)}
+        return {"kind": kind, "dt": _resolve_symbolic_bindings(_inner_parser(node))}
 
     def visit_slice_key(self, node):
         constant_none = {"__class__": "ASTConstantNone"}

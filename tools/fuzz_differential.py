@@ -85,6 +85,7 @@ import math
 import multiprocessing as mp
 import os
 import random
+import signal
 import sys
 import time
 import traceback
@@ -113,6 +114,231 @@ FLOAT_TOL = 1e-3   # ZK fixed-point quantisation is ~2^-precision_bits; transcen
                     # the differential signal. Tighter would yield spurious divergences.
 INT_TOL = 0         # ints are exact
 TIMEOUT_SEC = 30
+
+
+# ----------------------------------------------------------------------------
+# Supervisor — continuous-run stop flag
+# ----------------------------------------------------------------------------
+# The continuous mode installs SIGINT/SIGTERM handlers that flip this flag.
+# The main loop checks it between iterations and drains gracefully (finish
+# current iter, write summary, exit 0). A second signal restores the default
+# handler so ctrl-C ctrl-C still kills hard.
+
+_STOP_REQUESTED = False
+_STOP_REASON: str | None = None
+
+
+def _install_stop_signals() -> None:
+    """Wire SIGINT/SIGTERM to a soft-stop flag for continuous mode.
+
+    Idempotent: safe to call once at supervisor startup. In environments
+    where signal handlers can't be installed (threads, restricted runtimes)
+    the failure is logged and ignored — the supervisor will still exit on
+    hard kill, just without a graceful drain.
+    """
+    def _handler(signum, _frame):
+        global _STOP_REQUESTED, _STOP_REASON
+        if _STOP_REQUESTED:
+            # Second signal — restore default and re-raise so the user can
+            # always get out via repeated ctrl-C.
+            try:
+                signal.signal(signum, signal.SIG_DFL)
+            except (ValueError, OSError):
+                pass
+            os.kill(os.getpid(), signum)
+            return
+        _STOP_REQUESTED = True
+        _STOP_REASON = f"signal {signum}"
+        print(
+            f"[fuzz] stop requested ({_STOP_REASON}); draining current iteration...",
+            flush=True,
+        )
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(sig, _handler)
+        except (ValueError, OSError) as e:
+            print(f"[fuzz] could not install handler for {sig}: {e}", flush=True)
+
+
+def _reset_stop_flag_for_tests() -> None:
+    """Test helper — reset the module-level stop flag between invocations."""
+    global _STOP_REQUESTED, _STOP_REASON
+    _STOP_REQUESTED = False
+    _STOP_REASON = None
+
+
+# ----------------------------------------------------------------------------
+# Coverage tracker (Phase 3 Step 2 — pillar-3 coverage-guided generation)
+# ----------------------------------------------------------------------------
+# Each child compile, when `ZINNIA_TELEMETRY_DIR` is set, writes a single
+# `<pid>-0.jsonl` JSONL file with structured R/E/Q events (see
+# src/optim/telemetry.rs). The supervisor reads each iteration's file after
+# the child exits, tallies distinct (strategy, discharge, fact) signatures
+# per shape, and periodically reweights the generator's shape distribution
+# inversely-proportional to per-shape signal diversity.
+#
+# Bias model (matches card §6, with @Zane's two guards):
+#   bias[s]  = 1 / (1 + coverage_score(s))                # explore unfired
+#   new[s]   = (1-explore)*bias[s]*scale + explore*base[s] # blend with baseline
+#   new[s]  := max(new[s], min_shape_prob * total)         # per-shape floor
+#
+# `explore` (CLI: --coverage-exploration-floor, default 0.25) keeps the
+# base shape distribution informing the mix so the regulator can't crush
+# diversity. `min_shape_prob` (--coverage-min-shape-prob, default 0.01)
+# keeps each shape ≥ 1% of total weight so already-saturated shapes still
+# get sampled — regressions on covered paths still surface.
+
+class CoverageTracker:
+    """Aggregates Phase-1 telemetry events per shape across the fuzzer's run.
+
+    Stores SETS (not counts) of distinct signal signatures, because the
+    coverage metric the card prescribes is "unfired contracts/strategies",
+    not "how often a thing fires" — diversity, not frequency.
+    """
+
+    def __init__(self) -> None:
+        # Per-shape sets, lazy-initialized on first ingest.
+        self.per_shape_strategies: dict[str, set[str]] = {}
+        self.per_shape_discharges: dict[str, set[tuple[str, str]]] = {}
+        self.per_shape_facts: dict[str, set[tuple[str, str]]] = {}
+        # Per-shape iteration counter (number of completed iterations whose
+        # telemetry we've ingested). Distinct from per_shape_summary counts
+        # which include non-success outcomes.
+        self.shape_iters: dict[str, int] = {}
+        # Global ingestion stats for diagnostics.
+        self.total_events_ingested = 0
+        self.total_files_ingested = 0
+        self.total_ingest_errors = 0
+
+    def note_iteration(self, shape: str) -> None:
+        """Record that one fuzzer iteration completed for ``shape``. Called
+        exactly once per iteration by `_run_one_iteration`, independent of
+        how many telemetry files that iteration produced (one fuzzer
+        iteration can trigger multiple `Builder` constructions inside the
+        child compile, each opening its own sink file)."""
+        self.shape_iters[shape] = self.shape_iters.get(shape, 0) + 1
+
+    def ingest_file(self, shape: str, jsonl_path: Path) -> int:
+        """Parse a JSONL telemetry file and merge its signals into the
+        per-shape sets. Returns count of events ingested (0 if file missing
+        or unreadable — telemetry is best-effort, never raises).
+
+        Does NOT bump `shape_iters`; iteration counting lives in
+        `note_iteration` so a single fuzzer iter that produces N files
+        still counts as one iter, not N.
+        """
+        if not jsonl_path.exists():
+            return 0
+        try:
+            raw = jsonl_path.read_text()
+        except OSError:
+            self.total_ingest_errors += 1
+            return 0
+
+        strategies = self.per_shape_strategies.setdefault(shape, set())
+        discharges = self.per_shape_discharges.setdefault(shape, set())
+        facts = self.per_shape_facts.setdefault(shape, set())
+        n = 0
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                self.total_ingest_errors += 1
+                continue
+            kind = ev.get("event")
+            if kind == "strategy_dispatch":
+                strategies.add(ev.get("strategy", "?"))
+            elif kind == "strategy_default":
+                # Default fall-through is its own distinct signal so the
+                # regulator can tell "no gated strategy fired for op X"
+                # apart from "gated strategy Y fired for op X". Card §6:
+                # "discharge outcomes per op" + "strategies dispatched".
+                strategies.add(f"default:{ev.get('op', '?')}")
+            elif kind == "discharge":
+                discharges.add((ev.get("op", "?"), ev.get("outcome", "?")))
+            elif kind == "fact_emit":
+                # Use (producer, term_summary) as the signature. term_summary
+                # is the Debug-printed `ContractTerm` so semantically-distinct
+                # facts get distinct signatures.
+                facts.add((ev.get("producer", "?"), ev.get("term_summary", "?")))
+            # compile_start / compile_end carry no coverage signal; skip.
+            n += 1
+        self.total_events_ingested += n
+        self.total_files_ingested += 1
+        return n
+
+    def shape_coverage_score(self, shape: str) -> int:
+        """Signal-diversity score for one shape: sum of distinct
+        (strategies, discharges, facts) seen across all its iterations."""
+        return (
+            len(self.per_shape_strategies.get(shape, ()))
+            + len(self.per_shape_discharges.get(shape, ()))
+            + len(self.per_shape_facts.get(shape, ()))
+        )
+
+    def to_summary(self) -> dict:
+        """Snapshot of coverage state for summary.json. Sorted-key shape
+        ordering keeps diffs across runs stable for grep-based regression
+        comparison."""
+        return {
+            shape: {
+                "iters": self.shape_iters.get(shape, 0),
+                "strategies_seen": len(self.per_shape_strategies.get(shape, ())),
+                "discharges_seen": len(self.per_shape_discharges.get(shape, ())),
+                "facts_seen": len(self.per_shape_facts.get(shape, ())),
+                "score": self.shape_coverage_score(shape),
+            }
+            for shape in sorted(
+                set(self.shape_iters)
+                | set(self.per_shape_strategies)
+                | set(self.per_shape_discharges)
+                | set(self.per_shape_facts)
+            )
+        }
+
+
+def _reweight_shape_weights(
+    base_weights: dict[str, int],
+    tracker: CoverageTracker,
+    exploration_floor: float,
+    min_shape_prob: float,
+) -> list[float]:
+    """Compute new per-shape weights given coverage diversity, returning
+    the list in the same key order as ``base_weights`` so the caller's
+    `shape_population` ordering still aligns.
+
+    Inverse-coverage bias, blended with a fraction of the base distribution,
+    then clamped to a per-shape probability floor.
+    """
+    shapes = list(base_weights.keys())
+    base = [float(base_weights[s]) for s in shapes]
+    cov = [tracker.shape_coverage_score(s) for s in shapes]
+    bias_raw = [1.0 / (1.0 + c) for c in cov]
+
+    # Renorm the bias vector to the mean of the base distribution so the
+    # blended weights stay in roughly the same magnitude band as before.
+    mean_base = sum(base) / len(base) if base else 1.0
+    mean_bias = sum(bias_raw) / len(bias_raw) if bias_raw else 1.0
+    if mean_bias <= 0.0:
+        mean_bias = 1.0
+    bias = [b * mean_base / mean_bias for b in bias_raw]
+
+    # Blend: (1-floor)*bias + floor*base.
+    blended = [
+        (1.0 - exploration_floor) * b + exploration_floor * x
+        for b, x in zip(bias, base)
+    ]
+
+    # Per-shape floor (Zane's coverage-floor guard): each shape gets ≥
+    # min_shape_prob of total weight, so already-saturated shapes still
+    # surface regressions on covered paths.
+    total = sum(blended) or 1.0
+    floor_value = min_shape_prob * total
+    return [max(w, floor_value) for w in blended]
 
 
 # ----------------------------------------------------------------------------
@@ -1702,6 +1928,7 @@ def run_zinnia(
         args=(source, inputs_repr, list(sys.path), os.getcwd(), child_conn, backend, halo2_params),
     )
     proc.start()
+    child_pid = proc.pid  # Captured before join so timeout / crash paths still know it.
     child_conn.close()  # parent only reads
     proc.join(timeout)
     if proc.is_alive():
@@ -1710,24 +1937,37 @@ def run_zinnia(
         if proc.is_alive():
             proc.kill()
             proc.join()
-        return {"status": "timeout"}
+        return {"status": "timeout", "pid": child_pid}
     # Drain the pipe.
     if parent_conn.poll():
         try:
             tag, payload = parent_conn.recv()
         except EOFError:
-            return {"status": "crash", "exception": f"child died (exitcode={proc.exitcode})"}
+            return {
+                "status": "crash",
+                "exception": f"child died (exitcode={proc.exitcode})",
+                "pid": child_pid,
+            }
         if tag == "ok":
             return {
                 "status": "ok",
                 "satisfied": payload["satisfied"],
                 "extra": payload.get("extra", {}),
+                "pid": child_pid,
             }
         elif tag == "fail":
-            return {"status": "compile_failure", **payload}
+            return {"status": "compile_failure", "pid": child_pid, **payload}
         else:
-            return {"status": "crash", "exception": f"unknown tag: {tag!r}"}
-    return {"status": "crash", "exception": f"no message; exitcode={proc.exitcode}"}
+            return {
+                "status": "crash",
+                "exception": f"unknown tag: {tag!r}",
+                "pid": child_pid,
+            }
+    return {
+        "status": "crash",
+        "exception": f"no message; exitcode={proc.exitcode}",
+        "pid": child_pid,
+    }
 
 
 # ----------------------------------------------------------------------------
@@ -1808,12 +2048,175 @@ def _json_default(o):
 
 
 # ----------------------------------------------------------------------------
+# Iteration / summary helpers (shared by finite and continuous modes)
+# ----------------------------------------------------------------------------
+
+def _run_one_iteration(
+    i: int,
+    rng: random.Random,
+    args,
+    halo2_params,
+    report_dir: Path,
+    summary: dict,
+    per_shape: dict,
+    shape_population: list,
+    shape_weight_list: list,
+    coverage: CoverageTracker | None = None,
+    telemetry_root: Path | None = None,
+) -> dict:
+    """Run a single (generate, run, compare, report) cycle.
+
+    Mutates ``summary`` and ``per_shape`` in place. Returns a small info
+    dict ``{shape, outcome, wall}`` for callers that want per-iteration
+    telemetry (heartbeat printer, coverage feedback in continuous mode).
+    Output / divergence reporting is unchanged from phase-3a.
+
+    When ``coverage`` and ``telemetry_root`` are both passed, points
+    `ZINNIA_TELEMETRY_DIR` at a per-iteration subdir before spawning the
+    child, then ingests the child's JSONL file after join and folds the
+    signals into the tracker. Telemetry is purely best-effort: a missing
+    file is silently ignored (the child may not have constructed a Builder,
+    or may have crashed before the sink opened).
+    """
+    if args.shape:
+        shape = args.shape
+    else:
+        shape = rng.choices(shape_population, weights=shape_weight_list, k=1)[0]
+    try:
+        source, inputs, shape_tag, ref_output, expected_satisfied = gen_program(shape, rng)
+    except Exception as e:
+        print(
+            f"[fuzz] iter={i} GEN-ERROR shape={shape} {type(e).__name__}: {e}",
+            flush=True,
+        )
+        return {"shape": shape, "outcome": "gen_error", "wall": 0.0}
+
+    # Set up per-iteration telemetry dir (inherited by the child via env).
+    iter_telemetry_dir = None
+    if coverage is not None and telemetry_root is not None:
+        iter_telemetry_dir = telemetry_root / f"iter-{i:08d}"
+        iter_telemetry_dir.mkdir(parents=True, exist_ok=True)
+        os.environ["ZINNIA_TELEMETRY_DIR"] = str(iter_telemetry_dir)
+    else:
+        os.environ.pop("ZINNIA_TELEMETRY_DIR", None)
+
+    iter_t0 = time.time()
+    zinnia_result = run_zinnia(
+        source, inputs, timeout=args.timeout,
+        backend=args.backend, halo2_params=halo2_params,
+    )
+    iter_secs = time.time() - iter_t0
+    outcome_kind, detail = interpret_outcome(zinnia_result, expected_satisfied)
+
+    # Ingest telemetry from the child PID's files, if telemetry is active.
+    if coverage is not None and iter_telemetry_dir is not None:
+        child_pid = zinnia_result.get("pid")
+        if child_pid is not None:
+            # One fuzzer iteration spawns one child, but the child's compile
+            # may construct multiple `Builder` instances (each opens its own
+            # sink file `<pid>-<seq>.jsonl`). Ingest all matching files.
+            for jsonl_path in iter_telemetry_dir.glob(f"{child_pid}-*.jsonl"):
+                coverage.ingest_file(shape_tag, jsonl_path)
+                try:
+                    jsonl_path.unlink()
+                except OSError:
+                    pass
+        # One iteration counted once, independent of file count.
+        coverage.note_iteration(shape_tag)
+        # Best-effort: drop the empty per-iter subdir.
+        try:
+            iter_telemetry_dir.rmdir()
+        except OSError:
+            pass
+
+    summary[outcome_kind] += 1
+    per_shape[shape_tag][outcome_kind] += 1
+
+    extra = zinnia_result.get("extra") or {}
+    extra_bits = ""
+    if extra:
+        extra_bits = " " + " ".join(f"{k}={v}" for k, v in extra.items())
+    print(
+        f"[fuzz] iter={i:04d} shape={shape_tag} "
+        f"outcome={outcome_kind} wall={iter_secs:.1f}s"
+        + (f" expected_sat={expected_satisfied}" if shape_tag == "I" else "")
+        + (f" detail={detail}" if detail else "")
+        + extra_bits,
+        flush=True,
+    )
+
+    if outcome_kind != "success":
+        write_report(
+            report_dir=report_dir,
+            index=i,
+            shape=shape_tag,
+            source=source,
+            inputs=inputs,
+            ref_output=ref_output,
+            zinnia_result=zinnia_result,
+            outcome_kind=outcome_kind,
+            detail=detail,
+        )
+    return {"shape": shape_tag, "outcome": outcome_kind, "wall": iter_secs}
+
+
+def _write_summary_json(
+    report_dir: Path,
+    seed: int,
+    iterations_so_far: int,
+    args,
+    halo2_params,
+    summary: dict,
+    per_shape: dict,
+    elapsed: float,
+    coverage: CoverageTracker | None = None,
+    coverage_refresh_state: dict | None = None,
+) -> None:
+    """Write ``summary.json`` atomically. Called once at end of finite mode,
+    and on every heartbeat plus on graceful drain in continuous mode.
+
+    Atomic write (tmp + rename) keeps observers from reading a half-written
+    file when the supervisor is checkpointing under a long-running fuzzer.
+    """
+    payload = {
+        "seed": seed,
+        "iterations": iterations_so_far,
+        "elapsed_sec": elapsed,
+        "backend": args.backend,
+        "halo2_params": halo2_params,
+        "mode": getattr(args, "mode", "finite"),
+        "summary": summary,
+        "per_shape": per_shape,
+    }
+    if coverage is not None:
+        payload["coverage"] = {
+            "ingest_stats": {
+                "files": coverage.total_files_ingested,
+                "events": coverage.total_events_ingested,
+                "errors": coverage.total_ingest_errors,
+            },
+            "per_shape": coverage.to_summary(),
+        }
+        if coverage_refresh_state is not None:
+            payload["coverage"]["regulator"] = {
+                "last_refresh_iter": coverage_refresh_state.get("last_refresh_iter", 0),
+                "refresh_count": coverage_refresh_state.get("refresh_count", 0),
+                "current_weights": coverage_refresh_state.get("current_weights"),
+            }
+    tmp = report_dir / "summary.json.tmp"
+    final = report_dir / "summary.json"
+    tmp.write_text(json.dumps(payload, indent=2))
+    os.replace(tmp, final)
+
+
+# ----------------------------------------------------------------------------
 # Main loop
 # ----------------------------------------------------------------------------
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--iterations", type=int, default=30)
+    parser.add_argument("--iterations", type=int, default=30,
+                        help="finite mode only: number of iterations to run before exiting.")
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument(
         "--shape",
@@ -1835,6 +2238,62 @@ def main(argv=None) -> int:
                         help="halo2 fixed-point precision bits. Default 32.")
     parser.add_argument("--halo2-lookup-bits", type=int, default=8,
                         help="halo2 lookup table bits. Default 8.")
+    parser.add_argument(
+        "--mode",
+        choices=["finite", "continuous"],
+        default="finite",
+        help=(
+            "finite: run for --iterations then exit (default, phase-3a "
+            "compatible). continuous: run forever until SIGINT/SIGTERM, "
+            "checkpointing summary.json every heartbeat. This is the "
+            "pillar-3 'no-termination' mode."
+        ),
+    )
+    parser.add_argument(
+        "--heartbeat-iters",
+        type=int,
+        default=50,
+        help="continuous mode: print + checkpoint summary every N iterations.",
+    )
+    parser.add_argument(
+        "--heartbeat-secs",
+        type=float,
+        default=300.0,
+        help="continuous mode: also print + checkpoint summary every T seconds, "
+             "whichever trips first.",
+    )
+    parser.add_argument(
+        "--coverage",
+        choices=["auto", "on", "off"],
+        default="auto",
+        help="enable coverage-guided generation. 'auto' (default) = on in "
+             "continuous mode, off in finite mode. Coverage taps the Phase-1 "
+             "telemetry sink (ZINNIA_TELEMETRY_DIR) to bias the shape "
+             "distribution inversely-proportional to per-shape signal diversity.",
+    )
+    parser.add_argument(
+        "--coverage-refresh-iters",
+        type=int,
+        default=20,
+        help="recompute shape weights every N iterations once coverage is on.",
+    )
+    parser.add_argument(
+        "--coverage-exploration-floor",
+        type=float,
+        default=0.25,
+        help="fraction of the base shape distribution that bleeds through the "
+             "inverse-coverage bias. Higher = more attention to the original "
+             "balance; lower = more aggressive exploration of unfired paths. "
+             "Range [0,1].",
+    )
+    parser.add_argument(
+        "--coverage-min-shape-prob",
+        type=float,
+        default=0.01,
+        help="per-shape minimum sampling probability floor. Even fully-saturated "
+             "shapes keep ≥ this fraction of total weight, so regressions on "
+             "well-trodden paths still surface (Zane's coverage-floor guard).",
+    )
     args = parser.parse_args(argv)
 
     if args.timeout is None:
@@ -1881,60 +2340,145 @@ def main(argv=None) -> int:
     shape_population = list(shape_weights.keys())
     shape_weight_list = [shape_weights[s] for s in shape_population]
 
+    # Coverage tracker: opt-in via --coverage. 'auto' = on for continuous mode
+    # (the long-running case is the whole point of pillar-3 coverage-guidance)
+    # and off for finite mode (avoids per-iter telemetry I/O overhead on the
+    # phase-3a-compatible quick-loop path).
+    coverage_on = (
+        args.coverage == "on"
+        or (args.coverage == "auto" and args.mode == "continuous")
+    )
+    coverage: CoverageTracker | None = None
+    telemetry_root: Path | None = None
+    if coverage_on:
+        coverage = CoverageTracker()
+        telemetry_root = report_dir / "telemetry"
+        telemetry_root.mkdir(parents=True, exist_ok=True)
+    coverage_refresh_state: dict | None = (
+        {"last_refresh_iter": 0, "refresh_count": 0, "current_weights": None}
+        if coverage_on
+        else None
+    )
+
     print(
-        f"[fuzz] seed={seed} iterations={args.iterations} backend={args.backend} "
-        f"timeout={args.timeout}s report_dir={report_dir}"
+        f"[fuzz] seed={seed} mode={args.mode} "
+        + (f"iterations={args.iterations} " if args.mode == "finite" else "")
+        + f"backend={args.backend} timeout={args.timeout}s report_dir={report_dir} "
+        + f"coverage={'on' if coverage_on else 'off'}",
+        flush=True,
     )
     if args.backend == "halo2":
-        print(f"[fuzz] halo2_params={halo2_params}")
+        print(f"[fuzz] halo2_params={halo2_params}", flush=True)
+    if args.mode == "continuous":
+        print(
+            f"[fuzz] continuous mode: heartbeat every {args.heartbeat_iters} iters "
+            f"or {args.heartbeat_secs:.0f}s. Send SIGINT/SIGTERM to drain.",
+            flush=True,
+        )
+        if coverage_on:
+            print(
+                f"[fuzz] coverage-guided: refresh weights every "
+                f"{args.coverage_refresh_iters} iters; explore-floor="
+                f"{args.coverage_exploration_floor}; min-shape-prob="
+                f"{args.coverage_min_shape_prob}",
+                flush=True,
+            )
+        _install_stop_signals()
     start = time.time()
 
-    for i in range(args.iterations):
-        if args.shape:
-            shape = args.shape
-        else:
-            shape = rng.choices(shape_population, weights=shape_weight_list, k=1)[0]
-        try:
-            source, inputs, shape_tag, ref_output, expected_satisfied = gen_program(shape, rng)
-        except Exception as e:
-            print(f"[fuzz] iter={i} GEN-ERROR shape={shape} {type(e).__name__}: {e}")
-            continue
-
-        iter_t0 = time.time()
-        zinnia_result = run_zinnia(
-            source, inputs, timeout=args.timeout,
-            backend=args.backend, halo2_params=halo2_params,
-        )
-        iter_secs = time.time() - iter_t0
-        outcome_kind, detail = interpret_outcome(zinnia_result, expected_satisfied)
-
-        summary[outcome_kind] += 1
-        per_shape[shape_tag][outcome_kind] += 1
-
-        extra = zinnia_result.get("extra") or {}
-        extra_bits = ""
-        if extra:
-            extra_bits = " " + " ".join(f"{k}={v}" for k, v in extra.items())
-        print(
-            f"[fuzz] iter={i:04d} shape={shape_tag} "
-            f"outcome={outcome_kind} wall={iter_secs:.1f}s"
-            + (f" expected_sat={expected_satisfied}" if shape_tag == "I" else "")
-            + (f" detail={detail}" if detail else "")
-            + extra_bits
-        )
-
-        if outcome_kind != "success":
-            write_report(
-                report_dir=report_dir,
-                index=i,
-                shape=shape_tag,
-                source=source,
-                inputs=inputs,
-                ref_output=ref_output,
-                zinnia_result=zinnia_result,
-                outcome_kind=outcome_kind,
-                detail=detail,
+    if args.mode == "continuous":
+        i = 0
+        last_hb_t = start
+        last_hb_i = 0
+        last_reweight_i = 0
+        while not _STOP_REQUESTED:
+            _run_one_iteration(
+                i, rng, args, halo2_params, report_dir,
+                summary, per_shape, shape_population, shape_weight_list,
+                coverage=coverage,
+                telemetry_root=telemetry_root,
             )
+            i += 1
+
+            # Coverage reweight — periodic, with at least one full cycle of
+            # signal before the first refresh so the bias has data to bite on.
+            if (
+                coverage is not None
+                and (i - last_reweight_i) >= args.coverage_refresh_iters
+            ):
+                new_weights = _reweight_shape_weights(
+                    shape_weights,
+                    coverage,
+                    exploration_floor=args.coverage_exploration_floor,
+                    min_shape_prob=args.coverage_min_shape_prob,
+                )
+                # Replace contents in place so the live reference held by the
+                # loop sees the new weights without a rebinding.
+                shape_weight_list[:] = new_weights
+                last_reweight_i = i
+                if coverage_refresh_state is not None:
+                    coverage_refresh_state["last_refresh_iter"] = i
+                    coverage_refresh_state["refresh_count"] += 1
+                    coverage_refresh_state["current_weights"] = {
+                        s: round(w, 4) for s, w in zip(shape_population, new_weights)
+                    }
+
+            now = time.time()
+            if (
+                (i - last_hb_i) >= args.heartbeat_iters
+                or (now - last_hb_t) >= args.heartbeat_secs
+            ):
+                elapsed = now - start
+                cov_bits = ""
+                if coverage_refresh_state is not None:
+                    cov_bits = (
+                        f" cov_refresh_iter={coverage_refresh_state['last_refresh_iter']}"
+                        f" cov_since_refresh={i - coverage_refresh_state['last_refresh_iter']}"
+                        f" cov_files={coverage.total_files_ingested}"
+                        f" cov_events={coverage.total_events_ingested}"
+                    )
+                print(
+                    f"[fuzz] heartbeat iter={i} elapsed={elapsed:.0f}s "
+                    f"summary={summary}{cov_bits}",
+                    flush=True,
+                )
+                _write_summary_json(
+                    report_dir, seed, i, args, halo2_params,
+                    summary, per_shape, elapsed,
+                    coverage=coverage,
+                    coverage_refresh_state=coverage_refresh_state,
+                )
+                last_hb_t = now
+                last_hb_i = i
+
+        elapsed = time.time() - start
+        print(
+            f"[fuzz] continuous-mode drained after iter={i} elapsed={elapsed:.0f}s "
+            f"reason={_STOP_REASON}",
+            flush=True,
+        )
+        print(f"[fuzz] summary: {summary}", flush=True)
+        for shp, sub in per_shape.items():
+            print(f"[fuzz]   shape {shp}: {sub}", flush=True)
+        print(f"[fuzz] reports: {report_dir}", flush=True)
+        _write_summary_json(
+            report_dir, seed, i, args, halo2_params, summary, per_shape, elapsed,
+            coverage=coverage,
+            coverage_refresh_state=coverage_refresh_state,
+        )
+        return 0
+
+    # ----- finite mode (phase-3a-compatible) -----
+    for i in range(args.iterations):
+        # Use the same helper as continuous mode so the iteration body stays
+        # in one place. Coverage is opt-in even in finite mode (off by default
+        # under --coverage=auto) so the bit-compatible path is preserved.
+        _run_one_iteration(
+            i, rng, args, halo2_params, report_dir,
+            summary, per_shape, shape_population, shape_weight_list,
+            coverage=coverage,
+            telemetry_root=telemetry_root,
+        )
 
     elapsed = time.time() - start
 
@@ -1946,16 +2490,14 @@ def main(argv=None) -> int:
     print(f"[fuzz] reports: {report_dir}")
 
     # Always write a summary.json so the report dir has something even on
-    # an all-success run.
-    (report_dir / "summary.json").write_text(json.dumps({
-        "seed": seed,
-        "iterations": args.iterations,
-        "elapsed_sec": elapsed,
-        "backend": args.backend,
-        "halo2_params": halo2_params,
-        "summary": summary,
-        "per_shape": per_shape,
-    }, indent=2))
+    # an all-success run. Use the same atomic helper continuous mode uses
+    # so the on-disk shape stays consistent across modes.
+    _write_summary_json(
+        report_dir, seed, args.iterations, args, halo2_params,
+        summary, per_shape, elapsed,
+        coverage=coverage,
+        coverage_refresh_state=coverage_refresh_state,
+    )
 
     return 0
 

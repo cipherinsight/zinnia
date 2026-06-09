@@ -1,0 +1,93 @@
+{
+  "categories": [
+    "complex",
+    "denominator-obligation",
+    "loop-bounded"
+  ],
+  "diagnostics": [
+    "Complex kernels require Complex dtype support or a fail-closed classification."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "abs"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 17,
+      "line_start": 13,
+      "mutated_params": [],
+      "name": "limit1",
+      "ops": [
+        "Div",
+        "Lt"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "x",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "epsilon",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "abs",
+        "len",
+        "limit1",
+        "np.empty",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 27,
+      "line_start": 20,
+      "mutated_params": [],
+      "name": "clip",
+      "ops": [
+        "Gt",
+        "Mult"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "z",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "_max",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_clip/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_clip",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: complex, denominator-obligation, in-place-mutation, loop-bounded\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.\nimport numpy as np\n\n@zk_chip\ndef limit1(x: Float, epsilon: Float=1e-06):\n    if abs(x) < epsilon:\n        return 0\n    else:\n        return x / abs(x)\n\n@zk_circuit\ndef clip(z: Complex[Array, 'N<=1024'], _max: Float):\n    out = np.empty(z.shape, dtype=z.dtype)\n    for i in range(len(z)):\n        if abs(z[i]) > _max:\n            out[i] = limit1(z[i]) * _max\n        else:\n            out[i] = z[i]\n    return out",
+  "source_status": "direct"
+}

@@ -11,11 +11,7 @@ use crate::prove::types::Value;
 pub trait ExternalCallback {
     /// Call an external function by name with the given arguments.
     /// Arguments and return value use the unified `Value` type.
-    fn call(
-        &self,
-        func_name: &str,
-        args: Vec<Value>,
-    ) -> Result<Value, ProvingError>;
+    fn call(&self, func_name: &str, args: Vec<Value>) -> Result<Value, ProvingError>;
 }
 
 /// A no-op callback that rejects all external calls.

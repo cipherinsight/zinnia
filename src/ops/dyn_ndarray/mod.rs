@@ -8,12 +8,66 @@ use std::collections::HashMap;
 use crate::ir_gen::IRGenerator;
 use crate::types::{NumberType, ScalarValue, Value};
 
-pub mod metadata;
-pub mod constructors;
-pub mod reshape;
 pub mod aggregation;
-pub mod memory_ops;
 pub mod binary;
+pub mod constructors;
+pub mod memory_ops;
+pub mod metadata;
+pub mod reshape;
+
+/// True if `meta` describes a contiguous row-major view from offset 0.
+/// Consumers that read via `read_all_typed` + `row_major_strides` need
+/// this to hold; if it doesn't, call [`force_contiguous`] first.
+pub fn is_contiguous(meta: &crate::types::DynArrayMeta) -> bool {
+    if meta.logical_offset != 0 {
+        return false;
+    }
+    let expected = crate::helpers::shape_arith::row_major_strides(&meta.logical_shape);
+    meta.logical_strides == expected
+}
+
+/// Materialise a possibly-non-contiguous DynamicNDArray view into a fresh
+/// contiguous row-major segment. No-op (returns a clone) if already
+/// contiguous. Used by ops whose downstream code assumes
+/// `read_all_typed` returns cells in row-major logical order.
+pub fn force_contiguous(
+    b: &mut crate::builder::IRBuilder,
+    data: &crate::types::DynamicNDArrayData,
+) -> crate::types::DynamicNDArrayData {
+    use crate::types::{DynArrayMeta, DynamicNDArrayData, ValueId};
+    if is_contiguous(&data.meta) {
+        return data.clone();
+    }
+    let cells = crate::helpers::segment::read_all_logical_typed(
+        b,
+        data.segment_id,
+        &data.meta.logical_shape,
+        &data.meta.logical_strides,
+        data.meta.logical_offset,
+        data.dtype,
+    );
+    let new_seg = crate::helpers::segment::alloc_and_write_values(b, &cells, data.dtype);
+    let new_strides = crate::helpers::shape_arith::row_major_strides(&data.meta.logical_shape);
+    DynamicNDArrayData {
+        envelope: data.envelope.clone(),
+        dtype: data.dtype,
+        segment_id: new_seg,
+        meta: DynArrayMeta {
+            logical_shape: data.meta.logical_shape.clone(),
+            logical_offset: 0,
+            logical_strides: new_strides.clone(),
+            runtime_length: data.meta.runtime_length.clone(),
+            runtime_rank: data.meta.runtime_rank.clone(),
+            runtime_shape: data.meta.runtime_shape.clone(),
+            runtime_strides: new_strides
+                .iter()
+                .map(|&s| ScalarValue::new(Some(s as i64), None))
+                .collect(),
+            runtime_offset: ScalarValue::new(Some(0), None),
+        },
+        value_id: ValueId::next(),
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum DynAggKind {
@@ -50,14 +104,10 @@ pub use crate::helpers::shape_arith::{
 pub fn value_to_scalar_i64(val: &Value) -> ScalarValue<i64> {
     match val {
         Value::Integer(sv) => sv.clone(),
-        Value::Boolean(sv) => ScalarValue::new(
-            sv.static_val.map(|b| if b { 1 } else { 0 }),
-            sv.stmt_id,
-        ),
-        Value::Float(sv) => ScalarValue::new(
-            sv.static_val.map(|f| f as i64),
-            sv.stmt_id,
-        ),
+        Value::Boolean(sv) => {
+            ScalarValue::new(sv.static_val.map(|b| if b { 1 } else { 0 }), sv.stmt_id)
+        }
+        Value::Float(sv) => ScalarValue::new(sv.static_val.map(|f| f as i64), sv.stmt_id),
         _ => ScalarValue::new(None, None),
     }
 }
@@ -66,15 +116,43 @@ pub fn value_to_scalar_i64(val: &Value) -> ScalarValue<i64> {
 pub fn scalar_i64_to_value(elem: &ScalarValue<i64>, dtype: NumberType) -> Value {
     match dtype {
         NumberType::Integer => Value::Integer(elem.clone()),
-        NumberType::Float => {
-            Value::Float(ScalarValue::new(
-                elem.static_val.map(|v| v as f64),
-                elem.stmt_id,
-            ))
-        }
-        NumberType::Complex => panic!(
-            "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
+        NumberType::Float => Value::Float(ScalarValue::new(
+            elem.static_val.map(|v| v as f64),
+            elem.stmt_id,
+        )),
+        NumberType::Complex => Value::Complex {
+            real: ScalarValue::new(elem.static_val.map(|v| v as f64), elem.stmt_id),
+            imag: ScalarValue::new(Some(0.0), None),
+        },
+    }
+}
+
+pub fn value_to_complex_parts(val: &Value) -> (ScalarValue<i64>, ScalarValue<i64>) {
+    match val {
+        Value::Complex { real, imag } => (
+            ScalarValue::new(real.static_val.map(|f| f as i64), real.stmt_id),
+            ScalarValue::new(imag.static_val.map(|f| f as i64), imag.stmt_id),
         ),
+        Value::Float(sv) => (
+            ScalarValue::new(sv.static_val.map(|f| f as i64), sv.stmt_id),
+            ScalarValue::new(Some(0), sv.stmt_id),
+        ),
+        Value::Integer(sv) => (
+            ScalarValue::new(sv.static_val.map(|v| v as i64), sv.stmt_id),
+            ScalarValue::new(Some(0), sv.stmt_id),
+        ),
+        Value::Boolean(sv) => (
+            ScalarValue::new(sv.static_val.map(|v| i64::from(v)), sv.stmt_id),
+            ScalarValue::new(Some(0), sv.stmt_id),
+        ),
+        _ => (ScalarValue::new(None, None), ScalarValue::new(None, None)),
+    }
+}
+
+pub fn complex_parts_to_value(real: &ScalarValue<i64>, imag: &ScalarValue<i64>) -> Value {
+    Value::Complex {
+        real: ScalarValue::new(real.static_val.map(|v| v as f64), real.stmt_id),
+        imag: ScalarValue::new(imag.static_val.map(|v| v as f64), imag.stmt_id),
     }
 }
 
@@ -110,6 +188,9 @@ impl IRGenerator {
             "flatten" => metadata::dyn_flatten_to_list(&mut self.builder, &data),
             "flat" => metadata::dyn_flat(&mut self.builder, &data),
             "tolist" => metadata::dyn_tolist(&mut self.builder, &data),
+            "real" => metadata::dyn_complex_real(&mut self.builder, &data),
+            "imag" => metadata::dyn_complex_imag(&mut self.builder, &data),
+            "conjugate" | "conj" => metadata::dyn_complex_conjugate(&mut self.builder, &data),
             "T" => reshape::dyn_transpose(&mut self.builder, &data, &[]),
             "transpose" => {
                 let axes_args = if let Some(axes_val) = kwargs.get("axes") {
@@ -120,6 +201,15 @@ impl IRGenerator {
                 reshape::dyn_transpose(&mut self.builder, &data, &axes_args)
             }
             "moveaxis" => reshape::dyn_moveaxis(&mut self.builder, &data, args),
+            "swapaxes" => reshape::dyn_swapaxes(&mut self.builder, &data, args),
+            "squeeze" => {
+                let squeeze_args = if let Some(axis_val) = kwargs.get("axis") {
+                    vec![axis_val.clone()]
+                } else {
+                    args.to_vec()
+                };
+                reshape::dyn_squeeze(&mut self.builder, &data, &squeeze_args)
+            }
             "reshape" => reshape::dyn_reshape(&mut self.builder, &data, args),
 
             // Aggregation ops
@@ -155,13 +245,21 @@ impl IRGenerator {
                 let axis = kwargs.get("axis").or_else(|| args.first());
                 aggregation::dyn_aggregate(&mut self.builder, &data, axis, DynAggKind::Argmin)
             }
+            "mean" => {
+                let axis = kwargs.get("axis").or_else(|| args.first());
+                aggregation::dyn_mean(&mut self.builder, &data, axis)
+            }
+            "var" | "std" | "cumsum" | "cumprod" => panic!(
+                "DynamicNDArray.{} is not yet supported for bounded-dynamic arrays; use a static array or keep this operation outside the bounded-dynamic surface",
+                method
+            ),
 
             // Memory-heavy ops
             "filter" => memory_ops::dyn_filter(&mut self.builder, &data, args),
             "repeat" => memory_ops::dyn_repeat(&mut self.builder, &data, args, kwargs),
 
             _ => panic!(
-                "DynamicNDArray.{} not yet implemented in Rust IR generator",
+                "DynamicNDArray.{} is not yet supported for bounded-dynamic arrays; use a supported dynamic operator or convert to a static array before this operation",
                 method
             ),
         }

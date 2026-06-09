@@ -23,7 +23,10 @@ pub fn flatten_composite(val: &Value) -> Vec<Value> {
 /// materialising the segment payload first. Use at op boundaries that may
 /// see segment-backed numeric arrays — recurses through `List` / `Tuple`
 /// nesting.
-pub fn flatten_composite_with_builder(b: &mut crate::builder::IRBuilder, val: &Value) -> Vec<Value> {
+pub fn flatten_composite_with_builder(
+    b: &mut crate::builder::IRBuilder,
+    val: &Value,
+) -> Vec<Value> {
     match val {
         Value::StaticArray { .. } => {
             let lst = crate::helpers::static_array::base::to_value_list(b, val);
@@ -77,7 +80,7 @@ pub fn build_nested_value(flat: Vec<Value>, flat_types: Vec<ZinniaType>, shape: 
         return Value::List(CompositeData {
             elements_type: flat_types,
             values: flat,
-        
+
             value_id: ValueId::next(),
         });
     }
@@ -91,7 +94,7 @@ pub fn build_nested_value(flat: Vec<Value>, flat_types: Vec<ZinniaType>, shape: 
     Value::List(CompositeData {
         elements_type: row_types,
         values: rows,
-    
+
         value_id: ValueId::next(),
     })
 }

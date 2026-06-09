@@ -1,0 +1,64 @@
+{
+  "categories": [
+    "in-place-mutation",
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 19,
+      "line_start": 11,
+      "mutated_params": [
+        "tempU",
+        "u"
+      ],
+      "name": "diffuseNumpy",
+      "ops": [
+        "Add",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": true,
+          "name": "u",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 2,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "tempU",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 2,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "iterNum",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_diffusion/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "pythran_diffusion",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\n\n@zk_circuit\ndef diffuseNumpy(u: Float[Array, 'N<=1024 M<=1024'], tempU: Float[Array, 'N<=1024 M<=1024'], iterNum: Float):\n    \"\"\"\n    Apply Numpy matrix for the Forward-Euler Approximation\n    \"\"\"\n    mu = 0.1\n    for n in range(iterNum):\n        tempU[1:-1, 1:-1] = u[1:-1, 1:-1] + mu * (u[2:, 1:-1] - 2 * u[1:-1, 1:-1] + u[0:-2, 1:-1] + u[1:-1, 2:] - 2 * u[1:-1, 1:-1] + u[1:-1, 0:-2])\n        u[:, :] = tempU[:, :]\n        tempU[:, :] = 0.0",
+  "source_status": "direct"
+}

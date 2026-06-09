@@ -1,0 +1,55 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "loop-bounded",
+    "statistics"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "concatenate",
+        "dot",
+        "matrix_power",
+        "np.empty",
+        "np.mean",
+        "np.std",
+        "randn",
+        "range",
+        "trace"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 28,
+      "line_start": 15,
+      "mutated_params": [],
+      "name": "rand_mat_stat",
+      "ops": [
+        "Div"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "t",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_rand_mat_stat/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Record sample-size requirements such as N > 1 and nonzero variance denominators."
+  ],
+  "program": "pythran_rand_mat_stat",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\nfrom numpy import trace, concatenate, dot\nfrom numpy.random import randn\nfrom numpy.linalg import matrix_power\n\n@zk_circuit\ndef rand_mat_stat(t: Float[Array, 'N<=1024']):\n    n = 5\n    v = np.empty(t)\n    w = np.empty(t)\n    for i in range(t):\n        a = randn(n, n)\n        b = randn(n, n)\n        c = randn(n, n)\n        d = randn(n, n)\n        P = concatenate((a, b, c, d), axis=1)\n        Q = concatenate((concatenate((a, b), axis=1), concatenate((c, d), axis=1)), axis=0)\n        v[i] = trace(matrix_power(dot(P.T, P), 4))\n        w[i] = trace(matrix_power(dot(Q.T, Q), 4))\n    return (np.std(v) / np.mean(v), np.std(w) / np.mean(w))",
+  "source_status": "direct"
+}

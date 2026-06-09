@@ -1,0 +1,202 @@
+{
+  "categories": [
+    "data-dependent-loop",
+    "denominator-obligation",
+    "in-place-mutation",
+    "loop-bounded"
+  ],
+  "diagnostics": [
+    "while loops require a public/padded maximum iteration count."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "DATAN",
+        "DCOS",
+        "DEXP",
+        "DLOG",
+        "DSIN",
+        "DSQRT",
+        "P0",
+        "P3",
+        "PA",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": true,
+      "line_end": 102,
+      "line_start": 14,
+      "mutated_params": [],
+      "name": "whetstone",
+      "ops": [
+        "Add",
+        "Div",
+        "Eq",
+        "Gt",
+        "Lt",
+        "LtE",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "loopstart",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": true,
+      "line_end": 112,
+      "line_start": 105,
+      "mutated_params": [
+        "E"
+      ],
+      "name": "PA",
+      "ops": [
+        "Add",
+        "Div",
+        "Lt",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": true,
+          "name": "E",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "T",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "T2",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 118,
+      "line_start": 115,
+      "mutated_params": [
+        "E1"
+      ],
+      "name": "P0",
+      "ops": [
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": true,
+          "name": "E1",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "J",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "K",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "L",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 126,
+      "line_start": 121,
+      "mutated_params": [],
+      "name": "P3",
+      "ops": [
+        "Add",
+        "Div",
+        "Mult"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "X",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "Y",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "T",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "T2",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_stone/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add an explicit iteration cap or classify as fail-closed until a bound is available.",
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "pythran_stone",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: data-dependent-loop, denominator-obligation, in-place-mutation, loop-bounded\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: while loops require a public/padded maximum iteration count.\nfrom math import sin as DSIN, cos as DCOS, atan as DATAN, log as DLOG, exp as DEXP, sqrt as DSQRT\n\n@zk_circuit\ndef whetstone(loopstart: Integer):\n    T = 0.499975\n    T1 = 0.50025\n    T2 = 2.0\n    LOOP = loopstart\n    II = 1\n    JJ = 1\n    while JJ <= II:\n        N1 = 0\n        N2 = 12 * LOOP\n        N3 = 14 * LOOP\n        N4 = 345 * LOOP\n        N6 = 210 * LOOP\n        N7 = 32 * LOOP\n        N8 = 899 * LOOP\n        N9 = 616 * LOOP\n        N10 = 0\n        N11 = 93 * LOOP\n        X1 = 1.0\n        X2 = -1.0\n        X3 = -1.0\n        X4 = -1.0\n        for I in range(1, N1 + 1):\n            X1 = (X1 + X2 + X3 - X4) * T\n            X2 = (X1 + X2 - X3 + X4) * T\n            X3 = (X1 - X2 + X3 + X4) * T\n            X4 = (-X1 + X2 + X3 + X4) * T\n        E1 = [1.0, -1.0, -1.0, -1.0]\n        for I in range(1, N2 + 1):\n            E1[0] = (E1[0] + E1[1] + E1[2] - E1[3]) * T\n            E1[1] = (E1[0] + E1[1] - E1[2] + E1[3]) * T\n            E1[2] = (E1[0] - E1[1] + E1[2] + E1[3]) * T\n            E1[3] = (-E1[0] + E1[1] + E1[2] + E1[3]) * T\n        for I in range(1, N3 + 1):\n            PA(E1, T, T2)\n        J = 1\n        for I in range(1, N4 + 1):\n            if J == 1:\n                J = 2\n            else:\n                J = 3\n            if J > 2:\n                J = 0\n            else:\n                J = 1\n            if J < 1:\n                J = 1\n            else:\n                J = 0\n        J = 1\n        K = 2\n        L = 3\n        for I in range(1, N6 + 1):\n            J = J * (K - J) * (L - K)\n            K = L * K - (L - J) * K\n            L = (L - K) * (K + J)\n            E1[L - 2] = J + K + L\n            E1[K - 2] = J * K * L\n        X = 0.5\n        Y = 0.5\n        for I in range(1, N7 + 1):\n            X = T * DATAN(T2 * DSIN(X) * DCOS(X) / (DCOS(X + Y) + DCOS(X - Y) - 1.0))\n            Y = T * DATAN(T2 * DSIN(Y) * DCOS(Y) / (DCOS(X + Y) + DCOS(X - Y) - 1.0))\n        X = 1.0\n        Y = 1.0\n        Z = 1.0\n        for I in range(1, N8 + 1):",
+  "source_status": "direct"
+}

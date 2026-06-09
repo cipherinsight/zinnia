@@ -1,0 +1,59 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "domain-obligation",
+    "in-place-mutation",
+    "loop-bounded",
+    "matmul-dot"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "np.dot",
+        "np.sqrt",
+        "np.zeros",
+        "np.zeros_like",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 24,
+      "line_start": 14,
+      "mutated_params": [
+        "A"
+      ],
+      "name": "kernel",
+      "ops": [
+        "Add",
+        "Div",
+        "Mult"
+      ],
+      "parameters": [
+        {
+          "mutated": true,
+          "name": "A",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 2,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "npbench_polybench_gramschmidt_gramschmidt/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].",
+    "Declare shared matrix/vector dimensions explicitly, e.g. A[N,K] with x[K].",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "npbench_polybench_gramschmidt_gramschmidt",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, domain-obligation, in-place-mutation, loop-bounded, matmul-dot\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].\n# Precondition: Declare shared matrix/vector dimensions explicitly; when not expressible as @requires, encode with matching symbolic annotation names and keep as review obligation.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\n\n@zk_circuit\ndef kernel(A: Float[Array, 'N<=1024 M<=1024']):\n    Q = np.zeros_like(A)\n    R = np.zeros((A.shape[1], A.shape[1]), dtype=A.dtype)\n    for k in range(A.shape[1]):\n        nrm = np.dot(A[:, k], A[:, k])\n        R[k, k] = np.sqrt(nrm)\n        Q[:, k] = A[:, k] / R[k, k]\n        for j in range(k + 1, A.shape[1]):\n            R[k, j] = np.dot(Q[:, k], A[:, j])\n            A[:, j] -= Q[:, k] * R[k, j]\n    return (Q, R)",
+  "source_status": "direct"
+}

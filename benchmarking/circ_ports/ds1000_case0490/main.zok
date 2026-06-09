@@ -1,0 +1,15 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0490/kernel.py
+// REASON: Input shape N<=64 M<=64 K<=64 is runtime-bounded; signed/float comparisons and np.where assign also outside ZoKrates' field model
+
+def main(field[64][64][64] arr, field[5] n1, field[5] n2) -> field[64][64][64]:
+    field[64][64][64] result = [[[0; 64]; 64]; 64]
+    for u32 a in 0..5 do
+        for u32 j in 0..64 do
+            for u32 k in 0..64 do
+                field v = arr[a][j][k]
+                result[a][j][k] = v
+            endfor
+        endfor
+    endfor
+    return result

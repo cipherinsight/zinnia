@@ -57,6 +57,10 @@ def _build_input_node(value: Any, dt, name: str) -> dict:
         elements = [_build_input_node(elem, dtype, name) for elem in flat]
         return {"Array": {"shape": shape, "elements": elements}}
 
+    elif variant == "SymbolicNDArray":
+        concrete_dt = _concretize_symbolic_ndarray(data, name)
+        return _build_input_node(value, concrete_dt, name)
+
     elif variant == "List":
         elements_dt = data["elements"]
         if not isinstance(value, (list, tuple)):
@@ -92,9 +96,19 @@ def _build_input_node(value: Any, dt, name: str) -> dict:
     elif variant == "DynamicNDArray":
         dtype = data["dtype"]
         max_length = data["max_length"]
-        flat = _flatten_ndarray(value, [max_length], name)
+        max_rank = data.get("max_rank", 1)
+        max_shape = data.get("max_shape")
+        flat, runtime_shape = _flatten_bounded_dynarray_with_shape(
+            value, max_length, max_rank, dtype, name, max_shape
+        )
         elements = [_build_input_node(elem, dtype, name) for elem in flat]
-        return {"Array": {"shape": [max_length], "elements": elements}}
+        return {
+            "Array": {
+                "shape": [max_length],
+                "elements": elements,
+                "runtime_shape": runtime_shape,
+            }
+        }
 
     else:
         raise ZinniaException(f"Unsupported type `{variant}` for `{name}`")
@@ -185,6 +199,10 @@ def _flatten_value(entries: list, value: Any, dt, indices: tuple, name: str):
         for flat_idx, elem in enumerate(flat):
             _flatten_value(entries, elem, dtype, indices + (flat_idx,), name)
 
+    elif variant == "SymbolicNDArray":
+        concrete_dt = _concretize_symbolic_ndarray(data, name)
+        _flatten_value(entries, value, concrete_dt, indices, name)
+
     elif variant == "List":
         elements_dt = data["elements"]
         if not isinstance(value, (list, tuple)):
@@ -221,12 +239,39 @@ def _flatten_value(entries: list, value: Any, dt, indices: tuple, name: str):
     elif variant == "DynamicNDArray":
         dtype = data["dtype"]
         max_length = data["max_length"]
-        flat = _flatten_ndarray(value, [max_length], name)
+        max_rank = data.get("max_rank", 1)
+        max_shape = data.get("max_shape")
+        flat, _runtime_shape = _flatten_bounded_dynarray_with_shape(
+            value, max_length, max_rank, dtype, name, max_shape
+        )
         for flat_idx, elem in enumerate(flat):
             _flatten_value(entries, elem, dtype, indices + (flat_idx,), name)
 
     else:
         raise ZinniaException(f"Unsupported type `{variant}` for `{name}`")
+
+
+def _concretize_symbolic_ndarray(data: dict, name: str) -> dict:
+    shape, unresolved = _concretize_symbolic_shape(data["shape"], data.get("bindings") or {})
+    if unresolved:
+        raise ZinniaException(
+            f"Cannot build witness for `{name}` because symbolic shape "
+            f"dimension(s) {', '.join(unresolved)} are unresolved."
+        )
+    return {"NDArray": {"shape": shape, "dtype": data["dtype"]}}
+
+
+def _concretize_symbolic_shape(shape_spec: list, bindings: dict) -> tuple[list[int], list[str]]:
+    shape = []
+    unresolved = []
+    for dim in shape_spec:
+        if isinstance(dim, int):
+            shape.append(dim)
+        elif isinstance(dim, str) and dim in bindings:
+            shape.append(int(bindings[dim]))
+        else:
+            unresolved.append(str(dim))
+    return shape, unresolved
 
 
 def _coerce_integer(value: Any, name: str) -> int:
@@ -295,6 +340,115 @@ def _flatten_ndarray(value: Any, expected_shape: list, name: str) -> list:
     return flat
 
 
+def _flatten_bounded_dynarray_with_shape(
+    value: Any, max_length: int, max_rank: int, dtype, name: str, max_shape: list[int] | None = None
+) -> tuple[list, list[int]]:
+    """Flatten a dynamic array input, recording its actual runtime shape."""
+    def check_shape_bounds(actual_shape: list[int]) -> None:
+        if max_shape is None:
+            return
+        if len(actual_shape) != len(max_shape):
+            raise ZinniaException(
+                f"Shape mismatch for `{name}`. Expected DynamicNDArray rank {len(max_shape)} with per-axis bounds {max_shape}, got shape {actual_shape}."
+            )
+        for axis, (actual, bound) in enumerate(zip(actual_shape, max_shape)):
+            if actual > bound:
+                raise ZinniaException(
+                    f"Shape mismatch for `{name}`. Axis {axis} expected at most {bound}, got {actual}."
+                )
+
+    try:
+        import numpy as np
+        if isinstance(value, np.ndarray):
+            actual_shape = list(value.shape)
+            if len(actual_shape) == 0 or len(actual_shape) > max_rank:
+                raise ZinniaException(
+                    f"Shape mismatch for `{name}`. Expected DynamicNDArray rank 1..{max_rank} bounded by {max_length}, got shape {actual_shape}."
+                )
+            check_shape_bounds(actual_shape)
+            return _pad_dynamic_array_payload(
+                value.tolist(),
+                actual_shape,
+                max_length,
+                dtype,
+                name,
+                max_shape,
+            ), actual_shape
+    except ImportError:
+        pass
+
+    runtime_shape = _nested_shape(value, name)
+    if len(runtime_shape) == 0 or len(runtime_shape) > max_rank:
+        raise ZinniaException(
+            f"Shape mismatch for `{name}`. Expected DynamicNDArray rank 1..{max_rank} bounded by {max_length}, got shape {runtime_shape}."
+        )
+    check_shape_bounds(runtime_shape)
+    flat = []
+    _flatten_nested_list(value, flat)
+    return _pad_dynamic_array_payload(
+        value,
+        runtime_shape,
+        max_length,
+        dtype,
+        name,
+        max_shape,
+    ), runtime_shape
+
+
+def _pad_dynamic_array_payload(
+    value: Any,
+    runtime_shape: list[int],
+    max_length: int,
+    dtype,
+    name: str,
+    max_shape: list[int] | None,
+) -> list:
+    if max_shape is None:
+        flat = []
+        _flatten_nested_list(value, flat)
+        if len(flat) > max_length:
+            raise ZinniaException(
+                f"Shape mismatch for `{name}`. Expected at most {max_length} elements, got {len(flat)}."
+            )
+        return flat + [_zero_value_for_dtype(dtype)] * (max_length - len(flat))
+
+    padded = [_zero_value_for_dtype(dtype)] * max_length
+    strides = _row_major_strides(max_shape)
+
+    def visit(node, coords):
+        if len(coords) == len(runtime_shape):
+            flat_idx = sum(coord * stride for coord, stride in zip(coords, strides))
+            if flat_idx >= max_length:
+                raise ZinniaException(
+                    f"Shape mismatch for `{name}`. Flat index {flat_idx} exceeds max_length {max_length}."
+                )
+            padded[flat_idx] = node
+            return
+        for idx, child in enumerate(node):
+            visit(child, coords + [idx])
+
+    visit(value, [])
+    return padded
+
+
+def _row_major_strides(shape: list[int]) -> list[int]:
+    strides = [1] * len(shape)
+    for axis in range(len(shape) - 2, -1, -1):
+        strides[axis] = strides[axis + 1] * shape[axis + 1]
+    return strides
+
+
+def _zero_value_for_dtype(dtype):
+    variant, _ = _get_type_variant(dtype)
+    if variant == "Float":
+        return 0.0
+    if variant == "Boolean":
+        return False
+    if variant == "Complex":
+        return 0j
+    return 0
+
+
 def _flatten_nested_list(value: Any, flat: list):
     """Recursively flatten nested lists/tuples."""
     if isinstance(value, (list, tuple)):
@@ -302,3 +456,20 @@ def _flatten_nested_list(value: Any, flat: list):
             _flatten_nested_list(elem, flat)
     else:
         flat.append(value)
+
+
+def _nested_shape(value: Any, name: str) -> list[int]:
+    """Return the rectangular nested-list shape used for runtime metadata."""
+    if not isinstance(value, (list, tuple)):
+        return []
+    length = len(value)
+    if length == 0:
+        return [0]
+    child_shapes = [_nested_shape(elem, name) for elem in value]
+    first = child_shapes[0]
+    for child in child_shapes[1:]:
+        if child != first:
+            raise ZinniaException(
+                f"Shape mismatch for `{name}`. DynamicNDArray inputs must be rectangular."
+            )
+    return [length] + first

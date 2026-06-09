@@ -44,3 +44,30 @@ def test_ndarray_complex_now_supported_after_ndarray_ops_card():
         _ = arr[0]
 
     ZKCircuit.from_method(foo).compile()
+
+
+def test_numeric_scalar_real_imag_attributes_compile():
+    @zk_circuit
+    def foo():
+        x = 3
+        y = 2.5
+        assert x.real == 3
+        assert x.imag == 0
+        assert y.real == 2.5
+        assert y.imag == 0.0
+
+    assert foo()
+
+
+def test_dynamic_complex_real_imag_conj_views_compile():
+    @zk_circuit
+    def foo():
+        a = np.promote_to_dynamic(np.asarray([1 + 2j, 3 + 4j]))
+        r = a.real
+        i = a.imag
+        c = a.conjugate()
+        assert r[0] == 1.0
+        assert i[1] == 4.0
+        _ = c[0].imag
+
+    ZKCircuit.from_method(foo).compile()

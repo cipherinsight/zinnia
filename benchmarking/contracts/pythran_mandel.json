@@ -1,0 +1,81 @@
+{
+  "categories": [
+    "data-dependent-loop",
+    "denominator-obligation",
+    "loop-bounded"
+  ],
+  "diagnostics": [
+    "while loops require a public/padded maximum iteration count."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "float",
+        "range",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": true,
+      "line_end": 31,
+      "line_start": 15,
+      "mutated_params": [],
+      "name": "mandel",
+      "ops": [
+        "Add",
+        "Div",
+        "Eq",
+        "Lt",
+        "LtE",
+        "Mod",
+        "Mult",
+        "NotEq",
+        "Pow",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "size",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "x_center",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "y_center",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "max_iteration",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_mandel/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add an explicit iteration cap or classify as fail-closed until a bound is available.",
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_mandel",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: data-dependent-loop, denominator-obligation, in-place-mutation, loop-bounded\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: while loops require a public/padded maximum iteration count.\n\n@zk_circuit\n@requires(lambda size, x_center, y_center, max_iteration: 0 <= size <= 1024)\n@requires(lambda size, x_center, y_center, max_iteration: size != 0)\ndef mandel(size: Integer, x_center: Float, y_center: Float, max_iteration: Integer):\n    out = [[0 for i in range(size)] for j in range(size)]\n    for i in range(size):\n        'omp parallel for'\n        for j in range(size):\n            x, y = (x_center + 4.0 * float(i - size / 2) / size, y_center + 4.0 * float(j - size / 2) / size)\n            a, b = (0.0, 0.0)\n            iteration = 0\n            while a ** 2 + b ** 2 <= 4.0 and iteration < max_iteration:\n                a, b = (a ** 2 - b ** 2 + x, 2 * a * b + y)\n                iteration += 1\n            if iteration == max_iteration:\n                color_value = 255\n            else:\n                color_value = iteration * 10 % 255\n            out[i][j] = color_value\n    return out",
+  "source_status": "direct"
+}

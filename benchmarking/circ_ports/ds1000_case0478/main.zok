@@ -1,0 +1,12 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0478/kernel.py
+// REASON: np.einsum('ii->i', a) lowered to explicit diagonal extraction; in-place a[...]=0 and result[...]=save reduce to copies
+
+def main(field[4][4] a) -> field[4]:
+    field[4] result = [0; 4]
+    for u32 i in 0..4 do
+        result[i] = a[i][i]
+    endfor
+    // The Python mutates `a` then restores `result` from `save` - net effect on
+    // the returned value is the diagonal, which is what we emit.
+    return result

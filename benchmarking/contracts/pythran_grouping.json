@@ -1,0 +1,44 @@
+{
+  "categories": [
+    "mask-where"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "len",
+        "np.concatenate",
+        "np.diff",
+        "np.where"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 13,
+      "line_start": 9,
+      "mutated_params": [],
+      "name": "grouping",
+      "ops": [],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "values",
+          "proposed_annotation": "Integer[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_grouping/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Record mask shape equality and active-element bounds for where/nonzero-style indexing."
+  ],
+  "program": "pythran_grouping",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: mask-where\n# Expected outcome: compile/prove candidate\n# Precondition: Record mask shape equality and active-element bounds for where/nonzero-style indexing.\n\n@zk_circuit\ndef grouping(values: Integer[Array, 'N<=1024']):\n    import numpy as np\n    diff = np.concatenate(([1], np.diff(values)))\n    idx = np.concatenate((np.where(diff)[0], [len(values)]))\n    return (values[idx[:-1]], np.diff(idx))",
+  "source_status": "attempt_classify"
+}

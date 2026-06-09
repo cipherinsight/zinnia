@@ -1,0 +1,9 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0420/kernel.py
+// REASON: nested np.where on scalar lowered to nested if-expr; x_min/x_max are free in source, exposed as params here.
+
+def main(field x, field x_min, field x_max) -> field:
+    field smooth = 3 * x * x - 2 * x * x * x
+    field clamped_hi = if x > x_max then x_max else smooth fi
+    field result = if x < x_min then x_min else clamped_hi fi
+    return result

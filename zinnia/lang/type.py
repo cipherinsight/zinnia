@@ -3,18 +3,79 @@ from typing import Any
 from zinnia.lang.metatype import NDArrayMeta, PoseidonHashedMeta
 
 
-Boolean = bool
-boolean = bool
-Bool = bool
-Integer = int
-integer = int
-Int = int
-Float = float
+class TensorAnnotation:
+    def __init__(self, dtype, kind, shape):
+        self.dtype = dtype
+        self.kind = kind
+        self.shape = shape
+
+
+class _ArrayMarker:
+    pass
+
+
+class _DynArrayMarker:
+    pass
+
+
+class _VecMarker:
+    def __getitem__(self, key):
+        return TensorAnnotation(None, self, key)
+
+
+class _ScalarAlias:
+    def __init__(self, name: str, py_type: type):
+        self.__name__ = name
+        self.py_type = py_type
+
+    def __call__(self, *args, **kwargs):
+        return self.py_type(*args, **kwargs)
+
+    def __getitem__(self, key):
+        if not isinstance(key, tuple) or len(key) != 2:
+            raise TypeError(f"{self.__name__}[...] expects a marker and shape string")
+        return TensorAnnotation(self, key[0], key[1])
+
+    def __instancecheck__(self, instance):
+        return isinstance(instance, self.py_type)
+
+    def __subclasscheck__(self, subclass):
+        return issubclass(subclass, self.py_type)
+
+    def __eq__(self, other):
+        if isinstance(other, _ScalarAlias):
+            return self.py_type == other.py_type
+        return self.py_type == other
+
+    def __hash__(self):
+        return hash(self.py_type)
+
+    def __repr__(self):
+        return self.__name__
+
+
+Array = _ArrayMarker()
+DynArray = _DynArrayMarker()
+Vec = _VecMarker()
+
+Boolean = _ScalarAlias("Boolean", bool)
+boolean = Boolean
+Bool = Boolean
+Integer = _ScalarAlias("Integer", int)
+integer = Integer
+Int = Integer
+Float = _ScalarAlias("Float", float)
 # Complex scalars are first-class in @zk_circuit annotations.
 # At the IR layer they are lowered as a 2-tuple (real, imag) of Float.
-Complex = complex
+Complex = _ScalarAlias("Complex", complex)
 Tuple = tuple
 List = list
+
+
+def _normalize_dtype(dtype):
+    if isinstance(dtype, _ScalarAlias):
+        return dtype.py_type
+    return dtype
 
 
 class NDArray(metaclass=NDArrayMeta):
@@ -33,9 +94,9 @@ class NDArray(metaclass=NDArrayMeta):
         if dtype is None:
             dtype = Integer
         if dtype == Integer:
-            return NDArray(InternalNDArray.fill(shape, lambda: 0), Integer)
+            return NDArray(InternalNDArray.fill(shape, lambda: 0), _normalize_dtype(Integer))
         if dtype == Float:
-            return NDArray(InternalNDArray.fill(shape, lambda: 0.0), Float)
+            return NDArray(InternalNDArray.fill(shape, lambda: 0.0), _normalize_dtype(Float))
         raise NotImplementedError()
 
     @staticmethod
@@ -45,9 +106,9 @@ class NDArray(metaclass=NDArrayMeta):
         if dtype is None:
             dtype = Integer
         if dtype == Integer:
-            return NDArray(InternalNDArray.fill(shape, lambda: 1), Integer)
+            return NDArray(InternalNDArray.fill(shape, lambda: 1), _normalize_dtype(Integer))
         if dtype == Float:
-            return NDArray(InternalNDArray.fill(shape, lambda: 1.0), Float)
+            return NDArray(InternalNDArray.fill(shape, lambda: 1.0), _normalize_dtype(Float))
         raise NotImplementedError()
 
     @staticmethod
@@ -60,12 +121,12 @@ class NDArray(metaclass=NDArrayMeta):
             ndarray = InternalNDArray.fill((n, n), lambda: 0)
             for i in range(n):
                 ndarray.ndarray_set_item([i, i], InternalNDArray((1, ), [1]), lambda x, y: y)
-            return NDArray(ndarray, Integer)
+            return NDArray(ndarray, _normalize_dtype(Integer))
         if dtype == Float:
             ndarray = InternalNDArray.fill((n, n), lambda: 0.0)
             for i in range(n):
                 ndarray.ndarray_set_item([i, i], InternalNDArray((1, ), [1.0]), lambda x, y: y)
-            return NDArray(ndarray, Float)
+            return NDArray(ndarray, _normalize_dtype(Float))
         raise NotImplementedError()
 
     @staticmethod
@@ -78,12 +139,12 @@ class NDArray(metaclass=NDArrayMeta):
             ndarray = InternalNDArray.fill((n, m), lambda: 0)
             for i in range(min(n, m)):
                 ndarray.ndarray_set_item([i, i], InternalNDArray((1, ), [1]), lambda x, y: y)
-            return NDArray(ndarray, Integer)
+            return NDArray(ndarray, _normalize_dtype(Integer))
         if dtype == Float:
             ndarray = InternalNDArray.fill((n, m), lambda: 0.0)
             for i in range(min(n, m)):
                 ndarray.ndarray_set_item([i, i], InternalNDArray((1, ), [1.0]), lambda x, y: y)
-            return NDArray(ndarray, Float)
+            return NDArray(ndarray, _normalize_dtype(Float))
         raise NotImplementedError()
 
     @staticmethod
@@ -110,7 +171,7 @@ class NDArray(metaclass=NDArrayMeta):
                     raise ValueError('Cannot parse list into an NDArray: the values are not integers or floats.')
         else:
             inferred_dtype = dtype
-        return NDArray(ndarray, inferred_dtype)
+        return NDArray(ndarray, _normalize_dtype(inferred_dtype))
 
     def __setitem__(self, key, value):
         from zinnia.internal.internal_ndarray import InternalNDArray

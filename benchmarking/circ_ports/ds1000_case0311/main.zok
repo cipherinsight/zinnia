@@ -1,0 +1,18 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0311/kernel.py
+// REASON: np.unravel_index(argmax, shape, order='F') lowered to running-max producing (row,col) directly using Fortran-order linear index.
+
+def main(field[8][6] a) -> field[2]:
+  field best = a[0][0]
+  field r = 0
+  field c = 0
+  // Fortran order: linear = c*8 + r, so iterate column-major
+  for u32 j in 0..6 do
+    for u32 i in 0..8 do
+      bool gt = a[i][j] > best
+      best = if gt then a[i][j] else best fi
+      r = if gt then i else r fi
+      c = if gt then j else c fi
+    endfor
+  endfor
+  return [r, c]

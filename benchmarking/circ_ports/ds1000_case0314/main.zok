@@ -1,0 +1,38 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0314/kernel.py
+// REASON: argmax, then mutate that cell to a.min(), then argmax again — all unrolled over fixed 8x6 with running max/min.
+
+def main(field[8][6] a) -> field[2]:
+  field best = a[0][0]
+  field r1 = 0
+  field c1 = 0
+  field min = a[0][0]
+  for u32 i in 0..8 do
+    for u32 j in 0..6 do
+      bool gt = a[i][j] > best
+      best = if gt then a[i][j] else best fi
+      r1 = if gt then i else r1 fi
+      c1 = if gt then j else c1 fi
+      min = if a[i][j] < min then a[i][j] else min fi
+    endfor
+  endfor
+  // Replace a[r1][c1] with min via conditional write
+  for u32 i in 0..8 do
+    for u32 j in 0..6 do
+      bool match = (i == r1) && (j == c1)
+      a[i][j] = if match then min else a[i][j] fi
+    endfor
+  endfor
+  // Second argmax pass
+  field best2 = a[0][0]
+  field r2 = 0
+  field c2 = 0
+  for u32 i in 0..8 do
+    for u32 j in 0..6 do
+      bool gt = a[i][j] > best2
+      best2 = if gt then a[i][j] else best2 fi
+      r2 = if gt then i else r2 fi
+      c2 = if gt then j else c2 fi
+    endfor
+  endfor
+  return [r2, c2]

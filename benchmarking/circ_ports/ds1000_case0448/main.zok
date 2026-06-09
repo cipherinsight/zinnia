@@ -1,0 +1,17 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0448/kernel.py
+// REASON: np.vstack + .T over fixed shapes (3,4) lowered to explicit triple loop.
+// dists[i][j][k] = (k==0) ? x_dists[i][j] : y_dists[i][j]; output shape (3,4,2).
+
+const u32 R = 3
+const u32 C = 4
+
+def main(field[R][C] x_dists, field[R][C] y_dists) -> field[R][C][2]:
+    field[R][C][2] dists = [[[0; 2]; C]; R]
+    for u32 i in 0..R do
+        for u32 j in 0..C do
+            dists[i][j][0] = x_dists[i][j]
+            dists[i][j][1] = y_dists[i][j]
+        endfor
+    endfor
+    return dists

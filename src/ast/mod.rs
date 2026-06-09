@@ -82,6 +82,8 @@ pub struct ASTCircuit {
     pub block: Vec<ASTNode>,
     #[serde(default)]
     pub inputs: Vec<ASTCircuitInput>,
+    #[serde(default)]
+    pub return_dt: Option<serde_json::Value>,
     /// Structural-predicate preconditions declared via `@requires(...)` or
     /// `@zk_circuit(requires=[...])`. Lowered to `IR::StructuralPredicate`
     /// atoms emitted at the start of the circuit's IR by `ir_gen::visit_circuit`.
@@ -147,6 +149,7 @@ pub struct ASTChip {
     pub block: Vec<ASTNode>,
     #[serde(default)]
     pub inputs: Vec<ASTChipInput>,
+    #[serde(default)]
     pub return_dt: serde_json::Value,
     #[serde(default)]
     pub dbg: Option<DebugInfo>,

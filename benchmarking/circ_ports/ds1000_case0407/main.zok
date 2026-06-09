@@ -1,0 +1,21 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0407/kernel.py
+// REASON: np.bincount output length = max(accmap)+1 is data-dependent (after a mask add); ZoKrates needs compile-time array sizes.
+
+const u32 N = 100
+const u32 NBINS = 200  // upper bound; real bin count is runtime-dependent
+
+def main(field[N] a, field[N] accmap) -> field[NBINS]:
+    field add = 0
+    for u32 i in 0..N do
+        add = if accmap[i] > add then accmap[i] else add fi
+    endfor
+    field[N] shifted = [0; N]
+    for u32 i in 0..N do
+        shifted[i] = if accmap[i] < 0 then accmap[i] + add + 1 else accmap[i] fi
+    endfor
+    field[NBINS] result = [0; NBINS]
+    for u32 i in 0..N do
+        result[shifted[i]] = result[shifted[i]] + a[i]
+    endfor
+    return result

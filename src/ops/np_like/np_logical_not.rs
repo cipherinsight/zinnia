@@ -9,9 +9,15 @@ impl NpLogicalNotOp {
 }
 
 impl Op for NpLogicalNotOp {
-    fn name(&self) -> &'static str { "logical_not" }
-    fn signature(&self) -> &'static str { "np.logical_not" }
-    fn params(&self) -> &[ParamEntry] { &Self::PARAMS }
+    fn name(&self) -> &'static str {
+        "logical_not"
+    }
+    fn signature(&self) -> &'static str {
+        "np.logical_not"
+    }
+    fn params(&self) -> &[ParamEntry] {
+        &Self::PARAMS
+    }
 
     fn build(&self, builder: &mut IRBuilder, args: &OpArgs) -> Value {
         let x = args.require("x");

@@ -32,7 +32,11 @@ pub fn decode_coords(linear: usize, shape: &[usize], strides: &[usize]) -> Vec<u
 
 /// Encode multi-dimensional coordinates back to a linear index.
 pub fn encode_coords(coords: &[usize], strides: &[usize]) -> usize {
-    coords.iter().zip(strides.iter()).map(|(&c, &s)| c * s).sum()
+    coords
+        .iter()
+        .zip(strides.iter())
+        .map(|(&c, &s)| c * s)
+        .sum()
 }
 
 /// Total element count for a shape (product of dims). Empty shape (a 0-D
@@ -153,7 +157,10 @@ mod tests {
     #[test]
     fn broadcast_three_dim() {
         // (2, 1, 3) and (1, 4, 1) -> (2, 4, 3)
-        assert_eq!(broadcast_shapes(&[2, 1, 3], &[1, 4, 1]), Some(vec![2, 4, 3]));
+        assert_eq!(
+            broadcast_shapes(&[2, 1, 3], &[1, 4, 1]),
+            Some(vec![2, 4, 3])
+        );
     }
 
     #[test]

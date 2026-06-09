@@ -1,0 +1,275 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "in-place-mutation",
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 26,
+      "line_start": 12,
+      "mutated_params": [
+        "f"
+      ],
+      "name": "m2f_loc",
+      "ops": [
+        "Add",
+        "Div",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "m",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "f",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 38,
+      "line_start": 29,
+      "mutated_params": [
+        "m"
+      ],
+      "name": "f2m_loc",
+      "ops": [
+        "Add",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "f",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "m",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 50,
+      "line_start": 41,
+      "mutated_params": [
+        "floc"
+      ],
+      "name": "getf",
+      "ops": [
+        "Add",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "f",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "floc",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "i",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "j",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 62,
+      "line_start": 53,
+      "mutated_params": [
+        "f"
+      ],
+      "name": "setf",
+      "ops": [],
+      "parameters": [
+        {
+          "mutated": true,
+          "name": "f",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "floc",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "i",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "j",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 71,
+      "line_start": 65,
+      "mutated_params": [
+        "m"
+      ],
+      "name": "relaxation_loc",
+      "ops": [
+        "Add",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": true,
+          "name": "m",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "range"
+      ],
+      "entry_candidate": false,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 83,
+      "line_start": 74,
+      "mutated_params": [
+        "f"
+      ],
+      "name": "periodic_bc",
+      "ops": [
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": true,
+          "name": "f",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "f2m_loc",
+        "getf",
+        "m2f_loc",
+        "np.zeros",
+        "periodic_bc",
+        "range",
+        "relaxation_loc",
+        "setf"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 98,
+      "line_start": 86,
+      "mutated_params": [],
+      "name": "one_time_step",
+      "ops": [
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "f1",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "f2",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_d2q9_nxnyns/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "pythran_d2q9_nxnyns",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\n\n@zk_chip\ndef m2f_loc(m: Float[Array, 'N<=1024'], f: Float[Array, 'N<=1024']):\n    c0 = 1.0 / 6\n    c1 = 1.0 / 9\n    c2 = 1.0 / 18\n    c3 = 1.0 / 36\n    c4 = 1.0 / 12\n    f[0] = c1 * m[0] - c1 * m[3] + c1 * m[4]\n    f[1] = c1 * m[0] + c0 * m[1] - c3 * m[3] - c2 * m[4] - c0 * m[5] + 0.25 * m[7]\n    f[2] = c1 * m[0] + c0 * m[2] - c3 * m[3] - c2 * m[4] - c0 * m[6] - 0.25 * m[7]\n    f[3] = c1 * m[0] - c0 * m[1] - c3 * m[3] - c2 * m[4] + c0 * m[5] + 0.25 * m[7]\n    f[4] = c1 * m[0] - c0 * m[2] - c3 * m[3] - c2 * m[4] + c0 * m[6] - 0.25 * m[7]\n    f[5] = c1 * m[0] + c0 * m[1] + c0 * m[2] + c2 * m[3] + c3 * m[4] + c4 * m[5] + c4 * m[6] + 0.25 * m[8]\n    f[6] = c1 * m[0] - c0 * m[1] + c0 * m[2] + c2 * m[3] + c3 * m[4] - c4 * m[5] + c4 * m[6] - 0.25 * m[8]\n    f[7] = c1 * m[0] - c0 * m[1] - c0 * m[2] + c2 * m[3] + c3 * m[4] - c4 * m[5] - c4 * m[6] + 0.25 * m[8]\n    f[8] = c1 * m[0] + c0 * m[1] - c0 * m[2] + c2 * m[3] + c3 * m[4] + c4 * m[5] - c4 * m[6] - 0.25 * m[8]\n\n@zk_chip\ndef f2m_loc(f: Float[Array, 'N<=1024'], m: Float[Array, 'N<=1024']):\n    m[0] = f[0] + f[1] + f[2] + f[3] + f[4] + f[5] + f[6] + f[7] + f[8]\n    m[1] = f[1] - f[3] + f[5] - f[6] - f[7] + f[8]\n    m[2] = f[2] - f[4] + f[5] + f[6] - f[7] - f[8]\n    m[3] = -4.0 * f[0] - f[1] - f[2] - f[3] - f[4] + 2.0 * f[5] + 2.0 * f[6] + 2.0 * f[7] + 2.0 * f[8]\n    m[4] = 4.0 * f[0] - 2.0 * f[1] - 2.0 * f[2] - 2.0 * f[3] - 2.0 * f[4] + f[5] + f[6] + f[7] + f[8]\n    m[5] = -2.0 * f[1] + 2.0 * f[3] + f[5] - f[6] - f[7] + f[8]\n    m[6] = -2.0 * f[2] + 2.0 * f[4] + f[5] + f[6] - f[7] - f[8]\n    m[7] = f[1] - f[2] + f[3] - f[4]\n    m[8] = f[5] - f[6] + f[7] - f[8]\n\n@zk_chip\ndef getf(f: Float[Array, 'N<=1024 M<=1024 K<=1024'], floc: Float[Array, 'N<=1024'], i: Integer, j: Integer):\n    floc[0] = f[i, j, 0]\n    floc[1] = f[i - 1, j, 1]\n    floc[2] = f[i, j - 1, 2]\n    floc[3] = f[i + 1, j, 3]\n    floc[4] = f[i, j + 1, 4]\n    floc[5] = f[i - 1, j - 1, 5]\n    floc[6] = f[i + 1, j - 1, 6]\n    floc[7] = f[i + 1, j + 1, 7]\n    floc[8] = f[i - 1, j + 1, 8]\n\n@zk_chip\ndef setf(f: Float[Array, 'N<=1024 M<=1024 K<=1024'], floc: Float[Array, 'N<=1024'], i: Integer, j: Integer):\n    f[j, i, 0] = floc[0]\n    f[j, i, 1] = floc[1]\n    f[j, i, 2] = floc[2]\n    f[j, i, 3] = floc[3]\n    f[j, i, 4] = floc[4]\n    f[j, i, 5] = floc[5]\n    f[j, i, 6] = floc[6]\n    f[j, i, 7] = floc[7]\n    f[j, i, 8] = floc[8]\n\n@zk_chip\ndef relaxation_loc(m: Float[Array, 'N<=1024']):\n    m[3] += 1.1312217194570136 * (-2 * m[0] + 3.0 * m[1] * m[1] + 3.0 * m[2] * m[2] - m[3])\n    m[4] += 1.1312217194570136 * (m[0] + 1.5 * m[1] * m[1] + 1.5 * m[2] * m[2] - m[4])\n    m[5] += 1.1312217194570136 * (-m[1] - m[5])\n    m[6] += 1.1312217194570136 * (-m[2] - m[6])\n    m[7] += 1.8573551263001487 * (m[1] * m[1] - m[2] * m[2] - m[7])\n    m[8] += 1.8573551263001487 * (m[1] * m[2] - m[8])\n\n@zk_chip\ndef periodic_bc(f: Float[Array, 'N<=1024 M<=1024 K<=1024']):\n    nx, ny, ns = f.shape\n    for j in range(ny):\n        for k in range(ns):\n            f[0, j, k] = f[nx - 2, j, k]\n            f[nx - 1, j, k] = f[1, j, k]\n    for i in range(nx):",
+  "source_status": "direct"
+}

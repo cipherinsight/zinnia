@@ -218,6 +218,46 @@ def test_np_prod_on_complex_array():
     assert foo()
 
 
+def test_complex_sum_axis_0_native_static_array():
+    @zk_circuit
+    def foo():
+        a = np.array([[1 + 2j, 3 + 4j], [5 + 6j, 7 + 8j]])
+        s = np.sum(a, axis=0)
+        assert s[0].real == 6.0 and s[0].imag == 8.0
+        assert s[1].real == 10.0 and s[1].imag == 12.0
+    assert foo()
+
+
+def test_complex_sum_axis_1_native_static_array():
+    @zk_circuit
+    def foo():
+        a = np.array([[1 + 2j, 3 + 4j], [5 + 6j, 7 + 8j]])
+        s = a.sum(axis=1)
+        assert s[0].real == 4.0 and s[0].imag == 6.0
+        assert s[1].real == 12.0 and s[1].imag == 14.0
+    assert foo()
+
+
+def test_complex_prod_axis_0_native_static_array():
+    @zk_circuit
+    def foo():
+        a = np.array([[1 + 1j, 2 + 0j], [1 - 1j, 3 + 0j]])
+        p = np.prod(a, axis=0)
+        assert p[0].real == 2.0 and p[0].imag == 0.0
+        assert p[1].real == 6.0 and p[1].imag == 0.0
+    assert foo()
+
+
+def test_complex_mean_axis_keepdims_native_static_array():
+    @zk_circuit
+    def foo():
+        a = np.array([[1 + 2j, 3 + 4j], [5 + 6j, 7 + 8j]])
+        m = np.mean(a, axis=1, keepdims=True)
+        assert m[0, 0].real == 2.0 and m[0, 0].imag == 3.0
+        assert m[1, 0].real == 6.0 and m[1, 0].imag == 7.0
+    assert foo()
+
+
 # ───────────────────────── Shape ops ──────────────────────────────────────
 
 

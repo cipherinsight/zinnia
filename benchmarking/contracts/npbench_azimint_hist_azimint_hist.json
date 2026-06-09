@@ -1,0 +1,61 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "histogram-binning"
+  ],
+  "diagnostics": [
+    "Histogram/binning is an operator-specific benchmark row unless support is added."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "np.histogram"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 13,
+      "line_start": 10,
+      "mutated_params": [],
+      "name": "azimint_hist",
+      "ops": [
+        "Div"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "data",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "radius",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "npt",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "npbench_azimint_hist_azimint_hist/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Record bin count, finite radius/value ranges, and weighted/unweighted histogram semantics."
+  ],
+  "program": "npbench_azimint_hist_azimint_hist",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\nimport numpy as np\n\n@zk_circuit\ndef azimint_hist(data: Float, radius: Float[Array, 'N<=1024'], npt: Float[Array, 'N<=1024']):\n    histu = np.histogram(radius, npt)[0]\n    histw = np.histogram(radius, npt, weights=data)[0]\n    return histw / histu",
+  "source_status": "attempt_classify"
+}

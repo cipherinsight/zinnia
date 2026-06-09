@@ -8,15 +8,16 @@ use crate::types::Value;
 pub struct DivOp;
 
 impl DivOp {
-    const PARAMS: [ParamEntry; 2] = [
-        ParamEntry::required("lhs"),
-        ParamEntry::required("rhs"),
-    ];
+    const PARAMS: [ParamEntry; 2] = [ParamEntry::required("lhs"), ParamEntry::required("rhs")];
 }
 
 impl Op for DivOp {
-    fn name(&self) -> &'static str { "div" }
-    fn params(&self) -> &[ParamEntry] { &Self::PARAMS }
+    fn name(&self) -> &'static str {
+        "div"
+    }
+    fn params(&self) -> &[ParamEntry] {
+        &Self::PARAMS
+    }
 
     fn build(&self, builder: &mut IRBuilder, args: &OpArgs) -> Value {
         let lhs = args.require("lhs");
@@ -35,7 +36,10 @@ impl Op for DivOp {
             return builder.ir_div_f(&lf, &rf);
         }
 
-        panic!("Op `div` not supported for {:?} and {:?}",
-            lhs.zinnia_type(), rhs.zinnia_type())
+        panic!(
+            "Op `div` not supported for {:?} and {:?}",
+            lhs.zinnia_type(),
+            rhs.zinnia_type()
+        )
     }
 }

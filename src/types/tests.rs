@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::types::*;
+    use std::collections::BTreeMap;
 
     #[test]
     fn test_zinnia_type_display() {
@@ -20,6 +21,7 @@ mod tests {
                 dtype: NumberType::Integer,
                 max_length: 100,
                 max_rank: 2,
+                max_shape: None,
             }
             .to_string(),
             "DynamicNDArray[Integer, 100, 2]"
@@ -60,6 +62,7 @@ mod tests {
             dtype: NumberType::Float,
             max_length: 10,
             max_rank: 1,
+            max_shape: None,
         }
         .is_ndarray());
     }
@@ -83,11 +86,14 @@ mod tests {
             ZinniaType::Float
         );
         assert_eq!(
-            ZinniaType::from_annotation("NDArray", &[
-                AnnotationArg::Type(ZinniaType::Float),
-                AnnotationArg::Int(3),
-                AnnotationArg::Int(4),
-            ])
+            ZinniaType::from_annotation(
+                "NDArray",
+                &[
+                    AnnotationArg::Type(ZinniaType::Float),
+                    AnnotationArg::Int(3),
+                    AnnotationArg::Int(4),
+                ]
+            )
             .unwrap(),
             ZinniaType::NDArray {
                 shape: vec![3, 4],
@@ -95,16 +101,36 @@ mod tests {
             }
         );
         assert_eq!(
-            ZinniaType::from_annotation("DynamicNDArray", &[
-                AnnotationArg::Type(ZinniaType::Integer),
-                AnnotationArg::Int(100),
-                AnnotationArg::Int(2),
-            ])
+            ZinniaType::from_annotation(
+                "SymbolicNDArray",
+                &[
+                    AnnotationArg::Type(ZinniaType::Float),
+                    AnnotationArg::Symbol("N".to_string()),
+                    AnnotationArg::Int(4),
+                ]
+            )
+            .unwrap(),
+            ZinniaType::SymbolicNDArray {
+                shape: vec![ShapeDim::Symbol("N".to_string()), ShapeDim::Const(4)],
+                dtype: NumberType::Float,
+                bindings: BTreeMap::new(),
+            }
+        );
+        assert_eq!(
+            ZinniaType::from_annotation(
+                "DynamicNDArray",
+                &[
+                    AnnotationArg::Type(ZinniaType::Integer),
+                    AnnotationArg::Int(100),
+                    AnnotationArg::Int(2),
+                ]
+            )
             .unwrap(),
             ZinniaType::DynamicNDArray {
                 dtype: NumberType::Integer,
                 max_length: 100,
                 max_rank: 2,
+                max_shape: None,
             }
         );
         assert!(ZinniaType::from_annotation("NDArray", &[]).is_err());
@@ -122,15 +148,85 @@ mod tests {
             Some(12)
         );
         assert_eq!(
+            ZinniaType::SymbolicNDArray {
+                shape: vec![ShapeDim::Symbol("N".to_string()), ShapeDim::Const(4)],
+                dtype: NumberType::Float,
+                bindings: BTreeMap::new(),
+            }
+            .num_elements(),
+            None
+        );
+        let mut bindings = BTreeMap::new();
+        bindings.insert("N".to_string(), 3);
+        assert_eq!(
+            ZinniaType::SymbolicNDArray {
+                shape: vec![ShapeDim::Symbol("N".to_string()), ShapeDim::Const(4)],
+                dtype: NumberType::Float,
+                bindings,
+            }
+            .num_elements(),
+            Some(12)
+        );
+        assert_eq!(
             ZinniaType::DynamicNDArray {
                 dtype: NumberType::Integer,
                 max_length: 100,
                 max_rank: 2,
+                max_shape: None,
             }
             .num_elements(),
             Some(100)
         );
+        assert_eq!(
+            ZinniaType::SymbolicNDArray {
+                shape: vec![
+                    ShapeDim::Bounded {
+                        symbol: "N".to_string(),
+                        upper: 8,
+                    },
+                    ShapeDim::Const(2),
+                ],
+                dtype: NumberType::Float,
+                bindings: BTreeMap::new(),
+            }
+            .num_elements(),
+            Some(16)
+        );
         assert_eq!(ZinniaType::Integer.num_elements(), Option::None);
+    }
+
+    #[test]
+    fn symbolic_shape_concretization_reports_unresolved_symbols() {
+        let shape = vec![
+            ShapeDim::Symbol("N".to_string()),
+            ShapeDim::Const(4),
+            ShapeDim::Symbol("M".to_string()),
+        ];
+        let mut bindings = BTreeMap::new();
+        bindings.insert("N".to_string(), 2);
+        assert_eq!(
+            concretize_shape_dims(&shape, &bindings),
+            Err(vec!["M".to_string()])
+        );
+        bindings.insert("M".to_string(), 3);
+        assert_eq!(concretize_shape_dims(&shape, &bindings), Ok(vec![2, 4, 3]));
+    }
+
+    #[test]
+    fn symbolic_bounded_shape_reports_total_bound_not_concrete_shape() {
+        let shape = vec![
+            ShapeDim::Bounded {
+                symbol: "N".to_string(),
+                upper: 8,
+            },
+            ShapeDim::Const(2),
+        ];
+        let bindings = BTreeMap::new();
+        assert_eq!(
+            concretize_shape_dims(&shape, &bindings),
+            Err(vec!["N".to_string()])
+        );
+        assert_eq!(bounded_shape_total(&shape, &bindings), Ok(16));
     }
 
     #[test]
@@ -146,10 +242,24 @@ mod tests {
                 shape: vec![2, 3],
                 dtype: NumberType::Float,
             },
+            ZinniaType::SymbolicNDArray {
+                shape: vec![ShapeDim::Symbol("N".to_string()), ShapeDim::Const(3)],
+                dtype: NumberType::Float,
+                bindings: BTreeMap::new(),
+            },
+            ZinniaType::SymbolicNDArray {
+                shape: vec![ShapeDim::Bounded {
+                    symbol: "N".to_string(),
+                    upper: 8,
+                }],
+                dtype: NumberType::Float,
+                bindings: BTreeMap::new(),
+            },
             ZinniaType::DynamicNDArray {
                 dtype: NumberType::Integer,
                 max_length: 50,
                 max_rank: 3,
+                max_shape: None,
             },
             ZinniaType::List {
                 elements: vec![ZinniaType::Integer, ZinniaType::Float],

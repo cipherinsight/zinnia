@@ -1,0 +1,53 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "loop-bounded",
+    "matmul-dot"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "np.dot",
+        "np.empty_like",
+        "np.flip",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 23,
+      "line_start": 13,
+      "mutated_params": [],
+      "name": "kernel",
+      "ops": [
+        "Add",
+        "Div",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "r",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "npbench_polybench_durbin_durbin/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Declare shared matrix/vector dimensions explicitly, e.g. A[N,K] with x[K].",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "npbench_polybench_durbin_durbin",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, in-place-mutation, loop-bounded, matmul-dot\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Declare shared matrix/vector dimensions explicitly; when not expressible as @requires, encode with matching symbolic annotation names and keep as review obligation.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\n\n@zk_circuit\ndef kernel(r: Float[Array, 'N<=1024']):\n    y = np.empty_like(r)\n    alpha = -r[0]\n    beta = 1.0\n    y[0] = -r[0]\n    for k in range(1, r.shape[0]):\n        beta *= 1.0 - alpha * alpha\n        alpha = -(r[k] + np.dot(np.flip(r[:k]), y[:k])) / beta\n        y[:k] += alpha * np.flip(y[:k])\n        y[k] = alpha\n    return y",
+  "source_status": "direct"
+}

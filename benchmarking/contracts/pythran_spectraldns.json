@@ -1,0 +1,171 @@
+{
+  "categories": [
+    "complex",
+    "in-place-mutation"
+  ],
+  "diagnostics": [
+    "Complex kernels require Complex dtype support or a fail-closed classification."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 14,
+      "line_start": 10,
+      "mutated_params": [
+        "c"
+      ],
+      "name": "cross1",
+      "ops": [
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": true,
+          "name": "c",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "a",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "b",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "cross1"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 20,
+      "line_start": 17,
+      "mutated_params": [],
+      "name": "cross2",
+      "ops": [],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "c",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "a",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "b",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 29,
+      "line_start": 24,
+      "mutated_params": [
+        "P_hat",
+        "dU"
+      ],
+      "name": "add_pressure_diffusion",
+      "ops": [
+        "Add",
+        "LtE",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": true,
+          "name": "dU",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "U_hat",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "K2",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "K",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": true,
+          "name": "P_hat",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "K_over_K2",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "nu",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_spectraldns/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "pythran_spectraldns",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: complex, in-place-mutation\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.\n\n@zk_chip\ndef cross1(c: Complex[Array, 'N<=1024'], a: Complex[Array, 'N<=1024'], b: Complex[Array, 'N<=1024']):\n    c[0] = a[0] * b[2] - a[2] * b[1]\n    c[1] = a[2] * b[0] - a[0] * b[2]\n    c[2] = a[0] * b[1] - a[1] * b[0]\n    return c\n\n@zk_circuit\ndef cross2(c: Integer, a: Float, b: Float):\n    cross1(c, a, b)\n    c *= 1j\n    return c\n\n@zk_circuit\n@requires(lambda dU, U_hat, K2, K, P_hat, K_over_K2, nu: 0 <= K <= 1024)\ndef add_pressure_diffusion(dU: Complex[Array, 'N<=1024'], U_hat: Float, K2: Float, K: Integer, P_hat: Complex[Array, 'N<=1024'], K_over_K2: Complex[Array, 'N<=1024'], nu: Float):\n    du0, du1, du2 = (dU[0], dU[1], dU[2])\n    k_0, k_1, k_2 = (K_over_K2[0], K_over_K2[1], K_over_K2[2])\n    P_hat[:] = du0 * k_0 + du1 * k_1 + du2 * k_2\n    dU[:] = dU - P_hat * K - nu * K2 * U_hat\n    return P_hat",
+  "source_status": "direct"
+}

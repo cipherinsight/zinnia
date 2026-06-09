@@ -1,1 +1,7 @@
-define_np_minmax!(NpMaximumOp, "maximum", "np.maximum", ir_greater_than_i, ir_greater_than_f);
+define_np_minmax!(
+    NpMaximumOp,
+    "maximum",
+    "np.maximum",
+    ir_greater_than_i,
+    ir_greater_than_f
+);

@@ -199,9 +199,7 @@ impl IRGraph {
     /// from the same `&mut IRGraph`. P1's `SmtResolver` walks the IR via
     /// the resolver's `_with_stmts` trait methods; this is the chokepoint
     /// optim passes use when they need full-power SMT discharge.
-    pub fn split_resolver_and_stmts(
-        &mut self,
-    ) -> (&mut dyn Resolver, &[IRStatement]) {
+    pub fn split_resolver_and_stmts(&mut self) -> (&mut dyn Resolver, &[IRStatement]) {
         (&mut *self.resolver, &self.stmts)
     }
 
@@ -236,8 +234,7 @@ impl IRGraph {
         // Backfill arg_values for statements loaded via import (where
         // only `arguments` was filled). At-construction-time statements
         // already have both fields set by `IRBuilder::create_ir`.
-        let stmt_value_ids: Vec<ValueId> =
-            stmts.iter().map(|s| s.value_id).collect();
+        let stmt_value_ids: Vec<ValueId> = stmts.iter().map(|s| s.value_id).collect();
         for stmt in stmts.iter_mut() {
             if stmt.arg_values.is_empty() && !stmt.arguments.is_empty() {
                 stmt.arg_values = stmt
@@ -260,8 +257,7 @@ impl IRGraph {
             }
         }
 
-        let in_links: Vec<Vec<StmtId>> =
-            stmts.iter().map(|s| s.arguments.clone()).collect();
+        let in_links: Vec<Vec<StmtId>> = stmts.iter().map(|s| s.arguments.clone()).collect();
 
         self.stmts = stmts;
         self.value_to_stmt = value_to_stmt;
@@ -306,8 +302,7 @@ impl IRGraph {
     /// `arg_values` (value_id space) is stable across stmt_id renumbering
     /// and needs no remapping.
     pub fn remove_stmt_bunch(&mut self, indices: &[StmtId]) {
-        let index_set: std::collections::HashSet<StmtId> =
-            indices.iter().copied().collect();
+        let index_set: std::collections::HashSet<StmtId> = indices.iter().copied().collect();
 
         let mut new_stmts: Vec<IRStatement> = Vec::new();
         let mut id_mapping: std::collections::HashMap<StmtId, StmtId> =

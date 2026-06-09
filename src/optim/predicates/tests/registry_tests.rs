@@ -1,9 +1,7 @@
 //! Tests for the predicate-kind registry (`registry.rs`).
 
 use crate::ir_defs::IR;
-use crate::optim::predicates::{
-    registry, smt_encode_structural_predicate,
-};
+use crate::optim::predicates::{registry, smt_encode_structural_predicate};
 use crate::optim::smt_encoding::{IROp, SmtEncodingCtx, Z3Term};
 
 #[test]

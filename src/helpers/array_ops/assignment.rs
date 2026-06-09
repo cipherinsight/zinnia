@@ -1,12 +1,10 @@
 //! Dynamic array element and masked assignment.
 
 use crate::builder::IRBuilder;
-use crate::types::{ValueId,
-    DynamicNDArrayData, NumberType, SliceIndex, Value,
-};
+use crate::types::{DynamicNDArrayData, NumberType, SliceIndex, Value, ValueId};
 
 use super::bounded_axis::{select_stride_mode, stride_value, StrideMode};
-use super::indexing::compute_flat_addr;
+use super::indexing::{compute_flat_addr, discharge_dynamic_indices_in_bounds};
 
 /// Single element assignment: dyn[i] = x or dyn[i, j] = x.
 /// In-place write via `ir_write_memory` — O(1).
@@ -16,22 +14,109 @@ pub fn dyn_setitem(
     indices: &[SliceIndex],
     value: &Value,
 ) -> Value {
+    // Fancy-index scatter: any axis indexed by an integer array (StaticArray /
+    // List / Tuple) means `for k in 0..L: dst[idx_axes[k]] = rhs[k] | rhs`.
+    // Without this branch, `compute_flat_addr` would try to multiply an array
+    // by a stride and emit zero-arg / malformed IR statements.
+    if indices.iter().any(|i| {
+        matches!(
+            i,
+            SliceIndex::Single(Value::StaticArray { .. } | Value::List(_) | Value::Tuple(_))
+        )
+    }) {
+        return dyn_fancy_setitem(b, data, indices, value);
+    }
+
     let addr = compute_flat_addr(b, data, indices);
-    // Load-bearing index-in-range discharge (Group 5a). Phase E policy:
-    // literal-out-of-range panics, Disproved panics, Unknown emits a
-    // witness check (lenient) or panics (`ZINNIA_OP_REQUIRES_STRICT=1`).
-    crate::optim::resolver::discharge_index_in_range(
-        b,
-        &addr,
-        0,
-        data.envelope.total_bound as i64,
-        "dyn_setitem",
-    );
+    discharge_dynamic_indices_in_bounds(b, data, indices, "dyn_setitem");
+    if data.envelope.total_bound > 0 {
+        crate::optim::resolver::discharge_index_in_range(
+            b,
+            &addr,
+            0,
+            data.envelope.total_bound as i64,
+            "dyn_setitem",
+        );
+    }
 
     let write_val = cast_to_dtype(b, value, data.dtype);
-    b.ir_write_memory(data.segment_id, &addr, &write_val);
+    crate::helpers::segment::write_typed(b, data.segment_id, &addr, &write_val, data.dtype);
 
     Value::DynamicNDArray(data.clone())
+}
+
+fn read_index_array_elements(b: &mut IRBuilder, src: &Value) -> Vec<Value> {
+    match src {
+        Value::StaticArray { .. } => {
+            let list = crate::helpers::static_array::base::to_value_list(b, src);
+            match list {
+                Value::List(d) => d.values,
+                _ => vec![],
+            }
+        }
+        Value::List(d) | Value::Tuple(d) => d.values.clone(),
+        _ => vec![],
+    }
+}
+
+fn dyn_fancy_setitem(
+    b: &mut IRBuilder,
+    data: &DynamicNDArrayData,
+    indices: &[SliceIndex],
+    value: &Value,
+) -> Value {
+    let mut fancy_arrays: Vec<Option<Vec<Value>>> = Vec::with_capacity(indices.len());
+    let mut fancy_len: Option<usize> = None;
+    for idx in indices {
+        let elems = match idx {
+            SliceIndex::Single(v @ Value::StaticArray { .. })
+            | SliceIndex::Single(v @ Value::List(_))
+            | SliceIndex::Single(v @ Value::Tuple(_)) => Some(read_index_array_elements(b, v)),
+            _ => None,
+        };
+        if let Some(ref es) = elems {
+            if let Some(prev) = fancy_len {
+                assert!(
+                    prev == es.len(),
+                    "fancy-index axes must broadcast: got lengths {} and {}",
+                    prev,
+                    es.len()
+                );
+            } else {
+                fancy_len = Some(es.len());
+            }
+        }
+        fancy_arrays.push(elems);
+    }
+    let l = fancy_len.expect("dyn_fancy_setitem called without a fancy axis");
+
+    let value_per_k: Option<Vec<Value>> = match value {
+        Value::StaticArray { shape: vs, .. } if !vs.is_empty() && vs[0] == l && vs.len() == 1 => {
+            Some(read_index_array_elements(b, value))
+        }
+        Value::List(d) | Value::Tuple(d) if d.values.len() == l => Some(d.values.clone()),
+        _ => None,
+    };
+
+    let mut current = data.clone();
+    for k in 0..l {
+        let mut k_indices: Vec<SliceIndex> = Vec::with_capacity(indices.len());
+        for (ax, idx) in indices.iter().enumerate() {
+            match &fancy_arrays[ax] {
+                Some(arr) => k_indices.push(SliceIndex::Single(arr[k].clone())),
+                None => k_indices.push(idx.clone()),
+            }
+        }
+        let v_k = match &value_per_k {
+            Some(vs) => vs[k].clone(),
+            None => value.clone(),
+        };
+        let updated = dyn_setitem(b, &current, &k_indices, &v_k);
+        if let Value::DynamicNDArray(d) = updated {
+            current = d;
+        }
+    }
+    Value::DynamicNDArray(current)
 }
 
 /// Masked assignment: dyn[mask] = x.
@@ -42,17 +127,61 @@ pub fn dyn_setitem_mask(
     mask: &Value,
     value: &Value,
 ) -> Value {
+    let data_owned = crate::ops::dyn_ndarray::force_contiguous(b, data);
+    let data = &data_owned;
     let max_len = data.max_length();
+    let target_shape = &data.meta.logical_shape;
 
     let mask_elements: Vec<Value> = match mask {
         Value::DynamicNDArray(md) => {
-            crate::helpers::segment::read_all(b, md.segment_id, md.max_length())
+            if md.meta.logical_shape != *target_shape {
+                panic!(
+                    "masked assignment shape mismatch: array has shape {:?} but mask has shape {:?}",
+                    target_shape,
+                    md.meta.logical_shape
+                );
+            }
+            if md.max_length() != max_len {
+                panic!(
+                    "masked assignment shape mismatch: array has {} elements but mask has {}",
+                    max_len,
+                    md.max_length()
+                );
+            }
+            let md_owned = crate::ops::dyn_ndarray::force_contiguous(b, md);
+            crate::helpers::segment::read_all_typed(
+                b,
+                md_owned.segment_id,
+                md_owned.max_length(),
+                md_owned.dtype,
+            )
         }
-        Value::List(_) | Value::Tuple(_) => {
-            crate::helpers::composite::flatten_composite(mask)
+        Value::List(_) | Value::Tuple(_) | Value::StaticArray { .. } => {
+            let shape = crate::helpers::composite::get_composite_shape(mask);
+            if shape != *target_shape {
+                panic!(
+                    "masked assignment shape mismatch: array has shape {:?} but mask has shape {:?}",
+                    target_shape, shape
+                );
+            }
+            let mask_total: usize = shape.iter().product();
+            if mask_total != max_len {
+                panic!(
+                    "masked assignment shape mismatch: array has {} elements but mask has {}",
+                    max_len, mask_total
+                );
+            }
+            crate::helpers::composite::flatten_composite_with_builder(b, mask)
         }
         _ => panic!("masked assignment: mask must be array-like"),
     };
+    if mask_elements.len() != max_len {
+        panic!(
+            "masked assignment shape mismatch: array has {} elements but mask has {}",
+            max_len,
+            mask_elements.len()
+        );
+    }
 
     let value_is_scalar = value.is_number();
     let value_elements: Vec<Value> = if value_is_scalar {
@@ -60,43 +189,75 @@ pub fn dyn_setitem_mask(
     } else {
         match value {
             Value::DynamicNDArray(vd) => {
-                crate::helpers::segment::read_all(b, vd.segment_id, vd.max_length())
+                if vd.meta.logical_shape != *target_shape {
+                    panic!(
+                        "masked assignment RHS shape mismatch: array has shape {:?} but RHS has shape {:?}",
+                        target_shape,
+                        vd.meta.logical_shape
+                    );
+                }
+                if vd.max_length() != max_len {
+                    panic!(
+                        "masked assignment RHS shape mismatch: array has {} elements but RHS has {}",
+                        max_len,
+                        vd.max_length()
+                    );
+                }
+                let vd_owned = crate::ops::dyn_ndarray::force_contiguous(b, vd);
+                crate::helpers::segment::read_all_typed(
+                    b,
+                    vd_owned.segment_id,
+                    vd_owned.max_length(),
+                    vd_owned.dtype,
+                )
             }
-            Value::List(_) | Value::Tuple(_) => {
-                crate::helpers::composite::flatten_composite(value)
+            Value::List(_) | Value::Tuple(_) | Value::StaticArray { .. } => {
+                let shape = crate::helpers::composite::get_composite_shape(value);
+                if shape != *target_shape {
+                    panic!(
+                        "masked assignment RHS shape mismatch: array has shape {:?} but RHS has shape {:?}",
+                        target_shape, shape
+                    );
+                }
+                let value_total: usize = shape.iter().product();
+                if value_total != max_len {
+                    panic!(
+                        "masked assignment RHS shape mismatch: array has {} elements but RHS has {}",
+                        max_len, value_total
+                    );
+                }
+                crate::helpers::composite::flatten_composite_with_builder(b, value)
             }
             _ => panic!("masked assignment: value must be scalar or array-like"),
         }
     };
+    if !value_is_scalar && value_elements.len() != max_len {
+        panic!(
+            "masked assignment RHS shape mismatch: array has {} elements but RHS has {}",
+            max_len,
+            value_elements.len()
+        );
+    }
 
-    let current_vals = crate::helpers::segment::read_all(b, data.segment_id, max_len);
+    let current_vals =
+        crate::helpers::segment::read_all_typed(b, data.segment_id, max_len, data.dtype);
     let mut out_elements = Vec::with_capacity(max_len);
 
     for i in 0..max_len {
-        let mask_val = if i < mask_elements.len() {
-            mask_elements[i].clone()
-        } else {
-            b.ir_constant_int(0)
-        };
-        let keep = b.ir_bool_cast(&mask_val);
+        let keep = b.ir_bool_cast(&mask_elements[i]);
 
         let new_val = if value_is_scalar {
             cast_to_dtype(b, value, data.dtype)
-        } else if i < value_elements.len() {
-            cast_to_dtype(b, &value_elements[i.min(value_elements.len() - 1)], data.dtype)
         } else {
-            crate::ops::dyn_ndarray::metadata::dyn_default_value(b, data.dtype)
+            cast_to_dtype(b, &value_elements[i], data.dtype)
         };
 
-        let selected = if data.dtype == NumberType::Float {
-            b.ir_select_f(&keep, &new_val, &current_vals[i])
-        } else {
-            b.ir_select_i(&keep, &new_val, &current_vals[i])
-        };
-        out_elements.push(crate::ops::dyn_ndarray::value_to_scalar_i64(&selected));
+        let selected =
+            crate::helpers::value_ops::select_value(b, &keep, &new_val, &current_vals[i]);
+        out_elements.push(selected);
     }
 
-    let segment_id = crate::helpers::segment::alloc_and_write(b, &out_elements, data.dtype);
+    let segment_id = crate::helpers::segment::alloc_and_write_values(b, &out_elements, data.dtype);
 
     Value::DynamicNDArray(DynamicNDArrayData {
         envelope: data.envelope.clone(),
@@ -130,9 +291,10 @@ pub fn dyn_setitem_slice(
         src_axis: usize,
     }
     enum AxisCoords {
-        Single(Value),          // one coordinate (static or dynamic)
-        Static(Vec<usize>),     // known list of coordinates
-        Dynamic {               // pad-and-mask
+        Single(Value),      // one coordinate (static or dynamic)
+        Static(Vec<usize>), // known list of coordinates
+        Dynamic {
+            // pad-and-mask
             start: Value,
             stop: Value,
             step: Value,
@@ -165,11 +327,17 @@ pub fn dyn_setitem_slice(
                 let e_static = resolve(stop);
                 let st_static = resolve(step);
 
-                let all_static = start.is_none() || matches!(start.as_ref(), Some(Value::None)) || s_static.is_some();
+                let all_static = start.is_none()
+                    || matches!(start.as_ref(), Some(Value::None))
+                    || s_static.is_some();
                 let all_static = all_static
-                    && (stop.is_none() || matches!(stop.as_ref(), Some(Value::None)) || e_static.is_some());
+                    && (stop.is_none()
+                        || matches!(stop.as_ref(), Some(Value::None))
+                        || e_static.is_some());
                 let all_static = all_static
-                    && (step.is_none() || matches!(step.as_ref(), Some(Value::None)) || st_static.is_some());
+                    && (step.is_none()
+                        || matches!(step.as_ref(), Some(Value::None))
+                        || st_static.is_some());
 
                 if all_static {
                     let s = s_static.unwrap_or(0);
@@ -180,10 +348,16 @@ pub fn dyn_setitem_slice(
                     let mut coords = Vec::new();
                     if st > 0 {
                         let mut i = s;
-                        while i < e { coords.push(i); i += st as usize; }
+                        while i < e {
+                            coords.push(i);
+                            i += st as usize;
+                        }
                     } else {
                         let mut i = s;
-                        while i > e { coords.push(i); i = i.wrapping_sub((-st) as usize); }
+                        while i > e {
+                            coords.push(i);
+                            i = i.wrapping_sub((-st) as usize);
+                        }
                     }
                     value_shape.push(coords.len());
                     axis_specs.push(AxisSpec {
@@ -195,7 +369,11 @@ pub fn dyn_setitem_slice(
                     fn to_ir(b: &mut IRBuilder, v: &Option<Value>, default: i64) -> Value {
                         match v.as_ref() {
                             Some(val) if !matches!(val, Value::None) => {
-                                if let Some(s) = val.int_val() { b.ir_constant_int(s) } else { val.clone() }
+                                if let Some(s) = val.int_val() {
+                                    b.ir_constant_int(s)
+                                } else {
+                                    val.clone()
+                                }
                             }
                             _ => b.ir_constant_int(default),
                         }
@@ -236,11 +414,15 @@ pub fn dyn_setitem_slice(
     } else {
         match value {
             Value::DynamicNDArray(vd) => {
-                crate::helpers::segment::read_all(b, vd.segment_id, vd.max_length())
+                let vd_owned = crate::ops::dyn_ndarray::force_contiguous(b, vd);
+                crate::helpers::segment::read_all_typed(
+                    b,
+                    vd_owned.segment_id,
+                    vd_owned.max_length(),
+                    vd_owned.dtype,
+                )
             }
-            Value::List(_) | Value::Tuple(_) => {
-                crate::helpers::composite::flatten_composite(value)
-            }
+            Value::List(_) | Value::Tuple(_) => crate::helpers::composite::flatten_composite(value),
             _ => panic!("slice assignment: value must be scalar or array-like"),
         }
     };
@@ -252,13 +434,17 @@ pub fn dyn_setitem_slice(
             panic!(
                 "slice assignment shape mismatch: target slice has shape {:?} ({} elements) \
                  but value has {} elements. Broadcasting in slice assignment is not supported.",
-                value_shape, value_total, value_elements.len()
+                value_shape,
+                value_total,
+                value_elements.len()
             );
         }
     }
 
     // Collect the Range/trailing axes for iteration.
-    let _range_axes: Vec<(usize, &AxisSpec)> = axis_specs.iter().enumerate()
+    let _range_axes: Vec<(usize, &AxisSpec)> = axis_specs
+        .iter()
+        .enumerate()
         .filter(|(_, spec)| !matches!(spec.coords, AxisCoords::Single(_)))
         .collect();
 
@@ -271,7 +457,8 @@ pub fn dyn_setitem_slice(
         // in symbolic-runtime mode we emit one `ir_mul_i` per axis against
         // the compact buffer's `runtime_strides`.
         for val_flat in 0..value_total {
-            let val_coords = crate::helpers::shape_arith::decode_coords(val_flat, &value_shape, &value_strides);
+            let val_coords =
+                crate::helpers::shape_arith::decode_coords(val_flat, &value_shape, &value_strides);
 
             let addr = match &mode {
                 StrideMode::LiteralLogical(strides) => {
@@ -281,7 +468,11 @@ pub fn dyn_setitem_slice(
                         match &spec.coords {
                             AxisCoords::Single(v) => {
                                 if let Some(i) = v.int_val() {
-                                    let i = if i < 0 { shape[spec.src_axis] as i64 + i } else { i };
+                                    let i = if i < 0 {
+                                        shape[spec.src_axis] as i64 + i
+                                    } else {
+                                        i
+                                    };
                                     addr_static += i * strides[spec.src_axis] as i64;
                                 } else {
                                     panic!("slice assignment with dynamic single index + static range not yet optimized");
@@ -304,7 +495,11 @@ pub fn dyn_setitem_slice(
                         let coord_val = match &spec.coords {
                             AxisCoords::Single(v) => {
                                 if let Some(i) = v.int_val() {
-                                    let i = if i < 0 { shape[spec.src_axis] as i64 + i } else { i };
+                                    let i = if i < 0 {
+                                        shape[spec.src_axis] as i64 + i
+                                    } else {
+                                        i
+                                    };
                                     b.ir_constant_int(i)
                                 } else {
                                     v.clone()
@@ -332,13 +527,14 @@ pub fn dyn_setitem_slice(
             } else {
                 cast_to_dtype(b, &value_elements[val_flat], data.dtype)
             };
-            b.ir_write_memory(data.segment_id, &addr, &write_val);
+            crate::helpers::segment::write_typed(b, data.segment_id, &addr, &write_val, data.dtype);
         }
     } else {
         // Has dynamic range: iterate over max positions, conditionally write.
         // Read current values first (for select on out-of-bounds positions).
         for val_flat in 0..value_total {
-            let val_coords = crate::helpers::shape_arith::decode_coords(val_flat, &value_shape, &value_strides);
+            let val_coords =
+                crate::helpers::shape_arith::decode_coords(val_flat, &value_shape, &value_strides);
 
             let mut addr_parts_static: i64 = 0;
             let mut addr_parts_dynamic: Vec<Value> = Vec::new();
@@ -364,7 +560,11 @@ pub fn dyn_setitem_slice(
                 match &spec.coords {
                     AxisCoords::Single(v) => {
                         if let Some(i) = v.int_val() {
-                            let i = if i < 0 { shape[spec.src_axis] as i64 + i } else { i };
+                            let i = if i < 0 {
+                                shape[spec.src_axis] as i64 + i
+                            } else {
+                                i
+                            };
                             if use_symbolic {
                                 let i_val = b.ir_constant_int(i);
                                 addr_parts_dynamic.push(b.ir_mul_i(&i_val, &stride_v));
@@ -385,7 +585,12 @@ pub fn dyn_setitem_slice(
                         }
                         val_coord_idx += 1;
                     }
-                    AxisCoords::Dynamic { start, stop, step, axis_len } => {
+                    AxisCoords::Dynamic {
+                        start,
+                        stop,
+                        step,
+                        axis_len,
+                    } => {
                         let idx_in_slice = val_coords[val_coord_idx] as i64;
                         let idx_const = b.ir_constant_int(idx_in_slice);
                         let offset = b.ir_mul_i(&idx_const, step);
@@ -438,18 +643,16 @@ pub fn dyn_setitem_slice(
             };
 
             // Read current, select, write.
-            let current = b.ir_read_memory(data.segment_id, &addr);
+            let current =
+                crate::helpers::segment::read_typed(b, data.segment_id, &addr, data.dtype);
             let write_val = if value_is_scalar {
                 cast_to_dtype(b, value, data.dtype)
             } else {
                 cast_to_dtype(b, &value_elements[val_flat], data.dtype)
             };
-            let selected = if data.dtype == NumberType::Float {
-                b.ir_select_f(&in_bounds, &write_val, &current)
-            } else {
-                b.ir_select_i(&in_bounds, &write_val, &current)
-            };
-            b.ir_write_memory(data.segment_id, &addr, &selected);
+            let selected =
+                crate::helpers::value_ops::select_value(b, &in_bounds, &write_val, &current);
+            crate::helpers::segment::write_typed(b, data.segment_id, &addr, &selected, data.dtype);
         }
     }
 
@@ -459,13 +662,22 @@ pub fn dyn_setitem_slice(
 fn cast_to_dtype(b: &mut IRBuilder, v: &Value, dtype: NumberType) -> Value {
     match dtype {
         NumberType::Float => {
-            if matches!(v, Value::Float(_)) { v.clone() } else { b.ir_float_cast(v) }
+            if matches!(v, Value::Float(_)) {
+                v.clone()
+            } else {
+                b.ir_float_cast(v)
+            }
         }
         NumberType::Integer => {
-            if matches!(v, Value::Integer(_)) { v.clone() } else { b.ir_int_cast(v) }
+            if matches!(v, Value::Integer(_)) {
+                v.clone()
+            } else {
+                b.ir_int_cast(v)
+            }
         }
-        NumberType::Complex => panic!(
-            "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
-        ),
+        NumberType::Complex => {
+            let (real, imag) = crate::helpers::value_ops::unpack_value_to_complex_parts(b, v);
+            crate::helpers::value_ops::pack_complex_value(real, imag)
+        }
     }
 }

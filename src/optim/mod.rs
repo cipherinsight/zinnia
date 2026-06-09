@@ -1,4 +1,6 @@
 mod always_satisfied_elimination;
+mod assert_subsumption;
+mod asserted_equality_const_prop;
 mod constant_fold;
 mod dead_code_elimination;
 mod double_not_elimination;
@@ -15,11 +17,14 @@ pub mod resolver;
 pub mod smt_encoding;
 pub mod strategy;
 pub mod telemetry;
+mod unread_memory_elimination;
 
 #[cfg(test)]
 mod tests;
 
 pub use always_satisfied_elimination::AlwaysSatisfiedElimination;
+pub use assert_subsumption::AssertSubsumption;
+pub use asserted_equality_const_prop::AssertedEqualityConstantPropagation;
 pub use constant_fold::ConstantFold;
 pub use dead_code_elimination::DeadCodeElimination;
 pub use double_not_elimination::DoubleNotElimination;
@@ -41,6 +46,7 @@ pub use telemetry::{
     discharge_event, now_unix_ns, strategy_dispatch_event, SmtTelemetry, TelemetryEvent,
     TelemetrySink,
 };
+pub use unread_memory_elimination::UnreadMemoryEliminator;
 
 use crate::ir::IRGraph;
 

@@ -1,0 +1,16 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0310/kernel.py
+// REASON: a.argmin() over fixed-shape 8x6 lowered to explicit nested loop with running-min comparator.
+
+def main(field[8][6] a) -> field:
+  field best = a[0][0]
+  field idx = 0
+  for u32 i in 0..8 do
+    for u32 j in 0..6 do
+      field flat = i * 6 + j
+      bool lt = a[i][j] < best
+      best = if lt then a[i][j] else best fi
+      idx = if lt then flat else idx fi
+    endfor
+  endfor
+  return idx

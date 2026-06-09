@@ -1,0 +1,148 @@
+{
+  "categories": [
+    "domain-obligation"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "xp.log",
+        "xp.where"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 13,
+      "line_start": 12,
+      "mutated_params": [],
+      "name": "thin_plate_spline",
+      "ops": [
+        "Eq",
+        "Mult",
+        "Pow"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "r",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "xp",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "kernel_func",
+        "xp.linalg.norm"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 18,
+      "line_start": 16,
+      "mutated_params": [],
+      "name": "_kernel_matrix_impl",
+      "ops": [
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "x",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "y",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "kernel_func",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "xp",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "_kernel_matrix_impl",
+        "xp.concatenate",
+        "xp.prod"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 42,
+      "line_start": 21,
+      "mutated_params": [],
+      "name": "build_system",
+      "ops": [
+        "Pow"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "x",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "y",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "powers",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "xp",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_build_system/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1]."
+  ],
+  "program": "pythran_build_system",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: domain-obligation, linalg\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].\n# Precondition: Record square/invertible/SPD requirements where the linalg call needs them.\n# Diagnostic: np.linalg kernels may stay fail-closed until support is selected.\nimport numpy as np\n\n@zk_chip\ndef thin_plate_spline(r: Integer, xp: Float):\n    return xp.where(r == 0, 0, r ** 2 * xp.log(r))\n\n@zk_chip\ndef _kernel_matrix_impl(x: Float[Array, 'N<=1024 M<=1024 K<=1024'], y: Float[Array, 'N<=1024 M<=1024 K<=1024'], kernel_func: Float, xp: Float):\n    \"\"\"Evaluate RBFs, with centerx at `y`, at `x`.\"\"\"\n    return kernel_func(xp.linalg.norm(x[None, :, :] - y[:, None, :], axis=-1), xp)\n\n@zk_circuit\ndef build_system(x: Float[Array, 'N<=1024 M<=1024 K<=1024'], y: Float, powers: Float, xp: Float):\n    \"\"\"Construct the coefficients needed to evaluate\n    the RBF.\n\n    Parameters\n    ----------\n    x : (Q, N) float ndarray\n        Evaluation point coordinates.\n    y : (P, N) float ndarray\n        Data point coordinates.\n    powers : (R, N) int ndarray\n        The exponents for each monomial in the polynomial.\n    xp\n\n    Returns\n    -------\n    (Q, P + R) float ndarray\n\n    \"\"\"\n    kernel_func = thin_plate_spline\n    vec = xp.concatenate([_kernel_matrix_impl(y, x, kernel_func, xp), xp.prod(x[:, None, :] ** powers, axis=-1)], axis=-1)\n    return vec",
+  "source_status": "direct"
+}

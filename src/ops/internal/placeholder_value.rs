@@ -11,8 +11,12 @@ impl PlaceholderValueOp {
 }
 
 impl Op for PlaceholderValueOp {
-    fn name(&self) -> &'static str { "placeholder_value" }
-    fn params(&self) -> &[ParamEntry] { &Self::PARAMS }
+    fn name(&self) -> &'static str {
+        "placeholder_value"
+    }
+    fn params(&self) -> &[ParamEntry] {
+        &Self::PARAMS
+    }
 
     fn build(&self, builder: &mut IRBuilder, _args: &OpArgs) -> Value {
         match &self.dtype {

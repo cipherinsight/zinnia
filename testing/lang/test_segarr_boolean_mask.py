@@ -81,6 +81,44 @@ def test_dynamic_mask_read_returns_dynamic_ndarray():
     assert foo(2)
 
 
+# ───────────────────── Prefix-mask broadcasting (2-D arr) ────────────────
+
+
+def test_static_prefix_mask_read_2d_arr_keeps_trailing_axis():
+    """1-D static mask along the leading axis of a 2-D StaticArray returns
+    a 2-D StaticArray of shape (kept_rows, trailing)."""
+    @zk_circuit
+    def foo():
+        a = np.array([[10, 11], [20, 21], [30, 31]])
+        m = np.array([True, False, True])
+        b = a[m]
+        # Two surviving rows in original order; trailing axis preserved.
+        assert b[0, 0] == 10
+        assert b[0, 1] == 11
+        assert b[1, 0] == 30
+        assert b[1, 1] == 31
+    assert foo()
+
+
+def test_dynamic_prefix_mask_read_2d_arr_returns_dynamic_ndarray():
+    """1-D dynamic mask along the leading axis of a 2-D StaticArray returns
+    a DynamicNDArray of shape (true_count, trailing) with total_bound ==
+    arr.size. Exercises the runtime row-block compaction path."""
+    @zk_circuit
+    def foo(threshold: Integer):
+        a = np.array([[10, 11], [20, 21], [30, 31]])
+        # Per-row mask from a comparison on a derived column with a
+        # runtime threshold. Mask cells are not all compile-time-known.
+        row_keys = np.array([10, 20, 30])
+        m = row_keys > threshold
+        b = a[m]
+        # threshold = 15 → keep rows 1 and 2 → values [[20,21],[30,31]];
+        # column-0 sum = 50.
+        assert np.sum(b[:, 0]) == 50
+
+    assert foo(15)
+
+
 # ───────────────────────── Mask write — scalar RHS ────────────────────────
 
 

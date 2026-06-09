@@ -1,0 +1,59 @@
+{
+  "categories": [
+    "shape-dtype-only"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "numpy.exp"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 11,
+      "line_start": 10,
+      "mutated_params": [],
+      "name": "calculate_vibr_energy",
+      "ops": [
+        "Mult",
+        "Pow",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "harmonic",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "anharmonic",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "i",
+          "proposed_annotation": "Integer[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_vibr_energy/kernel.py",
+  "notes": [
+    "Likely first-pass candidate: mostly needs dtype/rank/shape annotations."
+  ],
+  "preconditions": [],
+  "program": "pythran_vibr_energy",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: shape-dtype-only\n# Expected outcome: compile/prove candidate\n# Precondition: Shape/rank/dtype annotations only.\nimport numpy\n\n@zk_circuit\ndef calculate_vibr_energy(harmonic: Float[Array, 'N<=1024'], anharmonic: Float[Array, 'N<=1024'], i: Integer[Array, 'N<=1024']):\n    return numpy.exp(-harmonic * i - anharmonic * i ** 2)",
+  "source_status": "direct"
+}

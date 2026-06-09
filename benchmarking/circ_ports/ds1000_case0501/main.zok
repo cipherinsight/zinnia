@@ -1,0 +1,12 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0501/kernel.py
+// REASON: np.take_along_axis with axis=-1 then squeezing last axis lowered to explicit indexed gather
+
+def main(field[13][13][2] a, u32[13][13] b) -> field[13][13]:
+    field[13][13] result = [[0; 13]; 13]
+    for u32 i in 0..13 do
+        for u32 j in 0..13 do
+            result[i][j] = a[i][j][b[i][j]]
+        endfor
+    endfor
+    return result

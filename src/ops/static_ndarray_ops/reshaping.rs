@@ -33,7 +33,11 @@ pub(super) fn concat_recursive(arrays: &[Value], axis: usize) -> Value {
                 }
             }
         }
-        return Value::List(CompositeData { elements_type: all_types, values: all_values, value_id: ValueId::next() });
+        return Value::List(CompositeData {
+            elements_type: all_types,
+            values: all_values,
+            value_id: ValueId::next(),
+        });
     }
     let first = match &arrays[0] {
         Value::List(d) | Value::Tuple(d) => d,
@@ -52,7 +56,11 @@ pub(super) fn concat_recursive(arrays: &[Value], axis: usize) -> Value {
         rows.push(concat_recursive(&inner, axis - 1));
     }
     let types = rows.iter().map(|v| v.zinnia_type()).collect();
-    Value::List(CompositeData { elements_type: types, values: rows, value_id: ValueId::next() })
+    Value::List(CompositeData {
+        elements_type: types,
+        values: rows,
+        value_id: ValueId::next(),
+    })
 }
 
 pub fn np_concatenate(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
@@ -71,7 +79,11 @@ pub fn np_concatenate(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String
     }
 
     let ndim = crate::helpers::composite::get_composite_shape(&data.values[0]).len();
-    let resolved = if raw_axis < 0 { ndim as i64 + raw_axis } else { raw_axis };
+    let resolved = if raw_axis < 0 {
+        ndim as i64 + raw_axis
+    } else {
+        raw_axis
+    };
     if resolved < 0 || resolved >= ndim as i64 {
         panic!(
             "axis {} is out of bounds for array with {} dimensions",
@@ -120,7 +132,11 @@ fn stack_recursive(arrays: &[Value], axis: usize) -> Value {
         rows.push(stack_recursive(&inner, axis - 1));
     }
     let types = rows.iter().map(|v| v.zinnia_type()).collect();
-    Value::List(CompositeData { elements_type: types, values: rows, value_id: ValueId::next() })
+    Value::List(CompositeData {
+        elements_type: types,
+        values: rows,
+        value_id: ValueId::next(),
+    })
 }
 
 pub fn np_stack(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
@@ -140,7 +156,11 @@ pub fn np_stack(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Valu
 
     // Stack inserts a new axis, so the result rank is input_rank + 1.
     let ndim = crate::helpers::composite::get_composite_shape(&data.values[0]).len() + 1;
-    let resolved = if raw_axis < 0 { ndim as i64 + raw_axis } else { raw_axis };
+    let resolved = if raw_axis < 0 {
+        ndim as i64 + raw_axis
+    } else {
+        raw_axis
+    };
     if resolved < 0 || resolved >= ndim as i64 {
         panic!(
             "axis {} is out of bounds for array of dimension {}",
@@ -159,19 +179,37 @@ pub fn np_stack(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Valu
     out
 }
 
-pub fn build_ndarray_from_flat(b: &mut IRBuilder, values: Vec<Value>, types: Vec<ZinniaType>, shape: &[usize]) -> Value {
+pub fn build_ndarray_from_flat(
+    b: &mut IRBuilder,
+    values: Vec<Value>,
+    types: Vec<ZinniaType>,
+    shape: &[usize],
+) -> Value {
     if shape.len() == 1 {
-        Value::List(CompositeData { elements_type: types, values, value_id: ValueId::next() })
+        Value::List(CompositeData {
+            elements_type: types,
+            values,
+            value_id: ValueId::next(),
+        })
     } else {
         // Build nested structure
         let inner_size: usize = shape[1..].iter().product();
         let mut rows = Vec::new();
         for chunk in values.chunks(inner_size) {
             let chunk_types = chunk.iter().map(|v| v.zinnia_type()).collect();
-            rows.push(build_ndarray_from_flat(b, chunk.to_vec(), chunk_types, &shape[1..]));
+            rows.push(build_ndarray_from_flat(
+                b,
+                chunk.to_vec(),
+                chunk_types,
+                &shape[1..],
+            ));
         }
         let row_types = rows.iter().map(|v| v.zinnia_type()).collect();
-        Value::List(CompositeData { elements_type: row_types, values: rows, value_id: ValueId::next() })
+        Value::List(CompositeData {
+            elements_type: row_types,
+            values: rows,
+            value_id: ValueId::next(),
+        })
     }
 }
 
@@ -185,12 +223,14 @@ pub fn ndarray_reshape(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value 
     // Parse new shape from args — single tuple arg or multiple int args
     let new_shape: Vec<usize> = if args.len() == 1 {
         match &args[0] {
-            Value::Tuple(data) | Value::List(data) => {
-                data.values.iter().map(|v| {
+            Value::Tuple(data) | Value::List(data) => data
+                .values
+                .iter()
+                .map(|v| {
                     let n = require_provable_static_int(b, v, SiteKind::ReshapeDim);
                     n as usize
-                }).collect()
-            }
+                })
+                .collect(),
             Value::Integer(_) => {
                 let n = require_provable_static_int(b, &args[0], SiteKind::ReshapeDim);
                 vec![n as usize]
@@ -198,33 +238,63 @@ pub fn ndarray_reshape(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value 
             _ => panic!("reshape: invalid shape argument"),
         }
     } else {
-        args.iter().map(|v| {
-            let n = require_provable_static_int(b, v, SiteKind::ReshapeDim);
-            n as usize
-        }).collect()
+        args.iter()
+            .map(|v| {
+                let n = require_provable_static_int(b, v, SiteKind::ReshapeDim);
+                n as usize
+            })
+            .collect()
     };
 
     // Handle -1 (infer one dimension)
     let neg_count = new_shape.iter().filter(|&&s| s == usize::MAX).count();
     let final_shape: Vec<usize> = if neg_count == 1 {
         let known_product: usize = new_shape.iter().filter(|&&s| s != usize::MAX).product();
-        assert!(known_product > 0 && total % known_product == 0, "reshape: cannot infer dimension");
-        new_shape.iter().map(|&s| if s == usize::MAX { total / known_product } else { s }).collect()
+        assert!(
+            known_product > 0 && total % known_product == 0,
+            "reshape: cannot infer dimension"
+        );
+        new_shape
+            .iter()
+            .map(|&s| {
+                if s == usize::MAX {
+                    total / known_product
+                } else {
+                    s
+                }
+            })
+            .collect()
     } else {
         // Also handle -1 encoded as a large number from i64 cast
         let has_neg = args.iter().any(|a| a.int_val() == Some(-1));
         if has_neg {
             let known: Vec<usize> = new_shape.iter().copied().collect();
             let known_product: usize = known.iter().filter(|&&s| s < usize::MAX / 2).product();
-            assert!(known_product > 0 && total % known_product == 0, "reshape: cannot infer dimension");
-            known.iter().map(|&s| if s >= usize::MAX / 2 { total / known_product } else { s }).collect()
+            assert!(
+                known_product > 0 && total % known_product == 0,
+                "reshape: cannot infer dimension"
+            );
+            known
+                .iter()
+                .map(|&s| {
+                    if s >= usize::MAX / 2 {
+                        total / known_product
+                    } else {
+                        s
+                    }
+                })
+                .collect()
         } else {
             new_shape
         }
     };
 
     let shape_product: usize = final_shape.iter().product();
-    assert_eq!(total, shape_product, "reshape: total size mismatch ({} vs {})", total, shape_product);
+    assert_eq!(
+        total, shape_product,
+        "reshape: total size mismatch ({} vs {})",
+        total, shape_product
+    );
 
     let types = flat.iter().map(|v| v.zinnia_type()).collect();
     build_ndarray_from_flat(b, flat, types, &final_shape)
@@ -234,15 +304,26 @@ pub fn ndarray_reshape(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value 
 pub fn ndarray_moveaxis(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value {
     let shape = crate::helpers::composite::get_composite_shape(val);
     let ndim = shape.len();
-    assert!(args.len() >= 2, "moveaxis: requires source and destination arguments");
+    assert!(
+        args.len() >= 2,
+        "moveaxis: requires source and destination arguments"
+    );
 
     let src = {
         let s: i64 = require_provable_static_int(b, &args[0], SiteKind::Axis);
-        if s < 0 { (ndim as i64 + s) as usize } else { s as usize }
+        if s < 0 {
+            (ndim as i64 + s) as usize
+        } else {
+            s as usize
+        }
     };
     let dst = {
         let d: i64 = require_provable_static_int(b, &args[1], SiteKind::Axis);
-        if d < 0 { (ndim as i64 + d) as usize } else { d as usize }
+        if d < 0 {
+            (ndim as i64 + d) as usize
+        } else {
+            d as usize
+        }
     };
     assert!(src < ndim && dst < ndim, "moveaxis: axis out of bounds");
 
@@ -250,7 +331,8 @@ pub fn ndarray_moveaxis(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value
     let mut order: Vec<usize> = (0..ndim).filter(|&i| i != src).collect();
     order.insert(dst, src);
 
-    let axes_val: Vec<Value> = order.iter()
+    let axes_val: Vec<Value> = order
+        .iter()
         .map(|&a| Value::Integer(crate::types::ScalarValue::new(Some(a as i64), None)))
         .collect();
     let axes_tuple = Value::Tuple(CompositeData {
@@ -263,10 +345,15 @@ pub fn ndarray_moveaxis(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value
 }
 
 /// NDArray repeat: repeat array elements along an axis.
-pub fn ndarray_repeat(b: &mut IRBuilder, val: &Value, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
-    let repeats_arg = args.first()
-        .expect("repeat: repeats argument required");
-    let axis = kwargs.get("axis")
+pub fn ndarray_repeat(
+    b: &mut IRBuilder,
+    val: &Value,
+    args: &[Value],
+    kwargs: &HashMap<String, Value>,
+) -> Value {
+    let repeats_arg = args.first().expect("repeat: repeats argument required");
+    let axis = kwargs
+        .get("axis")
         .or_else(|| args.get(1))
         .and_then(|v| v.int_val());
 
@@ -298,17 +385,10 @@ pub fn ndarray_repeat(b: &mut IRBuilder, val: &Value, args: &[Value], kwargs: &H
                 // reads. Length-zero input: nothing to repeat.
                 if len_arr == 0 || k_max == 0 {
                     let runtime_length = b.ir_constant_int(0);
-                    return dyn_from_values_with_active(
-                        b,
-                        Vec::new(),
-                        runtime_length,
-                        dtype,
-                    );
+                    return dyn_from_values_with_active(b, Vec::new(), runtime_length, dtype);
                 }
-                let src_scalars: Vec<crate::types::ScalarValue<i64>> = flat_src
-                    .iter()
-                    .map(value_to_scalar_i64)
-                    .collect();
+                let src_scalars: Vec<crate::types::ScalarValue<i64>> =
+                    flat_src.iter().map(value_to_scalar_i64).collect();
                 let src_seg = crate::helpers::segment::alloc_and_write(b, &src_scalars, dtype);
 
                 // Output buffer pre-filled with defaults; per-cell symbolic
@@ -377,7 +457,11 @@ pub fn ndarray_repeat(b: &mut IRBuilder, val: &Value, args: &[Value], kwargs: &H
         // Repeat along specific axis
         let shape = crate::helpers::composite::get_composite_shape(val);
         let ndim = shape.len();
-        let ax = if ax < 0 { (ndim as i64 + ax) as usize } else { ax as usize };
+        let ax = if ax < 0 {
+            (ndim as i64 + ax) as usize
+        } else {
+            ax as usize
+        };
 
         if ax == 0 {
             if let Value::List(data) | Value::Tuple(data) = val {
@@ -388,7 +472,11 @@ pub fn ndarray_repeat(b: &mut IRBuilder, val: &Value, args: &[Value], kwargs: &H
                     }
                 }
                 let types = new_vals.iter().map(|v| v.zinnia_type()).collect();
-                let result = Value::List(CompositeData { elements_type: types, values: new_vals, value_id: ValueId::next() });
+                let result = Value::List(CompositeData {
+                    elements_type: types,
+                    values: new_vals,
+                    value_id: ValueId::next(),
+                });
                 if let (Some(in_vid), Some(out_vid)) = (val.value_id(), result.value_id()) {
                     crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
                 }
@@ -398,8 +486,15 @@ pub fn ndarray_repeat(b: &mut IRBuilder, val: &Value, args: &[Value], kwargs: &H
         // For other axes, transpose so target axis is first, repeat, transpose back
         let mut fwd: Vec<usize> = (0..ndim).collect();
         fwd.swap(0, ax);
-        let fwd_vals: Vec<Value> = fwd.iter().map(|&a| Value::Integer(crate::types::ScalarValue::new(Some(a as i64), None))).collect();
-        let fwd_tuple = Value::Tuple(CompositeData { elements_type: vec![ZinniaType::Integer; ndim], values: fwd_vals, value_id: ValueId::next() });
+        let fwd_vals: Vec<Value> = fwd
+            .iter()
+            .map(|&a| Value::Integer(crate::types::ScalarValue::new(Some(a as i64), None)))
+            .collect();
+        let fwd_tuple = Value::Tuple(CompositeData {
+            elements_type: vec![ZinniaType::Integer; ndim],
+            values: fwd_vals,
+            value_id: ValueId::next(),
+        });
         let transposed = crate::helpers::ndarray::ndarray_transpose(b, val, &[fwd_tuple.clone()]);
         let repeated = ndarray_repeat(b, &transposed, args, &HashMap::new());
         crate::helpers::ndarray::ndarray_transpose(b, &repeated, &[fwd_tuple])
@@ -413,7 +508,11 @@ pub fn ndarray_repeat(b: &mut IRBuilder, val: &Value, args: &[Value], kwargs: &H
             }
         }
         let types = new_vals.iter().map(|v| v.zinnia_type()).collect();
-        let result = Value::List(CompositeData { elements_type: types, values: new_vals, value_id: ValueId::next() });
+        let result = Value::List(CompositeData {
+            elements_type: types,
+            values: new_vals,
+            value_id: ValueId::next(),
+        });
         if let (Some(in_vid), Some(out_vid)) = (val.value_id(), result.value_id()) {
             crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
         }
@@ -426,7 +525,11 @@ pub fn ndarray_filter(_b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value 
     let mask = args.first().expect("filter: requires a mask argument");
     let elements = crate::helpers::composite::flatten_composite(val);
     let mask_elements = crate::helpers::composite::flatten_composite(mask);
-    assert_eq!(elements.len(), mask_elements.len(), "filter: array and mask must have same size");
+    assert_eq!(
+        elements.len(),
+        mask_elements.len(),
+        "filter: array and mask must have same size"
+    );
 
     // For static arrays, we can build a filtered result at compile time
     // by using select chains. The result length depends on the mask values.
@@ -434,25 +537,49 @@ pub fn ndarray_filter(_b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value 
     let mut static_result = Vec::new();
     let mut all_static = true;
     for (elem, m) in elements.iter().zip(mask_elements.iter()) {
-        match m.int_val().or_else(|| if matches!(m, Value::Boolean(bv) if bv.static_val == Some(true)) { Some(1) } else if matches!(m, Value::Boolean(bv) if bv.static_val == Some(false)) { Some(0) } else { None }) {
+        match m.int_val().or_else(|| {
+            if matches!(m, Value::Boolean(bv) if bv.static_val == Some(true)) {
+                Some(1)
+            } else if matches!(m, Value::Boolean(bv) if bv.static_val == Some(false)) {
+                Some(0)
+            } else {
+                None
+            }
+        }) {
             Some(v) if v != 0 => static_result.push(elem.clone()),
             Some(_) => {} // masked out
-            None => { all_static = false; break; }
+            None => {
+                all_static = false;
+                break;
+            }
         }
     }
 
     if all_static {
         let types = static_result.iter().map(|v| v.zinnia_type()).collect();
-        Value::List(CompositeData { elements_type: types, values: static_result, value_id: ValueId::next() })
+        Value::List(CompositeData {
+            elements_type: types,
+            values: static_result,
+            value_id: ValueId::next(),
+        })
     } else {
         panic!("filter: dynamic masks require DynamicNDArray (not yet supported in Rust backend)");
     }
 }
 
-pub fn ndarray_argmax_argmin_with_axis(b: &mut IRBuilder, val: &Value, axis: i64, is_max: bool) -> Value {
+pub fn ndarray_argmax_argmin_with_axis(
+    b: &mut IRBuilder,
+    val: &Value,
+    axis: i64,
+    is_max: bool,
+) -> Value {
     if let Value::List(outer) | Value::Tuple(outer) = val {
         let ndim = crate::helpers::composite::get_composite_shape(val).len();
-        let axis = if axis < 0 { (ndim as i64 + axis) as usize } else { axis as usize };
+        let axis = if axis < 0 {
+            (ndim as i64 + axis) as usize
+        } else {
+            axis as usize
+        };
 
         if axis == 0 {
             // argmax along axis 0: for each column, find row with max/min
@@ -473,7 +600,8 @@ pub fn ndarray_argmax_argmin_with_axis(b: &mut IRBuilder, val: &Value, axis: i64
                                     };
                                     let idx_val = b.ir_constant_int(row_idx as i64);
                                     best_idx = b.ir_select_i(&cond, &idx_val, &best_idx);
-                                    best_val_opt = Some(b.ir_select_i(&cond, &rd.values[col], best_val));
+                                    best_val_opt =
+                                        Some(b.ir_select_i(&cond, &rd.values[col], best_val));
                                 } else {
                                     best_val_opt = Some(rd.values[col].clone());
                                 }
@@ -483,28 +611,43 @@ pub fn ndarray_argmax_argmin_with_axis(b: &mut IRBuilder, val: &Value, axis: i64
                     results.push(best_idx);
                 }
                 let types = vec![ZinniaType::Integer; results.len()];
-                return Value::List(CompositeData { elements_type: types, values: results, value_id: ValueId::next() });
+                return Value::List(CompositeData {
+                    elements_type: types,
+                    values: results,
+                    value_id: ValueId::next(),
+                });
             }
         } else if axis == 1 {
             // argmax along axis 1: for each row, find column index of max/min
             let mut results = Vec::new();
             for row in &outer.values {
-                results.push(crate::helpers::ndarray::ndarray_argmax_argmin(b, row, &[], is_max));
+                results.push(crate::helpers::ndarray::ndarray_argmax_argmin(
+                    b,
+                    row,
+                    &[],
+                    is_max,
+                ));
             }
             let types = vec![ZinniaType::Integer; results.len()];
-            return Value::List(CompositeData { elements_type: types, values: results, value_id: ValueId::next() });
+            return Value::List(CompositeData {
+                elements_type: types,
+                values: results,
+                value_id: ValueId::next(),
+            });
         }
     }
     crate::helpers::ndarray::ndarray_argmax_argmin(b, val, &[], is_max)
 }
-
 
 pub fn ndarray_shape(val: &Value) -> Value {
     // Return the shape as a tuple of constants
     match val {
         Value::List(data) => {
             // For a list, shape is (len,)
-            let len_val = Value::Integer(crate::types::ScalarValue::new(Some(data.values.len() as i64), None));
+            let len_val = Value::Integer(crate::types::ScalarValue::new(
+                Some(data.values.len() as i64),
+                None,
+            ));
             Value::Tuple(CompositeData {
                 elements_type: vec![ZinniaType::Integer],
                 values: vec![len_val],
@@ -513,7 +656,9 @@ pub fn ndarray_shape(val: &Value) -> Value {
             })
         }
         Value::NDArray(nd) => {
-            let shape_vals: Vec<Value> = nd.shape.iter()
+            let shape_vals: Vec<Value> = nd
+                .shape
+                .iter()
                 .map(|&s| Value::Integer(crate::types::ScalarValue::new(Some(s as i64), None)))
                 .collect();
             let types = shape_vals.iter().map(|_| ZinniaType::Integer).collect();
@@ -563,6 +708,13 @@ pub fn ndarray_swapaxes(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value
 
         value_id: ValueId::next(),
     });
+    if matches!(val, Value::StaticArray { .. }) {
+        if let Some(out) =
+            crate::helpers::static_array::shape::try_apply_transpose(b, val, &[axes_tuple.clone()])
+        {
+            return out;
+        }
+    }
     crate::helpers::ndarray::ndarray_transpose(b, val, &[axes_tuple])
 }
 
@@ -734,7 +886,13 @@ pub fn np_squeeze(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Va
     let new_shape: Vec<usize> = shape
         .iter()
         .enumerate()
-        .filter_map(|(i, &d)| if target_axes.contains(&i) { None } else { Some(d) })
+        .filter_map(|(i, &d)| {
+            if target_axes.contains(&i) {
+                None
+            } else {
+                Some(d)
+            }
+        })
         .collect();
     let flat = crate::helpers::composite::flatten_composite(val);
     if new_shape.is_empty() {
@@ -754,15 +912,19 @@ pub fn np_squeeze(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Va
 
 /// `np.expand_dims(arr, axis)` — insert a new axis of length 1 at `axis`.
 pub fn np_expand_dims(b: &mut IRBuilder, args: &[Value]) -> Value {
-    let val = args.first().expect("expand_dims: requires an array argument");
+    let val = args
+        .first()
+        .expect("expand_dims: requires an array argument");
     let shape = crate::helpers::composite::get_composite_shape(val);
     let ndim = shape.len();
-    let axis_arg = args
-        .get(1)
-        .expect("expand_dims: axis argument required");
+    let axis_arg = args.get(1).expect("expand_dims: axis argument required");
     let axis: i64 = require_provable_static_int(b, axis_arg, SiteKind::NewAxisPosition);
     let new_ndim = ndim + 1;
-    let resolved = if axis < 0 { new_ndim as i64 + axis } else { axis };
+    let resolved = if axis < 0 {
+        new_ndim as i64 + axis
+    } else {
+        axis
+    };
     if resolved < 0 || resolved >= new_ndim as i64 {
         panic!(
             "expand_dims: axis {} is out of bounds for array of rank {}",
@@ -805,8 +967,12 @@ pub fn np_expand_dims(b: &mut IRBuilder, args: &[Value]) -> Value {
 /// `np.broadcast_to(arr, shape)` — materialize the broadcast to a target
 /// shape. Thin wrapper around the broadcasting helper.
 pub fn np_broadcast_to(b: &mut IRBuilder, args: &[Value]) -> Value {
-    let val = args.first().expect("broadcast_to: requires an array argument");
-    let shape_arg = args.get(1).expect("broadcast_to: requires a shape argument");
+    let val = args
+        .first()
+        .expect("broadcast_to: requires an array argument");
+    let shape_arg = args
+        .get(1)
+        .expect("broadcast_to: requires a shape argument");
     let target: Vec<usize> = match shape_arg {
         Value::Tuple(d) | Value::List(d) => d
             .values
@@ -843,7 +1009,9 @@ pub fn np_broadcast_to(b: &mut IRBuilder, args: &[Value]) -> Value {
 
 /// `np.atleast_1d/2d/3d(arr)` — prepend unit axes until rank ≥ n.
 pub fn np_atleast_nd(_b: &mut IRBuilder, args: &[Value], n: usize) -> Value {
-    let val = args.first().expect("atleast_Nd: requires an array argument");
+    let val = args
+        .first()
+        .expect("atleast_Nd: requires an array argument");
     let shape = crate::helpers::composite::get_composite_shape(val);
     if shape.len() >= n {
         return val.clone();
@@ -1282,13 +1450,13 @@ pub fn np_split(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Valu
 
 /// `np.array_split(arr, sections, axis=0)` — like split but allows uneven
 /// sections; the first `length % n` sections get one extra element.
-pub fn np_array_split(
-    b: &mut IRBuilder,
-    args: &[Value],
-    kwargs: &HashMap<String, Value>,
-) -> Value {
-    let val = args.first().expect("array_split: requires an array argument");
-    let sections = args.get(1).expect("array_split: requires a sections argument");
+pub fn np_array_split(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+    let val = args
+        .first()
+        .expect("array_split: requires an array argument");
+    let sections = args
+        .get(1)
+        .expect("array_split: requires a sections argument");
     let axis = kwargs
         .get("axis")
         .or_else(|| args.get(2))

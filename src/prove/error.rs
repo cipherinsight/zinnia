@@ -20,6 +20,17 @@ pub enum ProvingError {
         needed_rows: usize,
         available_rows: usize,
     },
+    /// The verifier-side IR (recovered from `vk_bytes`) hashed to a value
+    /// that does not match `ProofArtifact.ir_hash`. **Distinct from
+    /// `VerificationFailed`** so the differential fuzzer's auto-filer can
+    /// route these as `ir_mismatch` (artifact-transport regression or
+    /// non-determinism in IR export) rather than as a proof-system
+    /// soundness divergence (`proof_invalid`). The Fiat-Shamir VK-bind
+    /// inside `verify_proof` would catch a wrong-IR proof at the
+    /// transcript level anyway (see soundness comment on the halo2 verify
+    /// path), so this variant is a *diagnostic affordance*, not a
+    /// soundness gate.
+    IrHashMismatch { expected: String, computed: String },
     /// Generic proving-pipeline error.
     Other { detail: String },
 }
@@ -38,14 +49,19 @@ impl ProvingError {
     }
 
     pub fn witness_missing(key: impl Into<String>) -> Self {
-        ProvingError::WitnessMissing {
-            key: key.into(),
-        }
+        ProvingError::WitnessMissing { key: key.into() }
     }
 
     pub fn other(detail: impl Into<String>) -> Self {
         ProvingError::Other {
             detail: detail.into(),
+        }
+    }
+
+    pub fn ir_hash_mismatch(expected: impl Into<String>, computed: impl Into<String>) -> Self {
+        ProvingError::IrHashMismatch {
+            expected: expected.into(),
+            computed: computed.into(),
         }
     }
 }
@@ -76,6 +92,15 @@ impl fmt::Display for ProvingError {
                     f,
                     "Circuit too large: needs {} rows but only {} available (increase k)",
                     needed_rows, available_rows
+                )
+            }
+            ProvingError::IrHashMismatch { expected, computed } => {
+                write!(
+                    f,
+                    "IR hash mismatch: artifact carried ir_hash={} but verifier-recomputed ir_hash={} \
+                     from the IR in vk_bytes. This indicates an artifact-transport regression \
+                     or non-determinism in IR export, not a proof-system soundness divergence.",
+                    expected, computed
                 )
             }
             ProvingError::Other { detail } => write!(f, "{}", detail),

@@ -1,0 +1,51 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "statistics"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "itemscores.sum",
+        "itemscores.var",
+        "itemvars.sum",
+        "len",
+        "tscores.var"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 13,
+      "line_start": 9,
+      "mutated_params": [],
+      "name": "cronbach",
+      "ops": [
+        "Div",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "itemscores",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_cronbach/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Record sample-size requirements such as N > 1 and nonzero variance denominators."
+  ],
+  "program": "pythran_cronbach",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n\n@zk_circuit\ndef cronbach(itemscores: Float[Array, 'N<=1024 M<=1024']):\n    itemvars = itemscores.var(1, None, None, 1)\n    tscores = itemscores.sum(0)\n    nitems = len(itemscores)\n    return nitems / (nitems - 1) * (1 - itemvars.sum() / tscores.var(None, None, None, 1))",
+  "source_status": "direct"
+}

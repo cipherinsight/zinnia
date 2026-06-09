@@ -1,0 +1,63 @@
+{
+  "categories": [
+    "in-place-mutation",
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 14,
+      "line_start": 11,
+      "mutated_params": [
+        "A",
+        "B"
+      ],
+      "name": "kernel",
+      "ops": [
+        "Add",
+        "Mult"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "TSTEPS",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": true,
+          "name": "A",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "B",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "npbench_polybench_jacobi_1d_jacobi_1d/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "npbench_polybench_jacobi_1d_jacobi_1d",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\n\n@zk_circuit\ndef kernel(TSTEPS: Float, A: Float[Array, 'N<=1024'], B: Float[Array, 'N<=1024']):\n    for t in range(1, TSTEPS):\n        B[1:-1] = 0.33333 * (A[:-2] + A[1:-1] + A[2:])\n        A[1:-1] = 0.33333 * (B[:-2] + B[1:-1] + B[2:])",
+  "source_status": "direct"
+}

@@ -1,0 +1,92 @@
+{
+  "categories": [
+    "complex",
+    "data-dependent-loop",
+    "denominator-obligation",
+    "loop-bounded"
+  ],
+  "diagnostics": [
+    "Complex kernels require Complex dtype support or a fail-closed classification.",
+    "while loops require a public/padded maximum iteration count."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "RuntimeError",
+        "abs",
+        "complex",
+        "float",
+        "range",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": true,
+      "line_end": 56,
+      "line_start": 15,
+      "mutated_params": [],
+      "name": "guerre",
+      "ops": [
+        "Add",
+        "Div",
+        "Eq",
+        "Gt",
+        "Lt",
+        "LtE",
+        "Mult",
+        "Pow",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "a",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "n",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "z",
+          "proposed_annotation": "Complex",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "err",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "nter",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_guerre/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add an explicit iteration cap or classify as fail-closed until a bound is available.",
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_guerre",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: complex, data-dependent-loop, denominator-obligation, in-place-mutation, loop-bounded\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.\n# Diagnostic: while loops require a public/padded maximum iteration count.\n\n@zk_circuit\n@requires(lambda a, n, z, err, nter: 0 <= n <= 1024)\ndef guerre(a: Complex[Array, 'N<=1024'], n: Integer, z: Complex, err: Float, nter: Integer):\n    az = [complex(0, 0) for i in range(50)]\n    azz = [complex(0, 0) for i in range(50)]\n    ci = complex(0.0, 1.0)\n    eps = 1e-20\n    for i in range(1, n + 1):\n        az[i - 1] = float(i) * a[i]\n    for i in range(1, n):\n        azz[i - 1] = float(i) * az[i]\n    dz = err + 1\n    itera = 0\n    jter = 0\n    while abs(dz) > err and itera < nter:\n        p = a[n - 1] + a[n] * z\n        for i in range(n - 1, 0, -1):\n            p = a[i - 1] + z * p\n        if abs(p) < eps:\n            return z\n        pz = az[n - 2] + az[n - 1] * z\n        for i in range(n - 2, 0, -1):\n            pz = az[i - 1] + z * pz\n        pzz = azz[n - 3] + azz[n - 2] * z\n        for i in range(n - 3, 0, -1):\n            pzz = azz[i - 1] + z * pzz\n        f = pz / p\n        g = f ** 2 - pzz / p\n        h = n * g\n        amp1 = abs(f + h)\n        amp2 = abs(f - h)\n        if amp1 > amp2:\n            dz = float(-n) / (f + h)\n        else:\n            dz = float(-n) / (f - h)\n        itera = itera + 1\n        jter = jter + 1\n        if jter == 10:\n            jter = 1\n            dz = dz * ci\n        z = z + dz\n        if jter == 100:\n            raise RuntimeError('Laguerre method not converging')\n    return z",
+  "source_status": "direct"
+}

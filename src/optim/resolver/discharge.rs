@@ -21,12 +21,7 @@ use super::chokepoints::SiteKind;
 ///
 /// Returns `true` if both `resolve_max(idx) < hi` and `resolve_min(idx)
 /// >= lo` were proved by some layer (static_val / range / SMT).
-pub fn probe_in_range(
-    b: &mut crate::builder::IRBuilder,
-    idx: &Value,
-    lo: i64,
-    hi: i64,
-) -> bool {
+pub fn probe_in_range(b: &mut crate::builder::IRBuilder, idx: &Value, lo: i64, hi: i64) -> bool {
     use std::sync::atomic::Ordering;
     let site_name = SiteKind::DynamicIndexBound.short_name();
 
@@ -142,9 +137,8 @@ pub fn discharge_index_in_range(
     hi: i64,
     op_name: &'static str,
 ) {
-    use crate::optim::predicates::formula::{
-        BoolOp, CmpOp, ContractTerm, ContractVar,
-    };
+    use crate::optim::predicates::formula::{BoolOp, CmpOp, ContractTerm, ContractVar};
+    use crate::optim::prove::ProveOutcome;
 
     // Literal-index fast path: compile-time decidable, panic if out of
     // range. This catches `arr[15]` on a length-10 array even when no
@@ -182,5 +176,122 @@ pub fn discharge_index_in_range(
             },
         ],
     };
-    b.discharge_requires(op_name, &term);
+    match b.prove(&term) {
+        ProveOutcome::Proved => {}
+        ProveOutcome::Disproved => {
+            let value_ids = crate::optim::predicates::collect_value_ids(&term);
+            panic!(
+                "op `{op_name}` requires precondition disproved by visible facts: \
+                 term={term:?}, value_ids={value_ids:?}"
+            );
+        }
+        ProveOutcome::Unknown => {
+            // Fact-fallback: `b.prove()` can return Unknown when the fact's
+            // upper bound is recorded as `Var(len_vid)` (e.g. from the
+            // `dyn_argextremum` contract) but our term has `LitInt(hi)` —
+            // the pattern doesn't unify even though `len_vid` constant-folds
+            // to `hi`. `ask_bounds` collapses the chain and gives concrete
+            // (min, max). Mirrors the same fallback in `is_index_in_range`.
+            if let Some((min, max)) = b.ask_bounds(idx) {
+                if min >= lo && max < hi {
+                    return;
+                }
+            }
+            if crate::builder::op_requires_strict() {
+                let value_ids = crate::optim::predicates::collect_value_ids(&term);
+                panic!(
+                    "op `{op_name}` requires precondition not provable from visible facts \
+                     (strict mode): term={term:?}, value_ids={value_ids:?}"
+                );
+            }
+            let lo_v = b.ir_constant_int(lo);
+            let hi_v = b.ir_constant_int(hi);
+            emit_index_bound_assert(b, idx, &lo_v, &hi_v);
+        }
+    }
+}
+
+/// Load-bearing discharge of `lo <= idx < hi`, where the upper bound is
+/// itself an SSA value. This is the dynamic-shape analogue of
+/// [`discharge_index_in_range`]: if the fact/prove layer can discharge the
+/// bound, no IR is emitted; otherwise lenient `discharge_requires` lowers the
+/// comparison to an `IR::Assert` so the backend enforces it at prove time.
+pub fn discharge_index_below_value(
+    b: &mut crate::builder::IRBuilder,
+    idx: &Value,
+    lo: i64,
+    hi: &Value,
+    op_name: &'static str,
+) {
+    use crate::optim::predicates::formula::{BoolOp, CmpOp, ContractTerm, ContractVar};
+    use crate::optim::prove::ProveOutcome;
+
+    if let Some(hi_static) = hi.int_val() {
+        discharge_index_in_range(b, idx, lo, hi_static, op_name);
+        return;
+    }
+
+    let lhs = match idx.value_id() {
+        Some(v) => ContractTerm::Var(ContractVar::Value(v)),
+        None => match idx.int_val() {
+            Some(n) => ContractTerm::LitInt(n),
+            None => return,
+        },
+    };
+    let hi_vid = match hi.value_id() {
+        Some(v) => v,
+        None => return,
+    };
+
+    let term = ContractTerm::BoolComb {
+        op: BoolOp::And,
+        operands: vec![
+            ContractTerm::Cmp {
+                op: CmpOp::Ge,
+                lhs: Box::new(lhs.clone()),
+                rhs: Box::new(ContractTerm::LitInt(lo)),
+            },
+            ContractTerm::Cmp {
+                op: CmpOp::Lt,
+                lhs: Box::new(lhs),
+                rhs: Box::new(ContractTerm::Var(ContractVar::Value(hi_vid))),
+            },
+        ],
+    };
+    match b.prove(&term) {
+        ProveOutcome::Proved => {}
+        ProveOutcome::Disproved => {
+            let value_ids = crate::optim::predicates::collect_value_ids(&term);
+            panic!(
+                "op `{op_name}` requires precondition disproved by visible facts: \
+                 term={term:?}, value_ids={value_ids:?}"
+            );
+        }
+        ProveOutcome::Unknown => {
+            if crate::builder::op_requires_strict() {
+                let value_ids = crate::optim::predicates::collect_value_ids(&term);
+                panic!(
+                    "op `{op_name}` requires precondition not provable from visible facts \
+                     (strict mode): term={term:?}, value_ids={value_ids:?}"
+                );
+            }
+            let lo_v = b.ir_constant_int(lo);
+            emit_index_bound_assert(b, idx, &lo_v, hi);
+        }
+    }
+}
+
+fn emit_index_bound_assert(b: &mut crate::builder::IRBuilder, idx: &Value, lo: &Value, hi: &Value) {
+    // Fast path: the overwhelming majority of slice/index discharges have
+    // `lo == 0`. Lower as a single u128-cast bound check; backends override
+    // it to whatever's cheapest (Noir collapses to one `assert((idx as u128)
+    // < (hi as u128))`, saving ~20 ACIR per call vs the 2-cmp chain).
+    if lo.int_val() == Some(0) {
+        b.ir_assert_u128_lt(idx, hi);
+        return;
+    }
+    let ge = b.ir_greater_than_or_equal_i(idx, lo);
+    let lt = b.ir_less_than_i(idx, hi);
+    let ok = b.ir_logical_and(&ge, &lt);
+    b.ir_assert(&ok);
 }

@@ -1,0 +1,49 @@
+{
+  "categories": [
+    "denominator-obligation"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "np.sum"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 17,
+      "line_start": 10,
+      "mutated_params": [],
+      "name": "tax",
+      "ops": [
+        "Add",
+        "BitAnd",
+        "Div",
+        "Gt",
+        "LtE",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "d",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_tax/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites."
+  ],
+  "program": "pythran_tax",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\nimport numpy as np\n\n@zk_circuit\ndef tax(d: Float[Array, 'N<=1024']):\n    tax_seg1 = d[d > 256303] * 0.45 - 16164.53\n    tax_seg2 = d[(d > 54057) & (d <= 256303)] * 0.42 - 8475.44\n    seg3 = d[(d > 13769) & (d <= 54057)] - 13769\n    seg4 = d[(d > 8820) & (d <= 13769)] - 8820\n    prog_seg3 = seg3 * 2.2376e-06 + 0.2397\n    prog_seg4 = seg4 * 1.00727e-05 + 0.14\n    return (np.sum(tax_seg1) + np.sum(tax_seg2) + np.sum(seg3 * prog_seg3 + 939.57) + np.sum(seg4 * prog_seg4)) / np.sum(d)",
+  "source_status": "direct"
+}

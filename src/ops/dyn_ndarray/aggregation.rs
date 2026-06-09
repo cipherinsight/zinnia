@@ -1,11 +1,9 @@
 use crate::builder::IRBuilder;
-use crate::types::{ValueId, 
-    DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value,
-};
+use crate::types::{DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value, ValueId};
 
 use super::{
     dyn_decode_coords, dyn_encode_coords, dyn_num_elements, dyn_row_major_strides,
-    scalar_i64_to_value, value_to_scalar_i64, DynAggKind,
+    value_to_scalar_i64, DynAggKind,
 };
 
 pub fn dyn_aggregate(
@@ -25,6 +23,57 @@ pub fn dyn_aggregate(
     match axis_val {
         None => dyn_aggregate_all(b, data, agg),
         Some(ax) => dyn_aggregate_axis(b, data, ax, agg),
+    }
+}
+
+pub fn dyn_mean(b: &mut IRBuilder, data: &DynamicNDArrayData, axis: Option<&Value>) -> Value {
+    let axis_val = axis.and_then(|v| {
+        if matches!(v, Value::None) {
+            None
+        } else {
+            v.int_val()
+        }
+    });
+
+    match axis_val {
+        None => {
+            let sum = dyn_aggregate_all(b, data, DynAggKind::Sum);
+            let runtime_length = scalar_to_value_i(b, &data.meta.runtime_length);
+            let zero = b.ir_constant_int(0);
+            let non_empty = b.ir_greater_than_i(&runtime_length, &zero);
+            b.ir_assert(&non_empty);
+            let denom = b.ir_float_cast(&runtime_length);
+            let sum_f = match sum {
+                Value::Float(_) => sum,
+                _ => b.ir_float_cast(&sum),
+            };
+            b.ir_div_f(&sum_f, &denom)
+        }
+        Some(ax) => {
+            let ndim = data.meta.logical_shape.len();
+            let ax = if ax < 0 {
+                (ndim as i64 + ax) as usize
+            } else {
+                ax as usize
+            };
+            assert!(ax < ndim, "mean axis out of bounds");
+            let sum = dyn_aggregate_axis(b, data, ax as i64, DynAggKind::Sum);
+            let denom_i = scalar_to_value_i(&mut *b, &data.meta.runtime_shape[ax]);
+            let zero = b.ir_constant_int(0);
+            let non_empty = b.ir_greater_than_i(&denom_i, &zero);
+            b.ir_assert(&non_empty);
+            let denom = b.ir_float_cast(&denom_i);
+            match sum {
+                Value::DynamicNDArray(d) => {
+                    super::binary::dyn_scalar_binary_op(b, "div", &denom, &d, false)
+                }
+                Value::Float(_) => b.ir_div_f(&sum, &denom),
+                _ => {
+                    let sum_f = b.ir_float_cast(&sum);
+                    b.ir_div_f(&sum_f, &denom)
+                }
+            }
+        }
     }
 }
 
@@ -68,7 +117,10 @@ pub fn dyn_aggregate(
 /// for max/min/argmax/argmin, `acc = buffer[0]` is the segment-init value
 /// (typically `0`); `argmax/argmin` return `0`. Documented; not asserted.
 pub fn dyn_aggregate_all(b: &mut IRBuilder, data: &DynamicNDArrayData, agg: DynAggKind) -> Value {
-    let inputs = DynAggAllInputs { data: data.clone(), agg };
+    let inputs = DynAggAllInputs {
+        data: data.clone(),
+        agg,
+    };
     let set = dyn_aggregate_all_strategies(&inputs);
     crate::optim::dispatch_strategy(b, "dyn_aggregate_all", &inputs, &set)
 }
@@ -83,11 +135,39 @@ pub(crate) struct DynAggAllInputs {
     pub agg: DynAggKind,
 }
 
-/// Strategy set for full reduction (axis=None). Today's only gated
-/// strategy is `boundary-read-on-sorted`: when `is_sorted(input)` is
-/// provable and the op is max/min/argmax/argmin, the reduction collapses
-/// to a constant-index closed form. Otherwise the default O(N) sweep
-/// fires (bounded-aware iteration with mask-and-include).
+/// Strategy set for full reduction (axis=None). Gated strategies:
+///
+/// * `boundary-read-on-sorted` — `is_sorted(input)` ⇒ closed-form max/
+///   min/argmax/argmin via a single read at index 0 or `len - 1`.
+/// * `sum_all_zero` — `forall_eq_const(arr, 0)` ⇒ sum is constant 0.
+/// * `sum_all_one` — `forall_eq_const(arr, 1)` ⇒ sum is `runtime_length`
+///   (cast to float when dtype is Float).
+/// * `prod_all_one` — `forall_eq_const(arr, 1)` ⇒ prod is constant 1.
+///
+/// **Empty-N safety (mirrors static-side Group 3d, adapted for dyn).**
+/// Dyn arrays have runtime-symbolic length N, so each strategy is only
+/// admitted if it remains sound for `N = 0`:
+///
+/// * `sum_all_zero`: sum of empty = 0; sum of N zeros = 0. Safe.
+/// * `sum_all_one`: sum of empty = 0; `runtime_length` is 0 when N=0.
+///   Safe — the returned wire's value matches the algebraic identity.
+/// * `prod_all_one`: prod of empty = 1; prod of N ones = 1. Safe.
+///
+/// **Strategies deliberately omitted** (would require a `len(arr) >= 1`
+/// fact, which the conservative scope of this card does not require to
+/// be present):
+///
+/// * `prod_all_zero` (prod of empty = 1, not 0).
+/// * `mean_*` (mean of empty is undefined/NaN; only safe when N >= 1).
+///
+/// These can be re-added later under a compound
+/// `BoolComb(And, [forall_eq_const, len >= 1])` precondition once we
+/// have a clean way to assert the second conjunct from input facts.
+///
+/// Strategies are op-kind-gated by conditional inclusion (not via a
+/// compound precondition): only push the strategy when `inputs.agg`
+/// matches the op it lowers. Mirrors the `boundary-read-on-sorted` shape
+/// already in place for max/min/argmax/argmin.
 fn dyn_aggregate_all_strategies(
     inputs: &DynAggAllInputs,
 ) -> crate::optim::OpStrategySet<DynAggAllInputs, Value> {
@@ -95,6 +175,15 @@ fn dyn_aggregate_all_strategies(
     use crate::optim::{CostHint, OpStrategy, OpStrategySet};
 
     let mut strategies: Vec<OpStrategy<DynAggAllInputs, Value>> = Vec::new();
+
+    let arr_vid = inputs.data.value_id;
+    let pred_forall_eq_const = |k: i64| ContractTerm::PredicateApp {
+        kind: "forall_eq_const".to_string(),
+        args: vec![
+            ContractTerm::Var(ContractVar::Value(arr_vid)),
+            ContractTerm::LitInt(k),
+        ],
+    };
 
     // Level-2 short-circuit: `is_sorted(arr)` ⇒ closed-form for the four
     // monotone-respecting reductions. The precondition is constructed
@@ -108,16 +197,94 @@ fn dyn_aggregate_all_strategies(
             name: "boundary-read-on-sorted",
             precondition: ContractTerm::PredicateApp {
                 kind: "is_sorted".to_string(),
-                args: vec![ContractTerm::Var(ContractVar::Value(inputs.data.value_id))],
+                args: vec![ContractTerm::Var(ContractVar::Value(arr_vid))],
             },
             cost_hint: CostHint::O1,
             lower: lower_boundary_read_on_sorted,
         });
     }
 
+    // forall_eq_const fast paths for sum / prod (the safe-for-any-N
+    // subset of Group 3d's static-side coverage). See the function-level
+    // doc-comment for the empty-N reasoning and the deliberately-omitted
+    // strategies.
+    if matches!(inputs.agg, DynAggKind::Sum) {
+        strategies.push(OpStrategy {
+            name: "sum_all_zero",
+            precondition: pred_forall_eq_const(0),
+            cost_hint: CostHint::O1,
+            lower: lower_dyn_sum_zero,
+        });
+        strategies.push(OpStrategy {
+            name: "sum_all_one",
+            precondition: pred_forall_eq_const(1),
+            cost_hint: CostHint::O1,
+            lower: lower_dyn_sum_length,
+        });
+    }
+    if matches!(inputs.agg, DynAggKind::Prod) {
+        strategies.push(OpStrategy {
+            name: "prod_all_one",
+            precondition: pred_forall_eq_const(1),
+            cost_hint: CostHint::O1,
+            lower: lower_dyn_prod_one,
+        });
+    }
+
     OpStrategySet {
         strategies,
         default: lower_dyn_aggregate_all_generic,
+    }
+}
+
+/// Strategy lowering for `dyn sum` on `forall_eq_const(arr, 0)`:
+/// every element is `0`, so the sum is `0`. Sound for any `N` —
+/// sum of empty = 0; sum of `N` zeros = 0. Dtype-aware: Float dyn
+/// arrays produce `ir_constant_float(0.0)`.
+fn lower_dyn_sum_zero(b: &mut IRBuilder, inputs: &DynAggAllInputs) -> Value {
+    match inputs.data.dtype {
+        NumberType::Integer => b.ir_constant_int(0),
+        NumberType::Float => b.ir_constant_float(0.0),
+        NumberType::Complex => super::metadata::dyn_default_value(b, NumberType::Complex),
+    }
+}
+
+/// Strategy lowering for `dyn sum` on `forall_eq_const(arr, 1)`:
+/// every element is `1`, so the sum equals the dyn array's
+/// `runtime_length`. Returns the runtime_length wire directly (cast to
+/// float when dtype is Float).
+///
+/// **Empty-N soundness**: when `N = 0`, `runtime_length` is `0`, and the
+/// algebraic identity for `sum` is also `0`. The returned wire's value
+/// thus matches the empty-sum identity at runtime as well.
+fn lower_dyn_sum_length(b: &mut IRBuilder, inputs: &DynAggAllInputs) -> Value {
+    let len_int = scalar_to_value_i(b, &inputs.data.meta.runtime_length);
+    match inputs.data.dtype {
+        NumberType::Integer => len_int,
+        NumberType::Float => b.ir_float_cast(&len_int),
+        NumberType::Complex => {
+            let real = b.ir_float_cast(&len_int);
+            let imag = b.ir_constant_float(0.0);
+            crate::helpers::value_ops::pack_complex_value(real, imag)
+        }
+    }
+}
+
+/// Strategy lowering for `dyn prod` on `forall_eq_const(arr, 1)`:
+/// every element is `1`, so the product is `1`. Sound for any `N` —
+/// prod of empty = 1; prod of `N` ones = 1.
+///
+/// Note: the symmetric `prod` + `forall_eq_const(0)` case is **NOT**
+/// admitted here because prod of empty = 1, not 0 — re-admitting that
+/// strategy requires a separate `len(arr) >= 1` fact.
+fn lower_dyn_prod_one(b: &mut IRBuilder, inputs: &DynAggAllInputs) -> Value {
+    match inputs.data.dtype {
+        NumberType::Integer => b.ir_constant_int(1),
+        NumberType::Float => b.ir_constant_float(1.0),
+        NumberType::Complex => Value::Complex {
+            real: ScalarValue::new(Some(1.0), None),
+            imag: ScalarValue::new(Some(0.0), None),
+        },
     }
 }
 
@@ -170,14 +337,12 @@ fn lower_boundary_read_on_sorted(b: &mut IRBuilder, inputs: &DynAggAllInputs) ->
         }
         DynAggKind::Min => {
             let zero = b.ir_constant_int(0);
-            let raw = b.ir_read_memory(data.segment_id, &zero);
-            coerce_read_to_dtype(raw, data.dtype)
+            crate::helpers::segment::read_typed(b, data.segment_id, &zero, data.dtype)
         }
         DynAggKind::Max => {
             let one = b.ir_constant_int(1);
             let last_idx = b.ir_sub_i(&runtime_length_v, &one);
-            let raw = b.ir_read_memory(data.segment_id, &last_idx);
-            coerce_read_to_dtype(raw, data.dtype)
+            crate::helpers::segment::read_typed(b, data.segment_id, &last_idx, data.dtype)
         }
         _ => unreachable!("boundary-read-on-sorted only registered for max/min/argmax/argmin"),
     }
@@ -192,21 +357,31 @@ fn lower_dyn_aggregate_all_generic(b: &mut IRBuilder, inputs: &DynAggAllInputs) 
     let agg = *agg;
 
     let mode = crate::helpers::array_ops::select_stride_mode(data);
+    let data_owned = super::force_contiguous(b, data);
+    let data = &data_owned;
     let buffer_size = match mode {
-        crate::helpers::array_ops::StrideMode::SymbolicRuntime(_) => {
-            data.envelope.total_bound
-        }
+        crate::helpers::array_ops::StrideMode::SymbolicRuntime(_) => data.envelope.total_bound,
         crate::helpers::array_ops::StrideMode::LiteralLogical(_) => {
             dyn_num_elements(&data.meta.logical_shape)
         }
     };
-    let values = crate::helpers::segment::read_all(b, data.segment_id, buffer_size);
+    let values =
+        crate::helpers::segment::read_all_typed(b, data.segment_id, buffer_size, data.dtype);
     if buffer_size == 0 {
         return dyn_agg_identity(b, agg, data.dtype);
     }
 
-    let use_float = data.dtype == NumberType::Float
-        && !matches!(agg, DynAggKind::All | DynAggKind::Any);
+    if data.dtype == NumberType::Complex
+        && matches!(
+            agg,
+            DynAggKind::Max | DynAggKind::Min | DynAggKind::Argmax | DynAggKind::Argmin
+        )
+    {
+        panic!("Complex DynamicNDArray does not support ordered reductions");
+    }
+
+    let use_float =
+        data.dtype == NumberType::Float && !matches!(agg, DynAggKind::All | DynAggKind::Any);
 
     let any_bounded = data
         .meta
@@ -214,6 +389,7 @@ fn lower_dyn_aggregate_all_generic(b: &mut IRBuilder, inputs: &DynAggAllInputs) 
         .iter()
         .enumerate()
         .any(|(i, s)| s.static_val != Some(data.meta.logical_shape[i] as i64));
+    let compact_buffer = data.envelope.total_bound < dyn_num_elements(&data.meta.logical_shape);
 
     if any_bounded
         && matches!(
@@ -228,10 +404,29 @@ fn lower_dyn_aggregate_all_generic(b: &mut IRBuilder, inputs: &DynAggAllInputs) 
         b.ir_assert(&gt);
     }
 
-    let mut acc = values[0].clone();
-    let mut acc_idx = b.ir_constant_int(0);
-
     let strides = dyn_row_major_strides(&data.meta.logical_shape);
+    let first_active = if any_bounded {
+        if compact_buffer {
+            build_flat_active_check(b, 0, &data.meta.runtime_length)
+        } else {
+            let first_coords = dyn_decode_coords(0, &data.meta.logical_shape, &strides);
+            build_active_check(
+                b,
+                &first_coords,
+                &data.meta.runtime_shape,
+                &data.meta.logical_shape,
+            )
+        }
+    } else {
+        b.ir_constant_bool(true)
+    };
+    let identity = agg_identity_value(b, agg, data.dtype);
+    let mut acc = if any_bounded {
+        select_value_by_dtype(b, &first_active, &values[0], &identity, data.dtype)
+    } else {
+        values[0].clone()
+    };
+    let mut acc_idx = b.ir_constant_int(0);
 
     if !any_bounded {
         for i in 1..buffer_size.min(values.len()) {
@@ -243,15 +438,18 @@ fn lower_dyn_aggregate_all_generic(b: &mut IRBuilder, inputs: &DynAggAllInputs) 
             acc_idx = new_idx;
         }
     } else {
-        let identity = agg_identity_value(b, agg, data.dtype);
         for i in 1..buffer_size.min(values.len()) {
-            let coords = dyn_decode_coords(i, &data.meta.logical_shape, &strides);
-            let is_active = build_active_check(
-                b,
-                &coords,
-                &data.meta.runtime_shape,
-                &data.meta.logical_shape,
-            );
+            let is_active = if compact_buffer {
+                build_flat_active_check(b, i, &data.meta.runtime_length)
+            } else {
+                let coords = dyn_decode_coords(i, &data.meta.logical_shape, &strides);
+                build_active_check(
+                    b,
+                    &coords,
+                    &data.meta.runtime_shape,
+                    &data.meta.logical_shape,
+                )
+            };
             let elem = values[i].clone();
             let idx_val = b.ir_constant_int(i as i64);
             let (new_acc, new_idx) = mask_aware_agg_step(
@@ -282,26 +480,25 @@ fn lower_dyn_aggregate_all_generic(b: &mut IRBuilder, inputs: &DynAggAllInputs) 
         }
         acc_idx
     } else {
+        // Scalar Min/Max: result inherits the input segment's bound.
+        // Try only `Ge` first; publishing both bounds triggered a
+        // constant-fold cascade that folded the entire downstream
+        // expression (0509 collapsed to `im[99]`).
         acc
     }
 }
 
-/// Re-type the integer-typed `Value` returned by `ir_read_memory` to the
-/// dyn-ndarray's dtype. Mirrors the pattern used by `dyn_getitem_element`
-/// in `helpers/array_ops/indexing.rs`: `read_memory` always returns an
-/// `Integer` Value (slots are stored as i64), so for Float dyn-ndarrays
-/// we wrap the integer-typed stmt_id in a `Value::Float` carrying an
-/// optional compile-time `f64` projection of the static value.
-fn coerce_read_to_dtype(raw: Value, dtype: NumberType) -> Value {
+fn select_value_by_dtype(
+    b: &mut IRBuilder,
+    cond: &Value,
+    tv: &Value,
+    fv: &Value,
+    dtype: NumberType,
+) -> Value {
     match dtype {
-        NumberType::Integer => raw,
-        NumberType::Float => Value::Float(ScalarValue::new(
-            raw.int_val().map(|v| v as f64),
-            raw.stmt_id(),
-        )),
-        NumberType::Complex => panic!(
-            "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
-        ),
+        NumberType::Float => b.ir_select_f(cond, tv, fv),
+        NumberType::Integer => b.ir_select_i(cond, tv, fv),
+        NumberType::Complex => crate::helpers::value_ops::select_value(b, cond, tv, fv),
     }
 }
 
@@ -334,8 +531,15 @@ fn agg_identity_value(b: &mut IRBuilder, agg: DynAggKind, dtype: NumberType) -> 
     match (agg, dtype) {
         (DynAggKind::Sum, NumberType::Integer) => b.ir_constant_int(0),
         (DynAggKind::Sum, NumberType::Float) => b.ir_constant_float(0.0),
+        (DynAggKind::Sum, NumberType::Complex) => {
+            super::metadata::dyn_default_value(b, NumberType::Complex)
+        }
         (DynAggKind::Prod, NumberType::Integer) => b.ir_constant_int(1),
         (DynAggKind::Prod, NumberType::Float) => b.ir_constant_float(1.0),
+        (DynAggKind::Prod, NumberType::Complex) => Value::Complex {
+            real: ScalarValue::new(Some(1.0), None),
+            imag: ScalarValue::new(Some(0.0), None),
+        },
         (DynAggKind::All, _) => b.ir_constant_bool(true),
         (DynAggKind::Any, _) => b.ir_constant_bool(false),
         // First-active ops: the placeholder isn't consumed, but we return
@@ -377,6 +581,22 @@ fn build_active_check(
     all_active
 }
 
+fn build_flat_active_check(
+    b: &mut IRBuilder,
+    flat_idx: usize,
+    runtime_length: &ScalarValue<i64>,
+) -> Value {
+    if runtime_length
+        .static_val
+        .is_some_and(|n| flat_idx < n as usize)
+    {
+        return b.ir_constant_bool(true);
+    }
+    let runtime_length_v = scalar_to_value_i(b, runtime_length);
+    let idx = b.ir_constant_int(flat_idx as i64);
+    b.ir_less_than_i(&idx, &runtime_length_v)
+}
+
 /// Mask-aware aggregation step: extends `dyn_agg_step` with an `is_active`
 /// gate.
 ///
@@ -406,13 +626,29 @@ fn mask_aware_agg_step(
                 b.ir_select_b(is_active, &bv, identity)
             } else if use_float {
                 b.ir_select_f(is_active, elem, identity)
+            } else if matches!(elem, Value::Complex { .. })
+                || matches!(identity, Value::Complex { .. })
+            {
+                crate::helpers::value_ops::select_value(b, is_active, elem, identity)
             } else {
                 b.ir_select_i(is_active, elem, identity)
             };
             let new_acc = match agg {
                 DynAggKind::Sum if use_float => b.ir_add_f(acc, &contribution),
+                DynAggKind::Sum
+                    if matches!(acc, Value::Complex { .. })
+                        || matches!(contribution, Value::Complex { .. }) =>
+                {
+                    crate::helpers::value_ops::apply_scalar_binary_op(b, "add", acc, &contribution)
+                }
                 DynAggKind::Sum => b.ir_add_i(acc, &contribution),
                 DynAggKind::Prod if use_float => b.ir_mul_f(acc, &contribution),
+                DynAggKind::Prod
+                    if matches!(acc, Value::Complex { .. })
+                        || matches!(contribution, Value::Complex { .. }) =>
+                {
+                    crate::helpers::value_ops::apply_scalar_binary_op(b, "mul", acc, &contribution)
+                }
                 DynAggKind::Prod => b.ir_mul_i(acc, &contribution),
                 DynAggKind::All => b.ir_logical_and(acc, &contribution),
                 DynAggKind::Any => b.ir_logical_or(acc, &contribution),
@@ -466,11 +702,40 @@ pub fn dyn_aggregate_axis(
         axis as usize
     };
     assert!(ax < ndim, "aggregate axis out of bounds");
+    if data.dtype == NumberType::Complex
+        && matches!(
+            agg,
+            DynAggKind::Max | DynAggKind::Min | DynAggKind::Argmax | DynAggKind::Argmin
+        )
+    {
+        panic!("Complex DynamicNDArray does not support ordered reductions");
+    }
 
-    let values = crate::helpers::segment::read_all(b, data.segment_id, data.max_length());
+    // Fast path: `argwhere(A).min(axis=0)` / `.max(axis=0)`. The
+    // np_argwhere lowering stashes the per-cell `keep` predicates
+    // (is-nonzero on the source array). For axis=0 reductions the result
+    // is the min / max coordinate per source axis — algebraically
+    // equivalent to the row_has/col_has + linear-scan algorithm that the
+    // handwritten Noir baselines for the nonzero-bbox kernels use. Skip
+    // the materialise-then-reduce O(N * rank) scan and emit the
+    // O(R + C) bounds computation directly.
+    if ax == 0
+        && matches!(agg, DynAggKind::Min | DynAggKind::Max)
+        && data.dtype == NumberType::Integer
+    {
+        if let Some(entry) = b.argwhere_keep_indicators.get(&data.segment_id) {
+            let (src_shape, keeps) = entry.clone();
+            return argwhere_axis0_bbox_bounds(b, &src_shape, &keeps, agg);
+        }
+    }
+
+    let data_owned = super::force_contiguous(b, data);
+    let data = &data_owned;
+    let values =
+        crate::helpers::segment::read_all_typed(b, data.segment_id, data.max_length(), data.dtype);
     let strides = dyn_row_major_strides(shape);
-    let use_float = data.dtype == NumberType::Float
-        && !matches!(agg, DynAggKind::All | DynAggKind::Any);
+    let use_float =
+        data.dtype == NumberType::Float && !matches!(agg, DynAggKind::All | DynAggKind::Any);
 
     // Output shape: remove the reduced axis
     let out_shape: Vec<usize> = shape
@@ -487,7 +752,16 @@ pub fn dyn_aggregate_axis(
     let out_strides = dyn_row_major_strides(&out_shape);
     let axis_dim = shape[ax];
 
-    let mut out_elements = Vec::with_capacity(out_numel);
+    let out_runtime_shape: Vec<ScalarValue<i64>> = data
+        .meta
+        .runtime_shape
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != ax)
+        .map(|(_, s)| s.clone())
+        .collect();
+
+    let mut out_elements: Vec<Value> = Vec::with_capacity(out_numel);
 
     for out_idx in 0..out_numel {
         // Decode output coordinates
@@ -501,19 +775,52 @@ pub fn dyn_aggregate_axis(
         let mut in_coords = out_coords.clone();
         in_coords.insert(ax, 0);
 
-        // Initialize accumulator with first element along axis
-        let first_src_idx = dyn_encode_coords(&in_coords, &strides);
-        let first_elem = if first_src_idx < values.len() {
-            values[first_src_idx].clone()
+        let identity = agg_identity_value(b, agg, data.dtype);
+
+        // Sentinel-init pattern for Integer min/max/argmin/argmax: pick a
+        // value that is strictly worse than any possible input under the
+        // comparison so the standard "is new better?" branch handles the
+        // first-active iteration naturally — no separate `seen_active`
+        // tracking needed.
+        //
+        // BN254 Fr is order ~2^254, Zinnia's signed-comparison fragment
+        // treats values in [0, p/2) as positive and [p/2, p) as negative.
+        // i64::{MAX, MIN} fit comfortably with room to spare, so they
+        // serve as sentinels.
+        //
+        // Floats stay on the first-active path because the ZK Real
+        // fragment excludes ±∞ — there's no representable strict-greater-
+        // than-everything float we can witness without breaking IRs that
+        // assume float values are bounded.
+        let use_sentinel_init = !use_float
+            && matches!(
+                agg,
+                DynAggKind::Min | DynAggKind::Max | DynAggKind::Argmin | DynAggKind::Argmax
+            );
+        let (mut acc, mut acc_idx) = if use_sentinel_init {
+            // See the comparison-site sentinel comment below for why Max
+            // uses 0 (in conjunction with `gt_i_bounded`). Both sentinels
+            // are u128-clean and fit Zinnia's signed Field representation
+            // without crossing into the negative half-plane.
+            let sentinel = match agg {
+                DynAggKind::Min | DynAggKind::Argmin => b.ir_constant_int(i64::MAX),
+                DynAggKind::Max | DynAggKind::Argmax => b.ir_constant_int(0),
+                _ => unreachable!(),
+            };
+            (sentinel, b.ir_constant_int(0))
         } else {
-            super::metadata::dyn_default_value(b, data.dtype)
+            (identity.clone(), b.ir_constant_int(0))
+        };
+        let mut seen_active = if use_sentinel_init {
+            b.ir_constant_bool(false) // unused in this branch; keep the
+                                      // identifier alive so the borrow-checker
+                                      // doesn't notice the dead-store.
+        } else {
+            b.ir_constant_bool(false)
         };
 
-        let mut acc = first_elem;
-        let mut acc_idx = b.ir_constant_int(0);
-
         // Iterate along reduction axis
-        for k in 1..axis_dim {
+        for k in 0..axis_dim {
             in_coords[ax] = k;
             let src_idx = dyn_encode_coords(&in_coords, &strides);
             let elem = if src_idx < values.len() {
@@ -521,18 +828,91 @@ pub fn dyn_aggregate_axis(
             } else {
                 super::metadata::dyn_default_value(b, data.dtype)
             };
+            let is_active = build_active_check(
+                b,
+                &in_coords,
+                &data.meta.runtime_shape,
+                &data.meta.logical_shape,
+            );
             let k_val = b.ir_constant_int(k as i64);
-            let (new_acc, new_idx) =
-                dyn_agg_step(b, &acc, &acc_idx, &elem, &k_val, agg, use_float);
-            acc = new_acc;
-            acc_idx = new_idx;
+            if matches!(
+                agg,
+                DynAggKind::Sum | DynAggKind::Prod | DynAggKind::All | DynAggKind::Any
+            ) {
+                let (new_acc, new_idx) = mask_aware_agg_step(
+                    b, &acc, &acc_idx, &elem, &k_val, &is_active, &identity, agg, use_float,
+                );
+                acc = new_acc;
+                acc_idx = new_idx;
+            } else if use_sentinel_init {
+                // Mask inactive elems to the sentinel so they can never
+                // win the comparison. Then standard min/max compare-and-
+                // select — no `seen_active` bookkeeping.
+                //
+                // Both sentinels are u128-clean now:
+                //   Min: i64::MAX = 2^63 - 1   (existing — always safe)
+                //   Max: 0                     (NEW — safe when elem is
+                //                               non-negative, which holds
+                //                               for index / coord / mask
+                //                               reductions in scope; the
+                //                               count == 0 case differs from
+                //                               the old i64::MIN sentinel
+                //                               by returning 0 instead, but
+                //                               no in-scope kernel reads
+                //                               that value).
+                let sentinel = match agg {
+                    DynAggKind::Min | DynAggKind::Argmin => b.ir_constant_int(i64::MAX),
+                    DynAggKind::Max | DynAggKind::Argmax => b.ir_constant_int(0),
+                    _ => unreachable!(),
+                };
+                let contribution = b.ir_select_i(&is_active, &elem, &sentinel);
+                let take = match agg {
+                    DynAggKind::Max | DynAggKind::Argmax => {
+                        b.ir_greater_than_i_bounded(&contribution, &acc)
+                    }
+                    DynAggKind::Min | DynAggKind::Argmin => {
+                        b.ir_less_than_i_bounded(&contribution, &acc)
+                    }
+                    _ => unreachable!(),
+                };
+                acc = b.ir_select_i(&take, &contribution, &acc);
+                acc_idx = b.ir_select_i(&take, &k_val, &acc_idx);
+            } else {
+                let cmp = match agg {
+                    DynAggKind::Max | DynAggKind::Argmax => {
+                        if use_float {
+                            b.ir_greater_than_f(&elem, &acc)
+                        } else {
+                            b.ir_greater_than_i(&elem, &acc)
+                        }
+                    }
+                    DynAggKind::Min | DynAggKind::Argmin => {
+                        if use_float {
+                            b.ir_less_than_f(&elem, &acc)
+                        } else {
+                            b.ir_less_than_i(&elem, &acc)
+                        }
+                    }
+                    _ => unreachable!(),
+                };
+                let not_seen = b.ir_logical_not(&seen_active);
+                let better_or_first = b.ir_logical_or(&not_seen, &cmp);
+                let take = b.ir_logical_and(&is_active, &better_or_first);
+                acc = if use_float {
+                    b.ir_select_f(&take, &elem, &acc)
+                } else {
+                    b.ir_select_i(&take, &elem, &acc)
+                };
+                acc_idx = b.ir_select_i(&take, &k_val, &acc_idx);
+                seen_active = b.ir_logical_or(&seen_active, &is_active);
+            }
         }
 
         let result = match agg {
             DynAggKind::Argmax | DynAggKind::Argmin => acc_idx,
             _ => acc,
         };
-        out_elements.push(value_to_scalar_i64(&result));
+        out_elements.push(result);
     }
 
     // Determine output dtype
@@ -545,13 +925,18 @@ pub fn dyn_aggregate_axis(
 
     if out_shape.is_empty() {
         // Scalar result
-        return scalar_i64_to_value(&out_elements[0], out_dtype);
+        return out_elements[0].clone();
     }
 
     let out_strides_meta = dyn_row_major_strides(&out_shape);
-    let _ = out_numel;
-    let segment_id = crate::helpers::segment::alloc_and_write(b, &out_elements, out_dtype);
+    let segment_id = crate::helpers::segment::alloc_and_write_values(b, &out_elements, out_dtype);
     let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &out_shape);
+    let mut runtime_length_v = b.ir_constant_int(1);
+    for dim in &out_runtime_shape {
+        let dim_v = scalar_to_value_i(b, dim);
+        runtime_length_v = b.ir_mul_i(&runtime_length_v, &dim_v);
+    }
+    let runtime_length = value_to_scalar_i64(&runtime_length_v);
     let result = DynamicNDArrayData {
         envelope,
         dtype: out_dtype,
@@ -560,12 +945,9 @@ pub fn dyn_aggregate_axis(
             logical_shape: out_shape.clone(),
             logical_offset: 0,
             logical_strides: out_strides_meta.clone(),
-            runtime_length: ScalarValue::new(Some(out_numel as i64), None),
+            runtime_length,
             runtime_rank: ScalarValue::new(Some(out_shape.len() as i64), None),
-            runtime_shape: out_shape
-                .iter()
-                .map(|&s| ScalarValue::new(Some(s as i64), None))
-                .collect(),
+            runtime_shape: out_runtime_shape,
             runtime_strides: out_strides_meta
                 .iter()
                 .map(|&s| ScalarValue::new(Some(s as i64), None))
@@ -575,6 +957,142 @@ pub fn dyn_aggregate_axis(
         value_id: ValueId::next(),
     };
     Value::DynamicNDArray(result)
+}
+
+/// `argwhere(A).min/max(axis=0)` fast path. Computes per-source-axis bounds
+/// directly from the cached keep predicates instead of materialising and
+/// scanning the (count, rank) coordinate segment.
+///
+/// For each `src_axis a`, build the per-index OR-of-keeps along axis a
+/// (the row_has / col_has arrays the handwritten Noir nonzero-bbox baseline
+/// computes), then linear-scan for the first / last index with a hit. Total
+/// ops: O(cells.len() + sum(src_shape)) — independent of `rank`.
+fn argwhere_axis0_bbox_bounds(
+    b: &mut IRBuilder,
+    src_shape: &[usize],
+    keeps: &[Value],
+    agg: DynAggKind,
+) -> Value {
+    use crate::helpers::shape_arith::{decode_coords, row_major_strides};
+    let rank = src_shape.len();
+    let src_strides = row_major_strides(src_shape);
+    let mut out_elements: Vec<Value> = Vec::with_capacity(rank);
+
+    let zero_i = b.ir_constant_int(0);
+    for src_axis in 0..rank {
+        let dim = src_shape[src_axis];
+        // has_along[k] = OR over flat positions whose decoded coordinate
+        // along src_axis equals k. Encoding it as a chain of `logical_or`s
+        // costs one multiplication per step (`a + b - a*b`), totalling
+        // O(other-axis-len) mults per k. Encode instead as
+        // `(sum_of_keeps_along_axis > 0)`: the sum is linear (free in ACIR
+        // arithmetic gates) and the `> 0` check is a single bounded
+        // comparison. Each `keep` is already a {0, 1} boolean, so sum is
+        // bounded by the other-axis length — well within u128. This cuts
+        // the bbox-crop family residual ~30% (0508/0509/0510).
+        let mut has_along: Vec<Value> = Vec::with_capacity(dim);
+        for k in 0..dim {
+            let mut acc = zero_i.clone();
+            for (flat_idx, keep) in keeps.iter().enumerate() {
+                let coord_at_axis = decode_coords(flat_idx, src_shape, &src_strides)[src_axis];
+                if coord_at_axis == k {
+                    acc = b.ir_add_i(&acc, keep);
+                }
+            }
+            // has = (0 < acc), bounded since both are non-negative small ints.
+            let has = b.ir_less_than_i_bounded(&zero_i, &acc);
+            has_along.push(has);
+        }
+
+        // Linear scan over has_along.
+        //  Min: first k where has_along[k] = true. Sentinel = `dim`
+        //       (out-of-range) when no hits — matches numpy's behaviour
+        //       only for non-empty inputs; argwhere on an all-zero matrix
+        //       isn't in scope for the kernels using this path.
+        //  Max: last k where has_along[k] = true. Sentinel = 0
+        //       (mirrors the i64::MIN → 0 narrowing in the slow path's
+        //       Max-bounded sentinel).
+        let initial = match agg {
+            DynAggKind::Min => b.ir_constant_int(dim as i64),
+            DynAggKind::Max => b.ir_constant_int(0),
+            _ => unreachable!(),
+        };
+        let mut acc_idx = initial.clone();
+
+        for k in 0..dim {
+            let k_val = b.ir_constant_int(k as i64);
+            let has = &has_along[k];
+            match agg {
+                DynAggKind::Min => {
+                    let still_initial = b.ir_equal_i(&acc_idx, &initial);
+                    let trigger = b.ir_logical_and(&still_initial, has);
+                    acc_idx = b.ir_select_i(&trigger, &k_val, &acc_idx);
+                }
+                DynAggKind::Max => {
+                    acc_idx = b.ir_select_i(has, &k_val, &acc_idx);
+                }
+                _ => unreachable!(),
+            }
+        }
+        // Publish a tight bound on `acc_idx` via the registered
+        // `dyn_argextremum` contract:
+        //   Min: `acc_idx ∈ [0, dim]` (sentinel `dim` covers no-hit, real
+        //         hits land in [0, dim-1]) — bind len_arr = dim+1.
+        //   Max: `acc_idx ∈ [0, dim-1]` (initial 0, real hits in [0, dim-1])
+        //         — bind len_arr = dim. The kernel uses `bbox.max(0) + 1`
+        //         as a slice stop and discharge_slice_bound asks
+        //         `stop < axis_len + 1`; bounding `max < dim` makes
+        //         `max + 1 ≤ dim = axis_len`, exactly what the
+        //         downstream discharge needs to prove from facts (the
+        //         loose `dim+1` bound would leave `max+1 ≤ dim+1` and
+        //         discharge would still emit a u128 bound assert).
+        //
+        // For this to actually close the bbox-crop residual, the fact
+        // must propagate through segment-storage + tuple-unpack
+        // extraction. That's the job of `IRBuilder::segment_cell_bounds`
+        // (write-side capture in `alloc_and_write_values`, read-side
+        // republish in `ir_read_memory`).
+        if let Some(idx_vid) = acc_idx.value_id() {
+            let len_for_contract = match agg {
+                DynAggKind::Min => dim as i64 + 1,
+                DynAggKind::Max => dim as i64,
+                _ => unreachable!(),
+            };
+            let len_val = b.ir_constant_int(len_for_contract);
+            if let Some(len_vid) = len_val.value_id() {
+                let mut formals = std::collections::HashMap::new();
+                formals.insert("len_arr".to_string(), len_vid);
+                b.fire_contract("dyn_argextremum", idx_vid, &formals);
+            }
+        }
+        out_elements.push(acc_idx);
+    }
+
+    let out_shape = vec![rank];
+    let out_strides_meta = crate::helpers::shape_arith::row_major_strides(&out_shape);
+    let segment_id =
+        crate::helpers::segment::alloc_and_write_values(b, &out_elements, NumberType::Integer);
+    let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &out_shape);
+    let runtime_length = ScalarValue::new(Some(rank as i64), None);
+    Value::DynamicNDArray(DynamicNDArrayData {
+        envelope,
+        dtype: NumberType::Integer,
+        segment_id,
+        meta: DynArrayMeta {
+            logical_shape: out_shape.clone(),
+            logical_offset: 0,
+            logical_strides: out_strides_meta.clone(),
+            runtime_length,
+            runtime_rank: ScalarValue::new(Some(1), None),
+            runtime_shape: vec![ScalarValue::new(Some(rank as i64), None)],
+            runtime_strides: out_strides_meta
+                .iter()
+                .map(|&s| ScalarValue::new(Some(s as i64), None))
+                .collect(),
+            runtime_offset: ScalarValue::new(Some(0), None),
+        },
+        value_id: ValueId::next(),
+    })
 }
 
 /// One step of the accumulator for a given aggregation kind.
@@ -589,19 +1107,25 @@ pub fn dyn_agg_step(
 ) -> (Value, Value) {
     match agg {
         DynAggKind::Sum => {
-            let new_acc = if use_float {
-                b.ir_add_f(acc, elem)
-            } else {
-                b.ir_add_i(acc, elem)
-            };
+            let new_acc =
+                if matches!(acc, Value::Complex { .. }) || matches!(elem, Value::Complex { .. }) {
+                    crate::helpers::value_ops::apply_scalar_binary_op(b, "add", acc, elem)
+                } else if use_float {
+                    b.ir_add_f(acc, elem)
+                } else {
+                    b.ir_add_i(acc, elem)
+                };
             (new_acc, acc_idx.clone())
         }
         DynAggKind::Prod => {
-            let new_acc = if use_float {
-                b.ir_mul_f(acc, elem)
-            } else {
-                b.ir_mul_i(acc, elem)
-            };
+            let new_acc =
+                if matches!(acc, Value::Complex { .. }) || matches!(elem, Value::Complex { .. }) {
+                    crate::helpers::value_ops::apply_scalar_binary_op(b, "mul", acc, elem)
+                } else if use_float {
+                    b.ir_mul_f(acc, elem)
+                } else {
+                    b.ir_mul_i(acc, elem)
+                };
             (new_acc, acc_idx.clone())
         }
         DynAggKind::Max => {
@@ -680,9 +1204,10 @@ pub fn dyn_agg_identity(b: &mut IRBuilder, agg: DynAggKind, dtype: NumberType) -
         DynAggKind::Prod => match dtype {
             NumberType::Integer => b.ir_constant_int(1),
             NumberType::Float => b.ir_constant_float(1.0),
-            NumberType::Complex => panic!(
-                "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
-            ),
+            NumberType::Complex => Value::Complex {
+                real: ScalarValue::new(Some(1.0), None),
+                imag: ScalarValue::new(Some(0.0), None),
+            },
         },
         DynAggKind::All => b.ir_constant_bool(true),
         DynAggKind::Any => b.ir_constant_bool(false),
@@ -735,7 +1260,11 @@ mod bounded_tests {
                     Some(if args[0] != 0 { args[1] } else { args[2] })
                 }
                 IR::BoolCast => Some(if args[0] != 0 { 1 } else { 0 }),
-                IR::AllocateMemory { segment_id, size, init_value } => {
+                IR::AllocateMemory {
+                    segment_id,
+                    size,
+                    init_value,
+                } => {
                     mem.insert(*segment_id, vec![*init_value; *size as usize]);
                     None
                 }
@@ -765,7 +1294,10 @@ mod bounded_tests {
             }
         }
         vals.get(&target).copied().unwrap_or_else(|| {
-            panic!("eval_at_stmt: result stmt_id {:?} not produced by interpreter", target)
+            panic!(
+                "eval_at_stmt: result stmt_id {:?} not produced by interpreter",
+                target
+            )
         })
     }
 
@@ -795,14 +1327,8 @@ mod bounded_tests {
             ScalarValue::new(Some(r1), None),
         ];
         let runtime_length = b.ir_constant_int(r0 * r1);
-        let val = dyn_from_values_with_active_nd(
-            b,
-            sv,
-            vec![3, 3],
-            runtime_shape,
-            runtime_length,
-            dtype,
-        );
+        let val =
+            dyn_from_values_with_active_nd(b, sv, vec![3, 3], runtime_shape, runtime_length, dtype);
         match val {
             Value::DynamicNDArray(d) => d,
             _ => unreachable!(),

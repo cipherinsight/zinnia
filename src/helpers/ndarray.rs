@@ -1,18 +1,27 @@
-use crate::builder::IRBuilder;
-use crate::types::{CompositeData, SliceIndex, Value, ValueId};
 use super::composite;
+use crate::builder::IRBuilder;
+use crate::types::{
+    CompositeData, DynamicNDArrayData, Envelope, NumberType, ScalarValue, SliceIndex, Value,
+    ValueId,
+};
 
 pub fn ndarray_transpose(_b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value {
     // Determine the shape of the input
     let shape = composite::get_composite_shape(val);
     let ndim = shape.len();
-    if ndim <= 1 { return val.clone(); }
+    if ndim <= 1 {
+        return val.clone();
+    }
 
     // Determine axis permutation — check length before validating individual values
     let raw_axes: Vec<i64> = if args.is_empty() || matches!(args.first(), Some(Value::None)) {
         (0..ndim as i64).rev().collect()
     } else if let Some(Value::Tuple(perm_data)) | Some(Value::List(perm_data)) = args.first() {
-        perm_data.values.iter().map(|v| v.int_val().unwrap_or(0)).collect()
+        perm_data
+            .values
+            .iter()
+            .map(|v| v.int_val().unwrap_or(0))
+            .collect()
     } else {
         args.iter().map(|v| v.int_val().unwrap_or(0)).collect()
     };
@@ -22,17 +31,26 @@ pub fn ndarray_transpose(_b: &mut IRBuilder, val: &Value, args: &[Value]) -> Val
         panic!("Length of `axes` should be equal to the number of dimensions of the array (expected {}, got {})", ndim, raw_axes.len());
     }
 
-    let axes: Vec<usize> = raw_axes.iter().map(|&a| {
-        let resolved = if a < 0 { ndim as i64 + a } else { a };
-        if resolved < 0 || resolved >= ndim as i64 {
-            panic!("Invalid axis value: {} is out of bounds for array with {} dimensions", a, ndim);
-        }
-        resolved as usize
-    }).collect();
+    let axes: Vec<usize> = raw_axes
+        .iter()
+        .map(|&a| {
+            let resolved = if a < 0 { ndim as i64 + a } else { a };
+            if resolved < 0 || resolved >= ndim as i64 {
+                panic!(
+                    "Invalid axis value: {} is out of bounds for array with {} dimensions",
+                    a, ndim
+                );
+            }
+            resolved as usize
+        })
+        .collect();
     // Check for invalid axis values
     for &a in &axes {
         if a >= ndim {
-            panic!("Invalid axis value: {} is out of bounds for array with {} dimensions", a, ndim);
+            panic!(
+                "Invalid axis value: {} is out of bounds for array with {} dimensions",
+                a, ndim
+            );
         }
     }
     // Check for valid permutation (no duplicates)
@@ -49,7 +67,9 @@ pub fn ndarray_transpose(_b: &mut IRBuilder, val: &Value, args: &[Value]) -> Val
 
     // Flatten the input, then reassemble in transposed order
     let flat = composite::flatten_composite(val);
-    if flat.is_empty() { return val.clone(); }
+    if flat.is_empty() {
+        return val.clone();
+    }
 
     // Compute strides for input
     let mut in_strides = vec![1usize; ndim];
@@ -93,10 +113,18 @@ pub fn ndarray_transpose(_b: &mut IRBuilder, val: &Value, args: &[Value]) -> Val
     composite::build_nested_value(out_flat, types, &out_shape)
 }
 
-pub fn ndarray_argmax_argmin(b: &mut IRBuilder, val: &Value, _args: &[Value], is_max: bool) -> Value {
+pub fn ndarray_argmax_argmin(
+    b: &mut IRBuilder,
+    val: &Value,
+    _args: &[Value],
+    is_max: bool,
+) -> Value {
     let elements = composite::flatten_composite(val);
-    if elements.is_empty() { return b.ir_constant_int(0); }
+    if elements.is_empty() {
+        return b.ir_constant_int(0);
+    }
     let len_arr = elements.len();
+
     let mut best_idx = b.ir_constant_int(0);
     let mut best_val = elements[0].clone();
     for (i, elem) in elements.iter().enumerate().skip(1) {
@@ -123,7 +151,9 @@ pub fn ndarray_argmax_argmin(b: &mut IRBuilder, val: &Value, _args: &[Value], is
 /// True if every leaf of `val` is a compile-time-constant boolean.
 fn all_const_bool(val: &Value) -> bool {
     match val {
-        Value::List(d) | Value::Tuple(d) => !d.values.is_empty() && d.values.iter().all(all_const_bool),
+        Value::List(d) | Value::Tuple(d) => {
+            !d.values.is_empty() && d.values.iter().all(all_const_bool)
+        }
         Value::Boolean(_) => val.bool_val().is_some(),
         _ => false,
     }
@@ -133,7 +163,9 @@ fn all_const_bool(val: &Value) -> bool {
 /// (booleans excluded — those should be routed to boolean masking).
 fn all_const_int_strict(val: &Value) -> bool {
     match val {
-        Value::List(d) | Value::Tuple(d) => !d.values.is_empty() && d.values.iter().all(all_const_int_strict),
+        Value::List(d) | Value::Tuple(d) => {
+            !d.values.is_empty() && d.values.iter().all(all_const_int_strict)
+        }
         Value::Integer(_) => val.int_val().is_some(),
         _ => false,
     }
@@ -163,7 +195,11 @@ pub fn boolean_mask_static(data: &Value, mask: &Value) -> Result<Value, String> 
         }
     }
     let types = selected.iter().map(|v| v.zinnia_type()).collect();
-    Ok(Value::List(CompositeData { elements_type: types, values: selected, value_id: ValueId::next() }))
+    Ok(Value::List(CompositeData {
+        elements_type: types,
+        values: selected,
+        value_id: ValueId::next(),
+    }))
 }
 
 /// Static fancy indexing along axis 0: `data[idx_array]` where `idx_array` is
@@ -178,12 +214,16 @@ pub fn fancy_index_static(data: &CompositeData, idx_array: &Value) -> Result<Val
                     out.push(walk(data, v)?);
                 }
                 let types = out.iter().map(|v| v.zinnia_type()).collect();
-                Ok(Value::List(CompositeData { elements_type: types, values: out, value_id: ValueId::next() }))
+                Ok(Value::List(CompositeData {
+                    elements_type: types,
+                    values: out,
+                    value_id: ValueId::next(),
+                }))
             }
             _ => {
-                let i = idx.int_val().ok_or_else(|| {
-                    "fancy index value is not compile-time constant".to_string()
-                })?;
+                let i = idx
+                    .int_val()
+                    .ok_or_else(|| "fancy index value is not compile-time constant".to_string())?;
                 let len = data.values.len() as i64;
                 let i = if i < 0 { len + i } else { i };
                 if i < 0 || i >= len {
@@ -232,6 +272,68 @@ pub fn try_advanced_index_static(
     )
 }
 
+fn dynamic_bool_mask_from_static(b: &mut IRBuilder, mask: &Value) -> Option<Value> {
+    if !crate::helpers::array_ops::is_boolean_mask(mask)
+        && !super::value_ops::is_numeric_composite(mask)
+    {
+        return None;
+    }
+    let shape = super::composite::get_composite_shape(mask);
+    let cells = super::composite::flatten_composite_with_builder(b, mask);
+    if cells.is_empty() {
+        return None;
+    }
+    let bool_cells: Vec<Value> = cells.iter().map(|v| b.ir_bool_cast(v)).collect();
+    let segment_id = super::segment::alloc_and_write_values(b, &bool_cells, NumberType::Integer);
+    let total: usize = shape.iter().product();
+    let strides = super::shape_arith::row_major_strides(&shape);
+    Some(Value::DynamicNDArray(DynamicNDArrayData {
+        envelope: Envelope::from_static_shape(&mut b.dim_table, &shape),
+        dtype: NumberType::Integer,
+        segment_id,
+        meta: crate::types::DynArrayMeta {
+            logical_shape: shape.clone(),
+            logical_offset: 0,
+            logical_strides: strides.clone(),
+            runtime_length: ScalarValue::new(Some(total as i64), None),
+            runtime_rank: ScalarValue::new(Some(shape.len() as i64), None),
+            runtime_shape: shape
+                .iter()
+                .map(|&s| ScalarValue::new(Some(s as i64), None))
+                .collect(),
+            runtime_strides: strides
+                .iter()
+                .map(|&s| ScalarValue::new(Some(s as i64), None))
+                .collect(),
+            runtime_offset: ScalarValue::new(Some(0), None),
+        },
+        value_id: ValueId::next(),
+    }))
+}
+
+pub fn try_dynamic_boolean_mask_from_static(
+    b: &mut IRBuilder,
+    data: &CompositeData,
+    idx: &Value,
+) -> Option<Value> {
+    let data_value = Value::List(data.clone());
+    let data_shape = super::composite::get_composite_shape(&data_value);
+    let mask_shape = super::composite::get_composite_shape(idx);
+    if data_shape != mask_shape {
+        return None;
+    }
+    let dyn_data = super::promote::promote_static_to_dynamic(b, &data_value);
+    let dyn_mask = dynamic_bool_mask_from_static(b, idx)?;
+    let Value::DynamicNDArray(d) = dyn_data else {
+        unreachable!("static promotion must produce DynamicNDArray")
+    };
+    Some(crate::helpers::array_ops::filter(
+        b,
+        &Value::DynamicNDArray(d),
+        &[dyn_mask],
+    ))
+}
+
 /// Apply trailing `np.newaxis` markers to a scalar value, wrapping it in
 /// nested length-1 lists. Any non-NewAxis index here is a usage error.
 fn apply_trailing_to_scalar(scalar: Value, indices: &[SliceIndex]) -> Value {
@@ -243,7 +345,7 @@ fn apply_trailing_to_scalar(scalar: Value, indices: &[SliceIndex]) -> Value {
                 current = Value::List(CompositeData {
                     elements_type: vec![t],
                     values: vec![current],
-                
+
                     value_id: ValueId::next(),
                 });
             }
@@ -258,7 +360,11 @@ fn apply_trailing_to_scalar(scalar: Value, indices: &[SliceIndex]) -> Value {
     current
 }
 
-pub fn multidim_subscript(b: &mut IRBuilder, data: &CompositeData, indices: &[SliceIndex]) -> Value {
+pub fn multidim_subscript(
+    b: &mut IRBuilder,
+    data: &CompositeData,
+    indices: &[SliceIndex],
+) -> Value {
     if indices.is_empty() {
         return Value::List(data.clone());
     }
@@ -298,7 +404,7 @@ pub fn multidim_subscript(b: &mut IRBuilder, data: &CompositeData, indices: &[Sl
         return Value::List(CompositeData {
             elements_type: vec![inner.zinnia_type()],
             values: vec![inner],
-        
+
             value_id: ValueId::next(),
         });
     }
@@ -306,7 +412,11 @@ pub fn multidim_subscript(b: &mut IRBuilder, data: &CompositeData, indices: &[Sl
     match &indices[0] {
         SliceIndex::Single(idx_value) => {
             if let Some(idx) = idx_value.int_val() {
-                let i = if idx < 0 { (data.values.len() as i64 + idx) as usize } else { idx as usize };
+                let i = if idx < 0 {
+                    (data.values.len() as i64 + idx) as usize
+                } else {
+                    idx as usize
+                };
                 if i >= data.values.len() {
                     return Value::None;
                 }
@@ -348,7 +458,8 @@ pub fn multidim_subscript(b: &mut IRBuilder, data: &CompositeData, indices: &[Sl
                 for i in (0..n - 1).rev() {
                     let const_i = b.ir_constant_int(i as i64);
                     let cmp = b.ir_equal_i(idx_value, &const_i);
-                    acc = crate::helpers::value_ops::select_value(b, &cmp, &per_row_results[i], &acc);
+                    acc =
+                        crate::helpers::value_ops::select_value(b, &cmp, &per_row_results[i], &acc);
                 }
                 acc
             }
@@ -373,20 +484,27 @@ pub fn multidim_subscript(b: &mut IRBuilder, data: &CompositeData, indices: &[Sl
                             Value::List(inner) | Value::Tuple(inner) => {
                                 selected.push(multidim_subscript(b, inner, &indices[1..]));
                             }
-                            _ => selected.push(apply_trailing_to_scalar(data.values[i].clone(), &indices[1..])),
+                            _ => selected.push(apply_trailing_to_scalar(
+                                data.values[i].clone(),
+                                &indices[1..],
+                            )),
                         }
                     }
                 }
                 i = (i as i64 + st) as usize;
             }
             let types = selected.iter().map(|v| v.zinnia_type()).collect();
-            Value::List(CompositeData { elements_type: types, values: selected, value_id: ValueId::next() })
+            Value::List(CompositeData {
+                elements_type: types,
+                values: selected,
+                value_id: ValueId::next(),
+            })
         }
         // Ellipsis and NewAxis are handled above (at function entry); reaching
         // them here means a logic bug.
-        SliceIndex::Ellipsis | SliceIndex::NewAxis => unreachable!(
-            "Ellipsis / NewAxis should have been handled before the main match"
-        ),
+        SliceIndex::Ellipsis | SliceIndex::NewAxis => {
+            unreachable!("Ellipsis / NewAxis should have been handled before the main match")
+        }
     }
 }
 
@@ -412,9 +530,7 @@ fn lower_sum_generic_sweep(b: &mut IRBuilder, inputs: &ReductionInputs) -> Value
     }
     // Per-element interval relay: Output ∈ [N*lo, N*hi].
     if let (Some(vids), Some(out_vid)) = (inputs.element_vids.as_ref(), acc.value_id()) {
-        crate::optim::resolver::relay_reduction_output_interval_int(
-            b, vids, out_vid, inputs.n,
-        );
+        crate::optim::resolver::relay_reduction_output_interval_int(b, vids, out_vid, inputs.n);
     }
     acc
 }
@@ -445,6 +561,12 @@ fn lower_prod_generic_sweep(b: &mut IRBuilder, inputs: &ReductionInputs) -> Valu
     let mut acc = inputs.elements[0].clone();
     for elem in &inputs.elements[1..] {
         acc = crate::helpers::value_ops::apply_binary_op(b, "mul", &acc, elem);
+    }
+    // Per-element sign-aware interval relay for static integer prod.
+    if !inputs.any_float {
+        if let (Some(vids), Some(out_vid)) = (inputs.element_vids.as_ref(), acc.value_id()) {
+            crate::optim::resolver::relay_prod_output_interval_int(b, vids, out_vid);
+        }
     }
     acc
 }
@@ -608,9 +730,7 @@ pub fn builtin_reduce(b: &mut IRBuilder, op: &str, val: &Value) -> Value {
             }
             // Per-element interval relay: Output ∈ [lo, hi] (multiplier 1).
             if let (Some(vids), Some(out_vid)) = (element_vids.as_ref(), acc.value_id()) {
-                crate::optim::resolver::relay_reduction_output_interval_int(
-                    b, vids, out_vid, 1,
-                );
+                crate::optim::resolver::relay_reduction_output_interval_int(b, vids, out_vid, 1);
             }
             acc
         }
@@ -622,9 +742,7 @@ pub fn builtin_reduce(b: &mut IRBuilder, op: &str, val: &Value) -> Value {
             }
             // Per-element interval relay: Output ∈ [lo, hi] (multiplier 1).
             if let (Some(vids), Some(out_vid)) = (element_vids.as_ref(), acc.value_id()) {
-                crate::optim::resolver::relay_reduction_output_interval_int(
-                    b, vids, out_vid, 1,
-                );
+                crate::optim::resolver::relay_reduction_output_interval_int(b, vids, out_vid, 1);
             }
             acc
         }

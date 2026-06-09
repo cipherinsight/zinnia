@@ -1,0 +1,18 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0444/kernel.py
+// REASON: A[mask] boolean-indexed read produces a dynamic-length array.
+
+const u32 NA = 20
+const u32 NB = 3
+
+def main(field[NA] A, field[NB] B) -> field[NA]:
+    field[NA] result = [0; NA]
+    u32 cnt = 0
+    for u32 i in 0..NA do
+        bool m1 = (A[i] > B[0]) && (A[i] < B[1])
+        bool m2 = (A[i] > B[1]) && (A[i] < B[2])
+        bool keep = m1 || m2
+        result[cnt] = if keep then A[i] else result[cnt] fi
+        cnt = if keep then cnt + 1 else cnt fi
+    endfor
+    return result

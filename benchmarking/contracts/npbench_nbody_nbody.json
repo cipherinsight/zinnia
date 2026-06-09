@@ -1,0 +1,216 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "domain-obligation",
+    "in-place-mutation",
+    "loop-bounded",
+    "matmul-dot"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "np.hstack"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 26,
+      "line_start": 5,
+      "mutated_params": [],
+      "name": "getAcc",
+      "ops": [
+        "Add",
+        "Gt",
+        "MatMult",
+        "Mult",
+        "Pow",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "pos",
+          "proposed_annotation": "Float[Array, 'N<=1024 C<=3']",
+          "rank_hint": 2,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "mass",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "G",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "softening",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "np.sqrt",
+        "np.sum",
+        "np.triu"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 49,
+      "line_start": 29,
+      "mutated_params": [],
+      "name": "getEnergy",
+      "ops": [
+        "Add",
+        "Div",
+        "Gt",
+        "Mult",
+        "Pow",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "pos",
+          "proposed_annotation": "Float[Array, 'N<=1024 C<=3']",
+          "rank_hint": 2,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "vel",
+          "proposed_annotation": "Float[Array, 'N<=1024 C<=3']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "mass",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "G",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "getAcc",
+        "getEnergy",
+        "np.mean",
+        "np.ndarray",
+        "range",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 68,
+      "line_start": 54,
+      "mutated_params": [
+        "pos",
+        "vel"
+      ],
+      "name": "nbody",
+      "ops": [
+        "Add",
+        "Div",
+        "LtE",
+        "Mult",
+        "NotEq"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "mass",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "pos",
+          "proposed_annotation": "Float[Array, 'N<=1024 C<=3']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "vel",
+          "proposed_annotation": "Float[Array, 'N<=1024 C<=3']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "N",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "Nt",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "dt",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "G",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "softening",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "npbench_nbody_nbody/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].",
+    "Declare shared matrix/vector dimensions explicitly, e.g. A[N,K] with x[K].",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "npbench_nbody_nbody",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\nimport numpy as np\n\n@zk_chip\ndef getAcc(pos: Float[Array, 'N<=1024 C<=3'], mass: Float[Array, 'N<=1024'], G: Float, softening: Float):\n    \"\"\"\n    Calculate the acceleration on each particle due to Newton's Law \n    pos  is an N x 3 matrix of positions\n    mass is an N x 1 vector of masses\n    G is Newton's Gravitational constant\n    softening is the softening length\n    a is N x 3 matrix of accelerations\n    \"\"\"\n    x = pos[:, 0:1]\n    y = pos[:, 1:2]\n    z = pos[:, 2:3]\n    dx = x.T - x\n    dy = y.T - y\n    dz = z.T - z\n    inv_r3 = dx ** 2 + dy ** 2 + dz ** 2 + softening ** 2\n    inv_r3[inv_r3 > 0] = inv_r3[inv_r3 > 0] ** (-1.5)\n    ax = G * (dx * inv_r3) @ mass\n    ay = G * (dy * inv_r3) @ mass\n    az = G * (dz * inv_r3) @ mass\n    a = np.hstack((ax, ay, az))\n    return a\n\n@zk_chip\ndef getEnergy(pos: Float[Array, 'N<=1024 C<=3'], vel: Float[Array, 'N<=1024 C<=3'], mass: Float[Array, 'N<=1024'], G: Float):\n    \"\"\"\n    Get kinetic energy (KE) and potential energy (PE) of simulation\n    pos is N x 3 matrix of positions\n    vel is N x 3 matrix of velocities\n    mass is an N x 1 vector of masses\n    G is Newton's Gravitational constant\n    KE is the kinetic energy of the system\n    PE is the potential energy of the system\n    \"\"\"\n    KE = 0.5 * np.sum(mass * vel ** 2)\n    x = pos[:, 0:1]\n    y = pos[:, 1:2]\n    z = pos[:, 2:3]\n    dx = x.T - x\n    dy = y.T - y\n    dz = z.T - z\n    inv_r = np.sqrt(dx ** 2 + dy ** 2 + dz ** 2)\n    inv_r[inv_r > 0] = 1.0 / inv_r[inv_r > 0]\n    PE = G * np.sum(np.triu(-(mass * mass.T) * inv_r, 1))\n    return (KE, PE)\n\n@zk_circuit\n@requires(lambda mass, pos, vel, N, Nt, dt, G, softening: 0 <= N <= 1024)\n@requires(lambda mass, pos, vel, N, Nt, dt, G, softening: dt != 0.0)\ndef nbody(mass: Float[Array, 'N<=1024'], pos: Float[Array, 'N<=1024 C<=3'], vel: Float[Array, 'N<=1024 C<=3'], N: Integer, Nt: Integer, dt: Float, G: Float, softening: Float):\n    vel -= np.mean(mass * vel, axis=0) / np.mean(mass)\n    acc = getAcc(pos, mass, G, softening)\n    KE = np.ndarray(Nt + 1, dtype=np.float64)\n    PE = np.ndarray(Nt + 1, dtype=np.float64)\n    KE[0], PE[0] = getEnergy(pos, vel, mass, G)\n    t = 0.0\n    for i in range(Nt):\n        vel += acc * dt / 2.0\n        pos += vel * dt\n        acc = getAcc(pos, mass, G, softening)\n        vel += acc * dt / 2.0\n        t += dt\n        KE[i + 1], PE[i + 1] = getEnergy(pos, vel, mass, G)\n    return (KE, PE)",
+  "source_status": "direct"
+}

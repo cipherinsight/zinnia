@@ -2,12 +2,17 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
 use crate::ast::*;
-use crate::types::{Value, ZinniaType};
+use crate::types::{NumberType, Value, ZinniaType};
 
 use super::{ChipCallFrame, IRGenerator};
 
 impl IRGenerator {
-    pub(crate) fn visit_chip_call(&mut self, name: &str, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+    pub(crate) fn visit_chip_call(
+        &mut self,
+        name: &str,
+        args: &[Value],
+        kwargs: &HashMap<String, Value>,
+    ) -> Value {
         let chip = self.registered_chips.get(name).cloned();
         let chip = match chip {
             Some(c) => c,
@@ -167,12 +172,15 @@ impl IRGenerator {
         };
 
         // Enter chip scope
-        let return_dt = self.parse_dt_descriptor(&chip.return_dt);
-        self.ctx.chip_enter(return_dt, None);
-        self.builder.facts.enter(
-            crate::optim::predicates::ScopeKind::Chip,
-            None,
-        );
+        let return_dt = chip
+            .return_dt
+            .as_ref()
+            .map(|dt| self.parse_dt_descriptor(dt));
+        self.ctx
+            .chip_enter(return_dt.clone().unwrap_or(ZinniaType::None), None);
+        self.builder
+            .facts
+            .enter(crate::optim::predicates::ScopeKind::Chip, None);
         self.recursion_depth += 1;
 
         // Bind arguments. Positional args first, then kwargs by name, then
@@ -212,9 +220,7 @@ impl IRGenerator {
             self.visit(stmt);
         }
 
-        // Check if return is guaranteed for non-None return types
-        let return_dt_check = self.parse_dt_descriptor(&chip.return_dt);
-        let _return_guaranteed = self.ctx.check_return_guaranteed();
+        let return_guaranteed = self.ctx.check_return_guaranteed();
 
         // Collect return value
         // Collect returns BEFORE leaving chip scope
@@ -222,8 +228,23 @@ impl IRGenerator {
 
         // Check return guarantee: error if chip has non-None return type
         // and no return statement was encountered on any path
-        if !matches!(return_dt_check, ZinniaType::None) && returns.is_empty() {
+        if return_dt
+            .as_ref()
+            .is_some_and(|dt| !matches!(dt, ZinniaType::None))
+            && returns.is_empty()
+        {
             panic!("Chip control ends without a return statement");
+        }
+        if !returns.is_empty() && !return_guaranteed {
+            if return_dt.is_some() {
+                panic!("Chip return annotation requires every path to return");
+            }
+            panic!(
+                "Chip return inference does not support partial returns without an explicit return annotation"
+            );
+        }
+        if self.ctx.has_mixed_bare_and_value_returns() {
+            panic!("Chip return inference does not allow mixing bare returns with value returns");
         }
 
         self.ctx.chip_leave();
@@ -240,7 +261,45 @@ impl IRGenerator {
             let (val, cond) = &returns[i];
             result = crate::helpers::value_ops::select_value(&mut self.builder, cond, val, &result);
         }
+        if let Some(return_dt) = return_dt {
+            if result.zinnia_type() != return_dt {
+                result = self.try_cast_value_to_match(result, &return_dt);
+            }
+            if result.zinnia_type() != return_dt {
+                if let (ZinniaType::NDArray { shape, dtype }, Value::List(_) | Value::Tuple(_)) =
+                    (&return_dt, &result)
+                {
+                    if self.composite_matches_ndarray_return(&result, shape, *dtype) {
+                        return result;
+                    }
+                }
+                panic!(
+                    "Chip return type mismatch: expected {}, got {}",
+                    return_dt,
+                    result.zinnia_type()
+                );
+            }
+        }
         result
+    }
+
+    fn composite_matches_ndarray_return(
+        &self,
+        value: &Value,
+        shape: &[usize],
+        dtype: NumberType,
+    ) -> bool {
+        if crate::helpers::composite::get_composite_shape(value) != shape {
+            return false;
+        }
+        crate::helpers::composite::flatten_composite(value)
+            .iter()
+            .all(|leaf| match (dtype, leaf) {
+                (NumberType::Integer, Value::Integer(_)) => true,
+                (NumberType::Float, Value::Float(_)) => true,
+                (NumberType::Complex, Value::Complex { .. }) => true,
+                _ => false,
+            })
     }
 
     pub(crate) fn visit_external_call(&mut self, name: &str, args: &[Value]) -> Value {
@@ -253,13 +312,18 @@ impl IRGenerator {
         let return_dt = self.parse_dt_descriptor(&ext.return_dt);
 
         // Build arg type descriptors for InvokeExternal
-        let arg_dts: Vec<serde_json::Value> = args.iter().map(|a| {
-            match a.zinnia_type() {
-                ZinniaType::Integer | ZinniaType::Boolean => serde_json::json!({"__class__": "IntegerDTDescriptor", "dt_data": {}}),
-                ZinniaType::Float => serde_json::json!({"__class__": "FloatDTDescriptor", "dt_data": {}}),
+        let arg_dts: Vec<serde_json::Value> = args
+            .iter()
+            .map(|a| match a.zinnia_type() {
+                ZinniaType::Integer | ZinniaType::Boolean => {
+                    serde_json::json!({"__class__": "IntegerDTDescriptor", "dt_data": {}})
+                }
+                ZinniaType::Float => {
+                    serde_json::json!({"__class__": "FloatDTDescriptor", "dt_data": {}})
+                }
                 _ => serde_json::json!({"__class__": "IntegerDTDescriptor", "dt_data": {}}),
-            }
-        }).collect();
+            })
+            .collect();
 
         // Allocate a unique store index for this external call
         let store_idx = self.next_external_store_idx;

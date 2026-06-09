@@ -1,7 +1,7 @@
+use super::ensure_bool;
 use crate::builder::IRBuilder;
 use crate::ops::{Op, OpArgs, ParamEntry};
 use crate::types::Value;
-use super::ensure_bool;
 
 pub struct LogicalNotOp;
 
@@ -10,8 +10,12 @@ impl LogicalNotOp {
 }
 
 impl Op for LogicalNotOp {
-    fn name(&self) -> &'static str { "logical_not" }
-    fn params(&self) -> &[ParamEntry] { &Self::PARAMS }
+    fn name(&self) -> &'static str {
+        "logical_not"
+    }
+    fn params(&self) -> &[ParamEntry] {
+        &Self::PARAMS
+    }
 
     fn build(&self, builder: &mut IRBuilder, args: &OpArgs) -> Value {
         let x = args.require("x");

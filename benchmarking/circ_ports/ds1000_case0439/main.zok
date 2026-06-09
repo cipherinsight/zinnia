@@ -1,0 +1,17 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0439/kernel.py
+// REASON: X.T[:,:,None] * X.T[:,None] (per-column outer product) lowered to explicit triple loop.
+
+const u32 R = 10
+const u32 C = 20
+
+def main(field[R][C] X) -> field[C][R][R]:
+    field[C][R][R] result = [[[0; R]; R]; C]
+    for u32 c in 0..C do
+        for u32 i in 0..R do
+            for u32 j in 0..R do
+                result[c][i][j] = X[i][c] * X[j][c]
+            endfor
+        endfor
+    endfor
+    return result

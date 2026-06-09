@@ -1,0 +1,22 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0299/kernel.py
+// REASON: ravel + one-hot with runtime column count temp.max()+1 — output shape not compile-time; ZoKrates requires literal sizes.
+
+def main(field[10][20] a) -> field[200][200]:
+  field min = a[0][0]
+  for u32 i in 0..10 do
+    for u32 j in 0..20 do
+      min = if a[i][j] < min then a[i][j] else min fi
+    endfor
+  endfor
+  field[200] temp = [0; 200]
+  field max = 0
+  for u32 i in 0..10 do
+    for u32 j in 0..20 do
+      temp[i * 20 + j] = a[i][j] - min
+      max = if temp[i * 20 + j] > max then temp[i * 20 + j] else max fi
+    endfor
+  endfor
+  // field[200][max+1] b  -- ILLEGAL: runtime dim
+  field[200][200] b = [[0; 200]; 200]
+  return b

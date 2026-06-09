@@ -5,22 +5,22 @@
 //! then routes to the appropriate implementation. Static operators can call
 //! dynamic counterparts directly — no centralized dispatcher needed.
 
+mod assignment;
+mod boolean_mask;
+mod bounded_axis;
+mod indexing;
+mod memory;
 mod reduce;
 mod shape;
-mod memory;
-mod bounded_axis;
-mod boolean_mask;
-mod indexing;
-mod assignment;
 
-pub use reduce::{reduce, argmax_argmin};
-pub use shape::{transpose, moveaxis, reshape, swapaxes};
-pub use memory::{filter, repeat};
+pub use assignment::{dyn_setitem, dyn_setitem_mask, dyn_setitem_slice};
 pub use boolean_mask::is_boolean_mask;
-pub use indexing::dyn_subscript;
 pub(crate) use bounded_axis::bounded_axis_strict;
 pub(crate) use bounded_axis::{select_stride_mode, StrideMode};
-pub use assignment::{dyn_setitem, dyn_setitem_mask, dyn_setitem_slice};
+pub use indexing::dyn_subscript;
+pub use memory::{filter, repeat};
+pub use reduce::{argmax_argmin, reduce};
+pub use shape::{moveaxis, reshape, swapaxes, transpose};
 
 use crate::builder::IRBuilder;
 use crate::ops::dyn_ndarray::DynAggKind;

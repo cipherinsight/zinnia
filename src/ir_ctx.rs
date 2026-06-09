@@ -9,6 +9,7 @@ use crate::types::{Value, ZinniaType};
 pub struct IRContext {
     scopes: Vec<Scope>,
     pub recursion_depth: i32,
+    unreachable_loop_bindings: HashMap<String, String>,
 }
 
 impl Default for IRContext {
@@ -24,6 +25,7 @@ impl IRContext {
                 var_table: HashMap::new(),
             })],
             recursion_depth: 0,
+            unreachable_loop_bindings: HashMap::new(),
         }
     }
 
@@ -32,6 +34,7 @@ impl IRContext {
     /// Set a variable in the current scope.
     /// For LoopScope: if the variable exists in a parent scope, update it there.
     pub fn set(&mut self, key: &str, val: Value) {
+        self.unreachable_loop_bindings.remove(key);
         let store = ValueStore::new(val);
         let n = self.scopes.len();
 
@@ -50,7 +53,10 @@ impl IRContext {
             }
         }
 
-        self.scopes.last_mut().unwrap().set_local(key.to_string(), store);
+        self.scopes
+            .last_mut()
+            .unwrap()
+            .set_local(key.to_string(), store);
     }
 
     /// Get a variable value from the scope chain.
@@ -70,6 +76,25 @@ impl IRContext {
         None
     }
 
+    /// Mark a name that is syntactically introduced only inside a loop body
+    /// that was proven not to execute. This is intentionally narrow: it is
+    /// not a general definite-assignment analysis, just a better diagnostic
+    /// for post-loop loads that would otherwise become a generic missing var.
+    pub fn mark_unreachable_loop_binding(&mut self, key: &str, reason: String) {
+        if !self.exists(key) {
+            self.unreachable_loop_bindings
+                .entry(key.to_string())
+                .or_insert(reason);
+        }
+    }
+
+    pub fn unreachable_loop_binding_reason(&self, key: &str) -> Option<&str> {
+        if self.exists(key) {
+            return None;
+        }
+        self.unreachable_loop_bindings.get(key).map(String::as_str)
+    }
+
     /// Check if a variable exists in the scope chain.
     pub fn exists(&self, key: &str) -> bool {
         let n = self.scopes.len();
@@ -86,11 +111,7 @@ impl IRContext {
 
     // ── Scope enter/leave ─────────────────────────────────────────────
 
-    pub fn chip_enter(
-        &mut self,
-        return_dtype: ZinniaType,
-        assertion_condition: Option<Value>,
-    ) {
+    pub fn chip_enter(&mut self, return_dtype: ZinniaType, assertion_condition: Option<Value>) {
         self.scopes.push(Scope::Chip(ChipScopeData {
             var_table: HashMap::new(),
             return_guaranteed: false,
@@ -98,7 +119,27 @@ impl IRContext {
             returns_with_conditions: Vec::new(),
             calculated_returning_condition: None,
             assertion_condition,
+            has_none_return: false,
+            has_value_return: false,
         }));
+    }
+
+    pub fn circuit_enter(&mut self, return_dtype: ZinniaType, assertion_condition: Option<Value>) {
+        self.scopes.push(Scope::Circuit(CircuitScopeData {
+            var_table: HashMap::new(),
+            return_guaranteed: false,
+            return_dtype,
+            returns_with_conditions: Vec::new(),
+            calculated_returning_condition: None,
+            assertion_condition,
+            has_none_return: false,
+            has_value_return: false,
+        }));
+    }
+
+    pub fn circuit_leave(&mut self) -> Scope {
+        assert!(matches!(self.scopes.last(), Some(Scope::Circuit(_))));
+        self.scopes.pop().unwrap()
     }
 
     pub fn chip_leave(&mut self) -> Scope {
@@ -122,7 +163,27 @@ impl IRContext {
 
     pub fn loop_leave(&mut self) -> Scope {
         assert!(matches!(self.scopes.last(), Some(Scope::Loop(_))));
-        self.scopes.pop().unwrap()
+        let popped = self.scopes.pop().unwrap();
+
+        // Python loop-scope semantics: names assigned in the body remain
+        // visible after the loop terminates (no fresh scope per iteration).
+        // `set()` already promotes writes that target a parent-chain name
+        // into that parent, so the loop's local `var_table` by construction
+        // holds only names newly introduced inside the loop body. Leak
+        // those out to the immediate enclosing scope on exit. If that
+        // parent is itself a Loop / Conditional / Generator, the binding
+        // continues to propagate / merge on its own leave / merge path.
+        //
+        // Card: compiler.loop-variable-scope-leak (intake, p3, 2026-05-16).
+        if let Scope::Loop(data) = &popped {
+            if let Some(parent) = self.scopes.last_mut() {
+                for (name, store) in data.var_table.iter() {
+                    parent.set_local(name.clone(), store.clone());
+                }
+            }
+        }
+
+        popped
     }
 
     pub fn if_enter(&mut self, condition: Value, builder: &mut IRBuilder) {
@@ -195,9 +256,15 @@ impl IRContext {
         let cond_return = self.find_condition(|s| s.get_returning_condition());
 
         let mut conditions: Vec<Value> = Vec::new();
-        if let Some(c) = cond_loop { conditions.push(c); }
-        if let Some(c) = cond_branch { conditions.push(c); }
-        if let Some(c) = cond_return { conditions.push(c); }
+        if let Some(c) = cond_loop {
+            conditions.push(c);
+        }
+        if let Some(c) = cond_branch {
+            conditions.push(c);
+        }
+        if let Some(c) = cond_return {
+            conditions.push(c);
+        }
 
         match conditions.len() {
             0 => builder.ir_constant_bool(true),
@@ -275,13 +342,13 @@ impl IRContext {
 
     // ── Return management ─────────────────────────────────────────────
 
-    pub fn register_return(&mut self, value: Value, builder: &mut IRBuilder) {
+    pub fn register_return(&mut self, value: Value, is_bare_return: bool, builder: &mut IRBuilder) {
         let cond = self.get_condition_value(builder);
         // Find the nearest ChipScope
         let n = self.scopes.len();
         for i in (0..n).rev() {
-            if matches!(&self.scopes[i], Scope::Chip(_)) {
-                self.scopes[i].register_return(value, cond, builder);
+            if matches!(&self.scopes[i], Scope::Chip(_) | Scope::Circuit(_)) {
+                self.scopes[i].register_return(value, cond, is_bare_return, builder);
                 return;
             }
         }
@@ -294,11 +361,20 @@ impl IRContext {
             if !ret.is_empty() {
                 return ret.to_vec();
             }
-            if let Scope::Chip(_) = scope {
+            if matches!(scope, Scope::Chip(_) | Scope::Circuit(_)) {
                 return ret.to_vec();
             }
         }
         Vec::new()
+    }
+
+    pub fn has_mixed_bare_and_value_returns(&self) -> bool {
+        for scope in self.scopes.iter().rev() {
+            if matches!(scope, Scope::Chip(_) | Scope::Circuit(_)) {
+                return scope.has_mixed_bare_and_value_returns();
+            }
+        }
+        false
     }
 
     pub fn get_return_dtype(&self) -> Option<ZinniaType> {
@@ -321,7 +397,9 @@ impl IRContext {
     }
 
     pub fn check_loop_terminated_guaranteed(&self) -> bool {
-        self.scopes.last().is_some_and(|s| s.is_terminated_guaranteed())
+        self.scopes
+            .last()
+            .is_some_and(|s| s.is_terminated_guaranteed())
     }
 
     pub fn set_terminated_guarantee(&mut self) {
@@ -442,18 +520,84 @@ mod tests {
         // Enter loop scope
         ctx.loop_enter();
 
-        // Writing to "i" should update the parent (chip scope) since it exists there
+        // Writing to "i" should update the parent (chip scope) since it exists there.
         ctx.set("i", Value::Integer(ScalarValue::known(1, 1)));
 
-        // New var should stay in loop scope
+        // A newly-introduced name lives in the loop's local var_table during the
+        // body, then leaks to the parent on loop exit (Python flat-scope semantics).
         ctx.set("loop_local", Value::Integer(ScalarValue::known(99, 2)));
 
         ctx.loop_leave();
 
         // "i" should have been updated in chip scope
         assert_eq!(ctx.get("i").unwrap().int_val(), Some(1));
-        // "loop_local" should NOT exist (was in loop's local table)
-        assert!(!ctx.exists("loop_local"));
+        // "loop_local" leaked to the chip scope on loop exit
+        // (compiler.loop-variable-scope-leak fix).
+        assert!(ctx.exists("loop_local"));
+        assert_eq!(ctx.get("loop_local").unwrap().int_val(), Some(99));
+    }
+
+    #[test]
+    fn test_loop_introduced_binding_leaks_to_parent() {
+        // Regression: compiler.loop-variable-scope-leak.
+        // Names assigned only inside a loop body must remain visible after
+        // the loop terminates, mirroring Python's flat loop scope.
+        let mut ctx = IRContext::new();
+
+        ctx.chip_enter(ZinniaType::None, None);
+        ctx.loop_enter();
+
+        // `x` is new (not in chip / master) — stays in loop var_table during body.
+        ctx.set("x", Value::Integer(ScalarValue::known(42, 0)));
+
+        ctx.loop_leave();
+
+        // After loop exit, `x` should still resolve from the enclosing chip scope.
+        assert!(ctx.exists("x"));
+        assert_eq!(ctx.get("x").unwrap().int_val(), Some(42));
+    }
+
+    #[test]
+    fn test_loop_leak_nested_through_outer_loop() {
+        // Nested loops: a binding introduced in the inner loop should leak
+        // first into the outer loop, and then into the chip scope when the
+        // outer loop terminates.
+        let mut ctx = IRContext::new();
+
+        ctx.chip_enter(ZinniaType::None, None);
+        ctx.loop_enter(); // outer
+        ctx.loop_enter(); // inner
+
+        ctx.set("x", Value::Integer(ScalarValue::known(7, 0)));
+
+        ctx.loop_leave(); // inner -> outer
+                          // Mid-leak invariant: `x` is now visible from the outer loop scope.
+        assert_eq!(ctx.get("x").unwrap().int_val(), Some(7));
+
+        ctx.loop_leave(); // outer -> chip
+        assert!(ctx.exists("x"));
+        assert_eq!(ctx.get("x").unwrap().int_val(), Some(7));
+    }
+
+    #[test]
+    fn test_loop_leak_does_not_overwrite_existing_parent_binding() {
+        // `set()` promotes loop writes into the parent if the name already
+        // exists there, so loop_leave has nothing to leak for shadowed names
+        // and must not clobber the parent's already-updated value.
+        let mut ctx = IRContext::new();
+
+        ctx.chip_enter(ZinniaType::None, None);
+        ctx.set("i", Value::Integer(ScalarValue::known(0, 0)));
+
+        ctx.loop_enter();
+        // Update of existing name is promoted to chip by `set()`.
+        ctx.set("i", Value::Integer(ScalarValue::known(5, 1)));
+        // New name leaks on exit.
+        ctx.set("acc", Value::Integer(ScalarValue::known(99, 2)));
+        ctx.loop_leave();
+
+        assert_eq!(ctx.get("i").unwrap().int_val(), Some(5));
+        assert_eq!(ctx.get("acc").unwrap().int_val(), Some(99));
     }
 
     #[test]

@@ -37,16 +37,17 @@ pub use chokepoints::{
     require_provable_static_int, require_static_int, require_static_or_bounded_int,
     resolve_int_or_bounded, BoundedInt, SiteKind, StaticInt,
 };
-pub use discharge::{discharge_index_in_range, discharge_slice_bound, probe_in_range};
-pub use intervals::{
-    interval_fact_for_float_binary, interval_fact_for_int_binary,
+pub use discharge::{
+    discharge_index_below_value, discharge_index_in_range, discharge_slice_bound, probe_in_range,
 };
 pub(crate) use intervals::derive_bounds_from_facts;
+pub use intervals::{interval_fact_for_float_binary, interval_fact_for_int_binary};
 pub use layered::LayeredResolver;
 pub use relays::{
-    relay_arccos_output_interval, relay_exp_output_interval,
-    relay_forall_eq_const_from_all_inputs, relay_forall_eq_const_from_input,
-    relay_log_output_interval, relay_reduction_output_interval_int,
+    prod_interval_int_for_static_len, relay_arccos_output_interval, relay_arctan2_output_interval,
+    relay_exp_output_interval, relay_forall_eq_const_from_all_inputs,
+    relay_forall_eq_const_from_input, relay_log_output_interval, relay_mean_tight_interval_float,
+    relay_prod_output_interval_int, relay_reduction_output_interval_int,
     relay_sqrt_output_interval,
 };
 pub use smt::SmtResolver;
@@ -116,35 +117,19 @@ pub trait Resolver: Send + Sync {
     /// (`IRBuilder::split_resolver_and_stmts`) so the borrow-checker can
     /// hand out `&mut resolver` and `&[IRStatement]` simultaneously without
     /// a churning API change at every call site.
-    fn resolve_int_with_stmts(
-        &mut self,
-        val: &Value,
-        _stmts: &[IRStatement],
-    ) -> Option<i64> {
+    fn resolve_int_with_stmts(&mut self, val: &Value, _stmts: &[IRStatement]) -> Option<i64> {
         self.resolve_int(val)
     }
 
-    fn resolve_bool_with_stmts(
-        &mut self,
-        val: &Value,
-        _stmts: &[IRStatement],
-    ) -> Option<bool> {
+    fn resolve_bool_with_stmts(&mut self, val: &Value, _stmts: &[IRStatement]) -> Option<bool> {
         self.resolve_bool(val)
     }
 
-    fn resolve_max_with_stmts(
-        &mut self,
-        val: &Value,
-        _stmts: &[IRStatement],
-    ) -> Option<i64> {
+    fn resolve_max_with_stmts(&mut self, val: &Value, _stmts: &[IRStatement]) -> Option<i64> {
         self.resolve_max(val)
     }
 
-    fn resolve_min_with_stmts(
-        &mut self,
-        val: &Value,
-        _stmts: &[IRStatement],
-    ) -> Option<i64> {
+    fn resolve_min_with_stmts(&mut self, val: &Value, _stmts: &[IRStatement]) -> Option<i64> {
         self.resolve_min(val)
     }
 
@@ -159,9 +144,7 @@ pub trait Resolver: Send + Sync {
     /// has one. Layered/Range/Smt resolvers return Some; StaticOnly
     /// returns None. The handle is `Arc`'d, so callers can hold it past
     /// the resolver's lifetime to print a summary at end of compilation.
-    fn telemetry_handle(
-        &self,
-    ) -> Option<std::sync::Arc<crate::optim::telemetry::SmtTelemetry>> {
+    fn telemetry_handle(&self) -> Option<std::sync::Arc<crate::optim::telemetry::SmtTelemetry>> {
         None
     }
 }

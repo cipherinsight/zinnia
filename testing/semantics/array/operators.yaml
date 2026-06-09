@@ -1064,8 +1064,121 @@ operators:
         oracle_expr: "(lambda arr: (arr.__setitem__((x, slice(None)), [1, 2, 3, 4]), arr)[1])(np.zeros((4, 4), dtype=int))"
         prove_args: [0]
         replaces: "testing/operator/ndarray/test_set_item_dynamic.py::test_dynamic_row_full_slice_read_then_compare"
+      - id: dynamic_chained_binary_ops
+        spellings: ["default"]
+        modes: ["dynamic"]
+        rank_from: [3]
+        setup:
+          - "a = np.promote_to_dynamic(np.asarray([1, 2, 3]))"
+          - "b = np.promote_to_dynamic(np.asarray([4, 5, 6]))"
+        source_expr: "(a + b) * a"
+        oracle_expr: "(np.asarray([1, 2, 3]) + np.asarray([4, 5, 6])) * np.asarray([1, 2, 3])"
+        replaces: "testing/todo/array_semantics_manual/test_dynamic_binary.py::test_chained_ops"
+      - id: dynamic_index_then_binary_op
+        spellings: ["default"]
+        modes: ["dynamic"]
+        rank_from: [2, 3]
+        setup:
+          - "a = np.promote_to_dynamic(np.asarray([[1, 2, 3], [4, 5, 6]]))"
+          - "row = a[0]"
+          - "b = np.promote_to_dynamic(np.asarray([10, 20, 30]))"
+        source_expr: "row + b"
+        oracle_expr: "np.asarray([[1, 2, 3], [4, 5, 6]])[0] + np.asarray([10, 20, 30])"
+        replaces: "testing/todo/array_semantics_manual/test_dynamic_indexing.py::test_index_then_binary_op"
+      - id: dynamic_slice_then_sum
+        spellings: ["default"]
+        modes: ["dynamic"]
+        rank_from: [8]
+        setup:
+          - "a = np.promote_to_dynamic(np.asarray([1, 2, 3, 4, 5, 6, 7, 8]))"
+        source_expr: "a[2:6].sum()"
+        oracle_expr: "np.asarray([1, 2, 3, 4, 5, 6, 7, 8])[2:6].sum()"
+        replaces: "testing/todo/array_semantics_manual/test_dynamic_indexing.py::test_slice_then_sum"
+      - id: dynamic_reshape_then_add
+        spellings: ["default"]
+        modes: ["dynamic"]
+        rank_from: [4]
+        setup:
+          - "a = np.promote_to_dynamic(np.asarray([1, 2, 3, 4]))"
+          - "b = a.reshape((2, 2))"
+          - "c = np.promote_to_dynamic(np.asarray([[10, 20], [30, 40]]))"
+        source_expr: "b + c"
+        oracle_expr: "np.asarray([1, 2, 3, 4]).reshape((2, 2)) + np.asarray([[10, 20], [30, 40]])"
+        replaces: "testing/todo/array_semantics_manual/test_dynamic_reshape.py::test_reshape_then_add"
+      - id: dynamic_reshape_preserves_sum
+        spellings: ["default"]
+        modes: ["dynamic"]
+        rank_from: [6]
+        setup:
+          - "a = np.promote_to_dynamic(np.asarray([1, 2, 3, 4, 5, 6]))"
+          - "b = a.reshape((2, 3))"
+        source_expr: "b.sum()"
+        oracle_expr: "np.asarray([1, 2, 3, 4, 5, 6]).reshape((2, 3)).sum()"
+        replaces: "testing/todo/array_semantics_manual/test_dynamic_reshape.py::test_reshape_preserves_sum"
+      - id: dynamic_concat_1d_sum
+        spellings: ["default"]
+        modes: ["dynamic"]
+        rank_from: [3, 3]
+        setup:
+          - "a = np.promote_to_dynamic(np.asarray([1, 2, 3]))"
+          - "b = np.promote_to_dynamic(np.asarray([4, 5, 6]))"
+        source_expr: "np.concatenate([a, b]).sum()"
+        oracle_expr: "np.concatenate([np.asarray([1, 2, 3]), np.asarray([4, 5, 6])]).sum()"
+        replaces: "testing/todo/array_semantics_manual/test_dynamic_concat_stack_split.py::test_concat_1d"
+      - id: dynamic_concat_2d_axis1_sum
+        spellings: ["default"]
+        modes: ["dynamic"]
+        rank_from: [2, 2]
+        setup:
+          - "a = np.promote_to_dynamic(np.asarray([[1, 2], [3, 4]]))"
+          - "b = np.promote_to_dynamic(np.asarray([[5], [6]]))"
+        source_expr: "np.concatenate([a, b], axis=1).sum()"
+        oracle_expr: "np.concatenate([np.asarray([[1, 2], [3, 4]]), np.asarray([[5], [6]])], axis=1).sum()"
+        replaces: "testing/todo/array_semantics_manual/test_dynamic_concat_stack_split.py::test_concat_2d_axis1"
+      - id: dynamic_stack_axis0_sum
+        spellings: ["default"]
+        modes: ["dynamic"]
+        rank_from: [3, 3]
+        setup:
+          - "a = np.promote_to_dynamic(np.asarray([1, 2, 3]))"
+          - "b = np.promote_to_dynamic(np.asarray([4, 5, 6]))"
+        source_expr: "np.stack([a, b]).sum()"
+        oracle_expr: "np.stack([np.asarray([1, 2, 3]), np.asarray([4, 5, 6])]).sum()"
+        replaces: "testing/todo/array_semantics_manual/test_dynamic_concat_stack_split.py::test_stack_1d_axis0"
+      - id: dynamic_split_equal_sections_sum
+        spellings: ["default"]
+        modes: ["dynamic"]
+        rank_from: [6]
+        setup:
+          - "a = np.promote_to_dynamic(np.asarray([1, 2, 3, 4, 5, 6]))"
+          - "parts = np.split(a, 3)"
+        source_expr: "parts[0].sum() + parts[1].sum() + parts[2].sum()"
+        oracle_expr: "sum(part.sum() for part in np.split(np.asarray([1, 2, 3, 4, 5, 6]), 3))"
+        replaces: "testing/todo/array_semantics_manual/test_dynamic_concat_stack_split.py::test_split_equal"
+      - id: dynamic_split_then_concat_roundtrip
+        spellings: ["default"]
+        modes: ["dynamic"]
+        rank_from: [6]
+        setup:
+          - "a = np.promote_to_dynamic(np.asarray([1, 2, 3, 4, 5, 6]))"
+          - "parts = np.split(a, 3)"
+        source_expr: "np.concatenate(parts).sum()"
+        oracle_expr: "np.concatenate(np.split(np.asarray([1, 2, 3, 4, 5, 6]), 3)).sum()"
+        replaces: "testing/todo/array_semantics_manual/test_dynamic_concat_stack_split.py::test_split_then_concat_roundtrip"
+      - id: dynamic_concat_then_split_roundtrip
+        spellings: ["default"]
+        modes: ["dynamic"]
+        rank_from: [3, 3]
+        setup:
+          - "a = np.promote_to_dynamic(np.asarray([1, 2, 3]))"
+          - "b = np.promote_to_dynamic(np.asarray([4, 5, 6]))"
+          - "joined = np.concatenate([a, b])"
+          - "parts = np.split(joined, 2)"
+        source_expr: "parts[0].sum() + parts[1].sum()"
+        oracle_expr: "sum(part.sum() for part in np.split(np.concatenate([np.asarray([1, 2, 3]), np.asarray([4, 5, 6])]), 2))"
+        replaces: "testing/todo/array_semantics_manual/test_dynamic_concat_stack_split.py::test_concat_then_split_roundtrip"
     expected: pass
-    tags: ["scenario", "migration", "composition"]
+    tags: ["scenario", "migration", "composition", "dynamic-join-split"]
 
   broadcasting_migration:
     kind: scenario
@@ -1128,6 +1241,50 @@ operators:
         replaces: "testing/operator/ndarray/test_broadcasting.py::test_broadcast_then_reduce"
     expected: pass
     tags: ["scenario", "migration", "broadcast"]
+
+  float_math_migration:
+    kind: scenario
+    modes: ["static"]
+    dtypes: ["float"]
+    shapes:
+      - id: float_sqrt_perfect_squares
+        rank_from: [4]
+        setup:
+          - "a = np.asarray([1.0, 4.0, 9.0, 16.0])"
+        source_expr: "np.sqrt(a)"
+        replaces: "testing/todo/array_semantics_manual/test_math_and_reductions.py::test_np_sqrt_vectorized"
+      - id: float_abs_2d
+        rank_from: [2, 2]
+        setup:
+          - "a = np.asarray([[-1.0, 2.0], [-3.0, 4.0]])"
+        source_expr: "np.abs(a)"
+        replaces: "testing/todo/array_semantics_manual/test_math_and_reductions.py::test_np_abs_vectorized_2d"
+      - id: float_negative_1d
+        rank_from: [3]
+        setup:
+          - "a = np.asarray([1.0, -2.0, 3.0])"
+        source_expr: "np.negative(a)"
+        replaces: "testing/todo/array_semantics_manual/test_math_and_reductions.py::test_np_negative_vectorized"
+      - id: float_floor_basic
+        rank_from: [4]
+        setup:
+          - "a = np.asarray([1.7, -1.2, 0.0, 3.5])"
+        source_expr: "np.floor(a)"
+        replaces: "testing/todo/array_semantics_manual/test_math_and_reductions.py::test_floor_basic"
+      - id: float_reciprocal_powers_of_two
+        rank_from: [4]
+        setup:
+          - "a = np.asarray([1.0, 2.0, 4.0, 8.0])"
+        source_expr: "np.reciprocal(a)"
+        replaces: "testing/todo/array_semantics_manual/test_math_and_reductions.py::test_reciprocal_basic"
+      - id: float_mean_no_axis
+        rank_from: [4]
+        setup:
+          - "a = np.asarray([1.0, 2.0, 3.0, 4.0])"
+        source_expr: "np.mean(a)"
+        replaces: "testing/todo/array_semantics_manual/test_math_and_reductions.py::test_mean_no_axis"
+    expected: pass
+    tags: ["scenario", "migration", "float", "math"]
 
   shape_manipulation_migration:
     kind: scenario

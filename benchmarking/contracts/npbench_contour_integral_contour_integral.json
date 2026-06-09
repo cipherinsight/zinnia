@@ -1,0 +1,96 @@
+{
+  "categories": [
+    "complex",
+    "denominator-obligation",
+    "linalg",
+    "loop-bounded"
+  ],
+  "diagnostics": [
+    "Complex kernels require Complex dtype support or a fail-closed classification.",
+    "np.linalg kernels may stay fail-closed until dynamic/static linalg support is selected."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "abs",
+        "np.linalg.inv",
+        "np.linalg.solve",
+        "np.power",
+        "np.zeros",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 31,
+      "line_start": 15,
+      "mutated_params": [],
+      "name": "contour_integral",
+      "ops": [
+        "Add",
+        "Div",
+        "Eq",
+        "Lt",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "NR",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "NM",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "slab_per_bc",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "Ham",
+          "proposed_annotation": "Complex[Array, 'S<=1024 NR<=1024 NR<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "int_pts",
+          "proposed_annotation": "Complex[Array, 'Z<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "Y",
+          "proposed_annotation": "Complex[Array, 'NR<=1024 NM<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "npbench_contour_integral_contour_integral/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Record square/invertible/SPD requirements where the linalg call needs them."
+  ],
+  "program": "npbench_contour_integral_contour_integral",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: complex, denominator-obligation, in-place-mutation, linalg, loop-bounded\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Record square/invertible/SPD requirements where the linalg call needs them.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.\n# Diagnostic: np.linalg kernels may stay fail-closed until support is selected.\nimport numpy as np\n\n@zk_circuit\ndef contour_integral(NR: Integer, NM: Integer, slab_per_bc: Integer, Ham: Complex[Array, 'S<=1024 NR<=1024 NR<=1024'], int_pts: Complex[Array, 'Z<=1024'], Y: Complex[Array, 'NR<=1024 NM<=1024']):\n    P0 = np.zeros((NR, NM), dtype=np.complex128)\n    P1 = np.zeros((NR, NM), dtype=np.complex128)\n    for z in int_pts:\n        Tz = np.zeros((NR, NR), dtype=np.complex128)\n        for n in range(slab_per_bc + 1):\n            zz = np.power(z, slab_per_bc / 2 - n)\n            Tz += zz * Ham[n]\n        if NR == NM:\n            X = np.linalg.inv(Tz)\n        else:\n            X = np.linalg.solve(Tz, Y)\n        if abs(z) < 1.0:\n            X = -X\n        P0 += X\n        P1 += z * X\n    return (P0, P1)",
+  "source_status": "attempt_classify"
+}

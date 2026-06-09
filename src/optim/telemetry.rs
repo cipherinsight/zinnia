@@ -33,13 +33,13 @@ pub const NUM_DURATION_BUCKETS: usize = 8;
 /// in bucket `i` where `BUCKET_EDGES_NS[i-1] < d <= BUCKET_EDGES_NS[i]`.
 /// Bucket 0: (0, 1µs], bucket 1: (1µs, 10µs], ... bucket 7: (>100ms, ∞).
 const BUCKET_EDGES_NS: [u64; NUM_DURATION_BUCKETS - 1] = [
-    1_000,           // 1µs
-    10_000,          // 10µs
-    100_000,         // 100µs
-    1_000_000,       // 1ms
-    10_000_000,      // 10ms
-    100_000_000,     // 100ms
-    1_000_000_000,   // 1s
+    1_000,         // 1µs
+    10_000,        // 10µs
+    100_000,       // 100µs
+    1_000_000,     // 1ms
+    10_000_000,    // 10ms
+    100_000_000,   // 100ms
+    1_000_000_000, // 1s
 ];
 
 /// All resolver-pipeline counters, lock-free. Accumulated across the
@@ -71,6 +71,11 @@ pub struct SmtTelemetry {
     /// Formula-size budget exceeded (P5 commit 3 — only bumped when the
     /// reverse-reachability walk aborts early).
     pub queries_skipped_oversized: AtomicUsize,
+    /// AST→IR while-guard adaptive throttle skipped a resolver call after
+    /// the loop had already produced repeated unresolved guard queries.
+    /// Distinct from unknown/oversized: this is a deliberate fail-open
+    /// compile-time cost guard, not a resolver result.
+    pub queries_skipped_while_throttle: AtomicUsize,
 
     // -- Timing (nanos) -----------------------------------------------
     pub total_time_in_smt_ns: AtomicU64,
@@ -194,11 +199,14 @@ impl SmtTelemetry {
         let cache_hit = self.queries_cache_hit.load(Ordering::Relaxed);
         let disabled = self.queries_skipped_disabled.load(Ordering::Relaxed);
         let oversized = self.queries_skipped_oversized.load(Ordering::Relaxed);
+        let while_throttle = self.queries_skipped_while_throttle.load(Ordering::Relaxed);
         let smt_ns = self.total_time_in_smt_ns.load(Ordering::Relaxed);
         let range_ns = self.total_time_in_range_ns.load(Ordering::Relaxed);
         let largest = self.largest_formula_size.load(Ordering::Relaxed);
         let cache_at_end = self.cache_size_at_end.load(Ordering::Relaxed);
-        let asserts_const = self.assertions_eliminated_const_fold.load(Ordering::Relaxed);
+        let asserts_const = self
+            .assertions_eliminated_const_fold
+            .load(Ordering::Relaxed);
         let asserts_resolver = self.assertions_eliminated_resolver.load(Ordering::Relaxed);
         let asserts_false = self.assertions_provably_false.load(Ordering::Relaxed);
         let rec_static = self.recursion_bound_static_val.load(Ordering::Relaxed);
@@ -215,27 +223,64 @@ impl SmtTelemetry {
         let mut s = String::new();
         s.push_str("SmtTelemetry summary:\n");
         s.push_str(&format!("  queries_total                = {}\n", total));
-        s.push_str(&format!("  queries_static_val_hit       = {}\n", static_hit));
+        s.push_str(&format!(
+            "  queries_static_val_hit       = {}\n",
+            static_hit
+        ));
         s.push_str(&format!("  queries_range_hit            = {}\n", range_hit));
         s.push_str(&format!("  queries_smt_resolved         = {}\n", smt_ok));
         s.push_str(&format!("  queries_smt_unknown          = {}\n", smt_unk));
-        s.push_str(&format!("  queries_smt_timeout          = {}\n", smt_timeout));
-        s.push_str(&format!("  queries_cache_hit            = {} ({:.1}%)\n",
-                            cache_hit, cache_pct));
+        s.push_str(&format!(
+            "  queries_smt_timeout          = {}\n",
+            smt_timeout
+        ));
+        s.push_str(&format!(
+            "  queries_cache_hit            = {} ({:.1}%)\n",
+            cache_hit, cache_pct
+        ));
         s.push_str(&format!("  queries_skipped_disabled     = {}\n", disabled));
         s.push_str(&format!("  queries_skipped_oversized    = {}\n", oversized));
-        s.push_str(&format!("  total_time_in_smt_ms         = {:.1}\n",
-                            smt_ns as f64 / 1e6));
-        s.push_str(&format!("  total_time_in_range_ms       = {:.1}\n",
-                            range_ns as f64 / 1e6));
+        s.push_str(&format!(
+            "  queries_skipped_while_throttle = {}\n",
+            while_throttle
+        ));
+        s.push_str(&format!(
+            "  total_time_in_smt_ms         = {:.1}\n",
+            smt_ns as f64 / 1e6
+        ));
+        s.push_str(&format!(
+            "  total_time_in_range_ms       = {:.1}\n",
+            range_ns as f64 / 1e6
+        ));
         s.push_str(&format!("  largest_formula_size         = {}\n", largest));
-        s.push_str(&format!("  cache_size_at_end            = {}\n", cache_at_end));
-        s.push_str(&format!("  assertions_eliminated_const  = {}\n", asserts_const));
-        s.push_str(&format!("  assertions_eliminated_solver = {}\n", asserts_resolver));
-        s.push_str(&format!("  assertions_provably_false    = {}\n", asserts_false));
-        s.push_str(&format!("  recursion_bound_static_val   = {}\n", rec_static));
-        s.push_str(&format!("  recursion_bound_resolver     = {}\n", rec_resolver));
-        s.push_str(&format!("  recursion_no_measure_found   = {}\n", rec_no_measure));
+        s.push_str(&format!(
+            "  cache_size_at_end            = {}\n",
+            cache_at_end
+        ));
+        s.push_str(&format!(
+            "  assertions_eliminated_const  = {}\n",
+            asserts_const
+        ));
+        s.push_str(&format!(
+            "  assertions_eliminated_solver = {}\n",
+            asserts_resolver
+        ));
+        s.push_str(&format!(
+            "  assertions_provably_false    = {}\n",
+            asserts_false
+        ));
+        s.push_str(&format!(
+            "  recursion_bound_static_val   = {}\n",
+            rec_static
+        ));
+        s.push_str(&format!(
+            "  recursion_bound_resolver     = {}\n",
+            rec_resolver
+        ));
+        s.push_str(&format!(
+            "  recursion_no_measure_found   = {}\n",
+            rec_no_measure
+        ));
 
         // Histogram.
         s.push_str("  smt_duration_histogram:\n");
@@ -256,8 +301,9 @@ impl SmtTelemetry {
 
         // Approximate p95 from histogram (count from the right until 5%
         // crossed). Useful for "is the tail blowing up?".
-        let total_smt: usize =
-            (0..NUM_DURATION_BUCKETS).map(|i| self.smt_duration_buckets[i].load(Ordering::Relaxed)).sum();
+        let total_smt: usize = (0..NUM_DURATION_BUCKETS)
+            .map(|i| self.smt_duration_buckets[i].load(Ordering::Relaxed))
+            .sum();
         if total_smt > 0 {
             let cutoff = (total_smt as f64 * 0.05).ceil() as usize;
             let mut acc = 0usize;
@@ -269,8 +315,11 @@ impl SmtTelemetry {
                     break;
                 }
             }
-            s.push_str(&format!("  smt_p95_bucket               = {} ({})\n",
-                                p95_bucket, labels[p95_bucket].trim()));
+            s.push_str(&format!(
+                "  smt_p95_bucket               = {} ({})\n",
+                p95_bucket,
+                labels[p95_bucket].trim()
+            ));
         }
 
         // Per-chokepoint breakdown.
@@ -385,10 +434,7 @@ pub enum TelemetryEvent {
     /// Marks the start of a compile. `program` is a free-form identifier
     /// supplied by the caller (file path, test name, hash, …). `timestamp_ns`
     /// is UNIX-epoch nanoseconds.
-    CompileStart {
-        program: String,
-        timestamp_ns: u64,
-    },
+    CompileStart { program: String, timestamp_ns: u64 },
     /// Emitted by `Builder::discharge_requires` on every op-contract
     /// precondition check. `outcome` is the `ProveOutcome` Debug-printed
     /// (`Proved` / `Disproved` / `Unknown`); `mode` distinguishes the
@@ -447,7 +493,10 @@ impl TelemetryEvent {
     pub fn to_jsonl(&self) -> String {
         let mut s = String::new();
         match self {
-            TelemetryEvent::CompileStart { program, timestamp_ns } => {
+            TelemetryEvent::CompileStart {
+                program,
+                timestamp_ns,
+            } => {
                 s.push_str(r#"{"event":"compile_start","program":""#);
                 push_json_escaped(&mut s, program);
                 s.push_str(r#"","timestamp_ns":"#);
@@ -633,11 +682,7 @@ impl TelemetrySink {
         let seq = SINK_SEQ.fetch_add(1, Ordering::Relaxed);
         let pid = std::process::id();
         let path = dir_path.join(format!("{pid}-{seq}.jsonl"));
-        let file = match OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-        {
+        let file = match OpenOptions::new().create(true).append(true).open(&path) {
             Ok(f) => f,
             Err(e) => {
                 tracing::debug!(
@@ -708,7 +753,9 @@ mod sink_tests {
 
     #[test]
     fn jsonl_strategy_default_minimal_shape() {
-        let ev = TelemetryEvent::StrategyDefault { op: "matmul".into() };
+        let ev = TelemetryEvent::StrategyDefault {
+            op: "matmul".into(),
+        };
         let line = ev.to_jsonl();
         assert_eq!(line, "{\"event\":\"strategy_default\",\"op\":\"matmul\"}\n");
     }

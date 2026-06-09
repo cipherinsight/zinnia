@@ -181,15 +181,16 @@ impl FactScope {
 ///   merge_branches(then_scope, else_scope)  // fold two if-arms into parent
 /// ```
 ///
-/// The stack also keeps `per_value`, a flat per-`ValueId` archive of every
-/// fact ever produced anywhere in the function. Downstream consumers
-/// (resolver, prove API) read this when they need to look up "what did we
-/// learn about Value v?" without worrying about which scope produced it.
+/// The stack also keeps `per_value`, a flat per-`ValueId` index of facts
+/// that are visible now or deliberately propagated from a closed scope.
+/// Raw conditional/loop-local facts are removed when their scope closes;
+/// branch joins reinsert only common facts or guarded implications.
 #[derive(Debug)]
 pub struct FactStack {
     scopes: Vec<FactScope>,
-    /// Flat archive: value_id → all facts ever anchored to it. Survives
-    /// scope exits so the resolver can query historical facts.
+    /// Flat index: value_id → visible or deliberately propagated facts.
+    /// This is not a history log: raw conditional/loop facts are removed
+    /// at scope exit so scanners cannot observe stale branch-local claims.
     pub per_value: HashMap<ValueId, Vec<Fact>>,
     /// Postcondition export from the most recently closed `Chip` scope.
     /// Read by the parent chip's IR-gen to inherit callee guarantees.
@@ -242,14 +243,42 @@ impl FactStack {
         if popped.kind == ScopeKind::Chip {
             self.last_chip_postcondition = Some(popped.facts.clone());
         }
+        if matches!(popped.kind, ScopeKind::Conditional | ScopeKind::Loop) {
+            self.remove_from_per_value(&popped.facts);
+        }
         popped
     }
 
-    /// Insert a value_id-anchored fact at the current top. Also archives
-    /// in `per_value` so historical lookups work after the scope is left.
+    /// Insert a value_id-anchored fact at the current top and in the flat
+    /// visible-fact index.
     pub fn insert_for(&mut self, vid: ValueId, fact: Fact) {
         self.current_mut().facts.insert_for(vid, fact.clone());
         self.per_value.entry(vid).or_default().push(fact);
+    }
+
+    fn remove_from_per_value(&mut self, facts: &FactSet) {
+        for (vid, scoped_facts) in &facts.by_value {
+            if let Some(indexed) = self.per_value.get_mut(vid) {
+                for scoped_fact in scoped_facts {
+                    if let Some(pos) = indexed.iter().position(|f| f == scoped_fact) {
+                        indexed.remove(pos);
+                    }
+                }
+                if indexed.is_empty() {
+                    self.per_value.remove(vid);
+                }
+            }
+        }
+    }
+
+    /// Add a closed scope's facts to the parent unguarded. Used only when
+    /// control-flow evaluation proves that a single branch definitely ran.
+    pub fn absorb_unconditional(&mut self, scope: FactScope) {
+        for (vid, facts) in scope.facts.by_value {
+            for fact in facts {
+                self.insert_for(vid, fact);
+            }
+        }
     }
 
     /// Merge two completed if-arms into the parent scope (conservative).
@@ -261,13 +290,13 @@ impl FactStack {
     /// preserved by erring on the side of forgetting facts rather than
     /// claiming them unconditionally. Used by v1 IR-gen wiring;
     /// [`merge_branches`] is the richer version that handles guards.
-    pub fn merge_branches_intersect_only(
-        &mut self,
-        then_scope: FactScope,
-        else_scope: FactScope,
-    ) {
+    pub fn merge_branches_intersect_only(&mut self, then_scope: FactScope, else_scope: FactScope) {
         let common = then_scope.facts.intersect(&else_scope.facts);
-        self.current_mut().facts.extend(common);
+        for (vid, facts) in common.by_value {
+            for fact in facts {
+                self.insert_for(vid, fact);
+            }
+        }
     }
 
     /// Merge two completed if-arms into the parent scope.
@@ -294,10 +323,18 @@ impl FactStack {
     /// antecedent matches an in-scope path condition.
     pub fn merge_branches(&mut self, then_scope: FactScope, else_scope: FactScope) {
         let common = then_scope.facts.intersect(&else_scope.facts);
-        self.current_mut().facts.extend(common);
+        for (vid, facts) in common.by_value {
+            for fact in facts {
+                self.insert_for(vid, fact);
+            }
+        }
 
         let p = conjunction(&then_scope.path_conditions);
-        let not_p = ContractTerm::Not(Box::new(p.clone()));
+        let else_p = if else_scope.path_conditions.is_empty() {
+            ContractTerm::Not(Box::new(p.clone()))
+        } else {
+            conjunction(&else_scope.path_conditions)
+        };
 
         let then_only = subtract(&then_scope.facts, &else_scope.facts);
         for (anchors, f) in then_only {
@@ -311,20 +348,20 @@ impl FactStack {
                 anchors
             };
             for anchor in &final_anchors {
-                self.current_mut().facts.insert_for(*anchor, wrapped.clone());
+                self.insert_for(*anchor, wrapped.clone());
             }
         }
 
         let else_only = subtract(&else_scope.facts, &then_scope.facts);
         for (anchors, f) in else_only {
-            let wrapped = implies(not_p.clone(), f);
+            let wrapped = implies(else_p.clone(), f);
             let final_anchors: Vec<ValueId> = if anchors.is_empty() {
                 collect_value_ids(&wrapped)
             } else {
                 anchors
             };
             for anchor in &final_anchors {
-                self.current_mut().facts.insert_for(*anchor, wrapped.clone());
+                self.insert_for(*anchor, wrapped.clone());
             }
         }
     }
@@ -458,6 +495,41 @@ pub fn collect_value_ids(term: &ContractTerm) -> Vec<ValueId> {
     out
 }
 
+pub fn collect_shape_params(term: &ContractTerm) -> Vec<String> {
+    use crate::optim::predicates::formula::ContractVar;
+    let mut out: Vec<String> = Vec::new();
+    fn walk(t: &ContractTerm, out: &mut Vec<String>) {
+        match t {
+            ContractTerm::Var(ContractVar::ShapeParam(name)) => {
+                if !out.contains(name) {
+                    out.push(name.clone());
+                }
+            }
+            ContractTerm::Var(_)
+            | ContractTerm::LitInt(_)
+            | ContractTerm::LitFloat(_)
+            | ContractTerm::LitBool(_) => {}
+            ContractTerm::Arith { lhs, rhs, .. } | ContractTerm::Cmp { lhs, rhs, .. } => {
+                walk(lhs, out);
+                walk(rhs, out);
+            }
+            ContractTerm::BoolComb { operands, .. } => {
+                for o in operands {
+                    walk(o, out);
+                }
+            }
+            ContractTerm::Not(inner) => walk(inner, out),
+            ContractTerm::PredicateApp { args, .. } => {
+                for a in args {
+                    walk(a, out);
+                }
+            }
+        }
+    }
+    walk(term, &mut out);
+    out
+}
+
 pub fn instantiate_contract(
     template: &ContractTerm,
     output: Option<ValueId>,
@@ -476,6 +548,7 @@ pub fn instantiate_contract(
         },
         ContractTerm::Var(ContractVar::Input(_))
         | ContractTerm::Var(ContractVar::Value(_))
+        | ContractTerm::Var(ContractVar::ShapeParam(_))
         | ContractTerm::LitInt(_)
         | ContractTerm::LitFloat(_)
         | ContractTerm::LitBool(_) => template.clone(),
@@ -496,9 +569,11 @@ pub fn instantiate_contract(
                 .map(|o| instantiate_contract(o, output, formals_to_args))
                 .collect(),
         },
-        ContractTerm::Not(inner) => {
-            ContractTerm::Not(Box::new(instantiate_contract(inner, output, formals_to_args)))
-        }
+        ContractTerm::Not(inner) => ContractTerm::Not(Box::new(instantiate_contract(
+            inner,
+            output,
+            formals_to_args,
+        ))),
         ContractTerm::PredicateApp { kind, args } => ContractTerm::PredicateApp {
             kind: kind.clone(),
             args: args
@@ -641,6 +716,7 @@ mod tests {
     fn stack_branch_join_intersects_common_facts() {
         let mut stk = FactStack::new();
         let pred = cmp(CmpOp::Gt, input("k"), lit_int(0));
+        let not_pred = ContractTerm::Not(Box::new(pred.clone()));
 
         // then-arm
         stk.enter(ScopeKind::Conditional, Some(pred.clone()));
@@ -649,7 +725,7 @@ mod tests {
         let then_scope = stk.leave();
 
         // else-arm
-        stk.enter(ScopeKind::Conditional, None);
+        stk.enter(ScopeKind::Conditional, Some(not_pred));
         stk.insert_for(vid(10), cmp(CmpOp::Ge, vref(10), lit_int(0)));
         stk.insert_for(vid(10), cmp(CmpOp::Eq, vref(10), lit_int(-1)));
         let else_scope = stk.leave();
@@ -674,6 +750,61 @@ mod tests {
         );
     }
 
+    #[test]
+    fn stack_branch_path_conditions_are_visible_inside_each_arm() {
+        let mut stk = FactStack::new();
+        let cond = cmp(CmpOp::Eq, vref(1), lit_int(1));
+        let not_cond = cmp(CmpOp::Eq, vref(1), lit_int(0));
+
+        stk.enter(ScopeKind::Conditional, Some(cond.clone()));
+        assert_eq!(stk.visible_path_conditions(), vec![&cond]);
+        let _ = stk.leave();
+
+        stk.enter(ScopeKind::Conditional, Some(not_cond.clone()));
+        assert_eq!(stk.visible_path_conditions(), vec![&not_cond]);
+        let _ = stk.leave();
+    }
+
+    #[test]
+    fn stack_guarded_join_preserves_original_anchors_in_per_value() {
+        let mut stk = FactStack::new();
+        let cond = cmp(CmpOp::Eq, vref(1), lit_int(1));
+        let not_cond = cmp(CmpOp::Eq, vref(1), lit_int(0));
+        let then_fact = cmp(CmpOp::Ge, vref(10), lit_int(0));
+        let else_fact = cmp(CmpOp::Le, vref(10), lit_int(-1));
+
+        stk.enter(ScopeKind::Conditional, Some(cond.clone()));
+        stk.insert_for(vid(10), then_fact.clone());
+        let then_scope = stk.leave();
+
+        stk.enter(ScopeKind::Conditional, Some(not_cond.clone()));
+        stk.insert_for(vid(10), else_fact.clone());
+        let else_scope = stk.leave();
+
+        assert!(
+            stk.per_value.get(&vid(10)).is_none(),
+            "raw branch-local facts must not remain indexed after leave"
+        );
+        stk.merge_branches(then_scope, else_scope);
+
+        let indexed = stk
+            .per_value
+            .get(&vid(10))
+            .expect("guarded facts should remain anchored at the body value");
+        assert_eq!(indexed.len(), 2);
+        assert!(indexed.iter().all(|fact| matches!(
+            fact,
+            ContractTerm::BoolComb {
+                op: BoolOp::Or,
+                operands
+            } if operands.len() == 2
+        )));
+        assert!(
+            stk.per_value.keys().all(|anchor| *anchor == vid(10)),
+            "guarded facts must not be indexed under guard ValueIds"
+        );
+    }
+
     // ── FactStack: loop drop ─────────────────────────────────────────
 
     #[test]
@@ -685,10 +816,26 @@ mod tests {
         assert_eq!(stk.visible_facts().len(), 2);
         let _ = stk.leave();
         assert_eq!(stk.visible_facts().len(), 1);
+        assert!(
+            stk.per_value.get(&vid(2)).is_none(),
+            "loop-local facts must not remain in the flat per_value index"
+        );
         assert!(stk
             .visible_facts()
             .iter()
             .any(|f| **f == cmp(CmpOp::Ge, vref(1), lit_int(0))));
+    }
+
+    #[test]
+    fn stack_rebinding_new_value_id_prevents_stale_fact_lookup() {
+        let mut stk = FactStack::new();
+        stk.insert_for(vid(1), cmp(CmpOp::Ge, vref(1), lit_int(0)));
+
+        assert!(stk.per_value.get(&vid(1)).is_some());
+        assert!(
+            stk.per_value.get(&vid(2)).is_none(),
+            "a rebinding/write that mints a new ValueId must not inherit old facts"
+        );
     }
 
     // ── FactStack: chip boundary ─────────────────────────────────────

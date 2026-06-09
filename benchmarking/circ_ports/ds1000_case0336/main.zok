@@ -1,0 +1,10 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0336/kernel.py
+// REASON: np.diag(np.fliplr(a)) on 8x8 is the anti-diagonal: result[i] = a[i][7-i]. Lowered to one loop.
+
+def main(field[8][8] a) -> field[8]:
+  field[8] result = [0; 8]
+  for u32 i in 0..8 do
+    result[i] = a[i][7 - i]
+  endfor
+  return result

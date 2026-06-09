@@ -1,0 +1,16 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0313/kernel.py
+// REASON: a.argmax() over fixed-shape 8x6 lowered to explicit nested loop.
+
+def main(field[8][6] a) -> field:
+  field best = a[0][0]
+  field idx = 0
+  for u32 i in 0..8 do
+    for u32 j in 0..6 do
+      field flat = i * 6 + j
+      bool gt = a[i][j] > best
+      best = if gt then a[i][j] else best fi
+      idx = if gt then flat else idx fi
+    endfor
+  endfor
+  return idx

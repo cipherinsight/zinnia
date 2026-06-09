@@ -17,8 +17,8 @@
 
 use crate::builder::IRBuilder;
 use crate::ops::dyn_ndarray::value_to_scalar_i64;
-use crate::types::{ValueId, 
-    DynArrayMeta, DynamicNDArrayData, Envelope, NumberType, ScalarValue, Value,
+use crate::types::{
+    DynArrayMeta, DynamicNDArrayData, Envelope, NumberType, ScalarValue, Value, ValueId,
 };
 
 use super::composite::{flatten_composite, get_composite_shape};
@@ -105,7 +105,7 @@ mod tests {
         Value::List(CompositeData {
             elements_type: types,
             values,
-        
+
             value_id: ValueId::next(),
         })
     }
@@ -203,7 +203,11 @@ mod tests {
         let promoted = promote_static_to_dynamic(&mut b, &lst);
         let zt = promoted.zinnia_type();
         match zt {
-            ZinniaType::DynamicNDArray { max_length, max_rank, .. } => {
+            ZinniaType::DynamicNDArray {
+                max_length,
+                max_rank,
+                ..
+            } => {
                 assert_eq!(max_length, 6);
                 assert_eq!(max_rank, 1);
             }

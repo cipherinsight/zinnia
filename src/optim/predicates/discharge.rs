@@ -57,9 +57,7 @@ use crate::types::StmtId;
 
 /// Find every `IR::StructuralPredicate` in `stmts`. Returns `(stmt_id, &IR)`
 /// pairs in IR order. Pure helper; testable in isolation.
-pub fn find_structural_predicates(
-    stmts: &[IRStatement],
-) -> Vec<(StmtId, &IR)> {
+pub fn find_structural_predicates(stmts: &[IRStatement]) -> Vec<(StmtId, &IR)> {
     stmts
         .iter()
         .filter_map(|s| match &s.ir {
@@ -133,9 +131,7 @@ pub fn build_input_array_lengths(stmts: &[IRStatement]) -> HashMap<String, u32> 
 /// `term_json` strings are returned as-is; deserialization happens at
 /// the discharge call site (via `serde_json::from_str` on the
 /// `ContractTerm` type).
-pub fn find_scalar_preconditions<'a>(
-    stmts: &'a [IRStatement],
-) -> Vec<&'a str> {
+pub fn find_scalar_preconditions<'a>(stmts: &'a [IRStatement]) -> Vec<&'a str> {
     stmts
         .iter()
         .filter_map(|s| match &s.ir {
@@ -222,9 +218,12 @@ impl Discharger {
 
         for (_, ir) in find_structural_predicates(stmts) {
             let (kind, args, op, bound) = match ir {
-                IR::StructuralPredicate { kind, args, op, bound } => {
-                    (kind, args, op, bound)
-                }
+                IR::StructuralPredicate {
+                    kind,
+                    args,
+                    op,
+                    bound,
+                } => (kind, args, op, bound),
                 _ => unreachable!(),
             };
 
@@ -262,10 +261,7 @@ impl Discharger {
             let pred_value = pred_symbols
                 .entry(key)
                 .or_insert_with(|| {
-                    Int::fresh_const(&format!(
-                        "pred_value_{kind}_{}_",
-                        args.join("_")
-                    ))
+                    Int::fresh_const(&format!("pred_value_{kind}_{}_", args.join("_")))
                 })
                 .clone();
 

@@ -6,11 +6,11 @@
 //! semantic consistency: the mock backend produces the exact same values
 //! that the halo2 backend constrains.
 //!
-//! All functions operate on `pasta_curves::Fp` — the Pasta base field
+//! All functions operate on `halo2_proofs::halo2curves::bn256::Fr` — the Pasta base field
 //! used by zcash/halo2 with IPA commitment.
 
-use pasta_curves::Fp;
-use pasta_curves::group::ff::PrimeField;
+use halo2_proofs::halo2curves::bn256::Fr as Fp;
+use halo2_proofs::halo2curves::ff::PrimeField;
 
 /// Re-export the Field trait so backends can call `.invert()` etc.
 pub use halo2_proofs::arithmetic::Field;
@@ -186,13 +186,16 @@ pub fn scale_fp(precision_bits: u32) -> Fp {
 // Value ↔ Fp conversion
 // ---------------------------------------------------------------------------
 
-use crate::prove::types::Value;
 use crate::prove::error::ProvingError;
+use crate::prove::types::Value;
 
 /// Parse a 64-char hex string into an Fp field element.
 pub fn hex_str_to_fp(s: &str) -> Result<Fp, ProvingError> {
     if s.len() != 64 || !s.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(ProvingError::other(format!("Invalid hex field element: '{}'", s)));
+        return Err(ProvingError::other(format!(
+            "Invalid hex field element: '{}'",
+            s
+        )));
     }
     let mut bytes = [0u8; 32];
     for i in 0..32 {
@@ -225,7 +228,9 @@ pub fn value_to_fp(value: &Value, precision_bits: u32) -> Result<Fp, ProvingErro
             Ok(i64_to_fp(v))
         }
         Value::None => Ok(Fp::zero()),
-        Value::List(_) => Err(ProvingError::other("Cannot convert list to a single field element")),
+        Value::List(_) => Err(ProvingError::other(
+            "Cannot convert list to a single field element",
+        )),
     }
 }
 
@@ -286,12 +291,30 @@ pub fn fp_mul_rescale(a: Fp, b: Fp, precision_bits: u32) -> (Fp, Fp) {
     let a_signed = fp_to_i64(a) as i128;
     let b_signed = fp_to_i64(b) as i128;
     let raw = a_signed * b_signed;
+    fp_rescale_raw_i128(raw, precision_bits)
+}
+
+/// Rescale an already-accumulated raw fixed-point integer by `2^precision_bits`.
+pub fn fp_rescale_raw_i128(raw: i128, precision_bits: u32) -> (Fp, Fp) {
     let scale = 1i128 << precision_bits;
     let quotient = raw.div_euclid(scale);
     let remainder = raw.rem_euclid(scale); // 0 <= remainder < scale
     let result_fp = i128_to_fp(quotient);
     let remainder_fp = Fp::from(remainder as u64); // remainder is non-negative and < 2^precision_bits
     (result_fp, remainder_fp)
+}
+
+/// Fused fixed-point inner product:
+/// `floor(sum_i raw(a_i*b_i) / 2^precision_bits)`.
+///
+/// This matches halo2-graph's `FixedPointChip::inner_product` shape and is
+/// closer to NumPy real arithmetic than adding already-rounded per-product
+/// fixed-point quotients.
+pub fn fp_product_sum_rescale(pairs: &[(Fp, Fp)], precision_bits: u32) -> (Fp, Fp) {
+    let raw = pairs.iter().fold(0i128, |acc, (a, b)| {
+        acc + (fp_to_i64(*a) as i128) * (fp_to_i64(*b) as i128)
+    });
+    fp_rescale_raw_i128(raw, precision_bits)
 }
 
 /// Fixed-point division with pre-scaling.
@@ -430,6 +453,12 @@ pub fn fp_arccos(x: Fp, precision_bits: u32) -> Fp {
     quantize_to_fp(v.acos(), precision_bits)
 }
 
+/// Compute arcsin(x) using native f64 math on the dequantized value.
+pub fn fp_arcsin(x: Fp, precision_bits: u32) -> Fp {
+    let v = dequantize_from_fp(x, precision_bits);
+    quantize_to_fp(v.asin(), precision_bits)
+}
+
 /// Simplified Poseidon permutation (4 rounds, t=3).
 /// Returns the first state element as the hash output.
 pub fn fp_poseidon(inputs: &[Fp]) -> Fp {
@@ -481,7 +510,12 @@ mod tests {
         for v in [0.0, 1.0, -1.0, 3.14, -2.71] {
             let q = quantize_to_fp(v, prec);
             let d = dequantize_from_fp(q, prec);
-            assert!((d - v).abs() < 1e-6, "Round-trip failed for {}: got {}", v, d);
+            assert!(
+                (d - v).abs() < 1e-6,
+                "Round-trip failed for {}: got {}",
+                v,
+                d
+            );
         }
     }
 
@@ -559,7 +593,11 @@ mod tests {
     fn test_i128_to_fp_round_trip() {
         // Positive, negative, large magnitudes
         let cases: &[i128] = &[
-            0, 1, -1, 42, -42,
+            0,
+            1,
+            -1,
+            42,
+            -42,
             (1i128 << 32) - 1,
             -(1i128 << 32) + 1,
             (1i128 << 62),
@@ -573,7 +611,12 @@ mod tests {
             let fp = i128_to_fp(v);
             // For values that fit in i64, fp_to_i64 should round-trip.
             if v >= i64::MIN as i128 && v <= i64::MAX as i128 {
-                assert_eq!(fp_to_i64(fp), v as i64, "i64-range round-trip failed for {}", v);
+                assert_eq!(
+                    fp_to_i64(fp),
+                    v as i64,
+                    "i64-range round-trip failed for {}",
+                    v
+                );
             }
             // Sign check
             if v < 0 {
@@ -645,7 +688,8 @@ mod tests {
             assert!(
                 rem_i128 < scale,
                 "fp_mul_rescale({a}, {b}) remainder {} >= scale {}",
-                rem_i128, scale,
+                rem_i128,
+                scale,
             );
         }
     }
@@ -668,10 +712,7 @@ mod tests {
             let raw = aq * bq;
             let (result, rem) = fp_mul_rescale(aq, bq, precision_bits);
             let recomputed = scale_fp_val * result + rem;
-            assert_eq!(
-                recomputed, raw,
-                "div_mod identity failed for ({a}, {b})",
-            );
+            assert_eq!(recomputed, raw, "div_mod identity failed for ({a}, {b})",);
         }
     }
 

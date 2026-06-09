@@ -1,0 +1,18 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0425/kernel.py
+// REASON: np.arange(m) where m is a runtime Integer; output shape (20, m) depends on runtime value.
+
+const u32 N = 20
+const u32 M_MAX = 32  // upper bound for m
+
+def main(field[N] a, field m) -> field[N][M_MAX]:
+    field[N][M_MAX] result = [[0; M_MAX]; N]
+    // CirC rejects: arange(m) gives runtime length; second axis size depends on m.
+    for u32 i in 0..N do
+        for u32 j in 0..M_MAX do
+            field shift = m - 1 - j
+            field bit = if a[i] / (1 << j) - (a[i] / (1 << (j+1))) * 2 != 0 then 1 else 0 fi
+            result[i][j] = if j < m then bit else 0 fi
+        endfor
+    endfor
+    return result

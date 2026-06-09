@@ -12,13 +12,14 @@
 //! `to_value_list` can go away — but [`to_static_array`] stays as the
 //! constructor entry point.
 
-use crate::builder::IRBuilder;
+use crate::builder::{IRBuilder, StaticArrayProductProvenance};
 use crate::ops::dyn_ndarray::{scalar_i64_to_value, value_to_scalar_i64};
 use crate::types::{CompositeData, NumberType, ScalarValue, Value, ValueId, ZinniaType};
 
 use super::super::composite::{flatten_composite, get_composite_shape};
 use super::super::segment::alloc_and_write;
 use super::super::shape_arith::row_major_strides;
+use super::elementwise::product_provenance_payload_cells;
 
 /// Determine whether a value is a (possibly-nested) composite of purely
 /// numeric leaves (Integer / Float / Boolean / Complex — P5a admits Complex).
@@ -81,6 +82,30 @@ pub fn build_static_array_from_flat(
     }
 }
 
+pub fn build_static_array_product_provenance(
+    b: &mut IRBuilder,
+    provenance: StaticArrayProductProvenance,
+) -> Value {
+    let total: usize = provenance.out_shape.iter().product();
+    let segment_id = b.alloc_segment_id();
+    b.ir_allocate_memory(segment_id, total as u32, 0);
+    b.lazy_static_array_segments.insert(segment_id);
+    let strides = row_major_strides(&provenance.out_shape);
+    let dtype = provenance.dtype;
+    let shape = provenance.out_shape.clone();
+    b.static_array_product_provenance
+        .insert(segment_id, provenance);
+    Value::StaticArray {
+        dtype,
+        shape,
+        segment_id,
+        strides,
+        offset: 0,
+        imag_segment_id: None,
+        value_id: ValueId::next(),
+    }
+}
+
 /// Build a Complex `Value::StaticArray` from precomputed flat real and imag
 /// payloads (same length) and shape. Allocates two parallel segments and
 /// caches the original Complex wires under the *real* segment id (cache
@@ -94,8 +119,8 @@ pub fn build_static_array_from_flat_complex(
     assert_eq!(real_flat.len(), imag_flat.len());
     let real_cells: Vec<ScalarValue<i64>> = real_flat.iter().map(value_to_scalar_i64).collect();
     let imag_cells: Vec<ScalarValue<i64>> = imag_flat.iter().map(value_to_scalar_i64).collect();
-    let real_seg = build_segment_for_payload(b, &real_cells, NumberType::Float);
-    let imag_seg = build_segment_for_payload(b, &imag_cells, NumberType::Float);
+    let real_seg = build_segment_for_payload_eager(b, &real_cells, NumberType::Float);
+    let imag_seg = build_segment_for_payload_eager(b, &imag_cells, NumberType::Float);
     let strides = row_major_strides(&shape);
 
     // Cache representation (A): one entry keyed on the *real* segment_id,
@@ -109,17 +134,26 @@ pub fn build_static_array_from_flat_complex(
                 Value::Float(s) => s.clone(),
                 _ => {
                     let f = b.ir_float_cast(re);
-                    match f { Value::Float(s) => s, _ => unreachable!() }
+                    match f {
+                        Value::Float(s) => s,
+                        _ => unreachable!(),
+                    }
                 }
             };
             let i_sv = match im {
                 Value::Float(s) => s.clone(),
                 _ => {
                     let f = b.ir_float_cast(im);
-                    match f { Value::Float(s) => s, _ => unreachable!() }
+                    match f {
+                        Value::Float(s) => s,
+                        _ => unreachable!(),
+                    }
                 }
             };
-            Value::Complex { real: r_sv, imag: i_sv }
+            Value::Complex {
+                real: r_sv,
+                imag: i_sv,
+            }
         })
         .collect();
     b.static_array_payload.insert(real_seg, complex_cells);
@@ -142,7 +176,7 @@ pub fn build_static_array_from_flat_complex(
 fn build_segment_for_payload(
     b: &mut IRBuilder,
     cells: &[ScalarValue<i64>],
-    dtype: NumberType,
+    _dtype: NumberType,
 ) -> u32 {
     // All-equal-known-constant fast path. Encoding nuance: `init_value` is
     // an `i64`. For Float arrays we re-interpret the static_val of each
@@ -158,7 +192,88 @@ fn build_segment_for_payload(
             }
         }
     }
+    let seg = b.alloc_segment_id();
+    b.ir_allocate_memory(seg, cells.len() as u32, 0);
+    b.lazy_static_array_segments.insert(seg);
+    seg
+}
+
+fn build_segment_for_payload_eager(
+    b: &mut IRBuilder,
+    cells: &[ScalarValue<i64>],
+    dtype: NumberType,
+) -> u32 {
+    if !cells.is_empty() {
+        if let Some(first_val) = cells[0].static_val {
+            let all_match = cells.iter().all(|c| c.static_val == Some(first_val));
+            if all_match {
+                let seg = b.alloc_segment_id();
+                b.ir_allocate_memory(seg, cells.len() as u32, first_val);
+                return seg;
+            }
+        }
+    }
     alloc_and_write(b, cells, dtype)
+}
+
+/// Emit deferred writes for a lazily-backed StaticArray segment. Static
+/// cache consumers do not need this; memory-backed reads/writes call it
+/// before touching the segment so semantics stay identical to eager writes.
+pub fn materialize_static_array_segment(b: &mut IRBuilder, segment_id: u32, dtype: NumberType) {
+    if b.static_array_product_provenance.contains_key(&segment_id) {
+        force_static_array_product_provenance(b, segment_id);
+    }
+    if !b.lazy_static_array_segments.remove(&segment_id) {
+        return;
+    }
+    let Some(cached) = b.static_array_payload.get(&segment_id).cloned() else {
+        return;
+    };
+    for (i, elem) in cached.iter().enumerate() {
+        let val = match dtype {
+            NumberType::Float => match elem {
+                Value::Float(_) => elem.clone(),
+                _ => b.ir_float_cast(elem),
+            },
+            NumberType::Integer => match elem {
+                Value::Integer(_) | Value::Boolean(_) => elem.clone(),
+                _ => b.ir_int_cast(elem),
+            },
+            NumberType::Complex => {
+                panic!("materialize_static_array_segment does not materialize Complex segments")
+            }
+        };
+        let addr = b.ir_constant_int(i as i64);
+        b.ir_write_memory(segment_id, &addr, &val);
+    }
+}
+
+pub fn force_static_array_product_provenance(b: &mut IRBuilder, segment_id: u32) {
+    let Some(provenance) = b.static_array_product_provenance.remove(&segment_id) else {
+        return;
+    };
+    let payload = product_provenance_payload_cells(b, &provenance);
+    b.static_array_payload.insert(segment_id, payload);
+}
+
+pub fn materialize_static_array_if_lazy(b: &mut IRBuilder, val: &Value) {
+    if let Value::StaticArray {
+        dtype,
+        segment_id,
+        imag_segment_id,
+        ..
+    } = val
+    {
+        match dtype {
+            NumberType::Complex => {
+                materialize_static_array_segment(b, *segment_id, NumberType::Float);
+                if let Some(imag) = imag_segment_id {
+                    materialize_static_array_segment(b, *imag, NumberType::Float);
+                }
+            }
+            _ => materialize_static_array_segment(b, *segment_id, *dtype),
+        }
+    }
 }
 
 /// Convert a `Value::List` / `Value::Tuple` of numeric leaves into a
@@ -219,14 +334,30 @@ pub fn deep_to_value_list(b: &mut IRBuilder, val: &Value) -> Value {
     match val {
         Value::StaticArray { .. } => to_value_list(b, val),
         Value::List(data) => {
-            let new_vals: Vec<Value> = data.values.iter().map(|v| deep_to_value_list(b, v)).collect();
+            let new_vals: Vec<Value> = data
+                .values
+                .iter()
+                .map(|v| deep_to_value_list(b, v))
+                .collect();
             let new_types = new_vals.iter().map(|v| v.zinnia_type()).collect();
-            Value::List(CompositeData { elements_type: new_types, values: new_vals, value_id: ValueId::next() })
+            Value::List(CompositeData {
+                elements_type: new_types,
+                values: new_vals,
+                value_id: ValueId::next(),
+            })
         }
         Value::Tuple(data) => {
-            let new_vals: Vec<Value> = data.values.iter().map(|v| deep_to_value_list(b, v)).collect();
+            let new_vals: Vec<Value> = data
+                .values
+                .iter()
+                .map(|v| deep_to_value_list(b, v))
+                .collect();
             let new_types = new_vals.iter().map(|v| v.zinnia_type()).collect();
-            Value::Tuple(CompositeData { elements_type: new_types, values: new_vals, value_id: ValueId::next() })
+            Value::Tuple(CompositeData {
+                elements_type: new_types,
+                values: new_vals,
+                value_id: ValueId::next(),
+            })
         }
         _ => val.clone(),
     }
@@ -238,9 +369,7 @@ pub fn deep_to_value_list(b: &mut IRBuilder, val: &Value) -> Value {
 fn contains_static_array(val: &Value) -> bool {
     match val {
         Value::StaticArray { .. } => true,
-        Value::List(data) | Value::Tuple(data) => {
-            data.values.iter().any(contains_static_array)
-        }
+        Value::List(data) | Value::Tuple(data) => data.values.iter().any(contains_static_array),
         _ => false,
     }
 }
@@ -264,32 +393,43 @@ pub fn to_value_list(b: &mut IRBuilder, val: &Value) -> Value {
             offset,
             imag_segment_id,
             value_id: _,
-        } => (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id),
+        } => (
+            *dtype,
+            shape.clone(),
+            *segment_id,
+            strides.clone(),
+            *offset,
+            *imag_segment_id,
+        ),
         _ => return val.clone(),
     };
     let total: usize = shape.iter().product();
+    if b.static_array_product_provenance.contains_key(&segment_id) {
+        force_static_array_product_provenance(b, segment_id);
+    }
     // P1 fast-path: if the segment payload is cached (always true for arrays
     // built via `build_static_array_from_flat`), reuse the original wires
     // instead of issuing N segment reads. This keeps the boundary cheap so
     // benchmarks with heavy indexing don't pay quadratic IR growth.
     let leaves: Vec<Value> = if let Some(cached) = b.static_array_payload.get(&segment_id) {
-        cached
-            .iter()
-            .skip(offset)
-            .take(total)
-            .cloned()
-            .collect()
+        cached.iter().skip(offset).take(total).cloned().collect()
     } else if dtype == NumberType::Complex {
         // P5a: dual-segment fallback for Complex when cache was invalidated.
         let im_seg = imag_seg.expect("Complex StaticArray missing imag_segment_id");
         let mut tmp = Vec::with_capacity(total);
         for i in 0..total {
-            tmp.push(super::read::read_complex_leaf(b, segment_id, im_seg, offset + i));
+            tmp.push(super::read::read_complex_leaf(
+                b,
+                segment_id,
+                im_seg,
+                offset + i,
+            ));
         }
         tmp
     } else {
         // Fallback: materialise via segment reads (only relevant for
         // StaticArrays created without cache registration).
+        materialize_static_array_segment(b, segment_id, dtype);
         let mut tmp = Vec::with_capacity(total);
         for i in 0..total {
             let addr = b.ir_constant_int((offset + i) as i64);
@@ -305,7 +445,7 @@ pub fn to_value_list(b: &mut IRBuilder, val: &Value) -> Value {
         return Value::List(CompositeData {
             elements_type: leaf_types,
             values: leaves,
-        
+
             value_id: ValueId::next(),
         });
     }
@@ -331,7 +471,7 @@ mod tests {
         Value::List(CompositeData {
             elements_type: types,
             values,
-        
+
             value_id: ValueId::next(),
         })
     }
@@ -405,6 +545,39 @@ mod tests {
             ) => assert_eq!(a, b),
             _ => panic!(),
         }
+    }
+
+    #[test]
+    fn non_uniform_static_array_payload_is_lazy_until_memory_access() {
+        let mut b = IRBuilder::new();
+        let lst = list_of((0..4).map(|i| int_value(&mut b, i)).collect());
+        let sa = to_static_array(&mut b, &lst).unwrap();
+        let segment_id = match &sa {
+            Value::StaticArray { segment_id, .. } => *segment_id,
+            _ => panic!("expected StaticArray"),
+        };
+        assert!(b.lazy_static_array_segments.contains(&segment_id));
+        assert!(!b
+            .stmts
+            .iter()
+            .any(|s| matches!(s.ir, crate::ir_defs::IR::WriteMemory { .. })));
+
+        let back = to_value_list(&mut b, &sa);
+        assert!(matches!(back, Value::List(_)));
+        assert!(b.lazy_static_array_segments.contains(&segment_id));
+        assert!(!b
+            .stmts
+            .iter()
+            .any(|s| matches!(s.ir, crate::ir_defs::IR::WriteMemory { .. })));
+
+        materialize_static_array_if_lazy(&mut b, &sa);
+        assert!(!b.lazy_static_array_segments.contains(&segment_id));
+        let writes = b
+            .stmts
+            .iter()
+            .filter(|s| matches!(s.ir, crate::ir_defs::IR::WriteMemory { .. }))
+            .count();
+        assert_eq!(writes, 4);
     }
 
     #[test]

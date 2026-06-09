@@ -1,0 +1,20 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0467/kernel.py
+// REASON: Builds a Python list of slices arr[xmin:xmax, ymin:ymax] whose shapes vary per element - ZoKrates has no list and no variable-shape arrays
+
+def main(field[4][4] a, u32[2] size) -> field[4][4][3][3]:
+    // Skeleton: emit a fixed (3,3) window per cell, zero-padded at edges.
+    field[4][4][3][3] result = [[[[0; 3]; 3]; 4]; 4]
+    for u32 i in 0..4 do
+        for u32 j in 0..4 do
+            for u32 di in 0..3 do
+                for u32 dj in 0..3 do
+                    // CirC: each "window" would in NumPy have a dynamic shape near edges
+                    u32 ii = i + di
+                    u32 jj = j + dj
+                    result[i][j][di][dj] = if (ii >= 1) && (jj >= 1) && (ii < 5) && (jj < 5) then a[ii-1][jj-1] else 0 fi
+                endfor
+            endfor
+        endfor
+    endfor
+    return result

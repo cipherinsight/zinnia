@@ -1,0 +1,46 @@
+{
+  "categories": [
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "enumerate",
+        "list",
+        "primes.append",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 19,
+      "line_start": 10,
+      "mutated_params": [],
+      "name": "primes_sieve",
+      "ops": [
+        "Mult"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "limit",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_primes_sieve/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_primes_sieve",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n\n@zk_circuit\ndef primes_sieve(limit: Integer):\n    a = [True] * limit\n    a[0] = a[1] = False\n    primes = list()\n    for i, isprime in enumerate(a):\n        if isprime:\n            primes.append(i)\n            for n in range(i * i, limit, i):\n                a[n] = False\n    return primes",
+  "source_status": "direct"
+}

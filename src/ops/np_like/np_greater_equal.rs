@@ -1,1 +1,7 @@
-define_np_compare!(NpGreaterEqualOp, "greater_equal", "np.greater_equal", ir_greater_than_or_equal_i, ir_greater_than_or_equal_f);
+define_np_compare!(
+    NpGreaterEqualOp,
+    "greater_equal",
+    "np.greater_equal",
+    ir_greater_than_or_equal_i,
+    ir_greater_than_or_equal_f
+);

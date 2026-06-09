@@ -1,0 +1,10 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0337/kernel.py
+// REASON: np.diag(np.fliplr(a)) on 8x10: result has length min(8,10)=8; result[i] = a[i][9-i]. Lowered to one loop.
+
+def main(field[8][10] a) -> field[8]:
+  field[8] result = [0; 8]
+  for u32 i in 0..8 do
+    result[i] = a[i][9 - i]
+  endfor
+  return result

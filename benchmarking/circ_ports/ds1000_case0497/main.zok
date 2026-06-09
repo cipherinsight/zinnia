@@ -1,0 +1,12 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0497/kernel.py
+// REASON: np.pad output shape derived from runtime `shape` argument; constant_values also runtime - ZoKrates requires fixed array sizes
+
+def main(field[42][10] a, u32[2] shape, field element) -> field[64][64]:
+    field[64][64] result = [[element; 64]; 64]
+    for u32 i in 0..42 do
+        for u32 j in 0..10 do
+            result[i][j] = a[i][j]
+        endfor
+    endfor
+    return result

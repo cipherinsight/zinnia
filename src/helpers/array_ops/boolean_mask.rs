@@ -12,13 +12,11 @@ use crate::types::Value;
 pub fn is_boolean_mask(val: &Value) -> bool {
     match val {
         Value::DynamicNDArray(_) => true,
-        Value::List(d) | Value::Tuple(d) => {
-            d.values.iter().all(|v| match v {
-                Value::Boolean(_) => true,
-                Value::List(_) | Value::Tuple(_) => is_boolean_mask(v),
-                _ => false,
-            })
-        }
+        Value::List(d) | Value::Tuple(d) => d.values.iter().all(|v| match v {
+            Value::Boolean(_) => true,
+            Value::List(_) | Value::Tuple(_) => is_boolean_mask(v),
+            _ => false,
+        }),
         _ => false,
     }
 }

@@ -1,0 +1,60 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "empty_like",
+        "max",
+        "min",
+        "range",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 37,
+      "line_start": 13,
+      "mutated_params": [],
+      "name": "dilate_decompose_loops",
+      "ops": [
+        "Add",
+        "FloorDiv",
+        "Gt",
+        "LtE",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "x",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 2,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "k",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_morphology/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_morphology",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nfrom numpy import empty_like\n\n@zk_circuit\n@requires(lambda x, k: 0 <= k <= 1024)\ndef dilate_decompose_loops(x: Float[Array, 'N<=1024 M<=1024'], k: Integer):\n    m, n = x.shape\n    y = empty_like(x)\n    for i in range(m):\n        for j in range(n):\n            left_idx = max(0, i - k // 2)\n            right_idx = min(m, i + k // 2 + 1)\n            currmax = x[left_idx, j]\n            for ii in range(left_idx + 1, right_idx):\n                elt = x[ii, j]\n                if elt > currmax:\n                    currmax = elt\n            y[i, j] = currmax\n    z = empty_like(x)\n    for i in range(m):\n        for j in range(n):\n            left_idx = max(0, j - k // 2)\n            right_idx = min(n, j + k // 2 + 1)\n            currmax = y[i, left_idx]\n            for jj in range(left_idx + 1, right_idx):\n                elt = y[i, jj]\n                if elt > currmax:\n                    currmax = elt\n            z[i, j] = currmax\n    return z",
+  "source_status": "direct"
+}

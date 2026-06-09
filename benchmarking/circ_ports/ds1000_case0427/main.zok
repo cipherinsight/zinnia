@@ -1,0 +1,19 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0427/kernel.py
+// REASON: np.arange(m) where m is a runtime Integer; output bit-array shape depends on runtime m. Also bitwise XOR over field is non-native.
+
+const u32 N = 20
+const u32 M_MAX = 32
+
+def main(field[N] a, field m) -> field[M_MAX]:
+    field res = 0
+    // CirC rejects: bitwise XOR is not a field operation; in source m sizes the output.
+    for u32 i in 0..N do
+        res = res ^ a[i]
+    endfor
+    field[M_MAX] result = [0; M_MAX]
+    for u32 j in 0..M_MAX do
+        field bit = if res / (1 << j) - (res / (1 << (j+1))) * 2 != 0 then 1 else 0 fi
+        result[j] = if j < m then bit else 0 fi
+    endfor
+    return result

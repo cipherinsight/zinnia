@@ -21,8 +21,12 @@ impl ExportExternalOp {
 }
 
 impl Op for ExportExternalOp {
-    fn name(&self) -> &'static str { "export_external" }
-    fn params(&self) -> &[ParamEntry] { &Self::PARAMS }
+    fn name(&self) -> &'static str {
+        "export_external"
+    }
+    fn params(&self) -> &[ParamEntry] {
+        &Self::PARAMS
+    }
 
     fn build(&self, builder: &mut IRBuilder, args: &OpArgs) -> Value {
         let x = args.require("x");
@@ -31,26 +35,22 @@ impl Op for ExportExternalOp {
             ExternalKeyValue::Str(s) => crate::ir_defs::ExternalKey::Str(s.clone()),
         };
         match x {
-            Value::Integer(_) | Value::Boolean(_) => {
-                builder.create_ir(
-                    &crate::ir_defs::IR::ExportExternalI {
-                        for_which: self.for_which,
-                        key,
-                        indices: self.indices.clone(),
-                    },
-                    &[x.clone()],
-                )
-            }
-            Value::Float(_) => {
-                builder.create_ir(
-                    &crate::ir_defs::IR::ExportExternalF {
-                        for_which: self.for_which,
-                        key,
-                        indices: self.indices.clone(),
-                    },
-                    &[x.clone()],
-                )
-            }
+            Value::Integer(_) | Value::Boolean(_) => builder.create_ir(
+                &crate::ir_defs::IR::ExportExternalI {
+                    for_which: self.for_which,
+                    key,
+                    indices: self.indices.clone(),
+                },
+                &[x.clone()],
+            ),
+            Value::Float(_) => builder.create_ir(
+                &crate::ir_defs::IR::ExportExternalF {
+                    for_which: self.for_which,
+                    key,
+                    indices: self.indices.clone(),
+                },
+                &[x.clone()],
+            ),
             _ => panic!("export_external: unsupported type {:?}", x.zinnia_type()),
         }
     }

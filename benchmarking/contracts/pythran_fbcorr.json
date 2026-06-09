@@ -1,0 +1,63 @@
+{
+  "categories": [
+    "in-place-mutation",
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 23,
+      "line_start": 10,
+      "mutated_params": [
+        "output"
+      ],
+      "name": "fbcorr",
+      "ops": [
+        "Add",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "imgs",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256']",
+          "rank_hint": 4,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "filters",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256']",
+          "rank_hint": 4,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "output",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256']",
+          "rank_hint": 4,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_fbcorr/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "pythran_fbcorr",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n\n@zk_circuit\ndef fbcorr(imgs: Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256'], filters: Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256'], output: Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256']):\n    n_imgs, n_rows, n_cols, n_channels = imgs.shape\n    n_filters, height, width, n_ch2 = filters.shape\n    'omp parallel for'\n    for ii in range(n_imgs):\n        for rr in range(n_rows - height + 1):\n            for cc in range(n_cols - width + 1):\n                for hh in range(height):\n                    for ww in range(width):\n                        for jj in range(n_channels):\n                            for ff in range(n_filters):\n                                imgval = imgs[ii, rr + hh, cc + ww, jj]\n                                filterval = filters[ff, hh, ww, jj]\n                                output[ii, ff, rr, cc] += imgval * filterval",
+  "source_status": "direct"
+}

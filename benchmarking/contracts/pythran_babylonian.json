@@ -1,0 +1,51 @@
+{
+  "categories": [
+    "data-dependent-loop",
+    "denominator-obligation"
+  ],
+  "diagnostics": [
+    "while loops require a public/padded maximum iteration count."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "seen.add"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": true,
+      "has_while": true,
+      "line_end": 20,
+      "line_start": 11,
+      "mutated_params": [],
+      "name": "is_square",
+      "ops": [
+        "Add",
+        "FloorDiv",
+        "In",
+        "Mult",
+        "NotEq"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "a_positive_int",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_babylonian/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add an explicit iteration cap or classify as fail-closed until a bound is available.",
+    "Add nonzero or positive denominator facts at the exact division/modulo sites."
+  ],
+  "program": "pythran_babylonian",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: data-dependent-loop, denominator-obligation\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Diagnostic: while loops require a public/padded maximum iteration count.\n\n@zk_circuit\ndef is_square(a_positive_int: Float):\n    \"\"\" Check if it is a perfect square. \"\"\"\n    x = a_positive_int // 2\n    seen = {x}\n    while x * x != a_positive_int:\n        x = (x + a_positive_int // x) // 2\n        if x in seen:\n            return False\n        seen.add(x)\n    return True",
+  "source_status": "direct"
+}

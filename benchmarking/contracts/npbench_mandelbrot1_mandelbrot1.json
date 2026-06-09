@@ -1,0 +1,103 @@
+{
+  "categories": [
+    "complex",
+    "loop-bounded"
+  ],
+  "diagnostics": [
+    "Complex kernels require Complex dtype support or a fail-closed classification."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "abs",
+        "np.less",
+        "np.linspace",
+        "np.zeros",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 23,
+      "line_start": 12,
+      "mutated_params": [],
+      "name": "mandelbrot",
+      "ops": [
+        "Add",
+        "Eq",
+        "Mult",
+        "Pow",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "xmin",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "xmax",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "ymin",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "ymax",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "xn",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "yn",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "maxiter",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "horizon",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "npbench_mandelbrot1_mandelbrot1/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "npbench_mandelbrot1_mandelbrot1",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: complex, in-place-mutation, loop-bounded\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.\nimport numpy as np\n\n@zk_circuit\ndef mandelbrot(xmin: Float[Array, 'N<=1024'], xmax: Float[Array, 'N<=1024'], ymin: Float[Array, 'N<=1024'], ymax: Float[Array, 'N<=1024'], xn: Complex[Array, 'N<=1024'], yn: Complex[Array, 'N<=1024'], maxiter: Float, horizon: Complex[Array, 'N<=1024']=2.0):\n    X = np.linspace(xmin, xmax, xn, dtype=np.float64)\n    Y = np.linspace(ymin, ymax, yn, dtype=np.float64)\n    C = X + Y[:, None] * 1j\n    N = np.zeros(C.shape, dtype=np.int64)\n    Z = np.zeros(C.shape, dtype=np.complex128)\n    for n in range(maxiter):\n        I = np.less(abs(Z), horizon)\n        N[I] = n\n        Z[I] = Z[I] ** 2 + C[I]\n    N[N == maxiter - 1] = 0\n    return (Z, N)",
+  "source_status": "direct"
+}

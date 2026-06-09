@@ -1,0 +1,19 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0437/kernel.py
+// REASON: a.min(axis=1, keepdims=1) == a lowered to per-row min scan + per-cell equality compare.
+
+const u32 R = 10
+const u32 C = 5
+
+def main(field[R][C] a) -> bool[R][C]:
+    bool[R][C] mask = [[false; C]; R]
+    for u32 i in 0..R do
+        field best = a[i][0]
+        for u32 j in 0..C do
+            best = if a[i][j] < best then a[i][j] else best fi
+        endfor
+        for u32 j in 0..C do
+            mask[i][j] = a[i][j] == best
+        endfor
+    endfor
+    return mask

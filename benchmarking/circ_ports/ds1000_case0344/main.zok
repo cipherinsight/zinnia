@@ -1,0 +1,9 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0344/kernel.py
+// REASON: np.array(list(mystr)) — string iteration produces a runtime-length array; CirC has no strings and no dynamic-length results
+
+def main(field mystr) -> field[1]:
+    // CirC has no string type; list(mystr) cannot be expressed.
+    // The naturally-written ZoKrates version below cannot legalize the result length.
+    field[1] result = [mystr]
+    return result

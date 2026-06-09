@@ -14,7 +14,7 @@ consumed downstream by the Rust IR generator:
 """
 
 import ast
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from zinnia.spec.predicates import PREDICATE_NAMES, _USER_PREDICATE_NAMES
 from zinnia.debug.dbg_info import DebugInfo
@@ -237,9 +237,16 @@ _ARITH_OPS_CONTRACT = {
 def _build_var(name: str) -> dict:
     return {"Var": {"Input": name}}
 
+def _build_shape_param(name: str) -> dict:
+    return {"Var": {"ShapeParam": name}}
+
 
 def _build_lit_int(n: int) -> dict:
     return {"LitInt": n}
+
+
+def _build_lit_float(f: float) -> dict:
+    return {"LitFloat": float(f)}
 
 
 def _build_lit_bool(b: bool) -> dict:
@@ -270,14 +277,24 @@ def _build_int_term(
     node: ast.AST,
     fn_param_names: List[str],
     dbg: DebugInfo,
+    fn_param_types: Optional[Dict[str, object]] = None,
 ) -> dict:
     """Recursively build a ContractTerm for an Int-typed scalar expression."""
+    shape_symbol_names = getattr(_build_int_term, "_shape_symbol_names", set())
     if isinstance(node, ast.Name):
+        if node.id in shape_symbol_names:
+            return _build_shape_param(node.id)
         if node.id not in fn_param_names:
             raise InvalidProgramException(
                 dbg,
                 f"scalar precondition references `{node.id}` which is not a "
-                f"parameter of the decorated function"
+                f"parameter or shape symbol of the decorated function"
+            )
+        if _scalar_param_kind(fn_param_types, node.id) == "Float":
+            raise InvalidProgramException(
+                dbg,
+                f"scalar precondition Int-context expected an integer-typed "
+                f"parameter; got Float parameter `{node.id}`"
             )
         return _build_var(node.id)
     if isinstance(node, ast.Constant):
@@ -300,10 +317,10 @@ def _build_int_term(
         if isinstance(node.op, ast.USub):
             return _build_arith(
                 "Sub", _build_lit_int(0),
-                _build_int_term(node.operand, fn_param_names, dbg),
+                _build_int_term(node.operand, fn_param_names, dbg, fn_param_types),
             )
         if isinstance(node.op, ast.UAdd):
-            return _build_int_term(node.operand, fn_param_names, dbg)
+            return _build_int_term(node.operand, fn_param_names, dbg, fn_param_types)
         raise InvalidProgramException(
             dbg,
             f"unsupported unary operator `{type(node.op).__name__}` in "
@@ -320,13 +337,149 @@ def _build_int_term(
             )
         return _build_arith(
             op,
-            _build_int_term(node.left, fn_param_names, dbg),
-            _build_int_term(node.right, fn_param_names, dbg),
+            _build_int_term(node.left, fn_param_names, dbg, fn_param_types),
+            _build_int_term(node.right, fn_param_names, dbg, fn_param_types),
         )
     raise InvalidProgramException(
         dbg,
         f"scalar precondition Int-context cannot contain "
         f"`{ast.unparse(node)}` (a {type(node).__name__})"
+    )
+
+
+def _scalar_param_kind(fn_param_types: Optional[Dict[str, object]], name: str) -> Optional[str]:
+    if not fn_param_types:
+        return None
+    dt = fn_param_types.get(name)
+    if isinstance(dt, str) and dt in {"Integer", "Float", "Boolean"}:
+        return dt
+    return None
+
+
+def _build_numeric_term(
+    node: ast.AST,
+    fn_param_names: List[str],
+    dbg: DebugInfo,
+    fn_param_types: Optional[Dict[str, object]],
+) -> Tuple[dict, str]:
+    """Build a scalar numeric ContractTerm and return (term, kind).
+
+    `kind` is `Integer` or `Float`. Float literals are accepted only in
+    float contexts after comparison-level type checking; int-typed
+    parameters are not silently widened to float.
+    """
+    shape_symbol_names = getattr(_build_int_term, "_shape_symbol_names", set())
+    if isinstance(node, ast.Name):
+        if node.id in shape_symbol_names:
+            return _build_shape_param(node.id), "Integer"
+        if node.id not in fn_param_names:
+            raise InvalidProgramException(
+                dbg,
+                f"scalar precondition references `{node.id}` which is not a "
+                f"parameter or shape symbol of the decorated function"
+            )
+        kind = _scalar_param_kind(fn_param_types, node.id)
+        if kind == "Float":
+            return _build_var(node.id), "Float"
+        if kind in (None, "Integer", "Boolean"):
+            return _build_var(node.id), "Integer"
+        raise InvalidProgramException(
+            dbg,
+            f"scalar precondition expected an integer or float parameter; "
+            f"got `{node.id}` with type `{kind}`"
+        )
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, bool):
+            raise InvalidProgramException(
+                dbg,
+                f"scalar precondition numeric context expected an integer or "
+                f"float literal; got Bool `{node.value}`"
+            )
+        if isinstance(node.value, int):
+            return _build_lit_int(int(node.value)), "Integer"
+        if isinstance(node.value, float):
+            return _build_lit_float(float(node.value)), "Float"
+        raise InvalidProgramException(
+            dbg,
+            f"scalar precondition numeric context expected an integer or "
+            f"float literal; got `{node.value!r}` "
+            f"(a {type(node.value).__name__})"
+        )
+    if isinstance(node, ast.UnaryOp):
+        if isinstance(node.op, ast.USub):
+            inner, kind = _build_numeric_term(node.operand, fn_param_names, dbg, fn_param_types)
+            zero = _build_lit_float(0.0) if kind == "Float" else _build_lit_int(0)
+            return _build_arith("Sub", zero, inner), kind
+        if isinstance(node.op, ast.UAdd):
+            return _build_numeric_term(node.operand, fn_param_names, dbg, fn_param_types)
+        raise InvalidProgramException(
+            dbg,
+            f"unsupported unary operator `{type(node.op).__name__}` in "
+            f"scalar precondition"
+        )
+    if isinstance(node, ast.BinOp):
+        op = _ARITH_OPS_CONTRACT.get(type(node.op))
+        if op is None:
+            raise InvalidProgramException(
+                dbg,
+                f"unsupported arithmetic operator `{type(node.op).__name__}` "
+                f"in scalar precondition; bitwise / shift operators require "
+                f"Z3 BV theory and are deferred"
+            )
+        lhs, lhs_kind = _build_numeric_term(node.left, fn_param_names, dbg, fn_param_types)
+        rhs, rhs_kind = _build_numeric_term(node.right, fn_param_names, dbg, fn_param_types)
+        kind = _combine_numeric_kinds(lhs_kind, rhs_kind, node, dbg)
+        return _build_arith(op, lhs, rhs), kind
+    raise InvalidProgramException(
+        dbg,
+        f"scalar precondition numeric context cannot contain "
+        f"`{ast.unparse(node)}` (a {type(node).__name__})"
+    )
+
+
+def _combine_numeric_kinds(lhs_kind: str, rhs_kind: str, node: ast.AST, dbg: DebugInfo) -> str:
+    if lhs_kind == rhs_kind:
+        return lhs_kind
+    raise InvalidProgramException(
+        dbg,
+        f"scalar precondition mixes integer and float numeric terms in "
+        f"`{ast.unparse(node)}`; use float-typed parameters with float "
+        f"literal bounds, or integer-typed parameters with integer bounds"
+    )
+
+
+def _coerce_float_int_literals(term: dict) -> dict:
+    if "LitInt" in term:
+        return _build_lit_float(float(term["LitInt"]))
+    if "Arith" in term:
+        data = term["Arith"]
+        return _build_arith(
+            data["op"],
+            _coerce_float_int_literals(data["lhs"]),
+            _coerce_float_int_literals(data["rhs"]),
+        )
+    return term
+
+
+def _align_comparison_terms(
+    lhs: dict,
+    lhs_kind: str,
+    rhs: dict,
+    rhs_kind: str,
+    original: ast.AST,
+    dbg: DebugInfo,
+) -> Tuple[dict, dict, str]:
+    if lhs_kind == rhs_kind:
+        return lhs, rhs, lhs_kind
+    if lhs_kind == "Float" and rhs_kind == "Integer" and "LitInt" in rhs:
+        return lhs, _coerce_float_int_literals(rhs), "Float"
+    if lhs_kind == "Integer" and rhs_kind == "Float" and "LitInt" in lhs:
+        return _coerce_float_int_literals(lhs), rhs, "Float"
+    raise InvalidProgramException(
+        dbg,
+        f"scalar precondition mixes integer and float comparison terms in "
+        f"`{ast.unparse(original)}`; int-typed parameters cannot use float "
+        f"literal bounds"
     )
 
 
@@ -336,6 +489,7 @@ def _lower_membership(
     negate: bool,
     fn_param_names: List[str],
     dbg: DebugInfo,
+    fn_param_types: Optional[Dict[str, object]] = None,
 ) -> dict:
     """Desugar ``x in container`` / ``x not in container`` into a
     ContractTerm. `left` is the already-built Int term for `x`.
@@ -352,16 +506,16 @@ def _lower_membership(
         args = container.args
         if len(args) == 1:
             lo_t = _build_lit_int(0)
-            hi_t = _build_int_term(args[0], fn_param_names, dbg)
+            hi_t = _build_int_term(args[0], fn_param_names, dbg, fn_param_types)
             step_t = None
         elif len(args) == 2:
-            lo_t = _build_int_term(args[0], fn_param_names, dbg)
-            hi_t = _build_int_term(args[1], fn_param_names, dbg)
+            lo_t = _build_int_term(args[0], fn_param_names, dbg, fn_param_types)
+            hi_t = _build_int_term(args[1], fn_param_names, dbg, fn_param_types)
             step_t = None
         elif len(args) == 3:
-            lo_t = _build_int_term(args[0], fn_param_names, dbg)
-            hi_t = _build_int_term(args[1], fn_param_names, dbg)
-            step_t = _build_int_term(args[2], fn_param_names, dbg)
+            lo_t = _build_int_term(args[0], fn_param_names, dbg, fn_param_types)
+            hi_t = _build_int_term(args[1], fn_param_names, dbg, fn_param_types)
+            step_t = _build_int_term(args[2], fn_param_names, dbg, fn_param_types)
         else:
             raise InvalidProgramException(
                 dbg, f"range() takes 1–3 arguments; got {len(args)}"
@@ -409,6 +563,7 @@ def _build_bool_term(
     node: ast.AST,
     fn_param_names: List[str],
     dbg: DebugInfo,
+    fn_param_types: Optional[Dict[str, object]] = None,
 ) -> dict:
     """Recursively build a ContractTerm for a Bool-typed expression."""
     # Boolean literal (must come before Int's Constant handler).
@@ -427,15 +582,15 @@ def _build_bool_term(
                 f"unsupported BoolOp operator `{type(node.op).__name__}` in "
                 f"scalar precondition"
             )
-        operands = [_build_bool_term(v, fn_param_names, dbg) for v in node.values]
+        operands = [_build_bool_term(v, fn_param_names, dbg, fn_param_types) for v in node.values]
         return _build_bool_comb(op, operands)
 
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
-        return _build_not(_build_bool_term(node.operand, fn_param_names, dbg))
+        return _build_not(_build_bool_term(node.operand, fn_param_names, dbg, fn_param_types))
 
     # Comparison, chained-comparison, or membership.
     if isinstance(node, ast.Compare):
-        return _build_compare(node, fn_param_names, dbg)
+        return _build_compare(node, fn_param_names, dbg, fn_param_types)
 
     # Predicate call (bare unary).
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
@@ -447,7 +602,7 @@ def _build_bool_term(
                 "a separate `@requires(...)`."
             )
         if node.func.id in _USER_PREDICATE_NAMES:
-            args = [_build_int_term(a, fn_param_names, dbg) for a in node.args]
+            args = [_build_int_term(a, fn_param_names, dbg, fn_param_types) for a in node.args]
             return _build_predicate_app(node.func.id, args)
         raise InvalidProgramException(
             dbg,
@@ -466,6 +621,7 @@ def _build_compare(
     node: ast.Compare,
     fn_param_names: List[str],
     dbg: DebugInfo,
+    fn_param_types: Optional[Dict[str, object]] = None,
 ) -> dict:
     """Build a Bool ContractTerm from an `ast.Compare` node.
 
@@ -476,10 +632,10 @@ def _build_compare(
         rhs = node.comparators[0]
         # Membership (`x in container` / `x not in container`).
         if isinstance(op, (ast.In, ast.NotIn)):
-            left = _build_int_term(node.left, fn_param_names, dbg)
+            left = _build_int_term(node.left, fn_param_names, dbg, fn_param_types)
             return _lower_membership(
                 left, rhs, isinstance(op, ast.NotIn),
-                fn_param_names, dbg,
+                fn_param_names, dbg, fn_param_types,
             )
         # Standard scalar comparison.
         op_name = _CMP_OPS_CONTRACT.get(type(op))
@@ -488,8 +644,9 @@ def _build_compare(
                 dbg,
                 f"unsupported comparison operator `{type(op).__name__}`"
             )
-        lhs = _build_int_term(node.left, fn_param_names, dbg)
-        rhs_t = _build_int_term(rhs, fn_param_names, dbg)
+        lhs, lhs_kind = _build_numeric_term(node.left, fn_param_names, dbg, fn_param_types)
+        rhs_t, rhs_kind = _build_numeric_term(rhs, fn_param_names, dbg, fn_param_types)
+        lhs, rhs_t, _ = _align_comparison_terms(lhs, lhs_kind, rhs_t, rhs_kind, node, dbg)
         return _build_cmp(op_name, lhs, rhs_t)
 
     if len(node.ops) == 2 and len(node.comparators) == 2:
@@ -508,12 +665,18 @@ def _build_compare(
                 f"unsupported chained comparison `{type(op1).__name__}` / "
                 f"`{type(op2).__name__}`"
             )
-        left_t = _build_int_term(node.left, fn_param_names, dbg)
-        mid_t = _build_int_term(node.comparators[0], fn_param_names, dbg)
-        right_t = _build_int_term(node.comparators[1], fn_param_names, dbg)
+        left_t, left_kind = _build_numeric_term(node.left, fn_param_names, dbg, fn_param_types)
+        mid_t, mid_kind = _build_numeric_term(node.comparators[0], fn_param_names, dbg, fn_param_types)
+        right_t, right_kind = _build_numeric_term(node.comparators[1], fn_param_names, dbg, fn_param_types)
+        left_t, mid_left_t, _ = _align_comparison_terms(
+            left_t, left_kind, mid_t, mid_kind, node, dbg
+        )
+        mid_right_t, right_t, _ = _align_comparison_terms(
+            mid_t, mid_kind, right_t, right_kind, node, dbg
+        )
         return _build_bool_comb("And", [
-            _build_cmp(op1_name, left_t, mid_t),
-            _build_cmp(op2_name, mid_t, right_t),
+            _build_cmp(op1_name, left_t, mid_left_t),
+            _build_cmp(op2_name, mid_right_t, right_t),
         ])
 
     raise InvalidProgramException(
@@ -618,7 +781,9 @@ def _extract_from_lambda_body(
 def _extract_from_lambda_body_with_params(
     body: ast.AST,
     fn_param_names: List[str],
+    fn_param_types: Optional[Dict[str, object]],
     dbg: DebugInfo,
+    shape_symbol_names: Optional[set[str]] = None,
 ) -> List[dict]:
     """Same as `_extract_from_lambda_body` but with the surrounding
     function's parameter names available for scalar-extraction Name
@@ -663,7 +828,12 @@ def _extract_from_lambda_body_with_params(
         )]
 
     # Scalar precondition: build a ContractTerm.
-    term = _build_bool_term(body, fn_param_names, dbg)
+    old_shape_symbols = getattr(_build_int_term, "_shape_symbol_names", set())
+    _build_int_term._shape_symbol_names = shape_symbol_names or set()
+    try:
+        term = _build_bool_term(body, fn_param_names, dbg, fn_param_types)
+    finally:
+        _build_int_term._shape_symbol_names = old_shape_symbols
     return [{
         "__class__": "ASTScalarRequires",
         "term": term,
@@ -673,7 +843,9 @@ def _extract_from_lambda_body_with_params(
 def _extract_one_lambda(
     lam: ast.Lambda,
     fn_param_names: List[str],
+    fn_param_types: Optional[Dict[str, object]],
     dbg: DebugInfo,
+    shape_symbol_names: Optional[set[str]] = None,
 ) -> List[dict]:
     """Extract precondition specs from one lambda.
 
@@ -688,13 +860,15 @@ def _extract_one_lambda(
                 f"precondition lambda parameter `{p}` is not a parameter of "
                 f"the decorated function (parameters: {fn_param_names})"
             )
-    return _extract_from_lambda_body_with_params(lam.body, fn_param_names, dbg)
+    return _extract_from_lambda_body_with_params(lam.body, fn_param_names, fn_param_types, dbg, shape_symbol_names)
 
 
 def extract_preconditions(
     func_node: ast.FunctionDef,
     source_code: str,
     method_name: str,
+    fn_param_types: Optional[Dict[str, object]] = None,
+    shape_symbol_names: Optional[set[str]] = None,
 ) -> List[dict]:
     """Walk a function's ``decorator_list`` and extract precondition specs.
 
@@ -727,7 +901,7 @@ def extract_preconditions(
                     f"@requires(...) argument must be a lambda; got "
                     f"`{type(lam).__name__}`"
                 )
-            specs.extend(_extract_one_lambda(lam, fn_param_names, dbg))
+            specs.extend(_extract_one_lambda(lam, fn_param_names, fn_param_types, dbg, shape_symbol_names))
 
         # @zk_circuit(requires=[lambda ..., ...])
         elif isinstance(deco, ast.Call) and \
@@ -749,8 +923,9 @@ def extract_preconditions(
                             f"lambdas; got `{type(lam).__name__}`"
                         )
                     specs.extend(_extract_one_lambda(
-                        lam, fn_param_names,
-                        _dbg_for(lam, source_code, method_name)
+                        lam, fn_param_names, fn_param_types,
+                        _dbg_for(lam, source_code, method_name),
+                        shape_symbol_names,
                     ))
 
     return specs

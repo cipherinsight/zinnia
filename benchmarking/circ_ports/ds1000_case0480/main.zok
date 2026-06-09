@@ -1,0 +1,15 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0480/kernel.py
+// REASON: argmax over a boolean mask plus a post-check lowered to a linear scan
+
+def main(field[8] x, field[8] y, field a, field b) -> field:
+    field result = 0
+    bool found = false
+    for u32 i in 0..8 do
+        bool match = (x[i] == a) && (y[i] == b)
+        result = if (!found) && match then (field)i else result fi
+        found = found || match
+    endfor
+    // If no match: -1 (encoded as p-1 in the field)
+    result = if found then result else 0 - 1 fi
+    return result

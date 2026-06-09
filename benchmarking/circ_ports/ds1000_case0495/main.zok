@@ -1,0 +1,13 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0495/kernel.py
+// REASON: np.pad with pad widths computed from runtime `shape` argument yields runtime-sized output - ZoKrates requires fixed compile-time shape
+
+def main(field[41][13] a, u32[2] shape) -> field[64][64]:
+    // Output shape (shape[0], shape[1]) is runtime - we bake an upper bound (64,64).
+    field[64][64] result = [[0; 64]; 64]
+    for u32 i in 0..41 do
+        for u32 j in 0..13 do
+            result[i][j] = a[i][j]
+        endfor
+    endfor
+    return result

@@ -1,0 +1,73 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "domain-obligation"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "np.arctan2",
+        "np.cos",
+        "np.sin",
+        "np.sqrt"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 17,
+      "line_start": 11,
+      "mutated_params": [],
+      "name": "arc_distance",
+      "ops": [
+        "Add",
+        "Div",
+        "Mult",
+        "Pow",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "theta_1",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "phi_1",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "theta_2",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "phi_2",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_arc_distance/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1]."
+  ],
+  "program": "pythran_arc_distance",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, domain-obligation\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].\nimport numpy as np\n\n@zk_circuit\ndef arc_distance(theta_1: Float[Array, 'N<=1024'], phi_1: Float[Array, 'N<=1024'], theta_2: Float[Array, 'N<=1024'], phi_2: Float[Array, 'N<=1024']):\n    \"\"\"\n    Calculates the pairwise arc distance between all points in vector a and b.\n    \"\"\"\n    temp = np.sin((theta_2 - theta_1) / 2) ** 2 + np.cos(theta_1) * np.cos(theta_2) * np.sin((phi_2 - phi_1) / 2) ** 2\n    distance_matrix = 2 * np.arctan2(np.sqrt(temp), np.sqrt(1 - temp))\n    return distance_matrix",
+  "source_status": "direct"
+}

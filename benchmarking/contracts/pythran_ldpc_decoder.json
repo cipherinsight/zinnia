@@ -1,0 +1,231 @@
+{
+  "categories": [
+    "data-dependent-loop",
+    "denominator-obligation",
+    "domain-obligation",
+    "in-place-mutation",
+    "loop-bounded",
+    "matmul-dot"
+  ],
+  "diagnostics": [
+    "while loops require a public/padded maximum iteration count."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "abs",
+        "log",
+        "tanh"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 22,
+      "line_start": 17,
+      "mutated_params": [],
+      "name": "phi0",
+      "ops": [
+        "Div",
+        "Lt"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "x",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "np.prod",
+        "np.sign",
+        "phi0",
+        "sum"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 28,
+      "line_start": 25,
+      "mutated_params": [],
+      "name": "G",
+      "ops": [
+        "Mult"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "Lq",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "X.dot"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 34,
+      "line_start": 31,
+      "mutated_params": [],
+      "name": "BinaryProduct",
+      "ops": [
+        "Mod"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "X",
+          "proposed_annotation": "Integer[Array, 'N<=1024 M<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "Y",
+          "proposed_annotation": "Integer[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "BinaryProduct",
+        "all"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 41,
+      "line_start": 37,
+      "mutated_params": [],
+      "name": "InCode",
+      "ops": [
+        "Eq"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "H",
+          "proposed_annotation": "Integer[Array, 'N<=1024 M<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "x",
+          "proposed_annotation": "Integer[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "G",
+        "InCode",
+        "Mji.remove",
+        "Nij.remove",
+        "ValueError",
+        "astype",
+        "len",
+        "list",
+        "np.array",
+        "np.clip",
+        "np.empty",
+        "np.zeros",
+        "range",
+        "requires",
+        "sum"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": true,
+      "line_end": 91,
+      "line_start": 45,
+      "mutated_params": [
+        "Lq"
+      ],
+      "name": "Decoding_logBP",
+      "ops": [
+        "Add",
+        "Eq",
+        "GtE",
+        "LtE",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "H",
+          "proposed_annotation": "Integer[Array, 'N<=1024 M<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "Bits",
+          "proposed_annotation": "Integer[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "Nodes",
+          "proposed_annotation": "Integer[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "Lq",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 2,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "Lc",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "max_iter",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_ldpc_decoder/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add an explicit iteration cap or classify as fail-closed until a bound is available.",
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].",
+    "Declare shared matrix/vector dimensions explicitly, e.g. A[N,K] with x[K].",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "pythran_ldpc_decoder",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: data-dependent-loop, denominator-obligation, domain-obligation, in-place-mutation, loop-bounded, matmul-dot\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].\n# Precondition: Declare shared matrix/vector dimensions explicitly; when not expressible as @requires, encode with matching symbolic annotation names and keep as review obligation.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: while loops require a public/padded maximum iteration count.\nimport numpy as np\nfrom math import log, tanh\n\n@zk_chip\ndef phi0(x: Float):\n    x = abs(x)\n    if x < 9.08e-05:\n        return 10\n    else:\n        return -log(tanh(x / 2))\n\n@zk_chip\ndef G(Lq: Float[Array, 'N<=1024']):\n    X = sum((phi0(e) for e in Lq))\n    s = np.prod(np.sign(Lq))\n    return s * phi0(X)\n\n@zk_chip\ndef BinaryProduct(X: Integer[Array, 'N<=1024 M<=1024'], Y: Integer[Array, 'N<=1024']):\n    \"\"\" Binary Matrices or Matrix-vector product in Z/2Z. Works with scipy.sparse.csr_matrix matrices X,Y too.\"\"\"\n    A = X.dot(Y)\n    return A % 2\n\n@zk_chip\ndef InCode(H: Integer[Array, 'N<=1024 M<=1024'], x: Integer[Array, 'N<=1024']):\n    \"\"\" Computes Binary Product of H and x. If product is null, x is in the code.\n        Returns appartenance boolean. \n    \"\"\"\n    return (BinaryProduct(H, x) == 0).all()\n\n@zk_circuit\n@requires(lambda H, Bits, Nodes, Lq, Lc, max_iter: 0 <= max_iter <= 1024)\ndef Decoding_logBP(H: Integer[Array, 'N<=1024 M<=1024'], Bits: Integer[Array, 'N<=1024 M<=1024'], Nodes: Integer[Array, 'N<=1024 M<=1024'], Lq: Float[Array, 'N<=1024 M<=1024'], Lc: Float[Array, 'N<=1024'], max_iter: Integer=1):\n    \"\"\" Decoding function using Belief Propagation algorithm (logarithmic version)\n    IMPORTANT: if H is large (n>1000), H should be scipy.sparse.csr_matrix object to speed up calculations\n    (highly recommanded. )\n    -----------------------------------\n    Parameters:\n    \n    H: 2D-array (OR scipy.sparse.csr_matrix object) Parity check matrix, shape = (m,n) \n    y: n-vector recieved after transmission in the channel. (In general, returned \n    by Coding Function)\n    Signal-Noise Ratio: SNR = 10log(1/variance) in decibels of the AWGN used in coding.\n    \n    max_iter: (default = 1) max iterations of the main loop. Increase if decoding is not error-free.\n     \"\"\"\n    m, n = H.shape\n    if not len(Lc) == n:\n        raise ValueError('La taille de y doit correspondre au nombre de colonnes de H')\n    if m >= n:\n        raise ValueError('H doit avoir plus de colonnes que de lignes')\n    Lr = np.zeros(shape=(m, n))\n    count = 0\n    Lq += Lc\n    while True:\n        count += 1\n        for i in range(m):\n            Ni = Bits[i]\n            for j in Ni:\n                Nij = list(Ni)\n                Nij.remove(j)\n                Lr[i, j] = G(Lq[i][Nij])\n        Lr = np.clip(Lr, -100, 100)\n        for j in range(n):\n            Mj = Nodes[j]\n            for i in Mj:\n                Mji = list(Mj)\n                Mji.remove(i)",
+  "source_status": "direct"
+}

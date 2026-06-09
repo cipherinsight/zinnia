@@ -11,10 +11,10 @@ pub mod dyn_ndarray;
 pub mod internal;
 pub mod logical;
 pub mod math_ops;
-pub mod static_ndarray_ops;
 pub mod nocls;
 pub mod np_like;
 pub mod registry;
+pub mod static_ndarray_ops;
 
 use std::collections::HashMap;
 
@@ -94,13 +94,19 @@ pub trait Op {
     fn name(&self) -> &'static str;
 
     /// Operator signature (e.g., "add", "math.exp").
-    fn signature(&self) -> &'static str { self.name() }
+    fn signature(&self) -> &'static str {
+        self.name()
+    }
 
     /// Whether this op modifies values in place.
-    fn is_inplace(&self) -> bool { false }
+    fn is_inplace(&self) -> bool {
+        false
+    }
 
     /// Whether this op requires a path condition.
-    fn requires_condition(&self) -> bool { false }
+    fn requires_condition(&self) -> bool {
+        false
+    }
 
     /// Parameter definitions for argparse.
     fn params(&self) -> &[ParamEntry];

@@ -1,39 +1,89 @@
 use std::collections::HashMap;
 
 use crate::builder::IRBuilder;
-use crate::types::{ValueId, 
-    DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value,
-};
+use crate::types::{DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value, ValueId};
 
 use super::{
     dyn_decode_coords, dyn_encode_coords, dyn_num_elements, dyn_row_major_strides,
     value_to_scalar_i64,
 };
 
+fn cast_to_dtype(b: &mut IRBuilder, value: &Value, dtype: NumberType) -> Value {
+    match dtype {
+        NumberType::Integer => b.ir_int_cast(value),
+        NumberType::Float => b.ir_float_cast(value),
+        NumberType::Complex => {
+            let (real, imag) = crate::helpers::value_ops::unpack_value_to_complex_parts(b, value);
+            crate::helpers::value_ops::pack_complex_value(real, imag)
+        }
+    }
+}
+
 pub fn dyn_filter(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) -> Value {
-    let mask = args
-        .first()
-        .expect("filter: requires a mask argument");
-    let elements: Vec<Value> = crate::helpers::segment::read_all(b, data.segment_id, data.max_length());
+    let mask = args.first().expect("filter: requires a mask argument");
+    let data_owned = super::force_contiguous(b, data);
+    let data = &data_owned;
+    let max_len = data.max_length();
+    let target_shape = &data.meta.logical_shape;
+    let elements: Vec<Value> =
+        crate::helpers::segment::read_all_typed(b, data.segment_id, max_len, data.dtype);
 
     // Get mask elements — from segment if dynamic, from composite if static.
     let mask_elements: Vec<Value> = match mask {
         Value::DynamicNDArray(md) => {
-            crate::helpers::segment::read_all(b, md.segment_id, md.max_length())
+            if md.meta.logical_shape != *target_shape {
+                panic!(
+                    "filter: array shape {:?} and mask shape {:?} must match",
+                    target_shape, md.meta.logical_shape
+                );
+            }
+            if md.max_length() != max_len {
+                panic!(
+                    "filter: array has {} elements but mask has {}",
+                    max_len,
+                    md.max_length()
+                );
+            }
+            let md_owned = super::force_contiguous(b, md);
+            crate::helpers::segment::read_all_typed(
+                b,
+                md_owned.segment_id,
+                md_owned.max_length(),
+                md_owned.dtype,
+            )
         }
-        Value::List(_) | Value::Tuple(_) => {
-            crate::helpers::composite::flatten_composite(mask)
+        Value::List(_) | Value::Tuple(_) | Value::StaticArray { .. } => {
+            let shape = crate::helpers::composite::get_composite_shape(mask);
+            if shape != *target_shape {
+                panic!(
+                    "filter: array shape {:?} and mask shape {:?} must match",
+                    target_shape, shape
+                );
+            }
+            let mask_total: usize = shape.iter().product();
+            if mask_total != max_len {
+                panic!(
+                    "filter: array has {} elements but mask has {}",
+                    max_len, mask_total
+                );
+            }
+            crate::helpers::composite::flatten_composite_with_builder(b, mask)
         }
         _ => panic!("filter: mask must be array-like"),
     };
-
-    let max_len = data.max_length();
+    if mask_elements.len() != max_len {
+        panic!(
+            "filter: array has {} elements but mask has {}",
+            max_len,
+            mask_elements.len()
+        );
+    }
 
     // Allocate output segment pre-filled with defaults.
     let default_val = super::metadata::dyn_default_value(b, data.dtype);
-    let default_sv = value_to_scalar_i64(&default_val);
-    let default_elements = vec![default_sv; max_len];
-    let segment_id = crate::helpers::segment::alloc_and_write(b, &default_elements, data.dtype);
+    let default_elements = vec![default_val.clone(); max_len];
+    let segment_id =
+        crate::helpers::segment::alloc_and_write_values(b, &default_elements, data.dtype);
 
     // Compaction via ZKRAM write pointer: for each input element, if mask
     // is true, write the element at write_ptr and advance. If false, write
@@ -42,22 +92,14 @@ pub fn dyn_filter(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) 
     let mut write_ptr = b.ir_constant_int(0);
 
     for i in 0..max_len.min(elements.len()) {
-        let mask_val = if i < mask_elements.len() {
-            mask_elements[i].clone()
-        } else {
-            b.ir_constant_int(0)
-        };
-        let keep = b.ir_bool_cast(&mask_val);
+        let keep = b.ir_bool_cast(&mask_elements[i]);
 
         // Write element or default at write_ptr. Non-kept writes are
         // harmless — they'll be overwritten by the next kept element or
         // sit beyond runtime_length.
-        let val_to_write = if data.dtype == NumberType::Float {
-            b.ir_select_f(&keep, &elements[i], &default_val)
-        } else {
-            b.ir_select_i(&keep, &elements[i], &default_val)
-        };
-        b.ir_write_memory(segment_id, &write_ptr, &val_to_write);
+        let val_to_write =
+            crate::helpers::value_ops::select_value(b, &keep, &elements[i], &default_val);
+        crate::helpers::segment::write_typed(b, segment_id, &write_ptr, &val_to_write, data.dtype);
 
         // Advance write_ptr only when keep is true.
         let one = b.ir_constant_int(1);
@@ -127,7 +169,10 @@ pub fn dyn_repeat(
         .or_else(|| args.get(1))
         .and_then(|v| v.int_val());
 
-    let values = crate::helpers::segment::read_all(b, data.segment_id, data.max_length());
+    let data_owned = super::force_contiguous(b, data);
+    let data = &data_owned;
+    let values =
+        crate::helpers::segment::read_all_typed(b, data.segment_id, data.max_length(), data.dtype);
     let numel = dyn_num_elements(&data.meta.logical_shape);
 
     let result = if let Some(_ax) = axis {
@@ -135,13 +180,13 @@ pub fn dyn_repeat(
         // (full axis support would need coordinate transforms)
         let mut new_elements = Vec::new();
         for val in values.iter().take(numel) {
-            let sv = value_to_scalar_i64(val);
             for _ in 0..repeats {
-                new_elements.push(sv.clone());
+                new_elements.push(val.clone());
             }
         }
         let new_len = new_elements.len();
-        let segment_id = crate::helpers::segment::alloc_and_write(b, &new_elements, data.dtype);
+        let segment_id =
+            crate::helpers::segment::alloc_and_write_values(b, &new_elements, data.dtype);
         let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &[new_len]);
         DynamicNDArrayData {
             envelope,
@@ -163,13 +208,13 @@ pub fn dyn_repeat(
         // No axis: flatten then repeat each element
         let mut new_elements = Vec::new();
         for val in values.iter().take(numel) {
-            let sv = value_to_scalar_i64(val);
             for _ in 0..repeats {
-                new_elements.push(sv.clone());
+                new_elements.push(val.clone());
             }
         }
         let new_len = new_elements.len();
-        let segment_id = crate::helpers::segment::alloc_and_write(b, &new_elements, data.dtype);
+        let segment_id =
+            crate::helpers::segment::alloc_and_write_values(b, &new_elements, data.dtype);
         let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &[new_len]);
         DynamicNDArrayData {
             envelope,
@@ -199,14 +244,16 @@ pub fn dyn_repeat(
 fn coerce_to_dyn(b: &mut IRBuilder, v: &Value) -> DynamicNDArrayData {
     match v {
         Value::DynamicNDArray(d) => d.clone(),
-        Value::Integer(_) | Value::Float(_) | Value::Boolean(_) => {
-            let dtype = if matches!(v, Value::Float(_)) {
+        Value::Integer(_) | Value::Float(_) | Value::Boolean(_) | Value::Complex { .. } => {
+            let dtype = if matches!(v, Value::Complex { .. }) {
+                NumberType::Complex
+            } else if matches!(v, Value::Float(_)) {
                 NumberType::Float
             } else {
                 NumberType::Integer
             };
-            let sv = value_to_scalar_i64(v);
-            let segment_id = crate::helpers::segment::alloc_and_write(b, &[sv], dtype);
+            let segment_id =
+                crate::helpers::segment::alloc_and_write_values(b, &[v.clone()], dtype);
             let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &[1]);
             DynamicNDArrayData {
                 envelope,
@@ -225,13 +272,18 @@ fn coerce_to_dyn(b: &mut IRBuilder, v: &Value) -> DynamicNDArrayData {
                 value_id: ValueId::next(),
             }
         }
-        _ => panic!("concatenate/stack: unsupported element type {:?}", v.zinnia_type()),
+        _ => panic!(
+            "concatenate/stack: unsupported element type {:?}",
+            v.zinnia_type()
+        ),
     }
 }
 
 /// Resolve output dtype: float wins over integer (NumPy promotion rule).
 fn resolve_dtype(arrays: &[DynamicNDArrayData]) -> NumberType {
-    if arrays.iter().any(|a| a.dtype == NumberType::Float) {
+    if arrays.iter().any(|a| a.dtype == NumberType::Complex) {
+        NumberType::Complex
+    } else if arrays.iter().any(|a| a.dtype == NumberType::Float) {
         NumberType::Float
     } else {
         NumberType::Integer
@@ -248,26 +300,23 @@ pub fn dyn_concatenate(
     args: &[Value],
     kwargs: &HashMap<String, Value>,
 ) -> Value {
-    let arrays_val = args
-        .first()
-        .expect("concatenate: requires arrays argument");
+    let arrays_val = args.first().expect("concatenate: requires arrays argument");
     let raw_values: Vec<Value> = match arrays_val {
         Value::List(cd) | Value::Tuple(cd) => cd.values.clone(),
         _ => panic!("concatenate: first arg must be list/tuple of arrays"),
     };
-    assert!(!raw_values.is_empty(), "concatenate: need at least one array");
+    assert!(
+        !raw_values.is_empty(),
+        "concatenate: need at least one array"
+    );
 
     // Check axis=None (flatten all then concatenate as 1D).
-    let axis_val = kwargs
-        .get("axis")
-        .or_else(|| args.get(1));
+    let axis_val = kwargs.get("axis").or_else(|| args.get(1));
     let axis_is_none = matches!(axis_val, Some(Value::None));
 
     // Coerce scalars to 1-d arrays.
-    let mut arrays: Vec<DynamicNDArrayData> = raw_values
-        .iter()
-        .map(|v| coerce_to_dyn(b, v))
-        .collect();
+    let mut arrays: Vec<DynamicNDArrayData> =
+        raw_values.iter().map(|v| coerce_to_dyn(b, v)).collect();
 
     // If axis=None, flatten all arrays to 1-d first.
     if axis_is_none {
@@ -316,15 +365,23 @@ pub fn dyn_concatenate(
     } else {
         axis as usize
     };
-    assert!(ax < ndim, "concatenate: axis {} out of bounds for rank {}", ax, ndim);
+    assert!(
+        ax < ndim,
+        "concatenate: axis {} out of bounds for rank {}",
+        ax,
+        ndim
+    );
 
     // Validate non-concat axes match.
     let base_shape = &arrays[0].meta.logical_shape;
     for (i, arr) in arrays.iter().enumerate().skip(1) {
         assert_eq!(
-            arr.meta.logical_shape.len(), ndim,
+            arr.meta.logical_shape.len(),
+            ndim,
             "concatenate: array {} has rank {} but expected {}",
-            i, arr.meta.logical_shape.len(), ndim
+            i,
+            arr.meta.logical_shape.len(),
+            ndim
         );
         for d in 0..ndim {
             if d != ax {
@@ -347,9 +404,9 @@ pub fn dyn_concatenate(
     let out_ax_stride = out_strides[ax] as i64;
 
     // Check if any input has a dynamic concat axis.
-    let has_dynamic_axis = arrays.iter().any(|a| {
-        a.envelope.dims[ax].min != a.envelope.dims[ax].max
-    });
+    let has_dynamic_axis = arrays
+        .iter()
+        .any(|a| a.envelope.dims[ax].min != a.envelope.dims[ax].max);
 
     // Build envelope.
     let total_bound: usize = arrays.iter().map(|a| a.envelope.total_bound).sum();
@@ -362,22 +419,25 @@ pub fn dyn_concatenate(
     let envelope = crate::types::Envelope::new_with_bound(out_dims, total_bound);
 
     // Non-concat axes: product for per-axis-position element count.
-    let other_product: usize = out_shape.iter().enumerate()
+    let other_product: usize = out_shape
+        .iter()
+        .enumerate()
         .filter(|&(d, _)| d != ax)
         .map(|(_, &s)| s)
         .product::<usize>()
         .max(1);
     let mut other_dims: Vec<usize> = Vec::new();
     for (d, &s) in base_shape.iter().enumerate() {
-        if d != ax { other_dims.push(s); }
+        if d != ax {
+            other_dims.push(s);
+        }
     }
     let other_dim_strides = dyn_row_major_strides(&other_dims);
 
     // Allocate output segment with defaults.
     let default_val = super::metadata::dyn_default_value(b, out_dtype);
-    let default_sv = value_to_scalar_i64(&default_val);
-    let init_elements = vec![default_sv; out_numel];
-    let segment_id = crate::helpers::segment::alloc_and_write(b, &init_elements, out_dtype);
+    let init_elements = vec![default_val.clone(); out_numel];
+    let segment_id = crate::helpers::segment::alloc_and_write_values(b, &init_elements, out_dtype);
     let max_out_addr = (out_numel as i64 - 1).max(0);
 
     // Single pass: iterate per input, write to output at cumulative_offset.
@@ -463,19 +523,18 @@ pub fn dyn_concatenate(
                 let src_addr_static = src_ax_base + src_other_addr;
                 let clamped_src = src_addr_static.max(0).min(src_max_len - 1);
                 let src_addr_val = b.ir_constant_int(clamped_src);
-                let src_val = b.ir_read_memory(arr.segment_id, &src_addr_val);
+                let src_val = crate::helpers::segment::read_typed(
+                    b,
+                    arr.segment_id,
+                    &src_addr_val,
+                    arr.dtype,
+                );
 
                 // Cast dtype if needed.
                 let casted = if arr.dtype == out_dtype {
                     src_val
                 } else {
-                    match out_dtype {
-                        NumberType::Float => b.ir_float_cast(&src_val),
-                        NumberType::Integer => b.ir_int_cast(&src_val),
-                        NumberType::Complex => panic!(
-                            "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
-                        ),
-                    }
+                    cast_to_dtype(b, &src_val, out_dtype)
                 };
 
                 // Output address = out_ax_base + out_other_addr (dynamic + static).
@@ -491,13 +550,16 @@ pub fn dyn_concatenate(
                 let clamped_out = b.ir_select_i(&is_over, &max_addr_val, &clamped_lo);
 
                 // Select value: in_bounds → casted source, else → default.
-                let write_val = if out_dtype == NumberType::Float {
-                    b.ir_select_f(&in_bounds, &casted, &default_val)
-                } else {
-                    b.ir_select_i(&in_bounds, &casted, &default_val)
-                };
+                let write_val =
+                    crate::helpers::value_ops::select_value(b, &in_bounds, &casted, &default_val);
 
-                b.ir_write_memory(segment_id, &clamped_out, &write_val);
+                crate::helpers::segment::write_typed(
+                    b,
+                    segment_id,
+                    &clamped_out,
+                    &write_val,
+                    out_dtype,
+                );
             }
         }
 
@@ -544,9 +606,7 @@ pub fn dyn_concatenate(
         let len_vid = runtime_length_sv.value_id;
         b.fire_contract("dyn_concatenate", len_vid, &HashMap::new());
 
-        use crate::optim::predicates::formula::{
-            ArithOp, CmpOp, ContractTerm, ContractVar,
-        };
+        use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
         let sum_term: ContractTerm = if arg_len_terms.is_empty() {
             ContractTerm::LitInt(0)
         } else {
@@ -575,11 +635,7 @@ pub fn dyn_concatenate(
     let input_vids: Vec<crate::types::ValueId> =
         raw_values.iter().filter_map(|v| v.value_id()).collect();
     if input_vids.len() == raw_values.len() {
-        crate::optim::resolver::relay_forall_eq_const_from_all_inputs(
-            b,
-            &input_vids,
-            out_value_id,
-        );
+        crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &input_vids, out_value_id);
     }
 
     Value::DynamicNDArray(DynamicNDArrayData {
@@ -608,24 +664,15 @@ pub fn dyn_concatenate(
 /// Supports: dtype promotion, scalar inputs (treated as 0-d → stacked as 1-d).
 /// Output envelope: inserts new static dim (= num_arrays), other dims from first.
 /// total_bound = N * T_input.
-pub fn dyn_stack(
-    b: &mut IRBuilder,
-    args: &[Value],
-    kwargs: &HashMap<String, Value>,
-) -> Value {
-    let arrays_val = args
-        .first()
-        .expect("stack: requires arrays argument");
+pub fn dyn_stack(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+    let arrays_val = args.first().expect("stack: requires arrays argument");
     let raw_values: Vec<Value> = match arrays_val {
         Value::List(cd) | Value::Tuple(cd) => cd.values.clone(),
         _ => panic!("stack: first arg must be list/tuple of arrays"),
     };
     assert!(!raw_values.is_empty(), "stack: need at least one array");
 
-    let arrays: Vec<DynamicNDArrayData> = raw_values
-        .iter()
-        .map(|v| coerce_to_dyn(b, v))
-        .collect();
+    let arrays: Vec<DynamicNDArrayData> = raw_values.iter().map(|v| coerce_to_dyn(b, v)).collect();
 
     let axis = kwargs
         .get("axis")
@@ -639,7 +686,12 @@ pub fn dyn_stack(
     } else {
         axis as usize
     };
-    assert!(ax <= ndim, "stack: axis {} out of bounds for rank {}", ax, ndim);
+    assert!(
+        ax <= ndim,
+        "stack: axis {} out of bounds for rank {}",
+        ax,
+        ndim
+    );
 
     // Validate all arrays have the same shape.
     for (i, arr) in arrays.iter().enumerate().skip(1) {
@@ -660,19 +712,21 @@ pub fn dyn_stack(
     // Build envelope.
     let total_bound = num_arrays.saturating_mul(arrays[0].envelope.total_bound);
     let mut out_dims = arrays[0].envelope.dims.clone();
-    out_dims.insert(ax, crate::types::Dim::new_static(&mut b.dim_table, num_arrays));
+    out_dims.insert(
+        ax,
+        crate::types::Dim::new_static(&mut b.dim_table, num_arrays),
+    );
     let envelope = crate::types::Envelope::new_with_bound(out_dims, total_bound);
 
     // Check if any input has dynamic element count.
-    let _has_dynamic_input = arrays.iter().any(|a| {
-        a.envelope.dims.iter().any(|d| d.min != d.max)
-    });
+    let _has_dynamic_input = arrays
+        .iter()
+        .any(|a| a.envelope.dims.iter().any(|d| d.min != d.max));
 
     // Allocate output segment with defaults.
     let default_val = super::metadata::dyn_default_value(b, out_dtype);
-    let default_sv = value_to_scalar_i64(&default_val);
-    let init_elements = vec![default_sv; out_numel];
-    let segment_id = crate::helpers::segment::alloc_and_write(b, &init_elements, out_dtype);
+    let init_elements = vec![default_val.clone(); out_numel];
+    let segment_id = crate::helpers::segment::alloc_and_write_values(b, &init_elements, out_dtype);
     let max_out_addr = (out_numel as i64 - 1).max(0);
 
     // Per-input pass: for each input k, write its elements into the output
@@ -700,19 +754,14 @@ pub fn dyn_stack(
             // Read from source via ir_read_memory.
             let clamped_src = (src_flat as i64).min(src_numel as i64 - 1).max(0);
             let src_addr = b.ir_constant_int(clamped_src);
-            let src_val = b.ir_read_memory(arr.segment_id, &src_addr);
+            let src_val =
+                crate::helpers::segment::read_typed(b, arr.segment_id, &src_addr, arr.dtype);
 
             // Cast dtype if needed.
             let casted = if arr.dtype == out_dtype {
                 src_val
             } else {
-                match out_dtype {
-                    NumberType::Float => b.ir_float_cast(&src_val),
-                    NumberType::Integer => b.ir_int_cast(&src_val),
-                    NumberType::Complex => panic!(
-                        "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
-                    ),
-                }
+                cast_to_dtype(b, &src_val, out_dtype)
             };
 
             // Compute output address: decode src_flat to source coords,
@@ -723,13 +772,10 @@ pub fn dyn_stack(
             let out_flat = dyn_encode_coords(&out_coords, &out_strides) as i64;
             let out_addr = b.ir_constant_int(out_flat.min(max_out_addr).max(0));
 
-            let write_val = if out_dtype == NumberType::Float {
-                b.ir_select_f(&in_bounds, &casted, &default_val)
-            } else {
-                b.ir_select_i(&in_bounds, &casted, &default_val)
-            };
+            let write_val =
+                crate::helpers::value_ops::select_value(b, &in_bounds, &casted, &default_val);
 
-            b.ir_write_memory(segment_id, &out_addr, &write_val);
+            crate::helpers::segment::write_typed(b, segment_id, &out_addr, &write_val, out_dtype);
         }
     }
 
@@ -765,11 +811,7 @@ pub fn dyn_stack(
     let input_vids: Vec<crate::types::ValueId> =
         raw_values.iter().filter_map(|v| v.value_id()).collect();
     if input_vids.len() == raw_values.len() {
-        crate::optim::resolver::relay_forall_eq_const_from_all_inputs(
-            b,
-            &input_vids,
-            out_value_id,
-        );
+        crate::optim::resolver::relay_forall_eq_const_from_all_inputs(b, &input_vids, out_value_id);
     }
 
     Value::DynamicNDArray(DynamicNDArrayData {
@@ -839,7 +881,12 @@ fn dyn_split_impl(
     } else {
         axis as usize
     };
-    assert!(ax < ndim, "split: axis {} out of bounds for rank {}", ax, ndim);
+    assert!(
+        ax < ndim,
+        "split: axis {} out of bounds for rank {}",
+        ax,
+        ndim
+    );
 
     let axis_len = data.meta.logical_shape[ax];
 
@@ -855,7 +902,9 @@ fn dyn_split_impl(
             assert!(
                 axis_len % n == 0,
                 "split: array of size {} on axis {} cannot be split into {} equal parts",
-                axis_len, ax, n
+                axis_len,
+                ax,
+                n
             );
         }
         // Compute split points for equal/unequal division.
@@ -883,8 +932,12 @@ fn dyn_split_impl(
 
     let all_static = split_values.iter().all(|v| v.int_val().is_some());
 
-    // Pre-read source segment.
-    let src_vals = crate::helpers::segment::read_all(b, data.segment_id, data.max_length());
+    // Pre-read source segment. Force contiguity so row-major indexing
+    // below is consistent with cell ordering after a lazy transpose view.
+    let data_owned = super::force_contiguous(b, data);
+    let data = &data_owned;
+    let src_vals =
+        crate::helpers::segment::read_all_typed(b, data.segment_id, data.max_length(), data.dtype);
     let src_strides = dyn_row_major_strides(&data.meta.logical_shape);
 
     let mut result_arrays: Vec<Value> = Vec::with_capacity(num_chunks);
@@ -917,10 +970,11 @@ fn dyn_split_impl(
                 let mut src_coords = chunk_coords.clone();
                 src_coords[ax] += start;
                 let src_flat = dyn_encode_coords(&src_coords, &src_strides);
-                chunk_elements.push(value_to_scalar_i64(&src_vals[src_flat]));
+                chunk_elements.push(src_vals[src_flat].clone());
             }
 
-            let segment_id = crate::helpers::segment::alloc_and_write(b, &chunk_elements, data.dtype);
+            let segment_id =
+                crate::helpers::segment::alloc_and_write_values(b, &chunk_elements, data.dtype);
             let mut chunk_dims = data.envelope.dims.clone();
             chunk_dims[ax] = crate::types::Dim::new_static(&mut b.dim_table, chunk_len);
             let chunk_bound = chunk_numel.min(data.envelope.total_bound);
@@ -985,14 +1039,20 @@ fn dyn_split_impl(
         boundaries.push(axis_len_val);
 
         // Non-split axes dimensions and strides.
-        let other_product: usize = data.meta.logical_shape.iter().enumerate()
+        let other_product: usize = data
+            .meta
+            .logical_shape
+            .iter()
+            .enumerate()
             .filter(|&(i, _)| i != ax)
             .map(|(_, &s)| s)
             .product::<usize>()
             .max(1);
         let mut other_dims: Vec<usize> = Vec::new();
         for (d, &s) in data.meta.logical_shape.iter().enumerate() {
-            if d != ax { other_dims.push(s); }
+            if d != ax {
+                other_dims.push(s);
+            }
         }
         let other_strides = dyn_row_major_strides(&other_dims);
 
@@ -1005,7 +1065,6 @@ fn dyn_split_impl(
         let max_chunk_strides = dyn_row_major_strides(&max_chunk_shape);
 
         let default_val = super::metadata::dyn_default_value(b, data.dtype);
-        let default_sv = value_to_scalar_i64(&default_val);
         let ax_stride = src_strides[ax] as i64;
         let max_addr = (data.max_length() as i64 - 1).max(0);
 
@@ -1017,8 +1076,9 @@ fn dyn_split_impl(
             let chunk_len = b.ir_sub_i(chunk_end, chunk_start);
 
             // Allocate output segment with defaults.
-            let init_elements = vec![default_sv.clone(); max_chunk_numel];
-            let segment_id = crate::helpers::segment::alloc_and_write(b, &init_elements, data.dtype);
+            let init_elements = vec![default_val.clone(); max_chunk_numel];
+            let segment_id =
+                crate::helpers::segment::alloc_and_write_values(b, &init_elements, data.dtype);
 
             // For each output position i on the split axis, compute source
             // address = (start_k + i) * stride[ax] + other_offset.
@@ -1059,18 +1119,26 @@ fn dyn_split_impl(
                     let clamped_addr = b.ir_select_i(&is_over, &max_addr_val, &clamped_lo);
 
                     // Random access read from source.
-                    let src_val = b.ir_read_memory(data.segment_id, &clamped_addr);
+                    let src_val = crate::helpers::segment::read_typed(
+                        b,
+                        data.segment_id,
+                        &clamped_addr,
+                        data.dtype,
+                    );
 
                     // Select: in-bounds → source value, else → default.
-                    let write_val = if data.dtype == NumberType::Float {
-                        b.ir_select_f(&in_bounds, &src_val, &default_val)
-                    } else {
-                        b.ir_select_i(&in_bounds, &src_val, &default_val)
-                    };
+                    let write_val = crate::helpers::value_ops::select_value(
+                        b,
+                        &in_bounds,
+                        &src_val,
+                        &default_val,
+                    );
 
                     // Direct output address: i * other_product + other_flat.
                     let out_addr = b.ir_constant_int((i * other_product + other_flat) as i64);
-                    b.ir_write_memory(segment_id, &out_addr, &write_val);
+                    crate::helpers::segment::write_typed(
+                        b, segment_id, &out_addr, &write_val, data.dtype,
+                    );
                 }
             }
 
@@ -1080,7 +1148,9 @@ fn dyn_split_impl(
             let chunk_bound = max_chunk_numel.min(data.envelope.total_bound);
             let envelope = crate::types::Envelope::new_with_bound(chunk_dims, chunk_bound);
 
-            let mut runtime_shape: Vec<ScalarValue<i64>> = data.meta.logical_shape
+            let mut runtime_shape: Vec<ScalarValue<i64>> = data
+                .meta
+                .logical_shape
                 .iter()
                 .map(|&s| ScalarValue::new(Some(s as i64), None))
                 .collect();
@@ -1116,7 +1186,7 @@ fn dyn_split_impl(
     Value::List(crate::types::CompositeData {
         elements_type: types,
         values: result_arrays,
-    
+
         value_id: ValueId::next(),
     })
 }

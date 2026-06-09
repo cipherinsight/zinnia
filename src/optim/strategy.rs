@@ -149,13 +149,9 @@ pub fn dispatch_strategy<Inputs, Output>(
             // input_value_ids so an A/B harness can attribute dispatches
             // back to specific SSA inputs.
             if let Some(sink) = &b.telemetry {
-                let value_ids = crate::optim::predicates::collect_value_ids(
-                    &strat.precondition,
-                );
+                let value_ids = crate::optim::predicates::collect_value_ids(&strat.precondition);
                 sink.emit(&crate::optim::telemetry::strategy_dispatch_event(
-                    op_name,
-                    strat.name,
-                    &value_ids,
+                    op_name, strat.name, &value_ids,
                 ));
             }
             return (strat.lower)(b, inputs);

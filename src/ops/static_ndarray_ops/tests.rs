@@ -7,8 +7,9 @@ use super::*;
 use crate::builder::IRBuilder;
 use crate::circuit_input::InputPath;
 use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
+use crate::optim::prove::ProveOutcome;
 use crate::optim::resolver::LayeredResolver;
-use crate::types::{CompositeData, ScalarValue, Value, ValueId, ZinniaType};
+use crate::types::{CompositeData, NumberType, ScalarValue, Value, ValueId, ZinniaType};
 
 /// Build a 1-D static-NDArray Value::List of `n` literal floats.
 fn static_floats(n: usize) -> Value {
@@ -22,6 +23,16 @@ fn static_floats(n: usize) -> Value {
 
         value_id: ValueId::next(),
     })
+}
+
+fn static_int_array(b: &mut IRBuilder, vals: &[i64], shape: Vec<usize>) -> Value {
+    let flat = vals.iter().map(|&v| b.ir_constant_int(v)).collect();
+    crate::helpers::static_array::base::build_static_array_from_flat(
+        b,
+        flat,
+        shape,
+        NumberType::Integer,
+    )
 }
 
 /// Plant `k * k == n_squared` and `k >= 0` so prove() pins k to the
@@ -58,7 +69,9 @@ fn reshape_admits_value_provable_via_prove() {
     // the arithmetic shape requires prove(). Today's `require_static_int`
     // would reject this program; `resolve_int_or_bounded` admits it.
     let mut b = IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
     let arr = static_floats(8); // 1-D of length 8
 
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
@@ -69,14 +82,20 @@ fn reshape_admits_value_provable_via_prove() {
     // reshape(arr, k, 2) → shape (4, 2).
     let out = ndarray_reshape(&mut b, &arr, &[k, two]);
     let shape = crate::helpers::composite::get_composite_shape(&out);
-    assert_eq!(shape, vec![4, 2], "reshape did not produce the prove-derived shape");
+    assert_eq!(
+        shape,
+        vec![4, 2],
+        "reshape did not produce the prove-derived shape"
+    );
 }
 
 #[test]
 fn split_admits_value_provable_via_prove() {
     // np.split(arr, k) with k == 2 (derived from `k * k == 4`).
     let mut b = IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
     let arr = static_floats(8); // 1-D length 8, splits into 2 sections of 4
 
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
@@ -105,7 +124,9 @@ fn reshape_still_rejects_when_no_facts() {
     // bound-aware path returns Neither, falling through to the same
     // diagnostic as before.
     let mut b = IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
     let arr = static_floats(8);
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
     let two = b.ir_constant_int(2);
@@ -116,7 +137,9 @@ fn reshape_still_rejects_when_no_facts() {
 #[should_panic(expected = "split sections must be a compile-time constant int")]
 fn split_still_rejects_when_no_facts() {
     let mut b = IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
     let arr = static_floats(8);
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
     let kwargs = std::collections::HashMap::new();
@@ -132,7 +155,9 @@ fn np_fill_1d_admits_value_provable_via_prove_bounded() {
     // doubling probe and the constructor promotes to a 1-D
     // `DynamicNDArray` whose envelope's max_total is 10.
     let mut b = IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
 
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
     let k_vid = k.value_id().unwrap();
@@ -168,7 +193,10 @@ fn np_fill_1d_admits_value_provable_via_prove_bounded() {
             "expected prove-derived max_length=10 from `k + k <= 20`",
         );
     } else {
-        panic!("expected Value::DynamicNDArray from np_fill on bounded k, got {:?}", out);
+        panic!(
+            "expected Value::DynamicNDArray from np_fill on bounded k, got {:?}",
+            out
+        );
     }
 }
 
@@ -208,7 +236,9 @@ fn np_arange_admits_value_provable_via_prove_bounded() {
     // values are `[0, 1, ..., 9]`; the tail beyond runtime_length is
     // masked by downstream subscript ops.
     let mut b = IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
 
     let n = b.ir_read_integer(InputPath::new("n", vec![]), false);
     let n_vid = n.value_id().unwrap();
@@ -240,7 +270,9 @@ fn np_tile_admits_value_provable_via_prove_bounded() {
     // `k_max=10` (buffer length `3 * 10 = 30`) and computes
     // `runtime_length = 3 * k`.
     let mut b = IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
 
     let arr = static_floats(3);
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
@@ -275,7 +307,9 @@ fn np_identity_admits_value_provable_via_prove_bounded() {
     // builds a 2-D `DynamicNDArray` with envelope max_length=100
     // (n_max^2) and runtime_length aliasing the `n * n` mul.
     let mut b = IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
 
     let n = b.ir_read_integer(InputPath::new("n", vec![]), false);
     let n_vid = n.value_id().unwrap();
@@ -307,7 +341,9 @@ fn np_fill_multi_dim_admits_value_provable_via_prove_bounded() {
     // axis promotes the whole shape to a 2-D `DynamicNDArray` with
     // envelope max_length=30 and runtime_length=m*3.
     let mut b = IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
 
     let m = b.ir_read_integer(InputPath::new("m", vec![]), false);
     let m_vid = m.value_id().unwrap();
@@ -344,11 +380,285 @@ fn np_fill_multi_dim_admits_value_provable_via_prove_bounded() {
 }
 
 #[test]
+fn np_sort_static_array_sorts_values_and_fires_sorted_fact() {
+    let mut b = IRBuilder::new();
+    let arr = static_int_array(&mut b, &[3, 1, 2], vec![3]);
+    let out =
+        crate::helpers::static_array::sorting::try_apply_sort(&mut b, &arr, None, false).unwrap();
+    let vals: Vec<Option<i64>> =
+        crate::helpers::static_array::elementwise::payload_cells(&mut b, &out)
+            .iter()
+            .map(|v| v.int_val())
+            .collect();
+    assert_eq!(vals, vec![Some(1), Some(2), Some(3)]);
+
+    let term = ContractTerm::PredicateApp {
+        kind: "is_sorted".to_string(),
+        args: vec![ContractTerm::Var(ContractVar::Value(
+            out.value_id().unwrap(),
+        ))],
+    };
+    assert_eq!(b.prove(&term), ProveOutcome::Proved);
+}
+
+#[test]
+fn np_argsort_static_array_is_stable_for_equal_values() {
+    let mut b = IRBuilder::new();
+    let arr = static_int_array(&mut b, &[3, 1, 2, 1], vec![4]);
+    let out =
+        crate::helpers::static_array::sorting::try_apply_sort(&mut b, &arr, None, true).unwrap();
+    let vals: Vec<Option<i64>> =
+        crate::helpers::static_array::elementwise::payload_cells(&mut b, &out)
+            .iter()
+            .map(|v| v.int_val())
+            .collect();
+    assert_eq!(vals, vec![Some(1), Some(3), Some(2), Some(0)]);
+}
+
+#[test]
+fn np_take_static_array_axis_one_and_negative_indices() {
+    let mut b = IRBuilder::new();
+    let arr = static_int_array(&mut b, &[10, 20, 30, 40, 50, 60], vec![2, 3]);
+    let idx = Value::List(CompositeData {
+        elements_type: vec![ZinniaType::Integer; 2],
+        values: vec![b.ir_constant_int(-1), b.ir_constant_int(0)],
+        value_id: ValueId::next(),
+    });
+    let axis = b.ir_constant_int(1);
+    let out =
+        crate::helpers::static_array::sorting::try_apply_take(&mut b, &arr, &idx, Some(&axis))
+            .unwrap();
+    match &out {
+        Value::StaticArray { shape, .. } => assert_eq!(shape, &vec![2, 2]),
+        _ => panic!("expected StaticArray"),
+    }
+    let vals: Vec<Option<i64>> =
+        crate::helpers::static_array::elementwise::payload_cells(&mut b, &out)
+            .iter()
+            .map(|v| v.int_val())
+            .collect();
+    assert_eq!(vals, vec![Some(30), Some(10), Some(60), Some(40)]);
+}
+
+#[test]
+fn np_full_static_known_fill_fires_forall_eq_const() {
+    let mut b = IRBuilder::new();
+    let shape = Value::Tuple(CompositeData {
+        elements_type: vec![ZinniaType::Integer; 2],
+        values: vec![b.ir_constant_int(2), b.ir_constant_int(2)],
+        value_id: ValueId::next(),
+    });
+    let fill = b.ir_constant_int(7);
+    let out = np_full(&mut b, &[shape, fill], &std::collections::HashMap::new());
+    let term = ContractTerm::PredicateApp {
+        kind: "forall_eq_const".to_string(),
+        args: vec![
+            ContractTerm::Var(ContractVar::Value(out.value_id().unwrap())),
+            ContractTerm::LitInt(7),
+        ],
+    };
+    assert_eq!(b.prove(&term), ProveOutcome::Proved);
+}
+
+#[test]
+#[should_panic(expected = "np.full/full_like: Complex fill is not yet implemented")]
+fn np_full_rejects_explicit_complex_dtype() {
+    let mut b = IRBuilder::new();
+    let shape = Value::Tuple(CompositeData {
+        elements_type: vec![ZinniaType::Integer; 1],
+        values: vec![b.ir_constant_int(2)],
+        value_id: ValueId::next(),
+    });
+    let fill = b.ir_constant_int(1);
+    let mut kwargs = std::collections::HashMap::new();
+    kwargs.insert("dtype".to_string(), Value::Class(ZinniaType::Complex));
+    let _ = np_full(&mut b, &[shape, fill], &kwargs);
+}
+
+#[test]
+#[should_panic(expected = "np.full/full_like: Complex fill is not yet implemented")]
+fn np_full_like_rejects_explicit_complex_dtype() {
+    let mut b = IRBuilder::new();
+    let arr = static_int_array(&mut b, &[1, 2], vec![2]);
+    let fill = b.ir_constant_int(1);
+    let mut kwargs = std::collections::HashMap::new();
+    kwargs.insert("dtype".to_string(), Value::Class(ZinniaType::Complex));
+    let _ = np_full_like(&mut b, &[arr, fill], &kwargs);
+}
+
+#[test]
+fn np_var_std_static_array_axis_and_ddof_are_native() {
+    let mut b = IRBuilder::new();
+    let arr = static_int_array(&mut b, &[1, 2, 3, 4], vec![2, 2]);
+    let axis = b.ir_constant_int(1);
+    let ddof = b.ir_constant_int(1);
+    let out = crate::helpers::static_array::reductions::try_apply_var_std(
+        &mut b,
+        "var",
+        &arr,
+        Some(&axis),
+        Some(&ddof),
+        false,
+    )
+    .expect("native var");
+    match &out {
+        Value::StaticArray { shape, dtype, .. } => {
+            assert_eq!(shape, &vec![2]);
+            assert_eq!(*dtype, NumberType::Float);
+        }
+        _ => panic!("expected StaticArray"),
+    }
+    let vals: Vec<Option<f64>> =
+        crate::helpers::static_array::elementwise::payload_cells(&mut b, &out)
+            .iter()
+            .map(|v| v.float_val())
+            .collect();
+    assert_eq!(vals, vec![Some(0.5), Some(0.5)]);
+
+    let std_out = crate::helpers::static_array::reductions::try_apply_var_std(
+        &mut b, "std", &arr, None, None, false,
+    )
+    .expect("native std");
+    assert!(matches!(
+        std_out,
+        Value::StaticArray {
+            dtype: NumberType::Float,
+            ..
+        }
+    ));
+}
+
+#[test]
+#[should_panic(expected = "non-positive divisor")]
+fn np_var_static_array_rejects_invalid_ddof_for_axis_fiber() {
+    let mut b = IRBuilder::new();
+    let arr = static_int_array(&mut b, &[1, 2, 3, 4], vec![2, 2]);
+    let axis = b.ir_constant_int(1);
+    let ddof = b.ir_constant_int(2);
+    let _ = crate::helpers::static_array::reductions::try_apply_var_std(
+        &mut b,
+        "var",
+        &arr,
+        Some(&axis),
+        Some(&ddof),
+        false,
+    );
+}
+
+#[test]
+fn np_cov_static_array_rowvar_true_default() {
+    let mut b = IRBuilder::new();
+    let arr = static_int_array(&mut b, &[1, 2, 3, 2, 4, 6], vec![2, 3]);
+    let out = np_cov(&mut b, &[arr], &std::collections::HashMap::new());
+    match &out {
+        Value::StaticArray { shape, dtype, .. } => {
+            assert_eq!(shape, &vec![2, 2]);
+            assert_eq!(*dtype, NumberType::Float);
+        }
+        _ => panic!("expected StaticArray"),
+    }
+    let vals: Vec<Option<f64>> =
+        crate::helpers::static_array::elementwise::payload_cells(&mut b, &out)
+            .iter()
+            .map(|v| v.float_val())
+            .collect();
+    assert_eq!(vals, vec![Some(1.0), Some(2.0), Some(2.0), Some(4.0)]);
+}
+
+#[test]
+#[should_panic(expected = "weights")]
+fn np_cov_rejects_weight_kwargs() {
+    let mut b = IRBuilder::new();
+    let arr = static_int_array(&mut b, &[1, 2, 3, 4], vec![2, 2]);
+    let mut kwargs = std::collections::HashMap::new();
+    kwargs.insert("fweights".to_string(), b.ir_constant_int(1));
+    let _ = np_cov(&mut b, &[arr], &kwargs);
+}
+
+#[test]
+fn np_linalg_verify_inverse_emits_bidirectional_asserts() {
+    let mut b = IRBuilder::new();
+    let a = static_int_array(&mut b, &[1, 0, 0, 1], vec![2, 2]);
+    let y = static_int_array(&mut b, &[1, 0, 0, 1], vec![2, 2]);
+    let out = np_linalg_verify_inverse(&mut b, &[a, y.clone()]);
+    assert_eq!(
+        crate::helpers::composite::get_composite_shape(&out),
+        vec![2, 2]
+    );
+    let assert_count = b
+        .stmts
+        .iter()
+        .filter(|stmt| matches!(stmt.ir, crate::ir_defs::IR::Assert))
+        .count();
+    assert_eq!(assert_count, 2, "A@Y and Y@A must both be asserted");
+}
+
+#[test]
+fn np_linalg_verify_solve_accepts_vector_and_matrix_rhs() {
+    let mut b = IRBuilder::new();
+    let a = static_int_array(&mut b, &[1, 0, 0, 1], vec![2, 2]);
+    let x = static_int_array(&mut b, &[3, 4], vec![2]);
+    let rhs = static_int_array(&mut b, &[3, 4], vec![2]);
+    let out = np_linalg_verify_solve(&mut b, &[a.clone(), x.clone(), rhs]);
+    assert_eq!(
+        crate::helpers::composite::get_composite_shape(&out),
+        vec![2]
+    );
+
+    let x_matrix = static_int_array(&mut b, &[3, 4, 5, 6], vec![2, 2]);
+    let rhs_matrix = static_int_array(&mut b, &[3, 4, 5, 6], vec![2, 2]);
+    let out = np_linalg_verify_solve(&mut b, &[a, x_matrix.clone(), rhs_matrix]);
+    assert_eq!(
+        crate::helpers::composite::get_composite_shape(&out),
+        vec![2, 2]
+    );
+}
+
+#[test]
+fn np_linalg_verify_cholesky_asserts_lower_triangle_and_reconstruction() {
+    let mut b = IRBuilder::new();
+    let a = static_int_array(&mut b, &[4, 2, 2, 5], vec![2, 2]);
+    let l = static_int_array(&mut b, &[2, 0, 1, 2], vec![2, 2]);
+    let out = np_linalg_verify_cholesky(&mut b, &[a, l.clone()]);
+    assert_eq!(
+        crate::helpers::composite::get_composite_shape(&out),
+        vec![2, 2]
+    );
+    let assert_count = b
+        .stmts
+        .iter()
+        .filter(|stmt| matches!(stmt.ir, crate::ir_defs::IR::Assert))
+        .count();
+    assert_eq!(
+        assert_count, 2,
+        "one upper-triangle zero plus one reconstruction assert expected for 2x2"
+    );
+}
+
+#[test]
+#[should_panic(expected = "expected x and b to both be shape")]
+fn np_linalg_verify_solve_rejects_mismatched_rhs_shapes() {
+    let mut b = IRBuilder::new();
+    let a = static_int_array(&mut b, &[1, 0, 0, 1], vec![2, 2]);
+    let x = static_int_array(&mut b, &[3, 4], vec![2]);
+    let rhs = static_int_array(&mut b, &[3, 4, 5], vec![3]);
+    let _ = np_linalg_verify_solve(&mut b, &[a, x, rhs]);
+}
+
+#[test]
+#[should_panic(expected = "implicit result-returning linear algebra is deferred")]
+fn np_linalg_inv_implicit_result_rejects_with_helper_hint() {
+    let _ = np_linalg_implicit_result("inv");
+}
+
+#[test]
 fn np_arange_3arg_admits_value_provable_via_prove_bounded() {
     // `np.arange(0, stop, 2)` where `stop ∈ [0, 10]`. len_max =
     // ceildiv(10, 2) = 5; values are [0, 2, 4, 6, 8].
     let mut b = IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
 
     let stop = b.ir_read_integer(InputPath::new("stop", vec![]), false);
     let stop_vid = stop.value_id().unwrap();
@@ -377,7 +687,9 @@ fn np_repeat_admits_value_provable_via_prove_bounded() {
     // and `k ∈ [0, 10]`. Per-cell zkRAM construction: buffer length
     // `3 * 10 = 30`, runtime_length = `3 * k`.
     let mut b = IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
 
     let arr = static_floats(3);
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
@@ -409,7 +721,9 @@ fn np_linspace_admits_value_provable_via_prove_bounded() {
     // `np.linspace(0.0, 1.0, num)` where `num ∈ [2, 10]`. We need
     // `num >= 2` for endpoint=true; plant that explicitly.
     let mut b = IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
 
     let num = b.ir_read_integer(InputPath::new("num", vec![]), false);
     let num_vid = num.value_id().unwrap();

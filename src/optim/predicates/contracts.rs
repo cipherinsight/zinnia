@@ -119,10 +119,7 @@ impl OpContract {
 /// nothing).
 pub fn op_contract_for(ir: &IR) -> OpContract {
     let class = ir.class_name();
-    contract_registry()
-        .get(class)
-        .cloned()
-        .unwrap_or_default()
+    contract_registry().get(class).cloned().unwrap_or_default()
 }
 
 /// Name-keyed registry lookup for ops without a single distinguished IR
@@ -239,9 +236,7 @@ fn build_contract_registry() -> HashMap<&'static str, OpContract> {
                 ContractFormula::new(ContractTerm::Cmp {
                     op: CmpOp::Eq,
                     lhs: Box::new(ContractTerm::Var(ContractVar::Output)),
-                    rhs: Box::new(ContractTerm::Var(ContractVar::Formal(
-                        "active".to_string(),
-                    ))),
+                    rhs: Box::new(ContractTerm::Var(ContractVar::Formal("active".to_string()))),
                 }),
             ],
         ),
@@ -566,27 +561,90 @@ fn build_contract_registry() -> HashMap<&'static str, OpContract> {
     fn ensures_output_bool() -> ContractFormula {
         ensures_output_in_range(ContractTerm::LitInt(0), ContractTerm::LitInt(1))
     }
-    m.insert("eq_i", OpContract::pure(vec![], vec![ensures_output_bool()]));
-    m.insert("eq_f", OpContract::pure(vec![], vec![ensures_output_bool()]));
-    m.insert("ne_i", OpContract::pure(vec![], vec![ensures_output_bool()]));
-    m.insert("ne_f", OpContract::pure(vec![], vec![ensures_output_bool()]));
-    m.insert("lt_i", OpContract::pure(vec![], vec![ensures_output_bool()]));
-    m.insert("lt_f", OpContract::pure(vec![], vec![ensures_output_bool()]));
-    m.insert("lte_i", OpContract::pure(vec![], vec![ensures_output_bool()]));
-    m.insert("lte_f", OpContract::pure(vec![], vec![ensures_output_bool()]));
-    m.insert("gt_i", OpContract::pure(vec![], vec![ensures_output_bool()]));
-    m.insert("gt_f", OpContract::pure(vec![], vec![ensures_output_bool()]));
-    m.insert("gte_i", OpContract::pure(vec![], vec![ensures_output_bool()]));
-    m.insert("gte_f", OpContract::pure(vec![], vec![ensures_output_bool()]));
-    m.insert("logical_and", OpContract::pure(vec![], vec![ensures_output_bool()]));
-    m.insert("logical_or", OpContract::pure(vec![], vec![ensures_output_bool()]));
-    m.insert("logical_not", OpContract::pure(vec![], vec![ensures_output_bool()]));
-    m.insert("bool_cast", OpContract::pure(vec![], vec![ensures_output_bool()]));
-    m.insert("bit_and_i", OpContract::pure(vec![], vec![ensures_output_bool()]));
-    m.insert("bit_or_i", OpContract::pure(vec![], vec![ensures_output_bool()]));
-    m.insert("bit_xor_i", OpContract::pure(vec![], vec![ensures_output_bool()]));
-    m.insert("bit_not_i", OpContract::pure(vec![], vec![ensures_output_bool()]));
-    m.insert("int_cast_from_bool", OpContract::pure(vec![], vec![ensures_output_bool()]));
+    m.insert(
+        "eq_i",
+        OpContract::pure(vec![], vec![ensures_output_bool()]),
+    );
+    m.insert(
+        "eq_f",
+        OpContract::pure(vec![], vec![ensures_output_bool()]),
+    );
+    m.insert(
+        "ne_i",
+        OpContract::pure(vec![], vec![ensures_output_bool()]),
+    );
+    m.insert(
+        "ne_f",
+        OpContract::pure(vec![], vec![ensures_output_bool()]),
+    );
+    m.insert(
+        "lt_i",
+        OpContract::pure(vec![], vec![ensures_output_bool()]),
+    );
+    m.insert(
+        "lt_f",
+        OpContract::pure(vec![], vec![ensures_output_bool()]),
+    );
+    m.insert(
+        "lte_i",
+        OpContract::pure(vec![], vec![ensures_output_bool()]),
+    );
+    m.insert(
+        "lte_f",
+        OpContract::pure(vec![], vec![ensures_output_bool()]),
+    );
+    m.insert(
+        "gt_i",
+        OpContract::pure(vec![], vec![ensures_output_bool()]),
+    );
+    m.insert(
+        "gt_f",
+        OpContract::pure(vec![], vec![ensures_output_bool()]),
+    );
+    m.insert(
+        "gte_i",
+        OpContract::pure(vec![], vec![ensures_output_bool()]),
+    );
+    m.insert(
+        "gte_f",
+        OpContract::pure(vec![], vec![ensures_output_bool()]),
+    );
+    m.insert(
+        "logical_and",
+        OpContract::pure(vec![], vec![ensures_output_bool()]),
+    );
+    m.insert(
+        "logical_or",
+        OpContract::pure(vec![], vec![ensures_output_bool()]),
+    );
+    m.insert(
+        "logical_not",
+        OpContract::pure(vec![], vec![ensures_output_bool()]),
+    );
+    m.insert(
+        "bool_cast",
+        OpContract::pure(vec![], vec![ensures_output_bool()]),
+    );
+    m.insert(
+        "bit_and_i",
+        OpContract::pure(vec![], vec![ensures_output_bool()]),
+    );
+    m.insert(
+        "bit_or_i",
+        OpContract::pure(vec![], vec![ensures_output_bool()]),
+    );
+    m.insert(
+        "bit_xor_i",
+        OpContract::pure(vec![], vec![ensures_output_bool()]),
+    );
+    m.insert(
+        "bit_not_i",
+        OpContract::pure(vec![], vec![ensures_output_bool()]),
+    );
+    m.insert(
+        "int_cast_from_bool",
+        OpContract::pure(vec![], vec![ensures_output_bool()]),
+    );
     m.insert(
         "float_cast_from_bool",
         OpContract::pure(
@@ -669,6 +727,39 @@ fn build_contract_registry() -> HashMap<&'static str, OpContract> {
     );
 
     m.insert(
+        "arcsin_f",
+        OpContract::pure(
+            vec![ContractFormula::new(ContractTerm::BoolComb {
+                op: crate::optim::predicates::formula::BoolOp::And,
+                operands: vec![
+                    ContractTerm::Cmp {
+                        op: CmpOp::Ge,
+                        lhs: Box::new(ContractTerm::Var(ContractVar::Formal("x".to_string()))),
+                        rhs: Box::new(ContractTerm::LitFloat(
+                            crate::optim::predicates::formula::ContractFloat(-1.0),
+                        )),
+                    },
+                    ContractTerm::Cmp {
+                        op: CmpOp::Le,
+                        lhs: Box::new(ContractTerm::Var(ContractVar::Formal("x".to_string()))),
+                        rhs: Box::new(ContractTerm::LitFloat(
+                            crate::optim::predicates::formula::ContractFloat(1.0),
+                        )),
+                    },
+                ],
+            })],
+            vec![ensures_output_in_range(
+                ContractTerm::LitFloat(crate::optim::predicates::formula::ContractFloat(
+                    -std::f64::consts::FRAC_PI_2 - slack,
+                )),
+                ContractTerm::LitFloat(crate::optim::predicates::formula::ContractFloat(
+                    std::f64::consts::FRAC_PI_2 + slack,
+                )),
+            )],
+        ),
+    );
+
+    m.insert(
         "arctan2_f",
         OpContract::pure(
             vec![],
@@ -704,12 +795,8 @@ fn build_contract_registry() -> HashMap<&'static str, OpContract> {
                     lhs: Box::new(ContractTerm::Var(ContractVar::Output)),
                     rhs: Box::new(ContractTerm::Arith {
                         op: crate::optim::predicates::formula::ArithOp::Sub,
-                        lhs: Box::new(ContractTerm::Var(ContractVar::Formal(
-                            "stop".to_string(),
-                        ))),
-                        rhs: Box::new(ContractTerm::Var(ContractVar::Formal(
-                            "start".to_string(),
-                        ))),
+                        lhs: Box::new(ContractTerm::Var(ContractVar::Formal("stop".to_string()))),
+                        rhs: Box::new(ContractTerm::Var(ContractVar::Formal("start".to_string()))),
                     }),
                 }),
             ],
@@ -739,9 +826,7 @@ fn build_contract_registry() -> HashMap<&'static str, OpContract> {
                         lhs: Box::new(ContractTerm::Var(ContractVar::Formal(
                             "len_arr".to_string(),
                         ))),
-                        rhs: Box::new(ContractTerm::Var(ContractVar::Formal(
-                            "k".to_string(),
-                        ))),
+                        rhs: Box::new(ContractTerm::Var(ContractVar::Formal("k".to_string()))),
                     }),
                 }),
             ],
@@ -768,9 +853,7 @@ fn build_contract_registry() -> HashMap<&'static str, OpContract> {
                         lhs: Box::new(ContractTerm::Var(ContractVar::Formal(
                             "len_arr".to_string(),
                         ))),
-                        rhs: Box::new(ContractTerm::Var(ContractVar::Formal(
-                            "k".to_string(),
-                        ))),
+                        rhs: Box::new(ContractTerm::Var(ContractVar::Formal("k".to_string()))),
                     }),
                 }),
             ],
@@ -794,9 +877,7 @@ fn build_contract_registry() -> HashMap<&'static str, OpContract> {
                 ContractFormula::new(ContractTerm::Cmp {
                     op: CmpOp::Eq,
                     lhs: Box::new(ContractTerm::Var(ContractVar::Output)),
-                    rhs: Box::new(ContractTerm::Var(ContractVar::Formal(
-                        "num".to_string(),
-                    ))),
+                    rhs: Box::new(ContractTerm::Var(ContractVar::Formal("num".to_string()))),
                 }),
             ],
         ),
@@ -880,12 +961,8 @@ fn build_contract_registry() -> HashMap<&'static str, OpContract> {
                     lhs: Box::new(ContractTerm::Var(ContractVar::Output)),
                     rhs: Box::new(ContractTerm::Arith {
                         op: crate::optim::predicates::formula::ArithOp::Mul,
-                        lhs: Box::new(ContractTerm::Var(ContractVar::Formal(
-                            "N".to_string(),
-                        ))),
-                        rhs: Box::new(ContractTerm::Var(ContractVar::Formal(
-                            "N".to_string(),
-                        ))),
+                        lhs: Box::new(ContractTerm::Var(ContractVar::Formal("N".to_string()))),
+                        rhs: Box::new(ContractTerm::Var(ContractVar::Formal("N".to_string()))),
                     }),
                 }),
             ],
@@ -914,18 +991,30 @@ fn build_contract_registry() -> HashMap<&'static str, OpContract> {
             )),
         })
     }
-    m.insert("div_i", OpContract::pure(vec![requires_rhs_ne_zero_int()], vec![]));
+    m.insert(
+        "div_i",
+        OpContract::pure(vec![requires_rhs_ne_zero_int()], vec![]),
+    );
     m.insert(
         "floor_div_i",
         OpContract::pure(vec![requires_rhs_ne_zero_int()], vec![]),
     );
-    m.insert("mod_i", OpContract::pure(vec![requires_rhs_ne_zero_int()], vec![]));
-    m.insert("div_f", OpContract::pure(vec![requires_rhs_ne_zero_float()], vec![]));
+    m.insert(
+        "mod_i",
+        OpContract::pure(vec![requires_rhs_ne_zero_int()], vec![]),
+    );
+    m.insert(
+        "div_f",
+        OpContract::pure(vec![requires_rhs_ne_zero_float()], vec![]),
+    );
     m.insert(
         "floor_div_f",
         OpContract::pure(vec![requires_rhs_ne_zero_float()], vec![]),
     );
-    m.insert("mod_f", OpContract::pure(vec![requires_rhs_ne_zero_float()], vec![]));
+    m.insert(
+        "mod_f",
+        OpContract::pure(vec![requires_rhs_ne_zero_float()], vec![]),
+    );
 
     // ── inv_i (modular-inverse `x != 0` requires) ────────────────────
     //
@@ -938,7 +1027,10 @@ fn build_contract_registry() -> HashMap<&'static str, OpContract> {
             rhs: Box::new(ContractTerm::LitInt(0)),
         })
     }
-    m.insert("inv_i", OpContract::pure(vec![requires_x_ne_zero_int()], vec![]));
+    m.insert(
+        "inv_i",
+        OpContract::pure(vec![requires_x_ne_zero_int()], vec![]),
+    );
 
     // ── pow_i / pow_f (domain `base != 0 OR exp >= 0` requires) ──────
     //
@@ -989,7 +1081,10 @@ fn build_contract_registry() -> HashMap<&'static str, OpContract> {
         })
     }
     m.insert("pow_i", OpContract::pure(vec![requires_pow_int()], vec![]));
-    m.insert("pow_f", OpContract::pure(vec![requires_pow_float()], vec![]));
+    m.insert(
+        "pow_f",
+        OpContract::pure(vec![requires_pow_float()], vec![]),
+    );
 
     // ── arange_is_sorted / linspace_is_sorted (range-constructor content) ──
     //
@@ -1015,6 +1110,16 @@ fn build_contract_registry() -> HashMap<&'static str, OpContract> {
     );
     m.insert(
         "linspace_is_sorted",
+        OpContract::pure(
+            vec![],
+            vec![ContractFormula::new(ContractTerm::PredicateApp {
+                kind: "is_sorted".to_string(),
+                args: vec![ContractTerm::Var(ContractVar::Output)],
+            })],
+        ),
+    );
+    m.insert(
+        "sort_is_sorted",
         OpContract::pure(
             vec![],
             vec![ContractFormula::new(ContractTerm::PredicateApp {

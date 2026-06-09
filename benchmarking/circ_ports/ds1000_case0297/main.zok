@@ -1,0 +1,18 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0297/kernel.py
+// REASON: one-hot encoding with shape depending on (a - a.min()).max()+1 — runtime size; ZoKrates needs compile-time array sizes.
+
+def main(field[50] a) -> field[50][50]:
+  field min = a[0]
+  for u32 i in 0..50 do
+    min = if a[i] < min then a[i] else min fi
+  endfor
+  field[50] temp = [0; 50]
+  field max = 0
+  for u32 i in 0..50 do
+    temp[i] = a[i] - min
+    max = if temp[i] > max then temp[i] else max fi
+  endfor
+  // field[50][max+1] b  -- ILLEGAL: runtime dim
+  field[50][50] b = [[0; 50]; 50]
+  return b

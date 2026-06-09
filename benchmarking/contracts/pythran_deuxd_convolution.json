@@ -1,0 +1,138 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "max",
+        "min"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 14,
+      "line_start": 12,
+      "mutated_params": [],
+      "name": "clamp",
+      "ops": [
+        "Add"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "i",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "offset",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "maxval",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "max",
+        "min"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 19,
+      "line_start": 17,
+      "mutated_params": [],
+      "name": "reflect",
+      "ops": [
+        "Add",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "pos",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "offset",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "bound",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "clamp",
+        "np.zeros_like",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 32,
+      "line_start": 22,
+      "mutated_params": [],
+      "name": "conv",
+      "ops": [
+        "FloorDiv",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "x",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "weights",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 2,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_deuxd_convolution/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_deuxd_convolution",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\n\n@zk_chip\ndef clamp(i: Integer, offset: Float, maxval: Float):\n    j = max(0, i + offset)\n    return min(j, maxval)\n\n@zk_circuit\ndef reflect(pos: Float, offset: Float, bound: Float):\n    idx = pos + offset\n    return min(2 * (bound - 1) - idx, max(idx, -idx))\n\n@zk_circuit\ndef conv(x: Float[Array, 'N<=1024 M<=1024'], weights: Float[Array, 'N<=1024 M<=1024']):\n    sx = x.shape\n    sw = weights.shape\n    result = np.zeros_like(x)\n    for i in range(sx[0]):\n        for j in range(sx[1]):\n            for ii in range(sw[0]):\n                for jj in range(sw[1]):\n                    idx = (clamp(i, ii - sw[0] // 2, sw[0]), clamp(j, jj - sw[0] // 2, sw[0]))\n                    result[i, j] += x[idx] * weights[ii, jj]\n    return result",
+  "source_status": "direct"
+}

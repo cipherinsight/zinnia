@@ -1,20 +1,21 @@
+use super::ensure_bool;
 use crate::builder::IRBuilder;
 use crate::ops::{Op, OpArgs, ParamEntry};
 use crate::types::Value;
-use super::ensure_bool;
 
 pub struct LogicalAndOp;
 
 impl LogicalAndOp {
-    const PARAMS: [ParamEntry; 2] = [
-        ParamEntry::required("lhs"),
-        ParamEntry::required("rhs"),
-    ];
+    const PARAMS: [ParamEntry; 2] = [ParamEntry::required("lhs"), ParamEntry::required("rhs")];
 }
 
 impl Op for LogicalAndOp {
-    fn name(&self) -> &'static str { "logical_and" }
-    fn params(&self) -> &[ParamEntry] { &Self::PARAMS }
+    fn name(&self) -> &'static str {
+        "logical_and"
+    }
+    fn params(&self) -> &[ParamEntry] {
+        &Self::PARAMS
+    }
 
     fn build(&self, builder: &mut IRBuilder, args: &OpArgs) -> Value {
         let lhs = args.require("lhs");

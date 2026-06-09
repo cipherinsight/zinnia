@@ -1,0 +1,88 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "in-place-mutation",
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "np.ndarray",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 58,
+      "line_start": 14,
+      "mutated_params": [
+        "utens_stage"
+      ],
+      "name": "vadv",
+      "ops": [
+        "Add",
+        "Div",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": true,
+          "name": "utens_stage",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "u_stage",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "wcon",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "u_pos",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "utens",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "dtr_stage",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "npbench_weather_stencils_vadv_vadv/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "npbench_weather_stencils_vadv_vadv",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\nBET_M = 0.5\nBET_P = 0.5\n\n@zk_circuit\ndef vadv(utens_stage: Float[Array, 'N<=1024 M<=1024 K<=1024'], u_stage: Float[Array, 'N<=1024 M<=1024 K<=1024'], wcon: Float[Array, 'N<=1024 M<=1024 K<=1024'], u_pos: Float[Array, 'N<=1024 M<=1024 K<=1024'], utens: Float[Array, 'N<=1024 M<=1024 K<=1024'], dtr_stage: Float):\n    I, J, K = (utens_stage.shape[0], utens_stage.shape[1], utens_stage.shape[2])\n    ccol = np.ndarray((I, J, K), dtype=utens_stage.dtype)\n    dcol = np.ndarray((I, J, K), dtype=utens_stage.dtype)\n    data_col = np.ndarray((I, J), dtype=utens_stage.dtype)\n    for k in range(1):\n        gcv = 0.25 * (wcon[1:, :, k + 1] + wcon[:-1, :, k + 1])\n        cs = gcv * BET_M\n        ccol[:, :, k] = gcv * BET_P\n        bcol = dtr_stage - ccol[:, :, k]\n        correction_term = -cs * (u_stage[:, :, k + 1] - u_stage[:, :, k])\n        dcol[:, :, k] = dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term\n        divided = 1.0 / bcol\n        ccol[:, :, k] = ccol[:, :, k] * divided\n        dcol[:, :, k] = dcol[:, :, k] * divided\n    for k in range(1, K - 1):\n        gav = -0.25 * (wcon[1:, :, k] + wcon[:-1, :, k])\n        gcv = 0.25 * (wcon[1:, :, k + 1] + wcon[:-1, :, k + 1])\n        as_ = gav * BET_M\n        cs = gcv * BET_M\n        acol = gav * BET_P\n        ccol[:, :, k] = gcv * BET_P\n        bcol = dtr_stage - acol - ccol[:, :, k]\n        correction_term = -as_ * (u_stage[:, :, k - 1] - u_stage[:, :, k]) - cs * (u_stage[:, :, k + 1] - u_stage[:, :, k])\n        dcol[:, :, k] = dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term\n        divided = 1.0 / (bcol - ccol[:, :, k - 1] * acol)\n        ccol[:, :, k] = ccol[:, :, k] * divided\n        dcol[:, :, k] = (dcol[:, :, k] - dcol[:, :, k - 1] * acol) * divided\n    for k in range(K - 1, K):\n        gav = -0.25 * (wcon[1:, :, k] + wcon[:-1, :, k])\n        as_ = gav * BET_M\n        acol = gav * BET_P\n        bcol = dtr_stage - acol\n        correction_term = -as_ * (u_stage[:, :, k - 1] - u_stage[:, :, k])\n        dcol[:, :, k] = dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term\n        divided = 1.0 / (bcol - ccol[:, :, k - 1] * acol)\n        dcol[:, :, k] = (dcol[:, :, k] - dcol[:, :, k - 1] * acol) * divided\n    for k in range(K - 1, K - 2, -1):\n        datacol = dcol[:, :, k]\n        data_col[:] = datacol\n        utens_stage[:, :, k] = dtr_stage * (datacol - u_pos[:, :, k])\n    for k in range(K - 2, -1, -1):\n        datacol = dcol[:, :, k] - ccol[:, :, k] * data_col[:, :]\n        data_col[:] = datacol\n        utens_stage[:, :, k] = dtr_stage * (datacol - u_pos[:, :, k])",
+  "source_status": "direct"
+}

@@ -1,0 +1,95 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "domain-obligation"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "len",
+        "np.sqrt",
+        "np.tile"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 32,
+      "line_start": 12,
+      "mutated_params": [],
+      "name": "dist",
+      "ops": [
+        "Add",
+        "Div",
+        "Eq",
+        "Gt",
+        "Lt",
+        "Pow",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "x",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "y",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "z",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "L",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "periodicX",
+          "proposed_annotation": "Bool",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "periodicY",
+          "proposed_annotation": "Bool",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "periodicZ",
+          "proposed_annotation": "Bool",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_periodic_dist/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1]."
+  ],
+  "program": "pythran_periodic_dist",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, domain-obligation, in-place-mutation\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\n\n@zk_circuit\ndef dist(x: Float[Array, 'N<=1024'], y: Float[Array, 'N<=1024'], z: Float[Array, 'N<=1024'], L: Integer, periodicX: Bool, periodicY: Bool, periodicZ: Bool):\n    \"\"\" Computes distances between all particles and places the result in a matrix such that the ij th matrix entry corresponds to the distance between particle i and j \"\"\"\n    N = len(x)\n    xtemp = np.tile(x, (N, 1))\n    dx = xtemp - xtemp.T\n    ytemp = np.tile(y, (N, 1))\n    dy = ytemp - ytemp.T\n    ztemp = np.tile(z, (N, 1))\n    dz = ztemp - ztemp.T\n    if periodicX:\n        dx[dx > L / 2] = dx[dx > L / 2] - L\n        dx[dx < -L / 2] = dx[dx < -L / 2] + L\n    if periodicY:\n        dy[dy > L / 2] = dy[dy > L / 2] - L\n        dy[dy < -L / 2] = dy[dy < -L / 2] + L\n    if periodicZ:\n        dz[dz > L / 2] = dz[dz > L / 2] - L\n        dz[dz < -L / 2] = dz[dz < -L / 2] + L\n    d = np.sqrt(dx ** 2 + dy ** 2 + dz ** 2)\n    d[d == 0] = -1\n    return (d, dx, dy, dz)",
+  "source_status": "direct"
+}

@@ -1,0 +1,19 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0414/kernel.py
+// REASON: reshape(-1, bin_size) with runtime bin_size -> runtime-dependent shape; mean per bin needs runtime axis size.
+
+const u32 N = 8
+const u32 BIN_MAX = 8  // upper bound; real shape depends on bin_size
+
+def main(field[N] data, field bin_size) -> field[BIN_MAX]:
+    field[BIN_MAX] result = [0; BIN_MAX]
+    // CirC rejects: bin count = N // bin_size only known at runtime; reshape(-1, bin_size) is data-dependent shape.
+    for u32 b in 0..BIN_MAX do
+        field acc = 0
+        for u32 k in 0..BIN_MAX do
+            field idx = b * bin_size + k
+            acc = if k < bin_size then acc + data[idx] else acc fi
+        endfor
+        result[b] = acc / bin_size
+    endfor
+    return result

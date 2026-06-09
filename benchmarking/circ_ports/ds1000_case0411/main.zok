@@ -1,0 +1,21 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0411/kernel.py
+// REASON: np.zeros((high_index-low_index, high_index-low_index)) has runtime-dependent shape; slices with runtime endpoints.
+
+const u32 H = 5
+const u32 W = 5
+const u32 OUT = 5  // upper bound; real size = high_index - low_index
+
+def main(field[H][W] a, field low_index, field high_index) -> field[OUT][OUT]:
+    field[OUT][OUT] result = [[0; OUT]; OUT]
+    // CirC rejects: output array shape depends on (high_index - low_index),
+    // and source/dest slice bounds [low_index : high_index] use witness indices.
+    for u32 i in 0..OUT do
+        for u32 j in 0..OUT do
+            field si = low_index + i
+            field sj = low_index + j
+            bool in_bounds = (i + low_index < high_index) && (j + low_index < high_index)
+            result[i][j] = if in_bounds then a[si][sj] else 0 fi
+        endfor
+    endfor
+    return result

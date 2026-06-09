@@ -1,0 +1,88 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "in-place-mutation",
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "abs",
+        "np.argmax",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 23,
+      "line_start": 12,
+      "mutated_params": [
+        "M"
+      ],
+      "name": "factorMatrix0",
+      "ops": [
+        "Add",
+        "Div",
+        "Mult",
+        "NotEq",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": true,
+          "name": "M",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 2,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "abs",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 45,
+      "line_start": 26,
+      "mutated_params": [
+        "M"
+      ],
+      "name": "factorMatrix1",
+      "ops": [
+        "Add",
+        "Div",
+        "Gt",
+        "Mult",
+        "NotEq",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": true,
+          "name": "M",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 2,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_lu/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "pythran_lu",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\n\n@zk_circuit\ndef factorMatrix0(M: Float[Array, 'N<=1024 M<=1024']):\n    n = M.shape[0]\n    m = M.shape[1]\n    for line in range(0, n - 1):\n        cmax = np.argmax(abs(M[line:n, line])) + line\n        if cmax != line:\n            M[[line, cmax]] = M[[cmax, line]]\n        pivot = M[line, line]\n        for j in range(line + 1, n):\n            v = M[j, line] / pivot\n            for k in range(line, m):\n                M[j, k] -= v * M[line, k]\n\n@zk_circuit\ndef factorMatrix1(M: Float[Array, 'N<=1024 M<=1024']):\n    n = M.shape[0]\n    m = M.shape[1]\n    for line in range(0, n - 1):\n        cmax = line\n        vmax = abs(M[line, line])\n        for i in range(line + 1, n):\n            if abs(M[i, line]) > vmax:\n                vmax = abs(M[i, line])\n                cmax = i\n        if cmax != line:\n            for j in range(line, m):\n                t = M[line, j]\n                M[line, j] = M[cmax, j]\n                M[cmax, j] = t\n        pivot = M[line, line]\n        for j in range(line + 1, n):\n            v = M[j, line] / pivot\n            for k in range(line, m):\n                M[j, k] -= v * M[line, k]",
+  "source_status": "direct"
+}

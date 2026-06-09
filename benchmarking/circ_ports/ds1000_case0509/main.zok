@@ -1,0 +1,21 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0509/kernel.py
+// REASON: rows.min()/rows.max() derive slice bounds at runtime; output array shape is data-dependent
+
+def main(field[10][10] im) -> field[10][10]:
+    bool[10] row_has_zero = [false; 10]
+    bool[10] col_has_zero = [false; 10]
+    for u32 i in 0..10 do
+        for u32 j in 0..10 do
+            bool z = im[i][j] == 0
+            row_has_zero[i] = row_has_zero[i] || z
+            col_has_zero[j] = col_has_zero[j] || z
+        endfor
+    endfor
+    field[10][10] result = [[0; 10]; 10]
+    for u32 i in 0..10 do
+        for u32 j in 0..10 do
+            result[i][j] = if row_has_zero[i] && col_has_zero[j] then im[i][j] else 0 fi
+        endfor
+    endfor
+    return result

@@ -1,0 +1,26 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0318/kernel.py
+// REASON: inverse permutation + fancy column indexing lowered to explicit loops; assignment c[permutation]=arange becomes per-i assignment.
+
+def main(field[8][6] a, field[6] permutation) -> field[8][6]:
+  field[6] c = [0; 6]
+  // c[permutation[i]] = i requires dynamic index; lower to conditional writes
+  for u32 i in 0..6 do
+    for u32 k in 0..6 do
+      bool match = (permutation[i] == k)
+      c[k] = if match then i else c[k] fi
+    endfor
+  endfor
+  // a[:, c] — column gather via dynamic index, lowered with linear scan
+  field[8][6] out = [[0; 6]; 8]
+  for u32 i in 0..8 do
+    for u32 j in 0..6 do
+      field acc = 0
+      for u32 k in 0..6 do
+        bool match = (c[j] == k)
+        acc = if match then a[i][k] else acc fi
+      endfor
+      out[i][j] = acc
+    endfor
+  endfor
+  return out

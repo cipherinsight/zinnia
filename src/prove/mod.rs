@@ -36,6 +36,12 @@ pub mod types;
 #[cfg(feature = "halo2-backend")]
 pub mod halo2;
 
+#[cfg(feature = "halo2-base-backend")]
+pub mod halo2_base;
+
+#[cfg(feature = "noir-backend")]
+pub mod noir;
+
 // Re-export primary types.
 pub use error::ProvingError;
 pub use traits::{ProverBackend, Synthesizer};
@@ -46,13 +52,18 @@ pub use types::{ProofArtifact, ProvingParams, Value, VerifyResult};
 /// Supported backends:
 /// - `"mock"` — fast concrete evaluation, no proof generation
 /// - `"halo2"` / `"halo2-ipa"` — real ZK proof via zcash/halo2 IPA
+/// - `"halo2-base"` — real ZK proof via halo2-base's auto-packed circuit builder
 pub fn create_prover_backend(backend: &str) -> Result<Box<dyn ProverBackend>, ProvingError> {
     match backend {
         "mock" => Ok(Box::new(mock::MockProverBackend)),
         #[cfg(feature = "halo2-backend")]
         "halo2" | "halo2-ipa" => Ok(Box::new(halo2::Halo2ProverBackend)),
+        #[cfg(feature = "halo2-base-backend")]
+        "halo2-base" => Ok(Box::new(halo2_base::Halo2BaseProverBackend)),
+        #[cfg(feature = "noir-backend")]
+        "noir" | "noir-ultrahonk" => Ok(Box::new(noir::NoirProverBackend)),
         _ => Err(ProvingError::other(format!(
-            "Unknown proving backend: '{}'. Available: mock, halo2-ipa",
+            "Unknown proving backend: '{}'. Available: mock, halo2-ipa, halo2-base, noir",
             backend
         ))),
     }

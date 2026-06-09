@@ -6,8 +6,7 @@ use crate::circuit_input::InputPath;
 use crate::ir::IRStatement;
 use crate::ir_defs::IR;
 use crate::optim::predicates::{
-    build_input_name_index, find_structural_predicates, Discharger, DischargeKey,
-    DischargeResult,
+    build_input_name_index, find_structural_predicates, DischargeKey, DischargeResult, Discharger,
 };
 
 // ---------------------------------------------------------------------------
@@ -16,13 +15,16 @@ use crate::optim::predicates::{
 
 fn read_int_stmt(stmt_id: u32, param: &str) -> IRStatement {
     IRStatement::new(
-        stmt_id, crate::types::ValueId::next(),
+        stmt_id,
+        crate::types::ValueId::next(),
         IR::ReadInteger {
             path: InputPath::new(param.to_string(), vec![]),
             is_public: false,
         },
-        vec![], vec![],
-        None)
+        vec![],
+        vec![],
+        None,
+    )
 }
 
 fn structural_pred_stmt(
@@ -33,15 +35,18 @@ fn structural_pred_stmt(
     bound: Option<&str>,
 ) -> IRStatement {
     IRStatement::new(
-        stmt_id, crate::types::ValueId::next(),
+        stmt_id,
+        crate::types::ValueId::next(),
         IR::StructuralPredicate {
             kind: kind.to_string(),
             args: args.iter().map(|s| s.to_string()).collect(),
             op: op.map(String::from),
             bound: bound.map(String::from),
         },
-        vec![], vec![],
-        None)
+        vec![],
+        vec![],
+        None,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -54,7 +59,14 @@ fn find_structural_predicates_skips_other_ops() {
         read_int_stmt(0, "x"),
         read_int_stmt(1, "k"),
         structural_pred_stmt(2, "nnz", &["x"], Some("=="), Some("k")),
-        IRStatement::new(3, crate::types::ValueId::next(), IR::ConstantInt { value: 42 }, vec![], vec![], None),
+        IRStatement::new(
+            3,
+            crate::types::ValueId::next(),
+            IR::ConstantInt { value: 42 },
+            vec![],
+            vec![],
+            None,
+        ),
     ];
     let preds = find_structural_predicates(&stmts);
     assert_eq!(preds.len(), 1);
@@ -71,7 +83,10 @@ fn find_structural_predicates_preserves_order() {
     ];
     let preds = find_structural_predicates(&stmts);
     assert_eq!(preds.len(), 3);
-    assert_eq!(preds.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![0, 2, 3]);
+    assert_eq!(
+        preds.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        vec![0, 2, 3]
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -97,7 +112,8 @@ fn input_name_index_ignores_composite_reads() {
     // (e.g., indexed element of an ndarray). The foundation index only
     // captures scalar (segment-less) reads.
     let composite_read = IRStatement::new(
-        0, crate::types::ValueId::next(),
+        0,
+        crate::types::ValueId::next(),
         IR::ReadInteger {
             path: InputPath::new(
                 "arr".to_string(),
@@ -105,8 +121,10 @@ fn input_name_index_ignores_composite_reads() {
             ),
             is_public: false,
         },
-        vec![], vec![],
-        None);
+        vec![],
+        vec![],
+        None,
+    );
     let stmts = vec![composite_read, read_int_stmt(1, "k")];
     let idx = build_input_name_index(&stmts);
     assert!(idx.get("arr").is_none(), "composite reads must not appear");
@@ -138,11 +156,12 @@ fn collect_predicate_constraints_ties_pred_value_to_scalar_bound() {
     let k_term = Int::fresh_const("k_");
 
     let input_lengths = std::collections::HashMap::new();
-    let constraints = discharger.collect_predicate_constraints(&stmts, &input_lengths, |name| match name {
-        "x" => x_term.clone(),
-        "k" => k_term.clone(),
-        _ => Int::fresh_const(&format!("test_{name}_")),
-    });
+    let constraints =
+        discharger.collect_predicate_constraints(&stmts, &input_lengths, |name| match name {
+            "x" => x_term.clone(),
+            "k" => k_term.clone(),
+            _ => Int::fresh_const(&format!("test_{name}_")),
+        });
 
     assert!(
         !constraints.clauses.is_empty(),
@@ -170,14 +189,17 @@ fn collect_predicate_constraints_ties_pred_value_to_scalar_bound() {
 
 #[test]
 fn collect_predicate_constraints_ignores_unregistered_kinds() {
-    let stmts = vec![
-        structural_pred_stmt(0, "not_a_real_predicate", &["x"], None, None),
-    ];
+    let stmts = vec![structural_pred_stmt(
+        0,
+        "not_a_real_predicate",
+        &["x"],
+        None,
+        None,
+    )];
     let discharger = Discharger::new();
     let input_lengths = std::collections::HashMap::new();
-    let c = discharger.collect_predicate_constraints(&stmts, &input_lengths, |_| {
-        Int::fresh_const("t_")
-    });
+    let c = discharger
+        .collect_predicate_constraints(&stmts, &input_lengths, |_| Int::fresh_const("t_"));
     assert!(c.clauses.is_empty());
     assert!(c.meta_facts.is_empty());
 }
@@ -195,9 +217,12 @@ fn collect_predicate_constraints_dedups_meta_facts_within_one_query() {
     let c = discharger.collect_predicate_constraints(&stmts, &input_lengths, |name| {
         Int::fresh_const(&format!("test_{name}_"))
     });
-    assert_eq!(c.meta_facts.len(), 1,
-               "meta-facts must dedup by predicate kind, got {} for 3 nnz refs",
-               c.meta_facts.len());
+    assert_eq!(
+        c.meta_facts.len(),
+        1,
+        "meta-facts must dedup by predicate kind, got {} for 3 nnz refs",
+        c.meta_facts.len()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -227,7 +252,8 @@ fn nnz_length_bound_constrains_k_via_z3() {
     // Element-wise reads for x: 1024 ReadFloat with segments [Index(i)].
     for i in 0..1024u32 {
         stmts.push(IRStatement::new(
-            stmt_id, crate::types::ValueId::next(),
+            stmt_id,
+            crate::types::ValueId::next(),
             IR::ReadFloat {
                 path: crate::circuit_input::InputPath::new(
                     "x".to_string(),
@@ -235,8 +261,10 @@ fn nnz_length_bound_constrains_k_via_z3() {
                 ),
                 is_public: false,
             },
-            vec![], vec![],
-            None));
+            vec![],
+            vec![],
+            None,
+        ));
         stmt_id += 1;
     }
     // Scalar read for k.
@@ -254,8 +282,11 @@ fn nnz_length_bound_constrains_k_via_z3() {
 
     // Derive helper maps the same way the resolver would.
     let input_lengths = crate::optim::predicates::build_input_array_lengths(&stmts);
-    assert_eq!(input_lengths.get("x").copied(), Some(1024),
-               "build_input_array_lengths must recover x's length from the reads");
+    assert_eq!(
+        input_lengths.get("x").copied(),
+        Some(1024),
+        "build_input_array_lengths must recover x's length from the reads"
+    );
 
     // Pre-resolve the scalar k name to a Z3 term so the discharger sees
     // the real symbol (mirrors what the resolver does at chokepoint).
@@ -264,7 +295,11 @@ fn nnz_length_bound_constrains_k_via_z3() {
 
     let discharger = Discharger::new();
     let c = discharger.collect_predicate_constraints(&stmts, &input_lengths, |name| {
-        if name == "k" { k_term.clone() } else { Int::fresh_const(&format!("test_{name}_")) }
+        if name == "k" {
+            k_term.clone()
+        } else {
+            Int::fresh_const(&format!("test_{name}_"))
+        }
     });
 
     let solver = z3::Solver::new();
@@ -278,22 +313,31 @@ fn nnz_length_bound_constrains_k_via_z3() {
     // 1) Witness k = 500 is satisfiable.
     solver.push();
     solver.assert(&k_term.eq(&Int::from_i64(500)));
-    assert_eq!(solver.check(), z3::SatResult::Sat,
-               "k = 500 must be admissible given nnz(x) <= 1024");
+    assert_eq!(
+        solver.check(),
+        z3::SatResult::Sat,
+        "k = 500 must be admissible given nnz(x) <= 1024"
+    );
     solver.pop(1);
 
     // 2) Witness k = 2000 is UNSAT (Z3 derived the bound).
     solver.push();
     solver.assert(&k_term.eq(&Int::from_i64(2000)));
-    assert_eq!(solver.check(), z3::SatResult::Unsat,
-               "k = 2000 must be rejected — the length bound is load-bearing");
+    assert_eq!(
+        solver.check(),
+        z3::SatResult::Unsat,
+        "k = 2000 must be rejected — the length bound is load-bearing"
+    );
     solver.pop(1);
 
     // 3) Witness k = -1 is UNSAT (the >= 0 half of the bound).
     solver.push();
     solver.assert(&k_term.eq(&Int::from_i64(-1)));
-    assert_eq!(solver.check(), z3::SatResult::Unsat,
-               "k = -1 must be rejected — nnz is non-negative");
+    assert_eq!(
+        solver.check(),
+        z3::SatResult::Unsat,
+        "k = -1 must be rejected — nnz is non-negative"
+    );
     solver.pop(1);
 }
 
@@ -320,7 +364,8 @@ fn full_resolver_chain_proves_k_bound_via_smt() {
     let mut id: u32 = 0;
     for i in 0..1024u32 {
         stmts.push(IRStatement::new(
-            id, crate::types::ValueId::next(),
+            id,
+            crate::types::ValueId::next(),
             IR::ReadFloat {
                 path: crate::circuit_input::InputPath::new(
                     "x".to_string(),
@@ -328,23 +373,34 @@ fn full_resolver_chain_proves_k_bound_via_smt() {
                 ),
                 is_public: false,
             },
-            vec![], vec![],
-            None));
+            vec![],
+            vec![],
+            None,
+        ));
         id += 1;
     }
     // Scalar read for k.
     let k_id = id;
     stmts.push(IRStatement::new(
-        id, crate::types::ValueId::next(),
+        id,
+        crate::types::ValueId::next(),
         IR::ReadInteger {
             path: crate::circuit_input::InputPath::new("k".to_string(), vec![]),
             is_public: false,
         },
-        vec![], vec![],
-        None));
+        vec![],
+        vec![],
+        None,
+    ));
     id += 1;
     // Structural-predicate: nnz(x) == k.
-    stmts.push(structural_pred_stmt(id, "nnz", &["x"], Some("=="), Some("k")));
+    stmts.push(structural_pred_stmt(
+        id,
+        "nnz",
+        &["x"],
+        Some("=="),
+        Some("k"),
+    ));
 
     // `Value` for the k wire that the chokepoint queries against.
     let k_value = Value::Integer(ScalarValue::new(None, Some(k_id)));
@@ -391,7 +447,11 @@ fn try_discharge_with_caches_first_result() {
         called2 += 1;
         DischargeResult::Disproved
     });
-    assert_eq!(r2, DischargeResult::Proved, "cache must return first result");
+    assert_eq!(
+        r2,
+        DischargeResult::Proved,
+        "cache must return first result"
+    );
     assert_eq!(called2, 0, "callback must not be invoked on cache hit");
 }
 

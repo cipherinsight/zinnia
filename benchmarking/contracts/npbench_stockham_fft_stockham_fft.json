@@ -1,0 +1,94 @@
+{
+  "categories": [
+    "complex",
+    "denominator-obligation",
+    "in-place-mutation",
+    "loop-bounded",
+    "matmul-dot"
+  ],
+  "diagnostics": [
+    "Complex kernels require Complex dtype support or a fail-closed classification."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "np.empty",
+        "np.exp",
+        "np.repeat",
+        "np.reshape",
+        "np.transpose",
+        "range",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 28,
+      "line_start": 15,
+      "mutated_params": [
+        "y"
+      ],
+      "name": "stockham_fft",
+      "ops": [
+        "Add",
+        "Div",
+        "MatMult",
+        "Mult",
+        "NotEq",
+        "Pow",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "N",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "R",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "K",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "x",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "y",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "npbench_stockham_fft_stockham_fft/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Declare shared matrix/vector dimensions explicitly, e.g. A[N,K] with x[K].",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "npbench_stockham_fft_stockham_fft",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: complex, denominator-obligation, in-place-mutation, loop-bounded, matmul-dot\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Declare shared matrix/vector dimensions explicitly; when not expressible as @requires, encode with matching symbolic annotation names and keep as review obligation.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.\nimport numpy as np\n\n@zk_circuit\n@requires(lambda N, R, K, x, y: R != 0)\ndef stockham_fft(N: Integer, R: Integer, K: Integer, x: Complex[Array, 'N<=1024'], y: Complex[Array, 'N<=1024']):\n    i_coord, j_coord = np.mgrid[0:R, 0:R]\n    dft_mat = np.empty((R, R), dtype=np.complex128)\n    dft_mat = np.exp(-2j * np.pi * i_coord * j_coord / R)\n    y[:] = x[:]\n    ii_coord, jj_coord = np.mgrid[0:R, 0:R ** K]\n    for i in range(K):\n        yv = np.reshape(y, (R ** i, R, R ** (K - i - 1)))\n        tmp_perm = np.transpose(yv, axes=(1, 0, 2))\n        D = np.empty((R, R ** i, R ** (K - i - 1)), dtype=np.complex128)\n        tmp = np.exp(-2j * np.pi * ii_coord[:, :R ** i] * jj_coord[:, :R ** i] / R ** (i + 1))\n        D[:] = np.repeat(np.reshape(tmp, (R, R ** i, 1)), R ** (K - i - 1), axis=2)\n        tmp_twid = np.reshape(tmp_perm, (N,)) * np.reshape(D, (N,))\n        y[:] = np.reshape(dft_mat @ np.reshape(tmp_twid, (R, R ** (K - 1))), (N,))",
+  "source_status": "direct"
+}

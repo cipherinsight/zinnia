@@ -1,0 +1,69 @@
+{
+  "categories": [
+    "matmul-dot"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 7,
+      "line_start": 5,
+      "mutated_params": [],
+      "name": "kernel",
+      "ops": [
+        "MatMult"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "x1",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "x2",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "y_1",
+          "proposed_annotation": "Float[Array, 'M<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "y_2",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "A",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "npbench_polybench_mvt_mvt/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Declare shared matrix/vector dimensions explicitly, e.g. A[N,K] with x[K]."
+  ],
+  "program": "npbench_polybench_mvt_mvt",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\nimport numpy as np\n\n@zk_circuit\ndef kernel(x1: Float, x2: Float, y_1: Float[Array, 'M<=1024'], y_2: Float[Array, 'N<=1024'], A: Float[Array, 'N<=1024 M<=1024']):\n    x1 += A @ y_1\n    x2 += y_2 @ A",
+  "source_status": "direct"
+}

@@ -1,0 +1,16 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0412/kernel.py
+// REASON: x[x>=0] boolean-mask read produces a dynamic-length array.
+
+const u32 N = 10
+
+def main(field[N] x) -> field[N]:
+    field[N] result = [0; N]
+    // CirC rejects: output length depends on count of nonneg entries (runtime-dependent).
+    u32 cnt = 0
+    for u32 i in 0..N do
+        bool keep = x[i] >= 0
+        result[cnt] = if keep then x[i] else result[cnt] fi
+        cnt = if keep then cnt + 1 else cnt fi
+    endfor
+    return result

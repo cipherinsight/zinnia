@@ -1,0 +1,15 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0413/kernel.py
+// REASON: complex numbers (x.imag) and dynamic-length boolean-mask read; ZoKrates has neither complex types nor variable-length arrays.
+
+const u32 N = 10
+
+def main(field[N] x_real, field[N] x_imag) -> field[N]:
+    field[N] result = [0; N]
+    u32 cnt = 0
+    for u32 i in 0..N do
+        bool keep = x_imag[i] != 0
+        result[cnt] = if keep then x_real[i] else result[cnt] fi
+        cnt = if keep then cnt + 1 else cnt fi
+    endfor
+    return result

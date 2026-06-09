@@ -9,7 +9,14 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = ["halo2-backend", "extension-module"]
-halo2-backend = ["halo2_proofs", "pasta_curves", "rand"]
+halo2-backend = ["halo2_proofs", "rand", "blake2b_simd"]
+halo2-base-backend = ["halo2-backend", "halo2-base"]
+# Source-to-source Noir backend: emits .nr text from IR and shells out to
+# nargo + bb. No new Rust deps; the Q32 fixed-point library lives in
+# benchmarking/noir_fpc and is vendored into emitted packages via
+# include_str! so the handwritten baselines and the auto-emitted ones
+# share a single source of truth.
+noir-backend = []
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]
@@ -20,9 +27,18 @@ pythonize = "0.23"
 num-bigint = "0.4"
 num-traits = "0.2"
 num-integer = "0.1"
-halo2_proofs = { version = "0.3", features = ["dev-graph"], optional = true }
-pasta_curves = { version = "0.5", optional = true }
+# Use the same PSE git v0.3.0 that halo2-base's halo2-pse feature uses.
+# This unlocks BN254 (`halo2_proofs::halo2curves::bn256`) so Zinnia and
+# the HW baselines (under halo2-base/halo2-pse) run on the SAME library
+# AND the SAME curve.
+halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", tag = "v0.3.0", features = ["circuit-params", "derive_serde"], optional = true }
+halo2-base = { git = "https://github.com/axiom-crypto/halo2-lib.git", branch = "community-edition", default-features = false, features = ["halo2-pse"], optional = true }
 rand = { version = "0.8", optional = true }
+# BLAKE2b for the `ir_hash` diagnostic field on `ProofArtifact`
+# (halo2-cross-process-vk-serialization, D' direction). Already pulled in
+# transitively by halo2_proofs; named directly so the prove crate has a
+# stable API surface and the dep is visible in `cargo tree`.
+blake2b_simd = { version = "1.0", optional = true }
 # P1 SMT-resolver foundation. The 0.20 line is the latest stable on
 # crates.io as of 2026-05-07. We deliberately do NOT enable the
 # `bundled` feature: it builds libz3 from source, which adds ~5 min to
@@ -44,3 +60,28 @@ pyo3 = { version = "0.23", features = ["auto-initialize"] }
 
 [build-dependencies]
 pyo3-build-config = "0.23"
+
+# Match the codegen settings of the standalone halo2_proofs micro-benchmark
+# so the prove path runs against an identically-optimized halo2 codebase.
+# Without this, the default `release` profile (no LTO, 16 codegen units)
+# can leave 15-25 % performance on the table for tight halo2 hot loops —
+# specifically the witness-assignment closures inside `create_proof` that
+# the standalone bench inlines and Zinnia previously did not.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+# Closes ~50 ms of the prior 0387 (output-heavy reshape) residual by giving
+# the LLVM whole-program optimizer all of `halo2_proofs` + Zinnia's prove
+# path. Previously the default release profile (no LTO, codegen-units=16)
+# left function boundaries in the witness-assignment hot loops; under LTO
+# those inline through.
+#
+# NOTE: `panic = "abort"` would shave another ~5 ms but is incompatible
+# with the Python-side fuzzer / runner, which relies on Python catching
+# panics from pre-existing bug cases (e.g. 0298) and treating them as
+# per-case failures rather than process-wide aborts. Kept on default
+# (unwind) so the benchmark runner survives those cases.
+debug = false
+debug-assertions = false
+incremental = false

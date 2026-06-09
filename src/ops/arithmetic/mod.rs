@@ -13,10 +13,18 @@ macro_rules! define_binary_arith_op {
         }
 
         impl crate::ops::Op for $name {
-            fn name(&self) -> &'static str { $op_name }
-            fn params(&self) -> &[crate::ops::ParamEntry] { &Self::PARAMS }
+            fn name(&self) -> &'static str {
+                $op_name
+            }
+            fn params(&self) -> &[crate::ops::ParamEntry] {
+                &Self::PARAMS
+            }
 
-            fn build(&self, builder: &mut crate::builder::IRBuilder, args: &crate::ops::OpArgs) -> crate::types::Value {
+            fn build(
+                &self,
+                builder: &mut crate::builder::IRBuilder,
+                args: &crate::ops::OpArgs,
+            ) -> crate::types::Value {
                 let lhs = args.require("lhs");
                 let rhs = args.require("rhs");
 
@@ -32,31 +40,35 @@ macro_rules! define_binary_arith_op {
                 }
 
                 // TODO: NDArray, List, Tuple, String paths
-                panic!("Op `{}` not supported for {:?} and {:?}",
-                    $op_name, lhs.zinnia_type(), rhs.zinnia_type())
+                panic!(
+                    "Op `{}` not supported for {:?} and {:?}",
+                    $op_name,
+                    lhs.zinnia_type(),
+                    rhs.zinnia_type()
+                )
             }
         }
     };
 }
 
 pub mod add;
-pub mod sub;
-pub mod mul;
 pub mod div;
 pub mod floor_divide;
-pub mod mod_op;
-pub mod power;
 pub mod mat_mul;
-pub mod usub;
+pub mod mod_op;
+pub mod mul;
+pub mod power;
+pub mod sub;
 pub mod uadd;
+pub mod usub;
 
 pub use add::AddOp;
-pub use sub::SubOp;
-pub use mul::MulOp;
 pub use div::DivOp;
 pub use floor_divide::FloorDivideOp;
-pub use mod_op::ModOp;
-pub use power::PowerOp;
 pub use mat_mul::MatMulOp;
-pub use usub::USubOp;
+pub use mod_op::ModOp;
+pub use mul::MulOp;
+pub use power::PowerOp;
+pub use sub::SubOp;
 pub use uadd::UAddOp;
+pub use usub::USubOp;

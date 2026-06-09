@@ -1,0 +1,22 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0406/kernel.py
+// REASON: np.unique (dynamic-length output), np.zeros(np.amax(index)+1) (runtime size), and a[index==i] boolean mask (dynamic).
+
+const u32 N = 100
+const u32 NBINS = 100  // upper bound; actual = max(index)+1, only known at runtime
+
+def main(field[N] a, field[N] index) -> field[NBINS]:
+    field[NBINS] result = [0; NBINS]
+    // CirC rejects: np.unique produces a runtime-sized list; iterating over it
+    // with a data-dependent loop bound is not expressible in ZoKrates.
+    for u32 i in 0..NBINS do
+        field best = 0
+        bool seen = false
+        for u32 k in 0..N do
+            bool match = index[k] == i
+            best = if match && (!seen || a[k] > best) then a[k] else best fi
+            seen = seen || match
+        endfor
+        result[i] = best
+    endfor
+    return result

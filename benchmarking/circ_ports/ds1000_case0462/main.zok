@@ -1,0 +1,17 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0462/kernel.py
+// REASON: Boolean-mask read a[selection] produces a runtime-length output; ZoKrates requires compile-time array sizes
+
+def main(field[20] a) -> field[20]:
+    bool[20] selection = [true; 20]
+    for u32 i in 1..20 do
+        selection[i] = (a[i] != a[i-1]) && (a[i] != 0)
+    endfor
+    selection[0] = a[0] != 0
+    // a[selection] would have unknown compile-time length - CirC rejects.
+    // Skeleton: zero out masked-off entries instead.
+    field[20] result = [0; 20]
+    for u32 i in 0..20 do
+        result[i] = if selection[i] then a[i] else 0 fi
+    endfor
+    return result

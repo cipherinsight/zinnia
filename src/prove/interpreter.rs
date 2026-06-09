@@ -12,30 +12,26 @@ use crate::prove::traits::Synthesizer;
 /// String operations and `Print` are no-ops (they have no circuit
 /// representation). External function calls are rejected — they must be
 /// resolved during preprocessing before the IR reaches the prover.
-pub fn interpret_ir<S: Synthesizer>(
-    graph: &IRGraph,
-    synth: &mut S,
-) -> Result<(), ProvingError> {
+pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<(), ProvingError> {
     let n = graph.stmts.len();
     let mut cells: Vec<Option<S::CellRef>> = Vec::with_capacity(n);
     cells.resize_with(n, || None);
 
     for stmt in &graph.stmts {
         let id = stmt.stmt_id as usize;
+        synth.on_stmt_begin(stmt.stmt_id);
 
         // Collect argument cell references.
         let args: Vec<S::CellRef> = stmt
             .arguments
             .iter()
             .map(|&arg_id| {
-                cells[arg_id as usize]
-                    .clone()
-                    .ok_or_else(|| {
-                        ProvingError::synthesis(format!(
-                            "Statement {} references undefined cell {}",
-                            id, arg_id
-                        ))
-                    })
+                cells[arg_id as usize].clone().ok_or_else(|| {
+                    ProvingError::synthesis(format!(
+                        "Statement {} references undefined cell {}",
+                        id, arg_id
+                    ))
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -68,12 +64,39 @@ pub fn interpret_ir<S: Synthesizer>(
 
             // ── Float arithmetic ──────────────────────────────────────
             IR::AddF => Some(synth.add_f(&args[0], &args[1])?),
+            IR::SumF { len } => {
+                if args.len() != *len as usize {
+                    return Err(ProvingError::synthesis(format!(
+                        "SumF expected {} operands, got {}",
+                        len,
+                        args.len()
+                    )));
+                }
+                Some(synth.sum_f(&args)?)
+            }
             IR::SubF => Some(synth.sub_f(&args[0], &args[1])?),
             IR::MulF => Some(synth.mul_f(&args[0], &args[1])?),
+            IR::ProductSumF { len } => {
+                let expected = (*len as usize).saturating_mul(2);
+                if args.len() != expected {
+                    return Err(ProvingError::synthesis(format!(
+                        "ProductSumF expected {} operands for {} pairs, got {}",
+                        expected,
+                        len,
+                        args.len()
+                    )));
+                }
+                let pairs: Vec<(S::CellRef, S::CellRef)> = args
+                    .chunks_exact(2)
+                    .map(|chunk| (chunk[0].clone(), chunk[1].clone()))
+                    .collect();
+                Some(synth.product_sum_f(&pairs)?)
+            }
             IR::DivF => Some(synth.div_f(&args[0], &args[1])?),
             IR::FloorDivF => Some(synth.floor_div_f(&args[0], &args[1])?),
             IR::ModF => Some(synth.mod_f(&args[0], &args[1])?),
             IR::PowF => Some(synth.pow_f(&args[0], &args[1])?),
+            IR::PowFI => Some(synth.pow_f_int(&args[0], &args[1])?),
             IR::AbsF => Some(synth.abs_f(&args[0])?),
             IR::SignF => Some(synth.sign_f(&args[0])?),
 
@@ -81,6 +104,20 @@ pub fn interpret_ir<S: Synthesizer>(
             IR::EqI => Some(synth.eq_i(&args[0], &args[1])?),
             IR::NeI => Some(synth.ne_i(&args[0], &args[1])?),
             IR::LtI => Some(synth.lt_i(&args[0], &args[1])?),
+            IR::LtIBounded => Some(synth.lt_i_bounded(&args[0], &args[1])?),
+            IR::GtIBounded => Some(synth.gt_i_bounded(&args[0], &args[1])?),
+            IR::IndexInBox { rank } => {
+                // args laid out flat as [idx_0, lo_0, hi_0, idx_1, lo_1, hi_1, ...].
+                let mut triples: Vec<(_, _, _)> = Vec::with_capacity(*rank);
+                for k in 0..*rank {
+                    triples.push((
+                        args[k * 3].clone(),
+                        args[k * 3 + 1].clone(),
+                        args[k * 3 + 2].clone(),
+                    ));
+                }
+                Some(synth.index_in_box(&triples)?)
+            }
             IR::LteI => Some(synth.lte_i(&args[0], &args[1])?),
             IR::GtI => Some(synth.gt_i(&args[0], &args[1])?),
             IR::GteI => Some(synth.gte_i(&args[0], &args[1])?),
@@ -103,6 +140,7 @@ pub fn interpret_ir<S: Synthesizer>(
             IR::SqrtF => Some(synth.sqrt_f(&args[0])?),
             IR::ExpF => Some(synth.exp_f(&args[0])?),
             IR::LogF => Some(synth.log_f(&args[0])?),
+            IR::ArcSinF => Some(synth.arcsin_f(&args[0])?),
             IR::ArcCosF => Some(synth.arccos_f(&args[0])?),
             IR::ArcTan2F => Some(synth.arctan2_f(&args[0], &args[1])?),
 
@@ -115,7 +153,21 @@ pub fn interpret_ir<S: Synthesizer>(
             IR::SelectI | IR::SelectF | IR::SelectB => {
                 Some(synth.select(&args[0], &args[1], &args[2])?)
             }
-
+            IR::SelectBitI | IR::SelectBitF => {
+                Some(synth.select_bit(&args[0], &args[1], &args[2])?)
+            }
+            IR::SelectManyI { len, lane } | IR::SelectManyF { len, lane } => {
+                let len = *len as usize;
+                let lane = *lane as usize;
+                let true_values = args[1..1 + len].to_vec();
+                let false_values = args[1 + len..1 + len * 2].to_vec();
+                Some(synth.select_many_lane(
+                    &args[0],
+                    &true_values,
+                    &false_values,
+                    lane,
+                )?)
+            }
             // ── Casting ───────────────────────────────────────────────
             IR::IntCast => Some(synth.int_cast(&args[0])?),
             IR::FloatCast => Some(synth.float_cast(&args[0])?),
@@ -125,24 +177,31 @@ pub fn interpret_ir<S: Synthesizer>(
             IR::AddStr | IR::StrI | IR::StrF => None,
 
             // ── I/O ───────────────────────────────────────────────────
-            IR::ReadInteger { path, is_public } => {
-                Some(synth.read_input(path, *is_public)?)
-            }
-            IR::ReadFloat { path, is_public } => {
-                Some(synth.read_input(path, *is_public)?)
-            }
-            IR::ReadHash { path, is_public } => {
-                Some(synth.read_input(path, *is_public)?)
-            }
-            IR::ReadExternalResult { store_idx, output_idx, .. } => {
-                Some(synth.read_external_result(*store_idx, *output_idx)?)
-            }
+            IR::ReadInteger { path, is_public } => Some(synth.read_input(path, *is_public)?),
+            IR::ReadFloat { path, is_public } => Some(synth.read_input(path, *is_public)?),
+            IR::ReadHash { path, is_public } => Some(synth.read_input(path, *is_public)?),
+            IR::ReadExternalResult {
+                store_idx,
+                output_idx,
+                ..
+            } => Some(synth.read_external_result(*store_idx, *output_idx)?),
             IR::Print => None,
 
             // ── Assertions & public exposure ──────────────────────────
             IR::Assert => {
                 synth.assert_true(&args[0])?;
                 None
+            }
+            IR::AssertBit => {
+                synth.assert_bit(&args[0])?;
+                None
+            }
+            IR::AssertU128Lt => {
+                synth.assert_u128_lt(&args[0], &args[1])?;
+                None
+            }
+            IR::AssertU128LtBit { hi, bit, bits } => {
+                Some(synth.assert_u128_lt_bit(&args[0], *hi, *bit, *bits)?)
             }
             IR::ExposePublicI => {
                 let label = format!("public_i_{}", id);
@@ -179,9 +238,7 @@ pub fn interpret_ir<S: Synthesizer>(
                 synth.write_memory(*segment_id, &args[0], &args[1])?;
                 None
             }
-            IR::ReadMemory { segment_id } => {
-                Some(synth.read_memory(*segment_id, &args[0])?)
-            }
+            IR::ReadMemory { segment_id } => Some(synth.read_memory(*segment_id, &args[0])?),
             IR::MemoryTraceEmit {
                 segment_id,
                 is_write,
@@ -200,17 +257,23 @@ pub fn interpret_ir<S: Synthesizer>(
                 dtype_name,
                 max_length,
                 max_rank,
+                max_shape,
             } => {
                 synth.allocate_dynamic_ndarray_meta(
                     *array_id,
                     dtype_name,
                     *max_length,
                     *max_rank,
+                    max_shape,
                 )?;
                 None
             }
-            IR::WitnessDynamicNDArrayMeta { array_id, max_rank } => {
-                synth.witness_dynamic_ndarray_meta(*array_id, *max_rank, &args)?;
+            IR::WitnessDynamicNDArrayMeta {
+                array_id,
+                max_rank,
+                param_name,
+            } => {
+                synth.witness_dynamic_ndarray_meta(*array_id, *max_rank, param_name, &args)?;
                 None
             }
             IR::AssertDynamicNDArrayMeta {
@@ -236,9 +299,9 @@ pub fn interpret_ir<S: Synthesizer>(
             // ── External function calls ──────────────────────────────
             // These are resolved during preprocessing. The prover skips
             // them — the external-computed values are already in the witness.
-            IR::InvokeExternal { .. }
-            | IR::ExportExternalI { .. }
-            | IR::ExportExternalF { .. } => None,
+            IR::InvokeExternal { .. } | IR::ExportExternalI { .. } | IR::ExportExternalF { .. } => {
+                None
+            }
 
             // ── Hash ──────────────────────────────────────────────────
             IR::PoseidonHash => Some(synth.poseidon_hash(&args)?),
@@ -252,4 +315,3 @@ pub fn interpret_ir<S: Synthesizer>(
 
     Ok(())
 }
-

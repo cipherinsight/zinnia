@@ -13,8 +13,19 @@ pub fn select_value(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> 
     // and same dtype → per-cell select into a fresh segment-backed result.
     // Mismatched shapes / dtypes / one-sided StaticArray fall through to
     // the legacy materialised path.
-    if let (Value::StaticArray { dtype: tdt, shape: ts, .. },
-            Value::StaticArray { dtype: fdt, shape: fs, .. }) = (tv, fv) {
+    if let (
+        Value::StaticArray {
+            dtype: tdt,
+            shape: ts,
+            ..
+        },
+        Value::StaticArray {
+            dtype: fdt,
+            shape: fs,
+            ..
+        },
+    ) = (tv, fv)
+    {
         if ts == fs && tdt == fdt && !matches!(tdt, crate::types::NumberType::Complex) {
             let shape = ts.clone();
             let dtype = *tdt;
@@ -37,24 +48,36 @@ pub fn select_value(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> 
     }
     match (tv, fv) {
         (Value::List(td), Value::List(fd)) if td.values.len() == fd.values.len() => {
-            let results: Vec<Value> = td.values.iter().zip(fd.values.iter())
+            let results: Vec<Value> = td
+                .values
+                .iter()
+                .zip(fd.values.iter())
                 .map(|(t, f)| select_value(b, cond, t, f))
                 .collect();
             let types = results.iter().map(|v| v.zinnia_type()).collect();
-            Value::List(CompositeData { elements_type: types, values: results, value_id: ValueId::next() })
+            Value::List(CompositeData {
+                elements_type: types,
+                values: results,
+                value_id: ValueId::next(),
+            })
         }
         (Value::Tuple(td), Value::Tuple(fd)) if td.values.len() == fd.values.len() => {
-            let results: Vec<Value> = td.values.iter().zip(fd.values.iter())
+            let results: Vec<Value> = td
+                .values
+                .iter()
+                .zip(fd.values.iter())
                 .map(|(t, f)| select_value(b, cond, t, f))
                 .collect();
             let types = results.iter().map(|v| v.zinnia_type()).collect();
-            Value::Tuple(CompositeData { elements_type: types, values: results, value_id: ValueId::next() })
+            Value::Tuple(CompositeData {
+                elements_type: types,
+                values: results,
+                value_id: ValueId::next(),
+            })
         }
         // If types don't match (e.g., list vs scalar), just use the true value
         // (can't do conditional select across different structures)
-        (Value::List(_) | Value::Tuple(_), _) | (_, Value::List(_) | Value::Tuple(_)) => {
-            tv.clone()
-        }
+        (Value::List(_) | Value::Tuple(_), _) | (_, Value::List(_) | Value::Tuple(_)) => tv.clone(),
         // Complex (2-cell) values: select per component. Promote any
         // numeric scalar on either side to Complex first.
         (Value::Complex { .. }, _) | (_, Value::Complex { .. }) => {
@@ -95,10 +118,7 @@ pub fn pack_complex_value(real: Value, imag: Value) -> Value {
 /// pair of `Value::Float` ScalarValues that can feed into ir_*_f gates.
 fn unpack_to_complex_parts(b: &mut IRBuilder, val: &Value) -> (Value, Value) {
     match val {
-        Value::Complex { real, imag } => (
-            Value::Float(real.clone()),
-            Value::Float(imag.clone()),
-        ),
+        Value::Complex { real, imag } => (Value::Float(real.clone()), Value::Float(imag.clone())),
         Value::Float(_) => (val.clone(), b.ir_constant_float(0.0)),
         Value::Integer(_) | Value::Boolean(_) => {
             let real = b.ir_float_cast(val);
@@ -127,12 +147,7 @@ fn pack_complex(real: Value, imag: Value) -> Value {
 /// Component-wise binary arithmetic on Complex operands. Each operand is
 /// promoted to a 2-tuple of Floats; the result is repackaged as
 /// `Value::Complex` (or, for `eq` / `ne`, a single boolean cell).
-pub fn apply_complex_binary_op(
-    b: &mut IRBuilder,
-    op: &str,
-    lhs: &Value,
-    rhs: &Value,
-) -> Value {
+pub fn apply_complex_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) -> Value {
     let (la, lb) = unpack_to_complex_parts(b, lhs);
     let (ra, rb) = unpack_to_complex_parts(b, rhs);
 
@@ -241,12 +256,30 @@ pub fn to_scalar_bool(b: &mut IRBuilder, val: &Value) -> Value {
             }
             acc
         }
+        Value::Boolean(_) => val.clone(),
         _ => b.ir_bool_cast(val),
     }
 }
 
 /// Apply a binary operation, with element-wise support for composite types.
 pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) -> Value {
+    if matches!(op, "in" | "not_in") {
+        return apply_membership_op(b, op, lhs, rhs);
+    }
+
+    let has_array_like_operand = matches!(
+        lhs,
+        Value::List(_) | Value::Tuple(_) | Value::StaticArray { .. }
+    ) || matches!(
+        rhs,
+        Value::List(_) | Value::Tuple(_) | Value::StaticArray { .. }
+    );
+    let op = match op {
+        "bit_and" if has_array_like_operand => "and",
+        "bit_or" if has_array_like_operand => "or",
+        other => other,
+    };
+
     // ── StaticArray native dispatch (P4a) ────────────────────────────
     // For two StaticArrays (or one StaticArray + numeric scalar), apply
     // the elementwise op on the segment-backed payload. Falls back to
@@ -270,8 +303,14 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
     // If either operand is Complex (and the other is a numeric scalar or
     // also Complex), route to component-wise complex arithmetic.
     if matches!(lhs, Value::Complex { .. }) || matches!(rhs, Value::Complex { .. }) {
-        let lhs_promotable = matches!(lhs, Value::Complex { .. } | Value::Float(_) | Value::Integer(_) | Value::Boolean(_));
-        let rhs_promotable = matches!(rhs, Value::Complex { .. } | Value::Float(_) | Value::Integer(_) | Value::Boolean(_));
+        let lhs_promotable = matches!(
+            lhs,
+            Value::Complex { .. } | Value::Float(_) | Value::Integer(_) | Value::Boolean(_)
+        );
+        let rhs_promotable = matches!(
+            rhs,
+            Value::Complex { .. } | Value::Float(_) | Value::Integer(_) | Value::Boolean(_)
+        );
         if lhs_promotable && rhs_promotable {
             return apply_complex_binary_op(b, op, lhs, rhs);
         }
@@ -280,6 +319,13 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
     // ── DynamicNDArray dispatch ──────────────────────────────────────
     // When either operand is a DynamicNDArray, promote the other and
     // dispatch to the dynamic binary op.
+    if matches!(op, "mat_mul")
+        && (matches!(lhs, Value::DynamicNDArray(_)) || matches!(rhs, Value::DynamicNDArray(_)))
+    {
+        panic!(
+            "DynamicNDArray matmul is not yet supported for bounded-dynamic arrays; use static arrays or keep matmul outside the bounded-dynamic surface"
+        );
+    }
     match (lhs, rhs) {
         (Value::DynamicNDArray(ld), Value::DynamicNDArray(rd)) => {
             return crate::ops::dyn_ndarray::binary::dyn_binary_op(b, op, ld, rd);
@@ -287,9 +333,14 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
         (Value::DynamicNDArray(d), other) | (other, Value::DynamicNDArray(d))
             if other.is_number() =>
         {
-            let scalar_is_lhs = matches!(lhs, Value::Integer(_) | Value::Float(_) | Value::Boolean(_));
+            let scalar_is_lhs =
+                matches!(lhs, Value::Integer(_) | Value::Float(_) | Value::Boolean(_));
             return crate::ops::dyn_ndarray::binary::dyn_scalar_binary_op(
-                b, op, other, d, scalar_is_lhs,
+                b,
+                op,
+                other,
+                d,
+                scalar_is_lhs,
             );
         }
         (Value::DynamicNDArray(d), other) | (other, Value::DynamicNDArray(d)) => {
@@ -313,15 +364,24 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
     // or when both are pure integer lists — same-length composites do element-wise)
     if op == "add" {
         match (lhs, rhs) {
-            (Value::List(ld), Value::List(rd)) | (Value::Tuple(ld), Value::List(rd))
-            | (Value::List(ld), Value::Tuple(rd)) | (Value::Tuple(ld), Value::Tuple(rd)) => {
+            (Value::List(ld), Value::List(rd))
+            | (Value::Tuple(ld), Value::List(rd))
+            | (Value::List(ld), Value::Tuple(rd))
+            | (Value::Tuple(ld), Value::Tuple(rd)) => {
                 // Same-length composites: element-wise addition (ndarray behavior)
                 if ld.values.len() == rd.values.len() && !ld.values.is_empty() {
-                    let results: Vec<Value> = ld.values.iter().zip(rd.values.iter())
+                    let results: Vec<Value> = ld
+                        .values
+                        .iter()
+                        .zip(rd.values.iter())
                         .map(|(l, r)| apply_binary_op(b, "add", l, r))
                         .collect();
                     let types = results.iter().map(|v| v.zinnia_type()).collect();
-                    return Value::List(CompositeData { elements_type: types, values: results, value_id: ValueId::next() });
+                    return Value::List(CompositeData {
+                        elements_type: types,
+                        values: results,
+                        value_id: ValueId::next(),
+                    });
                 }
                 // Different-length composites: by default this is Python
                 // list concatenation. But if both operands look like
@@ -341,9 +401,17 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
                     let types = values.iter().map(|v| v.zinnia_type()).collect();
                     let is_tuple = matches!(lhs, Value::Tuple(_));
                     return if is_tuple {
-                        Value::Tuple(CompositeData { elements_type: types, values, value_id: ValueId::next() })
+                        Value::Tuple(CompositeData {
+                            elements_type: types,
+                            values,
+                            value_id: ValueId::next(),
+                        })
                     } else {
-                        Value::List(CompositeData { elements_type: types, values, value_id: ValueId::next() })
+                        Value::List(CompositeData {
+                            elements_type: types,
+                            values,
+                            value_id: ValueId::next(),
+                        })
                     };
                 }
             }
@@ -367,9 +435,17 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
                 let types = values.iter().map(|v| v.zinnia_type()).collect();
                 let is_tuple = matches!(lhs, Value::Tuple(_));
                 return if is_tuple {
-                    Value::Tuple(CompositeData { elements_type: types, values, value_id: ValueId::next() })
+                    Value::Tuple(CompositeData {
+                        elements_type: types,
+                        values,
+                        value_id: ValueId::next(),
+                    })
                 } else {
-                    Value::List(CompositeData { elements_type: types, values, value_id: ValueId::next() })
+                    Value::List(CompositeData {
+                        elements_type: types,
+                        values,
+                        value_id: ValueId::next(),
+                    })
                 };
             }
             (_, Value::List(rd)) | (_, Value::Tuple(rd))
@@ -383,9 +459,17 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
                 let types = values.iter().map(|v| v.zinnia_type()).collect();
                 let is_tuple = matches!(rhs, Value::Tuple(_));
                 return if is_tuple {
-                    Value::Tuple(CompositeData { elements_type: types, values, value_id: ValueId::next() })
+                    Value::Tuple(CompositeData {
+                        elements_type: types,
+                        values,
+                        value_id: ValueId::next(),
+                    })
                 } else {
-                    Value::List(CompositeData { elements_type: types, values, value_id: ValueId::next() })
+                    Value::List(CompositeData {
+                        elements_type: types,
+                        values,
+                        value_id: ValueId::next(),
+                    })
                 };
             }
             _ => {}
@@ -447,7 +531,7 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
                         return Value::List(CompositeData {
                             elements_type: types,
                             values: results,
-                        
+
                             value_id: ValueId::next(),
                         });
                     }
@@ -463,15 +547,24 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
     // (E.g. (8,) @ (8, 7) — both have outermost length 8 but the result is
     // (7,), not 8 element-wise scalar matmuls.)
     match (lhs, rhs) {
-        (Value::List(ld), Value::List(rd)) | (Value::Tuple(ld), Value::List(rd))
-        | (Value::List(ld), Value::Tuple(rd)) | (Value::Tuple(ld), Value::Tuple(rd))
+        (Value::List(ld), Value::List(rd))
+        | (Value::Tuple(ld), Value::List(rd))
+        | (Value::List(ld), Value::Tuple(rd))
+        | (Value::Tuple(ld), Value::Tuple(rd))
             if ld.values.len() == rd.values.len() && op != "mat_mul" =>
         {
-            let results: Vec<Value> = ld.values.iter().zip(rd.values.iter())
+            let results: Vec<Value> = ld
+                .values
+                .iter()
+                .zip(rd.values.iter())
                 .map(|(l, r)| apply_binary_op(b, op, l, r))
                 .collect();
             let types = results.iter().map(|v| v.zinnia_type()).collect();
-            return Value::List(CompositeData { elements_type: types, values: results, value_id: ValueId::next() });
+            return Value::List(CompositeData {
+                elements_type: types,
+                values: results,
+                value_id: ValueId::next(),
+            });
         }
         // Shape-level broadcasting: both composites, mismatched shapes that are
         // broadcast-compatible (NumPy semantics). Materialize both operands to
@@ -506,18 +599,30 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
         }
         // Broadcasting: scalar op composite
         (_, Value::List(rd)) | (_, Value::Tuple(rd)) if lhs.is_number() => {
-            let results: Vec<Value> = rd.values.iter()
+            let results: Vec<Value> = rd
+                .values
+                .iter()
                 .map(|r| apply_binary_op(b, op, lhs, r))
                 .collect();
             let types = results.iter().map(|v| v.zinnia_type()).collect();
-            return Value::List(CompositeData { elements_type: types, values: results, value_id: ValueId::next() });
+            return Value::List(CompositeData {
+                elements_type: types,
+                values: results,
+                value_id: ValueId::next(),
+            });
         }
         (Value::List(ld), _) | (Value::Tuple(ld), _) if rhs.is_number() => {
-            let results: Vec<Value> = ld.values.iter()
+            let results: Vec<Value> = ld
+                .values
+                .iter()
                 .map(|l| apply_binary_op(b, op, l, rhs))
                 .collect();
             let types = results.iter().map(|v| v.zinnia_type()).collect();
-            return Value::List(CompositeData { elements_type: types, values: results, value_id: ValueId::next() });
+            return Value::List(CompositeData {
+                elements_type: types,
+                values: results,
+                value_id: ValueId::next(),
+            });
         }
         _ => {}
     }
@@ -536,13 +641,48 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
     apply_scalar_binary_op(b, op, lhs, rhs)
 }
 
+fn apply_membership_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) -> Value {
+    let candidates = match rhs {
+        Value::List(data) | Value::Tuple(data) => data.values.clone(),
+        Value::StaticArray { .. } => {
+            crate::helpers::composite::flatten_composite_with_builder(b, rhs)
+        }
+        Value::DynamicNDArray(_) => {
+            panic!(
+                "membership over DynamicNDArray is not supported; use a static List, Tuple, or NDArray RHS"
+            )
+        }
+        _ => panic!("membership operator requires a static List, Tuple, or NDArray RHS"),
+    };
+
+    let mut found = b.ir_constant_bool(false);
+    for candidate in candidates {
+        let eq = apply_binary_op(b, "eq", lhs, &candidate);
+        let eq_bool = to_scalar_bool(b, &eq);
+        if eq_bool.bool_val() == Some(true) {
+            found = eq_bool;
+            break;
+        }
+        found = b.ir_logical_or(&found, &eq_bool);
+    }
+
+    match op {
+        "in" => found,
+        "not_in" => b.ir_logical_not(&found),
+        _ => unreachable!("membership helper only accepts in/not_in"),
+    }
+}
+
 pub fn apply_scalar_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) -> Value {
     // Bitwise operators are defined only on integers / booleans. Reject
     // float operands with a clear panic before the float-promotion branch
     // (Python's & / ^ / | on float raises TypeError).
     if matches!(op, "bit_and" | "bit_or" | "bit_xor" | "shl" | "shr") {
         if matches!(lhs, Value::Float(_)) || matches!(rhs, Value::Float(_)) {
-            panic!("Bitwise operator `{}` requires integer/boolean operands, got float", op);
+            panic!(
+                "Bitwise operator `{}` requires integer/boolean operands, got float",
+                op
+            );
         }
         return match op {
             "bit_and" => b.ir_bit_and_i(lhs, rhs),
@@ -556,6 +696,12 @@ pub fn apply_scalar_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Va
 
     let use_float = matches!(lhs, Value::Float(_)) || matches!(rhs, Value::Float(_));
     if use_float {
+        // Float base ^ Integer exponent: stay in PowFI so backends can lower
+        // to integer-exponent square-and-multiply instead of qexp(b*qlog(a)).
+        // Detect BEFORE the implicit float cast erases the type.
+        if op == "pow" && matches!(lhs, Value::Float(_)) && matches!(rhs, Value::Integer(_)) {
+            return b.ir_pow_f_int(lhs, rhs);
+        }
         // Implicit cast: ensure both operands are float
         let lf = ensure_float(b, lhs);
         let rf = ensure_float(b, rhs);
@@ -590,9 +736,19 @@ pub fn apply_scalar_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Va
             "add" => b.ir_add_i(lhs, rhs),
             "sub" => b.ir_sub_i(lhs, rhs),
             "mul" => b.ir_mul_i(lhs, rhs),
-            "div" => b.ir_div_i(lhs, rhs),
+            // Python's `int / int` returns a float at the Python language
+            // level; user-facing kernels writing `np.floor(n/2).astype(int)`
+            // expect integer floor division at the IR level. Routing to
+            // `ir_div_i` (field-inverse division) leaves a vacuous DivI op
+            // whose runtime value is a junk field element — downstream slice
+            // bound discharges then fail (see 0467 mock_fail). Match the
+            // numpy/ZK convention: integer-typed `/` is integer floor div.
+            // The five IR-gen sites in reshape / arange / repeat / indexing
+            // were independently patched the same direction earlier in this
+            // session; this is the language-level entrypoint of the same
+            // pattern.
+            "div" | "floor_div" => b.ir_floor_div_i(lhs, rhs),
             "mod" => b.ir_mod_i(lhs, rhs),
-            "floor_div" => b.ir_floor_div_i(lhs, rhs),
             "pow" => b.ir_pow_i(lhs, rhs),
             "eq" => b.ir_equal_i(lhs, rhs),
             "ne" => b.ir_not_equal_i(lhs, rhs),
@@ -609,7 +765,12 @@ pub fn apply_scalar_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Va
 }
 
 /// Composite comparison (eq, ne, lt, lte, gt, gte) — element-wise then reduce.
-pub fn composite_comparison(b: &mut IRBuilder, op: &str, ld: &CompositeData, rd: &CompositeData) -> Value {
+pub fn composite_comparison(
+    b: &mut IRBuilder,
+    op: &str,
+    ld: &CompositeData,
+    rd: &CompositeData,
+) -> Value {
     let min_len = ld.values.len().min(rd.values.len());
     match op {
         "eq" => {
@@ -644,7 +805,7 @@ pub fn composite_comparison(b: &mut IRBuilder, op: &str, ld: &CompositeData, rd:
             let mut result = apply_binary_op(b, op, &ld.values[0], &rd.values[0]);
             for i in 1..min_len {
                 // If previous elements were equal, compare this element
-                let prev_eq = apply_binary_op(b, "eq", &ld.values[i-1], &rd.values[i-1]);
+                let prev_eq = apply_binary_op(b, "eq", &ld.values[i - 1], &rd.values[i - 1]);
                 let prev_eq_bool = to_scalar_bool(b, &prev_eq);
                 let this_cmp = apply_binary_op(b, op, &ld.values[i], &rd.values[i]);
                 let this_cmp_bool = to_scalar_bool(b, &this_cmp);
@@ -653,9 +814,19 @@ pub fn composite_comparison(b: &mut IRBuilder, op: &str, ld: &CompositeData, rd:
             }
             // Handle different lengths: if all common elements are equal
             if ld.values.len() != rd.values.len() {
-                let all_eq = composite_comparison(b, "eq",
-                    &CompositeData { elements_type: ld.elements_type[..min_len].to_vec(), values: ld.values[..min_len].to_vec(), value_id: ValueId::next() },
-                    &CompositeData { elements_type: rd.elements_type[..min_len].to_vec(), values: rd.values[..min_len].to_vec(), value_id: ValueId::next() },
+                let all_eq = composite_comparison(
+                    b,
+                    "eq",
+                    &CompositeData {
+                        elements_type: ld.elements_type[..min_len].to_vec(),
+                        values: ld.values[..min_len].to_vec(),
+                        value_id: ValueId::next(),
+                    },
+                    &CompositeData {
+                        elements_type: rd.elements_type[..min_len].to_vec(),
+                        values: rd.values[..min_len].to_vec(),
+                        value_id: ValueId::next(),
+                    },
                 );
                 let all_eq_bool = to_scalar_bool(b, &all_eq);
                 let len_result = match op {
@@ -724,7 +895,12 @@ pub fn dynamic_list_subscript(b: &mut IRBuilder, data: &CompositeData, idx: &Val
 }
 
 /// Returns the updated composite.
-pub fn dynamic_list_set_item(b: &mut IRBuilder, data: &CompositeData, idx: &Value, value: &Value) -> Value {
+pub fn dynamic_list_set_item(
+    b: &mut IRBuilder,
+    data: &CompositeData,
+    idx: &Value,
+    value: &Value,
+) -> Value {
     let n = data.values.len();
     if n == 0 {
         return Value::List(data.clone());
@@ -749,7 +925,11 @@ pub fn dynamic_list_set_item(b: &mut IRBuilder, data: &CompositeData, idx: &Valu
             new_types.push(selected.zinnia_type());
             new_values.push(selected);
         }
-        return Value::List(CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() });
+        return Value::List(CompositeData {
+            elements_type: new_types,
+            values: new_values,
+            value_id: ValueId::next(),
+        });
     }
 
     if n < 100 {
@@ -763,7 +943,11 @@ pub fn dynamic_list_set_item(b: &mut IRBuilder, data: &CompositeData, idx: &Valu
             new_types.push(selected.zinnia_type());
             new_values.push(selected);
         }
-        Value::List(CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() })
+        Value::List(CompositeData {
+            elements_type: new_types,
+            values: new_values,
+            value_id: ValueId::next(),
+        })
     } else {
         // Memory path: allocate, write all, then overwrite at dynamic index, read all back
         let seg_id = b.alloc_segment_id();
@@ -790,7 +974,11 @@ pub fn dynamic_list_set_item(b: &mut IRBuilder, data: &CompositeData, idx: &Valu
             new_types.push(read_val.zinnia_type());
             new_values.push(read_val);
         }
-        Value::List(CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() })
+        Value::List(CompositeData {
+            elements_type: new_types,
+            values: new_values,
+            value_id: ValueId::next(),
+        })
     }
 }
 
@@ -800,9 +988,7 @@ pub fn dynamic_list_set_item(b: &mut IRBuilder, data: &CompositeData, idx: &Valu
 /// broadcasting vs. Python list concatenation in the binary-op dispatcher.
 pub fn is_numeric_composite(val: &Value) -> bool {
     match val {
-        Value::List(data) | Value::Tuple(data) => {
-            data.values.iter().all(is_numeric_composite)
-        }
+        Value::List(data) | Value::Tuple(data) => data.values.iter().all(is_numeric_composite),
         Value::Integer(_) | Value::Float(_) | Value::Boolean(_) => true,
         _ => false,
     }
@@ -859,5 +1045,42 @@ mod tests {
         assert!(matches!(diff, Value::Float(_)));
         let dv = diff.float_val().expect("constant-folded float");
         assert!(dv.abs() < 1e-9, "expected ~0.0, got {dv}");
+    }
+
+    #[test]
+    fn membership_static_list_or_folds_equalities() {
+        let mut b = IRBuilder::new();
+        let needle = b.ir_constant_int(3);
+        let vals = vec![
+            b.ir_constant_int(1),
+            b.ir_constant_int(3),
+            b.ir_constant_int(5),
+        ];
+        let rhs = Value::List(CompositeData {
+            elements_type: vals.iter().map(|v| v.zinnia_type()).collect(),
+            values: vals,
+            value_id: ValueId::next(),
+        });
+
+        let result = apply_binary_op(&mut b, "in", &needle, &rhs);
+
+        assert_eq!(result.bool_val(), Some(true));
+    }
+
+    #[test]
+    fn membership_empty_composite_constants() {
+        let mut b = IRBuilder::new();
+        let needle = b.ir_constant_int(3);
+        let rhs = Value::Tuple(CompositeData {
+            elements_type: vec![],
+            values: vec![],
+            value_id: ValueId::next(),
+        });
+
+        let is_in = apply_binary_op(&mut b, "in", &needle, &rhs);
+        let not_in = apply_binary_op(&mut b, "not_in", &needle, &rhs);
+
+        assert_eq!(is_in.bool_val(), Some(false));
+        assert_eq!(not_in.bool_val(), Some(true));
     }
 }

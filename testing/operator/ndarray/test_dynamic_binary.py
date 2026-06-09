@@ -25,6 +25,16 @@ def test_add_same_shape():
     assert foo()
 
 
+def test_float_dynamic_scalar_add_does_not_double_scale_integer_like_payloads():
+    @zk_circuit
+    def foo():
+        a = np.promote_to_dynamic(np.asarray([1.0, 2.0, 3.0]))
+        b = a + 2.0
+        assert b.sum() == 12.0
+
+    assert foo()
+
+
 def test_sub():
     @zk_circuit
     def foo():

@@ -1,0 +1,12 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0296/kernel.py
+// REASON: np.zeros((a.size, a.max()+1)) — output shape depends on runtime a.max(); ZoKrates requires compile-time sizes.
+
+def main(field[50] a) -> field[50][50]:
+  field max = 0
+  for u32 i in 0..50 do
+    max = if a[i] > max then a[i] else max fi
+  endfor
+  // field[50][max+1] b  -- ILLEGAL: runtime dim
+  field[50][50] b = [[0; 50]; 50]
+  return b

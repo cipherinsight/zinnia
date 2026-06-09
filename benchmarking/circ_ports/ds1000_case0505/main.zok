@@ -1,0 +1,16 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0505/kernel.py
+// REASON: take_along_axis gather + two np.sum reductions lowered to explicit loops
+
+def main(field[13][13][5] a, u32[13][13] b) -> field:
+    field total_a = 0
+    field gathered = 0
+    for u32 i in 0..13 do
+        for u32 j in 0..13 do
+            for u32 k in 0..5 do
+                total_a = total_a + a[i][j][k]
+            endfor
+            gathered = gathered + a[i][j][b[i][j]]
+        endfor
+    endfor
+    return total_a - gathered

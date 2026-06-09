@@ -1,0 +1,23 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0434/kernel.py
+// REASON: fancy-index zero-write a[zero_rows,:]=0 and a[:,zero_cols]=0 lowered to membership check via inner loop.
+
+const u32 N = 4
+const u32 K = 2
+
+def main(field[N][N] a, field[K] zero_rows, field[K] zero_cols) -> field[N][N]:
+    field[N][N] result = [[0; N]; N]
+    for u32 i in 0..N do
+        bool row_hit = false
+        for u32 r in 0..K do
+            row_hit = row_hit || (i == zero_rows[r])
+        endfor
+        for u32 j in 0..N do
+            bool col_hit = false
+            for u32 c in 0..K do
+                col_hit = col_hit || (j == zero_cols[c])
+            endfor
+            result[i][j] = if row_hit || col_hit then 0 else a[i][j] fi
+        endfor
+    endfor
+    return result

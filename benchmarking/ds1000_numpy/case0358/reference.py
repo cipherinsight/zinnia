@@ -1,0 +1,2 @@
+index = np.argsort(a.sum(axis = (1, 2)))
+result = b[index, :, :]

@@ -67,52 +67,70 @@ fn build_witness_emitters() -> HashMap<&'static str, WitnessEmitter> {
 
     // ── nnz ───────────────────────────────────────────────────────────
     // Emits sum-of-indicators + assert against the bound.
-    m.insert("nnz", WitnessEmitter {
-        kind: "nnz",
-        emit: emit_nnz,
-    });
+    m.insert(
+        "nnz",
+        WitnessEmitter {
+            kind: "nnz",
+            emit: emit_nnz,
+        },
+    );
 
     // ── is_sorted / is_monotone_nondecreasing ──────────────────────────
     // Emit per-adjacent-pair `arr[i] <= arr[i+1]` + assert. Unary
     // predicate (no op / bound). Soundness: prover supplying an
     // unsorted array fails at the first violating pair.
-    m.insert("is_sorted", WitnessEmitter {
-        kind: "is_sorted",
-        emit: emit_is_sorted,
-    });
-    m.insert("is_monotone_nondecreasing", WitnessEmitter {
-        kind: "is_monotone_nondecreasing",
-        emit: emit_is_sorted,  // same semantics
-    });
+    m.insert(
+        "is_sorted",
+        WitnessEmitter {
+            kind: "is_sorted",
+            emit: emit_is_sorted,
+        },
+    );
+    m.insert(
+        "is_monotone_nondecreasing",
+        WitnessEmitter {
+            kind: "is_monotone_nondecreasing",
+            emit: emit_is_sorted, // same semantics
+        },
+    );
 
     // ── max_run ────────────────────────────────────────────────────────
     // Emits per-adjacent-pair `arr[i+1] - arr[i]` and asserts against
     // the bound via `op`. Today supports `op = "<="` (the common usage
     // in CSR-style preconditions); other ops fall through as a no-op
     // (soundness gap; documented in source).
-    m.insert("max_run", WitnessEmitter {
-        kind: "max_run",
-        emit: emit_max_run,
-    });
+    m.insert(
+        "max_run",
+        WitnessEmitter {
+            kind: "max_run",
+            emit: emit_max_run,
+        },
+    );
 
     // ── is_permutation ────────────────────────────────────────────────
     // Emits range checks (`0 <= p[i] < N`) plus injectivity checks
     // (`p[i] != p[j]` for `i < j`). O(N²) constraints for naive
     // emission. Large-N programs likely want a Plonk-style permutation
     // argument; that's a future tightening, gated on a real workload.
-    m.insert("is_permutation", WitnessEmitter {
-        kind: "is_permutation",
-        emit: emit_is_permutation,
-    });
+    m.insert(
+        "is_permutation",
+        WitnessEmitter {
+            kind: "is_permutation",
+            emit: emit_is_permutation,
+        },
+    );
 
     // ── fixed_point_count ─────────────────────────────────────────────
     // Same indicator-sum pattern as `nnz` / `popcount`: per index,
     // `p[i] == i` as a 0/1 indicator; sum across indices; assert
     // against the bound via `op`.
-    m.insert("fixed_point_count", WitnessEmitter {
-        kind: "fixed_point_count",
-        emit: emit_fixed_point_count,
-    });
+    m.insert(
+        "fixed_point_count",
+        WitnessEmitter {
+            kind: "fixed_point_count",
+            emit: emit_fixed_point_count,
+        },
+    );
 
     // `cycle_count`: deliberately not registered. Witness-time
     // enforcement requires graph traversal that doesn't lower
@@ -126,32 +144,47 @@ fn build_witness_emitters() -> HashMap<&'static str, WitnessEmitter> {
     // dispatches per-element on Bool/Int/Float, so the boolean case is
     // handled correctly. Register the same emitter under a separate
     // key so bitmap workloads can use the `popcount` name naturally.
-    m.insert("popcount", WitnessEmitter {
-        kind: "popcount",
-        emit: emit_nnz,
-    });
+    m.insert(
+        "popcount",
+        WitnessEmitter {
+            kind: "popcount",
+            emit: emit_nnz,
+        },
+    );
 
     // ── forall_* family (synthesized from `forall(arr, P)`) ───────────
     //
     // Each variant emits per-element checks matching the inner
     // element-predicate's semantics. Sound: a violating element
     // produces a failing assert.
-    m.insert("forall_is_nonneg", WitnessEmitter {
-        kind: "forall_is_nonneg",
-        emit: emit_forall_is_nonneg,
-    });
-    m.insert("forall_lt_bound", WitnessEmitter {
-        kind: "forall_lt_bound",
-        emit: emit_forall_lt_bound,
-    });
-    m.insert("forall_eq_const", WitnessEmitter {
-        kind: "forall_eq_const",
-        emit: emit_forall_eq_const,
-    });
-    m.insert("forall_in_range", WitnessEmitter {
-        kind: "forall_in_range",
-        emit: emit_forall_in_range,
-    });
+    m.insert(
+        "forall_is_nonneg",
+        WitnessEmitter {
+            kind: "forall_is_nonneg",
+            emit: emit_forall_is_nonneg,
+        },
+    );
+    m.insert(
+        "forall_lt_bound",
+        WitnessEmitter {
+            kind: "forall_lt_bound",
+            emit: emit_forall_lt_bound,
+        },
+    );
+    m.insert(
+        "forall_eq_const",
+        WitnessEmitter {
+            kind: "forall_eq_const",
+            emit: emit_forall_eq_const,
+        },
+    );
+    m.insert(
+        "forall_in_range",
+        WitnessEmitter {
+            kind: "forall_in_range",
+            emit: emit_forall_in_range,
+        },
+    );
 
     m
 }
@@ -186,12 +219,7 @@ fn build_witness_emitters() -> HashMap<&'static str, WitnessEmitter> {
 ///   regardless of shape rank.
 /// - Empty arrays (`N == 0`): emit `count = 0` literal + assert against
 ///   bound. Trivially correct (`count op k` reduces to `0 op k`).
-fn emit_nnz(
-    b: &mut IRBuilder,
-    arg_values: &[Value],
-    op: Option<&str>,
-    bound: Option<&Value>,
-) {
+fn emit_nnz(b: &mut IRBuilder, arg_values: &[Value], op: Option<&str>, bound: Option<&Value>) {
     if arg_values.len() != 1 {
         return;
     }
@@ -319,12 +347,7 @@ fn emit_is_sorted(
 /// - Int array, `Int` bound: standard.
 /// - Empty / singleton arrays: no asserts emitted (trivially satisfies
 ///   any bound).
-fn emit_max_run(
-    b: &mut IRBuilder,
-    arg_values: &[Value],
-    op: Option<&str>,
-    bound: Option<&Value>,
-) {
+fn emit_max_run(b: &mut IRBuilder, arg_values: &[Value], op: Option<&str>, bound: Option<&Value>) {
     // Only `<=` is supported today.
     if !matches!(op, Some("<=")) {
         return;
@@ -503,9 +526,7 @@ fn emit_forall_is_nonneg(
             _ => b.ir_constant_int(0),
         };
         let cmp = match elem {
-            Value::Integer(_) | Value::Boolean(_) => {
-                b.create_ir(&IR::GteI, &[elem.clone(), zero])
-            }
+            Value::Integer(_) | Value::Boolean(_) => b.create_ir(&IR::GteI, &[elem.clone(), zero]),
             Value::Float(_) => b.create_ir(&IR::GteF, &[elem.clone(), zero]),
             _ => continue,
         };
@@ -626,9 +647,7 @@ fn emit_forall_in_range(
 // scalar context for v1 — users compose structural + scalar preconditions
 // by writing multiple `@requires` clauses.
 
-use crate::optim::predicates::formula::{
-    ArithOp, BoolOp, CmpOp, ContractTerm, ContractVar,
-};
+use crate::optim::predicates::formula::{ArithOp, BoolOp, CmpOp, ContractTerm, ContractVar};
 
 /// Lower a user-written `@requires` precondition (a `ContractTerm` with
 /// `Var(Input(name))` leaves, top-level Bool) into Zinnia IR. Returns
@@ -672,13 +691,31 @@ where
         ContractTerm::Cmp { op, lhs, rhs } => {
             let l = emit_int_term(b, lhs, name_lookup)?;
             let r = emit_int_term(b, rhs, name_lookup)?;
-            let ir = match op {
-                CmpOp::Eq => IR::EqI,
-                CmpOp::Ne => IR::NeI,
-                CmpOp::Lt => IR::LtI,
-                CmpOp::Le => IR::LteI,
-                CmpOp::Gt => IR::GtI,
-                CmpOp::Ge => IR::GteI,
+            let ir = match (&l, &r) {
+                (Value::Integer(_) | Value::Boolean(_), Value::Integer(_) | Value::Boolean(_)) => {
+                    match op {
+                        CmpOp::Eq => IR::EqI,
+                        CmpOp::Ne => IR::NeI,
+                        CmpOp::Lt => IR::LtI,
+                        CmpOp::Le => IR::LteI,
+                        CmpOp::Gt => IR::GtI,
+                        CmpOp::Ge => IR::GteI,
+                    }
+                }
+                (Value::Float(_), Value::Float(_)) => match op {
+                    CmpOp::Eq => IR::EqF,
+                    CmpOp::Ne => IR::NeF,
+                    CmpOp::Lt => IR::LtF,
+                    CmpOp::Le => IR::LteF,
+                    CmpOp::Gt => IR::GtF,
+                    CmpOp::Ge => IR::GteF,
+                },
+                _ => {
+                    return Err(format!(
+                        "scalar precondition comparison mixes integer and float values; \
+                         int-typed parameters cannot use float literal bounds"
+                    ));
+                }
             };
             Ok(b.create_ir(&ir, &[l, r]))
         }
@@ -715,12 +752,10 @@ where
         ContractTerm::Var(_)
         | ContractTerm::LitInt(_)
         | ContractTerm::LitFloat(_)
-        | ContractTerm::Arith { .. } => {
-            Err(format!(
-                "scalar precondition Bool-context expected a comparison or \
+        | ContractTerm::Arith { .. } => Err(format!(
+            "scalar precondition Bool-context expected a comparison or \
                  logical composition; got a numeric-typed term"
-            ))
-        }
+        )),
     }
 }
 
@@ -736,16 +771,18 @@ where
         ContractTerm::Var(ContractVar::Input(name)) => name_lookup(name)
             .ok_or_else(|| format!("scalar precondition references unbound input `{name}`")),
 
-        ContractTerm::Var(ContractVar::Output) => Err(
-            "scalar precondition cannot reference `Output` (a contract \
-             template var; not valid in @requires)".to_string()
-        ),
+        ContractTerm::Var(ContractVar::Output) => {
+            Err("scalar precondition cannot reference `Output` (a contract \
+             template var; not valid in @requires)"
+                .to_string())
+        }
 
         ContractTerm::Var(ContractVar::Value(_)) => Err(
             "scalar precondition cannot reference `Value` (only contract \
              templates carry ValueId-anchored leaves; @requires terms \
              reach the witness emitter pre-substitution with Input(name) \
-             leaves only)".to_string()
+             leaves only)"
+                .to_string(),
         ),
 
         ContractTerm::Var(ContractVar::Formal(name)) => Err(format!(
@@ -760,14 +797,33 @@ where
         ContractTerm::Arith { op, lhs, rhs } => {
             let l = emit_int_term(b, lhs, name_lookup)?;
             let r = emit_int_term(b, rhs, name_lookup)?;
-            let ir = match op {
-                ArithOp::Add => IR::AddI,
-                ArithOp::Sub => IR::SubI,
-                ArithOp::Mul => IR::MulI,
-                ArithOp::Div => IR::DivI,
-                ArithOp::FloorDiv => IR::FloorDivI,
-                ArithOp::Mod => IR::ModI,
-                ArithOp::Pow => IR::PowI,
+            let ir = match (&l, &r) {
+                (Value::Integer(_) | Value::Boolean(_), Value::Integer(_) | Value::Boolean(_)) => {
+                    match op {
+                        ArithOp::Add => IR::AddI,
+                        ArithOp::Sub => IR::SubI,
+                        ArithOp::Mul => IR::MulI,
+                        ArithOp::Div => IR::DivI,
+                        ArithOp::FloorDiv => IR::FloorDivI,
+                        ArithOp::Mod => IR::ModI,
+                        ArithOp::Pow => IR::PowI,
+                    }
+                }
+                (Value::Float(_), Value::Float(_)) => match op {
+                    ArithOp::Add => IR::AddF,
+                    ArithOp::Sub => IR::SubF,
+                    ArithOp::Mul => IR::MulF,
+                    ArithOp::Div => IR::DivF,
+                    ArithOp::Pow => IR::PowF,
+                    ArithOp::FloorDiv => IR::FloorDivF,
+                    ArithOp::Mod => IR::ModF,
+                },
+                _ => {
+                    return Err(format!(
+                        "scalar precondition arithmetic mixes integer and float values; \
+                         int-typed parameters cannot use float literal bounds"
+                    ));
+                }
             };
             Ok(b.create_ir(&ir, &[l, r]))
         }
@@ -885,7 +941,7 @@ mod tests {
         Value::List(CompositeData {
             elements_type: vec![crate::types::ZinniaType::Integer; values.len()],
             values: elems,
-        
+
             value_id: ValueId::next(),
         })
     }
@@ -913,7 +969,11 @@ mod tests {
         let arr = list_of_ints(&mut b, &[1, 0, 1]);
         let before = b.stmts.len();
         emit_nnz(&mut b, &[arr], None, None);
-        assert_eq!(b.stmts.len(), before, "unary predicate → no witness emission");
+        assert_eq!(
+            b.stmts.len(),
+            before,
+            "unary predicate → no witness emission"
+        );
     }
 
     #[test]
@@ -948,7 +1008,10 @@ mod tests {
             let bound = b.ir_constant_int(1);
             emit_nnz(&mut b, &[arr], Some(op), Some(&bound));
             let last = b.stmts.last().expect("op produces an emitted assert");
-            assert!(matches!(last.ir, IR::Assert), "op `{op}` must end in IR::Assert");
+            assert!(
+                matches!(last.ir, IR::Assert),
+                "op `{op}` must end in IR::Assert"
+            );
         }
     }
 
@@ -972,8 +1035,14 @@ mod tests {
         assert!(after > before);
         // 3 adjacent pairs → 3 LteI + 3 Assert.
         let new_stmts = &b.stmts[before..];
-        let asserts = new_stmts.iter().filter(|s| matches!(s.ir, IR::Assert)).count();
-        let lte_i = new_stmts.iter().filter(|s| matches!(s.ir, IR::LteI)).count();
+        let asserts = new_stmts
+            .iter()
+            .filter(|s| matches!(s.ir, IR::Assert))
+            .count();
+        let lte_i = new_stmts
+            .iter()
+            .filter(|s| matches!(s.ir, IR::LteI))
+            .count();
         assert_eq!(asserts, 3);
         assert_eq!(lte_i, 3);
     }
@@ -1020,9 +1089,18 @@ mod tests {
         let after = b.stmts.len();
         assert!(after > before);
         let new_stmts = &b.stmts[before..];
-        let asserts = new_stmts.iter().filter(|s| matches!(s.ir, IR::Assert)).count();
-        let subs = new_stmts.iter().filter(|s| matches!(s.ir, IR::SubI)).count();
-        let lte = new_stmts.iter().filter(|s| matches!(s.ir, IR::LteI)).count();
+        let asserts = new_stmts
+            .iter()
+            .filter(|s| matches!(s.ir, IR::Assert))
+            .count();
+        let subs = new_stmts
+            .iter()
+            .filter(|s| matches!(s.ir, IR::SubI))
+            .count();
+        let lte = new_stmts
+            .iter()
+            .filter(|s| matches!(s.ir, IR::LteI))
+            .count();
         assert_eq!(asserts, 3);
         assert_eq!(subs, 3);
         assert_eq!(lte, 3);
@@ -1062,13 +1140,22 @@ mod tests {
         let before = b.stmts.len();
         emit_is_permutation(&mut b, &[arr], None, None);
         let new_stmts = &b.stmts[before..];
-        let gte = new_stmts.iter().filter(|s| matches!(s.ir, IR::GteI)).count();
+        let gte = new_stmts
+            .iter()
+            .filter(|s| matches!(s.ir, IR::GteI))
+            .count();
         let lt = new_stmts.iter().filter(|s| matches!(s.ir, IR::LtI)).count();
         let ne = new_stmts.iter().filter(|s| matches!(s.ir, IR::NeI)).count();
-        let asserts = new_stmts.iter().filter(|s| matches!(s.ir, IR::Assert)).count();
+        let asserts = new_stmts
+            .iter()
+            .filter(|s| matches!(s.ir, IR::Assert))
+            .count();
         assert_eq!(gte, 4, "expected 4 GteI for range-check lower bounds");
         assert_eq!(lt, 4, "expected 4 LtI for range-check upper bounds");
-        assert_eq!(ne, 6, "expected 6 NeI for the 4*(4-1)/2 = 6 injectivity pairs");
+        assert_eq!(
+            ne, 6,
+            "expected 6 NeI for the 4*(4-1)/2 = 6 injectivity pairs"
+        );
         assert_eq!(asserts, 14, "expected 4+4+6 = 14 asserts");
     }
 
@@ -1111,10 +1198,19 @@ mod tests {
         // 4 EqI (per-index `p[i] == i`), 4 IntCast, 3-4 AddI (post-fold), 1 EqI for final,
         // 1 Assert.
         let eq_i = new_stmts.iter().filter(|s| matches!(s.ir, IR::EqI)).count();
-        let int_cast = new_stmts.iter().filter(|s| matches!(s.ir, IR::IntCast)).count();
-        let asserts = new_stmts.iter().filter(|s| matches!(s.ir, IR::Assert)).count();
+        let int_cast = new_stmts
+            .iter()
+            .filter(|s| matches!(s.ir, IR::IntCast))
+            .count();
+        let asserts = new_stmts
+            .iter()
+            .filter(|s| matches!(s.ir, IR::Assert))
+            .count();
         // 4 per-index + 1 final = 5 EqI total (could fold to 5 in absence of optimization).
-        assert!(eq_i >= 4, "expected ≥4 EqI ops (per-index + final), got {eq_i}");
+        assert!(
+            eq_i >= 4,
+            "expected ≥4 EqI ops (per-index + final), got {eq_i}"
+        );
         assert_eq!(int_cast, 4);
         assert_eq!(asserts, 1);
     }
@@ -1165,8 +1261,14 @@ mod tests {
         let before = b.stmts.len();
         emit_forall_is_nonneg(&mut b, &[arr], None, None);
         let new_stmts = &b.stmts[before..];
-        let gte = new_stmts.iter().filter(|s| matches!(s.ir, IR::GteI)).count();
-        let asserts = new_stmts.iter().filter(|s| matches!(s.ir, IR::Assert)).count();
+        let gte = new_stmts
+            .iter()
+            .filter(|s| matches!(s.ir, IR::GteI))
+            .count();
+        let asserts = new_stmts
+            .iter()
+            .filter(|s| matches!(s.ir, IR::Assert))
+            .count();
         assert_eq!(gte, 4);
         assert_eq!(asserts, 4);
     }
@@ -1180,7 +1282,10 @@ mod tests {
         emit_forall_lt_bound(&mut b, &[arr, bound], None, None);
         let new_stmts = &b.stmts[before..];
         let lt = new_stmts.iter().filter(|s| matches!(s.ir, IR::LtI)).count();
-        let asserts = new_stmts.iter().filter(|s| matches!(s.ir, IR::Assert)).count();
+        let asserts = new_stmts
+            .iter()
+            .filter(|s| matches!(s.ir, IR::Assert))
+            .count();
         assert_eq!(lt, 4);
         assert_eq!(asserts, 4);
     }
@@ -1194,7 +1299,10 @@ mod tests {
         emit_forall_eq_const(&mut b, &[arr, c], None, None);
         let new_stmts = &b.stmts[before..];
         let eq = new_stmts.iter().filter(|s| matches!(s.ir, IR::EqI)).count();
-        let asserts = new_stmts.iter().filter(|s| matches!(s.ir, IR::Assert)).count();
+        let asserts = new_stmts
+            .iter()
+            .filter(|s| matches!(s.ir, IR::Assert))
+            .count();
         assert_eq!(eq, 3);
         assert_eq!(asserts, 3);
     }
@@ -1208,9 +1316,18 @@ mod tests {
         let before = b.stmts.len();
         emit_forall_in_range(&mut b, &[arr, lo, hi], None, None);
         let new_stmts = &b.stmts[before..];
-        let gte = new_stmts.iter().filter(|s| matches!(s.ir, IR::GteI)).count();
-        let lte = new_stmts.iter().filter(|s| matches!(s.ir, IR::LteI)).count();
-        let asserts = new_stmts.iter().filter(|s| matches!(s.ir, IR::Assert)).count();
+        let gte = new_stmts
+            .iter()
+            .filter(|s| matches!(s.ir, IR::GteI))
+            .count();
+        let lte = new_stmts
+            .iter()
+            .filter(|s| matches!(s.ir, IR::LteI))
+            .count();
+        let asserts = new_stmts
+            .iter()
+            .filter(|s| matches!(s.ir, IR::Assert))
+            .count();
         assert_eq!(gte, 3);
         assert_eq!(lte, 3);
         assert_eq!(asserts, 6);
@@ -1223,11 +1340,17 @@ mod tests {
         let bound = b.ir_constant_int(0);
         let before = b.stmts.len();
         emit_forall_is_nonneg(&mut b, &[arr.clone()], Some("=="), Some(&bound));
-        emit_forall_lt_bound(&mut b, &[arr.clone(), bound.clone()], Some("=="), Some(&bound));
+        emit_forall_lt_bound(
+            &mut b,
+            &[arr.clone(), bound.clone()],
+            Some("=="),
+            Some(&bound),
+        );
         emit_forall_eq_const(&mut b, &[arr.clone(), bound.clone()], None, Some(&bound));
         emit_forall_in_range(&mut b, &[arr, bound.clone(), bound], Some("=="), None);
         assert_eq!(
-            b.stmts.len(), before,
+            b.stmts.len(),
+            before,
             "forall_* must reject any op/bound (unary-style predicates)"
         );
     }
@@ -1238,10 +1361,14 @@ mod tests {
         // witness-emitter registry does not. Verified for documentation
         // — soundness gap is intentional and noted in the card status.
         use crate::optim::predicates::registry;
-        assert!(registry().get("cycle_count").is_some(),
-                "cycle_count must be in the predicate registry");
-        assert!(witness_emitters().get("cycle_count").is_none(),
-                "cycle_count must NOT have a witness emitter (deferred)");
+        assert!(
+            registry().get("cycle_count").is_some(),
+            "cycle_count must be in the predicate registry"
+        );
+        assert!(
+            witness_emitters().get("cycle_count").is_none(),
+            "cycle_count must NOT have a witness emitter (deferred)"
+        );
     }
 
     #[test]

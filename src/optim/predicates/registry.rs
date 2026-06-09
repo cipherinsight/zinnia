@@ -55,6 +55,23 @@ pub struct PredicateRegistration {
     pub arity: usize,
     encode_fn: fn(&[Int]) -> Bool,
     meta_facts_fn: fn(&[Int]) -> Vec<Bool>,
+    /// `true` iff this predicate encodes purely to a cached uninterpreted
+    /// Bool with no meta-facts. Consumers (notably `prove_with_facts`) use
+    /// this as a hint: a query that consists entirely of pure-opaque
+    /// `PredicateApp`s can be answered as `Unknown` without invoking Z3
+    /// when no visible fact mentions any of the same `(cache_key, args)`
+    /// symbols. Predicates that attach a pred-value Int (e.g. `nnz`,
+    /// `max_run`) are NOT pure-opaque — their numeric meta-facts can
+    /// interact with arithmetic in other facts and must go through Z3.
+    pub is_pure_opaque: bool,
+    /// The cache key used by `cached_uninterpreted_predicate` inside
+    /// `encode_fn`. For most predicates this equals `kind`, but some
+    /// kinds are *aliases* sharing a symbol with another kind — e.g.
+    /// `is_monotone_nondecreasing` routes through the `"is_sorted"`
+    /// cache key. Fast-path consumers (e.g. `prove_with_facts`) must
+    /// dedupe by `cache_key`, not `kind`, or they'll incorrectly
+    /// conclude "no relevant fact" when an aliased fact is in scope.
+    pub cache_key: &'static str,
 }
 
 impl PredicateRegistration {
@@ -168,16 +185,24 @@ fn build_registry() -> HashMap<&'static str, PredicateRegistration> {
     // Bool keyed by `(nnz, args)`. Meta-fact: `pred_value(nnz, args) >= 0`.
     // Tight upper bound `<= len(arr)` lives in discharge.rs (which has
     // input lengths in scope).
-    m.insert("nnz", PredicateRegistration {
-        kind: "nnz",
-        arity: 1,
-        // Soundness: cached uninterpreted Bool, NOT a tautology.
-        encode_fn: |args| cached_uninterpreted_predicate("nnz", args),
-        meta_facts_fn: |args| {
-            let v = cached_pred_value("nnz", args);
-            vec![v.ge(&Int::from_i64(0))]
+    m.insert(
+        "nnz",
+        PredicateRegistration {
+            kind: "nnz",
+            arity: 1,
+            // Soundness: cached uninterpreted Bool, NOT a tautology.
+            encode_fn: |args| cached_uninterpreted_predicate("nnz", args),
+            meta_facts_fn: |args| {
+                let v = cached_pred_value("nnz", args);
+                vec![v.ge(&Int::from_i64(0))]
+            },
+            // Carries a numeric pred-value (`nnz >= 0`); not pure-opaque
+            // because that value can combine with arithmetic in other
+            // facts (e.g. `len(arr) >= nnz(arr)`).
+            is_pure_opaque: false,
+            cache_key: "nnz",
         },
-    });
+    );
 
     // ── is_sorted / is_monotone_nondecreasing ─────────────────────────
     //
@@ -187,96 +212,135 @@ fn build_registry() -> HashMap<&'static str, PredicateRegistration> {
     // about the other.
     //
     // No meta-facts: the predicate doesn't carry a numeric value.
-    m.insert("is_sorted", PredicateRegistration {
-        kind: "is_sorted",
-        arity: 1,
-        // Soundness: cached uninterpreted Bool.
-        encode_fn: |args| cached_uninterpreted_predicate("is_sorted", args),
-        meta_facts_fn: |_args| Vec::new(),
-    });
-    m.insert("is_monotone_nondecreasing", PredicateRegistration {
-        kind: "is_monotone_nondecreasing",
-        arity: 1,
-        // Soundness: alias to `is_sorted` — same cache key, same Bool.
-        encode_fn: |args| cached_uninterpreted_predicate("is_sorted", args),
-        meta_facts_fn: |_args| Vec::new(),
-    });
+    m.insert(
+        "is_sorted",
+        PredicateRegistration {
+            kind: "is_sorted",
+            arity: 1,
+            // Soundness: cached uninterpreted Bool.
+            encode_fn: |args| cached_uninterpreted_predicate("is_sorted", args),
+            meta_facts_fn: |_args| Vec::new(),
+            is_pure_opaque: true,
+            cache_key: "is_sorted",
+        },
+    );
+    m.insert(
+        "is_monotone_nondecreasing",
+        PredicateRegistration {
+            kind: "is_monotone_nondecreasing",
+            arity: 1,
+            // Soundness: alias to `is_sorted` — same cache key, same Bool.
+            encode_fn: |args| cached_uninterpreted_predicate("is_sorted", args),
+            meta_facts_fn: |_args| Vec::new(),
+            is_pure_opaque: true,
+            // Alias: both kinds share the "is_sorted" symbol. The
+            // fast-path matches on cache_key, so a fact about
+            // is_sorted(arr) correctly discharges a query about
+            // is_monotone_nondecreasing(arr) (and vice versa).
+            cache_key: "is_sorted",
+        },
+    );
 
     // ── max_run ──────────────────────────────────────────────────────
     //
     // `max_run(arr) op K`: maximum gap between consecutive elements of a
     // monotone array. Meta-fact: `pred_value >= 0` (gaps in a
     // monotone-nondecreasing array are non-negative).
-    m.insert("max_run", PredicateRegistration {
-        kind: "max_run",
-        arity: 1,
-        // Soundness: cached uninterpreted Bool.
-        encode_fn: |args| cached_uninterpreted_predicate("max_run", args),
-        meta_facts_fn: |args| {
-            let v = cached_pred_value("max_run", args);
-            vec![v.ge(&Int::from_i64(0))]
+    m.insert(
+        "max_run",
+        PredicateRegistration {
+            kind: "max_run",
+            arity: 1,
+            // Soundness: cached uninterpreted Bool.
+            encode_fn: |args| cached_uninterpreted_predicate("max_run", args),
+            meta_facts_fn: |args| {
+                let v = cached_pred_value("max_run", args);
+                vec![v.ge(&Int::from_i64(0))]
+            },
+            is_pure_opaque: false,
+            cache_key: "max_run",
         },
-    });
+    );
 
     // ── is_permutation ───────────────────────────────────────────────
     //
     // `is_permutation(p)` asserts that `p` is a bijection on `[0, N)`.
     // Opaque Bool; per-element semantics live in the witness emitter.
     // No standalone numeric meta-facts.
-    m.insert("is_permutation", PredicateRegistration {
-        kind: "is_permutation",
-        arity: 1,
-        // Soundness: cached uninterpreted Bool.
-        encode_fn: |args| cached_uninterpreted_predicate("is_permutation", args),
-        meta_facts_fn: |_args| Vec::new(),
-    });
+    m.insert(
+        "is_permutation",
+        PredicateRegistration {
+            kind: "is_permutation",
+            arity: 1,
+            // Soundness: cached uninterpreted Bool.
+            encode_fn: |args| cached_uninterpreted_predicate("is_permutation", args),
+            meta_facts_fn: |_args| Vec::new(),
+            is_pure_opaque: true,
+            cache_key: "is_permutation",
+        },
+    );
 
     // ── cycle_count ──────────────────────────────────────────────────
     //
     // `cycle_count(p) op K`: count of cycles in the permutation graph
     // of `p`. Meta-fact: `pred_value >= 1` (every permutation has at
     // least one cycle). Length-relative upper bound lives in discharge.rs.
-    m.insert("cycle_count", PredicateRegistration {
-        kind: "cycle_count",
-        arity: 1,
-        // Soundness: cached uninterpreted Bool.
-        encode_fn: |args| cached_uninterpreted_predicate("cycle_count", args),
-        meta_facts_fn: |args| {
-            let v = cached_pred_value("cycle_count", args);
-            vec![v.ge(&Int::from_i64(1))]
+    m.insert(
+        "cycle_count",
+        PredicateRegistration {
+            kind: "cycle_count",
+            arity: 1,
+            // Soundness: cached uninterpreted Bool.
+            encode_fn: |args| cached_uninterpreted_predicate("cycle_count", args),
+            meta_facts_fn: |args| {
+                let v = cached_pred_value("cycle_count", args);
+                vec![v.ge(&Int::from_i64(1))]
+            },
+            is_pure_opaque: false,
+            cache_key: "cycle_count",
         },
-    });
+    );
 
     // ── fixed_point_count ────────────────────────────────────────────
     //
     // `fixed_point_count(p) op K`: count of `i` such that `p[i] == i`.
     // Meta-fact: `pred_value >= 0`.
-    m.insert("fixed_point_count", PredicateRegistration {
-        kind: "fixed_point_count",
-        arity: 1,
-        // Soundness: cached uninterpreted Bool.
-        encode_fn: |args| cached_uninterpreted_predicate("fixed_point_count", args),
-        meta_facts_fn: |args| {
-            let v = cached_pred_value("fixed_point_count", args);
-            vec![v.ge(&Int::from_i64(0))]
+    m.insert(
+        "fixed_point_count",
+        PredicateRegistration {
+            kind: "fixed_point_count",
+            arity: 1,
+            // Soundness: cached uninterpreted Bool.
+            encode_fn: |args| cached_uninterpreted_predicate("fixed_point_count", args),
+            meta_facts_fn: |args| {
+                let v = cached_pred_value("fixed_point_count", args);
+                vec![v.ge(&Int::from_i64(0))]
+            },
+            is_pure_opaque: false,
+            cache_key: "fixed_point_count",
         },
-    });
+    );
 
     // ── popcount ─────────────────────────────────────────────────────
     //
     // `popcount(b) op K`: cardinality of `true` entries in a boolean
     // array. Meta-fact: `pred_value >= 0`. Tight upper bound `<= len`
     // lives in discharge.rs.
-    m.insert("popcount", PredicateRegistration {
-        kind: "popcount",
-        arity: 1,
-        // Soundness: cached uninterpreted Bool.
-        encode_fn: |args| cached_uninterpreted_predicate("popcount", args),
-        meta_facts_fn: |args| {
-            let v = cached_pred_value("popcount", args);
-            vec![v.ge(&Int::from_i64(0))]
+    m.insert(
+        "popcount",
+        PredicateRegistration {
+            kind: "popcount",
+            arity: 1,
+            // Soundness: cached uninterpreted Bool.
+            encode_fn: |args| cached_uninterpreted_predicate("popcount", args),
+            meta_facts_fn: |args| {
+                let v = cached_pred_value("popcount", args);
+                vec![v.ge(&Int::from_i64(0))]
+            },
+            is_pure_opaque: false,
+            cache_key: "popcount",
         },
-    });
+    );
 
     // ── is_identity ──────────────────────────────────────────────────
     //
@@ -284,13 +348,18 @@ fn build_registry() -> HashMap<&'static str, PredicateRegistration> {
     // `arr[i][j] = 1 iff i == j`. Opaque Bool; per-element semantics live
     // in the producer (`np.identity` ensures). No standalone numeric
     // meta-facts.
-    m.insert("is_identity", PredicateRegistration {
-        kind: "is_identity",
-        arity: 1,
-        // Soundness: cached uninterpreted Bool.
-        encode_fn: |args| cached_uninterpreted_predicate("is_identity", args),
-        meta_facts_fn: |_args| Vec::new(),
-    });
+    m.insert(
+        "is_identity",
+        PredicateRegistration {
+            kind: "is_identity",
+            arity: 1,
+            // Soundness: cached uninterpreted Bool.
+            encode_fn: |args| cached_uninterpreted_predicate("is_identity", args),
+            meta_facts_fn: |_args| Vec::new(),
+            is_pure_opaque: true,
+            cache_key: "is_identity",
+        },
+    );
 
     // ── forall_* (synthesized kinds from `forall(arr, P)`) ────────────
     //
@@ -303,10 +372,10 @@ fn build_registry() -> HashMap<&'static str, PredicateRegistration> {
     // Z3 encoding: cached uninterpreted Bool per (synthesized kind,
     // args). Per-element semantics live in the witness emitter.
     for kind in [
-        "forall_is_nonneg",   // arity 1: (arr)
-        "forall_lt_bound",    // arity 2: (arr, B)
-        "forall_eq_const",    // arity 2: (arr, C)
-        "forall_in_range",    // arity 3: (arr, lo, hi)
+        "forall_is_nonneg", // arity 1: (arr)
+        "forall_lt_bound",  // arity 2: (arr, B)
+        "forall_eq_const",  // arity 2: (arr, C)
+        "forall_in_range",  // arity 3: (arr, lo, hi)
     ] {
         let encode_fn: fn(&[Int]) -> Bool = match kind {
             "forall_is_nonneg" => |args| cached_uninterpreted_predicate("forall_is_nonneg", args),
@@ -315,19 +384,51 @@ fn build_registry() -> HashMap<&'static str, PredicateRegistration> {
             "forall_in_range" => |args| cached_uninterpreted_predicate("forall_in_range", args),
             _ => unreachable!(),
         };
-        m.insert(kind, PredicateRegistration {
+        m.insert(
             kind,
-            arity: match kind {
-                "forall_is_nonneg" => 1,
-                "forall_lt_bound" | "forall_eq_const" => 2,
-                "forall_in_range" => 3,
-                _ => unreachable!(),
+            PredicateRegistration {
+                kind,
+                arity: match kind {
+                    "forall_is_nonneg" => 1,
+                    "forall_lt_bound" | "forall_eq_const" => 2,
+                    "forall_in_range" => 3,
+                    _ => unreachable!(),
+                },
+                // Soundness: cached uninterpreted Bool per synthesized kind.
+                encode_fn,
+                meta_facts_fn: |_args| Vec::new(),
+                is_pure_opaque: true,
+                cache_key: kind,
             },
-            // Soundness: cached uninterpreted Bool per synthesized kind.
-            encode_fn,
-            meta_facts_fn: |_args| Vec::new(),
-        });
+        );
     }
+
+    // ── array_in_range (value_id-keyed element bounds) ────────────────
+    //
+    // `array_in_range(Var(Value(arr_vid)), lo, hi)`: every element of
+    // the array `arr_vid` is in the integer range `[lo, hi]`. Mirrors
+    // `forall_in_range` but keyed on the array's compilation-layer
+    // ValueId (not on an Input name), so it can be deposited on
+    // *derived* or *in-place-mutated* arrays whose elements aren't
+    // tied to a single source parameter. Used by the in-place mutation
+    // contract (compiler.op-contract-inplace-mutation): after
+    // `arr[mask] = value`, the contract deposits a widened-union
+    // `array_in_range(arr_vid, min(arr_lo, val_lo), max(arr_hi,
+    // val_hi))` so downstream reductions can still see element bounds.
+    //
+    // No meta-facts: the predicate is an opaque Bool symbol; per-cell
+    // semantics are out of scope.
+    m.insert(
+        "array_in_range",
+        PredicateRegistration {
+            kind: "array_in_range",
+            arity: 3,
+            encode_fn: |args| cached_uninterpreted_predicate("array_in_range", args),
+            meta_facts_fn: |_args| Vec::new(),
+            is_pure_opaque: true,
+            cache_key: "array_in_range",
+        },
+    );
 
     m
 }
@@ -338,8 +439,8 @@ fn build_registry() -> HashMap<&'static str, PredicateRegistration> {
 
 #[cfg(test)]
 mod soundness_tests {
-    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
     use crate::optim::predicates::facts::Fact;
+    use crate::optim::predicates::formula::{ContractTerm, ContractVar};
     use crate::optim::prove::{prove_with_facts, ProveOutcome};
     use crate::types::ValueId;
 
@@ -348,7 +449,10 @@ mod soundness_tests {
     }
 
     fn pred(kind: &str, args: Vec<ContractTerm>) -> ContractTerm {
-        ContractTerm::PredicateApp { kind: kind.to_string(), args }
+        ContractTerm::PredicateApp {
+            kind: kind.to_string(),
+            args,
+        }
     }
 
     /// LOAD-BEARING: `prove(predicate(arr_X))` with NO matching fact
@@ -385,9 +489,15 @@ mod soundness_tests {
 
     #[test]
     fn prove_is_sorted_returns_disproved_with_negated_fact() {
-        let facts = vec![ContractTerm::Not(Box::new(pred("is_sorted", vec![vref(1)])))];
+        let facts = vec![ContractTerm::Not(Box::new(pred(
+            "is_sorted",
+            vec![vref(1)],
+        )))];
         let term = pred("is_sorted", vec![vref(1)]);
-        assert_eq!(prove_with_facts(&term, &facts, &[]), ProveOutcome::Disproved);
+        assert_eq!(
+            prove_with_facts(&term, &facts, &[]),
+            ProveOutcome::Disproved
+        );
     }
 
     /// `is_monotone_nondecreasing` aliases to `is_sorted` — a fact about

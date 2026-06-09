@@ -1,0 +1,45 @@
+{
+  "categories": [
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "range",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 15,
+      "line_start": 10,
+      "mutated_params": [],
+      "name": "fibo",
+      "ops": [
+        "Add",
+        "LtE"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "n",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_fibo_seq/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_fibo_seq",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n\n@zk_circuit\n@requires(lambda n: 0 <= n <= 1024)\ndef fibo(n: Integer):\n    \"\"\" fibonaccie compuation. \"\"\"\n    a, b = (1, 1)\n    for _ in range(n):\n        a, b = (a + b, a)\n    return a",
+  "source_status": "direct"
+}

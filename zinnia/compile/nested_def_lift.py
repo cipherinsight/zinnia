@@ -171,14 +171,6 @@ def autolift_nested_defs(source: str, module_globals: Dict[str, Any]) -> Tuple[s
             new_body.append(stmt)
             continue
 
-        # Pure but missing annotations? Chip transformer requires both
-        # param and return annotations. Without them, we can't safely lift
-        # — leave in body and let the diagnostic guide the user.
-        all_args_annotated = all(a.annotation is not None for a in stmt.args.args)
-        if not all_args_annotated or stmt.returns is None:
-            new_body.append(stmt)
-            continue
-
         # Pure: extract as a top-level chip source. Chip bodies use
         # `return X`, but circuit-style nested defs often write
         # `_zinnia_result = X`. Translate that to `return X` for the chip.

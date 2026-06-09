@@ -1,0 +1,103 @@
+{
+  "categories": [
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "abs"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 14,
+      "line_start": 11,
+      "mutated_params": [],
+      "name": "_areas_of_triangles",
+      "ops": [
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "a",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "bs",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "c",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "ValueError",
+        "_areas_of_triangles",
+        "len",
+        "next_bin.mean",
+        "np.argmax",
+        "np.array_split",
+        "np.zeros",
+        "range",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 41,
+      "line_start": 18,
+      "mutated_params": [],
+      "name": "downsample",
+      "ops": [
+        "Add",
+        "Eq",
+        "Gt",
+        "Lt",
+        "LtE",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "data",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "n_out",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_lttb_pt/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_lttb_pt",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\n\n@zk_chip\ndef _areas_of_triangles(a: Float[Array, 'N<=1024'], bs: Float, c: Float[Array, 'N<=1024']):\n    bs_minus_a = bs - a\n    a_minus_bs = a - bs\n    return 0.5 * abs((a[0] - c[0]) * bs_minus_a[:, 1] - a_minus_bs[:, 0] * (c[1] - a[1]))\n\n@zk_circuit\n@requires(lambda data, n_out: 0 <= n_out <= 1024)\ndef downsample(data: Float[Array, 'N<=1024'], n_out: Integer):\n    if n_out > data.shape[0]:\n        raise ValueError('n_out must be <= number of rows in data')\n    if n_out == data.shape[0]:\n        return data\n    if n_out < 3:\n        raise ValueError('Can only downsample to a minimum of 3 points')\n    n_bins = n_out - 2\n    data_bins = np.array_split(data[1:len(data) - 1], n_bins)\n    out = np.zeros((n_out, 2))\n    out[0] = data[0]\n    out[len(out) - 1] = data[len(data) - 1]\n    for i in range(len(data_bins)):\n        this_bin = data_bins[i]\n        if i < n_bins - 1:\n            next_bin = data_bins[i + 1]\n        else:\n            next_bin = data[len(data) - 1:]\n        a = out[i]\n        bs = this_bin\n        c = next_bin.mean(axis=0)\n        areas = _areas_of_triangles(a, bs, c)\n        out[i + 1] = bs[np.argmax(areas)]\n    return out",
+  "source_status": "direct"
+}

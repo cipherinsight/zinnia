@@ -4,6 +4,8 @@ End-to-end tests for dynamic ndarray indexing and slicing.
 All arrays are constructed inside the circuit via np.promote_to_dynamic.
 """
 
+import pytest
+
 from zinnia import *
 
 
@@ -282,6 +284,82 @@ def test_masked_assign_dynamic_mask():
     assert foo()
 
 
+def test_masked_assign_dynamic_mask_same_shape_rhs():
+    """dyn[mask] = dyn with the same shape updates per element."""
+    @zk_circuit
+    def foo():
+        a = np.promote_to_dynamic(np.asarray([1, 5, 3, 7, 2]))
+        rhs = np.promote_to_dynamic(np.asarray([10, 20, 30, 40, 50]))
+        threshold = np.promote_to_dynamic(np.asarray([3, 3, 3, 3, 3]))
+        mask = a > threshold  # [0, 1, 0, 1, 0]
+        a[mask] = rhs
+        # [1, 20, 3, 40, 2] -> sum = 66
+        assert a.sum() == 66
+
+    assert foo()
+
+
+def test_masked_assign_dynamic_mask_same_shape_2d_rhs():
+    """dyn2d[mask2d] = dyn2d preserves exact target shape."""
+    @zk_circuit
+    def foo():
+        a = np.promote_to_dynamic(np.asarray([[1, 5, 3], [7, 2, 8]]))
+        rhs = np.promote_to_dynamic(np.asarray([[10, 20, 30], [40, 50, 60]]))
+        threshold = np.promote_to_dynamic(np.asarray([[3, 3, 3], [3, 3, 3]]))
+        mask = a > threshold
+        a[mask] = rhs
+        # [[1, 20, 3], [40, 2, 60]] -> sum = 126
+        assert a.sum() == 126
+
+    assert foo()
+
+
+def test_masked_assign_dynamic_mask_rejects_mismatched_rhs_shape():
+    """dyn[mask] = dyn rejects non-scalar RHS that is not target-shaped."""
+    @zk_circuit
+    def foo():
+        a = np.promote_to_dynamic(np.asarray([1, 5, 3, 7, 2]))
+        rhs = np.promote_to_dynamic(np.asarray([10, 20, 30]))
+        threshold = np.promote_to_dynamic(np.asarray([3, 3, 3, 3, 3]))
+        mask = a > threshold
+        a[mask] = rhs
+        assert a.sum() == 66
+
+    with pytest.raises(ZinniaException) as exc_info:
+        ZKCircuit.from_method(foo).compile()
+    assert "masked assignment RHS shape mismatch" in str(exc_info.value)
+
+
+def test_masked_assign_rejects_same_product_different_mask_shape():
+    """dyn2d[mask1d] rejects even when flattened element counts match."""
+    @zk_circuit
+    def foo():
+        a = np.promote_to_dynamic(np.asarray([[1, 5, 3], [7, 2, 8]]))
+        mask = np.promote_to_dynamic(np.asarray([0, 1, 0, 1, 0, 1]))
+        a[mask] = 0
+        assert a.sum() == 6
+
+    with pytest.raises(ZinniaException) as exc_info:
+        ZKCircuit.from_method(foo).compile()
+    assert "masked assignment shape mismatch" in str(exc_info.value)
+
+
+def test_masked_assign_rejects_same_product_different_rhs_shape():
+    """dyn2d[mask2d] = dyn1d rejects even when flattened counts match."""
+    @zk_circuit
+    def foo():
+        a = np.promote_to_dynamic(np.asarray([[1, 5, 3], [7, 2, 8]]))
+        rhs = np.promote_to_dynamic(np.asarray([10, 20, 30, 40, 50, 60]))
+        threshold = np.promote_to_dynamic(np.asarray([[3, 3, 3], [3, 3, 3]]))
+        mask = a > threshold
+        a[mask] = rhs
+        assert a.sum() == 126
+
+    with pytest.raises(ZinniaException) as exc_info:
+        ZKCircuit.from_method(foo).compile()
+    assert "masked assignment RHS shape mismatch" in str(exc_info.value)
+
+
 def test_masked_assign_broadcast_scalar():
     """dyn[mask] = scalar broadcasts to all True positions."""
     @zk_circuit
@@ -510,6 +588,34 @@ def test_boolean_mask_dynamic():
         assert result.sum() == 12
 
     assert foo()
+
+
+def test_boolean_mask_dynamic_2d_exact_shape():
+    """Dynamic boolean-mask read accepts exact target-shaped 2D masks."""
+    @zk_circuit
+    def foo():
+        a = np.promote_to_dynamic(np.asarray([[1, 5, 3], [7, 2, 8]]))
+        threshold = np.promote_to_dynamic(np.asarray([[3, 3, 3], [3, 3, 3]]))
+        mask = a > threshold
+        result = a[mask]
+        # Selected: 5, 7, 8 -> sum = 20
+        assert result.sum() == 20
+
+    assert foo()
+
+
+def test_boolean_mask_dynamic_rejects_same_product_different_shape():
+    """Dynamic boolean-mask read rejects same-product non-matching shapes."""
+    @zk_circuit
+    def foo():
+        a = np.promote_to_dynamic(np.asarray([[1, 5, 3], [7, 2, 8]]))
+        mask = np.promote_to_dynamic(np.asarray([0, 1, 0, 1, 0, 1]))
+        result = a[mask]
+        assert result.sum() == 20
+
+    with pytest.raises(ZinniaException) as exc_info:
+        ZKCircuit.from_method(foo).compile()
+    assert "filter: array shape" in str(exc_info.value)
 
 
 # ── Element assignment ───────────────────────────────────────────────────

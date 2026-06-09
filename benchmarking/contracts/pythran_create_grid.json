@@ -1,0 +1,45 @@
+{
+  "categories": [
+    "shape-dtype-only"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "np.zeros",
+        "x.reshape",
+        "z.reshape"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 16,
+      "line_start": 10,
+      "mutated_params": [],
+      "name": "create_grid",
+      "ops": [
+        "Mult"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "x",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_create_grid/kernel.py",
+  "notes": [
+    "Likely first-pass candidate: mostly needs dtype/rank/shape annotations."
+  ],
+  "preconditions": [],
+  "program": "pythran_create_grid",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: in-place-mutation\n# Expected outcome: compile/prove candidate\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\n\n@zk_circuit\ndef create_grid(x: Float[Array, 'N<=1024']):\n    N = x.shape[0]\n    z = np.zeros((N, N, 3))\n    z[:, :, 0] = x.reshape(-1, 1)\n    z[:, :, 1] = x\n    fast_grid = z.reshape(N * N, 3)\n    return fast_grid",
+  "source_status": "direct"
+}

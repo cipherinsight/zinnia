@@ -1,0 +1,12 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0342/kernel.py
+// REASON: ndarray.flat iteration over fixed 5x6 lowered to explicit nested loop
+
+def main(field[5][6] X) -> field[30]:
+    field[30] result = [0; 30]
+    for u32 i in 0..5 do
+        for u32 j in 0..6 do
+            result[i * 6 + j] = X[i][j]
+        endfor
+    endfor
+    return result

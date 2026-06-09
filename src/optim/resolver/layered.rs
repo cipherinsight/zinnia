@@ -84,10 +84,7 @@ impl LayeredResolver {
     /// in telemetry. P5 commit 3 uses this so callers can configure a
     /// pragmatic budget that bounds the worst-case query without changing
     /// the timeout.
-    pub fn range_then_smt_with_budget(
-        timeout_ms: u64,
-        max_formula_size: usize,
-    ) -> Self {
+    pub fn range_then_smt_with_budget(timeout_ms: u64, max_formula_size: usize) -> Self {
         let telemetry = crate::optim::telemetry::SmtTelemetry::new();
         let range = crate::optim::range::RangeResolver::new()
             .with_telemetry(std::sync::Arc::clone(&telemetry));
@@ -95,10 +92,7 @@ impl LayeredResolver {
             .with_timeout(timeout_ms)
             .with_max_formula_size(max_formula_size)
             .with_telemetry(std::sync::Arc::clone(&telemetry));
-        Self::new_with_telemetry(
-            vec![Box::new(range), Box::new(smt)],
-            telemetry,
-        )
+        Self::new_with_telemetry(vec![Box::new(range), Box::new(smt)], telemetry)
     }
 
     /// Borrow the shared telemetry handle. Used by the compile entry-point
@@ -145,11 +139,7 @@ impl Resolver for LayeredResolver {
         None
     }
 
-    fn resolve_int_with_stmts(
-        &mut self,
-        val: &Value,
-        stmts: &[IRStatement],
-    ) -> Option<i64> {
+    fn resolve_int_with_stmts(&mut self, val: &Value, stmts: &[IRStatement]) -> Option<i64> {
         use std::sync::atomic::Ordering;
         self.telemetry.queries_total.fetch_add(1, Ordering::Relaxed);
         if val.int_val().is_some() {
@@ -165,11 +155,7 @@ impl Resolver for LayeredResolver {
         None
     }
 
-    fn resolve_bool_with_stmts(
-        &mut self,
-        val: &Value,
-        stmts: &[IRStatement],
-    ) -> Option<bool> {
+    fn resolve_bool_with_stmts(&mut self, val: &Value, stmts: &[IRStatement]) -> Option<bool> {
         use std::sync::atomic::Ordering;
         self.telemetry.queries_total.fetch_add(1, Ordering::Relaxed);
         if val.bool_val().is_some() {
@@ -185,11 +171,7 @@ impl Resolver for LayeredResolver {
         None
     }
 
-    fn resolve_max_with_stmts(
-        &mut self,
-        val: &Value,
-        stmts: &[IRStatement],
-    ) -> Option<i64> {
+    fn resolve_max_with_stmts(&mut self, val: &Value, stmts: &[IRStatement]) -> Option<i64> {
         use std::sync::atomic::Ordering;
         self.telemetry.queries_total.fetch_add(1, Ordering::Relaxed);
         if val.int_val().is_some() {
@@ -205,11 +187,7 @@ impl Resolver for LayeredResolver {
         None
     }
 
-    fn resolve_min_with_stmts(
-        &mut self,
-        val: &Value,
-        stmts: &[IRStatement],
-    ) -> Option<i64> {
+    fn resolve_min_with_stmts(&mut self, val: &Value, stmts: &[IRStatement]) -> Option<i64> {
         use std::sync::atomic::Ordering;
         self.telemetry.queries_total.fetch_add(1, Ordering::Relaxed);
         if val.int_val().is_some() {
@@ -231,9 +209,7 @@ impl Resolver for LayeredResolver {
         }
     }
 
-    fn telemetry_handle(
-        &self,
-    ) -> Option<std::sync::Arc<crate::optim::telemetry::SmtTelemetry>> {
+    fn telemetry_handle(&self) -> Option<std::sync::Arc<crate::optim::telemetry::SmtTelemetry>> {
         Some(std::sync::Arc::clone(&self.telemetry))
     }
 }

@@ -1,0 +1,12 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0491/kernel.py
+// REASON: np.isclose uses absolute/relative float tolerances; ZoKrates field arithmetic has no floats and no real-valued tolerance
+
+def main(field[6][1] s1, field[6][1] s2) -> field:
+    field count = 0
+    for u32 i in 0..6 do
+        // Skeleton: use strict inequality instead of "isclose"
+        bool diff = s1[i][0] != s2[i][0]
+        count = count + (if diff then 1 else 0 fi)
+    endfor
+    return count

@@ -13,10 +13,18 @@ macro_rules! define_compare_op {
         }
 
         impl crate::ops::Op for $name {
-            fn name(&self) -> &'static str { $op_name }
-            fn params(&self) -> &[crate::ops::ParamEntry] { &Self::PARAMS }
+            fn name(&self) -> &'static str {
+                $op_name
+            }
+            fn params(&self) -> &[crate::ops::ParamEntry] {
+                &Self::PARAMS
+            }
 
-            fn build(&self, builder: &mut crate::builder::IRBuilder, args: &crate::ops::OpArgs) -> crate::types::Value {
+            fn build(
+                &self,
+                builder: &mut crate::builder::IRBuilder,
+                args: &crate::ops::OpArgs,
+            ) -> crate::types::Value {
                 let lhs = args.require("lhs");
                 let rhs = args.require("rhs");
 
@@ -31,23 +39,27 @@ macro_rules! define_compare_op {
                 }
 
                 // TODO: NDArray comparison
-                panic!("Op `{}` not supported for {:?} and {:?}",
-                    $op_name, lhs.zinnia_type(), rhs.zinnia_type())
+                panic!(
+                    "Op `{}` not supported for {:?} and {:?}",
+                    $op_name,
+                    lhs.zinnia_type(),
+                    rhs.zinnia_type()
+                )
             }
         }
     };
 }
 
 pub mod equal;
-pub mod not_equal;
-pub mod less_than;
-pub mod less_than_or_equal;
 pub mod greater_than;
 pub mod greater_than_or_equal;
+pub mod less_than;
+pub mod less_than_or_equal;
+pub mod not_equal;
 
 pub use equal::EqualOp;
-pub use not_equal::NotEqualOp;
-pub use less_than::LessThanOp;
-pub use less_than_or_equal::LessThanOrEqualOp;
 pub use greater_than::GreaterThanOp;
 pub use greater_than_or_equal::GreaterThanOrEqualOp;
+pub use less_than::LessThanOp;
+pub use less_than_or_equal::LessThanOrEqualOp;
+pub use not_equal::NotEqualOp;

@@ -33,8 +33,9 @@ def test_unconditional_raise_fails():
     def foo(x: int):
         raise RuntimeError("always fail")
 
-    result = foo(0)
-    assert not result, "unconditional raise should always be unsatisfiable"
+    with pytest.raises(Exception) as excinfo:
+        foo(0)
+    assert "provably unsatisfiable" in str(excinfo.value)
 
 
 def test_nested_def_pure_with_annotations_is_lifted():
@@ -51,19 +52,16 @@ def test_nested_def_pure_with_annotations_is_lifted():
     assert foo(3, 4)
 
 
-@zk_circuit
-def _circuit_with_unannotated_helper(a: int):
-    def helper(x):
-        _zinnia_result = x + 1
+def test_nested_def_without_annotations_is_lifted_and_inferred():
+    @zk_circuit
+    def foo(a: int):
+        def helper(x):
+            _zinnia_result = x + 1
 
-    c = helper(a)
+        c = helper(a)
+        assert c == 6
 
-
-def test_nested_def_without_annotations_rejected_with_hint():
-    with pytest.raises(Exception) as excinfo:
-        _circuit_with_unannotated_helper(5)
-    msg = str(excinfo.value)
-    assert "annotate all parameters" in msg or "auto-lifted" in msg, f"missing helpful hint, got: {msg}"
+    assert foo(5)
 
 
 @zk_circuit
@@ -81,3 +79,28 @@ def test_nested_def_with_closure_rejected_with_hint():
         _circuit_with_closure_helper(5)
     msg = str(excinfo.value)
     assert "captures variables" in msg or "outer function" in msg, f"missing closure hint, got: {msg}"
+
+
+def test_conditional_branch_join_rebinds_common_name():
+    @zk_circuit
+    def foo(x: int):
+        if x > 0:
+            y = 1
+        else:
+            y = 2
+        assert y == 1 or y == 2
+
+    assert foo(5)
+
+
+def test_conditional_one_sided_binding_still_rejected():
+    @zk_circuit
+    def foo(x: int):
+        if x > 0:
+            y = 1
+        assert y == 1
+
+    with pytest.raises(Exception) as excinfo:
+        foo(5)
+    msg = str(excinfo.value)
+    assert "Variable `y` not found" in msg or "not definitely bound" in msg

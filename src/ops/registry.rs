@@ -8,14 +8,14 @@ use crate::types::Value;
 /// Namespace for operator lookup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpNamespace {
-    NoCls,      // Global operators (no class prefix)
+    NoCls, // Global operators (no class prefix)
     NDArray,
     DynamicNDArray,
     Tuple,
     List,
     String,
-    Np,         // numpy-like
-    Zinnia,     // alias for Np
+    Np,     // numpy-like
+    Zinnia, // alias for Np
     Math,
 }
 
@@ -53,10 +53,10 @@ pub fn build_op(
         OpNamespace::Math => build_math_op(op_name, builder, args),
         OpNamespace::Np | OpNamespace::Zinnia => build_np_op(op_name, builder, args),
         OpNamespace::NDArray => None, // Dispatched directly by ir_gen
-        OpNamespace::List => None, // Dispatched directly by ir_gen
-        OpNamespace::Tuple => None, // Dispatched directly by ir_gen
+        OpNamespace::List => None,    // Dispatched directly by ir_gen
+        OpNamespace::Tuple => None,   // Dispatched directly by ir_gen
         OpNamespace::DynamicNDArray => None, // Dispatched directly by ir_gen
-        OpNamespace::String => None, // String methods not yet implemented
+        OpNamespace::String => None,  // String methods not yet implemented
     }
 }
 
@@ -96,6 +96,9 @@ fn build_math_op(name: &str, builder: &mut IRBuilder, args: &OpArgs) -> Option<V
         "sqrt" => math_ops::MathSqrtOp.build(builder, args),
         "exp" => math_ops::MathExpOp.build(builder, args),
         "log" => math_ops::MathLogOp.build(builder, args),
+        "acos" => np_like::NpArcCosOp.build(builder, args),
+        "asin" => np_like::NpArcSinOp.build(builder, args),
+        "atan2" => np_like::NpArcTan2Op.build(builder, args),
         "fabs" => math_ops::MathFAbsOp.build(builder, args),
         "inv" => math_ops::MathInvOp.build(builder, args),
         _ => return None,
@@ -130,6 +133,7 @@ fn build_np_op(name: &str, builder: &mut IRBuilder, args: &OpArgs) -> Option<Val
         "cosh" => np_like::NpCosHOp.build(builder, args),
         "tanh" => np_like::NpTanHOp.build(builder, args),
         "arccos" | "acos" => np_like::NpArcCosOp.build(builder, args),
+        "arcsin" | "asin" => np_like::NpArcSinOp.build(builder, args),
         "arctan2" | "atan2" => np_like::NpArcTan2Op.build(builder, args),
         "abs" => np_like::NpAbsOp.build(builder, args),
         "absolute" => np_like::NpAbsoluteOp.build(builder, args),

@@ -9,9 +9,15 @@ impl NpPositiveOp {
 }
 
 impl Op for NpPositiveOp {
-    fn name(&self) -> &'static str { "positive" }
-    fn signature(&self) -> &'static str { "np.positive" }
-    fn params(&self) -> &[ParamEntry] { &Self::PARAMS }
+    fn name(&self) -> &'static str {
+        "positive"
+    }
+    fn signature(&self) -> &'static str {
+        "np.positive"
+    }
+    fn params(&self) -> &[ParamEntry] {
+        &Self::PARAMS
+    }
 
     fn build(&self, _builder: &mut IRBuilder, args: &OpArgs) -> Value {
         args.require("x").clone()

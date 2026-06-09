@@ -1,0 +1,8 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0301/kernel.py
+// REASON: np.reshape(A, (-1, ncol)) — ncol is a runtime integer parameter, so output dims are not compile-time. ZoKrates needs literal sizes.
+
+def main(field[20] A, field ncol) -> field[20][20]:
+  // Cannot express field[20/ncol][ncol] B with runtime ncol.
+  field[20][20] B = [[0; 20]; 20]
+  return B

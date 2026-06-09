@@ -1,0 +1,15 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0405/kernel.py
+// REASON: np.bincount output length = max(accmap)+1 is data-dependent; ZoKrates needs compile-time array sizes.
+
+const u32 N = 100
+const u32 NBINS = 100  // assumed upper bound; real size = max(accmap)+1 only known at runtime
+
+def main(field[N] a, field[N] accmap) -> field[NBINS]:
+    field[NBINS] result = [0; NBINS]
+    for u32 i in 0..N do
+        // CirC rejects: indirect indexed-store on a runtime index requires array mux,
+        // and final array length must equal max(accmap)+1, not a compile-time constant.
+        result[accmap[i]] = result[accmap[i]] + a[i]
+    endfor
+    return result

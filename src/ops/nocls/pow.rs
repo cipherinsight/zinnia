@@ -5,15 +5,16 @@ use crate::types::Value;
 pub struct PowOp;
 
 impl PowOp {
-    const PARAMS: [ParamEntry; 2] = [
-        ParamEntry::required("base"),
-        ParamEntry::required("exp"),
-    ];
+    const PARAMS: [ParamEntry; 2] = [ParamEntry::required("base"), ParamEntry::required("exp")];
 }
 
 impl Op for PowOp {
-    fn name(&self) -> &'static str { "pow" }
-    fn params(&self) -> &[ParamEntry] { &Self::PARAMS }
+    fn name(&self) -> &'static str {
+        "pow"
+    }
+    fn params(&self) -> &[ParamEntry] {
+        &Self::PARAMS
+    }
 
     fn build(&self, builder: &mut IRBuilder, args: &OpArgs) -> Value {
         let base = args.require("base");

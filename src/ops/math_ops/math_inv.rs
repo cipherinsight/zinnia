@@ -9,9 +9,15 @@ impl MathInvOp {
 }
 
 impl Op for MathInvOp {
-    fn name(&self) -> &'static str { "inv" }
-    fn signature(&self) -> &'static str { "math.inv" }
-    fn params(&self) -> &[ParamEntry] { &Self::PARAMS }
+    fn name(&self) -> &'static str {
+        "inv"
+    }
+    fn signature(&self) -> &'static str {
+        "math.inv"
+    }
+    fn params(&self) -> &[ParamEntry] {
+        &Self::PARAMS
+    }
 
     fn build(&self, builder: &mut IRBuilder, args: &OpArgs) -> Value {
         let x = args.require("x");

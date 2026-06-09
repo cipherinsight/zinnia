@@ -10,7 +10,7 @@
 #[cfg(test)]
 mod tests {
     use crate::builder::IRBuilder;
-    use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
+    use crate::optim::predicates::formula::{CmpOp, ContractFloat, ContractTerm, ContractVar};
     use crate::optim::{dispatch_strategy, CostHint, OpStrategy, OpStrategySet};
     use crate::types::ValueId;
 
@@ -84,7 +84,10 @@ mod tests {
         };
 
         let out = dispatch_strategy(&mut b, "test_op", &vid, &set);
-        assert_eq!(out, "slow", "default must fire when precondition is Unknown");
+        assert_eq!(
+            out, "slow",
+            "default must fire when precondition is Unknown"
+        );
     }
 
     #[test]
@@ -133,9 +136,8 @@ mod tests {
         use crate::types::{NumberType, ScalarValue, Value};
 
         let mut b = IRBuilder::new();
-        let values: Vec<ScalarValue<i64>> = (1..=5)
-            .map(|v| ScalarValue::new(Some(v), None))
-            .collect();
+        let values: Vec<ScalarValue<i64>> =
+            (1..=5).map(|v| ScalarValue::new(Some(v), None)).collect();
         let runtime_shape = vec![ScalarValue::new(Some(5), None)];
         let runtime_length = b.ir_constant_int(5);
         let arr_val = dyn_from_values_with_active_nd(
@@ -193,6 +195,179 @@ mod tests {
         );
     }
 
+    // ── Phase F dyn-side mirror of Group 3d sum/prod fast paths ──
+    //
+    // These tests verify that the dyn-side `dyn_aggregate_all` strategy
+    // set short-circuits sum/prod on `forall_eq_const(arr, k)` for the
+    // empty-N-safe subset:
+    //
+    //   sum + forall_eq_const(0) ⇒ constant 0           (empty-N safe)
+    //   sum + forall_eq_const(1) ⇒ runtime_length wire   (empty-N safe)
+    //   prod + forall_eq_const(1) ⇒ constant 1           (empty-N safe)
+    //
+    // The unsafe `prod + forall_eq_const(0)` (prod of empty = 1, not 0)
+    // and mean-* (mean of empty = undefined) are deliberately omitted
+    // and have a soundness regression guard
+    // (`dyn_prod_zero_does_not_fire_without_len_bound`) below.
+
+    fn make_dyn_int_const(b: &mut IRBuilder, vals: &[i64]) -> crate::types::DynamicNDArrayData {
+        use crate::ops::dyn_ndarray::constructors::dyn_from_values_with_active_nd;
+        use crate::types::{NumberType, ScalarValue, Value};
+        let scalar_vals: Vec<ScalarValue<i64>> = vals
+            .iter()
+            .map(|&v| ScalarValue::new(Some(v), None))
+            .collect();
+        let n = vals.len();
+        let runtime_shape = vec![ScalarValue::new(Some(n as i64), None)];
+        let runtime_length = b.ir_constant_int(n as i64);
+        let arr_val = dyn_from_values_with_active_nd(
+            b,
+            scalar_vals,
+            vec![n],
+            runtime_shape,
+            runtime_length,
+            NumberType::Integer,
+        );
+        match arr_val {
+            Value::DynamicNDArray(d) => d,
+            _ => unreachable!(),
+        }
+    }
+
+    fn plant_forall_eq_const_on(b: &mut IRBuilder, vid: ValueId, k: i64) {
+        let fact = ContractTerm::PredicateApp {
+            kind: "forall_eq_const".to_string(),
+            args: vec![
+                ContractTerm::Var(ContractVar::Value(vid)),
+                ContractTerm::LitInt(k),
+            ],
+        };
+        b.facts.insert_for(vid, fact);
+    }
+
+    #[test]
+    fn dyn_sum_zero_strategy_fires() {
+        // Plant `forall_eq_const(arr_vid, 0)`. dyn_aggregate_all(Sum) must
+        // resolve to a constant 0 without emitting any AddI ops.
+        use crate::ir_defs::IR;
+        use crate::ops::dyn_ndarray::aggregation::dyn_aggregate_all;
+        use crate::ops::dyn_ndarray::DynAggKind;
+
+        let mut b = IRBuilder::new();
+        let data = make_dyn_int_const(&mut b, &[5, 6, 7, 8]); // values irrelevant
+        plant_forall_eq_const_on(&mut b, data.value_id, 0);
+
+        let pre_adds = b.stmts.iter().filter(|s| matches!(s.ir, IR::AddI)).count();
+        let result = dyn_aggregate_all(&mut b, &data, DynAggKind::Sum);
+        let post_adds = b.stmts.iter().filter(|s| matches!(s.ir, IR::AddI)).count();
+
+        assert_eq!(
+            result.int_val(),
+            Some(0),
+            "dyn sum on forall_eq_const(0) must be 0"
+        );
+        assert_eq!(
+            post_adds,
+            pre_adds,
+            "sum_all_zero strategy must not emit any AddI ops (got delta {})",
+            post_adds - pre_adds
+        );
+    }
+
+    #[test]
+    fn dyn_sum_one_strategy_returns_length() {
+        // Plant `forall_eq_const(arr_vid, 1)`. dyn_aggregate_all(Sum) must
+        // resolve to the runtime_length (4 here) without emitting any
+        // AddI ops. The result's static int value should equal N.
+        use crate::ir_defs::IR;
+        use crate::ops::dyn_ndarray::aggregation::dyn_aggregate_all;
+        use crate::ops::dyn_ndarray::DynAggKind;
+
+        let mut b = IRBuilder::new();
+        let data = make_dyn_int_const(&mut b, &[3, 3, 3, 3]); // values match the planted fact
+        plant_forall_eq_const_on(&mut b, data.value_id, 1);
+
+        let pre_adds = b.stmts.iter().filter(|s| matches!(s.ir, IR::AddI)).count();
+        let result = dyn_aggregate_all(&mut b, &data, DynAggKind::Sum);
+        let post_adds = b.stmts.iter().filter(|s| matches!(s.ir, IR::AddI)).count();
+
+        assert_eq!(
+            result.int_val(),
+            Some(4),
+            "dyn sum on forall_eq_const(1) must equal runtime_length (4)"
+        );
+        assert_eq!(
+            post_adds,
+            pre_adds,
+            "sum_all_one strategy must not emit any AddI ops (got delta {})",
+            post_adds - pre_adds
+        );
+    }
+
+    #[test]
+    fn dyn_prod_one_strategy_returns_one() {
+        // Plant `forall_eq_const(arr_vid, 1)`. dyn_aggregate_all(Prod) must
+        // resolve to constant 1 without emitting any MulI ops.
+        use crate::ir_defs::IR;
+        use crate::ops::dyn_ndarray::aggregation::dyn_aggregate_all;
+        use crate::ops::dyn_ndarray::DynAggKind;
+
+        let mut b = IRBuilder::new();
+        let data = make_dyn_int_const(&mut b, &[7, 8, 9, 10]);
+        plant_forall_eq_const_on(&mut b, data.value_id, 1);
+
+        let pre_muls = b.stmts.iter().filter(|s| matches!(s.ir, IR::MulI)).count();
+        let result = dyn_aggregate_all(&mut b, &data, DynAggKind::Prod);
+        let post_muls = b.stmts.iter().filter(|s| matches!(s.ir, IR::MulI)).count();
+
+        assert_eq!(
+            result.int_val(),
+            Some(1),
+            "dyn prod on forall_eq_const(1) must be 1"
+        );
+        assert_eq!(
+            post_muls,
+            pre_muls,
+            "prod_all_one strategy must not emit any MulI ops (got delta {})",
+            post_muls - pre_muls
+        );
+    }
+
+    #[test]
+    fn dyn_prod_zero_does_not_fire_without_len_bound() {
+        // SOUNDNESS REGRESSION GUARD. `prod + forall_eq_const(0)` is
+        // **NOT** safe for any N (prod of empty = 1, not 0). Even with
+        // `forall_eq_const(0)` planted, the strategy set must NOT
+        // short-circuit to constant 0 — it must fall through to the
+        // generic O(N) sweep so the lowering remains sound for the
+        // runtime-N=0 case.
+        //
+        // We verify the fall-through by checking that at least one MulI
+        // is emitted (the generic prod sweep walks the buffer with
+        // mul-chains; the constant-fold strategy emits zero MulI). The
+        // exact MulI count depends on bounded-aware iteration, so this
+        // test only asserts that *some* sweep ran.
+        use crate::ir_defs::IR;
+        use crate::ops::dyn_ndarray::aggregation::dyn_aggregate_all;
+        use crate::ops::dyn_ndarray::DynAggKind;
+
+        let mut b = IRBuilder::new();
+        let data = make_dyn_int_const(&mut b, &[0, 0, 0, 0]); // values match the planted fact
+        plant_forall_eq_const_on(&mut b, data.value_id, 0);
+
+        let pre_muls = b.stmts.iter().filter(|s| matches!(s.ir, IR::MulI)).count();
+        let _result = dyn_aggregate_all(&mut b, &data, DynAggKind::Prod);
+        let post_muls = b.stmts.iter().filter(|s| matches!(s.ir, IR::MulI)).count();
+
+        assert!(
+            post_muls > pre_muls,
+            "prod + forall_eq_const(0) must fall through to the generic sweep \
+             (prod of empty is 1, not 0 — short-circuiting to 0 here would be \
+             unsound at runtime-N=0). Got MulI delta {}",
+            post_muls - pre_muls
+        );
+    }
+
     // ── Group 3d: builtin_reduce sum/prod and np_mean strategy dispatch ──
     //
     // These tests plant a `forall_eq_const(arr_vid, k)` fact on a
@@ -204,7 +379,7 @@ mod tests {
     use crate::helpers::ndarray::builtin_reduce;
     use crate::ir_defs::IR;
     use crate::ops::static_ndarray_ops::np_mean;
-    use crate::types::{CompositeData, Value};
+    use crate::types::{CompositeData, Value, ZinniaType};
     use std::collections::HashMap;
 
     fn make_int_list(b: &mut IRBuilder, vals: &[i64]) -> Value {
@@ -228,6 +403,72 @@ mod tests {
         b.stmts.iter().filter(|s| pred(&s.ir)).count()
     }
 
+    fn plant_int_bound(b: &mut IRBuilder, vid: ValueId, op: CmpOp, n: i64) {
+        b.facts.insert_for(
+            vid,
+            ContractTerm::Cmp {
+                op,
+                lhs: Box::new(ContractTerm::Var(ContractVar::Value(vid))),
+                rhs: Box::new(ContractTerm::LitInt(n)),
+            },
+        );
+    }
+
+    fn plant_float_bound(b: &mut IRBuilder, vid: ValueId, op: CmpOp, n: f64) {
+        b.facts.insert_for(
+            vid,
+            ContractTerm::Cmp {
+                op,
+                lhs: Box::new(ContractTerm::Var(ContractVar::Value(vid))),
+                rhs: Box::new(ContractTerm::LitFloat(ContractFloat(n))),
+            },
+        );
+    }
+
+    fn extract_int_bounds_from_latest_fact(b: &IRBuilder, vid: ValueId) -> Option<(i64, i64)> {
+        let term = b.facts.per_value.get(&vid)?.last()?;
+        if let ContractTerm::BoolComb { operands, .. } = term {
+            let mut lo = None;
+            let mut hi = None;
+            for clause in operands {
+                if let ContractTerm::Cmp { op, rhs, .. } = clause {
+                    if let ContractTerm::LitInt(n) = rhs.as_ref() {
+                        match op {
+                            CmpOp::Ge => lo = Some(*n),
+                            CmpOp::Le => hi = Some(*n),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            Some((lo?, hi?))
+        } else {
+            None
+        }
+    }
+
+    fn extract_float_bounds_from_latest_fact(b: &IRBuilder, vid: ValueId) -> Option<(f64, f64)> {
+        let term = b.facts.per_value.get(&vid)?.last()?;
+        if let ContractTerm::BoolComb { operands, .. } = term {
+            let mut lo = None;
+            let mut hi = None;
+            for clause in operands {
+                if let ContractTerm::Cmp { op, rhs, .. } = clause {
+                    if let ContractTerm::LitFloat(ContractFloat(n)) = rhs.as_ref() {
+                        match op {
+                            CmpOp::Ge => lo = Some(*n),
+                            CmpOp::Le => hi = Some(*n),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            Some((lo?, hi?))
+        } else {
+            None
+        }
+    }
+
     #[test]
     fn sum_strategy_zero_fires_on_forall_eq_zero() {
         // Plant `forall_eq_const(list_vid, 0)`. builtin_reduce("sum") must
@@ -241,7 +482,11 @@ mod tests {
         let result = builtin_reduce(&mut b, "sum", &lst);
         let post_adds = count_ir_kind(&b, |ir| matches!(ir, IR::AddI));
 
-        assert_eq!(result.int_val(), Some(0), "sum on forall_eq_const(0) must be 0");
+        assert_eq!(
+            result.int_val(),
+            Some(0),
+            "sum on forall_eq_const(0) must be 0"
+        );
         assert_eq!(
             post_adds, pre_adds,
             "sum-on-zeros strategy must not emit any AddI ops"
@@ -261,7 +506,11 @@ mod tests {
         let result = builtin_reduce(&mut b, "sum", &lst);
         let post_adds = count_ir_kind(&b, |ir| matches!(ir, IR::AddI));
 
-        assert_eq!(result.int_val(), Some(4), "sum on forall_eq_const(1) must be N");
+        assert_eq!(
+            result.int_val(),
+            Some(4),
+            "sum on forall_eq_const(1) must be N"
+        );
         assert_eq!(
             post_adds, pre_adds,
             "sum-on-ones strategy must not emit any AddI ops"
@@ -300,7 +549,11 @@ mod tests {
         let result = builtin_reduce(&mut b, "prod", &lst);
         let post_muls = count_ir_kind(&b, |ir| matches!(ir, IR::MulI));
 
-        assert_eq!(result.int_val(), Some(0), "prod on forall_eq_const(0) must be 0");
+        assert_eq!(
+            result.int_val(),
+            Some(0),
+            "prod on forall_eq_const(0) must be 0"
+        );
         assert_eq!(
             post_muls, pre_muls,
             "prod-on-zeros strategy must not emit any MulI ops"
@@ -320,7 +573,11 @@ mod tests {
         let result = builtin_reduce(&mut b, "prod", &lst);
         let post_muls = count_ir_kind(&b, |ir| matches!(ir, IR::MulI));
 
-        assert_eq!(result.int_val(), Some(1), "prod on forall_eq_const(1) must be 1");
+        assert_eq!(
+            result.int_val(),
+            Some(1),
+            "prod on forall_eq_const(1) must be 1"
+        );
         assert_eq!(
             post_muls, pre_muls,
             "prod-on-ones strategy must not emit any MulI ops"
@@ -342,6 +599,36 @@ mod tests {
             3,
             "default prod sweep must emit N-1 MulI ops (got {})",
             post_muls - pre_muls
+        );
+    }
+
+    #[test]
+    fn prod_default_sweep_deposits_sign_aware_interval_fact() {
+        let mut b = IRBuilder::new();
+        let leaves: Vec<Value> = (0..3)
+            .map(|i| {
+                b.ir_read_integer(
+                    crate::circuit_input::InputPath::new(&format!("p{}", i), vec![]),
+                    false,
+                )
+            })
+            .collect();
+        let vids: Vec<ValueId> = leaves.iter().map(|v| v.value_id().unwrap()).collect();
+        for vid in &vids {
+            plant_int_bound(&mut b, *vid, CmpOp::Ge, -3);
+            plant_int_bound(&mut b, *vid, CmpOp::Le, -2);
+        }
+        let lst = Value::List(CompositeData::new(
+            vec![ZinniaType::Integer; leaves.len()],
+            leaves,
+        ));
+
+        let result = builtin_reduce(&mut b, "prod", &lst);
+        let out_vid = result.value_id().expect("prod sweep output has value_id");
+
+        assert_eq!(
+            extract_int_bounds_from_latest_fact(&b, out_vid),
+            Some((-27, -8))
         );
     }
 
@@ -424,6 +711,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn np_mean_default_deposits_tight_float_interval_fact() {
+        let mut b = IRBuilder::new();
+        let leaves: Vec<Value> = (0..5)
+            .map(|i| {
+                b.ir_read_float(
+                    crate::circuit_input::InputPath::new(&format!("x{}", i), vec![]),
+                    false,
+                )
+            })
+            .collect();
+        let types = leaves.iter().map(|v| v.zinnia_type()).collect();
+        let lst = Value::List(CompositeData::new(types, leaves));
+        let arr_vid = lst.value_id().expect("list has value_id");
+        plant_float_bound(&mut b, arr_vid, CmpOp::Ge, 0.0);
+        plant_float_bound(&mut b, arr_vid, CmpOp::Le, 10.0);
+
+        let result = np_mean(&mut b, &[lst], &HashMap::new());
+        let out_vid = result.value_id().expect("mean output has value_id");
+
+        assert_eq!(
+            extract_float_bounds_from_latest_fact(&b, out_vid),
+            Some((0.0, 2.0))
+        );
+    }
+
     /// REGRESSION (Phase 3a fuzz, 2026-05-15 differential run): the legacy
     /// `np.mean` path on a `Value::List` of cos outputs collapsed to
     /// `Value::None` because [`builtin_reduce`] had no `"mean"` arm. The
@@ -457,13 +770,8 @@ mod tests {
             .collect();
         let types = leaves.iter().map(|v| v.zinnia_type()).collect();
         let lst = Value::List(CompositeData::new(types, leaves));
-        let kwargs: std::collections::HashMap<String, Value> =
-            std::collections::HashMap::new();
-        let result = crate::ops::static_ndarray_ops::np_mean(
-            &mut b,
-            &[lst],
-            &kwargs,
-        );
+        let kwargs: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+        let result = crate::ops::static_ndarray_ops::np_mean(&mut b, &[lst], &kwargs);
         assert!(
             !matches!(result, Value::None),
             "np_mean on a list of floats must return a real Value (not None) — \
@@ -520,7 +828,10 @@ mod tests {
         let x_flat = crate::helpers::composite::flatten_composite(&x);
         let result_ints: Vec<Option<i64>> = result_flat.iter().map(|v| v.int_val()).collect();
         let x_ints: Vec<Option<i64>> = x_flat.iter().map(|v| v.int_val()).collect();
-        assert_eq!(result_ints, x_ints, "result must equal x when cond all-true");
+        assert_eq!(
+            result_ints, x_ints,
+            "result must equal x when cond all-true"
+        );
     }
 
     #[test]
@@ -546,7 +857,10 @@ mod tests {
         let y_flat = crate::helpers::composite::flatten_composite(&y);
         let result_ints: Vec<Option<i64>> = result_flat.iter().map(|v| v.int_val()).collect();
         let y_ints: Vec<Option<i64>> = y_flat.iter().map(|v| v.int_val()).collect();
-        assert_eq!(result_ints, y_ints, "result must equal y when cond all-false");
+        assert_eq!(
+            result_ints, y_ints,
+            "result must equal y when cond all-false"
+        );
     }
 
     #[test]

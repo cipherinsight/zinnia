@@ -1,0 +1,14 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0357/kernel.py
+// REASON: argsort + reverse + witness-dependent gather (same family as 0355).
+
+def main(field[3][3][3] a, field[3][3][3] b) -> field[3][3][3]:
+    field[3][3][3] c = [[[0; 3]; 3]; 3]
+    for u32 j in 0..3 do
+        for u32 k in 0..3 do
+            for u32 i in 0..3 do
+                c[i][j][k] = b[2 - i][j][k]  // reversed-sort placeholder
+            endfor
+        endfor
+    endfor
+    return c

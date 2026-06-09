@@ -238,6 +238,108 @@ pub fn relay_arccos_output_interval(
     true
 }
 
+/// Relay an interval bound through `arctan2`: given visible intervals
+/// `y ∈ [y_lo, y_hi]` and `x ∈ [x_lo, x_hi]` on the fact stack, plant
+/// a tighter output bound on `output_vid` than the static `[-π - slack,
+/// π + slack]` contract.
+///
+/// **Soundness gate (the only subtle thing in this helper).** `arctan2`
+/// is continuous everywhere *except* the negative x-axis, where it
+/// jumps from `+π` (approaching from `y → 0⁺`) to `-π` (approaching
+/// from `y → 0⁻`). If the input bounding box `[x_lo, x_hi] × [y_lo,
+/// y_hi]` straddles that discontinuity, the corner-min-max approach is
+/// unsound (it could miss values near `±π` that the function attains in
+/// the interior of the box). The gate skips emit in that case.
+///
+/// Concretely the discontinuity lives on the open ray `(-∞, 0) × {0}`.
+/// The bounding box can intersect it only when `x_lo < 0` *and*
+/// `y_lo ≤ 0 ≤ y_hi`. So the safe condition is:
+///
+/// - `x_lo >= 0.0` (whole box is in the right half-plane; no discontinuity), OR
+/// - `y_lo > 0.0` (whole box is strictly above the x-axis), OR
+/// - `y_hi < 0.0` (whole box is strictly below the x-axis).
+///
+/// On the safe side, `arctan2` is continuous and monotone in each
+/// argument separately over the box, so the extrema are attained at
+/// corners and corner-min-max is exact. The card's sketch suggested
+/// `x_hi >= 0 ⇒ safe`, which is unsound for the box `x ∈ [-3, 5],
+/// y ∈ [-2, 2]` (true range approaches `±π`; corners only see
+/// `±(π - atan(2/3))`); the corrected gate uses `x_lo >= 0` instead.
+///
+/// **No slack widening.** The static `arctan2_f` contract widens by
+/// `ZINNIA_TRANSCENDENTAL_BOUND_SLACK_F64` to absorb the f64 round-down
+/// of `std::f64::consts::PI`. Our relayed bounds are strictly interior
+/// to `(-π, π)` whenever the soundness gate passes (the gate excludes
+/// the only configurations that can reach `±π` exactly), so the slack
+/// is not needed for soundness. We follow the existing
+/// `relay_{sqrt,exp,log,arccos}` precedent and deposit the corner-
+/// derived bound directly. f64 `atan2` is correctly-rounded on every
+/// platform we target (IEEE-754 recommendation, libm-conformant);
+/// 1-ulp drift doesn't push us through the gate.
+///
+/// Mirrors [`relay_sqrt_output_interval`]: facts-only lookup,
+/// default-deny on non-finite corners. Returns `true` when a bound was
+/// deposited.
+pub fn relay_arctan2_output_interval(
+    b: &mut crate::builder::IRBuilder,
+    y_vid: crate::types::ValueId,
+    x_vid: crate::types::ValueId,
+    output_vid: crate::types::ValueId,
+) -> bool {
+    use crate::optim::predicates::formula::{
+        BoolOp, CmpOp, ContractFloat, ContractTerm, ContractVar,
+    };
+
+    if req_disabled() {
+        return false;
+    }
+    let Some((y_lo, y_hi)) = derive_float_bounds_from_facts(&b.facts, y_vid) else {
+        return false;
+    };
+    let Some((x_lo, x_hi)) = derive_float_bounds_from_facts(&b.facts, x_vid) else {
+        return false;
+    };
+
+    // Soundness gate — see doc-comment for the derivation.
+    let safe = x_lo >= 0.0 || y_lo > 0.0 || y_hi < 0.0;
+    if !safe {
+        return false;
+    }
+
+    // Corner-min-max. On the safe side `arctan2` is continuous and
+    // monotone in each argument, so extrema live at the 4 corners.
+    let c1 = y_lo.atan2(x_lo);
+    let c2 = y_lo.atan2(x_hi);
+    let c3 = y_hi.atan2(x_lo);
+    let c4 = y_hi.atan2(x_hi);
+    let out_lo = c1.min(c2).min(c3).min(c4);
+    let out_hi = c1.max(c2).max(c3).max(c4);
+
+    if !out_lo.is_finite() || !out_hi.is_finite() {
+        return false;
+    }
+
+    b.facts.insert_for(
+        output_vid,
+        ContractTerm::BoolComb {
+            op: BoolOp::And,
+            operands: vec![
+                ContractTerm::Cmp {
+                    op: CmpOp::Ge,
+                    lhs: Box::new(ContractTerm::Var(ContractVar::Value(output_vid))),
+                    rhs: Box::new(ContractTerm::LitFloat(ContractFloat(out_lo))),
+                },
+                ContractTerm::Cmp {
+                    op: CmpOp::Le,
+                    lhs: Box::new(ContractTerm::Var(ContractVar::Value(output_vid))),
+                    rhs: Box::new(ContractTerm::LitFloat(ContractFloat(out_hi))),
+                },
+            ],
+        },
+    );
+    true
+}
+
 /// Emit `output ∈ [multiplier * agg_lo, multiplier * agg_hi]` on
 /// `output_vid` where `[agg_lo, agg_hi]` is the union of per-element
 /// fact-derived bounds across `element_vids`. Returns `true` on emit,
@@ -299,6 +401,145 @@ pub fn relay_reduction_output_interval_int(
         ],
     };
     b.facts.insert_for(output_vid, fact);
+    true
+}
+
+/// Relay the tight interval for a whole-array float mean. Given an input
+/// aggregate bound `arr ∈ [lo, hi]` and a known static element count `n`,
+/// plant `output ∈ [lo / n, hi / n]` on the mean result.
+///
+/// This is facts-only: it reads the already visible aggregate bound on the
+/// input array value and deposits a derived fact on the existing mean output.
+/// Missing bounds, non-positive counts, or non-finite arithmetic skip emit.
+pub fn relay_mean_tight_interval_float(
+    b: &mut crate::builder::IRBuilder,
+    input_vid: crate::types::ValueId,
+    n: i64,
+    output_vid: crate::types::ValueId,
+) -> bool {
+    use crate::optim::predicates::formula::{
+        BoolOp, CmpOp, ContractFloat, ContractTerm, ContractVar,
+    };
+
+    if req_disabled() || n <= 0 {
+        return false;
+    }
+    let Some((lo, hi)) = derive_float_bounds_from_facts(&b.facts, input_vid) else {
+        return false;
+    };
+    let n_f = n as f64;
+    let out_lo = lo / n_f;
+    let out_hi = hi / n_f;
+    if !out_lo.is_finite() || !out_hi.is_finite() {
+        return false;
+    }
+
+    b.facts.insert_for(
+        output_vid,
+        ContractTerm::BoolComb {
+            op: BoolOp::And,
+            operands: vec![
+                ContractTerm::Cmp {
+                    op: CmpOp::Ge,
+                    lhs: Box::new(ContractTerm::Var(ContractVar::Value(output_vid))),
+                    rhs: Box::new(ContractTerm::LitFloat(ContractFloat(out_lo))),
+                },
+                ContractTerm::Cmp {
+                    op: CmpOp::Le,
+                    lhs: Box::new(ContractTerm::Var(ContractVar::Value(output_vid))),
+                    rhs: Box::new(ContractTerm::LitFloat(ContractFloat(out_hi))),
+                },
+            ],
+        },
+    );
+    true
+}
+
+fn emit_int_interval_fact(
+    b: &mut crate::builder::IRBuilder,
+    output_vid: crate::types::ValueId,
+    out_lo: i64,
+    out_hi: i64,
+) {
+    use crate::optim::predicates::formula::{BoolOp, CmpOp, ContractTerm, ContractVar};
+
+    b.facts.insert_for(
+        output_vid,
+        ContractTerm::BoolComb {
+            op: BoolOp::And,
+            operands: vec![
+                ContractTerm::Cmp {
+                    op: CmpOp::Ge,
+                    lhs: Box::new(ContractTerm::Var(ContractVar::Value(output_vid))),
+                    rhs: Box::new(ContractTerm::LitInt(out_lo)),
+                },
+                ContractTerm::Cmp {
+                    op: CmpOp::Le,
+                    lhs: Box::new(ContractTerm::Var(ContractVar::Value(output_vid))),
+                    rhs: Box::new(ContractTerm::LitInt(out_hi)),
+                },
+            ],
+        },
+    );
+}
+
+/// Compute the exact static-length integer `prod` interval for elements whose
+/// aggregate bound is `[lo, hi]`.
+///
+/// Preconditions are intentionally explicit: `n` is a statically known element
+/// count. `n = 0` yields the product identity `[1, 1]`. Callers with runtime-
+/// symbolic or parity-unknown lengths must skip this helper rather than guess,
+/// because the all-non-positive case depends on parity.
+///
+/// Returns `None` for mixed-sign bounds and for any checked arithmetic
+/// overflow. This keeps the relay conservative: no emit is always sound.
+pub fn prod_interval_int_for_static_len(lo: i64, hi: i64, n: u32) -> Option<(i64, i64)> {
+    if n == 0 {
+        return Some((1, 1));
+    }
+    if lo >= 0 {
+        return Some((lo.checked_pow(n)?, hi.checked_pow(n)?));
+    }
+    if hi <= 0 {
+        let min_abs = hi.checked_neg()?;
+        let max_abs = lo.checked_neg()?;
+        let min_abs_pow = min_abs.checked_pow(n)?;
+        let max_abs_pow = max_abs.checked_pow(n)?;
+        if n % 2 == 0 {
+            Some((min_abs_pow, max_abs_pow))
+        } else {
+            Some((max_abs_pow.checked_neg()?, min_abs_pow.checked_neg()?))
+        }
+    } else {
+        None
+    }
+}
+
+/// Relay a sign-aware integer interval through static `prod`.
+///
+/// This is facts-only: every element must have a visible integer interval.
+/// Mixed-sign aggregate input bounds skip emit. The length is the static
+/// element count (`element_vids.len()`), so the non-positive parity split is
+/// well-defined here; future dynamic-length callers must skip when parity is
+/// unknown.
+pub fn relay_prod_output_interval_int(
+    b: &mut crate::builder::IRBuilder,
+    element_vids: &[crate::types::ValueId],
+    output_vid: crate::types::ValueId,
+) -> bool {
+    if req_disabled() {
+        return false;
+    }
+    let Some((agg_lo, agg_hi)) = aggregate_element_bounds(&b.facts, element_vids) else {
+        return false;
+    };
+    let Ok(n) = u32::try_from(element_vids.len()) else {
+        return false;
+    };
+    let Some((out_lo, out_hi)) = prod_interval_int_for_static_len(agg_lo, agg_hi, n) else {
+        return false;
+    };
+    emit_int_interval_fact(b, output_vid, out_lo, out_hi);
     true
 }
 
@@ -388,7 +629,11 @@ pub fn relay_forall_eq_const_from_all_inputs(
             matches!(b.prove(&term), ProveOutcome::Proved)
         });
         if all_match {
-            let contract = if *k == 0 { "zeros_content" } else { "ones_content" };
+            let contract = if *k == 0 {
+                "zeros_content"
+            } else {
+                "ones_content"
+            };
             b.fire_contract(contract, output_vid, &HashMap::new());
             return true;
         }

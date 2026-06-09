@@ -7,16 +7,9 @@ use super::{agg_kind, promote};
 
 /// Unified reduce: handles static arrays, dynamic arrays, static axis,
 /// dynamic axis, and no axis.
-pub fn reduce(
-    b: &mut IRBuilder,
-    op: &str,
-    val: &Value,
-    axis_arg: Option<&Value>,
-) -> Value {
+pub fn reduce(b: &mut IRBuilder, op: &str, val: &Value, axis_arg: Option<&Value>) -> Value {
     if let Value::DynamicNDArray(d) = val {
-        return crate::ops::dyn_ndarray::aggregation::dyn_aggregate(
-            b, d, axis_arg, agg_kind(op),
-        );
+        return crate::ops::dyn_ndarray::aggregation::dyn_aggregate(b, d, axis_arg, agg_kind(op));
     }
 
     match axis_arg {
@@ -26,7 +19,10 @@ pub fn reduce(
             } else {
                 let d = promote(b, val);
                 crate::ops::dyn_ndarray::aggregation::dyn_aggregate(
-                    b, &d, Some(ax_val), agg_kind(op),
+                    b,
+                    &d,
+                    Some(ax_val),
+                    agg_kind(op),
                 )
             }
         }
@@ -44,9 +40,7 @@ pub fn argmax_argmin(
     let op = if is_max { "argmax" } else { "argmin" };
 
     if let Value::DynamicNDArray(d) = val {
-        return crate::ops::dyn_ndarray::aggregation::dyn_aggregate(
-            b, d, axis_arg, agg_kind(op),
-        );
+        return crate::ops::dyn_ndarray::aggregation::dyn_aggregate(b, d, axis_arg, agg_kind(op));
     }
 
     match axis_arg {
@@ -56,7 +50,10 @@ pub fn argmax_argmin(
             } else {
                 let d = promote(b, val);
                 crate::ops::dyn_ndarray::aggregation::dyn_aggregate(
-                    b, &d, Some(ax_val), agg_kind(op),
+                    b,
+                    &d,
+                    Some(ax_val),
+                    agg_kind(op),
                 )
             }
         }

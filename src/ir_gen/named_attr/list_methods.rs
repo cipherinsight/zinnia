@@ -5,8 +5,8 @@
 
 use crate::types::Value;
 
-use super::DispatchCtx;
 use super::super::IRGenerator;
+use super::DispatchCtx;
 
 impl IRGenerator {
     pub(crate) fn try_list_method(&mut self, ctx: &DispatchCtx) -> Option<Value> {
@@ -28,8 +28,11 @@ impl IRGenerator {
                 // source. Without this, P3 segment-shared writes would
                 // mutate both the original and the copy.
                 if let Value::StaticArray { .. } = &v {
-                    let lst = crate::helpers::static_array::base::to_value_list(&mut self.builder, &v);
-                    if let Some(sa) = crate::helpers::static_array::base::to_static_array(&mut self.builder, &lst) {
+                    let lst =
+                        crate::helpers::static_array::base::to_value_list(&mut self.builder, &v);
+                    if let Some(sa) =
+                        crate::helpers::static_array::base::to_static_array(&mut self.builder, &lst)
+                    {
                         sa
                     } else {
                         lst

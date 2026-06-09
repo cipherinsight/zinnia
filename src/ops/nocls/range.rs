@@ -14,8 +14,12 @@ impl RangeOp {
 }
 
 impl Op for RangeOp {
-    fn name(&self) -> &'static str { "range" }
-    fn params(&self) -> &[ParamEntry] { &Self::PARAMS }
+    fn name(&self) -> &'static str {
+        "range"
+    }
+    fn params(&self) -> &[ParamEntry] {
+        &Self::PARAMS
+    }
 
     fn build(&self, builder: &mut IRBuilder, args: &OpArgs) -> Value {
         let start_val = args.require("start");
@@ -26,9 +30,7 @@ impl Op for RangeOp {
         let (start, stop, step) = if let Some(stop_v) = stop_opt {
             let s: i64 = require_provable_static_int(builder, start_val, SiteKind::RangeStart);
             let e: i64 = require_provable_static_int(builder, stop_v, SiteKind::RangeStop);
-            let st = step_opt
-                .and_then(|v| v.int_val())
-                .unwrap_or(1);
+            let st = step_opt.and_then(|v| v.int_val()).unwrap_or(1);
             (s, e, st)
         } else {
             // range(stop) — start=0, stop=start_val
@@ -50,7 +52,7 @@ impl Op for RangeOp {
         Value::List(crate::types::CompositeData {
             elements_type: types,
             values,
-        
+
             value_id: ValueId::next(),
         })
     }

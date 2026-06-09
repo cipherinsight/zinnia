@@ -1,0 +1,59 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "chr",
+        "join",
+        "len",
+        "ord",
+        "out.append",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 17,
+      "line_start": 4,
+      "mutated_params": [],
+      "name": "rc4_crypt",
+      "ops": [
+        "Add",
+        "BitXor",
+        "Mod"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "data",
+          "proposed_annotation": "str",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "key",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_rc4/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_rc4",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n\n@zk_circuit\ndef rc4_crypt(data: str, key: Float[Array, 'N<=1024']):\n    S = range(256)\n    j = 0\n    out = []\n    for i in range(256):\n        j = (j + S[i] + ord(key[i % len(key)])) % 256\n        S[i], S[j] = (S[j], S[i])\n    for char in data:\n        i = j = 0\n        i = (i + 1) % 256\n        j = (j + S[i]) % 256\n        S[i], S[j] = (S[j], S[i])\n        out.append(chr(ord(char) ^ S[(S[i] + S[j]) % 256]))\n    return ''.join(out)",
+  "source_status": "direct"
+}

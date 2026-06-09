@@ -1,0 +1,12 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0340/kernel.py
+// REASON: Python list-append over X.flat lowered to writing into a fixed-size field[30] (flattened row-major).
+
+def main(field[5][6] X) -> field[30]:
+  field[30] result = [0; 30]
+  for u32 i in 0..5 do
+    for u32 j in 0..6 do
+      result[i * 6 + j] = X[i][j]
+    endfor
+  endfor
+  return result

@@ -1,0 +1,23 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0507/kernel.py
+// REASON: rows.min()/rows.max() determine slice bounds at runtime, producing a runtime-sized output array - ZoKrates needs compile-time shapes
+
+def main(field[5][6] im) -> field[5][6]:
+    // Skeleton: emit a zero-elsewhere mask of the bounding-box; true output shape is dynamic.
+    bool[5][6] mask = [[false; 6]; 5]
+    bool[5] row_nonzero = [false; 5]
+    bool[6] col_nonzero = [false; 6]
+    for u32 i in 0..5 do
+        for u32 j in 0..6 do
+            mask[i][j] = im[i][j] != 0
+            row_nonzero[i] = row_nonzero[i] || mask[i][j]
+            col_nonzero[j] = col_nonzero[j] || mask[i][j]
+        endfor
+    endfor
+    field[5][6] result = [[0; 6]; 5]
+    for u32 i in 0..5 do
+        for u32 j in 0..6 do
+            result[i][j] = if row_nonzero[i] && col_nonzero[j] then im[i][j] else 0 fi
+        endfor
+    endfor
+    return result

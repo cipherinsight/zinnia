@@ -1,0 +1,2 @@
+idx_list = ((x == a) & (y == b))
+result = idx_list.nonzero()[0]

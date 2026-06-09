@@ -1,0 +1,72 @@
+{
+  "categories": [
+    "denominator-obligation"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "all",
+        "range"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 10,
+      "line_start": 9,
+      "mutated_params": [],
+      "name": "is_prime",
+      "ops": [
+        "Gt",
+        "Mod"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "n",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "is_prime",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 14,
+      "line_start": 13,
+      "mutated_params": [],
+      "name": "primes_below",
+      "ops": [
+        "Add",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "x",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_sexy_primes/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites."
+  ],
+  "program": "pythran_sexy_primes",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n\n@zk_chip\ndef is_prime(n: Integer):\n    return all((n % j > 0 for j in range(2, n)))\n\n@zk_circuit\ndef primes_below(x: Integer):\n    return [[j - 6, j] for j in range(9, x + 1) if is_prime(j) and is_prime(j - 6)]",
+  "source_status": "direct"
+}

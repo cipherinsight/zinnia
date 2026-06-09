@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::prove::error::ProvingError;
 use crate::prove::kernel;
+use crate::types::ZinniaType;
 
 // ---------------------------------------------------------------------------
 // InputPath — how IR instructions address circuit input values
@@ -49,7 +50,10 @@ pub struct InputPath {
 
 impl InputPath {
     pub fn new(param: impl Into<String>, segments: Vec<PathSegment>) -> Self {
-        Self { param: param.into(), segments }
+        Self {
+            param: param.into(),
+            segments,
+        }
     }
 
     /// Human-readable display string, e.g. `"arr.5"`, `"h.inner.0"`.
@@ -62,6 +66,7 @@ impl InputPath {
             s.push('.');
             match seg {
                 PathSegment::Index(i) => s.push_str(&i.to_string()),
+                PathSegment::RuntimeShape(i) => s.push_str(&format!("runtime_shape.{i}")),
                 PathSegment::Inner => s.push_str("inner"),
                 PathSegment::Hash => s.push_str("hash"),
             }
@@ -81,6 +86,8 @@ impl std::fmt::Display for InputPath {
 pub enum PathSegment {
     /// Index into a list, tuple, NDArray, or DynamicNDArray.
     Index(u32),
+    /// Runtime shape metadata axis for DynamicNDArray inputs.
+    RuntimeShape(u32),
     /// Navigate into the inner value of a `PoseidonHashed`.
     Inner,
     /// Navigate to the hash field of a `PoseidonHashed`.
@@ -119,14 +126,13 @@ pub enum InputNode {
     Array {
         shape: Vec<usize>,
         elements: Vec<InputNode>,
+        #[serde(default)]
+        runtime_shape: Option<Vec<usize>>,
     },
     /// An ordered sequence of heterogeneous elements (List or Tuple).
     Sequence(Vec<InputNode>),
     /// A Poseidon-hashed wrapper: inner value + precomputed hash.
-    Hashed {
-        inner: Box<InputNode>,
-        hash: String,
-    },
+    Hashed { inner: Box<InputNode>, hash: String },
 }
 
 impl InputNode {
@@ -141,51 +147,77 @@ impl InputNode {
         match (&segments[0], self) {
             (PathSegment::Index(i), InputNode::Sequence(elems)) => {
                 let idx = *i as usize;
-                elems.get(idx)
-                    .ok_or_else(|| ProvingError::other(format!(
-                        "Sequence index {} out of range (len {})", idx, elems.len()
-                    )))?
+                elems
+                    .get(idx)
+                    .ok_or_else(|| {
+                        ProvingError::other(format!(
+                            "Sequence index {} out of range (len {})",
+                            idx,
+                            elems.len()
+                        ))
+                    })?
                     .navigate(&segments[1..])
             }
             (PathSegment::Index(i), InputNode::Array { elements, .. }) => {
                 let idx = *i as usize;
-                elements.get(idx)
-                    .ok_or_else(|| ProvingError::other(format!(
-                        "Array index {} out of range (len {})", idx, elements.len()
-                    )))?
+                elements
+                    .get(idx)
+                    .ok_or_else(|| {
+                        ProvingError::other(format!(
+                            "Array index {} out of range (len {})",
+                            idx,
+                            elements.len()
+                        ))
+                    })?
                     .navigate(&segments[1..])
             }
-            (PathSegment::Inner, InputNode::Hashed { inner, .. }) => {
-                inner.navigate(&segments[1..])
+            (PathSegment::RuntimeShape(_axis), InputNode::Array { runtime_shape, .. }) => {
+                if segments.len() != 1 {
+                    return Err(ProvingError::other(
+                        "RuntimeShape path segment must be terminal",
+                    ));
+                }
+                let _ = runtime_shape.as_ref().ok_or_else(|| {
+                    ProvingError::other(
+                        "RuntimeShape metadata must be resolved through CircuitInputs::resolve",
+                    )
+                })?;
+                Err(ProvingError::other(
+                    "RuntimeShape metadata must be resolved through CircuitInputs::resolve",
+                ))
             }
+            (PathSegment::Inner, InputNode::Hashed { inner, .. }) => inner.navigate(&segments[1..]),
             (PathSegment::Hash, InputNode::Hashed { .. }) => {
                 if segments.len() > 1 {
                     return Err(ProvingError::other(
-                        "Hash segment must be terminal (no further navigation)"
+                        "Hash segment must be terminal (no further navigation)",
                     ));
                 }
                 Ok(self)
             }
-            (seg, node) => {
-                Err(ProvingError::other(format!(
-                    "Cannot navigate {:?} into {:?}", seg, std::mem::discriminant(node)
-                )))
-            }
+            (seg, node) => Err(ProvingError::other(format!(
+                "Cannot navigate {:?} into {:?}",
+                seg,
+                std::mem::discriminant(node)
+            ))),
         }
     }
 
     /// Convert a leaf node to an Fp field element.
-    pub fn to_fp(&self, precision_bits: u32) -> Result<pasta_curves::Fp, ProvingError> {
-        use pasta_curves::Fp;
+    pub fn to_fp(
+        &self,
+        precision_bits: u32,
+    ) -> Result<halo2_proofs::halo2curves::bn256::Fr, ProvingError> {
+        use halo2_proofs::halo2curves::bn256::Fr as Fp;
         match self {
             InputNode::Int(v) => Ok(kernel::i64_to_fp(*v)),
             InputNode::Float(v) => Ok(kernel::quantize_to_fp(*v, precision_bits)),
             InputNode::Bool(v) => Ok(if *v { Fp::one() } else { Fp::zero() }),
             InputNode::Hex(s) => kernel::hex_str_to_fp(s),
             InputNode::Hashed { hash, .. } => kernel::hex_str_to_fp(hash),
-            InputNode::Array { .. } | InputNode::Sequence(_) => {
-                Err(ProvingError::other("Cannot convert composite InputNode to Fp"))
-            }
+            InputNode::Array { .. } | InputNode::Sequence(_) => Err(ProvingError::other(
+                "Cannot convert composite InputNode to Fp",
+            )),
         }
     }
 }
@@ -223,17 +255,64 @@ impl CircuitInputs {
     }
 
     /// Resolve an [`InputPath`] to an Fp field element by navigating the tree.
-    pub fn resolve(&self, path: &InputPath, precision_bits: u32) -> Result<pasta_curves::Fp, ProvingError> {
-        let param = self.params.iter()
+    pub fn resolve(
+        &self,
+        path: &InputPath,
+        precision_bits: u32,
+    ) -> Result<halo2_proofs::halo2curves::bn256::Fr, ProvingError> {
+        let param = self
+            .params
+            .iter()
             .find(|p| p.name == path.param)
             .ok_or_else(|| ProvingError::witness_missing(&path.display()))?;
+        if let [PathSegment::RuntimeShape(axis)] = path.segments.as_slice() {
+            let InputNode::Array {
+                runtime_shape: Some(runtime_shape),
+                ..
+            } = &param.value
+            else {
+                return Err(ProvingError::other(
+                    "Array input has no runtime_shape metadata",
+                ));
+            };
+            let Some(n) = runtime_shape.get(*axis as usize) else {
+                return Err(ProvingError::other(format!(
+                    "Runtime shape axis {} out of range (rank {})",
+                    axis,
+                    runtime_shape.len()
+                )));
+            };
+            return Ok(kernel::i64_to_fp(*n as i64));
+        }
         let leaf = param.value.navigate(&path.segments)?;
         leaf.to_fp(precision_bits)
+    }
+
+    pub fn runtime_array_shape(&self, param_name: &str) -> Option<Vec<usize>> {
+        self.params
+            .iter()
+            .find(|p| p.name == param_name)
+            .and_then(|p| {
+                serde_json::from_value::<ZinniaType>(p.dtype.clone())
+                    .ok()
+                    .and_then(|dt| match (dt, &p.value) {
+                        (
+                            ZinniaType::DynamicNDArray { max_rank, .. },
+                            InputNode::Array {
+                                runtime_shape: Some(runtime_shape),
+                                ..
+                            },
+                        ) if max_rank == runtime_shape.len() => Some(runtime_shape.clone()),
+                        _ => None,
+                    })
+            })
     }
 }
 
 impl Default for CircuitInputs {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +333,8 @@ pub struct ResolvedWitness {
     /// The structured circuit inputs.
     pub input: CircuitInputs,
     /// External function results, keyed by (store_idx, output_idx).
-    pub external_results: std::collections::HashMap<(u32, u32), pasta_curves::Fp>,
+    pub external_results:
+        std::collections::HashMap<(u32, u32), halo2_proofs::halo2curves::bn256::Fr>,
     /// Precision bits for fixed-point quantization.
     pub precision_bits: u32,
 }
@@ -269,16 +349,25 @@ impl ResolvedWitness {
     }
 
     /// Resolve a circuit input path to Fp.
-    pub fn resolve_path(&self, path: &InputPath) -> Result<pasta_curves::Fp, ProvingError> {
+    pub fn resolve_path(
+        &self,
+        path: &InputPath,
+    ) -> Result<halo2_proofs::halo2curves::bn256::Fr, ProvingError> {
         self.input.resolve(path, self.precision_bits)
     }
 
     /// Look up an external function result.
-    pub fn resolve_external(&self, store_idx: u32, output_idx: u32) -> Result<pasta_curves::Fp, ProvingError> {
-        self.external_results.get(&(store_idx, output_idx)).copied()
-            .ok_or_else(|| ProvingError::witness_missing(
-                &format!("__ext.{}.{}", store_idx, output_idx)
-            ))
+    pub fn resolve_external(
+        &self,
+        store_idx: u32,
+        output_idx: u32,
+    ) -> Result<halo2_proofs::halo2curves::bn256::Fr, ProvingError> {
+        self.external_results
+            .get(&(store_idx, output_idx))
+            .copied()
+            .ok_or_else(|| {
+                ProvingError::witness_missing(&format!("__ext.{}.{}", store_idx, output_idx))
+            })
     }
 }
 
@@ -293,12 +382,18 @@ mod tests {
     #[test]
     fn test_input_path_display() {
         assert_eq!(InputPath::new("x", vec![]).display(), "x");
-        assert_eq!(InputPath::new("arr", vec![PathSegment::Index(5)]).display(), "arr.5");
+        assert_eq!(
+            InputPath::new("arr", vec![PathSegment::Index(5)]).display(),
+            "arr.5"
+        );
         assert_eq!(
             InputPath::new("h", vec![PathSegment::Inner, PathSegment::Index(0)]).display(),
             "h.inner.0"
         );
-        assert_eq!(InputPath::new("h", vec![PathSegment::Hash]).display(), "h.hash");
+        assert_eq!(
+            InputPath::new("h", vec![PathSegment::Hash]).display(),
+            "h.hash"
+        );
     }
 
     #[test]
@@ -324,6 +419,7 @@ mod tests {
         let node = InputNode::Array {
             shape: vec![3],
             elements: vec![InputNode::Int(1), InputNode::Int(2), InputNode::Int(3)],
+            runtime_shape: None,
         };
         let result = node.navigate(&[PathSegment::Index(2)]).unwrap();
         assert!(matches!(result, InputNode::Int(3)));
@@ -349,10 +445,13 @@ mod tests {
             InputNode::Array {
                 shape: vec![2],
                 elements: vec![InputNode::Int(100), InputNode::Int(200)],
+                runtime_shape: None,
             },
             InputNode::Int(300),
         ]);
-        let result = node.navigate(&[PathSegment::Index(0), PathSegment::Index(1)]).unwrap();
+        let result = node
+            .navigate(&[PathSegment::Index(0), PathSegment::Index(1)])
+            .unwrap();
         assert!(matches!(result, InputNode::Int(200)));
     }
 
@@ -375,7 +474,9 @@ mod tests {
             inner: Box::new(InputNode::Int(1)),
             hash: "a".repeat(64),
         };
-        assert!(node.navigate(&[PathSegment::Hash, PathSegment::Index(0)]).is_err());
+        assert!(node
+            .navigate(&[PathSegment::Hash, PathSegment::Index(0)])
+            .is_err());
     }
 
     #[test]
@@ -394,8 +495,14 @@ mod tests {
 
     #[test]
     fn test_to_fp_bool() {
-        assert_eq!(kernel::fp_to_i64(InputNode::Bool(true).to_fp(32).unwrap()), 1);
-        assert_eq!(kernel::fp_to_i64(InputNode::Bool(false).to_fp(32).unwrap()), 0);
+        assert_eq!(
+            kernel::fp_to_i64(InputNode::Bool(true).to_fp(32).unwrap()),
+            1
+        );
+        assert_eq!(
+            kernel::fp_to_i64(InputNode::Bool(false).to_fp(32).unwrap()),
+            0
+        );
     }
 
     #[test]
@@ -421,6 +528,7 @@ mod tests {
                     value: InputNode::Array {
                         shape: vec![3],
                         elements: vec![InputNode::Int(10), InputNode::Int(20), InputNode::Int(30)],
+                        runtime_shape: None,
                     },
                 },
             ],
@@ -429,14 +537,18 @@ mod tests {
         let fp = inputs.resolve(&InputPath::new("x", vec![]), 32).unwrap();
         assert_eq!(kernel::fp_to_i64(fp), 99);
         // Resolve array element
-        let fp = inputs.resolve(&InputPath::new("arr", vec![PathSegment::Index(2)]), 32).unwrap();
+        let fp = inputs
+            .resolve(&InputPath::new("arr", vec![PathSegment::Index(2)]), 32)
+            .unwrap();
         assert_eq!(kernel::fp_to_i64(fp), 30);
     }
 
     #[test]
     fn test_circuit_inputs_resolve_missing_param() {
         let inputs = CircuitInputs::new();
-        assert!(inputs.resolve(&InputPath::new("nonexistent", vec![]), 32).is_err());
+        assert!(inputs
+            .resolve(&InputPath::new("nonexistent", vec![]), 32)
+            .is_err());
     }
 
     #[test]

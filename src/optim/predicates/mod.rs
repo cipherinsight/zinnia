@@ -59,14 +59,16 @@ use crate::optim::smt_encoding::{SmtEncodingCtx, Z3Term};
 // ---------------------------------------------------------------------------
 
 pub use cache::{DischargeCache, DischargeKey, DischargeResult};
-pub use facts::{
-    collect_value_ids, instantiate_contract, substitute_inputs, Fact, FactScope, FactSet,
-    FactStack, ScopeKind,
+pub use contracts::{
+    op_contract_by_name, op_contract_for, ContractFormula, FrameCondition, OpContract,
 };
-pub use contracts::{op_contract_by_name, op_contract_for, ContractFormula, FrameCondition, OpContract};
 pub use discharge::{
     build_input_array_lengths, build_input_name_index, find_scalar_preconditions,
     find_structural_predicates, Discharger, PredicateConstraints,
+};
+pub use facts::{
+    collect_shape_params, collect_value_ids, instantiate_contract, substitute_inputs, Fact,
+    FactScope, FactSet, FactStack, ScopeKind,
 };
 pub use formula::{
     lower_bool, ArithOp, BoolOp, CmpOp, ContractTerm, ContractVar, LowerError, LowerOutput,
@@ -91,7 +93,13 @@ pub use witness::{witness_emitters, WitnessEmitter};
 /// unregistered or arity-mismatched. Both are sound (the atom contributes
 /// no information rather than wrong information).
 pub fn smt_encode_structural_predicate(ir: &IR, ctx: &mut SmtEncodingCtx) -> Z3Term {
-    if let IR::StructuralPredicate { kind, args, op, bound } = ir {
+    if let IR::StructuralPredicate {
+        kind,
+        args,
+        op,
+        bound,
+    } = ir
+    {
         if let Some(term) = encode_atom_fresh(ctx, kind, args, op.as_deref(), bound.as_deref()) {
             return term;
         }

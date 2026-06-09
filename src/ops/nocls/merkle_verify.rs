@@ -14,8 +14,12 @@ impl MerkleVerifyOp {
 }
 
 impl Op for MerkleVerifyOp {
-    fn name(&self) -> &'static str { "merkle_verify" }
-    fn params(&self) -> &[ParamEntry] { &Self::PARAMS }
+    fn name(&self) -> &'static str {
+        "merkle_verify"
+    }
+    fn params(&self) -> &[ParamEntry] {
+        &Self::PARAMS
+    }
 
     fn build(&self, builder: &mut IRBuilder, args: &OpArgs) -> Value {
         let leaf = args.require("leaf");

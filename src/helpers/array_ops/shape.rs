@@ -109,10 +109,18 @@ pub fn swapaxes(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value {
         let a1_i: i64 = require_provable_static_int(b, &args[1], SiteKind::Axis);
         let a0 = a0_i as usize;
         let a1 = a1_i as usize;
-        let perm: Vec<Value> = (0..ndim).map(|i| {
-            let j = if i == a0 { a1 } else if i == a1 { a0 } else { i };
-            Value::Integer(crate::types::ScalarValue::new(Some(j as i64), None))
-        }).collect();
+        let perm: Vec<Value> = (0..ndim)
+            .map(|i| {
+                let j = if i == a0 {
+                    a1
+                } else if i == a1 {
+                    a0
+                } else {
+                    i
+                };
+                Value::Integer(crate::types::ScalarValue::new(Some(j as i64), None))
+            })
+            .collect();
         let perm_list = Value::List(crate::types::CompositeData {
             elements_type: vec![crate::types::ZinniaType::Integer; ndim],
             values: perm,

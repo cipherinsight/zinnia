@@ -1,0 +1,20 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0473/kernel.py
+// REASON: any(np.array_equal(c, x) for x in CNTS) compares a 3D array against scalars in a Python generator; shape-mismatched array_equal and Python generators have no ZoKrates equivalent
+
+def main(field[4][1][2] c, field[3] CNTS) -> bool:
+    bool result = false
+    // array_equal of (4,1,2) array vs each scalar in CNTS is ill-defined; sketching as
+    // "exists x in CNTS such that every c[i][j][k] == x".
+    for u32 x in 0..3 do
+        bool all_eq = true
+        for u32 i in 0..4 do
+            for u32 j in 0..1 do
+                for u32 k in 0..2 do
+                    all_eq = all_eq && (c[i][j][k] == CNTS[x])
+                endfor
+            endfor
+        endfor
+        result = result || all_eq
+    endfor
+    return result

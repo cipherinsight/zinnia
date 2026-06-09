@@ -1,0 +1,53 @@
+{
+  "categories": [
+    "matmul-dot"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "np.dot",
+        "np.square",
+        "np.sum"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 11,
+      "line_start": 10,
+      "mutated_params": [],
+      "name": "euclidean_distance_square",
+      "ops": [
+        "Add",
+        "Mult"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "x1",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "x2",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_euclidean_distance_square/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Declare shared matrix/vector dimensions explicitly, e.g. A[N,K] with x[K]."
+  ],
+  "program": "pythran_euclidean_distance_square",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: matmul-dot\n# Expected outcome: compile/prove candidate\n# Precondition: Declare shared matrix/vector dimensions explicitly; when not expressible as @requires, encode with matching symbolic annotation names and keep as review obligation.\nimport numpy as np\n\n@zk_circuit\ndef euclidean_distance_square(x1: Float[Array, 'N<=1024 M<=1024'], x2: Float[Array, 'N<=1024 M<=1024']):\n    return -2 * np.dot(x1, x2.T) + np.sum(np.square(x1), axis=1)[:, np.newaxis] + np.sum(np.square(x2), axis=1)",
+  "source_status": "direct"
+}

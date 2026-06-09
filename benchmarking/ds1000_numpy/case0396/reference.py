@@ -1,0 +1,2 @@
+import scipy.stats
+result = scipy.stats.loguniform.rvs(a = np.exp(min), b = np.exp(max), size = n)

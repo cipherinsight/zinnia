@@ -1,0 +1,15 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0345/kernel.py
+// REASON: column index `col` is a runtime value used as the second array index — ZoKrates fixed-shape `a[i][col-1]` requires constant column for in-place mutation across rows, and a Float matrix is not representable as field without dropping precision
+
+def main(field[8][6] a, field col, field multiply_number) -> field[8]:
+    // Sketch: scaled-cumsum down a column whose index is runtime
+    field[8] result = [0; 8]
+    field acc = 0
+    for u32 i in 0..8 do
+        // CirC cannot index a[i][col-1] when col is a witness without RAM
+        field v = a[i][0] * multiply_number  // placeholder: col-1 indexing not legal
+        acc = acc + v
+        result[i] = acc
+    endfor
+    return result

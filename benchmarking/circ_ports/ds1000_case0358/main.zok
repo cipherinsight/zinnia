@@ -1,0 +1,14 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0358/kernel.py
+// REASON: np.argsort over per-slab sums then runtime-permuted row gather; permutation comes from witness values and is not expressible without a sort network plus indexed-load.
+
+def main(field[3][3][3] a, field[3][3][3] b) -> field[3][3][3]:
+    field[3][3][3] result = [[[0; 3]; 3]; 3]
+    for u32 i in 0..3 do
+        for u32 j in 0..3 do
+            for u32 k in 0..3 do
+                result[i][j][k] = b[i][j][k]  // would be b[sort_index[i]][j][k]
+            endfor
+        endfor
+    endfor
+    return result

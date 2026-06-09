@@ -1,0 +1,78 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "loop-bounded",
+    "matmul-dot"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "it.repeat",
+        "len",
+        "np.dot",
+        "np.empty",
+        "np.sum",
+        "np.zeros",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 27,
+      "line_start": 15,
+      "mutated_params": [],
+      "name": "np_descent",
+      "ops": [
+        "Add",
+        "Div",
+        "LtE",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "x",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "d",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "mu",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "N_epochs",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_descent/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Declare shared matrix/vector dimensions explicitly, e.g. A[N,K] with x[K].",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_descent",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, in-place-mutation, loop-bounded, matmul-dot\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Declare shared matrix/vector dimensions explicitly; when not expressible as @requires, encode with matching symbolic annotation names and keep as review obligation.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport itertools as it\nimport numpy as np\n\n@zk_circuit\n@requires(lambda x, d, mu, N_epochs: 0 <= N_epochs <= 1024)\ndef np_descent(x: Float[Array, 'N<=1024'], d: Float[Array, 'N<=1024'], mu: Float, N_epochs: Integer):\n    N = len(x)\n    f = 2 / N\n    y = np.zeros(N)\n    err = np.zeros(N)\n    w = np.zeros(2)\n    grad = np.empty(2)\n    for _ in it.repeat(None, N_epochs):\n        err[:] = d - y\n        grad[:] = (f * np.sum(err), f * np.dot(err, x))\n        w += mu * grad\n        y = w[0] + w[1] * x\n    return w",
+  "source_status": "direct"
+}

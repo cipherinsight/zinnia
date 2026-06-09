@@ -9,8 +9,12 @@ impl PoseidonHashOp {
 }
 
 impl Op for PoseidonHashOp {
-    fn name(&self) -> &'static str { "poseidon_hash" }
-    fn params(&self) -> &[ParamEntry] { &Self::PARAMS }
+    fn name(&self) -> &'static str {
+        "poseidon_hash"
+    }
+    fn params(&self) -> &[ParamEntry] {
+        &Self::PARAMS
+    }
 
     fn build(&self, builder: &mut IRBuilder, args: &OpArgs) -> Value {
         let x = args.require("x");

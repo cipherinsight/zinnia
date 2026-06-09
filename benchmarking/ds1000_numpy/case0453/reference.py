@@ -1,0 +1,2 @@
+l2 = np.sqrt((X*X).sum(axis=-1))
+result = X / l2.reshape(-1, 1)

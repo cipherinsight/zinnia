@@ -1,0 +1,10 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0328/kernel.py
+// REASON: branch picks between pad-to-length (runtime) and truncate-at-length; output size depends on runtime parameter — ZoKrates needs literal sizes.
+
+def main(field[5] A, field length) -> field[64]:
+  field[64] result = [0; 64]
+  for u32 i in 0..5 do
+    result[i] = A[i]
+  endfor
+  return result

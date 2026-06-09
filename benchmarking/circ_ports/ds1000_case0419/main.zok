@@ -1,0 +1,33 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0419/kernel.py
+// REASON: 2D reverse + reshape(-1, bin_size) with runtime bin_size, then reverse axis again.
+
+const u32 R = 8
+const u32 C = 6
+const u32 BIN_MAX = 6
+
+def main(field[R][C] data, field bin_size) -> field[R][BIN_MAX]:
+    field[R][C] rev = [[0; C]; R]
+    for u32 r in 0..R do
+        for u32 j in 0..C do
+            rev[r][j] = data[r][C - 1 - j]
+        endfor
+    endfor
+    field[R][BIN_MAX] mean = [[0; BIN_MAX]; R]
+    for u32 r in 0..R do
+        for u32 b in 0..BIN_MAX do
+            field acc = 0
+            for u32 k in 0..BIN_MAX do
+                field idx = b * bin_size + k
+                acc = if k < bin_size then acc + rev[r][idx] else acc fi
+            endfor
+            mean[r][b] = acc / bin_size
+        endfor
+    endfor
+    field[R][BIN_MAX] result = [[0; BIN_MAX]; R]
+    for u32 r in 0..R do
+        for u32 b in 0..BIN_MAX do
+            result[r][b] = mean[r][BIN_MAX - 1 - b]
+        endfor
+    endfor
+    return result

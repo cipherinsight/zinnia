@@ -1,0 +1,11 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0339/kernel.py
+// REASON: min(a.shape)=8 (compile-time given the fixed 8x10 input); slice b=a[:8,:8] then diag + anti-diag stacked. Lowered to two loops.
+
+def main(field[8][10] a) -> field[2][8]:
+  field[2][8] result = [[0; 8]; 2]
+  for u32 i in 0..8 do
+    result[0][i] = a[i][i]
+    result[1][i] = a[i][7 - i]
+  endfor
+  return result

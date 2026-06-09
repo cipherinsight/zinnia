@@ -1,0 +1,13 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0361/kernel.py
+// REASON: np.delete columns [0,2] from a 6x6 — literal index list lowered to explicit column copy
+
+def main(field[6][6] a) -> field[6][4]:
+    field[6][4] result = [[0; 4]; 6]
+    for u32 i in 0..6 do
+        result[i][0] = a[i][1]
+        result[i][1] = a[i][3]
+        result[i][2] = a[i][4]
+        result[i][3] = a[i][5]
+    endfor
+    return result

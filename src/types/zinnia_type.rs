@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fmt;
+
+use super::ShapeDim;
 
 /// Discriminant for numeric element types (Integer, Float, or Complex).
 ///
@@ -53,10 +56,18 @@ pub enum ZinniaType {
         shape: Vec<usize>,
         dtype: NumberType,
     },
+    SymbolicNDArray {
+        shape: Vec<ShapeDim>,
+        dtype: NumberType,
+        #[serde(default)]
+        bindings: BTreeMap<String, usize>,
+    },
     DynamicNDArray {
         dtype: NumberType,
         max_length: usize,
         max_rank: usize,
+        #[serde(default)]
+        max_shape: Option<Vec<usize>>,
     },
     List {
         elements: Vec<ZinniaType>,
@@ -83,10 +94,15 @@ impl fmt::Display for ZinniaType {
                 let dims: Vec<String> = shape.iter().map(|d| d.to_string()).collect();
                 write!(f, "NDArray[{}, {}]", dtype, dims.join(", "))
             }
+            ZinniaType::SymbolicNDArray { shape, dtype, .. } => {
+                let dims: Vec<String> = shape.iter().map(|d| d.to_string()).collect();
+                write!(f, "SymbolicNDArray[{}, {}]", dtype, dims.join(", "))
+            }
             ZinniaType::DynamicNDArray {
                 dtype,
                 max_length,
                 max_rank,
+                ..
             } => write!(f, "DynamicNDArray[{}, {}, {}]", dtype, max_length, max_rank),
             ZinniaType::List { elements } => {
                 let elems: Vec<String> = elements.iter().map(|e| e.to_string()).collect();
@@ -134,7 +150,9 @@ impl ZinniaType {
     pub fn is_ndarray(&self) -> bool {
         matches!(
             self,
-            ZinniaType::NDArray { .. } | ZinniaType::DynamicNDArray { .. }
+            ZinniaType::NDArray { .. }
+                | ZinniaType::SymbolicNDArray { .. }
+                | ZinniaType::DynamicNDArray { .. }
         )
     }
 
@@ -218,9 +236,7 @@ impl ZinniaType {
             }
             "NDArray" => {
                 if args.len() <= 1 {
-                    return Err(
-                        "Annotation `NDArray` requires 2 or more arguments".to_string()
-                    );
+                    return Err("Annotation `NDArray` requires 2 or more arguments".to_string());
                 }
                 let dtype = match &args[0] {
                     AnnotationArg::Type(ZinniaType::Integer) => NumberType::Integer,
@@ -246,6 +262,42 @@ impl ZinniaType {
                 }
                 Ok(ZinniaType::NDArray { shape, dtype })
             }
+            "SymbolicNDArray" => {
+                if args.len() <= 1 {
+                    return Err(
+                        "Annotation `SymbolicNDArray` requires 2 or more arguments".to_string()
+                    );
+                }
+                let dtype = match &args[0] {
+                    AnnotationArg::Type(ZinniaType::Integer) => NumberType::Integer,
+                    AnnotationArg::Type(ZinniaType::Float) => NumberType::Float,
+                    AnnotationArg::Type(ZinniaType::Complex) => NumberType::Complex,
+                    _ => {
+                        return Err(
+                            "Annotation `SymbolicNDArray` missing a required argument dtype"
+                                .to_string(),
+                        )
+                    }
+                };
+                let mut shape = Vec::new();
+                for arg in &args[1..] {
+                    match arg {
+                        AnnotationArg::Int(n) => shape.push(ShapeDim::Const(*n as usize)),
+                        AnnotationArg::Symbol(s) => shape.push(ShapeDim::Symbol(s.clone())),
+                        _ => {
+                            return Err(
+                                "Annotation `SymbolicNDArray` only accepts integer or symbol dimensions"
+                                    .to_string(),
+                            )
+                        }
+                    }
+                }
+                Ok(ZinniaType::SymbolicNDArray {
+                    shape,
+                    dtype,
+                    bindings: BTreeMap::new(),
+                })
+            }
             "DynamicNDArray" => {
                 if args.len() != 3 {
                     return Err(
@@ -256,11 +308,7 @@ impl ZinniaType {
                     AnnotationArg::Type(ZinniaType::Integer) => NumberType::Integer,
                     AnnotationArg::Type(ZinniaType::Float) => NumberType::Float,
                     AnnotationArg::Type(ZinniaType::Complex) => NumberType::Complex,
-                    _ => {
-                        return Err(
-                            "Unsupported `DynamicNDArray` dtype".to_string()
-                        )
-                    }
+                    _ => return Err("Unsupported `DynamicNDArray` dtype".to_string()),
                 };
                 let max_length = match &args[1] {
                     AnnotationArg::Int(n) if *n > 0 => *n as usize,
@@ -272,16 +320,16 @@ impl ZinniaType {
                 };
                 let max_rank = match &args[2] {
                     AnnotationArg::Int(n) if *n > 0 => *n as usize,
-                    _ => {
-                        return Err(
-                            "Annotation `DynamicNDArray` requires `max_rank` to be a positive integer".to_string()
-                        )
-                    }
+                    _ => return Err(
+                        "Annotation `DynamicNDArray` requires `max_rank` to be a positive integer"
+                            .to_string(),
+                    ),
                 };
                 Ok(ZinniaType::DynamicNDArray {
                     dtype,
                     max_length,
                     max_rank,
+                    max_shape: None,
                 })
             }
             "PoseidonHashed" => {
@@ -294,9 +342,7 @@ impl ZinniaType {
                     AnnotationArg::Type(t) => Ok(ZinniaType::PoseidonHashed {
                         dtype: Box::new(t.clone()),
                     }),
-                    _ => Err(
-                        "Annotation `PoseidonHashed` requires a type argument".to_string()
-                    ),
+                    _ => Err("Annotation `PoseidonHashed` requires a type argument".to_string()),
                 }
             }
             _ => Err(format!("`{}` is not a valid type name", typename)),
@@ -314,6 +360,7 @@ impl ZinniaType {
             ZinniaType::None => vec!["None"],
             ZinniaType::Class => vec!["Class"],
             ZinniaType::NDArray { .. } => vec!["NDArray"],
+            ZinniaType::SymbolicNDArray { .. } => vec!["SymbolicNDArray"],
             ZinniaType::DynamicNDArray { .. } => vec!["DynamicNDArray"],
             ZinniaType::List { .. } => vec!["List", "list"],
             ZinniaType::Tuple { .. } => vec!["Tuple", "tuple"],
@@ -332,6 +379,7 @@ impl ZinniaType {
             ZinniaType::None => "None",
             ZinniaType::Class => "Class",
             ZinniaType::NDArray { .. } => "NDArray",
+            ZinniaType::SymbolicNDArray { .. } => "SymbolicNDArray",
             ZinniaType::DynamicNDArray { .. } => "DynamicNDArray",
             ZinniaType::List { .. } => "List",
             ZinniaType::Tuple { .. } => "Tuple",
@@ -343,6 +391,12 @@ impl ZinniaType {
     pub fn num_elements(&self) -> Option<usize> {
         match self {
             ZinniaType::NDArray { shape, .. } => Some(shape.iter().product()),
+            ZinniaType::SymbolicNDArray {
+                shape, bindings, ..
+            } => super::concretize_shape_dims(shape, bindings)
+                .ok()
+                .map(|shape| shape.iter().product())
+                .or_else(|| super::bounded_shape_total(shape, bindings).ok()),
             ZinniaType::DynamicNDArray { max_length, .. } => Some(*max_length),
             _ => Option::None,
         }
@@ -354,4 +408,5 @@ impl ZinniaType {
 pub enum AnnotationArg {
     Type(ZinniaType),
     Int(i64),
+    Symbol(String),
 }

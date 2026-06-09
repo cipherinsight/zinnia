@@ -67,9 +67,12 @@ fn shape_of(val: &Value) -> Vec<usize> {
 /// can do reshape / flatten as pure metadata; otherwise we must materialise.
 fn is_contiguous(val: &Value) -> bool {
     match val {
-        Value::StaticArray { shape, strides, offset, .. } => {
-            *offset == 0 && *strides == row_major_strides(shape)
-        }
+        Value::StaticArray {
+            shape,
+            strides,
+            offset,
+            ..
+        } => *offset == 0 && *strides == row_major_strides(shape),
         _ => false,
     }
 }
@@ -86,9 +89,14 @@ fn materialise_to_flat(b: &mut IRBuilder, val: &Value) -> Vec<Value> {
     // only correct for contiguous views. Compute strided cell reads by hand
     // when the view is non-contiguous.
     let (shape, strides, offset, _segment_id, dtype) = match val {
-        Value::StaticArray { shape, strides, offset, segment_id, dtype, .. } => {
-            (shape.clone(), strides.clone(), *offset, *segment_id, *dtype)
-        }
+        Value::StaticArray {
+            shape,
+            strides,
+            offset,
+            segment_id,
+            dtype,
+            ..
+        } => (shape.clone(), strides.clone(), *offset, *segment_id, *dtype),
         _ => panic!("materialise_to_flat: expected StaticArray"),
     };
     let _ = dtype;
@@ -116,6 +124,7 @@ fn materialise_to_flat(b: &mut IRBuilder, val: &Value) -> Vec<Value> {
             if abs < cached.len() {
                 cached[abs].clone()
             } else {
+                super::base::materialize_static_array_segment(b, segment_id, dtype_of(val));
                 let addr = b.ir_constant_int(abs as i64);
                 let raw = b.ir_read_memory(segment_id, &addr);
                 let dtype = dtype_of(val);
@@ -125,6 +134,7 @@ fn materialise_to_flat(b: &mut IRBuilder, val: &Value) -> Vec<Value> {
                 )
             }
         } else {
+            super::base::materialize_static_array_segment(b, segment_id, dtype_of(val));
             let addr = b.ir_constant_int(abs as i64);
             let raw = b.ir_read_memory(segment_id, &addr);
             let dtype = dtype_of(val);
@@ -187,7 +197,13 @@ fn parse_reshape_target(args: &[Value], total: usize) -> Option<Vec<usize>> {
         let inferred = total as i64 / known_product;
         Some(
             raw.iter()
-                .map(|&n| if n == -1 { inferred as usize } else { n as usize })
+                .map(|&n| {
+                    if n == -1 {
+                        inferred as usize
+                    } else {
+                        n as usize
+                    }
+                })
                 .collect(),
         )
     } else {
@@ -198,15 +214,24 @@ fn parse_reshape_target(args: &[Value], total: usize) -> Option<Vec<usize>> {
 /// Try to apply `reshape` natively. Returns `Some(view-or-copy)` for the
 /// migrated all-static-target case; `None` otherwise (caller should fall
 /// back to the legacy path).
-pub fn try_apply_reshape(
-    b: &mut IRBuilder,
-    val: &Value,
-    args: &[Value],
-) -> Option<Value> {
+pub fn try_apply_reshape(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Option<Value> {
     let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id, value_id: _ } => {
-            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
-        }
+        Value::StaticArray {
+            dtype,
+            shape,
+            segment_id,
+            strides,
+            offset,
+            imag_segment_id,
+            value_id: _,
+        } => (
+            *dtype,
+            shape.clone(),
+            *segment_id,
+            strides.clone(),
+            *offset,
+            *imag_segment_id,
+        ),
         _ => return None,
     };
     let total: usize = shape.iter().product();
@@ -255,7 +280,9 @@ pub fn try_apply_reshape(
                 _ => unreachable!("Complex StaticArray cell expected"),
             }
         }
-        crate::helpers::static_array::base::build_static_array_from_flat_complex(b, reals, imags, target)
+        crate::helpers::static_array::base::build_static_array_from_flat_complex(
+            b, reals, imags, target,
+        )
     } else {
         let flat = materialise_to_flat(b, val);
         build_static_array_from_flat(b, flat, target, dtype)
@@ -322,9 +349,14 @@ fn parse_transpose_perm(args: &[Value], ndim: usize) -> Option<Vec<usize>> {
 /// Mirrors `dyn_transpose`'s policy.
 fn transpose_materialise(b: &mut IRBuilder, val: &Value, perm: &[usize]) -> Value {
     let (dtype, shape, _segment_id, strides, offset) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset, .. } => {
-            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset)
-        }
+        Value::StaticArray {
+            dtype,
+            shape,
+            segment_id,
+            strides,
+            offset,
+            ..
+        } => (*dtype, shape.clone(), *segment_id, strides.clone(), *offset),
         _ => unreachable!(),
     };
     let ndim = shape.len();
@@ -368,30 +400,55 @@ fn transpose_materialise(b: &mut IRBuilder, val: &Value, perm: &[usize]) -> Valu
                 _ => unreachable!("Complex StaticArray cell expected"),
             }
         }
-        return crate::helpers::static_array::base::build_static_array_from_flat_complex(b, reals, imags, new_shape);
+        return crate::helpers::static_array::base::build_static_array_from_flat_complex(
+            b, reals, imags, new_shape,
+        );
     }
     build_static_array_from_flat(b, out, new_shape, dtype)
 }
 
 /// Try to apply `transpose` (or `.T`) natively. Returns `Some(result)` for
 /// the migrated case; `None` otherwise.
-pub fn try_apply_transpose(
-    b: &mut IRBuilder,
-    val: &Value,
-    args: &[Value],
-) -> Option<Value> {
-    let dtype = match val {
-        Value::StaticArray { dtype, .. } => *dtype,
+pub fn try_apply_transpose(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Option<Value> {
+    let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
+        Value::StaticArray {
+            dtype,
+            shape,
+            segment_id,
+            strides,
+            offset,
+            imag_segment_id,
+            value_id: _,
+        } => (
+            *dtype,
+            shape.clone(),
+            *segment_id,
+            strides.clone(),
+            *offset,
+            *imag_segment_id,
+        ),
         _ => return None,
     };
-    let _ = dtype;
-    let shape = shape_of(val);
     let ndim = shape.len();
     if ndim <= 1 {
         return Some(val.clone());
     }
     let perm = parse_transpose_perm(args, ndim)?;
-    let out = transpose_materialise(b, val, &perm);
+    // Lazy view: permute shape and strides; share the segment with the
+    // source (no materialisation, no `ir_write_memory` for each cell).
+    // Downstream readers handle non-contiguous strides via
+    // `payload_cells` (strides-aware) and `compute_addr`.
+    let new_shape: Vec<usize> = perm.iter().map(|&p| shape[p]).collect();
+    let new_strides: Vec<usize> = perm.iter().map(|&p| strides[p]).collect();
+    let out = Value::StaticArray {
+        dtype,
+        shape: new_shape,
+        segment_id,
+        strides: new_strides,
+        offset,
+        imag_segment_id: imag_seg,
+        value_id: ValueId::next(),
+    };
     if let (Some(in_vid), Some(out_vid)) = (val.value_id(), out.value_id()) {
         crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
     }
@@ -400,35 +457,61 @@ pub fn try_apply_transpose(
 
 /// Try to apply `moveaxis` natively. Returns `Some(result)` for the migrated
 /// case; `None` otherwise. `args` is `[source, dest]`.
-pub fn try_apply_moveaxis(
-    b: &mut IRBuilder,
-    val: &Value,
-    args: &[Value],
-) -> Option<Value> {
-    let dtype = match val {
-        Value::StaticArray { dtype, .. } => *dtype,
+pub fn try_apply_moveaxis(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Option<Value> {
+    let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
+        Value::StaticArray {
+            dtype,
+            shape,
+            segment_id,
+            strides,
+            offset,
+            imag_segment_id,
+            value_id: _,
+        } => (
+            *dtype,
+            shape.clone(),
+            *segment_id,
+            strides.clone(),
+            *offset,
+            *imag_segment_id,
+        ),
         _ => return None,
     };
-    let _ = dtype;
     if args.len() < 2 {
         return None;
     }
     let src_raw = args[0].int_val()?;
     let dst_raw = args[1].int_val()?;
-    let shape = shape_of(val);
     let ndim = shape.len();
     if ndim == 0 {
         return Some(val.clone());
     }
-    let src = if src_raw < 0 { (ndim as i64 + src_raw) as usize } else { src_raw as usize };
-    let dst = if dst_raw < 0 { (ndim as i64 + dst_raw) as usize } else { dst_raw as usize };
+    let src = if src_raw < 0 {
+        (ndim as i64 + src_raw) as usize
+    } else {
+        src_raw as usize
+    };
+    let dst = if dst_raw < 0 {
+        (ndim as i64 + dst_raw) as usize
+    } else {
+        dst_raw as usize
+    };
     if src >= ndim || dst >= ndim {
         panic!("moveaxis: axis out of bounds for array of rank {}", ndim);
     }
-    // Build permutation: remove src, insert at dst.
     let mut perm: Vec<usize> = (0..ndim).filter(|&i| i != src).collect();
     perm.insert(dst, src);
-    let out = transpose_materialise(b, val, &perm);
+    let new_shape: Vec<usize> = perm.iter().map(|&p| shape[p]).collect();
+    let new_strides: Vec<usize> = perm.iter().map(|&p| strides[p]).collect();
+    let out = Value::StaticArray {
+        dtype,
+        shape: new_shape,
+        segment_id,
+        strides: new_strides,
+        offset,
+        imag_segment_id: imag_seg,
+        value_id: ValueId::next(),
+    };
     if let (Some(in_vid), Some(out_vid)) = (val.value_id(), out.value_id()) {
         crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
     }
@@ -447,14 +530,31 @@ pub fn try_apply_expand_dims(
     axis_arg: Option<&Value>,
 ) -> Option<Value> {
     let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id, value_id: _ } => {
-            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
-        }
+        Value::StaticArray {
+            dtype,
+            shape,
+            segment_id,
+            strides,
+            offset,
+            imag_segment_id,
+            value_id: _,
+        } => (
+            *dtype,
+            shape.clone(),
+            *segment_id,
+            strides.clone(),
+            *offset,
+            *imag_segment_id,
+        ),
         _ => return None,
     };
     let axis_raw = axis_arg?.int_val()?;
     let new_ndim = shape.len() + 1;
-    let resolved = if axis_raw < 0 { new_ndim as i64 + axis_raw } else { axis_raw };
+    let resolved = if axis_raw < 0 {
+        new_ndim as i64 + axis_raw
+    } else {
+        axis_raw
+    };
     if resolved < 0 || resolved >= new_ndim as i64 {
         panic!(
             "expand_dims: axis {} is out of bounds for array of rank {}",
@@ -491,9 +591,22 @@ pub fn try_apply_squeeze(
     axis_arg: Option<&Value>,
 ) -> Option<Value> {
     let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id, value_id: _ } => {
-            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
-        }
+        Value::StaticArray {
+            dtype,
+            shape,
+            segment_id,
+            strides,
+            offset,
+            imag_segment_id,
+            value_id: _,
+        } => (
+            *dtype,
+            shape.clone(),
+            *segment_id,
+            strides.clone(),
+            *offset,
+            *imag_segment_id,
+        ),
         _ => return None,
     };
     let ndim = shape.len();
@@ -510,7 +623,10 @@ pub fn try_apply_squeeze(
                 let a = v.int_val()?;
                 let r = if a < 0 { ndim as i64 + a } else { a };
                 if r < 0 || r >= ndim as i64 {
-                    panic!("squeeze: axis {} is out of bounds for array of rank {}", a, ndim);
+                    panic!(
+                        "squeeze: axis {} is out of bounds for array of rank {}",
+                        a, ndim
+                    );
                 }
                 out.push(r as usize);
             }
@@ -520,7 +636,10 @@ pub fn try_apply_squeeze(
             let a = v.int_val()?;
             let r = if a < 0 { ndim as i64 + a } else { a };
             if r < 0 || r >= ndim as i64 {
-                panic!("squeeze: axis {} is out of bounds for array of rank {}", a, ndim);
+                panic!(
+                    "squeeze: axis {} is out of bounds for array of rank {}",
+                    a, ndim
+                );
             }
             vec![r as usize]
         }
@@ -546,15 +665,23 @@ pub fn try_apply_squeeze(
     }
     let out = if new_shape.is_empty() {
         // 0-D scalar — read the single cell from the cache or segment.
-        let cached = _b.static_array_payload.get(&segment_id)
-            .and_then(|c| if offset < c.len() { Some(c[offset].clone()) } else { None });
+        let cached = _b.static_array_payload.get(&segment_id).and_then(|c| {
+            if offset < c.len() {
+                Some(c[offset].clone())
+            } else {
+                None
+            }
+        });
         match cached {
             Some(v) => v,
             None => {
                 if dtype == NumberType::Complex {
                     let im = imag_seg.expect("Complex StaticArray missing imag_segment_id");
-                    crate::helpers::static_array::read::read_complex_leaf(_b, segment_id, im, offset)
+                    crate::helpers::static_array::read::read_complex_leaf(
+                        _b, segment_id, im, offset,
+                    )
                 } else {
+                    super::base::materialize_static_array_segment(_b, segment_id, dtype);
                     let addr = _b.ir_constant_int(offset as i64);
                     let raw = _b.ir_read_memory(segment_id, &addr);
                     crate::ops::dyn_ndarray::scalar_i64_to_value(
@@ -585,9 +712,22 @@ pub fn try_apply_squeeze(
 /// metadata. For non-contiguous: materialise.
 pub fn try_apply_flatten(b: &mut IRBuilder, val: &Value) -> Option<Value> {
     let (dtype, shape, segment_id, _strides, offset, imag_seg) = match val {
-        Value::StaticArray { dtype, shape, segment_id, strides, offset, imag_segment_id, value_id: _ } => {
-            (*dtype, shape.clone(), *segment_id, strides.clone(), *offset, *imag_segment_id)
-        }
+        Value::StaticArray {
+            dtype,
+            shape,
+            segment_id,
+            strides,
+            offset,
+            imag_segment_id,
+            value_id: _,
+        } => (
+            *dtype,
+            shape.clone(),
+            *segment_id,
+            strides.clone(),
+            *offset,
+            *imag_segment_id,
+        ),
         _ => return None,
     };
     let total: usize = shape.iter().product();
@@ -615,7 +755,12 @@ pub fn try_apply_flatten(b: &mut IRBuilder, val: &Value) -> Option<Value> {
                 _ => unreachable!(),
             }
         }
-        crate::helpers::static_array::base::build_static_array_from_flat_complex(b, reals, imags, vec![total])
+        crate::helpers::static_array::base::build_static_array_from_flat_complex(
+            b,
+            reals,
+            imags,
+            vec![total],
+        )
     } else {
         let flat = materialise_to_flat(b, val);
         build_static_array_from_flat(b, flat, vec![total], dtype)
@@ -646,11 +791,7 @@ fn coerce_to_static_array(b: &mut IRBuilder, v: &Value) -> Option<Value> {
 /// matching dtype and shapes (other than along the concatenation axis).
 ///
 /// `arrays_arg` is the first positional argument (a list/tuple of arrays).
-pub fn try_apply_concatenate(
-    b: &mut IRBuilder,
-    arrays_arg: &Value,
-    axis: i64,
-) -> Option<Value> {
+pub fn try_apply_concatenate(b: &mut IRBuilder, arrays_arg: &Value, axis: i64) -> Option<Value> {
     let inputs = match arrays_arg {
         Value::List(d) | Value::Tuple(d) => d.values.clone(),
         _ => return None,
@@ -663,8 +804,24 @@ pub fn try_apply_concatenate(
         let arr = coerce_to_static_array(b, v)?;
         arrays.push(arr);
     }
-    let has_complex = arrays.iter().any(|a| matches!(a, Value::StaticArray { dtype: NumberType::Complex, .. }));
-    let all_complex = arrays.iter().all(|a| matches!(a, Value::StaticArray { dtype: NumberType::Complex, .. }));
+    let has_complex = arrays.iter().any(|a| {
+        matches!(
+            a,
+            Value::StaticArray {
+                dtype: NumberType::Complex,
+                ..
+            }
+        )
+    });
+    let all_complex = arrays.iter().all(|a| {
+        matches!(
+            a,
+            Value::StaticArray {
+                dtype: NumberType::Complex,
+                ..
+            }
+        )
+    });
     if has_complex && !all_complex {
         return None;
     }
@@ -717,7 +874,8 @@ pub fn try_apply_concatenate(
 
     // Read each input as flat row-major.
     let inputs_flat: Vec<Vec<Value>> = arrays.iter().map(|a| materialise_to_flat(b, a)).collect();
-    let inputs_strides: Vec<Vec<usize>> = arrays.iter()
+    let inputs_strides: Vec<Vec<usize>> = arrays
+        .iter()
         .map(|a| row_major_strides(&shape_of(a)))
         .collect();
     let inputs_axis_lens: Vec<usize> = arrays.iter().map(|a| shape_of(a)[ax]).collect();
@@ -765,9 +923,15 @@ pub fn try_apply_concatenate(
                 _ => unreachable!("Complex concat: cell must be Complex"),
             }
         }
-        return Some(crate::helpers::static_array::base::build_static_array_from_flat_complex(b, reals, imags, out_shape));
+        return Some(
+            crate::helpers::static_array::base::build_static_array_from_flat_complex(
+                b, reals, imags, out_shape,
+            ),
+        );
     }
-    Some(build_static_array_from_flat(b, out_flat, out_shape, out_dtype))
+    Some(build_static_array_from_flat(
+        b, out_flat, out_shape, out_dtype,
+    ))
 }
 
 /// Promote a leaf to the target dtype (Integer→Float when needed).
@@ -781,11 +945,7 @@ fn promote_cell_dtype(b: &mut IRBuilder, v: &Value, target: NumberType) -> Value
 
 /// Try to apply `stack` natively (insert a new axis at position `axis` of
 /// length `len(arrays)`).
-pub fn try_apply_stack(
-    b: &mut IRBuilder,
-    arrays_arg: &Value,
-    axis: i64,
-) -> Option<Value> {
+pub fn try_apply_stack(b: &mut IRBuilder, arrays_arg: &Value, axis: i64) -> Option<Value> {
     let inputs = match arrays_arg {
         Value::List(d) | Value::Tuple(d) => d.values.clone(),
         _ => return None,
@@ -798,16 +958,41 @@ pub fn try_apply_stack(
         let arr = coerce_to_static_array(b, v)?;
         arrays.push(arr);
     }
-    let has_complex = arrays.iter().any(|a| matches!(a, Value::StaticArray { dtype: NumberType::Complex, .. }));
-    let all_complex = arrays.iter().all(|a| matches!(a, Value::StaticArray { dtype: NumberType::Complex, .. }));
-    if has_complex && !all_complex { return None; }
+    let has_complex = arrays.iter().any(|a| {
+        matches!(
+            a,
+            Value::StaticArray {
+                dtype: NumberType::Complex,
+                ..
+            }
+        )
+    });
+    let all_complex = arrays.iter().all(|a| {
+        matches!(
+            a,
+            Value::StaticArray {
+                dtype: NumberType::Complex,
+                ..
+            }
+        )
+    });
+    if has_complex && !all_complex {
+        return None;
+    }
 
     let first_shape = shape_of(&arrays[0]);
     let ndim = first_shape.len();
     let new_ndim = ndim + 1;
-    let resolved = if axis < 0 { new_ndim as i64 + axis } else { axis };
+    let resolved = if axis < 0 {
+        new_ndim as i64 + axis
+    } else {
+        axis
+    };
     if resolved < 0 || resolved >= new_ndim as i64 {
-        panic!("stack: axis {} is out of bounds for array of dimension {}", axis, ndim);
+        panic!(
+            "stack: axis {} is out of bounds for array of dimension {}",
+            axis, ndim
+        );
     }
     let ax = resolved as usize;
 
@@ -848,7 +1033,9 @@ pub fn try_apply_stack(
         let mut src_lin: usize = 0;
         let mut k = 0;
         for d in 0..new_ndim {
-            if d == ax { continue; }
+            if d == ax {
+                continue;
+            }
             src_lin += coords[d] * in_strides[k];
             k += 1;
         }
@@ -867,9 +1054,15 @@ pub fn try_apply_stack(
                 _ => unreachable!("Complex stack: cell must be Complex"),
             }
         }
-        return Some(crate::helpers::static_array::base::build_static_array_from_flat_complex(b, reals, imags, out_shape));
+        return Some(
+            crate::helpers::static_array::base::build_static_array_from_flat_complex(
+                b, reals, imags, out_shape,
+            ),
+        );
     }
-    Some(build_static_array_from_flat(b, out_flat, out_shape, out_dtype))
+    Some(build_static_array_from_flat(
+        b, out_flat, out_shape, out_dtype,
+    ))
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -920,7 +1113,7 @@ pub fn try_apply_vstack(b: &mut IRBuilder, arrays_arg: &Value) -> Option<Value> 
     let promoted_list = Value::List(crate::types::CompositeData {
         elements_type: promoted.iter().map(|v| v.zinnia_type()).collect(),
         values: promoted,
-    
+
         value_id: ValueId::next(),
     });
     try_apply_concatenate(b, &promoted_list, 0)
@@ -947,7 +1140,7 @@ pub fn try_apply_hstack(b: &mut IRBuilder, arrays_arg: &Value) -> Option<Value> 
     let arrays_list = Value::List(crate::types::CompositeData {
         elements_type: arrays.iter().map(|v| v.zinnia_type()).collect(),
         values: arrays,
-    
+
         value_id: ValueId::next(),
     });
     try_apply_concatenate(b, &arrays_list, axis)
@@ -970,7 +1163,7 @@ pub fn try_apply_column_stack(b: &mut IRBuilder, arrays_arg: &Value) -> Option<V
     let promoted_list = Value::List(crate::types::CompositeData {
         elements_type: promoted.iter().map(|v| v.zinnia_type()).collect(),
         values: promoted,
-    
+
         value_id: ValueId::next(),
     });
     try_apply_concatenate(b, &promoted_list, 1)
@@ -996,7 +1189,7 @@ mod tests {
         Value::List(CompositeData {
             elements_type: types,
             values,
-        
+
             value_id: ValueId::next(),
         })
     }
@@ -1025,10 +1218,20 @@ mod tests {
         let out = try_apply_reshape(&mut b, &a, &[three, two]).expect("native");
         match (&a, &out) {
             (
-                Value::StaticArray { segment_id: a_seg, .. },
-                Value::StaticArray { segment_id: o_seg, shape, strides, .. },
+                Value::StaticArray {
+                    segment_id: a_seg, ..
+                },
+                Value::StaticArray {
+                    segment_id: o_seg,
+                    shape,
+                    strides,
+                    ..
+                },
             ) => {
-                assert_eq!(a_seg, o_seg, "reshape on contiguous source must reuse segment");
+                assert_eq!(
+                    a_seg, o_seg,
+                    "reshape on contiguous source must reuse segment"
+                );
                 assert_eq!(*shape, vec![3, 2]);
                 assert_eq!(*strides, vec![2, 1]);
             }
@@ -1070,7 +1273,10 @@ mod tests {
         let cells = payload_cells(&mut b, &out);
         let v: Vec<Option<i64>> = cells.iter().map(|c| c.int_val()).collect();
         // Transposed: [[1,4],[2,5],[3,6]] flat → [1, 4, 2, 5, 3, 6]
-        assert_eq!(v, vec![Some(1), Some(4), Some(2), Some(5), Some(3), Some(6)]);
+        assert_eq!(
+            v,
+            vec![Some(1), Some(4), Some(2), Some(5), Some(3), Some(6)]
+        );
     }
 
     #[test]
@@ -1098,8 +1304,19 @@ mod tests {
         }
         let cells = payload_cells(&mut b, &out);
         let v: Vec<Option<i64>> = cells.iter().map(|c| c.int_val()).collect();
-        assert_eq!(v, vec![Some(1), Some(2), Some(3), Some(4),
-                            Some(5), Some(6), Some(7), Some(8)]);
+        assert_eq!(
+            v,
+            vec![
+                Some(1),
+                Some(2),
+                Some(3),
+                Some(4),
+                Some(5),
+                Some(6),
+                Some(7),
+                Some(8)
+            ]
+        );
     }
 
     #[test]
@@ -1115,8 +1332,19 @@ mod tests {
         }
         let cells = payload_cells(&mut b, &out);
         let v: Vec<Option<i64>> = cells.iter().map(|c| c.int_val()).collect();
-        assert_eq!(v, vec![Some(1), Some(2), Some(5), Some(6),
-                            Some(3), Some(4), Some(7), Some(8)]);
+        assert_eq!(
+            v,
+            vec![
+                Some(1),
+                Some(2),
+                Some(5),
+                Some(6),
+                Some(3),
+                Some(4),
+                Some(7),
+                Some(8)
+            ]
+        );
     }
 
     #[test]
@@ -1132,7 +1360,10 @@ mod tests {
         }
         let cells = payload_cells(&mut b, &out);
         let v: Vec<Option<i64>> = cells.iter().map(|c| c.int_val()).collect();
-        assert_eq!(v, vec![Some(1), Some(2), Some(3), Some(4), Some(5), Some(6)]);
+        assert_eq!(
+            v,
+            vec![Some(1), Some(2), Some(3), Some(4), Some(5), Some(6)]
+        );
     }
 
     #[test]
@@ -1143,8 +1374,14 @@ mod tests {
         let out = try_apply_expand_dims(&mut b, &a, Some(&zero)).expect("native");
         match (&a, &out) {
             (
-                Value::StaticArray { segment_id: a_seg, .. },
-                Value::StaticArray { segment_id: o_seg, shape, .. },
+                Value::StaticArray {
+                    segment_id: a_seg, ..
+                },
+                Value::StaticArray {
+                    segment_id: o_seg,
+                    shape,
+                    ..
+                },
             ) => {
                 assert_eq!(a_seg, o_seg);
                 assert_eq!(*shape, vec![1, 3]);
@@ -1176,8 +1413,15 @@ mod tests {
         let out = try_apply_flatten(&mut b, &a).expect("native");
         match (&a, &out) {
             (
-                Value::StaticArray { segment_id: a_seg, .. },
-                Value::StaticArray { segment_id: o_seg, shape, strides, .. },
+                Value::StaticArray {
+                    segment_id: a_seg, ..
+                },
+                Value::StaticArray {
+                    segment_id: o_seg,
+                    shape,
+                    strides,
+                    ..
+                },
             ) => {
                 assert_eq!(a_seg, o_seg);
                 assert_eq!(*shape, vec![6]);
@@ -1192,11 +1436,18 @@ mod tests {
         let mut b = IRBuilder::new();
         // shape (2, 3, 4): axis 0 → axis 2 results in (3, 4, 2)
         let mut leaves = Vec::new();
-        for v in 0..24 { leaves.push(b.ir_constant_int(v)); }
+        for v in 0..24 {
+            leaves.push(b.ir_constant_int(v));
+        }
         let lst = list_of(leaves);
         let arr = super::super::base::build_static_array_from_flat(
-            &mut b, match &lst { Value::List(d) => d.values.clone(), _ => unreachable!() },
-            vec![2, 3, 4], NumberType::Integer,
+            &mut b,
+            match &lst {
+                Value::List(d) => d.values.clone(),
+                _ => unreachable!(),
+            },
+            vec![2, 3, 4],
+            NumberType::Integer,
         );
         let zero = b.ir_constant_int(0);
         let two = b.ir_constant_int(2);

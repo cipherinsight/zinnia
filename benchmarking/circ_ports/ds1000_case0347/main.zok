@@ -1,0 +1,12 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0347/kernel.py
+// REASON: runtime row index selects which row to mutate and reduce; ZoKrates does not allow runtime row-slice mutation. Also Float division.
+
+def main(field[8][6] a, field row, field divide_number) -> field:
+    field result = 1
+    for u32 j in 0..6 do
+        // row-1 indexing illegal w/o RAM; division by witness is field inverse (semantically lossy vs float)
+        field v = a[0][j] / divide_number
+        result = result * v
+    endfor
+    return result

@@ -196,9 +196,7 @@ impl IROp for IR {
             IR::ConstantBool { value } => Z3Term::Bool(Bool::from_bool(*value)),
             // Float / string constants aren't on the integer resolver
             // hot path. Silent fallback. Tighten if profiling demands.
-            IR::ConstantFloat { .. } | IR::ConstantStr { .. } => {
-                ctx.fresh_unconstrained()
-            }
+            IR::ConstantFloat { .. } | IR::ConstantStr { .. } => ctx.fresh_unconstrained(),
 
             // ── Integer arithmetic ─────────────────────────────────────
             IR::AddI => {
@@ -270,8 +268,7 @@ impl IROp for IR {
             // these as silent fallback; consider tightening (BV-bridge) if
             // profiling shows demand. Range analysis (P2) will catch many
             // common cases (mask ranges, shift bounds).
-            IR::BitAndI | IR::BitOrI | IR::BitXorI
-            | IR::ShlI | IR::ShrI | IR::BitNotI => {
+            IR::BitAndI | IR::BitOrI | IR::BitXorI | IR::ShlI | IR::ShrI | IR::BitNotI => {
                 let _ = args;
                 ctx.fresh_unconstrained()
             }
@@ -279,9 +276,18 @@ impl IROp for IR {
             // ── Float arithmetic — silent fallback ─────────────────────
             // Integer resolution is the P1 priority; float queries don't
             // route through this path today.
-            IR::AddF | IR::SubF | IR::MulF | IR::DivF
-            | IR::FloorDivF | IR::ModF | IR::PowF
-            | IR::AbsF | IR::SignF => {
+            IR::AddF
+            | IR::SumF { .. }
+            | IR::SubF
+            | IR::MulF
+            | IR::ProductSumF { .. }
+            | IR::DivF
+            | IR::FloorDivF
+            | IR::ModF
+            | IR::PowF
+            | IR::PowFI
+            | IR::AbsF
+            | IR::SignF => {
                 let _ = args;
                 ctx.fresh_unconstrained()
             }
@@ -297,10 +303,27 @@ impl IROp for IR {
                 let b = args[1].as_int();
                 Z3Term::Bool(a.eq(&b).not())
             }
-            IR::LtI => {
+            IR::LtI | IR::LtIBounded => {
                 let a = args[0].as_int();
                 let b = args[1].as_int();
                 Z3Term::Bool(a.lt(&b))
+            }
+            IR::GtIBounded => {
+                let a = args[0].as_int();
+                let b = args[1].as_int();
+                Z3Term::Bool(a.gt(&b))
+            }
+            IR::IndexInBox { rank } => {
+                // args laid out flat as [idx_0, lo_0, hi_0, idx_1, lo_1, hi_1, ...].
+                let mut conj = Bool::from_bool(true);
+                for k in 0..*rank {
+                    let idx = args[k * 3].as_int();
+                    let lo = args[k * 3 + 1].as_int();
+                    let hi = args[k * 3 + 2].as_int();
+                    let in_axis = Bool::and(&[&idx.ge(&lo), &idx.lt(&hi)]);
+                    conj = Bool::and(&[&conj, &in_axis]);
+                }
+                Z3Term::Bool(conj)
             }
             IR::LteI => {
                 let a = args[0].as_int();
@@ -326,9 +349,18 @@ impl IROp for IR {
             }
 
             // ── Math (transcendental) — silent fallback ────────────────
-            IR::SinF | IR::SinHF | IR::CosF | IR::CosHF
-            | IR::TanF | IR::TanHF | IR::SqrtF | IR::ExpF | IR::LogF
-            | IR::ArcCosF | IR::ArcTan2F => {
+            IR::SinF
+            | IR::SinHF
+            | IR::CosF
+            | IR::CosHF
+            | IR::TanF
+            | IR::TanHF
+            | IR::SqrtF
+            | IR::ExpF
+            | IR::LogF
+            | IR::ArcSinF
+            | IR::ArcCosF
+            | IR::ArcTan2F => {
                 let _ = args;
                 ctx.fresh_unconstrained()
             }
@@ -347,10 +379,18 @@ impl IROp for IR {
             IR::LogicalNot => Z3Term::Bool(args[0].as_bool().not()),
 
             // ── Selection ──────────────────────────────────────────────
-            IR::SelectI => {
+            IR::SelectI | IR::SelectBitI => {
                 let cond = args[0].as_bool();
                 let t = args[1].as_int();
                 let f = args[2].as_int();
+                Z3Term::Int(cond.ite(&t, &f))
+            }
+            IR::SelectManyI { len, lane } => {
+                let len = *len as usize;
+                let lane = *lane as usize;
+                let cond = args[0].as_bool();
+                let t = args[1 + lane].as_int();
+                let f = args[1 + len + lane].as_int();
                 Z3Term::Int(cond.ite(&t, &f))
             }
             IR::SelectB => {
@@ -359,7 +399,7 @@ impl IROp for IR {
                 let f = args[2].as_bool();
                 Z3Term::Bool(cond.ite(&t, &f))
             }
-            IR::SelectF => {
+            IR::SelectF | IR::SelectBitF | IR::SelectManyF { .. } => {
                 // Float silent fallback — see float-arithmetic note.
                 let _ = args;
                 ctx.fresh_unconstrained()
@@ -410,6 +450,9 @@ impl IROp for IR {
             | IR::ReadExternalResult { .. }
             | IR::Print
             | IR::Assert
+            | IR::AssertBit
+            | IR::AssertU128Lt
+            | IR::AssertU128LtBit { .. }
             | IR::ExposePublicI
             | IR::ExposePublicF
             | IR::AllocateMemory { .. }

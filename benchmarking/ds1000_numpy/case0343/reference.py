@@ -1,0 +1,3 @@
+result = []
+for value in X.T.flat:
+    result.append(value)

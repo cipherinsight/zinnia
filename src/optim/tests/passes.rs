@@ -9,18 +9,35 @@ mod tests {
     #[test]
     fn test_external_call_remover() {
         let stmts = vec![
-            IRStatement::new(0, crate::types::ValueId::next(), IR::ConstantInt { value: 1 }, vec![], vec![], None),
             IRStatement::new(
-                1, crate::types::ValueId::next(),
+                0,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 1 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
                 IR::InvokeExternal {
                     store_idx: 0,
                     func_name: "f".to_string(),
                     args: vec![],
                     kwargs: HashMap::new(),
                 },
-                vec![], vec![],
-                None),
-            IRStatement::new(2, crate::types::ValueId::next(), IR::Assert, vec![0], vec![], None),
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                2,
+                crate::types::ValueId::next(),
+                IR::Assert,
+                vec![0],
+                vec![],
+                None,
+            ),
         ];
         let graph = IRGraph::new(stmts);
         let result = ExternalCallRemover.exec(graph);
@@ -34,9 +51,30 @@ mod tests {
     fn test_dead_code_elimination() {
         // stmt0 = const(10) [unused], stmt1 = const(20), stmt2 = assert(stmt1)
         let stmts = vec![
-            IRStatement::new(0, crate::types::ValueId::next(), IR::ConstantInt { value: 10 }, vec![], vec![], None),
-            IRStatement::new(1, crate::types::ValueId::next(), IR::ConstantInt { value: 20 }, vec![], vec![], None),
-            IRStatement::new(2, crate::types::ValueId::next(), IR::Assert, vec![1], vec![], None),
+            IRStatement::new(
+                0,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 10 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 20 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                2,
+                crate::types::ValueId::next(),
+                IR::Assert,
+                vec![1],
+                vec![],
+                None,
+            ),
         ];
         let graph = IRGraph::new(stmts);
         let result = DeadCodeElimination.exec(graph);
@@ -50,10 +88,38 @@ mod tests {
     fn test_double_not_elimination() {
         // stmt0 = const_bool(true), stmt1 = not(0), stmt2 = not(1) [== stmt0]
         let stmts = vec![
-            IRStatement::new(0, crate::types::ValueId::next(), IR::ConstantBool { value: true }, vec![], vec![], None),
-            IRStatement::new(1, crate::types::ValueId::next(), IR::LogicalNot, vec![0], vec![], None),
-            IRStatement::new(2, crate::types::ValueId::next(), IR::LogicalNot, vec![1], vec![], None),
-            IRStatement::new(3, crate::types::ValueId::next(), IR::Assert, vec![2], vec![], None),
+            IRStatement::new(
+                0,
+                crate::types::ValueId::next(),
+                IR::ConstantBool { value: true },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
+                IR::LogicalNot,
+                vec![0],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                2,
+                crate::types::ValueId::next(),
+                IR::LogicalNot,
+                vec![1],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                3,
+                crate::types::ValueId::next(),
+                IR::Assert,
+                vec![2],
+                vec![],
+                None,
+            ),
         ];
         let graph = IRGraph::new(stmts);
         let result = DoubleNotElimination.exec(graph);
@@ -67,8 +133,22 @@ mod tests {
     fn test_always_satisfied_elimination() {
         // stmt0 = const(1), stmt1 = assert(0) — always satisfied
         let stmts = vec![
-            IRStatement::new(0, crate::types::ValueId::next(), IR::ConstantInt { value: 1 }, vec![], vec![], None),
-            IRStatement::new(1, crate::types::ValueId::next(), IR::Assert, vec![0], vec![], None),
+            IRStatement::new(
+                0,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 1 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
+                IR::Assert,
+                vec![0],
+                vec![],
+                None,
+            ),
         ];
         let graph = IRGraph::new(stmts);
         let result = AlwaysSatisfiedElimination.exec(graph);
@@ -78,21 +158,244 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_code_elimination_replaces_duplicate_constants() {
+        let stmts = vec![
+            IRStatement::new(
+                0,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 7 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 7 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                2,
+                crate::types::ValueId::next(),
+                IR::Assert,
+                vec![1],
+                vec![],
+                None,
+            ),
+        ];
+        let graph = IRGraph::new(stmts);
+        let result = DuplicateCodeElimination.exec(graph);
+
+        assert_eq!(result.len(), 2);
+        assert!(matches!(result.stmts[0].ir, IR::ConstantInt { value: 7 }));
+        assert!(matches!(result.stmts[1].ir, IR::Assert));
+        assert_eq!(result.stmts[1].arguments, vec![0]);
+    }
+
+    #[test]
+    fn duplicate_code_elimination_keeps_first_canonical_for_three_duplicates() {
+        let stmts = vec![
+            IRStatement::new(
+                0,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 7 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 7 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                2,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 7 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                3,
+                crate::types::ValueId::next(),
+                IR::Assert,
+                vec![2],
+                vec![],
+                None,
+            ),
+        ];
+        let graph = IRGraph::new(stmts);
+        let result = DuplicateCodeElimination.exec(graph);
+
+        assert_eq!(result.len(), 2);
+        assert!(matches!(result.stmts[0].ir, IR::ConstantInt { value: 7 }));
+        assert_eq!(result.stmts[1].arguments, vec![0]);
+    }
+
+    #[test]
+    fn duplicate_code_elimination_canonicalizes_commutative_mulf_args() {
+        let stmts = vec![
+            IRStatement::new(
+                0,
+                crate::types::ValueId::next(),
+                IR::ReadFloat {
+                    path: crate::circuit_input::InputPath::new("x", vec![]),
+                    is_public: false,
+                },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
+                IR::ReadFloat {
+                    path: crate::circuit_input::InputPath::new("y", vec![]),
+                    is_public: false,
+                },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                2,
+                crate::types::ValueId::next(),
+                IR::MulF,
+                vec![0, 1],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                3,
+                crate::types::ValueId::next(),
+                IR::MulF,
+                vec![1, 0],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                4,
+                crate::types::ValueId::next(),
+                IR::Assert,
+                vec![3],
+                vec![],
+                None,
+            ),
+        ];
+        let graph = IRGraph::new(stmts);
+        let result = DuplicateCodeElimination.exec(graph);
+
+        assert_eq!(result.len(), 4);
+        assert!(matches!(result.stmts[2].ir, IR::MulF));
+        assert_eq!(result.stmts[3].arguments, vec![2]);
+    }
+
+    #[test]
+    fn duplicate_code_elimination_replaces_duplicates_after_many_unrelated_keys() {
+        let stmts = vec![
+            IRStatement::new(
+                0,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 0 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 1 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                2,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 2 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                3,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 3 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                4,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 0 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                5,
+                crate::types::ValueId::next(),
+                IR::Assert,
+                vec![4],
+                vec![],
+                None,
+            ),
+        ];
+        let graph = IRGraph::new(stmts);
+        let result = DuplicateCodeElimination.exec(graph);
+
+        assert_eq!(result.len(), 5);
+        assert!(matches!(result.stmts[4].ir, IR::Assert));
+        assert_eq!(result.stmts[4].arguments, vec![0]);
+    }
+
+    #[test]
     fn test_pattern_match_add_zero() {
         // stmt0 = const(0), stmt1 = read_integer, stmt2 = add_i(0, 1)
         // add(0, x) should simplify to x
         let stmts = vec![
-            IRStatement::new(0, crate::types::ValueId::next(), IR::ConstantInt { value: 0 }, vec![], vec![], None),
             IRStatement::new(
-                1, crate::types::ValueId::next(),
+                0,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 0 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
                 IR::ReadInteger {
                     path: crate::circuit_input::InputPath::new("x", vec![]),
                     is_public: false,
                 },
-                vec![], vec![],
-                None),
-            IRStatement::new(2, crate::types::ValueId::next(), IR::AddI, vec![0, 1], vec![], None),
-            IRStatement::new(3, crate::types::ValueId::next(), IR::Assert, vec![2], vec![], None),
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                2,
+                crate::types::ValueId::next(),
+                IR::AddI,
+                vec![0, 1],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                3,
+                crate::types::ValueId::next(),
+                IR::Assert,
+                vec![2],
+                vec![],
+                None,
+            ),
         ];
         let graph = IRGraph::new(stmts);
         let result = PatternMatchOptim.exec(graph);
@@ -105,17 +408,41 @@ mod tests {
     fn test_memory_trace_injection() {
         let stmts = vec![
             IRStatement::new(
-                0, crate::types::ValueId::next(),
+                0,
+                crate::types::ValueId::next(),
                 IR::AllocateMemory {
                     segment_id: 0,
                     size: 10,
                     init_value: 0,
                 },
-                vec![], vec![],
-                None),
-            IRStatement::new(1, crate::types::ValueId::next(), IR::ConstantInt { value: 0 }, vec![], vec![], None),
-            IRStatement::new(2, crate::types::ValueId::next(), IR::ConstantInt { value: 42 }, vec![], vec![], None),
-            IRStatement::new(3, crate::types::ValueId::next(), IR::WriteMemory { segment_id: 0 }, vec![1, 2], vec![], None),
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 0 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                2,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 42 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                3,
+                crate::types::ValueId::next(),
+                IR::WriteMemory { segment_id: 0 },
+                vec![1, 2],
+                vec![],
+                None,
+            ),
         ];
         let graph = IRGraph::new(stmts);
         let result = MemoryTraceInjection.exec(graph);

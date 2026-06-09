@@ -191,7 +191,9 @@ impl SmtResolver {
         {
             let inner = self.inner.lock().unwrap();
             if let Some(cached) = inner.cache.get(&ptr) {
-                self.telemetry.queries_cache_hit.fetch_add(1, Ordering::Relaxed);
+                self.telemetry
+                    .queries_cache_hit
+                    .fetch_add(1, Ordering::Relaxed);
                 return Some(*cached);
             }
         }
@@ -199,7 +201,9 @@ impl SmtResolver {
         // Disable flag: short-circuit to Unknown after the static-val
         // fast path. Cache + return.
         if self.disabled {
-            self.telemetry.queries_skipped_disabled.fetch_add(1, Ordering::Relaxed);
+            self.telemetry
+                .queries_skipped_disabled
+                .fetch_add(1, Ordering::Relaxed);
             self.cache_outcome(ptr, ResolvedValue::Unknown);
             return Some(ResolvedValue::Unknown);
         }
@@ -231,10 +235,14 @@ impl SmtResolver {
         } else {
             match &qout.resolved {
                 Some(ResolvedValue::Int(_)) | Some(ResolvedValue::Bool(_)) => {
-                    self.telemetry.queries_smt_resolved.fetch_add(1, Ordering::Relaxed);
+                    self.telemetry
+                        .queries_smt_resolved
+                        .fetch_add(1, Ordering::Relaxed);
                 }
                 Some(ResolvedValue::Unknown) | None => {
-                    self.telemetry.queries_smt_unknown.fetch_add(1, Ordering::Relaxed);
+                    self.telemetry
+                        .queries_smt_unknown
+                        .fetch_add(1, Ordering::Relaxed);
                     // Heuristic: if the wall time is ≥ 90 % of the configured
                     // budget, treat it as a timeout for the dedicated counter.
                     // Z3's `unknown` doesn't distinguish timeout vs other
@@ -242,7 +250,9 @@ impl SmtResolver {
                     // strong signal in practice.
                     let budget_ns = (self.timeout_ms as u128) * 1_000_000;
                     if budget_ns > 0 && dur.as_nanos() * 10 >= budget_ns * 9 {
-                        self.telemetry.queries_smt_timeout.fetch_add(1, Ordering::Relaxed);
+                        self.telemetry
+                            .queries_smt_timeout
+                            .fetch_add(1, Ordering::Relaxed);
                     }
                 }
             }
@@ -285,11 +295,7 @@ impl Resolver for SmtResolver {
         val.int_val()
     }
 
-    fn resolve_int_with_stmts(
-        &mut self,
-        val: &Value,
-        stmts: &[IRStatement],
-    ) -> Option<i64> {
+    fn resolve_int_with_stmts(&mut self, val: &Value, stmts: &[IRStatement]) -> Option<i64> {
         match self.resolve_inner(val, stmts, /*want_bool=*/ false)? {
             ResolvedValue::Int(n) => Some(n),
             ResolvedValue::Bool(b) => Some(if b { 1 } else { 0 }),
@@ -297,11 +303,7 @@ impl Resolver for SmtResolver {
         }
     }
 
-    fn resolve_bool_with_stmts(
-        &mut self,
-        val: &Value,
-        stmts: &[IRStatement],
-    ) -> Option<bool> {
+    fn resolve_bool_with_stmts(&mut self, val: &Value, stmts: &[IRStatement]) -> Option<bool> {
         match self.resolve_inner(val, stmts, /*want_bool=*/ true)? {
             ResolvedValue::Bool(b) => Some(b),
             ResolvedValue::Int(n) => Some(n != 0),
@@ -309,11 +311,7 @@ impl Resolver for SmtResolver {
         }
     }
 
-    fn resolve_max_with_stmts(
-        &mut self,
-        val: &Value,
-        stmts: &[IRStatement],
-    ) -> Option<i64> {
+    fn resolve_max_with_stmts(&mut self, val: &Value, stmts: &[IRStatement]) -> Option<i64> {
         // Static-val first.
         if let Some(n) = val.int_val() {
             return Some(n);
@@ -325,13 +323,17 @@ impl Resolver for SmtResolver {
         {
             let inner = self.inner.lock().unwrap();
             if let Some(ResolvedValue::Int(n)) = inner.cache.get(&ptr) {
-                self.telemetry.queries_cache_hit.fetch_add(1, Ordering::Relaxed);
+                self.telemetry
+                    .queries_cache_hit
+                    .fetch_add(1, Ordering::Relaxed);
                 return Some(*n);
             }
         }
 
         if self.disabled {
-            self.telemetry.queries_skipped_disabled.fetch_add(1, Ordering::Relaxed);
+            self.telemetry
+                .queries_skipped_disabled
+                .fetch_add(1, Ordering::Relaxed);
             return None;
         }
 
@@ -353,20 +355,22 @@ impl Resolver for SmtResolver {
         self.telemetry.record_smt_duration(dur);
         self.telemetry.note_formula_size(formula_size);
         if oversized {
-            self.telemetry.queries_skipped_oversized.fetch_add(1, Ordering::Relaxed);
+            self.telemetry
+                .queries_skipped_oversized
+                .fetch_add(1, Ordering::Relaxed);
         } else if resolved.is_some() {
-            self.telemetry.queries_smt_resolved.fetch_add(1, Ordering::Relaxed);
+            self.telemetry
+                .queries_smt_resolved
+                .fetch_add(1, Ordering::Relaxed);
         } else {
-            self.telemetry.queries_smt_unknown.fetch_add(1, Ordering::Relaxed);
+            self.telemetry
+                .queries_smt_unknown
+                .fetch_add(1, Ordering::Relaxed);
         }
         resolved
     }
 
-    fn resolve_min_with_stmts(
-        &mut self,
-        val: &Value,
-        stmts: &[IRStatement],
-    ) -> Option<i64> {
+    fn resolve_min_with_stmts(&mut self, val: &Value, stmts: &[IRStatement]) -> Option<i64> {
         if let Some(n) = val.int_val() {
             return Some(n);
         }
@@ -374,12 +378,16 @@ impl Resolver for SmtResolver {
         {
             let inner = self.inner.lock().unwrap();
             if let Some(ResolvedValue::Int(n)) = inner.cache.get(&ptr) {
-                self.telemetry.queries_cache_hit.fetch_add(1, Ordering::Relaxed);
+                self.telemetry
+                    .queries_cache_hit
+                    .fetch_add(1, Ordering::Relaxed);
                 return Some(*n);
             }
         }
         if self.disabled {
-            self.telemetry.queries_skipped_disabled.fetch_add(1, Ordering::Relaxed);
+            self.telemetry
+                .queries_skipped_disabled
+                .fetch_add(1, Ordering::Relaxed);
             return None;
         }
         let max_size = if self.max_formula_size == usize::MAX {
@@ -400,11 +408,17 @@ impl Resolver for SmtResolver {
         self.telemetry.record_smt_duration(dur);
         self.telemetry.note_formula_size(formula_size);
         if oversized {
-            self.telemetry.queries_skipped_oversized.fetch_add(1, Ordering::Relaxed);
+            self.telemetry
+                .queries_skipped_oversized
+                .fetch_add(1, Ordering::Relaxed);
         } else if resolved.is_some() {
-            self.telemetry.queries_smt_resolved.fetch_add(1, Ordering::Relaxed);
+            self.telemetry
+                .queries_smt_resolved
+                .fetch_add(1, Ordering::Relaxed);
         } else {
-            self.telemetry.queries_smt_unknown.fetch_add(1, Ordering::Relaxed);
+            self.telemetry
+                .queries_smt_unknown
+                .fetch_add(1, Ordering::Relaxed);
         }
         resolved
     }
@@ -415,9 +429,7 @@ impl Resolver for SmtResolver {
         self.inner.lock().unwrap().cache.clear();
     }
 
-    fn telemetry_handle(
-        &self,
-    ) -> Option<std::sync::Arc<crate::optim::telemetry::SmtTelemetry>> {
+    fn telemetry_handle(&self) -> Option<std::sync::Arc<crate::optim::telemetry::SmtTelemetry>> {
         Some(Arc::clone(&self.telemetry))
     }
 }
@@ -543,11 +555,10 @@ fn smt_query_with_budget(
         // on the solver.
         use crate::optim::predicates::{find_scalar_preconditions, formula};
         for term_json in find_scalar_preconditions(stmts) {
-            let term: formula::ContractTerm =
-                match serde_json::from_str(term_json) {
-                    Ok(t) => t,
-                    Err(_) => continue,
-                };
+            let term: formula::ContractTerm = match serde_json::from_str(term_json) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
             let mut subst = formula::Substitution::new();
             for (name, int_term) in &name_to_int {
                 subst = subst.with_input(name.clone(), int_term.clone());
@@ -699,11 +710,10 @@ fn smt_extreme(
         // to the Solver path in smt_query_with_budget).
         use crate::optim::predicates::{find_scalar_preconditions, formula};
         for term_json in find_scalar_preconditions(stmts) {
-            let term: formula::ContractTerm =
-                match serde_json::from_str(term_json) {
-                    Ok(t) => t,
-                    Err(_) => continue,
-                };
+            let term: formula::ContractTerm = match serde_json::from_str(term_json) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
             let mut subst = formula::Substitution::new();
             for (name, int_term) in &name_to_int {
                 subst = subst.with_input(name.clone(), int_term.clone());
@@ -736,15 +746,131 @@ fn smt_extreme(
     } else {
         opt.minimize(&int);
     }
-    let resolved = match opt.check(&[]) {
-        z3::SatResult::Sat => {
-            opt.get_model()
-                .and_then(|model| model.eval(&int, true))
-                .and_then(|v| v.as_i64())
-        }
+    let candidate = match opt.check(&[]) {
+        z3::SatResult::Sat => opt
+            .get_model()
+            .and_then(|model| model.eval(&int, true))
+            .and_then(|v| v.as_i64()),
         z3::SatResult::Unsat | z3::SatResult::Unknown => None,
     };
-    (resolved, formula_size, false)
+
+    // Soundness check (compiler.smt-extreme-unbounded-int-soundness):
+    // `z3::Optimize::maximize` on an unbounded integer returns Sat with
+    // the default model value (typically 0) rather than reporting the
+    // objective as unbounded. That model value is NOT an upper bound —
+    // it's just one feasible assignment. Without a follow-up check,
+    // downstream consumers (np.arange, np.zeros, np.pad, etc.) treat
+    // the spurious 0 as a real bound and silently emit a zero-length
+    // array.
+    //
+    // Mirror the safety check that `maximize_shape_param` /
+    // `minimize_shape_param` in `prove.rs` already perform: re-assert
+    // every constraint on a fresh `Solver`, push `int > candidate`
+    // (or `int < candidate` for min), and check_sat. If satisfiable,
+    // the original optimize was misleading — the value can exceed
+    // (or fall below) `candidate` while satisfying all constraints —
+    // so return `None` rather than the bogus bound.
+    if let Some(c) = candidate {
+        let verifier = z3::Solver::new();
+        let mut vparams = z3::Params::new();
+        vparams.set_u32("timeout", timeout_ms.min(u32::MAX as u64) as u32);
+        verifier.set_params(&vparams);
+        // Replay all the formula's structural and predicate constraints.
+        // walker.constraints was already drained into `opt`; rebuild a
+        // fresh walker to get them again. (Cheap — the cache hits
+        // catch repeated subtree visits.)
+        let mut walker2 = Walker::new(stmts, cache);
+        walker2.max_size = max_formula_size;
+        let root2 = walker2.encode(root);
+        if let Some(root_term2) = root2 {
+            for c2 in walker2.constraints.drain(..) {
+                verifier.assert(&c2);
+            }
+            // Replay structural-predicate constraints + scalar precondi-
+            // tions, same shape as the Optimize side above.
+            use crate::optim::predicates::{
+                build_input_array_lengths, build_input_name_index, find_scalar_preconditions,
+                formula, Discharger,
+            };
+            use z3::ast::Int;
+
+            let input_idx = build_input_name_index(stmts);
+            let input_lengths = build_input_array_lengths(stmts);
+            let mut name_to_int: HashMap<String, Int> = HashMap::new();
+            for (name, producer_id) in &input_idx {
+                if let Some(term) = walker2.encode(*producer_id) {
+                    name_to_int.insert(name.clone(), term.as_int());
+                }
+            }
+            let discharger = Discharger::new();
+            let pred_c = discharger.collect_predicate_constraints(stmts, &input_lengths, |name| {
+                if let Some(t) = name_to_int.get(name) {
+                    t.clone()
+                } else if let Ok(n) = name.parse::<i64>() {
+                    Int::from_i64(n)
+                } else {
+                    Int::fresh_const(&format!("sp_unknown_{name}_"))
+                }
+            });
+            for cc in &pred_c.clauses {
+                verifier.assert(cc);
+            }
+            for f in &pred_c.meta_facts {
+                verifier.assert(f);
+            }
+            for term_json in find_scalar_preconditions(stmts) {
+                if let Ok(term) = serde_json::from_str::<formula::ContractTerm>(term_json) {
+                    let mut subst = formula::Substitution::new();
+                    for (name, int_term) in &name_to_int {
+                        subst = subst.with_input(name.clone(), int_term.clone());
+                    }
+                    if let Ok(out) = formula::lower_bool(&term, &subst) {
+                        verifier.assert(&out.term);
+                        for (_, facts) in &out.meta_fact_sets {
+                            for f in facts {
+                                verifier.assert(f);
+                            }
+                        }
+                    }
+                }
+            }
+            // The "is the candidate actually a bound?" question.
+            // CRITICAL: use the Int from walker2 (matches the verifier's
+            // fresh symbols), NOT the original `int` (which was minted
+            // by the first walker and is disconnected from the
+            // verifier's constraint graph).
+            let int2 = match root_term2 {
+                crate::optim::smt_encoding::Z3Term::Int(i) => i,
+                crate::optim::smt_encoding::Z3Term::Bool(b) => {
+                    b.ite(&z3::ast::Int::from_i64(1), &z3::ast::Int::from_i64(0))
+                }
+                crate::optim::smt_encoding::Z3Term::Real(r) => r.to_int(),
+            };
+            let probe = if maximise {
+                int2.gt(&z3::ast::Int::from_i64(c))
+            } else {
+                int2.lt(&z3::ast::Int::from_i64(c))
+            };
+            verifier.assert(&probe);
+            match verifier.check() {
+                z3::SatResult::Sat => {
+                    // The objective can exceed (or fall below) the
+                    // candidate while still satisfying all constraints,
+                    // so `c` is not a sound bound. Default-deny.
+                    return (None, formula_size, false);
+                }
+                z3::SatResult::Unsat => {
+                    // Confirmed: `c` is a sound bound.
+                }
+                z3::SatResult::Unknown => {
+                    // Verifier timed out; can't confirm bound is real.
+                    // Default-deny rather than trust the optimize result.
+                    return (None, formula_size, false);
+                }
+            }
+        }
+    }
+    (candidate, formula_size, false)
 }
 
 /// Reverse-reachability walker. Translates IR → Z3 terms via the
@@ -771,10 +897,7 @@ struct Walker<'a> {
 }
 
 impl<'a> Walker<'a> {
-    fn new(
-        stmts: &'a [IRStatement],
-        cache: &'a HashMap<StmtId, ResolvedValue>,
-    ) -> Self {
+    fn new(stmts: &'a [IRStatement], cache: &'a HashMap<StmtId, ResolvedValue>) -> Self {
         Self {
             stmts,
             cache,
@@ -790,10 +913,7 @@ impl<'a> Walker<'a> {
     /// Encode the wire at `ptr`, recursively encoding its dependencies.
     /// Returns the Z3 term that *represents* the wire's value. Each ptr
     /// is encoded at most once per query.
-    fn encode(
-        &mut self,
-        ptr: StmtId,
-    ) -> Option<crate::optim::smt_encoding::Z3Term> {
+    fn encode(&mut self, ptr: StmtId) -> Option<crate::optim::smt_encoding::Z3Term> {
         if let Some(t) = self.encoded.get(&ptr) {
             return Some(t.clone());
         }

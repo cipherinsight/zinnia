@@ -1,0 +1,78 @@
+{
+  "categories": [
+    "data-dependent-loop"
+  ],
+  "diagnostics": [
+    "while loops require a public/padded maximum iteration count."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "list",
+        "perm1.insert",
+        "perm1.pop",
+        "range"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": true,
+      "has_while": true,
+      "line_end": 42,
+      "line_start": 11,
+      "mutated_params": [],
+      "name": "fannkuch",
+      "ops": [
+        "Add",
+        "Gt",
+        "Lt",
+        "NotEq",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "n",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "fannkuch",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 47,
+      "line_start": 46,
+      "mutated_params": [],
+      "name": "fannkuch2",
+      "ops": [
+        "LtE"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "n",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_fannkuch/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add an explicit iteration cap or classify as fail-closed until a bound is available."
+  ],
+  "program": "pythran_fannkuch",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: data-dependent-loop, in-place-mutation\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: while loops require a public/padded maximum iteration count.\n\n@zk_chip\ndef fannkuch(n: Integer):\n    count = list(range(1, n + 1))\n    max_flips = 0\n    m = n - 1\n    r = n\n    check = 0\n    perm1 = list(range(n))\n    perm = list(range(n))\n    while 1:\n        if check < 30:\n            check += 1\n        while r != 1:\n            count[r - 1] = r\n            r -= 1\n        if perm1[0] != 0 and perm1[m] != m:\n            perm = perm1[:]\n            flips_count = 0\n            k = perm[0]\n            while k:\n                perm[:k + 1] = perm[k::-1]\n                flips_count += 1\n                k = perm[0]\n            if flips_count > max_flips:\n                max_flips = flips_count\n        while r != n:\n            perm1.insert(r, perm1.pop(0))\n            count[r] -= 1\n            if count[r] > 0:\n                break\n            r += 1\n        else:\n            return max_flips\n\n@zk_circuit\n@requires(lambda n: 0 <= n <= 1024)\ndef fannkuch2(n: Integer):\n    fannkuch(n)",
+  "source_status": "direct"
+}

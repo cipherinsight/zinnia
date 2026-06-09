@@ -1,9 +1,8 @@
 use crate::builder::IRBuilder;
-use crate::types::{ValueId, 
-    CompositeData, DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value, ZinniaType,
+use crate::types::{
+    CompositeData, DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value, ValueId,
+    ZinniaType,
 };
-
-use super::value_to_scalar_i64;
 
 use std::collections::HashMap;
 
@@ -14,9 +13,10 @@ pub fn dyn_default_value(b: &mut IRBuilder, dtype: NumberType) -> Value {
     match dtype {
         NumberType::Integer => b.ir_constant_int(0),
         NumberType::Float => b.ir_constant_float(0.0),
-        NumberType::Complex => panic!(
-            "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
-        ),
+        NumberType::Complex => Value::Complex {
+            real: ScalarValue::new(Some(0.0), None),
+            imag: ScalarValue::new(Some(0.0), None),
+        },
     }
 }
 
@@ -35,79 +35,64 @@ pub fn dyn_dtype(data: &DynamicNDArrayData) -> Value {
 }
 
 pub fn dyn_shape(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
-    let shape = &data.meta.logical_shape;
-    if shape.len() == 1 {
-        // 1D: use runtime_length if available (dynamic), else constant
-        let len_val = if let Some(v) = data.meta.runtime_length.static_val {
-            b.ir_constant_int(v)
-        } else if let Some(ptr) = data.meta.runtime_length.stmt_id {
-            Value::Integer(ScalarValue::new(None, Some(ptr)))
-        } else {
-            b.ir_constant_int(shape[0] as i64)
-        };
-        let types = vec![ZinniaType::Integer];
-        Value::Tuple(CompositeData {
-            elements_type: types,
-            values: vec![len_val],
-        
-            value_id: ValueId::next(),
+    let vals: Vec<Value> = data
+        .meta
+        .runtime_shape
+        .iter()
+        .enumerate()
+        .map(|(axis, dim)| {
+            if let Some(v) = dim.static_val {
+                b.ir_constant_int(v)
+            } else if let Some(ptr) = dim.stmt_id {
+                Value::Integer(ScalarValue::new(None, Some(ptr)))
+            } else {
+                b.ir_constant_int(data.meta.logical_shape[axis] as i64)
+            }
         })
-    } else {
-        let vals: Vec<Value> = shape
-            .iter()
-            .map(|&s| Value::Integer(ScalarValue::new(Some(s as i64), None)))
-            .collect();
-        let types = vec![ZinniaType::Integer; vals.len()];
-        Value::Tuple(CompositeData {
-            elements_type: types,
-            values: vals,
-        
-            value_id: ValueId::next(),
-        })
-    }
+        .collect();
+    let types = vec![ZinniaType::Integer; vals.len()];
+    Value::Tuple(CompositeData {
+        elements_type: types,
+        values: vals,
+
+        value_id: ValueId::next(),
+    })
 }
 
 pub fn dyn_size(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
-    let shape = &data.meta.logical_shape;
-    if shape.len() == 1 {
-        // 1D: return runtime_length if dynamic
-        if let Some(v) = data.meta.runtime_length.static_val {
-            b.ir_constant_int(v)
-        } else if let Some(ptr) = data.meta.runtime_length.stmt_id {
-            Value::Integer(ScalarValue::new(None, Some(ptr)))
-        } else {
-            b.ir_constant_int(shape[0] as i64)
-        }
+    if let Some(v) = data.meta.runtime_length.static_val {
+        b.ir_constant_int(v)
+    } else if let Some(ptr) = data.meta.runtime_length.stmt_id {
+        Value::Integer(ScalarValue::new(None, Some(ptr)))
     } else {
-        let total: usize = shape.iter().product();
-        b.ir_constant_int(total as i64)
+        b.ir_constant_int(data.meta.logical_shape.iter().product::<usize>() as i64)
     }
 }
 
 // ── Phase 2: simple value ops ─────────────────────────────────────
 
 pub fn dyn_astype(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) -> Value {
-    let target_float = matches!(args.first(), Some(Value::Class(ZinniaType::Float)));
-    let new_dtype = if target_float {
-        NumberType::Float
-    } else {
-        NumberType::Integer
+    let new_dtype = match args.first() {
+        Some(Value::Class(ZinniaType::Complex)) => NumberType::Complex,
+        Some(Value::Class(ZinniaType::Float)) => NumberType::Float,
+        _ => NumberType::Integer,
     };
 
-    let values = crate::helpers::segment::read_all(b, data.segment_id, data.max_length());
-    let new_elements: Vec<ScalarValue<i64>> = values
+    let values =
+        crate::helpers::segment::read_all_typed(b, data.segment_id, data.max_length(), data.dtype);
+    let new_values: Vec<Value> = values
         .iter()
-        .map(|val| {
-            let cast_val = if target_float {
-                b.ir_float_cast(&val)
-            } else {
-                b.ir_int_cast(&val)
-            };
-            value_to_scalar_i64(&cast_val)
+        .map(|val| match new_dtype {
+            NumberType::Complex => {
+                let (real, imag) = crate::helpers::value_ops::unpack_value_to_complex_parts(b, val);
+                crate::helpers::value_ops::pack_complex_value(real, imag)
+            }
+            NumberType::Float => b.ir_float_cast(&val),
+            NumberType::Integer => b.ir_int_cast(&val),
         })
         .collect();
 
-    let segment_id = crate::helpers::segment::alloc_and_write(b, &new_elements, new_dtype);
+    let segment_id = crate::helpers::segment::alloc_and_write_values(b, &new_values, new_dtype);
     let result = DynamicNDArrayData {
         envelope: data.envelope.clone(),
         dtype: new_dtype,
@@ -119,21 +104,23 @@ pub fn dyn_astype(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) 
 }
 
 pub fn dyn_flatten_to_list(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
-    let values = crate::helpers::segment::read_all(b, data.segment_id, data.max_length());
+    reject_if_runtime_shape_may_be_shorter(data, "flatten");
+    let values =
+        crate::helpers::segment::read_all_typed(b, data.segment_id, data.max_length(), data.dtype);
     let types = values.iter().map(|v| v.zinnia_type()).collect();
     Value::List(CompositeData {
         elements_type: types,
         values,
-    
+
         value_id: ValueId::next(),
     })
 }
 
 pub fn dyn_flat(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
-    let values = crate::helpers::segment::read_all(b, data.segment_id, data.max_length());
-    let flat: Vec<ScalarValue<i64>> = values.iter().map(|v| value_to_scalar_i64(v)).collect();
+    let values =
+        crate::helpers::segment::read_all_typed(b, data.segment_id, data.max_length(), data.dtype);
     let max_length = data.max_length();
-    let segment_id = crate::helpers::segment::alloc_and_write(b, &flat, data.dtype);
+    let segment_id = crate::helpers::segment::alloc_and_write_values(b, &values, data.dtype);
     // Flatten to a single dim of the same total max bound. Always Static
     // here because flatten loses any min-bound information from the
     // individual axes (we'd need a full intersection to recover it).
@@ -158,9 +145,111 @@ pub fn dyn_flat(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
 }
 
 pub fn dyn_tolist(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
-    let flat_values = crate::helpers::segment::read_all(b, data.segment_id, data.max_length());
+    reject_if_runtime_shape_may_be_shorter(data, "tolist");
+    let flat_values =
+        crate::helpers::segment::read_all_typed(b, data.segment_id, data.max_length(), data.dtype);
     let shape = &data.meta.logical_shape.clone();
     build_nested_list(&flat_values, shape)
+}
+
+pub fn dyn_complex_real(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
+    if data.dtype != NumberType::Complex {
+        return Value::DynamicNDArray(data.clone());
+    }
+    let values =
+        crate::helpers::segment::read_all_typed(b, data.segment_id, data.max_length(), data.dtype);
+    let real_values: Vec<Value> = values
+        .into_iter()
+        .map(|v| match v {
+            Value::Complex { real, .. } => Value::Float(real),
+            _ => unreachable!("Complex DynamicNDArray read must yield Complex values"),
+        })
+        .collect();
+    let segment_id =
+        crate::helpers::segment::alloc_and_write_values(b, &real_values, NumberType::Float);
+    Value::DynamicNDArray(DynamicNDArrayData {
+        envelope: data.envelope.clone(),
+        dtype: NumberType::Float,
+        segment_id,
+        meta: data.meta.clone(),
+        value_id: ValueId::next(),
+    })
+}
+
+pub fn dyn_complex_imag(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
+    if data.dtype != NumberType::Complex {
+        let zeros = vec![b.ir_constant_float(0.0); data.max_length()];
+        let segment_id =
+            crate::helpers::segment::alloc_and_write_values(b, &zeros, NumberType::Float);
+        return Value::DynamicNDArray(DynamicNDArrayData {
+            envelope: data.envelope.clone(),
+            dtype: NumberType::Float,
+            segment_id,
+            meta: data.meta.clone(),
+            value_id: ValueId::next(),
+        });
+    }
+    let values =
+        crate::helpers::segment::read_all_typed(b, data.segment_id, data.max_length(), data.dtype);
+    let imag_values: Vec<Value> = values
+        .into_iter()
+        .map(|v| match v {
+            Value::Complex { imag, .. } => Value::Float(imag),
+            _ => unreachable!("Complex DynamicNDArray read must yield Complex values"),
+        })
+        .collect();
+    let segment_id =
+        crate::helpers::segment::alloc_and_write_values(b, &imag_values, NumberType::Float);
+    Value::DynamicNDArray(DynamicNDArrayData {
+        envelope: data.envelope.clone(),
+        dtype: NumberType::Float,
+        segment_id,
+        meta: data.meta.clone(),
+        value_id: ValueId::next(),
+    })
+}
+
+pub fn dyn_complex_conjugate(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Value {
+    if data.dtype != NumberType::Complex {
+        return Value::DynamicNDArray(data.clone());
+    }
+    let values =
+        crate::helpers::segment::read_all_typed(b, data.segment_id, data.max_length(), data.dtype);
+    let zero = b.ir_constant_float(0.0);
+    let conj_values: Vec<Value> = values
+        .into_iter()
+        .map(|v| match v {
+            Value::Complex { real, imag } => {
+                let neg_imag = b.ir_sub_f(&zero, &Value::Float(imag));
+                crate::helpers::value_ops::pack_complex_value(Value::Float(real), neg_imag)
+            }
+            _ => unreachable!("Complex DynamicNDArray read must yield Complex values"),
+        })
+        .collect();
+    let segment_id =
+        crate::helpers::segment::alloc_and_write_values(b, &conj_values, NumberType::Complex);
+    Value::DynamicNDArray(DynamicNDArrayData {
+        envelope: data.envelope.clone(),
+        dtype: NumberType::Complex,
+        segment_id,
+        meta: data.meta.clone(),
+        value_id: ValueId::next(),
+    })
+}
+
+fn reject_if_runtime_shape_may_be_shorter(data: &DynamicNDArrayData, method: &str) {
+    let runtime_may_be_shorter = data
+        .meta
+        .runtime_shape
+        .iter()
+        .zip(&data.meta.logical_shape)
+        .any(|(runtime, logical)| runtime.static_val != Some(*logical as i64));
+    if runtime_may_be_shorter {
+        panic!(
+            "DynamicNDArray.{} is not yet supported for bounded-dynamic arrays because it would expose max-buffer padding; use runtime-shape-aware array operations instead",
+            method
+        );
+    }
 }
 
 /// Build nested Value::List from flat values and shape.
@@ -172,7 +261,7 @@ pub fn build_nested_list(flat: &[Value], shape: &[usize]) -> Value {
         return Value::List(CompositeData {
             elements_type: types,
             values: vals,
-        
+
             value_id: ValueId::next(),
         });
     }
@@ -185,7 +274,7 @@ pub fn build_nested_list(flat: &[Value], shape: &[usize]) -> Value {
     Value::List(CompositeData {
         elements_type: row_types,
         values: rows,
-    
+
         value_id: ValueId::next(),
     })
 }

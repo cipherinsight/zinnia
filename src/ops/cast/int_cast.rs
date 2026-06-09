@@ -9,8 +9,12 @@ impl IntCastOp {
 }
 
 impl Op for IntCastOp {
-    fn name(&self) -> &'static str { "int" }
-    fn params(&self) -> &[ParamEntry] { &Self::PARAMS }
+    fn name(&self) -> &'static str {
+        "int"
+    }
+    fn params(&self) -> &[ParamEntry] {
+        &Self::PARAMS
+    }
 
     fn build(&self, builder: &mut IRBuilder, args: &OpArgs) -> Value {
         let x = args.require("x");

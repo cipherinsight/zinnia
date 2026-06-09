@@ -38,9 +38,11 @@ def test_math_acos():
     def foo(x: NDArray[Float, 4]):
         a = math.acos(x[0])
         b = np.arccos(x[1])
-        _ = a, b
+        c = math.asin(x[2])
+        d = np.arcsin(x[3])
+        _ = a, b, c, d
 
-    assert foo(np.asarray([0.5, -0.5, 0.0, 0.0]))
+    assert foo(np.asarray([0.5, -0.5, 0.25, -0.25]))
 
 
 def test_math_atan2():

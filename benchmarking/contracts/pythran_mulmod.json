@@ -1,0 +1,64 @@
+{
+  "categories": [
+    "data-dependent-loop"
+  ],
+  "diagnostics": [
+    "while loops require a public/padded maximum iteration count."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": true,
+      "has_while": true,
+      "line_end": 22,
+      "line_start": 12,
+      "mutated_params": [],
+      "name": "gf2mulmod",
+      "ops": [
+        "BitAnd",
+        "BitXor",
+        "Gt",
+        "Lt",
+        "LtE",
+        "NotEq"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "x",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "y",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "m",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_mulmod/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add an explicit iteration cap or classify as fail-closed until a bound is available."
+  ],
+  "program": "pythran_mulmod",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: data-dependent-loop, in-place-mutation\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: while loops require a public/padded maximum iteration count.\n\n@zk_circuit\n@requires(lambda x, y, m: 0 <= m <= 1024)\ndef gf2mulmod(x: Float, y: Float, m: Integer):\n    z = 0\n    while x > 0:\n        if x & 1 != 0:\n            z ^= y\n        y <<= 1\n        y2 = y ^ m\n        if y2 < y:\n            y = y2\n        x >>= 1\n    return z",
+  "source_status": "direct"
+}

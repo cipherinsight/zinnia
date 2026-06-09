@@ -1,0 +1,14 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0498/kernel.py
+// REASON: Input shape "N<=64 M<=64 K<=64" is runtime-bounded and np.pad output shape derives from runtime `shape` - ZoKrates requires fixed array sizes
+
+def main(field[64][64][64] arr, u32[2] shape) -> field[64][64][64]:
+    field[64][64][64] result = [[[0; 64]; 64]; 64]
+    for u32 i in 0..64 do
+        for u32 j in 0..64 do
+            for u32 k in 0..64 do
+                result[i][j][k] = arr[i][j][k]
+            endfor
+        endfor
+    endfor
+    return result

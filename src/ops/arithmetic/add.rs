@@ -5,15 +5,16 @@ use crate::types::{Value, ValueId};
 pub struct AddOp;
 
 impl AddOp {
-    const PARAMS: [ParamEntry; 2] = [
-        ParamEntry::required("lhs"),
-        ParamEntry::required("rhs"),
-    ];
+    const PARAMS: [ParamEntry; 2] = [ParamEntry::required("lhs"), ParamEntry::required("rhs")];
 }
 
 impl Op for AddOp {
-    fn name(&self) -> &'static str { "add" }
-    fn params(&self) -> &[ParamEntry] { &Self::PARAMS }
+    fn name(&self) -> &'static str {
+        "add"
+    }
+    fn params(&self) -> &[ParamEntry] {
+        &Self::PARAMS
+    }
 
     fn build(&self, builder: &mut IRBuilder, args: &OpArgs) -> Value {
         let lhs = args.require("lhs");
@@ -31,25 +32,42 @@ impl Op for AddOp {
                 types.extend(rd.elements_type.clone());
                 let mut vals = ld.values.clone();
                 vals.extend(rd.values.clone());
-                return Value::List(crate::types::CompositeData { elements_type: types, values: vals, value_id: ValueId::next() });
+                return Value::List(crate::types::CompositeData {
+                    elements_type: types,
+                    values: vals,
+                    value_id: ValueId::next(),
+                });
             }
             (Value::Tuple(ld), Value::Tuple(rd)) => {
                 let mut types = ld.elements_type.clone();
                 types.extend(rd.elements_type.clone());
                 let mut vals = ld.values.clone();
                 vals.extend(rd.values.clone());
-                return Value::Tuple(crate::types::CompositeData { elements_type: types, values: vals, value_id: ValueId::next() });
+                return Value::Tuple(crate::types::CompositeData {
+                    elements_type: types,
+                    values: vals,
+                    value_id: ValueId::next(),
+                });
             }
             _ => {}
         }
 
         // Scalar numeric path
         if lhs.is_number() && rhs.is_number() {
-            return dispatch_binary_numeric(builder, lhs, rhs, IRBuilder::ir_add_i, IRBuilder::ir_add_f);
+            return dispatch_binary_numeric(
+                builder,
+                lhs,
+                rhs,
+                IRBuilder::ir_add_i,
+                IRBuilder::ir_add_f,
+            );
         }
 
-        panic!("Op `add` not supported for {:?} and {:?}",
-            lhs.zinnia_type(), rhs.zinnia_type())
+        panic!(
+            "Op `add` not supported for {:?} and {:?}",
+            lhs.zinnia_type(),
+            rhs.zinnia_type()
+        )
     }
 }
 

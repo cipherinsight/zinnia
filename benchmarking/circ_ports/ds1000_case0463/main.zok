@@ -1,0 +1,15 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0463/kernel.py
+// REASON: Boolean-mask read a[selection] followed by reshape(-1,1) yields a runtime-sized 2D array
+
+def main(field[20][1] a) -> field[20][1]:
+    bool[20] selection = [true; 20]
+    for u32 i in 1..20 do
+        selection[i] = (a[i][0] != a[i-1][0]) && (a[i][0] != 0)
+    endfor
+    selection[0] = a[0][0] != 0
+    field[20][1] result = [[0; 1]; 20]
+    for u32 i in 0..20 do
+        result[i][0] = if selection[i] then a[i][0] else 0 fi
+    endfor
+    return result

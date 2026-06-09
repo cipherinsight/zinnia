@@ -1,0 +1,109 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "loop-bounded",
+    "matmul-dot"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "np.exp"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 14,
+      "line_start": 13,
+      "mutated_params": [],
+      "name": "sigmoid",
+      "ops": [
+        "Add",
+        "Div"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "z",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "np.dot",
+        "np.tanh",
+        "np.zeros",
+        "range",
+        "reshape",
+        "sigmoid",
+        "state_results.reshape"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 40,
+      "line_start": 17,
+      "mutated_params": [],
+      "name": "convnet",
+      "ops": [
+        "Add",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "conv_matrix",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "qcnn_filter",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "length",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "batch_size",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "state_size",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_convnet/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Declare shared matrix/vector dimensions explicitly, e.g. A[N,K] with x[K].",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_convnet",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, in-place-mutation, loop-bounded, matmul-dot\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Declare shared matrix/vector dimensions explicitly; when not expressible as @requires, encode with matching symbolic annotation names and keep as review obligation.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\n\n@zk_chip\ndef sigmoid(z: Float[Array, 'N<=1024']):\n    return 1 / (1 + np.exp(-z))\n\n@zk_circuit\ndef convnet(conv_matrix: Float[Array, 'N<=1024 M<=1024'], qcnn_filter: Float[Array, 'N<=1024 M<=1024'], length: Integer, batch_size: Integer, state_size: Integer):\n    state_size_2 = state_size * 2\n    state_size_3 = state_size * 3\n    state_size_4 = state_size * 4\n    conv_results = np.dot(conv_matrix, qcnn_filter).reshape(length, batch_size, state_size_4)\n    conv_results[:, :, :state_size] = np.tanh(conv_results[:, :, :state_size])\n    conv_results[:, :, state_size:state_size_4] = sigmoid(conv_results[:, :, state_size:state_size_4])\n    state_results = np.zeros((batch_size, length, state_size_2), dtype=np.float32)\n    state = np.zeros((batch_size, state_size), dtype=np.float32)\n    for i in range(length):\n        z = conv_results[i, :, :state_size]\n        f = conv_results[i, :, state_size:state_size_2]\n        o = conv_results[i, :, state_size_2:state_size_3]\n        state = f * state + (1 - f) * z\n        state_results[:, i, :state_size] = state * o\n    state = np.zeros((batch_size, state_size), dtype=np.float32)\n    for i in range(length - 1, -1, -1):\n        z = conv_results[i, :, :state_size]\n        f = conv_results[i, :, state_size_3:state_size_4]\n        o = conv_results[i, :, state_size_2:state_size_3]\n        state = f * state + (1 - f) * z\n        state_results[:, i, state_size:] = state * o\n    state_results = state_results.reshape((batch_size * length, state_size_2))\n    return state_results",
+  "source_status": "direct"
+}

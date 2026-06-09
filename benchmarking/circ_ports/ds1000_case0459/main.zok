@@ -1,0 +1,12 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0459/kernel.py
+// REASON: np.mean returns a float; ZoKrates has no float and exact field division of n elements isn't a real mean
+
+def main(field[5] A, field[5] NA) -> field:
+    field s = 0
+    for u32 i in 0..5 do
+        s = s + NA[i]
+    endfor
+    // Division by 5 in the field is exact mod p, not the float mean
+    field avg = s / 5
+    return avg

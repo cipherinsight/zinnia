@@ -33,9 +33,7 @@ fn static_int_into_i64() {
 
 #[test]
 fn site_kind_diagnostic_includes_axis() {
-    assert!(SiteKind::ShapeAxis(3)
-        .diagnostic()
-        .contains("axis 3"));
+    assert!(SiteKind::ShapeAxis(3).diagnostic().contains("axis 3"));
 }
 
 // ---------------------------------------------------------------
@@ -61,10 +59,38 @@ fn smt_resolves_select_with_constant_cond() {
     // stmt0 = ConstantBool(true), stmt1 = ConstantInt(7),
     // stmt2 = ConstantInt(9), stmt3 = SelectI(stmt0, stmt1, stmt2)
     let stmts = vec![
-        IRStatement::new(0, crate::types::ValueId::next(), IR::ConstantBool { value: true }, vec![], vec![], None),
-        IRStatement::new(1, crate::types::ValueId::next(), IR::ConstantInt { value: 7 }, vec![], vec![], None),
-        IRStatement::new(2, crate::types::ValueId::next(), IR::ConstantInt { value: 9 }, vec![], vec![], None),
-        IRStatement::new(3, crate::types::ValueId::next(), IR::SelectI, vec![0, 1, 2], vec![], None),
+        IRStatement::new(
+            0,
+            crate::types::ValueId::next(),
+            IR::ConstantBool { value: true },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            1,
+            crate::types::ValueId::next(),
+            IR::ConstantInt { value: 7 },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            2,
+            crate::types::ValueId::next(),
+            IR::ConstantInt { value: 9 },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            3,
+            crate::types::ValueId::next(),
+            IR::SelectI,
+            vec![0, 1, 2],
+            vec![],
+            None,
+        ),
     ];
     let v = runtime_int(3);
     let mut r = SmtResolver::new();
@@ -82,15 +108,56 @@ fn smt_resolves_select_with_both_branches_equal() {
     // stmt4 = ConstantInt(100), stmt5 = SelectI(stmt2, stmt3, stmt4)
     let stmts = vec![
         IRStatement::new(
-            0, crate::types::ValueId::next(),
-            IR::ReadInteger { path: InputPath::new("x", vec![]), is_public: false },
-            vec![], vec![],
-            None),
-        IRStatement::new(1, crate::types::ValueId::next(), IR::ConstantInt { value: 5 }, vec![], vec![], None),
-        IRStatement::new(2, crate::types::ValueId::next(), IR::EqI, vec![0, 1], vec![], None),
-        IRStatement::new(3, crate::types::ValueId::next(), IR::ConstantInt { value: 100 }, vec![], vec![], None),
-        IRStatement::new(4, crate::types::ValueId::next(), IR::ConstantInt { value: 100 }, vec![], vec![], None),
-        IRStatement::new(5, crate::types::ValueId::next(), IR::SelectI, vec![2, 3, 4], vec![], None),
+            0,
+            crate::types::ValueId::next(),
+            IR::ReadInteger {
+                path: InputPath::new("x", vec![]),
+                is_public: false,
+            },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            1,
+            crate::types::ValueId::next(),
+            IR::ConstantInt { value: 5 },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            2,
+            crate::types::ValueId::next(),
+            IR::EqI,
+            vec![0, 1],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            3,
+            crate::types::ValueId::next(),
+            IR::ConstantInt { value: 100 },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            4,
+            crate::types::ValueId::next(),
+            IR::ConstantInt { value: 100 },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            5,
+            crate::types::ValueId::next(),
+            IR::SelectI,
+            vec![2, 3, 4],
+            vec![],
+            None,
+        ),
     ];
     let v = runtime_int(5);
     let mut r = SmtResolver::new();
@@ -102,10 +169,16 @@ fn smt_resolves_select_with_both_branches_equal() {
 #[test]
 fn smt_returns_none_on_free_variable() {
     let stmts = vec![IRStatement::new(
-        0, crate::types::ValueId::next(),
-        IR::ReadInteger { path: InputPath::new("x", vec![]), is_public: false },
-        vec![], vec![],
-        None)];
+        0,
+        crate::types::ValueId::next(),
+        IR::ReadInteger {
+            path: InputPath::new("x", vec![]),
+            is_public: false,
+        },
+        vec![],
+        vec![],
+        None,
+    )];
     let v = runtime_int(0);
     let mut r = SmtResolver::new();
     assert_eq!(r.resolve_int_with_stmts(&v, &stmts), None);
@@ -116,10 +189,38 @@ fn smt_returns_none_on_free_variable() {
 #[test]
 fn smt_disable_flag_short_circuits() {
     let stmts = vec![
-        IRStatement::new(0, crate::types::ValueId::next(), IR::ConstantBool { value: true }, vec![], vec![], None),
-        IRStatement::new(1, crate::types::ValueId::next(), IR::ConstantInt { value: 7 }, vec![], vec![], None),
-        IRStatement::new(2, crate::types::ValueId::next(), IR::ConstantInt { value: 9 }, vec![], vec![], None),
-        IRStatement::new(3, crate::types::ValueId::next(), IR::SelectI, vec![0, 1, 2], vec![], None),
+        IRStatement::new(
+            0,
+            crate::types::ValueId::next(),
+            IR::ConstantBool { value: true },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            1,
+            crate::types::ValueId::next(),
+            IR::ConstantInt { value: 7 },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            2,
+            crate::types::ValueId::next(),
+            IR::ConstantInt { value: 9 },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            3,
+            crate::types::ValueId::next(),
+            IR::SelectI,
+            vec![0, 1, 2],
+            vec![],
+            None,
+        ),
     ];
     let v = runtime_int(3);
     let mut r = SmtResolver::new().with_disabled(true);
@@ -133,10 +234,38 @@ fn smt_disable_flag_short_circuits() {
 #[test]
 fn smt_caches_resolution() {
     let stmts = vec![
-        IRStatement::new(0, crate::types::ValueId::next(), IR::ConstantBool { value: true }, vec![], vec![], None),
-        IRStatement::new(1, crate::types::ValueId::next(), IR::ConstantInt { value: 7 }, vec![], vec![], None),
-        IRStatement::new(2, crate::types::ValueId::next(), IR::ConstantInt { value: 9 }, vec![], vec![], None),
-        IRStatement::new(3, crate::types::ValueId::next(), IR::SelectI, vec![0, 1, 2], vec![], None),
+        IRStatement::new(
+            0,
+            crate::types::ValueId::next(),
+            IR::ConstantBool { value: true },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            1,
+            crate::types::ValueId::next(),
+            IR::ConstantInt { value: 7 },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            2,
+            crate::types::ValueId::next(),
+            IR::ConstantInt { value: 9 },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            3,
+            crate::types::ValueId::next(),
+            IR::SelectI,
+            vec![0, 1, 2],
+            vec![],
+            None,
+        ),
     ];
     let v = runtime_int(3);
     let mut r = SmtResolver::new();
@@ -173,15 +302,28 @@ fn smt_honours_tight_timeout() {
     // produced when the sub-checks succeed.
     let mut stmts = Vec::new();
     stmts.push(IRStatement::new(
-        0, crate::types::ValueId::next(),
-        IR::ReadInteger { path: InputPath::new("x", vec![]), is_public: false },
-        vec![], vec![],
-        None));
+        0,
+        crate::types::ValueId::next(),
+        IR::ReadInteger {
+            path: InputPath::new("x", vec![]),
+            is_public: false,
+        },
+        vec![],
+        vec![],
+        None,
+    ));
     // Build a chain: stmt1 = stmt0 * stmt0, stmt2 = stmt1 * stmt0, ...
     // up to stmt30. Result has high arithmetic complexity.
     let mut last = 0u32;
     for i in 1..=30 {
-        stmts.push(IRStatement::new(i, crate::types::ValueId::next(), IR::MulI, vec![last, 0], vec![], None));
+        stmts.push(IRStatement::new(
+            i,
+            crate::types::ValueId::next(),
+            IR::MulI,
+            vec![last, 0],
+            vec![],
+            None,
+        ));
         last = i;
     }
     let v = runtime_int(last);
@@ -199,10 +341,38 @@ fn smt_honours_tight_timeout() {
 #[test]
 fn smt_on_ir_mutated_clears_cache() {
     let stmts = vec![
-        IRStatement::new(0, crate::types::ValueId::next(), IR::ConstantBool { value: true }, vec![], vec![], None),
-        IRStatement::new(1, crate::types::ValueId::next(), IR::ConstantInt { value: 7 }, vec![], vec![], None),
-        IRStatement::new(2, crate::types::ValueId::next(), IR::ConstantInt { value: 9 }, vec![], vec![], None),
-        IRStatement::new(3, crate::types::ValueId::next(), IR::SelectI, vec![0, 1, 2], vec![], None),
+        IRStatement::new(
+            0,
+            crate::types::ValueId::next(),
+            IR::ConstantBool { value: true },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            1,
+            crate::types::ValueId::next(),
+            IR::ConstantInt { value: 7 },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            2,
+            crate::types::ValueId::next(),
+            IR::ConstantInt { value: 9 },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            3,
+            crate::types::ValueId::next(),
+            IR::SelectI,
+            vec![0, 1, 2],
+            vec![],
+            None,
+        ),
     ];
     let v = runtime_int(3);
     let mut r = SmtResolver::new();
@@ -234,10 +404,38 @@ fn smt_resolves_bool_through_select() {
     // stmt3 = SelectB(stmt0, stmt1, stmt2)
     // Both branches are true so result is true regardless of cond.
     let stmts = vec![
-        IRStatement::new(0, crate::types::ValueId::next(), IR::ConstantBool { value: false }, vec![], vec![], None),
-        IRStatement::new(1, crate::types::ValueId::next(), IR::ConstantBool { value: true }, vec![], vec![], None),
-        IRStatement::new(2, crate::types::ValueId::next(), IR::ConstantBool { value: true }, vec![], vec![], None),
-        IRStatement::new(3, crate::types::ValueId::next(), IR::SelectB, vec![0, 1, 2], vec![], None),
+        IRStatement::new(
+            0,
+            crate::types::ValueId::next(),
+            IR::ConstantBool { value: false },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            1,
+            crate::types::ValueId::next(),
+            IR::ConstantBool { value: true },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            2,
+            crate::types::ValueId::next(),
+            IR::ConstantBool { value: true },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            3,
+            crate::types::ValueId::next(),
+            IR::SelectB,
+            vec![0, 1, 2],
+            vec![],
+            None,
+        ),
     ];
     let v = runtime_bool(3);
     let mut r = SmtResolver::new();
@@ -281,35 +479,19 @@ impl Resolver for CountingResolver {
     fn resolve_min(&mut self, val: &Value) -> Option<i64> {
         self.inner.resolve_min(val)
     }
-    fn resolve_int_with_stmts(
-        &mut self,
-        val: &Value,
-        stmts: &[IRStatement],
-    ) -> Option<i64> {
+    fn resolve_int_with_stmts(&mut self, val: &Value, stmts: &[IRStatement]) -> Option<i64> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.inner.resolve_int_with_stmts(val, stmts)
     }
-    fn resolve_bool_with_stmts(
-        &mut self,
-        val: &Value,
-        stmts: &[IRStatement],
-    ) -> Option<bool> {
+    fn resolve_bool_with_stmts(&mut self, val: &Value, stmts: &[IRStatement]) -> Option<bool> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.inner.resolve_bool_with_stmts(val, stmts)
     }
-    fn resolve_max_with_stmts(
-        &mut self,
-        val: &Value,
-        stmts: &[IRStatement],
-    ) -> Option<i64> {
+    fn resolve_max_with_stmts(&mut self, val: &Value, stmts: &[IRStatement]) -> Option<i64> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.inner.resolve_max_with_stmts(val, stmts)
     }
-    fn resolve_min_with_stmts(
-        &mut self,
-        val: &Value,
-        stmts: &[IRStatement],
-    ) -> Option<i64> {
+    fn resolve_min_with_stmts(&mut self, val: &Value, stmts: &[IRStatement]) -> Option<i64> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.inner.resolve_min_with_stmts(val, stmts)
     }
@@ -326,16 +508,40 @@ impl Resolver for CountingResolver {
 fn layered_range_answers_first() {
     let stmts = vec![
         IRStatement::new(
-            0, crate::types::ValueId::next(),
+            0,
+            crate::types::ValueId::next(),
             IR::ReadInteger {
                 path: InputPath::new("c", vec![]),
                 is_public: false,
             },
-            vec![], vec![],
-            None),
-        IRStatement::new(1, crate::types::ValueId::next(), IR::ConstantInt { value: 7 }, vec![], vec![], None),
-        IRStatement::new(2, crate::types::ValueId::next(), IR::ConstantInt { value: 7 }, vec![], vec![], None),
-        IRStatement::new(3, crate::types::ValueId::next(), IR::SelectI, vec![0, 1, 2], vec![], None),
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            1,
+            crate::types::ValueId::next(),
+            IR::ConstantInt { value: 7 },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            2,
+            crate::types::ValueId::next(),
+            IR::ConstantInt { value: 7 },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            3,
+            crate::types::ValueId::next(),
+            IR::SelectI,
+            vec![0, 1, 2],
+            vec![],
+            None,
+        ),
     ];
     let v = runtime_int(3);
 
@@ -344,10 +550,8 @@ fn layered_range_answers_first() {
         inner: Box::new(SmtResolver::new()),
         calls: Arc::clone(&smt_calls),
     };
-    let mut layered = LayeredResolver::new(vec![
-        Box::new(RangeResolver::new()),
-        Box::new(counting_smt),
-    ]);
+    let mut layered =
+        LayeredResolver::new(vec![Box::new(RangeResolver::new()), Box::new(counting_smt)]);
 
     assert_eq!(layered.resolve_int_with_stmts(&v, &stmts), Some(7));
     // Range answered → SMT was never called.
@@ -363,17 +567,48 @@ fn layered_range_answers_first() {
 fn layered_falls_through_to_smt() {
     let stmts = vec![
         IRStatement::new(
-            0, crate::types::ValueId::next(),
+            0,
+            crate::types::ValueId::next(),
             IR::ReadInteger {
                 path: InputPath::new("x", vec![]),
                 is_public: false,
             },
-            vec![], vec![],
-            None),
-        IRStatement::new(1, crate::types::ValueId::next(), IR::EqI, vec![0, 0], vec![], None), // x == x → true
-        IRStatement::new(2, crate::types::ValueId::next(), IR::ConstantInt { value: 7 }, vec![], vec![], None),
-        IRStatement::new(3, crate::types::ValueId::next(), IR::ConstantInt { value: 9 }, vec![], vec![], None),
-        IRStatement::new(4, crate::types::ValueId::next(), IR::SelectI, vec![1, 2, 3], vec![], None),
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            1,
+            crate::types::ValueId::next(),
+            IR::EqI,
+            vec![0, 0],
+            vec![],
+            None,
+        ), // x == x → true
+        IRStatement::new(
+            2,
+            crate::types::ValueId::next(),
+            IR::ConstantInt { value: 7 },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            3,
+            crate::types::ValueId::next(),
+            IR::ConstantInt { value: 9 },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            4,
+            crate::types::ValueId::next(),
+            IR::SelectI,
+            vec![1, 2, 3],
+            vec![],
+            None,
+        ),
     ];
     let v = runtime_int(4);
 
@@ -382,10 +617,8 @@ fn layered_falls_through_to_smt() {
         inner: Box::new(SmtResolver::new()),
         calls: Arc::clone(&smt_calls),
     };
-    let mut layered = LayeredResolver::new(vec![
-        Box::new(RangeResolver::new()),
-        Box::new(counting_smt),
-    ]);
+    let mut layered =
+        LayeredResolver::new(vec![Box::new(RangeResolver::new()), Box::new(counting_smt)]);
     assert_eq!(layered.resolve_int_with_stmts(&v, &stmts), Some(7));
     // SMT was consulted (range couldn't tell which branch).
     assert!(smt_calls.load(Ordering::SeqCst) >= 1);
@@ -396,13 +629,16 @@ fn layered_falls_through_to_smt() {
 #[test]
 fn layered_returns_none_when_neither_resolves() {
     let stmts = vec![IRStatement::new(
-        0, crate::types::ValueId::next(),
+        0,
+        crate::types::ValueId::next(),
         IR::ReadInteger {
             path: InputPath::new("x", vec![]),
             is_public: false,
         },
-        vec![], vec![],
-        None)];
+        vec![],
+        vec![],
+        None,
+    )];
     let v = runtime_int(0);
     let mut layered = LayeredResolver::range_then_smt();
     assert_eq!(layered.resolve_int_with_stmts(&v, &stmts), None);
@@ -425,13 +661,16 @@ fn layered_resolver_is_send_sync() {
 #[test]
 fn telemetry_smt_unknown_on_free_var() {
     let stmts = vec![IRStatement::new(
-        0, crate::types::ValueId::next(),
+        0,
+        crate::types::ValueId::next(),
         IR::ReadInteger {
             path: InputPath::new("x", vec![]),
             is_public: false,
         },
-        vec![], vec![],
-        None)];
+        vec![],
+        vec![],
+        None,
+    )];
     let v = runtime_int(0);
     let mut r = SmtResolver::new();
     let t = r.telemetry();
@@ -439,10 +678,9 @@ fn telemetry_smt_unknown_on_free_var() {
     assert_eq!(t.queries_smt_unknown.load(Ordering::SeqCst), 1);
     assert_eq!(t.queries_smt_resolved.load(Ordering::SeqCst), 0);
     // The duration histogram has a single entry now (somewhere).
-    let total: usize =
-        (0..crate::optim::telemetry::NUM_DURATION_BUCKETS)
-            .map(|i| t.smt_duration_buckets[i].load(Ordering::SeqCst))
-            .sum();
+    let total: usize = (0..crate::optim::telemetry::NUM_DURATION_BUCKETS)
+        .map(|i| t.smt_duration_buckets[i].load(Ordering::SeqCst))
+        .sum();
     assert_eq!(total, 1);
 }
 
@@ -459,17 +697,48 @@ fn smt_max_formula_size_aborts_oversized_walk() {
     // oversized counter increments.
     let stmts = vec![
         IRStatement::new(
-            0, crate::types::ValueId::next(),
+            0,
+            crate::types::ValueId::next(),
             IR::ReadInteger {
                 path: InputPath::new("x", vec![]),
                 is_public: false,
             },
-            vec![], vec![],
-            None),
-        IRStatement::new(1, crate::types::ValueId::next(), IR::MulI, vec![0, 0], vec![], None),
-        IRStatement::new(2, crate::types::ValueId::next(), IR::MulI, vec![1, 0], vec![], None),
-        IRStatement::new(3, crate::types::ValueId::next(), IR::MulI, vec![2, 0], vec![], None),
-        IRStatement::new(4, crate::types::ValueId::next(), IR::MulI, vec![3, 0], vec![], None),
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            1,
+            crate::types::ValueId::next(),
+            IR::MulI,
+            vec![0, 0],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            2,
+            crate::types::ValueId::next(),
+            IR::MulI,
+            vec![1, 0],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            3,
+            crate::types::ValueId::next(),
+            IR::MulI,
+            vec![2, 0],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            4,
+            crate::types::ValueId::next(),
+            IR::MulI,
+            vec![3, 0],
+            vec![],
+            None,
+        ),
     ];
     let v = runtime_int(4);
     let mut r = SmtResolver::new().with_max_formula_size(2);
@@ -491,16 +760,26 @@ fn smt_max_formula_size_aborts_oversized_walk() {
 fn smt_tight_timeout_via_with_timeout_mitigation() {
     let mut stmts = Vec::new();
     stmts.push(IRStatement::new(
-        0, crate::types::ValueId::next(),
+        0,
+        crate::types::ValueId::next(),
         IR::ReadInteger {
             path: InputPath::new("x", vec![]),
             is_public: false,
         },
-        vec![], vec![],
-        None));
+        vec![],
+        vec![],
+        None,
+    ));
     let mut last = 0u32;
     for i in 1..=20 {
-        stmts.push(IRStatement::new(i, crate::types::ValueId::next(), IR::MulI, vec![last, 0], vec![], None));
+        stmts.push(IRStatement::new(
+            i,
+            crate::types::ValueId::next(),
+            IR::MulI,
+            vec![last, 0],
+            vec![],
+            None,
+        ));
         last = i;
     }
     let v = runtime_int(last);
@@ -516,16 +795,40 @@ fn smt_tight_timeout_via_with_timeout_mitigation() {
 fn telemetry_layered_range_hit_increments_shared_telemetry() {
     let stmts = vec![
         IRStatement::new(
-            0, crate::types::ValueId::next(),
+            0,
+            crate::types::ValueId::next(),
             IR::ReadInteger {
                 path: InputPath::new("c", vec![]),
                 is_public: false,
             },
-            vec![], vec![],
-            None),
-        IRStatement::new(1, crate::types::ValueId::next(), IR::ConstantInt { value: 7 }, vec![], vec![], None),
-        IRStatement::new(2, crate::types::ValueId::next(), IR::ConstantInt { value: 7 }, vec![], vec![], None),
-        IRStatement::new(3, crate::types::ValueId::next(), IR::SelectI, vec![0, 1, 2], vec![], None),
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            1,
+            crate::types::ValueId::next(),
+            IR::ConstantInt { value: 7 },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            2,
+            crate::types::ValueId::next(),
+            IR::ConstantInt { value: 7 },
+            vec![],
+            vec![],
+            None,
+        ),
+        IRStatement::new(
+            3,
+            crate::types::ValueId::next(),
+            IR::SelectI,
+            vec![0, 1, 2],
+            vec![],
+            None,
+        ),
     ];
     let v = runtime_int(3);
     let mut layered = LayeredResolver::range_then_smt();
@@ -547,12 +850,7 @@ fn bounded_int_static_branch_for_literal() {
     // branch — same as require_static_int's fast lane.
     let mut b = crate::builder::IRBuilder::new();
     let v = b.ir_constant_int(42);
-    let outcome = require_static_or_bounded_int(
-        &mut b,
-        &v,
-        SiteKind::ShapeAxis(0),
-        None,
-    );
+    let outcome = require_static_or_bounded_int(&mut b, &v, SiteKind::ShapeAxis(0), None);
     assert_eq!(outcome, BoundedInt::Static(42));
 }
 
@@ -561,14 +859,11 @@ fn bounded_int_neither_for_unconstrained_symbolic() {
     // A free runtime ReadInteger has no static value and no
     // resolver-provable bound under the SMT-enabled pipeline.
     let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
-    let outcome = require_static_or_bounded_int(
-        &mut b,
-        &k,
-        SiteKind::ShapeAxis(0),
-        None,
-    );
+    let outcome = require_static_or_bounded_int(&mut b, &k, SiteKind::ShapeAxis(0), None);
     assert_eq!(outcome, BoundedInt::Neither);
 }
 
@@ -581,7 +876,9 @@ fn bounded_int_recovers_bound_from_op_contract_facts() {
     use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
 
     let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
     let k_vid = k.value_id().unwrap();
 
@@ -603,12 +900,7 @@ fn bounded_int_recovers_bound_from_op_contract_facts() {
         },
     );
 
-    let outcome = require_static_or_bounded_int(
-        &mut b,
-        &k,
-        SiteKind::ShapeAxis(0),
-        None,
-    );
+    let outcome = require_static_or_bounded_int(&mut b, &k, SiteKind::ShapeAxis(0), None);
     assert_eq!(outcome, BoundedInt::Bounded { min: 0, max: 16 });
 }
 
@@ -621,18 +913,14 @@ fn bounded_int_bounded_branch_via_structural_predicate() {
     use crate::circuit_input::PathSegment;
 
     let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
 
     // Emit reads at indices 0 and 15 — the array-length inference
     // uses max-index + 1 = 16.
-    let _ = b.ir_read_float(
-        InputPath::new("x", vec![PathSegment::Index(0)]),
-        false,
-    );
-    let _ = b.ir_read_float(
-        InputPath::new("x", vec![PathSegment::Index(15)]),
-        false,
-    );
+    let _ = b.ir_read_float(InputPath::new("x", vec![PathSegment::Index(0)]), false);
+    let _ = b.ir_read_float(InputPath::new("x", vec![PathSegment::Index(15)]), false);
 
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
 
@@ -643,12 +931,7 @@ fn bounded_int_bounded_branch_via_structural_predicate() {
         Some("k".to_string()),
     );
 
-    let outcome = require_static_or_bounded_int(
-        &mut b,
-        &k,
-        SiteKind::ShapeAxis(0),
-        None,
-    );
+    let outcome = require_static_or_bounded_int(&mut b, &k, SiteKind::ShapeAxis(0), None);
     assert_eq!(
         outcome,
         BoundedInt::Bounded { min: 0, max: 16 },
@@ -664,18 +947,15 @@ fn bounded_int_static_from_statically_resolvable_select() {
     // Static branch — not the Bounded one — when a unique value is
     // available.
     let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
     // Build `select(true, 7, 7)` so it constant-folds to 7.
     let t = b.ir_constant_bool(true);
     let a = b.ir_constant_int(7);
     let c = b.ir_constant_int(7);
     let v = b.create_ir(&IR::SelectI, &[t, a, c]);
-    let outcome = require_static_or_bounded_int(
-        &mut b,
-        &v,
-        SiteKind::ShapeAxis(0),
-        None,
-    );
+    let outcome = require_static_or_bounded_int(&mut b, &v, SiteKind::ShapeAxis(0), None);
     assert_eq!(outcome, BoundedInt::Static(7));
 }
 
@@ -714,7 +994,9 @@ fn plant_cmp_fact(
 fn probe_in_range_recovers_from_op_contract_facts() {
     use crate::optim::predicates::formula::CmpOp;
     let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
     // A runtime int with no resolver-derivable bound. We pick a
     // window [10, 20) so the resolver's spuriously-tight (0, 0)
     // fallback for free reads can't accidentally satisfy the probe.
@@ -742,7 +1024,9 @@ fn require_static_int_recovers_from_op_contract_eq_fact() {
     // value to a single point.
     use crate::optim::predicates::formula::CmpOp;
     let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
     let v = b.ir_read_integer(InputPath::new("n", vec![]), false);
     let v_vid = v.value_id().unwrap();
 
@@ -763,7 +1047,9 @@ fn require_static_int_rejects_when_facts_only_give_range() {
     // single-static-int contract; the chokepoint must still reject.
     use crate::optim::predicates::formula::CmpOp;
     let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
     let v = b.ir_read_integer(InputPath::new("n", vec![]), false);
     let v_vid = v.value_id().unwrap();
     plant_cmp_fact(&mut b, v_vid, CmpOp::Ge, 0);
@@ -784,12 +1070,7 @@ fn require_static_int_rejects_when_facts_only_give_range() {
 fn resolve_int_or_bounded_falls_through_to_static_for_literal() {
     let mut b = crate::builder::IRBuilder::new();
     let v = b.ir_constant_int(42);
-    let outcome = resolve_int_or_bounded(
-        &mut b,
-        &v,
-        SiteKind::ReshapeDim,
-        None,
-    );
+    let outcome = resolve_int_or_bounded(&mut b, &v, SiteKind::ReshapeDim, None);
     assert_eq!(outcome, BoundedInt::Static(42));
 }
 
@@ -800,18 +1081,15 @@ fn resolve_int_or_bounded_falls_through_to_existing_fact_scan() {
     // already returns Bounded.
     use crate::optim::predicates::formula::CmpOp;
     let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
     let k_vid = k.value_id().unwrap();
     plant_cmp_fact(&mut b, k_vid, CmpOp::Ge, 0);
     plant_cmp_fact(&mut b, k_vid, CmpOp::Le, 16);
 
-    let outcome = resolve_int_or_bounded(
-        &mut b,
-        &k,
-        SiteKind::ReshapeDim,
-        None,
-    );
+    let outcome = resolve_int_or_bounded(&mut b, &k, SiteKind::ReshapeDim, None);
     assert_eq!(outcome, BoundedInt::Bounded { min: 0, max: 16 });
 }
 
@@ -825,7 +1103,9 @@ fn resolve_int_or_bounded_recovers_bound_via_prove_arithmetic_fact() {
     // facts). We plant both halves so the test pins both bounds.
     use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
     let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
     let k_vid = k.value_id().unwrap();
 
@@ -853,12 +1133,7 @@ fn resolve_int_or_bounded_recovers_bound_via_prove_arithmetic_fact() {
         },
     );
 
-    let outcome = resolve_int_or_bounded(
-        &mut b,
-        &k,
-        SiteKind::ReshapeDim,
-        None,
-    );
+    let outcome = resolve_int_or_bounded(&mut b, &k, SiteKind::ReshapeDim, None);
     assert_eq!(
         outcome,
         BoundedInt::Bounded { min: -10, max: 10 },
@@ -871,14 +1146,11 @@ fn resolve_int_or_bounded_returns_neither_on_unknown() {
     // A genuinely free runtime int with no facts must return
     // Neither — Unknown from prove() defaults to no admission.
     let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
-    let outcome = resolve_int_or_bounded(
-        &mut b,
-        &k,
-        SiteKind::ReshapeDim,
-        None,
-    );
+    let outcome = resolve_int_or_bounded(&mut b, &k, SiteKind::ReshapeDim, None);
     assert_eq!(outcome, BoundedInt::Neither);
 }
 
@@ -889,7 +1161,9 @@ fn resolve_int_or_bounded_collapses_min_eq_max_to_static() {
     // should report `Static(4)`, not `Bounded { min: 4, max: 4 }`.
     use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
     let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
     let k_vid = k.value_id().unwrap();
 
@@ -908,12 +1182,7 @@ fn resolve_int_or_bounded_collapses_min_eq_max_to_static() {
     );
     plant_cmp_fact(&mut b, k_vid, CmpOp::Ge, 0);
 
-    let outcome = resolve_int_or_bounded(
-        &mut b,
-        &k,
-        SiteKind::ReshapeDim,
-        None,
-    );
+    let outcome = resolve_int_or_bounded(&mut b, &k, SiteKind::ReshapeDim, None);
     assert_eq!(outcome, BoundedInt::Static(4));
 }
 
@@ -927,7 +1196,9 @@ fn ndarray_axis_or_other_chokepoint_admits_value_provable_via_prove() {
     // promoted Phase-A helper unblocks it everywhere.
     use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
     let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
     let k_vid = k.value_id().unwrap();
 
@@ -949,7 +1220,10 @@ fn ndarray_axis_or_other_chokepoint_admits_value_provable_via_prove() {
     plant_cmp_fact(&mut b, k_vid, CmpOp::Ge, 0);
 
     let n = require_provable_static_int(&mut b, &k, SiteKind::RepeatCount);
-    assert_eq!(n, 4, "prove()-derived single-point bound must be admitted at RepeatCount");
+    assert_eq!(
+        n, 4,
+        "prove()-derived single-point bound must be admitted at RepeatCount"
+    );
 }
 
 #[test]
@@ -961,7 +1235,9 @@ fn ask_bounds_falls_back_to_facts() {
     // helper consults op-contract facts.
     use crate::optim::predicates::formula::CmpOp;
     let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
     let v = b.ir_read_integer(InputPath::new("k", vec![]), false);
     let v_vid = v.value_id().unwrap();
     plant_cmp_fact(&mut b, v_vid, CmpOp::Ge, 0);
@@ -999,13 +1275,20 @@ fn extract_float_bounds_from_term(
     use crate::optim::predicates::formula::{
         BoolOp, CmpOp, ContractFloat, ContractTerm, ContractVar,
     };
-    if let ContractTerm::BoolComb { op: BoolOp::And, operands } = term {
+    if let ContractTerm::BoolComb {
+        op: BoolOp::And,
+        operands,
+    } = term
+    {
         assert_eq!(operands.len(), 2);
         let mut lo: Option<f64> = None;
         let mut hi: Option<f64> = None;
         for clause in operands {
             if let ContractTerm::Cmp { op, lhs, rhs } = clause {
-                assert!(matches!(lhs.as_ref(), ContractTerm::Var(ContractVar::Value(_))));
+                assert!(matches!(
+                    lhs.as_ref(),
+                    ContractTerm::Var(ContractVar::Value(_))
+                ));
                 if let ContractTerm::LitFloat(ContractFloat(n)) = rhs.as_ref() {
                     match op {
                         CmpOp::Ge => lo = Some(*n),
@@ -1117,6 +1400,269 @@ fn interval_float_unbounded_input_skips_emit() {
     let out_vid = crate::types::ValueId::next();
     let term = interval_fact_for_float_binary(&b.facts, ArithOp::Add, a_vid, b_vid, out_vid);
     assert!(term.is_none(), "unbounded input must skip emit");
+}
+
+// ---------------------------------------------------------------
+// prod sign-aware interval relay (compiler.op-fact-prod-sign-aware-interval)
+// ---------------------------------------------------------------
+
+fn extract_int_bounds_from_latest_fact(
+    b: &crate::builder::IRBuilder,
+    out_vid: crate::types::ValueId,
+) -> (i64, i64) {
+    use crate::optim::predicates::formula::{BoolOp, CmpOp, ContractTerm, ContractVar};
+    let term = b
+        .facts
+        .per_value
+        .get(&out_vid)
+        .and_then(|bucket| bucket.last())
+        .expect("expected interval fact bucket");
+    if let ContractTerm::BoolComb {
+        op: BoolOp::And,
+        operands,
+    } = term
+    {
+        assert_eq!(operands.len(), 2);
+        let mut lo = None;
+        let mut hi = None;
+        for clause in operands {
+            if let ContractTerm::Cmp { op, lhs, rhs } = clause {
+                assert!(matches!(
+                    lhs.as_ref(),
+                    ContractTerm::Var(ContractVar::Value(_))
+                ));
+                if let ContractTerm::LitInt(n) = rhs.as_ref() {
+                    match op {
+                        CmpOp::Ge => lo = Some(*n),
+                        CmpOp::Le => hi = Some(*n),
+                        _ => panic!("unexpected cmp op in emitted bound: {:?}", op),
+                    }
+                }
+            }
+        }
+        (lo.expect("missing lo bound"), hi.expect("missing hi bound"))
+    } else {
+        panic!("expected BoolComb(And, ...), got {:?}", term);
+    }
+}
+
+fn bounded_int_inputs(
+    n: usize,
+    lo: i64,
+    hi: i64,
+) -> (crate::builder::IRBuilder, Vec<crate::types::ValueId>) {
+    use crate::optim::predicates::formula::CmpOp;
+    let mut b = crate::builder::IRBuilder::new();
+    let mut vids = Vec::with_capacity(n);
+    for i in 0..n {
+        let value = b.ir_read_integer(InputPath::new(&format!("p{}", i), vec![]), false);
+        let vid = value.value_id().unwrap();
+        plant_cmp_fact(&mut b, vid, CmpOp::Ge, lo);
+        plant_cmp_fact(&mut b, vid, CmpOp::Le, hi);
+        vids.push(vid);
+    }
+    (b, vids)
+}
+
+#[test]
+fn prod_interval_static_len_zero_is_identity() {
+    assert_eq!(prod_interval_int_for_static_len(-3, -2, 0), Some((1, 1)));
+}
+
+#[test]
+fn relay_prod_non_negative_input_emits_power_interval() {
+    let (mut b, vids) = bounded_int_inputs(4, 2, 3);
+    let out = b.ir_read_integer(InputPath::new("out", vec![]), false);
+    let out_vid = out.value_id().unwrap();
+
+    assert!(relay_prod_output_interval_int(&mut b, &vids, out_vid));
+    assert_eq!(extract_int_bounds_from_latest_fact(&b, out_vid), (16, 81));
+}
+
+#[test]
+fn relay_prod_non_positive_even_len_emits_positive_interval() {
+    let (mut b, vids) = bounded_int_inputs(4, -3, -2);
+    let out = b.ir_read_integer(InputPath::new("out", vec![]), false);
+    let out_vid = out.value_id().unwrap();
+
+    assert!(relay_prod_output_interval_int(&mut b, &vids, out_vid));
+    assert_eq!(extract_int_bounds_from_latest_fact(&b, out_vid), (16, 81));
+}
+
+#[test]
+fn relay_prod_non_positive_odd_len_emits_negative_interval() {
+    let (mut b, vids) = bounded_int_inputs(3, -3, -2);
+    let out = b.ir_read_integer(InputPath::new("out", vec![]), false);
+    let out_vid = out.value_id().unwrap();
+
+    assert!(relay_prod_output_interval_int(&mut b, &vids, out_vid));
+    // Odd negative case: lower is the larger-magnitude negative,
+    // upper is the smaller-magnitude negative.
+    assert_eq!(extract_int_bounds_from_latest_fact(&b, out_vid), (-27, -8));
+}
+
+#[test]
+fn relay_prod_mixed_sign_input_skips_emit() {
+    let (mut b, vids) = bounded_int_inputs(3, -2, 3);
+    let out = b.ir_read_integer(InputPath::new("out", vec![]), false);
+    let out_vid = out.value_id().unwrap();
+
+    assert!(!relay_prod_output_interval_int(&mut b, &vids, out_vid));
+    assert!(b.facts.per_value.get(&out_vid).is_none());
+}
+
+#[test]
+fn relay_prod_checked_pow_overflow_skips_emit() {
+    let (mut b, vids) = bounded_int_inputs(2, i64::MAX, i64::MAX);
+    let out = b.ir_read_integer(InputPath::new("out", vec![]), false);
+    let out_vid = out.value_id().unwrap();
+
+    assert!(!relay_prod_output_interval_int(&mut b, &vids, out_vid));
+    assert!(b.facts.per_value.get(&out_vid).is_none());
+}
+
+#[test]
+fn relay_mean_tight_yields_lo_over_n_hi_over_n() {
+    use crate::optim::predicates::formula::CmpOp;
+    let mut b = crate::builder::IRBuilder::new();
+    let input = b.ir_read_float(InputPath::new("arr", vec![]), false);
+    let input_vid = input.value_id().unwrap();
+    plant_float_cmp_fact(&mut b, input_vid, CmpOp::Ge, 0.0);
+    plant_float_cmp_fact(&mut b, input_vid, CmpOp::Le, 10.0);
+    let out = b.ir_read_float(InputPath::new("mean", vec![]), false);
+    let out_vid = out.value_id().unwrap();
+
+    assert!(relay_mean_tight_interval_float(
+        &mut b, input_vid, 5, out_vid
+    ));
+    let term = b
+        .facts
+        .per_value
+        .get(&out_vid)
+        .and_then(|bucket| bucket.last())
+        .expect("expected relayed output fact");
+    assert_eq!(extract_float_bounds_from_term(term), (0.0, 2.0));
+}
+
+#[test]
+fn relay_mean_tight_skips_when_n_zero() {
+    use crate::optim::predicates::formula::CmpOp;
+    let mut b = crate::builder::IRBuilder::new();
+    let input = b.ir_read_float(InputPath::new("arr", vec![]), false);
+    let input_vid = input.value_id().unwrap();
+    plant_float_cmp_fact(&mut b, input_vid, CmpOp::Ge, 0.0);
+    plant_float_cmp_fact(&mut b, input_vid, CmpOp::Le, 10.0);
+    let out = b.ir_read_float(InputPath::new("mean", vec![]), false);
+    let out_vid = out.value_id().unwrap();
+
+    assert!(!relay_mean_tight_interval_float(
+        &mut b, input_vid, 0, out_vid
+    ));
+    assert!(b.facts.per_value.get(&out_vid).is_none());
+}
+
+#[test]
+fn relay_mean_tight_skips_when_unbounded_input() {
+    let mut b = crate::builder::IRBuilder::new();
+    let input = b.ir_read_float(InputPath::new("arr", vec![]), false);
+    let input_vid = input.value_id().unwrap();
+    let out = b.ir_read_float(InputPath::new("mean", vec![]), false);
+    let out_vid = out.value_id().unwrap();
+
+    assert!(!relay_mean_tight_interval_float(
+        &mut b, input_vid, 5, out_vid
+    ));
+    assert!(b.facts.per_value.get(&out_vid).is_none());
+}
+
+#[test]
+fn interval_float_div_sign_stable_positive_divisor() {
+    // a ∈ [1, 4], b ∈ [2, 4]. Sign-stable positive divisor:
+    //   1/b ∈ [1/4, 1/2] = [0.25, 0.5]
+    //   corners of a * (1/b) min/max give [0.25, 2.0].
+    use crate::optim::predicates::formula::{ArithOp, CmpOp};
+    let mut b = crate::builder::IRBuilder::new();
+    let a = b.ir_read_float(InputPath::new("a", vec![]), false);
+    let bb = b.ir_read_float(InputPath::new("b", vec![]), false);
+    let a_vid = a.value_id().unwrap();
+    let b_vid = bb.value_id().unwrap();
+    plant_float_cmp_fact(&mut b, a_vid, CmpOp::Ge, 1.0);
+    plant_float_cmp_fact(&mut b, a_vid, CmpOp::Le, 4.0);
+    plant_float_cmp_fact(&mut b, b_vid, CmpOp::Ge, 2.0);
+    plant_float_cmp_fact(&mut b, b_vid, CmpOp::Le, 4.0);
+
+    let out_vid = crate::types::ValueId::next();
+    let term = interval_fact_for_float_binary(&b.facts, ArithOp::Div, a_vid, b_vid, out_vid)
+        .expect("expected interval fact for sign-stable positive-divisor div");
+    let (lo, hi) = extract_float_bounds_from_term(&term);
+    assert_eq!(lo, 0.25);
+    assert_eq!(hi, 2.0);
+}
+
+#[test]
+fn interval_float_div_sign_stable_negative_divisor() {
+    // a ∈ [1, 4], b ∈ [-4, -2]. Sign-stable negative divisor:
+    //   1/b ∈ [1/-2, 1/-4] = [-0.5, -0.25]
+    //   corner products give [-2.0, -0.25].
+    use crate::optim::predicates::formula::{ArithOp, CmpOp};
+    let mut b = crate::builder::IRBuilder::new();
+    let a = b.ir_read_float(InputPath::new("a", vec![]), false);
+    let bb = b.ir_read_float(InputPath::new("b", vec![]), false);
+    let a_vid = a.value_id().unwrap();
+    let b_vid = bb.value_id().unwrap();
+    plant_float_cmp_fact(&mut b, a_vid, CmpOp::Ge, 1.0);
+    plant_float_cmp_fact(&mut b, a_vid, CmpOp::Le, 4.0);
+    plant_float_cmp_fact(&mut b, b_vid, CmpOp::Ge, -4.0);
+    plant_float_cmp_fact(&mut b, b_vid, CmpOp::Le, -2.0);
+
+    let out_vid = crate::types::ValueId::next();
+    let term = interval_fact_for_float_binary(&b.facts, ArithOp::Div, a_vid, b_vid, out_vid)
+        .expect("expected interval fact for sign-stable negative-divisor div");
+    let (lo, hi) = extract_float_bounds_from_term(&term);
+    assert_eq!(lo, -2.0);
+    assert_eq!(hi, -0.25);
+}
+
+#[test]
+fn interval_float_div_zero_crossing_divisor_skips() {
+    // b ∈ [-1, 1] straddles zero — the relayed bound would expand to
+    // ±inf, so we must skip emit. Sound: no fact is always safer than
+    // a non-finite bound flowing into the ZK Real fragment.
+    use crate::optim::predicates::formula::{ArithOp, CmpOp};
+    let mut b = crate::builder::IRBuilder::new();
+    let a = b.ir_read_float(InputPath::new("a", vec![]), false);
+    let bb = b.ir_read_float(InputPath::new("b", vec![]), false);
+    let a_vid = a.value_id().unwrap();
+    let b_vid = bb.value_id().unwrap();
+    plant_float_cmp_fact(&mut b, a_vid, CmpOp::Ge, 1.0);
+    plant_float_cmp_fact(&mut b, a_vid, CmpOp::Le, 4.0);
+    plant_float_cmp_fact(&mut b, b_vid, CmpOp::Ge, -1.0);
+    plant_float_cmp_fact(&mut b, b_vid, CmpOp::Le, 1.0);
+
+    let out_vid = crate::types::ValueId::next();
+    let term = interval_fact_for_float_binary(&b.facts, ArithOp::Div, a_vid, b_vid, out_vid);
+    assert!(term.is_none(), "zero-crossing divisor must skip emit");
+}
+
+#[test]
+fn interval_float_div_zero_divisor_skips() {
+    // b ∈ [0, 0] (degenerate point at zero) — soundness says skip emit;
+    // the registered `div_f` contract's `rhs != 0` requires would also
+    // independently catch any actual lowering at this site.
+    use crate::optim::predicates::formula::{ArithOp, CmpOp};
+    let mut b = crate::builder::IRBuilder::new();
+    let a = b.ir_read_float(InputPath::new("a", vec![]), false);
+    let bb = b.ir_read_float(InputPath::new("b", vec![]), false);
+    let a_vid = a.value_id().unwrap();
+    let b_vid = bb.value_id().unwrap();
+    plant_float_cmp_fact(&mut b, a_vid, CmpOp::Ge, 1.0);
+    plant_float_cmp_fact(&mut b, a_vid, CmpOp::Le, 4.0);
+    plant_float_cmp_fact(&mut b, b_vid, CmpOp::Ge, 0.0);
+    plant_float_cmp_fact(&mut b, b_vid, CmpOp::Le, 0.0);
+
+    let out_vid = crate::types::ValueId::next();
+    let term = interval_fact_for_float_binary(&b.facts, ArithOp::Div, a_vid, b_vid, out_vid);
+    assert!(term.is_none(), "zero divisor must skip emit");
 }
 
 #[test]
@@ -1315,5 +1861,207 @@ fn relay_arccos_with_out_of_domain_lo_skips_emit() {
     let out_vid = crate::types::ValueId::next();
     let emitted = relay_arccos_output_interval(&mut b, x_vid, out_vid);
     assert!(!emitted, "out-of-domain lo must skip emit");
+    assert!(b.facts.per_value.get(&out_vid).is_none());
+}
+
+// ---------------------------------------------------------------
+// arctan2 sign-stable interval relay (compiler.op-fact-arctan2-output-interval)
+// ---------------------------------------------------------------
+
+#[test]
+fn relay_arctan2_first_quadrant_emits_output_interval() {
+    // y ∈ [0, 1], x ∈ [1, 2] — first quadrant, no discontinuity reach.
+    // Expected: out ∈ [arctan2(0, 2), arctan2(1, 1)] = [0, π/4].
+    use crate::optim::predicates::formula::CmpOp;
+    let mut b = crate::builder::IRBuilder::new();
+    let y = b.ir_read_float(InputPath::new("y", vec![]), false);
+    let x = b.ir_read_float(InputPath::new("x", vec![]), false);
+    let y_vid = y.value_id().unwrap();
+    let x_vid = x.value_id().unwrap();
+    plant_float_cmp_fact(&mut b, y_vid, CmpOp::Ge, 0.0);
+    plant_float_cmp_fact(&mut b, y_vid, CmpOp::Le, 1.0);
+    plant_float_cmp_fact(&mut b, x_vid, CmpOp::Ge, 1.0);
+    plant_float_cmp_fact(&mut b, x_vid, CmpOp::Le, 2.0);
+
+    let out_vid = crate::types::ValueId::next();
+    let emitted = relay_arctan2_output_interval(&mut b, y_vid, x_vid, out_vid);
+    assert!(emitted, "expected relay to deposit an output bound");
+
+    let entries = b.facts.per_value.get(&out_vid).expect("output bucket");
+    let term = entries.last().expect("at least one fact");
+    let (lo, hi) = extract_float_bounds_from_term(term);
+    assert_eq!(lo, 0.0_f64.atan2(2.0));
+    assert_eq!(hi, 1.0_f64.atan2(1.0));
+}
+
+#[test]
+fn relay_arctan2_right_half_plane_y_straddles_zero_emits() {
+    // x ∈ [1, 4] (strictly positive), y ∈ [-2, 2] (straddles zero).
+    // No discontinuity (discontinuity lives on x < 0). On the right
+    // half-plane arctan2 is monotone in each argument, so corners give
+    // the tight range: [arctan2(-2, 1), arctan2(2, 1)].
+    use crate::optim::predicates::formula::CmpOp;
+    let mut b = crate::builder::IRBuilder::new();
+    let y = b.ir_read_float(InputPath::new("y", vec![]), false);
+    let x = b.ir_read_float(InputPath::new("x", vec![]), false);
+    let y_vid = y.value_id().unwrap();
+    let x_vid = x.value_id().unwrap();
+    plant_float_cmp_fact(&mut b, y_vid, CmpOp::Ge, -2.0);
+    plant_float_cmp_fact(&mut b, y_vid, CmpOp::Le, 2.0);
+    plant_float_cmp_fact(&mut b, x_vid, CmpOp::Ge, 1.0);
+    plant_float_cmp_fact(&mut b, x_vid, CmpOp::Le, 4.0);
+
+    let out_vid = crate::types::ValueId::next();
+    let emitted = relay_arctan2_output_interval(&mut b, y_vid, x_vid, out_vid);
+    assert!(
+        emitted,
+        "right half-plane with y straddling zero must be safe"
+    );
+
+    let entries = b.facts.per_value.get(&out_vid).expect("output bucket");
+    let term = entries.last().expect("at least one fact");
+    let (lo, hi) = extract_float_bounds_from_term(term);
+    assert_eq!(lo, (-2.0_f64).atan2(1.0));
+    assert_eq!(hi, 2.0_f64.atan2(1.0));
+    // Sanity: the relayed bound is strictly tighter than the static
+    // `arctan2_f` contract's `[-π, π]`.
+    assert!(lo > -std::f64::consts::PI);
+    assert!(hi < std::f64::consts::PI);
+}
+
+#[test]
+fn relay_arctan2_upper_half_plane_with_negative_x_emits() {
+    // y ∈ [1, 2] (strictly positive), x ∈ [-3, -1] (strictly negative).
+    // Discontinuity lives on (x < 0, y = 0); y_lo > 0 keeps us safely
+    // above it. Second quadrant — arctan2 is in (π/2, π).
+    use crate::optim::predicates::formula::CmpOp;
+    let mut b = crate::builder::IRBuilder::new();
+    let y = b.ir_read_float(InputPath::new("y", vec![]), false);
+    let x = b.ir_read_float(InputPath::new("x", vec![]), false);
+    let y_vid = y.value_id().unwrap();
+    let x_vid = x.value_id().unwrap();
+    plant_float_cmp_fact(&mut b, y_vid, CmpOp::Ge, 1.0);
+    plant_float_cmp_fact(&mut b, y_vid, CmpOp::Le, 2.0);
+    plant_float_cmp_fact(&mut b, x_vid, CmpOp::Ge, -3.0);
+    plant_float_cmp_fact(&mut b, x_vid, CmpOp::Le, -1.0);
+
+    let out_vid = crate::types::ValueId::next();
+    let emitted = relay_arctan2_output_interval(&mut b, y_vid, x_vid, out_vid);
+    assert!(emitted, "upper half-plane with negative x must be safe");
+
+    let entries = b.facts.per_value.get(&out_vid).expect("output bucket");
+    let term = entries.last().expect("at least one fact");
+    let (lo, hi) = extract_float_bounds_from_term(term);
+    let corners = [
+        1.0_f64.atan2(-3.0),
+        1.0_f64.atan2(-1.0),
+        2.0_f64.atan2(-3.0),
+        2.0_f64.atan2(-1.0),
+    ];
+    let expected_lo = corners.iter().cloned().fold(f64::INFINITY, f64::min);
+    let expected_hi = corners.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    assert_eq!(lo, expected_lo);
+    assert_eq!(hi, expected_hi);
+    // Whole quadrant lives in (π/2, π).
+    assert!(lo > std::f64::consts::FRAC_PI_2);
+    assert!(hi < std::f64::consts::PI);
+}
+
+#[test]
+fn relay_arctan2_lower_half_plane_with_negative_x_emits() {
+    // y_hi < 0 sign-stable branch. Symmetric to the upper-half test.
+    use crate::optim::predicates::formula::CmpOp;
+    let mut b = crate::builder::IRBuilder::new();
+    let y = b.ir_read_float(InputPath::new("y", vec![]), false);
+    let x = b.ir_read_float(InputPath::new("x", vec![]), false);
+    let y_vid = y.value_id().unwrap();
+    let x_vid = x.value_id().unwrap();
+    plant_float_cmp_fact(&mut b, y_vid, CmpOp::Ge, -2.0);
+    plant_float_cmp_fact(&mut b, y_vid, CmpOp::Le, -1.0);
+    plant_float_cmp_fact(&mut b, x_vid, CmpOp::Ge, -3.0);
+    plant_float_cmp_fact(&mut b, x_vid, CmpOp::Le, -1.0);
+
+    let out_vid = crate::types::ValueId::next();
+    let emitted = relay_arctan2_output_interval(&mut b, y_vid, x_vid, out_vid);
+    assert!(emitted, "lower half-plane with negative x must be safe");
+
+    let entries = b.facts.per_value.get(&out_vid).expect("output bucket");
+    let term = entries.last().expect("at least one fact");
+    let (lo, hi) = extract_float_bounds_from_term(term);
+    // Third-quadrant: arctan2 ∈ (-π, -π/2).
+    assert!(lo > -std::f64::consts::PI);
+    assert!(hi < -std::f64::consts::FRAC_PI_2);
+}
+
+#[test]
+fn relay_arctan2_wraparound_box_skips_emit() {
+    // y ∈ [-2, 2] AND x ∈ [-3, 5] — bounding box covers the negative
+    // x-axis discontinuity. Corner-min-max would deposit
+    // `[-(π - atan(2/3)), π - atan(2/3)] ≈ [-2.55, 2.55]`, which is
+    // unsound: the true function attains values arbitrarily close to
+    // ±π along (x < 0, y → 0±). Soundness gate must skip emit.
+    use crate::optim::predicates::formula::CmpOp;
+    let mut b = crate::builder::IRBuilder::new();
+    let y = b.ir_read_float(InputPath::new("y", vec![]), false);
+    let x = b.ir_read_float(InputPath::new("x", vec![]), false);
+    let y_vid = y.value_id().unwrap();
+    let x_vid = x.value_id().unwrap();
+    plant_float_cmp_fact(&mut b, y_vid, CmpOp::Ge, -2.0);
+    plant_float_cmp_fact(&mut b, y_vid, CmpOp::Le, 2.0);
+    plant_float_cmp_fact(&mut b, x_vid, CmpOp::Ge, -3.0);
+    plant_float_cmp_fact(&mut b, x_vid, CmpOp::Le, 5.0);
+
+    let out_vid = crate::types::ValueId::next();
+    let emitted = relay_arctan2_output_interval(&mut b, y_vid, x_vid, out_vid);
+    assert!(
+        !emitted,
+        "wraparound bounding box must skip emit (soundness)"
+    );
+    assert!(b.facts.per_value.get(&out_vid).is_none());
+}
+
+#[test]
+fn relay_arctan2_negative_x_with_y_zero_on_lo_skips_emit() {
+    // y_lo = 0 (not strictly > 0), so the y-sign-stable branch of the
+    // gate doesn't apply. x_lo < 0, so the x-non-negative branch
+    // doesn't apply either. The box touches the discontinuity at
+    // (x_lo, 0); skip emit. Pins the strict `y_lo > 0` (vs `>= 0`) in
+    // the gate.
+    use crate::optim::predicates::formula::CmpOp;
+    let mut b = crate::builder::IRBuilder::new();
+    let y = b.ir_read_float(InputPath::new("y", vec![]), false);
+    let x = b.ir_read_float(InputPath::new("x", vec![]), false);
+    let y_vid = y.value_id().unwrap();
+    let x_vid = x.value_id().unwrap();
+    plant_float_cmp_fact(&mut b, y_vid, CmpOp::Ge, 0.0);
+    plant_float_cmp_fact(&mut b, y_vid, CmpOp::Le, 1.0);
+    plant_float_cmp_fact(&mut b, x_vid, CmpOp::Ge, -2.0);
+    plant_float_cmp_fact(&mut b, x_vid, CmpOp::Le, -1.0);
+
+    let out_vid = crate::types::ValueId::next();
+    let emitted = relay_arctan2_output_interval(&mut b, y_vid, x_vid, out_vid);
+    assert!(
+        !emitted,
+        "y_lo = 0 with negative x touches the discontinuity at (x, 0); must skip"
+    );
+    assert!(b.facts.per_value.get(&out_vid).is_none());
+}
+
+#[test]
+fn relay_arctan2_with_unbounded_y_skips_emit() {
+    // Only x has a planted interval; the helper requires both inputs
+    // to have visible bounds.
+    use crate::optim::predicates::formula::CmpOp;
+    let mut b = crate::builder::IRBuilder::new();
+    let y = b.ir_read_float(InputPath::new("y", vec![]), false);
+    let x = b.ir_read_float(InputPath::new("x", vec![]), false);
+    let y_vid = y.value_id().unwrap();
+    let x_vid = x.value_id().unwrap();
+    plant_float_cmp_fact(&mut b, x_vid, CmpOp::Ge, 1.0);
+    plant_float_cmp_fact(&mut b, x_vid, CmpOp::Le, 2.0);
+
+    let out_vid = crate::types::ValueId::next();
+    let emitted = relay_arctan2_output_interval(&mut b, y_vid, x_vid, out_vid);
+    assert!(!emitted, "unbounded y must skip emit");
     assert!(b.facts.per_value.get(&out_vid).is_none());
 }

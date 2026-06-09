@@ -1,0 +1,2 @@
+a[row-1, :] /= divide_number
+result = np.multiply.reduce(a[row-1, :])

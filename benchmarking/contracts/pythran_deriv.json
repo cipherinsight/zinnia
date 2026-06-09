@@ -1,0 +1,106 @@
+{
+  "categories": [
+    "complex",
+    "in-place-mutation",
+    "loop-bounded"
+  ],
+  "diagnostics": [
+    "Complex kernels require Complex dtype support or a fail-closed classification."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "complex",
+        "range",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 34,
+      "line_start": 12,
+      "mutated_params": [
+        "dg",
+        "dh1",
+        "dh3"
+      ],
+      "name": "deriv",
+      "ops": [
+        "Add",
+        "LtE",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "n",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "sig",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "alp",
+          "proposed_annotation": "Complex",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": true,
+          "name": "dg",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "dh1",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "dh3",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "bin",
+          "proposed_annotation": "Complex[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "nu",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_deriv/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "pythran_deriv",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: complex, in-place-mutation, loop-bounded\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.\n\n@zk_circuit\n@requires(lambda n, sig, alp, dg, dh1, dh3, bin, nu: 0 <= n <= 1024)\ndef deriv(n: Integer, sig: Float, alp: Complex, dg: Complex[Array, 'N<=1024'], dh1: Complex[Array, 'N<=1024'], dh3: Complex[Array, 'N<=1024'], bin: Complex[Array, 'N<=1024 M<=1024'], nu: Float):\n    dh2 = [complex(0, 0) for _ in dh1]\n    ci = complex(0.0, 1.0)\n    dh1[0] = complex(0.5, 0) * ci * complex(sig, 0)\n    exp1 = complex(-0.5, 0)\n    dh2[0] = alp\n    exp2 = complex(-1.0, 0)\n    dh3[0] = -2.0 * nu\n    exp3 = complex(-1.0, 0)\n    for i in range(1, n):\n        dh1[i] = dh1[i - 1] * exp1\n        exp1 = exp1 - 1.0\n        dh2[i] = dh2[i - 1] * exp2\n        exp2 = exp2 - 1.0\n        dh3[i] = -nu * dh3[i - 1] * exp3\n        exp3 = exp3 - 1.0\n    dg[0] = complex(1.0)\n    dg[1] = dh1[0] + dh2[0] + dh3[0]\n    for i in range(2, n + 1):\n        dg[i] = dh1[i - 1] + dh2[i - 1] + dh3[i - 1]\n        for j in range(1, i):\n            dg[i] = dg[i] + bin[j - 1][i - 1] * (dh1[j - 1] + dh2[j - 1] + dh3[j - 1]) * dg[i - j]\n    return dg",
+  "source_status": "direct"
+}

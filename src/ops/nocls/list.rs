@@ -9,8 +9,12 @@ impl ListOp {
 }
 
 impl Op for ListOp {
-    fn name(&self) -> &'static str { "list" }
-    fn params(&self) -> &[ParamEntry] { &Self::PARAMS }
+    fn name(&self) -> &'static str {
+        "list"
+    }
+    fn params(&self) -> &[ParamEntry] {
+        &Self::PARAMS
+    }
 
     fn build(&self, _builder: &mut IRBuilder, args: &OpArgs) -> Value {
         let x = args.require("x");
@@ -19,7 +23,7 @@ impl Op for ListOp {
             Value::Tuple(data) => Value::List(crate::types::CompositeData {
                 elements_type: data.elements_type.clone(),
                 values: data.values.clone(),
-            
+
                 value_id: ValueId::next(),
             }),
             _ => panic!("list: unsupported type {:?}", x.zinnia_type()),

@@ -1,0 +1,57 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "np.sum",
+        "np.zeros",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 21,
+      "line_start": 12,
+      "mutated_params": [],
+      "name": "weights",
+      "ops": [
+        "Div",
+        "Eq",
+        "Gt",
+        "Mult"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "input_data",
+          "proposed_annotation": "Integer[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "threshold",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_weights/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_weights",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\n\n@zk_circuit\ndef weights(input_data: Integer[Array, 'N<=1024 M<=1024'], threshold: Float=0.3):\n    n_seq, length = input_data.shape\n    weights = np.zeros(n_seq, dtype=np.float32)\n    for i in range(n_seq):\n        vector = input_data[i, None, :]\n        count_matches = np.sum(vector == input_data, axis=1)\n        over_threshold = count_matches > threshold * length\n        total = np.sum(over_threshold)\n        weights[i] = 1 / total\n    return weights",
+  "source_status": "direct"
+}

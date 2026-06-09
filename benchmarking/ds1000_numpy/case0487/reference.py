@@ -1,0 +1,2 @@
+from sklearn.preprocessing import minmax_scale
+result = minmax_scale(arr.T).T

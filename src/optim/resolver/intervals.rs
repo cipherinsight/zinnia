@@ -36,7 +36,10 @@ pub(crate) fn derive_bounds_from_facts(
         // how the branch-merge preserves the anchor for arm-only facts;
         // the body is the original value_id-anchored claim.
         let term: &ContractTerm = match raw_term {
-            ContractTerm::BoolComb { op: BoolOp::Or, operands } if operands.len() == 2 => {
+            ContractTerm::BoolComb {
+                op: BoolOp::Or,
+                operands,
+            } if operands.len() == 2 => {
                 if let ContractTerm::Not(inner) = &operands[0] {
                     let antecedent = inner.as_ref();
                     if path_conds.iter().any(|p| **p == *antecedent) {
@@ -53,14 +56,14 @@ pub(crate) fn derive_bounds_from_facts(
         if let ContractTerm::Cmp { op, lhs, rhs } = term {
             // Match `Value(vid) <op> LitInt(n)` or `LitInt(n) <op> Value(vid)`.
             let (relation, n) = match (lhs.as_ref(), rhs.as_ref()) {
-                (
-                    ContractTerm::Var(ContractVar::Value(v)),
-                    ContractTerm::LitInt(n),
-                ) if *v == vid => (*op, *n),
-                (
-                    ContractTerm::LitInt(n),
-                    ContractTerm::Var(ContractVar::Value(v)),
-                ) if *v == vid => {
+                (ContractTerm::Var(ContractVar::Value(v)), ContractTerm::LitInt(n))
+                    if *v == vid =>
+                {
+                    (*op, *n)
+                }
+                (ContractTerm::LitInt(n), ContractTerm::Var(ContractVar::Value(v)))
+                    if *v == vid =>
+                {
                     // Swap: `n <op> ptr` becomes `ptr <swap(op)> n`.
                     let swapped = match op {
                         CmpOp::Lt => CmpOp::Gt,
@@ -110,9 +113,7 @@ pub fn interval_fact_for_int_binary(
     b_vid: crate::types::ValueId,
     out_vid: crate::types::ValueId,
 ) -> Option<crate::optim::predicates::formula::ContractTerm> {
-    use crate::optim::predicates::formula::{
-        ArithOp, BoolOp, CmpOp, ContractTerm, ContractVar,
-    };
+    use crate::optim::predicates::formula::{ArithOp, BoolOp, CmpOp, ContractTerm, ContractVar};
 
     let (a_lo, a_hi) = derive_bounds_from_facts(facts, a_vid)?;
     let (b_lo, b_hi) = derive_bounds_from_facts(facts, b_vid)?;
@@ -172,14 +173,19 @@ pub(crate) fn derive_float_bounds_from_facts(
     facts: &crate::optim::predicates::FactStack,
     vid: crate::types::ValueId,
 ) -> Option<(f64, f64)> {
-    use crate::optim::predicates::formula::{BoolOp, CmpOp, ContractFloat, ContractTerm, ContractVar};
+    use crate::optim::predicates::formula::{
+        BoolOp, CmpOp, ContractFloat, ContractTerm, ContractVar,
+    };
     let entries = facts.per_value.get(&vid)?;
     let path_conds: Vec<&ContractTerm> = facts.visible_path_conditions();
     let mut lo: Option<f64> = None;
     let mut hi: Option<f64> = None;
     for raw_term in entries {
         let term: &ContractTerm = match raw_term {
-            ContractTerm::BoolComb { op: BoolOp::Or, operands } if operands.len() == 2 => {
+            ContractTerm::BoolComb {
+                op: BoolOp::Or,
+                operands,
+            } if operands.len() == 2 => {
                 if let ContractTerm::Not(inner) = &operands[0] {
                     let antecedent = inner.as_ref();
                     if path_conds.iter().any(|p| **p == *antecedent) {
@@ -270,6 +276,33 @@ pub fn interval_fact_for_float_binary(
             let c3 = a_hi * b_lo;
             let c4 = a_hi * b_hi;
             (c1.min(c2).min(c3).min(c4), c1.max(c2).max(c3).max(c4))
+        }
+        ArithOp::Div => {
+            // Sign-stable divisor (both bounds strictly same-signed, so
+            // the interval excludes zero): `1/b` is monotone over the
+            // divisor interval, so invert-then-corner-min-max mirrors
+            // the Mul path exactly.
+            //
+            // Zero-crossing or zero-touching divisor (`b_lo <= 0 <= b_hi`)
+            // would force the relayed bound to `±inf`; we skip emit
+            // rather than deposit a non-finite literal. Sound:
+            // no-emit is always safe — the registered `div_f` contract's
+            // `rhs != 0` requires still discharges the soundness side,
+            // independently of any interval relay.
+            if b_lo > 0.0 || b_hi < 0.0 {
+                // For b > 0: 1/b ∈ [1/b_hi, 1/b_lo] (smaller divisor ⇒ larger reciprocal).
+                // For b < 0: same identity holds because both endpoints flip
+                // sign together (e.g. b ∈ [-4,-2] ⇒ 1/b ∈ [-0.5,-0.25]).
+                let inv_lo = 1.0 / b_hi;
+                let inv_hi = 1.0 / b_lo;
+                let c1 = a_lo * inv_lo;
+                let c2 = a_lo * inv_hi;
+                let c3 = a_hi * inv_lo;
+                let c4 = a_hi * inv_hi;
+                (c1.min(c2).min(c3).min(c4), c1.max(c2).max(c3).max(c4))
+            } else {
+                return None;
+            }
         }
         _ => return None,
     };

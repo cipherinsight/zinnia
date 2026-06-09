@@ -7,18 +7,24 @@
 
 mod constructors;
 mod elementwise;
+mod indexing;
+mod linalg;
 mod matmul;
 mod reductions;
 mod reshaping;
+mod statistics;
 
 // Re-export every public surface so the path
 // `crate::ops::static_ndarray_ops::np_foo` keeps resolving for all
 // external callers without changes to their code.
 pub use constructors::*;
 pub use elementwise::*;
+pub use indexing::*;
+pub use linalg::*;
 pub use matmul::*;
 pub use reductions::*;
 pub use reshaping::*;
+pub use statistics::*;
 
 #[cfg(test)]
 mod tests;

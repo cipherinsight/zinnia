@@ -1,0 +1,71 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "domain-obligation",
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "np.logical_and",
+        "np.zeros",
+        "radius.max",
+        "range",
+        "requires",
+        "values_r12.mean"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 23,
+      "line_start": 14,
+      "mutated_params": [],
+      "name": "azimint_naive",
+      "ops": [
+        "Add",
+        "Div",
+        "Lt",
+        "LtE",
+        "Mult",
+        "NotEq"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "data",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "radius",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "npt",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "npbench_azimint_naive_azimint_naive/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "npbench_azimint_naive_azimint_naive",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, domain-obligation, in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\n\n@zk_circuit\n@requires(lambda data, radius, npt: npt != 0)\ndef azimint_naive(data: Float[Array, 'N<=1024'], radius: Float[Array, 'N<=1024'], npt: Float[Array, 'N<=1024']):\n    rmax = radius.max()\n    res = np.zeros(npt, dtype=np.float64)\n    for i in range(npt):\n        r1 = rmax * i / npt\n        r2 = rmax * (i + 1) / npt\n        mask_r12 = np.logical_and(r1 <= radius, radius < r2)\n        values_r12 = data[mask_r12]\n        res[i] = values_r12.mean()\n    return res",
+  "source_status": "direct"
+}

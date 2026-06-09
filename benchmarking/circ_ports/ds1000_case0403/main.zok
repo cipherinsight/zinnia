@@ -1,0 +1,10 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0403/kernel.py
+// REASON: np.ravel_multi_index(order='C') lowered to explicit C-order stride loop over fixed N=5.
+
+def main(field[5] dims, field[5] index) -> field:
+    field result = 0
+    for u32 i in 0..5 do
+        result = result * dims[i] + index[i]
+    endfor
+    return result

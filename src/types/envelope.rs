@@ -126,7 +126,12 @@ impl Dim {
 
     /// A dim with runtime length in `[min, max]`. Asserts `min <= max`.
     pub fn new_dynamic(table: &mut DimTable, min: usize, max: usize) -> Self {
-        assert!(min <= max, "Dim::new_dynamic: min ({}) > max ({})", min, max);
+        assert!(
+            min <= max,
+            "Dim::new_dynamic: min ({}) > max ({})",
+            min,
+            max
+        );
         Dim {
             var: table.fresh(),
             min,
@@ -233,7 +238,11 @@ impl Envelope {
     /// (exact, since all dims are static).
     pub fn from_static_shape(table: &mut DimTable, shape: &[usize]) -> Self {
         let dims: Vec<Dim> = shape.iter().map(|&n| Dim::new_static(table, n)).collect();
-        let total_bound = if shape.is_empty() { 1 } else { shape.iter().product() };
+        let total_bound = if shape.is_empty() {
+            1
+        } else {
+            shape.iter().product()
+        };
         Envelope { dims, total_bound }
     }
 }
@@ -285,8 +294,16 @@ pub fn broadcast_envelopes(
 
     for i in 0..rank {
         // Right-aligned indexing: axis `i` from the back of each operand.
-        let a_axis = if i < a.rank() { Some(a.rank() - 1 - i) } else { None };
-        let b_axis = if i < b.rank() { Some(b.rank() - 1 - i) } else { None };
+        let a_axis = if i < a.rank() {
+            Some(a.rank() - 1 - i)
+        } else {
+            None
+        };
+        let b_axis = if i < b.rank() {
+            Some(b.rank() - 1 - i)
+        } else {
+            None
+        };
 
         let dim = match (a_axis, b_axis) {
             (Some(ai), None) => {
@@ -708,14 +725,8 @@ mod tests {
     fn total_bound_broadcast_same_shape() {
         // Same-shape broadcast: T_out = min(T_a, T_b).
         let mut t = DimTable::new();
-        let a = Envelope::new_with_bound(
-            vec![Dim::new_dynamic(&mut t, 0, 100)],
-            80,
-        );
-        let b = Envelope::new_with_bound(
-            vec![Dim::new_dynamic(&mut t, 0, 100)],
-            60,
-        );
+        let a = Envelope::new_with_bound(vec![Dim::new_dynamic(&mut t, 0, 100)], 80);
+        let b = Envelope::new_with_bound(vec![Dim::new_dynamic(&mut t, 0, 100)], 60);
         let out = broadcast_envelopes(&mut t, &a, &b).unwrap();
         // No a-only or b-only axes, so T_out = min(80, 60) = 60.
         assert_eq!(out.total_bound, 60);
@@ -728,17 +739,11 @@ mod tests {
         // T_out = min(T_a * 3, T_b * D_max) = min(100 * 3, 3 * 100) = 300.
         let mut t = DimTable::new();
         let a = Envelope::new_with_bound(
-            vec![
-                Dim::new_dynamic(&mut t, 0, 100),
-                Dim::new_static(&mut t, 1),
-            ],
+            vec![Dim::new_dynamic(&mut t, 0, 100), Dim::new_static(&mut t, 1)],
             100,
         );
         let b = Envelope::new_with_bound(
-            vec![
-                Dim::new_static(&mut t, 1),
-                Dim::new_static(&mut t, 3),
-            ],
+            vec![Dim::new_static(&mut t, 1), Dim::new_static(&mut t, 3)],
             3,
         );
         let out = broadcast_envelopes(&mut t, &a, &b).unwrap();
@@ -758,15 +763,9 @@ mod tests {
         // a_only_factor = 3 (b's axis 0 is added to a), b_only_factor = 1
         // T_out = min(T_a * 3, T_b * 1) = min(300, 30) = 30
         let mut t = DimTable::new();
-        let a = Envelope::new_with_bound(
-            vec![Dim::new_dynamic(&mut t, 0, 100)],
-            100,
-        );
+        let a = Envelope::new_with_bound(vec![Dim::new_dynamic(&mut t, 0, 100)], 100);
         let b = Envelope::new_with_bound(
-            vec![
-                Dim::new_static(&mut t, 3),
-                Dim::new_dynamic(&mut t, 0, 100),
-            ],
+            vec![Dim::new_static(&mut t, 3), Dim::new_dynamic(&mut t, 0, 100)],
             30,
         );
         let out = broadcast_envelopes(&mut t, &a, &b).unwrap();
@@ -778,10 +777,7 @@ mod tests {
     fn total_bound_preserved_through_new() {
         // Envelope::new() sets total_bound = product of dim.max.
         let mut t = DimTable::new();
-        let e = Envelope::new(vec![
-            Dim::new_static(&mut t, 3),
-            Dim::new_static(&mut t, 4),
-        ]);
+        let e = Envelope::new(vec![Dim::new_static(&mut t, 3), Dim::new_static(&mut t, 4)]);
         assert_eq!(e.total_bound, 12);
         assert_eq!(e.max_total(), 12);
     }

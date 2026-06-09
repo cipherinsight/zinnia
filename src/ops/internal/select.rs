@@ -15,8 +15,12 @@ impl SelectOp {
 }
 
 impl Op for SelectOp {
-    fn name(&self) -> &'static str { "select" }
-    fn params(&self) -> &[ParamEntry] { &Self::PARAMS }
+    fn name(&self) -> &'static str {
+        "select"
+    }
+    fn params(&self) -> &[ParamEntry] {
+        &Self::PARAMS
+    }
 
     fn build(&self, builder: &mut IRBuilder, args: &OpArgs) -> Value {
         let cond = args.require("cond");

@@ -1,0 +1,13 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0481/kernel.py
+// REASON: idx_list.nonzero()[0] produces a runtime-sized index array; ZoKrates needs compile-time array length
+
+def main(field[9] x, field[9] y, field a, field b) -> field[9]:
+    // Skeleton: emit a fixed-size [9] array where slots that don't match are set to -1.
+    // The Python version yields a variable-length vector of indices, which CirC rejects.
+    field[9] result = [0 - 1; 9]
+    for u32 i in 0..9 do
+        bool match = (x[i] == a) && (y[i] == b)
+        result[i] = if match then (field)i else 0 - 1 fi
+    endfor
+    return result

@@ -1,0 +1,78 @@
+{
+  "categories": [
+    "complex",
+    "in-place-mutation",
+    "loop-bounded"
+  ],
+  "diagnostics": [
+    "Complex kernels require Complex dtype support or a fail-closed classification."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "abs",
+        "range",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 29,
+      "line_start": 12,
+      "mutated_params": [
+        "a",
+        "b"
+      ],
+      "name": "pivot",
+      "ops": [
+        "Add",
+        "Eq",
+        "Gt",
+        "LtE",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "n",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "i",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": true,
+          "name": "a",
+          "proposed_annotation": "Complex[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "b",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_pivot/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "pythran_pivot",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: complex, in-place-mutation, loop-bounded\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.\n\n@zk_circuit\n@requires(lambda n, i, a, b: 0 <= n <= 1024)\ndef pivot(n: Integer, i: Integer, a: Complex[Array, 'N<=1024 M<=1024'], b: Complex[Array, 'N<=1024']):\n    i0 = i\n    amp0 = abs(a[i - 1][i - 1])\n    for j in range(i + 1, n + 1):\n        amp = abs(a[i - 1][j - 1])\n        if amp > amp0:\n            i0 = j\n            amp0 = amp\n    if i == i0:\n        return\n    temp = b[i - 1]\n    b[i - 1] = b[i0 - 1]\n    b[i0 - 1] = temp\n    for j in range(i, n + 1):\n        temp = a[j - 1][i - 1]\n        a[j - 1][i - 1] = a[j - 1][i0 - 1]\n        a[j - 1][i0 - 1] = temp\n    return (a, b)",
+  "source_status": "direct"
+}

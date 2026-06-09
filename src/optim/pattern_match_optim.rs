@@ -11,6 +11,12 @@ pub struct PatternMatchOptim;
 
 impl PatternMatchOptim {
     fn optimize_ir(&self, builder: &mut IRBuilder, ir: &IR, args: &[Value]) -> Value {
+        if let Some(min_arity) = min_required_arity(ir) {
+            if args.len() < min_arity {
+                return builder.create_ir(ir, args);
+            }
+        }
+
         match ir {
             IR::LogicalAnd => self.optimize_logical_and(builder, ir, args),
             IR::LogicalOr => self.optimize_logical_or(builder, ir, args),
@@ -25,8 +31,12 @@ impl PatternMatchOptim {
             IR::MulF => self.optimize_mul_f(builder, ir, args),
             IR::DivI => self.optimize_div_i(builder, ir, args),
             IR::DivF => self.optimize_div_f(builder, ir, args),
-            IR::LtI | IR::GtI | IR::LtF | IR::GtF => self.optimize_same_ptr_cmp(builder, ir, args, false),
-            IR::LteI | IR::GteI | IR::LteF | IR::GteF => self.optimize_same_ptr_cmp(builder, ir, args, true),
+            IR::LtI | IR::GtI | IR::LtF | IR::GtF => {
+                self.optimize_same_ptr_cmp(builder, ir, args, false)
+            }
+            IR::LteI | IR::GteI | IR::LteF | IR::GteF => {
+                self.optimize_same_ptr_cmp(builder, ir, args, true)
+            }
             IR::EqI | IR::EqF => self.optimize_same_ptr_cmp(builder, ir, args, true),
             IR::NeI | IR::NeF => self.optimize_same_ptr_cmp(builder, ir, args, false),
             _ => builder.create_ir(ir, args),
@@ -36,10 +46,18 @@ impl PatternMatchOptim {
     fn optimize_logical_and(&self, b: &mut IRBuilder, ir: &IR, args: &[Value]) -> Value {
         let lv = args[0].int_val();
         let rv = args[1].int_val();
-        if lv == Some(0) { return b.ir_constant_bool(false); }
-        if rv == Some(0) { return b.ir_constant_bool(false); }
-        if lv.is_some() && lv != Some(0) { return args[1].clone(); }
-        if rv.is_some() && rv != Some(0) { return args[0].clone(); }
+        if lv == Some(0) {
+            return b.ir_constant_bool(false);
+        }
+        if rv == Some(0) {
+            return b.ir_constant_bool(false);
+        }
+        if lv.is_some() && lv != Some(0) {
+            return args[1].clone();
+        }
+        if rv.is_some() && rv != Some(0) {
+            return args[0].clone();
+        }
         if let (Some(a), Some(c)) = (lv, rv) {
             return b.ir_constant_bool(a != 0 && c != 0);
         }
@@ -49,10 +67,18 @@ impl PatternMatchOptim {
     fn optimize_logical_or(&self, b: &mut IRBuilder, ir: &IR, args: &[Value]) -> Value {
         let lv = args[0].int_val();
         let rv = args[1].int_val();
-        if lv.is_some() && lv != Some(0) { return b.ir_constant_bool(true); }
-        if rv.is_some() && rv != Some(0) { return b.ir_constant_bool(true); }
-        if lv == Some(0) { return args[1].clone(); }
-        if rv == Some(0) { return args[0].clone(); }
+        if lv.is_some() && lv != Some(0) {
+            return b.ir_constant_bool(true);
+        }
+        if rv.is_some() && rv != Some(0) {
+            return b.ir_constant_bool(true);
+        }
+        if lv == Some(0) {
+            return args[1].clone();
+        }
+        if rv == Some(0) {
+            return args[0].clone();
+        }
         if let (Some(a), Some(c)) = (lv, rv) {
             return b.ir_constant_bool(a != 0 || c != 0);
         }
@@ -65,9 +91,11 @@ impl PatternMatchOptim {
         let fv = &args[2];
         // If both branches are boolean, delegate to select_b logic
         if (tv.bool_val().is_some() || fv.bool_val().is_some())
-            && matches!(tv, Value::Boolean(_)) && matches!(fv, Value::Boolean(_)) {
-                return self.optimize_select_b(b, ir, args);
-            }
+            && matches!(tv, Value::Boolean(_))
+            && matches!(fv, Value::Boolean(_))
+        {
+            return self.optimize_select_b(b, ir, args);
+        }
         if tv.int_val() == fv.int_val() && fv.int_val().is_some() {
             return b.ir_constant_int(tv.int_val().unwrap());
         }
@@ -157,23 +185,37 @@ impl PatternMatchOptim {
     fn optimize_add_i(&self, b: &mut IRBuilder, ir: &IR, args: &[Value]) -> Value {
         let lv = args[0].int_val();
         let rv = args[1].int_val();
-        if lv == Some(0) { return args[1].clone(); }
-        if rv == Some(0) { return args[0].clone(); }
-        if let (Some(a), Some(c)) = (lv, rv) { return b.ir_constant_int(a + c); }
+        if lv == Some(0) {
+            return args[1].clone();
+        }
+        if rv == Some(0) {
+            return args[0].clone();
+        }
+        if let (Some(a), Some(c)) = (lv, rv) {
+            return b.ir_constant_int(a + c);
+        }
         b.create_ir(ir, args)
     }
 
     fn optimize_add_f(&self, b: &mut IRBuilder, ir: &IR, args: &[Value]) -> Value {
         let lv = args[0].float_val();
         let rv = args[1].float_val();
-        if lv == Some(0.0) { return args[1].clone(); }
-        if rv == Some(0.0) { return args[0].clone(); }
-        if let (Some(a), Some(c)) = (lv, rv) { return b.ir_constant_float(a + c); }
+        if lv == Some(0.0) {
+            return args[1].clone();
+        }
+        if rv == Some(0.0) {
+            return args[0].clone();
+        }
+        if let (Some(a), Some(c)) = (lv, rv) {
+            return b.ir_constant_float(a + c);
+        }
         b.create_ir(ir, args)
     }
 
     fn optimize_sub_i(&self, b: &mut IRBuilder, ir: &IR, args: &[Value]) -> Value {
-        if args[1].int_val() == Some(0) { return args[0].clone(); }
+        if args[1].int_val() == Some(0) {
+            return args[0].clone();
+        }
         if let (Some(a), Some(c)) = (args[0].int_val(), args[1].int_val()) {
             return b.ir_constant_int(a - c);
         }
@@ -181,7 +223,9 @@ impl PatternMatchOptim {
     }
 
     fn optimize_sub_f(&self, b: &mut IRBuilder, ir: &IR, args: &[Value]) -> Value {
-        if args[1].float_val() == Some(0.0) { return args[0].clone(); }
+        if args[1].float_val() == Some(0.0) {
+            return args[0].clone();
+        }
         if let (Some(a), Some(c)) = (args[0].float_val(), args[1].float_val()) {
             return b.ir_constant_float(a - c);
         }
@@ -191,41 +235,92 @@ impl PatternMatchOptim {
     fn optimize_mul_i(&self, b: &mut IRBuilder, ir: &IR, args: &[Value]) -> Value {
         let lv = args[0].int_val();
         let rv = args[1].int_val();
-        if lv == Some(1) { return args[1].clone(); }
-        if rv == Some(1) { return args[0].clone(); }
-        if let (Some(a), Some(c)) = (lv, rv) { return b.ir_constant_int(a * c); }
+        if lv == Some(1) {
+            return args[1].clone();
+        }
+        if rv == Some(1) {
+            return args[0].clone();
+        }
+        if let (Some(a), Some(c)) = (lv, rv) {
+            return b.ir_constant_int(a * c);
+        }
         b.create_ir(ir, args)
     }
 
     fn optimize_mul_f(&self, b: &mut IRBuilder, ir: &IR, args: &[Value]) -> Value {
         let lv = args[0].float_val();
         let rv = args[1].float_val();
-        if lv == Some(1.0) { return args[1].clone(); }
-        if rv == Some(1.0) { return args[0].clone(); }
-        if let (Some(a), Some(c)) = (lv, rv) { return b.ir_constant_float(a * c); }
+        if lv == Some(1.0) {
+            return args[1].clone();
+        }
+        if rv == Some(1.0) {
+            return args[0].clone();
+        }
+        if let (Some(a), Some(c)) = (lv, rv) {
+            return b.ir_constant_float(a * c);
+        }
         b.create_ir(ir, args)
     }
 
     fn optimize_div_i(&self, b: &mut IRBuilder, ir: &IR, args: &[Value]) -> Value {
-        if args[1].int_val() == Some(1) { return args[0].clone(); }
+        if args[1].int_val() == Some(1) {
+            return args[0].clone();
+        }
         b.create_ir(ir, args)
     }
 
     fn optimize_div_f(&self, b: &mut IRBuilder, ir: &IR, args: &[Value]) -> Value {
-        if args[1].float_val() == Some(1.0) { return args[0].clone(); }
+        if args[1].float_val() == Some(1.0) {
+            return args[0].clone();
+        }
         b.create_ir(ir, args)
     }
 
     /// Optimize comparisons where both operands are the same pointer.
     /// For `a == a` → true, `a != a` → false, `a < a` → false, `a <= a` → true.
     fn optimize_same_ptr_cmp(
-        &self, b: &mut IRBuilder, ir: &IR, args: &[Value], result_if_same: bool,
+        &self,
+        b: &mut IRBuilder,
+        ir: &IR,
+        args: &[Value],
+        result_if_same: bool,
     ) -> Value {
         if args[0].stmt_id() == args[1].stmt_id() && args[0].stmt_id().is_some() {
             return b.ir_constant_bool(result_if_same);
         }
         b.create_ir(ir, args)
     }
+}
+
+fn min_required_arity(ir: &IR) -> Option<usize> {
+    Some(match ir {
+        IR::LogicalNot => 1,
+        IR::LogicalAnd
+        | IR::LogicalOr
+        | IR::AddI
+        | IR::AddF
+        | IR::SumF { .. }
+        | IR::SubI
+        | IR::SubF
+        | IR::MulI
+        | IR::MulF
+        | IR::DivI
+        | IR::DivF
+        | IR::LtI
+        | IR::GtI
+        | IR::LtF
+        | IR::GtF
+        | IR::LteI
+        | IR::GteI
+        | IR::LteF
+        | IR::GteF
+        | IR::EqI
+        | IR::EqF
+        | IR::NeI
+        | IR::NeF => 2,
+        IR::SelectB | IR::SelectI | IR::SelectF => 3,
+        _ => 0,
+    })
 }
 
 impl IRPass for PatternMatchOptim {

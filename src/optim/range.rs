@@ -235,7 +235,10 @@ impl IntInterval {
         if a.min >= 0 && b.min >= 0 {
             // Non-negative: result in [0, min(a.max, b.max)].
             let upper = a.max.min(b.max);
-            Self { min: 0, max: upper.max(0) }
+            Self {
+                min: 0,
+                max: upper.max(0),
+            }
         } else {
             Self::unbounded()
         }
@@ -404,9 +407,7 @@ impl RangeResolver {
         let interval = match &stmt.ir {
             // Constants ------------------------------------------------
             IR::ConstantInt { value } => IntInterval::point(*value),
-            IR::ConstantBool { value } => {
-                IntInterval::point(if *value { 1 } else { 0 })
-            }
+            IR::ConstantBool { value } => IntInterval::point(if *value { 1 } else { 0 }),
 
             // Arithmetic -----------------------------------------------
             IR::AddI => self.binop(stmt, stmts, IntInterval::add),
@@ -497,16 +498,16 @@ impl RangeResolver {
             }
 
             // Logical: always boolean-projected → [0, 1] ----------------
-            IR::LogicalAnd | IR::LogicalOr | IR::LogicalNot => {
-                IntInterval::bool_domain()
-            }
+            IR::LogicalAnd | IR::LogicalOr | IR::LogicalNot => IntInterval::bool_domain(),
 
             // Comparisons project to bool: [0, 1] -----------------------
             IR::EqI
             | IR::NeI
             | IR::LtI
+            | IR::LtIBounded
             | IR::LteI
             | IR::GtI
+            | IR::GtIBounded
             | IR::GteI
             | IR::EqF
             | IR::NeF
@@ -564,11 +565,7 @@ impl Resolver for RangeResolver {
         val.int_val()
     }
 
-    fn resolve_int_with_stmts(
-        &mut self,
-        val: &Value,
-        stmts: &[IRStatement],
-    ) -> Option<i64> {
+    fn resolve_int_with_stmts(&mut self, val: &Value, stmts: &[IRStatement]) -> Option<i64> {
         // Fast path 1: static-val.
         if let Some(n) = val.int_val() {
             return Some(n);
@@ -579,7 +576,9 @@ impl Resolver for RangeResolver {
         let interval = self.interval_of(ptr, stmts);
         self.telemetry.record_range_duration(t0.elapsed());
         if interval.is_point() {
-            self.telemetry.queries_range_hit.fetch_add(1, Ordering::Relaxed);
+            self.telemetry
+                .queries_range_hit
+                .fetch_add(1, Ordering::Relaxed);
             Some(interval.min)
         } else {
             None
@@ -593,11 +592,7 @@ impl Resolver for RangeResolver {
     /// projected to bool — but that's already covered by `resolve_int`'s
     /// `[0, 1]` arms returning `Some(0)` or `Some(1)`. We mirror it here
     /// to keep the bool API symmetric.
-    fn resolve_bool_with_stmts(
-        &mut self,
-        val: &Value,
-        stmts: &[IRStatement],
-    ) -> Option<bool> {
+    fn resolve_bool_with_stmts(&mut self, val: &Value, stmts: &[IRStatement]) -> Option<bool> {
         if let Some(b) = val.bool_val() {
             return Some(b);
         }
@@ -608,18 +603,16 @@ impl Resolver for RangeResolver {
         // Only resolve to bool if the wire is a [0, 1]-domain wire that
         // collapsed to a single point.
         if interval.is_point() && (interval.min == 0 || interval.min == 1) {
-            self.telemetry.queries_range_hit.fetch_add(1, Ordering::Relaxed);
+            self.telemetry
+                .queries_range_hit
+                .fetch_add(1, Ordering::Relaxed);
             Some(interval.min == 1)
         } else {
             None
         }
     }
 
-    fn resolve_max_with_stmts(
-        &mut self,
-        val: &Value,
-        stmts: &[IRStatement],
-    ) -> Option<i64> {
+    fn resolve_max_with_stmts(&mut self, val: &Value, stmts: &[IRStatement]) -> Option<i64> {
         if let Some(n) = val.int_val() {
             return Some(n);
         }
@@ -630,16 +623,14 @@ impl Resolver for RangeResolver {
         if interval.max == i64::MAX {
             None
         } else {
-            self.telemetry.queries_range_hit.fetch_add(1, Ordering::Relaxed);
+            self.telemetry
+                .queries_range_hit
+                .fetch_add(1, Ordering::Relaxed);
             Some(interval.max)
         }
     }
 
-    fn resolve_min_with_stmts(
-        &mut self,
-        val: &Value,
-        stmts: &[IRStatement],
-    ) -> Option<i64> {
+    fn resolve_min_with_stmts(&mut self, val: &Value, stmts: &[IRStatement]) -> Option<i64> {
         if let Some(n) = val.int_val() {
             return Some(n);
         }
@@ -650,7 +641,9 @@ impl Resolver for RangeResolver {
         if interval.min == i64::MIN {
             None
         } else {
-            self.telemetry.queries_range_hit.fetch_add(1, Ordering::Relaxed);
+            self.telemetry
+                .queries_range_hit
+                .fetch_add(1, Ordering::Relaxed);
             Some(interval.min)
         }
     }
@@ -660,9 +653,7 @@ impl Resolver for RangeResolver {
         self.cache.lock().unwrap().clear();
     }
 
-    fn telemetry_handle(
-        &self,
-    ) -> Option<std::sync::Arc<crate::optim::telemetry::SmtTelemetry>> {
+    fn telemetry_handle(&self) -> Option<std::sync::Arc<crate::optim::telemetry::SmtTelemetry>> {
         Some(Arc::clone(&self.telemetry))
     }
 }
@@ -706,7 +697,10 @@ mod tests {
     #[test]
     fn div_zero_crossing_returns_unbounded() {
         // Divisor crosses zero — result is unbounded.
-        assert_eq!(IntInterval::div(iv(10, 20), iv(-5, 5)), IntInterval::unbounded());
+        assert_eq!(
+            IntInterval::div(iv(10, 20), iv(-5, 5)),
+            IntInterval::unbounded()
+        );
     }
 
     #[test]
@@ -756,16 +750,40 @@ mod tests {
         // stmt3 = SelectI(stmt0, stmt1, stmt2).
         let stmts = vec![
             IRStatement::new(
-                0, crate::types::ValueId::next(),
+                0,
+                crate::types::ValueId::next(),
                 IR::ReadInteger {
                     path: InputPath::new("c", vec![]),
                     is_public: false,
                 },
-                vec![], vec![],
-                None),
-            IRStatement::new(1, crate::types::ValueId::next(), IR::ConstantInt { value: 7 }, vec![], vec![], None),
-            IRStatement::new(2, crate::types::ValueId::next(), IR::ConstantInt { value: 7 }, vec![], vec![], None),
-            IRStatement::new(3, crate::types::ValueId::next(), IR::SelectI, vec![0, 1, 2], vec![], None),
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 7 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                2,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 7 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                3,
+                crate::types::ValueId::next(),
+                IR::SelectI,
+                vec![0, 1, 2],
+                vec![],
+                None,
+            ),
         ];
         let v = runtime_int(3);
         let mut r = RangeResolver::new();
@@ -778,22 +796,35 @@ mod tests {
     fn range_unbounded_returns_none() {
         let stmts = vec![
             IRStatement::new(
-                0, crate::types::ValueId::next(),
+                0,
+                crate::types::ValueId::next(),
                 IR::ReadInteger {
                     path: InputPath::new("x", vec![]),
                     is_public: false,
                 },
-                vec![], vec![],
-                None),
+                vec![],
+                vec![],
+                None,
+            ),
             IRStatement::new(
-                1, crate::types::ValueId::next(),
+                1,
+                crate::types::ValueId::next(),
                 IR::ReadInteger {
                     path: InputPath::new("y", vec![]),
                     is_public: false,
                 },
-                vec![], vec![],
-                None),
-            IRStatement::new(2, crate::types::ValueId::next(), IR::AddI, vec![0, 1], vec![], None),
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                2,
+                crate::types::ValueId::next(),
+                IR::AddI,
+                vec![0, 1],
+                vec![],
+                None,
+            ),
         ];
         let v = runtime_int(2);
         let mut r = RangeResolver::new();
@@ -812,18 +843,56 @@ mod tests {
         // Then multiply by 2 (constant) and ask for resolve_max.
         let stmts = vec![
             IRStatement::new(
-                0, crate::types::ValueId::next(),
+                0,
+                crate::types::ValueId::next(),
                 IR::ReadInteger {
                     path: InputPath::new("c", vec![]),
                     is_public: false,
                 },
-                vec![], vec![],
-                None),
-            IRStatement::new(1, crate::types::ValueId::next(), IR::ConstantInt { value: 3 }, vec![], vec![], None),
-            IRStatement::new(2, crate::types::ValueId::next(), IR::ConstantInt { value: 5 }, vec![], vec![], None),
-            IRStatement::new(3, crate::types::ValueId::next(), IR::SelectI, vec![0, 1, 2], vec![], None), // [3, 5]
-            IRStatement::new(4, crate::types::ValueId::next(), IR::ConstantInt { value: 2 }, vec![], vec![], None),
-            IRStatement::new(5, crate::types::ValueId::next(), IR::MulI, vec![3, 4], vec![], None), // [6, 10]
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 3 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                2,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 5 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                3,
+                crate::types::ValueId::next(),
+                IR::SelectI,
+                vec![0, 1, 2],
+                vec![],
+                None,
+            ), // [3, 5]
+            IRStatement::new(
+                4,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 2 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                5,
+                crate::types::ValueId::next(),
+                IR::MulI,
+                vec![3, 4],
+                vec![],
+                None,
+            ), // [6, 10]
         ];
         let v = runtime_int(5);
         let mut r = RangeResolver::new();
@@ -841,9 +910,30 @@ mod tests {
     #[test]
     fn range_resolves_constant_add() {
         let stmts = vec![
-            IRStatement::new(0, crate::types::ValueId::next(), IR::ConstantInt { value: 3 }, vec![], vec![], None),
-            IRStatement::new(1, crate::types::ValueId::next(), IR::ConstantInt { value: 4 }, vec![], vec![], None),
-            IRStatement::new(2, crate::types::ValueId::next(), IR::AddI, vec![0, 1], vec![], None),
+            IRStatement::new(
+                0,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 3 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 4 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                2,
+                crate::types::ValueId::next(),
+                IR::AddI,
+                vec![0, 1],
+                vec![],
+                None,
+            ),
         ];
         // Build a Value::Integer with no static_val but ptr=2.
         let v = runtime_int(2);
@@ -856,9 +946,30 @@ mod tests {
     #[test]
     fn range_caches_intervals() {
         let stmts = vec![
-            IRStatement::new(0, crate::types::ValueId::next(), IR::ConstantInt { value: 3 }, vec![], vec![], None),
-            IRStatement::new(1, crate::types::ValueId::next(), IR::ConstantInt { value: 4 }, vec![], vec![], None),
-            IRStatement::new(2, crate::types::ValueId::next(), IR::AddI, vec![0, 1], vec![], None),
+            IRStatement::new(
+                0,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 3 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 4 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                2,
+                crate::types::ValueId::next(),
+                IR::AddI,
+                vec![0, 1],
+                vec![],
+                None,
+            ),
         ];
         let v = runtime_int(2);
         let mut r = RangeResolver::new();
@@ -875,9 +986,30 @@ mod tests {
     #[test]
     fn range_on_ir_mutated_clears_cache() {
         let stmts = vec![
-            IRStatement::new(0, crate::types::ValueId::next(), IR::ConstantInt { value: 3 }, vec![], vec![], None),
-            IRStatement::new(1, crate::types::ValueId::next(), IR::ConstantInt { value: 4 }, vec![], vec![], None),
-            IRStatement::new(2, crate::types::ValueId::next(), IR::AddI, vec![0, 1], vec![], None),
+            IRStatement::new(
+                0,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 3 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 4 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                2,
+                crate::types::ValueId::next(),
+                IR::AddI,
+                vec![0, 1],
+                vec![],
+                None,
+            ),
         ];
         let v = runtime_int(2);
         let mut r = RangeResolver::new();
@@ -893,22 +1025,35 @@ mod tests {
     fn range_bool_projected_ops_are_zero_one() {
         let stmts = vec![
             IRStatement::new(
-                0, crate::types::ValueId::next(),
+                0,
+                crate::types::ValueId::next(),
                 IR::ReadInteger {
                     path: InputPath::new("x", vec![]),
                     is_public: false,
                 },
-                vec![], vec![],
-                None),
+                vec![],
+                vec![],
+                None,
+            ),
             IRStatement::new(
-                1, crate::types::ValueId::next(),
+                1,
+                crate::types::ValueId::next(),
                 IR::ReadInteger {
                     path: InputPath::new("y", vec![]),
                     is_public: false,
                 },
-                vec![], vec![],
-                None),
-            IRStatement::new(2, crate::types::ValueId::next(), IR::LtI, vec![0, 1], vec![], None),
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                2,
+                crate::types::ValueId::next(),
+                IR::LtI,
+                vec![0, 1],
+                vec![],
+                None,
+            ),
         ];
         // The result of LtI is a Boolean wire; range projects to [0, 1].
         let v = Value::Boolean(ScalarValue::runtime(2));
@@ -943,22 +1088,74 @@ mod tests {
         let stmts = vec![
             // stmt0..3: build i ∈ [0, 63] via select(c, 0, 63).
             IRStatement::new(
-                0, crate::types::ValueId::next(),
+                0,
+                crate::types::ValueId::next(),
                 IR::ReadInteger {
                     path: InputPath::new("c", vec![]),
                     is_public: false,
                 },
-                vec![], vec![],
-                None),
-            IRStatement::new(1, crate::types::ValueId::next(), IR::ConstantInt { value: 0 }, vec![], vec![], None),
-            IRStatement::new(2, crate::types::ValueId::next(), IR::ConstantInt { value: 63 }, vec![], vec![], None),
-            IRStatement::new(3, crate::types::ValueId::next(), IR::SelectI, vec![0, 1, 2], vec![], None), // [0, 63]
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 0 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                2,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 63 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                3,
+                crate::types::ValueId::next(),
+                IR::SelectI,
+                vec![0, 1, 2],
+                vec![],
+                None,
+            ), // [0, 63]
             // stmt4: 7. stmt5: i * 7 → [0, 441].
-            IRStatement::new(4, crate::types::ValueId::next(), IR::ConstantInt { value: 7 }, vec![], vec![], None),
-            IRStatement::new(5, crate::types::ValueId::next(), IR::MulI, vec![3, 4], vec![], None),
+            IRStatement::new(
+                4,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 7 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                5,
+                crate::types::ValueId::next(),
+                IR::MulI,
+                vec![3, 4],
+                vec![],
+                None,
+            ),
             // stmt6: 64. stmt7: (i*7) % 64 → [0, 63].
-            IRStatement::new(6, crate::types::ValueId::next(), IR::ConstantInt { value: 64 }, vec![], vec![], None),
-            IRStatement::new(7, crate::types::ValueId::next(), IR::ModI, vec![5, 6], vec![], None),
+            IRStatement::new(
+                6,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 64 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                7,
+                crate::types::ValueId::next(),
+                IR::ModI,
+                vec![5, 6],
+                vec![],
+                None,
+            ),
         ];
         let v = runtime_int(7);
         let mut r = RangeResolver::new();
@@ -974,18 +1171,56 @@ mod tests {
     fn range_bitand_mask_bounds_result() {
         let stmts = vec![
             IRStatement::new(
-                0, crate::types::ValueId::next(),
+                0,
+                crate::types::ValueId::next(),
                 IR::ReadInteger {
                     path: InputPath::new("c", vec![]),
                     is_public: false,
                 },
-                vec![], vec![],
-                None),
-            IRStatement::new(1, crate::types::ValueId::next(), IR::ConstantInt { value: 0 }, vec![], vec![], None),
-            IRStatement::new(2, crate::types::ValueId::next(), IR::ConstantInt { value: 100 }, vec![], vec![], None),
-            IRStatement::new(3, crate::types::ValueId::next(), IR::SelectI, vec![0, 1, 2], vec![], None), // [0, 100]
-            IRStatement::new(4, crate::types::ValueId::next(), IR::ConstantInt { value: 7 }, vec![], vec![], None),
-            IRStatement::new(5, crate::types::ValueId::next(), IR::BitAndI, vec![3, 4], vec![], None), // [0, 7]
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 0 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                2,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 100 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                3,
+                crate::types::ValueId::next(),
+                IR::SelectI,
+                vec![0, 1, 2],
+                vec![],
+                None,
+            ), // [0, 100]
+            IRStatement::new(
+                4,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 7 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                5,
+                crate::types::ValueId::next(),
+                IR::BitAndI,
+                vec![3, 4],
+                vec![],
+                None,
+            ), // [0, 7]
         ];
         let v = runtime_int(5);
         let mut r = RangeResolver::new();
@@ -999,9 +1234,30 @@ mod tests {
     #[test]
     fn range_floor_div_constant_resolves() {
         let stmts = vec![
-            IRStatement::new(0, crate::types::ValueId::next(), IR::ConstantInt { value: 16 }, vec![], vec![], None),
-            IRStatement::new(1, crate::types::ValueId::next(), IR::ConstantInt { value: 4 }, vec![], vec![], None),
-            IRStatement::new(2, crate::types::ValueId::next(), IR::FloorDivI, vec![0, 1], vec![], None), // [4, 4]
+            IRStatement::new(
+                0,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 16 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 4 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                2,
+                crate::types::ValueId::next(),
+                IR::FloorDivI,
+                vec![0, 1],
+                vec![],
+                None,
+            ), // [4, 4]
         ];
         let v = runtime_int(2);
         let mut r = RangeResolver::new();

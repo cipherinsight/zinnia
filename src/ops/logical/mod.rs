@@ -14,11 +14,11 @@ pub(crate) fn ensure_bool(builder: &mut IRBuilder, val: &Value) -> Value {
 }
 
 pub mod logical_and;
-pub mod logical_or;
 pub mod logical_not;
+pub mod logical_or;
 pub mod logical_xor;
 
 pub use logical_and::LogicalAndOp;
-pub use logical_or::LogicalOrOp;
 pub use logical_not::LogicalNotOp;
+pub use logical_or::LogicalOrOp;
 pub use logical_xor::LogicalXorOp;

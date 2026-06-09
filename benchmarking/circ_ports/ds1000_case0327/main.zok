@@ -1,0 +1,11 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0327/kernel.py
+// REASON: np.pad output length is `length` (runtime parameter); ZoKrates requires compile-time array shapes.
+
+def main(field[10] A, field length) -> field[64]:
+  // field[length] result  -- ILLEGAL: runtime dim
+  field[64] result = [0; 64]
+  for u32 i in 0..10 do
+    result[i] = A[i]
+  endfor
+  return result

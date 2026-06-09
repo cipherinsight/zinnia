@@ -1,0 +1,28 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0408/kernel.py
+// REASON: np.unique (dynamic-length), np.zeros(np.amax(index)+1) (runtime size), and a[index==i] boolean masking.
+
+const u32 N = 100
+const u32 NBINS = 200
+
+def main(field[N] a, field[N] index) -> field[NBINS]:
+    field add = 0
+    for u32 i in 0..N do
+        add = if index[i] > add then index[i] else add fi
+    endfor
+    field[N] shifted = [0; N]
+    for u32 i in 0..N do
+        shifted[i] = if index[i] < 0 then index[i] + add + 1 else index[i] fi
+    endfor
+    field[NBINS] result = [0; NBINS]
+    for u32 i in 0..NBINS do
+        field best = 0
+        bool seen = false
+        for u32 k in 0..N do
+            bool match = shifted[k] == i
+            best = if match && (!seen || a[k] < best) then a[k] else best fi
+            seen = seen || match
+        endfor
+        result[i] = best
+    endfor
+    return result

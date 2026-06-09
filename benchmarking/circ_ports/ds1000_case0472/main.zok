@@ -1,0 +1,18 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0472/kernel.py
+// REASON: Slice a[-1:,...] lowered to explicit copy of the last row of a 6D array
+
+def main(field[6][2][9][3][7][4] a) -> field[1][2][9][3][7][4]:
+    field[1][2][9][3][7][4] result = [[[[[[0; 4]; 7]; 3]; 9]; 2]; 1]
+    for u32 i in 0..2 do
+        for u32 j in 0..9 do
+            for u32 k in 0..3 do
+                for u32 l in 0..7 do
+                    for u32 m in 0..4 do
+                        result[0][i][j][k][l][m] = a[5][i][j][k][l][m]
+                    endfor
+                endfor
+            endfor
+        endfor
+    endfor
+    return result

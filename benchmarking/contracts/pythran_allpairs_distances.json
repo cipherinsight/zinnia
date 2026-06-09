@@ -1,0 +1,79 @@
+{
+  "categories": [
+    "shape-dtype-only"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "np.array",
+        "np.sum"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 11,
+      "line_start": 10,
+      "mutated_params": [],
+      "name": "dists",
+      "ops": [
+        "Pow",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "X",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "Y",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "dists",
+        "np.arange",
+        "reshape"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 17,
+      "line_start": 14,
+      "mutated_params": [],
+      "name": "allpairs_distances",
+      "ops": [
+        "Mult"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "d",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_allpairs_distances/kernel.py",
+  "notes": [
+    "Likely first-pass candidate: mostly needs dtype/rank/shape annotations."
+  ],
+  "preconditions": [],
+  "program": "pythran_allpairs_distances",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: shape-dtype-only\n# Expected outcome: compile/prove candidate\n# Precondition: Shape/rank/dtype annotations only.\nimport numpy as np\n\n@zk_chip\ndef dists(X: Float[Array, 'N<=1024'], Y: Float[Array, 'N<=1024']):\n    return np.array([[np.sum((x - y) ** 2) for x in X] for y in Y])\n\n@zk_circuit\ndef allpairs_distances(d: Integer):\n    X = np.arange(600 * d).reshape((600, d))\n    Y = np.arange(200 * d).reshape((200, d))\n    return dists(X, Y)",
+  "source_status": "direct"
+}

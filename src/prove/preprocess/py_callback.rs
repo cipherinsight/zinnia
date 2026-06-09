@@ -22,16 +22,17 @@ impl<'py> PyExternalCallback<'py> {
         match val {
             Value::Integer(v) => v.into_pyobject(self.py).unwrap().unbind().into(),
             Value::Float(v) => v.into_pyobject(self.py).unwrap().unbind().into(),
-            Value::Bool(v) => {
-                (*v).into_pyobject(self.py).unwrap().to_owned().unbind().into()
-            }
+            Value::Bool(v) => (*v)
+                .into_pyobject(self.py)
+                .unwrap()
+                .to_owned()
+                .unbind()
+                .into(),
             Value::Str(s) => s.as_str().into_pyobject(self.py).unwrap().unbind().into(),
             Value::List(items) => {
-                let py_list = pyo3::types::PyList::new(
-                    self.py,
-                    items.iter().map(|v| self.value_to_py(v)),
-                )
-                .unwrap();
+                let py_list =
+                    pyo3::types::PyList::new(self.py, items.iter().map(|v| self.value_to_py(v)))
+                        .unwrap();
                 py_list.unbind().into()
             }
             Value::None => self.py.None(),
@@ -60,31 +61,34 @@ impl<'py> PyExternalCallback<'py> {
         }
         // Try list
         if let Ok(list) = obj.downcast::<pyo3::types::PyList>() {
-            let items: Result<Vec<Value>, _> = list
-                .iter()
-                .map(|item| self.py_to_value(&item))
-                .collect();
+            let items: Result<Vec<Value>, _> =
+                list.iter().map(|item| self.py_to_value(&item)).collect();
             return Ok(Value::List(items?));
         }
         Err(ProvingError::other(format!(
-            "Cannot convert Python object to Value: {:?}", obj
+            "Cannot convert Python object to Value: {:?}",
+            obj
         )))
     }
 }
 
 impl<'py> ExternalCallback for PyExternalCallback<'py> {
     fn call(&self, func_name: &str, args: Vec<Value>) -> Result<Value, ProvingError> {
-        let callable = self.callables
+        let callable = self
+            .callables
             .get_item(func_name)
             .map_err(|e| ProvingError::other(format!("Failed to get '{}': {}", func_name, e)))?
-            .ok_or_else(|| ProvingError::other(format!("External function '{}' not found", func_name)))?;
+            .ok_or_else(|| {
+                ProvingError::other(format!("External function '{}' not found", func_name))
+            })?;
 
         let py_args: Vec<PyObject> = args.iter().map(|v| self.value_to_py(v)).collect();
         let py_tuple = PyTuple::new(self.py, &py_args)
             .map_err(|e| ProvingError::other(format!("Failed to create args tuple: {}", e)))?;
 
-        let result = callable.call1(&py_tuple)
-            .map_err(|e| ProvingError::other(format!("External function '{}' failed: {}", func_name, e)))?;
+        let result = callable.call1(&py_tuple).map_err(|e| {
+            ProvingError::other(format!("External function '{}' failed: {}", func_name, e))
+        })?;
 
         self.py_to_value(&result)
     }

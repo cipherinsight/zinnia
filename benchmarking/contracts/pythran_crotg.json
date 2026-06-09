@@ -1,0 +1,76 @@
+{
+  "categories": [
+    "complex",
+    "denominator-obligation",
+    "domain-obligation"
+  ],
+  "diagnostics": [
+    "Complex kernels require Complex dtype support or a fail-closed classification."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "CB.conjugate",
+        "abs",
+        "complex",
+        "math.sqrt"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 24,
+      "line_start": 12,
+      "mutated_params": [],
+      "name": "CROTG",
+      "ops": [
+        "Add",
+        "Div",
+        "Eq",
+        "Mult",
+        "Pow"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "CA",
+          "proposed_annotation": "Complex",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "CB",
+          "proposed_annotation": "Complex",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "C",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "S",
+          "proposed_annotation": "Complex",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_crotg/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1]."
+  ],
+  "program": "pythran_crotg",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: complex, denominator-obligation, domain-obligation\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].\n# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.\nimport math\n\n@zk_circuit\ndef CROTG(CA: Complex, CB: Complex, C: Float=0, S: Complex=0):\n    if abs(CA) == 0.0:\n        C = 0.0\n        S = complex(1.0, 0.0)\n        CA = CB\n    else:\n        SCALE = abs(CA) + abs(CB)\n        NORM = SCALE * math.sqrt(abs(CA / SCALE) ** 2 + abs(CB / SCALE) ** 2)\n        ALPHA = CA / abs(CA)\n        C = abs(CA) / NORM\n        S = ALPHA * CB.conjugate() / NORM\n        CA = ALPHA * NORM\n    return (CA, CB, C, S)",
+  "source_status": "direct"
+}

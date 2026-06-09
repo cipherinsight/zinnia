@@ -1,0 +1,25 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0422/kernel.py
+// REASON: np.hstack and np.correlate(mode='valid') unrolled over fixed shapes (a:50, hstack(b[1:],b)->99).
+
+const u32 N = 50
+const u32 M = 99  // b[1:] has 49 + b has 50 = 99
+const u32 OUT = M - N + 1  // 50
+
+def main(field[N] a, field[N] b) -> field[OUT]:
+    field[M] hs = [0; M]
+    for u32 i in 0..49 do
+        hs[i] = b[i + 1]
+    endfor
+    for u32 i in 0..N do
+        hs[49 + i] = b[i]
+    endfor
+    field[OUT] result = [0; OUT]
+    for u32 k in 0..OUT do
+        field s = 0
+        for u32 j in 0..N do
+            s = s + a[j] * hs[k + j]
+        endfor
+        result[k] = s
+    endfor
+    return result

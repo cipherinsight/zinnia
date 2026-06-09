@@ -1,0 +1,28 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0438/kernel.py
+// REASON: np.corrcoef requires sqrt for normalisation (floating-point semantics); ZoKrates field has no sqrt.
+
+const u32 N = 4
+
+def main(field[N] post, field[N] distance) -> field:
+    field sp = 0
+    field sd = 0
+    for u32 i in 0..N do
+        sp = sp + post[i]
+        sd = sd + distance[i]
+    endfor
+    field mp = sp / N
+    field md = sd / N
+    field cov = 0
+    field vp = 0
+    field vd = 0
+    for u32 i in 0..N do
+        field dp = post[i] - mp
+        field dd = distance[i] - md
+        cov = cov + dp * dd
+        vp = vp + dp * dp
+        vd = vd + dd * dd
+    endfor
+    // CirC rejects: corrcoef needs cov / sqrt(vp * vd); no sqrt available.
+    field denom = vp * vd  // placeholder for sqrt(vp*vd)
+    return cov / denom

@@ -1,0 +1,112 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "domain-obligation",
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "math.acos",
+        "math.cos",
+        "math.sin",
+        "range",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 26,
+      "line_start": 15,
+      "mutated_params": [],
+      "name": "run",
+      "ops": [
+        "Add",
+        "Div",
+        "Lt",
+        "Mult",
+        "NotEq",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "xmin",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "ymin",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "xmax",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "ymax",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "step",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "range_",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "range_x",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "range_y",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "t",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_hyantes_core/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_hyantes_core",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, domain-obligation, in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport math\n\n@zk_circuit\n@requires(lambda xmin, ymin, xmax, ymax, step, range_, range_x, range_y, t: step != 0.0)\n@requires(lambda xmin, ymin, xmax, ymax, step, range_, range_x, range_y, t: range_ != 0.0)\ndef run(xmin: Float, ymin: Float, xmax: Float, ymax: Float, step: Float, range_: Float, range_x: Integer, range_y: Integer, t: Float[Array, 'N<=1024 M<=1024']):\n    pt = [[0] * range_y for _ in range(range_x)]\n    'omp parallel for'\n    for i in range(range_x):\n        for j in range(range_y):\n            s = 0\n            for k in t:\n                tmp = 6368.0 * math.acos(math.cos(xmin + step * i) * math.cos(k[0]) * math.cos(ymin + step * j - k[1]) + math.sin(xmin + step * i) * math.sin(k[0]))\n                if tmp < range_:\n                    s += k[2] / (1 + tmp)\n            pt[i][j] = s\n    return pt",
+  "source_status": "direct"
+}

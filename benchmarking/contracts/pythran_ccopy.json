@@ -1,0 +1,83 @@
+{
+  "categories": [
+    "complex",
+    "in-place-mutation",
+    "loop-bounded"
+  ],
+  "diagnostics": [
+    "Complex kernels require Complex dtype support or a fail-closed classification."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "range",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 29,
+      "line_start": 12,
+      "mutated_params": [
+        "CY"
+      ],
+      "name": "CCOPY",
+      "ops": [
+        "Add",
+        "Eq",
+        "Lt",
+        "LtE",
+        "Mult"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "N",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "CX",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "INCX",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": true,
+          "name": "CY",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "INCY",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_ccopy/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "pythran_ccopy",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: complex, in-place-mutation, loop-bounded\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.\n\n@zk_circuit\n@requires(lambda N, CX, INCX, CY, INCY: 0 <= N <= 1024)\ndef CCOPY(N: Integer, CX: Complex[Array, 'N<=1024'], INCX: Integer, CY: Complex[Array, 'N<=1024'], INCY: Integer):\n    if N <= 0:\n        return\n    if INCX == 1 and INCY == 1:\n        for I in range(N):\n            CY[I] = CX[I]\n    else:\n        IX = 0\n        IY = 0\n        if INCX < 0:\n            IX = (-N + 1) * INCX\n        if INCY < 0:\n            IY = (-N + 1) * INCY\n        for I in range(N):\n            CY[IY] = CX[IX]\n            IX = IX + INCX\n            IY = IY + INCY\n    return",
+  "source_status": "direct"
+}

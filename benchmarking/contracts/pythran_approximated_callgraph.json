@@ -1,0 +1,78 @@
+{
+  "categories": [
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 10,
+      "line_start": 9,
+      "mutated_params": [],
+      "name": "call",
+      "ops": [
+        "Add"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "i",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "j",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "call",
+        "list",
+        "map",
+        "out.append",
+        "range",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 18,
+      "line_start": 14,
+      "mutated_params": [],
+      "name": "approximated_callgraph",
+      "ops": [
+        "LtE"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "size",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_approximated_callgraph/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_approximated_callgraph",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n\n@zk_chip\ndef call(i: Integer, j: Integer):\n    return i + j\n\n@zk_circuit\n@requires(lambda size: 0 <= size <= 1024)\ndef approximated_callgraph(size: Integer):\n    out = list()\n    for i in range(size):\n        out.append(list(map(lambda j: call(i, j), range(size))))\n    return out",
+  "source_status": "direct"
+}

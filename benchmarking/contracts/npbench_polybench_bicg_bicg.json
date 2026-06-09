@@ -1,0 +1,55 @@
+{
+  "categories": [
+    "matmul-dot"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 6,
+      "line_start": 5,
+      "mutated_params": [],
+      "name": "kernel",
+      "ops": [
+        "MatMult"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "A",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "p",
+          "proposed_annotation": "Float[Array, 'M<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "r",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "npbench_polybench_bicg_bicg/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Declare shared matrix/vector dimensions explicitly, e.g. A[N,K] with x[K]."
+  ],
+  "program": "npbench_polybench_bicg_bicg",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\nimport numpy as np\n\n@zk_circuit\ndef kernel(A: Float[Array, 'N<=1024 M<=1024'], p: Float[Array, 'M<=1024'], r: Float[Array, 'N<=1024']):\n    return (r @ A, A @ p)",
+  "source_status": "direct"
+}

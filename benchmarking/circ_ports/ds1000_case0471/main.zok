@@ -1,0 +1,12 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0471/kernel.py
+// REASON: Input shape "N<=64 M<=64 K<=64" is runtime-bounded; ZoKrates requires fixed compile-time dimensions
+
+def main(field[64][64][64] Z) -> field[64][64][1]:
+    field[64][64][1] result = [[[0; 1]; 64]; 64]
+    for u32 i in 0..64 do
+        for u32 j in 0..64 do
+            result[i][j][0] = Z[i][j][63]
+        endfor
+    endfor
+    return result

@@ -25,7 +25,10 @@ impl IRPass for DynamicNDArrayMemoryLowering {
         let mut dynamic_access_segments: HashSet<u32> = HashSet::new();
 
         for stmt in &ir_graph.stmts {
-            if let IR::AllocateMemory { segment_id, size, .. } = &stmt.ir {
+            if let IR::AllocateMemory {
+                segment_id, size, ..
+            } = &stmt.ir
+            {
                 segment_sizes.insert(*segment_id, *size);
             }
             match &stmt.ir {

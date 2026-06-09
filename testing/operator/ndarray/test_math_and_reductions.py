@@ -79,6 +79,20 @@ def test_np_maximum_with_broadcast():
     assert foo()
 
 
+def test_np_amax_amin_aliases_match_max_min():
+    """`np.amax`/`np.amin` are historical numpy spellings still in the
+    public API. They normalize to `max`/`min` in the dispatch and share
+    semantics (same axis/keepdims behaviour)."""
+    @zk_circuit
+    def foo():
+        a = np.asarray([[1, 5, 3], [4, 2, 6]])
+        assert np.amax(a) == 6
+        assert np.amin(a) == 1
+        assert (np.amax(a, axis=0) == np.asarray([4, 5, 6])).all()
+        assert (np.amin(a, axis=1) == np.asarray([1, 2])).all()
+    assert foo()
+
+
 def test_np_equal_vectorized():
     @zk_circuit
     def foo():

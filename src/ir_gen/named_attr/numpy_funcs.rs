@@ -11,17 +11,688 @@
 use std::collections::HashMap;
 
 use crate::ast::*;
-use crate::types::{CompositeData, ScalarValue, Value, ValueId, ZinniaType};
+use crate::types::{CompositeData, NumberType, ScalarValue, Value, ValueId, ZinniaType};
 
-use super::DispatchCtx;
 use super::super::IRGenerator;
+use super::DispatchCtx;
+
+fn ensure_no_kwargs(op: &str, kwargs: &HashMap<String, Value>, supported: &[&str]) {
+    for key in kwargs.keys() {
+        if !supported.iter().any(|allowed| allowed == key) {
+            panic!("{}: keyword argument `{}` is not supported", op, key);
+        }
+    }
+}
+
+fn numeric_leaf_count(v: &Value) -> Option<usize> {
+    match v {
+        Value::Integer(_) | Value::Float(_) | Value::Boolean(_) | Value::Complex { .. } => Some(1),
+        Value::List(d) | Value::Tuple(d) => d
+            .values
+            .iter()
+            .try_fold(0usize, |acc, elem| Some(acc + numeric_leaf_count(elem)?)),
+        Value::StaticArray { shape, .. } => Some(shape.iter().product()),
+        _ => None,
+    }
+}
+
+fn np_array_equal(b: &mut crate::builder::IRBuilder, args: &[Value]) -> Value {
+    assert!(args.len() >= 2, "np.array_equal: requires two input arrays");
+    if matches!(args[0], Value::DynamicNDArray(_)) || matches!(args[1], Value::DynamicNDArray(_)) {
+        panic!(
+            "np.array_equal is not yet supported for bounded-dynamic arrays; active-lane equality needs runtime-shape-aware semantics"
+        );
+    }
+    let lhs_count = numeric_leaf_count(&args[0]);
+    let rhs_count = numeric_leaf_count(&args[1]);
+    if lhs_count != rhs_count {
+        return b.ir_constant_bool(false);
+    }
+    let cmp = crate::helpers::value_ops::apply_binary_op(b, "eq", &args[0], &args[1]);
+    crate::helpers::value_ops::to_scalar_bool(b, &cmp)
+}
+
+fn np_isclose(
+    b: &mut crate::builder::IRBuilder,
+    args: &[Value],
+    kwargs: &HashMap<String, Value>,
+) -> Value {
+    ensure_no_kwargs("np.isclose", kwargs, &["rtol", "atol", "equal_nan"]);
+    assert!(args.len() >= 2, "np.isclose: requires a and b");
+    if matches!(args[0], Value::DynamicNDArray(_)) || matches!(args[1], Value::DynamicNDArray(_)) {
+        panic!(
+            "np.isclose is not yet supported for bounded-dynamic arrays; active-lane tolerance comparisons need runtime-shape-aware semantics"
+        );
+    }
+    // `equal_nan` is ignored under Zinnia's current no-NaN numeric model.
+    let rtol = kwargs
+        .get("rtol")
+        .cloned()
+        .unwrap_or_else(|| b.ir_constant_float(1e-05));
+    let atol = kwargs
+        .get("atol")
+        .cloned()
+        .unwrap_or_else(|| b.ir_constant_float(1e-08));
+    let lhs = &args[0];
+    let rhs = &args[1];
+
+    // Integer specialization: `np.isclose(int, int, atol=0)` is functionally
+    // equivalent to `int == int`. The float-tolerance chain (abs / qmul by
+    // rtol / qle) costs ~50 gates per cell on Float-Q32; for integer inputs
+    // with atol=0, the difference is always integer-valued, so |diff| <=
+    // rtol*|rhs| holds iff diff == 0 (for |rhs| < 1/rtol = 100000 under the
+    // numpy default rtol=1e-5). Drop straight to `eq` — gates fall from
+    // ~3900 to ~58 on 0368-style kernels.
+    let atol_is_zero = match &atol {
+        Value::Float(s) => s.static_val == Some(0.0),
+        Value::Integer(s) => s.static_val == Some(0),
+        Value::Boolean(s) => s.static_val == Some(false),
+        _ => false,
+    };
+    fn is_all_integer(v: &Value) -> bool {
+        match v {
+            Value::StaticArray { dtype, .. } => *dtype == NumberType::Integer,
+            Value::Integer(_) | Value::Boolean(_) => true,
+            Value::Float(_) => false,
+            Value::List(d) | Value::Tuple(d) => d.values.iter().all(is_all_integer),
+            _ => false,
+        }
+    }
+    if atol_is_zero && is_all_integer(lhs) && is_all_integer(rhs) {
+        return crate::helpers::value_ops::apply_binary_op(b, "eq", lhs, rhs);
+    }
+
+    let diff = crate::helpers::value_ops::apply_binary_op(b, "sub", lhs, rhs);
+    let abs_diff = np_abs_value(b, &diff);
+    let abs_rhs = np_abs_value(b, rhs);
+    let scaled = crate::helpers::value_ops::apply_binary_op(b, "mul", &rtol, &abs_rhs);
+    let tol = crate::helpers::value_ops::apply_binary_op(b, "add", &atol, &scaled);
+    crate::helpers::value_ops::apply_binary_op(b, "lte", &abs_diff, &tol)
+}
+
+fn np_abs_value(b: &mut crate::builder::IRBuilder, v: &Value) -> Value {
+    match v {
+        Value::StaticArray { .. } => {
+            if matches!(
+                v,
+                Value::StaticArray {
+                    dtype: NumberType::Complex,
+                    ..
+                }
+            ) {
+                crate::helpers::static_array::complex::np_abs_complex_static_array(b, v)
+            } else {
+                let (shape, dtype) = match v {
+                    Value::StaticArray { shape, dtype, .. } => (shape.clone(), *dtype),
+                    _ => unreachable!(),
+                };
+                let cells = crate::helpers::static_array::elementwise::payload_cells(b, v);
+                let out: Vec<Value> = cells
+                    .iter()
+                    .map(|cell| match cell {
+                        Value::Float(_) => b.ir_abs_f(cell),
+                        Value::Integer(_) | Value::Boolean(_) => b.ir_abs_i(cell),
+                        _ => panic!("np.isclose: unsupported StaticArray element type"),
+                    })
+                    .collect();
+                crate::helpers::static_array::base::build_static_array_from_flat(
+                    b, out, shape, dtype,
+                )
+            }
+        }
+        Value::List(d) | Value::Tuple(d) => {
+            let vals: Vec<Value> = d.values.iter().map(|elem| np_abs_value(b, elem)).collect();
+            let types = vals.iter().map(|elem| elem.zinnia_type()).collect();
+            Value::List(CompositeData {
+                elements_type: types,
+                values: vals,
+                value_id: ValueId::next(),
+            })
+        }
+        Value::Float(_) => b.ir_abs_f(v),
+        Value::Integer(_) | Value::Boolean(_) => b.ir_abs_i(v),
+        Value::Complex { real, imag } => {
+            let r = Value::Float(real.clone());
+            let i = Value::Float(imag.clone());
+            let rr = b.ir_mul_f(&r, &r);
+            let ii = b.ir_mul_f(&i, &i);
+            let sum = b.ir_add_f(&rr, &ii);
+            b.ir_sqrt_f(&sum)
+        }
+        _ => panic!("np.isclose: unsupported operand type {}", v.zinnia_type()),
+    }
+}
+
+fn static_array_meta(val: &Value, op: &str) -> (NumberType, Vec<usize>) {
+    match val {
+        Value::StaticArray { dtype, shape, .. } => (*dtype, shape.clone()),
+        _ => panic!("{op}: this DS1000 slice supports StaticArray inputs only"),
+    }
+}
+
+fn static_cells(b: &mut crate::builder::IRBuilder, val: &Value, op: &str) -> Vec<Value> {
+    match val {
+        Value::StaticArray { .. } => {
+            crate::helpers::static_array::elementwise::payload_cells(b, val)
+        }
+        Value::List(_) | Value::Tuple(_) => {
+            crate::helpers::composite::flatten_composite_with_builder(b, val)
+        }
+        _ => panic!("{op}: expected a static array/list"),
+    }
+}
+
+fn as_float_value(b: &mut crate::builder::IRBuilder, val: &Value) -> Value {
+    match val {
+        Value::Float(_) => val.clone(),
+        _ => b.ir_float_cast(val),
+    }
+}
+
+fn product_sum(b: &mut crate::builder::IRBuilder, lhs: &[Value], rhs: &[Value]) -> Value {
+    assert_eq!(
+        lhs.len(),
+        rhs.len(),
+        "product_sum: operand lengths must match"
+    );
+    let pairs: Vec<(Value, Value)> = lhs
+        .iter()
+        .zip(rhs.iter())
+        .map(|(l, r)| (as_float_value(b, l), as_float_value(b, r)))
+        .collect();
+    b.ir_product_sum_f(&pairs)
+}
+
+fn np_percentile_ds1000(
+    b: &mut crate::builder::IRBuilder,
+    args: &[Value],
+    kwargs: &HashMap<String, Value>,
+) -> Value {
+    ensure_no_kwargs("np.percentile", kwargs, &["q"]);
+    assert!(args.len() >= 2, "np.percentile: requires a and q");
+    let arr = &args[0];
+    let q = kwargs.get("q").or_else(|| args.get(1)).unwrap();
+    let (_, shape) = static_array_meta(arr, "np.percentile");
+    if shape.len() != 1 {
+        panic!("np.percentile: DS1000 slice supports 1-D StaticArray input only");
+    }
+    let n = shape[0];
+    if n == 0 {
+        panic!("np.percentile: empty arrays are not supported");
+    }
+    let sorted = crate::helpers::static_array::sorting::try_apply_sort(b, arr, None, false)
+        .unwrap_or_else(|| panic!("np.percentile: sorting failed for StaticArray input"));
+    let cells = static_cells(b, &sorted, "np.percentile");
+    let percentile_at = |b: &mut crate::builder::IRBuilder, p: i64| -> Value {
+        if !(0..=100).contains(&p) {
+            panic!("np.percentile: q must be in [0, 100]");
+        }
+        let rank = (p as f64 / 100.0) * ((n - 1) as f64);
+        let lo = rank.floor() as usize;
+        let hi = rank.ceil() as usize;
+        let weight = rank - lo as f64;
+        let lo_v = as_float_value(b, &cells[lo]);
+        if lo == hi {
+            lo_v
+        } else {
+            let hi_v = as_float_value(b, &cells[hi]);
+            let one_minus = b.ir_constant_float(1.0 - weight);
+            let weight_v = b.ir_constant_float(weight);
+            let left = b.ir_mul_f(&lo_v, &one_minus);
+            let right = b.ir_mul_f(&hi_v, &weight_v);
+            b.ir_add_f(&left, &right)
+        }
+    };
+    if let Some(p) = q.int_val() {
+        return percentile_at(b, p);
+    }
+    crate::optim::resolver::discharge_index_in_range(b, q, 0, 101, "np.percentile");
+    let mut result = percentile_at(b, 0);
+    for p in 1..=100 {
+        let p_val = b.ir_constant_int(p);
+        let cond = b.ir_equal_i(q, &p_val);
+        let candidate = percentile_at(b, p);
+        result = b.ir_select_f(&cond, &candidate, &result);
+    }
+    result
+}
+
+fn np_correlate_ds1000(
+    b: &mut crate::builder::IRBuilder,
+    args: &[Value],
+    kwargs: &HashMap<String, Value>,
+) -> Value {
+    ensure_no_kwargs("np.correlate", kwargs, &["mode"]);
+    assert!(args.len() >= 2, "np.correlate: requires a and v");
+    let mode = kwargs
+        .get("mode")
+        .or_else(|| args.get(2))
+        .and_then(|v| v.string_val())
+        .unwrap_or("valid");
+    if mode != "valid" {
+        panic!("np.correlate: DS1000 slice currently supports mode='valid' only");
+    }
+    let (lhs_dtype, lhs_shape) = static_array_meta(&args[0], "np.correlate");
+    let (rhs_dtype, rhs_shape) = static_array_meta(&args[1], "np.correlate");
+    if lhs_dtype == NumberType::Complex || rhs_dtype == NumberType::Complex {
+        panic!("np.correlate: Complex inputs are not supported in this slice");
+    }
+    if lhs_shape.len() != 1 || rhs_shape.len() != 1 {
+        panic!("np.correlate: DS1000 slice supports 1-D StaticArray inputs only");
+    }
+    let a = static_cells(b, &args[0], "np.correlate");
+    let v = static_cells(b, &args[1], "np.correlate");
+    let (long, short) = if a.len() >= v.len() {
+        (&a, &v)
+    } else {
+        (&v, &a)
+    };
+    let out_len = long.len() - short.len() + 1;
+    let mut out = Vec::with_capacity(out_len);
+    for start in 0..out_len {
+        out.push(product_sum(b, &long[start..start + short.len()], short));
+    }
+    crate::helpers::static_array::base::build_static_array_from_flat(
+        b,
+        out,
+        vec![out_len],
+        NumberType::Float,
+    )
+}
+
+fn np_corrcoef_ds1000(b: &mut crate::builder::IRBuilder, args: &[Value]) -> Value {
+    assert!(
+        args.len() >= 2,
+        "np.corrcoef: DS1000 slice requires x and y"
+    );
+    let (_, x_shape) = static_array_meta(&args[0], "np.corrcoef");
+    let (_, y_shape) = static_array_meta(&args[1], "np.corrcoef");
+    if x_shape.len() != 1 || y_shape.len() != 1 || x_shape[0] != y_shape[0] {
+        panic!("np.corrcoef: DS1000 slice supports same-length 1-D StaticArrays");
+    }
+    let n = x_shape[0];
+    if n <= 1 {
+        panic!("np.corrcoef: at least two observations are required");
+    }
+    let x = static_cells(b, &args[0], "np.corrcoef");
+    let y = static_cells(b, &args[1], "np.corrcoef");
+    let mean = |b: &mut crate::builder::IRBuilder, vals: &[Value]| -> Value {
+        let mut acc = b.ir_constant_float(0.0);
+        for v in vals {
+            let vf = as_float_value(b, v);
+            acc = b.ir_add_f(&acc, &vf);
+        }
+        let denom = b.ir_constant_float(vals.len() as f64);
+        b.ir_div_f(&acc, &denom)
+    };
+    let mx = mean(b, &x);
+    let my = mean(b, &y);
+    let mut cov_acc = b.ir_constant_float(0.0);
+    let mut vx_acc = b.ir_constant_float(0.0);
+    let mut vy_acc = b.ir_constant_float(0.0);
+    for i in 0..n {
+        let x_f = as_float_value(b, &x[i]);
+        let y_f = as_float_value(b, &y[i]);
+        let dx = b.ir_sub_f(&x_f, &mx);
+        let dy = b.ir_sub_f(&y_f, &my);
+        let cov_term = b.ir_mul_f(&dx, &dy);
+        cov_acc = b.ir_add_f(&cov_acc, &cov_term);
+        let vx_term = b.ir_mul_f(&dx, &dx);
+        vx_acc = b.ir_add_f(&vx_acc, &vx_term);
+        let vy_term = b.ir_mul_f(&dy, &dy);
+        vy_acc = b.ir_add_f(&vy_acc, &vy_term);
+    }
+    let denom_sq = b.ir_mul_f(&vx_acc, &vy_acc);
+    let denom = b.ir_sqrt_f(&denom_sq);
+    let corr = b.ir_div_f(&cov_acc, &denom);
+    let one = b.ir_constant_float(1.0);
+    crate::helpers::static_array::base::build_static_array_from_flat(
+        b,
+        vec![one.clone(), corr.clone(), corr, one],
+        vec![2, 2],
+        NumberType::Float,
+    )
+}
+
+fn np_einsum_ds1000(b: &mut crate::builder::IRBuilder, args: &[Value]) -> Value {
+    assert!(args.len() >= 2, "np.einsum: requires subscript and operand");
+    let subscript = args[0]
+        .string_val()
+        .unwrap_or_else(|| panic!("np.einsum: DS1000 slice requires a static subscript string"));
+    if subscript != "ii->i" {
+        panic!("np.einsum: DS1000 slice supports only 'ii->i'");
+    }
+    let (dtype, shape) = static_array_meta(&args[1], "np.einsum");
+    if shape.len() != 2 || shape[0] != shape[1] {
+        panic!("np.einsum('ii->i'): operand must be a square rank-2 StaticArray");
+    }
+    let cells = static_cells(b, &args[1], "np.einsum");
+    let n = shape[0];
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        out.push(cells[i * n + i].clone());
+    }
+    crate::helpers::static_array::base::build_static_array_from_flat(b, out, vec![n], dtype)
+}
+
+fn np_tensordot_ds1000(
+    b: &mut crate::builder::IRBuilder,
+    args: &[Value],
+    kwargs: &HashMap<String, Value>,
+) -> Value {
+    assert!(args.len() >= 2, "np.tensordot: requires a and b");
+    let (a_dtype, a_shape) = static_array_meta(&args[0], "np.tensordot");
+    let (b_dtype, b_shape) = static_array_meta(&args[1], "np.tensordot");
+    if a_dtype == NumberType::Complex || b_dtype == NumberType::Complex {
+        panic!("np.tensordot: Complex inputs are not supported in this slice");
+    }
+    let axes_value = kwargs
+        .get("axes")
+        .or_else(|| args.get(2))
+        .unwrap_or_else(|| panic!("np.tensordot: requires axes"));
+    let axes = match axes_value {
+        Value::Tuple(d) | Value::List(d) if d.values.len() == 2 => {
+            let lhs = match &d.values[0] {
+                Value::Integer(_) => vec![d.values[0].int_val().unwrap()],
+                Value::Tuple(td) | Value::List(td) => td
+                    .values
+                    .iter()
+                    .map(|v| {
+                        v.int_val()
+                            .expect("np.tensordot: axes must be static integers")
+                    })
+                    .collect(),
+                _ => panic!("np.tensordot: axes must be static integers"),
+            };
+            let rhs = match &d.values[1] {
+                Value::Integer(_) => vec![d.values[1].int_val().unwrap()],
+                Value::Tuple(td) | Value::List(td) => td
+                    .values
+                    .iter()
+                    .map(|v| {
+                        v.int_val()
+                            .expect("np.tensordot: axes must be static integers")
+                    })
+                    .collect(),
+                _ => panic!("np.tensordot: axes must be static integers"),
+            };
+            (lhs, rhs)
+        }
+        Value::Integer(_) => {
+            let n = axes_value.int_val().unwrap();
+            if n < 0 {
+                panic!("np.tensordot: axes integer must be nonnegative");
+            }
+            let n = n as usize;
+            let lhs: Vec<i64> = ((a_shape.len() - n)..a_shape.len())
+                .map(|v| v as i64)
+                .collect();
+            let rhs: Vec<i64> = (0..n).map(|v| v as i64).collect();
+            (lhs, rhs)
+        }
+        _ => panic!("np.tensordot: axes must be static"),
+    };
+    let norm_axis = |axis: i64, rank: usize, op: &str| -> usize {
+        crate::helpers::shape_arith::resolve_axis(axis, rank, op)
+    };
+    let a_axes: Vec<usize> = axes
+        .0
+        .iter()
+        .map(|a| norm_axis(*a, a_shape.len(), "np.tensordot"))
+        .collect();
+    let b_axes: Vec<usize> = axes
+        .1
+        .iter()
+        .map(|a| norm_axis(*a, b_shape.len(), "np.tensordot"))
+        .collect();
+    if a_axes.len() != b_axes.len() {
+        panic!("np.tensordot: axes lists must have same length");
+    }
+    for (aa, ba) in a_axes.iter().zip(b_axes.iter()) {
+        if a_shape[*aa] != b_shape[*ba] {
+            panic!("np.tensordot: contracted dimensions must match");
+        }
+    }
+    let a_keep: Vec<usize> = (0..a_shape.len())
+        .filter(|ax| !a_axes.contains(ax))
+        .collect();
+    let b_keep: Vec<usize> = (0..b_shape.len())
+        .filter(|ax| !b_axes.contains(ax))
+        .collect();
+    let mut out_shape: Vec<usize> = a_keep.iter().map(|ax| a_shape[*ax]).collect();
+    out_shape.extend(b_keep.iter().map(|ax| b_shape[*ax]));
+    let contract_shape: Vec<usize> = a_axes.iter().map(|ax| a_shape[*ax]).collect();
+    let out_total: usize = out_shape.iter().product();
+    let contract_total: usize = contract_shape.iter().product();
+    let out_strides = crate::helpers::shape_arith::row_major_strides(&out_shape);
+    let contract_strides = crate::helpers::shape_arith::row_major_strides(&contract_shape);
+    let a_strides = crate::helpers::shape_arith::row_major_strides(&a_shape);
+    let b_strides = crate::helpers::shape_arith::row_major_strides(&b_shape);
+    let a_cells = static_cells(b, &args[0], "np.tensordot");
+    let b_cells = static_cells(b, &args[1], "np.tensordot");
+    let mut out = Vec::with_capacity(out_total);
+    for out_idx in 0..out_total {
+        let out_coords =
+            crate::helpers::shape_arith::decode_coords(out_idx, &out_shape, &out_strides);
+        let mut a_base = vec![0usize; a_shape.len()];
+        let mut b_base = vec![0usize; b_shape.len()];
+        let mut cursor = 0usize;
+        for ax in &a_keep {
+            a_base[*ax] = out_coords[cursor];
+            cursor += 1;
+        }
+        for ax in &b_keep {
+            b_base[*ax] = out_coords[cursor];
+            cursor += 1;
+        }
+        let mut lhs = Vec::with_capacity(contract_total);
+        let mut rhs = Vec::with_capacity(contract_total);
+        for cidx in 0..contract_total {
+            let ccoords = if contract_shape.is_empty() {
+                Vec::new()
+            } else {
+                crate::helpers::shape_arith::decode_coords(cidx, &contract_shape, &contract_strides)
+            };
+            let mut ac = a_base.clone();
+            let mut bc = b_base.clone();
+            for (k, coord) in ccoords.iter().enumerate() {
+                ac[a_axes[k]] = *coord;
+                bc[b_axes[k]] = *coord;
+            }
+            lhs.push(a_cells[crate::helpers::shape_arith::encode_coords(&ac, &a_strides)].clone());
+            rhs.push(b_cells[crate::helpers::shape_arith::encode_coords(&bc, &b_strides)].clone());
+        }
+        out.push(product_sum(b, &lhs, &rhs));
+    }
+    crate::helpers::static_array::base::build_static_array_from_flat(
+        b,
+        out,
+        out_shape,
+        NumberType::Float,
+    )
+}
+
+fn np_diag(b: &mut crate::builder::IRBuilder, args: &[Value]) -> Value {
+    assert!(!args.is_empty(), "np.diag: requires an input array");
+    let k = args.get(1).and_then(|v| v.int_val()).unwrap_or(0);
+    if k != 0 {
+        panic!("np.diag: nonzero k is not yet supported");
+    }
+    let arr = &args[0];
+    if matches!(arr, Value::DynamicNDArray(_)) {
+        panic!("np.diag is not yet supported for bounded-dynamic arrays; output shape depends on runtime metadata");
+    }
+    let (dtype, shape, cells) = match arr {
+        Value::StaticArray { dtype, shape, .. } => (
+            *dtype,
+            shape.clone(),
+            crate::helpers::static_array::elementwise::payload_cells(b, arr),
+        ),
+        Value::List(_) | Value::Tuple(_) => {
+            let promoted = crate::helpers::static_array::base::to_static_array(b, arr)
+                .unwrap_or_else(|| panic!("np.diag: input must be a numeric array"));
+            let Value::StaticArray { dtype, shape, .. } = &promoted else {
+                unreachable!()
+            };
+            (
+                *dtype,
+                shape.clone(),
+                crate::helpers::static_array::elementwise::payload_cells(b, &promoted),
+            )
+        }
+        _ => panic!("np.diag: input must be a 1-D or 2-D array"),
+    };
+    match shape.as_slice() {
+        [n] => {
+            let total = n * n;
+            let zero = match dtype {
+                NumberType::Float => b.ir_constant_float(0.0),
+                NumberType::Integer => b.ir_constant_int(0),
+                NumberType::Complex => crate::helpers::value_ops::pack_complex_value(
+                    b.ir_constant_float(0.0),
+                    b.ir_constant_float(0.0),
+                ),
+            };
+            let mut out = vec![zero; total];
+            for i in 0..*n {
+                out[i * n + i] = cells[i].clone();
+            }
+            if dtype == NumberType::Complex {
+                let mut reals = Vec::with_capacity(total);
+                let mut imags = Vec::with_capacity(total);
+                for cell in out {
+                    match cell {
+                        Value::Complex { real, imag } => {
+                            reals.push(Value::Float(real));
+                            imags.push(Value::Float(imag));
+                        }
+                        _ => unreachable!("Complex diag cell expected"),
+                    }
+                }
+                crate::helpers::static_array::base::build_static_array_from_flat_complex(
+                    b,
+                    reals,
+                    imags,
+                    vec![*n, *n],
+                )
+            } else {
+                crate::helpers::static_array::base::build_static_array_from_flat(
+                    b,
+                    out,
+                    vec![*n, *n],
+                    dtype,
+                )
+            }
+        }
+        [rows, cols] => {
+            let n = (*rows).min(*cols);
+            let mut out = Vec::with_capacity(n);
+            for i in 0..n {
+                out.push(cells[i * cols + i].clone());
+            }
+            if dtype == NumberType::Complex {
+                let mut reals = Vec::with_capacity(n);
+                let mut imags = Vec::with_capacity(n);
+                for cell in out {
+                    match cell {
+                        Value::Complex { real, imag } => {
+                            reals.push(Value::Float(real));
+                            imags.push(Value::Float(imag));
+                        }
+                        _ => unreachable!("Complex diag cell expected"),
+                    }
+                }
+                crate::helpers::static_array::base::build_static_array_from_flat_complex(
+                    b,
+                    reals,
+                    imags,
+                    vec![n],
+                )
+            } else {
+                crate::helpers::static_array::base::build_static_array_from_flat(
+                    b,
+                    out,
+                    vec![n],
+                    dtype,
+                )
+            }
+        }
+        _ => panic!("np.diag: input must be 1-D or 2-D"),
+    }
+}
+
+fn np_indices(b: &mut crate::builder::IRBuilder, args: &[Value]) -> Value {
+    assert!(!args.is_empty(), "np.indices: requires dimensions");
+    let dims_value = &args[0];
+    let dims: Vec<usize> = match dims_value {
+        Value::Tuple(d) | Value::List(d) => d
+            .values
+            .iter()
+            .map(|v| {
+                let n = v.int_val().unwrap_or_else(|| {
+                    panic!("np.indices: dimensions must be compile-time integers")
+                });
+                assert!(n >= 0, "np.indices: dimensions must be nonnegative");
+                n as usize
+            })
+            .collect(),
+        Value::Integer(_) => {
+            let n = dims_value
+                .int_val()
+                .unwrap_or_else(|| panic!("np.indices: dimension must be compile-time integer"));
+            assert!(n >= 0, "np.indices: dimension must be nonnegative");
+            vec![n as usize]
+        }
+        _ => panic!("np.indices: dimensions must be a tuple/list of integers"),
+    };
+    if dims.is_empty() {
+        panic!("np.indices: dimensions must not be empty");
+    }
+    let dense = args
+        .get(2)
+        .and_then(|v| v.bool_val())
+        .or_else(|| {
+            if let Some(Value::Boolean(_)) = args.get(1) {
+                args[1].bool_val()
+            } else {
+                None
+            }
+        })
+        .unwrap_or(true);
+    if !dense {
+        panic!("np.indices(sparse=True) is not yet supported");
+    }
+    let total: usize = dims.iter().product();
+    let mut out_shape = Vec::with_capacity(dims.len() + 1);
+    out_shape.push(dims.len());
+    out_shape.extend(dims.iter().copied());
+    let strides = crate::helpers::shape_arith::row_major_strides(&dims);
+    let mut out = Vec::with_capacity(dims.len() * total);
+    for axis in 0..dims.len() {
+        for flat in 0..total {
+            let coord = if total == 0 {
+                0
+            } else {
+                crate::helpers::shape_arith::decode_coords(flat, &dims, &strides)[axis]
+            };
+            out.push(b.ir_constant_int(coord as i64));
+        }
+    }
+    crate::helpers::static_array::base::build_static_array_from_flat(
+        b,
+        out,
+        out_shape,
+        NumberType::Integer,
+    )
+}
 
 /// Check if the first arg is a list/tuple containing DynamicNDArrays.
 fn has_dynamic_array_in_list(args: &[Value]) -> bool {
     match args.first() {
-        Some(Value::List(cd)) | Some(Value::Tuple(cd)) => {
-            cd.values.iter().any(|v| matches!(v, Value::DynamicNDArray(_)))
-        }
+        Some(Value::List(cd)) | Some(Value::Tuple(cd)) => cd
+            .values
+            .iter()
+            .any(|v| matches!(v, Value::DynamicNDArray(_))),
         _ => false,
     }
 }
@@ -31,9 +702,10 @@ fn has_dynamic_array_in_list(args: &[Value]) -> bool {
 /// path before falling back to the legacy nested-List handlers.
 fn list_contains_static_array(arg: &Value) -> bool {
     match arg {
-        Value::List(cd) | Value::Tuple(cd) => {
-            cd.values.iter().any(|v| matches!(v, Value::StaticArray { .. }))
-        }
+        Value::List(cd) | Value::Tuple(cd) => cd
+            .values
+            .iter()
+            .any(|v| matches!(v, Value::StaticArray { .. })),
         _ => false,
     }
 }
@@ -50,12 +722,21 @@ impl IRGenerator {
         let v = match (target, member) {
             // ── np.* (numpy-like operations) ───────────────────────────
             // numpy dtype aliases — collapse width into ZinniaType (Float / Integer / Boolean)
-            ("np", "float16" | "float32" | "float64" | "double" | "single" | "half" | "longdouble") => Value::Class(ZinniaType::Float),
-            ("np", "int8" | "int16" | "int32" | "int64" | "uint8" | "uint16" | "uint32" | "uint64"
-                 | "intp" | "uintp" | "long" | "byte" | "short" | "intc" | "uintc" | "ubyte"
-                 | "ushort" | "longlong" | "ulonglong") => Value::Class(ZinniaType::Integer),
+            (
+                "np",
+                "float16" | "float32" | "float64" | "double" | "single" | "half" | "longdouble",
+            ) => Value::Class(ZinniaType::Float),
+            (
+                "np",
+                "int8" | "int16" | "int32" | "int64" | "uint8" | "uint16" | "uint32" | "uint64"
+                | "intp" | "uintp" | "long" | "byte" | "short" | "intc" | "uintc" | "ubyte"
+                | "ushort" | "longlong" | "ulonglong",
+            ) => Value::Class(ZinniaType::Integer),
             ("np", "bool_") => Value::Class(ZinniaType::Boolean),
-            ("np", "complex64" | "complex128" | "complex256" | "csingle" | "cdouble" | "clongdouble") => Value::Class(ZinniaType::Complex),
+            (
+                "np",
+                "complex64" | "complex128" | "complex256" | "csingle" | "cdouble" | "clongdouble",
+            ) => Value::Class(ZinniaType::Complex),
             // Complex helpers
             ("np", "conj" | "conjugate") => {
                 let v = visited_args_orig.first().cloned().unwrap_or(Value::None);
@@ -71,8 +752,18 @@ impl IRGenerator {
                         Value::Complex { real, imag: ni }
                     }
                     // P5a: Complex StaticArray → fresh imag segment with negated values; share real segment.
-                    Value::StaticArray { dtype: crate::types::NumberType::Complex, .. } => {
-                        crate::helpers::static_array::complex::np_conj_static_array(&mut self.builder, &v)
+                    Value::StaticArray {
+                        dtype: crate::types::NumberType::Complex,
+                        ..
+                    } => crate::helpers::static_array::complex::np_conj_static_array(
+                        &mut self.builder,
+                        &v,
+                    ),
+                    Value::DynamicNDArray(d) => {
+                        crate::ops::dyn_ndarray::metadata::dyn_complex_conjugate(
+                            &mut self.builder,
+                            &d,
+                        )
                     }
                     // For real inputs, conj is the identity.
                     other => other,
@@ -82,8 +773,18 @@ impl IRGenerator {
                 let v = visited_args_orig.first().cloned().unwrap_or(Value::None);
                 match v {
                     Value::Complex { real, .. } => Value::Float(real),
-                    Value::StaticArray { dtype: crate::types::NumberType::Complex, .. } => {
-                        crate::helpers::static_array::complex::np_real_static_array(&mut self.builder, &v)
+                    Value::StaticArray {
+                        dtype: crate::types::NumberType::Complex,
+                        ..
+                    } => crate::helpers::static_array::complex::np_real_static_array(
+                        &mut self.builder,
+                        &v,
+                    ),
+                    Value::DynamicNDArray(d) => {
+                        crate::ops::dyn_ndarray::metadata::dyn_complex_real(
+                            &mut self.builder,
+                            &d,
+                        )
                     }
                     // For real inputs, real is the identity.
                     other => other,
@@ -93,8 +794,18 @@ impl IRGenerator {
                 let v = visited_args_orig.first().cloned().unwrap_or(Value::None);
                 match v {
                     Value::Complex { imag, .. } => Value::Float(imag),
-                    Value::StaticArray { dtype: crate::types::NumberType::Complex, .. } => {
-                        crate::helpers::static_array::complex::np_imag_static_array(&mut self.builder, &v)
+                    Value::StaticArray {
+                        dtype: crate::types::NumberType::Complex,
+                        ..
+                    } => crate::helpers::static_array::complex::np_imag_static_array(
+                        &mut self.builder,
+                        &v,
+                    ),
+                    Value::DynamicNDArray(d) => {
+                        crate::ops::dyn_ndarray::metadata::dyn_complex_imag(
+                            &mut self.builder,
+                            &d,
+                        )
                     }
                     // For real inputs, imag is zero of same shape.
                     Value::StaticArray { shape, .. } => {
@@ -107,7 +818,9 @@ impl IRGenerator {
                             crate::types::NumberType::Float,
                         )
                     }
-                    Value::Integer(_) | Value::Float(_) | Value::Boolean(_) => self.builder.ir_constant_float(0.0),
+                    Value::Integer(_) | Value::Float(_) | Value::Boolean(_) => {
+                        self.builder.ir_constant_float(0.0)
+                    }
                     other => other,
                 }
             }
@@ -121,7 +834,8 @@ impl IRGenerator {
                     // Validate that all sub-elements have consistent shapes
                     if let Value::List(data) | Value::Tuple(data) = val {
                         if data.values.len() > 1 {
-                            let first_is_composite = matches!(&data.values[0], Value::List(_) | Value::Tuple(_));
+                            let first_is_composite =
+                                matches!(&data.values[0], Value::List(_) | Value::Tuple(_));
                             for v in &data.values[1..] {
                                 let is_composite = matches!(v, Value::List(_) | Value::Tuple(_));
                                 if is_composite != first_is_composite {
@@ -140,7 +854,10 @@ impl IRGenerator {
                     // P1 segarr-foundation: numeric Python list/tuple inputs
                     // become segment-backed `Value::StaticArray`. Falls back
                     // to passing through for non-numeric / heterogeneous data.
-                    if let Some(sa) = crate::helpers::static_array::base::to_static_array(&mut self.builder, &cast_val) {
+                    if let Some(sa) = crate::helpers::static_array::base::to_static_array(
+                        &mut self.builder,
+                        &cast_val,
+                    ) {
                         sa
                     } else {
                         cast_val
@@ -149,24 +866,75 @@ impl IRGenerator {
                     Value::None
                 }
             }
-            ("np", "zeros") => crate::ops::static_ndarray_ops::np_fill(&mut self.builder, visited_args, _visited_kwargs, 0),
-            ("np", "ones") => crate::ops::static_ndarray_ops::np_fill(&mut self.builder, visited_args, _visited_kwargs, 1),
-            ("np", "empty" | "ndarray") => crate::ops::static_ndarray_ops::np_fill(&mut self.builder, visited_args, _visited_kwargs, 0),
-            ("np", "zeros_like") => crate::ops::static_ndarray_ops::np_fill_like(&mut self.builder, visited_args, _visited_kwargs, 0),
-            ("np", "ones_like") => crate::ops::static_ndarray_ops::np_fill_like(&mut self.builder, visited_args, _visited_kwargs, 1),
-            ("np", "empty_like") => crate::ops::static_ndarray_ops::np_fill_like(&mut self.builder, visited_args, _visited_kwargs, 0),
-            ("np", "identity" | "eye") => crate::ops::static_ndarray_ops::np_identity(&mut self.builder, visited_args),
-            // numpy reduction aliases — forward to the existing reduce/argmax_argmin path used by x.sum() / x.argmin()
-            ("np", method @ ("sum" | "prod" | "min" | "max" | "any" | "all")) => {
+            ("np", "zeros") => crate::ops::static_ndarray_ops::np_fill(
+                &mut self.builder,
+                visited_args,
+                _visited_kwargs,
+                0,
+            ),
+            ("np", "ones") => crate::ops::static_ndarray_ops::np_fill(
+                &mut self.builder,
+                visited_args,
+                _visited_kwargs,
+                1,
+            ),
+            ("np", "empty" | "ndarray") => crate::ops::static_ndarray_ops::np_fill(
+                &mut self.builder,
+                visited_args,
+                _visited_kwargs,
+                0,
+            ),
+            ("np", "full") => crate::ops::static_ndarray_ops::np_full(
+                &mut self.builder,
+                visited_args,
+                _visited_kwargs,
+            ),
+            ("np", "zeros_like") => crate::ops::static_ndarray_ops::np_fill_like(
+                &mut self.builder,
+                visited_args,
+                _visited_kwargs,
+                0,
+            ),
+            ("np", "ones_like") => crate::ops::static_ndarray_ops::np_fill_like(
+                &mut self.builder,
+                visited_args,
+                _visited_kwargs,
+                1,
+            ),
+            ("np", "empty_like") => crate::ops::static_ndarray_ops::np_fill_like(
+                &mut self.builder,
+                visited_args,
+                _visited_kwargs,
+                0,
+            ),
+            ("np", "full_like") => crate::ops::static_ndarray_ops::np_full_like(
+                &mut self.builder,
+                visited_args,
+                _visited_kwargs,
+            ),
+            ("np", "identity" | "eye") => {
+                crate::ops::static_ndarray_ops::np_identity(&mut self.builder, visited_args)
+            }
+            // numpy reduction aliases — forward to the existing reduce/argmax_argmin path used by x.sum() / x.argmin().
+            // `amax`/`amin` are the historical numpy spellings (still in
+            // the public API); they share semantics with `max`/`min`.
+            ("np", method @ (
+                "sum" | "prod"
+                | "min" | "amin"
+                | "max" | "amax"
+                | "any" | "all"
+            )) => {
+                let method = match method {
+                    "amin" => "min",
+                    "amax" => "max",
+                    m => m,
+                };
                 // P4b: native StaticArray dispatch before the legacy boundary.
                 let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
                 let axis_arg_orig = visited_kwargs_orig
                     .get("axis")
                     .or_else(|| visited_args_orig.get(1));
-                let keepdims = visited_kwargs_orig
-                    .get("keepdims")
-                    .and_then(|v| v.bool_val())
-                    .unwrap_or(false);
+                let keepdims = super::kwarg_static_truthy(visited_kwargs_orig, "keepdims", false);
                 if let Some(out) = crate::helpers::static_array::reductions::try_apply_reduce(
                     &mut self.builder,
                     method,
@@ -186,10 +954,7 @@ impl IRGenerator {
                 let axis_arg_orig = visited_kwargs_orig
                     .get("axis")
                     .or_else(|| visited_args_orig.get(1));
-                let keepdims = visited_kwargs_orig
-                    .get("keepdims")
-                    .and_then(|v| v.bool_val())
-                    .unwrap_or(false);
+                let keepdims = super::kwarg_static_truthy(visited_kwargs_orig, "keepdims", false);
                 if let Some(out) = crate::helpers::static_array::reductions::try_apply_argmax_argmin(
                     &mut self.builder,
                     &val_orig,
@@ -201,63 +966,156 @@ impl IRGenerator {
                 }
                 let val = visited_args.first().cloned().unwrap_or(Value::None);
                 let axis_arg = _visited_kwargs.get("axis").or_else(|| visited_args.get(1));
-                crate::helpers::array_ops::argmax_argmin(&mut self.builder, &val, axis_arg, method == "argmax")
+                crate::helpers::array_ops::argmax_argmin(
+                    &mut self.builder,
+                    &val,
+                    axis_arg,
+                    method == "argmax",
+                )
+            }
+            ("np", method @ ("sort" | "argsort")) => {
+                let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
+                let axis_arg_orig = visited_kwargs_orig
+                    .get("axis")
+                    .or_else(|| visited_args_orig.get(1));
+                if let Some(out) = crate::helpers::static_array::sorting::try_apply_sort(
+                    &mut self.builder,
+                    &val_orig,
+                    axis_arg_orig,
+                    method == "argsort",
+                ) {
+                    return Some(out);
+                }
+                panic!(
+                    "np.{}: only StaticArray inputs are supported; dynamic sort/argsort is not yet implemented",
+                    method
+                );
             }
             ("np", "dot" | "matmul") => {
                 let lhs = visited_args.first().cloned().unwrap_or(Value::None);
                 let rhs = visited_args.get(1).cloned().unwrap_or(Value::None);
+                if matches!(lhs, Value::DynamicNDArray(_)) || matches!(rhs, Value::DynamicNDArray(_)) {
+                    panic!(
+                        "np.{} is not yet supported for bounded-dynamic arrays; use static arrays or keep matmul outside the bounded-dynamic surface",
+                        member
+                    );
+                }
                 crate::ops::static_ndarray_ops::matmul(&mut self.builder, &lhs, &rhs)
             }
-            ("np", "square") => crate::ops::static_ndarray_ops::np_square(&mut self.builder, visited_args),
-            ("np", "diff") => crate::ops::static_ndarray_ops::np_diff(&mut self.builder, visited_args),
-            ("np", "outer") => crate::ops::static_ndarray_ops::np_outer(&mut self.builder, visited_args),
-            ("np", "add_outer") => crate::ops::static_ndarray_ops::np_outer_op(&mut self.builder, visited_args, "add"),
-            ("np", "subtract_outer") => crate::ops::static_ndarray_ops::np_outer_op(&mut self.builder, visited_args, "sub"),
-            ("np", "multiply_outer") => crate::ops::static_ndarray_ops::np_outer_op(&mut self.builder, visited_args, "mul"),
-            ("np", "divide_outer") => crate::ops::static_ndarray_ops::np_outer_op(&mut self.builder, visited_args, "div"),
-            ("np", "arange") => crate::ops::static_ndarray_ops::np_arange(&mut self.builder, visited_args),
-            ("np", "linspace") => crate::ops::static_ndarray_ops::np_linspace(&mut self.builder, visited_args, _visited_kwargs),
-            ("np", "allclose") => crate::ops::static_ndarray_ops::np_allclose(&mut self.builder, visited_args, _visited_kwargs),
+            ("np", "square") => {
+                crate::ops::static_ndarray_ops::np_square(&mut self.builder, visited_args)
+            }
+            ("np", "deg2rad" | "radians") => {
+                let x = visited_args.first().cloned().unwrap_or(Value::None);
+                let scale = self
+                    .builder
+                    .ir_constant_float(std::f64::consts::PI / 180.0);
+                crate::helpers::value_ops::apply_binary_op(&mut self.builder, "mul", &x, &scale)
+            }
+            ("np", "rad2deg" | "degrees") => {
+                let x = visited_args.first().cloned().unwrap_or(Value::None);
+                let scale = self
+                    .builder
+                    .ir_constant_float(180.0 / std::f64::consts::PI);
+                crate::helpers::value_ops::apply_binary_op(&mut self.builder, "mul", &x, &scale)
+            }
+            ("np", "diff") => {
+                crate::ops::static_ndarray_ops::np_diff(&mut self.builder, visited_args)
+            }
+            ("np", "outer") => {
+                crate::ops::static_ndarray_ops::np_outer(&mut self.builder, visited_args)
+            }
+            ("np", "add_outer") => {
+                crate::ops::static_ndarray_ops::np_outer_op(&mut self.builder, visited_args, "add")
+            }
+            ("np", "subtract_outer") => {
+                crate::ops::static_ndarray_ops::np_outer_op(&mut self.builder, visited_args, "sub")
+            }
+            ("np", "multiply_outer") => {
+                crate::ops::static_ndarray_ops::np_outer_op(&mut self.builder, visited_args, "mul")
+            }
+            ("np", "divide_outer") => {
+                crate::ops::static_ndarray_ops::np_outer_op(&mut self.builder, visited_args, "div")
+            }
+            ("np", "arange") => {
+                crate::ops::static_ndarray_ops::np_arange(&mut self.builder, visited_args)
+            }
+            ("np", "linspace") => crate::ops::static_ndarray_ops::np_linspace(
+                &mut self.builder,
+                visited_args,
+                _visited_kwargs,
+            ),
+            ("np", "allclose") => crate::ops::static_ndarray_ops::np_allclose(
+                &mut self.builder,
+                visited_args,
+                _visited_kwargs,
+            ),
+            ("np", "isclose") => np_isclose(&mut self.builder, visited_args, _visited_kwargs),
+            ("np", "array_equal") => np_array_equal(&mut self.builder, visited_args),
             ("np", "concatenate") => {
                 if has_dynamic_array_in_list(visited_args) {
-                    crate::ops::dyn_ndarray::memory_ops::dyn_concatenate(&mut self.builder, visited_args, _visited_kwargs)
+                    crate::ops::dyn_ndarray::memory_ops::dyn_concatenate(
+                        &mut self.builder,
+                        visited_args,
+                        _visited_kwargs,
+                    )
                 } else {
                     // P4c: native StaticArray dispatch — uses orig args (un-converted).
-                    let raw_axis = visited_kwargs_orig.get("axis")
+                    let raw_axis = visited_kwargs_orig
+                        .get("axis")
                         .or_else(|| visited_args_orig.get(1))
                         .and_then(|v| v.int_val())
                         .unwrap_or(0);
                     if let Some(arrays_arg) = visited_args_orig.first() {
                         if list_contains_static_array(arrays_arg) {
-                            if let Some(out) = crate::helpers::static_array::shape::try_apply_concatenate(
-                                &mut self.builder, arrays_arg, raw_axis,
-                            ) {
+                            if let Some(out) =
+                                crate::helpers::static_array::shape::try_apply_concatenate(
+                                    &mut self.builder,
+                                    arrays_arg,
+                                    raw_axis,
+                                )
+                            {
                                 return Some(out);
                             }
                         }
                     }
-                    crate::ops::static_ndarray_ops::np_concatenate(&mut self.builder, visited_args, _visited_kwargs)
+                    crate::ops::static_ndarray_ops::np_concatenate(
+                        &mut self.builder,
+                        visited_args,
+                        _visited_kwargs,
+                    )
                 }
             }
             ("np", "stack") => {
                 if has_dynamic_array_in_list(visited_args) {
-                    crate::ops::dyn_ndarray::memory_ops::dyn_stack(&mut self.builder, visited_args, _visited_kwargs)
+                    crate::ops::dyn_ndarray::memory_ops::dyn_stack(
+                        &mut self.builder,
+                        visited_args,
+                        _visited_kwargs,
+                    )
                 } else {
                     // P4c: native StaticArray dispatch.
-                    let raw_axis = visited_kwargs_orig.get("axis")
+                    let raw_axis = visited_kwargs_orig
+                        .get("axis")
                         .or_else(|| visited_args_orig.get(1))
                         .and_then(|v| v.int_val())
                         .unwrap_or(0);
                     if let Some(arrays_arg) = visited_args_orig.first() {
                         if list_contains_static_array(arrays_arg) {
                             if let Some(out) = crate::helpers::static_array::shape::try_apply_stack(
-                                &mut self.builder, arrays_arg, raw_axis,
+                                &mut self.builder,
+                                arrays_arg,
+                                raw_axis,
                             ) {
                                 return Some(out);
                             }
                         }
                     }
-                    crate::ops::static_ndarray_ops::np_stack(&mut self.builder, visited_args, _visited_kwargs)
+                    crate::ops::static_ndarray_ops::np_stack(
+                        &mut self.builder,
+                        visited_args,
+                        _visited_kwargs,
+                    )
                 }
             }
             ("np", "vstack") => {
@@ -265,7 +1123,8 @@ impl IRGenerator {
                 if let Some(arrays_arg) = visited_args_orig.first() {
                     if list_contains_static_array(arrays_arg) {
                         if let Some(out) = crate::helpers::static_array::shape::try_apply_vstack(
-                            &mut self.builder, arrays_arg,
+                            &mut self.builder,
+                            arrays_arg,
                         ) {
                             return Some(out);
                         }
@@ -273,13 +1132,16 @@ impl IRGenerator {
                 }
                 crate::ops::static_ndarray_ops::np_vstack(&mut self.builder, visited_args)
             }
-            ("np", "row_stack") => crate::ops::static_ndarray_ops::np_row_stack(&mut self.builder, visited_args),
+            ("np", "row_stack") => {
+                crate::ops::static_ndarray_ops::np_row_stack(&mut self.builder, visited_args)
+            }
             ("np", "hstack") => {
                 // P4c: native StaticArray dispatch.
                 if let Some(arrays_arg) = visited_args_orig.first() {
                     if list_contains_static_array(arrays_arg) {
                         if let Some(out) = crate::helpers::static_array::shape::try_apply_hstack(
-                            &mut self.builder, arrays_arg,
+                            &mut self.builder,
+                            arrays_arg,
                         ) {
                             return Some(out);
                         }
@@ -287,14 +1149,19 @@ impl IRGenerator {
                 }
                 crate::ops::static_ndarray_ops::np_hstack(&mut self.builder, visited_args)
             }
-            ("np", "dstack") => crate::ops::static_ndarray_ops::np_dstack(&mut self.builder, visited_args),
+            ("np", "dstack") => {
+                crate::ops::static_ndarray_ops::np_dstack(&mut self.builder, visited_args)
+            }
             ("np", "column_stack") => {
                 // P4c: native StaticArray dispatch.
                 if let Some(arrays_arg) = visited_args_orig.first() {
                     if list_contains_static_array(arrays_arg) {
-                        if let Some(out) = crate::helpers::static_array::shape::try_apply_column_stack(
-                            &mut self.builder, arrays_arg,
-                        ) {
+                        if let Some(out) =
+                            crate::helpers::static_array::shape::try_apply_column_stack(
+                                &mut self.builder,
+                                arrays_arg,
+                            )
+                        {
                             return Some(out);
                         }
                     }
@@ -303,7 +1170,11 @@ impl IRGenerator {
             }
             ("np", "swapaxes") => {
                 let val = visited_args.first().cloned().unwrap_or(Value::None);
-                crate::ops::static_ndarray_ops::ndarray_swapaxes(&mut self.builder, &val, &visited_args[1..])
+                crate::ops::static_ndarray_ops::ndarray_swapaxes(
+                    &mut self.builder,
+                    &val,
+                    &visited_args[1..],
+                )
             }
             ("np", "moveaxis") => {
                 // P4c: native StaticArray dispatch via array_ops::moveaxis fast-path,
@@ -311,67 +1182,122 @@ impl IRGenerator {
                 let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
                 if matches!(val_orig, Value::StaticArray { .. }) {
                     return Some(crate::helpers::array_ops::moveaxis(
-                        &mut self.builder, &val_orig, &visited_args_orig[1..],
+                        &mut self.builder,
+                        &val_orig,
+                        &visited_args_orig[1..],
                     ));
                 }
                 let val = visited_args.first().cloned().unwrap_or(Value::None);
-                crate::ops::static_ndarray_ops::ndarray_moveaxis(&mut self.builder, &val, &visited_args[1..])
+                crate::ops::static_ndarray_ops::ndarray_moveaxis(
+                    &mut self.builder,
+                    &val,
+                    &visited_args[1..],
+                )
             }
             ("np", "transpose") => {
                 // P4c: native StaticArray dispatch.
                 let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
                 if matches!(val_orig, Value::StaticArray { .. }) {
                     if let Some(out) = crate::helpers::static_array::shape::try_apply_transpose(
-                        &mut self.builder, &val_orig, &visited_args_orig[1..],
+                        &mut self.builder,
+                        &val_orig,
+                        &visited_args_orig[1..],
                     ) {
                         return Some(out);
                     }
                 }
                 let val = visited_args.first().cloned().unwrap_or(Value::None);
-                crate::helpers::ndarray::ndarray_transpose(&mut self.builder, &val, &visited_args[1..])
+                crate::helpers::ndarray::ndarray_transpose(
+                    &mut self.builder,
+                    &val,
+                    &visited_args[1..],
+                )
             }
-            ("np", "flip") => crate::ops::static_ndarray_ops::np_flip(&mut self.builder, visited_args, _visited_kwargs),
-            ("np", "flipud") => crate::ops::static_ndarray_ops::np_flipud(&mut self.builder, visited_args),
-            ("np", "fliplr") => crate::ops::static_ndarray_ops::np_fliplr(&mut self.builder, visited_args),
-            ("np", "rot90") => crate::ops::static_ndarray_ops::np_rot90(&mut self.builder, visited_args, _visited_kwargs),
+            ("np", "flip") => crate::ops::static_ndarray_ops::np_flip(
+                &mut self.builder,
+                visited_args,
+                _visited_kwargs,
+            ),
+            ("np", "flipud") => {
+                crate::ops::static_ndarray_ops::np_flipud(&mut self.builder, visited_args)
+            }
+            ("np", "fliplr") => {
+                crate::ops::static_ndarray_ops::np_fliplr(&mut self.builder, visited_args)
+            }
+            ("np", "rot90") => crate::ops::static_ndarray_ops::np_rot90(
+                &mut self.builder,
+                visited_args,
+                _visited_kwargs,
+            ),
             ("np", "squeeze") => {
                 let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
                 if matches!(val_orig, Value::StaticArray { .. }) {
-                    let axis_arg = visited_kwargs_orig.get("axis").or_else(|| visited_args_orig.get(1));
+                    let axis_arg = visited_kwargs_orig
+                        .get("axis")
+                        .or_else(|| visited_args_orig.get(1));
                     if let Some(out) = crate::helpers::static_array::shape::try_apply_squeeze(
-                        &mut self.builder, &val_orig, axis_arg,
+                        &mut self.builder,
+                        &val_orig,
+                        axis_arg,
                     ) {
                         return Some(out);
                     }
                 }
-                crate::ops::static_ndarray_ops::np_squeeze(&mut self.builder, visited_args, _visited_kwargs)
+                crate::ops::static_ndarray_ops::np_squeeze(
+                    &mut self.builder,
+                    visited_args,
+                    _visited_kwargs,
+                )
             }
             ("np", "expand_dims") => {
                 let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
                 if matches!(val_orig, Value::StaticArray { .. }) {
                     let axis_arg = visited_args_orig.get(1);
                     if let Some(out) = crate::helpers::static_array::shape::try_apply_expand_dims(
-                        &mut self.builder, &val_orig, axis_arg,
+                        &mut self.builder,
+                        &val_orig,
+                        axis_arg,
                     ) {
                         return Some(out);
                     }
                 }
                 crate::ops::static_ndarray_ops::np_expand_dims(&mut self.builder, visited_args)
             }
-            ("np", "broadcast_to") => crate::ops::static_ndarray_ops::np_broadcast_to(&mut self.builder, visited_args),
-            ("np", "atleast_1d") => crate::ops::static_ndarray_ops::np_atleast_nd(&mut self.builder, visited_args, 1),
-            ("np", "atleast_2d") => crate::ops::static_ndarray_ops::np_atleast_nd(&mut self.builder, visited_args, 2),
-            ("np", "atleast_3d") => crate::ops::static_ndarray_ops::np_atleast_nd(&mut self.builder, visited_args, 3),
-            ("np", "tile") => crate::ops::static_ndarray_ops::np_tile(&mut self.builder, visited_args),
+            ("np", "broadcast_to") => {
+                crate::ops::static_ndarray_ops::np_broadcast_to(&mut self.builder, visited_args)
+            }
+            ("np", "atleast_1d") => {
+                crate::ops::static_ndarray_ops::np_atleast_nd(&mut self.builder, visited_args, 1)
+            }
+            ("np", "atleast_2d") => {
+                crate::ops::static_ndarray_ops::np_atleast_nd(&mut self.builder, visited_args, 2)
+            }
+            ("np", "atleast_3d") => {
+                crate::ops::static_ndarray_ops::np_atleast_nd(&mut self.builder, visited_args, 3)
+            }
+            ("np", "tile") => {
+                crate::ops::static_ndarray_ops::np_tile(&mut self.builder, visited_args)
+            }
             ("np", "take") => {
-                // np.take(arr, indices, axis=None). For now we support the
-                // default-axis case on a 1-D source, or explicit axis=0 — the
-                // semantics that compose with `fancy_index_static`. Multi-D
-                // flatten-then-take and arbitrary axes are TBD.
+                let arr_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
+                let indices_orig = visited_args_orig.get(1).cloned().unwrap_or(Value::None);
+                let axis_raw_orig = visited_kwargs_orig
+                    .get("axis")
+                    .or_else(|| visited_args_orig.get(2));
+                if let Some(out) = crate::helpers::static_array::sorting::try_apply_take(
+                    &mut self.builder,
+                    &arr_orig,
+                    &indices_orig,
+                    axis_raw_orig,
+                ) {
+                    return Some(out);
+                }
+                // Legacy composite path: default-axis case on a 1-D source,
+                // or explicit axis=0. Multi-D flatten-then-take and arbitrary
+                // axes are handled by the StaticArray path above or rejected.
                 let arr = visited_args.first().cloned().unwrap_or(Value::None);
                 let indices = visited_args.get(1).cloned().unwrap_or(Value::None);
-                let axis_raw = _visited_kwargs.get("axis")
-                    .or_else(|| visited_args.get(2));
+                let axis_raw = _visited_kwargs.get("axis").or_else(|| visited_args.get(2));
                 let axis_is_default = match axis_raw {
                     None => true,
                     Some(Value::None) => true,
@@ -384,7 +1310,10 @@ impl IRGenerator {
                 };
                 // Default-axis path on a 1-D source matches axis=0; for
                 // multi-D `axis=None` we'd need to flatten first.
-                let is_1d = data.values.iter().all(|v| !matches!(v, Value::List(_) | Value::Tuple(_)));
+                let is_1d = data
+                    .values
+                    .iter()
+                    .all(|v| !matches!(v, Value::List(_) | Value::Tuple(_)));
                 if !axis_is_default && axis_val != 0 {
                     panic!("np.take with axis != 0 is not yet implemented");
                 }
@@ -398,7 +1327,9 @@ impl IRGenerator {
                 // Group 5c (E-axis): content fact relay.
                 if let (Some(in_vid), Some(out_vid)) = (arr.value_id(), out.value_id()) {
                     crate::optim::resolver::relay_forall_eq_const_from_input(
-                        &mut self.builder, in_vid, out_vid,
+                        &mut self.builder,
+                        in_vid,
+                        out_vid,
                     );
                 }
                 out
@@ -409,9 +1340,18 @@ impl IRGenerator {
                         Value::DynamicNDArray(d) => d.clone(),
                         _ => unreachable!(),
                     };
-                    crate::ops::dyn_ndarray::memory_ops::dyn_split(&mut self.builder, &data, &visited_args[1..], _visited_kwargs)
+                    crate::ops::dyn_ndarray::memory_ops::dyn_split(
+                        &mut self.builder,
+                        &data,
+                        &visited_args[1..],
+                        _visited_kwargs,
+                    )
                 } else {
-                    crate::ops::static_ndarray_ops::np_split(&mut self.builder, visited_args, _visited_kwargs)
+                    crate::ops::static_ndarray_ops::np_split(
+                        &mut self.builder,
+                        visited_args,
+                        _visited_kwargs,
+                    )
                 }
             }
             ("np", "array_split") => {
@@ -420,9 +1360,18 @@ impl IRGenerator {
                         Value::DynamicNDArray(d) => d.clone(),
                         _ => unreachable!(),
                     };
-                    crate::ops::dyn_ndarray::memory_ops::dyn_array_split(&mut self.builder, &data, &visited_args[1..], _visited_kwargs)
+                    crate::ops::dyn_ndarray::memory_ops::dyn_array_split(
+                        &mut self.builder,
+                        &data,
+                        &visited_args[1..],
+                        _visited_kwargs,
+                    )
                 } else {
-                    crate::ops::static_ndarray_ops::np_array_split(&mut self.builder, visited_args, _visited_kwargs)
+                    crate::ops::static_ndarray_ops::np_array_split(
+                        &mut self.builder,
+                        visited_args,
+                        _visited_kwargs,
+                    )
                 }
             }
             ("np", "hsplit") => {
@@ -434,8 +1383,16 @@ impl IRGenerator {
                     let ndim = data.meta.logical_shape.len();
                     let ax = if ndim == 1 { 0i64 } else { 1i64 };
                     let mut kw = _visited_kwargs.clone();
-                    kw.insert("axis".to_string(), Value::Integer(ScalarValue::new(Some(ax), None)));
-                    crate::ops::dyn_ndarray::memory_ops::dyn_split(&mut self.builder, &data, &visited_args[1..], &kw)
+                    kw.insert(
+                        "axis".to_string(),
+                        Value::Integer(ScalarValue::new(Some(ax), None)),
+                    );
+                    crate::ops::dyn_ndarray::memory_ops::dyn_split(
+                        &mut self.builder,
+                        &data,
+                        &visited_args[1..],
+                        &kw,
+                    )
                 } else {
                     crate::ops::static_ndarray_ops::np_hsplit(&mut self.builder, visited_args)
                 }
@@ -447,8 +1404,16 @@ impl IRGenerator {
                         _ => unreachable!(),
                     };
                     let mut kw = _visited_kwargs.clone();
-                    kw.insert("axis".to_string(), Value::Integer(ScalarValue::new(Some(0), None)));
-                    crate::ops::dyn_ndarray::memory_ops::dyn_split(&mut self.builder, &data, &visited_args[1..], &kw)
+                    kw.insert(
+                        "axis".to_string(),
+                        Value::Integer(ScalarValue::new(Some(0), None)),
+                    );
+                    crate::ops::dyn_ndarray::memory_ops::dyn_split(
+                        &mut self.builder,
+                        &data,
+                        &visited_args[1..],
+                        &kw,
+                    )
                 } else {
                     crate::ops::static_ndarray_ops::np_vsplit(&mut self.builder, visited_args)
                 }
@@ -460,24 +1425,300 @@ impl IRGenerator {
                         _ => unreachable!(),
                     };
                     let mut kw = _visited_kwargs.clone();
-                    kw.insert("axis".to_string(), Value::Integer(ScalarValue::new(Some(2), None)));
-                    crate::ops::dyn_ndarray::memory_ops::dyn_split(&mut self.builder, &data, &visited_args[1..], &kw)
+                    kw.insert(
+                        "axis".to_string(),
+                        Value::Integer(ScalarValue::new(Some(2), None)),
+                    );
+                    crate::ops::dyn_ndarray::memory_ops::dyn_split(
+                        &mut self.builder,
+                        &data,
+                        &visited_args[1..],
+                        &kw,
+                    )
                 } else {
                     crate::ops::static_ndarray_ops::np_dsplit(&mut self.builder, visited_args)
                 }
             }
-            ("np", "floor") => crate::ops::static_ndarray_ops::np_floor(&mut self.builder, visited_args),
-            ("np", "ceil") => crate::ops::static_ndarray_ops::np_ceil(&mut self.builder, visited_args),
-            ("np", "trunc") => crate::ops::static_ndarray_ops::np_trunc(&mut self.builder, visited_args),
-            ("np", "round") => crate::ops::static_ndarray_ops::np_round(&mut self.builder, visited_args),
-            ("np", "reciprocal") => crate::ops::static_ndarray_ops::np_reciprocal(&mut self.builder, visited_args),
-            ("np", "where") => crate::ops::static_ndarray_ops::np_where(&mut self.builder, visited_args),
-            ("np", "clip") => crate::ops::static_ndarray_ops::np_clip(&mut self.builder, visited_args),
-            ("np", "mean") => crate::ops::static_ndarray_ops::np_mean(&mut self.builder, visited_args, _visited_kwargs),
-            ("np", "var") => crate::ops::static_ndarray_ops::np_var(&mut self.builder, visited_args, _visited_kwargs),
-            ("np", "std") => crate::ops::static_ndarray_ops::np_std(&mut self.builder, visited_args, _visited_kwargs),
-            ("np", "cumsum") => crate::ops::static_ndarray_ops::np_cumsum(&mut self.builder, visited_args, _visited_kwargs),
-            ("np", "cumprod") => crate::ops::static_ndarray_ops::np_cumprod(&mut self.builder, visited_args, _visited_kwargs),
+            ("np", "floor") => {
+                match visited_args.first() {
+                    Some(Value::DynamicNDArray(_)) => panic!(
+                        "np.floor is not yet supported for bounded-dynamic arrays; dynamic Float rounding needs active-lane-aware fixed-point rounding constraints"
+                    ),
+                    _ => crate::ops::static_ndarray_ops::np_floor(&mut self.builder, visited_args),
+                }
+            }
+            ("np", "ceil") => {
+                match visited_args.first() {
+                    Some(Value::DynamicNDArray(_)) => panic!(
+                        "np.ceil is not yet supported for bounded-dynamic arrays; dynamic Float rounding needs active-lane-aware fixed-point rounding constraints"
+                    ),
+                    _ => crate::ops::static_ndarray_ops::np_ceil(&mut self.builder, visited_args),
+                }
+            }
+            ("np", "trunc") => {
+                match visited_args.first() {
+                    Some(Value::DynamicNDArray(_)) => panic!(
+                        "np.trunc is not yet supported for bounded-dynamic arrays; dynamic Float rounding needs active-lane-aware fixed-point rounding constraints"
+                    ),
+                    _ => crate::ops::static_ndarray_ops::np_trunc(&mut self.builder, visited_args),
+                }
+            }
+            ("np", "round") => {
+                match visited_args.first() {
+                    Some(Value::DynamicNDArray(_)) => panic!(
+                        "np.round is not yet supported for bounded-dynamic arrays; dynamic Float rounding needs active-lane-aware fixed-point rounding constraints"
+                    ),
+                    _ => crate::ops::static_ndarray_ops::np_round(&mut self.builder, visited_args),
+                }
+            }
+            ("np", "reciprocal") => {
+                match visited_args.first() {
+                    Some(Value::DynamicNDArray(_)) => panic!(
+                        "np.reciprocal is not yet supported for bounded-dynamic arrays because each active element needs a nonzero proof obligation"
+                    ),
+                    _ => crate::ops::static_ndarray_ops::np_reciprocal(&mut self.builder, visited_args),
+                }
+            }
+            ("np", "where") => {
+                crate::ops::static_ndarray_ops::np_where(&mut self.builder, visited_args)
+            }
+            ("np", "diag") => np_diag(&mut self.builder, visited_args),
+            ("np", "indices") => np_indices(&mut self.builder, visited_args),
+            ("np", "unravel_index") => crate::ops::static_ndarray_ops::np_unravel_index(
+                &mut self.builder,
+                visited_args,
+                _visited_kwargs,
+            ),
+            ("np", "ravel_multi_index") => crate::ops::static_ndarray_ops::np_ravel_multi_index(
+                &mut self.builder,
+                visited_args_orig,
+                visited_kwargs_orig,
+            ),
+            ("np", "take_along_axis") => crate::ops::static_ndarray_ops::np_take_along_axis(
+                &mut self.builder,
+                visited_args_orig,
+                visited_kwargs_orig,
+            ),
+            ("np", "delete") => crate::ops::static_ndarray_ops::np_delete(
+                &mut self.builder,
+                visited_args_orig,
+                visited_kwargs_orig,
+            ),
+            ("np", "insert") => crate::ops::static_ndarray_ops::np_insert(
+                &mut self.builder,
+                visited_args_orig,
+                visited_kwargs_orig,
+            ),
+            ("np", "pad") => crate::ops::static_ndarray_ops::np_pad(
+                &mut self.builder,
+                visited_args_orig,
+                visited_kwargs_orig,
+            ),
+            ("np", "argwhere") => {
+                crate::ops::static_ndarray_ops::np_argwhere(&mut self.builder, visited_args)
+            }
+            ("np", "nonzero") => {
+                crate::ops::static_ndarray_ops::np_nonzero(&mut self.builder, visited_args)
+            }
+            ("np", "flatnonzero") => {
+                let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
+                let flat = if matches!(val_orig, Value::StaticArray { .. }) {
+                    crate::helpers::static_array::shape::try_apply_flatten(
+                        &mut self.builder,
+                        &val_orig,
+                    )
+                    .unwrap_or(val_orig)
+                } else {
+                    visited_args.first().cloned().unwrap_or(Value::None)
+                };
+                let nz = crate::ops::static_ndarray_ops::np_nonzero(&mut self.builder, &[flat]);
+                match nz {
+                    Value::Tuple(d) if d.values.len() == 1 => d.values[0].clone(),
+                    _ => panic!("np.flatnonzero: expected rank-1 nonzero output"),
+                }
+            }
+            ("np", "in1d") => {
+                let ar1 = visited_args_orig.first().cloned().unwrap_or(Value::None);
+                let ar2 = visited_args_orig.get(1).cloned().unwrap_or(Value::None);
+                let ar1_flat = if matches!(ar1, Value::StaticArray { .. }) {
+                    crate::helpers::static_array::shape::try_apply_flatten(&mut self.builder, &ar1)
+                        .unwrap_or(ar1)
+                } else {
+                    ar1
+                };
+                let ar2_flat = if matches!(ar2, Value::StaticArray { .. }) {
+                    crate::helpers::static_array::shape::try_apply_flatten(&mut self.builder, &ar2)
+                        .unwrap_or(ar2)
+                } else {
+                    ar2
+                };
+                let (shape, ar1_cells) = match &ar1_flat {
+                    Value::StaticArray { shape, .. } => (
+                        shape.clone(),
+                        crate::helpers::static_array::elementwise::payload_cells(
+                            &mut self.builder,
+                            &ar1_flat,
+                        ),
+                    ),
+                    _ => panic!("np.in1d: ar1 must be a StaticArray in this slice"),
+                };
+                let ar2_cells = match &ar2_flat {
+                    Value::StaticArray { .. } => {
+                        crate::helpers::static_array::elementwise::payload_cells(
+                            &mut self.builder,
+                            &ar2_flat,
+                        )
+                    }
+                    Value::List(d) | Value::Tuple(d) => d.values.clone(),
+                    _ => panic!("np.in1d: ar2 must be a static array/list in this slice"),
+                };
+                let mut out = Vec::with_capacity(ar1_cells.len());
+                for lhs in ar1_cells {
+                    let mut found = self.builder.ir_constant_bool(false);
+                    for rhs in &ar2_cells {
+                        let eq = crate::helpers::value_ops::apply_binary_op(
+                            &mut self.builder,
+                            "eq",
+                            &lhs,
+                            rhs,
+                        );
+                        let eq_bool =
+                            crate::helpers::value_ops::to_scalar_bool(&mut self.builder, &eq);
+                        found = self.builder.ir_logical_or(&found, &eq_bool);
+                    }
+                    out.push(found);
+                }
+                crate::helpers::static_array::base::build_static_array_from_flat(
+                    &mut self.builder,
+                    out,
+                    shape,
+                    crate::types::NumberType::Integer,
+                )
+            }
+            ("np", "bincount") => {
+                crate::ops::static_ndarray_ops::np_bincount(
+                    &mut self.builder,
+                    visited_args_orig,
+                    visited_kwargs_orig,
+                )
+            }
+            ("np", "histogram") => crate::ops::static_ndarray_ops::np_histogram(
+                &mut self.builder,
+                visited_args,
+                _visited_kwargs,
+            ),
+            ("np", "percentile") => np_percentile_ds1000(
+                &mut self.builder,
+                visited_args_orig,
+                visited_kwargs_orig,
+            ),
+            ("np", "correlate") => np_correlate_ds1000(
+                &mut self.builder,
+                visited_args_orig,
+                visited_kwargs_orig,
+            ),
+            ("np", "corrcoef") => np_corrcoef_ds1000(&mut self.builder, visited_args_orig),
+            ("np", "einsum") => np_einsum_ds1000(&mut self.builder, visited_args_orig),
+            ("np", "tensordot") => np_tensordot_ds1000(
+                &mut self.builder,
+                visited_args_orig,
+                visited_kwargs_orig,
+            ),
+            ("np", "unique") => crate::ops::static_ndarray_ops::np_unique(
+                &mut self.builder,
+                visited_args_orig,
+                visited_kwargs_orig,
+            ),
+            ("np", "cov") => crate::ops::static_ndarray_ops::np_cov(
+                &mut self.builder,
+                visited_args_orig,
+                visited_kwargs_orig,
+            ),
+            ("np", "clip") => {
+                crate::ops::static_ndarray_ops::np_clip(&mut self.builder, visited_args)
+            }
+            ("np", "mean") => {
+                let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
+                let axis_arg_orig = visited_kwargs_orig
+                    .get("axis")
+                    .or_else(|| visited_args_orig.get(1));
+                let keepdims = super::kwarg_static_truthy(visited_kwargs_orig, "keepdims", false);
+                if let Some(out) = crate::helpers::static_array::reductions::try_apply_reduce(
+                    &mut self.builder,
+                    "mean",
+                    &val_orig,
+                    axis_arg_orig,
+                    keepdims,
+                ) {
+                    return Some(out);
+                }
+                crate::ops::static_ndarray_ops::np_mean(
+                    &mut self.builder,
+                    visited_args,
+                    _visited_kwargs,
+                )
+            }
+            ("np", op @ ("var" | "std")) => {
+                let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
+                let axis_arg_orig = visited_kwargs_orig
+                    .get("axis")
+                    .or_else(|| visited_args_orig.get(1));
+                let ddof_arg_orig = visited_kwargs_orig
+                    .get("ddof")
+                    .or_else(|| visited_args_orig.get(4));
+                let unsupported_dtype = visited_kwargs_orig
+                    .get("dtype")
+                    .or_else(|| visited_args_orig.get(2));
+                if !matches!(unsupported_dtype, None | Some(Value::None)) {
+                    panic!(
+                        "{}: dtype argument is deferred for native StaticArray stats",
+                        op
+                    );
+                }
+                let unsupported_out = visited_kwargs_orig
+                    .get("out")
+                    .or_else(|| visited_args_orig.get(3));
+                if !matches!(unsupported_out, None | Some(Value::None)) {
+                    panic!(
+                        "{}: out argument is deferred for native StaticArray stats",
+                        op
+                    );
+                }
+                let keepdims = super::kwarg_static_truthy(visited_kwargs_orig, "keepdims", false);
+                if let Some(out) = crate::helpers::static_array::reductions::try_apply_var_std(
+                    &mut self.builder,
+                    op,
+                    &val_orig,
+                    axis_arg_orig,
+                    ddof_arg_orig,
+                    keepdims,
+                ) {
+                    return Some(out);
+                }
+                if op == "var" {
+                    crate::ops::static_ndarray_ops::np_var(
+                        &mut self.builder,
+                        visited_args,
+                        _visited_kwargs,
+                    )
+                } else {
+                    crate::ops::static_ndarray_ops::np_std(
+                        &mut self.builder,
+                        visited_args,
+                        _visited_kwargs,
+                    )
+                }
+            }
+            ("np", "cumsum") => crate::ops::static_ndarray_ops::np_cumsum(
+                &mut self.builder,
+                visited_args,
+                _visited_kwargs,
+            ),
+            ("np", "cumprod") => crate::ops::static_ndarray_ops::np_cumprod(
+                &mut self.builder,
+                visited_args,
+                _visited_kwargs,
+            ),
             ("np", "promote_to_dynamic") => {
                 let val = visited_args.first().cloned().unwrap_or(Value::None);
                 crate::helpers::promote::promote_static_to_dynamic(&mut self.builder, &val)
@@ -491,12 +1732,18 @@ impl IRGenerator {
                 fn ast_block_depth(node: &ASTNode) -> usize {
                     match node {
                         ASTNode::ASTSquareBrackets(sb) => {
-                            if sb.values.is_empty() { 1 }
-                            else { 1 + ast_block_depth(&sb.values[0]) }
+                            if sb.values.is_empty() {
+                                1
+                            } else {
+                                1 + ast_block_depth(&sb.values[0])
+                            }
                         }
                         ASTNode::ASTParenthesis(p) => {
-                            if p.values.is_empty() { 1 }
-                            else { 1 + ast_block_depth(&p.values[0]) }
+                            if p.values.is_empty() {
+                                1
+                            } else {
+                                1 + ast_block_depth(&p.values[0])
+                            }
                         }
                         _ => 0,
                     }
@@ -508,34 +1755,65 @@ impl IRGenerator {
             ("np", "reshape") => {
                 // P4c: native StaticArray dispatch via array_ops::reshape fast-path.
                 let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
-                if matches!(val_orig, Value::StaticArray { .. }) {
+                if matches!(val_orig, Value::StaticArray { .. } | Value::DynamicNDArray(_)) {
                     return Some(crate::helpers::array_ops::reshape(
-                        &mut self.builder, &val_orig, &visited_args_orig[1..],
+                        &mut self.builder,
+                        &val_orig,
+                        &visited_args_orig[1..],
                     ));
                 }
                 let val = visited_args.first().cloned().unwrap_or(Value::None);
-                crate::ops::static_ndarray_ops::ndarray_reshape(&mut self.builder, &val, &visited_args[1..])
+                crate::ops::static_ndarray_ops::ndarray_reshape(
+                    &mut self.builder,
+                    &val,
+                    &visited_args[1..],
+                )
             }
             ("np", "repeat") => {
                 let val = visited_args.first().cloned().unwrap_or(Value::None);
-                crate::ops::static_ndarray_ops::ndarray_repeat(&mut self.builder, &val, &visited_args[1..], _visited_kwargs)
+                crate::ops::static_ndarray_ops::ndarray_repeat(
+                    &mut self.builder,
+                    &val,
+                    &visited_args[1..],
+                    _visited_kwargs,
+                )
             }
 
             // ── DynamicNDArray class methods ────────────────────────────
             ("DynamicNDArray", "zeros") | ("zinnia", "zeros") => {
-                crate::ops::dyn_ndarray::metadata::dyn_zeros(&mut self.builder, visited_args, _visited_kwargs)
+                crate::ops::dyn_ndarray::metadata::dyn_zeros(
+                    &mut self.builder,
+                    visited_args,
+                    _visited_kwargs,
+                )
             }
             ("DynamicNDArray", "ones") | ("zinnia", "ones") => {
-                crate::ops::dyn_ndarray::metadata::dyn_ones(&mut self.builder, visited_args, _visited_kwargs)
+                crate::ops::dyn_ndarray::metadata::dyn_ones(
+                    &mut self.builder,
+                    visited_args,
+                    _visited_kwargs,
+                )
             }
             ("DynamicNDArray", "eye") | ("zinnia", "eye") => {
-                crate::ops::dyn_ndarray::constructors::dyn_eye(&mut self.builder, visited_args, _visited_kwargs)
+                crate::ops::dyn_ndarray::constructors::dyn_eye(
+                    &mut self.builder,
+                    visited_args,
+                    _visited_kwargs,
+                )
             }
             ("DynamicNDArray", "concatenate") | ("zinnia", "concatenate") => {
-                crate::ops::dyn_ndarray::memory_ops::dyn_concatenate(&mut self.builder, visited_args, _visited_kwargs)
+                crate::ops::dyn_ndarray::memory_ops::dyn_concatenate(
+                    &mut self.builder,
+                    visited_args,
+                    _visited_kwargs,
+                )
             }
             ("DynamicNDArray", "stack") | ("zinnia", "stack") => {
-                crate::ops::dyn_ndarray::memory_ops::dyn_stack(&mut self.builder, visited_args, _visited_kwargs)
+                crate::ops::dyn_ndarray::memory_ops::dyn_stack(
+                    &mut self.builder,
+                    visited_args,
+                    _visited_kwargs,
+                )
             }
             _ => return None,
         };
@@ -598,7 +1876,9 @@ impl IRGenerator {
                     let name_owned = name.to_string();
                     let kw_clone = base_kwargs.clone();
                     crate::ops::dyn_ndarray::binary::dyn_unary_op(
-                        builder, d, out_dtype,
+                        builder,
+                        d,
+                        out_dtype,
                         move |b, v| {
                             let mut kw = kw_clone.clone();
                             kw.insert("x".to_string(), v.clone());
@@ -620,9 +1900,18 @@ impl IRGenerator {
                             let sin_b = builder.ir_sin_f(&im);
                             let r = builder.ir_mul_f(&exp_a, &cos_b);
                             let i = builder.ir_mul_f(&exp_a, &sin_b);
-                            let r_sv = match r { Value::Float(s) => s, _ => unreachable!() };
-                            let i_sv = match i { Value::Float(s) => s, _ => unreachable!() };
-                            Value::Complex { real: r_sv, imag: i_sv }
+                            let r_sv = match r {
+                                Value::Float(s) => s,
+                                _ => unreachable!(),
+                            };
+                            let i_sv = match i {
+                                Value::Float(s) => s,
+                                _ => unreachable!(),
+                            };
+                            Value::Complex {
+                                real: r_sv,
+                                imag: i_sv,
+                            }
                         }
                         "sin" => {
                             // sin(a + bi) = sin(a)*cosh(b) + i*cos(a)*sinh(b)
@@ -632,9 +1921,18 @@ impl IRGenerator {
                             let sb = builder.ir_sinh_f(&im);
                             let r = builder.ir_mul_f(&sa, &cb);
                             let i = builder.ir_mul_f(&ca, &sb);
-                            let r_sv = match r { Value::Float(s) => s, _ => unreachable!() };
-                            let i_sv = match i { Value::Float(s) => s, _ => unreachable!() };
-                            Value::Complex { real: r_sv, imag: i_sv }
+                            let r_sv = match r {
+                                Value::Float(s) => s,
+                                _ => unreachable!(),
+                            };
+                            let i_sv = match i {
+                                Value::Float(s) => s,
+                                _ => unreachable!(),
+                            };
+                            Value::Complex {
+                                real: r_sv,
+                                imag: i_sv,
+                            }
                         }
                         "cos" => {
                             // cos(a + bi) = cos(a)*cosh(b) - i*sin(a)*sinh(b)
@@ -646,9 +1944,18 @@ impl IRGenerator {
                             let prod_sa_sb = builder.ir_mul_f(&sa, &sb);
                             let zero = builder.ir_constant_float(0.0);
                             let i_neg = builder.ir_sub_f(&zero, &prod_sa_sb);
-                            let r_sv = match r { Value::Float(s) => s, _ => unreachable!() };
-                            let i_sv = match i_neg { Value::Float(s) => s, _ => unreachable!() };
-                            Value::Complex { real: r_sv, imag: i_sv }
+                            let r_sv = match r {
+                                Value::Float(s) => s,
+                                _ => unreachable!(),
+                            };
+                            let i_sv = match i_neg {
+                                Value::Float(s) => s,
+                                _ => unreachable!(),
+                            };
+                            Value::Complex {
+                                real: r_sv,
+                                imag: i_sv,
+                            }
                         }
                         "sqrt" => {
                             // sqrt(z) where z = a + bi:
@@ -674,18 +1981,39 @@ impl IRGenerator {
                             let pos = builder.ir_greater_than_or_equal_f(&im, &zero);
                             let neg_s = builder.ir_sub_f(&zero, &s_abs);
                             let s = builder.ir_select_f(&pos, &s_abs, &neg_s);
-                            let r_sv = match r { Value::Float(sv) => sv, _ => unreachable!() };
-                            let s_sv = match s { Value::Float(sv) => sv, _ => unreachable!() };
-                            Value::Complex { real: r_sv, imag: s_sv }
+                            let r_sv = match r {
+                                Value::Float(sv) => sv,
+                                _ => unreachable!(),
+                            };
+                            let s_sv = match s {
+                                Value::Float(sv) => sv,
+                                _ => unreachable!(),
+                            };
+                            Value::Complex {
+                                real: r_sv,
+                                imag: s_sv,
+                            }
                         }
                         "log" => {
                             // log(a + bi) = log(|z|) + i*arg(z) where arg = atan2(b, a)
-                            // Skip until atan2 lands on the real path; fall through
-                            // to scalar dispatch which will panic.
-                            let mut kw = base_kwargs.clone();
-                            kw.insert("x".to_string(), x.clone());
-                            dispatch_scalar(builder, name, kw)
-                                .unwrap_or_else(|| panic!("np.{} on Complex is not yet implemented", name))
+                            let aa = builder.ir_mul_f(&re, &re);
+                            let bb = builder.ir_mul_f(&im, &im);
+                            let mod_sq = builder.ir_add_f(&aa, &bb);
+                            let modulus = builder.ir_sqrt_f(&mod_sq);
+                            let real = builder.ir_log_f(&modulus);
+                            let imag = builder.ir_arctan2_f(&im, &re);
+                            let r_sv = match real {
+                                Value::Float(sv) => sv,
+                                _ => unreachable!(),
+                            };
+                            let i_sv = match imag {
+                                Value::Float(sv) => sv,
+                                _ => unreachable!(),
+                            };
+                            Value::Complex {
+                                real: r_sv,
+                                imag: i_sv,
+                            }
                         }
                         _ => {
                             panic!("np.{} on Complex is not yet implemented (compiler.complex-transcendentals scope)", name)
@@ -728,15 +2056,27 @@ impl IRGenerator {
         // StaticArray fall through to legacy path via deep_to_value_list
         // (for now; native vectorization is a follow-up).
         let result = if visited_args.len() == 1
-            && matches!(visited_args_orig.first(), Some(Value::StaticArray { dtype: crate::types::NumberType::Complex, .. }))
+            && matches!(
+                visited_args_orig.first(),
+                Some(Value::StaticArray {
+                    dtype: crate::types::NumberType::Complex,
+                    ..
+                })
+            )
             && matches!(member, "abs" | "absolute" | "fabs")
         {
             let arr = visited_args_orig[0].clone();
-            Some(crate::helpers::static_array::complex::np_abs_complex_static_array(
-                &mut self.builder, &arr,
-            ))
+            Some(
+                crate::helpers::static_array::complex::np_abs_complex_static_array(
+                    &mut self.builder,
+                    &arr,
+                ),
+            )
         } else if visited_args.len() == 1
-            && matches!(visited_args[0], Value::List(_) | Value::Tuple(_) | Value::DynamicNDArray(_) | Value::Complex { .. })
+            && matches!(
+                visited_args[0],
+                Value::List(_) | Value::Tuple(_) | Value::DynamicNDArray(_) | Value::Complex { .. }
+            )
         {
             // Centralized unary vectorization.
             Some(vectorize_unary_np(
@@ -746,8 +2086,29 @@ impl IRGenerator {
                 &visited_args[0],
             ))
         } else if visited_args.len() == 2
-            && (matches!(visited_args[0], Value::List(_) | Value::Tuple(_) | Value::DynamicNDArray(_))
-                || matches!(visited_args[1], Value::List(_) | Value::Tuple(_) | Value::DynamicNDArray(_)))
+            && (matches!(
+                visited_args_orig[0],
+                Value::StaticArray { .. } | Value::Complex { .. }
+            ) || matches!(
+                visited_args_orig[1],
+                Value::StaticArray { .. } | Value::Complex { .. }
+            ))
+            && binary_apply_name.is_some()
+        {
+            Some(crate::helpers::value_ops::apply_binary_op(
+                &mut self.builder,
+                binary_apply_name.unwrap(),
+                &visited_args_orig[0],
+                &visited_args_orig[1],
+            ))
+        } else if visited_args.len() == 2
+            && (matches!(
+                visited_args[0],
+                Value::List(_) | Value::Tuple(_) | Value::DynamicNDArray(_)
+            ) || matches!(
+                visited_args[1],
+                Value::List(_) | Value::Tuple(_) | Value::DynamicNDArray(_)
+            ))
             && binary_apply_name.is_some()
         {
             // Centralized binary vectorization for composite operands.

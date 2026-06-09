@@ -1,0 +1,64 @@
+{
+  "categories": [
+    "in-place-mutation",
+    "mask-where"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "np.where"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 18,
+      "line_start": 11,
+      "mutated_params": [
+        "out_field"
+      ],
+      "name": "hdiff",
+      "ops": [
+        "Add",
+        "Gt",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "in_field",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "out_field",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "coeff",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 3,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "npbench_weather_stencils_hdiff_hdiff/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Record mask shape equality and active-element bounds for where/nonzero-style indexing.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "npbench_weather_stencils_hdiff_hdiff",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: in-place-mutation, mask-where\n# Expected outcome: compile/prove candidate\n# Precondition: Record mask shape equality and active-element bounds for where/nonzero-style indexing.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\n\n@zk_circuit\ndef hdiff(in_field: Float[Array, 'N<=1024 M<=1024 K<=1024'], out_field: Float[Array, 'N<=1024 M<=1024 K<=1024'], coeff: Float[Array, 'N<=1024 M<=1024 K<=1024']):\n    I, J, K = (out_field.shape[0], out_field.shape[1], out_field.shape[2])\n    lap_field = 4.0 * in_field[1:I + 3, 1:J + 3, :] - (in_field[2:I + 4, 1:J + 3, :] + in_field[0:I + 2, 1:J + 3, :] + in_field[1:I + 3, 2:J + 4, :] + in_field[1:I + 3, 0:J + 2, :])\n    res = lap_field[1:, 1:J + 1, :] - lap_field[:-1, 1:J + 1, :]\n    flx_field = np.where(res * (in_field[2:I + 3, 2:J + 2, :] - in_field[1:I + 2, 2:J + 2, :]) > 0, 0, res)\n    res = lap_field[1:I + 1, 1:, :] - lap_field[1:I + 1, :-1, :]\n    fly_field = np.where(res * (in_field[2:I + 2, 2:J + 3, :] - in_field[2:I + 2, 1:J + 2, :]) > 0, 0, res)\n    out_field[:, :, :] = in_field[2:I + 2, 2:J + 2, :] - coeff[:, :, :] * (flx_field[1:, :, :] - flx_field[:-1, :, :] + fly_field[:, 1:, :] - fly_field[:, :-1, :])",
+  "source_status": "attempt_classify"
+}

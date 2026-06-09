@@ -1,8 +1,9 @@
-pub mod zinnia_type;
-pub mod scalar;
 pub mod composite;
-pub mod value;
 pub mod envelope;
+pub mod scalar;
+pub mod shape;
+pub mod value;
+pub mod zinnia_type;
 
 #[cfg(test)]
 mod tests;
@@ -21,7 +22,9 @@ pub type StmtId = u32;
 /// `ContractTerm` leaves reference Values via `ContractVar::Value(ValueId)`;
 /// the witness emitter is the one place that resolves ValueId back to
 /// StmtId via `IRBuilder::value_id_to_stmt_id`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct ValueId(pub u64);
 
 impl ValueId {
@@ -42,11 +45,12 @@ impl std::fmt::Display for ValueId {
 }
 
 // Re-export all public types. (`ValueId` is defined in this module above.)
-pub use zinnia_type::{AnnotationArg, NumberType, ZinniaType};
-pub use scalar::{ScalarValue, StringValue};
 pub use composite::{CompositeData, DynArrayMeta, DynamicNDArrayData, NDArrayData};
 pub use envelope::{broadcast_envelopes, Dim, DimTable, DimVar, Envelope};
+pub use scalar::{ScalarValue, StringValue};
+pub use shape::{bounded_shape_total, concretize_shape_dims, ShapeDim};
 pub use value::Value;
+pub use zinnia_type::{AnnotationArg, NumberType, ZinniaType};
 
 /// Represents a slice index used inside an `array[…]` subscript.
 ///

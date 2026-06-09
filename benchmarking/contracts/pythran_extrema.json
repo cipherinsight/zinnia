@@ -1,0 +1,160 @@
+{
+  "categories": [
+    "shape-dtype-only"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 21,
+      "line_start": 10,
+      "mutated_params": [],
+      "name": "extrema_op",
+      "ops": [
+        "Gt",
+        "Lt"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "a",
+          "proposed_annotation": "Tuple[Integer, Float, Integer, Float]",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "b",
+          "proposed_annotation": "Tuple[Integer, Float, Integer, Float]",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 25,
+      "line_start": 24,
+      "mutated_params": [],
+      "name": "extrema_id",
+      "ops": [],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "x",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "len",
+        "range"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 29,
+      "line_start": 28,
+      "mutated_params": [],
+      "name": "indices",
+      "ops": [],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "A",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "indices",
+        "reduce",
+        "zip"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 33,
+      "line_start": 32,
+      "mutated_params": [],
+      "name": "extrema",
+      "ops": [],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "x",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "x_id",
+          "proposed_annotation": "Tuple[Integer, Float, Integer, Float]",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "extrema",
+        "extrema_id",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 39,
+      "line_start": 37,
+      "mutated_params": [],
+      "name": "run_extrema",
+      "ops": [
+        "LtE"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "n",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "a",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_extrema/kernel.py",
+  "notes": [
+    "Likely first-pass candidate: mostly needs dtype/rank/shape annotations."
+  ],
+  "preconditions": [],
+  "program": "pythran_extrema",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: shape-dtype-only\n# Expected outcome: compile/prove candidate\n# Precondition: Shape/rank/dtype annotations only.\nfrom functools import reduce\n\n@zk_circuit\ndef extrema_op(a: Tuple[Integer, Float, Integer, Float], b: Tuple[Integer, Float, Integer, Float]):\n    a_min_idx, a_min_val, a_max_idx, a_max_val = a\n    b_min_idx, b_min_val, b_max_idx, b_max_val = b\n    if a_min_val < b_min_val:\n        if a_max_val > b_max_val:\n            return a\n        else:\n            return (a_min_idx, a_min_val, b_max_idx, b_max_val)\n    elif a_max_val > b_max_val:\n        return (b_min_idx, b_min_val, a_max_idx, a_max_val)\n    else:\n        return b\n\n@zk_chip\ndef extrema_id(x: Float):\n    return (-1, 1.0, 1, 0.0)\n\n@zk_chip\ndef indices(A: Float[Array, 'N<=1024']):\n    return range(len(A))\n\n@zk_chip\ndef extrema(x: Float[Array, 'N<=1024'], x_id: Tuple[Integer, Float, Integer, Float]):\n    return reduce(extrema_op, zip(indices(x), x, indices(x), x), x_id)\n\n@zk_circuit\n@requires(lambda n, a: 0 <= n <= 1024)\ndef run_extrema(n: Integer, a: Float[Array, 'N<=1024']):\n    a_id = extrema_id(0.0)\n    return extrema(a, a_id)",
+  "source_status": "direct"
+}

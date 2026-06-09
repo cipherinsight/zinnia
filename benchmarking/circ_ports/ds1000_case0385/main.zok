@@ -1,0 +1,17 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0385/kernel.py
+// REASON: reshape/swapaxes/transpose with all literal shapes (100x200 -> 5000x2x2) lowered to explicit index arithmetic
+
+def main(field[100][200] a) -> field[5000][2][2]:
+    field[5000][2][2] result = [[[0; 2]; 2]; 5000]
+    for u32 j in 0..100 do
+        for u32 i in 0..50 do
+            for u32 di in 0..2 do
+                for u32 dj in 0..2 do
+                    // transpose(1,0,2,3) over (50,100,2,2) -> (100,50,2,2)
+                    result[j * 50 + i][di][dj] = a[i * 2 + di][j * 2 + dj]
+                endfor
+            endfor
+        endfor
+    endfor
+    return result

@@ -1,0 +1,11 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0398/kernel.py
+// REASON: kernel signature declares variable bounds N<=64 M<=64 K<=64 and the loop runs `for k in range(0, len(B))` with len(A) being a runtime value; ZoKrates `for u32 i in 0..N` requires N to be a compile-time constant.
+
+def main(field[64][64][64] A, field a, field b) -> field[64]:
+    field[64] B = [0; 64]
+    B[0] = a * A[0][0][0]
+    for u32 k in 1..64 do
+        B[k] = a * A[k][0][0] + b * B[k - 1]
+    endfor
+    return B

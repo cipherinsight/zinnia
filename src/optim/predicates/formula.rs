@@ -96,6 +96,10 @@ pub enum ContractVar {
     /// witness emitter is the single bridge that maps `ValueId → StmtId`
     /// when it has to re-enter the IR layer.
     Value(ValueId),
+    /// Compile-time symbolic shape parameter. These are discharged from
+    /// scalar `@requires` facts before array input lowering and must not
+    /// survive to witness-time circuit generation.
+    ShapeParam(String),
 }
 
 /// Comparison operators expressible in contracts.
@@ -257,6 +261,8 @@ pub struct Substitution {
     /// Map: `ValueId` → its `Z3Term`. Populated by the fact-propagation
     /// framework when lowering value-anchored facts (`Var(Value(_))`).
     value_ids: HashMap<ValueId, Z3Term>,
+    /// Map: shape parameter name → its compile-time Z3 term.
+    shape_params: HashMap<String, Z3Term>,
 }
 
 impl Substitution {
@@ -294,6 +300,11 @@ impl Substitution {
         self
     }
 
+    pub fn with_shape_param(mut self, name: impl Into<String>, term: Int) -> Self {
+        self.shape_params.insert(name.into(), Z3Term::Int(term));
+        self
+    }
+
     pub fn input(&self, name: &str) -> Option<&Z3Term> {
         self.inputs.get(name)
     }
@@ -304,6 +315,14 @@ impl Substitution {
 
     pub fn value_id(&self, vid: ValueId) -> Option<&Z3Term> {
         self.value_ids.get(&vid)
+    }
+
+    pub fn shape_param(&self, name: &str) -> Option<&Z3Term> {
+        self.shape_params.get(name)
+    }
+
+    pub fn shape_params(&self) -> impl Iterator<Item = (&String, &Z3Term)> {
+        self.shape_params.iter()
     }
 }
 
@@ -320,6 +339,9 @@ pub enum LowerError {
     UnboundOutput,
     /// A `Var(Value(vid))` referenced a ValueId not in the substitution.
     UnboundValueId(ValueId),
+    /// A `Var(ShapeParam(name))` referenced a shape symbol not in the
+    /// substitution.
+    UnboundShapeParam(String),
     /// A `Var(Formal(name))` survived to the lowering layer. Contract
     /// templates must be fully substituted by `instantiate_contract`
     /// before lowering; reaching Z3 with a formal is a template-shape bug.
@@ -327,7 +349,11 @@ pub enum LowerError {
     /// A `PredicateApp { kind, .. }` references an unregistered predicate.
     UnknownPredicate(String),
     /// Arity mismatch on a `PredicateApp`.
-    ArityMismatch { kind: String, expected: usize, got: usize },
+    ArityMismatch {
+        kind: String,
+        expected: usize,
+        got: usize,
+    },
     /// A subterm that should have lowered to `Int` produced `Bool` (or vice
     /// versa). Indicates a malformed contract template; reviewers should
     /// catch this at audit time.
@@ -352,10 +378,7 @@ pub struct LowerOutput {
 /// Lower a `ContractTerm` whose top-level must produce a `Bool`. Internal
 /// arithmetic terms produce `Int`. The split between
 /// [`lower_bool`] and [`lower_int`] enforces sort discipline statically.
-pub fn lower_bool(
-    term: &ContractTerm,
-    subst: &Substitution,
-) -> Result<LowerOutput, LowerError> {
+pub fn lower_bool(term: &ContractTerm, subst: &Substitution) -> Result<LowerOutput, LowerError> {
     let mut meta_fact_sets = Vec::new();
     let bool_term = lower_bool_inner(term, subst, &mut meta_fact_sets)?;
     Ok(LowerOutput {
@@ -418,9 +441,7 @@ fn lower_bool_inner(
             })
         }
 
-        ContractTerm::Not(inner) => {
-            Ok(lower_bool_inner(inner, subst, meta_fact_sets)?.not())
-        }
+        ContractTerm::Not(inner) => Ok(lower_bool_inner(inner, subst, meta_fact_sets)?.not()),
 
         ContractTerm::PredicateApp { kind, args } => {
             let registry = crate::optim::predicates::registry::registry();
@@ -474,15 +495,19 @@ fn lower_num_inner(
             .cloned()
             .ok_or_else(|| LowerError::UnboundInput(name.clone())),
 
-        ContractTerm::Var(ContractVar::Output) => subst
-            .output()
-            .cloned()
-            .ok_or(LowerError::UnboundOutput),
+        ContractTerm::Var(ContractVar::Output) => {
+            subst.output().cloned().ok_or(LowerError::UnboundOutput)
+        }
 
         ContractTerm::Var(ContractVar::Value(vid)) => subst
             .value_id(*vid)
             .cloned()
             .ok_or(LowerError::UnboundValueId(*vid)),
+
+        ContractTerm::Var(ContractVar::ShapeParam(name)) => subst
+            .shape_param(name)
+            .cloned()
+            .ok_or_else(|| LowerError::UnboundShapeParam(name.clone())),
 
         ContractTerm::Var(ContractVar::Formal(name)) => {
             Err(LowerError::UnboundFormal(name.clone()))
@@ -594,7 +619,11 @@ mod float_tests {
         ContractTerm::LitInt(n)
     }
     fn cmp(op: CmpOp, lhs: ContractTerm, rhs: ContractTerm) -> ContractTerm {
-        ContractTerm::Cmp { op, lhs: Box::new(lhs), rhs: Box::new(rhs) }
+        ContractTerm::Cmp {
+            op,
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+        }
     }
 
     #[test]
@@ -628,10 +657,8 @@ mod float_tests {
     fn float_value_id_substitutes_real_term() {
         // Plant a Real Z3 term for ValueId(42); assert `Value(42) >= 0.0`
         // against the symbolic. The substitution provides the Real wire.
-        let subst = Substitution::new().with_value_id_term(
-            ValueId(42),
-            Z3Term::Real(Real::fresh_const("v42_")),
-        );
+        let subst = Substitution::new()
+            .with_value_id_term(ValueId(42), Z3Term::Real(Real::fresh_const("v42_")));
         let term = cmp(
             CmpOp::Ge,
             ContractTerm::Var(ContractVar::Value(ValueId(42))),

@@ -1,0 +1,139 @@
+{
+  "categories": [
+    "in-place-mutation",
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "_ising_update",
+        "np.float32",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 18,
+      "line_start": 11,
+      "mutated_params": [],
+      "name": "ising_step",
+      "ops": [],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "field",
+          "proposed_annotation": "Integer[Array, 'N<=1024 M<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "beta",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 27,
+      "line_start": 21,
+      "mutated_params": [],
+      "name": "clamp",
+      "ops": [
+        "Add",
+        "Lt",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "v",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "n",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "clamp",
+        "np.exp",
+        "range"
+      ],
+      "entry_candidate": false,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 42,
+      "line_start": 30,
+      "mutated_params": [
+        "field"
+      ],
+      "name": "_ising_update",
+      "ops": [
+        "Add",
+        "Eq",
+        "Gt",
+        "LtE",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": true,
+          "name": "field",
+          "proposed_annotation": "Integer[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 2,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "n",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "m",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "beta",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_ising/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "pythran_ising",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\n\n@zk_circuit\ndef ising_step(field: Integer[Array, 'N<=1024 M<=1024'], beta: Float=0.4):\n    N, M = field.shape\n    for n_offset in range(2):\n        for m_offset in range(2):\n            for n in range(n_offset, N, 2):\n                for m in range(m_offset, M, 2):\n                    _ising_update(field, n, m, np.float32(beta))\n    return field\n\n@zk_chip\ndef clamp(v: Float, n: Integer):\n    if v < 0:\n        return v + n\n    elif v < n:\n        return v\n    else:\n        return v - n\n\n@zk_chip\ndef _ising_update(field: Integer[Array, 'N<=1024 M<=1024'], n: Integer, m: Integer, beta: Float):\n    total = 0\n    N, M = field.shape\n    for i in range(n - 1, n + 2):\n        for j in range(m - 1, m + 2):\n            if i == n and j == m:\n                continue\n            total += field[clamp(i, N), clamp(j, M)]\n    dE = 2 * field[n, m] * total\n    if dE <= 0:\n        field[n, m] *= -1\n    elif np.exp(-dE * beta) > 0.5:\n        field[n, m] *= -1",
+  "source_status": "direct"
+}

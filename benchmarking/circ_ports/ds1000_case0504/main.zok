@@ -1,0 +1,12 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0504/kernel.py
+// REASON: take_along_axis gather + np.sum reduction lowered to nested loop with accumulator
+
+def main(field[13][13][5] a, u32[13][13] b) -> field:
+    field result = 0
+    for u32 i in 0..13 do
+        for u32 j in 0..13 do
+            result = result + a[i][j][b[i][j]]
+        endfor
+    endfor
+    return result

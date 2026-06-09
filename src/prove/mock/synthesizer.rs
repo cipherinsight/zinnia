@@ -7,13 +7,13 @@
 
 use std::collections::HashMap;
 
-use pasta_curves::Fp;
+use halo2_proofs::halo2curves::bn256::Fr as Fp;
 
+use crate::circuit_input::{InputPath, ResolvedWitness};
 use crate::prove::error::ProvingError;
 use crate::prove::kernel::{self, Field};
 use crate::prove::traits::Synthesizer;
 use crate::prove::types::ProvingParams;
-use crate::circuit_input::{ResolvedWitness, InputPath};
 
 // ---------------------------------------------------------------------------
 // MockCell — the CellRef type for MockSynthesizer
@@ -46,6 +46,7 @@ pub struct MockSynthesizer {
     pub public_outputs: HashMap<String, String>,
     memories: HashMap<u32, Vec<Fp>>,
     memory_init: HashMap<u32, Fp>,
+    dyn_meta_bounds: HashMap<u32, (u32, Vec<u32>)>,
 }
 
 impl MockSynthesizer {
@@ -58,6 +59,7 @@ impl MockSynthesizer {
             public_outputs: HashMap::new(),
             memories: HashMap::new(),
             memory_init: HashMap::new(),
+            dyn_meta_bounds: HashMap::new(),
         }
     }
 
@@ -202,8 +204,18 @@ impl Synthesizer for MockSynthesizer {
         Ok(MockCell(result))
     }
 
+    fn product_sum_f(&mut self, pairs: &[(MockCell, MockCell)]) -> Result<MockCell, ProvingError> {
+        let pair_values: Vec<(Fp, Fp)> = pairs.iter().map(|(a, b)| (a.fp(), b.fp())).collect();
+        let (result, _) = kernel::fp_product_sum_rescale(&pair_values, self.prec());
+        Ok(MockCell(result))
+    }
+
     fn div_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
-        Ok(MockCell(kernel::fp_div_prescale(a.fp(), b.fp(), self.prec())))
+        Ok(MockCell(kernel::fp_div_prescale(
+            a.fp(),
+            b.fp(),
+            self.prec(),
+        )))
     }
 
     fn floor_div_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
@@ -233,18 +245,30 @@ impl Synthesizer for MockSynthesizer {
     // ── Comparisons ───────────────────────────────────────────────────
 
     fn eq_i(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
-        Ok(MockCell(if a.fp() == b.fp() { Fp::one() } else { Fp::zero() }))
+        Ok(MockCell(if a.fp() == b.fp() {
+            Fp::one()
+        } else {
+            Fp::zero()
+        }))
     }
 
     fn ne_i(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
-        Ok(MockCell(if a.fp() != b.fp() { Fp::one() } else { Fp::zero() }))
+        Ok(MockCell(if a.fp() != b.fp() {
+            Fp::one()
+        } else {
+            Fp::zero()
+        }))
     }
 
     fn lt_i(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
         let diff = a.fp() - b.fp();
         let is_neg = kernel::fp_is_negative(diff);
         let is_zero = diff == Fp::zero();
-        Ok(MockCell(if is_neg && !is_zero { Fp::one() } else { Fp::zero() }))
+        Ok(MockCell(if is_neg && !is_zero {
+            Fp::one()
+        } else {
+            Fp::zero()
+        }))
     }
 
     fn lte_i(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
@@ -261,12 +285,24 @@ impl Synthesizer for MockSynthesizer {
         self.logical_not(&lt)
     }
 
-    fn eq_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> { self.eq_i(a, b) }
-    fn ne_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> { self.ne_i(a, b) }
-    fn lt_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> { self.lt_i(a, b) }
-    fn lte_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> { self.lte_i(a, b) }
-    fn gt_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> { self.gt_i(a, b) }
-    fn gte_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> { self.gte_i(a, b) }
+    fn eq_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
+        self.eq_i(a, b)
+    }
+    fn ne_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
+        self.ne_i(a, b)
+    }
+    fn lt_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
+        self.lt_i(a, b)
+    }
+    fn lte_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
+        self.lte_i(a, b)
+    }
+    fn gt_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
+        self.gt_i(a, b)
+    }
+    fn gte_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
+        self.gte_i(a, b)
+    }
 
     // ── Transcendentals (same Remez polynomials as halo2) ─────────────
 
@@ -310,6 +346,10 @@ impl Synthesizer for MockSynthesizer {
         Ok(MockCell(kernel::fp_arccos(a.fp(), self.prec())))
     }
 
+    fn arcsin_f(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {
+        Ok(MockCell(kernel::fp_arcsin(a.fp(), self.prec())))
+    }
+
     fn arctan2_f(&mut self, y: &MockCell, x: &MockCell) -> Result<MockCell, ProvingError> {
         Ok(MockCell(kernel::fp_atan2(y.fp(), x.fp(), self.prec())))
     }
@@ -317,11 +357,19 @@ impl Synthesizer for MockSynthesizer {
     // ── Boolean logic ─────────────────────────────────────────────────
 
     fn logical_and(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
-        Ok(MockCell(if a.is_truthy() && b.is_truthy() { Fp::one() } else { Fp::zero() }))
+        Ok(MockCell(if a.is_truthy() && b.is_truthy() {
+            Fp::one()
+        } else {
+            Fp::zero()
+        }))
     }
 
     fn logical_or(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
-        Ok(MockCell(if a.is_truthy() || b.is_truthy() { Fp::one() } else { Fp::zero() }))
+        Ok(MockCell(if a.is_truthy() || b.is_truthy() {
+            Fp::one()
+        } else {
+            Fp::zero()
+        }))
     }
 
     fn logical_not(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {
@@ -330,8 +378,17 @@ impl Synthesizer for MockSynthesizer {
 
     // ── Select ────────────────────────────────────────────────────────
 
-    fn select(&mut self, cond: &MockCell, t: &MockCell, f: &MockCell) -> Result<MockCell, ProvingError> {
-        Ok(if cond.is_truthy() { t.clone() } else { f.clone() })
+    fn select(
+        &mut self,
+        cond: &MockCell,
+        t: &MockCell,
+        f: &MockCell,
+    ) -> Result<MockCell, ProvingError> {
+        Ok(if cond.is_truthy() {
+            t.clone()
+        } else {
+            f.clone()
+        })
     }
 
     // ── Casting ───────────────────────────────────────────────────────
@@ -345,7 +402,6 @@ impl Synthesizer for MockSynthesizer {
     }
 
     fn float_cast(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {
-        // Int→Float: multiply by scale
         let scale = kernel::scale_fp(self.prec());
         Ok(MockCell(a.fp() * scale))
     }
@@ -361,64 +417,182 @@ impl Synthesizer for MockSynthesizer {
         Ok(MockCell(fp))
     }
 
-    fn read_external_result(&mut self, store_idx: u32, output_idx: u32) -> Result<MockCell, ProvingError> {
+    fn read_external_result(
+        &mut self,
+        store_idx: u32,
+        output_idx: u32,
+    ) -> Result<MockCell, ProvingError> {
         let fp = self.witness.resolve_external(store_idx, output_idx)?;
         Ok(MockCell(fp))
     }
 
     fn expose_public(&mut self, a: &MockCell, label: &str) -> Result<(), ProvingError> {
-        self.public_outputs.insert(label.to_string(), format!("{}", kernel::fp_to_i64(a.fp())));
+        self.public_outputs
+            .insert(label.to_string(), format!("{}", kernel::fp_to_i64(a.fp())));
         Ok(())
     }
 
     fn assert_true(&mut self, a: &MockCell) -> Result<(), ProvingError> {
         if !a.is_truthy() {
             self.satisfied = false;
-            self.assertion_failures.push(format!("Assertion failed: value is zero"));
+            self.assertion_failures
+                .push(format!("Assertion failed: value is zero"));
         }
         Ok(())
     }
 
     // ── Memory ────────────────────────────────────────────────────────
 
-    fn allocate_memory(&mut self, segment_id: u32, size: u32, init: i64) -> Result<(), ProvingError> {
+    fn allocate_memory(
+        &mut self,
+        segment_id: u32,
+        size: u32,
+        init: i64,
+    ) -> Result<(), ProvingError> {
         let init_fp = kernel::i64_to_fp(init);
-        self.memories.insert(segment_id, vec![init_fp; size as usize]);
+        self.memories
+            .insert(segment_id, vec![init_fp; size as usize]);
         self.memory_init.insert(segment_id, init_fp);
         Ok(())
     }
 
-    fn write_memory(&mut self, segment_id: u32, addr: &MockCell, value: &MockCell) -> Result<(), ProvingError> {
+    fn write_memory(
+        &mut self,
+        segment_id: u32,
+        addr: &MockCell,
+        value: &MockCell,
+    ) -> Result<(), ProvingError> {
         let a = kernel::fp_to_i64(addr.fp()) as usize;
-        let mem = self.memories.get_mut(&segment_id)
+        let mem = self
+            .memories
+            .get_mut(&segment_id)
             .ok_or_else(|| ProvingError::synthesis("Segment not allocated"))?;
-        if a < mem.len() { mem[a] = value.fp(); }
+        if a >= mem.len() {
+            return Err(ProvingError::synthesis(format!(
+                "Memory write out of bounds: segment {} addr {} len {}",
+                segment_id,
+                a,
+                mem.len()
+            )));
+        }
+        mem[a] = value.fp();
         Ok(())
     }
 
     fn read_memory(&mut self, segment_id: u32, addr: &MockCell) -> Result<MockCell, ProvingError> {
         let a = kernel::fp_to_i64(addr.fp()) as usize;
-        let init = self.memory_init.get(&segment_id).copied().unwrap_or(Fp::zero());
-        let mem = self.memories.get(&segment_id)
+        let init = self
+            .memory_init
+            .get(&segment_id)
+            .copied()
+            .unwrap_or(Fp::zero());
+        let mem = self
+            .memories
+            .get(&segment_id)
             .ok_or_else(|| ProvingError::synthesis("Segment not allocated"))?;
         let val = if a < mem.len() { mem[a] } else { init };
         Ok(MockCell(val))
     }
 
-    fn memory_trace_emit(&mut self, _: u32, _: bool, _: &[MockCell]) -> Result<(), ProvingError> { Ok(()) }
-    fn memory_trace_seal(&mut self) -> Result<(), ProvingError> { Ok(()) }
+    fn memory_trace_emit(&mut self, _: u32, _: bool, _: &[MockCell]) -> Result<(), ProvingError> {
+        Ok(())
+    }
+    fn memory_trace_seal(&mut self) -> Result<(), ProvingError> {
+        Ok(())
+    }
 
     // ── Dynamic NDArray ───────────────────────────────────────────────
 
-    fn allocate_dynamic_ndarray_meta(&mut self, array_id: u32, _: &str, max_length: u32, _: u32) -> Result<(), ProvingError> {
+    fn allocate_dynamic_ndarray_meta(
+        &mut self,
+        array_id: u32,
+        _: &str,
+        max_length: u32,
+        max_rank: u32,
+        max_shape: &[u32],
+    ) -> Result<(), ProvingError> {
+        let axis_bounds = if max_shape.is_empty() {
+            vec![max_length; max_rank as usize]
+        } else {
+            max_shape.to_vec()
+        };
+        self.dyn_meta_bounds
+            .insert(array_id, (max_length, axis_bounds));
         self.allocate_memory(10000 + array_id, max_length, 0)
     }
-    fn witness_dynamic_ndarray_meta(&mut self, _: u32, _: u32, _: &[MockCell]) -> Result<(), ProvingError> { Ok(()) }
-    fn assert_dynamic_ndarray_meta(&mut self, _: u32, _: u32, _: u32, _: &[MockCell]) -> Result<(), ProvingError> { Ok(()) }
-    fn dynamic_ndarray_get_item(&mut self, array_id: u32, _: u32, index: &MockCell) -> Result<MockCell, ProvingError> {
+    fn witness_dynamic_ndarray_meta(
+        &mut self,
+        _: u32,
+        _: u32,
+        _: &str,
+        _: &[MockCell],
+    ) -> Result<(), ProvingError> {
+        Ok(())
+    }
+    fn assert_dynamic_ndarray_meta(
+        &mut self,
+        array_id: u32,
+        max_rank: u32,
+        max_length: u32,
+        args: &[MockCell],
+    ) -> Result<(), ProvingError> {
+        let rank = max_rank as usize;
+        if args.len() != rank && args.len() != rank * 2 {
+            self.satisfied = false;
+            self.assertion_failures.push(format!(
+                "DynamicNDArray metadata assertion failed for array {}: expected {} runtime shape axes with optional bounds, got {} args",
+                array_id, max_rank, args.len()
+            ));
+            return Ok(());
+        }
+        let (total_bound, mut axis_bounds) = self
+            .dyn_meta_bounds
+            .get(&array_id)
+            .cloned()
+            .unwrap_or_else(|| (max_length, vec![max_length; max_rank as usize]));
+        if args.len() == rank * 2 {
+            axis_bounds = args[rank..]
+                .iter()
+                .map(|cell| kernel::fp_to_i64(cell.fp()).max(0) as u32)
+                .collect();
+        }
+        let mut runtime_len: u128 = 1;
+        for (axis, dim) in args[..rank].iter().enumerate() {
+            let dim_value = kernel::fp_to_i64(dim.fp());
+            let axis_bound = axis_bounds.get(axis).copied().unwrap_or(max_length);
+            if dim_value < 0 || dim_value as u128 > axis_bound as u128 {
+                self.satisfied = false;
+                self.assertion_failures.push(format!(
+                    "DynamicNDArray metadata assertion failed for array {}: axis {} expected 0..={}, got {}",
+                    array_id, axis, axis_bound, dim_value
+                ));
+            }
+            runtime_len = runtime_len.saturating_mul(dim_value.max(0) as u128);
+        }
+        if runtime_len > total_bound as u128 {
+            self.satisfied = false;
+            self.assertion_failures.push(format!(
+                "DynamicNDArray metadata assertion failed for array {}: runtime length {} exceeds max_length {}",
+                array_id, runtime_len, total_bound
+            ));
+        }
+        Ok(())
+    }
+    fn dynamic_ndarray_get_item(
+        &mut self,
+        array_id: u32,
+        _: u32,
+        index: &MockCell,
+    ) -> Result<MockCell, ProvingError> {
         self.read_memory(10000 + array_id, index)
     }
-    fn dynamic_ndarray_set_item(&mut self, array_id: u32, _: u32, index: &MockCell, value: &MockCell) -> Result<(), ProvingError> {
+    fn dynamic_ndarray_set_item(
+        &mut self,
+        array_id: u32,
+        _: u32,
+        index: &MockCell,
+        value: &MockCell,
+    ) -> Result<(), ProvingError> {
         self.write_memory(10000 + array_id, index, value)
     }
 

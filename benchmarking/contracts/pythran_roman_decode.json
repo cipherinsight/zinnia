@@ -1,0 +1,45 @@
+{
+  "categories": [
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "dict",
+        "zip"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 11,
+      "line_start": 4,
+      "mutated_params": [],
+      "name": "decode",
+      "ops": [
+        "Add",
+        "Lt"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "roman",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_roman_decode/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_roman_decode",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n\n@zk_circuit\ndef decode(roman: Float[Array, 'N<=1024']):\n    s, t = ('MDCLXVI', (1000, 500, 100, 50, 10, 5, 1))\n    _rdecode = dict(zip(s, t))\n    result = 0\n    for r, r1 in zip(roman, roman[1:]):\n        rd, rd1 = (_rdecode[r], _rdecode[r1])\n        result += -rd if rd < rd1 else rd\n    return result + _rdecode[roman[-1]]",
+  "source_status": "direct"
+}

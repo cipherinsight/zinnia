@@ -75,8 +75,7 @@ impl IRPass for AlwaysSatisfiedElimination {
                     // v == 0 — provably false on the constant-fold path.
                     provably_false_asserts.push((assert_stmt_id, cond_ptr));
                     if let Some(t) = telemetry.as_ref() {
-                        t.assertions_provably_false
-                            .fetch_add(1, Ordering::Relaxed);
+                        t.assertions_provably_false.fetch_add(1, Ordering::Relaxed);
                     }
                     continue;
                 }
@@ -106,8 +105,7 @@ impl IRPass for AlwaysSatisfiedElimination {
                 Some(false) => {
                     provably_false_asserts.push((assert_stmt_id, cond_ptr));
                     if let Some(t) = telemetry.as_ref() {
-                        t.assertions_provably_false
-                            .fetch_add(1, Ordering::Relaxed);
+                        t.assertions_provably_false.fetch_add(1, Ordering::Relaxed);
                     }
                 }
                 None => {
@@ -156,8 +154,22 @@ mod tests {
     #[test]
     fn assert_eliminated_when_constant_fold_proves_true() {
         let stmts = vec![
-            IRStatement::new(0, crate::types::ValueId::next(), IR::ConstantInt { value: 1 }, vec![], vec![], None),
-            IRStatement::new(1, crate::types::ValueId::next(), IR::Assert, vec![0], vec![], None),
+            IRStatement::new(
+                0,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 1 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
+                IR::Assert,
+                vec![0],
+                vec![],
+                None,
+            ),
         ];
         let graph = IRGraph::new(stmts);
         let result = AlwaysSatisfiedElimination.exec(graph);
@@ -174,15 +186,32 @@ mod tests {
         // stmt0 = read_int x, stmt1 = eq(x, x), stmt2 = assert(stmt1)
         let stmts = vec![
             IRStatement::new(
-                0, crate::types::ValueId::next(),
+                0,
+                crate::types::ValueId::next(),
                 IR::ReadInteger {
                     path: crate::circuit_input::InputPath::new("x", vec![]),
                     is_public: false,
                 },
-                vec![], vec![],
-                None),
-            IRStatement::new(1, crate::types::ValueId::next(), IR::EqI, vec![0, 0], vec![], None),
-            IRStatement::new(2, crate::types::ValueId::next(), IR::Assert, vec![1], vec![], None),
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
+                IR::EqI,
+                vec![0, 0],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                2,
+                crate::types::ValueId::next(),
+                IR::Assert,
+                vec![1],
+                vec![],
+                None,
+            ),
         ];
         let mut graph = IRGraph::new(stmts);
         // Wire the layered resolver — same composition the real default
@@ -210,8 +239,22 @@ mod tests {
     #[should_panic(expected = "provably unsatisfiable")]
     fn assert_rejected_when_constant_fold_proves_false() {
         let stmts = vec![
-            IRStatement::new(0, crate::types::ValueId::next(), IR::ConstantBool { value: false }, vec![], vec![], None),
-            IRStatement::new(1, crate::types::ValueId::next(), IR::Assert, vec![0], vec![], None),
+            IRStatement::new(
+                0,
+                crate::types::ValueId::next(),
+                IR::ConstantBool { value: false },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
+                IR::Assert,
+                vec![0],
+                vec![],
+                None,
+            ),
         ];
         let graph = IRGraph::new(stmts);
         let _ = AlwaysSatisfiedElimination.exec(graph);

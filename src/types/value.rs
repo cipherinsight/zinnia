@@ -1,6 +1,6 @@
-use super::zinnia_type::{NumberType, ZinniaType};
+use super::composite::{CompositeData, DynamicNDArrayData, NDArrayData};
 use super::scalar::{ScalarValue, StringValue};
-use super::composite::{CompositeData, NDArrayData, DynamicNDArrayData};
+use super::zinnia_type::{NumberType, ZinniaType};
 use super::{StmtId, ValueId};
 
 /// The unified value enum representing all Zinnia values during compilation.
@@ -81,6 +81,7 @@ impl Value {
                 dtype: data.dtype,
                 max_length: data.max_length(),
                 max_rank: data.max_rank(),
+                max_shape: Some(data.envelope.dims.iter().map(|d| d.max).collect()),
             },
             Value::StaticArray { dtype, shape, .. } => ZinniaType::NDArray {
                 shape: shape.clone(),
@@ -135,7 +136,10 @@ impl Value {
 
     /// Returns true if this value is a numeric type.
     pub fn is_number(&self) -> bool {
-        matches!(self, Value::Integer(_) | Value::Float(_) | Value::Boolean(_))
+        matches!(
+            self,
+            Value::Integer(_) | Value::Float(_) | Value::Boolean(_)
+        )
     }
 
     /// Returns true if this value is an integer-like type.

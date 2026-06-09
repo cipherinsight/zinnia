@@ -1,0 +1,13 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0499/kernel.py
+// REASON: np.pad with center padding computed from runtime `shape` argument; pad widths and output shape are runtime-dependent
+
+def main(field[42][10] a, u32[2] shape) -> field[64][64]:
+    // Skeleton: place input at runtime-computed offset (would need static shape in CirC).
+    field[64][64] result = [[0; 64]; 64]
+    for u32 i in 0..42 do
+        for u32 j in 0..10 do
+            result[i][j] = a[i][j]
+        endfor
+    endfor
+    return result

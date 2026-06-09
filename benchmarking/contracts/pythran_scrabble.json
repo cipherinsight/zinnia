@@ -1,0 +1,79 @@
+{
+  "categories": [
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "scoretable.get",
+        "sum"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 11,
+      "line_start": 10,
+      "mutated_params": [],
+      "name": "scrabble_fun_score",
+      "ops": [],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "word",
+          "proposed_annotation": "str",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "scoretable",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 19,
+      "line_start": 14,
+      "mutated_params": [],
+      "name": "scrabble_imp_score",
+      "ops": [
+        "In"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "word",
+          "proposed_annotation": "str",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "scoretable",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_scrabble/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_scrabble",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n\n@zk_circuit\ndef scrabble_fun_score(word: str, scoretable: Float):\n    return sum([scoretable.get(x, 0) for x in word])\n\n@zk_circuit\ndef scrabble_imp_score(word: str, scoretable: Float[Array, 'N<=1024']):\n    score = 0\n    for letter in word:\n        if letter in scoretable:\n            score += scoretable[letter]\n    return score",
+  "source_status": "direct"
+}

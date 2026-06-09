@@ -59,9 +59,73 @@ fn op_contract_by_name_returns_registered_contract_for_dyn_fill() {
 fn op_contract_registry_has_dyn_filter_entry() {
     use crate::optim::predicates::{op_contract_by_name, ContractTerm};
     let c = op_contract_by_name("dyn_filter");
-    assert!(!c.is_default(), "dyn_filter should have a registered contract");
+    assert!(
+        !c.is_default(),
+        "dyn_filter should have a registered contract"
+    );
     assert_eq!(c.ensures.len(), 1);
     assert!(matches!(c.ensures[0].term, ContractTerm::Cmp { .. }));
+}
+
+#[test]
+fn dyn_filter_deposits_runtime_length_upper_bound_fact() {
+    use crate::builder::IRBuilder;
+    use crate::ops::dyn_ndarray::constructors::dyn_from_values_with_active_nd;
+    use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
+    use crate::optim::prove::ProveOutcome;
+    use crate::types::{NumberType, ScalarValue, Value};
+
+    let mut b = IRBuilder::new();
+    let values: Vec<ScalarValue<i64>> = [1, 2, 3, 4, 5, 6]
+        .into_iter()
+        .map(|v| ScalarValue::new(Some(v), None))
+        .collect();
+    let mask_values: Vec<ScalarValue<i64>> = [1, 0, 1, 0, 1, 0]
+        .into_iter()
+        .map(|v| ScalarValue::new(Some(v), None))
+        .collect();
+    let active_len = b.ir_constant_int(6);
+    let arr = dyn_from_values_with_active_nd(
+        &mut b,
+        values,
+        vec![2, 3],
+        vec![
+            ScalarValue::new(Some(2), None),
+            ScalarValue::new(Some(3), None),
+        ],
+        active_len.clone(),
+        NumberType::Integer,
+    );
+    let mask = dyn_from_values_with_active_nd(
+        &mut b,
+        mask_values,
+        vec![2, 3],
+        vec![
+            ScalarValue::new(Some(2), None),
+            ScalarValue::new(Some(3), None),
+        ],
+        active_len,
+        NumberType::Integer,
+    );
+    let arr_data = match arr {
+        Value::DynamicNDArray(d) => d,
+        _ => unreachable!(),
+    };
+    let out = crate::ops::dyn_ndarray::memory_ops::dyn_filter(&mut b, &arr_data, &[mask]);
+    let out_len_vid = match out {
+        Value::DynamicNDArray(d) => d.meta.runtime_length.value_id,
+        _ => unreachable!(),
+    };
+    let query = ContractTerm::Cmp {
+        op: CmpOp::Le,
+        lhs: Box::new(ContractTerm::Var(ContractVar::Value(out_len_vid))),
+        rhs: Box::new(ContractTerm::LitInt(6)),
+    };
+    assert_eq!(
+        b.prove(&query),
+        ProveOutcome::Proved,
+        "dyn_filter should prove its runtime length is bounded by input length"
+    );
 }
 
 #[test]
@@ -99,10 +163,8 @@ fn op_contract_registry_has_dyn_argextremum_entry() {
 
 #[test]
 fn registered_dyn_fill_template_instantiates_to_value_anchored_fact() {
-    use crate::optim::predicates::{
-        instantiate_contract, op_contract_by_name,
-    };
     use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
+    use crate::optim::predicates::{instantiate_contract, op_contract_by_name};
     use crate::types::ValueId;
     use std::collections::HashMap;
 
@@ -129,7 +191,11 @@ fn fire_contract_deposits_registry_facts_on_output_value() {
     let v = b.ir_read_integer(InputPath::new("k", vec![]), false);
     let v_vid = v.value_id().unwrap();
 
-    assert!(b.facts.per_value.get(&v_vid).map_or(true, |s: &Vec<_>| s.is_empty()));
+    assert!(b
+        .facts
+        .per_value
+        .get(&v_vid)
+        .map_or(true, |s: &Vec<_>| s.is_empty()));
 
     b.fire_contract("dyn_fill_with_active", v_vid, &HashMap::new());
 
@@ -236,7 +302,9 @@ fn sqrt_f_op_fires_nonneg_fact_on_output_value() {
     let mut b = crate::builder::IRBuilder::new();
     let x = b.ir_read_float(InputPath::new("x", vec![]), false);
     let out = b.ir_sqrt_f(&x);
-    let out_vid = out.value_id().expect("ir_sqrt_f output must have a ValueId");
+    let out_vid = out
+        .value_id()
+        .expect("ir_sqrt_f output must have a ValueId");
 
     let facts = b
         .facts
@@ -290,7 +358,9 @@ fn sign_i_op_fires_range_fact_on_output_value() {
     let mut b = crate::builder::IRBuilder::new();
     let x = b.ir_read_integer(InputPath::new("x", vec![]), false);
     let out = b.ir_sign_i(&x);
-    let out_vid = out.value_id().expect("ir_sign_i output must have a ValueId");
+    let out_vid = out
+        .value_id()
+        .expect("ir_sign_i output must have a ValueId");
 
     let facts = b
         .facts
@@ -329,7 +399,9 @@ fn sign_f_op_fires_range_fact_on_output_value() {
     let mut b = crate::builder::IRBuilder::new();
     let x = b.ir_read_float(InputPath::new("x", vec![]), false);
     let out = b.ir_sign_f(&x);
-    let out_vid = out.value_id().expect("ir_sign_f output must have a ValueId");
+    let out_vid = out
+        .value_id()
+        .expect("ir_sign_f output must have a ValueId");
 
     let facts = b
         .facts
@@ -446,7 +518,9 @@ fn tanh_f_op_fires_range_fact_on_output_value() {
     let mut b = crate::builder::IRBuilder::new();
     let x = b.ir_read_float(InputPath::new("x", vec![]), false);
     let out = b.ir_tanh_f(&x);
-    let out_vid = out.value_id().expect("ir_tanh_f output must have a ValueId");
+    let out_vid = out
+        .value_id()
+        .expect("ir_tanh_f output must have a ValueId");
 
     let facts = b
         .facts
@@ -483,7 +557,9 @@ fn cosh_f_op_fires_lower_bound_fact_on_output_value() {
     let mut b = crate::builder::IRBuilder::new();
     let x = b.ir_read_float(InputPath::new("x", vec![]), false);
     let out = b.ir_cosh_f(&x);
-    let out_vid = out.value_id().expect("ir_cosh_f output must have a ValueId");
+    let out_vid = out
+        .value_id()
+        .expect("ir_cosh_f output must have a ValueId");
 
     let facts = b
         .facts
@@ -510,7 +586,11 @@ fn fire_contract_with_unknown_name_is_noop() {
     let v = b.ir_read_integer(InputPath::new("k", vec![]), false);
     let v_vid = v.value_id().unwrap();
     b.fire_contract("totally_not_a_real_op", v_vid, &HashMap::new());
-    assert!(b.facts.per_value.get(&v_vid).map_or(true, |s: &Vec<_>| s.is_empty()));
+    assert!(b
+        .facts
+        .per_value
+        .get(&v_vid)
+        .map_or(true, |s: &Vec<_>| s.is_empty()));
 }
 
 #[test]
@@ -522,7 +602,9 @@ fn ir_equal_i_fires_bool_bounds_fact_on_output_value() {
     let x = b.ir_read_integer(InputPath::new("x", vec![]), false);
     let y = b.ir_read_integer(InputPath::new("y", vec![]), false);
     let out = b.ir_equal_i(&x, &y);
-    let out_vid = out.value_id().expect("ir_equal_i output must have a ValueId");
+    let out_vid = out
+        .value_id()
+        .expect("ir_equal_i output must have a ValueId");
 
     let facts = b
         .facts
@@ -949,9 +1031,8 @@ fn relay_sum_static_array_yields_n_times_input_interval() {
     let (mut b, vids) = planted_int_inputs(4, 0, 5);
     let out_vid = fresh_output_vid(&mut b);
 
-    let emitted = crate::optim::resolver::relay_reduction_output_interval_int(
-        &mut b, &vids, out_vid, 4,
-    );
+    let emitted =
+        crate::optim::resolver::relay_reduction_output_interval_int(&mut b, &vids, out_vid, 4);
     assert!(emitted, "relay should emit when all elements have bounds");
 
     let facts = b
@@ -989,9 +1070,8 @@ fn relay_max_static_array_yields_input_interval() {
     let (mut b, vids) = planted_int_inputs(4, -3, 7);
     let out_vid = fresh_output_vid(&mut b);
 
-    let emitted = crate::optim::resolver::relay_reduction_output_interval_int(
-        &mut b, &vids, out_vid, 1,
-    );
+    let emitted =
+        crate::optim::resolver::relay_reduction_output_interval_int(&mut b, &vids, out_vid, 1);
     assert!(emitted, "relay should emit when all elements have bounds");
 
     let facts = b
@@ -1029,9 +1109,8 @@ fn relay_min_static_array_yields_input_interval() {
     let (mut b, vids) = planted_int_inputs(3, 2, 9);
     let out_vid = fresh_output_vid(&mut b);
 
-    let emitted = crate::optim::resolver::relay_reduction_output_interval_int(
-        &mut b, &vids, out_vid, 1,
-    );
+    let emitted =
+        crate::optim::resolver::relay_reduction_output_interval_int(&mut b, &vids, out_vid, 1);
     assert!(emitted, "relay should emit when all elements have bounds");
 
     let facts = b
@@ -1073,10 +1152,12 @@ fn relay_sum_with_unbounded_input_emits_nothing() {
     let vids = vec![a.value_id().unwrap(), bv.value_id().unwrap()];
     let out_vid = fresh_output_vid(&mut b);
 
-    let emitted = crate::optim::resolver::relay_reduction_output_interval_int(
-        &mut b, &vids, out_vid, 2,
+    let emitted =
+        crate::optim::resolver::relay_reduction_output_interval_int(&mut b, &vids, out_vid, 2);
+    assert!(
+        !emitted,
+        "relay should refuse to emit when elements unbounded"
     );
-    assert!(!emitted, "relay should refuse to emit when elements unbounded");
 
     let bucket = b.facts.per_value.get(&out_vid);
     assert!(
@@ -1092,10 +1173,12 @@ fn relay_sum_with_overflowing_multiplier_emits_nothing() {
     let (mut b, vids) = planted_int_inputs(1, 1, i64::MAX);
     let out_vid = fresh_output_vid(&mut b);
 
-    let emitted = crate::optim::resolver::relay_reduction_output_interval_int(
-        &mut b, &vids, out_vid, 2,
+    let emitted =
+        crate::optim::resolver::relay_reduction_output_interval_int(&mut b, &vids, out_vid, 2);
+    assert!(
+        !emitted,
+        "relay should refuse to emit on multiplier overflow"
     );
-    assert!(!emitted, "relay should refuse to emit on multiplier overflow");
 
     let bucket = b.facts.per_value.get(&out_vid);
     assert!(
@@ -1210,14 +1293,14 @@ fn dyn_fill_with_active_emits_runtime_length_eq_active_fact() {
 fn dyn_arange_bounded_emits_length_eq_fact() {
     use crate::circuit_input::InputPath;
     use crate::ops::static_ndarray_ops::np_arange;
-    use crate::optim::predicates::formula::{
-        ArithOp, CmpOp, ContractTerm, ContractVar,
-    };
+    use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
     use crate::optim::resolver::LayeredResolver;
     use crate::types::Value;
 
     let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
 
     let n = b.ir_read_integer(InputPath::new("n", vec![]), false);
     let n_vid = n.value_id().unwrap();
@@ -1266,8 +1349,16 @@ fn dyn_arange_bounded_emits_length_eq_fact() {
         // single `Sub` fact in the bucket and read its RHS leaves.
         let mut found = None;
         for fact in facts {
-            if let ContractTerm::Cmp { op: CmpOp::Eq, rhs, .. } = fact {
-                if let ContractTerm::Arith { op: ArithOp::Sub, rhs: r, .. } = rhs.as_ref() {
+            if let ContractTerm::Cmp {
+                op: CmpOp::Eq, rhs, ..
+            } = fact
+            {
+                if let ContractTerm::Arith {
+                    op: ArithOp::Sub,
+                    rhs: r,
+                    ..
+                } = rhs.as_ref()
+                {
                     if let ContractTerm::Var(ContractVar::Value(vid)) = r.as_ref() {
                         found = Some(*vid);
                     }
@@ -1296,14 +1387,14 @@ fn dyn_arange_bounded_emits_length_eq_fact() {
 fn dyn_tile_bounded_emits_length_eq_fact() {
     use crate::circuit_input::InputPath;
     use crate::ops::static_ndarray_ops::np_tile;
-    use crate::optim::predicates::formula::{
-        ArithOp, CmpOp, ContractTerm, ContractVar,
-    };
+    use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
     use crate::optim::resolver::LayeredResolver;
     use crate::types::{CompositeData, Value, ValueId, ZinniaType};
 
     let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
 
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
     let k_vid = k.value_id().unwrap();
@@ -1334,7 +1425,7 @@ fn dyn_tile_bounded_emits_length_eq_fact() {
     let arr = Value::List(CompositeData {
         elements_type: vec![ZinniaType::Float; 3],
         values: vals,
-    
+
         value_id: ValueId::next(),
     });
 
@@ -1353,8 +1444,16 @@ fn dyn_tile_bounded_emits_length_eq_fact() {
     let len_arr_vid = {
         let mut found = None;
         for fact in facts {
-            if let ContractTerm::Cmp { op: CmpOp::Eq, rhs, .. } = fact {
-                if let ContractTerm::Arith { op: ArithOp::Mul, lhs: l, .. } = rhs.as_ref() {
+            if let ContractTerm::Cmp {
+                op: CmpOp::Eq, rhs, ..
+            } = fact
+            {
+                if let ContractTerm::Arith {
+                    op: ArithOp::Mul,
+                    lhs: l,
+                    ..
+                } = rhs.as_ref()
+                {
                     if let ContractTerm::Var(ContractVar::Value(vid)) = l.as_ref() {
                         found = Some(*vid);
                     }
@@ -1383,14 +1482,14 @@ fn dyn_tile_bounded_emits_length_eq_fact() {
 fn dyn_repeat_bounded_emits_length_eq_fact() {
     use crate::circuit_input::InputPath;
     use crate::ops::static_ndarray_ops::ndarray_repeat;
-    use crate::optim::predicates::formula::{
-        ArithOp, CmpOp, ContractTerm, ContractVar,
-    };
+    use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
     use crate::optim::resolver::LayeredResolver;
     use crate::types::{CompositeData, Value, ValueId, ZinniaType};
 
     let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
 
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
     let k_vid = k.value_id().unwrap();
@@ -1420,7 +1519,7 @@ fn dyn_repeat_bounded_emits_length_eq_fact() {
     let arr = Value::List(CompositeData {
         elements_type: vec![ZinniaType::Float; 3],
         values: vals,
-    
+
         value_id: ValueId::next(),
     });
 
@@ -1440,8 +1539,16 @@ fn dyn_repeat_bounded_emits_length_eq_fact() {
     let len_arr_vid = {
         let mut found = None;
         for fact in facts {
-            if let ContractTerm::Cmp { op: CmpOp::Eq, rhs, .. } = fact {
-                if let ContractTerm::Arith { op: ArithOp::Mul, lhs: l, .. } = rhs.as_ref() {
+            if let ContractTerm::Cmp {
+                op: CmpOp::Eq, rhs, ..
+            } = fact
+            {
+                if let ContractTerm::Arith {
+                    op: ArithOp::Mul,
+                    lhs: l,
+                    ..
+                } = rhs.as_ref()
+                {
                     if let ContractTerm::Var(ContractVar::Value(vid)) = l.as_ref() {
                         found = Some(*vid);
                     }
@@ -1470,14 +1577,14 @@ fn dyn_repeat_bounded_emits_length_eq_fact() {
 fn dyn_linspace_bounded_emits_length_eq_fact() {
     use crate::circuit_input::InputPath;
     use crate::ops::static_ndarray_ops::np_linspace;
-    use crate::optim::predicates::formula::{
-        ArithOp, CmpOp, ContractTerm, ContractVar,
-    };
+    use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
     use crate::optim::resolver::LayeredResolver;
     use crate::types::{ScalarValue, Value};
 
     let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
 
     // num ∈ [2, 10] — bounded admission requires num >= 2 for endpoint.
     let num = b.ir_read_integer(InputPath::new("num", vec![]), false);
@@ -1535,14 +1642,14 @@ fn dyn_linspace_bounded_emits_length_eq_fact() {
 fn dyn_identity_bounded_emits_length_eq_fact() {
     use crate::circuit_input::InputPath;
     use crate::ops::static_ndarray_ops::np_identity;
-    use crate::optim::predicates::formula::{
-        ArithOp, CmpOp, ContractTerm, ContractVar,
-    };
+    use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
     use crate::optim::resolver::LayeredResolver;
     use crate::types::Value;
 
     let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
 
     let n = b.ir_read_integer(InputPath::new("n", vec![]), false);
     let n_vid = n.value_id().unwrap();
@@ -1614,8 +1721,12 @@ fn every_known_ir_kind_resolves_to_at_least_default_contract() {
     ];
     for ir in &samples {
         let c = op_contract_for(ir);
-        assert!(c.is_default(),
-                "expected default contract for {:?}; got {:?}", ir, c);
+        assert!(
+            c.is_default(),
+            "expected default contract for {:?}; got {:?}",
+            ir,
+            c
+        );
     }
 }
 
@@ -1633,7 +1744,9 @@ fn ir_arccos_f_fires_range_fact_on_output_value() {
     let mut b = crate::builder::IRBuilder::new();
     let x = b.ir_read_float(InputPath::new("x", vec![]), false);
     let out = b.ir_arccos_f(&x);
-    let out_vid = out.value_id().expect("ir_arccos_f output must have a ValueId");
+    let out_vid = out
+        .value_id()
+        .expect("ir_arccos_f output must have a ValueId");
 
     let facts = b
         .facts
@@ -1676,7 +1789,9 @@ fn ir_arctan2_f_fires_range_fact_on_output_value() {
     let y = b.ir_read_float(InputPath::new("y", vec![]), false);
     let x = b.ir_read_float(InputPath::new("x", vec![]), false);
     let out = b.ir_arctan2_f(&y, &x);
-    let out_vid = out.value_id().expect("ir_arctan2_f output must have a ValueId");
+    let out_vid = out
+        .value_id()
+        .expect("ir_arctan2_f output must have a ValueId");
 
     let facts = b
         .facts
@@ -1733,7 +1848,10 @@ impl ScopedRequiresStrict {
             .unwrap_or_else(|p| p.into_inner());
         let previous = std::env::var("ZINNIA_OP_REQUIRES_STRICT").ok();
         std::env::set_var("ZINNIA_OP_REQUIRES_STRICT", value);
-        Self { previous, _lock: lock }
+        Self {
+            previous,
+            _lock: lock,
+        }
     }
 }
 
@@ -2113,7 +2231,9 @@ fn fire_contract_sqrt_f_with_satisfying_input_publishes_ensures() {
     );
 
     let out = b.ir_sqrt_f(&x);
-    let out_vid = out.value_id().expect("ir_sqrt_f output must have a ValueId");
+    let out_vid = out
+        .value_id()
+        .expect("ir_sqrt_f output must have a ValueId");
 
     let facts = b
         .facts
@@ -2170,7 +2290,10 @@ fn fire_contract_log_f_with_satisfying_input_does_not_panic() {
         },
     );
     let out = b.ir_log_f(&x);
-    assert!(out.value_id().is_some(), "ir_log_f output must have a ValueId");
+    assert!(
+        out.value_id().is_some(),
+        "ir_log_f output must have a ValueId"
+    );
 }
 
 #[test]
@@ -2291,7 +2414,10 @@ fn fire_contract_div_i_with_nonzero_rhs_no_panic() {
         },
     );
     let out = b.ir_div_i(&a, &r);
-    assert!(out.value_id().is_some(), "ir_div_i output must have a ValueId");
+    assert!(
+        out.value_id().is_some(),
+        "ir_div_i output must have a ValueId"
+    );
 }
 
 #[test]
@@ -2335,7 +2461,10 @@ fn fire_contract_div_f_with_nonzero_rhs_no_panic() {
         },
     );
     let out = b.ir_div_f(&a, &r);
-    assert!(out.value_id().is_some(), "ir_div_f output must have a ValueId");
+    assert!(
+        out.value_id().is_some(),
+        "ir_div_f output must have a ValueId"
+    );
 }
 
 #[test]
@@ -2366,7 +2495,10 @@ fn fire_contract_inv_i_with_nonzero_no_panic() {
         },
     );
     let out = b.ir_inv_i(&x);
-    assert!(out.value_id().is_some(), "ir_inv_i output must have a ValueId");
+    assert!(
+        out.value_id().is_some(),
+        "ir_inv_i output must have a ValueId"
+    );
 }
 
 #[test]
@@ -2413,7 +2545,10 @@ fn fire_contract_pow_i_with_nonzero_base_no_panic() {
         },
     );
     let out = b.ir_pow_i(&base, &exp);
-    assert!(out.value_id().is_some(), "ir_pow_i output must have a ValueId");
+    assert!(
+        out.value_id().is_some(),
+        "ir_pow_i output must have a ValueId"
+    );
 }
 
 #[test]
@@ -2435,7 +2570,10 @@ fn fire_contract_pow_i_with_nonneg_exp_no_panic() {
         },
     );
     let out = b.ir_pow_i(&base, &exp);
-    assert!(out.value_id().is_some(), "ir_pow_i output must have a ValueId");
+    assert!(
+        out.value_id().is_some(),
+        "ir_pow_i output must have a ValueId"
+    );
 }
 
 #[test]
@@ -2488,7 +2626,10 @@ fn fire_contract_pow_f_with_nonzero_base_no_panic() {
         },
     );
     let out = b.ir_pow_f(&base, &exp);
-    assert!(out.value_id().is_some(), "ir_pow_f output must have a ValueId");
+    assert!(
+        out.value_id().is_some(),
+        "ir_pow_f output must have a ValueId"
+    );
 }
 
 #[test]
@@ -2510,7 +2651,10 @@ fn fire_contract_pow_f_with_nonneg_exp_no_panic() {
         },
     );
     let out = b.ir_pow_f(&base, &exp);
-    assert!(out.value_id().is_some(), "ir_pow_f output must have a ValueId");
+    assert!(
+        out.value_id().is_some(),
+        "ir_pow_f output must have a ValueId"
+    );
 }
 
 #[test]
@@ -2551,8 +2695,16 @@ fn fire_contract_all_yields_output_bool_facts() {
         ContractTerm::BoolComb { operands, .. } => operands.iter().any(|o| *o == le_one),
         f => *f == le_one,
     });
-    assert!(has_ge, "expected Output >= 0 fact after fire_contract(all); got {:?}", facts);
-    assert!(has_le, "expected Output <= 1 fact after fire_contract(all); got {:?}", facts);
+    assert!(
+        has_ge,
+        "expected Output >= 0 fact after fire_contract(all); got {:?}",
+        facts
+    );
+    assert!(
+        has_le,
+        "expected Output <= 1 fact after fire_contract(all); got {:?}",
+        facts
+    );
 }
 
 #[test]
@@ -2590,8 +2742,16 @@ fn fire_contract_any_yields_output_bool_facts() {
         ContractTerm::BoolComb { operands, .. } => operands.iter().any(|o| *o == le_one),
         f => *f == le_one,
     });
-    assert!(has_ge, "expected Output >= 0 fact after fire_contract(any); got {:?}", facts);
-    assert!(has_le, "expected Output <= 1 fact after fire_contract(any); got {:?}", facts);
+    assert!(
+        has_ge,
+        "expected Output >= 0 fact after fire_contract(any); got {:?}",
+        facts
+    );
+    assert!(
+        has_le,
+        "expected Output <= 1 fact after fire_contract(any); got {:?}",
+        facts
+    );
 }
 
 #[test]
@@ -2778,7 +2938,10 @@ fn np_identity_static_path_fires_identity_content() {
     let out = crate::ops::static_ndarray_ops::np_identity(&mut b, &[n]);
     let out_vid = match &out {
         Value::StaticArray { value_id, .. } => *value_id,
-        other => panic!("expected StaticArray from static np_identity, got {:?}", other.zinnia_type()),
+        other => panic!(
+            "expected StaticArray from static np_identity, got {:?}",
+            other.zinnia_type()
+        ),
     };
 
     let query = ContractTerm::PredicateApp {
@@ -2797,16 +2960,16 @@ fn np_fill_call_site_fires_zeros_for_zero_fill_value() {
     // bounded — this routes through `dyn_fill_with_active`.
     use crate::circuit_input::InputPath;
     use crate::ops::static_ndarray_ops::np_fill;
-    use crate::optim::predicates::formula::{
-        ArithOp, CmpOp, ContractTerm, ContractVar,
-    };
+    use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
     use crate::optim::prove::ProveOutcome;
     use crate::optim::resolver::LayeredResolver;
     use crate::types::Value;
     use std::collections::HashMap;
 
     let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
 
     let n = b.ir_read_integer(InputPath::new("n", vec![]), false);
     let n_vid = n.value_id().unwrap();
@@ -2835,7 +2998,10 @@ fn np_fill_call_site_fires_zeros_for_zero_fill_value() {
     let out = np_fill(&mut b, &[n.clone()], &HashMap::new(), 0);
     let out_vid = match &out {
         Value::DynamicNDArray(d) => d.value_id,
-        other => panic!("expected dyn-ndarray from bounded np_fill, got {:?}", other.zinnia_type()),
+        other => panic!(
+            "expected dyn-ndarray from bounded np_fill, got {:?}",
+            other.zinnia_type()
+        ),
     };
 
     let zeros_query = ContractTerm::PredicateApp {
@@ -2853,7 +3019,9 @@ fn np_fill_call_site_fires_zeros_for_zero_fill_value() {
 
     // Sanity: ones-fill at the same site should fire ones_content, not zeros.
     let mut b2 = crate::builder::IRBuilder::new();
-    b2.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b2.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
     let n2 = b2.ir_read_integer(InputPath::new("n", vec![]), false);
     let n2_vid = n2.value_id().unwrap();
     let n2_plus_n2 = ContractTerm::Arith {
@@ -2949,15 +3117,15 @@ fn np_arange_bounded_call_site_fires_is_sorted_on_output() {
     // scalar) — so `prove(is_sorted(out_vid))` returns `Proved`.
     use crate::circuit_input::InputPath;
     use crate::ops::static_ndarray_ops::np_arange;
-    use crate::optim::predicates::formula::{
-        ArithOp, CmpOp, ContractTerm, ContractVar,
-    };
+    use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
     use crate::optim::prove::ProveOutcome;
     use crate::optim::resolver::LayeredResolver;
     use crate::types::Value;
 
     let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
 
     let n = b.ir_read_integer(InputPath::new("n", vec![]), false);
     let n_vid = n.value_id().unwrap();
@@ -3007,16 +3175,16 @@ fn np_linspace_bounded_call_site_fires_is_sorted_when_ascending() {
     // site should fire `linspace_is_sorted` on the array's `value_id`.
     use crate::circuit_input::InputPath;
     use crate::ops::static_ndarray_ops::np_linspace;
-    use crate::optim::predicates::formula::{
-        ArithOp, CmpOp, ContractTerm, ContractVar,
-    };
+    use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
     use crate::optim::prove::ProveOutcome;
     use crate::optim::resolver::LayeredResolver;
     use crate::types::Value;
     use std::collections::HashMap;
 
     let mut b = crate::builder::IRBuilder::new();
-    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(500, 4096)));
+    b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
+        500, 4096,
+    )));
 
     let num = b.ir_read_integer(InputPath::new("num", vec![]), false);
     let num_vid = num.value_id().unwrap();
@@ -3193,7 +3361,10 @@ fn relay_forall_eq_const_skips_when_no_fact() {
     let out_vid = out_val.value_id().unwrap();
 
     let fired = relay_forall_eq_const_from_input(&mut b, in_vid, out_vid);
-    assert!(!fired, "relay should not fire when no content fact is visible");
+    assert!(
+        !fired,
+        "relay should not fire when no content fact is visible"
+    );
 
     for k in [0i64, 1i64] {
         let query = ContractTerm::PredicateApp {
@@ -3335,7 +3506,9 @@ mod group_6_shape_preserving {
         plant_forall_eq_const(&mut b, in_vid, 0);
 
         let out = crate::helpers::array_ops::transpose(&mut b, &a, &[]);
-        let out_vid = out.value_id().expect("transpose output should have value_id");
+        let out_vid = out
+            .value_id()
+            .expect("transpose output should have value_id");
         assert_forall_eq_const_proved(&mut b, out_vid, 0);
     }
 
@@ -3376,7 +3549,9 @@ mod group_6_shape_preserving {
 
         let axis = b.ir_constant_int(0);
         let out = crate::ops::static_ndarray_ops::np_expand_dims(&mut b, &[a, axis]);
-        let out_vid = out.value_id().expect("expand_dims output should have value_id");
+        let out_vid = out
+            .value_id()
+            .expect("expand_dims output should have value_id");
         assert_forall_eq_const_proved(&mut b, out_vid, 0);
     }
 
@@ -3404,7 +3579,9 @@ mod group_6_shape_preserving {
             value_id: ValueId::next(),
         });
         let out = crate::ops::static_ndarray_ops::np_broadcast_to(&mut b, &[a, shape]);
-        let out_vid = out.value_id().expect("broadcast_to output should have value_id");
+        let out_vid = out
+            .value_id()
+            .expect("broadcast_to output should have value_id");
         assert_forall_eq_const_proved(&mut b, out_vid, 1);
     }
 
@@ -3414,7 +3591,9 @@ mod group_6_shape_preserving {
         let a = make_2d_int(&mut b, &[&[1, 2, 3], &[4, 5, 6]]);
         // No fact planted on `a`.
         let out = crate::helpers::array_ops::transpose(&mut b, &a, &[]);
-        let out_vid = out.value_id().expect("transpose output should have value_id");
+        let out_vid = out
+            .value_id()
+            .expect("transpose output should have value_id");
         for k in [0i64, 1i64] {
             let query = ContractTerm::PredicateApp {
                 kind: "forall_eq_const".to_string(),
@@ -3867,14 +4046,22 @@ mod group_5c_gather_content {
     fn make_1d_list_int(b: &mut IRBuilder, vals: &[i64]) -> Value {
         let values: Vec<Value> = vals.iter().map(|n| b.ir_constant_int(*n)).collect();
         let elements_type = values.iter().map(|v| v.zinnia_type()).collect();
-        Value::List(CompositeData { elements_type, values, value_id: ValueId::next() })
+        Value::List(CompositeData {
+            elements_type,
+            values,
+            value_id: ValueId::next(),
+        })
     }
 
     /// Build a Python-list-like index array `[i, j, k]` of integer literals.
     fn make_index_list(b: &mut IRBuilder, idxs: &[i64]) -> Value {
         let values: Vec<Value> = idxs.iter().map(|n| b.ir_constant_int(*n)).collect();
         let elements_type = values.iter().map(|v| v.zinnia_type()).collect();
-        Value::List(CompositeData { elements_type, values, value_id: ValueId::next() })
+        Value::List(CompositeData {
+            elements_type,
+            values,
+            value_id: ValueId::next(),
+        })
     }
 
     fn plant_forall_eq_const(b: &mut IRBuilder, vid: ValueId, k: i64) {
@@ -3922,11 +4109,12 @@ mod group_5c_gather_content {
         };
         let out = crate::helpers::ndarray::fancy_index_static(&data, &idx)
             .expect("fancy_index_static should succeed on int literals");
-        let out_vid = out.value_id().expect("fancy_index_static output should have a value_id");
+        let out_vid = out
+            .value_id()
+            .expect("fancy_index_static output should have a value_id");
 
-        let fired = crate::optim::resolver::relay_forall_eq_const_from_input(
-            &mut b, in_vid, out_vid,
-        );
+        let fired =
+            crate::optim::resolver::relay_forall_eq_const_from_input(&mut b, in_vid, out_vid);
         assert!(fired, "relay should fire when forall_eq_const(in, 0) holds");
         assert_forall_eq_const_proved(&mut b, out_vid, 0);
     }
@@ -3949,9 +4137,8 @@ mod group_5c_gather_content {
             .expect("fancy_index_static should succeed on int literals");
         let out_vid = out.value_id().expect("output should have a value_id");
 
-        let fired = crate::optim::resolver::relay_forall_eq_const_from_input(
-            &mut b, in_vid, out_vid,
-        );
+        let fired =
+            crate::optim::resolver::relay_forall_eq_const_from_input(&mut b, in_vid, out_vid);
         assert!(fired, "relay should fire when forall_eq_const(in, 1) holds");
         assert_forall_eq_const_proved(&mut b, out_vid, 1);
     }
@@ -3972,9 +4159,8 @@ mod group_5c_gather_content {
             .expect("fancy_index_static should succeed on int literals");
         let out_vid = out.value_id().expect("output should have a value_id");
 
-        let fired = crate::optim::resolver::relay_forall_eq_const_from_input(
-            &mut b, in_vid, out_vid,
-        );
+        let fired =
+            crate::optim::resolver::relay_forall_eq_const_from_input(&mut b, in_vid, out_vid);
         assert!(!fired, "relay should NOT fire without a source fact");
         for k in [0i64, 1i64] {
             let query = ContractTerm::PredicateApp {
@@ -4020,7 +4206,10 @@ impl ScopedReqDisable {
             .unwrap_or_else(|p| p.into_inner());
         let previous = std::env::var("ZINNIA_REQ_DISABLE").ok();
         std::env::set_var("ZINNIA_REQ_DISABLE", value);
-        Self { previous, _lock: lock }
+        Self {
+            previous,
+            _lock: lock,
+        }
     }
 }
 
@@ -4171,16 +4360,17 @@ fn disable_switch_skips_relay() {
             ],
         },
     );
-    let fired = crate::optim::resolver::relay_forall_eq_const_from_input(
-        &mut b, in_vid, out_vid,
-    );
+    let fired = crate::optim::resolver::relay_forall_eq_const_from_input(&mut b, in_vid, out_vid);
     assert!(
         !fired,
         "ZINNIA_REQ_DISABLE=1 must make relay_forall_eq_const_from_input no-op"
     );
     // And no fact should have been deposited on out_vid.
     assert!(
-        b.facts.per_value.get(&out_vid).map_or(true, |s: &Vec<_>| s.is_empty()),
+        b.facts
+            .per_value
+            .get(&out_vid)
+            .map_or(true, |s: &Vec<_>| s.is_empty()),
         "kill switch must not relay any fact onto the output",
     );
 }

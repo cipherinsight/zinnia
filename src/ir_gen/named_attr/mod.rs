@@ -6,9 +6,20 @@ use crate::types::{CompositeData, Value, ValueId, ZinniaType};
 use super::IRGenerator;
 
 mod builtins;
-mod numpy_funcs;
 mod list_methods;
 mod ndarray_methods;
+mod numpy_funcs;
+
+pub(super) fn kwarg_static_truthy(
+    kwargs: &HashMap<String, Value>,
+    name: &str,
+    default: bool,
+) -> bool {
+    kwargs
+        .get(name)
+        .and_then(|v| v.bool_val().or_else(|| v.int_val().map(|i| i != 0)))
+        .unwrap_or(default)
+}
 
 /// Bundle of dispatcher inputs shared across category sub-dispatchers.
 ///
@@ -70,13 +81,59 @@ impl IRGenerator {
         // on the StaticArray representation.
         let visited_args_orig: Vec<Value> = visited_args.clone();
         let visited_kwargs_orig: HashMap<String, Value> = _visited_kwargs.clone();
+        if target == Some("np") && matches!(member, "sum" | "prod" | "min" | "max" | "any" | "all")
+        {
+            let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
+            let axis_arg_orig = visited_kwargs_orig
+                .get("axis")
+                .or_else(|| visited_args_orig.get(1));
+            let keepdims = kwarg_static_truthy(&visited_kwargs_orig, "keepdims", false);
+            if let Some(out) = crate::helpers::static_array::reductions::try_apply_reduce(
+                &mut self.builder,
+                member,
+                &val_orig,
+                axis_arg_orig,
+                keepdims,
+            ) {
+                return out;
+            }
+        }
+        if target.is_none() && self.registered_chips.contains_key(member) {
+            return self.visit_chip_call(member, &visited_args_orig, &visited_kwargs_orig);
+        }
+        if let Some(target_name) = target {
+            if target_name == "copy" && matches!(member, "copy" | "deepcopy") {
+                return visited_args_orig.first().cloned().unwrap_or(Value::None);
+            }
+            if let Some(Value::StaticArray { shape, .. }) = self.ctx.get(target_name) {
+                match member {
+                    "real" | "conjugate" => return self.ctx.get(target_name).unwrap(),
+                    "imag" => {
+                        let total: usize = shape.iter().product();
+                        let zero = self.builder.ir_constant_float(0.0);
+                        return crate::helpers::static_array::base::build_static_array_from_flat(
+                            &mut self.builder,
+                            vec![zero; total],
+                            shape,
+                            crate::types::NumberType::Float,
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
         let visited_args: Vec<Value> = visited_args
             .iter()
             .map(|v| crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, v))
             .collect();
         let _visited_kwargs: HashMap<String, Value> = _visited_kwargs
             .into_iter()
-            .map(|(k, v)| (k, crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &v)))
+            .map(|(k, v)| {
+                (
+                    k,
+                    crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &v),
+                )
+            })
             .collect();
 
         let ctx = DispatchCtx {
@@ -146,6 +203,10 @@ impl IRGenerator {
     }
 
     pub(crate) fn visit_expr_attr(&mut self, n: &ASTExprAttribute) -> Value {
+        if let Some(out) = self.try_np_linalg_expr_attr(n) {
+            return out;
+        }
+
         let target = self.visit(&n.target);
         let mut visited_args: Vec<Value> = Vec::new();
         for a in &n.args {
@@ -177,20 +238,29 @@ impl IRGenerator {
         let target_orig = target.clone();
         let visited_args_orig: Vec<Value> = visited_args.clone();
         let visited_kwargs_orig: HashMap<String, Value> = visited_kwargs.clone();
-        let target = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &target);
+        let target =
+            crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &target);
         let visited_args: Vec<Value> = visited_args
             .iter()
             .map(|v| crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, v))
             .collect();
         let visited_kwargs: HashMap<String, Value> = visited_kwargs
             .into_iter()
-            .map(|(k, v)| (k, crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &v)))
+            .map(|(k, v)| {
+                (
+                    k,
+                    crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &v),
+                )
+            })
             .collect();
 
         // DynamicNDArray dispatch — route to dedicated handler
         if matches!(target, Value::DynamicNDArray(_)) {
             return self.dispatch_dyn_ndarray_method(
-                target, n.member.as_str(), &visited_args, &visited_kwargs,
+                target,
+                n.member.as_str(),
+                &visited_args,
+                &visited_kwargs,
             );
         }
 
@@ -206,7 +276,46 @@ impl IRGenerator {
                         Value::Float(s) => s,
                         _ => unreachable!(),
                     };
-                    return Value::Complex { real: real.clone(), imag: ni };
+                    return Value::Complex {
+                        real: real.clone(),
+                        imag: ni,
+                    };
+                }
+                _ => {}
+            }
+        }
+
+        if matches!(
+            target,
+            Value::Integer(_) | Value::Float(_) | Value::Boolean(_)
+        ) {
+            match n.member.as_str() {
+                "real" | "conjugate" => return target,
+                "imag" => {
+                    return if matches!(target, Value::Float(_)) {
+                        self.builder.ir_constant_float(0.0)
+                    } else {
+                        self.builder.ir_constant_int(0)
+                    };
+                }
+                _ => {}
+            }
+        }
+
+        if matches!(target_orig, Value::StaticArray { .. }) {
+            match n.member.as_str() {
+                "real" | "conjugate" => return target_orig,
+                "imag" => {
+                    if let Value::StaticArray { shape, .. } = &target_orig {
+                        let total: usize = shape.iter().product();
+                        let zero = self.builder.ir_constant_float(0.0);
+                        return crate::helpers::static_array::base::build_static_array_from_flat(
+                            &mut self.builder,
+                            vec![zero; total],
+                            shape.clone(),
+                            crate::types::NumberType::Float,
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -218,10 +327,7 @@ impl IRGenerator {
                 let axis_arg_orig = visited_kwargs_orig
                     .get("axis")
                     .or_else(|| visited_args_orig.first());
-                let keepdims = visited_kwargs_orig
-                    .get("keepdims")
-                    .and_then(|v| v.bool_val())
-                    .unwrap_or(false);
+                let keepdims = kwarg_static_truthy(&visited_kwargs_orig, "keepdims", false);
                 if let Some(out) = crate::helpers::static_array::reductions::try_apply_reduce(
                     &mut self.builder,
                     method,
@@ -248,10 +354,7 @@ impl IRGenerator {
                 let axis_arg_orig = visited_kwargs_orig
                     .get("axis")
                     .or_else(|| visited_args_orig.first());
-                let keepdims = visited_kwargs_orig
-                    .get("keepdims")
-                    .and_then(|v| v.bool_val())
-                    .unwrap_or(false);
+                let keepdims = kwarg_static_truthy(&visited_kwargs_orig, "keepdims", false);
                 if let Some(out) = crate::helpers::static_array::reductions::try_apply_argmax_argmin(
                     &mut self.builder,
                     &target_orig,
@@ -262,7 +365,12 @@ impl IRGenerator {
                     return out;
                 }
                 let axis_arg = visited_kwargs.get("axis").or_else(|| visited_args.first());
-                crate::helpers::array_ops::argmax_argmin(&mut self.builder, &target, axis_arg, method == "argmax")
+                crate::helpers::array_ops::argmax_argmin(
+                    &mut self.builder,
+                    &target,
+                    axis_arg,
+                    method == "argmax",
+                )
             }
             "transpose" => {
                 let args = if let Some(axes_val) = visited_kwargs.get("axes") {
@@ -273,7 +381,9 @@ impl IRGenerator {
                 // P4c: native StaticArray dispatch.
                 if matches!(target_orig, Value::StaticArray { .. }) {
                     if let Some(out) = crate::helpers::static_array::shape::try_apply_transpose(
-                        &mut self.builder, &target_orig, &args,
+                        &mut self.builder,
+                        &target_orig,
+                        &args,
                     ) {
                         return out;
                     }
@@ -284,7 +394,9 @@ impl IRGenerator {
                 // P4c: native StaticArray dispatch.
                 if matches!(target_orig, Value::StaticArray { .. }) {
                     if let Some(out) = crate::helpers::static_array::shape::try_apply_transpose(
-                        &mut self.builder, &target_orig, &[],
+                        &mut self.builder,
+                        &target_orig,
+                        &[],
                     ) {
                         return out;
                     }
@@ -293,11 +405,12 @@ impl IRGenerator {
             }
             "tolist" => target,
             "astype" => {
-                let target_float = if let Some(Value::Class(ZinniaType::Float)) = visited_args.first() {
-                    true
-                } else {
-                    false
-                };
+                let target_float =
+                    if let Some(Value::Class(ZinniaType::Float)) = visited_args.first() {
+                        true
+                    } else {
+                        false
+                    };
                 self.cast_composite(&target, target_float)
             }
             "ndim" => {
@@ -309,56 +422,106 @@ impl IRGenerator {
                 let total: usize = shape.iter().product();
                 self.builder.ir_constant_int(total as i64)
             }
-            "flatten" | "flat" => {
+            "flatten" | "ravel" | "flat" => {
                 // P4c: native StaticArray dispatch.
                 if matches!(target_orig, Value::StaticArray { .. }) {
                     if let Some(out) = crate::helpers::static_array::shape::try_apply_flatten(
-                        &mut self.builder, &target_orig,
+                        &mut self.builder,
+                        &target_orig,
                     ) {
                         return out;
                     }
                 }
                 let flat = crate::helpers::composite::flatten_composite(&target);
                 let types = flat.iter().map(|v| v.zinnia_type()).collect();
-                let out = Value::List(CompositeData { elements_type: types, values: flat, value_id: ValueId::next() });
+                let out = Value::List(CompositeData {
+                    elements_type: types,
+                    values: flat,
+                    value_id: ValueId::next(),
+                });
                 if let (Some(in_vid), Some(out_vid)) = (target_orig.value_id(), out.value_id()) {
-                    crate::optim::resolver::relay_forall_eq_const_from_input(&mut self.builder, in_vid, out_vid);
+                    crate::optim::resolver::relay_forall_eq_const_from_input(
+                        &mut self.builder,
+                        in_vid,
+                        out_vid,
+                    );
                 }
                 out
             }
             "reshape" => {
                 // P4c: native StaticArray dispatch.
                 if matches!(target_orig, Value::StaticArray { .. }) {
-                    return crate::helpers::array_ops::reshape(&mut self.builder, &target_orig, &visited_args);
+                    return crate::helpers::array_ops::reshape(
+                        &mut self.builder,
+                        &target_orig,
+                        &visited_args,
+                    );
                 }
                 crate::helpers::array_ops::reshape(&mut self.builder, &target, &visited_args)
             }
             "moveaxis" => {
                 // P4c: native StaticArray dispatch.
                 if matches!(target_orig, Value::StaticArray { .. }) {
-                    return crate::helpers::array_ops::moveaxis(&mut self.builder, &target_orig, &visited_args);
+                    return crate::helpers::array_ops::moveaxis(
+                        &mut self.builder,
+                        &target_orig,
+                        &visited_args,
+                    );
                 }
                 crate::helpers::array_ops::moveaxis(&mut self.builder, &target, &visited_args)
             }
-            "repeat" => crate::helpers::array_ops::repeat(&mut self.builder, &target, &visited_args, &visited_kwargs),
-            "filter" => crate::helpers::array_ops::filter(&mut self.builder, &target, &visited_args),
+            "swapaxes" => {
+                if matches!(target_orig, Value::StaticArray { .. }) {
+                    return crate::helpers::array_ops::swapaxes(
+                        &mut self.builder,
+                        &target_orig,
+                        &visited_args,
+                    );
+                }
+                crate::helpers::array_ops::swapaxes(&mut self.builder, &target, &visited_args)
+            }
+            "nonzero" => crate::ops::static_ndarray_ops::np_nonzero(
+                &mut self.builder,
+                &[target_orig.clone()],
+            ),
+            "repeat" => crate::helpers::array_ops::repeat(
+                &mut self.builder,
+                &target,
+                &visited_args,
+                &visited_kwargs,
+            ),
+            "filter" => {
+                crate::helpers::array_ops::filter(&mut self.builder, &target, &visited_args)
+            }
             "shape" => {
                 let shape = crate::helpers::composite::get_composite_shape(&target);
-                let shape_vals: Vec<Value> = shape.iter()
+                let shape_vals: Vec<Value> = shape
+                    .iter()
                     .map(|&s| Value::Integer(crate::types::ScalarValue::new(Some(s as i64), None)))
                     .collect();
                 let types = vec![ZinniaType::Integer; shape_vals.len()];
-                Value::Tuple(CompositeData { elements_type: types, values: shape_vals, value_id: ValueId::next() })
+                Value::Tuple(CompositeData {
+                    elements_type: types,
+                    values: shape_vals,
+                    value_id: ValueId::next(),
+                })
             }
             "dtype" => {
                 let flat = crate::helpers::composite::flatten_composite(&target);
                 let has_float = flat.iter().any(|v| matches!(v, Value::Float(_)));
-                if has_float { Value::Class(ZinniaType::Float) } else { Value::Class(ZinniaType::Integer) }
+                if has_float {
+                    Value::Class(ZinniaType::Float)
+                } else {
+                    Value::Class(ZinniaType::Integer)
+                }
             }
-            "append" | "extend" | "pop" | "remove" | "clear" |
-            "copy" | "reverse" | "count" | "index" => {
+            "append" | "extend" | "pop" | "remove" | "clear" | "copy" | "reverse" | "count"
+            | "index" => {
                 // These should be handled via visit_named_attr with a target variable name
-                panic!("Expr attribute `.{}` on non-variable target not supported", n.member)
+                panic!(
+                    "Expr attribute `.{}` on non-variable target not supported",
+                    n.member
+                )
             }
             _ => {
                 panic!(
@@ -367,5 +530,71 @@ impl IRGenerator {
                 )
             }
         }
+    }
+
+    fn try_np_linalg_expr_attr(&mut self, n: &ASTExprAttribute) -> Option<Value> {
+        let ASTNode::ASTNamedAttribute(target) = &*n.target else {
+            return None;
+        };
+        if target.target.as_deref() != Some("np") || target.member != "linalg" {
+            return None;
+        }
+
+        let mut visited_args: Vec<Value> = Vec::new();
+        for a in &n.args {
+            if let ASTNode::ASTStarredExpr(se) = a {
+                let inner = self.visit(&se.value);
+                if let Value::List(data) | Value::Tuple(data) = inner {
+                    visited_args.extend(data.values);
+                } else {
+                    visited_args.push(inner);
+                }
+            } else {
+                visited_args.push(self.visit(a));
+            }
+        }
+        let _visited_kwargs: HashMap<String, Value> = n
+            .kwargs
+            .iter()
+            .map(|(k, v)| (k.clone(), self.visit(v)))
+            .collect();
+        if !_visited_kwargs.is_empty() {
+            panic!(
+                "np.linalg.{}: keyword arguments are not supported in the first static verification slice",
+                n.member
+            );
+        }
+        if visited_args
+            .iter()
+            .any(|arg| matches!(arg, Value::DynamicNDArray(_)))
+        {
+            panic!(
+                "np.linalg.{} is not yet supported for bounded-dynamic arrays; use static arrays or keep linalg outside the bounded-dynamic surface",
+                n.member
+            );
+        }
+
+        let out = match n.member.as_str() {
+            "inv" | "solve" | "cholesky" => {
+                crate::ops::static_ndarray_ops::np_linalg_implicit_result(n.member.as_str())
+            }
+            "verify_inverse" => crate::ops::static_ndarray_ops::np_linalg_verify_inverse(
+                &mut self.builder,
+                &visited_args,
+            ),
+            "verify_solve" => crate::ops::static_ndarray_ops::np_linalg_verify_solve(
+                &mut self.builder,
+                &visited_args,
+            ),
+            "verify_cholesky" => crate::ops::static_ndarray_ops::np_linalg_verify_cholesky(
+                &mut self.builder,
+                &visited_args,
+            ),
+            other => panic!(
+                "np.linalg.{} is not implemented; supported verification helpers are verify_inverse, verify_solve, and verify_cholesky",
+                other
+            ),
+        };
+        Some(out)
     }
 }

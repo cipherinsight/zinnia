@@ -1,0 +1,246 @@
+{
+  "categories": [
+    "complex",
+    "denominator-obligation",
+    "in-place-mutation",
+    "loop-bounded"
+  ],
+  "diagnostics": [
+    "Complex kernels require Complex dtype support or a fail-closed classification."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "ValueError",
+        "adapt_step",
+        "apply_filter",
+        "errorfct",
+        "modes.max",
+        "np.conj",
+        "np.zeros",
+        "range",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 36,
+      "line_start": 15,
+      "mutated_params": [
+        "wx"
+      ],
+      "name": "train_equaliser",
+      "ops": [
+        "Add",
+        "Eq",
+        "Gt",
+        "Lt",
+        "LtE",
+        "Mod",
+        "Mult",
+        "NotEq",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "E",
+          "proposed_annotation": "Complex[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 2,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "TrSyms",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "Niter",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "os",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "mu",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "wx",
+          "proposed_annotation": "Complex[Array, 'N<=1024 M<=1024 K<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "modes",
+          "proposed_annotation": "Integer[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "adaptive",
+          "proposed_annotation": "Bool",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "symbols",
+          "proposed_annotation": "Complex[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "method",
+          "proposed_annotation": "str",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "abs"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 41,
+      "line_start": 39,
+      "mutated_params": [],
+      "name": "cma_error",
+      "ops": [
+        "Mult",
+        "Pow",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "Xest",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "s1",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "i",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 48,
+      "line_start": 44,
+      "mutated_params": [],
+      "name": "adapt_step",
+      "ops": [
+        "Add",
+        "Div",
+        "Gt",
+        "Mult"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "mu",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "err_p",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "err",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "E.dtype.type",
+        "np.conj",
+        "range"
+      ],
+      "entry_candidate": false,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 58,
+      "line_start": 51,
+      "mutated_params": [],
+      "name": "apply_filter",
+      "ops": [
+        "Mult"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "E",
+          "proposed_annotation": "Complex[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 2,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "wx",
+          "proposed_annotation": "Complex[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 2,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_train_equalizer/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "pythran_train_equalizer",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: complex, denominator-obligation, in-place-mutation, loop-bounded\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.\nimport numpy as np\n\n@zk_circuit\n@requires(lambda E, TrSyms, Niter, os, mu, wx, modes, adaptive, symbols, method: 0 <= Niter <= 1024)\n@requires(lambda E, TrSyms, Niter, os, mu, wx, modes, adaptive, symbols, method: method != 0)\ndef train_equaliser(E: Complex[Array, 'N<=1024 M<=1024'], TrSyms: Integer, Niter: Integer, os: Integer, mu: Float, wx: Complex[Array, 'N<=1024 M<=1024 K<=1024'], modes: Integer[Array, 'N<=1024'], adaptive: Bool, symbols: Complex[Array, 'N<=1024 M<=1024'], method: str):\n    if method == 'cma':\n        errorfct = cma_error\n    else:\n        raise ValueError('Unknown method %s' % method)\n    nmodes = E.shape[0]\n    ntaps = wx.shape[-1]\n    assert symbols.shape[0] == nmodes, 'symbols must be at least size of modes'\n    assert wx.shape[0] == nmodes, 'wx needs to have at least as many dimensions as the maximum mode'\n    assert E.shape[1] > TrSyms * os + ntaps, 'Field must be longer than the number of training symbols'\n    assert modes.max() < nmodes, 'Maximum mode number must not be higher than number of modes'\n    err = np.zeros((nmodes, TrSyms * Niter), dtype=E.dtype)\n    for mode in modes:\n        for it in range(Niter):\n            for i in range(TrSyms):\n                X = E[:, i * os:i * os + ntaps]\n                Xest = apply_filter(X, wx[mode])\n                err[mode, it * Niter + i] = errorfct(Xest, symbols[mode], i)\n                wx[mode] += mu * np.conj(err[mode, it * Niter + i]) * X\n                if adaptive and i > 0:\n                    mu = adapt_step(mu, err[mode, it * Niter + i], err[mode, it * Niter + i - 1])\n    return (err, wx, mu)\n\n@zk_chip\ndef cma_error(Xest: Float, s1: Complex[Array, 'N<=1024'], i: Integer):\n    d = s1[0].real - abs(Xest) ** 2\n    return d * Xest\n\n@zk_chip\ndef adapt_step(mu: Float, err_p: Float, err: Float):\n    if err.real * err_p.real > 0 and err.imag * err_p.imag > 0:\n        return mu\n    else:\n        return mu / (1 + mu * (err.real * err.real + err.imag * err.imag))\n\n@zk_chip\ndef apply_filter(E: Complex[Array, 'N<=1024 M<=1024'], wx: Complex[Array, 'N<=1024 M<=1024']):\n    pols = E.shape[0]\n    Ntaps = wx.shape[1]\n    Xest = E.dtype.type(0)\n    for k in range(pols):\n        for i in range(Ntaps):\n            Xest += E[k, i] * np.conj(wx[k, i])\n    return Xest",
+  "source_status": "direct"
+}

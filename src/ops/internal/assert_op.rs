@@ -12,8 +12,12 @@ impl AssertOp {
 }
 
 impl Op for AssertOp {
-    fn name(&self) -> &'static str { "assert" }
-    fn params(&self) -> &[ParamEntry] { &Self::PARAMS }
+    fn name(&self) -> &'static str {
+        "assert"
+    }
+    fn params(&self) -> &[ParamEntry] {
+        &Self::PARAMS
+    }
 
     fn build(&self, builder: &mut IRBuilder, args: &OpArgs) -> Value {
         let test = args.require("test");

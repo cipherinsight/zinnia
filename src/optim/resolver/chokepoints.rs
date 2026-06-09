@@ -131,37 +131,20 @@ impl SiteKind {
                 "shape element at axis {} must be a compile-time constant int",
                 i
             ),
-            SiteKind::SliceStart => {
-                "slice start must be a compile-time constant int".to_string()
-            }
-            SiteKind::SliceStop => {
-                "slice stop must be a compile-time constant int".to_string()
-            }
-            SiteKind::SliceStep => {
-                "slice step must be a compile-time constant int".to_string()
-            }
-            SiteKind::RangeStart => {
-                "range start must be a compile-time constant int".to_string()
-            }
-            SiteKind::RangeStop => {
-                "range stop must be a compile-time constant int".to_string()
-            }
-            SiteKind::RangeStep => {
-                "range step must be a compile-time constant int".to_string()
-            }
+            SiteKind::SliceStart => "slice start must be a compile-time constant int".to_string(),
+            SiteKind::SliceStop => "slice stop must be a compile-time constant int".to_string(),
+            SiteKind::SliceStep => "slice step must be a compile-time constant int".to_string(),
+            SiteKind::RangeStart => "range start must be a compile-time constant int".to_string(),
+            SiteKind::RangeStop => "range stop must be a compile-time constant int".to_string(),
+            SiteKind::RangeStep => "range step must be a compile-time constant int".to_string(),
             SiteKind::ReshapeDim => {
-                "reshape target dimension must be a compile-time constant int"
-                    .to_string()
+                "reshape target dimension must be a compile-time constant int".to_string()
             }
-            SiteKind::RepeatCount => {
-                "repeat count must be a compile-time constant int".to_string()
-            }
+            SiteKind::RepeatCount => "repeat count must be a compile-time constant int".to_string(),
             SiteKind::SplitSections => {
                 "split sections must be a compile-time constant int".to_string()
             }
-            SiteKind::Axis => {
-                "axis argument must be a compile-time constant int".to_string()
-            }
+            SiteKind::Axis => "axis argument must be a compile-time constant int".to_string(),
             SiteKind::NewAxisPosition => {
                 "new-axis position must be a compile-time constant int".to_string()
             }
@@ -333,9 +316,7 @@ pub fn require_static_or_bounded_int(
                 let upper = resolver.resolve_max_with_stmts(val, stmts);
                 let lower = resolver.resolve_min_with_stmts(val, stmts);
                 match (lower, upper) {
-                    (Some(min), Some(max)) if min < max => {
-                        BoundedInt::Bounded { min, max }
-                    }
+                    (Some(min), Some(max)) if min <= max => BoundedInt::Bounded { min, max },
                     _ => BoundedInt::Neither,
                 }
             }
@@ -352,8 +333,12 @@ pub fn require_static_or_bounded_int(
     //    back to Neither rather than masquerading as a degenerate range.
     if matches!(outcome, BoundedInt::Neither) {
         if let Some((min, max)) = b.ask_bounds(val) {
-            if min < max {
-                outcome = BoundedInt::Bounded { min, max };
+            if min <= max {
+                outcome = if min == max {
+                    BoundedInt::Static(min)
+                } else {
+                    BoundedInt::Bounded { min, max }
+                };
             }
         }
     }
@@ -468,10 +453,7 @@ pub fn require_provable_static_int(
 /// Binary-search the tightest `c` such that `Value(vid) <= c` is
 /// `Proved`. Returns `None` if no finite `c` in `[-(1<<32), 1<<32)`
 /// is provable.
-fn prove_upper_bound(
-    b: &mut crate::builder::IRBuilder,
-    vid: crate::types::ValueId,
-) -> Option<i64> {
+fn prove_upper_bound(b: &mut crate::builder::IRBuilder, vid: crate::types::ValueId) -> Option<i64> {
     use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
     use crate::optim::prove::ProveOutcome;
     const MAX_ABS: i64 = 1 << 32;
@@ -531,10 +513,7 @@ fn prove_upper_bound(
 
 /// Mirror of [`prove_upper_bound`] for `Value(vid) >= c` (returns the
 /// largest provable `c`).
-fn prove_lower_bound(
-    b: &mut crate::builder::IRBuilder,
-    vid: crate::types::ValueId,
-) -> Option<i64> {
+fn prove_lower_bound(b: &mut crate::builder::IRBuilder, vid: crate::types::ValueId) -> Option<i64> {
     use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
     use crate::optim::prove::ProveOutcome;
     const MAX_ABS: i64 = 1 << 32;

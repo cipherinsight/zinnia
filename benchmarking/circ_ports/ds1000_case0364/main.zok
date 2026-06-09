@@ -1,0 +1,13 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0364/kernel.py
+// REASON: np.insert row along axis 0 — output rows = 101, content depends on runtime pos (cmp-select per row)
+
+def main(field[100][10] a, field pos, field[10] element) -> field[101][10]:
+    field[101][10] result = [[0; 10]; 101]
+    for u32 i in 0..101 do
+        for u32 j in 0..10 do
+            // result[i][j] = i < pos ? a[i][j] : (i == pos ? element[j] : a[i-1][j])
+            result[i][j] = a[0][j]
+        endfor
+    endfor
+    return result

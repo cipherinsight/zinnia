@@ -15,10 +15,18 @@ use crate::circuit_input::InputPath;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum IR {
     // ── Constants ──────────────────────────────────────────────────────
-    ConstantInt { value: i64 },
-    ConstantFloat { value: f64 },
-    ConstantBool { value: bool },
-    ConstantStr { value: String },
+    ConstantInt {
+        value: i64,
+    },
+    ConstantFloat {
+        value: f64,
+    },
+    ConstantBool {
+        value: bool,
+    },
+    ConstantStr {
+        value: String,
+    },
 
     // ── Integer arithmetic ────────────────────────────────────────────
     AddI,
@@ -42,18 +50,78 @@ pub enum IR {
 
     // ── Float arithmetic ──────────────────────────────────────────────
     AddF,
+    /// Static float sum aggregate.
+    ///
+    /// Arguments are same-scale fixed-point float operands. Semantics are
+    /// exactly repeated `AddF`, but backends may lower small chunks to a
+    /// denser native addition gate.
+    SumF {
+        len: u32,
+    },
     SubF,
     MulF,
+    /// Static float product-sum aggregate.
+    ///
+    /// Arguments are `2 * len` scalar float operands in adjacent pair order:
+    /// `[a0, b0, a1, b1, ...]`. Semantics are exactly the scalar fixed-point
+    /// path per pair:
+    /// `sum_i fp_mul_rescale(ai, bi, precision_bits)`, accumulated with
+    /// existing float-add semantics. This is not raw field `mul_add`.
+    ProductSumF {
+        len: u32,
+    },
     DivF,
     FloorDivF,
     ModF,
     PowF,
+    /// Float base raised to an Integer exponent. The exponent stays in
+    /// integer representation (not Q-scaled) so backends can lower to
+    /// integer-exponent square-and-multiply instead of `exp(b*log(a))`.
+    PowFI,
     AbsF,
     SignF,
 
     // ── Integer comparison ────────────────────────────────────────────
     EqI,
     NeI,
+    /// `lt_i` specialized for the case where BOTH operands are provably
+    /// non-negative and fit in u128 (e.g. internally-generated slice
+    /// indices, axis lengths, row/col coords). Lowers to a single ACIR
+    /// constraint via Noir's native `<` on u128, rather than the full
+    /// sign-aware `qlt` decomposition. Caller is responsible for the
+    /// bound; mis-use produces wrong answers on Zinnia's signed-Field
+    /// negative encoding.
+    LtIBounded,
+    /// `gt_i` companion to `LtIBounded` — same bounded-operand contract.
+    GtIBounded,
+    /// Single-shot `0 <= idx < hi` discharge. Noir lowers to one
+    /// `assert((idx as u128) < (hi as u128))` (~30 ACIR), saving the
+    /// `qge(idx, 0) && qlt(idx, hi) && assert` chain (~49 ACIR). Sound
+    /// because the Noir `as u128` cast emits an implicit `< 2^128` range
+    /// constraint that catches Zinnia's signed-Field negative encoding
+    /// (negatives are encoded as `p - |x|`, well above `2^128`). Used by
+    /// `discharge_index_in_range` for the common `lo == 0` case.
+    AssertU128Lt,
+    /// Value-producing bounded-index decomposition bit. Returns bit `bit`
+    /// of `idx`, while also constraining `0 <= idx < hi`. Multiple bits for
+    /// the same `(idx, hi, bits)` may be fused/cached by backends.
+    AssertU128LtBit {
+        hi: u64,
+        bit: u32,
+        bits: u32,
+    },
+    /// Multi-axis bounded-range mask. Returns Field 0/1 = 1 iff for
+    /// every axis k: `lo_k <= idx_k < hi_k`. `arguments` is laid out as
+    /// `[idx_0, lo_0, hi_0, idx_1, lo_1, hi_1, ...]` for `rank` axes.
+    /// Same operand contract as `LtIBounded`: every operand must be a
+    /// non-negative u128-safe value (slice indices, axis lengths). The
+    /// Noir backend lowers to one combined boolean expression sharing
+    /// a single u128 RANGE table — replaces the multi-multiplication
+    /// AND chain a generic `LtIBounded + LogicalAnd` lowering would
+    /// emit, saving ~3 gates per axis per cell on 2D dynamic slices.
+    IndexInBox {
+        rank: usize,
+    },
     LtI,
     LteI,
     GtI,
@@ -77,6 +145,7 @@ pub enum IR {
     SqrtF,
     ExpF,
     LogF,
+    ArcSinF,
     ArcCosF,
     ArcTan2F,
 
@@ -89,6 +158,20 @@ pub enum IR {
     SelectI,
     SelectF,
     SelectB,
+    /// Select where the condition is also constrained to be a bit.
+    /// Backends may fuse `assert_bit(cond)` and the mux equation.
+    SelectBitI,
+    SelectBitF,
+    /// Lane of a vector select with one shared condition:
+    /// `out[lane] = cond ? true_values[lane] : false_values[lane]`.
+    SelectManyI {
+        len: u32,
+        lane: u32,
+    },
+    SelectManyF {
+        len: u32,
+        lane: u32,
+    },
 
     // ── Casting ───────────────────────────────────────────────────────
     IntCast,
@@ -123,6 +206,7 @@ pub enum IR {
 
     // ── Assertions & public exposure ──────────────────────────────────
     Assert,
+    AssertBit,
     ExposePublicI,
     ExposePublicF,
 
@@ -175,10 +259,13 @@ pub enum IR {
         dtype_name: String,
         max_length: u32,
         max_rank: u32,
+        #[serde(default)]
+        max_shape: Vec<u32>,
     },
     WitnessDynamicNDArrayMeta {
         array_id: u32,
         max_rank: u32,
+        param_name: String,
     },
     AssertDynamicNDArrayMeta {
         array_id: u32,
@@ -258,18 +345,28 @@ impl IR {
 
             // Float arithmetic
             IR::AddF => "add_f".to_string(),
+            IR::SumF { len } => format!("sum_f[{}]", len),
             IR::SubF => "sub_f".to_string(),
             IR::MulF => "mul_f".to_string(),
+            IR::ProductSumF { len } => format!("product_sum_f[{}]", len),
             IR::DivF => "div_f".to_string(),
             IR::FloorDivF => "floor_divide_f".to_string(),
             IR::ModF => "mod_f".to_string(),
             IR::PowF => "pow_f".to_string(),
+            IR::PowFI => "pow_f_int".to_string(),
             IR::AbsF => "abs_f".to_string(),
             IR::SignF => "sign_f".to_string(),
 
             // Integer comparison
             IR::EqI => "eq_i".to_string(),
             IR::NeI => "ne_i".to_string(),
+            IR::LtIBounded => "lt_i_bounded".to_string(),
+            IR::GtIBounded => "gt_i_bounded".to_string(),
+            IR::AssertU128Lt => "assert_u128_lt".to_string(),
+            IR::AssertU128LtBit { hi, bit, bits } => {
+                format!("assert_u128_lt_bit[{},{},{}]", hi, bit, bits)
+            }
+            IR::IndexInBox { rank } => format!("index_in_box[{}]", rank),
             IR::LtI => "lt_i".to_string(),
             IR::LteI => "lte_i".to_string(),
             IR::GtI => "gt_i".to_string(),
@@ -293,6 +390,7 @@ impl IR {
             IR::SqrtF => "sqrt_f".to_string(),
             IR::ExpF => "exp_f".to_string(),
             IR::LogF => "log_f".to_string(),
+            IR::ArcSinF => "arcsin_f".to_string(),
             IR::ArcCosF => "arccos_f".to_string(),
             IR::ArcTan2F => "arctan2_f".to_string(),
 
@@ -305,6 +403,10 @@ impl IR {
             IR::SelectI => "select_i".to_string(),
             IR::SelectF => "select_f".to_string(),
             IR::SelectB => "select_b".to_string(),
+            IR::SelectBitI => "select_bit_i".to_string(),
+            IR::SelectBitF => "select_bit_f".to_string(),
+            IR::SelectManyI { len, lane } => format!("select_many_i[{},{}]", len, lane),
+            IR::SelectManyF { len, lane } => format!("select_many_f[{},{}]", len, lane),
 
             // Cast
             IR::IntCast => "int_cast".to_string(),
@@ -326,23 +428,38 @@ impl IR {
             IR::ReadHash { path, is_public } => {
                 format!("read_hash[{}][{}]", path.display(), is_public)
             }
-            IR::ReadExternalResult { store_idx, output_idx, is_float } => {
-                format!("read_external_result[{}.{}][float={}]", store_idx, output_idx, is_float)
+            IR::ReadExternalResult {
+                store_idx,
+                output_idx,
+                is_float,
+            } => {
+                format!(
+                    "read_external_result[{}.{}][float={}]",
+                    store_idx, output_idx, is_float
+                )
             }
             IR::Print => "print".to_string(),
 
             // Assert & expose
             IR::Assert => "assert".to_string(),
+            IR::AssertBit => "assert_bit".to_string(),
             IR::ExposePublicI => "expose_public_i".to_string(),
             IR::ExposePublicF => "expose_public_f".to_string(),
 
             // Structural-predicate precondition
-            IR::StructuralPredicate { kind, args, op, bound } => {
+            IR::StructuralPredicate {
+                kind,
+                args,
+                op,
+                bound,
+            } => {
                 let args_str = args.join(",");
                 let op_str = op.as_deref().unwrap_or("");
                 let bound_str = bound.as_deref().unwrap_or("");
-                format!("structural_predicate[{}][{}][{}][{}]",
-                        kind, args_str, op_str, bound_str)
+                format!(
+                    "structural_predicate[{}][{}][{}][{}]",
+                    kind, args_str, op_str, bound_str
+                )
             }
 
             // Scalar precondition (term-tree carrying the payload)
@@ -370,12 +487,20 @@ impl IR {
                 dtype_name,
                 max_length,
                 max_rank,
+                max_shape,
             } => format!(
-                "alloc_dynamic_ndarray_meta[{}][{}][{}][{}]",
-                array_id, dtype_name, max_length, max_rank
+                "alloc_dynamic_ndarray_meta[{}][{}][{}][{}][{:?}]",
+                array_id, dtype_name, max_length, max_rank, max_shape
             ),
-            IR::WitnessDynamicNDArrayMeta { array_id, max_rank } => {
-                format!("witness_dynamic_ndarray_meta[{}][{}]", array_id, max_rank)
+            IR::WitnessDynamicNDArrayMeta {
+                array_id,
+                max_rank,
+                param_name,
+            } => {
+                format!(
+                    "witness_dynamic_ndarray_meta[{}][{}][{}]",
+                    array_id, max_rank, param_name
+                )
             }
             IR::AssertDynamicNDArrayMeta {
                 array_id,
@@ -426,7 +551,6 @@ impl IR {
             // Hash
             IR::PoseidonHash => "poseidon_hash".to_string(),
             IR::EqHash => "eq_hash".to_string(),
-
             // (StructuralPredicate handled in the Assert/expose block above)
         }
     }
@@ -434,33 +558,42 @@ impl IR {
     /// Returns `true` if this IR is a "fixed" IR that should not be eliminated
     /// by dead code elimination or constant folding.
     /// Mirrors the Python `is_fixed_ir()` method.
+    ///
+    /// `ReadInteger { is_public }` / `ReadFloat { is_public }` are fixed
+    /// only when `is_public == true`: public inputs are part of the
+    /// verifier-visible interface and must be preserved. Private reads
+    /// with no downstream consumers can be safely eliminated by DCE —
+    /// they would otherwise commit witness values the circuit never
+    /// constrains (e.g. case 0402 declares a 36 864-cell
+    /// `Float[8,9,8,8,8]` parameter but only uses `dims` and `index`).
     pub fn is_fixed(&self) -> bool {
-        matches!(
-            self,
+        match self {
             IR::Assert
-                | IR::StructuralPredicate { .. }
-                | IR::ScalarPrecondition { .. }
-                | IR::Print
-                | IR::ExposePublicI
-                | IR::ExposePublicF
-                | IR::ReadInteger { .. }
-                | IR::ReadFloat { .. }
-                | IR::ReadHash { .. }
-                | IR::AllocateMemory { .. }
-                | IR::WriteMemory { .. }
-                | IR::ReadMemory { .. }
-                | IR::MemoryTraceEmit { .. }
-                | IR::MemoryTraceSeal
-                | IR::AllocateDynamicNDArrayMeta { .. }
-                | IR::WitnessDynamicNDArrayMeta { .. }
-                | IR::AssertDynamicNDArrayMeta { .. }
-                | IR::DynamicNDArrayGetItem { .. }
-                | IR::DynamicNDArraySetItem { .. }
-                | IR::InvokeExternal { .. }
-                | IR::ExportExternalI { .. }
-                | IR::ExportExternalF { .. }
-                | IR::EqHash
-        )
+            | IR::AssertBit
+            | IR::AssertU128Lt
+            | IR::StructuralPredicate { .. }
+            | IR::ScalarPrecondition { .. }
+            | IR::Print
+            | IR::ExposePublicI
+            | IR::ExposePublicF
+            | IR::ReadHash { .. }
+            | IR::AllocateMemory { .. }
+            | IR::WriteMemory { .. }
+            | IR::ReadMemory { .. }
+            | IR::MemoryTraceEmit { .. }
+            | IR::MemoryTraceSeal
+            | IR::AllocateDynamicNDArrayMeta { .. }
+            | IR::WitnessDynamicNDArrayMeta { .. }
+            | IR::AssertDynamicNDArrayMeta { .. }
+            | IR::DynamicNDArrayGetItem { .. }
+            | IR::DynamicNDArraySetItem { .. }
+            | IR::InvokeExternal { .. }
+            | IR::ExportExternalI { .. }
+            | IR::ExportExternalF { .. }
+            | IR::EqHash => true,
+            IR::ReadInteger { is_public, .. } | IR::ReadFloat { is_public, .. } => *is_public,
+            _ => false,
+        }
     }
 
     /// Returns the Python IR class name for serialization compatibility.
@@ -488,16 +621,24 @@ impl IR {
             IR::ShrI => "ShrIIR",
             IR::BitNotI => "BitNotIIR",
             IR::AddF => "AddFIR",
+            IR::SumF { .. } => "SumFIR",
             IR::SubF => "SubFIR",
             IR::MulF => "MulFIR",
+            IR::ProductSumF { .. } => "ProductSumFIR",
             IR::DivF => "DivFIR",
             IR::FloorDivF => "FloorDivFIR",
             IR::ModF => "ModFIR",
             IR::PowF => "PowFIR",
+            IR::PowFI => "PowFIIR",
             IR::AbsF => "AbsFIR",
             IR::SignF => "SignFIR",
             IR::EqI => "EqualIIR",
             IR::NeI => "NotEqualIIR",
+            IR::LtIBounded => "LessThanIBoundedIR",
+            IR::GtIBounded => "GreaterThanIBoundedIR",
+            IR::AssertU128Lt => "AssertU128LtIR",
+            IR::AssertU128LtBit { .. } => "AssertU128LtBitIR",
+            IR::IndexInBox { .. } => "IndexInBoxIR",
             IR::LtI => "LessThanIIR",
             IR::LteI => "LessThanOrEqualIIR",
             IR::GtI => "GreaterThanIIR",
@@ -517,6 +658,7 @@ impl IR {
             IR::SqrtF => "SqrtFIR",
             IR::ExpF => "ExpFIR",
             IR::LogF => "LogFIR",
+            IR::ArcSinF => "ArcSinFIR",
             IR::ArcCosF => "ArcCosFIR",
             IR::ArcTan2F => "ArcTan2FIR",
             IR::LogicalAnd => "LogicalAndIR",
@@ -525,6 +667,10 @@ impl IR {
             IR::SelectI => "SelectIIR",
             IR::SelectF => "SelectFIR",
             IR::SelectB => "SelectBIR",
+            IR::SelectBitI => "SelectBitIIR",
+            IR::SelectBitF => "SelectBitFIR",
+            IR::SelectManyI { .. } => "SelectManyIIR",
+            IR::SelectManyF { .. } => "SelectManyFIR",
             IR::IntCast => "IntCastIR",
             IR::FloatCast => "FloatCastIR",
             IR::BoolCast => "BoolCastIR",
@@ -537,6 +683,7 @@ impl IR {
             IR::ReadExternalResult { .. } => "ReadExternalResultIR",
             IR::Print => "PrintIR",
             IR::Assert => "AssertIR",
+            IR::AssertBit => "AssertBitIR",
             IR::StructuralPredicate { .. } => "StructuralPredicateIR",
             IR::ScalarPrecondition { .. } => "ScalarPreconditionIR",
             IR::ExposePublicI => "ExposePublicIIR",
@@ -561,6 +708,35 @@ impl IR {
 
     /// Serialize the IR-specific data to a JSON value.
     /// Mirrors the Python `export()` method on each IR class.
+    ///
+    /// # Determinism invariant (load-bearing for `ProofArtifact.ir_hash`)
+    ///
+    /// `compiler.halo2-cross-process-vk-serialization` (D' direction)
+    /// ships the IR through `ProofArtifact.vk_bytes` and identifies it via
+    /// a BLAKE2b-256 `ir_hash` over the canonical JSON bytes produced by
+    /// this path. That hash must be byte-stable across processes for the
+    /// same IR — otherwise the fuzzer's auto-filer sees spurious
+    /// `IrHashMismatch` errors and the VK cache loses its hit rate.
+    ///
+    /// Most variants here use `serde_json::json!` with fixed source-order
+    /// keys; the resulting `serde_json::Map` is `BTreeMap`-backed (no
+    /// `preserve_order` feature on `serde_json` in this project, confirmed
+    /// via `Cargo.lock` — no `indexmap` transitive dep), so keys serialize
+    /// lexicographically and the byte output is deterministic.
+    ///
+    /// **The one variant that embeds a `HashMap<String, serde_json::Value>`
+    /// (`IR::InvokeExternal::kwargs`) relies on the same `BTreeMap`-backed
+    /// `Map` to sort keys at serialize time.** `HashMap → serde_json::Value`
+    /// via `From<HashMap<K, V>> for Value` collects into that map, so
+    /// `HashMap` iteration randomness is normalized away. **If anyone ever
+    /// enables `serde_json`'s `preserve_order` feature (which switches
+    /// `Map` to `IndexMap`, preserving insertion order), this guarantee
+    /// silently breaks and `ir_hash` will drift across processes for the
+    /// same IR.** Guarded by:
+    /// 1. The `ir_export_byte_stable_*` determinism regression tests in
+    ///    `prove/halo2/tests.rs`.
+    /// 2. @Sage's `keygen_vk` byte-equality test (a second-layer guard
+    ///    that catches a determinism break one layer up).
     pub fn export_data(&self) -> serde_json::Value {
         match self {
             IR::ConstantInt { value } => serde_json::json!({ "value": value }),
@@ -577,10 +753,21 @@ impl IR {
             IR::ReadHash { path, is_public } => {
                 serde_json::json!({ "path": path, "is_public": is_public })
             }
-            IR::ReadExternalResult { store_idx, output_idx, is_float } => {
+            IR::ReadExternalResult {
+                store_idx,
+                output_idx,
+                is_float,
+            } => {
                 serde_json::json!({ "store_idx": store_idx, "output_idx": output_idx, "is_float": is_float })
             }
-
+            IR::ProductSumF { len } => serde_json::json!({ "len": len }),
+            IR::SumF { len } => serde_json::json!({ "len": len }),
+            IR::AssertU128LtBit { hi, bit, bits } => {
+                serde_json::json!({ "hi": hi, "bit": bit, "bits": bits })
+            }
+            IR::SelectManyI { len, lane } | IR::SelectManyF { len, lane } => {
+                serde_json::json!({ "len": len, "lane": lane })
+            }
             IR::AllocateMemory {
                 segment_id,
                 size,
@@ -592,6 +779,7 @@ impl IR {
             }),
             IR::WriteMemory { segment_id } => serde_json::json!({ "segment_id": segment_id }),
             IR::ReadMemory { segment_id } => serde_json::json!({ "segment_id": segment_id }),
+            IR::IndexInBox { rank } => serde_json::json!({ "rank": rank }),
             IR::MemoryTraceEmit {
                 segment_id,
                 is_write,
@@ -602,14 +790,20 @@ impl IR {
                 dtype_name,
                 max_length,
                 max_rank,
+                max_shape,
             } => serde_json::json!({
                 "array_id": array_id,
                 "dtype_name": dtype_name,
                 "max_length": max_length,
                 "max_rank": max_rank,
+                "max_shape": max_shape,
             }),
-            IR::WitnessDynamicNDArrayMeta { array_id, max_rank } => {
-                serde_json::json!({ "array_id": array_id, "max_rank": max_rank })
+            IR::WitnessDynamicNDArrayMeta {
+                array_id,
+                max_rank,
+                param_name,
+            } => {
+                serde_json::json!({ "array_id": array_id, "max_rank": max_rank, "param_name": param_name })
             }
             IR::AssertDynamicNDArrayMeta {
                 array_id,
@@ -659,7 +853,12 @@ impl IR {
                 "indices": indices,
             }),
 
-            IR::StructuralPredicate { kind, args, op, bound } => serde_json::json!({
+            IR::StructuralPredicate {
+                kind,
+                args,
+                op,
+                bound,
+            } => serde_json::json!({
                 "kind": kind,
                 "args": args,
                 "op": op,
@@ -694,19 +893,20 @@ impl IR {
     }
 
     /// Construct an IR variant from class name and data dict.
-    fn from_class_and_data(
-        class_name: &str,
-        data: &serde_json::Value,
-    ) -> Result<IR, String> {
+    fn from_class_and_data(class_name: &str, data: &serde_json::Value) -> Result<IR, String> {
         match class_name {
             "ConstantIntIR" => Ok(IR::ConstantInt {
                 value: data["value"].as_i64().ok_or("ConstantInt: missing value")?,
             }),
             "ConstantFloatIR" => Ok(IR::ConstantFloat {
-                value: data["value"].as_f64().ok_or("ConstantFloat: missing value")?,
+                value: data["value"]
+                    .as_f64()
+                    .ok_or("ConstantFloat: missing value")?,
             }),
             "ConstantBoolIR" => Ok(IR::ConstantBool {
-                value: data["value"].as_bool().ok_or("ConstantBool: missing value")?,
+                value: data["value"]
+                    .as_bool()
+                    .ok_or("ConstantBool: missing value")?,
             }),
             "ConstantStrIR" => Ok(IR::ConstantStr {
                 value: data["value"]
@@ -727,18 +927,40 @@ impl IR {
             "InvIIR" => Ok(IR::InvI),
 
             "AddFIR" => Ok(IR::AddF),
+            "SumFIR" => Ok(IR::SumF {
+                len: data["len"].as_u64().unwrap_or(0) as u32,
+            }),
             "SubFIR" => Ok(IR::SubF),
             "MulFIR" => Ok(IR::MulF),
+            "ProductSumFIR" => Ok(IR::ProductSumF {
+                len: data["len"].as_u64().unwrap_or(0) as u32,
+            }),
             "DivFIR" => Ok(IR::DivF),
             "FloorDivFIR" => Ok(IR::FloorDivF),
             "ModFIR" => Ok(IR::ModF),
             "PowFIR" => Ok(IR::PowF),
+            "PowFIIR" => Ok(IR::PowFI),
             "AbsFIR" => Ok(IR::AbsF),
             "SignFIR" => Ok(IR::SignF),
 
             "EqualIIR" => Ok(IR::EqI),
             "NotEqualIIR" => Ok(IR::NeI),
             "LessThanIIR" => Ok(IR::LtI),
+            "LessThanIBoundedIR" => Ok(IR::LtIBounded),
+            "GreaterThanIBoundedIR" => Ok(IR::GtIBounded),
+            "AssertU128LtIR" => Ok(IR::AssertU128Lt),
+            "AssertU128LtBitIR" => Ok(IR::AssertU128LtBit {
+                hi: data["hi"].as_u64().ok_or("AssertU128LtBit: missing hi")?,
+                bit: data["bit"]
+                    .as_u64()
+                    .ok_or("AssertU128LtBit: missing bit")? as u32,
+                bits: data["bits"]
+                    .as_u64()
+                    .ok_or("AssertU128LtBit: missing bits")? as u32,
+            }),
+            "IndexInBoxIR" => Ok(IR::IndexInBox {
+                rank: data["rank"].as_u64().ok_or("IndexInBox: missing rank")? as usize,
+            }),
             "LessThanOrEqualIIR" => Ok(IR::LteI),
             "GreaterThanIIR" => Ok(IR::GtI),
             "GreaterThanOrEqualIIR" => Ok(IR::GteI),
@@ -759,6 +981,7 @@ impl IR {
             "SqrtFIR" => Ok(IR::SqrtF),
             "ExpFIR" => Ok(IR::ExpF),
             "LogFIR" => Ok(IR::LogF),
+            "ArcSinFIR" => Ok(IR::ArcSinF),
             "ArcCosFIR" => Ok(IR::ArcCosF),
             "ArcTan2FIR" => Ok(IR::ArcTan2F),
 
@@ -769,7 +992,16 @@ impl IR {
             "SelectIIR" => Ok(IR::SelectI),
             "SelectFIR" => Ok(IR::SelectF),
             "SelectBIR" => Ok(IR::SelectB),
-
+            "SelectBitIIR" => Ok(IR::SelectBitI),
+            "SelectBitFIR" => Ok(IR::SelectBitF),
+            "SelectManyIIR" => Ok(IR::SelectManyI {
+                len: data["len"].as_u64().ok_or("SelectManyI: missing len")? as u32,
+                lane: data["lane"].as_u64().ok_or("SelectManyI: missing lane")? as u32,
+            }),
+            "SelectManyFIR" => Ok(IR::SelectManyF {
+                len: data["len"].as_u64().ok_or("SelectManyF: missing len")? as u32,
+                lane: data["lane"].as_u64().ok_or("SelectManyF: missing lane")? as u32,
+            }),
             "IntCastIR" => Ok(IR::IntCast),
             "FloatCastIR" => Ok(IR::FloatCast),
             "BoolCastIR" => Ok(IR::BoolCast),
@@ -802,25 +1034,33 @@ impl IR {
                     .ok_or("ReadHash: missing is_public")?;
                 Ok(IR::ReadHash { path, is_public })
             }
-            "ReadExternalResultIR" => {
-                Ok(IR::ReadExternalResult {
-                    store_idx: data["store_idx"].as_u64().unwrap_or(0) as u32,
-                    output_idx: data["output_idx"].as_u64().unwrap_or(0) as u32,
-                    is_float: data["is_float"].as_bool().unwrap_or(false),
-                })
-            }
+            "ReadExternalResultIR" => Ok(IR::ReadExternalResult {
+                store_idx: data["store_idx"].as_u64().unwrap_or(0) as u32,
+                output_idx: data["output_idx"].as_u64().unwrap_or(0) as u32,
+                is_float: data["is_float"].as_bool().unwrap_or(false),
+            }),
             "PrintIR" => Ok(IR::Print),
 
             "AssertIR" => Ok(IR::Assert),
+            "AssertBitIR" => Ok(IR::AssertBit),
             "StructuralPredicateIR" => {
                 let kind = data["kind"].as_str().unwrap_or("").to_string();
                 let args: Vec<String> = data["args"]
                     .as_array()
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 let op = data.get("op").and_then(|v| v.as_str()).map(String::from);
                 let bound = data.get("bound").and_then(|v| v.as_str()).map(String::from);
-                Ok(IR::StructuralPredicate { kind, args, op, bound })
+                Ok(IR::StructuralPredicate {
+                    kind,
+                    args,
+                    op,
+                    bound,
+                })
             }
             "ScalarPreconditionIR" => {
                 let term_json = data["term_json"].as_str().unwrap_or("").to_string();
@@ -848,16 +1088,18 @@ impl IR {
 
             "AllocateDynamicNDArrayMetaIR" => Ok(IR::AllocateDynamicNDArrayMeta {
                 array_id: data["array_id"].as_u64().unwrap_or(0) as u32,
-                dtype_name: data["dtype_name"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string(),
+                dtype_name: data["dtype_name"].as_str().unwrap_or("").to_string(),
                 max_length: data["max_length"].as_u64().unwrap_or(0) as u32,
                 max_rank: data["max_rank"].as_u64().unwrap_or(0) as u32,
+                max_shape: data["max_shape"]
+                    .as_array()
+                    .map(|arr| arr.iter().map(|v| v.as_u64().unwrap_or(0) as u32).collect())
+                    .unwrap_or_default(),
             }),
             "WitnessDynamicNDArrayMetaIR" => Ok(IR::WitnessDynamicNDArrayMeta {
                 array_id: data["array_id"].as_u64().unwrap_or(0) as u32,
                 max_rank: data["max_rank"].as_u64().unwrap_or(0) as u32,
+                param_name: data["param_name"].as_str().unwrap_or("").to_string(),
             }),
             "AssertDynamicNDArrayMetaIR" => Ok(IR::AssertDynamicNDArrayMeta {
                 array_id: data["array_id"].as_u64().unwrap_or(0) as u32,
@@ -874,20 +1116,15 @@ impl IR {
             }),
 
             "InvokeExternalIR" => {
-                let args: Vec<serde_json::Value> = data["args"]
-                    .as_array()
-                    .cloned()
-                    .unwrap_or_default();
+                let args: Vec<serde_json::Value> =
+                    data["args"].as_array().cloned().unwrap_or_default();
                 let kwargs: HashMap<String, serde_json::Value> = data["kwargs"]
                     .as_object()
                     .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                     .unwrap_or_default();
                 Ok(IR::InvokeExternal {
                     store_idx: data["store_idx"].as_u64().unwrap_or(0) as u32,
-                    func_name: data["func_name"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_string(),
+                    func_name: data["func_name"].as_str().unwrap_or("").to_string(),
                     args,
                     kwargs,
                 })
@@ -972,6 +1209,7 @@ mod tests {
             .signature(),
             "read_integer[x.1][true]"
         );
+        assert_eq!(IR::ProductSumF { len: 3 }.signature(), "product_sum_f[3]");
     }
 
     #[test]
@@ -1000,6 +1238,7 @@ mod tests {
         assert_eq!(IR::ConstantInt { value: 0 }.class_name(), "ConstantIntIR");
         assert_eq!(IR::EqI.class_name(), "EqualIIR");
         assert_eq!(IR::LogicalNot.class_name(), "LogicalNotIR");
+        assert_eq!(IR::ProductSumF { len: 2 }.class_name(), "ProductSumFIR");
         assert_eq!(IR::PoseidonHash.class_name(), "PoseidonHashIR");
         assert_eq!(IR::EqHash.class_name(), "EqualHashIR");
     }
@@ -1009,6 +1248,7 @@ mod tests {
         let irs = vec![
             IR::AddI,
             IR::SubF,
+            IR::ProductSumF { len: 2 },
             IR::EqI,
             IR::LogicalAnd,
             IR::SelectI,
@@ -1070,10 +1310,12 @@ mod tests {
                 dtype_name: "Integer".to_string(),
                 max_length: 50,
                 max_rank: 3,
+                max_shape: vec![10, 5, 1],
             },
             IR::WitnessDynamicNDArrayMeta {
                 array_id: 1,
                 max_rank: 2,
+                param_name: "x".to_string(),
             },
             IR::AssertDynamicNDArrayMeta {
                 array_id: 2,

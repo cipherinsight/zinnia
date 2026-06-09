@@ -1,0 +1,18 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0485/kernel.py
+// REASON: np.tensordot(A,B,axes=((2),(0))) lowered to explicit 4-level loop summing over inner axis
+
+def main(field[5][6][3] A, field[3][3] B) -> field[5][6][3]:
+    field[5][6][3] result = [[[0; 3]; 6]; 5]
+    for u32 i in 0..5 do
+        for u32 j in 0..6 do
+            for u32 k in 0..3 do
+                field s = 0
+                for u32 t in 0..3 do
+                    s = s + A[i][j][t] * B[t][k]
+                endfor
+                result[i][j][k] = s
+            endfor
+        endfor
+    endfor
+    return result

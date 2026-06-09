@@ -1,0 +1,595 @@
+{
+  "categories": [
+    "complex",
+    "data-dependent-loop",
+    "denominator-obligation",
+    "domain-obligation",
+    "in-place-mutation",
+    "loop-bounded"
+  ],
+  "diagnostics": [
+    "Complex kernels require Complex dtype support or a fail-closed classification.",
+    "while loops require a public/padded maximum iteration count."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "RuntimeError",
+        "abs",
+        "complex",
+        "float",
+        "range"
+      ],
+      "entry_candidate": false,
+      "has_for": true,
+      "has_if": true,
+      "has_while": true,
+      "line_end": 57,
+      "line_start": 16,
+      "mutated_params": [],
+      "name": "guerre",
+      "ops": [
+        "Add",
+        "Div",
+        "Eq",
+        "Gt",
+        "Lt",
+        "Mult",
+        "Pow",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "a",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "n",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "z",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "err",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "nter",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "cmath.sqrt",
+        "complex",
+        "guerre",
+        "range"
+      ],
+      "entry_candidate": false,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 79,
+      "line_start": 60,
+      "mutated_params": [
+        "a"
+      ],
+      "name": "fndrt",
+      "ops": [
+        "Add",
+        "Div",
+        "Eq",
+        "Gt",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": true,
+          "name": "a",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "n",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "abs",
+        "range"
+      ],
+      "entry_candidate": false,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 98,
+      "line_start": 82,
+      "mutated_params": [
+        "a",
+        "b"
+      ],
+      "name": "pivot",
+      "ops": [
+        "Add",
+        "Eq",
+        "Gt",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "n",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "i",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": true,
+          "name": "a",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "b",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "pivot",
+        "range"
+      ],
+      "entry_candidate": false,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 116,
+      "line_start": 101,
+      "mutated_params": [
+        "a",
+        "b"
+      ],
+      "name": "gauss",
+      "ops": [
+        "Add",
+        "Div",
+        "Lt",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "n",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": true,
+          "name": "a",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "b",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "complex",
+        "range"
+      ],
+      "entry_candidate": false,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 140,
+      "line_start": 119,
+      "mutated_params": [
+        "dg",
+        "dh1",
+        "dh3"
+      ],
+      "name": "deriv",
+      "ops": [
+        "Add",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "n",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "sig",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "alp",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": true,
+          "name": "dg",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "dh1",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "dh3",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "bin",
+          "proposed_annotation": "Float[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "nu",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "complex",
+        "deriv",
+        "fndrt",
+        "gauss",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 206,
+      "line_start": 143,
+      "mutated_params": [
+        "pd1",
+        "pd2"
+      ],
+      "name": "epade",
+      "ops": [
+        "Add",
+        "Div",
+        "Eq",
+        "GtE",
+        "LtE",
+        "Mult",
+        "Pow",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "np",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "ns",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "ip",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "k0",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "dr",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": true,
+          "name": "pd1",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "pd2",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "complex",
+        "range",
+        "requires"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 258,
+      "line_start": 211,
+      "mutated_params": [
+        "f1",
+        "f2",
+        "f3",
+        "ksq",
+        "r1",
+        "r2",
+        "r3",
+        "s1",
+        "s2",
+        "s3"
+      ],
+      "name": "matrc",
+      "ops": [
+        "Add",
+        "Div",
+        "LtE",
+        "Mult",
+        "NotEq",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "nz",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "np",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "iz",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "dz",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "k0",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "rhob",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "alpw",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "alpb",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "ksq",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "ksqw",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "ksqb",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "f1",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "f2",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "f3",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "r1",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "r2",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "r3",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "s1",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "s2",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "s3",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "pd1",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "pd2",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "izsrf",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_ramsurf/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add an explicit iteration cap or classify as fail-closed until a bound is available.",
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "pythran_ramsurf",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: complex, data-dependent-loop, denominator-obligation, domain-obligation, in-place-mutation, loop-bounded\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.\n# Diagnostic: while loops require a public/padded maximum iteration count.\nimport cmath\n\n@zk_chip\ndef guerre(a: Complex[Array, 'N<=1024'], n: Integer, z: Float, err: Float, nter: Float):\n    az = [complex(0, 0) for i in range(50)]\n    azz = [complex(0, 0) for i in range(50)]\n    ci = complex(0.0, 1.0)\n    eps = 1e-20\n    for i in range(1, n + 1):\n        az[i - 1] = float(i) * a[i]\n    for i in range(1, n):\n        azz[i - 1] = float(i) * az[i]\n    dz = err + 1\n    itera = 0\n    jter = 0\n    while abs(dz) > err and itera < nter:\n        p = a[n - 1] + a[n] * z\n        for i in range(n - 1, 0, -1):\n            p = a[i - 1] + z * p\n        if abs(p) < eps:\n            return z\n        pz = az[n - 2] + az[n - 1] * z\n        for i in range(n - 2, 0, -1):\n            pz = az[i - 1] + z * pz\n        pzz = azz[n - 3] + azz[n - 2] * z\n        for i in range(n - 3, 0, -1):\n            pzz = azz[i - 1] + z * pzz\n        f = pz / p\n        g = f ** 2 - pzz / p\n        h = n * g\n        amp1 = abs(f + h)\n        amp2 = abs(f - h)\n        if amp1 > amp2:\n            dz = float(-n) / (f + h)\n        else:\n            dz = float(-n) / (f - h)\n        itera = itera + 1\n        jter = jter + 1\n        if jter == 10:\n            jter = 1\n            dz = dz * ci\n        z = z + dz\n        if jter == 100:\n            raise RuntimeError('Laguerre method not converging')\n    return z\n\n@zk_chip\ndef fndrt(a: Complex[Array, 'N<=1024'], n: Integer):\n    z = [complex(0, 0) for k in range(n)]\n    if n == 1:\n        z[0] = -a[0] / a[1]\n        return z\n    if n > 2:\n        for k in range(n, 2, -1):\n            root = complex(0.0, 0)\n            err = 1e-12\n            root = guerre(a, k, root, err, 1000)\n            err = 0.0\n            root = guerre(a, k, root, err, 5)\n            z[k - 1] = root\n            for i in range(k, 0, -1):\n                a[i - 1] = a[i - 1] + root * a[i]\n            for i in range(1, k + 1):\n                a[i - 1] = a[i]\n    z[1] = 0.5 * (-a[1] + cmath.sqrt(a[1] * a[1] - 4.0 * a[0] * a[2])) / a[2]\n    z[0] = 0.5 * (-a[1] - cmath.sqrt(a[1] * a[1] - 4.0 * a[0] * a[2])) / a[2]\n    return z\n",
+  "source_status": "direct"
+}

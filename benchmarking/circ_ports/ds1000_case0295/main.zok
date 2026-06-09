@@ -1,0 +1,18 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0295/kernel.py
+// REASON: np.zeros((a.size, a.max()+1)) — output column count depends on runtime value a.max(); ZoKrates requires compile-time array sizes.
+
+def main(field[50] a) -> field[50][50]:
+  // Sketch: build one-hot of shape (50, max+1) where max is runtime.
+  // ZoKrates cannot express field[50][a.max()+1] — sizes must be literals.
+  field max = 0
+  for u32 i in 0..50 do
+    max = if a[i] > max then a[i] else max fi
+  endfor
+  // The line below is the unsupported construct: runtime-sized inner dim.
+  // field[50][max+1] b = [[0; max+1]; 50]  // ILLEGAL in ZoKrates
+  field[50][50] b = [[0; 50]; 50]
+  for u32 i in 0..50 do
+    // b[i][a[i]] = 1  -- requires dynamic index, would need linear scan
+  endfor
+  return b

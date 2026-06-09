@@ -32,8 +32,8 @@ impl IRGenerator {
         let idx_val = args.first();
         // Only use static path if: (a) no args (default -1), or (b) arg is compile-time known
         let static_idx = match idx_val {
-            None => Some(-1i64),  // default: pop last
-            Some(v) => v.int_val(),  // None if dynamic
+            None => Some(-1i64),    // default: pop last
+            Some(v) => v.int_val(), // None if dynamic
         };
 
         if let Some(idx) = static_idx {
@@ -69,7 +69,11 @@ impl IRGenerator {
                 let in_bounds = self.builder.ir_logical_and(&ge_zero, &lt_len);
                 self.builder.ir_assert(&in_bounds);
 
-                let popped = crate::helpers::value_ops::dynamic_list_subscript(&mut self.builder, &data, &idx_norm);
+                let popped = crate::helpers::value_ops::dynamic_list_subscript(
+                    &mut self.builder,
+                    &data,
+                    &idx_norm,
+                );
                 if n > 0 {
                     let mut past_idx = self.builder.ir_constant_bool(false);
                     let mut new_values = Vec::new();
@@ -79,11 +83,19 @@ impl IRGenerator {
                         let is_idx = self.builder.ir_equal_i(&idx_norm, &i_const);
                         past_idx = self.builder.ir_logical_or(&past_idx, &is_idx);
                         // If past the popped index, take data[i+1], else data[i]
-                        let shifted = self.builder.ir_select_i(&past_idx, &data.values[i + 1], &data.values[i]);
+                        let shifted = self.builder.ir_select_i(
+                            &past_idx,
+                            &data.values[i + 1],
+                            &data.values[i],
+                        );
                         new_values.push(shifted);
                         new_types.push(data.elements_type[i].clone());
                     }
-                    let new_list = Value::List(CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() });
+                    let new_list = Value::List(CompositeData {
+                        elements_type: new_types,
+                        values: new_values,
+                        value_id: ValueId::next(),
+                    });
                     self.ctx.set(var, new_list);
                 }
                 return popped;
@@ -101,7 +113,11 @@ impl IRGenerator {
                     let mut new_data = data.clone();
                     // Check if all elements have known values (static list)
                     let all_known = new_data.values.iter().all(|v| v.int_val().is_some());
-                    if let Some(pos) = new_data.values.iter().position(|v| v.int_val() == Some(target_val)) {
+                    if let Some(pos) = new_data
+                        .values
+                        .iter()
+                        .position(|v| v.int_val() == Some(target_val))
+                    {
                         new_data.values.remove(pos);
                         new_data.elements_type.remove(pos);
                         self.ctx.set(var, Value::List(new_data));
@@ -128,7 +144,9 @@ impl IRGenerator {
                     found = self.builder.ir_logical_or(&found, &is_removal);
                     // After this point, 'found' means we've removed an element at or before i
                     // If found, take data[i+1], else take data[i]
-                    let shifted = self.builder.ir_select_i(&found, &data.values[i + 1], &data.values[i]);
+                    let shifted =
+                        self.builder
+                            .ir_select_i(&found, &data.values[i + 1], &data.values[i]);
                     new_values.push(shifted);
                     new_types.push(data.elements_type[i].clone());
                 }
@@ -142,7 +160,11 @@ impl IRGenerator {
                 self.builder.ir_assert(&found);
 
                 // Update the list variable with the shorter list
-                let new_list = Value::List(CompositeData { elements_type: new_types, values: new_values, value_id: ValueId::next() });
+                let new_list = Value::List(CompositeData {
+                    elements_type: new_types,
+                    values: new_values,
+                    value_id: ValueId::next(),
+                });
                 self.ctx.set(var, new_list);
             }
         }
@@ -150,7 +172,14 @@ impl IRGenerator {
     }
 
     pub(crate) fn list_method_clear(&mut self, var: &str) -> Value {
-        self.ctx.set(var, Value::List(CompositeData { elements_type: vec![], values: vec![], value_id: ValueId::next() }));
+        self.ctx.set(
+            var,
+            Value::List(CompositeData {
+                elements_type: vec![],
+                values: vec![],
+                value_id: ValueId::next(),
+            }),
+        );
         Value::None
     }
 
@@ -164,7 +193,10 @@ impl IRGenerator {
     }
 
     pub(crate) fn list_method_insert(&mut self, var: &str, args: &[Value]) -> Value {
-        assert!(args.len() >= 2, "list.insert requires index and object arguments");
+        assert!(
+            args.len() >= 2,
+            "list.insert requires index and object arguments"
+        );
         let idx_arg = &args[0];
         let new_elem = &args[1];
 
@@ -200,12 +232,24 @@ impl IRGenerator {
                     let mut new_vals = current_data.values.clone();
                     // Swap: move new_elem to position i and shift others right
                     for j in (i + 1..=len).rev() {
-                        new_vals[j] = self.builder.ir_select_i(&should_insert_here, &current_data.values[j - 1], &current_data.values[j]);
+                        new_vals[j] = self.builder.ir_select_i(
+                            &should_insert_here,
+                            &current_data.values[j - 1],
+                            &current_data.values[j],
+                        );
                     }
-                    new_vals[i] = self.builder.ir_select_i(&should_insert_here, new_elem, &current_data.values[i]);
+                    new_vals[i] = self.builder.ir_select_i(
+                        &should_insert_here,
+                        new_elem,
+                        &current_data.values[i],
+                    );
                     current_data.values = new_vals;
                 }
-                let types = current_data.values.iter().map(|v| v.zinnia_type()).collect();
+                let types = current_data
+                    .values
+                    .iter()
+                    .map(|v| v.zinnia_type())
+                    .collect();
                 current_data.elements_type = types;
                 self.ctx.set(var, Value::List(current_data));
             }
@@ -214,7 +258,9 @@ impl IRGenerator {
     }
 
     pub(crate) fn list_method_count(&mut self, var: &str, args: &[Value]) -> Value {
-        if let (Some(target), Some(Value::List(data) | Value::Tuple(data))) = (args.first(), self.ctx.get(var)) {
+        if let (Some(target), Some(Value::List(data) | Value::Tuple(data))) =
+            (args.first(), self.ctx.get(var))
+        {
             // Generate dynamic count: sum(1 if elem == target else 0 for elem in list)
             let mut count = self.builder.ir_constant_int(0);
             for elem in &data.values {
@@ -232,13 +278,17 @@ impl IRGenerator {
     }
 
     pub(crate) fn list_method_index(&mut self, var: &str, args: &[Value]) -> Value {
-        if let (Some(target), Some(Value::List(data) | Value::Tuple(data))) = (args.first(), self.ctx.get(var)) {
+        if let (Some(target), Some(Value::List(data) | Value::Tuple(data))) =
+            (args.first(), self.ctx.get(var))
+        {
             let start = args.get(1).and_then(|a| a.int_val()).unwrap_or(0) as usize;
             // Generate dynamic index: find first match after start
             let mut found = self.builder.ir_constant_bool(false);
             let mut answer = self.builder.ir_constant_int(0);
             for (i, elem) in data.values.iter().enumerate() {
-                if i < start { continue; }
+                if i < start {
+                    continue;
+                }
                 let eq = self.builder.ir_equal_i(elem, target);
                 let not_found = self.builder.ir_logical_not(&found);
                 let first_match = self.builder.ir_logical_and(&eq, &not_found);

@@ -1,0 +1,54 @@
+{
+  "categories": [
+    "complex",
+    "denominator-obligation"
+  ],
+  "diagnostics": [
+    "Complex kernels require Complex dtype support or a fail-closed classification."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "fft",
+        "np.array",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 20,
+      "line_start": 11,
+      "mutated_params": [],
+      "name": "fft",
+      "ops": [
+        "Add",
+        "Div",
+        "Eq",
+        "FloorDiv",
+        "Mult",
+        "Pow",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "x",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_fft/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites."
+  ],
+  "program": "pythran_fft",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: complex, denominator-obligation\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.\nimport math, numpy as np\n\n@zk_circuit\ndef fft(x: Complex[Array, 'N<=1024']):\n    N = x.shape[0]\n    if N == 1:\n        return np.array(x)\n    e = fft(x[::2])\n    o = fft(x[1::2])\n    M = N // 2\n    l = [e[k] + o[k] * math.e ** (-2j * math.pi * k / N) for k in range(M)]\n    r = [e[k] - o[k] * math.e ** (-2j * math.pi * k / N) for k in range(M)]\n    return np.array(l + r)",
+  "source_status": "direct"
+}

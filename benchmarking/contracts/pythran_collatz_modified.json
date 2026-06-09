@@ -1,0 +1,49 @@
+{
+  "categories": [
+    "data-dependent-loop",
+    "denominator-obligation"
+  ],
+  "diagnostics": [
+    "while loops require a public/padded maximum iteration count."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": true,
+      "has_while": true,
+      "line_end": 27,
+      "line_start": 12,
+      "mutated_params": [],
+      "name": "collatz_modified",
+      "ops": [
+        "Add",
+        "Eq",
+        "FloorDiv",
+        "Mod",
+        "Mult"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "target",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_collatz_modified/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add an explicit iteration cap or classify as fail-closed until a bound is available.",
+    "Add nonzero or positive denominator facts at the exact division/modulo sites."
+  ],
+  "program": "pythran_collatz_modified",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: data-dependent-loop, denominator-obligation, in-place-mutation\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: while loops require a public/padded maximum iteration count.\n\n@zk_circuit\ndef collatz_modified(target: Integer):\n    start = 1\n    while True:\n        i = start\n        steps = 0\n        while True:\n            if i == 1:\n                break\n            if i % 2 == 0:\n                i = i // 2\n            else:\n                i = 3 * i + 1\n            steps += 1\n        if steps == target:\n            return start\n        start += 1",
+  "source_status": "direct"
+}

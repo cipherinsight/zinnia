@@ -1,0 +1,12 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0399/kernel.py
+// REASON: Float[Array,"N<=64"] re-encoded as field[64]; recurrence written as fixed for-loop with if-expr branches.
+
+def main(field[64] A, field a, field b, field c) -> field[64]:
+    field[64] B = [0; 64]
+    for u32 k in 0..64 do
+        B[k] = if k == 0 then a * A[k] else \
+               if k == 1 then a * A[k] + b * B[k-1] else \
+               a * A[k] + b * B[k-1] + c * B[k-2] fi fi
+    endfor
+    return B

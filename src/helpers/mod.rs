@@ -1,9 +1,9 @@
-pub mod composite;
-pub mod value_ops;
-pub mod ndarray;
+pub mod array_ops;
 pub mod broadcast;
-pub mod shape_arith;
+pub mod composite;
+pub mod ndarray;
 pub mod promote;
 pub mod segment;
+pub mod shape_arith;
 pub mod static_array;
-pub mod array_ops;
+pub mod value_ops;

@@ -1,0 +1,10 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0373/kernel.py
+// REASON: np.sort requires a sort network with witness-dependent permutation; np.arange/float division produces floats. CirC has no floats and no built-in sort.
+
+def main(field[50] grades) -> field[50]:
+    field[50] result = [0; 50]
+    for u32 i in 0..50 do
+        result[i] = grades[i]  // sort/arange/float-div not expressible
+    endfor
+    return result

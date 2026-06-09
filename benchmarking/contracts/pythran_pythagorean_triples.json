@@ -1,0 +1,46 @@
+{
+  "categories": [
+    "matmul-dot"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "next_triples.reshape",
+        "np.array",
+        "np.dot",
+        "np.transpose"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 14,
+      "line_start": 10,
+      "mutated_params": [],
+      "name": "next_pythagorean_triples",
+      "ops": [
+        "Mult"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "previous",
+          "proposed_annotation": "Integer[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_pythagorean_triples/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Declare shared matrix/vector dimensions explicitly, e.g. A[N,K] with x[K]."
+  ],
+  "program": "pythran_pythagorean_triples",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: matmul-dot\n# Expected outcome: compile/prove candidate\n# Precondition: Declare shared matrix/vector dimensions explicitly; when not expressible as @requires, encode with matching symbolic annotation names and keep as review obligation.\nimport numpy as np\n\n@zk_circuit\ndef next_pythagorean_triples(previous: Integer[Array, 'N<=1024 M<=1024']):\n    matrices = np.array([[-1, 2, 2], [-2, 1, 2], [-2, 2, 3], [1, 2, 2], [2, 1, 2], [2, 2, 3], [1, -2, 2], [2, -1, 2], [2, -2, 3]])\n    next_triples = np.transpose(np.dot(matrices, np.transpose(previous)))\n    next_triples = next_triples.reshape((3 * previous.shape[0], previous.shape[1]))\n    return next_triples",
+  "source_status": "direct"
+}

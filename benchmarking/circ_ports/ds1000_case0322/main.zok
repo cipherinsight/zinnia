@@ -1,0 +1,15 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0322/kernel.py
+// REASON: np.argwhere(a == np.min(a)) returns a bounded-dynamic 2D array whose row count equals the number of min-valued cells — runtime-dependent length, unsupported by ZoKrates.
+
+def main(field[2][2] a) -> field[4][2]:
+  field min = a[0][0]
+  for u32 i in 0..2 do
+    for u32 j in 0..2 do
+      min = if a[i][j] < min then a[i][j] else min fi
+    endfor
+  endfor
+  // Cannot return a variable number of (row,col) pairs.
+  // field[?][2] result  -- ILLEGAL
+  field[4][2] result = [[0; 2]; 4]
+  return result

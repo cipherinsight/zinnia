@@ -1,0 +1,239 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 12,
+      "line_start": 11,
+      "mutated_params": [],
+      "name": "_cross_product",
+      "ops": [
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "x0",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "y0",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "x1",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "y1",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "x2",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "y2",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "math.hypot",
+        "max",
+        "min"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 32,
+      "line_start": 15,
+      "mutated_params": [],
+      "name": "make_circumcircle",
+      "ops": [
+        "Add",
+        "Div",
+        "Eq",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "a",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "b",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "c",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "math.hypot",
+        "max"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 40,
+      "line_start": 35,
+      "mutated_params": [],
+      "name": "make_diameter",
+      "ops": [
+        "Add",
+        "Div",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "a",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "b",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "math.hypot"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 44,
+      "line_start": 43,
+      "mutated_params": [],
+      "name": "is_in_circle",
+      "ops": [
+        "Add",
+        "LtE",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "c",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "p",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "_cross_product",
+        "is_in_circle",
+        "make_circumcircle",
+        "make_diameter"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 71,
+      "line_start": 47,
+      "mutated_params": [],
+      "name": "make_circle_two_points",
+      "ops": [
+        "Gt",
+        "Is",
+        "Lt",
+        "LtE"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "points",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "p",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "q",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_make_circle_two_points/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_make_circle_two_points",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\nimport math\n\n@zk_chip\ndef _cross_product(x0: Float, y0: Float, x1: Float, y1: Float, x2: Float, y2: Float):\n    return (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0)\n\n@zk_chip\ndef make_circumcircle(a: Float[Array, 'N<=1024'], b: Float[Array, 'N<=1024'], c: Float[Array, 'N<=1024']):\n    ox = (min(a[0], b[0], c[0]) + max(a[0], b[0], c[0])) / 2.0\n    oy = (min(a[1], b[1], c[1]) + max(a[1], b[1], c[1])) / 2.0\n    ax = a[0] - ox\n    ay = a[1] - oy\n    bx = b[0] - ox\n    by = b[1] - oy\n    cx = c[0] - ox\n    cy = c[1] - oy\n    d = (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)) * 2.0\n    if d == 0.0:\n        return None\n    x = ox + ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / d\n    y = oy + ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / d\n    ra = math.hypot(x - a[0], y - a[1])\n    rb = math.hypot(x - b[0], y - b[1])\n    rc = math.hypot(x - c[0], y - c[1])\n    return (x, y, max(ra, rb, rc))\n\n@zk_chip\ndef make_diameter(a: Float[Array, 'N<=1024'], b: Float[Array, 'N<=1024']):\n    cx = (a[0] + b[0]) / 2.0\n    cy = (a[1] + b[1]) / 2.0\n    r0 = math.hypot(cx - a[0], cy - a[1])\n    r1 = math.hypot(cx - b[0], cy - b[1])\n    return (cx, cy, max(r0, r1))\n\n@zk_chip\ndef is_in_circle(c: Float[Array, 'N<=1024'], p: Float[Array, 'N<=1024']):\n    return math.hypot(p[0] - c[0], p[1] - c[1]) <= c[2] * (1 + 1e-14)\n\n@zk_circuit\ndef make_circle_two_points(points: Float, p: Float, q: Float):\n    circ = make_diameter(p, q)\n    left = None\n    right = None\n    px, py = p\n    qx, qy = q\n    for r in points:\n        if is_in_circle(circ, r):\n            continue\n        cross = _cross_product(px, py, qx, qy, r[0], r[1])\n        c = make_circumcircle(p, q, r)\n        if c is None:\n            continue\n        elif cross > 0.0 and (left is None or _cross_product(px, py, qx, qy, c[0], c[1]) > _cross_product(px, py, qx, qy, left[0], left[1])):\n            left = c\n        elif cross < 0.0 and (right is None or _cross_product(px, py, qx, qy, c[0], c[1]) < _cross_product(px, py, qx, qy, right[0], right[1])):\n            right = c\n    if left is None and right is None:\n        return circ\n    elif left is None:\n        return right\n    elif right is None:\n        return left\n    else:\n        return left if left[2] <= right[2] else right",
+  "source_status": "direct"
+}

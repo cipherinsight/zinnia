@@ -7,4 +7,5 @@ pub mod mask;
 pub mod read;
 pub mod reductions;
 pub mod shape;
+pub mod sorting;
 pub mod write;

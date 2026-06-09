@@ -124,15 +124,19 @@ fn rejects_unknown_predicate_with_specific_error() {
 
 #[test]
 fn rejects_predicate_with_arity_mismatch() {
-    let template = ContractTerm::pred("nnz", vec![
-        ContractTerm::var_in("x"),
-        ContractTerm::var_in("y"),
-    ]);
+    let template = ContractTerm::pred(
+        "nnz",
+        vec![ContractTerm::var_in("x"), ContractTerm::var_in("y")],
+    );
     let subst = Substitution::new()
         .with_input("x", Int::fresh_const("x_"))
         .with_input("y", Int::fresh_const("y_"));
     match lower_bool(&template, &subst) {
-        Err(LowerError::ArityMismatch { kind, expected, got }) => {
+        Err(LowerError::ArityMismatch {
+            kind,
+            expected,
+            got,
+        }) => {
             assert_eq!(kind, "nnz");
             assert_eq!(expected, 1);
             assert_eq!(got, 2);
@@ -207,8 +211,14 @@ fn builder_methods_produce_expected_variants() {
         ContractTerm::BoolComb { op, operands } => {
             assert_eq!(op, crate::optim::predicates::BoolOp::And);
             assert_eq!(operands.len(), 2);
-            assert!(matches!(operands[0], ContractTerm::Cmp { op: CmpOp::Le, .. }));
-            assert!(matches!(operands[1], ContractTerm::Cmp { op: CmpOp::Eq, .. }));
+            assert!(matches!(
+                operands[0],
+                ContractTerm::Cmp { op: CmpOp::Le, .. }
+            ));
+            assert!(matches!(
+                operands[1],
+                ContractTerm::Cmp { op: CmpOp::Eq, .. }
+            ));
         }
         other => panic!("expected BoolComb, got {:?}", other),
     }

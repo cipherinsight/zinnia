@@ -1,0 +1,67 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "domain-obligation"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "numpy.exp",
+        "numpy.log",
+        "numpy.sqrt",
+        "requires",
+        "sum"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 17,
+      "line_start": 13,
+      "mutated_params": [],
+      "name": "log_likelihood",
+      "ops": [
+        "Div",
+        "Mult",
+        "NotEq",
+        "Pow",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "data",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "mean",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "sigma",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_log_likelihood/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1]."
+  ],
+  "program": "pythran_log_likelihood",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, domain-obligation, in-place-mutation\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy\n\n@zk_circuit\n@requires(lambda data, mean, sigma: sigma != 0.0)\ndef log_likelihood(data: Float[Array, 'N<=1024'], mean: Float, sigma: Float):\n    s = (data - mean) ** 2 / (2 * sigma ** 2)\n    pdfs = numpy.exp(-s)\n    pdfs /= numpy.sqrt(2 * numpy.pi) * sigma\n    return numpy.log(pdfs).sum()",
+  "source_status": "direct"
+}

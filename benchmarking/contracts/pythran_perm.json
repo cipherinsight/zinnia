@@ -1,0 +1,54 @@
+{
+  "categories": [
+    "data-dependent-loop",
+    "loop-bounded"
+  ],
+  "diagnostics": [
+    "while loops require a public/padded maximum iteration count."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "len",
+        "list",
+        "out.append",
+        "range",
+        "reversed",
+        "tuple"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": true,
+      "line_end": 33,
+      "line_start": 12,
+      "mutated_params": [],
+      "name": "permutations",
+      "ops": [
+        "Add",
+        "Eq",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "iterable",
+          "proposed_annotation": "Integer[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_perm/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add an explicit iteration cap or classify as fail-closed until a bound is available.",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_perm",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: data-dependent-loop, in-place-mutation, loop-bounded\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: while loops require a public/padded maximum iteration count.\n\n@zk_circuit\ndef permutations(iterable: Integer[Array, 'N<=1024']):\n    \"\"\"permutations(range(3), 2) --> (0,1) (0,2) (1,0) (1,2) (2,0) (2,1)\"\"\"\n    out = []\n    pool = tuple(iterable)\n    n = len(pool)\n    r = n\n    indices = list(range(n))\n    cycles = list(range(n - r + 1, n + 1))[::-1]\n    out.append(tuple([pool[i] for i in indices[:r]]))\n    while 1:\n        for i in reversed(range(r)):\n            cycles[i] -= 1\n            if cycles[i] == 0:\n                indices[i:] = indices[i + 1:] + indices[i:i + 1]\n                cycles[i] = n - i\n            else:\n                j = cycles[i]\n                indices[i], indices[-j] = (indices[-j], indices[i])\n                out.append(tuple([pool[i] for i in indices[:r]]))\n                break\n        else:\n            return out",
+  "source_status": "direct"
+}

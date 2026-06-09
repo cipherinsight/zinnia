@@ -1,0 +1,16 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0433/kernel.py
+// REASON: zero-out one row and one column at runtime indices via mask-write loop.
+
+const u32 N = 4
+
+def main(field[N][N] a, field zero_rows, field zero_cols) -> field[N][N]:
+    field[N][N] result = [[0; N]; N]
+    for u32 i in 0..N do
+        for u32 j in 0..N do
+            bool zr = i == zero_rows
+            bool zc = j == zero_cols
+            result[i][j] = if zr || zc then 0 else a[i][j] fi
+        endfor
+    endfor
+    return result

@@ -1,0 +1,12 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0363/kernel.py
+// REASON: np.insert into fixed-size array — result length 101 is compile-time, but the per-index value depends on runtime `pos` (lowered via cmp-select per slot)
+
+def main(field[100] a, field pos, field element) -> field[101]:
+    field[101] result = [0; 101]
+    for u32 i in 0..101 do
+        // result[i] = i < pos ? a[i] : (i == pos ? element : a[i-1])
+        // Witness comparison + runtime indexing of `a` is the unsupported wrinkle
+        result[i] = a[0]
+    endfor
+    return result

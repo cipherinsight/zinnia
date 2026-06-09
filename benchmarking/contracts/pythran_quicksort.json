@@ -1,0 +1,144 @@
+{
+  "categories": [
+    "data-dependent-loop",
+    "in-place-mutation"
+  ],
+  "diagnostics": [
+    "while loops require a public/padded maximum iteration count."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": true,
+      "has_while": true,
+      "line_end": 34,
+      "line_start": 11,
+      "mutated_params": [
+        "list"
+      ],
+      "name": "partition",
+      "ops": [
+        "Add",
+        "Eq",
+        "Gt",
+        "Lt",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": true,
+          "name": "list",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "start",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "end",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "do_quicksort",
+        "partition"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 41,
+      "line_start": 37,
+      "mutated_params": [],
+      "name": "do_quicksort",
+      "ops": [
+        "Add",
+        "Lt",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "list",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "start",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "end",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "do_quicksort"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 45,
+      "line_start": 44,
+      "mutated_params": [],
+      "name": "quicksort",
+      "ops": [],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "l",
+          "proposed_annotation": "Integer[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "s",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "e",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_quicksort/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add an explicit iteration cap or classify as fail-closed until a bound is available.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "pythran_quicksort",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: data-dependent-loop, in-place-mutation\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: while loops require a public/padded maximum iteration count.\n\n@zk_chip\ndef partition(list: Float[Array, 'N<=1024'], start: Float, end: Float):\n    pivot = list[end]\n    bottom = start - 1\n    top = end\n    done = 0\n    while not done:\n        while not done:\n            bottom = bottom + 1\n            if bottom == top:\n                done = 1\n                break\n            if list[bottom] > pivot:\n                list[top] = list[bottom]\n                break\n        while not done:\n            top = top - 1\n            if top == bottom:\n                done = 1\n                break\n            if list[top] < pivot:\n                list[bottom] = list[top]\n                break\n    list[top] = pivot\n    return top\n\n@zk_chip\ndef do_quicksort(list: Float, start: Float, end: Float):\n    if start < end:\n        split = partition(list, start, end)\n        do_quicksort(list, start, split - 1)\n        do_quicksort(list, split + 1, end)\n\n@zk_circuit\ndef quicksort(l: Integer[Array, 'N<=1024'], s: Integer, e: Integer):\n    do_quicksort(l, s, e)",
+  "source_status": "direct"
+}

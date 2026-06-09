@@ -1,0 +1,12 @@
+// CLASS: MANUAL-LOWER
+// SOURCE: ds1000_case0409/kernel.py
+// REASON: 2D elementwise addition lowered to nested for-loops.
+
+def main(field[8][6] x, field[8][6] y) -> field[8][6]:
+    field[8][6] z = [[0; 6]; 8]
+    for u32 i in 0..8 do
+        for u32 j in 0..6 do
+            z[i][j] = x[i][j] + y[i][j]
+        endfor
+    endfor
+    return z

@@ -2,11 +2,22 @@ use std::collections::HashMap;
 
 use crate::builder::IRBuilder;
 use crate::optim::resolver::{require_provable_static_int, SiteKind};
-use crate::types::{ValueId, 
-    DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value, ZinniaType,
+use crate::types::{
+    DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value, ValueId, ZinniaType,
 };
 
 use super::{dyn_row_major_strides, value_to_scalar_i64};
+
+fn fill_value_for_dtype(b: &mut IRBuilder, fill_value: i64, dtype: NumberType) -> Value {
+    match dtype {
+        NumberType::Integer => b.ir_constant_int(fill_value),
+        NumberType::Float => b.ir_constant_float(fill_value as f64),
+        NumberType::Complex => Value::Complex {
+            real: ScalarValue::new(Some(fill_value as f64), None),
+            imag: ScalarValue::new(Some(0.0), None),
+        },
+    }
+}
 
 pub fn dyn_fill(
     b: &mut IRBuilder,
@@ -19,21 +30,9 @@ pub fn dyn_fill(
     let max_length: usize = shape.iter().product();
     let max_rank = shape.len();
 
-    let fill_sv = match dtype {
-        NumberType::Integer => {
-            let v = b.ir_constant_int(fill_value);
-            value_to_scalar_i64(&v)
-        }
-        NumberType::Float => {
-            let v = b.ir_constant_float(fill_value as f64);
-            value_to_scalar_i64(&v)
-        }
-        NumberType::Complex => panic!(
-            "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
-        ),
-    };
-    let values = vec![fill_sv; max_length];
-    let segment_id = crate::helpers::segment::alloc_and_write(b, &values, dtype);
+    let fill = fill_value_for_dtype(b, fill_value, dtype);
+    let values = vec![fill; max_length];
+    let segment_id = crate::helpers::segment::alloc_and_write_values(b, &values, dtype);
 
     let strides = dyn_row_major_strides(&shape);
     let _ = max_rank;
@@ -80,32 +79,8 @@ pub fn dyn_eye(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
     let shape = vec![n, m];
     let strides = dyn_row_major_strides(&shape);
 
-    let zero = match dtype {
-        NumberType::Integer => {
-            let v = b.ir_constant_int(0);
-            value_to_scalar_i64(&v)
-        }
-        NumberType::Float => {
-            let v = b.ir_constant_float(0.0);
-            value_to_scalar_i64(&v)
-        }
-        NumberType::Complex => panic!(
-            "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
-        ),
-    };
-    let one = match dtype {
-        NumberType::Integer => {
-            let v = b.ir_constant_int(1);
-            value_to_scalar_i64(&v)
-        }
-        NumberType::Float => {
-            let v = b.ir_constant_float(1.0);
-            value_to_scalar_i64(&v)
-        }
-        NumberType::Complex => panic!(
-            "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
-        ),
-    };
+    let zero = fill_value_for_dtype(b, 0, dtype);
+    let one = fill_value_for_dtype(b, 1, dtype);
 
     let mut values = Vec::with_capacity(max_length);
     for i in 0..n {
@@ -113,7 +88,7 @@ pub fn dyn_eye(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value
             values.push(if i == j { one.clone() } else { zero.clone() });
         }
     }
-    let segment_id = crate::helpers::segment::alloc_and_write(b, &values, dtype);
+    let segment_id = crate::helpers::segment::alloc_and_write_values(b, &values, dtype);
 
     let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &shape);
     let result = DynamicNDArrayData {
@@ -159,8 +134,21 @@ pub fn dyn_from_values_with_active(
     active_len: Value,
     dtype: NumberType,
 ) -> Value {
+    let values: Vec<Value> = values
+        .iter()
+        .map(|v| super::scalar_i64_to_value(v, dtype))
+        .collect();
+    dyn_from_values_with_active_values(b, values, active_len, dtype)
+}
+
+pub fn dyn_from_values_with_active_values(
+    b: &mut IRBuilder,
+    values: Vec<Value>,
+    active_len: Value,
+    dtype: NumberType,
+) -> Value {
     let max_length = values.len();
-    let segment_id = crate::helpers::segment::alloc_and_write(b, &values, dtype);
+    let segment_id = crate::helpers::segment::alloc_and_write_values(b, &values, dtype);
 
     // Static envelope: 1-D with the proven max_length.
     let logical_shape: Vec<usize> = vec![max_length];
@@ -212,6 +200,28 @@ pub fn dyn_from_values_with_active_nd(
     runtime_length: Value,
     dtype: NumberType,
 ) -> Value {
+    let values: Vec<Value> = values
+        .iter()
+        .map(|v| super::scalar_i64_to_value(v, dtype))
+        .collect();
+    dyn_from_values_with_active_nd_values(
+        b,
+        values,
+        max_shape,
+        runtime_shape,
+        runtime_length,
+        dtype,
+    )
+}
+
+pub fn dyn_from_values_with_active_nd_values(
+    b: &mut IRBuilder,
+    values: Vec<Value>,
+    max_shape: Vec<usize>,
+    runtime_shape: Vec<ScalarValue<i64>>,
+    runtime_length: Value,
+    dtype: NumberType,
+) -> Value {
     let max_length: usize = max_shape.iter().product();
     assert_eq!(
         values.len(),
@@ -228,7 +238,7 @@ pub fn dyn_from_values_with_active_nd(
         max_shape.len(),
     );
 
-    let segment_id = crate::helpers::segment::alloc_and_write(b, &values, dtype);
+    let segment_id = crate::helpers::segment::alloc_and_write_values(b, &values, dtype);
     let logical_strides = dyn_row_major_strides(&max_shape);
     let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &max_shape);
     let runtime_length_sv = value_to_scalar_i64(&runtime_length);
@@ -398,21 +408,9 @@ pub fn dyn_fill_with_active(
     fill_value: i64,
     dtype: NumberType,
 ) -> Value {
-    let fill_sv = match dtype {
-        NumberType::Integer => {
-            let v = b.ir_constant_int(fill_value);
-            value_to_scalar_i64(&v)
-        }
-        NumberType::Float => {
-            let v = b.ir_constant_float(fill_value as f64);
-            value_to_scalar_i64(&v)
-        }
-        NumberType::Complex => panic!(
-            "DynamicNDArray of Complex is not yet supported (compiler.complex-ndarray-ops scope)"
-        ),
-    };
-    let values = vec![fill_sv; max_length];
-    let result = dyn_from_values_with_active(b, values, active_len.clone(), dtype);
+    let fill = fill_value_for_dtype(b, fill_value, dtype);
+    let values = vec![fill; max_length];
+    let result = dyn_from_values_with_active_values(b, values, active_len.clone(), dtype);
 
     // Op contract for the dyn-ndarray allocator
     // (compiler.fact-propagation-framework prototype + compiler.contract-fact-binding):
@@ -436,11 +434,7 @@ pub fn dyn_fill_with_active(
         let active_sv = value_to_scalar_i64(&active_len);
         let mut formals = std::collections::HashMap::new();
         formals.insert("active".to_string(), active_sv.value_id);
-        b.fire_contract(
-            "dyn_fill_with_active",
-            active_sv.value_id,
-            &formals,
-        );
+        b.fire_contract("dyn_fill_with_active", active_sv.value_id, &formals);
     }
 
     // Group 4a (compiler.op-fact-group-4a-fill-constructors-forall-eq-const):
@@ -505,7 +499,9 @@ mod tests {
     fn dyn_fill_with_active_fires_nonneg_length_fact() {
         let mut b = IRBuilder::new();
         let k = b.ir_constant_int(8);
-        let k_vid = k.value_id().expect("ir_constant_int returns a value_id'd Value");
+        let k_vid = k
+            .value_id()
+            .expect("ir_constant_int returns a value_id'd Value");
 
         let _out = dyn_fill_with_active(
             &mut b,

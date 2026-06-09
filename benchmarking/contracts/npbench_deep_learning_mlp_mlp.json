@@ -1,0 +1,140 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "matmul-dot"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "np.maximum"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 6,
+      "line_start": 5,
+      "mutated_params": [],
+      "name": "relu",
+      "ops": [],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "x",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "np.exp",
+        "np.max",
+        "np.sum"
+      ],
+      "entry_candidate": false,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 13,
+      "line_start": 9,
+      "mutated_params": [],
+      "name": "softmax",
+      "ops": [
+        "Div",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "x",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "relu",
+        "softmax"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 20,
+      "line_start": 16,
+      "mutated_params": [],
+      "name": "mlp",
+      "ops": [
+        "Add",
+        "MatMult"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "input",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "w1",
+          "proposed_annotation": "Float[Array, 'N<=1024 H<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "b1",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "w2",
+          "proposed_annotation": "Float[Array, 'H<=1024 K<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "b2",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "w3",
+          "proposed_annotation": "Float[Array, 'K<=1024 M<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "b3",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "npbench_deep_learning_mlp_mlp/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Declare shared matrix/vector dimensions explicitly, e.g. A[N,K] with x[K]."
+  ],
+  "program": "npbench_deep_learning_mlp_mlp",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\nimport numpy as np\n\n@zk_chip\ndef relu(x: Float[Array, 'N<=1024']):\n    return np.maximum(x, 0)\n\n@zk_chip\ndef softmax(x: Float[Array, 'N<=1024']):\n    tmp_max = np.max(x, axis=-1, keepdims=True)\n    tmp_out = np.exp(x - tmp_max)\n    tmp_sum = np.sum(tmp_out, axis=-1, keepdims=True)\n    return tmp_out / tmp_sum\n\n@zk_circuit\ndef mlp(input: Float[Array, 'N<=1024'], w1: Float[Array, 'N<=1024 H<=1024'], b1: Float, w2: Float[Array, 'H<=1024 K<=1024'], b2: Float, w3: Float[Array, 'K<=1024 M<=1024'], b3: Float):\n    x = relu(input @ w1 + b1)\n    x = relu(x @ w2 + b2)\n    x = softmax(x @ w3 + b3)\n    return x",
+  "source_status": "direct"
+}

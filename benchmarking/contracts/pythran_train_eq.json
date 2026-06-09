@@ -1,0 +1,266 @@
+{
+  "categories": [
+    "complex",
+    "denominator-obligation",
+    "in-place-mutation",
+    "loop-bounded"
+  ],
+  "diagnostics": [
+    "Complex kernels require Complex dtype support or a fail-closed classification."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "abs",
+        "np.conj",
+        "np.float32",
+        "np.sum",
+        "np.zeros",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 28,
+      "line_start": 13,
+      "mutated_params": [
+        "wx"
+      ],
+      "name": "train_eq",
+      "ops": [
+        "Add",
+        "Div",
+        "Gt",
+        "Mult",
+        "Pow",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "E",
+          "proposed_annotation": "Complex[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 2,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "TrSyms",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "os",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "mu",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "wx",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "errfctprs",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "adapt",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "abs",
+        "np.conj",
+        "np.float32",
+        "np.sum",
+        "np.zeros",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 46,
+      "line_start": 31,
+      "mutated_params": [
+        "wx"
+      ],
+      "name": "train_eq2",
+      "ops": [
+        "Add",
+        "Div",
+        "Gt",
+        "Mult",
+        "Pow",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "E",
+          "proposed_annotation": "Complex[Array, 'N<=1024 M<=1024']",
+          "rank_hint": 2,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "TrSyms",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "os",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "mu",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": true,
+          "name": "wx",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "errfctprs",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "adapt",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "abs"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 50,
+      "line_start": 49,
+      "mutated_params": [],
+      "name": "cma_error",
+      "ops": [
+        "Mult",
+        "Pow",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "Xest",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "R",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "symbs",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "symbs.dtype.type"
+      ],
+      "entry_candidate": true,
+      "has_for": false,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 54,
+      "line_start": 53,
+      "mutated_params": [],
+      "name": "mcma_error",
+      "ops": [
+        "Add",
+        "Mult",
+        "Pow",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "Xest",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "R",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "symbs",
+          "proposed_annotation": "Complex[Array, 'N<=1024']",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_train_eq/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "pythran_train_eq",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: complex, denominator-obligation, in-place-mutation, loop-bounded\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.\nimport numpy as np\n\n@zk_circuit\ndef train_eq(E: Complex[Array, 'N<=1024 M<=1024'], TrSyms: Complex[Array, 'N<=1024'], os: Float, mu: Float, wx: Complex[Array, 'N<=1024'], errfctprs: Float, adapt: Float):\n    Ntaps = wx.shape[1]\n    pols = wx.shape[0]\n    R, symbs = errfctprs\n    err = np.zeros(TrSyms, dtype=E.dtype)\n    for i in range(TrSyms):\n        X = E[:, i * os:i * os + Ntaps]\n        Xest = np.sum(np.conj(wx) * X)\n        err[i] = (R.real - abs(Xest) ** 2) * Xest\n        wx += mu * np.conj(err[i]) * X\n        if adapt and i > 0:\n            if err[i].real * err[i - 1].real > 0 and err[i].imag * err[i - 1].imag > 0:\n                pass\n            else:\n                mu = np.float32(mu / (1 + mu * (err[i].real * err[i].real + err[i].imag * err[i].imag)))\n    return (err, wx, mu)\n\n@zk_circuit\ndef train_eq2(E: Complex[Array, 'N<=1024 M<=1024'], TrSyms: Complex[Array, 'N<=1024'], os: Float, mu: Float, wx: Complex[Array, 'N<=1024'], errfctprs: Float, adapt: Float):\n    Ntaps = wx.shape[1]\n    pols = wx.shape[0]\n    R, symbs = errfctprs\n    err = np.zeros(TrSyms, dtype=E.dtype)\n    for i in range(TrSyms):\n        X = E[:, i * os:i * os + Ntaps]\n        Xest = np.sum(np.conj(wx) * X)\n        err[i] = (R.real - abs(Xest) ** 2) * Xest\n        wx += mu * np.conj(err[i]) * X\n        if adapt and i > 0:\n            if err[i].real * err[i - 1].real > 0 and err[i].imag * err[i - 1].imag > 0:\n                pass\n            else:\n                mu = np.float32(mu / (1 + mu * (err[i].real * err[i].real + err[i].imag * err[i].imag)))\n    return (err, wx, mu)\n\n@zk_circuit\ndef cma_error(Xest: Float, R: Integer, symbs: Float):\n    return (R.real - abs(Xest) ** 2) * Xest\n\n@zk_circuit\ndef mcma_error(Xest: Float, R: Integer, symbs: Complex[Array, 'N<=1024']):\n    return symbs.dtype.type((R.real - Xest.real ** 2) * Xest.real + (R.imag - Xest.imag ** 2) * Xest.imag * 1j)",
+  "source_status": "direct"
+}

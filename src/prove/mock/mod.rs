@@ -9,12 +9,12 @@ pub mod synthesizer;
 #[cfg(test)]
 mod tests;
 
+use crate::circuit_input::ResolvedWitness;
 use crate::ir::IRGraph;
 use crate::prove::error::ProvingError;
 use crate::prove::interpreter::interpret_ir;
 use crate::prove::traits::ProverBackend;
 use crate::prove::types::{ProofArtifact, ProvingParams, VerifyResult};
-use crate::circuit_input::ResolvedWitness;
 
 use self::synthesizer::MockSynthesizer;
 
@@ -51,7 +51,13 @@ impl ProverBackend for MockProverBackend {
 
         Ok(ProofArtifact {
             backend: "mock".to_string(),
+            format: "mock-v1".to_string(),
             vk_bytes: String::new(),
+            // Mock backend does not carry a cross-process VK or IR, so the
+            // diagnostic hash is empty. The fuzzer's auto-filer treats
+            // ir_hash="" as "not applicable for this backend" rather than as
+            // a hash collision.
+            ir_hash: String::new(),
             proof_bytes: if satisfied {
                 "mock_satisfied".to_string()
             } else {
@@ -60,6 +66,7 @@ impl ProverBackend for MockProverBackend {
             },
             public_values,
             k: params.k,
+            prove_seconds: 0.0,
         })
     }
 

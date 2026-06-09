@@ -1,0 +1,17 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0354/kernel.py
+// REASON: same as 0353 plus np.append along axis=0 of two runtime-length filtered arrays; ZoKrates cannot express runtime-length array concatenation.
+
+def main(field[2][3] A, field[7][3] B) -> field[2][3]:
+    field[2][3] output = [[0; 3]; 2]
+    for u32 i in 0..2 do
+        bool keep = true
+        for u32 j in 0..7 do
+            bool eq = (A[i][0] == B[j][0]) && (A[i][1] == B[j][1]) && (A[i][2] == B[j][2])
+            keep = keep && !eq
+        endfor
+        for u32 k in 0..3 do
+            output[i][k] = if keep then A[i][k] else 0 fi
+        endfor
+    endfor
+    return output

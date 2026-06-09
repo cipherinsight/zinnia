@@ -1,0 +1,11 @@
+// CLASS: UNSUPPORTED
+// SOURCE: ds1000_case0492/kernel.py
+// REASON: np.isclose with equal_nan=True requires NaN handling and float tolerances - neither exists in ZoKrates
+
+def main(field[6][1] s1, field[6][1] s2) -> field:
+    field count = 0
+    for u32 i in 0..6 do
+        bool diff = s1[i][0] != s2[i][0]
+        count = count + (if diff then 1 else 0 fi)
+    endfor
+    return count

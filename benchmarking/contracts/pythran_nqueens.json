@@ -1,0 +1,93 @@
+{
+  "categories": [
+    "data-dependent-loop",
+    "loop-bounded"
+  ],
+  "diagnostics": [
+    "while loops require a public/padded maximum iteration count."
+  ],
+  "expected_outcome": "diagnostic/fail-closed candidate",
+  "functions": [
+    {
+      "calls": [
+        "len",
+        "list",
+        "range",
+        "reversed",
+        "tuple"
+      ],
+      "entry_candidate": false,
+      "has_for": true,
+      "has_if": true,
+      "has_while": true,
+      "line_end": 33,
+      "line_start": 12,
+      "mutated_params": [],
+      "name": "permutations",
+      "ops": [
+        "Add",
+        "Eq",
+        "Is",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "iterable",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "r",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "len",
+        "list",
+        "out.append",
+        "permutations",
+        "range",
+        "set"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": true,
+      "has_while": false,
+      "line_end": 53,
+      "line_start": 36,
+      "mutated_params": [],
+      "name": "n_queens",
+      "ops": [
+        "Add",
+        "Eq",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "queen_count",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_nqueens/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add an explicit iteration cap or classify as fail-closed until a bound is available.",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions."
+  ],
+  "program": "pythran_nqueens",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: data-dependent-loop, in-place-mutation, loop-bounded\n# Expected outcome: diagnostic/fail-closed candidate\n# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\n# Diagnostic: while loops require a public/padded maximum iteration count.\n\n@zk_chip\ndef permutations(iterable: Float, r: Integer=None):\n    \"\"\"permutations(range(3), 2) --> (0,1) (0,2) (1,0) (1,2) (2,0) (2,1)\"\"\"\n    pool = tuple(iterable)\n    n = len(pool)\n    if r is None:\n        r = n\n    indices = list(range(n))\n    cycles = list(range(n - r + 1, n + 1))[::-1]\n    yield tuple((pool[i] for i in indices[:r]))\n    while n:\n        for i in reversed(range(r)):\n            cycles[i] -= 1\n            if cycles[i] == 0:\n                indices[i:] = indices[i + 1:] + indices[i:i + 1]\n                cycles[i] = n - i\n            else:\n                j = cycles[i]\n                indices[i], indices[-j] = (indices[-j], indices[i])\n                yield tuple((pool[i] for i in indices[:r]))\n                break\n        else:\n            return\n\n@zk_circuit\ndef n_queens(queen_count: Integer):\n    \"\"\"N-Queens solver.\n\n    Args:\n        queen_count: the number of queens to solve for. This is also the\n            board size.\n\n    Yields:\n        Solutions to the problem. Each yielded value is looks like\n        (3, 8, 2, 1, 4, ..., 6) where each number is the column position for the\n        queen, and the index into the tuple indicates the row.\n    \"\"\"\n    out = list()\n    cols = list(range(queen_count))\n    for vec in permutations(cols, None):\n        if queen_count == len(set((vec[i] + i for i in cols))) == len(set((vec[i] - i for i in cols))):\n            out.append(vec)\n    return out",
+  "source_status": "direct"
+}

@@ -1,0 +1,113 @@
+{
+  "categories": [
+    "denominator-obligation",
+    "domain-obligation",
+    "in-place-mutation",
+    "loop-bounded"
+  ],
+  "diagnostics": [],
+  "expected_outcome": "compile/prove candidate",
+  "functions": [
+    {
+      "calls": [
+        "np.array",
+        "np.sqrt",
+        "np.zeros",
+        "range"
+      ],
+      "entry_candidate": false,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 37,
+      "line_start": 14,
+      "mutated_params": [
+        "masspoints"
+      ],
+      "name": "physics",
+      "ops": [
+        "Add",
+        "Div",
+        "Mult",
+        "NotEq",
+        "Pow",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": true,
+          "name": "masspoints",
+          "proposed_annotation": "Float[Array, 'N<=1024']",
+          "rank_hint": 1,
+          "role": "array"
+        },
+        {
+          "mutated": false,
+          "name": "dt",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "plunk",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        },
+        {
+          "mutated": false,
+          "name": "which",
+          "proposed_annotation": "Float",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    },
+    {
+      "calls": [
+        "float",
+        "np.empty",
+        "np.zeros",
+        "physics",
+        "range"
+      ],
+      "entry_candidate": true,
+      "has_for": true,
+      "has_if": false,
+      "has_while": false,
+      "line_end": 54,
+      "line_start": 40,
+      "mutated_params": [],
+      "name": "test",
+      "ops": [
+        "Add",
+        "Div",
+        "FloorDiv",
+        "Mult",
+        "Sub"
+      ],
+      "parameters": [
+        {
+          "mutated": false,
+          "name": "PARTICLE_COUNT",
+          "proposed_annotation": "Integer",
+          "rank_hint": null,
+          "role": "scalar"
+        }
+      ]
+    }
+  ],
+  "kernel_path": "pythran_wave_simulation/kernel.py",
+  "notes": [],
+  "preconditions": [
+    "Add nonzero or positive denominator facts at the exact division/modulo sites.",
+    "Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].",
+    "Loop trip counts must be finite and tied to scalar bounds or array dimensions.",
+    "Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs."
+  ],
+  "program": "pythran_wave_simulation",
+  "review_status": "draft",
+  "source_excerpt": "from zinnia import *\n# Zinnia benchmark contract draft: generated for review.\n# Keep kernel body faithful; refine TODO contracts before final benchmark runs.\n# Categories: denominator-obligation, domain-obligation, in-place-mutation, loop-bounded\n# Expected outcome: compile/prove candidate\n# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.\n# Precondition: Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].\n# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.\n# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.\nimport numpy as np\nfrom math import ceil\n\n@zk_chip\ndef physics(masspoints: Float[Array, 'N<=1024'], dt: Float, plunk: Float, which: Float):\n    ppos = masspoints[1]\n    cpos = masspoints[0]\n    N = cpos.shape[0]\n    HOOKE_K = 2100000.0\n    DAMPING = 0.0001\n    MASS = 0.01\n    force = np.zeros((N, 2))\n    for i in range(1, N):\n        dx, dy = cpos[i] - cpos[i - 1]\n        dist = np.sqrt(dx ** 2 + dy ** 2)\n        assert dist != 0\n        fmag = -HOOKE_K * dist\n        cosine = dx / dist\n        sine = dy / dist\n        fvec = np.array([fmag * cosine, fmag * sine])\n        force[i - 1] -= fvec\n        force[i] += fvec\n    force[0] = force[-1] = (0, 0)\n    force[which][1] += plunk\n    accel = force / MASS\n    npos = (2 - DAMPING) * cpos - (1 - DAMPING) * ppos + accel * dt ** 2\n    masspoints[1] = cpos\n    masspoints[0] = npos\n\n@zk_circuit\ndef test(PARTICLE_COUNT: Integer):\n    SUBDIVISION = 300\n    FRAMERATE = 60\n    count = PARTICLE_COUNT\n    width, height = (600, 200)\n    masspoints = np.empty((2, count, 2), np.float64)\n    initpos = np.zeros(count, np.float64)\n    for i in range(1, count):\n        initpos[i] = initpos[i - 1] + float(width) / count\n    masspoints[:, :, 0] = initpos\n    masspoints[:, :, 1] = height / 2\n    f = 15\n    plunk_pos = count // 2\n    physics(masspoints, 1.0 / (SUBDIVISION * FRAMERATE), f, plunk_pos)\n    return masspoints[0, count // 2]",
+  "source_status": "direct"
+}
