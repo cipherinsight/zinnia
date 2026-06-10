@@ -98,3 +98,37 @@ overhead inside `create_proof`. Low priority.
   parity.
 - The walk is greedy (stops on first non-improving probe per direction);
   with the observed noise it can land ±1 k from the true optimum.
+
+---
+
+## Post-fix update (2026-06-10, evening sweep)
+
+Three fixes landed after the morning survey (commits 8e08dbe, cbf8a78,
+8b92c8e): single-root affine zkRAM decomposition with shared indicators,
+factored two-root gathers for windowed reads, and range-window fact
+propagation for comparisons. Fresh full Zinnia sweep
+(`zinnia_halo2_base_postfixes_20260610.json`): 124/124 prove + verify,
+0 errors. Full table: `HALO2_FULL_COMPARISON_v21_postfixes.md`.
+
+**Epoch caveat**: the evening box runs Zinnia tiny-circuit proves ~1.4-1.6x
+slower than the morning epoch (verified on structurally untouched cases at
+identical k), while HW cargo proves are stable (1.02x re-measured). The
+mixed-epoch geomean of 0.509 is therefore a pessimistic bound; the
+epoch-corrected estimate min(morning, evening)/HW is **0.422** (pre-fix
+morning baseline: 0.467). The fixes only remove constraints, so the true
+same-epoch number lies in [0.42, 0.51], most likely near 0.42.
+
+**Same-epoch slower set** (HW re-measured in the evening epoch alongside
+the Zinnia numbers; everything else is parity at 0.98-1.15x):
+
+| Case | ZN | HW | Ratio | Residual cause |
+|------|-----:|-----:|------:|----------------|
+| 0442 | 307ms | 170ms | 1.8x | in1d membership: per-(write,read) overlay eq pairs, all distinct |
+| 0304 | 400ms | 229ms | 1.7x | small dyn-memory reshape; overlay + per-read scans on 23-slot segment |
+| 0319 | 580ms | 426ms | 1.4x | inverse-permutation writes still overlay-priced on the gather |
+| 0434 | 214ms | 162ms | 1.3x | row/col zeroing select density vs HW's fused or-chains |
+| 0385 | 997ms | 823ms | 1.2x | 20k public instances; both sides k=15, copy overhead |
+| 0387 | 981ms | 810ms | 1.2x | same as 0385 |
+
+Worst case is now 1.8x (was 27.8x in the morning survey). All residual
+absolute deltas are <= 180ms.
