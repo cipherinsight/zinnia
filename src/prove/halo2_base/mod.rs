@@ -400,6 +400,16 @@ fn build_circuit(
 
     if stage != CircuitBuilderStage::Prover {
         builder.calculate_params(Some(UNUSABLE_ROWS));
+        if std::env::var("ZINNIA_HALO2_BASE_DEBUG_CELLS").is_ok() {
+            let stats = builder.statistics();
+            eprintln!(
+                "[halo2-base cells] advice={:?} lookup={:?} fixed={} instances={}",
+                stats.gate.total_advice_per_phase,
+                stats.total_lookup_advice_per_phase,
+                stats.gate.total_fixed,
+                public_values.len(),
+            );
+        }
     }
     Ok((builder, public_values))
 }
