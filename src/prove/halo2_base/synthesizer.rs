@@ -53,6 +53,12 @@ pub struct Halo2BaseSynthesizer<'a> {
     plane_cache: HashMap<(u32, u64, u64, i64, i64), Halo2BaseCell>,
     // Bumped on every write to a segment; invalidates plane_cache entries.
     write_version: HashMap<u32, u64>,
+    // Cells already constrained to the signed-64 window (x + 2^63 < 2^64)
+    // resp. the unsigned-64 window (x < 2^64). Comparisons skip their input
+    // range checks for cells whose window is already enforced; selects
+    // propagate the facts (the output provably equals one branch).
+    signed64_cells: HashSet<u64>,
+    unsigned64_cells: HashSet<u64>,
     // eq(write addr, read addr) bits for dynamic-write overlays. The read
     // side is keyed by cell id for dynamic addresses and by value for
     // constant addresses (constants with equal values are interchangeable).
@@ -142,6 +148,8 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             membership_asserted: HashSet::new(),
             plane_cache: HashMap::new(),
             write_version: HashMap::new(),
+            signed64_cells: HashSet::new(),
+            unsigned64_cells: HashSet::new(),
             overlay_eq_cache: HashMap::new(),
         }
     }
@@ -379,7 +387,31 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         self.add_i(a, &offset)
     }
 
+    /// Whether `x + 2^63 < 2^64` is already enforced: previously checked,
+    /// a constant (value fixed by the fixed column), or an asserted bit.
+    /// Only witness-independent facts qualify — the skip decision must be
+    /// identical for every witness or keygen and prove would diverge.
+    fn is_signed64_known(&self, x: &Halo2BaseCell) -> bool {
+        self.signed64_cells.contains(&x.id)
+            || self.bit_cell_ids.contains(&x.id)
+            || (self.const_cell_ids.contains(&x.id)
+                // The constant's fixed value must actually lie in the
+                // signed-64 window (canonical i64 encoding roundtrips).
+                && kernel::i64_to_fp(kernel::fp_to_i64(x.value)) == x.value)
+    }
+
+    /// Whether `x < 2^64` is already enforced (same qualifying facts).
+    fn is_unsigned64_known(&self, x: &Halo2BaseCell) -> bool {
+        self.unsigned64_cells.contains(&x.id)
+            || self.bit_cell_ids.contains(&x.id)
+            || (self.const_cell_ids.contains(&x.id)
+                && kernel::fp_to_i64(x.value) >= 0
+                && kernel::i64_to_fp(kernel::fp_to_i64(x.value)) == x.value)
+    }
+
     fn signed_lt(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        let a_known = self.is_signed64_known(a);
+        let b_known = self.is_signed64_known(b);
         let a_shifted = self.signed_offset_cell(a)?;
         let b_shifted = self.signed_offset_cell(b)?;
         let value = if kernel::fp_to_i64(a.value) < kernel::fp_to_i64(b.value) {
@@ -388,8 +420,14 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             Fp::zero()
         };
         let range = self.builder.range_chip();
-        range.range_check(self.ctx(), a_shifted.assigned, 64);
-        range.range_check(self.ctx(), b_shifted.assigned, 64);
+        if !a_known {
+            range.range_check(self.ctx(), a_shifted.assigned, 64);
+            self.signed64_cells.insert(a.id);
+        }
+        if !b_known {
+            range.range_check(self.ctx(), b_shifted.assigned, 64);
+            self.signed64_cells.insert(b.id);
+        }
         let assigned = range.is_less_than(self.ctx(), a_shifted.assigned, b_shifted.assigned, 64);
         let out = self.wrap(assigned, value);
         self.mark_bit(&out);
@@ -644,9 +682,17 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
     fn lt_i_bounded(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         let value = if kernel::fp_to_i64(a.value) < kernel::fp_to_i64(b.value) { Fp::one() } else { Fp::zero() };
+        let a_known = self.is_unsigned64_known(a);
+        let b_known = self.is_unsigned64_known(b);
         let range = self.builder.range_chip();
-        range.range_check(self.ctx(), a.assigned, 64);
-        range.range_check(self.ctx(), b.assigned, 64);
+        if !a_known {
+            range.range_check(self.ctx(), a.assigned, 64);
+            self.unsigned64_cells.insert(a.id);
+        }
+        if !b_known {
+            range.range_check(self.ctx(), b.assigned, 64);
+            self.unsigned64_cells.insert(b.id);
+        }
         let assigned = range.is_less_than(self.ctx(), a.assigned, b.assigned, 64);
         let out = self.wrap(assigned, value);
         self.mark_bit(&out);
@@ -761,7 +807,16 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn select_bit(&mut self, cond: &Self::CellRef, if_true: &Self::CellRef, if_false: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         self.assert_bit(cond)?;
         let value = cond.value * if_true.value + (Fp::one() - cond.value) * if_false.value;
-        Ok(self.gate_cell(value, |gate, ctx| gate.select(ctx, if_true.assigned, if_false.assigned, cond.assigned)))
+        let out = self.gate_cell(value, |gate, ctx| gate.select(ctx, if_true.assigned, if_false.assigned, cond.assigned));
+        // The select gate pins out to one of the branches, so window facts
+        // shared by both branches hold for the output as well.
+        if self.is_signed64_known(if_true) && self.is_signed64_known(if_false) {
+            self.signed64_cells.insert(out.id);
+        }
+        if self.is_unsigned64_known(if_true) && self.is_unsigned64_known(if_false) {
+            self.unsigned64_cells.insert(out.id);
+        }
+        Ok(out)
     }
     fn select_many_lane(&mut self, cond: &Self::CellRef, true_values: &[Self::CellRef], false_values: &[Self::CellRef], lane: usize) -> Result<Self::CellRef, ProvingError> {
         let cond = self.truthy_bit(cond);
