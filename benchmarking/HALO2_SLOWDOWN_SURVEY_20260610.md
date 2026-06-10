@@ -161,3 +161,26 @@ index maps across chained slices; the backend's lineage then folds
 cancelling dynamic terms — for 0304 the reversal cancels the dynamic
 start entirely, ~500 cells like HW). Deferred along with the
 compacted-vs-masked output-encoding decision for 0442.
+
+## Final dual sweep (2026-06-10 evening, same-epoch, all fixes)
+
+`zinnia_halo2_base_final_20260610.json` + `hw_halo2_final_20260610.json`,
+run back-to-back. 124/124 prove + verify on both sides, 0 errors. Full
+table: `HALO2_FULL_COMPARISON_v22_final.md`.
+
+- **Geomean ZN/HW prove ratio: 0.481x** (median 0.69x); Zinnia faster on
+  102/120 fair cases; 14 above 1.05x, of which 12 are <=1.16x (parity
+  band, deltas 5-127ms).
+- The day's fix targets hold under the full sweep: 0304 absent from the
+  slower list (was 2.5x), argwhere family 0507-0510 absent (0507-0510 all
+  faster than HW), 0442 at 1.32x (was 1.8x), 0319 at 1.15x (was 27.8x).
+- Two findings exposed by honest walking:
+  - **0451 (2.65x, 212ms vs 80ms)**: the auto-seed picked k=12 where
+    yesterday it sat at k=8 — one of today's IR changes altered this
+    case's circuit; under investigation.
+  - **0318 (1.97x, 530ms vs 269ms)**: the morning HW baseline had
+    stopped its k-walk prematurely at k=7/812ms (greedy stop on a noisy
+    probe); today's walk found k=10/269ms. 0318 also runs ~1.6x slower
+    than its own yesterday — consistent with the in-flight fancy-index
+    static_array lowering committed in the checkpoint (same family that
+    originally regressed 0319 before the affine zkRAM fix rescued it).
