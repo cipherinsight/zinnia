@@ -224,7 +224,10 @@ fn dyn_slice_1d(
         && (!is_present(stop) || stop_static.is_some())
         && (!is_present(step) || step_static.is_some());
 
-    if all_static {
+    // The fully-static fast path is only sound when the array's runtime
+    // length is itself a compile-time constant: slice defaults and negative
+    // bounds are relative to the *actual* length, not the padded bound.
+    if all_static && data.meta.runtime_length.static_val.is_some() {
         return dyn_slice_1d_static(b, data, start_static, stop_static, step_static);
     }
 
@@ -243,11 +246,61 @@ fn dyn_slice_1d(
     crate::optim::resolver::discharge_slice_bound(b, start, bound, "dyn_slice_start");
     crate::optim::resolver::discharge_slice_bound(b, stop, bound, "dyn_slice_stop");
 
-    // Dynamic path: pad-and-mask.
+    // Dynamic path: pad-and-mask, with slice defaults / negative bounds /
+    // clamping all relative to the array's *runtime* length (python slice
+    // semantics), not the padded bound.
     let max_out_len = len;
 
-    fn val_to_ir(b: &mut IRBuilder, v: Option<&Value>, default: i64) -> Value {
-        match v {
+    let zero = b.ir_constant_int(0);
+    let one = b.ir_constant_int(1);
+    let neg_one = b.ir_constant_int(-1);
+    let len_rt = Value::Integer(data.meta.runtime_length.clone());
+    let len_rt_m1 = b.ir_sub_i(&len_rt, &one);
+
+    // Step: static when possible; a runtime step is supported via
+    // sign-dependent selects. step == 0 is rejected (statically or by an
+    // in-circuit assert, mirroring python).
+    let step_ir = match (is_present(step), step_static) {
+        (false, _) => b.ir_constant_int(1),
+        (true, Some(s)) => {
+            assert!(s != 0, "slice step cannot be zero");
+            b.ir_constant_int(s)
+        }
+        (true, None) => {
+            let s = step.unwrap().clone();
+            let nonzero = b.ir_not_equal_i(&s, &zero);
+            b.ir_assert(&nonzero);
+            s
+        }
+    };
+    let step_pos: Option<bool> = step_static.map(|s| s > 0).or(if is_present(step) {
+        None
+    } else {
+        Some(true)
+    });
+    // Step-sign-dependent quantities: fold statically when the sign is
+    // known, otherwise select on the runtime sign bit.
+    let mut by_sign = |b: &mut IRBuilder, pos: &Value, neg: &Value| -> Value {
+        match step_pos {
+            Some(true) => pos.clone(),
+            Some(false) => neg.clone(),
+            None => {
+                let sp = b.ir_greater_than_i(&step_ir, &zero);
+                b.ir_select_i(&sp, pos, neg)
+            }
+        }
+    };
+    let window_lo = by_sign(b, &zero, &neg_one);
+    let window_hi = by_sign(b, &len_rt, &len_rt_m1);
+    let start_default = by_sign(b, &zero, &len_rt_m1);
+    let stop_default = by_sign(b, &len_rt, &neg_one);
+
+    // Normalize a slice bound against the runtime length: missing bounds
+    // take the python default for the step sign; negative values are
+    // length-relative; everything clamps into the valid window
+    // (step>0: [0, len]; step<0: [-1, len-1]).
+    let mut normalize = |b: &mut IRBuilder, v: Option<&Value>, default: &Value| -> Value {
+        let raw = match v {
             Some(val) if !matches!(val, Value::None) => {
                 if let Some(s) = val.int_val() {
                     b.ir_constant_int(s)
@@ -255,35 +308,47 @@ fn dyn_slice_1d(
                     val.clone()
                 }
             }
-            _ => b.ir_constant_int(default),
-        }
-    }
-    let start_ir = val_to_ir(b, start, 0);
-    let stop_ir = val_to_ir(b, stop, len as i64);
-    let step_ir = val_to_ir(b, step, 1);
+            _ => return default.clone(),
+        };
+        let shifted = b.ir_add_i(&raw, &len_rt);
+        let is_neg = b.ir_less_than_i(&raw, &zero);
+        let adjusted = b.ir_select_i(&is_neg, &shifted, &raw);
+        let lt_lo = b.ir_less_than_i(&adjusted, &window_lo);
+        let above = b.ir_select_i(&lt_lo, &window_lo, &adjusted);
+        let gt_hi = b.ir_greater_than_i(&above, &window_hi);
+        b.ir_select_i(&gt_hi, &window_hi, &above)
+    };
+    let start_ir = normalize(b, start, &start_default);
+    let stop_ir = normalize(b, stop, &stop_default);
+
+    // out_len = max(0, ceil(diff / |step|)) with diff oriented by step sign.
+    let stop_minus_start = b.ir_sub_i(&stop_ir, &start_ir);
+    let start_minus_stop = b.ir_sub_i(&start_ir, &stop_ir);
+    let diff = by_sign(b, &stop_minus_start, &start_minus_stop);
+    let neg_step = b.ir_sub_i(&zero, &step_ir);
+    let abs_step = by_sign(b, &step_ir, &neg_step);
+    let abs_step_m1 = b.ir_sub_i(&abs_step, &one);
+    let numerator = b.ir_add_i(&diff, &abs_step_m1);
+    let divided = b.ir_floor_div_i(&numerator, &abs_step);
+    let diff_pos = b.ir_greater_than_i(&diff, &zero);
+    let runtime_length = b.ir_select_i(&diff_pos, &divided, &zero);
 
     let default_val = crate::ops::dyn_ndarray::metadata::dyn_default_value(b, data.dtype);
-    let zero = b.ir_constant_int(0);
-    let len_val = b.ir_constant_int(len as i64);
+    let max_idx = b.ir_constant_int(len as i64 - 1);
     let mut out_elements = Vec::with_capacity(max_out_len);
 
     for i in 0..max_out_len {
         let i_const = b.ir_constant_int(i as i64);
-        let offset = b.ir_mul_i(&i_const, &step_ir);
+        // Element i is valid iff i < out_len; that single check subsumes
+        // the start/stop/range conditions because the bounds are clamped.
+        let in_bounds = b.ir_less_than_i(&i_const, &runtime_length);
+
+        let offset = match step_static {
+            Some(s) => b.ir_constant_int(i as i64 * s),
+            None if !is_present(step) => b.ir_constant_int(i as i64),
+            None => b.ir_mul_i(&i_const, &step_ir),
+        };
         let src_idx = b.ir_add_i(&start_ir, &offset);
-
-        let ge_zero = b.ir_greater_than_or_equal_i(&src_idx, &zero);
-        let lt_len = b.ir_less_than_i(&src_idx, &len_val);
-        let in_range = b.ir_logical_and(&ge_zero, &lt_len);
-
-        let step_pos = b.ir_greater_than_i(&step_ir, &zero);
-        let lt_stop = b.ir_less_than_i(&src_idx, &stop_ir);
-        let gt_stop = b.ir_greater_than_i(&src_idx, &stop_ir);
-        let stop_ok = b.ir_select_i(&step_pos, &lt_stop, &gt_stop);
-        let stop_bool = b.ir_bool_cast(&stop_ok);
-        let in_bounds = b.ir_logical_and(&in_range, &stop_bool);
-
-        let max_idx = b.ir_constant_int(len as i64 - 1);
         let is_neg = b.ir_less_than_i(&src_idx, &zero);
         let is_over = b.ir_greater_than_i(&src_idx, &max_idx);
         let clamped_hi = b.ir_select_i(&is_over, &max_idx, &src_idx);
@@ -297,20 +362,6 @@ fn dyn_slice_1d(
         };
         out_elements.push(masked.clone());
     }
-
-    // runtime_length
-    let step_pos_2 = b.ir_greater_than_i(&step_ir, &zero);
-    let stop_minus_start = b.ir_sub_i(&stop_ir, &start_ir);
-    let start_minus_stop = b.ir_sub_i(&start_ir, &stop_ir);
-    let diff = b.ir_select_i(&step_pos_2, &stop_minus_start, &start_minus_stop);
-    let neg_step = b.ir_sub_i(&zero, &step_ir);
-    let abs_step = b.ir_select_i(&step_pos_2, &step_ir, &neg_step);
-    let diff_pos = b.ir_greater_than_i(&diff, &zero);
-    let one = b.ir_constant_int(1);
-    let abs_step_m1 = b.ir_sub_i(&abs_step, &one);
-    let numerator = b.ir_add_i(&diff, &abs_step_m1);
-    let divided = b.ir_floor_div_i(&numerator, &abs_step);
-    let runtime_length = b.ir_select_i(&diff_pos, &divided, &zero);
 
     let segment_id = crate::helpers::segment::alloc_and_write_values(b, &out_elements, data.dtype);
     let runtime_len_sv = crate::ops::dyn_ndarray::value_to_scalar_i64(&runtime_length);
@@ -348,21 +399,33 @@ fn dyn_slice_1d_static(
     stop: Option<i64>,
     step: Option<i64>,
 ) -> Value {
-    let len = data.meta.logical_shape[0] as i64;
-    let start_i = start.unwrap_or(0);
-    let stop_i = stop.unwrap_or(len);
+    // Only sound when runtime_length is static (the caller guarantees it):
+    // slice defaults and negative bounds are relative to the actual length.
+    let len = data
+        .meta
+        .runtime_length
+        .static_val
+        .expect("dyn_slice_1d_static requires a static runtime length");
     let step_i = step.unwrap_or(1);
-    let start_i = if start_i < 0 {
-        (len + start_i).max(0)
-    } else {
-        start_i.min(len)
-    };
-    let stop_i = if stop_i < 0 {
-        (len + stop_i).max(0)
-    } else {
-        stop_i.min(len)
-    };
     assert!(step_i != 0, "slice step cannot be zero");
+    // Python slice-bound defaults depend on step sign:
+    //   step > 0 → start=0, stop=len
+    //   step < 0 → start=len-1, stop=-1 (i.e. "before index 0")
+    let start_i = start.unwrap_or(if step_i > 0 { 0 } else { len - 1 });
+    let stop_i = stop.unwrap_or(if step_i > 0 { len } else { -1 });
+    let (lo, hi) = if step_i > 0 { (0, len) } else { (-1, len - 1) };
+    let start_i = if start.is_some() && start_i < 0 {
+        (len + start_i).clamp(lo, hi)
+    } else {
+        start_i.clamp(lo, hi)
+    };
+    let stop_i = if stop.is_some() && stop_i < 0 {
+        (len + stop_i).clamp(lo, hi)
+    } else if stop.is_some() {
+        stop_i.clamp(lo, hi)
+    } else {
+        stop_i
+    };
 
     let mut src_indices: Vec<i64> = Vec::new();
     if step_i > 0 {
