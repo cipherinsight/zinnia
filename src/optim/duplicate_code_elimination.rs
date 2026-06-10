@@ -70,7 +70,17 @@ impl IRPass for DuplicateCodeElimination {
                 // Memory ops never dedupe — order matters.
                 continue;
             }
-            if let Some(key) = fast_dce_key(&stmt.ir, &stmt.arguments) {
+            // Canonicalize arguments through replacements found so far
+            // (statements are in dependency order, so an argument's
+            // replacement is already known). This lets duplicates cascade:
+            // once two producers unify, their identical consumers unify too,
+            // all in a single forward pass.
+            let resolved_args: Vec<StmtId> = stmt
+                .arguments
+                .iter()
+                .map(|a| to_be_replaced.get(a).copied().unwrap_or(*a))
+                .collect();
+            if let Some(key) = fast_dce_key(&stmt.ir, &resolved_args) {
                 if let Some(existing_id) = fast_seen.get(&key).copied() {
                     to_be_replaced.insert(stmt.stmt_id, existing_id);
                 } else {
@@ -78,7 +88,18 @@ impl IRPass for DuplicateCodeElimination {
                 }
                 continue;
             }
-            let key = (discriminant(&stmt.ir), stmt.arguments.clone());
+            // Side-effecting / order- or count-sensitive ops must not dedupe
+            // (e.g. two ExposePublic of the same cell are two public slots).
+            // Pure asserts are idempotent, so duplicates of those may fold.
+            if stmt.ir.is_fixed()
+                && !matches!(
+                    stmt.ir,
+                    IR::Assert | IR::AssertBit | IR::AssertU128Lt | IR::AssertU128LtBit { .. }
+                )
+            {
+                continue;
+            }
+            let key = (discriminant(&stmt.ir), resolved_args);
             let bucket = seen.entry(key).or_default();
             let mut existing = None;
             for (ir, id) in bucket.iter() {

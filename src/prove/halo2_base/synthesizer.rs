@@ -893,6 +893,13 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         self.u128_lt_bit_cache.get(&key).and_then(|v| v.get(bit as usize)).copied().ok_or_else(|| ProvingError::synthesis("range bit index out of bounds"))
     }
     fn assert_bit(&mut self, a: &Self::CellRef) -> Result<(), ProvingError> {
+        // Cells in bit_cell_ids are already constrained boolean (is_equal /
+        // is_zero / comparison outputs, or a previous assert_bit) — only
+        // structurally marked bits qualify, never the value==0/1 heuristic,
+        // so the skip is witness-independent and sound.
+        if self.bit_cell_ids.contains(&a.id) {
+            return Ok(());
+        }
         GateChip::<Fp>::default().assert_bit(self.ctx(), a.assigned);
         self.mark_bit(a);
         Ok(())
