@@ -922,6 +922,8 @@ class CaseResult:
     case: str
     keygen_ok: bool = False
     min_k: int | None = None
+    # Timed k-probes from the measured argmin walk: list of [k, prove_s].
+    k_probes: list = field(default_factory=list)
     prove_times_s: list[float] = field(default_factory=list)
     snark_size_bytes: int | None = None
     verify_ok: bool | None = None
@@ -1058,12 +1060,51 @@ def run_case(case: str, repeats: int, k_fixed: int | None) -> CaseResult:
     if min_k is None:
         return CaseResult(case=case, error=f"no viable k in [{K_MIN_BISECT}..{K_MAX_BISECT}]")
 
-    advice, fixed, rng = parse_cell_counts(first_keygen_log)
+    # Ground-truth k selection: prove time is U-shaped in k (small k packs
+    # cells into many columns, i.e. many committed polynomials; large k pays
+    # 2^k per polynomial). min_k is the smallest *viable* k, not the fastest.
+    # Probe upward with real keygen+prove and keep the measured argmin. The
+    # 3% margin is a stop-rule noise guard only.
+    k_probes: list = []
+    best_k = min_k
+    best_t = parse_prove_time(first_keygen_log)
+    best_log = first_keygen_log
+    last_keygen_k = min_k
+    if k_fixed is None and best_t is not None:
+        k_probes.append([min_k, best_t])
+        k = min_k + 1
+        while k <= K_MAX_BISECT:
+            rc, klog = cargo_run(case, "keygen", k, env)
+            if rc != 0:
+                break
+            last_keygen_k = k
+            rc, plog = cargo_run(case, "prove", k, env)
+            if rc != 0:
+                break
+            t = parse_prove_time(plog)
+            if t is None:
+                break
+            k_probes.append([k, t])
+            if t < best_t * 0.97:
+                best_k, best_t = k, t
+                best_log = klog + "\n" + plog
+                k += 1
+            else:
+                break
+    min_k = best_k
+    # The on-disk pk/pinning belong to the last keygen run; restore best_k's.
+    if last_keygen_k != best_k:
+        rc, log = cargo_run(case, "keygen", best_k, env)
+        if rc != 0:
+            return CaseResult(case=case, keygen_ok=True, min_k=best_k,
+                              k_probes=k_probes,
+                              error=f"re-keygen at best k failed: {log[-400:]}")
+
+    advice, fixed, rng = parse_cell_counts(best_log)
     # First prove time:
     prove_times: list[float] = []
-    t = parse_prove_time(first_keygen_log)
-    if t is not None:
-        prove_times.append(t)
+    if best_t is not None:
+        prove_times.append(best_t)
     for _ in range(repeats - 1):
         rc, log = cargo_run(case, "prove", min_k, env)
         if rc != 0:
@@ -1080,6 +1121,7 @@ def run_case(case: str, repeats: int, k_fixed: int | None) -> CaseResult:
     verify_t = parse_verify_time(vlog) if verify_ok else None
 
     return CaseResult(case=case, keygen_ok=True, min_k=min_k,
+                      k_probes=k_probes,
                       prove_times_s=prove_times, snark_size_bytes=size,
                       verify_ok=verify_ok, verify_time_s=verify_t,
                       advice_cells=advice, fixed_cells=fixed,

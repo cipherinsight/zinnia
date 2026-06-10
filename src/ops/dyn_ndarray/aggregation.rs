@@ -979,28 +979,29 @@ fn argwhere_axis0_bbox_bounds(
     let mut out_elements: Vec<Value> = Vec::with_capacity(rank);
 
     let zero_i = b.ir_constant_int(0);
+    let mut counts_by_axis: Vec<Vec<Value>> = src_shape
+        .iter()
+        .map(|&dim| vec![zero_i.clone(); dim])
+        .collect();
+    for (flat_idx, keep) in keeps.iter().enumerate() {
+        let coords = decode_coords(flat_idx, src_shape, &src_strides);
+        for src_axis in 0..rank {
+            let coord = coords[src_axis];
+            let prev = counts_by_axis[src_axis][coord].clone();
+            counts_by_axis[src_axis][coord] = b.ir_add_i(&prev, keep);
+        }
+    }
+
     for src_axis in 0..rank {
         let dim = src_shape[src_axis];
-        // has_along[k] = OR over flat positions whose decoded coordinate
-        // along src_axis equals k. Encoding it as a chain of `logical_or`s
-        // costs one multiplication per step (`a + b - a*b`), totalling
-        // O(other-axis-len) mults per k. Encode instead as
-        // `(sum_of_keeps_along_axis > 0)`: the sum is linear (free in ACIR
-        // arithmetic gates) and the `> 0` check is a single bounded
-        // comparison. Each `keep` is already a {0, 1} boolean, so sum is
-        // bounded by the other-axis length — well within u128. This cuts
-        // the bbox-crop family residual ~30% (0508/0509/0510).
+        // Build the row/column occupancy vectors in one pass over the
+        // cached keeps, then threshold each bucket with a single bounded
+        // comparison. This matches the handwritten bbox baselines more
+        // closely than rescanning all keeps once per bucket.
         let mut has_along: Vec<Value> = Vec::with_capacity(dim);
-        for k in 0..dim {
-            let mut acc = zero_i.clone();
-            for (flat_idx, keep) in keeps.iter().enumerate() {
-                let coord_at_axis = decode_coords(flat_idx, src_shape, &src_strides)[src_axis];
-                if coord_at_axis == k {
-                    acc = b.ir_add_i(&acc, keep);
-                }
-            }
+        for acc in &counts_by_axis[src_axis] {
             // has = (0 < acc), bounded since both are non-negative small ints.
-            let has = b.ir_less_than_i_bounded(&zero_i, &acc);
+            let has = b.ir_less_than_i_bounded(&zero_i, acc);
             has_along.push(has);
         }
 

@@ -101,6 +101,8 @@ def _coerce_arg(value, dt_spec=None):
 class CaseResult:
     case: str
     min_k: int | None = None
+    # Timed k-probes from the measured argmin walk: list of [k, prove_s].
+    k_probes: list = field(default_factory=list)
     # First prove (cold; includes keygen) and subsequent warm proves.
     first_prove_s: float | None = None
     warm_prove_times_s: list = field(default_factory=list)
@@ -157,6 +159,7 @@ def run_case(case: str, repeats: int, precision_bits: int, lookup_bits: int,
         k_candidates = [None, *range(k_min, k_max + 1)]
     else:
         k_candidates = range(k_min, k_max + 1)
+    warm_params = None
     for k in k_candidates:
         params = None if k is None else {"k": k, "precision_bits": precision_bits, "lookup_bits": lookup_bits}
         try:
@@ -168,6 +171,7 @@ def run_case(case: str, repeats: int, precision_bits: int, lookup_bits: int,
             cr.first_prove_s = getattr(proof, "prove_seconds", 0.0) or (time.time() - t0)
             cr.min_k = getattr(proof, "k", None) or k
             last_proof = proof
+            warm_params = params
             break
         except BaseException as e:  # noqa: BLE001
             msg = f"{type(e).__name__}: {e}"
@@ -188,12 +192,44 @@ def run_case(case: str, repeats: int, precision_bits: int, lookup_bits: int,
         cr.error = f"no viable k in [{k_min}..{k_max}]"
         return cr
 
-    # Warm proves
-    params = {"k": cr.min_k, "precision_bits": precision_bits, "lookup_bits": lookup_bits}
+    # Ground-truth k selection: prove time is U-shaped in k (small k packs
+    # cells into many columns, i.e. many committed polynomials; large k pays
+    # 2^k per polynomial). The first success above seeds the search; walk
+    # neighbouring k in both directions with real timed proves and keep the
+    # measured argmin. The 3% margin is a stop-rule noise guard only.
+    k0 = cr.min_k
+    cr.k_probes.append([k0, cr.first_prove_s])
+    best_k, best_t = k0, cr.first_prove_s
+    for direction in (1, -1):
+        k = k0 + direction
+        while k_min <= k <= k_max:
+            p = {"k": k, "precision_bits": precision_bits,
+                 "lookup_bits": min(lookup_bits, max(k - 1, 1))}
+            try:
+                t0 = time.time()
+                proof = compiled.prove(*inputs, backend=backend, params=p)
+                t = getattr(proof, "prove_seconds", 0.0) or (time.time() - t0)
+            except BaseException:  # noqa: BLE001
+                break
+            cr.k_probes.append([k, t])
+            if t < best_t * 0.97:
+                best_k, best_t = k, t
+                last_proof = proof
+                warm_params = p
+                k += direction
+            else:
+                break
+    cr.min_k = best_k
+    cr.first_prove_s = best_t
+
+    # Warm proves. Reuse the exact params of the successful attempt: for the
+    # auto-sized path (params=None) the backend re-derives the same
+    # ground-truth (k, lookup_bits) deterministically, which keeps
+    # lookup_bits consistent with the first prove.
     for _ in range(repeats):
         try:
             t0 = time.time()
-            proof = compiled.prove(*inputs, backend=backend, params=params)
+            proof = compiled.prove(*inputs, backend=backend, params=warm_params)
             cr.warm_prove_times_s.append(
                 getattr(proof, "prove_seconds", 0.0) or (time.time() - t0)
             )

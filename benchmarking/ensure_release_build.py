@@ -46,6 +46,31 @@ def ensure_zinnia_release_build() -> None:
 
     env = os.environ.copy()
     env.setdefault("RUSTUP_TOOLCHAIN", DEFAULT_TOOLCHAIN)
+    stale_artifacts = [
+        ROOT / "target" / "release" / "lib_zinnia_core.so",
+        ROOT / "target" / "release" / "deps" / "lib_zinnia_core.so",
+        ROOT / "target" / "maturin" / "lib_zinnia_core.so",
+    ]
+    if any(path.exists() and path.stat().st_size == 0 for path in stale_artifacts):
+        clean_cmd = ["cargo", "clean", "-p", "zinnia_core", "--release"]
+        print(
+            "Cleaning stale zero-byte release artifact: " + " ".join(clean_cmd),
+            flush=True,
+        )
+        clean = subprocess.run(
+            clean_cmd,
+            cwd=ROOT,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        if clean.returncode != 0:
+            sys.stderr.write(clean.stdout)
+            raise RuntimeError(
+                f"release clean failed with rc={clean.returncode}; "
+                f"command={' '.join(clean_cmd)}"
+            )
     print(
         "Ensuring Zinnia release Rust build: "
         + " ".join(cmd)

@@ -53,6 +53,16 @@ use self::artifact_format::{
 };
 use self::synthesizer::Halo2BaseSynthesizer;
 
+/// k search range for ground-truth parameter estimation.
+const ESTIMATE_K_MIN: u32 = 4;
+const ESTIMATE_K_MAX: u32 = 22;
+/// Rows reserved for blinding factors / poisoned rows when packing cells
+/// into columns and when checking row-fit during sizing. Matches the
+/// halo2-graph scaffold's MINIMUM_ROWS default (20) so both sides pack
+/// columns identically; the real requirement (`meta.minimum_rows()`) is
+/// ~10, so 20 is safely conservative.
+const UNUSABLE_ROWS: usize = 20;
+
 pub struct Halo2BaseProverBackend;
 
 impl ProverBackend for Halo2BaseProverBackend {
@@ -61,71 +71,118 @@ impl ProverBackend for Halo2BaseProverBackend {
     }
 
     fn estimate_params(&self, ir: &IRGraph) -> Result<ProvingParams, ProvingError> {
-        let mut params = ProvingParams::default();
-        let mut reads = 0usize;
-        let mut writes = 0usize;
-        let mut selects = 0usize;
-        let mut comparisons = 0usize;
-        let mut public_outputs = 0usize;
-        let mut range_ops = 0usize;
-        let mut trig_ops = 0usize;
-        let mut pow_fi_ops = 0usize;
-        let mut product_sum_ops = 0usize;
+        // Ground-truth sizing, no tuned thresholds. Two facts drive it:
+        //
+        // 1. Cell counts are witness-independent, so a dry synthesis into a
+        //    virtual builder (the synthesizer substitutes zeros when no
+        //    witness is given) yields the exact advice / lookup / fixed cell
+        //    counts and the exact public-instance count. Cell counts DO
+        //    depend on lookup_bits (range checks decompose into
+        //    lookup_bits-wide limbs), so the dry run is cached per
+        //    lookup_bits value.
+        //
+        // 2. Any k whose usable rows hold the instance column and the range
+        //    table is viable — `calculate_params` packs cells into as many
+        //    columns as needed. But prove time is U-shaped in k: every extra
+        //    column is an extra committed polynomial (plus its share of
+        //    permutation and lookup arguments), so tiny k explodes the
+        //    polynomial count while large k pays 2^k per polynomial. We pick
+        //    the k minimizing (committed polynomials) x 2^k, where the
+        //    polynomial count is read from halo2's own ConstraintSystem
+        //    configured exactly as the real circuit would be.
+        use halo2_base::gates::circuit::BaseCircuitParams;
+        use halo2_base::halo2_proofs::plonk::ConstraintSystem;
+        use std::collections::HashMap;
 
-        for stmt in &ir.stmts {
-            match &stmt.ir {
-                IR::ReadMemory { .. } | IR::DynamicNDArrayGetItem { .. } => reads += 1,
-                IR::WriteMemory { .. } | IR::DynamicNDArraySetItem { .. } => writes += 1,
-                IR::SelectManyI { .. }
-                | IR::SelectManyF { .. }
-                | IR::SelectI
-                | IR::SelectF
-                | IR::SelectB
-                | IR::SelectBitI
-                | IR::SelectBitF => selects += 1,
-                IR::LtI
-                | IR::LtIBounded
-                | IR::GtIBounded
-                | IR::GtI
-                | IR::LteI
-                | IR::GteI
-                | IR::LtF
-                | IR::GtF
-                | IR::LteF
-                | IR::GteF
-                | IR::EqI
-                | IR::NeI
-                | IR::EqF
-                | IR::NeF => comparisons += 1,
-                IR::ExposePublicI | IR::ExposePublicF => public_outputs += 1,
-                IR::AssertU128Lt | IR::AssertU128LtBit { .. } | IR::AssertBit => range_ops += 1,
-                IR::SinF | IR::CosF | IR::TanF | IR::ArcSinF | IR::ArcCosF | IR::ArcTan2F => {
-                    trig_ops += 1
-                }
-                IR::PowFI | IR::PowF => pow_fi_ops += 1,
-                IR::ProductSumF { .. } => product_sum_ops += 1,
-                _ => {}
+        let defaults = ProvingParams::default();
+        // (advice cells, lookup cells, fixed cells, instance count) per lookup_bits
+        let mut dry_cache: HashMap<u32, (usize, usize, usize, usize)> = HashMap::new();
+        let mut dry_run = |lb: u32| -> Result<(usize, usize, usize, usize), ProvingError> {
+            if let Some(v) = dry_cache.get(&lb) {
+                return Ok(*v);
+            }
+            let mut builder = BaseCircuitBuilder::from_stage(CircuitBuilderStage::Keygen);
+            builder.set_k(ESTIMATE_K_MAX as usize);
+            builder.set_lookup_bits(lb as usize);
+            builder.set_instance_columns(1);
+            let dry_params = ProvingParams {
+                k: ESTIMATE_K_MAX,
+                lookup_bits: lb,
+                ..defaults.clone()
+            };
+            let instances = {
+                let mut synth = Halo2BaseSynthesizer::new(&mut builder, None, dry_params);
+                interpret_ir(ir, &mut synth)?;
+                synth.public_values().len()
+            };
+            let stats = builder.statistics();
+            let entry = (
+                stats.gate.total_advice_per_phase.iter().sum::<usize>(),
+                stats.total_lookup_advice_per_phase.iter().sum::<usize>(),
+                stats.gate.total_fixed,
+                instances,
+            );
+            dry_cache.insert(lb, entry);
+            Ok(entry)
+        };
+
+        let mut best: Option<(u128, u32, u32)> = None; // (cost, k, lookup_bits)
+        for k in ESTIMATE_K_MIN..=ESTIMATE_K_MAX {
+            let lookup_bits = defaults.lookup_bits.min(k.saturating_sub(1)).max(1);
+            let (advice, lookup, fixed, instances) = dry_run(lookup_bits)?;
+            let lookup_used = lookup > 0;
+
+            let usable = (1usize << k).saturating_sub(UNUSABLE_ROWS);
+            if usable == 0 || instances > usable {
+                continue;
+            }
+            if lookup_used && (1usize << lookup_bits) > usable {
+                continue;
+            }
+
+            let num_advice = advice.div_ceil(usable).max(1);
+            let num_lookup_advice = if lookup_used { lookup.div_ceil(usable) } else { 0 };
+            let num_fixed = fixed.div_ceil(usable).max(1);
+
+            // Configure the real constraint system for this column layout and
+            // count the polynomials the prover would commit to.
+            let base_params = BaseCircuitParams {
+                k: k as usize,
+                num_advice_per_phase: vec![num_advice],
+                num_fixed,
+                num_lookup_advice_per_phase: vec![num_lookup_advice],
+                lookup_bits: lookup_used.then_some(lookup_bits as usize),
+                num_instance_columns: 1,
+            };
+            let mut meta = ConstraintSystem::<Fp>::default();
+            let _config =
+                halo2_base::gates::circuit::BaseConfig::configure(&mut meta, base_params);
+            let degree = meta.degree().max(3);
+            let perm_chunk = (degree - 2).max(1);
+            let perm_columns = meta.permutation().get_columns().len();
+            let committed_polys = num_advice
+                + num_lookup_advice
+                + meta.lookups().len() * 2 // mv_lookup: multiplicity + running-sum poly
+                + perm_columns.div_ceil(perm_chunk) // permutation grand products
+                + (degree - 1) // quotient pieces
+                + 1; // vanishing blinder
+            let cost = (committed_polys as u128) << k;
+            if best.map_or(true, |(c, _, _)| cost < c) {
+                best = Some((cost, k, lookup_bits));
             }
         }
 
-        let total = ir.stmts.len();
-        let memory = reads + writes;
-        params.k = if public_outputs >= 20_000 {
-            15
-        } else if pow_fi_ops > 0 || product_sum_ops > 0 {
-            12
-        } else if total >= 20_000 || selects >= 2_000 || memory >= 400 || total >= 3_500 {
-            12
-        } else if total >= 1_200 || selects >= 500 || memory >= 100 {
-            11
-        } else if total >= 300 || selects >= 100 || memory >= 40 || comparisons >= 50 {
-            10
-        } else if trig_ops > 0 || range_ops > 0 || comparisons > 0 || memory > 0 {
-            9
-        } else {
-            8
-        };
-        Ok(params)
+        match best {
+            Some((_, k, lookup_bits)) => Ok(ProvingParams {
+                k,
+                lookup_bits,
+                ..defaults
+            }),
+            None => Err(ProvingError::other(format!(
+                "no k in [{}..{}] fits the circuit's public instances",
+                ESTIMATE_K_MIN, ESTIMATE_K_MAX
+            ))),
+        }
     }
 
     fn prove(
@@ -342,7 +399,7 @@ fn build_circuit(
     };
 
     if stage != CircuitBuilderStage::Prover {
-        builder.calculate_params(Some(8));
+        builder.calculate_params(Some(UNUSABLE_ROWS));
     }
     Ok((builder, public_values))
 }

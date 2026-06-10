@@ -305,6 +305,14 @@ fn compile_circuit(
     if duplicate_code_elimination {
         passes.push("DuplicateCodeElimination");
     }
+    // `argwhere/nonzero` bbox kernels can materialize coordinate segments
+    // that later min/max fast paths never read. Drop those memory ops late
+    // in the scalar-optimization phase, then run DCE once more to clean up
+    // their now-dead address/value arithmetic.
+    passes.push("UnreadMemoryEliminator");
+    if dead_code_elimination {
+        passes.push("DeadCodeElimination");
+    }
     // Collapse `AssertU128Lt(stride_k + base, hi)` chains to the tightest
     // (max-stride) member: see `optim/assert_subsumption.rs`. Runs after
     // DCE so the redundant asserts are visible side-by-side.

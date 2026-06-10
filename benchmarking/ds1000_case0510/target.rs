@@ -7,8 +7,11 @@
 // im: Float[10, 10]. Bounding box of rows / cols containing at least one
 // nonzero entry. Uses EqualFIR pattern for the float-equality test.
 //
-// Output shape is data-dependent — expose all 100 cells masked-to-zero
-// outside the bbox plus shape metadata.
+// The kernel returns only the cropped array. Public output encoding is not
+// specified by kernel.py, so align this handwritten baseline with the current
+// Zinnia convention for these bbox cases: expose the fixed padded 10x10
+// payload with the crop packed into the top-left corner and zeros elsewhere,
+// omitting separate shape metadata.
 
 use clap::Parser;
 use halo2_base::utils::{ScalarField, BigPrimeField};
@@ -105,35 +108,45 @@ fn nonzero_bbox_f64<F: ScalarField>(
         cmax = gate.select(ctx, j_const, cmax, col_has[j]);
     }
 
-    let one = ctx.load_constant(F::ONE);
-    let rmax_p1 = gate.add(ctx, rmax, one);
-    let cmax_p1 = gate.add(ctx, cmax, one);
-    for i in 0..N {
-        let i_cell = ctx.load_constant(F::from(i as u64));
-        let i_p1 = gate.add(ctx, i_cell, one);
-        let ge_rmin = rc.is_less_than(ctx, rmin, i_p1, 32);
-        let lt_rmax_p1 = rc.is_less_than(ctx, i_cell, rmax_p1, 32);
-        let in_row = gate.and(ctx, ge_rmin, lt_rmax_p1);
+    let height_span = gate.sub(ctx, rmax, rmin);
+    let one_h = ctx.load_constant(F::ONE);
+    let height = gate.add(ctx, height_span, one_h);
+    let width_span = gate.sub(ctx, cmax, cmin);
+    let one_w = ctx.load_constant(F::ONE);
+    let width = gate.add(ctx, width_span, one_w);
+    let row_consts: Vec<_> = (0..N)
+        .map(|i| ctx.load_constant(F::from(i as u64)))
+        .collect();
+    let col_consts: Vec<_> = (0..N)
+        .map(|j| ctx.load_constant(F::from(j as u64)))
+        .collect();
+    for out_i in 0..N {
+        let out_i_cell = row_consts[out_i];
+        let row_active = rc.is_less_than(ctx, out_i_cell, height, 32);
+        let src_row = gate.add(ctx, rmin, out_i_cell);
+        let mut packed_row = Vec::with_capacity(N);
         for j in 0..N {
-            let j_cell = ctx.load_constant(F::from(j as u64));
-            let j_p1 = gate.add(ctx, j_cell, one);
-            let ge_cmin = rc.is_less_than(ctx, cmin, j_p1, 32);
-            let lt_cmax_p1 = rc.is_less_than(ctx, j_cell, cmax_p1, 32);
-            let in_col = gate.and(ctx, ge_cmin, lt_cmax_p1);
-            let in_box = gate.and(ctx, in_row, in_col);
-            let out = gate.select(ctx, cells[i * N + j], zero_fp, in_box);
+            let mut selected = cells[j];
+            for i in 1..N {
+                let eq = gate.is_equal(ctx, src_row, row_consts[i]);
+                selected = gate.select(ctx, cells[i * N + j], selected, eq);
+            }
+            packed_row.push(selected);
+        }
+        for out_j in 0..N {
+            let out_j_cell = col_consts[out_j];
+            let col_active = rc.is_less_than(ctx, out_j_cell, width, 32);
+            let src_col = gate.add(ctx, cmin, out_j_cell);
+            let mut selected = packed_row[0];
+            for j in 1..N {
+                let eq = gate.is_equal(ctx, src_col, col_consts[j]);
+                selected = gate.select(ctx, packed_row[j], selected, eq);
+            }
+            let active = gate.and(ctx, row_active, col_active);
+            let out = gate.select(ctx, selected, zero_fp, active);
             make_public.push(out);
         }
     }
-
-    let height = gate.sub(ctx, rmax_p1, rmin);
-    let width = gate.sub(ctx, cmax_p1, cmin);
-    make_public.push(rmin);
-    make_public.push(rmax);
-    make_public.push(cmin);
-    make_public.push(cmax);
-    make_public.push(height);
-    make_public.push(width);
 }
 
 fn main() {

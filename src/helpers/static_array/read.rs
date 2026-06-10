@@ -160,6 +160,419 @@ fn compute_addr(
     }
 }
 
+const SMALL_DYNAMIC_SINGLE_READ_SELECT_LIMIT: usize = 1024;
+
+fn select_typed(
+    b: &mut IRBuilder,
+    dtype: NumberType,
+    cond: &Value,
+    true_val: &Value,
+    false_val: &Value,
+) -> Value {
+    match dtype {
+        NumberType::Float => b.ir_select_f(cond, true_val, false_val),
+        NumberType::Integer => b.ir_select_i(cond, true_val, false_val),
+        NumberType::Complex => {
+            panic!("select_typed does not handle Complex StaticArray reads")
+        }
+    }
+}
+
+fn index_equals_coord(b: &mut IRBuilder, idx: &Value, coord: usize, axis_len: usize) -> Value {
+    if let Some(i) = idx.int_val() {
+        let i = if i < 0 { axis_len as i64 + i } else { i };
+        return b.ir_constant_bool(i == coord as i64);
+    }
+    let coord_v = b.ir_constant_int(coord as i64);
+    b.ir_equal_i(idx, &coord_v)
+}
+
+fn and_all(b: &mut IRBuilder, parts: Vec<Value>) -> Value {
+    let mut it = parts.into_iter();
+    let Some(mut acc) = it.next() else {
+        return b.ir_constant_bool(true);
+    };
+    for part in it {
+        acc = b.ir_logical_and(&acc, &part);
+    }
+    acc
+}
+
+fn enumerate_dynamic_single_choices(
+    axes: &[(usize, Value)],
+    shape: &[usize],
+    mut f: impl FnMut(&[usize]),
+) {
+    fn rec(
+        pos: usize,
+        axes: &[(usize, Value)],
+        shape: &[usize],
+        coords: &mut Vec<usize>,
+        f: &mut impl FnMut(&[usize]),
+    ) {
+        if pos == axes.len() {
+            f(coords);
+            return;
+        }
+        let ax = axes[pos].0;
+        for coord in 0..shape[ax] {
+            coords.push(coord);
+            rec(pos + 1, axes, shape, coords, f);
+            coords.pop();
+        }
+    }
+    let mut coords = Vec::with_capacity(axes.len());
+    rec(0, axes, shape, &mut coords, &mut f);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_read_dynamic_single_from_payload(
+    b: &mut IRBuilder,
+    dtype: NumberType,
+    shape: &[usize],
+    segment_id: u32,
+    strides: &[usize],
+    static_src_base: i64,
+    dynamic_single_axes: &[(usize, Value)],
+    addr_for_bounds: &Value,
+    addr_bound_hi: usize,
+) -> Option<Value> {
+    if dtype == NumberType::Complex || dynamic_single_axes.is_empty() {
+        return None;
+    }
+    let choice_count: usize = dynamic_single_axes
+        .iter()
+        .map(|(ax, _)| shape[*ax])
+        .product();
+    if choice_count == 0 || choice_count > SMALL_DYNAMIC_SINGLE_READ_SELECT_LIMIT {
+        return None;
+    }
+    if b.static_array_product_provenance.contains_key(&segment_id) {
+        super::base::force_static_array_product_provenance(b, segment_id);
+    }
+    let cached = b.static_array_payload.get(&segment_id)?.clone();
+    crate::optim::resolver::discharge_index_in_range(
+        b,
+        addr_for_bounds,
+        0,
+        addr_bound_hi as i64,
+        "static_array_read",
+    );
+
+    let mut candidates: Vec<(Value, Value)> = Vec::with_capacity(choice_count);
+    enumerate_dynamic_single_choices(dynamic_single_axes, shape, |choice_coords| {
+        let mut abs = static_src_base;
+        let mut conds = Vec::with_capacity(dynamic_single_axes.len());
+        for (choice_pos, (ax, idx)) in dynamic_single_axes.iter().enumerate() {
+            let coord = choice_coords[choice_pos];
+            abs += coord as i64 * strides[*ax] as i64;
+            conds.push(index_equals_coord(b, idx, coord, shape[*ax]));
+        }
+        if abs >= 0 {
+            let abs = abs as usize;
+            if abs < cached.len() {
+                candidates.push((and_all(b, conds), cached[abs].clone()));
+            }
+        }
+    });
+    let (_, first) = candidates.first()?.clone();
+    let mut acc = first;
+    for (cond, value) in candidates.iter().skip(1) {
+        acc = select_typed(b, dtype, cond, value, &acc);
+    }
+    Some(acc)
+}
+
+fn normalize_dynamic_index(b: &mut IRBuilder, idx: &Value, axis_len: usize) -> Value {
+    if b.ask_bounds(idx).map(|(min, _)| min >= 0).unwrap_or(false) {
+        return idx.clone();
+    }
+    let zero_v = b.ir_constant_int(0);
+    let len_v = b.ir_constant_int(axis_len as i64);
+    let is_neg = b.ir_less_than_i(idx, &zero_v);
+    let wrapped = b.ir_add_i(idx, &len_v);
+    b.ir_select_i(&is_neg, &wrapped, idx)
+}
+
+enum FancyAxisPlan {
+    Single(Value),
+    Range {
+        coords: Vec<usize>,
+        out_axis: usize,
+    },
+    Fancy {
+        values: Vec<Value>,
+        shape: Vec<usize>,
+        strides: Vec<usize>,
+        out_start: usize,
+    },
+}
+
+fn integer_fancy_index_payload(
+    b: &mut IRBuilder,
+    value: &Value,
+) -> Option<(Vec<Value>, Vec<usize>)> {
+    let list_value = match value {
+        Value::StaticArray { .. } => super::base::to_value_list(b, value),
+        Value::List(_) | Value::Tuple(_) => value.clone(),
+        _ => return None,
+    };
+    let shape = super::super::composite::get_composite_shape(&list_value);
+    if shape.is_empty() {
+        return None;
+    }
+    let flat = super::super::composite::flatten_composite_with_builder(b, &list_value);
+    if flat
+        .iter()
+        .all(|v| matches!(v, Value::Integer(_)) && !matches!(v, Value::Boolean(_)))
+    {
+        Some((flat, shape))
+    } else {
+        None
+    }
+}
+
+fn static_range_coords(
+    shape: &[usize],
+    axis: usize,
+    start: &Option<Value>,
+    stop: &Option<Value>,
+    step: &Option<Value>,
+) -> Option<Vec<usize>> {
+    let len_i = shape[axis] as i64;
+    let is_absent =
+        |v: &Option<Value>| -> bool { matches!(v.as_ref(), Some(Value::None) | None) };
+    let int_of = |v: &Option<Value>| -> Option<i64> {
+        match v.as_ref() {
+            Some(Value::None) | None => None,
+            Some(val) => val.int_val(),
+        }
+    };
+    let st_absent = is_absent(step);
+    let s_absent = is_absent(start);
+    let e_absent = is_absent(stop);
+    let st_int = int_of(step);
+    let s_int = int_of(start);
+    let e_int = int_of(stop);
+    if !(st_absent || st_int.is_some())
+        || !(s_absent || s_int.is_some())
+        || !(e_absent || e_int.is_some())
+    {
+        return None;
+    }
+    let st = st_int.unwrap_or(1);
+    assert!(st != 0, "slice step cannot be zero");
+    let s = if s_absent {
+        if st > 0 {
+            0
+        } else {
+            len_i - 1
+        }
+    } else {
+        let raw = s_int.unwrap();
+        if raw < 0 {
+            (len_i + raw).max(0)
+        } else {
+            raw.min(len_i)
+        }
+    };
+    let e = if e_absent {
+        if st > 0 {
+            len_i
+        } else {
+            -1
+        }
+    } else {
+        let raw = e_int.unwrap();
+        if raw < 0 {
+            (len_i + raw).max(0)
+        } else {
+            raw.min(len_i)
+        }
+    };
+    let mut coords = Vec::new();
+    if st > 0 {
+        let mut i = s;
+        while i < e {
+            coords.push(i as usize);
+            i += st;
+        }
+    } else {
+        let mut i = s;
+        while i > e {
+            coords.push(i as usize);
+            i += st;
+        }
+    }
+    Some(coords)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_single_axis_fancy_subscript(
+    b: &mut IRBuilder,
+    dtype: NumberType,
+    shape: &[usize],
+    segment_id: u32,
+    imag_seg: Option<u32>,
+    strides: &[usize],
+    offset: usize,
+    indices: &[SliceIndex],
+) -> Option<Value> {
+    let rank = shape.len();
+    if indices.len() > rank {
+        return None;
+    }
+
+    let mut plans: Vec<FancyAxisPlan> = Vec::with_capacity(rank);
+    let mut out_shape: Vec<usize> = Vec::new();
+    let mut fancy_axes = 0usize;
+
+    for ax in 0..rank {
+        let idx = indices
+            .get(ax)
+            .cloned()
+            .unwrap_or(SliceIndex::Range(None, None, None));
+        match idx {
+            SliceIndex::Single(v) => {
+                if let Some((values, idx_shape)) = integer_fancy_index_payload(b, &v) {
+                    fancy_axes += 1;
+                    if fancy_axes > 1 {
+                        return None;
+                    }
+                    let out_start = out_shape.len();
+                    out_shape.extend(idx_shape.iter().copied());
+                    let idx_strides = row_major_strides(&idx_shape);
+                    plans.push(FancyAxisPlan::Fancy {
+                        values,
+                        shape: idx_shape,
+                        strides: idx_strides,
+                        out_start,
+                    });
+                } else {
+                    plans.push(FancyAxisPlan::Single(v));
+                }
+            }
+            SliceIndex::Range(start, stop, step) => {
+                let coords = static_range_coords(shape, ax, &start, &stop, &step)?;
+                let out_axis = out_shape.len();
+                out_shape.push(coords.len());
+                plans.push(FancyAxisPlan::Range { coords, out_axis });
+            }
+            SliceIndex::Ellipsis | SliceIndex::NewAxis => return None,
+        }
+    }
+
+    if fancy_axes != 1 {
+        return None;
+    }
+
+    let total: usize = out_shape.iter().product();
+    let out_strides = row_major_strides(&out_shape);
+    let src_total: usize = shape.iter().product();
+    let mut leaves: Vec<Value> = Vec::with_capacity(total);
+
+    for flat_out in 0..total {
+        let out_coords = decode_coords(flat_out, &out_shape, &out_strides);
+        let mut static_addr = offset as i64;
+        let mut dynamic_parts: Vec<Value> = Vec::new();
+
+        for (src_axis, plan) in plans.iter().enumerate() {
+            match plan {
+                FancyAxisPlan::Single(v) => {
+                    if let Some(i) = v.int_val() {
+                        let i = if i < 0 {
+                            shape[src_axis] as i64 + i
+                        } else {
+                            i
+                        };
+                        static_addr += i * strides[src_axis] as i64;
+                    } else {
+                        let normalized = normalize_dynamic_index(b, v, shape[src_axis]);
+                        let stride_val = b.ir_constant_int(strides[src_axis] as i64);
+                        dynamic_parts.push(b.ir_mul_i(&normalized, &stride_val));
+                    }
+                }
+                FancyAxisPlan::Range { coords, out_axis } => {
+                    static_addr +=
+                        coords[out_coords[*out_axis]] as i64 * strides[src_axis] as i64;
+                }
+                FancyAxisPlan::Fancy {
+                    values,
+                    shape: idx_shape,
+                    strides: idx_strides,
+                    out_start,
+                } => {
+                    let mut idx_flat = 0usize;
+                    for ax in 0..idx_shape.len() {
+                        idx_flat += out_coords[*out_start + ax] * idx_strides[ax];
+                    }
+                    let idx_val = values[idx_flat].clone();
+                    if let Some(i) = idx_val.int_val() {
+                        let i = if i < 0 {
+                            shape[src_axis] as i64 + i
+                        } else {
+                            i
+                        };
+                        static_addr += i * strides[src_axis] as i64;
+                    } else {
+                        let normalized = normalize_dynamic_index(b, &idx_val, shape[src_axis]);
+                        let stride_val = b.ir_constant_int(strides[src_axis] as i64);
+                        dynamic_parts.push(b.ir_mul_i(&normalized, &stride_val));
+                    }
+                }
+            }
+        }
+
+        if dynamic_parts.is_empty() {
+            let abs = static_addr as usize;
+            if dtype == NumberType::Complex {
+                let im = imag_seg.expect("Complex StaticArray missing imag_segment_id");
+                leaves.push(read_complex_leaf(b, segment_id, im, abs));
+            } else {
+                leaves.push(read_leaf_at_flat(b, segment_id, 0, abs, dtype));
+            }
+        } else {
+            let mut addr = b.ir_constant_int(static_addr);
+            for part in &dynamic_parts {
+                addr = b.ir_add_i(&addr, part);
+            }
+            if dtype == NumberType::Complex {
+                let im = imag_seg.expect("Complex StaticArray missing imag_segment_id");
+                leaves.push(read_complex_leaf_dynamic(b, segment_id, im, &addr));
+            } else {
+                leaves.push(read_leaf_at_dynamic(
+                    b,
+                    segment_id,
+                    &addr,
+                    dtype,
+                    offset + src_total,
+                ));
+            }
+        }
+    }
+
+    if dtype == NumberType::Complex {
+        let mut reals = Vec::with_capacity(leaves.len());
+        let mut imags = Vec::with_capacity(leaves.len());
+        for leaf in leaves {
+            match leaf {
+                Value::Complex { real, imag } => {
+                    reals.push(Value::Float(real));
+                    imags.push(Value::Float(imag));
+                }
+                _ => unreachable!(),
+            }
+        }
+        return Some(super::base::build_static_array_from_flat_complex(
+            b, reals, imags, out_shape,
+        ));
+    }
+
+    Some(super::base::build_static_array_from_flat(
+        b, leaves, out_shape, dtype,
+    ))
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // Public dispatch
 // ────────────────────────────────────────────────────────────────────────
@@ -274,6 +687,12 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
             _ => return lst,
         };
         return super::super::ndarray::multidim_subscript(b, &data, indices);
+    }
+
+    if let Some(out) = try_single_axis_fancy_subscript(
+        b, dtype, &shape, segment_id, imag_seg, &strides, offset, indices,
+    ) {
+        return out;
     }
 
     // ── Fast path: all-Single, fully-resolved index across all axes →
@@ -1294,15 +1713,17 @@ fn materialise_dynamic_multi_axis_slice(
     dtype: NumberType,
     shape: &[usize],
     segment_id: u32,
+    imag_seg: Option<u32>,
     strides: &[usize],
-    offset: usize,
-    axis_specs: &[(usize, Option<Value>, Option<Value>, Option<Value>)],
+    static_base: i64,
+    static_range_axes: &[(usize, usize, Vec<usize>)],
+    axis_specs: &[(usize, usize, Option<Value>, Option<Value>, Option<Value>)],
     out_shape: &[usize],
 ) -> Value {
     // Discharge each axis's bounds first (same contract as the per-axis
     // path; an OOB start/stop must fail at prove time, not silently
     // alias into a wrong cell).
-    for (ax, start, stop, _step) in axis_specs {
+    for (ax, _, start, stop, _step) in axis_specs {
         crate::optim::resolver::discharge_slice_bound(
             b,
             start.as_ref(),
@@ -1333,9 +1754,11 @@ fn materialise_dynamic_multi_axis_slice(
         }
     };
 
-    // Per axis: (axis_idx, start_ir, stop_ir, step_ir, fast).
-    let mut axes: Vec<(usize, Value, Value, Value, bool)> = Vec::with_capacity(axis_specs.len());
-    for (ax, start, stop, step) in axis_specs {
+    // Per dynamic axis: (src_axis_idx, out_axis_idx, start_ir, stop_ir,
+    // step_ir, fast).
+    let mut axes: Vec<(usize, usize, Value, Value, Value, bool)> =
+        Vec::with_capacity(axis_specs.len());
+    for (ax, out_ax, start, stop, step) in axis_specs {
         let start_ir = val_to_ir(b, start, 0);
         let stop_ir = val_to_ir(b, stop, shape[*ax] as i64);
         let step_ir = val_to_ir(b, step, 1);
@@ -1349,7 +1772,7 @@ fn materialise_dynamic_multi_axis_slice(
             None => true, // `discharge_slice_bound` already constrains start in [0, axis_len+1].
         };
         let fast = step_pos_known && start_nonneg;
-        axes.push((*ax, start_ir, stop_ir, step_ir, fast));
+        axes.push((*ax, *out_ax, start_ir, stop_ir, step_ir, fast));
     }
 
     let default_val = crate::ops::dyn_ndarray::metadata::dyn_default_value(b, dtype);
@@ -1358,7 +1781,7 @@ fn materialise_dynamic_multi_axis_slice(
     // Per slice_idx along each axis: precompute (in_bounds_mask, clamped_idx).
     // Each axis's table has size = shape[axis]; shared across all output cells.
     let mut per_axis_table: Vec<Vec<(Option<Value>, Value)>> = Vec::with_capacity(axes.len());
-    for (axis_idx, start_ir, stop_ir, step_ir, fast) in &axes {
+    for (axis_idx, _, start_ir, stop_ir, step_ir, fast) in &axes {
         let axis_len = shape[*axis_idx];
         let axis_len_val = b.ir_constant_int(axis_len as i64);
         let max_idx_val = b.ir_constant_int(axis_len as i64 - 1);
@@ -1407,10 +1830,16 @@ fn materialise_dynamic_multi_axis_slice(
     for flat_out in 0..total {
         let out_coords = decode_coords(flat_out, out_shape, &new_strides);
         let mut combined_mask: Option<Value> = None;
-        let offset_val = b.ir_constant_int(offset as i64);
-        let mut addr = offset_val;
-        for (table_idx, (axis_idx, _, _, _, _)) in axes.iter().enumerate() {
-            let (mask_k, clamped_k) = per_axis_table[table_idx][out_coords[*axis_idx]].clone();
+        let mut addr = b.ir_constant_int(static_base);
+        for (src_ax, out_ax, coords) in static_range_axes {
+            let coord = coords[out_coords[*out_ax]];
+            if coord != 0 {
+                let contrib = b.ir_constant_int((coord * strides[*src_ax]) as i64);
+                addr = b.ir_add_i(&addr, &contrib);
+            }
+        }
+        for (table_idx, (axis_idx, out_ax, _, _, _, _)) in axes.iter().enumerate() {
+            let (mask_k, clamped_k) = per_axis_table[table_idx][out_coords[*out_ax]].clone();
             if let Some(m) = mask_k {
                 combined_mask = Some(match combined_mask {
                     None => m,
@@ -1425,18 +1854,61 @@ fn materialise_dynamic_multi_axis_slice(
             };
             addr = b.ir_add_i(&addr, &scaled);
         }
-        let elem = b.ir_read_memory(segment_id, &addr);
-        let masked = match combined_mask {
-            None => elem,
-            Some(cond) => {
-                if dtype == NumberType::Float {
-                    b.ir_select_f(&cond, &elem, &default_val)
-                } else {
-                    b.ir_select_i(&cond, &elem, &default_val)
+        if dtype == NumberType::Complex {
+            let imag_seg = imag_seg.expect("Complex StaticArray missing imag_segment_id");
+            let elem = read_complex_leaf_dynamic(b, segment_id, imag_seg, &addr);
+            let masked = match combined_mask {
+                None => elem,
+                Some(cond) => match elem {
+                    Value::Complex { real, imag } => {
+                        let (default_real, default_imag) = match default_val.clone() {
+                            Value::Complex { real, imag } => (Value::Float(real), Value::Float(imag)),
+                            _ => unreachable!(),
+                        };
+                        let real_v = b.ir_select_f(&cond, &Value::Float(real), &default_real);
+                        let imag_v = b.ir_select_f(&cond, &Value::Float(imag), &default_imag);
+                        match (real_v, imag_v) {
+                            (Value::Float(real), Value::Float(imag)) => Value::Complex { real, imag },
+                            _ => unreachable!(),
+                        }
+                    }
+                    _ => unreachable!(),
+                },
+            };
+            leaves.push(masked);
+        } else {
+            let elem = b.ir_read_memory(segment_id, &addr);
+            let masked = match combined_mask {
+                None => elem,
+                Some(cond) => {
+                    if dtype == NumberType::Float {
+                        b.ir_select_f(&cond, &elem, &default_val)
+                    } else {
+                        b.ir_select_i(&cond, &elem, &default_val)
+                    }
                 }
+            };
+            leaves.push(scalar_i64_to_value(&value_to_scalar_i64(&masked), dtype));
+        }
+    }
+    if dtype == NumberType::Complex {
+        let mut reals: Vec<Value> = Vec::with_capacity(leaves.len());
+        let mut imags: Vec<Value> = Vec::with_capacity(leaves.len());
+        for v in leaves {
+            match v {
+                Value::Complex { real, imag } => {
+                    reals.push(Value::Float(real));
+                    imags.push(Value::Float(imag));
+                }
+                _ => unreachable!(),
             }
-        };
-        leaves.push(scalar_i64_to_value(&value_to_scalar_i64(&masked), dtype));
+        }
+        return super::base::build_static_array_from_flat_complex(
+            b,
+            reals,
+            imags,
+            out_shape.to_vec(),
+        );
     }
     super::base::build_static_array_from_flat(b, leaves, out_shape.to_vec(), dtype)
 }
@@ -1567,26 +2039,18 @@ fn multidim_subscript_static_array(
         );
     }
 
-    // NOTE: an earlier experiment routed multi-axis dynamic slices
-    // through a fused `materialise_dynamic_multi_axis_slice` (kept below
-    // for reference / future patterns). Empirically Noir's ACIR
-    // optimizer already elides the axis-0 intermediate that the
-    // recursive per-axis path produces, so the fused path was a wash
-    // on 0508 (+30) and a regression on 0467/0468 (+192 each) due to
-    // per-call per-axis table overhead duplicated across multiple
-    // slice sites. The `IR::IndexInBox` primitive is still available
-    // for callers that build a multi-axis bound check directly.
-
     // If every position is Single and resolved (covered earlier), so reach
     // here for at least one Range. Compute a per-axis "selection" — either
     // Single (consumes the axis) or Range coords.
     let mut out_shape: Vec<usize> = Vec::new();
     let mut axis_kind: Vec<AxisSel> = Vec::with_capacity(rank);
+    let mut out_axis_of_src: Vec<Option<usize>> = vec![None; rank];
 
     for ax in 0..rank {
         if ax >= indices.len() {
             // Trailing axes default to full range.
             out_shape.push(shape[ax]);
+            out_axis_of_src[ax] = Some(out_shape.len() - 1);
             axis_kind.push(AxisSel::FullRange);
             continue;
         }
@@ -1660,35 +2124,16 @@ fn multidim_subscript_static_array(
                         }
                     }
                     out_shape.push(coords.len());
+                    out_axis_of_src[ax] = Some(out_shape.len() - 1);
                     axis_kind.push(AxisSel::Coords(coords));
                 } else {
-                    // Dynamic-bounds range on this axis: fall back to the
-                    // dynamic-axis materialiser, then recurse.
-                    let sliced = slice_axis(
-                        b,
-                        val,
-                        dtype,
-                        &shape,
-                        segment_id,
-                        &strides,
-                        offset,
-                        ax,
-                        s.as_ref(),
-                        e.as_ref(),
-                        st.as_ref(),
-                    );
-                    let remaining: Vec<SliceIndex> = indices
-                        .iter()
-                        .enumerate()
-                        .map(|(i, idx)| {
-                            if i == ax {
-                                SliceIndex::Range(None, None, None)
-                            } else {
-                                idx.clone()
-                            }
-                        })
-                        .collect();
-                    return static_array_subscript(b, &sliced, &remaining);
+                    out_shape.push(shape[ax]);
+                    out_axis_of_src[ax] = Some(out_shape.len() - 1);
+                    axis_kind.push(AxisSel::DynamicRange(
+                        s.clone(),
+                        e.clone(),
+                        st.clone(),
+                    ));
                 }
             }
             _ => unreachable!("Ellipsis/NewAxis already handled at top-level"),
@@ -1699,7 +2144,10 @@ fn multidim_subscript_static_array(
     // contributions; collect axis-coord arrays for Range axes.
     let mut static_base: i64 = offset as i64;
     let mut dynamic_parts: Vec<Value> = Vec::new();
+    let mut dynamic_single_axes: Vec<(usize, Value)> = Vec::new();
     let mut range_axes: Vec<(usize, Vec<usize>)> = Vec::new();
+    let mut dynamic_range_axes: Vec<(usize, usize, Option<Value>, Option<Value>, Option<Value>)> =
+        Vec::new();
 
     for ax in 0..rank {
         match &axis_kind[ax] {
@@ -1710,6 +2158,7 @@ fn multidim_subscript_static_array(
                 } else {
                     let stride_val = b.ir_constant_int(strides[ax] as i64);
                     dynamic_parts.push(b.ir_mul_i(v, &stride_val));
+                    dynamic_single_axes.push((ax, v.clone()));
                 }
             }
             AxisSel::Coords(coords) => {
@@ -1719,7 +2168,73 @@ fn multidim_subscript_static_array(
                 let coords: Vec<usize> = (0..shape[ax]).collect();
                 range_axes.push((ax, coords));
             }
+            AxisSel::DynamicRange(start, stop, step) => {
+                dynamic_range_axes.push((
+                    ax,
+                    out_axis_of_src[ax].expect("dynamic range axis must map to an output axis"),
+                    start.clone(),
+                    stop.clone(),
+                    step.clone(),
+                ));
+            }
         }
+    }
+
+    if !dynamic_range_axes.is_empty() {
+        if dynamic_range_axes.len() >= 2 && dynamic_parts.is_empty() {
+            let mut static_range_axes: Vec<(usize, usize, Vec<usize>)> =
+                Vec::with_capacity(range_axes.len());
+            for (src_ax, coords) in &range_axes {
+                static_range_axes.push((
+                    *src_ax,
+                    out_axis_of_src[*src_ax].expect("range axis must map to an output axis"),
+                    coords.clone(),
+                ));
+            }
+            return materialise_dynamic_multi_axis_slice(
+                b,
+                dtype,
+                &shape,
+                segment_id,
+                imag_seg,
+                &strides,
+                static_base,
+                &static_range_axes,
+                &dynamic_range_axes,
+                &out_shape,
+            );
+        }
+
+        // Preserve the existing recursive single-axis materialisation path
+        // when there is only one dynamic range axis or when a dynamic Single
+        // index contributes to the address; those cases rely on the
+        // downstream `read_leaf_at_dynamic` address-range discharge.
+        let (ax, _, start, stop, step) = dynamic_range_axes[0].clone();
+        let sliced = slice_axis(
+            b,
+            val,
+            dtype,
+            &shape,
+            segment_id,
+            &strides,
+            offset,
+            ax,
+            start.as_ref(),
+            stop.as_ref(),
+            step.as_ref(),
+        );
+        let remaining: Vec<SliceIndex> = indices
+            .iter()
+            .enumerate()
+            .map(|(i, idx)| {
+                if i == ax {
+                    SliceIndex::Range(None, None, None)
+                } else {
+                    idx.clone()
+                }
+            })
+            .collect();
+        return static_array_subscript(b, &sliced, &remaining);
     }
 
     let total: usize = out_shape.iter().product();
@@ -1767,14 +2282,28 @@ fn multidim_subscript_static_array(
                 let im = imag_seg.expect("Complex StaticArray missing imag_segment_id");
                 leaves.push(read_complex_leaf_dynamic(b, segment_id, im, &acc));
             } else {
-                let src_total: usize = shape.iter().product();
-                leaves.push(read_leaf_at_dynamic(
+                if let Some(v) = try_read_dynamic_single_from_payload(
                     b,
-                    segment_id,
-                    &acc,
                     dtype,
-                    offset + src_total,
-                ));
+                    &shape,
+                    segment_id,
+                    &strides,
+                    src_flat,
+                    &dynamic_single_axes,
+                    &acc,
+                    offset + shape.iter().product::<usize>(),
+                ) {
+                    leaves.push(v);
+                } else {
+                    let src_total: usize = shape.iter().product();
+                    leaves.push(read_leaf_at_dynamic(
+                        b,
+                        segment_id,
+                        &acc,
+                        dtype,
+                        offset + src_total,
+                    ));
+                }
             }
         }
     }
@@ -1799,6 +2328,7 @@ enum AxisSel {
     Single(Value),
     Coords(Vec<usize>),
     FullRange,
+    DynamicRange(Option<Value>, Option<Value>, Option<Value>),
 }
 
 // ────────────────────────────────────────────────────────────────────────

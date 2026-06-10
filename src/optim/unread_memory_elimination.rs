@@ -57,18 +57,6 @@ impl IRPass for UnreadMemoryEliminator {
             .filter(|&&seg| read_count.get(&seg).copied().unwrap_or(0) == 0)
             .copied()
             .collect();
-        let n_writes_drop = ir_graph
-            .stmts
-            .iter()
-            .filter(|s| match s.ir {
-                IR::WriteMemory { segment_id } | IR::AllocateMemory { segment_id, .. } => {
-                    elide.contains(&segment_id)
-                }
-                _ => false,
-            })
-            .count();
-        eprintln!("DEBUG UnreadMemoryEliminator: elide segs={:?}, dropping {} writes; total stmts before={}",
-            elide, n_writes_drop, ir_graph.stmts.len());
         if elide.is_empty() {
             return ir_graph;
         }
@@ -105,10 +93,6 @@ impl IRPass for UnreadMemoryEliminator {
         }
 
         let new_graph = builder.export_ir_graph();
-        eprintln!(
-            "DEBUG UnreadMemoryEliminator: stmts after rebuild = {}",
-            new_graph.stmts.len()
-        );
         let mut new_graph = new_graph;
         new_graph.resolver_mut().on_ir_mutated(&[]);
         new_graph

@@ -239,6 +239,72 @@ mod tests {
     }
 
     #[test]
+    fn unread_memory_elimination_drops_unread_segment_and_following_dce_cleans_inputs() {
+        let stmts = vec![
+            IRStatement::new(
+                0,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 7 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                1,
+                crate::types::ValueId::next(),
+                IR::ConstantInt { value: 11 },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                2,
+                crate::types::ValueId::next(),
+                IR::AllocateMemory {
+                    segment_id: 9,
+                    size: 4,
+                    init_value: 0,
+                },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                3,
+                crate::types::ValueId::next(),
+                IR::AddI,
+                vec![0, 1],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                4,
+                crate::types::ValueId::next(),
+                IR::WriteMemory { segment_id: 9 },
+                vec![0, 3],
+                vec![],
+                None,
+            ),
+            IRStatement::new(
+                5,
+                crate::types::ValueId::next(),
+                IR::Assert,
+                vec![1],
+                vec![],
+                None,
+            ),
+        ];
+        let graph = IRGraph::new(stmts);
+        let graph = UnreadMemoryEliminator.exec(graph);
+        let result = DeadCodeElimination.exec(graph);
+
+        assert_eq!(result.len(), 2);
+        assert!(matches!(result.stmts[0].ir, IR::ConstantInt { value: 11 }));
+        assert!(matches!(result.stmts[1].ir, IR::Assert));
+        assert_eq!(result.stmts[1].arguments, vec![0]);
+    }
+
+    #[test]
     fn duplicate_code_elimination_canonicalizes_commutative_mulf_args() {
         let stmts = vec![
             IRStatement::new(

@@ -6,8 +6,11 @@
 // A: Integer[10, 10]. Same bounding-box-of-nonzero structure as 0507, just
 // expressed via np.argwhere + min/max.
 //
-// Output shape is data-dependent — expose all 100 cells masked-to-zero
-// outside the bbox plus shape metadata (ystart, ystop, xstart, xstop, h, w).
+// The kernel returns only the cropped array. Public output encoding is not
+// specified by kernel.py, so align this handwritten baseline with the current
+// Zinnia convention for these bbox cases: expose the fixed padded 10x10
+// payload with the crop packed into the top-left corner and zeros elsewhere,
+// omitting separate shape metadata.
 
 use clap::Parser;
 use halo2_base::utils::{ScalarField, BigPrimeField};
@@ -98,37 +101,48 @@ fn argwhere_bbox_10x10<F: ScalarField>(
         xmax = gate.select(ctx, j_const, xmax, col_has[j]);
     }
 
-    let one = ctx.load_constant(F::ONE);
-    let ystop = gate.add(ctx, ymax, one);
-    let xstop = gate.add(ctx, xmax, one);
+    let height_span = gate.sub(ctx, ymax, ystart);
+    let one_h = ctx.load_constant(F::ONE);
+    let height = gate.add(ctx, height_span, one_h);
+    let width_span = gate.sub(ctx, xmax, xstart);
+    let one_w = ctx.load_constant(F::ONE);
+    let width = gate.add(ctx, width_span, one_w);
 
-    // Output cells: keep im[i][j] when ystart <= i < ystop && xstart <= j < xstop.
-    for i in 0..N {
-        let i_cell = ctx.load_constant(F::from(i as u64));
-        let i_p1 = gate.add(ctx, i_cell, one);
-        let ge_yst = rc.is_less_than(ctx, ystart, i_p1, 32);
-        let lt_yst = rc.is_less_than(ctx, i_cell, ystop, 32);
-        let in_row = gate.and(ctx, ge_yst, lt_yst);
+    // Expose a fixed 10x10 payload with the dynamic crop packed into the
+    // top-left corner, matching Zinnia's current padded-slice encoding.
+    let row_consts: Vec<_> = (0..N)
+        .map(|i| ctx.load_constant(F::from(i as u64)))
+        .collect();
+    let col_consts: Vec<_> = (0..N)
+        .map(|j| ctx.load_constant(F::from(j as u64)))
+        .collect();
+    for out_i in 0..N {
+        let out_i_cell = row_consts[out_i];
+        let row_active = rc.is_less_than(ctx, out_i_cell, height, 32);
+        let src_row = gate.add(ctx, ystart, out_i_cell);
+        let mut packed_row = Vec::with_capacity(N);
         for j in 0..N {
-            let j_cell = ctx.load_constant(F::from(j as u64));
-            let j_p1 = gate.add(ctx, j_cell, one);
-            let ge_xst = rc.is_less_than(ctx, xstart, j_p1, 32);
-            let lt_xst = rc.is_less_than(ctx, j_cell, xstop, 32);
-            let in_col = gate.and(ctx, ge_xst, lt_xst);
-            let in_box = gate.and(ctx, in_row, in_col);
-            let out = gate.select(ctx, cells[i * N + j], zero, in_box);
+            let mut selected = cells[j];
+            for i in 1..N {
+                let eq = gate.is_equal(ctx, src_row, row_consts[i]);
+                selected = gate.select(ctx, cells[i * N + j], selected, eq);
+            }
+            packed_row.push(selected);
+        }
+        for out_j in 0..N {
+            let out_j_cell = col_consts[out_j];
+            let col_active = rc.is_less_than(ctx, out_j_cell, width, 32);
+            let src_col = gate.add(ctx, xstart, out_j_cell);
+            let mut selected = packed_row[0];
+            for j in 1..N {
+                let eq = gate.is_equal(ctx, src_col, col_consts[j]);
+                selected = gate.select(ctx, packed_row[j], selected, eq);
+            }
+            let active = gate.and(ctx, row_active, col_active);
+            let out = gate.select(ctx, selected, zero, active);
             make_public.push(out);
         }
     }
-
-    let height = gate.sub(ctx, ystop, ystart);
-    let width = gate.sub(ctx, xstop, xstart);
-    make_public.push(ystart);
-    make_public.push(ystop);
-    make_public.push(xstart);
-    make_public.push(xstop);
-    make_public.push(height);
-    make_public.push(width);
 }
 
 fn main() {
