@@ -9,6 +9,9 @@ use crate::types::{CompositeData, Value, ValueId};
 
 /// Conditional select: if cond { tv } else { fv }, with element-wise support.
 pub fn select_value(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> Value {
+    if std::env::var("ZINNIA_DEBUG_SELECT_VALUE").is_ok() {
+        eprintln!("[select_value] tv={:?} fv={:?}", tv.zinnia_type(), fv.zinnia_type());
+    }
     // P4a: native StaticArray + StaticArray select. Both sides same shape
     // and same dtype → per-cell select into a fresh segment-backed result.
     // Mismatched shapes / dtypes / one-sided StaticArray fall through to
@@ -41,7 +44,10 @@ pub fn select_value(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> 
             );
         }
     }
-    if matches!(tv, Value::StaticArray { .. }) || matches!(fv, Value::StaticArray { .. }) {
+    if (matches!(tv, Value::StaticArray { .. }) || matches!(fv, Value::StaticArray { .. }))
+        && !matches!(tv, Value::DynamicNDArray(_))
+        && !matches!(fv, Value::DynamicNDArray(_))
+    {
         let tv_n = crate::helpers::static_array::base::to_value_list(b, tv);
         let fv_n = crate::helpers::static_array::base::to_value_list(b, fv);
         return select_value(b, cond, &tv_n, &fv_n);
@@ -75,8 +81,136 @@ pub fn select_value(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> 
                 value_id: ValueId::next(),
             })
         }
-        // If types don't match (e.g., list vs scalar), just use the true value
-        // (can't do conditional select across different structures)
+        // Dynamic arrays: promote the other side (static array / list /
+        // scalar) to dynamic, then merge payload cells and runtime metadata
+        // under the condition. The merged value uses a flat 1-D logical
+        // layout; dimensionality is carried by the runtime rank/shape.
+        (Value::DynamicNDArray(_), _) | (_, Value::DynamicNDArray(_)) => {
+            let to_dyn = |b: &mut IRBuilder, v: &Value| -> crate::types::DynamicNDArrayData {
+                match v {
+                    Value::DynamicNDArray(d) => d.clone(),
+                    other => match crate::helpers::promote::promote_static_to_dynamic(b, other) {
+                        Value::DynamicNDArray(d) => d,
+                        _ => panic!(
+                            "select_value: cannot merge {:?} with a dynamic array",
+                            other.zinnia_type()
+                        ),
+                    },
+                }
+            };
+            let td = to_dyn(b, tv);
+            let fd = to_dyn(b, fv);
+            assert!(
+                td.dtype != crate::types::NumberType::Complex
+                    && fd.dtype != crate::types::NumberType::Complex,
+                "select_value: Complex dynamic-array merge is not supported"
+            );
+            let out_dtype = if td.dtype == crate::types::NumberType::Float
+                || fd.dtype == crate::types::NumberType::Float
+            {
+                crate::types::NumberType::Float
+            } else {
+                crate::types::NumberType::Integer
+            };
+
+            let max_len = td.max_length().max(fd.max_length());
+            let default_val =
+                crate::ops::dyn_ndarray::metadata::dyn_default_value(b, out_dtype);
+            let mut cells: Vec<Value> = Vec::with_capacity(max_len);
+            for i in 0..max_len {
+                let addr = b.ir_constant_int(i as i64);
+                let t_elem = if i < td.max_length() {
+                    crate::helpers::segment::read_typed(b, td.segment_id, &addr, td.dtype)
+                } else {
+                    default_val.clone()
+                };
+                let f_elem = if i < fd.max_length() {
+                    crate::helpers::segment::read_typed(b, fd.segment_id, &addr, fd.dtype)
+                } else {
+                    default_val.clone()
+                };
+                // Scalar recursion promotes mixed int/float to float.
+                cells.push(select_value(b, cond, &t_elem, &f_elem));
+            }
+            let segment_id =
+                crate::helpers::segment::alloc_and_write_values(b, &cells, out_dtype);
+
+            let sel_scalar = |b: &mut IRBuilder,
+                              cond: &Value,
+                              t: &crate::types::ScalarValue<i64>,
+                              f: &crate::types::ScalarValue<i64>|
+             -> crate::types::ScalarValue<i64> {
+                let merged = select_value(
+                    b,
+                    cond,
+                    &Value::Integer(t.clone()),
+                    &Value::Integer(f.clone()),
+                );
+                crate::ops::dyn_ndarray::value_to_scalar_i64(&merged)
+            };
+            let zero_sv = crate::types::ScalarValue::new(Some(0), None);
+            let one_sv = crate::types::ScalarValue::new(Some(1), None);
+            let runtime_length =
+                sel_scalar(b, cond, &td.meta.runtime_length, &fd.meta.runtime_length);
+            let runtime_rank = sel_scalar(b, cond, &td.meta.runtime_rank, &fd.meta.runtime_rank);
+            let max_rank = td.max_rank().max(fd.max_rank());
+            let mut runtime_shape = Vec::with_capacity(max_rank);
+            let mut dims = Vec::with_capacity(max_rank);
+            for axis in 0..max_rank {
+                let t_dim = td
+                    .meta
+                    .runtime_shape
+                    .get(axis)
+                    .cloned()
+                    .unwrap_or_else(|| zero_sv.clone());
+                let f_dim = fd
+                    .meta
+                    .runtime_shape
+                    .get(axis)
+                    .cloned()
+                    .unwrap_or_else(|| zero_sv.clone());
+                runtime_shape.push(sel_scalar(b, cond, &t_dim, &f_dim));
+                let t_max = td.envelope.dims.get(axis).map(|d| d.max).unwrap_or(1);
+                let f_max = fd.envelope.dims.get(axis).map(|d| d.max).unwrap_or(1);
+                dims.push(crate::types::Dim::new_dynamic(
+                    &mut b.dim_table,
+                    0,
+                    t_max.max(f_max),
+                ));
+            }
+            let envelope = crate::types::Envelope::new_with_bound(dims, max_len);
+
+            Value::DynamicNDArray(crate::types::DynamicNDArrayData {
+                envelope,
+                dtype: out_dtype,
+                segment_id,
+                meta: crate::types::DynArrayMeta {
+                    logical_shape: vec![max_len],
+                    logical_offset: 0,
+                    logical_strides: vec![1],
+                    runtime_length,
+                    runtime_rank,
+                    runtime_shape,
+                    runtime_strides: vec![one_sv; max_rank],
+                    runtime_offset: crate::types::ScalarValue::new(Some(0), None),
+                },
+                value_id: ValueId::next(),
+            })
+        }
+        // Composites with mismatched structure (e.g. an empty np.array([])
+        // branch merging with a non-empty result): the honest merged value
+        // is a *dynamic* array whose runtime length/shape select on the
+        // condition. Promote both sides and re-enter the dynamic-merge arm.
+        (
+            Value::List(_) | Value::Tuple(_),
+            Value::List(_) | Value::Tuple(_),
+        ) => {
+            let tdyn = crate::helpers::promote::promote_static_to_dynamic(b, tv);
+            let fdyn = crate::helpers::promote::promote_static_to_dynamic(b, fv);
+            select_value(b, cond, &tdyn, &fdyn)
+        }
+        // Composite vs scalar: no meaningful merge; keep the legacy
+        // true-side fallback.
         (Value::List(_) | Value::Tuple(_), _) | (_, Value::List(_) | Value::Tuple(_)) => tv.clone(),
         // Complex (2-cell) values: select per component. Promote any
         // numeric scalar on either side to Complex first.
