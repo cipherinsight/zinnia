@@ -312,6 +312,13 @@ fn compile_circuit(
     passes.push("UnreadMemoryEliminator");
     if dead_code_elimination {
         passes.push("DeadCodeElimination");
+        // Eliding a segment's writes leaves the reads that fed them dead;
+        // DCE above removes their pure consumers, which exposes the reads
+        // themselves (and possibly further segments) to a second
+        // unread-memory round. One extra pair reaches the fixpoint for
+        // slice-of-slice view composition chains.
+        passes.push("UnreadMemoryEliminator");
+        passes.push("DeadCodeElimination");
     }
     // Collapse `AssertU128Lt(stride_k + base, hi)` chains to the tightest
     // (max-stride) member: see `optim/assert_subsumption.rs`. Runs after

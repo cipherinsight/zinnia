@@ -1296,6 +1296,24 @@ fn materialise_dynamic_1d_slice(
     let runtime_len_sv = value_to_scalar_i64(&runtime_length);
 
     let out_segment = crate::helpers::segment::alloc_and_write_values(b, &leaves, dtype);
+    // Slice provenance: valid output element i reads
+    // base[offset + (start + i*step) * stride]. A downstream slice composes
+    // this map instead of re-materialising (see IRBuilder::slice_views).
+    if let Some(step_const) = step_ir.int_val() {
+        if dtype != NumberType::Complex {
+            b.slice_views.insert(
+                out_segment,
+                crate::builder::SliceView {
+                    base_segment: segment_id,
+                    axis_len: len,
+                    stride: axis_stride,
+                    base_offset: offset,
+                    start: start_ir.clone(),
+                    step: step_const,
+                },
+            );
+        }
+    }
     let envelope = crate::types::Envelope::new_with_bound(
         vec![crate::types::Dim::new_dynamic(
             &mut b.dim_table,

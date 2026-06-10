@@ -33,35 +33,67 @@ pub struct UnreadMemoryEliminator;
 
 impl IRPass for UnreadMemoryEliminator {
     fn exec(&self, ir_graph: IRGraph) -> IRGraph {
-        // Phase 1: tally per-segment Read/Write/Alloc activity.
-        let mut read_count: HashMap<u32, usize> = HashMap::new();
-        let mut has_writes: HashMap<u32, bool> = HashMap::new();
-        for stmt in &ir_graph.stmts {
-            match stmt.ir {
-                IR::ReadMemory { segment_id } => {
-                    *read_count.entry(segment_id).or_insert(0) += 1;
-                }
-                IR::WriteMemory { segment_id } => {
-                    has_writes.insert(segment_id, true);
-                }
-                IR::AllocateMemory { segment_id, .. } => {
-                    // Note the segment exists even with no reads/writes.
-                    has_writes.entry(segment_id).or_insert(false);
-                }
-                _ => {}
+        // Iterate to fixpoint: eliding a segment's writes leaves the reads
+        // that produced the written values unused; eliding those reads can
+        // in turn leave further segments unread.
+        let mut graph = ir_graph;
+        loop {
+            let (g, changed) = eliminate_round(graph);
+            graph = g;
+            if !changed {
+                return graph;
             }
         }
-        // Segments to elide: have at least one write or allocate but zero reads.
-        let elide: HashSet<u32> = has_writes
-            .keys()
-            .filter(|&&seg| read_count.get(&seg).copied().unwrap_or(0) == 0)
-            .copied()
-            .collect();
-        if elide.is_empty() {
-            return ir_graph;
-        }
+    }
+}
 
-        // Phase 2: rebuild dropping WriteMemory + AllocateMemory on elided segments.
+fn eliminate_round(ir_graph: IRGraph) -> (IRGraph, bool) {
+    // Phase 1: tally per-segment Read/Write/Alloc activity and per-stmt
+    // value usage.
+    let mut read_count: HashMap<u32, usize> = HashMap::new();
+    let mut has_writes: HashMap<u32, bool> = HashMap::new();
+    let mut used: HashSet<StmtId> = HashSet::new();
+    for stmt in &ir_graph.stmts {
+        for arg in &stmt.arguments {
+            used.insert(*arg);
+        }
+        match stmt.ir {
+            IR::ReadMemory { segment_id } => {
+                *read_count.entry(segment_id).or_insert(0) += 1;
+            }
+            IR::WriteMemory { segment_id } => {
+                has_writes.insert(segment_id, true);
+            }
+            IR::AllocateMemory { segment_id, .. } => {
+                // Note the segment exists even with no reads/writes.
+                has_writes.entry(segment_id).or_insert(false);
+            }
+            _ => {}
+        }
+    }
+    // Segments to elide: have at least one write or allocate but zero reads.
+    let elide: HashSet<u32> = has_writes
+        .keys()
+        .filter(|&&seg| read_count.get(&seg).copied().unwrap_or(0) == 0)
+        .copied()
+        .collect();
+    // Reads to elide: a ReadMemory whose value nothing consumes is pure
+    // dead work. Its in-circuit bound checks belong to the read itself,
+    // not to program semantics — soundness-relevant bounds are discharged
+    // by explicit asserts at IR-gen time — so dropping it is sound.
+    let dead_reads: HashSet<StmtId> = ir_graph
+        .stmts
+        .iter()
+        .filter(|stmt| matches!(stmt.ir, IR::ReadMemory { .. }) && !used.contains(&stmt.stmt_id))
+        .map(|stmt| stmt.stmt_id)
+        .collect();
+    if elide.is_empty() && dead_reads.is_empty() {
+        return (ir_graph, false);
+    }
+
+    // Phase 2: rebuild dropping WriteMemory + AllocateMemory on elided
+    // segments and value-unused ReadMemory ops.
+    {
         let mut builder = IRBuilder::new();
         let mut value_lookup: HashMap<StmtId, Value> = HashMap::new();
         let true_const: Value = builder.ir_constant_bool(true);
@@ -71,6 +103,7 @@ impl IRPass for UnreadMemoryEliminator {
                 IR::WriteMemory { segment_id } | IR::AllocateMemory { segment_id, .. } => {
                     elide.contains(&segment_id)
                 }
+                IR::ReadMemory { .. } => dead_reads.contains(&stmt.stmt_id),
                 _ => false,
             };
             if drop {
@@ -92,9 +125,8 @@ impl IRPass for UnreadMemoryEliminator {
             value_lookup.insert(stmt.stmt_id, new_val);
         }
 
-        let new_graph = builder.export_ir_graph();
-        let mut new_graph = new_graph;
+        let mut new_graph = builder.export_ir_graph();
         new_graph.resolver_mut().on_ir_mutated(&[]);
-        new_graph
+        (new_graph, true)
     }
 }

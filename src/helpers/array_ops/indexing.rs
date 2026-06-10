@@ -337,33 +337,127 @@ fn dyn_slice_1d(
     let max_idx = b.ir_constant_int(len as i64 - 1);
     let mut out_elements = Vec::with_capacity(max_out_len);
 
-    for i in 0..max_out_len {
-        let i_const = b.ir_constant_int(i as i64);
-        // Element i is valid iff i < out_len; that single check subsumes
-        // the start/stop/range conditions because the bounds are clamped.
-        let in_bounds = b.ir_less_than_i(&i_const, &runtime_length);
+    // View composition: if the input is itself a materialised slice of a
+    // base segment (element j = base[off + (v.start + j*v.step)*stride])
+    // and this slice has a static step, the composed source index is
+    // v.start + v.step*start + (v.step*step)*i. When the composed start
+    // resolves to a compile-time constant (the SMT resolver folds
+    // cancelling dynamic terms, e.g. reversal of a to-the-end slice), every
+    // element becomes a constant-address read of the base — no clamping,
+    // no intermediate hop.
+    let flat_input = data.meta.logical_strides == vec![1]
+        && data.meta.logical_offset == 0
+        && data.meta.logical_shape.len() == 1;
+    let composed: Option<(crate::builder::SliceView, i64)> = match (
+        flat_input,
+        step_static.or(if is_present(step) { None } else { Some(1) }),
+        b.slice_views.get(&data.segment_id).cloned(),
+    ) {
+        (true, Some(step_c), Some(view)) if data.dtype != NumberType::Complex => {
+            let vstep = b.ir_constant_int(view.step);
+            let scaled_start = b.ir_mul_i(&start_ir, &vstep);
+            let comp_start = b.ir_add_i(&view.start, &scaled_start);
+            match crate::optim::resolver::require_static_int(
+                b,
+                &comp_start,
+                crate::optim::resolver::SiteKind::SliceStart,
+                None,
+            ) {
+                Ok(s0) => {
+                    if std::env::var("ZINNIA_DEBUG_SLICE_VIEW").is_ok() {
+                        eprintln!("[slice-view] composed start resolved to {}", s0.get());
+                    }
+                    Some((
+                        crate::builder::SliceView {
+                            start: b.ir_constant_int(s0.get()),
+                            step: view.step * step_c,
+                            ..view
+                        },
+                        s0.get(),
+                    ))
+                }
+                Err(e) => {
+                    if std::env::var("ZINNIA_DEBUG_SLICE_VIEW").is_ok() {
+                        eprintln!("[slice-view] resolution failed: {e}");
+                    }
+                    None
+                }
+            }
+        }
+        _ => { if std::env::var("ZINNIA_DEBUG_SLICE_VIEW").is_ok() { eprintln!("[slice-view] no composition (flat/step/view gate)"); } None }
+    };
 
-        let offset = match step_static {
-            Some(s) => b.ir_constant_int(i as i64 * s),
-            None if !is_present(step) => b.ir_constant_int(i as i64),
-            None => b.ir_mul_i(&i_const, &step_ir),
-        };
-        let src_idx = b.ir_add_i(&start_ir, &offset);
-        let is_neg = b.ir_less_than_i(&src_idx, &zero);
-        let is_over = b.ir_greater_than_i(&src_idx, &max_idx);
-        let clamped_hi = b.ir_select_i(&is_over, &max_idx, &src_idx);
-        let clamped = b.ir_select_i(&is_neg, &zero, &clamped_hi);
+    if let Some((cview, s0)) = &composed {
+        for i in 0..max_out_len {
+            let i_const = b.ir_constant_int(i as i64);
+            let in_bounds = b.ir_less_than_i(&i_const, &runtime_length);
+            let axis_idx = s0 + (i as i64) * cview.step;
+            // Statically out-of-range source positions can only belong to
+            // masked elements (valid i < out_len always maps in-range), so
+            // they take the default without a read.
+            let masked = if axis_idx >= 0 && (axis_idx as usize) < cview.axis_len {
+                let slot = cview.base_offset + (axis_idx as usize) * cview.stride;
+                let addr = b.ir_constant_int(slot as i64);
+                let elem =
+                    crate::helpers::segment::read_typed(b, cview.base_segment, &addr, data.dtype);
+                if data.dtype == NumberType::Float {
+                    b.ir_select_f(&in_bounds, &elem, &default_val)
+                } else {
+                    b.ir_select_i(&in_bounds, &elem, &default_val)
+                }
+            } else {
+                default_val.clone()
+            };
+            out_elements.push(masked);
+        }
+    } else {
+        for i in 0..max_out_len {
+            let i_const = b.ir_constant_int(i as i64);
+            // Element i is valid iff i < out_len; that single check subsumes
+            // the start/stop/range conditions because the bounds are clamped.
+            let in_bounds = b.ir_less_than_i(&i_const, &runtime_length);
 
-        let elem = crate::helpers::segment::read_typed(b, data.segment_id, &clamped, data.dtype);
-        let masked = if data.dtype == NumberType::Float {
-            b.ir_select_f(&in_bounds, &elem, &default_val)
-        } else {
-            b.ir_select_i(&in_bounds, &elem, &default_val)
-        };
-        out_elements.push(masked.clone());
+            let offset = match step_static {
+                Some(s) => b.ir_constant_int(i as i64 * s),
+                None if !is_present(step) => b.ir_constant_int(i as i64),
+                None => b.ir_mul_i(&i_const, &step_ir),
+            };
+            let src_idx = b.ir_add_i(&start_ir, &offset);
+            let is_neg = b.ir_less_than_i(&src_idx, &zero);
+            let is_over = b.ir_greater_than_i(&src_idx, &max_idx);
+            let clamped_hi = b.ir_select_i(&is_over, &max_idx, &src_idx);
+            let clamped = b.ir_select_i(&is_neg, &zero, &clamped_hi);
+
+            let elem = crate::helpers::segment::read_typed(b, data.segment_id, &clamped, data.dtype);
+            let masked = if data.dtype == NumberType::Float {
+                b.ir_select_f(&in_bounds, &elem, &default_val)
+            } else {
+                b.ir_select_i(&in_bounds, &elem, &default_val)
+            };
+            out_elements.push(masked.clone());
+        }
     }
 
     let segment_id = crate::helpers::segment::alloc_and_write_values(b, &out_elements, data.dtype);
+    // Provenance for further composition: either the composed base view, or
+    // this slice's own map over its (flat) input.
+    if let Some((cview, _)) = composed {
+        b.slice_views.insert(segment_id, cview);
+    } else if flat_input && data.dtype != NumberType::Complex {
+        if let Some(step_c) = step_static.or(if is_present(step) { None } else { Some(1) }) {
+            b.slice_views.insert(
+                segment_id,
+                crate::builder::SliceView {
+                    base_segment: data.segment_id,
+                    axis_len: len,
+                    stride: 1,
+                    base_offset: 0,
+                    start: start_ir.clone(),
+                    step: step_c,
+                },
+            );
+        }
+    }
     let runtime_len_sv = crate::ops::dyn_ndarray::value_to_scalar_i64(&runtime_length);
     let envelope = crate::types::Envelope::new_with_bound(
         vec![crate::types::Dim::new_dynamic(
