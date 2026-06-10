@@ -79,34 +79,58 @@ pub fn dyn_filter(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) 
         );
     }
 
-    // Allocate output segment pre-filled with defaults.
+    // Compaction via a one-hot shift network — no memory ops. Row `row[j]`
+    // one-hot encodes the landing slot of element i (the prefix count of
+    // keeps before i): row starts as e_0 and shifts right by one whenever
+    // an element is kept. Each element then select-writes into its landing
+    // slot: a kept element deposits its value; a non-kept element deposits
+    // the default at the (still unowned) next free slot, exactly mirroring
+    // the previous write-pointer semantics, so the output layout is
+    // bit-identical (compacted prefix, default padding). The row region is
+    // triangular (prefix_i <= i), so entries beyond i+1 stay the constant 0
+    // and emit nothing.
     let default_val = super::metadata::dyn_default_value(b, data.dtype);
-    let default_elements = vec![default_val.clone(); max_len];
-    let segment_id =
-        crate::helpers::segment::alloc_and_write_values(b, &default_elements, data.dtype);
+    let zero = b.ir_constant_int(0);
+    let one = b.ir_constant_int(1);
+    let zero_bit = b.ir_constant_int(0);
+    let one_bit = b.ir_constant_int(1);
 
-    // Compaction via ZKRAM write pointer: for each input element, if mask
-    // is true, write the element at write_ptr and advance. If false, write
-    // a default at write_ptr (will be overwritten by the next kept element).
-    // O(N) writes instead of O(N²) selects.
+    let mut row: Vec<Value> = (0..max_len)
+        .map(|j| if j == 0 { one_bit.clone() } else { zero_bit.clone() })
+        .collect();
+    let mut acc: Vec<Value> = vec![default_val.clone(); max_len];
     let mut write_ptr = b.ir_constant_int(0);
+
+    let is_const_zero = |v: &Value| v.int_val() == Some(0);
 
     for i in 0..max_len.min(elements.len()) {
         let keep = b.ir_bool_cast(&mask_elements[i]);
-
-        // Write element or default at write_ptr. Non-kept writes are
-        // harmless — they'll be overwritten by the next kept element or
-        // sit beyond runtime_length.
-        let val_to_write =
+        let deposit =
             crate::helpers::value_ops::select_value(b, &keep, &elements[i], &default_val);
-        crate::helpers::segment::write_typed(b, segment_id, &write_ptr, &val_to_write, data.dtype);
 
-        // Advance write_ptr only when keep is true.
-        let one = b.ir_constant_int(1);
-        let zero = b.ir_constant_int(0);
+        for (j, slot) in acc.iter_mut().enumerate().take((i + 1).min(max_len)) {
+            if is_const_zero(&row[j]) {
+                continue;
+            }
+            *slot = crate::helpers::value_ops::select_value(b, &row[j], &deposit, slot);
+        }
+
+        // Shift the one-hot row right when this element was kept.
+        let mut new_row = row.clone();
+        for j in (0..(i + 2).min(max_len)).rev() {
+            let prev = if j == 0 { &zero_bit } else { &row[j - 1] };
+            if is_const_zero(prev) && is_const_zero(&row[j]) {
+                continue;
+            }
+            new_row[j] = b.ir_select_i(&keep, prev, &row[j]);
+        }
+        row = new_row;
+
         let inc = b.ir_select_i(&keep, &one, &zero);
         write_ptr = b.ir_add_i(&write_ptr, &inc);
     }
+
+    let segment_id = crate::helpers::segment::alloc_and_write_values(b, &acc, data.dtype);
 
     // After filter, the runtime length is unknown (depends on the mask) but
     // bounded by the input's max. total_bound conserved from source (§3.8).
