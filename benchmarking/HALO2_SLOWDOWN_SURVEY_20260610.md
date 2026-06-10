@@ -132,3 +132,32 @@ the Zinnia numbers; everything else is parity at 0.98-1.15x):
 
 Worst case is now 1.8x (was 27.8x in the morning survey). All residual
 absolute deltas are <= 180ms.
+
+## Output-binding corrections (2026-06-10, late)
+
+While chasing 0304's overhead, two correctness holes surfaced: (1) 1-D
+dynamic-array slices used positive-step defaults for all steps and padded-
+length-relative bounds, so `[::-1]` returned an empty array; (2) branch
+merges between an empty `np.array([])` arm and a computed array silently
+discarded the computed side. Net effect: **0304, 0507, 0509 and 0510 bound
+0-2 public values where their handwritten counterparts bind 20-30** — all
+prior comparison rows for these cases overstate Zinnia.
+
+Both fixed (commits d804a2e, 535bdf7; suites 54→53 pre-existing failures —
+the dynamic negative_step semantics test was failing because of exactly
+this bug). Honest same-epoch numbers with full payload binding:
+
+| Case | ZN (honest) | HW | Ratio | prior (invalid) ratio |
+|------|------------:|-----:|------:|------:|
+| 0507 | 294ms | 309ms | 0.95x | (1.6x) |
+| 0509 | 558ms | 727ms | 0.77x | (2.2x) |
+| 0510 | 548ms | 757ms | 0.72x | (3.4x) |
+| 0304 | 574ms | 229ms | 2.50x | (1.7x) |
+
+0304 is now the genuine worst case: ~16k cells from the variable-length
+slice machinery (two materialization rounds + per-element masks). The
+clean optimization is dynamic-slice *view composition* (compose affine
+index maps across chained slices; the backend's lineage then folds
+cancelling dynamic terms — for 0304 the reversal cancels the dynamic
+start entirely, ~500 cells like HW). Deferred along with the
+compacted-vs-masked output-encoding decision for 0442.
