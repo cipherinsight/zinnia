@@ -39,16 +39,20 @@ pub struct Halo2BaseSynthesizer<'a> {
     const_cell_ids: HashSet<u64>,
     select_many_cache: HashMap<Vec<u64>, Vec<Halo2BaseCell>>,
     u128_lt_bit_cache: HashMap<(u64, u64, u32), Vec<Halo2BaseCell>>,
-    // Affine address lineage: cell id -> (dynamic root, scale, offset) with
-    // `cell == root * scale + offset` enforced by the gates that built the
-    // cell. Lets dynamic-address memory reads mux over only the slots
-    // reachable from the root instead of the whole segment.
-    addr_lineage: HashMap<u64, (Halo2BaseCell, i64, i64)>,
+    // Affine address lineage: cell id -> sum of dynamic terms plus offset,
+    // enforced by the gates that built the cell. Lets dynamic-address memory
+    // reads mux over only the slots reachable from the roots instead of the
+    // whole segment.
+    addr_lineage: HashMap<u64, AffineLin>,
     // eq(root, v) indicator bits, shared across all reads on the same root.
     indicator_cache: HashMap<(u64, i64), Halo2BaseCell>,
-    // (root id, segment, scale, offset) sets whose one-hot membership
-    // (sum of indicators == 1) has already been asserted.
-    membership_asserted: HashSet<(u64, u32, i64, i64)>,
+    // (root id, enumerated value set) one-hot memberships already asserted.
+    membership_asserted: HashSet<(u64, Vec<i64>)>,
+    // Stage-1 gathered planes for factored two-root reads, keyed by
+    // (segment, write version, root id, root scale, residual offset).
+    plane_cache: HashMap<(u32, u64, u64, i64, i64), Halo2BaseCell>,
+    // Bumped on every write to a segment; invalidates plane_cache entries.
+    write_version: HashMap<u32, u64>,
     // eq(write addr, read addr) bits for dynamic-write overlays. The read
     // side is keyed by cell id for dynamic addresses and by value for
     // constant addresses (constants with equal values are interchangeable).
@@ -59,6 +63,56 @@ pub struct Halo2BaseSynthesizer<'a> {
 enum OverlayReadKey {
     Cell(u64),
     Const(i64),
+}
+
+/// Affine view of an integer cell: `cell == Σ root_i * scale_i + offset`,
+/// with at most two dynamic roots and non-zero scales.
+#[derive(Clone, Debug, Default)]
+struct AffineLin {
+    terms: Vec<(Halo2BaseCell, i64)>,
+    offset: i64,
+}
+
+impl AffineLin {
+    fn combine(a: &AffineLin, b: &AffineLin, sign: i64) -> Option<AffineLin> {
+        let offset = (a.offset as i128) + (sign as i128) * (b.offset as i128);
+        let mut terms = a.terms.clone();
+        for (root, scale) in &b.terms {
+            let s = (sign as i128) * (*scale as i128);
+            if let Some(existing) = terms.iter_mut().find(|(r, _)| r.id == root.id) {
+                let merged = (existing.1 as i128) + s;
+                if merged.abs() > i64::MAX as i128 {
+                    return None;
+                }
+                existing.1 = merged as i64;
+            } else {
+                terms.push((*root, s as i64));
+            }
+        }
+        terms.retain(|(_, s)| *s != 0);
+        if terms.len() > 2 || offset.abs() > i64::MAX as i128 {
+            return None;
+        }
+        Some(AffineLin { terms, offset: offset as i64 })
+    }
+
+    fn scaled(&self, k: i64) -> Option<AffineLin> {
+        let offset = (self.offset as i128) * (k as i128);
+        if offset.abs() > i64::MAX as i128 {
+            return None;
+        }
+        let mut terms = Vec::with_capacity(self.terms.len());
+        for (root, scale) in &self.terms {
+            let s = (*scale as i128) * (k as i128);
+            if s.abs() > i64::MAX as i128 {
+                return None;
+            }
+            if s != 0 {
+                terms.push((*root, s as i64));
+            }
+        }
+        Some(AffineLin { terms, offset: offset as i64 })
+    }
 }
 
 impl<'a> Halo2BaseSynthesizer<'a> {
@@ -86,6 +140,8 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             addr_lineage: HashMap::new(),
             indicator_cache: HashMap::new(),
             membership_asserted: HashSet::new(),
+            plane_cache: HashMap::new(),
+            write_version: HashMap::new(),
             overlay_eq_cache: HashMap::new(),
         }
     }
@@ -139,25 +195,24 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         self.const_cell_ids.contains(&cell.id)
     }
 
-    /// Affine view of `cell`: (root, scale, offset) with
-    /// `cell == root * scale + offset`. Falls back to the identity view.
-    fn affine_view(&self, cell: &Halo2BaseCell) -> (Halo2BaseCell, i64, i64) {
-        self.addr_lineage
-            .get(&cell.id)
-            .copied()
-            .unwrap_or((*cell, 1, 0))
+    /// Affine view of `cell`. Falls back to the identity view (the cell is
+    /// its own root) for dynamic cells, and to a pure offset for constants.
+    fn affine_lin_of(&self, cell: &Halo2BaseCell) -> AffineLin {
+        if let Some(lin) = self.addr_lineage.get(&cell.id) {
+            return lin.clone();
+        }
+        if self.is_const_cell(cell) {
+            return AffineLin { terms: Vec::new(), offset: kernel::fp_to_i64(cell.value) };
+        }
+        AffineLin { terms: vec![(*cell, 1)], offset: 0 }
     }
 
-    /// Record `out == dynamic * scale + offset` lineage when the linear map
-    /// stays in safe integer range and is non-degenerate.
-    fn record_lineage(&mut self, out: &Halo2BaseCell, dynamic: &Halo2BaseCell, scale: i64, offset: i64) {
-        let (root, s0, c0) = self.affine_view(dynamic);
-        let s = (s0 as i128) * (scale as i128);
-        let c = (c0 as i128) * (scale as i128) + (offset as i128);
-        if s == 0 || s.abs() > i64::MAX as i128 || c.abs() > i64::MAX as i128 {
-            return;
+    fn record_lin(&mut self, out: &Halo2BaseCell, lin: Option<AffineLin>) {
+        if let Some(lin) = lin {
+            if !lin.terms.is_empty() {
+                self.addr_lineage.insert(out.id, lin);
+            }
         }
-        self.addr_lineage.insert(out.id, (root, s as i64, c as i64));
     }
 
     /// eq(root, v) indicator bit, shared across reads on the same root.
@@ -169,6 +224,67 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         let ind = self.eq_i(&root.clone(), &v_cell)?;
         self.indicator_cache.insert((root.id, v), ind);
         Ok(ind)
+    }
+
+    /// Assert (once per root and value set) that exactly one of the
+    /// eq(root, v) indicators is high, pinning the root onto the set.
+    fn assert_one_hot(&mut self, root: &Halo2BaseCell, vs: &[i64]) -> Result<(), ProvingError> {
+        let key = (root.id, vs.to_vec());
+        if self.membership_asserted.contains(&key) {
+            return Ok(());
+        }
+        let mut sum: Option<Halo2BaseCell> = None;
+        for v in vs {
+            let ind = self.root_indicator(root, *v)?;
+            sum = Some(match sum {
+                Some(acc) => self.add_i(&acc, &ind)?,
+                None => ind,
+            });
+        }
+        if let Some(sum) = sum {
+            self.assert_const(&sum, Fp::one());
+        }
+        self.membership_asserted.insert(key);
+        Ok(())
+    }
+
+    /// Stage-1 gathered plane for factored two-root reads:
+    /// `Σ_v eq(root, v) * mem[v * scale + t]` over in-bounds v, cached per
+    /// (segment, write version, root, scale, t). The cached value is only
+    /// meaningful when the read's full address is separately range-checked.
+    #[allow(clippy::too_many_arguments)]
+    fn gathered_plane(
+        &mut self,
+        segment_id: u32,
+        root: &Halo2BaseCell,
+        scale: i64,
+        t: i64,
+        len: usize,
+        init: Fp,
+    ) -> Result<Halo2BaseCell, ProvingError> {
+        let version = self.write_version.get(&segment_id).copied().unwrap_or(0);
+        let key = (segment_id, version, root.id, scale, t);
+        if let Some(plane) = self.plane_cache.get(&key) {
+            return Ok(*plane);
+        }
+        let mut out = self.cell(init);
+        for idx in 0..len as i64 {
+            let num = idx - t;
+            if num % scale != 0 {
+                continue;
+            }
+            let ind = self.root_indicator(root, num / scale)?;
+            let slot = self
+                .memory_cells
+                .get(&segment_id)
+                .and_then(|cells| cells.get(idx as usize))
+                .copied()
+                .flatten()
+                .unwrap_or_else(|| self.cell(init));
+            out = self.select_bit(&ind, &slot, &out)?;
+        }
+        self.plane_cache.insert(key, out);
+        Ok(out)
     }
 
     /// eq(write addr, read addr) bit for dynamic-write overlays, cached so
@@ -338,31 +454,26 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
 
     fn add_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         let out = self.gate_cell(a.value + b.value, |gate, ctx| gate.add(ctx, a.assigned, b.assigned));
-        match (self.is_const_cell(a), self.is_const_cell(b)) {
-            (false, true) => self.record_lineage(&out, a, 1, kernel::fp_to_i64(b.value)),
-            (true, false) => self.record_lineage(&out, b, 1, kernel::fp_to_i64(a.value)),
-            _ => {}
-        }
+        let lin = AffineLin::combine(&self.affine_lin_of(a), &self.affine_lin_of(b), 1);
+        self.record_lin(&out, lin);
         Ok(out)
     }
 
     fn sub_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         let out = self.gate_cell(a.value - b.value, |gate, ctx| gate.sub(ctx, a.assigned, b.assigned));
-        match (self.is_const_cell(a), self.is_const_cell(b)) {
-            (false, true) => self.record_lineage(&out, a, 1, -kernel::fp_to_i64(b.value)),
-            (true, false) => self.record_lineage(&out, b, -1, kernel::fp_to_i64(a.value)),
-            _ => {}
-        }
+        let lin = AffineLin::combine(&self.affine_lin_of(a), &self.affine_lin_of(b), -1);
+        self.record_lin(&out, lin);
         Ok(out)
     }
 
     fn mul_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         let out = self.gate_cell(a.value * b.value, |gate, ctx| gate.mul(ctx, a.assigned, b.assigned));
-        match (self.is_const_cell(a), self.is_const_cell(b)) {
-            (false, true) => self.record_lineage(&out, a, kernel::fp_to_i64(b.value), 0),
-            (true, false) => self.record_lineage(&out, b, kernel::fp_to_i64(a.value), 0),
-            _ => {}
-        }
+        let lin = match (self.is_const_cell(a), self.is_const_cell(b)) {
+            (false, true) => self.affine_lin_of(a).scaled(kernel::fp_to_i64(b.value)),
+            (true, false) => self.affine_lin_of(b).scaled(kernel::fp_to_i64(a.value)),
+            _ => None,
+        };
+        self.record_lin(&out, lin);
         Ok(out)
     }
 
@@ -737,9 +848,11 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         self.memories.insert(segment_id, vec![init_fp; size as usize]);
         self.memory_cells.insert(segment_id, vec![None; size as usize]);
         self.memory_init.insert(segment_id, init_fp);
+        *self.write_version.entry(segment_id).or_insert(0) += 1;
         Ok(())
     }
     fn write_memory(&mut self, segment_id: u32, addr: &Self::CellRef, value: &Self::CellRef) -> Result<(), ProvingError> {
+        *self.write_version.entry(segment_id).or_insert(0) += 1;
         if self.is_const_cell(addr) {
             let a = kernel::fp_to_i64(addr.value) as usize;
             let mem = self.memories.get_mut(&segment_id).ok_or_else(|| ProvingError::synthesis("segment not allocated"))?;
@@ -813,54 +926,110 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
             .len();
         let init = self.memory_init.get(&segment_id).copied().unwrap_or(Fp::zero());
 
-        // Affine view `addr == root * scale + offset` (identity view when no
-        // lineage is known). Only slot indices reachable from the root are
-        // muxed: a strided gather like a[c,i,j] (addr = c*48 + const) scans 8
-        // plane choices instead of all 384 slots, and the eq(root, v)
-        // indicators are shared across every read on the same root.
-        let (root, scale, offset) = self.affine_view(addr);
-        let mut choices: Vec<(i64, usize)> = Vec::new(); // (root value v, slot idx)
-        for idx in 0..len as i64 {
-            let num = idx - offset;
-            if scale != 0 && num % scale == 0 {
-                choices.push((num / scale, idx as usize));
+        // Affine view of the address (identity view when no lineage is
+        // known). Two lowering strategies:
+        //
+        // Two dynamic roots (windowed gathers, addr = r1*s1 + r2*s2 + c):
+        // factored two-stage gather. Stage-1 planes Σ_v eq(r1,v)*mem[v*s1+t]
+        // are cached and shared across reads; each read then muxes the
+        // s1/s2 digit choices of r2. Both roots are pinned one-hot and the
+        // full address is range-checked (an out-of-bounds (v,w) pair would
+        // otherwise silently select the init value).
+        //
+        // One root (strided gathers, addr = root*s + c): mux only the slot
+        // indices reachable from the root; eq(root, v) indicators are shared
+        // across reads. The one-hot membership over the in-bounds choice set
+        // subsumes the range check.
+        let lin = self.affine_lin_of(addr);
+        let mut out: Option<Halo2BaseCell> = None;
+
+        if lin.terms.len() == 2 {
+            let (mut t1, mut t2) = (lin.terms[0], lin.terms[1]);
+            if t1.1.abs() < t2.1.abs() {
+                std::mem::swap(&mut t1, &mut t2);
+            }
+            let ((root1, s1), (root2, s2)) = (t1, t2);
+            if s1 > 0 && s2 > 0 && s1 % s2 == 0 && s1 / s2 >= 2 {
+                // Digit-canonical choices for the minor root: residuals that
+                // stay inside one major stride. Matches Zinnia's clamped
+                // in-bounds index lowering; a kernel violating it fails the
+                // one-hot assert at verify time rather than proving silently.
+                let w_choices: Vec<i64> = (0..s1 / s2)
+                    .filter(|w| {
+                        let t = w * s2 + lin.offset;
+                        (0..len as i64).any(|idx| (idx - t) % s1 == 0)
+                    })
+                    .collect();
+                let v_union: Vec<i64> = {
+                    let mut vs: Vec<i64> = Vec::new();
+                    for w in &w_choices {
+                        let t = w * s2 + lin.offset;
+                        for idx in 0..len as i64 {
+                            let num = idx - t;
+                            if num % s1 == 0 && !vs.contains(&(num / s1)) {
+                                vs.push(num / s1);
+                            }
+                        }
+                    }
+                    vs.sort_unstable();
+                    vs
+                };
+                if !w_choices.is_empty() && !v_union.is_empty() {
+                    let range = self.builder.range_chip();
+                    range.check_less_than_safe(self.ctx(), addr.assigned, len as u64);
+                    let mut acc = self.cell(init);
+                    for w in &w_choices {
+                        let t = w * s2 + lin.offset;
+                        let plane = self.gathered_plane(segment_id, &root1, s1, t, len, init)?;
+                        let ind = self.root_indicator(&root2, *w)?;
+                        acc = self.select_bit(&ind, &plane, &acc)?;
+                    }
+                    self.assert_one_hot(&root2, &w_choices)?;
+                    self.assert_one_hot(&root1, &v_union)?;
+                    out = Some(acc);
+                }
             }
         }
-        if choices.is_empty() {
-            return Err(ProvingError::synthesis(
-                "dynamic memory read can never be in bounds",
-            ));
-        }
 
-        let mut out = self.cell(init);
-        let mut indicators = Vec::with_capacity(choices.len());
-        for (v, idx) in &choices {
-            let ind = self.root_indicator(&root, *v)?;
-            indicators.push(ind);
-            let slot = self
-                .memory_cells
-                .get(&segment_id)
-                .and_then(|cells| cells.get(*idx))
-                .copied()
-                .flatten()
-                .unwrap_or_else(|| self.cell(init));
-            out = self.select_bit(&ind, &slot, &out)?;
-        }
-
-        // Soundness: the gates that built `addr` already enforce
-        // addr == root * scale + offset; forcing exactly one indicator high
-        // pins root to a valid choice, i.e. addr in bounds. Replaces the
-        // per-read range check and is asserted once per (root, choice set).
-        let membership_key = (root.id, segment_id, scale, offset);
-        if !self.membership_asserted.contains(&membership_key) {
-            let mut sum = indicators[0];
-            for ind in &indicators[1..] {
-                sum = self.add_i(&sum, ind)?;
+        if out.is_none() {
+            let (root, scale, offset) = match lin.terms.len() {
+                1 => (lin.terms[0].0, lin.terms[0].1, lin.offset),
+                _ => (*addr, 1, 0),
+            };
+            let mut choices: Vec<(i64, usize)> = Vec::new(); // (root value v, slot idx)
+            for idx in 0..len as i64 {
+                let num = idx - offset;
+                if scale != 0 && num % scale == 0 {
+                    choices.push((num / scale, idx as usize));
+                }
             }
-            self.assert_const(&sum, Fp::one());
-            self.membership_asserted.insert(membership_key);
+            if choices.is_empty() {
+                return Err(ProvingError::synthesis(
+                    "dynamic memory read can never be in bounds",
+                ));
+            }
+            let mut acc = self.cell(init);
+            for (v, idx) in &choices {
+                let ind = self.root_indicator(&root, *v)?;
+                let slot = self
+                    .memory_cells
+                    .get(&segment_id)
+                    .and_then(|cells| cells.get(*idx))
+                    .copied()
+                    .flatten()
+                    .unwrap_or_else(|| self.cell(init));
+                acc = self.select_bit(&ind, &slot, &acc)?;
+            }
+            // Soundness: the gates that built `addr` already enforce
+            // addr == root * scale + offset; pinning root one-hot onto the
+            // in-bounds choices implies addr in bounds, replacing the
+            // per-read range check.
+            let vs: Vec<i64> = choices.iter().map(|(v, _)| *v).collect();
+            self.assert_one_hot(&root, &vs)?;
+            out = Some(acc);
         }
 
+        let mut out = out.expect("dynamic read lowering produced a value");
         for (write_addr, write_value) in dynamic_writes {
             let hit = self.overlay_hit(&write_addr, addr)?;
             out = self.select_bit(&hit, &write_value, &out)?;
