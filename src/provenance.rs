@@ -212,16 +212,20 @@ pub enum LayoutKind {
     Compact,
 }
 
-/// Compaction provenance: this segment's payload is `keep`-filtered
+/// Compaction provenance: this segment lane's payload is `keep`-filtered
 /// content packed to the front (zero-padded tail), with `count` kept
-/// elements. `prefix[i]` = number of kept elements among positions
-/// `0..=i` (the scatter/gather alignment used by mask writes). `sorted`
-/// records whether the packed values are non-decreasing (true for
-/// `flatnonzero`/`argwhere`-style index outputs), which unlocks
-/// first/last-set-bit consumers for `min()`/`max()` (plan Step 3).
+/// elements. `source[i]` is the pre-compaction value at source position
+/// `i` (for index-style outputs these are the coordinate constants);
+/// `prefix[i]` = number of kept elements among positions `0..=i` (the
+/// scatter/gather alignment used by mask writes). `sorted` records
+/// whether the packed values are non-decreasing in source order (true
+/// for `flatnonzero`/`argwhere`-style index outputs), which unlocks
+/// first/last-set-bit scan consumers for `min()`/`max()`: O(N) selects
+/// over (keep, source) instead of materialise + masked reduce.
 #[derive(Clone, Debug)]
 pub struct CompactionInfo {
     pub keep: Vec<ValueId>,
+    pub source: Vec<ValueId>,
     pub prefix: Vec<ValueId>,
     pub count: ValueId,
     pub sorted: bool,
@@ -256,8 +260,10 @@ pub struct ProvenanceTable {
     interval: HashMap<ValueId, Interval>,
     /// Buffer layout per segment.
     layout: HashMap<u32, LayoutKind>,
-    /// Compaction provenance per segment.
-    compaction: HashMap<u32, CompactionInfo>,
+    /// Compaction provenance per (segment, lane). 1-D compactions use
+    /// lane 0; interleaved outputs (argwhere's (count, rank) rows) hold
+    /// one record per coordinate lane.
+    compaction: HashMap<(u32, usize), CompactionInfo>,
     /// Slice provenance for materialised dynamic 1-D slices, keyed by the
     /// OUTPUT segment. Invalidated when either the view's own segment or
     /// its base segment is written (invariant #4; eager-drop form).
@@ -299,7 +305,7 @@ impl ProvenanceTable {
         *self.write_version.entry(segment).or_insert(0) += 1;
         self.slice_views
             .retain(|seg, view| *seg != segment && view.base_segment != segment);
-        self.compaction.remove(&segment);
+        self.compaction.retain(|(seg, _), _| *seg != segment);
     }
 
     pub fn write_version(&self, segment: u32) -> u64 {
@@ -360,12 +366,12 @@ impl ProvenanceTable {
         self.layout.insert(segment, kind);
     }
 
-    pub fn compaction_of(&self, segment: u32) -> Option<&CompactionInfo> {
-        self.compaction.get(&segment)
+    pub fn compaction_of(&self, segment: u32, lane: usize) -> Option<&CompactionInfo> {
+        self.compaction.get(&(segment, lane))
     }
 
-    pub fn set_compaction(&mut self, segment: u32, info: CompactionInfo) {
-        self.compaction.insert(segment, info);
+    pub fn set_compaction(&mut self, segment: u32, lane: usize, info: CompactionInfo) {
+        self.compaction.insert((segment, lane), info);
     }
 
     // ── Pass hooks ───────────────────────────────────────────────────
@@ -390,7 +396,12 @@ impl ProvenanceTable {
             }
         }
         for info in self.compaction.values_mut() {
-            for vid in info.keep.iter_mut().chain(info.prefix.iter_mut()) {
+            for vid in info
+                .keep
+                .iter_mut()
+                .chain(info.source.iter_mut())
+                .chain(info.prefix.iter_mut())
+            {
                 if *vid == old {
                     *vid = new;
                 }
@@ -410,6 +421,7 @@ impl ProvenanceTable {
         self.compaction.retain(|_, info| {
             live(info.count)
                 && info.keep.iter().all(|v| live(*v))
+                && info.source.iter().all(|v| live(*v))
                 && info.prefix.iter().all(|v| live(*v))
         });
         self.slice_views.retain(|_, view| {
@@ -441,8 +453,13 @@ impl ProvenanceTable {
                 return Err(format!("interval record keyed by dead value {:?}", vid));
             }
         }
-        for (seg, info) in &self.compaction {
-            for v in info.keep.iter().chain(info.prefix.iter()) {
+        for ((seg, _lane), info) in &self.compaction {
+            for v in info
+                .keep
+                .iter()
+                .chain(info.source.iter())
+                .chain(info.prefix.iter())
+            {
                 if !value_exists(*v) {
                     return Err(format!(
                         "compaction record for segment {} references dead value {:?}",

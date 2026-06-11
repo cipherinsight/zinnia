@@ -286,6 +286,21 @@ impl IRBuilder {
         }
     }
 
+    /// Reconstruct an integer `Value` wrapper for a recorded `ValueId`
+    /// (static value recovered when the producer is a `ConstantInt`).
+    /// Used by provenance-record consumers (e.g. compaction scans) that
+    /// hold `ValueId`s and need IR-layer references to emit ops.
+    pub fn value_of_vid(&self, vid: crate::types::ValueId) -> Option<Value> {
+        let sid = self.value_to_stmt.get(&vid).copied()?;
+        let static_val = match self.stmts.get(sid as usize).map(|st| &st.ir) {
+            Some(IR::ConstantInt { value }) => Some(*value),
+            _ => None,
+        };
+        let mut sv = crate::types::ScalarValue::new(static_val, Some(sid));
+        sv.value_id = vid;
+        Some(Value::Integer(sv))
+    }
+
     /// Look up the SSA stmt_id for a `ValueId`. Used by the witness
     /// emitter (compiler.value-id-and-fact-leaves) when lowering
     /// `ContractVar::Value(_)` leaves back into IR-layer references.

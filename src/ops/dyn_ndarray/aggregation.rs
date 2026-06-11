@@ -117,12 +117,69 @@ pub fn dyn_mean(b: &mut IRBuilder, data: &DynamicNDArrayData, axis: Option<&Valu
 /// for max/min/argmax/argmin, `acc = buffer[0]` is the segment-init value
 /// (typically `0`); `argmax/argmin` return `0`. Documented; not asserted.
 pub fn dyn_aggregate_all(b: &mut IRBuilder, data: &DynamicNDArrayData, agg: DynAggKind) -> Value {
+    // Compaction-scan fast path: min/max over a sorted compaction
+    // (flatnonzero/nonzero outputs) is a first/last-set-bit scan over the
+    // (keep, source) pairs — O(N) selects, NO reads of the compacted
+    // segment. With the segment unread, unread_memory_elimination then
+    // deletes its writes (~6 ops/cell), which was the residual gap on the
+    // nonzero-bbox kernels. Generalizes (and will replace) the argwhere
+    // axis-0 bbox special case.
+    if matches!(agg, DynAggKind::Min | DynAggKind::Max)
+        && data.dtype == NumberType::Integer
+        && data.meta.logical_shape.len() == 1
+        && data.meta.logical_offset == 0
+    {
+        if let Some(info) = b.provenance.compaction_of(data.segment_id, 0).cloned() {
+            if info.sorted {
+                if let Some(out) = compaction_scan_min_max(b, &info, agg) {
+                    return out;
+                }
+            }
+        }
+    }
     let inputs = DynAggAllInputs {
         data: data.clone(),
         agg,
     };
     let set = dyn_aggregate_all_strategies(&inputs);
     crate::optim::dispatch_strategy(b, "dyn_aggregate_all", &inputs, &set)
+}
+
+/// First/last-set-bit scan over a sorted compaction's (keep, source)
+/// pairs. Ascending source order makes min = the FIRST kept source
+/// (reverse select chain) and max = the LAST kept (forward chain).
+/// Empty input yields 0, matching the zero-initialised compacted
+/// segment's boundary reads.
+pub(crate) fn compaction_scan_min_max(
+    b: &mut IRBuilder,
+    info: &crate::provenance::CompactionInfo,
+    agg: DynAggKind,
+) -> Option<Value> {
+    let n = info.keep.len();
+    if n == 0 || info.source.len() != n {
+        return None;
+    }
+    let mut keeps = Vec::with_capacity(n);
+    let mut sources = Vec::with_capacity(n);
+    for i in 0..n {
+        keeps.push(b.value_of_vid(info.keep[i])?);
+        sources.push(b.value_of_vid(info.source[i])?);
+    }
+    let mut acc = b.ir_constant_int(0);
+    match agg {
+        DynAggKind::Min => {
+            for i in (0..n).rev() {
+                acc = b.ir_select_i(&keeps[i], &sources[i], &acc);
+            }
+        }
+        DynAggKind::Max => {
+            for i in 0..n {
+                acc = b.ir_select_i(&keeps[i], &sources[i], &acc);
+            }
+        }
+        _ => return None,
+    }
+    Some(acc)
 }
 
 /// Per-call inputs for `dyn_aggregate_all`'s strategy set. Carries the

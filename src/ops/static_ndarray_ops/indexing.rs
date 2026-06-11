@@ -394,6 +394,9 @@ pub fn np_nonzero(b: &mut IRBuilder, args: &[Value]) -> Value {
     let one = b.ir_constant_int(1);
     let zero = b.ir_constant_int(0);
 
+    let mut keep_vids: Vec<crate::types::ValueId> = Vec::with_capacity(cells.len());
+    let mut source_vids: Vec<Vec<crate::types::ValueId>> = vec![Vec::with_capacity(cells.len()); rank];
+    let mut prefix_vids: Vec<crate::types::ValueId> = Vec::with_capacity(cells.len());
     for (flat_idx, cell) in cells.iter().enumerate() {
         let keep = nonzero_indicator(b, cell);
         let coords = static_row_major_coords(flat_idx, &shape);
@@ -401,9 +404,40 @@ pub fn np_nonzero(b: &mut IRBuilder, args: &[Value]) -> Value {
             let coord_val = b.ir_constant_int(*coord as i64);
             let write_val = b.ir_select_i(&keep, &coord_val, &zero);
             b.ir_write_memory(segment_ids[axis], &true_count, &write_val);
+            if let Some(vid) = coord_val.value_id() {
+                source_vids[axis].push(vid);
+            }
         }
         let inc = b.ir_select_i(&keep, &one, &zero);
         true_count = b.ir_add_i(&true_count, &inc);
+        if let Some(vid) = keep.value_id() {
+            keep_vids.push(vid);
+        }
+        if let Some(vid) = true_count.value_id() {
+            prefix_vids.push(vid);
+        }
+    }
+    // Compaction provenance: each per-axis output is the keep-filtered
+    // coordinate stream packed to the front, ascending in source order.
+    // Unlocks first/last-set-bit scans for min()/max() downstream.
+    if keep_vids.len() == cells.len() && prefix_vids.len() == cells.len() {
+        if let Some(count_vid) = true_count.value_id() {
+            for (axis, seg) in segment_ids.iter().enumerate() {
+                if source_vids[axis].len() == cells.len() {
+                    b.provenance.set_compaction(
+                        *seg,
+                        0,
+                        crate::provenance::CompactionInfo {
+                            keep: keep_vids.clone(),
+                            source: source_vids[axis].clone(),
+                            prefix: prefix_vids.clone(),
+                            count: count_vid,
+                            sorted: true,
+                        },
+                    );
+                }
+            }
+        }
     }
 
     let mut outputs = Vec::with_capacity(rank);
