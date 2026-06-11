@@ -600,6 +600,37 @@ fn dyn_subscript_multidim(
         return dyn_subscript_with_dynamic_axis(b, data, indices, dyn_ax);
     }
 
+    // A Range with static bounds can still be RUNTIME-dependent: on an
+    // axis whose runtime extent is dynamic, negative steps and negative
+    // bounds resolve against the runtime length, not the envelope width
+    // (`m[:, ::-1]` on a runtime-ncols array must reverse the first
+    // `ncols` cells — enumerating envelope coordinates parked the
+    // content at the padding end; binding-audit case 0419).
+    let runtime_dependent = indices.iter().enumerate().find(|(ax, idx)| {
+        if let SliceIndex::Range(start, stop, step) = idx {
+            let static_of = |v: &Option<Value>| -> Option<i64> {
+                match v.as_ref() {
+                    Some(Value::None) | None => None,
+                    Some(val) => val.int_val(),
+                }
+            };
+            let st = static_of(step).unwrap_or(1);
+            let neg_bound = static_of(start).is_some_and(|v| v < 0)
+                || static_of(stop).is_some_and(|v| v < 0);
+            let axis_runtime_dynamic = data
+                .meta
+                .runtime_shape
+                .get(*ax)
+                .is_some_and(|sv| sv.static_val.is_none());
+            axis_runtime_dynamic && (st < 0 || neg_bound)
+        } else {
+            false
+        }
+    });
+    if let Some((dyn_ax, _)) = runtime_dependent {
+        return dyn_subscript_with_dynamic_axis(b, data, indices, dyn_ax);
+    }
+
     // All ranges are static — use direct coordinate-based reads.
     dyn_subscript_multidim_static(b, data, indices)
 }
@@ -701,8 +732,53 @@ fn dyn_slice_axis(
             _ => b.ir_constant_int(default),
         }
     }
-    let start_ir = val_to_ir(b, start, 0);
-    let stop_ir = val_to_ir(b, stop, axis_len as i64);
+    // Slice-bound defaults are step-sign dependent (Python semantics):
+    // step < 0 walks len-1 down to "before 0" — where `len` is the
+    // RUNTIME extent of this axis when that's dynamic (the envelope
+    // width is just padding). Resolve the step sign statically when
+    // possible; a fully-dynamic step keeps the positive defaults (no
+    // DS-1000 lowering produces one today).
+    let step_static = match step {
+        Some(v) if !matches!(v, Value::None) => v.int_val().unwrap_or(1),
+        _ => 1,
+    };
+    let axis_rt_sv = data.meta.runtime_shape.get(axis).cloned();
+    let axis_len_rt: Value = match &axis_rt_sv {
+        Some(sv) if sv.static_val.is_none() => Value::Integer(sv.clone()),
+        Some(sv) => b.ir_constant_int(sv.static_val.unwrap()),
+        None => b.ir_constant_int(axis_len as i64),
+    };
+    let is_given = |v: Option<&Value>| matches!(v, Some(val) if !matches!(val, Value::None));
+    let one_c = b.ir_constant_int(1);
+    let start_ir = if is_given(start) {
+        let raw = val_to_ir(b, start, 0);
+        // Negative static bounds wrap against the runtime length.
+        match raw.int_val() {
+            Some(v) if v < 0 => {
+                let off = b.ir_constant_int(v);
+                b.ir_add_i(&axis_len_rt, &off)
+            }
+            _ => raw,
+        }
+    } else if step_static > 0 {
+        b.ir_constant_int(0)
+    } else {
+        b.ir_sub_i(&axis_len_rt, &one_c)
+    };
+    let stop_ir = if is_given(stop) {
+        let raw = val_to_ir(b, stop, 0);
+        match raw.int_val() {
+            Some(v) if v < 0 => {
+                let off = b.ir_constant_int(v);
+                b.ir_add_i(&axis_len_rt, &off)
+            }
+            _ => raw,
+        }
+    } else if step_static > 0 {
+        axis_len_rt.clone()
+    } else {
+        b.ir_constant_int(-1)
+    };
     let step_ir = val_to_ir(b, step, 1);
 
     // Output shape: same as input but with the sliced axis replaced by max_slice_len.
@@ -826,20 +902,35 @@ fn dyn_slice_axis(
                 &runtime_axis_len,
             ));
         } else {
-            dims.push(crate::types::Dim::new_static(&mut b.dim_table, shape[ax]));
-            rt_shape.push(ScalarValue::new(Some(shape[ax] as i64), None));
+            // Non-sliced axes keep their (possibly runtime) extents —
+            // collapsing them to the envelope width here is what leaked
+            // static skeleton dims into output metadata.
+            dims.push(data.envelope.dims[ax]);
+            rt_shape.push(
+                data.meta
+                    .runtime_shape
+                    .get(ax)
+                    .cloned()
+                    .unwrap_or_else(|| ScalarValue::new(Some(shape[ax] as i64), None)),
+            );
         }
     }
     let envelope =
         crate::types::Envelope::new_with_bound(dims, out_total.min(data.envelope.total_bound));
 
-    // Runtime total length.
-    let other_product: i64 = (0..rank)
-        .filter(|&ax| ax != axis)
-        .map(|ax| shape[ax] as i64)
-        .product();
-    let other_prod_val = b.ir_constant_int(other_product);
-    let runtime_length = b.ir_mul_i(&runtime_axis_len, &other_prod_val);
+    // Runtime total length = product of runtime extents.
+    let mut runtime_length = runtime_axis_len.clone();
+    for (ax, sv) in rt_shape.iter().enumerate() {
+        if ax == axis {
+            continue;
+        }
+        let dim_v: Value = if let Some(c) = sv.static_val {
+            b.ir_constant_int(c)
+        } else {
+            Value::Integer(sv.clone())
+        };
+        runtime_length = b.ir_mul_i(&runtime_length, &dim_v);
+    }
     let runtime_len_sv = crate::ops::dyn_ndarray::value_to_scalar_i64(&runtime_length);
 
     let out = Value::DynamicNDArray(DynamicNDArrayData {
@@ -886,28 +977,52 @@ fn dyn_subscript_multidim_static(
             SliceIndex::Single(_) => {}
             SliceIndex::Range(start, stop, step) => {
                 let dim = shape[ax] as i64;
-                let resolve = |v: &Option<Value>, default: i64| -> i64 {
+                let given = |v: &Option<Value>| -> Option<i64> {
                     match v.as_ref() {
-                        Some(Value::None) | None => default,
-                        Some(val) => val.int_val().unwrap_or(default),
+                        Some(Value::None) | None => None,
+                        Some(val) => val.int_val(),
                     }
                 };
-                let s = resolve(start, 0);
-                let e = resolve(stop, dim);
-                let st = resolve(step, 1);
-                let s = if s < 0 { (dim + s).max(0) } else { s.min(dim) } as usize;
-                let e = if e < 0 { (dim + e).max(0) } else { e.min(dim) } as usize;
-                let mut coords = Vec::new();
+                let st = given(step).unwrap_or(1);
+                assert!(st != 0, "slice step cannot be zero");
+                // Python slice-bound defaults and clamp windows depend on
+                // the step sign (step < 0 walks dim-1 down to "before 0").
+                // The old sign-agnostic defaults made `[::-1]` produce an
+                // EMPTY axis (binding-audit case 0419).
+                let (lo, hi) = if st > 0 { (0i64, dim) } else { (-1i64, dim - 1) };
+                let s = match given(start) {
+                    Some(v) if v < 0 => (dim + v).clamp(lo, hi),
+                    Some(v) => v.clamp(lo, hi),
+                    None => {
+                        if st > 0 {
+                            0
+                        } else {
+                            dim - 1
+                        }
+                    }
+                };
+                let e = match given(stop) {
+                    Some(v) if v < 0 => (dim + v).clamp(lo, hi),
+                    Some(v) => v.clamp(lo, hi),
+                    None => {
+                        if st > 0 {
+                            dim
+                        } else {
+                            -1
+                        }
+                    }
+                };
+                let mut coords: Vec<usize> = Vec::new();
                 let mut i = s;
                 if st > 0 {
                     while i < e {
-                        coords.push(i);
-                        i += st as usize;
+                        coords.push(i as usize);
+                        i += st;
                     }
                 } else {
                     while i > e {
-                        coords.push(i);
-                        i = i.wrapping_add(st as usize);
+                        coords.push(i as usize);
+                        i += st;
                     }
                 }
                 out_shape.push(coords.len());

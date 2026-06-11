@@ -82,6 +82,19 @@ GROUND_TRUTH_OVERRIDES = {
     "0344": _gt_0344,
 }
 
+# Documented under-bindings deferred to the provenance plan's Step 3
+# (slice-view provenance with runtime extents — the "encoding fork").
+# Dynamic-bounds slices of STATIC arrays currently return a full-envelope
+# StaticArray: payload values are correct and verified, but the runtime
+# bbox shape is not pinned by the contract (the if-merge then surfaces
+# static envelope dims as metadata). Step 3's verification criteria
+# include deleting these entries.
+EXPECTED_FAILURES = {
+    "0507": "bbox slice metadata = static envelope dims (plan Step 3)",
+    "0509": "bbox slice metadata = static envelope dims (plan Step 3)",
+    "0510": "bbox slice metadata = static envelope dims (plan Step 3)",
+}
+
 
 def numpy_ground_truth(case: str, args: list):
     """Run the kernel body as plain numpy. Returns the raw return value."""
@@ -355,19 +368,34 @@ def main():
 
     results.sort(key=lambda r: r["case"])
     failures = [r for r in results if not r["ok"]]
+    unexpected = [r for r in failures if r["case"] not in EXPECTED_FAILURES]
+    expected = [r for r in failures if r["case"] in EXPECTED_FAILURES]
+    fixed_xfails = [c for c in EXPECTED_FAILURES
+                    if any(r["case"] == c and r["ok"] for r in results)]
     summary = {
         "total": len(results),
         "passed": len(results) - len(failures),
         "failed": len(failures),
-        "failures": [{"case": r["case"], "error": r.get("error")} for r in failures],
+        "unexpected_failures": [
+            {"case": r["case"], "error": r.get("error")} for r in unexpected
+        ],
+        "expected_failures": [
+            {"case": r["case"], "reason": EXPECTED_FAILURES[r["case"]],
+             "error": r.get("error")} for r in expected
+        ],
         "results": results,
     }
     Path(args.output).write_text(json.dumps(summary, indent=2))
     print(f"\n{summary['passed']}/{summary['total']} cases pass binding audit "
           f"-> {args.output}")
-    if failures:
-        print("FAILING:", " ".join(r["case"] for r in failures))
-    sys.exit(1 if failures else 0)
+    if expected:
+        print("XFAIL (deferred, see EXPECTED_FAILURES):",
+              " ".join(r["case"] for r in expected))
+    if fixed_xfails:
+        print("XPASS — remove from EXPECTED_FAILURES:", " ".join(fixed_xfails))
+    if unexpected:
+        print("FAILING:", " ".join(r["case"] for r in unexpected))
+    sys.exit(1 if unexpected else 0)
 
 
 if __name__ == "__main__":

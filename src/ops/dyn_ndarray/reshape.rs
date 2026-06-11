@@ -56,6 +56,21 @@ pub fn dyn_transpose(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value
         "transpose: permutation length must match rank"
     );
 
+    // A runtime-strided source (runtime-reshape output: compact buffer in
+    // runtime C-order) cannot be transposed as a static stride
+    // permutation — the skeleton strides describe the padding rectangle,
+    // not the content layout. Materialise a permuted copy with
+    // runtime-stride address arithmetic instead (case 0389: swapaxes
+    // after `reshape(h//r, -1, r, c)` was silently the identity).
+    if data
+        .meta
+        .runtime_shape
+        .iter()
+        .any(|sv| sv.static_val.is_none())
+    {
+        return dyn_transpose_runtime_strided(b, data, &perm);
+    }
+
     let new_shape: Vec<usize> = perm.iter().map(|&p| shape[p]).collect();
     let new_strides: Vec<usize> = perm.iter().map(|&p| strides[p]).collect();
 
@@ -98,6 +113,138 @@ pub fn dyn_transpose(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value
             runtime_shape: new_runtime_shape,
             runtime_strides: new_runtime_strides,
             runtime_offset: data.meta.runtime_offset.clone(),
+        },
+        value_id: ValueId::next(),
+    })
+}
+
+/// Transpose a runtime-strided dyn array by materialising a permuted
+/// copy. Each storage position `s` of the compact buffer decodes to
+/// runtime coordinates (mixed-radix over the runtime dims), which map to
+/// an output position under the permuted runtime C-order strides; the
+/// cell scatters there with a dynamic write. Positions beyond
+/// `runtime_length` self-map (identity) so padding stays padding.
+fn dyn_transpose_runtime_strided(
+    b: &mut IRBuilder,
+    data: &DynamicNDArrayData,
+    perm: &[usize],
+) -> Value {
+    let rank = perm.len();
+    let total = data.envelope.total_bound;
+    let shape = &data.meta.logical_shape;
+
+    // Runtime dims as IR values.
+    let dim_vals: Vec<Value> = data
+        .meta
+        .runtime_shape
+        .iter()
+        .map(|sv| {
+            if let Some(c) = sv.static_val {
+                b.ir_constant_int(c)
+            } else {
+                Value::Integer(sv.clone())
+            }
+        })
+        .collect();
+
+    // Output runtime strides: C-order over the permuted dims.
+    let mut out_strides: Vec<Value> = vec![b.ir_constant_int(1); rank];
+    let mut acc = b.ir_constant_int(1);
+    for i in (0..rank).rev() {
+        out_strides[i] = acc.clone();
+        if i > 0 {
+            acc = b.ir_mul_i(&acc, &dim_vals[perm[i]]);
+        }
+    }
+    // out axis position of each SOURCE axis.
+    let mut out_axis_of_src: Vec<usize> = vec![0; rank];
+    for (out_ax, &src_ax) in perm.iter().enumerate() {
+        out_axis_of_src[src_ax] = out_ax;
+    }
+
+    let runtime_len_v: Value = if let Some(c) = data.meta.runtime_length.static_val {
+        b.ir_constant_int(c)
+    } else {
+        Value::Integer(data.meta.runtime_length.clone())
+    };
+    let len_static_full = data.meta.runtime_length.static_val == Some(total as i64);
+
+    let default_val = super::metadata::dyn_default_value(b, data.dtype);
+    let out_seg = b.alloc_segment_id();
+    b.ir_allocate_memory(out_seg, total as u32, 0);
+
+    // Walk storage positions with an incremental mixed-radix carry chain
+    // (eq/select/add only — a per-cell div/mod decode fires the
+    // floor_div/mod op contracts' Z3 discharge 2·rank·total times, which
+    // is what made 20k-cell kernels uncompilable).
+    let zero_c = b.ir_constant_int(0);
+    let one_c = b.ir_constant_int(1);
+    let mut coords: Vec<Value> = vec![zero_c.clone(); rank];
+    for s in 0..total {
+        let s_c = b.ir_constant_int(s as i64);
+        // Output position under permuted strides.
+        let mut out_pos = b.ir_constant_int(0);
+        for src_ax in 0..rank {
+            let contrib = b.ir_mul_i(&coords[src_ax], &out_strides[out_axis_of_src[src_ax]]);
+            out_pos = b.ir_add_i(&out_pos, &contrib);
+        }
+        let cell = crate::helpers::segment::read_typed(b, data.segment_id, &s_c, data.dtype);
+        if len_static_full {
+            crate::helpers::segment::write_typed(b, out_seg, &out_pos, &cell, data.dtype);
+        } else {
+            // Inactive tail: keep the padding at its own position with the
+            // default value so active scatters never collide with it.
+            let active = b.ir_less_than_i(&s_c, &runtime_len_v);
+            let addr = b.ir_select_i(&active, &out_pos, &s_c);
+            let val = if data.dtype == crate::types::NumberType::Float {
+                b.ir_select_f(&active, &cell, &default_val)
+            } else {
+                b.ir_select_i(&active, &cell, &default_val)
+            };
+            crate::helpers::segment::write_typed(b, out_seg, &addr, &val, data.dtype);
+        }
+        // Increment the runtime coordinates (last axis fastest).
+        if s + 1 < total {
+            let mut carry = one_c.clone();
+            for ax in (0..rank).rev() {
+                let bumped = b.ir_add_i(&coords[ax], &carry);
+                if ax == 0 {
+                    coords[0] = bumped;
+                    break;
+                }
+                let wrap = b.ir_equal_i(&bumped, &dim_vals[ax]);
+                coords[ax] = b.ir_select_i(&wrap, &zero_c, &bumped);
+                carry = b.ir_select_i(&wrap, &one_c, &zero_c);
+            }
+        }
+    }
+
+    let new_logical: Vec<usize> = perm.iter().map(|&p| shape[p]).collect();
+    let new_log_strides = row_major_strides(&new_logical);
+    let new_dims: Vec<crate::types::Dim> = perm.iter().map(|&p| data.envelope.dims[p]).collect();
+    let envelope = crate::types::Envelope::new_with_bound(new_dims, total);
+    let new_runtime_shape: Vec<ScalarValue<i64>> = perm
+        .iter()
+        .map(|&p| data.meta.runtime_shape[p].clone())
+        .collect();
+    let new_runtime_strides: Vec<ScalarValue<i64>> = out_strides
+        .iter()
+        .map(crate::ops::dyn_ndarray::value_to_scalar_i64)
+        .collect();
+
+    Value::DynamicNDArray(DynamicNDArrayData {
+        envelope,
+        dtype: data.dtype,
+        segment_id: out_seg,
+        meta: DynArrayMeta {
+            logical_shape: new_logical,
+            logical_offset: 0,
+            logical_strides: new_log_strides,
+            runtime_length: data.meta.runtime_length.clone(),
+            runtime_rank: data.meta.runtime_rank.clone(),
+            runtime_shape: new_runtime_shape,
+            runtime_strides: new_runtime_strides,
+            runtime_offset: ScalarValue::new(Some(0), None),
         },
         value_id: ValueId::next(),
     })
@@ -643,6 +790,21 @@ fn dyn_reshape_runtime_infer_unknown(
         const_product,
         old_total,
     );
+
+    // Layout invariant (provenance plan #1/#3): prod(logical_shape) must
+    // equal the storage total — the skeleton describes the padding
+    // rectangle, and chained reshapes / consumers read
+    // `prod(logical_shape)` as the buffer size. Pool the runtime
+    // variability into the FIRST non-static axis, mirroring
+    // `dyn_reshape_runtime`. (Without this, `reshape(h//r, -1, r, c)`
+    // left prod(logical) == r*c and a later `.reshape(h, w)` saw a
+    // 12-cell source for a 72-cell buffer — case 0389.)
+    if let Some(ax) = dim_args
+        .iter()
+        .position(|v| !matches!(v.int_val(), Some(c) if c > 0))
+    {
+        logical_shape[ax] = old_total / const_product;
+    }
 
     // Single divisibility assertion: prod(all_dims) == runtime_length.
     // Previously this fired twice — once via `runtime_divisor * inferred ==
