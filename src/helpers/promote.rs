@@ -25,10 +25,16 @@ use super::composite::{flatten_composite, get_composite_shape};
 use super::shape_arith::row_major_strides;
 
 /// Infer the dtype of a static composite by looking at its leaves. Any
-/// `Float` leaf forces `Float`; otherwise `Integer`.
+/// `Complex` leaf forces `Complex`; any `Float` leaf forces `Float`;
+/// otherwise `Integer`. A `StaticArray` input reports its own dtype.
 fn infer_static_dtype(val: &Value) -> NumberType {
+    if let Value::StaticArray { dtype, .. } = val {
+        return *dtype;
+    }
     let leaves = flatten_composite(val);
-    if leaves.iter().any(|v| matches!(v, Value::Float(_))) {
+    if leaves.iter().any(|v| matches!(v, Value::Complex { .. })) {
+        NumberType::Complex
+    } else if leaves.iter().any(|v| matches!(v, Value::Float(_))) {
         NumberType::Float
     } else {
         NumberType::Integer
@@ -51,14 +57,21 @@ pub fn promote_static_to_dynamic(b: &mut IRBuilder, val: &Value) -> Value {
     // Flatten leaves to the row-major payload representation used by
     // existing dynamic ops.
     let flat = flatten_composite(val);
-    let elements: Vec<ScalarValue<i64>> = flat.iter().map(value_to_scalar_i64).collect();
 
     let envelope = Envelope::from_static_shape(&mut b.dim_table, &shape);
     let strides = row_major_strides(&shape);
     let total: usize = shape.iter().product();
     let rank = shape.len();
 
-    let segment_id = super::segment::alloc_and_write(b, &elements, dtype);
+    let segment_id = if dtype == NumberType::Complex {
+        // Complex leaves store as interleaved (real, imag) cell pairs —
+        // `value_to_scalar_i64` of a Complex is a sourceless placeholder
+        // and would crash the segment write.
+        super::segment::alloc_and_write_values(b, &flat, dtype)
+    } else {
+        let elements: Vec<ScalarValue<i64>> = flat.iter().map(value_to_scalar_i64).collect();
+        super::segment::alloc_and_write(b, &elements, dtype)
+    };
 
     let dyn_data = DynamicNDArrayData {
         envelope,

@@ -18,8 +18,12 @@ from zinnia.lang.operator import Integer, NDArray
 
 
 def test_scalar_oob_witness_refused_baseline():
-    """Scalar `arr[i]` with `i = -1`: discharge_index_in_range fires on
-    the dyn-read chokepoint, witness refused.
+    """Scalar `arr[i]` bounds at the dyn-read chokepoint.
+
+    `i = -1` is LEGAL under numpy semantics (negative indices wrap; the
+    dual-equality normalization landed with the 2026-06 negative-index
+    work), so it must satisfy and read the last element. A genuinely
+    out-of-range witness (`i = 8`) is still refused.
     """
     @zk_circuit
     def g(x: NDArray[Integer, 8], i: int):
@@ -27,6 +31,9 @@ def test_scalar_oob_witness_refused_baseline():
         assert out >= -1000000
 
     r = g(np.array([-1, 10, 8, 4, -1, 2, 1, -10]), -1)
+    assert r.satisfied is True
+
+    r = g(np.array([-1, 10, 8, 4, -1, 2, 1, -10]), 8)
     assert r.satisfied is False
 
 

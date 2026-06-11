@@ -128,11 +128,16 @@ def foo(a: Float[Array, "4"], n: Integer):
 """
     assert ZKCircuit.from_source("foo", source_pad).compile() is not None
 
+    # An UNBOUNDED runtime pad width is rejected: the old behavior
+    # silently capped it at 128 with a proof-time witness assert, which
+    # narrowed the contract without telling the user. The compiler now
+    # demands a @requires bound (soundness over convenience).
     source_pad_unbounded = """
 def foo(a: Float[Array, "4"], n: Integer):
     return np.pad(a, (0, n))
 """
-    assert ZKCircuit.from_source("foo", source_pad_unbounded).compile() is not None
+    with pytest.raises(ZinniaException, match="not statically bounded"):
+        ZKCircuit.from_source("foo", source_pad_unbounded).compile()
 
     # Dynamic dims (rank statically known, values runtime) is supported:
     # strides are emitted as runtime IR products and per-axis index bounds
@@ -156,17 +161,21 @@ def foo(idx: Integer[Array, "3 4"]):
         is not None
     )
 
+    # Unbounded bincount inputs are rejected (the old behavior silently
+    # capped the output at 256 with a proof-time witness assert).
     source_bincount = """
 def foo(x: Integer[Array, "4"]):
     return np.bincount(x)
 """
-    assert ZKCircuit.from_source("foo", source_bincount).compile() is not None
+    with pytest.raises(ZinniaException, match="not statically bounded"):
+        ZKCircuit.from_source("foo", source_bincount).compile()
 
     source_bincount_weighted = """
 def foo(x: Integer[Array, "4"], w: Integer[Array, "4"]):
     return np.bincount(x, weights=w)
 """
-    assert ZKCircuit.from_source("foo", source_bincount_weighted).compile() is not None
+    with pytest.raises(ZinniaException, match="not statically bounded"):
+        ZKCircuit.from_source("foo", source_bincount_weighted).compile()
 
 
 def test_ds1000_runtime_pad_width_bounded_dynamic_subset():
@@ -177,6 +186,7 @@ def foo(A: Float[Array, "5"], length: Integer):
 """
     assert ZKCircuit.from_source("foo", source_right_pad).compile() is not None
 
+    # Unbounded target shapes are rejected — see the pad-width policy above.
     source_2d_target_shape = """
 def foo(a: Float[Array, "42 10"], shape: Integer[Array, "2"], element: Integer):
     return np.pad(
@@ -186,7 +196,8 @@ def foo(a: Float[Array, "42 10"], shape: Integer[Array, "2"], element: Integer):
         constant_values=element,
     )
 """
-    assert ZKCircuit.from_source("foo", source_2d_target_shape).compile() is not None
+    with pytest.raises(ZinniaException, match="not statically bounded"):
+        ZKCircuit.from_source("foo", source_2d_target_shape).compile()
 
     source_centered = """
 def foo(a: Float[Array, "42 10"], shape: Integer[Array, "2"]):
@@ -200,7 +211,8 @@ def foo(a: Float[Array, "42 10"], shape: Integer[Array, "2"]):
         mode="constant",
     )
 """
-    assert ZKCircuit.from_source("foo", source_centered).compile() is not None
+    with pytest.raises(ZinniaException, match="not statically bounded"):
+        ZKCircuit.from_source("foo", source_centered).compile()
 
 
 def test_flatnonzero_reaches_dynamic_return_boundary():

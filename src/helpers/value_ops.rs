@@ -535,9 +535,38 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
                 }
             }
         }
+        // Broadcast fallback with ndarray semantics: the native path
+        // doesn't cover this shape pair, but ndarray operands must NEVER
+        // pick up the Python sequence semantics below (a broadcast
+        // comparison like `isclose(a, a[0])` would collapse to one
+        // Boolean). Materialise both sides to the broadcast shape and
+        // apply the op structurally.
+        if op != "mat_mul" {
+            let lhs_n = crate::helpers::static_array::base::to_value_list(b, lhs);
+            let rhs_n = crate::helpers::static_array::base::to_value_list(b, rhs);
+            let l_ok = is_numeric_composite(&lhs_n) || lhs_n.is_number();
+            let r_ok = is_numeric_composite(&rhs_n) || rhs_n.is_number();
+            if l_ok && r_ok {
+                let ls = crate::helpers::composite::get_composite_shape(&lhs_n);
+                let rs = crate::helpers::composite::get_composite_shape(&rhs_n);
+                if let Some(out_shape) = crate::helpers::broadcast::broadcast_shapes(&ls, &rs) {
+                    let lm = if ls == out_shape {
+                        lhs_n.clone()
+                    } else {
+                        crate::helpers::broadcast::materialize_to_shape(&lhs_n, &out_shape)
+                    };
+                    let rm = if rs == out_shape {
+                        rhs_n.clone()
+                    } else {
+                        crate::helpers::broadcast::materialize_to_shape(&rhs_n, &out_shape)
+                    };
+                    return elementwise_binary_numeric(b, op, &lm, &rm);
+                }
+            }
+            return apply_binary_op(b, op, &lhs_n, &rhs_n);
+        }
         // Residual: materialise to nested List and re-dispatch through the
-        // legacy path. Covers StaticArray meeting a non-numeric List, the
-        // matmul route, etc.
+        // legacy path (the matmul route).
         let lhs_n = crate::helpers::static_array::base::to_value_list(b, lhs);
         let rhs_n = crate::helpers::static_array::base::to_value_list(b, rhs);
         return apply_binary_op(b, op, &lhs_n, &rhs_n);

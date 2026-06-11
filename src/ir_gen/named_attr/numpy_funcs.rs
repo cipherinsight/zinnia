@@ -1050,7 +1050,13 @@ impl IRGenerator {
                 visited_args,
                 _visited_kwargs,
             ),
-            ("np", "isclose") => np_isclose(&mut self.builder, visited_args, _visited_kwargs),
+            ("np", "isclose") => {
+                // Use the un-materialised args: ndarray operands must keep
+                // StaticArray representation so the comparison chain stays
+                // elementwise (a List pair would collapse to one Boolean
+                // under Python sequence equality).
+                np_isclose(&mut self.builder, visited_args_orig, _visited_kwargs)
+            }
             ("np", "array_equal") => np_array_equal(&mut self.builder, visited_args),
             ("np", "concatenate") => {
                 if has_dynamic_array_in_list(visited_args) {

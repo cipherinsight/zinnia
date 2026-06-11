@@ -1054,6 +1054,11 @@ impl IRGenerator {
             self.visit(stmt);
         }
 
+        // For-loop trips are statically enumerated, so a return guarantee
+        // established inside the body (or the for-else block, which always
+        // runs when the loop wasn't broken) holds unconditionally outside.
+        // The flag lives on the Loop scope and would vanish at loop_leave.
+        let returned = self.ctx.check_return_guaranteed();
         self.ctx.loop_leave();
         if pushed_frame {
             if let Some(frame) = self.for_loop_frames.pop() {
@@ -1061,6 +1066,9 @@ impl IRGenerator {
             }
         }
         let _loop_facts = self.builder.facts.leave();
+        if returned {
+            self.ctx.set_return_guarantee();
+        }
     }
 
     pub(crate) fn visit_while(&mut self, n: &ASTWhileStatement) {
@@ -1089,6 +1097,7 @@ impl IRGenerator {
         //       layered resolver.
         let mut prev_guard_ptr: Option<crate::types::StmtId> = None;
         let mut prev_resolver_result: Option<bool> = None;
+        let mut returned_guaranteed_outside = false;
         let mut unresolved_guard_queries = 0usize;
         const WHILE_GUARD_UNRESOLVED_QUERY_BUDGET: usize = 8;
 
@@ -1197,6 +1206,14 @@ impl IRGenerator {
                 self.visit(stmt);
                 if self.ctx.check_return_guaranteed() || self.ctx.check_loop_terminated_guaranteed()
                 {
+                    // A return reached during an iteration whose guard was
+                    // statically TRUE is unconditional from outside the
+                    // loop: `while True: ... return x` guarantees a
+                    // return. (The guarantee flag lives on the Loop scope
+                    // and would otherwise vanish at loop_leave.)
+                    if self.ctx.check_return_guaranteed() && test_static == Some(true) {
+                        returned_guaranteed_outside = true;
+                    }
                     terminated = true;
                     break;
                 }
@@ -1214,6 +1231,9 @@ impl IRGenerator {
 
         self.ctx.loop_leave();
         let _while_facts = self.builder.facts.leave();
+        if returned_guaranteed_outside {
+            self.ctx.set_return_guarantee();
+        }
     }
 
     pub(crate) fn visit_break(&mut self) {

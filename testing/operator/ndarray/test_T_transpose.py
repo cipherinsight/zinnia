@@ -152,25 +152,27 @@ def test_transpose_3_dim_axes_specified_error():
         [[5, 6], [7, 8]]
     ]
 
+    # Expectations track the segment-backed transpose diagnostics
+    # (src/helpers/static_array/shape.rs).
     with pytest.raises(ZinniaException) as e:
         assert foo_1(input_array)
-    assert "should be a permutation of 0 to 2" in str(e)
+    assert "axes must be a permutation" in str(e)
 
     with pytest.raises(ZinniaException) as e:
         foo_2(input_array)
-    assert "Length of `axes` should be equal to the number of dimensions of the array" in str(e)
+    assert "does not match array rank" in str(e)
 
     with pytest.raises(ZinniaException) as e:
         foo_3(input_array)
-    assert "Length of `axes` should be equal to the number of dimensions of the array" in str(e)
+    assert "does not match array rank" in str(e)
 
     with pytest.raises(ZinniaException) as e:
         foo_4(input_array)
-    assert "Invalid axis value" in str(e)
+    assert "is out of bounds for array of rank" in str(e)
 
     with pytest.raises(ZinniaException) as e:
         foo_5(input_array)
-    assert "Invalid axis value" in str(e)
+    assert "is out of bounds for array of rank" in str(e)
 
 
 def test_transpose_negative_axes():

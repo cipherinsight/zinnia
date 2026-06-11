@@ -393,7 +393,7 @@ fn contains_static_array(val: &Value) -> bool {
 /// time constants they would have seen if the array had been built as a
 /// `Value::List` to begin with.
 pub fn to_value_list(b: &mut IRBuilder, val: &Value) -> Value {
-    let (dtype, shape, segment_id, _strides, offset, imag_seg) = match val {
+    let (dtype, shape, segment_id, strides, offset, imag_seg) = match val {
         Value::StaticArray {
             dtype,
             shape,
@@ -415,6 +415,23 @@ pub fn to_value_list(b: &mut IRBuilder, val: &Value) -> Value {
     let total: usize = shape.iter().product();
     if b.static_array_product_provenance.contains_key(&segment_id) {
         force_static_array_product_provenance(b, segment_id);
+    }
+    // A stride-permuted view (transpose / moveaxis / non-contiguous
+    // slice) must materialise in LOGICAL row-major order — the naive
+    // cache slice below reads SOURCE order and silently un-transposes
+    // the view (`l @ l.T` computed `l @ l`).
+    let contiguous = strides == crate::helpers::shape_arith::row_major_strides(&shape);
+    if !contiguous {
+        let leaves = crate::helpers::static_array::elementwise::payload_cells(b, val);
+        let leaf_types: Vec<ZinniaType> = leaves.iter().map(|v| v.zinnia_type()).collect();
+        if shape.len() <= 1 {
+            return Value::List(CompositeData {
+                elements_type: leaf_types,
+                values: leaves,
+                value_id: ValueId::next(),
+            });
+        }
+        return super::super::composite::build_nested_value(leaves, leaf_types, &shape);
     }
     // P1 fast-path: if the segment payload is cached (always true for arrays
     // built via `build_static_array_from_flat`), reuse the original wires

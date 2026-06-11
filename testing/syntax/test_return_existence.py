@@ -39,12 +39,15 @@ def test_has_return_2():
     with pytest.raises(ZinniaException) as e:
         foo_2(1)
     assert "Chip control ends without a return statement" in str(e.value)
+    # A dynamic argument makes the return PARTIAL (some paths return,
+    # some don't) — the compiler now reports that distinctly from a chip
+    # with no return statement at all.
     with pytest.raises(ZinniaException) as e:
         foo_3(0)
-    assert "Chip control ends without a return statement" in str(e.value)
+    assert "Chip return annotation requires every path to return" in str(e.value)
     with pytest.raises(ZinniaException) as e:
         foo_3(1)
-    assert "Chip control ends without a return statement" in str(e.value)
+    assert "Chip return annotation requires every path to return" in str(e.value)
 
 
 def test_has_return_3():
@@ -161,7 +164,9 @@ def test_has_return_9():
 
     with pytest.raises(ZinniaException) as e:
         assert foo(0)
-    assert "Chip control ends without a return statement" in str(e.value)
+    # Partial return (the else arm breaks without returning) — rejected
+    # with the every-path diagnostic.
+    assert "Chip return annotation requires every path to return" in str(e.value)
 
 
 def test_has_return_10():
@@ -178,7 +183,9 @@ def test_has_return_10():
 
     with pytest.raises(ZinniaException) as e:
         assert foo(1)
-    assert "Chip control ends without a return statement" in str(e.value)
+    # Partial return (no return when x is none of 0..9) — rejected with
+    # the every-path diagnostic.
+    assert "Chip return annotation requires every path to return" in str(e.value)
 
 
 def test_has_return_11():

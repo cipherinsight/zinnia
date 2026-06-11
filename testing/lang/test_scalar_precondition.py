@@ -400,13 +400,19 @@ def test_pure_scalar_bound_unlocks_dyn_ndarray_construction():
             os.environ["ZINNIA_SMT_ENABLE"] = prev
 
 
-def test_pure_scalar_bound_rejects_under_smt_off():
+def test_pure_scalar_bound_compiles_under_smt_off():
+    """The scalar-precondition bound `0 <= k <= 16` is now resolvable
+    through the fact fast-path (deposited ContractTerms scanned without a
+    Z3 query), so the ShapeAxis chokepoint admits `np.zeros(k, ...)` even
+    with SMT disabled. This used to reject — the test pins the upgraded
+    behavior so a regression back to SMT-only resolution is caught.
+    """
     import os
     prev = os.environ.get("ZINNIA_SMT_ENABLE")
     os.environ["ZINNIA_SMT_ENABLE"] = "0"
     try:
-        with pytest.raises(ZinniaException, match=r"(?i)shape|static|constant"):
-            ZKCircuit.from_method(_scalar_bound_unlocks_zeros).compile()
+        program = ZKCircuit.from_method(_scalar_bound_unlocks_zeros).compile()
+        assert program is not None
     finally:
         if prev is None:
             os.environ.pop("ZINNIA_SMT_ENABLE", None)
