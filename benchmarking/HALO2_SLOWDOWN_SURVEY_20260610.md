@@ -264,3 +264,19 @@ Causes, by band:
    cells — halo2 pays ~60 cells per window test vs Noir's ~4 gates):
    slice-view composition through reshape is the principled fix.
 4. **0433** (1.15x): +15 gates absolute; eq/select dust, known.
+
+## Noir emitter: witness-specialization fix + affine-gather port (2026-06-11, commits 71e3048, b21ff5d)
+
+The 1.1x survey exposed witness specialization (circuit structurally
+depended on the prover's witness: select zero-path on witness-folded
+values; memory addresses resolved from the witness in all 31
+dynamic-address kernels). After the fix + porting the halo2 affine
+machinery (lineage, shared indicators, one-hot membership, plane-cached
+two-root factoring, interval domain incl. min/max recognition and
+assert mining):
+
+- Honest sweep: 134/134 ok, gate geomean 0.595x (the earlier 0.533x was
+  partly bogus). 7 cases >1.1x, only 0509/0510 >1.5x (1.51-1.52x).
+- 0391/0393: 60.7k -> 5.4k = 0.70x (below HW). 0318: 14k -> 682 =
+  1.25x. 0508: 50k -> 5.8k = 1.47x. 0319: timeout -> 4.1k = 1.07x.
+- 0433/0434: with negative-index wrap added to HW, both EXACTLY 1.000x.
