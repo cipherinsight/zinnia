@@ -245,13 +245,18 @@ Causes, by band:
    their +1..+44 gate deltas are emitter micro-differences, not metadata.
    0322 is already Category-C flagged. 0364's +277 is class 2 (insert
    position), like 0363.
-2. **Negative-index semantics** (~6 cases at 1.04-1.07x, +~250 gates):
-   ZN emits to_signed/qlt_signed normalization for runtime indices
-   (python allows a[col-1] with col=0 -> -1 -> last column; np.insert
-   accepts negative pos). HW baselines assert the index nonneg as u128
-   and skip normalization — a semantic restriction. Cases: 0345/0346/
-   0347 (column select), 0363/0364/0365 (insert position). 0508 similar
-   band via argwhere-bbox dyn-slice machinery.
+2. **Negative-index semantics** — FIXED 2026-06-11 (commit fa09acb):
+   all six baselines (0345/0346/0347 select, 0363/0364/0365 insert),
+   BOTH Noir and halo2 flavors, now implement python's negative-index
+   wrapping (select cases via dual-equality indicators + membership-sum
+   bound; insert cases via one in-circuit sign test + normalized
+   comparisons). The halo2 select targets previously had NO bound assert
+   and silently selected zero on negative indices. Post-fix Noir ratios:
+   1.016-1.065x; the residual is ZN's signed bound-discharge vs the
+   baselines' near-free membership-sum bound — emitter optimization
+   opportunity (replace the residual discharge with assert(sum(ind)==1)
+   when the index feeds only dual-eq indicator sets). 0508's similar
+   band is argwhere-bbox dyn-slice machinery, unrelated.
 3. **Runtime-reshape window hoisting** (0416/0418, 1.12x, +9k gates):
    the mask-formulation reduce tests windows per (row, slot) combo; the
    leading static row axis means tests could hoist across rows (HW
