@@ -1328,7 +1328,7 @@ fn dyn_arange_bounded_emits_length_eq_fact() {
         },
     );
 
-    let out = np_arange(&mut b, &[n.clone()]);
+    let out = np_arange(&mut b, &[n.clone()], &std::collections::HashMap::new());
     let runtime_length_vid = match &out {
         Value::DynamicNDArray(d) => d.meta.runtime_length.value_id,
         _ => panic!("expected DynamicNDArray, got {:?}", out),
@@ -3151,7 +3151,7 @@ fn np_arange_bounded_call_site_fires_is_sorted_on_output() {
         },
     );
 
-    let out = np_arange(&mut b, &[n.clone()]);
+    let out = np_arange(&mut b, &[n.clone()], &std::collections::HashMap::new());
     let out_vid = match &out {
         Value::DynamicNDArray(d) => d.value_id,
         other => panic!("expected DynamicNDArray, got {:?}", other.zinnia_type()),
@@ -3252,7 +3252,7 @@ fn np_arange_call_site_does_not_emit_for_negative_step() {
     let start = b.ir_constant_int(10);
     let stop = b.ir_constant_int(0);
     let step = b.ir_constant_int(-1);
-    let _out = np_arange(&mut b, &[start, stop, step]);
+    let _out = np_arange(&mut b, &[start, stop, step], &std::collections::HashMap::new());
 
     let any_is_sorted = b.facts.per_value.values().any(|bucket| {
         bucket.iter().any(|fact| {

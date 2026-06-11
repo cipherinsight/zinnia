@@ -468,6 +468,7 @@ pub fn dyn_setitem_slice(
             let addr = match &mode {
                 StrideMode::LiteralLogical(strides) => {
                     let mut addr_static: i64 = 0;
+                    let mut dynamic_parts: Vec<Value> = Vec::new();
                     let mut val_coord_idx = 0;
                     for spec in &axis_specs {
                         match &spec.coords {
@@ -480,7 +481,13 @@ pub fn dyn_setitem_slice(
                                     };
                                     addr_static += i * strides[spec.src_axis] as i64;
                                 } else {
-                                    panic!("slice assignment with dynamic single index + static range not yet optimized");
+                                    // Dynamic single index (e.g.
+                                    // `out[row, :] = vals` with a runtime
+                                    // row): contribute idx*stride; the
+                                    // bound is discharged once below.
+                                    let stride_val =
+                                        b.ir_constant_int(strides[spec.src_axis] as i64);
+                                    dynamic_parts.push(b.ir_mul_i(v, &stride_val));
                                 }
                             }
                             AxisCoords::Static(coords) => {
@@ -491,7 +498,11 @@ pub fn dyn_setitem_slice(
                             AxisCoords::Dynamic { .. } => unreachable!("checked above"),
                         }
                     }
-                    b.ir_constant_int(addr_static)
+                    let mut acc = b.ir_constant_int(addr_static);
+                    for part in &dynamic_parts {
+                        acc = b.ir_add_i(&acc, part);
+                    }
+                    acc
                 }
                 StrideMode::SymbolicRuntime(_) => {
                     let mut acc: Option<Value> = None;

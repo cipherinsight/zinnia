@@ -723,7 +723,71 @@ pub fn np_identity(b: &mut IRBuilder, args: &[Value]) -> Value {
     }
 }
 
-pub fn np_arange(b: &mut IRBuilder, args: &[Value]) -> Value {
+pub fn np_arange(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+    // NumPy signature: arange([start,] stop[, step][, dtype]) — the dtype
+    // can arrive positionally (4th arg) or as a kwarg; float arguments
+    // make the sequence float-typed.
+    let mut core: Vec<Value> = args.to_vec();
+    let mut dtype_req: Option<ZinniaType> = None;
+    if let Some(Value::Class(t)) = core.last() {
+        dtype_req = Some(t.clone());
+        core.pop();
+    }
+    if let Some(Value::Class(t)) = kwargs.get("dtype") {
+        dtype_req = Some(t.clone());
+    }
+
+    let any_float = core.iter().any(|v| matches!(v, Value::Float(_)));
+    if any_float || dtype_req == Some(ZinniaType::Float) {
+        // Static float sequence. NumPy computes the length as
+        // ceil((stop - start) / step) and the i-th value as
+        // start + i*step (no accumulation drift).
+        let as_f = |v: &Value| -> f64 {
+            match v {
+                Value::Float(sv) => sv
+                    .static_val
+                    .unwrap_or_else(|| panic!("np.arange: float arguments must be compile-time constants")),
+                _ => v
+                    .int_val()
+                    .unwrap_or_else(|| panic!("np.arange: arguments must be compile-time constants when any is float"))
+                    as f64,
+            }
+        };
+        let (start, stop, step) = match core.len() {
+            1 => (0.0, as_f(&core[0]), 1.0),
+            2 => (as_f(&core[0]), as_f(&core[1]), 1.0),
+            3 => (as_f(&core[0]), as_f(&core[1]), as_f(&core[2])),
+            n => panic!("np.arange: expected 1-3 range arguments, got {}", n),
+        };
+        assert!(step != 0.0, "np.arange: step must not be zero");
+        let n = ((stop - start) / step).ceil().max(0.0) as usize;
+        let int_out = dtype_req == Some(ZinniaType::Integer);
+        let mut values = Vec::with_capacity(n);
+        for i in 0..n {
+            let v = start + (i as f64) * step;
+            if int_out {
+                values.push(b.ir_constant_int(v.trunc() as i64));
+            } else {
+                values.push(b.ir_constant_float(v));
+            }
+        }
+        let len = values.len();
+        return crate::helpers::static_array::base::build_static_array_from_flat(
+            b,
+            values,
+            vec![len],
+            if int_out {
+                crate::types::NumberType::Integer
+            } else {
+                crate::types::NumberType::Float
+            },
+        );
+    }
+
+    np_arange_int(b, &core)
+}
+
+fn np_arange_int(b: &mut IRBuilder, args: &[Value]) -> Value {
     // np.arange always returns a numeric ndarray — emit as StaticArray
     // when fully static, or DynamicNDArray when the stop is symbolic
     // but bounded via the prove-aware resolver chain.
@@ -925,9 +989,136 @@ fn arange_static(b: &mut IRBuilder, start: i64, stop: i64, step: i64) -> Value {
     result
 }
 
+/// `np.linspace` with array start/stop: broadcast the endpoints, sample
+/// `num` points per element, and place the sample axis at `axis`
+/// (numpy semantics). Static `num` only.
+fn np_linspace_array(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+    use crate::helpers::value_ops::ensure_float;
+
+    let num = args
+        .get(2)
+        .or_else(|| kwargs.get("num"))
+        .and_then(|v| v.int_val())
+        .unwrap_or(50);
+    assert!(num >= 0, "np.linspace: num must be non-negative");
+    let n = num as usize;
+    let endpoint = kwargs
+        .get("endpoint")
+        .and_then(|v| v.bool_val())
+        .unwrap_or(true);
+    let use_int = matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Integer)));
+    let axis_raw = kwargs.get("axis").and_then(|v| v.int_val()).unwrap_or(0);
+
+    let to_list = |b: &mut IRBuilder, v: &Value| -> Value {
+        if matches!(v, Value::StaticArray { .. }) {
+            crate::helpers::static_array::base::to_value_list(b, v)
+        } else {
+            v.clone()
+        }
+    };
+    let s_v = to_list(b, &args[0]);
+    let e_v = to_list(b, &args[1]);
+    let s_shape = crate::helpers::composite::get_composite_shape(&s_v);
+    let e_shape = crate::helpers::composite::get_composite_shape(&e_v);
+    let bshape = crate::helpers::broadcast::broadcast_shapes(&s_shape, &e_shape)
+        .unwrap_or_else(|| {
+            panic!(
+                "np.linspace: start shape {:?} and stop shape {:?} are not broadcast compatible",
+                s_shape, e_shape
+            )
+        });
+    let s_m = if s_shape == bshape {
+        s_v.clone()
+    } else {
+        crate::helpers::broadcast::materialize_to_shape(&s_v, &bshape)
+    };
+    let e_m = if e_shape == bshape {
+        e_v.clone()
+    } else {
+        crate::helpers::broadcast::materialize_to_shape(&e_v, &bshape)
+    };
+    let s_leaves: Vec<Value> = crate::helpers::composite::flatten_composite(&s_m)
+        .iter()
+        .map(|v| ensure_float(b, v))
+        .collect();
+    let e_leaves: Vec<Value> = crate::helpers::composite::flatten_composite(&e_m)
+        .iter()
+        .map(|v| ensure_float(b, v))
+        .collect();
+    let pairs = s_leaves.len().max(1);
+
+    let bn = bshape.len();
+    let axis = if axis_raw < 0 {
+        (bn as i64 + 1 + axis_raw) as usize
+    } else {
+        axis_raw as usize
+    };
+    assert!(axis <= bn, "np.linspace: axis {} out of bounds", axis_raw);
+
+    let denom = if endpoint {
+        assert!(n >= 2, "np.linspace: endpoint=True requires num >= 2");
+        (n - 1) as f64
+    } else {
+        assert!(n >= 1, "np.linspace: num >= 1 required");
+        n as f64
+    };
+    let denom_c = b.ir_constant_float(denom);
+
+    // samples[k][t] = start_k + t * (stop_k - start_k) / denom
+    let mut samples: Vec<Vec<Value>> = Vec::with_capacity(pairs);
+    for k in 0..pairs {
+        let diff = b.ir_sub_f(&e_leaves[k], &s_leaves[k]);
+        let step = b.ir_div_f(&diff, &denom_c);
+        let mut row = Vec::with_capacity(n);
+        for t in 0..n {
+            let t_c = b.ir_constant_float(t as f64);
+            let off = b.ir_mul_f(&t_c, &step);
+            let v = b.ir_add_f(&s_leaves[k], &off);
+            row.push(if use_int { b.ir_int_cast(&v) } else { v });
+        }
+        samples.push(row);
+    }
+
+    // Target shape = broadcast shape with `num` inserted at `axis`.
+    let mut target = bshape.clone();
+    target.insert(axis, n);
+    let total: usize = target.iter().product();
+    let t_strides = crate::helpers::shape_arith::row_major_strides(&target);
+    let b_strides = crate::helpers::shape_arith::row_major_strides(&bshape);
+    let mut flat: Vec<Value> = Vec::with_capacity(total);
+    for fo in 0..total {
+        let coords = crate::helpers::shape_arith::decode_coords(fo, &target, &t_strides);
+        let t = coords[axis];
+        let mut k = 0usize;
+        let mut bi = 0usize;
+        for (d, &c) in coords.iter().enumerate() {
+            if d == axis {
+                continue;
+            }
+            k += c * b_strides[bi];
+            bi += 1;
+        }
+        flat.push(samples[k][t].clone());
+    }
+    let types: Vec<ZinniaType> = flat.iter().map(|v| v.zinnia_type()).collect();
+    crate::helpers::composite::build_nested_value(flat, types, &target)
+}
+
 pub fn np_linspace(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
     if args.len() < 2 {
         return Value::None;
+    }
+    // Array start/stop (numpy broadcasts them and places the sample axis
+    // at `axis`): handled by the dedicated static path. The scalar path
+    // below would silently read them as 0.0.
+    let arr_like = |v: &Value| {
+        matches!(
+            v,
+            Value::List(_) | Value::Tuple(_) | Value::StaticArray { .. }
+        )
+    };
+    if arr_like(&args[0]) || arr_like(&args[1]) {
+        return np_linspace_array(b, args, kwargs);
     }
     let start = args[0]
         .float_val()

@@ -242,7 +242,9 @@ def test_atleast_3d_promotes_1d():
     def foo():
         a = np.asarray([1, 2, 3])
         out = np.atleast_3d(a)
-        assert (out == np.asarray([[[1, 2, 3]]])).all()
+        # NumPy places the unit axes AROUND the data: (N,) -> (1, N, 1).
+        assert out.shape == (1, 3, 1)
+        assert (out == np.asarray([[[1], [2], [3]]])).all()
 
     assert foo()
 

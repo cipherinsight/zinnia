@@ -1037,9 +1037,11 @@ impl IRGenerator {
             ("np", "divide_outer") => {
                 crate::ops::static_ndarray_ops::np_outer_op(&mut self.builder, visited_args, "div")
             }
-            ("np", "arange") => {
-                crate::ops::static_ndarray_ops::np_arange(&mut self.builder, visited_args)
-            }
+            ("np", "arange") => crate::ops::static_ndarray_ops::np_arange(
+                &mut self.builder,
+                visited_args,
+                _visited_kwargs,
+            ),
             ("np", "linspace") => crate::ops::static_ndarray_ops::np_linspace(
                 &mut self.builder,
                 visited_args,
@@ -1212,6 +1214,13 @@ impl IRGenerator {
                         return Some(out);
                     }
                 }
+                if matches!(val_orig, Value::DynamicNDArray(_)) {
+                    return Some(crate::helpers::array_ops::transpose(
+                        &mut self.builder,
+                        &val_orig,
+                        &visited_args_orig[1..],
+                    ));
+                }
                 let val = visited_args.first().cloned().unwrap_or(Value::None);
                 crate::helpers::ndarray::ndarray_transpose(
                     &mut self.builder,
@@ -1249,6 +1258,19 @@ impl IRGenerator {
                         return Some(out);
                     }
                 }
+                if let Value::DynamicNDArray(d) = &val_orig {
+                    let axis_args: Vec<Value> = visited_kwargs_orig
+                        .get("axis")
+                        .or_else(|| visited_args_orig.get(1))
+                        .cloned()
+                        .into_iter()
+                        .collect();
+                    return Some(crate::ops::dyn_ndarray::reshape::dyn_squeeze(
+                        &mut self.builder,
+                        d,
+                        &axis_args,
+                    ));
+                }
                 crate::ops::static_ndarray_ops::np_squeeze(
                     &mut self.builder,
                     visited_args,
@@ -1266,6 +1288,19 @@ impl IRGenerator {
                     ) {
                         return Some(out);
                     }
+                }
+                if let Value::DynamicNDArray(d) = &val_orig {
+                    let axis_args: Vec<Value> = visited_kwargs_orig
+                        .get("axis")
+                        .or_else(|| visited_args_orig.get(1))
+                        .cloned()
+                        .into_iter()
+                        .collect();
+                    return Some(crate::ops::dyn_ndarray::reshape::dyn_expand_dims(
+                        &mut self.builder,
+                        d,
+                        &axis_args,
+                    ));
                 }
                 crate::ops::static_ndarray_ops::np_expand_dims(&mut self.builder, visited_args)
             }

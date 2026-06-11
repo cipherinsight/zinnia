@@ -1007,25 +1007,36 @@ pub fn np_broadcast_to(b: &mut IRBuilder, args: &[Value]) -> Value {
     out
 }
 
-/// `np.atleast_1d/2d/3d(arr)` — prepend unit axes until rank ≥ n.
-pub fn np_atleast_nd(_b: &mut IRBuilder, args: &[Value], n: usize) -> Value {
+/// `np.atleast_1d/2d/3d(arr)` — promote to rank ≥ n with NumPy's axis
+/// placement: 1d/2d PREPEND unit axes, but atleast_3d places them around
+/// the data ((N,) → (1, N, 1); (M, N) → (M, N, 1)).
+pub fn np_atleast_nd(b: &mut IRBuilder, args: &[Value], n: usize) -> Value {
     let val = args
         .first()
         .expect("atleast_Nd: requires an array argument");
-    let shape = crate::helpers::composite::get_composite_shape(val);
+    let val = if matches!(val, Value::StaticArray { .. }) {
+        crate::helpers::static_array::base::to_value_list(b, val)
+    } else {
+        val.clone()
+    };
+    let shape = crate::helpers::composite::get_composite_shape(&val);
     if shape.len() >= n {
         return val.clone();
     }
-    let mut out = val.clone();
-    for _ in 0..(n - shape.len()) {
-        out = Value::List(CompositeData {
-            elements_type: vec![out.zinnia_type()],
-            values: vec![out],
-
-            value_id: ValueId::next(),
-        });
-    }
-    out
+    let target: Vec<usize> = match (n, shape.as_slice()) {
+        (3, []) => vec![1, 1, 1],
+        (3, [len]) => vec![1, *len, 1],
+        (3, [m, k]) => vec![*m, *k, 1],
+        // atleast_1d / atleast_2d: prepend.
+        _ => {
+            let mut t = vec![1; n - shape.len()];
+            t.extend(shape.iter().copied());
+            t
+        }
+    };
+    let leaves = crate::helpers::composite::flatten_composite(&val);
+    let types: Vec<crate::types::ZinniaType> = leaves.iter().map(|v| v.zinnia_type()).collect();
+    crate::helpers::composite::build_nested_value(leaves, types, &target)
 }
 
 /// `np.tile(arr, reps)` — repeat `arr` according to `reps`.

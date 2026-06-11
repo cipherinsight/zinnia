@@ -316,6 +316,66 @@ pub fn dyn_swapaxes(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]
     dyn_transpose(b, data, &[axes_tuple])
 }
 
+/// Insert a size-1 axis (np.expand_dims) as a metadata-only change on a
+/// contiguous buffer.
+pub fn dyn_expand_dims(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) -> Value {
+    let ndim = data.meta.logical_shape.len();
+    let axis_i: i64 = require_provable_static_int(
+        b,
+        args.first().expect("expand_dims: axis required"),
+        SiteKind::Axis,
+    );
+    let axis = if axis_i < 0 {
+        (ndim as i64 + 1 + axis_i) as usize
+    } else {
+        axis_i as usize
+    };
+    assert!(
+        axis <= ndim,
+        "expand_dims: axis {} out of bounds for rank {}",
+        axis_i,
+        ndim
+    );
+    let data = super::force_contiguous(b, data);
+    let mut shape = data.meta.logical_shape.clone();
+    shape.insert(axis, 1);
+    let strides = row_major_strides(&shape);
+    let mut dims = data.envelope.dims.clone();
+    dims.insert(axis, crate::types::Dim::new_static(&mut b.dim_table, 1));
+    let envelope = crate::types::Envelope::new_with_bound(dims, data.envelope.total_bound);
+    let mut rt_shape = data.meta.runtime_shape.clone();
+    rt_shape.insert(axis, ScalarValue::new(Some(1), None));
+    // The size-1 axis is never multiplied by a nonzero coordinate, so any
+    // stride works; reuse the stride of the axis that now follows (or 1).
+    let mut rt_strides = data.meta.runtime_strides.clone();
+    let ins = rt_strides
+        .get(axis)
+        .cloned()
+        .unwrap_or_else(|| ScalarValue::new(Some(1), None));
+    rt_strides.insert(axis, ins);
+    let runtime_rank = ScalarValue::new(
+        data.meta.runtime_rank.static_val.map(|r| r + 1),
+        data.meta.runtime_rank.stmt_id,
+    );
+
+    Value::DynamicNDArray(DynamicNDArrayData {
+        envelope,
+        dtype: data.dtype,
+        segment_id: data.segment_id,
+        meta: DynArrayMeta {
+            logical_shape: shape,
+            logical_offset: data.meta.logical_offset,
+            logical_strides: strides,
+            runtime_length: data.meta.runtime_length.clone(),
+            runtime_rank,
+            runtime_shape: rt_shape,
+            runtime_strides: rt_strides,
+            runtime_offset: data.meta.runtime_offset.clone(),
+        },
+        value_id: ValueId::next(),
+    })
+}
+
 pub fn dyn_squeeze(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) -> Value {
     let ndim = data.meta.logical_shape.len();
     let axes: Vec<usize> = if args.is_empty() || matches!(args.first(), Some(Value::None)) {

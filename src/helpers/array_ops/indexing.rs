@@ -23,6 +23,61 @@ pub fn dyn_subscript(
     data: &DynamicNDArrayData,
     indices: &[SliceIndex],
 ) -> Value {
+    // Ellipsis expands to the missing full ranges; NewAxis is stripped
+    // here and re-inserted as a unit axis on the result.
+    if indices
+        .iter()
+        .any(|i| matches!(i, SliceIndex::Ellipsis | SliceIndex::NewAxis))
+    {
+        let rank = data.envelope.rank();
+        let consumed = indices
+            .iter()
+            .filter(|i| matches!(i, SliceIndex::Single(_) | SliceIndex::Range(_, _, _)))
+            .count();
+        let mut expanded: Vec<SliceIndex> = Vec::new();
+        let mut newaxis_out: Vec<usize> = Vec::new();
+        let mut out_axis = 0usize;
+        let mut seen_ellipsis = false;
+        for idx in indices {
+            match idx {
+                SliceIndex::Ellipsis => {
+                    assert!(
+                        !seen_ellipsis,
+                        "an index can only have a single ellipsis ('...')"
+                    );
+                    seen_ellipsis = true;
+                    for _ in 0..rank.saturating_sub(consumed) {
+                        expanded.push(SliceIndex::Range(None, None, None));
+                        out_axis += 1;
+                    }
+                }
+                SliceIndex::NewAxis => {
+                    newaxis_out.push(out_axis);
+                    out_axis += 1;
+                }
+                SliceIndex::Single(_) => expanded.push(idx.clone()),
+                SliceIndex::Range(_, _, _) => {
+                    expanded.push(idx.clone());
+                    out_axis += 1;
+                }
+            }
+        }
+        let mut cur = dyn_subscript(b, data, &expanded);
+        for &pos in &newaxis_out {
+            match &cur {
+                Value::DynamicNDArray(d) => {
+                    let pos_v = Value::Integer(ScalarValue::new(Some(pos as i64), None));
+                    cur =
+                        crate::ops::dyn_ndarray::reshape::dyn_expand_dims(b, d, &[pos_v]);
+                }
+                _ => panic!(
+                    "DynamicNDArray: NewAxis on a scalar subscript result is not supported"
+                ),
+            }
+        }
+        return cur;
+    }
+
     // Single-index special cases: boolean mask, fancy indexing.
     if indices.len() == 1 {
         if let SliceIndex::Single(idx_val) = &indices[0] {
@@ -100,6 +155,13 @@ fn is_fancy_index(b: &mut IRBuilder, val: &Value) -> bool {
                 && shape[0] > 0
                 && !crate::helpers::static_array::mask::is_boolean_mask_static_array(b, val)
         }
+        // A promoted 1-D integer dyn array with a full (static) runtime
+        // length acts as a fancy index of its cells.
+        Value::DynamicNDArray(d) => {
+            d.envelope.rank() == 1
+                && d.dtype == crate::types::NumberType::Integer
+                && d.meta.runtime_length.static_val == Some(d.max_length() as i64)
+        }
         _ => false,
     }
 }
@@ -110,7 +172,13 @@ fn extract_index_values(b: &mut IRBuilder, val: &Value) -> Vec<Value> {
         Value::StaticArray { .. } => {
             crate::helpers::static_array::elementwise::payload_cells(b, val)
         }
-        _ => panic!("extract_index_values: expected List/Tuple/StaticArray"),
+        Value::DynamicNDArray(d) => crate::helpers::segment::read_all_typed(
+            b,
+            d.segment_id,
+            d.max_length(),
+            d.dtype,
+        ),
+        _ => panic!("extract_index_values: expected List/Tuple/StaticArray/DynamicNDArray"),
     }
 }
 

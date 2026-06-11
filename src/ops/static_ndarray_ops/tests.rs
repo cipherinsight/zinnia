@@ -244,7 +244,7 @@ fn np_arange_admits_value_provable_via_prove_bounded() {
     let n_vid = n.value_id().unwrap();
     plant_bounded_zero_to_ten(&mut b, n_vid);
 
-    let out = np_arange(&mut b, &[n.clone()]);
+    let out = np_arange(&mut b, &[n.clone()], &std::collections::HashMap::new());
     if let Value::DynamicNDArray(data) = &out {
         assert_eq!(
             data.max_length(),
@@ -666,7 +666,7 @@ fn np_arange_3arg_admits_value_provable_via_prove_bounded() {
     let zero = b.ir_constant_int(0);
     let two = b.ir_constant_int(2);
 
-    let out = np_arange(&mut b, &[zero, stop, two]);
+    let out = np_arange(&mut b, &[zero, stop, two], &std::collections::HashMap::new());
     if let Value::DynamicNDArray(data) = &out {
         assert_eq!(
             data.max_length(),
