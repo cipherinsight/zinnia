@@ -212,3 +212,20 @@ halo2_proofs v0.3.0 vs v2023_02_02: no difference) to the execution
 environment: Zinnia proves inside a Python cdylib (PIC + unwind) vs HW's
 panic=abort standalone binary. Fix would be a standalone zinnia-prove
 benchmark binary; documented as accepted parity-band for now.
+
+## Circuit-size families 2/3/4 closed (2026-06-11, commit 45d7853)
+
+- **Discharge elision** (family 2): min/max relational facts + gated
+  add/sub equality facts + per-conjunct discharge with the new cheap
+  AssertNonNegI residual. 0353: 4,334 -> 2,839 cells (1.08x), Noir
+  6,809 -> 4,794 gates (0.70x).
+- **0415 excluded** (family 3): HW uses host-provided bin_size as a
+  compile-time loop bound, unconstrained in-circuit — Category C.
+- **Select/eq density** (family 4): halo2 zero-branch select fusion and
+  the Noir normalized-index dual-equality peephole. 0433: Noir 2,903 ->
+  113 (1.15x), halo2 0.94x; 0434: Noir 2,982 -> 134 (**below** the
+  handwritten 139), halo2 0.98x.
+
+Remaining circuit-size gaps are all family 1 (compacted-prefix vs
+masked-in-place dynamic-output encoding, deferred): 0442 3.8x, 0412
+2.2x, 0353's last 8%. Everything else is at or below handwritten size.
