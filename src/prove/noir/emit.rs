@@ -480,6 +480,12 @@ pub struct NoirEmitter {
     plane_cache: HashMap<(u32, u64, String, i64, i64), String>,
     /// Bumped on every write to a segment; invalidates plane_cache.
     write_version: HashMap<u32, u64>,
+    /// Per-segment value hull: the interval union of every value written
+    /// to the segment (plus its init). `None` once any written value
+    /// lacks a derivable interval. Read results inherit this hull, which
+    /// is what lets comparison chains over gathered values stay on the
+    /// cheap unsigned path.
+    segment_iv: HashMap<u32, Option<(i64, i64)>>,
     /// lt(a, b) output provenance: lets select(lt(a,b), a, b) be
     /// recognized as min(a, b) (and the swapped form as max) so interval
     /// bounds flow through clamp chains with only one bounded side.
@@ -642,6 +648,12 @@ impl NoirEmitter {
     }
 
     fn gt_i_inner(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some(v) = self.unsigned_cmp(a, b, ">") {
+            let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x > y);
+            self.fold_b(&v, folded);
+            self.set_ival(&v, Some((0, 1)));
+            return Ok(v);
+        }
         let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x > y);
         if self.is_u32(a) && self.is_u32(b) {
             let v = self.bind_u32_with_bound(&format!("if {} > {} {{ 1 }} else {{ 0 }}", a, b), 1);
@@ -759,6 +771,62 @@ impl NoirEmitter {
         let x = l.checked_mul(k)?;
         let y = h.checked_mul(k)?;
         Some((x.min(y), x.max(y)))
+    }
+
+    /// Bind with an explicit non-Field type annotation (for narrow
+    /// unsigned casts; plain bind() annotates Field).
+    fn bind_typed(&mut self, expr: &str, ty: &str) -> String {
+        let key = format!("{ty}:{expr}");
+        if let Some(existing) = self.cse_cache.get(&key) {
+            return existing.clone();
+        }
+        let v = self.fresh();
+        let _ = writeln!(self.body, "    let {}: {} = {};", v, ty, expr);
+        self.cse_cache.insert(key, v.clone());
+        v
+    }
+
+    /// Tag a memory-read result with the segment's value hull (if known
+    /// and the cell has no tighter interval already).
+    fn apply_segment_iv(&mut self, segment_id: u32, out: &str) {
+        if self.interval_of.contains_key(out) {
+            return;
+        }
+        if let Some(Some(iv)) = self.segment_iv.get(&segment_id) {
+            self.interval_of.insert(out.to_string(), *iv);
+        }
+    }
+
+    /// Interval-driven unsigned comparison: when both operands are
+    /// provably nonnegative (interval domain), the u128-cast comparison
+    /// replaces the to_signed projection (~140 gates -> ~30; the casts
+    /// CSE per operand). Sound regardless of the interval's correctness:
+    /// the `as u128` cast itself constrains the operand nonnegative —
+    /// a witness violating the derived interval simply fails to prove.
+    fn unsigned_cmp(&mut self, a: &str, b: &str, op: &str) -> Option<String> {
+        let (al, ah) = self.ival(a)?;
+        let (bl, bh) = self.ival(b)?;
+        if al < 0 || bl < 0 {
+            return None;
+        }
+        // Narrowest unsigned width covering both hulls: a u8 comparison
+        // is ~20 gates (vs ~130 for u128), and the cast range checks CSE
+        // per (operand, width). The cast also enforces the hull's
+        // nonnegativity claim, so this stays sound even if the derived
+        // interval were wrong.
+        let max_hi = ah.max(bh).max(1) as u128;
+        let bits = 128 - max_hi.leading_zeros();
+        let width = match bits {
+            0..=8 => "u8",
+            9..=16 => "u16",
+            17..=32 => "u32",
+            33..=64 => "u64",
+            _ => "u128",
+        };
+        let (fa, fb) = (self.as_field(a), self.as_field(b));
+        let ca = self.bind_typed(&format!("{fa} as {width}"), width);
+        let cb = self.bind_typed(&format!("{fb} as {width}"), width);
+        Some(self.bind(&format!("if {ca} {op} {cb} {{ 1 }} else {{ 0 }}")))
     }
 
     /// Bind a sum of product terms in chunks (Noir rejects monolithic
@@ -913,6 +981,12 @@ impl NoirEmitter {
         Ok(v)
     }
     fn lt_i_inner(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some(v) = self.unsigned_cmp(a, b, "<") {
+            let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x < y);
+            self.fold_b(&v, folded);
+            self.set_ival(&v, Some((0, 1)));
+            return Ok(v);
+        }
         let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x < y);
         if self.is_u32(a) && self.is_u32(b) {
             let v = self.bind_u32_with_bound(&format!("if {} < {} {{ 1 }} else {{ 0 }}", a, b), 1);
@@ -974,6 +1048,7 @@ impl NoirEmitter {
             write_version: HashMap::new(),
             interval_of: HashMap::new(),
             lt_pair_of: HashMap::new(),
+            segment_iv: HashMap::new(),
             lt_zero_of: HashMap::new(),
             add_const_of: HashMap::new(),
             norm_index_of: HashMap::new(),
@@ -1891,6 +1966,12 @@ impl Synthesizer for NoirEmitter {
         Ok(v)
     }
     fn lte_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some(v) = self.unsigned_cmp(a, b, "<=") {
+            let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x <= y);
+            self.fold_b(&v, folded);
+            self.set_ival(&v, Some((0, 1)));
+            return Ok(v);
+        }
         let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x <= y);
         if self.is_u32(a) && self.is_u32(b) {
             let v = self.bind_u32_with_bound(&format!("if {} <= {} {{ 1 }} else {{ 0 }}", a, b), 1);
@@ -1917,6 +1998,12 @@ impl Synthesizer for NoirEmitter {
     }
 
     fn gte_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some(v) = self.unsigned_cmp(a, b, ">=") {
+            let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x >= y);
+            self.fold_b(&v, folded);
+            self.set_ival(&v, Some((0, 1)));
+            return Ok(v);
+        }
         let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x >= y);
         if self.is_u32(a) && self.is_u32(b) {
             let v = self.bind_u32_with_bound(&format!("if {} >= {} {{ 1 }} else {{ 0 }}", a, b), 1);
@@ -2391,6 +2478,7 @@ impl Synthesizer for NoirEmitter {
         // mirror halo2 synth semantics.
         let init_field = signed_to_field_decimal(init as i128);
         self.memory_init.insert(segment_id, init_field.clone());
+        self.segment_iv.insert(segment_id, Some((init, init)));
         // Each cell starts as a literal; writes overwrite with SSA names.
         self.memories.insert(
             segment_id,
@@ -2405,6 +2493,13 @@ impl Synthesizer for NoirEmitter {
         value: &CellRef,
     ) -> Result<(), ProvingError> {
         *self.write_version.entry(segment_id).or_insert(0) += 1;
+        // Merge the written value into the segment hull.
+        let viv = self.ival(value);
+        let entry = self.segment_iv.entry(segment_id).or_insert(Some((0, 0)));
+        *entry = match (*entry, viv) {
+            (Some((sl, sh)), Some((vl, vh))) => Some((sl.min(vl), sh.max(vh))),
+            _ => None,
+        };
         if let Some(a) = self.s_int_of(addr) {
             let a = a as usize;
             let mem = self.memories.entry(segment_id).or_default();
@@ -2513,7 +2608,9 @@ impl Synthesizer for NoirEmitter {
                             self.as_field(&plane)
                         ));
                     }
-                    return Ok(self.bind_sum(&parts));
+                    let out = self.bind_sum(&parts);
+                    self.apply_segment_iv(segment_id, &out);
+                    return Ok(out);
                 }
             }
             let (root, scale, offset) = if aff.terms.len() == 1 {
@@ -2541,7 +2638,9 @@ impl Synthesizer for NoirEmitter {
                     self.as_field(&cell)
                 ));
             }
-            return Ok(self.bind_sum(&parts));
+            let out = self.bind_sum(&parts);
+            self.apply_segment_iv(segment_id, &out);
+            return Ok(out);
         };
         let a = a as usize;
         let mem = self.memories.get(&segment_id);
@@ -2557,6 +2656,11 @@ impl Synthesizer for NoirEmitter {
         // reshape becomes a no-op rename, bloating both nargo compile time
         // and the proof's gate count.
         if is_identifier(&expr) {
+            // Inherit the segment hull only when the cell itself carries
+            // no tighter interval.
+            if !self.interval_of.contains_key(&expr) {
+                self.apply_segment_iv(segment_id, &expr.clone());
+            }
             return Ok(expr);
         }
         let prior_val = self.value_cache.get(&expr).cloned();
