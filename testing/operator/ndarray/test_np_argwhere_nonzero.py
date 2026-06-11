@@ -80,7 +80,11 @@ def test_two_axis_dynamic_slice_public_layout_is_top_left_packed():
         ordered.append((int(label.split("_")[-1]), int(value)))
     ordered.sort()
     values = [value for _, value in ordered]
-    assert values == [
+    # The contract pins the runtime bbox shape (length, then per-axis
+    # extents) ahead of the payload — a dynamic-bounds slice no longer
+    # binds only the static envelope rectangle.
+    assert values[:3] == [4, 2, 2]
+    assert values[3:] == [
         5, 6, 0, 0,
         7, 8, 0, 0,
         0, 0, 0, 0,

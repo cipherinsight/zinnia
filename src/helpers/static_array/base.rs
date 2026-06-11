@@ -236,6 +236,9 @@ pub fn materialize_static_array_segment(b: &mut IRBuilder, segment_id: u32, dtyp
     // predicate: predicating them on the branch that merely *triggered*
     // materialization would lock cells to that branch's path condition
     // (binding-audit finding: 0374's ecdf table read inside an `elif`).
+    // For the same reason, the segment's runtime-extents provenance
+    // survives: the content is unchanged, only its storage realises.
+    let saved_extents = b.provenance.runtime_extents_of(segment_id).cloned();
     let prev_wp = b.swap_write_predicate(None);
     for (i, elem) in cached.iter().enumerate() {
         let val = match dtype {
@@ -255,6 +258,9 @@ pub fn materialize_static_array_segment(b: &mut IRBuilder, segment_id: u32, dtyp
         b.ir_write_memory(segment_id, &addr, &val);
     }
     b.swap_write_predicate(prev_wp);
+    if let Some(exts) = saved_extents {
+        b.provenance.set_runtime_extents(segment_id, exts);
+    }
 }
 
 pub fn force_static_array_product_provenance(b: &mut IRBuilder, segment_id: u32) {

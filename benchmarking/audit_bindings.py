@@ -82,18 +82,11 @@ GROUND_TRUTH_OVERRIDES = {
     "0344": _gt_0344,
 }
 
-# Documented under-bindings deferred to the provenance plan's Step 3
-# (slice-view provenance with runtime extents — the "encoding fork").
-# Dynamic-bounds slices of STATIC arrays currently return a full-envelope
-# StaticArray: payload values are correct and verified, but the runtime
-# bbox shape is not pinned by the contract (the if-merge then surfaces
-# static envelope dims as metadata). Step 3's verification criteria
-# include deleting these entries.
-EXPECTED_FAILURES = {
-    "0507": "bbox slice metadata = static envelope dims (plan Step 3)",
-    "0509": "bbox slice metadata = static envelope dims (plan Step 3)",
-    "0510": "bbox slice metadata = static envelope dims (plan Step 3)",
-}
+# Documented under-bindings, keyed case -> reason. Currently EMPTY: the
+# dyn-slice runtime-extents work (provenance plan Step 3) cleared the
+# 0507/0509/0510 bbox entries — dynamic-bounds slices now pin their
+# runtime shape in the output contract.
+EXPECTED_FAILURES: dict[str, str] = {}
 
 
 def numpy_ground_truth(case: str, args: list):
@@ -138,6 +131,9 @@ def flatten_expected(result):
     for part in parts:
         arr = np.asarray(part)
         allowed_meta.add(int(arr.size))
+        # Runtime rank is legitimate dyn metadata (a rank-merging select,
+        # e.g. `np.array([]) if empty else 2-D crop`, exposes it).
+        allowed_meta.add(int(arr.ndim))
         for d in arr.shape:
             allowed_meta.add(int(d))
         if arr.ndim >= 1:

@@ -136,6 +136,23 @@ pub fn select_value(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> 
         && !matches!(tv, Value::DynamicNDArray(_))
         && !matches!(fv, Value::DynamicNDArray(_))
     {
+        // A StaticArray side carrying runtime-extents provenance (a
+        // dynamic-bounds slice) must keep its segment identity through
+        // the merge — materialising to a List would discard the runtime
+        // shape and the output contract would leak envelope dims.
+        // Promote it (consuming the record) and take the dynamic arm.
+        let has_extents = |b: &IRBuilder, v: &Value| {
+            matches!(v, Value::StaticArray { segment_id, .. }
+                if b.provenance.runtime_extents_of(*segment_id).is_some())
+        };
+        if has_extents(b, tv) {
+            let t2 = crate::helpers::promote::promote_static_to_dynamic_with_extents(b, tv);
+            return select_value(b, cond, &t2, fv);
+        }
+        if has_extents(b, fv) {
+            let f2 = crate::helpers::promote::promote_static_to_dynamic_with_extents(b, fv);
+            return select_value(b, cond, tv, &f2);
+        }
         let tv_n = crate::helpers::static_array::base::to_value_list(b, tv);
         let fv_n = crate::helpers::static_array::base::to_value_list(b, fv);
         return select_value(b, cond, &tv_n, &fv_n);

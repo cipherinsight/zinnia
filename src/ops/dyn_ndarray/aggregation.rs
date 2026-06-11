@@ -940,12 +940,43 @@ pub fn dyn_aggregate_axis(
             b.ir_constant_bool(false)
         };
 
+        // Block-confined fast path (BlockView provenance, the padded-
+        // prefix reshape view): scan only this output's static block.
+        // The window comparisons then reference only the TAIL
+        // coordinates' dynamic base — identical IR across all prefix
+        // coordinates, so duplicate-code elimination shares one window
+        // mask per (position, tail combo) instead of per output.
+        let block_view = if mask_form && data.meta.runtime_offset.static_val == Some(0) {
+            b.provenance.block_view_of(data.value_id).filter(|bv| {
+                ax >= bv.prefix_rank
+                    && in_coords.len() >= bv.prefix_rank
+                    && data.meta.runtime_strides[..bv.prefix_rank]
+                        .iter()
+                        .all(|s| s.static_val.is_some())
+            })
+        } else {
+            None
+        };
+        let (skip_prefix, block_off) = match &block_view {
+            Some(bv) => {
+                let mut off = 0usize;
+                for i in 0..bv.prefix_rank {
+                    off += in_coords[i]
+                        * data.meta.runtime_strides[i].static_val.unwrap() as usize;
+                }
+                (bv.prefix_rank, off)
+            }
+            None => (0, 0usize),
+        };
+
         // Mask-form precomputation: contiguous storage window of this
         // output combo, [base, base + dim_ax), plus its non-axis activity.
+        // (Block form: base is block-LOCAL — prefix contributions are
+        // static and folded into `block_off` instead.)
         let mask_ctx = if mask_form {
             let mut base = scalar_to_value_i(b, &data.meta.runtime_offset);
             for (i, &c) in in_coords.iter().enumerate() {
-                if i == ax || c == 0 {
+                if i == ax || c == 0 || i < skip_prefix {
                     continue;
                 }
                 let stride_v = scalar_to_value_i(b, &data.meta.runtime_strides[i]);
@@ -980,10 +1011,10 @@ pub fn dyn_aggregate_axis(
         } else {
             None
         };
-        let steps = if mask_form {
-            data.max_length()
-        } else {
-            axis_dim
+        let steps = match &block_view {
+            Some(bv) => bv.block,
+            None if mask_form => data.max_length(),
+            None => axis_dim,
         };
 
         // Iterate: storage positions (mask form) or axis coordinates.
@@ -995,12 +1026,14 @@ pub fn dyn_aggregate_axis(
                 let lt_hi = b.ir_less_than_i(&s_c, hi);
                 let member = b.ir_logical_and(&ge_base, &lt_hi);
                 let active = b.ir_logical_and(&member, out_active);
-                let elem = if k < values.len() {
-                    values[k].clone()
+                let elem = if block_off + k < values.len() {
+                    values[block_off + k].clone()
                 } else {
                     super::metadata::dyn_default_value(b, data.dtype)
                 };
-                // Axis position (argmax/argmin index) = s - base.
+                // Axis position (argmax/argmin index) = s - base
+                // (block-local positions share the same algebra: both s
+                // and base exclude the static block offset).
                 let pos = b.ir_sub_i(&s_c, base);
                 (elem, active, pos)
             } else if runtime_dynamic {

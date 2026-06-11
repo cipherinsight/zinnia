@@ -468,6 +468,93 @@ fn normalize_axis(axis: i64, ndim: usize, op: &str) -> usize {
 /// `logical_shape` is over-approximated: each runtime dim is recorded as
 /// `old_total` (the loosest upper bound implied by the source). Downstream
 /// ops that need true per-dim bounds should consult `runtime_shape`.
+/// Padded-prefix strided view: when a runtime reshape's source is a
+/// PADDED buffer (a dynamic-bounds slice of a static array: static-full
+/// leading axes, one partial trailing axis, envelope strides) and the
+/// target keeps the static prefix verbatim, the reshape must NOT
+/// address the segment with compact strides — each prefix block lives
+/// at its envelope offset. Returns the strided-view metadata
+/// (runtime_strides, runtime_length, block-confinement record) over the
+/// SAME segment; `None` means the source is compact and the standard
+/// compact-stride path is correct.
+///
+/// Soundness of the confinement record: the caller's
+/// `prod(runtime_shape) == runtime_length` assert forces the tail dims'
+/// product to equal the source's trailing extent, and the extent is
+/// `<= envelope dim` by slice-bound construction, so every active
+/// element's window stays inside its prefix block.
+fn padded_prefix_view(
+    b: &mut IRBuilder,
+    data: &DynamicNDArrayData,
+    shape_values: &[Value],
+) -> Option<(
+    Vec<ScalarValue<i64>>,
+    ScalarValue<i64>,
+    crate::provenance::BlockView,
+)> {
+    let meta = &data.meta;
+    if meta.runtime_offset.static_val != Some(0) {
+        return None;
+    }
+    let src_rank = meta.logical_shape.len();
+    if src_rank < 2 || meta.runtime_shape.len() != src_rank {
+        return None;
+    }
+    // Source must address through the static envelope strides.
+    let env_strides = row_major_strides(&meta.logical_shape);
+    if meta.runtime_strides.len() != src_rank {
+        return None;
+    }
+    for (sv, &e) in meta.runtime_strides.iter().zip(env_strides.iter()) {
+        if sv.static_val != Some(e as i64) {
+            return None;
+        }
+    }
+    // Leading axes static-full; trailing axis genuinely partial.
+    let prefix_rank = src_rank - 1;
+    for i in 0..prefix_rank {
+        if meta.runtime_shape[i].static_val != Some(meta.logical_shape[i] as i64) {
+            return None;
+        }
+    }
+    if meta.runtime_shape[src_rank - 1].static_val
+        == Some(meta.logical_shape[src_rank - 1] as i64)
+    {
+        return None; // full buffer — compact path is correct and cheaper
+    }
+    // Target must preserve the static prefix verbatim and have a tail.
+    if shape_values.len() <= prefix_rank {
+        return None;
+    }
+    for i in 0..prefix_rank {
+        if shape_values[i].int_val() != Some(meta.logical_shape[i] as i64) {
+            return None;
+        }
+    }
+    // Strides: prefix axes keep their envelope strides; tail axes get
+    // row-major strides over the (possibly dynamic) tail dims.
+    let n = shape_values.len();
+    let mut rt: Vec<ScalarValue<i64>> = vec![ScalarValue::new(Some(1), None); n];
+    let mut acc = b.ir_constant_int(1);
+    for i in (prefix_rank..n).rev() {
+        rt[i] = value_to_scalar_i64(&acc);
+        if i > prefix_rank {
+            acc = b.ir_mul_i(&acc, &shape_values[i]);
+        }
+    }
+    for (i, slot) in rt.iter_mut().enumerate().take(prefix_rank) {
+        *slot = ScalarValue::new(Some(env_strides[i] as i64), None);
+    }
+    Some((
+        rt,
+        meta.runtime_length.clone(),
+        crate::provenance::BlockView {
+            prefix_rank,
+            block: env_strides[prefix_rank - 1],
+        },
+    ))
+}
+
 fn dyn_reshape_runtime(
     b: &mut IRBuilder,
     data: &DynamicNDArrayData,
@@ -578,32 +665,46 @@ fn dyn_reshape_runtime(
     // True runtime strides (C-order over the RUNTIME dims, as IR cells):
     // the logical skeleton's strides describe the padding rectangle, not
     // the actual layout — consumers gathering with runtime geometry (e.g.
-    // axis reductions over a runtime-reshaped array) need these.
-    let mut rt_strides: Vec<ScalarValue<i64>> = vec![ScalarValue::new(Some(1), None); n_dims];
-    let mut stride_acc = b.ir_constant_int(1);
-    for i in (0..n_dims).rev() {
-        rt_strides[i] = value_to_scalar_i64(&stride_acc);
-        if i > 0 {
-            stride_acc = b.ir_mul_i(&stride_acc, &shape_values[i]);
+    // axis reductions over a runtime-reshaped array) need these. A
+    // padded-prefix source instead keeps its envelope prefix strides
+    // (see padded_prefix_view).
+    let padded = padded_prefix_view(b, data, &shape_values);
+    let (rt_strides, runtime_length) = match &padded {
+        Some((strides, length, _)) => (strides.clone(), length.clone()),
+        None => {
+            let mut rt_strides: Vec<ScalarValue<i64>> =
+                vec![ScalarValue::new(Some(1), None); n_dims];
+            let mut stride_acc = b.ir_constant_int(1);
+            for i in (0..n_dims).rev() {
+                rt_strides[i] = value_to_scalar_i64(&stride_acc);
+                if i > 0 {
+                    stride_acc = b.ir_mul_i(&stride_acc, &shape_values[i]);
+                }
+            }
+            (rt_strides, ScalarValue::new(Some(old_total as i64), None))
         }
-    }
+    };
 
-    Value::DynamicNDArray(DynamicNDArrayData {
+    let out = Value::DynamicNDArray(DynamicNDArrayData {
         envelope,
         dtype: data.dtype,
-        segment_id: data.segment_id, // segment is contiguous; reuse
+        segment_id: data.segment_id, // compact OR padded view; strides decide
         meta: DynArrayMeta {
             logical_shape,
             logical_offset: 0,
             logical_strides: new_strides.clone(),
-            runtime_length: ScalarValue::new(Some(old_total as i64), None),
+            runtime_length,
             runtime_rank: ScalarValue::new(Some(n_dims as i64), None),
             runtime_shape,
             runtime_strides: rt_strides,
             runtime_offset: ScalarValue::new(Some(0), None),
         },
         value_id: ValueId::next(),
-    })
+    });
+    if let (Some((_, _, bv)), Some(vid)) = (padded, out.value_id()) {
+        b.provenance.set_block_view(vid, bv);
+    }
+    out
 }
 
 /// Reshape a dynamic array to a new static shape.
@@ -904,19 +1005,27 @@ fn dyn_reshape_runtime_infer_unknown(
 
     // True runtime strides (C-order over the RUNTIME dims, as IR cells) —
     // see dyn_reshape_runtime: the logical skeleton's strides describe the
-    // padding rectangle, not the actual layout.
+    // padding rectangle, not the actual layout. A padded-prefix source
+    // keeps its envelope prefix strides (padded_prefix_view).
     let n_dims_total = shape_values.len();
-    let mut rt_strides: Vec<ScalarValue<i64>> =
-        vec![ScalarValue::new(Some(1), None); n_dims_total];
-    let mut stride_acc = b.ir_constant_int(1);
-    for i in (0..n_dims_total).rev() {
-        rt_strides[i] = value_to_scalar_i64(&stride_acc);
-        if i > 0 {
-            stride_acc = b.ir_mul_i(&stride_acc, &shape_values[i]);
+    let padded = padded_prefix_view(b, data, &shape_values);
+    let (rt_strides, runtime_length) = match &padded {
+        Some((strides, length, _)) => (strides.clone(), length.clone()),
+        None => {
+            let mut rt_strides: Vec<ScalarValue<i64>> =
+                vec![ScalarValue::new(Some(1), None); n_dims_total];
+            let mut stride_acc = b.ir_constant_int(1);
+            for i in (0..n_dims_total).rev() {
+                rt_strides[i] = value_to_scalar_i64(&stride_acc);
+                if i > 0 {
+                    stride_acc = b.ir_mul_i(&stride_acc, &shape_values[i]);
+                }
+            }
+            (rt_strides, ScalarValue::new(Some(old_total as i64), None))
         }
-    }
+    };
 
-    Value::DynamicNDArray(DynamicNDArrayData {
+    let out = Value::DynamicNDArray(DynamicNDArrayData {
         envelope,
         dtype: data.dtype,
         segment_id: data.segment_id,
@@ -924,12 +1033,16 @@ fn dyn_reshape_runtime_infer_unknown(
             logical_shape,
             logical_offset: 0,
             logical_strides: new_strides.clone(),
-            runtime_length: ScalarValue::new(Some(old_total as i64), None),
+            runtime_length,
             runtime_rank: ScalarValue::new(Some(dim_args.len() as i64), None),
             runtime_shape,
             runtime_strides: rt_strides,
             runtime_offset: ScalarValue::new(Some(0), None),
         },
         value_id: ValueId::next(),
-    })
+    });
+    if let (Some((_, _, bv)), Some(vid)) = (padded, out.value_id()) {
+        b.provenance.set_block_view(vid, bv);
+    }
+    out
 }

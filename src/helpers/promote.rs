@@ -18,7 +18,7 @@
 use crate::builder::IRBuilder;
 use crate::ops::dyn_ndarray::value_to_scalar_i64;
 use crate::types::{
-    DynArrayMeta, DynamicNDArrayData, Envelope, NumberType, ScalarValue, Value, ValueId,
+    Dim, DynArrayMeta, DynamicNDArrayData, Envelope, NumberType, ScalarValue, Value, ValueId,
 };
 
 use super::composite::{flatten_composite, get_composite_shape};
@@ -39,6 +39,106 @@ fn infer_static_dtype(val: &Value) -> NumberType {
     } else {
         NumberType::Integer
     }
+}
+
+/// Promote a static composite ndarray (`Value::List`/`Value::Tuple` of
+/// numeric leaves) into a `Value::DynamicNDArray` with the tightest
+/// envelope (one `Static(N)` dim per axis). The runtime metadata is
+/// initialised to match the static shape.
+///
+/// Scalars (non-composite numeric values) become rank-0 dynamic arrays.
+///
+/// Panics if `val` is not a static numeric value or composite of numeric
+/// leaves.
+/// Contract-boundary variant of [`promote_static_to_dynamic`]: a
+/// segment-backed StaticArray with runtime-extents provenance (a
+/// dynamic-bounds slice materialization) promotes with its TRUE runtime
+/// shape — content occupies the `[0, extent_i)` prefix of each envelope
+/// axis (padded layout). Without this, the promotion claims the full
+/// envelope rectangle and the output contract leaks static skeleton
+/// dims instead of the runtime extents (the 0507/0509/0510
+/// binding-audit xfails).
+///
+/// ONLY for values that feed the output contract (circuit return
+/// exposure, the if-merge select feeding a return). Mid-computation
+/// coercions must use the plain promotion: switching them to runtime
+/// dims flips every downstream op from static to dynamic lowering
+/// (0389/0419/0450 regressed 30-600x in gates when this fired
+/// unconditionally).
+pub fn promote_static_to_dynamic_with_extents(b: &mut IRBuilder, val: &Value) -> Value {
+    if let Value::StaticArray {
+        segment_id,
+        shape: sa_shape,
+        strides: sa_strides,
+        offset: 0,
+        dtype: sa_dtype,
+        ..
+    } = val
+    {
+        if *sa_strides == row_major_strides(sa_shape) && *sa_dtype != NumberType::Complex {
+            if let Some(ext_vids) = b.provenance.runtime_extents_of(*segment_id).cloned() {
+                // The dyn wrapper reads the segment directly — a lazily
+                // backed StaticArray must materialise its deferred writes
+                // first or every read sees the init value.
+                super::static_array::base::materialize_static_array_if_lazy(b, val);
+                if ext_vids.len() == sa_shape.len() {
+                    let mut ext_vals: Vec<Value> = Vec::with_capacity(ext_vids.len());
+                    let mut ok = true;
+                    for vid in &ext_vids {
+                        match b.value_of_vid(*vid) {
+                            Some(v) => ext_vals.push(v),
+                            None => {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+                    if ok {
+                        let rank = sa_shape.len();
+                        let total: usize = sa_shape.iter().product();
+                        let mut dims = Vec::with_capacity(rank);
+                        let mut rt_shape = Vec::with_capacity(rank);
+                        let mut len_v: Option<Value> = None;
+                        for (ax, ev) in ext_vals.iter().enumerate() {
+                            if ev.int_val() == Some(sa_shape[ax] as i64) {
+                                dims.push(Dim::new_static(&mut b.dim_table, sa_shape[ax]));
+                            } else {
+                                dims.push(Dim::new_dynamic(&mut b.dim_table, 0, sa_shape[ax]));
+                            }
+                            rt_shape.push(value_to_scalar_i64(ev));
+                            len_v = Some(match len_v.take() {
+                                None => ev.clone(),
+                                Some(prev) => b.ir_mul_i(&prev, ev),
+                            });
+                        }
+                        let runtime_length =
+                            value_to_scalar_i64(&len_v.unwrap_or_else(|| b.ir_constant_int(0)));
+                        let strides = row_major_strides(sa_shape);
+                        return Value::DynamicNDArray(DynamicNDArrayData {
+                            envelope: Envelope::new_with_bound(dims, total),
+                            dtype: *sa_dtype,
+                            segment_id: *segment_id,
+                            meta: DynArrayMeta {
+                                logical_shape: sa_shape.clone(),
+                                logical_offset: 0,
+                                logical_strides: strides.clone(),
+                                runtime_length,
+                                runtime_rank: ScalarValue::new(Some(rank as i64), None),
+                                runtime_shape: rt_shape,
+                                runtime_strides: strides
+                                    .iter()
+                                    .map(|&s| ScalarValue::new(Some(s as i64), None))
+                                    .collect(),
+                                runtime_offset: ScalarValue::new(Some(0), None),
+                            },
+                            value_id: ValueId::next(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    promote_static_to_dynamic(b, val)
 }
 
 /// Promote a static composite ndarray (`Value::List`/`Value::Tuple` of

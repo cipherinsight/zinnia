@@ -82,8 +82,22 @@ pub fn reshape(b: &mut IRBuilder, val: &Value, args: &[Value]) -> Value {
         });
 
         if has_dynamic {
-            let val_m = maybe_materialise_static_array(b, val);
-            let d = promote(b, &val_m);
+            // Keep a dynamic-bounds slice's segment identity (and its
+            // runtime-extents record) through the promotion: listifying
+            // re-claims the full static envelope, and the runtime
+            // reshape then either mis-addresses the padded buffer or
+            // rejects valid witnesses on its length assert.
+            let d = if matches!(val, Value::StaticArray { segment_id, .. }
+                if b.provenance.runtime_extents_of(*segment_id).is_some())
+            {
+                match crate::helpers::promote::promote_static_to_dynamic_with_extents(b, val) {
+                    Value::DynamicNDArray(d) => d,
+                    _ => unreachable!("with_extents promote returns a dyn array"),
+                }
+            } else {
+                let val_m = maybe_materialise_static_array(b, val);
+                promote(b, &val_m)
+            };
             crate::ops::dyn_ndarray::reshape::dyn_reshape(b, &d, args)
         } else if let Some(out) =
             crate::helpers::static_array::shape::try_apply_reshape(b, val, args)

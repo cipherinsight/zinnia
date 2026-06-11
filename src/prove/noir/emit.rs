@@ -693,8 +693,6 @@ impl<'a> NoirEmitter<'a> {
                             terms,
                             offset: av.offset,
                         };
-                    } else if std::env::var("ZINNIA_PROV_DEBUG").is_ok() {
-                        eprintln!("[prov-debug] aff_of({}): root vid unmapped", var);
                     }
                 }
             }
@@ -822,18 +820,67 @@ impl<'a> NoirEmitter<'a> {
     }
 
     /// Cached eq(root, v) indicator, shared across all reads/writes on
-    /// the same root.
+    /// the same root. Structural provenance widens the sharing: a
+    /// unit-scale single-root affine view shifts the request
+    /// (`[x + c == v]` is `[x == v - c]`) and a constant clamp forwards
+    /// strictly-inside values to its source (`[min(x,K) == v]` is
+    /// `[x == v]` for `v < K`, and `[x >= K]` at the bound), so the
+    /// per-row one-hots of a windowed gather all collapse onto the
+    /// window start's single indicator family.
     fn indicator(&mut self, root: &str, v: i64) -> String {
         if let Some(i) = self.ind_cache.get(&(root.to_string(), v)) {
             return i.clone();
         }
-        let rf = self.as_field(root);
-        let expr = if v >= 0 {
-            format!("if {rf} == {v} {{ 1 }} else {{ 0 }}")
+        let mut base = root.to_string();
+        let mut val = v;
+        let mut boundary: Option<(String, i64, bool)> = None;
+        for _ in 0..8 {
+            let Some(vid) = self.vid_of_var.get(&base).copied() else {
+                break;
+            };
+            if let Some(av) = self.prov.affine_of(vid) {
+                if av.terms.len() == 1 && av.terms[0].1 == 1 && av.offset != 0 {
+                    if let Some(b2) = self.var_of_vid.get(&av.terms[0].0).cloned() {
+                        if b2 != base {
+                            val -= av.offset;
+                            base = b2;
+                            continue;
+                        }
+                    }
+                }
+            }
+            if let Some(cl) = self.prov.clamp_of(vid) {
+                if let Some(b2) = self.var_of_vid.get(&cl.source).cloned() {
+                    if b2 != base {
+                        if (cl.is_min && val < cl.bound) || (!cl.is_min && val > cl.bound) {
+                            base = b2;
+                            continue;
+                        }
+                        if val == cl.bound && cl.bound >= 0 && self.is_u32(&b2) {
+                            boundary = Some((b2, cl.bound, cl.is_min));
+                        }
+                    }
+                }
+            }
+            break;
+        }
+        let ind = if let Some((src, k, is_min)) = boundary {
+            // Saturated clamp slot: the comparison form. `src` is
+            // u32-bound (nonnegative), so the integer comparison agrees
+            // with the signed min/max semantics.
+            let op = if is_min { ">=" } else { "<=" };
+            self.bind(&format!("if {src} {op} {k} {{ 1 }} else {{ 0 }}"))
+        } else if base != root || val != v {
+            self.indicator(&base, val)
         } else {
-            format!("if {rf} + {} == 0 {{ 1 }} else {{ 0 }}", -v)
+            let rf = self.as_field(root);
+            let expr = if v >= 0 {
+                format!("if {rf} == {v} {{ 1 }} else {{ 0 }}")
+            } else {
+                format!("if {rf} + {} == 0 {{ 1 }} else {{ 0 }}", -v)
+            };
+            self.bind(&expr)
         };
-        let ind = self.bind(&expr);
         self.ind_cache.insert((root.to_string(), v), ind.clone());
         ind
     }

@@ -248,6 +248,36 @@ pub struct SliceView {
     pub step: i64,
 }
 
+/// Structural clamp: the annotated value is `min(source, bound)` (or
+/// `max(source, bound)` when `is_min` is false) with a compile-time
+/// constant `bound`. Deposited by the `SelectI` min/max recognizer when
+/// one branch is constant. Lets backend equality indicators on clamped
+/// gather addresses reduce to the un-clamped root's indicator family
+/// (`[min(x,K) == v]` is `[x == v]` for `v < K` and `[x >= K]` at the
+/// bound), so per-row dynamic gathers share one one-hot per root.
+#[derive(Clone, Copy, Debug)]
+pub struct ClampView {
+    pub source: ValueId,
+    pub bound: i64,
+    pub is_min: bool,
+}
+
+/// Block-confined view: for the annotated DynamicNDArray VALUE, every
+/// active (within-runtime-shape) element's storage position lies inside
+/// the static block selected by its leading `prefix_rank` coordinates —
+/// `[linear(prefix coords) * block, … + block)`. Deposited by the
+/// padded-prefix runtime-reshape path (a dynamic-bounds slice of a
+/// static array reshaped without repacking); the producer's
+/// `prod(runtime_shape) == runtime_length` assert plus the slice
+/// extent's `<= envelope dim` construction guarantee the confinement.
+/// Consumed by axis reductions to scan one block per output instead of
+/// the whole buffer, with window masks shared across prefix coords.
+#[derive(Clone, Copy, Debug)]
+pub struct BlockView {
+    pub prefix_rank: usize,
+    pub block: usize,
+}
+
 /// The one structural-provenance table. Owned by `IRBuilder` during IR
 /// generation; transferred onto `IRGraph` at export and carried through
 /// the optimization pipeline (with remap/retain hooks) so backends can
@@ -278,6 +308,23 @@ pub struct ProvenanceTable {
     /// interval). Feeds `ReadMemory` output intervals (the Noir emitter's
     /// `segment_iv` semantics).
     segment_hull: HashMap<u32, Option<Interval>>,
+    /// Runtime extents of a PADDED slice materialization: the segment's
+    /// content occupies the `[0, extent_i)` prefix of axis `i` of its
+    /// envelope rectangle (one ValueId per axis; constants for static
+    /// axes). Deposited by dynamic-bounds slices of static arrays;
+    /// consumed when the value is promoted to a dyn array or bound as a
+    /// circuit output, so the runtime shape is pinned by the contract
+    /// instead of leaking the envelope skeleton (the 0507/0509/0510
+    /// under-binding).
+    runtime_extents: HashMap<u32, Vec<ValueId>>,
+    /// Block-confined dyn-array views, keyed by the array VALUE (not the
+    /// segment — confinement is a property of the view's strides).
+    /// Consumed at IR-build time by axis reductions; carried in the
+    /// table for the uniform remap/retain/consistency lifecycle.
+    block_views: HashMap<ValueId, BlockView>,
+    /// Structural min/max-against-constant views, keyed by the clamped
+    /// value.
+    clamps: HashMap<ValueId, ClampView>,
 }
 
 impl ProvenanceTable {
@@ -293,6 +340,9 @@ impl ProvenanceTable {
             && self.layout.is_empty()
             && self.compaction.is_empty()
             && self.slice_views.is_empty()
+            && self.runtime_extents.is_empty()
+            && self.clamps.is_empty()
+            && self.block_views.is_empty()
     }
 
     // ── Write tracking (invariant #4) ────────────────────────────────
@@ -306,6 +356,7 @@ impl ProvenanceTable {
         self.slice_views
             .retain(|seg, view| *seg != segment && view.base_segment != segment);
         self.compaction.retain(|(seg, _), _| *seg != segment);
+        self.runtime_extents.remove(&segment);
     }
 
     pub fn write_version(&self, segment: u32) -> u64 {
@@ -332,6 +383,14 @@ impl ProvenanceTable {
         self.segment_hull.get(&segment).copied().flatten()
     }
 
+    pub fn runtime_extents_of(&self, segment: u32) -> Option<&Vec<ValueId>> {
+        self.runtime_extents.get(&segment)
+    }
+
+    pub fn set_runtime_extents(&mut self, segment: u32, extents: Vec<ValueId>) {
+        self.runtime_extents.insert(segment, extents);
+    }
+
     // ── Record accessors ─────────────────────────────────────────────
 
     pub fn slice_view(&self, segment: u32) -> Option<&SliceView> {
@@ -356,6 +415,22 @@ impl ProvenanceTable {
 
     pub fn set_interval(&mut self, vid: ValueId, iv: Interval) {
         self.interval.insert(vid, iv);
+    }
+
+    pub fn block_view_of(&self, vid: ValueId) -> Option<BlockView> {
+        self.block_views.get(&vid).copied()
+    }
+
+    pub fn set_block_view(&mut self, vid: ValueId, view: BlockView) {
+        self.block_views.insert(vid, view);
+    }
+
+    pub fn clamp_of(&self, vid: ValueId) -> Option<ClampView> {
+        self.clamps.get(&vid).copied()
+    }
+
+    pub fn set_clamp(&mut self, vid: ValueId, view: ClampView) {
+        self.clamps.insert(vid, view);
     }
 
     pub fn layout_of(&self, segment: u32) -> Option<LayoutKind> {
@@ -387,6 +462,24 @@ impl ProvenanceTable {
         }
         if let Some(v) = self.interval.remove(&old) {
             self.interval.entry(new).or_insert(v);
+        }
+        if let Some(v) = self.clamps.remove(&old) {
+            self.clamps.entry(new).or_insert(v);
+        }
+        if let Some(v) = self.block_views.remove(&old) {
+            self.block_views.entry(new).or_insert(v);
+        }
+        for view in self.clamps.values_mut() {
+            if view.source == old {
+                view.source = new;
+            }
+        }
+        for exts in self.runtime_extents.values_mut() {
+            for vid in exts.iter_mut() {
+                if *vid == old {
+                    *vid = new;
+                }
+            }
         }
         for view in self.affine.values_mut() {
             for (vid, _) in view.terms.iter_mut() {
@@ -427,6 +520,11 @@ impl ProvenanceTable {
         self.slice_views.retain(|_, view| {
             view.start.value_id().map(|v| live(v)).unwrap_or(true)
         });
+        self.runtime_extents
+            .retain(|_, exts| exts.iter().all(|v| live(*v)));
+        self.clamps
+            .retain(|vid, view| live(*vid) && live(view.source));
+        self.block_views.retain(|vid, _| live(*vid));
     }
 
     /// Validate that every `ValueId` referenced by a record resolves in
@@ -471,6 +569,32 @@ impl ProvenanceTable {
                 return Err(format!(
                     "compaction record for segment {} has dead count {:?}",
                     seg, info.count
+                ));
+            }
+        }
+        for (seg, exts) in &self.runtime_extents {
+            for v in exts {
+                if !value_exists(*v) {
+                    return Err(format!(
+                        "runtime-extents record for segment {} references dead value {:?}",
+                        seg, v
+                    ));
+                }
+            }
+        }
+        for vid in self.block_views.keys() {
+            if !value_exists(*vid) {
+                return Err(format!(
+                    "block-view record references dead value {:?}",
+                    vid
+                ));
+            }
+        }
+        for (vid, view) in &self.clamps {
+            if !value_exists(*vid) || !value_exists(view.source) {
+                return Err(format!(
+                    "clamp record {:?} -> {:?} references a dead value",
+                    vid, view
                 ));
             }
         }

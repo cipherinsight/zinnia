@@ -1218,6 +1218,28 @@ impl IRBuilder {
                             // gt + straight = max; gt + swapped = min.
                             let is_min = (is_lt && straight) || (is_gt && swapped);
                             let is_max = (is_lt && swapped) || (is_gt && straight);
+                            // Structural clamp record: min/max against a
+                            // CONSTANT branch keeps the other branch's
+                            // identity (backend indicator sharing).
+                            if is_min || is_max {
+                                let pairs =
+                                    [(&args[1], &args[2]), (&args[2], &args[1])];
+                                for (cv, sv) in pairs {
+                                    if let (Some(k), Some(src)) =
+                                        (cv.int_val(), sv.value_id())
+                                    {
+                                        self.provenance.set_clamp(
+                                            vid,
+                                            crate::provenance::ClampView {
+                                                source: src,
+                                                bound: k,
+                                                is_min,
+                                            },
+                                        );
+                                        break;
+                                    }
+                                }
+                            }
                             // One known side suffices: min(a,b) <= hi of
                             // either; max(a,b) >= lo of either.
                             if is_min {

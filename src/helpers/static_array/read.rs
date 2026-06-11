@@ -1767,7 +1767,49 @@ fn materialise_dynamic_axis_slice(
         };
         leaves.push(scalar_i64_to_value(&value_to_scalar_i64(&masked), dtype));
     }
-    super::base::build_static_array_from_flat(b, leaves, new_shape, dtype)
+    let out = super::base::build_static_array_from_flat(b, leaves, new_shape, dtype);
+    // Runtime-extents provenance (padded layout: content sits in the
+    // [0, extent) prefix of the sliced axis). step == 1 only — the bbox
+    // family; other steps keep today's no-record behavior. Non-sliced
+    // axes inherit the SOURCE's extents when recorded (slice-of-slice
+    // composition), else their full static dims.
+    if step_ir.int_val() == Some(1) {
+        if let Value::StaticArray {
+            segment_id: out_seg,
+            ..
+        } = &out
+        {
+            let diff = b.ir_sub_i(&stop_ir, &start_ir);
+            let zero = b.ir_constant_int(0);
+            let neg = b.ir_less_than_i(&diff, &zero);
+            let extent = b.ir_select_i(&neg, &zero, &diff);
+            if let Some(ext_vid) = extent.value_id() {
+                let src_exts = b.provenance.runtime_extents_of(segment_id).cloned();
+                let mut exts: Vec<crate::types::ValueId> = Vec::with_capacity(shape.len());
+                let mut ok = true;
+                for ax in 0..shape.len() {
+                    if ax == axis {
+                        exts.push(ext_vid);
+                    } else if let Some(srcs) = src_exts.as_ref().and_then(|v| v.get(ax)) {
+                        exts.push(*srcs);
+                    } else {
+                        let c = b.ir_constant_int(shape[ax] as i64);
+                        match c.value_id() {
+                            Some(vid) => exts.push(vid),
+                            None => {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if ok {
+                    b.provenance.set_runtime_extents(*out_seg, exts);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Fuse the per-axis slice mask computation when 2+ axes have dynamic
@@ -1990,7 +2032,65 @@ fn materialise_dynamic_multi_axis_slice(
             out_shape.to_vec(),
         );
     }
-    super::base::build_static_array_from_flat(b, leaves, out_shape.to_vec(), dtype)
+    let out = super::base::build_static_array_from_flat(b, leaves, out_shape.to_vec(), dtype);
+    // Runtime-extents provenance for the fused multi-axis slice: each
+    // dynamic axis (step 1) gets extent = max(0, stop - start); static
+    // Range axes occupy their full output dims. Bail (no record) when
+    // any dynamic axis has a non-unit step.
+    if let Value::StaticArray {
+        segment_id: out_seg,
+        ..
+    } = &out
+    {
+        let mut by_out_axis: Vec<Option<crate::types::ValueId>> = vec![None; out_shape.len()];
+        let mut ok = true;
+        for (ax_src, out_axis, start, stop, step) in axis_specs {
+            let step_one = match step {
+                Some(v) if !matches!(v, Value::None) => v.int_val() == Some(1),
+                _ => true,
+            };
+            if !step_one {
+                ok = false;
+                break;
+            }
+            let axis_len = shape[*ax_src] as i64;
+            let s_ir = val_to_ir(b, &start.clone(), 0);
+            let e_ir = val_to_ir(b, &stop.clone(), axis_len);
+            let diff = b.ir_sub_i(&e_ir, &s_ir);
+            let zero = b.ir_constant_int(0);
+            let neg = b.ir_less_than_i(&diff, &zero);
+            let extent = b.ir_select_i(&neg, &zero, &diff);
+            match extent.value_id() {
+                Some(vid) if *out_axis < by_out_axis.len() => by_out_axis[*out_axis] = Some(vid),
+                _ => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if ok {
+            let mut exts: Vec<crate::types::ValueId> = Vec::with_capacity(out_shape.len());
+            for (oa, slot) in by_out_axis.into_iter().enumerate() {
+                match slot {
+                    Some(vid) => exts.push(vid),
+                    None => {
+                        let c = b.ir_constant_int(out_shape[oa] as i64);
+                        match c.value_id() {
+                            Some(vid) => exts.push(vid),
+                            None => {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if ok {
+                b.provenance.set_runtime_extents(*out_seg, exts);
+            }
+        }
+    }
+    out
 }
 
 fn provable_nonneg(b: &IRBuilder, v: &Value) -> bool {
@@ -2314,6 +2414,30 @@ fn multidim_subscript_static_array(
                 }
             })
             .collect();
+        // Identity subscript: every remaining axis is a bare full range
+        // (the `data[:, :k]` pattern). Re-subscripting would copy the
+        // materialised slice into a fresh segment — wasted memory ops,
+        // and the copy would shed the slice's runtime-extents record.
+        // Bounds may be parsed as concrete 0..len step 1 rather than
+        // bare `None`s, so test full-ness against the axis length.
+        let full_range = |idx: &SliceIndex, len: usize| match idx {
+            SliceIndex::Range(s, e, st) => {
+                let unset = |v: &Value| matches!(v, Value::None);
+                s.as_ref().map_or(true, |v| unset(v) || v.int_val() == Some(0))
+                    && e.as_ref()
+                        .map_or(true, |v| unset(v) || v.int_val() == Some(len as i64))
+                    && st.as_ref().map_or(true, |v| unset(v) || v.int_val() == Some(1))
+            }
+            _ => false,
+        };
+        if remaining.len() == shape.len()
+            && remaining
+                .iter()
+                .zip(shape.iter())
+                .all(|(idx, &len)| full_range(idx, len))
+        {
+            return sliced;
+        }
         return static_array_subscript(b, &sliced, &remaining);
     }
 

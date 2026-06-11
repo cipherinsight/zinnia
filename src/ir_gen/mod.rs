@@ -672,6 +672,76 @@ impl IRGenerator {
             Value::Float(_) => {
                 self.builder.ir_expose_public_f(value);
             }
+            // A StaticArray carrying runtime-extents provenance (a
+            // dynamic-bounds slice) binds as a dyn array so the contract
+            // pins the RUNTIME shape, not the envelope rectangle.
+            Value::StaticArray {
+                segment_id, shape, ..
+            } if self
+                .builder
+                .provenance
+                .runtime_extents_of(*segment_id)
+                .is_some() =>
+            {
+                // Bind with the dyn-array contract layout (length, dims,
+                // payload) so the contract pins the RUNTIME shape — but
+                // take the payload from the in-SSA cell values rather
+                // than promoting to a segment-backed dyn array. Promotion
+                // would re-read every envelope cell from memory, keeping
+                // the slice envelope's writes alive; the SSA path lets
+                // unread_memory_elimination delete them (and pad-slot
+                // constants elide like any constant return cell).
+                let ext_vids = self
+                    .builder
+                    .provenance
+                    .runtime_extents_of(*segment_id)
+                    .cloned()
+                    .unwrap();
+                let mut ext_vals: Vec<Value> = Vec::with_capacity(ext_vids.len());
+                for vid in &ext_vids {
+                    match self.builder.value_of_vid(*vid) {
+                        Some(v) => ext_vals.push(v),
+                        None => break,
+                    }
+                }
+                if ext_vals.len() == shape.len() {
+                    let shape = shape.clone();
+                    let total: usize = shape.iter().product();
+                    let mut len_v: Option<Value> = None;
+                    for ev in &ext_vals {
+                        len_v = Some(match len_v.take() {
+                            None => ev.clone(),
+                            Some(prev) => self.builder.ir_mul_i(&prev, ev),
+                        });
+                    }
+                    let len_v = len_v.unwrap_or_else(|| self.builder.ir_constant_int(0));
+                    // Same elision rules as expose_dynamic_ndarray_return:
+                    // skip metadata cells that are compile-time constants
+                    // equal to what the signature already implies.
+                    if len_v.int_val() != Some(total as i64) {
+                        self.builder.ir_expose_public_i(&len_v);
+                    }
+                    for ev in &ext_vals {
+                        if ev.int_val().is_none() {
+                            self.builder.ir_expose_public_i(ev);
+                        }
+                    }
+                    let flat = crate::helpers::composite::flatten_composite_with_builder(
+                        &mut self.builder,
+                        value,
+                    );
+                    for leaf in flat {
+                        self.expose_circuit_return_value(&leaf);
+                    }
+                } else {
+                    let promoted =
+                        crate::helpers::promote::promote_static_to_dynamic_with_extents(
+                            &mut self.builder,
+                            value,
+                        );
+                    self.expose_circuit_return_value(&promoted);
+                }
+            }
             Value::List(_) | Value::Tuple(_) | Value::StaticArray { .. } => {
                 let flat = crate::helpers::composite::flatten_composite_with_builder(
                     &mut self.builder,
