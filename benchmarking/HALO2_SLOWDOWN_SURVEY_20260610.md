@@ -184,3 +184,31 @@ table: `HALO2_FULL_COMPARISON_v22_final.md`.
     than its own yesterday — consistent with the in-flight fancy-index
     static_array lowering committed in the checkpoint (same family that
     originally regressed 0319 before the affine zkRAM fix rescued it).
+
+## Circuit-size audit + bitwidth fairness (2026-06-11)
+
+Per-case advice-cell comparison (`zn_halo2_cells_20260611.json` vs the HW
+final sweep): geomean **0.351x**, totals 1.48M vs 5.09M; five Zinnia
+circuits are zero-cell (fully folded). Zinnia larger on 16 cases, six at
+>=2x — all in the small-kernel select/eq-density family where prove time
+is floor-dominated (time ratios ~1.0-1.26x despite 2-4x cells).
+
+Root cause of the largest gaps: discharge/comparison **bitwidth**. Zinnia
+enforces its 64-bit integer domain (range-check both operands + 64-bit
+compare, ~100 cells per bound discharge); the handwritten 0402/0403 used a
+bare 32-bit check_less_than whose input assumption was never enforced. A
+width audit across all 134 target.rs files found 0402/0403 to be the only
+unjustified narrow-width integer sites; they now enforce 64-bit (commit
+4fc2c4f). With equal rules: 0402/0403 at cell parity (1.04x/1.07x) and
+Zinnia faster in time (0.74-0.77x). The remaining cell-larger cases
+(0442 4.0x, 0415 2.5x, 0412 2.3x, 0353 1.65x, ...) are genuine per-gadget
+density differences (select/eq chains, floor_div machinery) with prove
+times at or near parity; candidates if circuit size ever becomes a
+headline metric.
+
+Residual prove-time gap on 0385/0387 (1.06-1.16x) was traced past circuit
+structure (byte-identical configs) and library version (A/B-tested
+halo2_proofs v0.3.0 vs v2023_02_02: no difference) to the execution
+environment: Zinnia proves inside a Python cdylib (PIC + unwind) vs HW's
+panic=abort standalone binary. Fix would be a standalone zinnia-prove
+benchmark binary; documented as accepted parity-band for now.
