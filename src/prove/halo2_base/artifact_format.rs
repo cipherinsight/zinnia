@@ -17,6 +17,14 @@ pub struct Halo2BasePinnedRekeygenV1Payload {
     pub lookup_bits: u32,
     pub base_params: BaseCircuitParams,
     pub break_points: MultiPhaseThreadBreakPoints,
+    /// Graph-phase provenance records (Step 2: synthesis consumes the
+    /// table — interval/affine narrowing changes the emitted gate
+    /// count). Verify re-synthesizes from `ir_stmts`; without the
+    /// table it builds a DIFFERENT circuit and the pinned break points
+    /// mismatch. `default` keeps old artifacts decodable (they fail
+    /// verify on provenance-dependent circuits either way).
+    #[serde(default)]
+    pub provenance: crate::provenance::ProvenanceWire,
 }
 
 pub const HALO2_BASE_PINNED_REKEYGEN_V1: &str = "halo2-base-pinned-rekeygen-v1";

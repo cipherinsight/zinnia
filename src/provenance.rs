@@ -58,13 +58,13 @@
 
 use std::collections::HashMap;
 
-use crate::types::{Value, ValueId};
+use crate::types::{StmtId, Value, ValueId};
 
 /// Affine view of a scalar: `value = Σ terms[i].1 * vid_i + offset`,
 /// with at most two dynamic roots. Backend-independent replacement for
 /// the halo2 synthesizer's `AffineLin` and the Noir emitter's `AffLin`
 /// (consumed there from Step 2 of the consolidation plan).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct AffineView {
     pub terms: Vec<(ValueId, i64)>,
     pub offset: i64,
@@ -141,7 +141,7 @@ impl AffineView {
 
 /// Inclusive value bounds. The structural counterpart of the backends'
 /// `value_interval` / `interval_of` caches.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Interval {
     pub lo: i64,
     pub hi: i64,
@@ -200,7 +200,7 @@ impl Interval {
 /// producer must state which layout it built; consumers must not guess
 /// from `runtime_strides` (the confusion that produced the 0415/0416/0418
 /// wrong-output binding bug).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LayoutKind {
     /// Content sits at the logical positions of the envelope rectangle;
     /// `runtime_shape[i] <= logical_shape[i]` on every axis; addressing
@@ -222,7 +222,7 @@ pub enum LayoutKind {
 /// for `flatnonzero`/`argwhere`-style index outputs), which unlocks
 /// first/last-set-bit scan consumers for `min()`/`max()`: O(N) selects
 /// over (keep, source) instead of materialise + masked reduce.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CompactionInfo {
     pub keep: Vec<ValueId>,
     pub source: Vec<ValueId>,
@@ -255,7 +255,7 @@ pub struct SliceView {
 /// gather addresses reduce to the un-clamped root's indicator family
 /// (`[min(x,K) == v]` is `[x == v]` for `v < K` and `[x >= K]` at the
 /// bound), so per-row dynamic gathers share one one-hot per root.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ClampView {
     pub source: ValueId,
     pub bound: i64,
@@ -272,7 +272,7 @@ pub struct ClampView {
 /// extent's `<= envelope dim` construction guarantee the confinement.
 /// Consumed by axis reductions to scan one block per output instead of
 /// the whole buffer, with window masks shared across prefix coords.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct BlockView {
     pub prefix_rank: usize,
     pub block: usize,
@@ -325,6 +325,209 @@ pub struct ProvenanceTable {
     /// Structural min/max-against-constant views, keyed by the clamped
     /// value.
     clamps: HashMap<ValueId, ClampView>,
+}
+
+
+/// JSON-friendly wire form of the graph-phase records, carried inside
+/// proof artifacts whose verify path re-synthesizes the circuit from
+/// serialized IR: backend emission consumes the table (Step 2), so a
+/// roundtrip that dropped it produced a DIFFERENT (bigger) circuit at
+/// verify time ("break points don't match" on the provenance-heavy
+/// bbox kernels).
+///
+/// Values are referenced by STMT id, not `ValueId`:
+/// `IRStatement::import_from` mints fresh `ValueId`s, so vid-keyed
+/// records would dangle after a JSON roundtrip, while stmt ids survive
+/// it verbatim. Conversion happens against a graph's vid↔stmt maps;
+/// records whose vid no longer resolves to a statement are dropped
+/// (they could never influence synthesis). Entry vectors are key-sorted
+/// so artifact bytes stay deterministic. `slice_views` is
+/// builder-phase-only (carries a full `Value`) and is deliberately not
+/// part of the wire form.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct ProvenanceWire {
+    affine: Vec<(StmtId, Vec<(StmtId, i64)>, i64)>,
+    interval: Vec<(StmtId, Interval)>,
+    layout: Vec<(u32, LayoutKind)>,
+    compaction: Vec<(u32, usize, CompactionWire)>,
+    write_version: Vec<(u32, u64)>,
+    segment_hull: Vec<(u32, Option<Interval>)>,
+    runtime_extents: Vec<(u32, Vec<StmtId>)>,
+    clamps: Vec<(StmtId, StmtId, i64, bool)>,
+    block_views: Vec<(StmtId, BlockView)>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct CompactionWire {
+    pub keep: Vec<StmtId>,
+    pub source: Vec<StmtId>,
+    pub prefix: Vec<StmtId>,
+    pub count: StmtId,
+    pub sorted: bool,
+}
+
+impl ProvenanceTable {
+    /// Serialize against `stmt_of` (vid → producing stmt). Records with
+    /// any unresolvable vid are dropped.
+    pub fn to_wire(&self, stmt_of: &dyn Fn(ValueId) -> Option<StmtId>) -> ProvenanceWire {
+        let map_all = |vids: &[ValueId]| -> Option<Vec<StmtId>> {
+            vids.iter().map(|v| stmt_of(*v)).collect()
+        };
+        let mut affine: Vec<(StmtId, Vec<(StmtId, i64)>, i64)> = self
+            .affine
+            .iter()
+            .filter_map(|(vid, view)| {
+                let key = stmt_of(*vid)?;
+                let terms: Option<Vec<(StmtId, i64)>> = view
+                    .terms
+                    .iter()
+                    .map(|(r, k)| stmt_of(*r).map(|s| (s, *k)))
+                    .collect();
+                Some((key, terms?, view.offset))
+            })
+            .collect();
+        affine.sort_by_key(|(k, _, _)| *k);
+        let mut interval: Vec<(StmtId, Interval)> = self
+            .interval
+            .iter()
+            .filter_map(|(vid, iv)| Some((stmt_of(*vid)?, *iv)))
+            .collect();
+        interval.sort_by_key(|(k, _)| *k);
+        let mut layout: Vec<(u32, LayoutKind)> =
+            self.layout.iter().map(|(k, v)| (*k, *v)).collect();
+        layout.sort_by_key(|(k, _)| *k);
+        let mut compaction: Vec<(u32, usize, CompactionWire)> = self
+            .compaction
+            .iter()
+            .filter_map(|((seg, lane), info)| {
+                Some((
+                    *seg,
+                    *lane,
+                    CompactionWire {
+                        keep: map_all(&info.keep)?,
+                        source: map_all(&info.source)?,
+                        prefix: map_all(&info.prefix)?,
+                        count: stmt_of(info.count)?,
+                        sorted: info.sorted,
+                    },
+                ))
+            })
+            .collect();
+        compaction.sort_by_key(|(seg, lane, _)| (*seg, *lane));
+        let mut write_version: Vec<(u32, u64)> =
+            self.write_version.iter().map(|(k, v)| (*k, *v)).collect();
+        write_version.sort_by_key(|(k, _)| *k);
+        let mut segment_hull: Vec<(u32, Option<Interval>)> =
+            self.segment_hull.iter().map(|(k, v)| (*k, *v)).collect();
+        segment_hull.sort_by_key(|(k, _)| *k);
+        let mut runtime_extents: Vec<(u32, Vec<StmtId>)> = self
+            .runtime_extents
+            .iter()
+            .filter_map(|(seg, vids)| Some((*seg, map_all(vids)?)))
+            .collect();
+        runtime_extents.sort_by_key(|(k, _)| *k);
+        let mut clamps: Vec<(StmtId, StmtId, i64, bool)> = self
+            .clamps
+            .iter()
+            .filter_map(|(vid, cl)| {
+                Some((stmt_of(*vid)?, stmt_of(cl.source)?, cl.bound, cl.is_min))
+            })
+            .collect();
+        clamps.sort_by_key(|(k, _, _, _)| *k);
+        let mut block_views: Vec<(StmtId, BlockView)> = self
+            .block_views
+            .iter()
+            .filter_map(|(vid, bv)| Some((stmt_of(*vid)?, *bv)))
+            .collect();
+        block_views.sort_by_key(|(k, _)| *k);
+        ProvenanceWire {
+            affine,
+            interval,
+            layout,
+            compaction,
+            write_version,
+            segment_hull,
+            runtime_extents,
+            clamps,
+            block_views,
+        }
+    }
+
+    /// Rebuild from the wire form against `vid_of` (stmt → its value id
+    /// in the RECEIVING graph). Entries with unresolvable stmt ids are
+    /// dropped.
+    pub fn from_wire(w: &ProvenanceWire, vid_of: &dyn Fn(StmtId) -> Option<ValueId>) -> Self {
+        let map_all = |stmts: &[StmtId]| -> Option<Vec<ValueId>> {
+            stmts.iter().map(|s| vid_of(*s)).collect()
+        };
+        let mut t = ProvenanceTable::default();
+        for (key, terms, offset) in &w.affine {
+            let Some(vid) = vid_of(*key) else { continue };
+            let Some(terms): Option<Vec<(ValueId, i64)>> =
+                terms.iter().map(|(s, k)| vid_of(*s).map(|v| (v, *k))).collect()
+            else {
+                continue;
+            };
+            t.affine.insert(
+                vid,
+                AffineView {
+                    terms,
+                    offset: *offset,
+                },
+            );
+        }
+        for (key, iv) in &w.interval {
+            if let Some(vid) = vid_of(*key) {
+                t.interval.insert(vid, *iv);
+            }
+        }
+        t.layout = w.layout.iter().copied().collect();
+        for (seg, lane, info) in &w.compaction {
+            let (Some(keep), Some(source), Some(prefix), Some(count)) = (
+                map_all(&info.keep),
+                map_all(&info.source),
+                map_all(&info.prefix),
+                vid_of(info.count),
+            ) else {
+                continue;
+            };
+            t.compaction.insert(
+                (*seg, *lane),
+                CompactionInfo {
+                    keep,
+                    source,
+                    prefix,
+                    count,
+                    sorted: info.sorted,
+                },
+            );
+        }
+        t.write_version = w.write_version.iter().copied().collect();
+        t.segment_hull = w.segment_hull.iter().copied().collect();
+        for (seg, stmts) in &w.runtime_extents {
+            if let Some(vids) = map_all(stmts) {
+                t.runtime_extents.insert(*seg, vids);
+            }
+        }
+        for (key, src, bound, is_min) in &w.clamps {
+            if let (Some(vid), Some(source)) = (vid_of(*key), vid_of(*src)) {
+                t.clamps.insert(
+                    vid,
+                    ClampView {
+                        source,
+                        bound: *bound,
+                        is_min: *is_min,
+                    },
+                );
+            }
+        }
+        for (key, bv) in &w.block_views {
+            if let Some(vid) = vid_of(*key) {
+                t.block_views.insert(vid, *bv);
+            }
+        }
+        t
+    }
 }
 
 impl ProvenanceTable {

@@ -261,6 +261,9 @@ impl ProverBackend for Halo2BaseProverBackend {
             lookup_bits: params.lookup_bits,
             base_params,
             break_points,
+            provenance: ir
+                .provenance
+                .to_wire(&|vid| ir.value_to_stmt.get(&vid).copied()),
         };
         let vk_bytes = encode_payload(&payload).map_err(|e| {
             ProvingError::other(format!(
@@ -307,11 +310,25 @@ impl ProverBackend for Halo2BaseProverBackend {
                 detail: format!("Failed to decode halo2-base payload: {}", e),
             })?;
 
-        let graph = IRGraph::import_stmts(&payload.ir_stmts).map_err(|e| {
+        let mut graph = IRGraph::import_stmts(&payload.ir_stmts).map_err(|e| {
             ProvingError::VerificationFailed {
                 detail: format!("IR import failed: {}", e),
             }
         })?;
+        // Re-attach the provenance records — synthesis consumes them
+        // (Step 2: interval/affine narrowing changes the emitted gate
+        // count), so the verify-side rebuild must see exactly what the
+        // prover saw. Stmt-keyed wire form: import_stmts mints fresh
+        // ValueIds, so the table is re-keyed through stmt ids.
+        let vid_of_stmt: std::collections::HashMap<_, _> = graph
+            .stmts
+            .iter()
+            .map(|st| (st.stmt_id, st.value_id))
+            .collect();
+        graph.provenance = crate::provenance::ProvenanceTable::from_wire(
+            &payload.provenance,
+            &|sid| vid_of_stmt.get(&sid).copied(),
+        );
         let recovered_params = ProvingParams {
             k: artifact.k,
             precision_bits: payload.precision_bits,
