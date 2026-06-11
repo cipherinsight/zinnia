@@ -22,11 +22,17 @@ closing it would mean changing the output contract. (b) The plan's
 written against pre-Step-0c numbers; the ~20 correctness fixes invalidated
 that baseline (0389's old 65 gates was a witness-specialized mis-compile).
 Verification used wip-vs-HEAD sweeps instead, per the re-baseline rule.
-(c) Known pre-existing bug found during validation, NOT from Step 3
-(reproduced on clean HEAD): halo2-base verify panics "break points don't
-match" on k-walked cases (0318/0319/0507-0510) — verify-side re-synthesis
-doesn't use the proof's k. Must be fixed before Step 5's halo2 numbers.
-Next: Step 4. Owner: this session.
+(c) A pre-existing bug found during validation (bisected to 28aa4c9, the
+Step 2 halo2 half): synthesis consumes the provenance table but verify
+re-synthesized from artifact IR with an empty table — bigger circuit,
+"break points don't match" panic on the provenance-heavy bbox kernels.
+FIXED in debdaf1: the artifact carries a stmt-keyed ProvenanceWire
+(import_stmts mints fresh ValueIds, so vid keys would dangle); 13/13
+spot set proves + verifies.
+
+Step 4 DONE (a240525): compile runs on a dedicated 512 MiB-stack thread;
+5 consecutive combined-suite runs at an 8 MiB limit, zero segfaults.
+Next: Step 5 (fresh four-way re-baseline). Owner: this session.
 
 ## Context
 
