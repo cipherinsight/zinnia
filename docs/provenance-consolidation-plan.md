@@ -1,9 +1,10 @@
 # Provenance Consolidation & Quality-Hardening Plan
 
-Date: 2026-06-11. Status: Step 0a DONE (a34555e), Step 0b DONE
-(d28d4d5/51b33ba/a65d329 — audit green 131 + 3 documented xfails deferred
-to Step 3; nine compiler bugs found and fixed, see commit messages).
-Owner: this session.
+Date: 2026-06-11. Status: Steps 0a (a34555e), 0b (d28d4d5/51b33ba/a65d329 —
+audit green 131 + 3 documented xfails deferred to Step 3) and 0c
+(26dd5d7/d90f477/f4cb2bb — all four suites at 0 failures, from 78
+pre-session; ~20 compiler bugs fixed along the way, see commit messages)
+are DONE. Next: Step 1. Owner: this session.
 
 ## Context
 
