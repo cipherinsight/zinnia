@@ -8,17 +8,28 @@ global COLS: u32 = 6;
 
 fn main(a: [Field; 48], col: Field, multiply_number: Field) -> pub [Field; 8] {
     let col_idx = col - 1;
-    assert(((col_idx as u128) < (COLS as u128)), "0345: col out of range");
+    // Full numpy semantics: negative indices wrap (col = 0 selects the
+    // last column). Exact dual-equality identity per slot:
+    // match(j) = (idx == j) | (idx == j - COLS) -- no signed-comparison
+    // machinery. The membership sum == 1 enforces -COLS <= idx < COLS
+    // (numpy IndexError otherwise). Indicators hoisted across rows.
+    let mut ind: [Field; 6] = [0; 6];
+    let mut hits: Field = 0;
+    for j in 0..COLS {
+        let pos_match: Field = if col_idx == (j as Field) { 1 } else { 0 };
+        let neg_match: Field =
+            if col_idx == ((j as Field) - (COLS as Field)) { 1 } else { 0 };
+        ind[j] = pos_match + neg_match;
+        hits = hits + ind[j];
+    }
+    assert(hits == 1, "0345: col out of range");
     let mn_fp = multiply_number * Q;
     let mut acc: Field = 0;
     let mut out: [Field; 8] = [0; 8];
     for i in 0..ROWS {
-        // Dynamic column index -> per-row mux over COLS, mirroring the
-        // Zinnia emitter's pattern for runtime indexing.
         let mut a_at: Field = 0;
         for j in 0..COLS {
-            let is_match: Field = if (j as Field) == col_idx { 1 } else { 0 };
-            a_at = a_at + is_match * a[i * COLS + j];
+            a_at = a_at + ind[j] * a[i * COLS + j];
         }
         let scaled = qmul(a_at, mn_fp);
         acc = qadd(acc, scaled);

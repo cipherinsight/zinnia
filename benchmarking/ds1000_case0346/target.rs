@@ -37,14 +37,29 @@ fn row_scale_cumsum<F: ScalarField>(
     let one_fp = ctx.load_witness(fpc.quantization(1.0));
     let mn_fp = fpc.qmul(ctx, mn, one_fp);
     let zero_fp = ctx.load_witness(fpc.quantization(0.0));
-    // Per col j: select a[row_idx][j] via match on i=0..8.
+    // Full numpy semantics: negative indices wrap (row = 0 selects the
+    // last row). Dual-equality indicators, hoisted across columns:
+    // ind[i] = (idx == i) + (idx == i - 8); membership sum == 1 enforces
+    // -8 <= idx < 8 (numpy IndexError otherwise).
+    let mut inds = Vec::with_capacity(8);
+    let mut hits = ctx.load_constant(F::ZERO);
+    for i in 0..8usize {
+        let i_cell = ctx.load_constant(F::from(i as u64));
+        let in_cell = ctx.load_constant(-F::from((8 - i) as u64));
+        let is_i = gate.is_equal(ctx, row_idx, i_cell);
+        let is_in = gate.is_equal(ctx, row_idx, in_cell);
+        let ind = gate.add(ctx, is_i, is_in);
+        hits = gate.add(ctx, hits, ind);
+        inds.push(ind);
+    }
+    let one_c = ctx.load_constant(F::ONE);
+    let hits_ok = gate.is_equal(ctx, hits, one_c);
+    gate.assert_is_const(ctx, &hits_ok, &F::ONE);
     let mut col_vals: Vec<AssignedValue<F>> = Vec::with_capacity(6);
     for j in 0..6usize {
         let mut chosen = zero_fp;
         for i in 0..8usize {
-            let i_cell = ctx.load_constant(F::from(i as u64));
-            let is_i = gate.is_equal(ctx, row_idx, i_cell);
-            chosen = gate.select(ctx, cells[i * 6 + j], chosen, is_i);
+            chosen = gate.select(ctx, cells[i * 6 + j], chosen, inds[i]);
         }
         let scaled = fpc.qmul(ctx, chosen, mn_fp);
         col_vals.push(scaled);

@@ -45,18 +45,32 @@ fn insert_row_2d<F: ScalarField>(
     let pos_abs = ctx.load_witness(F::from_u128(
         input.pos.trim_start_matches('-').parse::<u128>().unwrap()));
     let pos = if input.pos.starts_with('-') { gate.neg(ctx, pos_abs) } else { pos_abs };
+    // Full numpy semantics: negative positions wrap (np.insert with
+    // pos = -1 inserts before the last slot). In-circuit sign test on
+    // the signed-64 window, then all comparisons use the normalized
+    // (nonnegative) position; the final bound check enforces
+    // -N <= pos <= N (numpy IndexError otherwise).
+    let shift_c = ctx.load_constant(F::from(1u64 << 63));
+    let shifted = gate.add(ctx, pos, shift_c);
+    range_chip.range_check(ctx, shifted, 64);
+    let is_neg = range_chip.is_less_than(ctx, shifted, shift_c, 64);
+    let n_c = ctx.load_constant(F::from(100u64));
+    let wrapped = gate.add(ctx, pos, n_c);
+    let pos_n = gate.select(ctx, wrapped, pos, is_neg);
+    let n1_c = ctx.load_constant(F::from(101u64));
+    range_chip.check_less_than(ctx, pos_n, n1_c, 64);
+
 
     // Bounds-check semantic (mirrors Zinnia's `discharge_index_in_range`
     // for `np.insert`): pos must lie in [0, 101) for `np.insert(a, pos, ...)
     // on Float[100, 10] with axis=0`. Without this an out-of-range pos
     // silently falls through HW's per-row mux (no `is_pos` ever triggers,
     // so the output equals the un-shifted input — wrong semantic).
-    range_chip.check_less_than_safe(ctx, pos, 101);
 
     for i in 0..101usize {
         let i_cell = ctx.load_constant(F::from(i as u64));
-        let is_pre = range_chip.is_less_than(ctx, i_cell, pos, 128);
-        let is_pos = gate.is_equal(ctx, i_cell, pos);
+        let is_pre = range_chip.is_less_than(ctx, i_cell, pos_n, 128);
+        let is_pos = gate.is_equal(ctx, i_cell, pos_n);
         for j in 0..10usize {
             let pre_val = if i < 100 { a[i * 10 + j] } else { a[99 * 10 + j] };
             let post_val = if i >= 1 { a[(i - 1) * 10 + j] } else { a[j] };
