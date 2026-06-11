@@ -769,7 +769,19 @@ pub fn dyn_aggregate_axis(
     // existing logical-stride path is correct (runtime masking included).
     let runtime_dynamic = bounds != *shape;
     let grid_shape: Vec<usize> = if runtime_dynamic { bounds } else { shape.clone() };
-    let values = if runtime_dynamic {
+    // Mask formulation: when the reduced axis is innermost (static stride
+    // 1, so each output's elements form a contiguous storage window
+    // [base, base + dim_ax)), fold over STORAGE positions with a window-
+    // membership test instead of gathering by runtime coordinate. The
+    // window base is only compared — never dereferenced — so no address
+    // guard is needed and the payload is fetched with constant reads.
+    let mask_form = runtime_dynamic
+        && data
+            .meta
+            .runtime_strides
+            .get(ax)
+            .map_or(false, |st| st.static_val == Some(1));
+    let values = if runtime_dynamic && !mask_form {
         Vec::new()
     } else {
         crate::helpers::segment::read_all_typed(b, data.segment_id, data.max_length(), data.dtype)
@@ -860,20 +872,77 @@ pub fn dyn_aggregate_axis(
             b.ir_constant_bool(false)
         };
 
-        // Iterate along reduction axis
-        for k in 0..axis_dim {
-            in_coords[ax] = k;
-            let is_active_pre = if runtime_dynamic {
-                Some(build_active_check(
+        // Mask-form precomputation: contiguous storage window of this
+        // output combo, [base, base + dim_ax), plus its non-axis activity.
+        let mask_ctx = if mask_form {
+            let mut base = scalar_to_value_i(b, &data.meta.runtime_offset);
+            for (i, &c) in in_coords.iter().enumerate() {
+                if i == ax || c == 0 {
+                    continue;
+                }
+                let stride_v = scalar_to_value_i(b, &data.meta.runtime_strides[i]);
+                let c_v = b.ir_constant_int(c as i64);
+                let term = b.ir_mul_i(&c_v, &stride_v);
+                base = b.ir_add_i(&base, &term);
+            }
+            let dim_ax = scalar_to_value_i(b, &data.meta.runtime_shape[ax]);
+            let hi = b.ir_add_i(&base, &dim_ax);
+            let oc: Vec<usize> = in_coords
+                .iter()
+                .enumerate()
+                .filter(|&(i, _)| i != ax)
+                .map(|(_, &c)| c)
+                .collect();
+            let rt_f: Vec<ScalarValue<i64>> = data
+                .meta
+                .runtime_shape
+                .iter()
+                .enumerate()
+                .filter(|&(i, _)| i != ax)
+                .map(|(_, v)| v.clone())
+                .collect();
+            let gs_f: Vec<usize> = grid_shape
+                .iter()
+                .enumerate()
+                .filter(|&(i, _)| i != ax)
+                .map(|(_, &v)| v)
+                .collect();
+            let out_active = build_active_check(b, &oc, &rt_f, &gs_f);
+            Some((base, hi, out_active))
+        } else {
+            None
+        };
+        let steps = if mask_form {
+            data.max_length()
+        } else {
+            axis_dim
+        };
+
+        // Iterate: storage positions (mask form) or axis coordinates.
+        for k in 0..steps {
+            let (elem, is_active, k_val) = if let Some((base, hi, out_active)) = &mask_ctx {
+                let s_c = b.ir_constant_int(k as i64);
+                let lt_base = b.ir_less_than_i(&s_c, base);
+                let ge_base = b.ir_logical_not(&lt_base);
+                let lt_hi = b.ir_less_than_i(&s_c, hi);
+                let member = b.ir_logical_and(&ge_base, &lt_hi);
+                let active = b.ir_logical_and(&member, out_active);
+                let elem = if k < values.len() {
+                    values[k].clone()
+                } else {
+                    super::metadata::dyn_default_value(b, data.dtype)
+                };
+                // Axis position (argmax/argmin index) = s - base.
+                let pos = b.ir_sub_i(&s_c, base);
+                (elem, active, pos)
+            } else if runtime_dynamic {
+                in_coords[ax] = k;
+                let is_active = build_active_check(
                     b,
                     &in_coords,
                     &data.meta.runtime_shape,
                     &grid_shape,
-                ))
-            } else {
-                None
-            };
-            let elem = if runtime_dynamic {
+                );
                 // Gather with the runtime stride cells: addr = sum of
                 // coord_i * runtime_stride_i (+ runtime offset). Inactive
                 // grid combos can compute out-of-range addresses, so the
@@ -890,27 +959,28 @@ pub fn dyn_aggregate_axis(
                     addr = b.ir_add_i(&addr, &term);
                 }
                 let zero = b.ir_constant_int(0);
-                let safe_addr =
-                    b.ir_select_i(is_active_pre.as_ref().unwrap(), &addr, &zero);
-                crate::helpers::segment::read_typed(b, data.segment_id, &safe_addr, data.dtype)
+                let safe_addr = b.ir_select_i(&is_active, &addr, &zero);
+                let elem =
+                    crate::helpers::segment::read_typed(b, data.segment_id, &safe_addr, data.dtype);
+                let k_val = b.ir_constant_int(k as i64);
+                (elem, is_active, k_val)
             } else {
+                in_coords[ax] = k;
                 let src_idx = dyn_encode_coords(&in_coords, &strides);
-                if src_idx < values.len() {
+                let elem = if src_idx < values.len() {
                     values[src_idx].clone()
                 } else {
                     super::metadata::dyn_default_value(b, data.dtype)
-                }
-            };
-            let is_active = match is_active_pre {
-                Some(v) => v,
-                None => build_active_check(
+                };
+                let is_active = build_active_check(
                     b,
                     &in_coords,
                     &data.meta.runtime_shape,
                     &grid_shape,
-                ),
+                );
+                let k_val = b.ir_constant_int(k as i64);
+                (elem, is_active, k_val)
             };
-            let k_val = b.ir_constant_int(k as i64);
             if matches!(
                 agg,
                 DynAggKind::Sum | DynAggKind::Prod | DynAggKind::All | DynAggKind::Any
