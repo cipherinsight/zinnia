@@ -170,9 +170,46 @@ fn run_pass_pipeline(
 
 /// Compile a circuit: generate IR from AST and run all optimization passes.
 /// Returns a CompiledIR handle (opaque to Python — no JSON round-trip).
+/// Stack reservation for the dedicated compile thread. Compilation
+/// recurses over the AST and the IR graph (visitor walks, pass
+/// rebuilds); deep kernels overflow the ~8 MiB main-thread stack, and
+/// `RUST_MIN_STACK`/`ulimit -s` don't reliably govern the thread Python
+/// calls in on. The reservation is virtual address space — Linux only
+/// commits pages actually touched.
+const COMPILE_STACK_BYTES: usize = 512 * 1024 * 1024;
+
 #[pyfunction]
 #[pyo3(signature = (ast_json, config_json, chips_json="{}".to_string(), externals_json="{}".to_string()))]
 fn compile_circuit(
+    ast_json: &str,
+    config_json: &str,
+    chips_json: String,
+    externals_json: String,
+) -> PyResult<CompiledIR> {
+    // Run the real work on a dedicated thread with an explicit stack
+    // size: the flaky pytest segfault was main-thread stack exhaustion
+    // in deep visitor/pass recursion (provenance plan Step 4).
+    let ast_json = ast_json.to_owned();
+    let config_json = config_json.to_owned();
+    let handle = std::thread::Builder::new()
+        .name("zinnia-compile".into())
+        .stack_size(COMPILE_STACK_BYTES)
+        .spawn(move || compile_circuit_impl(&ast_json, &config_json, chips_json, externals_json))
+        .map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "failed to spawn compile thread: {}",
+                e
+            ))
+        })?;
+    handle.join().unwrap_or_else(|payload| {
+        Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+            "compile thread panicked: {}",
+            panic_payload_to_string(payload)
+        )))
+    })
+}
+
+fn compile_circuit_impl(
     ast_json: &str,
     config_json: &str,
     chips_json: String,
