@@ -12,6 +12,12 @@ pub fn select_value(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> 
     if std::env::var("ZINNIA_DEBUG_SELECT_VALUE").is_ok() {
         eprintln!("[select_value] tv={:?} fv={:?}", tv.zinnia_type(), fv.zinnia_type());
     }
+    // Static condition: pick the branch at compile time, no IR. Keeps
+    // statically-resolved `if`s free even though the branch-merge path
+    // runs for every conditional assignment.
+    if let Some(c) = cond.bool_val().or_else(|| cond.int_val().map(|v| v != 0)) {
+        return if c { tv.clone() } else { fv.clone() };
+    }
     // P4a: native StaticArray + StaticArray select. Both sides same shape
     // and same dtype → per-cell select into a fresh segment-backed result.
     // Mismatched shapes / dtypes / one-sided StaticArray fall through to

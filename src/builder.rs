@@ -118,6 +118,26 @@ pub struct SliceView {
 /// methods. Mirrors Python `IRBuilderImpl` from `builder_impl.py`.
 pub struct IRBuilder {
     pub stmts: Vec<IRStatement>,
+    /// Constant return cells elided from the public instance (the
+    /// constant-elision arms of `expose_circuit_return_value`). Carried
+    /// onto the exported `IRGraph` so output auditors can verify the
+    /// elided values against ground truth.
+    pub elided_publics: Vec<crate::ir::ElidedPublic>,
+    /// Conditional-write predicate. While `Some(p)`, every
+    /// `ir_write_memory` / `ir_dynamic_ndarray_set_item` stores
+    /// `select(p, new, old)` instead of `new`, so segment mutations
+    /// emitted inside a dynamic branch only take effect when that
+    /// branch's path condition holds. IRGen scopes this around `if`-arm
+    /// visitation (`visit_cond`); a statically-true predicate costs
+    /// nothing (the select is skipped). Without this, branch bodies
+    /// write through to shared segments unconditionally — the
+    /// last-write-wins / wrongly-constant-folded `if` bug class found
+    /// by the 2026-06-11 binding audit (cases 0374/0490).
+    write_predicate: Option<Value>,
+    /// Segments allocated while a given predicate (by stmt id) was
+    /// active — branch-local storage whose writes under that same
+    /// predicate skip predication (see `ir_allocate_memory`).
+    predicate_exempt_segments: HashMap<u32, StmtId>,
     /// Next available memory segment ID for dynamic array allocations.
     next_segment_id: u32,
     /// Next available array ID for dynamic ndarray metadata.
@@ -227,6 +247,9 @@ impl IRBuilder {
     pub fn new() -> Self {
         Self {
             stmts: Vec::new(),
+            elided_publics: Vec::new(),
+            write_predicate: None,
+            predicate_exempt_segments: HashMap::new(),
             next_segment_id: 0,
             next_array_id: 0,
             dim_table: crate::types::DimTable::new(),
@@ -1073,7 +1096,10 @@ impl IRBuilder {
     }
 
     pub fn export_ir_graph(self) -> IRGraph {
-        IRGraph::new(self.stmts)
+        let elided = self.elided_publics;
+        let mut graph = IRGraph::new(self.stmts);
+        graph.elided_publics = elided;
+        graph
     }
 
     // ── Convenience helpers used by optimization passes ──────────────
@@ -1594,23 +1620,45 @@ impl IRBuilder {
         ir_bool_cast  => IR::BoolCast, contract = "bool_cast",
     );
 
-    /// Cast to integer. Fires `int_cast_from_bool` contract (Output ∈ {0,1})
-    /// only when the input is `Value::Boolean`-typed; the IR op accepts any
-    /// scalar and would not be sound to constrain unconditionally.
+    /// Cast to integer.
+    ///
+    /// The runtime `IR::IntCast` op is float→int (it DEQUANTIZES: cell /
+    /// 2^32, truncating). Integer cells are already raw ints and Boolean
+    /// cells already hold raw 0/1, so for those inputs this is a pure
+    /// type retag with NO IR — emitting the runtime cast would divide
+    /// the raw value by the fixed-point scale and truncate everything to
+    /// 0 (the `int(flag)` / bool-into-int-array bug class, binding-audit
+    /// cases 0325/0462).
+    ///
+    /// Fires `int_cast_from_bool` contract (Output ∈ {0,1}) when the
+    /// input is `Value::Boolean`-typed.
     pub fn ir_int_cast(&mut self, a: &Value) -> Value {
-        let out = self.create_ir(&IR::IntCast, &[a.clone()]);
-        if matches!(a, Value::Boolean(_)) {
-            if let Some(vid) = out.value_id() {
-                self.fire_contract("int_cast_from_bool", vid, &HashMap::new());
+        match a {
+            Value::Integer(_) => a.clone(),
+            Value::Boolean(sv) => {
+                let out = Value::Integer(crate::types::ScalarValue {
+                    static_val: sv.static_val.map(|b| if b { 1 } else { 0 }),
+                    stmt_id: sv.stmt_id,
+                    // Same cell, same identity: facts attached to the
+                    // boolean (∈ {0,1}) remain valid for the integer.
+                    value_id: sv.value_id,
+                });
+                self.fire_contract("int_cast_from_bool", sv.value_id, &HashMap::new());
+                out
             }
+            _ => self.create_ir(&IR::IntCast, &[a.clone()]),
         }
-        out
     }
 
-    /// Cast to float. Fires `float_cast_from_bool` contract (Output ∈ {0.0, 1.0})
-    /// only when the input is `Value::Boolean`-typed; same conditional rationale
-    /// as `ir_int_cast`.
+    /// Cast to float. A Float input is already quantized — re-emitting
+    /// the runtime cast would multiply by the scale a second time, so
+    /// it's a no-op. Integer/Boolean inputs quantize (× 2^32) via the IR
+    /// op. Fires `float_cast_from_bool` contract (Output ∈ {0.0, 1.0})
+    /// when the input is `Value::Boolean`-typed.
     pub fn ir_float_cast(&mut self, a: &Value) -> Value {
+        if matches!(a, Value::Float(_)) {
+            return a.clone();
+        }
         let out = self.create_ir(&IR::FloatCast, &[a.clone()]);
         if matches!(a, Value::Boolean(_)) {
             if let Some(vid) = out.value_id() {
@@ -1908,6 +1956,17 @@ impl IRBuilder {
     // ── Memory ────────────────────────────────────────────────────────
 
     pub fn ir_allocate_memory(&mut self, segment_id: u32, size: u32, init_value: i64) -> Value {
+        // A segment allocated while a conditional-write predicate is
+        // active is branch-local: its contents are unobservable on the
+        // not-taken path (it only escapes through a cond-gated merge), so
+        // writes to it under the SAME predicate skip the read+select
+        // predication. Keyed by the predicate's stmt identity — a nested
+        // branch has a different (composed) predicate and still pays.
+        if let Some(p) = &self.write_predicate {
+            if let Some(pid) = p.stmt_id() {
+                self.predicate_exempt_segments.insert(segment_id, pid);
+            }
+        }
         self.create_ir(
             &IR::AllocateMemory {
                 segment_id,
@@ -1918,7 +1977,82 @@ impl IRBuilder {
         )
     }
 
+    /// Current conditional-write predicate (`None` = unconditional).
+    pub fn write_predicate(&self) -> Option<&Value> {
+        self.write_predicate.as_ref()
+    }
+
+    /// Swap the conditional-write predicate, returning the previous one so
+    /// callers can scope it (`let prev = swap(..); ...; swap(prev);`).
+    /// The predicate passed in must already incorporate any enclosing
+    /// branch conditions (IRGen uses the scope's calculated branching
+    /// condition, which self-composes across nested `if`s).
+    pub fn swap_write_predicate(&mut self, p: Option<Value>) -> Option<Value> {
+        std::mem::replace(&mut self.write_predicate, p)
+    }
+
+    /// Resolve the write predicate to `Some(static bool)` when it's a
+    /// compile-time constant, `None` when it's a runtime value.
+    fn write_predicate_static(&self) -> Option<bool> {
+        match &self.write_predicate {
+            None => Some(true),
+            Some(p) => p.bool_val().or_else(|| p.int_val().map(|v| v != 0)),
+        }
+    }
+
+    /// Apply the conditional-write predicate to a value about to be stored
+    /// at `(segment_id, address)`: returns `select(p, new, old)` (typed to
+    /// match `value`), or `None` when the write is statically dead.
+    fn apply_write_predicate(
+        &mut self,
+        segment_id: u32,
+        address: &Value,
+        value: &Value,
+    ) -> Option<Value> {
+        match self.write_predicate_static() {
+            Some(true) => Some(value.clone()),
+            Some(false) => None,
+            None => {
+                let p = self.write_predicate.clone().unwrap();
+                // Branch-local segment under its own predicate: writes
+                // are unobservable on the not-taken path; skip the
+                // read+select.
+                if p.stmt_id().is_some()
+                    && self.predicate_exempt_segments.get(&segment_id) == p.stmt_id().as_ref()
+                {
+                    return Some(value.clone());
+                }
+                let old_raw = self.ir_read_memory(segment_id, address);
+                Some(match value {
+                    Value::Float(_) => {
+                        // Storage cells are integer-typed at the IR layer;
+                        // re-tag the old cell as Float so the select keeps
+                        // float semantics (mirrors `segment::read_typed`).
+                        let old_f = Value::Float(crate::types::ScalarValue::new(
+                            None,
+                            old_raw.stmt_id(),
+                        ));
+                        self.ir_select_f(&p, value, &old_f)
+                    }
+                    _ => self.ir_select_i(&p, value, &old_raw),
+                })
+            }
+        }
+    }
+
+    /// Write a value into a memory segment. Returns the value actually
+    /// stored — equal to `value` for unconditional writes, or the
+    /// predicated `select(p, value, old)` under a conditional-write
+    /// predicate. Callers that mirror writes into compile-time caches
+    /// (`static_array_payload`) must cache the RETURNED value, not the
+    /// input, or the cached view diverges from the segment on the
+    /// not-taken path.
     pub fn ir_write_memory(&mut self, segment_id: u32, address: &Value, value: &Value) -> Value {
+        let Some(stored) = self.apply_write_predicate(segment_id, address, value) else {
+            // Statically-false predicate: the write can never happen.
+            return value.clone();
+        };
+        let value = &stored;
         // A write invalidates slice views of this segment and any views
         // reading through it as their base.
         self.slice_views
@@ -1967,7 +2101,8 @@ impl IRBuilder {
         self.create_ir(
             &IR::WriteMemory { segment_id },
             &[address.clone(), value.clone()],
-        )
+        );
+        stored
     }
 
     pub fn ir_read_memory(&mut self, segment_id: u32, address: &Value) -> Value {
@@ -2071,13 +2206,18 @@ impl IRBuilder {
         address: &Value,
         value: &Value,
     ) -> Value {
+        // Same conditional-write semantics as `ir_write_memory`.
+        let Some(stored) = self.apply_write_predicate(segment_id, address, value) else {
+            return value.clone();
+        };
         self.create_ir(
             &IR::DynamicNDArraySetItem {
                 array_id,
                 segment_id,
             },
-            &[address.clone(), value.clone()],
-        )
+            &[address.clone(), stored.clone()],
+        );
+        stored
     }
 
     // ── External calls ────────────────────────────────────────────────

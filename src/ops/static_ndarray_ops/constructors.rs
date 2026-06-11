@@ -82,6 +82,20 @@ fn scalar_fill_for_dtype(
     }
 }
 
+/// Resolve the requested dtype of a `np.zeros/ones/empty` call from the
+/// positional second argument or the `dtype=` kwarg. NumPy semantics:
+/// the DEFAULT is float64 — an unannotated `np.zeros(n)` accumulating
+/// fractional values must NOT silently truncate to integers (binding
+/// audit finding, cases 0398/0399).
+fn fill_dtype(args: &[Value], kwargs: &HashMap<String, Value>) -> ZinniaType {
+    let spec = args.get(1).or_else(|| kwargs.get("dtype"));
+    match spec {
+        Some(Value::Class(t @ (ZinniaType::Integer | ZinniaType::Boolean))) => t.clone(),
+        Some(Value::Class(ZinniaType::Complex)) => ZinniaType::Complex,
+        _ => ZinniaType::Float,
+    }
+}
+
 pub fn np_fill(
     b: &mut IRBuilder,
     args: &[Value],
@@ -93,6 +107,7 @@ pub fn np_fill(
         Some(a) => a,
         None => return Value::None,
     };
+    let req_dtype = fill_dtype(args, kwargs);
     let shape = match arg {
         Value::Integer(_) => {
             // Bounded-aware single-axis dispatch via the prove-aware
@@ -111,12 +126,9 @@ pub fn np_fill(
                     // `resolve_max`. Float dtype falls back to the
                     // existing static path (dyn-ndarray of float is OK).
                     let dtype =
-                        if matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Float))) {
+                        if req_dtype == ZinniaType::Float {
                             crate::types::NumberType::Float
-                        } else if matches!(
-                            kwargs.get("dtype"),
-                            Some(Value::Class(ZinniaType::Complex))
-                        ) {
+                        } else if req_dtype == ZinniaType::Complex {
                             // Complex dyn-ndarray isn't supported; defer to
                             // the static path (which will panic if the
                             // shape isn't statically resolvable).
@@ -162,7 +174,7 @@ pub fn np_fill(
             // (uniform fill — buffer is position-independent, so logical-
             // and runtime-strides agree). Complex dtype keeps the static
             // path (dyn-ndarray of Complex is not supported).
-            let is_complex = matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Complex)));
+            let is_complex = req_dtype == ZinniaType::Complex;
             let mut max_shape: Vec<usize> = Vec::with_capacity(data.values.len());
             let mut runtime_shape: Vec<Value> = Vec::with_capacity(data.values.len());
             let mut any_bounded = false;
@@ -196,8 +208,7 @@ pub fn np_fill(
                     },
                     value_to_scalar_i64,
                 };
-                let dtype = if matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Float)))
-                {
+                let dtype = if req_dtype == ZinniaType::Float {
                     crate::types::NumberType::Float
                 } else {
                     crate::types::NumberType::Integer
@@ -276,7 +287,7 @@ pub fn np_fill(
     let total: usize = shape.iter().product();
 
     // Complex dtype: produce a Complex StaticArray (dual-segment).
-    if matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Complex))) {
+    if req_dtype == ZinniaType::Complex {
         let real_fill = b.ir_constant_float(fill_value as f64);
         let imag_fill = b.ir_constant_float(0.0);
         let reals = vec![real_fill; total];
@@ -288,7 +299,7 @@ pub fn np_fill(
         return out;
     }
 
-    let use_float = matches!(kwargs.get("dtype"), Some(Value::Class(ZinniaType::Float)));
+    let use_float = req_dtype == ZinniaType::Float;
     let (fill, dtype) = if use_float {
         (
             b.ir_constant_float(fill_value as f64),

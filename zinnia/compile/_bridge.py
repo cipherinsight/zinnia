@@ -10,6 +10,7 @@ from zinnia._zinnia_core import (
     compile_circuit,
     prove_circuit,
     emit_structural_circuit,
+    get_elided_publics,
     verify_proof_artifact,
     export_ir_json,
     import_ir_json,

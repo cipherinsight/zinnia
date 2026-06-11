@@ -229,6 +229,14 @@ pub fn materialize_static_array_segment(b: &mut IRBuilder, segment_id: u32, dtyp
     let Some(cached) = b.static_array_payload.get(&segment_id).cloned() else {
         return;
     };
+    // Materialization reconstructs the segment's KNOWN logical content —
+    // it is infrastructure, not a user mutation. Any conditionality is
+    // already baked into the cached cells (overlay selects carry their
+    // own predicates), so these writes must bypass the conditional-write
+    // predicate: predicating them on the branch that merely *triggered*
+    // materialization would lock cells to that branch's path condition
+    // (binding-audit finding: 0374's ecdf table read inside an `elif`).
+    let prev_wp = b.swap_write_predicate(None);
     for (i, elem) in cached.iter().enumerate() {
         let val = match dtype {
             NumberType::Float => match elem {
@@ -246,6 +254,7 @@ pub fn materialize_static_array_segment(b: &mut IRBuilder, segment_id: u32, dtyp
         let addr = b.ir_constant_int(i as i64);
         b.ir_write_memory(segment_id, &addr, &val);
     }
+    b.swap_write_predicate(prev_wp);
 }
 
 pub fn force_static_array_product_provenance(b: &mut IRBuilder, segment_id: u32) {

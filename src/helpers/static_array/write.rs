@@ -506,11 +506,12 @@ fn complex_element_setitem(
             flat += i * strides[ax] as i64;
         }
         let addr = b.ir_constant_int(flat);
-        b.ir_write_memory(real_seg, &addr, &re_v);
-        b.ir_write_memory(imag_seg, &addr, &im_v);
-        // Update cache cell to a Value::Complex made from the new parts.
+        // Cache the values actually stored (under a conditional-write
+        // predicate these are `select(p, new, old)`, not the raw inputs).
+        let re_s = b.ir_write_memory(real_seg, &addr, &re_v);
+        let im_s = b.ir_write_memory(imag_seg, &addr, &im_v);
         let abs = flat as usize;
-        let new_complex = match (&re_v, &im_v) {
+        let new_complex = match (&re_s, &im_s) {
             (Value::Float(r), Value::Float(im)) => Value::Complex {
                 real: r.clone(),
                 imag: im.clone(),
@@ -937,8 +938,9 @@ fn static_array_element_setitem(
         }
         let abs_offset = (offset as i64 + flat_rel) as usize;
         let addr = b.ir_constant_int(abs_offset as i64);
-        b.ir_write_memory(segment_id, &addr, &cast_val);
-        cache_set_cell(b, segment_id, abs_offset, cast_val);
+        // Cache what was actually stored (predicated under a branch).
+        let stored = b.ir_write_memory(segment_id, &addr, &cast_val);
+        cache_set_cell(b, segment_id, abs_offset, stored);
         return val.clone();
     }
 
@@ -989,6 +991,19 @@ fn try_overlay_dynamic_element_setitem(
         let mut conds = Vec::with_capacity(idx_vals.len());
         for (ax, idx) in idx_vals.iter().enumerate() {
             conds.push(index_equals_coord(b, idx, coords[ax], shape[ax]));
+        }
+        // This path mutates only the compile-time overlay (no
+        // ir_write_memory until lazy materialisation, which may happen
+        // outside the branch), so the conditional-write predicate must
+        // be folded into the per-cell select here.
+        if let Some(p) = b.write_predicate().cloned() {
+            let static_true = p
+                .bool_val()
+                .or_else(|| p.int_val().map(|v| v != 0))
+                .unwrap_or(false);
+            if !static_true {
+                conds.push(p);
+            }
         }
         let cond = and_all(b, conds);
         let old = cells[abs].clone();
@@ -1270,10 +1285,11 @@ fn static_array_slice_setitem(
             } else {
                 cast_to_dtype(b, &value_elements[val_flat], dtype)
             };
-            b.ir_write_memory(segment_id, &addr, &write_val);
+            // Cache what was actually stored (predicated under a branch).
+            let stored = b.ir_write_memory(segment_id, &addr, &write_val);
 
             if !had_dynamic_single {
-                cache_set_cell(b, segment_id, addr_static as usize, write_val);
+                cache_set_cell(b, segment_id, addr_static as usize, stored);
             }
         }
         if axis_specs
@@ -1444,6 +1460,18 @@ fn try_overlay_dynamic_single_slice_setitem(
         }
         if !targeted {
             continue;
+        }
+        // Compile-time-overlay-only path: fold the conditional-write
+        // predicate into the per-cell select (same as
+        // `try_overlay_dynamic_element_setitem`).
+        if let Some(p) = b.write_predicate().cloned() {
+            let static_true = p
+                .bool_val()
+                .or_else(|| p.int_val().map(|v| v != 0))
+                .unwrap_or(false);
+            if !static_true {
+                conds.push(p);
+            }
         }
         let cond = and_all(b, conds);
         let raw_write = if value_is_scalar {

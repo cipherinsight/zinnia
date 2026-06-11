@@ -248,6 +248,14 @@ impl IRContext {
 
     // ── Condition values ──────────────────────────────────────────────
 
+    /// The innermost calculated branching condition (already ANDed with
+    /// enclosing branch conditions at `if_enter`), or `None` outside any
+    /// conditional scope. Used to scope the builder's conditional-write
+    /// predicate around `if`-arm visitation.
+    pub fn get_branching_condition_value(&self) -> Option<Value> {
+        self.find_condition(|s| s.get_branching_condition())
+    }
+
     /// Get the combined execution condition (looping AND branching AND returning).
     /// If no conditions are active, returns a constant `true`.
     pub fn get_condition_value(&self, builder: &mut IRBuilder) -> Value {

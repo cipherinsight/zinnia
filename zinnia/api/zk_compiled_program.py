@@ -110,6 +110,17 @@ class ZKCompiledProgram:
         )
         return ZKProofResult.from_json(artifact_json)
 
+    def get_elided_publics(self) -> list:
+        """Constant output cells elided from the public instance.
+
+        Returns a list of ``{"Int": v}`` / ``{"Float": v}`` dicts in return
+        order — the compiler's claim of which output values are pinned by
+        the kernel text itself rather than exposed. Output auditors check
+        these against ground truth.
+        """
+        from zinnia.compile._bridge import get_elided_publics
+        return json.loads(get_elided_publics(self._compiled_ir))
+
     def emit_structural(self, *args, backend="noir", params=None, externals=None) -> str:
         """Render the circuit STRUCTURE for the given witness without proving.
 

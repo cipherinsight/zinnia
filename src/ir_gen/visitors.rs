@@ -731,9 +731,16 @@ impl IRGenerator {
                 crate::optim::predicates::ScopeKind::Conditional,
                 path_predicate,
             );
+            // Segment writes inside this arm only take effect when the
+            // arm's path condition holds (statically-true predicates are
+            // free; see IRBuilder::write_predicate).
+            let prev_wp = self
+                .builder
+                .swap_write_predicate(self.ctx.get_branching_condition_value());
             for stmt in &n.t_block {
                 self.visit(stmt);
             }
+            self.builder.swap_write_predicate(prev_wp);
             scope_true_ret_guaranteed = self.ctx.check_return_guaranteed();
             scope_true_term_guaranteed = self.ctx.check_loop_terminated_guaranteed();
             let scope_true = self.ctx.if_leave();
@@ -753,9 +760,13 @@ impl IRGenerator {
                 crate::optim::predicates::ScopeKind::Conditional,
                 path_predicate,
             );
+            let prev_wp = self
+                .builder
+                .swap_write_predicate(self.ctx.get_branching_condition_value());
             for stmt in &n.f_block {
                 self.visit(stmt);
             }
+            self.builder.swap_write_predicate(prev_wp);
             scope_false_ret_guaranteed = self.ctx.check_return_guaranteed();
             scope_false_term_guaranteed = self.ctx.check_loop_terminated_guaranteed();
             let scope_false = self.ctx.if_leave();
@@ -804,11 +815,30 @@ impl IRGenerator {
             self.ctx.set_terminated_guarantee();
         }
 
-        if let (Some(then_scope), Some(else_scope)) = (then_scope, else_scope) {
-            self.merge_conditional_branch_bindings(then_scope, else_scope, &true_cond);
+        match (then_scope, else_scope) {
+            (Some(then_scope), Some(else_scope)) => {
+                self.merge_conditional_branch_bindings(then_scope, else_scope, &true_cond);
+            }
+            // Statically-resolved condition: exactly one arm ran, so its
+            // bindings propagate unconditionally (Python semantics).
+            (Some(scope), None) | (None, Some(scope)) => {
+                self.propagate_single_branch_bindings(scope);
+            }
+            (None, None) => {}
         }
     }
 
+    /// Join variable bindings after a dynamic two-arm conditional.
+    ///
+    /// Names assigned in BOTH arms merge via `select(cond, then, else)`.
+    /// Names assigned in ONE arm propagate as-is IF they already existed
+    /// outside the branch: `do_recursive_assign` pre-merged such values
+    /// against the pre-branch binding using the full path condition, so
+    /// the stored value is already correct for both paths. (Before
+    /// 2026-06-11 one-armed assignments were silently DROPPED — `r = 7;
+    /// if cond: r = 3` kept `r == 7` on every path; see the binding-audit
+    /// notes for case 0374.) A name born inside one arm of a dynamic
+    /// branch is conditionally defined and stays branch-local.
     fn merge_conditional_branch_bindings(
         &mut self,
         then_scope: crate::scope::Scope,
@@ -822,23 +852,75 @@ impl IRGenerator {
             return;
         };
 
-        let common_names: Vec<String> = then_vars
-            .keys()
-            .filter(|name| else_vars.contains_key(*name))
-            .cloned()
-            .collect();
-
-        for name in common_names {
-            let then_val = then_vars.get(&name).unwrap().value.clone();
-            let else_val = else_vars.get(&name).unwrap().value.clone();
-            let merged = crate::helpers::value_ops::select_value(
-                &mut self.builder,
-                condition,
-                &then_val,
-                &else_val,
-            );
-            self.ctx.set(&name, merged);
+        let mut names: Vec<String> = then_vars.keys().cloned().collect();
+        for name in else_vars.keys() {
+            if !then_vars.contains_key(name) {
+                names.push(name.clone());
+            }
         }
+
+        for name in names {
+            match (then_vars.get(&name), else_vars.get(&name)) {
+                (Some(t), Some(e)) => {
+                    let then_val = t.value.clone();
+                    let else_val = e.value.clone();
+                    let merged = crate::helpers::value_ops::select_value(
+                        &mut self.builder,
+                        condition,
+                        &then_val,
+                        &else_val,
+                    );
+                    self.ctx.set(&name, merged);
+                }
+                (Some(one), None) | (None, Some(one)) => {
+                    if self.ctx.exists(&name) {
+                        let val = one.value.clone();
+                        self.ctx.set(&name, val);
+                    }
+                }
+                (None, None) => unreachable!(),
+            }
+        }
+    }
+
+    /// Propagate bindings out of the single arm of a statically-resolved
+    /// conditional: the arm definitely ran, so existing names update and
+    /// new names become defined, both unconditionally.
+    fn propagate_single_branch_bindings(&mut self, scope: crate::scope::Scope) {
+        let Some(vars) = scope.get_local_var_table() else {
+            return;
+        };
+        for (name, store) in vars {
+            let val = store.value.clone();
+            self.ctx.set(name, val);
+        }
+    }
+
+    /// Rebind a subscript-assignment target after a setitem. In-place
+    /// (same-segment) updates already carry branch predication at the
+    /// memory level (`IRBuilder::write_predicate`); rebinds that produce
+    /// a NEW value (materialised List, fresh dyn array, ...) must merge
+    /// against the previous binding under the current path condition, or
+    /// a dynamic branch's setitem would apply unconditionally.
+    fn rebind_subscript_target(&mut self, var_name: &str, current: &Value, updated: Value) {
+        let same_segment = match (current, &updated) {
+            (
+                Value::StaticArray { segment_id: a, .. },
+                Value::StaticArray { segment_id: b, .. },
+            ) => a == b,
+            (Value::DynamicNDArray(da), Value::DynamicNDArray(db)) => {
+                da.segment_id == db.segment_id
+            }
+            _ => false,
+        };
+        if same_segment || !self.ctx.has_nontrivial_condition() {
+            self.ctx.set(var_name, updated);
+            return;
+        }
+        let cond = self.ctx.get_condition_value(&mut self.builder);
+        let merged =
+            crate::helpers::value_ops::select_value(&mut self.builder, &cond, &updated, current);
+        self.ctx.set(var_name, merged);
     }
 
     pub(crate) fn visit_for_in(&mut self, n: &ASTForInStatement) {
@@ -1971,7 +2053,7 @@ impl IRGenerator {
                                     panic!("TypeInferenceError: {} is not iterable", tp);
                                 }
                             }
-                            if let Some(name) = Self::simple_name_target(tgt) {
+                            if Self::simple_name_target(tgt).is_some() {
                                 if let Some(n) = data.values[i].int_val() {
                                     if let Some(vid) = data.values[i].value_id() {
                                         let fact = ContractTerm::eq(
@@ -1980,8 +2062,10 @@ impl IRGenerator {
                                         );
                                         self.builder.facts.insert_for(vid, fact);
                                     }
-                                    self.ctx.set(name, data.values[i].clone());
-                                    continue;
+                                    // Fall through to do_recursive_assign:
+                                    // a direct ctx.set here would bypass
+                                    // the conditional-branch merge for
+                                    // names that exist outside the branch.
                                 }
                             }
                             self.do_recursive_assign(
@@ -2110,7 +2194,7 @@ impl IRGenerator {
                                                     &mut self.builder, pre, &updated,
                                                 );
                                             }
-                                            self.ctx.set(var_name, updated);
+                                            self.rebind_subscript_target(var_name, &current, updated);
                                             return;
                                         }
                                     }
@@ -2136,17 +2220,17 @@ impl IRGenerator {
                                         &updated,
                                     );
                                 }
-                                self.ctx.set(var_name, updated);
+                                self.rebind_subscript_target(var_name, &current, updated);
                                 return;
                             }
                             // NewAxis fallback path: materialise then run
                             // legacy.
-                            let current = crate::helpers::static_array::base::to_value_list(
+                            let current_lst = crate::helpers::static_array::base::to_value_list(
                                 &mut self.builder,
                                 &current,
                             );
-                            let updated = self.set_nested_value(current, &indices, value);
-                            self.ctx.set(var_name, updated);
+                            let updated = self.set_nested_value(current_lst, &indices, value);
+                            self.rebind_subscript_target(var_name, &current, updated);
                             return;
                         }
                         let updated = if let Value::DynamicNDArray(d) = &current {
@@ -2160,7 +2244,7 @@ impl IRGenerator {
                                             mask_val,
                                             &value,
                                         );
-                                        self.ctx.set(var_name, result);
+                                        self.rebind_subscript_target(var_name, &current, result);
                                         return;
                                     }
                                 }
@@ -2176,7 +2260,7 @@ impl IRGenerator {
                                     &indices,
                                     &value,
                                 );
-                                self.ctx.set(var_name, result);
+                                self.rebind_subscript_target(var_name, &current, result);
                                 return;
                             }
                             crate::helpers::array_ops::dyn_setitem(
@@ -2186,9 +2270,9 @@ impl IRGenerator {
                                 &value,
                             )
                         } else {
-                            self.set_nested_value(current, &indices, value)
+                            self.set_nested_value(current.clone(), &indices, value)
                         };
-                        self.ctx.set(var_name, updated);
+                        self.rebind_subscript_target(var_name, &current, updated);
                     }
                 }
             }

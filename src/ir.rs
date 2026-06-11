@@ -106,10 +106,26 @@ impl IRStatement {
 // IRGraph
 // ---------------------------------------------------------------------------
 
+/// A constant return-cell value elided from the public instance
+/// (see `expose_circuit_return_value`'s constant-elision arms). The
+/// circuit never materializes these — they're pinned by the kernel text
+/// itself — but output auditors (`benchmarking/audit_bindings.py`) need
+/// the compiler's claim to verify payload completeness: every expected
+/// output element must be either an exposed public or an entry here.
+#[derive(Clone, Debug, serde::Serialize)]
+pub enum ElidedPublic {
+    Int(i64),
+    Float(f64),
+}
+
 /// A graph of IR statements with adjacency information.
 /// Mirrors Python `IRGraph` from `zinnia/compile/ir/ir_graph.py`.
 pub struct IRGraph {
     pub stmts: Vec<IRStatement>,
+    /// Constant output cells elided from the public instance, in return
+    /// order. Populated by IRGen at export; NOT round-tripped through
+    /// `export_stmts`/`import_stmts` (a deserialized graph reports none).
+    pub elided_publics: Vec<ElidedPublic>,
     /// `ValueId → StmtId` (= index in `stmts`) lookup. Built and
     /// maintained by `update_graph` after Phase 3
     /// (compiler.value-id-and-fact-leaves) switched `arguments` to
@@ -148,6 +164,7 @@ impl IRGraph {
     pub fn new(stmts: Vec<IRStatement>) -> Self {
         let mut graph = IRGraph {
             stmts: Vec::new(),
+            elided_publics: Vec::new(),
             value_to_stmt: HashMap::new(),
             in_d: Vec::new(),
             out_d: Vec::new(),

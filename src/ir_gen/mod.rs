@@ -649,9 +649,23 @@ impl IRGenerator {
             // metadata elision below. Kernels returning constant tensors
             // (e.g. np.zeros((20,10,10,2)) in case 0451: 4000 cells) would
             // otherwise pin k via the instance column for nothing.
-            Value::Integer(sv) if sv.static_val.is_some() => {}
-            Value::Boolean(sv) if sv.static_val.is_some() => {}
-            Value::Float(sv) if sv.static_val.is_some() => {}
+            // Elided constants are still recorded (IRGraph::elided_publics)
+            // so output auditors can check the claim against ground truth.
+            Value::Integer(sv) if sv.static_val.is_some() => {
+                self.builder
+                    .elided_publics
+                    .push(crate::ir::ElidedPublic::Int(sv.static_val.unwrap()));
+            }
+            Value::Boolean(sv) if sv.static_val.is_some() => {
+                self.builder.elided_publics.push(crate::ir::ElidedPublic::Int(
+                    if sv.static_val.unwrap() { 1 } else { 0 },
+                ));
+            }
+            Value::Float(sv) if sv.static_val.is_some() => {
+                self.builder
+                    .elided_publics
+                    .push(crate::ir::ElidedPublic::Float(sv.static_val.unwrap()));
+            }
             Value::Integer(_) | Value::Boolean(_) => {
                 self.builder.ir_expose_public_i(value);
             }

@@ -63,7 +63,10 @@ impl CompiledIR {
 }
 
 fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32) -> Option<IRGraph> {
-    Some(match pass_name {
+    // Passes rebuild the graph via `IRGraph::new`, which starts with an
+    // empty elided-publics list; carry the IRGen-recorded claim across.
+    let elided = graph.elided_publics.clone();
+    let mut out = match pass_name {
         "ExternalCallRemover" => ExternalCallRemover.exec(graph),
         "DeadCodeElimination" => DeadCodeElimination.exec(graph),
         "DoubleNotElimination" => DoubleNotElimination.exec(graph),
@@ -80,7 +83,9 @@ fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32) -> Option<IRG
         "MemoryTraceInjection" => MemoryTraceInjection.exec(graph),
         "PatternMatchOptim" => PatternMatchOptim.exec(graph),
         _ => return None,
-    })
+    };
+    out.elided_publics = elided;
+    Some(out)
 }
 
 fn compile_phase_trace_enabled() -> bool {
@@ -515,6 +520,18 @@ fn verify_proof_artifact(proof_artifact_json: &str) -> PyResult<String> {
     })
 }
 
+/// Constant output cells the compiler elided from the public instance
+/// (constant-elision in `expose_circuit_return_value`). JSON list of
+/// `{"Int": v}` / `{"Float": v}` in return order. Consumed by
+/// `benchmarking/audit_bindings.py` to verify output completeness:
+/// every expected output element must be an exposed public OR appear here.
+#[pyfunction]
+fn get_elided_publics(compiled_ir: &CompiledIR) -> PyResult<String> {
+    serde_json::to_string(&compiled_ir.graph.elided_publics).map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e))
+    })
+}
+
 /// On-demand IR serialization: CompiledIR → JSON string (for debugging/persistence).
 #[pyfunction]
 fn export_ir_json(compiled_ir: &CompiledIR) -> PyResult<String> {
@@ -581,6 +598,7 @@ fn _zinnia_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compile_circuit, m)?)?;
     m.add_function(wrap_pyfunction!(prove_circuit, m)?)?;
     m.add_function(wrap_pyfunction!(emit_structural_circuit, m)?)?;
+    m.add_function(wrap_pyfunction!(get_elided_publics, m)?)?;
     m.add_function(wrap_pyfunction!(verify_proof_artifact, m)?)?;
     m.add_function(wrap_pyfunction!(export_ir_json, m)?)?;
     m.add_function(wrap_pyfunction!(import_ir_json, m)?)?;
