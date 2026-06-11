@@ -87,18 +87,35 @@ fn setdiff_rows<F: ScalarField>(
 
     // in1d: in_b[r] = OR over s of (a_idx[r] == b_idx[s]). keep[r] = !in_b[r].
     let zero = ctx.load_constant(F::ZERO);
+    let mut keeps = [zero; 2];
     for r in 0..2usize {
         let mut in_b = zero;
         for s in 0..7usize {
             let eq = gate.is_equal(ctx, a_idx[r], b_idx[s]);
             in_b = gate.or(ctx, in_b, eq);
         }
-        let keep = gate.not(ctx, in_b);
-        // Expose (keep_mask, row[0], row[1], row[2]) for each row.
-        make_public.push(keep);
-        for j in 0..3usize {
-            make_public.push(a[r * 3 + j]);
-        }
+        keeps[r] = gate.not(ctx, in_b);
+    }
+
+    // Compact output (mirrors Zinnia's dynamic-array encoding): kept rows
+    // packed to the front in order, zero-padded; metadata = runtime
+    // length (rows * 3) and the row count.
+    let count = gate.add(ctx, keeps[0], keeps[1]);
+    let three = ctx.load_constant(F::from(3u64));
+    let total = gate.mul(ctx, count, three);
+    make_public.push(total);
+    make_public.push(count);
+    let both = gate.and(ctx, keeps[0], keeps[1]);
+    for j in 0..3usize {
+        // Slot row 0: A0 if kept, else A1 if kept, else 0.
+        let fallback = gate.mul(ctx, keeps[1], a[3 + j]);
+        let row0 = gate.select(ctx, a[j], fallback, keeps[0]);
+        make_public.push(row0);
+    }
+    for j in 0..3usize {
+        // Slot row 1: A1 only when both rows kept.
+        let row1 = gate.mul(ctx, both, a[3 + j]);
+        make_public.push(row1);
     }
 }
 
