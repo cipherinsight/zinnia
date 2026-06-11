@@ -63,6 +63,12 @@ pub struct Halo2BaseSynthesizer<'a> {
     // side is keyed by cell id for dynamic addresses and by value for
     // constant addresses (constants with equal values are interchangeable).
     overlay_eq_cache: HashMap<(u64, OverlayReadKey), Halo2BaseCell>,
+    // Constraint-derived value intervals (signed i64 view): constants are
+    // exact, select outputs take the hull of their branches, asserted bits
+    // are [0,1]. Used to shrink dynamic-read choice sets: a gather along a
+    // unit-stride axis (addr = row*W + col with col in [0,W)) muxes W slots
+    // instead of the whole segment. Witness-independent by construction.
+    value_interval: HashMap<u64, (i64, i64)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -151,6 +157,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             signed64_cells: HashSet::new(),
             unsigned64_cells: HashSet::new(),
             overlay_eq_cache: HashMap::new(),
+            value_interval: HashMap::new(),
         }
     }
 
@@ -171,7 +178,22 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         let assigned = self.ctx().load_constant(value);
         let cell = self.wrap(assigned, value);
         self.const_cell_ids.insert(cell.id);
+        let v = kernel::fp_to_i64(value);
+        if kernel::i64_to_fp(v) == value {
+            self.value_interval.insert(cell.id, (v, v));
+        }
         cell
+    }
+
+    /// Constraint-derived signed-i64 interval of a cell, if known.
+    fn interval_of(&self, cell: &Halo2BaseCell) -> Option<(i64, i64)> {
+        if let Some(iv) = self.value_interval.get(&cell.id) {
+            return Some(*iv);
+        }
+        if self.bit_cell_ids.contains(&cell.id) {
+            return Some((0, 1));
+        }
+        None
     }
 
     fn wrap(&mut self, assigned: AssignedValue<Fp>, value: Fp) -> Halo2BaseCell {
@@ -288,7 +310,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
                 .and_then(|cells| cells.get(idx as usize))
                 .copied()
                 .flatten()
-                .unwrap_or_else(|| self.cell(init));
+                .unwrap_or_else(|| self.const_cell(init));
             out = self.select_bit(&ind, &slot, &out)?;
         }
         self.plane_cache.insert(key, out);
@@ -816,6 +838,11 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         if self.is_unsigned64_known(if_true) && self.is_unsigned64_known(if_false) {
             self.unsigned64_cells.insert(out.id);
         }
+        if let (Some((tl, th)), Some((fl, fh))) =
+            (self.interval_of(if_true), self.interval_of(if_false))
+        {
+            self.value_interval.insert(out.id, (tl.min(fl), th.max(fh)));
+        }
         Ok(out)
     }
     fn select_many_lane(&mut self, cond: &Self::CellRef, true_values: &[Self::CellRef], false_values: &[Self::CellRef], lane: usize) -> Result<Self::CellRef, ProvingError> {
@@ -964,15 +991,10 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
                 .and_then(|cells| cells.get(a))
                 .copied()
                 .flatten()
-                .unwrap_or_else(|| {
-                    let value = self
-                        .memories
-                        .get(&segment_id)
-                        .and_then(|m| m.get(a))
-                        .copied()
-                        .unwrap_or(init);
-                    self.cell(value)
-                });
+                // Never-const-written slot: its pre-overlay content is the
+                // init value by construction; a constant cell keeps it
+                // constrained (a witness cell here would be a free variable).
+                .unwrap_or_else(|| self.const_cell(init));
             let mut out = base;
             for (write_addr, write_value) in dynamic_writes {
                 let hit = self.overlay_hit(&write_addr, addr)?;
@@ -1058,11 +1080,23 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
                 1 => (lin.terms[0].0, lin.terms[0].1, lin.offset),
                 _ => (*addr, 1, 0),
             };
+            // Constraint-derived root interval shrinks the choice set: a
+            // unit-stride gather (addr = base + col, col in [0,W)) muxes W
+            // slots instead of the whole segment. The membership assert
+            // below stays sound — the interval is enforced by the root's
+            // defining gates, so the true value is always inside it.
+            let root_iv = self.interval_of(&root);
             let mut choices: Vec<(i64, usize)> = Vec::new(); // (root value v, slot idx)
             for idx in 0..len as i64 {
                 let num = idx - offset;
                 if scale != 0 && num % scale == 0 {
-                    choices.push((num / scale, idx as usize));
+                    let v = num / scale;
+                    if let Some((lo, hi)) = root_iv {
+                        if v < lo || v > hi {
+                            continue;
+                        }
+                    }
+                    choices.push((v, idx as usize));
                 }
             }
             if choices.is_empty() {
@@ -1079,7 +1113,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
                     .and_then(|cells| cells.get(*idx))
                     .copied()
                     .flatten()
-                    .unwrap_or_else(|| self.cell(init));
+                    .unwrap_or_else(|| self.const_cell(init));
                 acc = self.select_bit(&ind, &slot, &acc)?;
             }
             // Soundness: the gates that built `addr` already enforce
