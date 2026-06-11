@@ -346,9 +346,25 @@ fn dyn_reshape_runtime(
     b.ir_assert(&eq);
 
     let new_strides = row_major_strides(&logical_shape);
-    let new_dims: Vec<crate::types::Dim> = logical_shape
+    // Envelope: static axes are exact; each runtime axis is bounded by
+    // old_total / product(static dims) (every other runtime dim is >= 1).
+    // Consumers (e.g. axis reductions) size their enumeration grids from
+    // these bounds — total_bound alone is hopelessly loose for rank > 2.
+    let static_product: usize = dim_args
         .iter()
-        .map(|&s| crate::types::Dim::new_static(&mut b.dim_table, s))
+        .filter_map(|v| v.int_val())
+        .filter(|&c| c > 0)
+        .map(|c| c as usize)
+        .product::<usize>()
+        .max(1);
+    let runtime_axis_bound = (old_total / static_product).max(1);
+    let new_dims: Vec<crate::types::Dim> = dim_args
+        .iter()
+        .zip(logical_shape.iter())
+        .map(|(arg, &s)| match arg.int_val() {
+            Some(c) if c > 0 => crate::types::Dim::new_static(&mut b.dim_table, c as usize),
+            _ => crate::types::Dim::new_dynamic(&mut b.dim_table, 0, runtime_axis_bound.max(s)),
+        })
         .collect();
     let envelope = crate::types::Envelope::new_with_bound(new_dims, old_total);
 
@@ -642,9 +658,25 @@ fn dyn_reshape_runtime_infer_unknown(
     b.ir_assert(&eq);
 
     let new_strides = row_major_strides(&logical_shape);
-    let new_dims: Vec<crate::types::Dim> = logical_shape
+    // Envelope: static axes are exact; each runtime axis is bounded by
+    // old_total / product(static dims) (every other runtime dim is >= 1).
+    // Consumers (e.g. axis reductions) size their enumeration grids from
+    // these bounds — total_bound alone is hopelessly loose for rank > 2.
+    let static_product: usize = dim_args
         .iter()
-        .map(|&s| crate::types::Dim::new_static(&mut b.dim_table, s))
+        .filter_map(|v| v.int_val())
+        .filter(|&c| c > 0)
+        .map(|c| c as usize)
+        .product::<usize>()
+        .max(1);
+    let runtime_axis_bound = (old_total / static_product).max(1);
+    let new_dims: Vec<crate::types::Dim> = dim_args
+        .iter()
+        .zip(logical_shape.iter())
+        .map(|(arg, &s)| match arg.int_val() {
+            Some(c) if c > 0 => crate::types::Dim::new_static(&mut b.dim_table, c as usize),
+            _ => crate::types::Dim::new_dynamic(&mut b.dim_table, 0, runtime_axis_bound.max(s)),
+        })
         .collect();
     let envelope = crate::types::Envelope::new_with_bound(new_dims, old_total);
 
