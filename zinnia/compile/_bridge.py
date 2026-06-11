@@ -9,6 +9,7 @@ from zinnia._zinnia_core import (
     CompiledIR,
     compile_circuit,
     prove_circuit,
+    emit_structural_circuit,
     verify_proof_artifact,
     export_ir_json,
     import_ir_json,

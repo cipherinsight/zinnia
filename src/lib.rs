@@ -424,6 +424,78 @@ fn prove_circuit(
     })
 }
 
+/// Structural-circuit probe for the witness-independence regression test
+/// (docs/provenance-consolidation-plan.md, Step 0a). Runs preprocess +
+/// circuit construction for the given witness but never invokes a prover,
+/// returning a deterministic structural rendering of the circuit:
+///
+///   backend="noir"       → the emitted `src/main.nr` text
+///   backend="halo2-base" → keygen-stage builder cell-statistics fingerprint
+///
+/// Compiling once and calling this with two different witnesses MUST yield
+/// byte-identical output; any difference means emission decisions were
+/// specialized to the prover's witness (a soundness bug).
+#[pyfunction]
+#[pyo3(signature = (compiled_ir, inputs_json, external_callables, backend="noir", params_json=None))]
+fn emit_structural_circuit(
+    py: Python<'_>,
+    compiled_ir: &CompiledIR,
+    inputs_json: &str,
+    external_callables: &Bound<'_, pyo3::types::PyDict>,
+    backend: &str,
+    params_json: Option<&str>,
+) -> PyResult<String> {
+    let ir_graph = &compiled_ir.graph;
+
+    let witness_input: circuit_input::CircuitInputs =
+        serde_json::from_str(inputs_json).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Witness JSON parse error: {}", e))
+        })?;
+
+    let prover = prove::create_prover_backend(backend)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+    let mut params: prove::types::ProvingParams = if let Some(pj) = params_json {
+        serde_json::from_str(pj).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Params JSON parse error: {}", e))
+        })?
+    } else {
+        prover
+            .estimate_params(ir_graph)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
+    };
+    // halo2-base needs a real k to size the builder; k=0 means "estimate".
+    if backend == "halo2-base" && params.k == 0 {
+        params = prover
+            .estimate_params(ir_graph)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+    }
+
+    let py_callback =
+        prove::preprocess::py_callback::PyExternalCallback::new(py, external_callables);
+    let resolved_witness =
+        prove::preprocess::run_preprocess(ir_graph, &witness_input, &params, &py_callback)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+    match backend {
+        #[cfg(feature = "noir-backend")]
+        "noir" | "noir-ultrahonk" => {
+            let out = prove::noir::emit::emit_circuit(ir_graph, &resolved_witness, &params)
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+            Ok(out.main_nr)
+        }
+        #[cfg(feature = "halo2-base-backend")]
+        "halo2-base" => {
+            prove::halo2_base::structural_fingerprint(ir_graph, &resolved_witness, &params)
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+        }
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "emit_structural_circuit: unsupported backend '{}'",
+            other
+        ))),
+    }
+}
+
 /// Verify a ZK proof.
 /// Returns a JSON-serialized VerifyResult.
 #[pyfunction]
@@ -508,6 +580,7 @@ fn _zinnia_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CompiledIR>()?;
     m.add_function(wrap_pyfunction!(compile_circuit, m)?)?;
     m.add_function(wrap_pyfunction!(prove_circuit, m)?)?;
+    m.add_function(wrap_pyfunction!(emit_structural_circuit, m)?)?;
     m.add_function(wrap_pyfunction!(verify_proof_artifact, m)?)?;
     m.add_function(wrap_pyfunction!(export_ir_json, m)?)?;
     m.add_function(wrap_pyfunction!(import_ir_json, m)?)?;

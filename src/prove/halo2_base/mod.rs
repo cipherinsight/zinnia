@@ -356,6 +356,29 @@ impl ProverBackend for Halo2BaseProverBackend {
     }
 }
 
+/// Keygen-stage structural fingerprint for the witness-independence
+/// regression test (docs/provenance-consolidation-plan.md, Step 0a):
+/// synthesizes the circuit with the given witness and renders the cell
+/// statistics. A sound (witness-independent) synthesizer yields the same
+/// fingerprint for every witness of the same compiled circuit; any drift
+/// means emission decisions leaked witness data.
+pub fn structural_fingerprint(
+    ir: &IRGraph,
+    witness: &ResolvedWitness,
+    params: &ProvingParams,
+) -> Result<String, ProvingError> {
+    let (builder, public_values) =
+        build_circuit(ir, Some(witness), params, CircuitBuilderStage::Keygen, None)?;
+    let stats = builder.statistics();
+    Ok(format!(
+        "advice={:?} lookup={:?} fixed={} instances={}",
+        stats.gate.total_advice_per_phase,
+        stats.total_lookup_advice_per_phase,
+        stats.gate.total_fixed,
+        public_values.len(),
+    ))
+}
+
 fn build_circuit(
     ir: &IRGraph,
     witness: Option<&ResolvedWitness>,

@@ -110,6 +110,39 @@ class ZKCompiledProgram:
         )
         return ZKProofResult.from_json(artifact_json)
 
+    def emit_structural(self, *args, backend="noir", params=None, externals=None) -> str:
+        """Render the circuit STRUCTURE for the given witness without proving.
+
+        Returns the emitted Noir `main.nr` text (backend="noir") or a
+        halo2-base cell-statistics fingerprint (backend="halo2-base").
+        Soundness contract: for one compiled program, every witness must
+        yield byte-identical output — the witness-independence regression
+        test (testing/lang/test_witness_independence.py) relies on this.
+        """
+        from zinnia.exec.input_parser import build_circuit_inputs
+        from zinnia.compile._bridge import emit_structural_circuit
+
+        witness = build_circuit_inputs(self.program_inputs, args)
+
+        ext_dict = {}
+        if externals:
+            ext_dict = externals
+        else:
+            for name, ef in self.external_funcs.items():
+                if hasattr(ef, 'callable'):
+                    ext_dict[name] = ef.callable
+                elif callable(ef):
+                    ext_dict[name] = ef
+
+        params_json = json.dumps(params) if params else None
+        return emit_structural_circuit(
+            self._compiled_ir,
+            json.dumps(witness),
+            ext_dict,
+            backend,
+            params_json,
+        )
+
     def verify(self, proof_result) -> bool:
         """Verify a proof artifact (backend auto-detected from the artifact)."""
         from zinnia.compile._bridge import verify_proof_artifact
