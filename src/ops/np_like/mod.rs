@@ -51,6 +51,7 @@ pub(crate) fn vectorize_minmax(
         &crate::types::Value,
         &crate::types::Value,
     ) -> crate::types::Value,
+    is_max: bool,
 ) -> crate::types::Value {
     use crate::types::{CompositeData, Value, ValueId};
     // Broadcast first so both operands have the same shape, then walk in
@@ -76,6 +77,7 @@ pub(crate) fn vectorize_minmax(
         b: &Value,
         int_cmp: fn(&mut crate::builder::IRBuilder, &Value, &Value) -> Value,
         float_cmp: fn(&mut crate::builder::IRBuilder, &Value, &Value) -> Value,
+        is_max: bool,
     ) -> Value {
         match (a, b) {
             (Value::List(da), Value::List(db))
@@ -86,7 +88,7 @@ pub(crate) fn vectorize_minmax(
                     .values
                     .iter()
                     .zip(db.values.iter())
-                    .map(|(av, bv)| rec(builder, av, bv, int_cmp, float_cmp))
+                    .map(|(av, bv)| rec(builder, av, bv, int_cmp, float_cmp, is_max))
                     .collect();
                 let types = vals.iter().map(|v| v.zinnia_type()).collect();
                 Value::List(CompositeData {
@@ -113,12 +115,14 @@ pub(crate) fn vectorize_minmax(
                     builder.ir_select_f(&cond, &af, &bf)
                 } else {
                     let cond = int_cmp(builder, a, b);
-                    builder.ir_select_i(&cond, a, b)
+                    let out = builder.ir_select_i(&cond, a, b);
+                    builder.deposit_minmax_facts(&out, a, b, is_max);
+                    out
                 }
             }
         }
     }
-    rec(builder, &l, &r, int_cmp, float_cmp)
+    rec(builder, &l, &r, int_cmp, float_cmp, is_max)
 }
 
 macro_rules! define_np_arith {
@@ -431,7 +435,9 @@ macro_rules! define_np_minmax {
                     | (crate::types::Value::Integer(_), crate::types::Value::Boolean(_))
                     | (crate::types::Value::Boolean(_), crate::types::Value::Boolean(_)) => {
                         let cond = builder.$int_cmp(x1, x2);
-                        builder.ir_select_i(&cond, x1, x2)
+                        let out = builder.ir_select_i(&cond, x1, x2);
+                        builder.deposit_minmax_facts(&out, x1, x2, $op_name == "maximum");
+                        out
                     }
                     (crate::types::Value::Float(_), crate::types::Value::Float(_)) => {
                         let cond = builder.$float_cmp(x1, x2);
@@ -470,6 +476,7 @@ macro_rules! define_np_minmax {
                             b,
                             crate::builder::IRBuilder::$int_cmp,
                             crate::builder::IRBuilder::$float_cmp,
+                            $op_name == "maximum",
                         )
                     }
                     _ => panic!("{}: unsupported types", $sig),

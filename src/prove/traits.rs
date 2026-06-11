@@ -432,6 +432,15 @@ pub trait Synthesizer {
         self.assert_bit(&out)?;
         Ok(out)
     }
+    /// Constrain `a` (signed-i64 domain) to be non-negative. Defaults to
+    /// the generic comparison; backends with cheap range checks override
+    /// (halo2-base: a single 63-bit range check).
+    fn assert_non_neg_i(&mut self, a: &Self::CellRef) -> Result<(), ProvingError> {
+        let zero = self.constant_int(0)?;
+        let ge = self.gte_i(a, &zero)?;
+        self.assert_true(&ge)
+    }
+
     /// Constrain `a` to be in {0, 1}. Defaults to `assert_true(eq(a, bool_cast(a)))`
     /// for backends without a dedicated bit gate. The halo2 backend overrides
     /// this with its 1-row `s_bit` gate.

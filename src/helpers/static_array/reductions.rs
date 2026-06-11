@@ -59,11 +59,15 @@ fn fold_two(b: &mut IRBuilder, op: &str, acc: &Value, elem: &Value) -> Value {
         "prod" => super::super::value_ops::apply_binary_op(b, "mul", acc, elem),
         "min" => {
             let cond = super::super::value_ops::apply_binary_op(b, "lt", acc, elem);
-            super::super::value_ops::select_value(b, &cond, acc, elem)
+            let out = super::super::value_ops::select_value(b, &cond, acc, elem);
+            b.deposit_minmax_facts(&out, acc, elem, false);
+            out
         }
         "max" => {
             let cond = super::super::value_ops::apply_binary_op(b, "gt", acc, elem);
-            super::super::value_ops::select_value(b, &cond, acc, elem)
+            let out = super::super::value_ops::select_value(b, &cond, acc, elem);
+            b.deposit_minmax_facts(&out, acc, elem, true);
+            out
         }
         "any" => {
             let acc_b = super::super::value_ops::to_scalar_bool(b, acc);

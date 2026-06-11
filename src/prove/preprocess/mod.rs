@@ -423,6 +423,7 @@ impl<'a> Preprocessor<'a> {
             IR::AddStr | IR::StrI | IR::StrF | IR::Print => Ok(None),
             IR::Assert
             | IR::AssertBit
+            | IR::AssertNonNegI
             | IR::AssertU128Lt
             | IR::ExposePublicI
             | IR::ExposePublicF => Ok(None),

@@ -415,6 +415,14 @@ pub struct NoirEmitter {
     /// expression at emit time. Used for public-input bookkeeping only;
     /// the proof itself derives values from witness execution by nargo.
     value_cache: HashMap<String, ConcreteValue>,
+    /// Peephole provenance for the negative-index normalization pattern
+    /// `select(lt(x, 0), x + N, x)`: maps lt(x,0) outputs to x, add-const
+    /// outputs to (x, c), and recognized normalized indices to (x, N).
+    /// `eq_i(norm, j)` then emits the signed-machinery-free identity
+    /// `(x == j) | (x == j - N)` — exact for every x.
+    lt_zero_of: HashMap<String, String>,
+    add_const_of: HashMap<String, (String, i64)>,
+    norm_index_of: HashMap<String, (String, i64)>,
     /// Track whether the lookup-table-style cmp helper is used (records
     /// which noir_fpc symbols to `use ...`-import).
     needs_lib: HashMap<&'static str, bool>,
@@ -513,6 +521,71 @@ enum ConcreteValue {
 }
 
 impl NoirEmitter {
+    fn add_i_inner(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x + y);
+        // u32 path: both operands already bound u32 AND sum still fits.
+        // Bound-propagation lets axis-dim chains (`row_has`, sums, scan
+        // accumulators) stay u32 without any RANGE cast.
+        if self.is_u32(a) && self.is_u32(b) {
+            if let Some(sum) = self
+                .bound_of(a)
+                .zip(self.bound_of(b))
+                .and_then(|(x, y)| x.checked_add(y))
+                .filter(|s| *s < (1u64 << 32))
+            {
+                let v = self.bind_u32_with_bound(&format!("{} + {}", a, b), sum);
+                self.fold_i(&v, folded);
+                return Ok(v);
+            }
+        }
+        // u32_amortizable + at-least-one-operand-u32: extend the u32
+        // add-chain across a single Field neighbour by promoting it
+        // (one CSE-d 32-bit RANGE) so accumulators keep flowing in
+        // u32. The guard avoids breaking pure-Field chains where
+        // neither operand is u32 yet — promoting both would pay two
+        // RANGE casts per add and rarely pays back (cf. 0510).
+        if self.u32_amortizable && (self.is_u32(a) || self.is_u32(b)) {
+            let ap = self.maybe_promote_to_u32(a);
+            let bp = self.maybe_promote_to_u32(b);
+            if self.is_u32(&ap) && self.is_u32(&bp) {
+                if let Some(sum) = self
+                    .bound_of(&ap)
+                    .zip(self.bound_of(&bp))
+                    .and_then(|(x, y)| x.checked_add(y))
+                    .filter(|s| *s < (1u64 << 32))
+                {
+                    let v = self.bind_u32_with_bound(&format!("{} + {}", ap, bp), sum);
+                    self.fold_i(&v, folded);
+                    return Ok(v);
+                }
+            }
+        }
+        let v = self.bind(&format!("{} + {}", self.as_field(a), self.as_field(b)));
+        self.fold_i(&v, folded);
+        Ok(v)
+    }
+    fn lt_i_inner(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x < y);
+        if self.is_u32(a) && self.is_u32(b) {
+            let v = self.bind_u32_with_bound(&format!("if {} < {} {{ 1 }} else {{ 0 }}", a, b), 1);
+            self.fold_b(&v, folded);
+            return Ok(v);
+        }
+        // Field path: signed-aware comparison via to_signed. Bind the
+        // {0, 1} result as u32 so downstream stays u32-clean.
+        self.use_lib("qlt_signed");
+        let af = self.as_field(a);
+        let bf = self.as_field(b);
+        let (sa, ma) = self.project_signed(&af);
+        let (sb, mb) = self.project_signed(&bf);
+        let v = self.bind(&format!(
+            "if qlt_signed({}, {}, {}, {}) {{ 1 }} else {{ 0 }}",
+            sa, ma, sb, mb,
+        ));
+        self.fold_b(&v, folded);
+        Ok(v)
+    }
+
     pub fn new(
         inputs: Vec<EmittedInput>,
         witness: ResolvedWitness,
@@ -546,6 +619,9 @@ impl NoirEmitter {
             exposes: Vec::new(),
             public_decimal: Vec::new(),
             value_cache: HashMap::new(),
+            lt_zero_of: HashMap::new(),
+            add_const_of: HashMap::new(),
+            norm_index_of: HashMap::new(),
             needs_lib: HashMap::new(),
             params,
             memories: HashMap::new(),
@@ -985,48 +1061,15 @@ impl Synthesizer for NoirEmitter {
     }
 
     fn add_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x + y);
-        // u32 path: both operands already bound u32 AND sum still fits.
-        // Bound-propagation lets axis-dim chains (`row_has`, sums, scan
-        // accumulators) stay u32 without any RANGE cast.
-        if self.is_u32(a) && self.is_u32(b) {
-            if let Some(sum) = self
-                .bound_of(a)
-                .zip(self.bound_of(b))
-                .and_then(|(x, y)| x.checked_add(y))
-                .filter(|s| *s < (1u64 << 32))
-            {
-                let v = self.bind_u32_with_bound(&format!("{} + {}", a, b), sum);
-                self.fold_i(&v, folded);
-                return Ok(v);
-            }
+        let out = self.add_i_inner(a, b)?;
+        if let Some(c) = self.int_of(b) {
+            self.add_const_of.insert(out.clone(), (a.clone(), c as i64));
+        } else if let Some(c) = self.int_of(a) {
+            self.add_const_of.insert(out.clone(), (b.clone(), c as i64));
         }
-        // u32_amortizable + at-least-one-operand-u32: extend the u32
-        // add-chain across a single Field neighbour by promoting it
-        // (one CSE-d 32-bit RANGE) so accumulators keep flowing in
-        // u32. The guard avoids breaking pure-Field chains where
-        // neither operand is u32 yet — promoting both would pay two
-        // RANGE casts per add and rarely pays back (cf. 0510).
-        if self.u32_amortizable && (self.is_u32(a) || self.is_u32(b)) {
-            let ap = self.maybe_promote_to_u32(a);
-            let bp = self.maybe_promote_to_u32(b);
-            if self.is_u32(&ap) && self.is_u32(&bp) {
-                if let Some(sum) = self
-                    .bound_of(&ap)
-                    .zip(self.bound_of(&bp))
-                    .and_then(|(x, y)| x.checked_add(y))
-                    .filter(|s| *s < (1u64 << 32))
-                {
-                    let v = self.bind_u32_with_bound(&format!("{} + {}", ap, bp), sum);
-                    self.fold_i(&v, folded);
-                    return Ok(v);
-                }
-            }
-        }
-        let v = self.bind(&format!("{} + {}", self.as_field(a), self.as_field(b)));
-        self.fold_i(&v, folded);
-        Ok(v)
+        return Ok(out);
     }
+
     fn sub_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x - y);
         // u32 path is only sound if we can prove the result is
@@ -1288,6 +1331,40 @@ impl Synthesizer for NoirEmitter {
 
     fn eq_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x == y);
+        // Normalized-index dual equality: for norm = select(lt(x,0), x+N, x),
+        // eq(norm, j) == (x == j) | (x == j - N) for every x — two Field
+        // equalities instead of the signed-comparison machinery that the
+        // normalization otherwise drags in (~600 ACIR gates per index).
+        {
+            let hit = self
+                .norm_index_of
+                .get(a)
+                .cloned()
+                .map(|nx| (nx, self.int_of(b)))
+                .filter(|(_, j)| j.is_some())
+                .or_else(|| {
+                    self.norm_index_of
+                        .get(b)
+                        .cloned()
+                        .map(|nx| (nx, self.int_of(a)))
+                        .filter(|(_, j)| j.is_some())
+                });
+            if let Some(((x, n), Some(j))) = hit {
+                let xf = self.as_field(&x);
+                let j = j as i64;
+                let second = if j - n >= 0 {
+                    format!("({} == {})", xf, j - n)
+                } else {
+                    format!("({} + {} == 0)", xf, n - j)
+                };
+                let v = self.bind(&format!(
+                    "if ({} == {}) | {} {{ 1 }} else {{ 0 }}",
+                    xf, j, second
+                ));
+                self.fold_b(&v, folded);
+                return Ok(v);
+            }
+        }
         // Only bind u32 when operands are already u32. Unconditional
         // u32-binding adds a `BLACKBOX::RANGE` per compare on
         // otherwise-Field-pure kernels (0441/0442/0443 regressed +2700
@@ -1354,26 +1431,13 @@ impl Synthesizer for NoirEmitter {
         Ok(v)
     }
     fn lt_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x < y);
-        if self.is_u32(a) && self.is_u32(b) {
-            let v = self.bind_u32_with_bound(&format!("if {} < {} {{ 1 }} else {{ 0 }}", a, b), 1);
-            self.fold_b(&v, folded);
-            return Ok(v);
+        let out = self.lt_i_inner(a, b)?;
+        if self.int_of(b) == Some(0) {
+            self.lt_zero_of.insert(out.clone(), a.clone());
         }
-        // Field path: signed-aware comparison via to_signed. Bind the
-        // {0, 1} result as u32 so downstream stays u32-clean.
-        self.use_lib("qlt_signed");
-        let af = self.as_field(a);
-        let bf = self.as_field(b);
-        let (sa, ma) = self.project_signed(&af);
-        let (sb, mb) = self.project_signed(&bf);
-        let v = self.bind(&format!(
-            "if qlt_signed({}, {}, {}, {}) {{ 1 }} else {{ 0 }}",
-            sa, ma, sb, mb,
-        ));
-        self.fold_b(&v, folded);
-        Ok(v)
+        return Ok(out);
     }
+
     fn lt_i_bounded(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x < y);
         // Pre-promote Field operands with provable u32 bounds (CSE-d):
@@ -1775,6 +1839,15 @@ impl Synthesizer for NoirEmitter {
             let picked = if c { if_true } else { if_false };
             if let Some(cv) = self.value_cache.get(picked).cloned() {
                 self.value_cache.insert(v.clone(), cv);
+            }
+        }
+        // Normalized-index recognition: select(lt(x,0), x + N, x).
+        if let (Some(x), Some((ax, n))) = (
+            self.lt_zero_of.get(cond).cloned(),
+            self.add_const_of.get(if_true).cloned(),
+        ) {
+            if ax == x && if_false == &x && n > 0 {
+                self.norm_index_of.insert(v.clone(), (x, n));
             }
         }
         Ok(v)

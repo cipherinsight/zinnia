@@ -829,7 +829,17 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn select_bit(&mut self, cond: &Self::CellRef, if_true: &Self::CellRef, if_false: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         self.assert_bit(cond)?;
         let value = cond.value * if_true.value + (Fp::one() - cond.value) * if_false.value;
-        let out = self.gate_cell(value, |gate, ctx| gate.select(ctx, if_true.assigned, if_false.assigned, cond.assigned));
+        // Zero-branch fusion: select(c, 0, x) == (1-c)*x and
+        // select(c, x, 0) == c*x — one gate instead of two.
+        let t_zero = self.is_const_cell(if_true) && if_true.value == Fp::zero();
+        let f_zero = self.is_const_cell(if_false) && if_false.value == Fp::zero();
+        let out = if t_zero {
+            self.gate_cell(value, |gate, ctx| gate.mul_not(ctx, cond.assigned, if_false.assigned))
+        } else if f_zero {
+            self.gate_cell(value, |gate, ctx| gate.mul(ctx, cond.assigned, if_true.assigned))
+        } else {
+            self.gate_cell(value, |gate, ctx| gate.select(ctx, if_true.assigned, if_false.assigned, cond.assigned))
+        };
         // The select gate pins out to one of the branches, so window facts
         // shared by both branches hold for the output as well.
         if self.is_signed64_known(if_true) && self.is_signed64_known(if_false) {
@@ -919,6 +929,20 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         }
         self.u128_lt_bit_cache.get(&key).and_then(|v| v.get(bit as usize)).copied().ok_or_else(|| ProvingError::synthesis("range bit index out of bounds"))
     }
+    fn assert_non_neg_i(&mut self, a: &Self::CellRef) -> Result<(), ProvingError> {
+        // For signed-i64-domain values, x >= 0 is exactly x in [0, 2^63):
+        // negatives encode as field elements near p and fail the check.
+        let range = self.builder.range_chip();
+        range.range_check(self.ctx(), a.assigned, 63);
+        // The check enforces a in [0, 2^63); tighten any known interval.
+        let tightened = match self.interval_of(a) {
+            Some((lo, hi)) => (lo.max(0), hi),
+            None => (0, i64::MAX),
+        };
+        self.value_interval.insert(a.id, tightened);
+        Ok(())
+    }
+
     fn assert_bit(&mut self, a: &Self::CellRef) -> Result<(), ProvingError> {
         // Cells in bit_cell_ids are already constrained boolean (is_equal /
         // is_zero / comparison outputs, or a previous assert_bit) — only

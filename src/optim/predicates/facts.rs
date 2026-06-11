@@ -256,6 +256,12 @@ impl FactStack {
         self.per_value.entry(vid).or_default().push(fact);
     }
 
+    /// Whether any fact is anchored on `vid`. Cheap volume gate for
+    /// chained fact deposits.
+    pub fn has_facts_for(&self, vid: ValueId) -> bool {
+        self.per_value.get(&vid).map_or(false, |v| !v.is_empty())
+    }
+
     fn remove_from_per_value(&mut self, facts: &FactSet) {
         for (vid, scoped_facts) in &facts.by_value {
             if let Some(indexed) = self.per_value.get_mut(vid) {

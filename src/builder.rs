@@ -1068,6 +1068,10 @@ impl IRBuilder {
         val
     }
 
+    pub fn ir_assert_non_neg_i(&mut self, a: &Value) -> Value {
+        self.create_ir(&IR::AssertNonNegI, &[a.clone()])
+    }
+
     pub fn export_ir_graph(self) -> IRGraph {
         IRGraph::new(self.stmts)
     }
@@ -1121,6 +1125,31 @@ impl IRBuilder {
     // `ir_add_i`, `ir_sub_i`, `ir_mul_i` are hand-rolled out of the macro
     // because they deposit a call-site-fact (input-fact-driven interval
     // bound on the output) rather than a fixed registered template.
+    /// Deposit relational min/max facts: for a select-built max,
+    /// `out >= a && out >= b` (min: `<=`). These let `prove()` discharge
+    /// bound checks like `x < max(..., x, ...) + 1` at compile time,
+    /// which the interval machinery cannot express (the bound is a
+    /// variable, not a literal).
+    pub fn deposit_minmax_facts(&mut self, out: &Value, a: &Value, b: &Value, is_max: bool) {
+        use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
+        let (Some(out_vid), Some(a_vid), Some(b_vid)) =
+            (out.value_id(), a.value_id(), b.value_id())
+        else {
+            return;
+        };
+        let op = if is_max { CmpOp::Ge } else { CmpOp::Le };
+        for rhs in [a_vid, b_vid] {
+            self.facts.insert_for(
+                out_vid,
+                ContractTerm::Cmp {
+                    op,
+                    lhs: Box::new(ContractTerm::Var(ContractVar::Value(out_vid))),
+                    rhs: Box::new(ContractTerm::Var(ContractVar::Value(rhs))),
+                },
+            );
+        }
+    }
+
     /// Interval bounds via input facts (call-site-fact, no SMT).
     pub fn ir_add_i(&mut self, a: &Value, b: &Value) -> Value {
         let out = self.create_ir(&IR::AddI, &[a.clone(), b.clone()]);
@@ -1135,6 +1164,35 @@ impl IRBuilder {
                 out_vid,
             ) {
                 self.facts.insert_for(out_vid, fact);
+            }
+        }
+        {
+            // Relational link for prove(): out == a + b. Lets variable-bound
+            // chains (e.g. dims = max(...) + 1) discharge downstream
+            // `idx < dims` checks that interval facts cannot express.
+            use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
+            if let (Some(a_vid), Some(b_vid), Some(out_vid)) =
+                (a.value_id(), b.value_id(), out.value_id())
+            {
+                // Volume gate: chain only through dynamic operands that
+                // already carry facts (min/max outputs etc.). Depositing on
+                // every integer add bloats the Z3 context of later proves.
+                let chains = (a.int_val().is_none() && self.facts.has_facts_for(a_vid))
+                    || (b.int_val().is_none() && self.facts.has_facts_for(b_vid));
+                if chains {
+                self.facts.insert_for(
+                    out_vid,
+                    ContractTerm::Cmp {
+                        op: CmpOp::Eq,
+                        lhs: Box::new(ContractTerm::Var(ContractVar::Value(out_vid))),
+                        rhs: Box::new(ContractTerm::Arith {
+                            op: ArithOp::Add,
+                            lhs: Box::new(ContractTerm::Var(ContractVar::Value(a_vid))),
+                            rhs: Box::new(ContractTerm::Var(ContractVar::Value(b_vid))),
+                        }),
+                    },
+                );
+                }
             }
         }
         out
@@ -1154,6 +1212,35 @@ impl IRBuilder {
                 out_vid,
             ) {
                 self.facts.insert_for(out_vid, fact);
+            }
+        }
+        {
+            // Relational link for prove(): out == a - b. Lets variable-bound
+            // chains (e.g. dims = max(...) + 1) discharge downstream
+            // `idx < dims` checks that interval facts cannot express.
+            use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
+            if let (Some(a_vid), Some(b_vid), Some(out_vid)) =
+                (a.value_id(), b.value_id(), out.value_id())
+            {
+                // Volume gate: chain only through dynamic operands that
+                // already carry facts (min/max outputs etc.). Depositing on
+                // every integer add bloats the Z3 context of later proves.
+                let chains = (a.int_val().is_none() && self.facts.has_facts_for(a_vid))
+                    || (b.int_val().is_none() && self.facts.has_facts_for(b_vid));
+                if chains {
+                self.facts.insert_for(
+                    out_vid,
+                    ContractTerm::Cmp {
+                        op: CmpOp::Eq,
+                        lhs: Box::new(ContractTerm::Var(ContractVar::Value(out_vid))),
+                        rhs: Box::new(ContractTerm::Arith {
+                            op: ArithOp::Sub,
+                            lhs: Box::new(ContractTerm::Var(ContractVar::Value(a_vid))),
+                            rhs: Box::new(ContractTerm::Var(ContractVar::Value(b_vid))),
+                        }),
+                    },
+                );
+                }
             }
         }
         out
@@ -2343,7 +2430,7 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
         IR::Print => Value::None,
 
         // ── Assert & expose (fixed, return None) ──────────────────
-        IR::Assert | IR::AssertBit | IR::AssertU128Lt => Value::None,
+        IR::Assert | IR::AssertBit | IR::AssertNonNegI | IR::AssertU128Lt => Value::None,
         IR::StructuralPredicate { .. } => Value::None,
         IR::ScalarPrecondition { .. } => Value::None,
         IR::ExposePublicI | IR::ExposePublicF => Value::None,
@@ -2413,6 +2500,7 @@ fn min_required_arity(ir: &IR) -> Option<usize> {
         | IR::StrF
         | IR::Assert
         | IR::AssertBit
+        | IR::AssertNonNegI
         | IR::AssertU128LtBit { .. }
         | IR::AssertU128Lt
         | IR::ExposePublicI
@@ -2540,6 +2628,7 @@ fn unknown_value_for_ir(ir: &IR, ir_id: StmtId) -> Value {
         IR::Print
         | IR::Assert
         | IR::AssertBit
+        | IR::AssertNonNegI
         | IR::AssertU128Lt
         | IR::StructuralPredicate { .. }
         | IR::ScalarPrecondition { .. }

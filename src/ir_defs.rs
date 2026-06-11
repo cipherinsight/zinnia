@@ -207,6 +207,10 @@ pub enum IR {
     // ── Assertions & public exposure ──────────────────────────────────
     Assert,
     AssertBit,
+    /// Assert the (signed-i64-domain) operand is non-negative. Backends
+    /// may lower this far cheaper than a general comparison (a single
+    /// 63-bit range check in halo2-base).
+    AssertNonNegI,
     ExposePublicI,
     ExposePublicF,
 
@@ -443,6 +447,7 @@ impl IR {
             // Assert & expose
             IR::Assert => "assert".to_string(),
             IR::AssertBit => "assert_bit".to_string(),
+            IR::AssertNonNegI => "assert_non_neg_i".to_string(),
             IR::ExposePublicI => "expose_public_i".to_string(),
             IR::ExposePublicF => "expose_public_f".to_string(),
 
@@ -570,6 +575,7 @@ impl IR {
         match self {
             IR::Assert
             | IR::AssertBit
+            | IR::AssertNonNegI
             | IR::AssertU128Lt
             | IR::StructuralPredicate { .. }
             | IR::ScalarPrecondition { .. }
@@ -684,6 +690,7 @@ impl IR {
             IR::Print => "PrintIR",
             IR::Assert => "AssertIR",
             IR::AssertBit => "AssertBitIR",
+            IR::AssertNonNegI => "AssertNonNegIIR",
             IR::StructuralPredicate { .. } => "StructuralPredicateIR",
             IR::ScalarPrecondition { .. } => "ScalarPreconditionIR",
             IR::ExposePublicI => "ExposePublicIIR",
@@ -1043,6 +1050,7 @@ impl IR {
 
             "AssertIR" => Ok(IR::Assert),
             "AssertBitIR" => Ok(IR::AssertBit),
+            "AssertNonNegIIR" => Ok(IR::AssertNonNegI),
             "StructuralPredicateIR" => {
                 let kind = data["kind"].as_str().unwrap_or("").to_string();
                 let args: Vec<String> = data["args"]

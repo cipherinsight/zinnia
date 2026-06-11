@@ -243,31 +243,78 @@ pub fn discharge_index_below_value(
         None => return,
     };
 
+    let lo_term = ContractTerm::Cmp {
+        op: CmpOp::Ge,
+        lhs: Box::new(lhs.clone()),
+        rhs: Box::new(ContractTerm::LitInt(lo)),
+    };
+    let hi_term = ContractTerm::Cmp {
+        op: CmpOp::Lt,
+        lhs: Box::new(lhs.clone()),
+        rhs: Box::new(ContractTerm::Var(ContractVar::Value(hi_vid))),
+    };
     let term = ContractTerm::BoolComb {
         op: BoolOp::And,
-        operands: vec![
-            ContractTerm::Cmp {
-                op: CmpOp::Ge,
-                lhs: Box::new(lhs.clone()),
-                rhs: Box::new(ContractTerm::LitInt(lo)),
-            },
-            ContractTerm::Cmp {
-                op: CmpOp::Lt,
-                lhs: Box::new(lhs),
-                rhs: Box::new(ContractTerm::Var(ContractVar::Value(hi_vid))),
-            },
-        ],
+        operands: vec![lo_term.clone(), hi_term.clone()],
     };
-    match b.prove(&term) {
-        ProveOutcome::Proved => {}
-        ProveOutcome::Disproved => {
-            let value_ids = crate::optim::predicates::collect_value_ids(&term);
-            panic!(
-                "op `{op_name}` requires precondition disproved by visible facts: \
-                 term={term:?}, value_ids={value_ids:?}"
-            );
+    // Per-conjunct discharge: when the upper half is provable (e.g.
+    // `idx < max(...) + 1` holds by construction) emit only the cheap
+    // `idx >= lo` residual. The upper half is probed first; an Unknown
+    // there falls straight through to the combined path so the common
+    // unprovable case costs no extra Z3 invocations vs the old code.
+    let p_hi = b.prove(&hi_term);
+    if matches!(p_hi, ProveOutcome::Disproved) {
+        let value_ids = crate::optim::predicates::collect_value_ids(&term);
+        panic!(
+            "op `{op_name}` requires precondition disproved by visible facts: \
+             term={term:?}, value_ids={value_ids:?}"
+        );
+    }
+    let p_lo = if matches!(p_hi, ProveOutcome::Proved) {
+        b.prove(&lo_term)
+    } else {
+        ProveOutcome::Unknown
+    };
+    if matches!(p_lo, ProveOutcome::Disproved) {
+        let value_ids = crate::optim::predicates::collect_value_ids(&term);
+        panic!(
+            "op `{op_name}` requires precondition disproved by visible facts: \
+             term={term:?}, value_ids={value_ids:?}"
+        );
+    }
+    match (p_lo, p_hi) {
+        (ProveOutcome::Proved, ProveOutcome::Proved) => {}
+        (ProveOutcome::Unknown, ProveOutcome::Proved) => {
+            // Residual: idx >= lo only. lo == 0 gets the dedicated
+            // non-negativity assert (a single 63-bit range check in
+            // halo2-base, ~15 cells vs ~45 for the comparison form).
+            if lo == 0 {
+                b.ir_assert_non_neg_i(idx);
+            } else {
+                let lo_v = b.ir_constant_int(lo);
+                let ge = b.ir_greater_than_or_equal_i(idx, &lo_v);
+                b.ir_assert(&ge);
+            }
         }
-        ProveOutcome::Unknown => {
+        (ProveOutcome::Proved, ProveOutcome::Unknown) => {
+            // Residual: idx < hi only.
+            let lt = b.ir_less_than_i(idx, hi);
+            b.ir_assert(&lt);
+        }
+        _ => {
+            // Upper half unprovable: the combined term cannot fare better
+            // (prove decomposes conjunctions per-atom), so emit the full
+            // bound assert without further solver calls.
+            if std::env::var("ZINNIA_DEBUG_DISCHARGE").is_ok() {
+                let vids = crate::optim::predicates::collect_value_ids(&term);
+                let nfacts: usize = b.facts.visible_facts().len();
+                eprintln!("[discharge-unknown] op={op_name} vids={vids:?} visible_facts={nfacts}");
+                if std::env::var("ZINNIA_DEBUG_DISCHARGE").as_deref() == Ok("2") {
+                    for f in b.facts.visible_facts() {
+                        eprintln!("  fact: {f:?}");
+                    }
+                }
+            }
             if crate::builder::op_requires_strict() {
                 let value_ids = crate::optim::predicates::collect_value_ids(&term);
                 panic!(

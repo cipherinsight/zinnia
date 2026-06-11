@@ -33,6 +33,7 @@ OUT_DEFAULT = "HALO2_FULL_COMPARISON_v2.md"
 # Category C (other silent specialisation): HW silently changes the kernel
 #   contract (output shape downgrade, or witness-controlled circuit shape).
 UNFAIR_BASELINES = {
+    "0415": "[C] HW uses host-provided bin_size as a compile-time loop bound (different inputs -> different circuits); bin_size never constrained in-circuit",
     # Category A — needs zkRAM
     "0388": "[A] HW hardcodes patch_size=4 for 100x200 patch-extract; faithful version needs zkRAM over 20k cells",
     "0390": "[A] HW hardcodes patch_size=10 for 100x200 patch-extract; faithful version needs zkRAM over 20k cells",

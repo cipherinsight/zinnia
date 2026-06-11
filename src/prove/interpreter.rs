@@ -196,6 +196,10 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
                 synth.assert_bit(&args[0])?;
                 None
             }
+            IR::AssertNonNegI => {
+                synth.assert_non_neg_i(&args[0])?;
+                None
+            }
             IR::AssertU128Lt => {
                 synth.assert_u128_lt(&args[0], &args[1])?;
                 None

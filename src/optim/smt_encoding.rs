@@ -451,6 +451,7 @@ impl IROp for IR {
             | IR::Print
             | IR::Assert
             | IR::AssertBit
+            | IR::AssertNonNegI
             | IR::AssertU128Lt
             | IR::AssertU128LtBit { .. }
             | IR::ExposePublicI

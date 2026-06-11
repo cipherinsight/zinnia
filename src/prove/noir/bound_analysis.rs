@@ -210,6 +210,7 @@ pub fn run(graph: &IRGraph) -> BoundMap {
             | IR::Print
             | IR::Assert
             | IR::AssertBit
+            | IR::AssertNonNegI
             | IR::AssertU128Lt
             | IR::ExposePublicI
             | IR::ExposePublicF
