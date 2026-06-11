@@ -1,6 +1,9 @@
 # Provenance Consolidation & Quality-Hardening Plan
 
-Date: 2026-06-11. Status: planned (not started). Owner: next session.
+Date: 2026-06-11. Status: Step 0a DONE (a34555e), Step 0b DONE
+(d28d4d5/51b33ba/a65d329 — audit green 131 + 3 documented xfails deferred
+to Step 3; nine compiler bugs found and fixed, see commit messages).
+Owner: this session.
 
 ## Context
 
@@ -220,6 +223,11 @@ Instructions:
   windows, masks hoisted across rows).
 
 Verification criteria (the performance gates):
+- `benchmarking/audit_bindings.py`: the three EXPECTED_FAILURES entries
+  (0507/0509/0510 — bbox slice metadata pins static envelope dims instead
+  of runtime extents) are deleted and the audit passes 134/134 with no
+  xfails. This falls out of slice-view provenance carrying runtime
+  extents through to the output contract.
 - Noir: 0509/0510 ≤ 1.15x (from 1.33x); 0507/0508 ≤ 1.25x (from 1.33/1.47);
   no case regresses by more than +2% gates; geomean ≤ 0.59x.
 - halo2: 0416/0418 cells from 258k to ≤ 25k (≤ 2x of HW's 13,545); mock ==
