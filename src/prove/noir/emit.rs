@@ -388,6 +388,56 @@ fn dce_body(body: &str, exposes: &[String]) -> String {
 /// SSA-style emitter. Each call returns the name of a Noir let-binding
 /// (or a literal expression for cheap constants). The interpreter dispatches
 /// one method per IR statement.
+/// Affine view of an integer cell: `cell == sum(root_i * scale_i) + offset`,
+/// with at most two dynamic roots and non-zero scales.
+#[derive(Clone, Debug, Default)]
+struct AffLin {
+    terms: Vec<(String, i64)>,
+    offset: i64,
+}
+
+impl AffLin {
+    fn combine(a: &AffLin, b: &AffLin, sign: i64) -> Option<AffLin> {
+        let offset = (a.offset as i128) + (sign as i128) * (b.offset as i128);
+        let mut terms = a.terms.clone();
+        for (root, scale) in &b.terms {
+            let s = (sign as i128) * (*scale as i128);
+            if let Some(existing) = terms.iter_mut().find(|(r, _)| r == root) {
+                let merged = (existing.1 as i128) + s;
+                if merged.abs() > i64::MAX as i128 {
+                    return None;
+                }
+                existing.1 = merged as i64;
+            } else {
+                terms.push((root.clone(), s as i64));
+            }
+        }
+        terms.retain(|(_, s)| *s != 0);
+        if terms.len() > 2 || offset.abs() > i64::MAX as i128 {
+            return None;
+        }
+        Some(AffLin { terms, offset: offset as i64 })
+    }
+
+    fn scaled(&self, k: i64) -> Option<AffLin> {
+        let offset = (self.offset as i128) * (k as i128);
+        if offset.abs() > i64::MAX as i128 {
+            return None;
+        }
+        let mut terms = Vec::with_capacity(self.terms.len());
+        for (root, scale) in &self.terms {
+            let s = (*scale as i128) * (k as i128);
+            if s.abs() > i64::MAX as i128 {
+                return None;
+            }
+            if s != 0 {
+                terms.push((root.clone(), s as i64));
+            }
+        }
+        Some(AffLin { terms, offset: offset as i64 })
+    }
+}
+
 pub struct NoirEmitter {
     /// Function arguments declared on `fn main`.
     pub inputs: Vec<EmittedInput>,
@@ -415,6 +465,31 @@ pub struct NoirEmitter {
     /// expression at emit time. Used for public-input bookkeeping only;
     /// the proof itself derives values from witness execution by nargo.
     value_cache: HashMap<String, ConcreteValue>,
+    /// Affine address lineage: var == sum of root_i * scale_i + offset,
+    /// with at most two dynamic roots (mirrors the halo2 backend's
+    /// AffineLin). Lets dynamic-address memory reads gather with shared
+    /// per-root indicators instead of a per-read mux over the segment.
+    affine_of: HashMap<String, AffLin>,
+    /// eq(root, v) indicator bindings, shared across all reads/writes on
+    /// the same root. Roots are SSA names (immutable), so no invalidation.
+    ind_cache: HashMap<(String, i64), String>,
+    /// (root, enumerated value set) one-hot memberships already asserted.
+    membership_done: std::collections::HashSet<(String, Vec<i64>)>,
+    /// Stage-1 gathered planes for factored two-root reads, keyed by
+    /// (segment, write version, root, scale, residual offset).
+    plane_cache: HashMap<(u32, u64, String, i64, i64), String>,
+    /// Bumped on every write to a segment; invalidates plane_cache.
+    write_version: HashMap<u32, u64>,
+    /// lt(a, b) output provenance: lets select(lt(a,b), a, b) be
+    /// recognized as min(a, b) (and the swapped form as max) so interval
+    /// bounds flow through clamp chains with only one bounded side.
+    lt_pair_of: HashMap<String, (String, String)>,
+    /// Constraint-derived signed value intervals (port of the halo2
+    /// backend's value_interval): constants exact, select outputs take
+    /// the hull of their branches, comparison outputs are [0,1], and
+    /// add/sub/mul-const propagate. Used to shrink the feasible slot set
+    /// of dynamic-address gathers. Witness-independent by construction.
+    interval_of: HashMap<String, (i64, i64)>,
     /// Peephole provenance for the negative-index normalization pattern
     /// `select(lt(x, 0), x + N, x)`: maps lt(x,0) outputs to x, add-const
     /// outputs to (x, c), and recognized normalized indices to (x, N).
@@ -521,6 +596,279 @@ enum ConcreteValue {
 }
 
 impl NoirEmitter {
+    fn lt_i_bounded_inner(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x < y);
+        // Pre-promote Field operands with provable u32 bounds (CSE-d):
+        // u32→u128 widening downstream is free, so this trades a single
+        // 32-bit RANGE per operand for one 128-bit RANGE per compare site.
+        let a = self.maybe_promote_to_u32(a);
+        let b = self.maybe_promote_to_u32(b);
+        // u32 path when bound-prop has already typed both operands.
+        if self.is_u32(&a) && self.is_u32(&b) {
+            let v = self.bind_u32_with_bound(&format!("if {} < {} {{ 1 }} else {{ 0 }}", a, b), 1);
+            self.fold_b(&v, folded);
+            return Ok(v);
+        }
+        // Otherwise the u128-cast path. Cast directly through
+        // `as_u128` — for u32 operands this is a free widening; for
+        // Field operands it emits the implicit < 2^128 range check
+        // that catches the signed-Field negative encoding. Going
+        // through `as_field` first would force a redundant Field→u128
+        // RANGE on already-u32 cells.
+        let v = self.bind(&format!(
+            "if {} < {} {{ 1 }} else {{ 0 }}",
+            self.as_u128(&a),
+            self.as_u128(&b)
+        ));
+        self.fold_b(&v, folded);
+        Ok(v)
+    }
+    fn gt_i_bounded_inner(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x > y);
+        let a = self.maybe_promote_to_u32(a);
+        let b = self.maybe_promote_to_u32(b);
+        if self.is_u32(&a) && self.is_u32(&b) {
+            let v = self.bind_u32_with_bound(&format!("if {} > {} {{ 1 }} else {{ 0 }}", a, b), 1);
+            self.fold_b(&v, folded);
+            return Ok(v);
+        }
+        let v = self.bind(&format!(
+            "if {} > {} {{ 1 }} else {{ 0 }}",
+            self.as_u128(&a),
+            self.as_u128(&b)
+        ));
+        self.fold_b(&v, folded);
+        Ok(v)
+    }
+
+    fn gt_i_inner(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x > y);
+        if self.is_u32(a) && self.is_u32(b) {
+            let v = self.bind_u32_with_bound(&format!("if {} > {} {{ 1 }} else {{ 0 }}", a, b), 1);
+            self.fold_b(&v, folded);
+            return Ok(v);
+        }
+        self.use_lib("qgt_signed");
+        let af = self.as_field(a);
+        let bf = self.as_field(b);
+        let (sa, ma) = self.project_signed(&af);
+        let (sb, mb) = self.project_signed(&bf);
+        let v = self.bind(&format!(
+            "if qgt_signed({}, {}, {}, {}) {{ 1 }} else {{ 0 }}",
+            sa, ma, sb, mb,
+        ));
+        self.fold_b(&v, folded);
+        Ok(v)
+    }
+
+    fn sub_i_inner(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x - y);
+        // u32 path is only sound if we can prove the result is
+        // non-negative — u32 subtraction wraps on underflow. The
+        // strongest evidence we have is folded value: if the witness
+        // sample is non-negative AND both operands are u32, take the
+        // path. Otherwise fall back to Field (signed-encoded).
+        if self.is_u32(a) && self.is_u32(b) && folded.map_or(false, |v| v >= 0) {
+            let bound = self.bound_of(a).unwrap_or(u32::MAX as u64);
+            let v = self.bind_u32_with_bound(&format!("{} - {}", a, b), bound);
+            self.fold_i(&v, folded);
+            return Ok(v);
+        }
+        let v = self.bind(&format!("{} - {}", self.as_field(a), self.as_field(b)));
+        self.fold_i(&v, folded);
+        Ok(v)
+    }
+    fn mul_i_inner(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x * y);
+        if self.is_u32(a) && self.is_u32(b) {
+            if let Some(prod) = self
+                .bound_of(a)
+                .zip(self.bound_of(b))
+                .and_then(|(x, y)| x.checked_mul(y))
+                .filter(|p| *p < (1u64 << 32))
+            {
+                let v = self.bind_u32_with_bound(&format!("{} * {}", a, b), prod);
+                self.fold_i(&v, folded);
+                return Ok(v);
+            }
+        }
+        let v = self.bind(&format!("{} * {}", self.as_field(a), self.as_field(b)));
+        self.fold_i(&v, folded);
+        Ok(v)
+    }
+
+    /// Affine view of a cell: explicit lineage, a literal constant, or a
+    /// fresh single-root term.
+    fn aff_of(&self, var: &str) -> AffLin {
+        if let Some(a) = self.affine_of.get(var) {
+            return a.clone();
+        }
+        if let Some(c) = self.s_int_of(var) {
+            return AffLin { terms: vec![], offset: c as i64 };
+        }
+        AffLin { terms: vec![(var.to_string(), 1)], offset: 0 }
+    }
+
+    fn record_affine(&mut self, out: &str, aff: Option<AffLin>) {
+        if let Some(a) = aff {
+            // Only record non-trivial lineage (a bare single root with
+            // scale 1 / offset 0 is the default view anyway).
+            if !(a.terms.len() == 1 && a.terms[0].1 == 1 && a.offset == 0 && a.terms[0].0 == out)
+            {
+                self.affine_of.insert(out.to_string(), a);
+            }
+        }
+    }
+
+    /// Signed interval of a cell, if derivable.
+    fn ival(&self, var: &str) -> Option<(i64, i64)> {
+        if let Some(iv) = self.interval_of.get(var) {
+            return Some(*iv);
+        }
+        if let Some(c) = self.s_int_of(var) {
+            if let Ok(c) = i64::try_from(c) {
+                return Some((c, c));
+            }
+        }
+        // Cells with a known analysis bound are in [0, bound] — the
+        // bound sources (AssertU128Lt discharges, LtIBounded, u32 typing)
+        // all imply nonnegativity.
+        if let Some(b) = self.bound_of(var) {
+            if let Ok(b) = i64::try_from(b) {
+                return Some((0, b));
+            }
+        }
+        None
+    }
+
+    fn set_ival(&mut self, var: &str, iv: Option<(i64, i64)>) {
+        if let Some(iv) = iv {
+            self.interval_of.insert(var.to_string(), iv);
+        }
+    }
+
+    fn ival_add(a: Option<(i64, i64)>, b: Option<(i64, i64)>, sign: i64) -> Option<(i64, i64)> {
+        let (al, ah) = a?;
+        let (bl, bh) = b?;
+        let (bl, bh) = if sign >= 0 { (bl, bh) } else { (-bh, -bl) };
+        Some((al.checked_add(bl)?, ah.checked_add(bh)?))
+    }
+
+    fn ival_scale(a: Option<(i64, i64)>, k: i64) -> Option<(i64, i64)> {
+        let (l, h) = a?;
+        let x = l.checked_mul(k)?;
+        let y = h.checked_mul(k)?;
+        Some((x.min(y), x.max(y)))
+    }
+
+    /// Bind a sum of product terms in chunks (Noir rejects monolithic
+    /// expressions with hundreds of terms: "Try to simplify expressions").
+    fn bind_sum(&mut self, parts: &[String]) -> String {
+        const CHUNK: usize = 8;
+        let mut acc: Option<String> = None;
+        for chunk in parts.chunks(CHUNK) {
+            let body = chunk.join(" + ");
+            let expr = match &acc {
+                Some(a) => format!("{a} + {body}"),
+                None => body,
+            };
+            acc = Some(self.bind(&expr));
+        }
+        acc.unwrap_or_else(|| "0".to_string())
+    }
+
+    /// Cached eq(root, v) indicator, shared across all reads/writes on
+    /// the same root.
+    fn indicator(&mut self, root: &str, v: i64) -> String {
+        if let Some(i) = self.ind_cache.get(&(root.to_string(), v)) {
+            return i.clone();
+        }
+        let rf = self.as_field(root);
+        let expr = if v >= 0 {
+            format!("if {rf} == {v} {{ 1 }} else {{ 0 }}")
+        } else {
+            format!("if {rf} + {} == 0 {{ 1 }} else {{ 0 }}", -v)
+        };
+        let ind = self.bind(&expr);
+        self.ind_cache.insert((root.to_string(), v), ind.clone());
+        ind
+    }
+
+    /// Assert the indicator family over `values` is one-hot (exactly one
+    /// fires). Replaces per-read bound checks: a witness root outside the
+    /// enumerated set makes the proof fail instead of silently gathering
+    /// the init value. Emitted once per (root, value set).
+    fn assert_one_hot(&mut self, root: &str, values: &[i64]) {
+        let key = (root.to_string(), values.to_vec());
+        if self.membership_done.contains(&key) {
+            return;
+        }
+        let inds: Vec<String> = values.iter().map(|&v| self.indicator(root, v)).collect();
+        let parts: Vec<String> = inds.iter().map(|i| self.as_field(i)).collect();
+        let sum = self.bind_sum(&parts);
+        let _ = writeln!(self.body, "    assert({} == 1);", sum);
+        self.membership_done.insert(key);
+    }
+
+    /// Feasible root values v with 0 <= v*scale + resid < len, clipped to
+    /// the root's derived interval when known.
+    fn feasible(scale: i64, resid: i64, len: usize, root_iv: Option<(i64, i64)>) -> Vec<i64> {
+        let mut out = Vec::new();
+        if scale == 0 {
+            return out;
+        }
+        for slot in 0..len as i64 {
+            let num = slot - resid;
+            if num % scale == 0 {
+                let v = num / scale;
+                if let Some((lo, hi)) = root_iv {
+                    if v < lo || v > hi {
+                        continue;
+                    }
+                }
+                out.push(v);
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// Stage-1 plane for factored two-root gathers: sum over feasible v of
+    /// ind(root, v) * mem[v*scale + resid]. Cached by (segment, version,
+    /// root, scale, resid).
+    fn gather_plane(
+        &mut self,
+        segment_id: u32,
+        root: &str,
+        scale: i64,
+        resid: i64,
+        init: &str,
+    ) -> String {
+        let ver = self.write_version.get(&segment_id).copied().unwrap_or(0);
+        let key = (segment_id, ver, root.to_string(), scale, resid);
+        if let Some(p) = self.plane_cache.get(&key) {
+            return p.clone();
+        }
+        let len = self.memories.get(&segment_id).map_or(0, |m| m.len());
+        let root_iv = self.ival(root);
+        let vs = Self::feasible(scale, resid, len, root_iv);
+        let mut parts: Vec<String> = Vec::with_capacity(vs.len());
+        for &v in &vs {
+            let slot = (v * scale + resid) as usize;
+            let cell = self.memories.get(&segment_id).unwrap()[slot].clone();
+            let ind = self.indicator(root, v);
+            parts.push(format!("{} * {}", self.as_field(&ind), self.as_field(&cell)));
+        }
+        let plane = if parts.is_empty() {
+            init.to_string()
+        } else {
+            self.bind_sum(&parts)
+        };
+        self.plane_cache.insert(key, plane.clone());
+        plane
+    }
+
     fn add_i_inner(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x + y);
         // u32 path: both operands already bound u32 AND sum still fits.
@@ -619,6 +967,13 @@ impl NoirEmitter {
             exposes: Vec::new(),
             public_decimal: Vec::new(),
             value_cache: HashMap::new(),
+            affine_of: HashMap::new(),
+            ind_cache: HashMap::new(),
+            membership_done: std::collections::HashSet::new(),
+            plane_cache: HashMap::new(),
+            write_version: HashMap::new(),
+            interval_of: HashMap::new(),
+            lt_pair_of: HashMap::new(),
             lt_zero_of: HashMap::new(),
             add_const_of: HashMap::new(),
             norm_index_of: HashMap::new(),
@@ -705,7 +1060,22 @@ impl NoirEmitter {
         };
         // Bind `(cell as u32)` once; CSE collapses repeated promotions
         // of the same source cell so the 32-bit RANGE only fires once.
-        self.bind_u32_with_bound(&format!("{} as u32", cell), bound)
+        let v = self.bind_u32_with_bound(&format!("{} as u32", cell), bound);
+        // Value-preserving rebind: carry the affine lineage so address
+        // chains through the promotion keep their root for the shared
+        // indicator gathers.
+        if let Some(aff) = self.affine_of.get(cell).cloned() {
+            self.affine_of.insert(v.clone(), aff);
+        } else if !self.literal_cells.contains(cell) {
+            self.affine_of.insert(
+                v.clone(),
+                AffLin { terms: vec![(cell.to_string(), 1)], offset: 0 },
+            );
+        }
+        if let Some(iv) = self.interval_of.get(cell).copied() {
+            self.interval_of.insert(v.clone(), iv);
+        }
+        v
     }
 
     /// Apply the IR-analysis bound to a freshly-bound cell, regardless
@@ -758,7 +1128,13 @@ impl NoirEmitter {
             return existing.clone();
         }
         let v = self.fresh();
-        let _ = writeln!(self.body, "    let {} = {};", v, expr);
+        // Explicit Field annotation: nargo's type inference recurses
+        // through chains of untyped lets unified via integer-literal type
+        // variables and panics ("Type recursion limit reached") past a few
+        // thousand bindings. Every bind() expression is Field-valued by
+        // construction (bools are 0/1 Fields; typed lets go through
+        // bind_u32_with_bound).
+        let _ = writeln!(self.body, "    let {}: Field = {};", v, expr);
         self.cse_cache.insert(expr.to_string(), v.clone());
         // Forward-annotate the IR-analysis bound for the current
         // statement so downstream emit-time u32-path conditions see
@@ -1088,44 +1464,36 @@ impl Synthesizer for NoirEmitter {
         } else if let Some(c) = self.s_int_of(a) {
             self.add_const_of.insert(out.clone(), (b.clone(), c as i64));
         }
+        let aff = AffLin::combine(&self.aff_of(a), &self.aff_of(b), 1);
+        self.record_affine(&out, aff);
+        let iv = Self::ival_add(self.ival(a), self.ival(b), 1);
+        self.set_ival(&out, iv);
         return Ok(out);
     }
 
     fn sub_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x - y);
-        // u32 path is only sound if we can prove the result is
-        // non-negative — u32 subtraction wraps on underflow. The
-        // strongest evidence we have is folded value: if the witness
-        // sample is non-negative AND both operands are u32, take the
-        // path. Otherwise fall back to Field (signed-encoded).
-        if self.is_u32(a) && self.is_u32(b) && folded.map_or(false, |v| v >= 0) {
-            let bound = self.bound_of(a).unwrap_or(u32::MAX as u64);
-            let v = self.bind_u32_with_bound(&format!("{} - {}", a, b), bound);
-            self.fold_i(&v, folded);
-            return Ok(v);
-        }
-        let v = self.bind(&format!("{} - {}", self.as_field(a), self.as_field(b)));
-        self.fold_i(&v, folded);
-        Ok(v)
+        let out = self.sub_i_inner(a, b)?;
+        let aff = AffLin::combine(&self.aff_of(a), &self.aff_of(b), -1);
+        self.record_affine(&out, aff);
+        let iv = Self::ival_add(self.ival(a), self.ival(b), -1);
+        self.set_ival(&out, iv);
+        return Ok(out);
     }
+
     fn mul_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x * y);
-        if self.is_u32(a) && self.is_u32(b) {
-            if let Some(prod) = self
-                .bound_of(a)
-                .zip(self.bound_of(b))
-                .and_then(|(x, y)| x.checked_mul(y))
-                .filter(|p| *p < (1u64 << 32))
-            {
-                let v = self.bind_u32_with_bound(&format!("{} * {}", a, b), prod);
-                self.fold_i(&v, folded);
-                return Ok(v);
-            }
-        }
-        let v = self.bind(&format!("{} * {}", self.as_field(a), self.as_field(b)));
-        self.fold_i(&v, folded);
-        Ok(v)
+        let out = self.mul_i_inner(a, b)?;
+        let (aff, iv) = if let Some(c) = self.s_int_of(b) {
+            (self.aff_of(a).scaled(c as i64), Self::ival_scale(self.ival(a), c as i64))
+        } else if let Some(c) = self.s_int_of(a) {
+            (self.aff_of(b).scaled(c as i64), Self::ival_scale(self.ival(b), c as i64))
+        } else {
+            (None, None)
+        };
+        self.record_affine(&out, aff);
+        self.set_ival(&out, iv);
+        return Ok(out);
     }
+
     fn div_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let folded =
             self.int_of(a)
@@ -1456,53 +1824,25 @@ impl Synthesizer for NoirEmitter {
         if self.s_int_of(b) == Some(0) {
             self.lt_zero_of.insert(out.clone(), a.clone());
         }
+        self.lt_pair_of.insert(out.clone(), (a.clone(), b.clone()));
+        self.set_ival(&out, Some((0, 1)));
         return Ok(out);
     }
 
     fn lt_i_bounded(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x < y);
-        // Pre-promote Field operands with provable u32 bounds (CSE-d):
-        // u32→u128 widening downstream is free, so this trades a single
-        // 32-bit RANGE per operand for one 128-bit RANGE per compare site.
-        let a = self.maybe_promote_to_u32(a);
-        let b = self.maybe_promote_to_u32(b);
-        // u32 path when bound-prop has already typed both operands.
-        if self.is_u32(&a) && self.is_u32(&b) {
-            let v = self.bind_u32_with_bound(&format!("if {} < {} {{ 1 }} else {{ 0 }}", a, b), 1);
-            self.fold_b(&v, folded);
-            return Ok(v);
-        }
-        // Otherwise the u128-cast path. Cast directly through
-        // `as_u128` — for u32 operands this is a free widening; for
-        // Field operands it emits the implicit < 2^128 range check
-        // that catches the signed-Field negative encoding. Going
-        // through `as_field` first would force a redundant Field→u128
-        // RANGE on already-u32 cells.
-        let v = self.bind(&format!(
-            "if {} < {} {{ 1 }} else {{ 0 }}",
-            self.as_u128(&a),
-            self.as_u128(&b)
-        ));
-        self.fold_b(&v, folded);
-        Ok(v)
+        let out = self.lt_i_bounded_inner(a, b)?;
+        self.lt_pair_of.insert(out.clone(), (a.clone(), b.clone()));
+        self.set_ival(&out, Some((0, 1)));
+        return Ok(out);
     }
+
     fn gt_i_bounded(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x > y);
-        let a = self.maybe_promote_to_u32(a);
-        let b = self.maybe_promote_to_u32(b);
-        if self.is_u32(&a) && self.is_u32(&b) {
-            let v = self.bind_u32_with_bound(&format!("if {} > {} {{ 1 }} else {{ 0 }}", a, b), 1);
-            self.fold_b(&v, folded);
-            return Ok(v);
-        }
-        let v = self.bind(&format!(
-            "if {} > {} {{ 1 }} else {{ 0 }}",
-            self.as_u128(&a),
-            self.as_u128(&b)
-        ));
-        self.fold_b(&v, folded);
-        Ok(v)
+        let out = self.gt_i_bounded_inner(a, b)?;
+        self.lt_pair_of.insert(out.clone(), (b.clone(), a.clone()));
+        self.set_ival(&out, Some((0, 1)));
+        return Ok(out);
     }
+
     fn index_in_box(
         &mut self,
         triples: &[(CellRef, CellRef, CellRef)],
@@ -1570,24 +1910,12 @@ impl Synthesizer for NoirEmitter {
         Ok(v)
     }
     fn gt_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x > y);
-        if self.is_u32(a) && self.is_u32(b) {
-            let v = self.bind_u32_with_bound(&format!("if {} > {} {{ 1 }} else {{ 0 }}", a, b), 1);
-            self.fold_b(&v, folded);
-            return Ok(v);
-        }
-        self.use_lib("qgt_signed");
-        let af = self.as_field(a);
-        let bf = self.as_field(b);
-        let (sa, ma) = self.project_signed(&af);
-        let (sb, mb) = self.project_signed(&bf);
-        let v = self.bind(&format!(
-            "if qgt_signed({}, {}, {}, {}) {{ 1 }} else {{ 0 }}",
-            sa, ma, sb, mb,
-        ));
-        self.fold_b(&v, folded);
-        Ok(v)
+        let out = self.gt_i_inner(a, b)?;
+        self.lt_pair_of.insert(out.clone(), (b.clone(), a.clone()));
+        self.set_ival(&out, Some((0, 1)));
+        return Ok(out);
     }
+
     fn gte_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x >= y);
         if self.is_u32(a) && self.is_u32(b) {
@@ -1862,6 +2190,57 @@ impl Synthesizer for NoirEmitter {
                 self.value_cache.insert(v.clone(), cv);
             }
         }
+        // Interval propagation. min/max shapes (select over an lt of the
+        // same operands) bound from ONE known side; generic selects take
+        // the hull of both branches.
+        let minmax = self.lt_pair_of.get(cond).cloned().and_then(|(a2, b2)| {
+            if if_true == &a2 && if_false == &b2 {
+                Some(true) // min(a, b)
+            } else if if_true == &b2 && if_false == &a2 {
+                Some(false) // max(a, b)
+            } else {
+                None
+            }
+        });
+        match minmax {
+            Some(true) => {
+                let (ta, fa) = (self.ival(if_true), self.ival(if_false));
+                let hi = match (ta, fa) {
+                    (Some((_, x)), Some((_, y))) => Some(x.min(y)),
+                    (Some((_, x)), None) | (None, Some((_, x))) => Some(x),
+                    _ => None,
+                };
+                let lo = match (ta, fa) {
+                    (Some((x, _)), Some((y, _))) => Some(x.min(y)),
+                    _ => None,
+                };
+                if let Some(h) = hi {
+                    self.set_ival(&v, Some((lo.unwrap_or(i64::MIN / 4), h)));
+                }
+            }
+            Some(false) => {
+                let (ta, fa) = (self.ival(if_true), self.ival(if_false));
+                let lo = match (ta, fa) {
+                    (Some((x, _)), Some((y, _))) => Some(x.max(y)),
+                    (Some((x, _)), None) | (None, Some((x, _))) => Some(x),
+                    _ => None,
+                };
+                let hi = match (ta, fa) {
+                    (Some((_, x)), Some((_, y))) => Some(x.max(y)),
+                    _ => None,
+                };
+                if let Some(l) = lo {
+                    self.set_ival(&v, Some((l, hi.unwrap_or(i64::MAX / 4))));
+                }
+            }
+            None => {
+                if let (Some((tl, th)), Some((fl, fh))) =
+                    (self.ival(if_true), self.ival(if_false))
+                {
+                    self.set_ival(&v, Some((tl.min(fl), th.max(fh))));
+                }
+            }
+        }
         // Normalized-index recognition: select(lt(x,0), x + N, x).
         if let (Some(x), Some((ax, n))) = (
             self.lt_zero_of.get(cond).cloned(),
@@ -1950,6 +2329,19 @@ impl Synthesizer for NoirEmitter {
     }
 
     fn assert_u128_lt(&mut self, idx: &CellRef, hi: &CellRef) -> Result<(), ProvingError> {
+        // The assert proves idx in [0, hi): mine it for the interval
+        // domain (shrinks dynamic-gather feasible sets).
+        if let Some(h) = self.s_int_of(hi) {
+            if let Ok(h) = i64::try_from(h) {
+                if h > 0 {
+                    let new_iv = match self.ival(idx) {
+                        Some((lo, hi0)) => (lo.max(0), hi0.min(h - 1)),
+                        None => (0, h - 1),
+                    };
+                    self.set_ival(idx, Some(new_iv));
+                }
+            }
+        }
         // The `as u128` cast emits an implicit `< 2^128` range constraint that
         // catches Zinnia's signed-Field negative encoding (negatives ≈ `p - |x|`
         // are well above 2^128 for BN254). The trailing `<` then enforces
@@ -2012,6 +2404,7 @@ impl Synthesizer for NoirEmitter {
         addr: &CellRef,
         value: &CellRef,
     ) -> Result<(), ProvingError> {
+        *self.write_version.entry(segment_id).or_insert(0) += 1;
         if let Some(a) = self.s_int_of(addr) {
             let a = a as usize;
             let mem = self.memories.entry(segment_id).or_default();
@@ -2023,20 +2416,36 @@ impl Synthesizer for NoirEmitter {
             mem[a] = value.clone();
             return Ok(());
         }
-        // Dynamic address: honest in-circuit scatter — every slot becomes
-        // select(addr == k, value, old). Resolving the address from the
-        // witness instead (the pre-2026-06-11 behaviour) specializes the
-        // circuit to the prover's witness.
-        let af = self.as_field(addr);
-        let vf = self.as_field(value);
+        // Dynamic address: honest in-circuit scatter. The address's affine
+        // lineage names a root whose eq-indicators are cached and shared
+        // with every other access on the same root; slot k updates with
+        // the flat arithmetic form old + ind*(value - old).
         let len = self.memories.get(&segment_id).map_or(0, |m| m.len());
-        for k in 0..len {
-            let old_v = self.memories.get(&segment_id).unwrap()[k].clone();
+        let aff = self.aff_of(addr);
+        let (root, scale, offset) = if aff.terms.len() == 1 {
+            (aff.terms[0].0.clone(), aff.terms[0].1, aff.offset)
+        } else {
+            (addr.clone(), 1, 0)
+        };
+        let vf = self.as_field(value);
+        let root_iv = self.ival(&root);
+        for k in 0..len as i64 {
+            let num = k - offset;
+            if scale == 0 || num % scale != 0 {
+                continue; // slot unreachable from this address
+            }
+            let v = num / scale;
+            if let Some((lo, hi)) = root_iv {
+                if v < lo || v > hi {
+                    continue; // slot outside the address's value interval
+                }
+            }
+            let ind = self.indicator(&root, v);
+            let old_v = self.memories.get(&segment_id).unwrap()[k as usize].clone();
             let of = self.as_field(&old_v);
-            let nv = self.bind(&format!(
-                "if {af} == {k} {{ {vf} }} else {{ {of} }}"
-            ));
-            self.memories.get_mut(&segment_id).unwrap()[k] = nv;
+            let indf = self.as_field(&ind);
+            let nv = self.bind(&format!("{of} + {indf} * ({vf} - {of})"));
+            self.memories.get_mut(&segment_id).unwrap()[k as usize] = nv;
         }
         Ok(())
     }
@@ -2047,24 +2456,92 @@ impl Synthesizer for NoirEmitter {
             .cloned()
             .unwrap_or_else(|| "0".to_string());
         let Some(a) = self.s_int_of(addr) else {
-            // Dynamic address: honest in-circuit gather — a one-hot mux
-            // over every slot of the segment. Resolving the address from
-            // the witness instead (the pre-2026-06-11 behaviour)
-            // specializes the circuit to the prover's witness.
-            let af = self.as_field(addr);
-            let slots: Vec<String> = self
-                .memories
-                .get(&segment_id)
-                .cloned()
-                .unwrap_or_default();
-            let mut acc = init;
-            for (k, slot) in slots.iter().enumerate() {
-                let sf = self.as_field(slot);
-                acc = self.bind(&format!(
-                    "if {af} == {k} {{ {sf} }} else {{ {acc} }}"
+            // Dynamic address: honest in-circuit gather via the address's
+            // affine lineage (port of the halo2 backend's machinery).
+            // Single root: flat sum of shared eq-indicators times the
+            // reachable slots, with a one-hot membership assert replacing
+            // per-read bound checks. Two roots: factored two-stage gather
+            // with cached stage-1 planes. No lineage: the address itself
+            // is the root (still flat + shared, never a sequential chain).
+            let len = self.memories.get(&segment_id).map_or(0, |m| m.len());
+            let aff = self.aff_of(addr);
+            if aff.terms.len() == 2 && len > 0 {
+                // Stage-1 over the larger-stride root, stage-2 over the
+                // other; planes cached across reads.
+                let (t0, t1) = (aff.terms[0].clone(), aff.terms[1].clone());
+                let ((r1, s1), (r2, s2)) = if t0.1.abs() >= t1.1.abs() {
+                    (t0, t1)
+                } else {
+                    (t1, t0)
+                };
+                let r1_iv = self.ival(&r1);
+                let r2_iv = self.ival(&r2);
+                let mut w_vals: Vec<i64> = Vec::new();
+                for w in -(len as i64)..=(len as i64) {
+                    if let Some((lo, hi)) = r2_iv {
+                        if w < lo || w > hi {
+                            continue;
+                        }
+                    }
+                    let resid = w * s2 + aff.offset;
+                    if !Self::feasible(s1, resid, len, r1_iv).is_empty() {
+                        w_vals.push(w);
+                    }
+                }
+                if !w_vals.is_empty() {
+                    let mut v_all: Vec<i64> = Vec::new();
+                    for &w in &w_vals {
+                        v_all.extend(Self::feasible(s1, w * s2 + aff.offset, len, r1_iv));
+                    }
+                    v_all.sort_unstable();
+                    v_all.dedup();
+                    self.assert_one_hot(&r1.clone(), &v_all);
+                    self.assert_one_hot(&r2.clone(), &w_vals);
+                    let mut parts: Vec<String> = Vec::with_capacity(w_vals.len());
+                    for &w in &w_vals {
+                        let plane = self.gather_plane(
+                            segment_id,
+                            &r1,
+                            s1,
+                            w * s2 + aff.offset,
+                            &init,
+                        );
+                        let ind = self.indicator(&r2, w);
+                        parts.push(format!(
+                            "{} * {}",
+                            self.as_field(&ind),
+                            self.as_field(&plane)
+                        ));
+                    }
+                    return Ok(self.bind_sum(&parts));
+                }
+            }
+            let (root, scale, offset) = if aff.terms.len() == 1 {
+                (aff.terms[0].0.clone(), aff.terms[0].1, aff.offset)
+            } else {
+                (addr.clone(), 1, 0)
+            };
+            let root_iv = self.ival(&root);
+            let vs = Self::feasible(scale, offset, len, root_iv);
+            if vs.is_empty() {
+                // No reachable slot: any witness fails the membership
+                // assert below; surface it as an explicit contradiction.
+                let _ = writeln!(self.body, "    assert(1 == 0);");
+                return Ok(init);
+            }
+            self.assert_one_hot(&root.clone(), &vs);
+            let mut parts: Vec<String> = Vec::with_capacity(vs.len());
+            for &v in &vs {
+                let slot = (v * scale + offset) as usize;
+                let cell = self.memories.get(&segment_id).unwrap()[slot].clone();
+                let ind = self.indicator(&root, v);
+                parts.push(format!(
+                    "{} * {}",
+                    self.as_field(&ind),
+                    self.as_field(&cell)
                 ));
             }
-            return Ok(acc);
+            return Ok(self.bind_sum(&parts));
         };
         let a = a as usize;
         let mem = self.memories.get(&segment_id);
