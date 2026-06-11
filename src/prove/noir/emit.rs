@@ -52,6 +52,7 @@ pub fn emit_circuit(
         params.clone(),
         bounds,
         intrinsic_count,
+        &ir.provenance,
     );
     interpret_ir(ir, &mut emitter)?;
 
@@ -396,49 +397,14 @@ struct AffLin {
     offset: i64,
 }
 
-impl AffLin {
-    fn combine(a: &AffLin, b: &AffLin, sign: i64) -> Option<AffLin> {
-        let offset = (a.offset as i128) + (sign as i128) * (b.offset as i128);
-        let mut terms = a.terms.clone();
-        for (root, scale) in &b.terms {
-            let s = (sign as i128) * (*scale as i128);
-            if let Some(existing) = terms.iter_mut().find(|(r, _)| r == root) {
-                let merged = (existing.1 as i128) + s;
-                if merged.abs() > i64::MAX as i128 {
-                    return None;
-                }
-                existing.1 = merged as i64;
-            } else {
-                terms.push((root.clone(), s as i64));
-            }
-        }
-        terms.retain(|(_, s)| *s != 0);
-        if terms.len() > 2 || offset.abs() > i64::MAX as i128 {
-            return None;
-        }
-        Some(AffLin { terms, offset: offset as i64 })
-    }
 
-    fn scaled(&self, k: i64) -> Option<AffLin> {
-        let offset = (self.offset as i128) * (k as i128);
-        if offset.abs() > i64::MAX as i128 {
-            return None;
-        }
-        let mut terms = Vec::with_capacity(self.terms.len());
-        for (root, scale) in &self.terms {
-            let s = (*scale as i128) * (k as i128);
-            if s.abs() > i64::MAX as i128 {
-                return None;
-            }
-            if s != 0 {
-                terms.push((root.clone(), s as i64));
-            }
-        }
-        Some(AffLin { terms, offset: offset as i64 })
-    }
-}
-
-pub struct NoirEmitter {
+pub struct NoirEmitter<'a> {
+    /// Structural-provenance table (derived once in the IRBuilder; see
+    /// src/provenance.rs). Read LIVE for intervals / affine views /
+    /// segment hulls via the name ↔ ValueId maps below.
+    prov: &'a crate::provenance::ProvenanceTable,
+    vid_of_var: HashMap<String, crate::types::ValueId>,
+    var_of_vid: HashMap<crate::types::ValueId, String>,
     /// Function arguments declared on `fn main`.
     pub inputs: Vec<EmittedInput>,
     /// Resolved witness — used to compute constant-folded values for any
@@ -486,10 +452,6 @@ pub struct NoirEmitter {
     /// is what lets comparison chains over gathered values stay on the
     /// cheap unsigned path.
     segment_iv: HashMap<u32, Option<(i64, i64)>>,
-    /// lt(a, b) output provenance: lets select(lt(a,b), a, b) be
-    /// recognized as min(a, b) (and the swapped form as max) so interval
-    /// bounds flow through clamp chains with only one bounded side.
-    lt_pair_of: HashMap<String, (String, String)>,
     /// Constraint-derived signed value intervals (port of the halo2
     /// backend's value_interval): constants exact, select outputs take
     /// the hull of their branches, comparison outputs are [0,1], and
@@ -601,7 +563,7 @@ enum ConcreteValue {
     Field(String),
 }
 
-impl NoirEmitter {
+impl<'a> NoirEmitter<'a> {
     fn lt_i_bounded_inner(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x < y);
         // Pre-promote Field operands with provable u32 bounds (CSE-d):
@@ -712,6 +674,31 @@ impl NoirEmitter {
     /// Affine view of a cell: explicit lineage, a literal constant, or a
     /// fresh single-root term.
     fn aff_of(&self, var: &str) -> AffLin {
+        if let Some(vid) = self.vid_of_var.get(var) {
+            if let Some(av) = self.prov.affine_of(*vid) {
+                if !av.terms.is_empty() {
+                    let mut terms = Vec::with_capacity(av.terms.len());
+                    let mut ok = true;
+                    for (rvid, scale) in &av.terms {
+                        match self.var_of_vid.get(rvid) {
+                            Some(rv) => terms.push((rv.clone(), *scale)),
+                            None => {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+                    if ok {
+                        return AffLin {
+                            terms,
+                            offset: av.offset,
+                        };
+                    } else if std::env::var("ZINNIA_PROV_DEBUG").is_ok() {
+                        eprintln!("[prov-debug] aff_of({}): root vid unmapped", var);
+                    }
+                }
+            }
+        }
         if let Some(a) = self.affine_of.get(var) {
             return a.clone();
         }
@@ -721,19 +708,15 @@ impl NoirEmitter {
         AffLin { terms: vec![(var.to_string(), 1)], offset: 0 }
     }
 
-    fn record_affine(&mut self, out: &str, aff: Option<AffLin>) {
-        if let Some(a) = aff {
-            // Only record non-trivial lineage (a bare single root with
-            // scale 1 / offset 0 is the default view anyway).
-            if !(a.terms.len() == 1 && a.terms[0].1 == 1 && a.offset == 0 && a.terms[0].0 == out)
-            {
-                self.affine_of.insert(out.to_string(), a);
+    /// Signed interval of a cell, if derivable. IR-level cells read the
+    /// provenance table LIVE; emitter-internal cells (and, during the
+    /// staged migration, locally-derived entries) fall back to the maps.
+    fn ival(&self, var: &str) -> Option<(i64, i64)> {
+        if let Some(vid) = self.vid_of_var.get(var) {
+            if let Some(iv) = self.prov.interval_of(*vid) {
+                return Some((iv.lo, iv.hi));
             }
         }
-    }
-
-    /// Signed interval of a cell, if derivable.
-    fn ival(&self, var: &str) -> Option<(i64, i64)> {
         if let Some(iv) = self.interval_of.get(var) {
             return Some(*iv);
         }
@@ -759,19 +742,6 @@ impl NoirEmitter {
         }
     }
 
-    fn ival_add(a: Option<(i64, i64)>, b: Option<(i64, i64)>, sign: i64) -> Option<(i64, i64)> {
-        let (al, ah) = a?;
-        let (bl, bh) = b?;
-        let (bl, bh) = if sign >= 0 { (bl, bh) } else { (-bh, -bl) };
-        Some((al.checked_add(bl)?, ah.checked_add(bh)?))
-    }
-
-    fn ival_scale(a: Option<(i64, i64)>, k: i64) -> Option<(i64, i64)> {
-        let (l, h) = a?;
-        let x = l.checked_mul(k)?;
-        let y = h.checked_mul(k)?;
-        Some((x.min(y), x.max(y)))
-    }
 
     /// Bind with an explicit non-Field type annotation (for narrow
     /// unsigned casts; plain bind() annotates Field).
@@ -790,6 +760,12 @@ impl NoirEmitter {
     /// and the cell has no tighter interval already).
     fn apply_segment_iv(&mut self, segment_id: u32, out: &str) {
         if self.interval_of.contains_key(out) {
+            return;
+        }
+        // Table-first (the builder maintains the hull at every write);
+        // the local map stays as fallback during the staged migration.
+        if let Some(h) = self.prov.segment_hull(segment_id) {
+            self.interval_of.insert(out.to_string(), (h.lo, h.hi));
             return;
         }
         if let Some(Some(iv)) = self.segment_iv.get(&segment_id) {
@@ -1014,7 +990,8 @@ impl NoirEmitter {
         params: ProvingParams,
         stmt_bounds: super::bound_analysis::BoundMap,
         intrinsic_count: usize,
-    ) -> Self {
+        provenance: &'a crate::provenance::ProvenanceTable,
+    ) -> NoirEmitter<'a> {
         // u32 amortization heuristic: instantiating bb's u32/u128 RANGE
         // lookup tables pulls in a fixed cost (~2700-3500 gates in the
         // tested bb 5.0 nightly). Each `(field as u32)` elimination
@@ -1033,6 +1010,9 @@ impl NoirEmitter {
         // while excluding the single-intrinsic regressors.
         let u32_amortizable = intrinsic_count >= 20;
         Self {
+            prov: provenance,
+            vid_of_var: HashMap::new(),
+            var_of_vid: HashMap::new(),
             inputs,
             witness,
             body: String::new(),
@@ -1047,7 +1027,6 @@ impl NoirEmitter {
             plane_cache: HashMap::new(),
             write_version: HashMap::new(),
             interval_of: HashMap::new(),
-            lt_pair_of: HashMap::new(),
             segment_iv: HashMap::new(),
             lt_zero_of: HashMap::new(),
             add_const_of: HashMap::new(),
@@ -1149,6 +1128,10 @@ impl NoirEmitter {
         }
         if let Some(iv) = self.interval_of.get(cell).copied() {
             self.interval_of.insert(v.clone(), iv);
+        }
+        // TEST: vid copy across the promotion rebind
+        if let Some(vid) = self.vid_of_var.get(cell).copied() {
+            self.vid_of_var.insert(v.clone(), vid);
         }
         v
     }
@@ -1487,8 +1470,19 @@ macro_rules! noop_unsupported {
     }};
 }
 
-impl Synthesizer for NoirEmitter {
+impl Synthesizer for NoirEmitter<'_> {
     type CellRef = CellRef;
+
+    fn on_stmt_result(
+        &mut self,
+        _stmt_id: u32,
+        value_id: crate::types::ValueId,
+        cell: &CellRef,
+    ) {
+        // Name ↔ ValueId correspondence for live provenance-table reads.
+        self.vid_of_var.insert(cell.clone(), value_id);
+        self.var_of_vid.insert(value_id, cell.clone());
+    }
 
     fn on_stmt_begin(&mut self, stmt_id: u32) {
         // Stash the IR-analysis bound for the result of this statement
@@ -1539,34 +1533,15 @@ impl Synthesizer for NoirEmitter {
         } else if let Some(c) = self.s_int_of(a) {
             self.add_const_of.insert(out.clone(), (b.clone(), c as i64));
         }
-        let aff = AffLin::combine(&self.aff_of(a), &self.aff_of(b), 1);
-        self.record_affine(&out, aff);
-        let iv = Self::ival_add(self.ival(a), self.ival(b), 1);
-        self.set_ival(&out, iv);
         return Ok(out);
     }
 
     fn sub_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        let out = self.sub_i_inner(a, b)?;
-        let aff = AffLin::combine(&self.aff_of(a), &self.aff_of(b), -1);
-        self.record_affine(&out, aff);
-        let iv = Self::ival_add(self.ival(a), self.ival(b), -1);
-        self.set_ival(&out, iv);
-        return Ok(out);
+        self.sub_i_inner(a, b)
     }
 
     fn mul_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        let out = self.mul_i_inner(a, b)?;
-        let (aff, iv) = if let Some(c) = self.s_int_of(b) {
-            (self.aff_of(a).scaled(c as i64), Self::ival_scale(self.ival(a), c as i64))
-        } else if let Some(c) = self.s_int_of(a) {
-            (self.aff_of(b).scaled(c as i64), Self::ival_scale(self.ival(b), c as i64))
-        } else {
-            (None, None)
-        };
-        self.record_affine(&out, aff);
-        self.set_ival(&out, iv);
-        return Ok(out);
+        self.mul_i_inner(a, b)
     }
 
     fn div_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
@@ -1895,27 +1870,22 @@ impl Synthesizer for NoirEmitter {
         Ok(v)
     }
     fn lt_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        // min/max select recognition now happens at IR level (the
+        // provenance table's SelectI deposit); only the lt-zero peephole
+        // stays emitter-local.
         let out = self.lt_i_inner(a, b)?;
         if self.s_int_of(b) == Some(0) {
             self.lt_zero_of.insert(out.clone(), a.clone());
         }
-        self.lt_pair_of.insert(out.clone(), (a.clone(), b.clone()));
-        self.set_ival(&out, Some((0, 1)));
         return Ok(out);
     }
 
     fn lt_i_bounded(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        let out = self.lt_i_bounded_inner(a, b)?;
-        self.lt_pair_of.insert(out.clone(), (a.clone(), b.clone()));
-        self.set_ival(&out, Some((0, 1)));
-        return Ok(out);
+        return self.lt_i_bounded_inner(a, b);
     }
 
     fn gt_i_bounded(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        let out = self.gt_i_bounded_inner(a, b)?;
-        self.lt_pair_of.insert(out.clone(), (b.clone(), a.clone()));
-        self.set_ival(&out, Some((0, 1)));
-        return Ok(out);
+        return self.gt_i_bounded_inner(a, b);
     }
 
     fn index_in_box(
@@ -1991,10 +1961,7 @@ impl Synthesizer for NoirEmitter {
         Ok(v)
     }
     fn gt_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        let out = self.gt_i_inner(a, b)?;
-        self.lt_pair_of.insert(out.clone(), (b.clone(), a.clone()));
-        self.set_ival(&out, Some((0, 1)));
-        return Ok(out);
+        return self.gt_i_inner(a, b);
     }
 
     fn gte_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
@@ -2277,57 +2244,8 @@ impl Synthesizer for NoirEmitter {
                 self.value_cache.insert(v.clone(), cv);
             }
         }
-        // Interval propagation. min/max shapes (select over an lt of the
-        // same operands) bound from ONE known side; generic selects take
-        // the hull of both branches.
-        let minmax = self.lt_pair_of.get(cond).cloned().and_then(|(a2, b2)| {
-            if if_true == &a2 && if_false == &b2 {
-                Some(true) // min(a, b)
-            } else if if_true == &b2 && if_false == &a2 {
-                Some(false) // max(a, b)
-            } else {
-                None
-            }
-        });
-        match minmax {
-            Some(true) => {
-                let (ta, fa) = (self.ival(if_true), self.ival(if_false));
-                let hi = match (ta, fa) {
-                    (Some((_, x)), Some((_, y))) => Some(x.min(y)),
-                    (Some((_, x)), None) | (None, Some((_, x))) => Some(x),
-                    _ => None,
-                };
-                let lo = match (ta, fa) {
-                    (Some((x, _)), Some((y, _))) => Some(x.min(y)),
-                    _ => None,
-                };
-                if let Some(h) = hi {
-                    self.set_ival(&v, Some((lo.unwrap_or(i64::MIN / 4), h)));
-                }
-            }
-            Some(false) => {
-                let (ta, fa) = (self.ival(if_true), self.ival(if_false));
-                let lo = match (ta, fa) {
-                    (Some((x, _)), Some((y, _))) => Some(x.max(y)),
-                    (Some((x, _)), None) | (None, Some((x, _))) => Some(x),
-                    _ => None,
-                };
-                let hi = match (ta, fa) {
-                    (Some((_, x)), Some((_, y))) => Some(x.max(y)),
-                    _ => None,
-                };
-                if let Some(l) = lo {
-                    self.set_ival(&v, Some((l, hi.unwrap_or(i64::MAX / 4))));
-                }
-            }
-            None => {
-                if let (Some((tl, th)), Some((fl, fh))) =
-                    (self.ival(if_true), self.ival(if_false))
-                {
-                    self.set_ival(&v, Some((tl.min(fl), th.max(fh))));
-                }
-            }
-        }
+        // Interval propagation (hulls, min/max recognition) comes from the
+        // provenance table's SelectI records.
         // Normalized-index recognition: select(lt(x,0), x + N, x).
         if let (Some(x), Some((ax, n))) = (
             self.lt_zero_of.get(cond).cloned(),

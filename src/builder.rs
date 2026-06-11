@@ -1184,12 +1184,19 @@ impl IRBuilder {
             }
             IR::SelectI | IR::SelectBitI => {
                 let Some(vid) = out.value_id() else { return };
-                let (Some(ti), Some(fi)) =
-                    (interval_of(self, &args[1]), interval_of(self, &args[2]))
-                else {
-                    return;
+                let ti = interval_of(self, &args[1]);
+                let fi = interval_of(self, &args[2]);
+                // Generic selects need both branch intervals for a hull;
+                // min/max shapes (recognized below) can bound from ONE
+                // known side, so don't bail early.
+                let mut iv = match (ti, fi) {
+                    (Some(a), Some(b)) => Interval::union(a, b),
+                    _ => Interval {
+                        lo: i64::MIN / 4,
+                        hi: i64::MAX / 4,
+                    },
                 };
-                let mut iv = Interval::union(ti, fi);
+                let mut have_any = ti.is_some() && fi.is_some();
                 // Min/max recognition: select(a<b, a, b) = min(a, b) →
                 // hi tightens to min(hi_a, hi_b); select(a<b, b, a) =
                 // max(a, b) → lo tightens to max(lo_a, lo_b). Same for
@@ -1207,15 +1214,33 @@ impl IRBuilder {
                             // gt + straight = max; gt + swapped = min.
                             let is_min = (is_lt && straight) || (is_gt && swapped);
                             let is_max = (is_lt && swapped) || (is_gt && straight);
+                            // One known side suffices: min(a,b) <= hi of
+                            // either; max(a,b) >= lo of either.
                             if is_min {
-                                iv.hi = iv.hi.min(ti.hi.min(fi.hi));
+                                if let Some(h) = match (ti, fi) {
+                                    (Some(a), Some(b)) => Some(a.hi.min(b.hi)),
+                                    (Some(a), None) | (None, Some(a)) => Some(a.hi),
+                                    _ => None,
+                                } {
+                                    iv.hi = iv.hi.min(h);
+                                    have_any = true;
+                                }
                             } else if is_max {
-                                iv.lo = iv.lo.max(ti.lo.max(fi.lo));
+                                if let Some(l) = match (ti, fi) {
+                                    (Some(a), Some(b)) => Some(a.lo.max(b.lo)),
+                                    (Some(a), None) | (None, Some(a)) => Some(a.lo),
+                                    _ => None,
+                                } {
+                                    iv.lo = iv.lo.max(l);
+                                    have_any = true;
+                                }
                             }
                         }
                     }
                 }
-                self.provenance.set_interval(vid, iv);
+                if have_any {
+                    self.provenance.set_interval(vid, iv);
+                }
             }
             IR::ReadMemory { segment_id } | IR::DynamicNDArrayGetItem { segment_id, .. } => {
                 if let (Some(vid), Some(hull)) =
