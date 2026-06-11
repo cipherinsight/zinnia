@@ -38,13 +38,23 @@ fn array_indexed_zero<F: ScalarField>(
     let zero = ctx.load_constant(F::ZERO);
     for i in 0..4usize {
         let i_cell = ctx.load_constant(F::from(i as u64));
-        let i_in_zr_0 = gate.is_equal(ctx, i_cell, zrs[0]);
-        let i_in_zr_1 = gate.is_equal(ctx, i_cell, zrs[1]);
+        let i_neg = ctx.load_constant(-F::from((4 - i) as u64));
+        let i_in_zr_0p = gate.is_equal(ctx, i_cell, zrs[0]);
+        let i_in_zr_0n = gate.is_equal(ctx, i_neg, zrs[0]);
+        let i_in_zr_0 = gate.or(ctx, i_in_zr_0p, i_in_zr_0n);
+        let i_in_zr_1p = gate.is_equal(ctx, i_cell, zrs[1]);
+        let i_in_zr_1n = gate.is_equal(ctx, i_neg, zrs[1]);
+        let i_in_zr_1 = gate.or(ctx, i_in_zr_1p, i_in_zr_1n);
         let row_zero = gate.or(ctx, i_in_zr_0, i_in_zr_1);
         for j in 0..4usize {
             let j_cell = ctx.load_constant(F::from(j as u64));
-            let j_in_zc_0 = gate.is_equal(ctx, j_cell, zcs[0]);
-            let j_in_zc_1 = gate.is_equal(ctx, j_cell, zcs[1]);
+            let j_neg = ctx.load_constant(-F::from((4 - j) as u64));
+            let j_in_zc_0p = gate.is_equal(ctx, j_cell, zcs[0]);
+            let j_in_zc_0n = gate.is_equal(ctx, j_neg, zcs[0]);
+            let j_in_zc_0 = gate.or(ctx, j_in_zc_0p, j_in_zc_0n);
+            let j_in_zc_1p = gate.is_equal(ctx, j_cell, zcs[1]);
+            let j_in_zc_1n = gate.is_equal(ctx, j_neg, zcs[1]);
+            let j_in_zc_1 = gate.or(ctx, j_in_zc_1p, j_in_zc_1n);
             let col_zero = gate.or(ctx, j_in_zc_0, j_in_zc_1);
             let any_zero = gate.or(ctx, row_zero, col_zero);
             let out = gate.select(ctx, zero, cells[i * 4 + j], any_zero);

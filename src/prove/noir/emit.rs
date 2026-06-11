@@ -773,6 +773,27 @@ impl NoirEmitter {
         v
     }
 
+    /// Structural-constant accessors: like int_of/float_of but only for
+    /// values that are compile-time literals (`literal_cells`). The plain
+    /// accessors also surface WITNESS-folded values; emission decisions
+    /// keyed on those specialize the circuit to the prover's witness
+    /// (soundness bug — a select whose else-branch happens to be 0 under
+    /// the current witness would lose the branch structurally).
+    fn s_int_of(&self, var: &str) -> Option<i128> {
+        if self.literal_cells.contains(var) {
+            self.int_of(var)
+        } else {
+            None
+        }
+    }
+    fn s_float_of(&self, var: &str) -> Option<f64> {
+        if self.literal_cells.contains(var) {
+            self.float_of(var)
+        } else {
+            None
+        }
+    }
+
     fn float_of(&self, var: &str) -> Option<f64> {
         match self.value_cache.get(var)? {
             ConcreteValue::Float(f) => Some(*f),
@@ -1062,9 +1083,9 @@ impl Synthesizer for NoirEmitter {
 
     fn add_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let out = self.add_i_inner(a, b)?;
-        if let Some(c) = self.int_of(b) {
+        if let Some(c) = self.s_int_of(b) {
             self.add_const_of.insert(out.clone(), (a.clone(), c as i64));
-        } else if let Some(c) = self.int_of(a) {
+        } else if let Some(c) = self.s_int_of(a) {
             self.add_const_of.insert(out.clone(), (b.clone(), c as i64));
         }
         return Ok(out);
@@ -1340,13 +1361,13 @@ impl Synthesizer for NoirEmitter {
                 .norm_index_of
                 .get(a)
                 .cloned()
-                .map(|nx| (nx, self.int_of(b)))
+                .map(|nx| (nx, self.s_int_of(b)))
                 .filter(|(_, j)| j.is_some())
                 .or_else(|| {
                     self.norm_index_of
                         .get(b)
                         .cloned()
-                        .map(|nx| (nx, self.int_of(a)))
+                        .map(|nx| (nx, self.s_int_of(a)))
                         .filter(|(_, j)| j.is_some())
                 });
             if let Some(((x, n), Some(j))) = hit {
@@ -1432,7 +1453,7 @@ impl Synthesizer for NoirEmitter {
     }
     fn lt_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let out = self.lt_i_inner(a, b)?;
-        if self.int_of(b) == Some(0) {
+        if self.s_int_of(b) == Some(0) {
             self.lt_zero_of.insert(out.clone(), a.clone());
         }
         return Ok(out);
@@ -1800,8 +1821,8 @@ impl Synthesizer for NoirEmitter {
         // dyn-slice / mask-then-default-zero pattern) the second half
         // is structurally dead and the binding becomes `cond * t` —
         // one mul instead of two muls plus an add.
-        let is_zero_int = self.int_of(if_false) == Some(0);
-        let is_zero_flt = self.float_of(if_false) == Some(0.0);
+        let is_zero_int = self.s_int_of(if_false) == Some(0);
+        let is_zero_flt = self.s_float_of(if_false) == Some(0.0);
         let all_u32 = self.is_u32(cond)
             && self.is_u32(if_true)
             && (is_zero_int || is_zero_flt || self.is_u32(if_false));
@@ -1991,23 +2012,61 @@ impl Synthesizer for NoirEmitter {
         addr: &CellRef,
         value: &CellRef,
     ) -> Result<(), ProvingError> {
-        let a = self.int_of(addr).unwrap_or(0) as usize;
-        let mem = self.memories.entry(segment_id).or_default();
-        if a >= mem.len() {
-            // Resize to mirror the halo2 mock behaviour: writes beyond
-            // the allocated region are silently bounded.
+        if let Some(a) = self.s_int_of(addr) {
+            let a = a as usize;
+            let mem = self.memories.entry(segment_id).or_default();
+            if a >= mem.len() {
+                // Resize to mirror the halo2 mock behaviour: writes beyond
+                // the allocated region are silently bounded.
+                return Ok(());
+            }
+            mem[a] = value.clone();
             return Ok(());
         }
-        mem[a] = value.clone();
+        // Dynamic address: honest in-circuit scatter — every slot becomes
+        // select(addr == k, value, old). Resolving the address from the
+        // witness instead (the pre-2026-06-11 behaviour) specializes the
+        // circuit to the prover's witness.
+        let af = self.as_field(addr);
+        let vf = self.as_field(value);
+        let len = self.memories.get(&segment_id).map_or(0, |m| m.len());
+        for k in 0..len {
+            let old_v = self.memories.get(&segment_id).unwrap()[k].clone();
+            let of = self.as_field(&old_v);
+            let nv = self.bind(&format!(
+                "if {af} == {k} {{ {vf} }} else {{ {of} }}"
+            ));
+            self.memories.get_mut(&segment_id).unwrap()[k] = nv;
+        }
         Ok(())
     }
     fn read_memory(&mut self, segment_id: u32, addr: &CellRef) -> Result<CellRef, ProvingError> {
-        let a = self.int_of(addr).unwrap_or(0) as usize;
         let init = self
             .memory_init
             .get(&segment_id)
             .cloned()
             .unwrap_or_else(|| "0".to_string());
+        let Some(a) = self.s_int_of(addr) else {
+            // Dynamic address: honest in-circuit gather — a one-hot mux
+            // over every slot of the segment. Resolving the address from
+            // the witness instead (the pre-2026-06-11 behaviour)
+            // specializes the circuit to the prover's witness.
+            let af = self.as_field(addr);
+            let slots: Vec<String> = self
+                .memories
+                .get(&segment_id)
+                .cloned()
+                .unwrap_or_default();
+            let mut acc = init;
+            for (k, slot) in slots.iter().enumerate() {
+                let sf = self.as_field(slot);
+                acc = self.bind(&format!(
+                    "if {af} == {k} {{ {sf} }} else {{ {acc} }}"
+                ));
+            }
+            return Ok(acc);
+        };
+        let a = a as usize;
         let mem = self.memories.get(&segment_id);
         let expr = match mem {
             Some(m) if a < m.len() => m[a].clone(),

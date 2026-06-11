@@ -9,8 +9,14 @@ fn main(a: [Field; 16], zero_rows: [Field; 2], zero_cols: [Field; 2]) -> pub [Fi
     for i in 0..ROWS {
         for j in 0..COLS {
             let mut zero_it: bool = false;
-            for r in 0..2 { if (i as Field) == zero_rows[r] { zero_it = true; } }
-            for c in 0..2 { if (j as Field) == zero_cols[c] { zero_it = true; } }
+            for r in 0..2 {
+                if ((i as Field) == zero_rows[r])
+                    | (((i as Field) - (ROWS as Field)) == zero_rows[r]) { zero_it = true; }
+            }
+            for c in 0..2 {
+                if ((j as Field) == zero_cols[c])
+                    | (((j as Field) - (COLS as Field)) == zero_cols[c]) { zero_it = true; }
+            }
             out[i * COLS + j] = if zero_it { 0 } else { a[i * COLS + j] };
         }
     }

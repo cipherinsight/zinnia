@@ -28,10 +28,16 @@ fn scalar_zero_idx<F: ScalarField>(
     let zero = ctx.load_constant(F::ZERO);
     for i in 0..4usize {
         let i_cell = ctx.load_constant(F::from(i as u64));
-        let row_match = gate.is_equal(ctx, i_cell, zr);
+        let i_neg = ctx.load_constant(-F::from((4 - i) as u64));
+        let row_match_pos = gate.is_equal(ctx, i_cell, zr);
+        let row_match_neg = gate.is_equal(ctx, i_neg, zr);
+        let row_match = gate.or(ctx, row_match_pos, row_match_neg);
         for j in 0..4usize {
             let j_cell = ctx.load_constant(F::from(j as u64));
-            let col_match = gate.is_equal(ctx, j_cell, zc);
+            let j_neg = ctx.load_constant(-F::from((4 - j) as u64));
+            let col_match_pos = gate.is_equal(ctx, j_cell, zc);
+            let col_match_neg = gate.is_equal(ctx, j_neg, zc);
+            let col_match = gate.or(ctx, col_match_pos, col_match_neg);
             let any = gate.or(ctx, row_match, col_match);
             let out = gate.select(ctx, zero, cells[i * 4 + j], any);
             make_public.push(out);
