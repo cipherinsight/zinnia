@@ -6,19 +6,23 @@ use noir_fpc::q_floor_div_hint;
 
 global N: u32 = 23;
 
-fn main(a: [Field; 23], ncol: Field) -> pub [Field; 23] {
+fn main(a: [Field; 23], ncol: Field) -> pub [Field; 25] {
     assert(ncol != 0, "0303: ncol must be > 0");
     // floor_div via hint + reconstruction, matching the Zinnia emitter's
     // pattern (noir_fpc::q_floor_div_hint + downstream q*ncol == _ check).
     let q = q_floor_div_hint(N as Field, ncol);
     let col = q * ncol;
-    let mut out: [Field; 23] = [0; 23];
+    let mut out: [Field; 25] = [0; 25];
+    // Runtime shape metadata (rows, cols), mirroring Zinnia's dyn-array
+    // output contract.
+    out[0] = q;
+    out[1] = ncol;
     for k in 0..N {
         // Per-cell `(k as Field) < col`: u32-safe operands fit u128 so
         // the bounded form is sound. Mirrors the Zinnia emitter's
         // slice-mask `lt_i` lowering.
         if ((k as u128) < (col as u128)) {
-            out[k] = a[k];
+            out[k + 2] = a[k];
         }
     }
     out

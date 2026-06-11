@@ -3,9 +3,17 @@
 
 use noir_fpc::q_floor_div_hint;
 
-fn main(a: [Field; 20], nrow: Field) -> pub [Field; 20] {
+fn main(a: [Field; 20], nrow: Field) -> pub [Field; 22] {
     assert(nrow != 0, "0302: nrow must be > 0");
     let q = q_floor_div_hint(20 as Field, nrow);
     assert(q * nrow == 20, "0302: nrow must divide len(a)");
-    a
+    // Runtime shape metadata (rows, cols), mirroring Zinnia's dyn-array
+    // output contract.
+    let mut out: [Field; 22] = [0; 22];
+    out[0] = nrow;
+    out[1] = q;
+    for k in 0..20 {
+        out[k + 2] = a[k];
+    }
+    out
 }

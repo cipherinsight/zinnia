@@ -235,11 +235,16 @@ masked-in-place dynamic-output encoding, deferred): 0442 3.8x, 0412
 Geomean 0.533x over 126 pairs; 26 cases >1.0x, only 3 >1.1x, none >1.5x.
 Causes, by band:
 
-1. **Dyn-metadata exposure** (15 cases at 1.000-1.006x, +1 to +44 gates):
-   Zinnia binds runtime shape dims as publics (e.g. 0301: 22 vs 20
-   outputs = +4 gates); HW baselines don't expose them. Richer contract,
-   not inefficiency. Cases: 0303/0309/0311/0312/0313/0321/0322/0326/
-   0329/0330/0431/0438/0452 + partially 0304/0364.
+1. **Dyn-metadata exposure** (4 cases: 0301/0302/0303/0304, +2 publics
+   each): Zinnia binds the runtime shape dims; HW didn't. FIXED
+   2026-06-11: those four baselines now expose (rows, cols) -> 0301/0302
+   land at exactly 1.000x (80 = 80 gates), 0303 1.005x, 0304 1.038x
+   (residual = reversal/slice machinery, class 2). CORRECTION to the
+   first draft of this survey: the other dust cases (0309/0311/0312/
+   0313/0321/0326/0329/0330/0431/0438/0452) have EQUAL output contracts;
+   their +1..+44 gate deltas are emitter micro-differences, not metadata.
+   0322 is already Category-C flagged. 0364's +277 is class 2 (insert
+   position), like 0363.
 2. **Negative-index semantics** (~6 cases at 1.04-1.07x, +~250 gates):
    ZN emits to_signed/qlt_signed normalization for runtime indices
    (python allows a[col-1] with col=0 -> -1 -> last column; np.insert
