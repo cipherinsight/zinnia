@@ -280,3 +280,18 @@ assert mining):
 - 0391/0393: 60.7k -> 5.4k = 0.70x (below HW). 0318: 14k -> 682 =
   1.25x. 0508: 50k -> 5.8k = 1.47x. 0319: timeout -> 4.1k = 1.07x.
 - 0433/0434: with negative-index wrap added to HW, both EXACTLY 1.000x.
+
+## 0509/0510 anatomy + narrow comparisons (2026-06-11, commit da1d011)
+
+Why they were 1.5x: ~70% of the gates were signed-comparison machinery
+(53 to_signed projections) in rows/cols min/max reductions — values in
+[0, 9] paying Field-width signed compares because masked select chains
+drop u32 typing. Fix: interval-driven narrowest-width unsigned
+comparisons (u8 for [0,9]) + per-segment value hulls flowing to read
+results. 0509/0510: 10,582 -> 9,302 (1.33x); side wins: 0363/0365 ->
+0.75x, 0364 -> 0.87x (both below baseline now).
+
+Final Noir landscape: 134/134, geomean 0.590x, zero cases above 1.5x
+(max 0508 1.47x). The remaining 1.2-1.5x band (0507-0510, 0318) is
+distributed structural density (one-hot compaction + paired gathers vs
+handwritten packed arrays), no dominant construct.
