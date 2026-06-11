@@ -229,3 +229,28 @@ benchmark binary; documented as accepted parity-band for now.
 Remaining circuit-size gaps are all family 1 (compacted-prefix vs
 masked-in-place dynamic-output encoding, deferred): 0442 3.8x, 0412
 2.2x, 0353's last 8%. Everything else is at or below handwritten size.
+
+## Noir slowdown survey (2026-06-11, fresh sweep zinnia_noir_fresh_20260611.json)
+
+Geomean 0.533x over 126 pairs; 26 cases >1.0x, only 3 >1.1x, none >1.5x.
+Causes, by band:
+
+1. **Dyn-metadata exposure** (15 cases at 1.000-1.006x, +1 to +44 gates):
+   Zinnia binds runtime shape dims as publics (e.g. 0301: 22 vs 20
+   outputs = +4 gates); HW baselines don't expose them. Richer contract,
+   not inefficiency. Cases: 0303/0309/0311/0312/0313/0321/0322/0326/
+   0329/0330/0431/0438/0452 + partially 0304/0364.
+2. **Negative-index semantics** (~6 cases at 1.04-1.07x, +~250 gates):
+   ZN emits to_signed/qlt_signed normalization for runtime indices
+   (python allows a[col-1] with col=0 -> -1 -> last column; np.insert
+   accepts negative pos). HW baselines assert the index nonneg as u128
+   and skip normalization — a semantic restriction. Cases: 0345/0346/
+   0347 (column select), 0363/0364/0365 (insert position). 0508 similar
+   band via argwhere-bbox dyn-slice machinery.
+3. **Runtime-reshape window hoisting** (0416/0418, 1.12x, +9k gates):
+   the mask-formulation reduce tests windows per (row, slot) combo; the
+   leading static row axis means tests could hoist across rows (HW
+   does). Same root as the halo2-side 19x on these two (258k vs 13.5k
+   cells — halo2 pays ~60 cells per window test vs Noir's ~4 gates):
+   slice-view composition through reshape is the principled fix.
+4. **0433** (1.15x): +15 gates absolute; eq/select dust, known.
