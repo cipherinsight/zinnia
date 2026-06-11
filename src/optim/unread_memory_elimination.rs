@@ -4,7 +4,7 @@
 //! never reads. The clearest example is `np.argwhere(A).min/max(axis=0)`:
 //! the argwhere lowering writes a `(count, rank)` coord segment, but the
 //! min/max(axis=0) bypass added in round 4 reads the per-cell `keep`
-//! predicates directly from `IRBuilder::argwhere_keep_indicators` instead
+//! predicates directly from the provenance table's compaction records instead
 //! of `ReadMemory`-ing the segment. The segment writes (and their input
 //! `select_i` / `add_i` arithmetic) stay alive because `WriteMemory` and
 //! `AllocateMemory` are `is_fixed()`, so `DeadCodeElimination` won't touch

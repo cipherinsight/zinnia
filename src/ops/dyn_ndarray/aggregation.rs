@@ -768,21 +768,32 @@ pub fn dyn_aggregate_axis(
         panic!("Complex DynamicNDArray does not support ordered reductions");
     }
 
-    // Fast path: `argwhere(A).min(axis=0)` / `.max(axis=0)`. The
-    // np_argwhere lowering stashes the per-cell `keep` predicates
-    // (is-nonzero on the source array). For axis=0 reductions the result
-    // is the min / max coordinate per source axis — algebraically
-    // equivalent to the row_has/col_has + linear-scan algorithm that the
-    // handwritten Noir baselines for the nonzero-bbox kernels use. Skip
-    // the materialise-then-reduce O(N * rank) scan and emit the
-    // O(R + C) bounds computation directly.
+    // Fast path: `argwhere(A).min(axis=0)` / `.max(axis=0)`. The argwhere
+    // lowering deposits one compaction record per coordinate lane; an
+    // axis-0 reduction is then a per-lane bucket-occupancy min/max —
+    // algebraically the row_has/col_has + linear-scan algorithm the
+    // handwritten Noir nonzero-bbox baselines use, O(cells + Σdims)
+    // instead of the materialise-then-reduce O(N · rank) scan. The
+    // compacted segment itself goes unread, so unread_memory_elimination
+    // deletes its writes.
     if ax == 0
         && matches!(agg, DynAggKind::Min | DynAggKind::Max)
         && data.dtype == NumberType::Integer
+        && data.meta.logical_shape.len() == 2
     {
-        if let Some(entry) = b.argwhere_keep_indicators.get(&data.segment_id) {
-            let (src_shape, keeps) = entry.clone();
-            return argwhere_axis0_bbox_bounds(b, &src_shape, &keeps, agg);
+        let rank = data.meta.logical_shape[1];
+        let mut outs: Vec<Value> = Vec::with_capacity(rank);
+        for lane in 0..rank {
+            let Some(info) = b.provenance.compaction_of(data.segment_id, lane).cloned() else {
+                break;
+            };
+            let Some(v) = compaction_bucket_min_max(b, &info, agg) else {
+                break;
+            };
+            outs.push(v);
+        }
+        if rank > 0 && outs.len() == rank {
+            return assemble_axis0_bounds(b, outs);
         }
     }
 
@@ -1162,116 +1173,90 @@ pub fn dyn_aggregate_axis(
     Value::DynamicNDArray(result)
 }
 
-/// `argwhere(A).min/max(axis=0)` fast path. Computes per-source-axis bounds
-/// directly from the cached keep predicates instead of materialising and
-/// scanning the (count, rank) coordinate segment.
-///
-/// For each `src_axis a`, build the per-index OR-of-keeps along axis a
-/// (the row_has / col_has arrays the handwritten Noir nonzero-bbox baseline
-/// computes), then linear-scan for the first / last index with a hit. Total
-/// ops: O(cells.len() + sum(src_shape)) — independent of `rank`.
-fn argwhere_axis0_bbox_bounds(
+/// min/max over one compaction lane whose sources are STATIC small-range
+/// values (coordinate streams), via bucket occupancy: `counts[v] = Σ
+/// keep_i` over positions with source value `v`; `has[v] = counts[v] >
+/// 0`; min = first occupied bucket, max = last. O(cells + dim) — works
+/// for UNSORTED lanes where the first/last-set-bit scan doesn\'t.
+/// Sentinels match the historical bbox fast path: Min yields `dim` and
+/// Max yields `0` when nothing is kept (all-empty inputs are guarded by
+/// the kernels using this family). Fires the `dyn_argextremum` contract
+/// so downstream slice-bound discharges resolve from facts.
+pub(crate) fn compaction_bucket_min_max(
     b: &mut IRBuilder,
-    src_shape: &[usize],
-    keeps: &[Value],
+    info: &crate::provenance::CompactionInfo,
     agg: DynAggKind,
-) -> Value {
-    use crate::helpers::shape_arith::{decode_coords, row_major_strides};
-    let rank = src_shape.len();
-    let src_strides = row_major_strides(src_shape);
-    let mut out_elements: Vec<Value> = Vec::with_capacity(rank);
+) -> Option<Value> {
+    let n = info.keep.len();
+    if n == 0 || info.source.len() != n {
+        return None;
+    }
+    let mut keeps = Vec::with_capacity(n);
+    let mut sources = Vec::with_capacity(n);
+    for i in 0..n {
+        keeps.push(b.value_of_vid(info.keep[i])?);
+        let sv = b.value_of_vid(info.source[i])?.int_val()?;
+        if sv < 0 {
+            return None;
+        }
+        sources.push(sv as usize);
+    }
+    let dim = sources.iter().copied().max()? + 1;
+    if dim > 4096 {
+        return None;
+    }
 
     let zero_i = b.ir_constant_int(0);
-    let mut counts_by_axis: Vec<Vec<Value>> = src_shape
-        .iter()
-        .map(|&dim| vec![zero_i.clone(); dim])
-        .collect();
-    for (flat_idx, keep) in keeps.iter().enumerate() {
-        let coords = decode_coords(flat_idx, src_shape, &src_strides);
-        for src_axis in 0..rank {
-            let coord = coords[src_axis];
-            let prev = counts_by_axis[src_axis][coord].clone();
-            counts_by_axis[src_axis][coord] = b.ir_add_i(&prev, keep);
-        }
+    let mut counts: Vec<Value> = vec![zero_i.clone(); dim];
+    for i in 0..n {
+        let prev = counts[sources[i]].clone();
+        counts[sources[i]] = b.ir_add_i(&prev, &keeps[i]);
+    }
+    let mut has_along: Vec<Value> = Vec::with_capacity(dim);
+    for acc in &counts {
+        has_along.push(b.ir_less_than_i_bounded(&zero_i, acc));
     }
 
-    for src_axis in 0..rank {
-        let dim = src_shape[src_axis];
-        // Build the row/column occupancy vectors in one pass over the
-        // cached keeps, then threshold each bucket with a single bounded
-        // comparison. This matches the handwritten bbox baselines more
-        // closely than rescanning all keeps once per bucket.
-        let mut has_along: Vec<Value> = Vec::with_capacity(dim);
-        for acc in &counts_by_axis[src_axis] {
-            // has = (0 < acc), bounded since both are non-negative small ints.
-            let has = b.ir_less_than_i_bounded(&zero_i, acc);
-            has_along.push(has);
+    let initial = match agg {
+        DynAggKind::Min => b.ir_constant_int(dim as i64),
+        DynAggKind::Max => b.ir_constant_int(0),
+        _ => return None,
+    };
+    let mut acc_idx = initial.clone();
+    for (k, has) in has_along.iter().enumerate() {
+        let k_val = b.ir_constant_int(k as i64);
+        match agg {
+            DynAggKind::Min => {
+                let still_initial = b.ir_equal_i(&acc_idx, &initial);
+                let trigger = b.ir_logical_and(&still_initial, has);
+                acc_idx = b.ir_select_i(&trigger, &k_val, &acc_idx);
+            }
+            DynAggKind::Max => {
+                acc_idx = b.ir_select_i(has, &k_val, &acc_idx);
+            }
+            _ => unreachable!(),
         }
-
-        // Linear scan over has_along.
-        //  Min: first k where has_along[k] = true. Sentinel = `dim`
-        //       (out-of-range) when no hits — matches numpy's behaviour
-        //       only for non-empty inputs; argwhere on an all-zero matrix
-        //       isn't in scope for the kernels using this path.
-        //  Max: last k where has_along[k] = true. Sentinel = 0
-        //       (mirrors the i64::MIN → 0 narrowing in the slow path's
-        //       Max-bounded sentinel).
-        let initial = match agg {
-            DynAggKind::Min => b.ir_constant_int(dim as i64),
-            DynAggKind::Max => b.ir_constant_int(0),
+    }
+    if let Some(idx_vid) = acc_idx.value_id() {
+        let len_for_contract = match agg {
+            DynAggKind::Min => dim as i64 + 1,
+            DynAggKind::Max => dim as i64,
             _ => unreachable!(),
         };
-        let mut acc_idx = initial.clone();
-
-        for k in 0..dim {
-            let k_val = b.ir_constant_int(k as i64);
-            let has = &has_along[k];
-            match agg {
-                DynAggKind::Min => {
-                    let still_initial = b.ir_equal_i(&acc_idx, &initial);
-                    let trigger = b.ir_logical_and(&still_initial, has);
-                    acc_idx = b.ir_select_i(&trigger, &k_val, &acc_idx);
-                }
-                DynAggKind::Max => {
-                    acc_idx = b.ir_select_i(has, &k_val, &acc_idx);
-                }
-                _ => unreachable!(),
-            }
+        let len_val = b.ir_constant_int(len_for_contract);
+        if let Some(len_vid) = len_val.value_id() {
+            let mut formals = std::collections::HashMap::new();
+            formals.insert("len_arr".to_string(), len_vid);
+            b.fire_contract("dyn_argextremum", idx_vid, &formals);
         }
-        // Publish a tight bound on `acc_idx` via the registered
-        // `dyn_argextremum` contract:
-        //   Min: `acc_idx ∈ [0, dim]` (sentinel `dim` covers no-hit, real
-        //         hits land in [0, dim-1]) — bind len_arr = dim+1.
-        //   Max: `acc_idx ∈ [0, dim-1]` (initial 0, real hits in [0, dim-1])
-        //         — bind len_arr = dim. The kernel uses `bbox.max(0) + 1`
-        //         as a slice stop and discharge_slice_bound asks
-        //         `stop < axis_len + 1`; bounding `max < dim` makes
-        //         `max + 1 ≤ dim = axis_len`, exactly what the
-        //         downstream discharge needs to prove from facts (the
-        //         loose `dim+1` bound would leave `max+1 ≤ dim+1` and
-        //         discharge would still emit a u128 bound assert).
-        //
-        // For this to actually close the bbox-crop residual, the fact
-        // must propagate through segment-storage + tuple-unpack
-        // extraction. That's the job of `IRBuilder::segment_cell_bounds`
-        // (write-side capture in `alloc_and_write_values`, read-side
-        // republish in `ir_read_memory`).
-        if let Some(idx_vid) = acc_idx.value_id() {
-            let len_for_contract = match agg {
-                DynAggKind::Min => dim as i64 + 1,
-                DynAggKind::Max => dim as i64,
-                _ => unreachable!(),
-            };
-            let len_val = b.ir_constant_int(len_for_contract);
-            if let Some(len_vid) = len_val.value_id() {
-                let mut formals = std::collections::HashMap::new();
-                formals.insert("len_arr".to_string(), len_vid);
-                b.fire_contract("dyn_argextremum", idx_vid, &formals);
-            }
-        }
-        out_elements.push(acc_idx);
     }
+    Some(acc_idx)
+}
 
+/// Assemble per-axis min/max bounds into the `(rank,)` dyn-array shape
+/// the axis-0 reduction contract expects.
+fn assemble_axis0_bounds(b: &mut IRBuilder, out_elements: Vec<Value>) -> Value {
+    let rank = out_elements.len();
     let out_shape = vec![rank];
     let out_strides_meta = crate::helpers::shape_arith::row_major_strides(&out_shape);
     let segment_id =

@@ -180,16 +180,6 @@ pub struct IRBuilder {
     /// builder clones and helper threads, and `Send + Sync` via the
     /// inner `Mutex<File>`.
     pub telemetry: Option<std::sync::Arc<crate::optim::telemetry::TelemetrySink>>,
-    /// Provenance map for `np.argwhere` results, keyed by the result
-    /// segment_id. Stores `(source_shape, per-cell keep predicates in
-    /// row-major order)`. Lets `dyn_aggregate_axis` recognise the
-    /// `argwhere(A).min/max(axis=0)` pattern and bypass the
-    /// materialise-then-reduce O(N*rank) scan with an O(R + C) per-axis
-    /// has-any + linear search — the algorithm the handwritten Noir
-    /// baselines use for the nonzero-bbox kernels. Cleared lazily; entries
-    /// are only consulted when an `axis=0` min/max reduces the matching
-    /// dynamic array.
-    pub argwhere_keep_indicators: HashMap<u32, (Vec<usize>, Vec<Value>)>,
     /// Per-segment, per-cell bound facts captured at write time. When a
     /// `Value` whose `ask_bounds` is `Some((min, max))` is written into a
     /// segment via `alloc_and_write_values` / `write_typed`, the bounds
@@ -252,7 +242,6 @@ impl IRBuilder {
             // up the change, but the tests scope the env var around the
             // builder construction so this matches the desired semantics.
             telemetry: crate::optim::telemetry::TelemetrySink::from_env(),
-            argwhere_keep_indicators: HashMap::new(),
             segment_cell_bounds: HashMap::new(),
             segment_default_bounds: HashMap::new(),
             scalar_value_bounds: HashMap::new(),

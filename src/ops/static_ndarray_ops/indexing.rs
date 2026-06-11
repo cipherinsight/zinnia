@@ -310,10 +310,14 @@ pub fn np_argwhere(b: &mut IRBuilder, args: &[Value]) -> Value {
     let zero = b.ir_constant_int(0);
     let rank_const = b.ir_constant_int(rank as i64);
 
-    // Side-record per-cell keep predicates so that downstream `min/max(axis=0)`
-    // reductions on this result can take the bbox-bounds fast path instead of
+    // Deposit per-lane compaction provenance so downstream
+    // `min/max(axis=0)` reductions take the bucket-occupancy fast path
+    // (per-axis bounds from keep bits + coordinate constants) instead of
     // materialising and re-scanning the segment. See `dyn_aggregate_axis`.
-    let mut keep_indicators: Vec<Value> = Vec::with_capacity(cells.len());
+    let mut keep_vids: Vec<crate::types::ValueId> = Vec::with_capacity(cells.len());
+    let mut source_vids: Vec<Vec<crate::types::ValueId>> =
+        vec![Vec::with_capacity(cells.len()); rank];
+    let mut prefix_vids: Vec<crate::types::ValueId> = Vec::with_capacity(cells.len());
     for (flat_idx, cell) in cells.iter().enumerate() {
         let keep = nonzero_indicator(b, cell);
         let row_base = b.ir_mul_i(&true_count, &rank_const);
@@ -324,13 +328,40 @@ pub fn np_argwhere(b: &mut IRBuilder, args: &[Value]) -> Value {
             let coord_val = b.ir_constant_int(*coord as i64);
             let write_val = b.ir_select_i(&keep, &coord_val, &zero);
             b.ir_write_memory(segment_id, &out_addr, &write_val);
+            if let Some(vid) = coord_val.value_id() {
+                source_vids[axis].push(vid);
+            }
         }
         let inc = b.ir_select_i(&keep, &one, &zero);
         true_count = b.ir_add_i(&true_count, &inc);
-        keep_indicators.push(keep);
+        if let Some(vid) = keep.value_id() {
+            keep_vids.push(vid);
+        }
+        if let Some(vid) = true_count.value_id() {
+            prefix_vids.push(vid);
+        }
     }
-    b.argwhere_keep_indicators
-        .insert(segment_id, (shape.clone(), keep_indicators));
+    if keep_vids.len() == cells.len() && prefix_vids.len() == cells.len() {
+        if let Some(count_vid) = true_count.value_id() {
+            for axis in 0..rank {
+                if source_vids[axis].len() == cells.len() {
+                    b.provenance.set_compaction(
+                        segment_id,
+                        axis,
+                        crate::provenance::CompactionInfo {
+                            keep: keep_vids.clone(),
+                            source: source_vids[axis].clone(),
+                            prefix: prefix_vids.clone(),
+                            count: count_vid,
+                            // Row-major enumeration: only axis 0's
+                            // coordinates are non-decreasing.
+                            sorted: axis == 0,
+                        },
+                    );
+                }
+            }
+        }
+    }
 
     let runtime_rows = value_to_scalar_i64(&true_count);
     let runtime_rank_width = ScalarValue::new(Some(rank as i64), None);
@@ -418,8 +449,11 @@ pub fn np_nonzero(b: &mut IRBuilder, args: &[Value]) -> Value {
         }
     }
     // Compaction provenance: each per-axis output is the keep-filtered
-    // coordinate stream packed to the front, ascending in source order.
-    // Unlocks first/last-set-bit scans for min()/max() downstream.
+    // coordinate stream packed to the front. Only AXIS 0's coordinates
+    // are non-decreasing in row-major source order (later axes cycle),
+    // so only that lane is `sorted` (the first/last-set-bit scan
+    // consumer requires it; unsorted lanes use the bucket-occupancy
+    // consumer instead).
     if keep_vids.len() == cells.len() && prefix_vids.len() == cells.len() {
         if let Some(count_vid) = true_count.value_id() {
             for (axis, seg) in segment_ids.iter().enumerate() {
@@ -432,7 +466,7 @@ pub fn np_nonzero(b: &mut IRBuilder, args: &[Value]) -> Value {
                             source: source_vids[axis].clone(),
                             prefix: prefix_vids.clone(),
                             count: count_vid,
-                            sorted: true,
+                            sorted: axis == 0,
                         },
                     );
                 }
