@@ -3,11 +3,30 @@
 Date: 2026-06-11. Status: Step 0 (a34555e..f4cb2bb — safety nets caught and
 fixed ~20 compiler bugs; suites 78→0 failures; audit green 131 + 3 xfails
 deferred to Step 3), Step 1 (60455b1 — table + slice_views pilot,
-bit-identical), and Step 2 (28aa4c9 halo2 + 99d15ce Noir — both backends
+bit-identical), Step 2 (28aa4c9 halo2 + 99d15ce Noir — both backends
 read the table live; derivation happens once in create_ir; affine algebra
 single-definition; halo2 0391 dropped 533,943→14,040 advice cells, 38x;
-Noir emissions byte-identical on the probe set) are DONE.
-Next: Step 3. Owner: this session.
+Noir emissions byte-identical on the probe set), and Step 3 (56241da +
+0e2760f + 89e77ed — compaction records + argwhere generic consumers +
+runtime extents/ClampView/BlockView; audit 134/134 with EXPECTED_FAILURES
+deleted; 0416/0418 halo2 258,157→~8,000 advice cells; full Noir sweep
+zero regressions, geomean 0.948 vs pre-Step-3 HEAD) are DONE.
+
+Step 3 measured notes: (a) 0507 0.852 / 0509 0.751 / 0510 0.745 vs fresh
+same-bb HW — targets met; 0508 landed 1.394 vs the 1.25 target. The
+residual is the packed-output 2-D gather's ~900-mul floor: Zinnia's
+contract exposes the bbox top-left-packed (strictly more information),
+while the handwritten baseline only masks in place. Not pursued further —
+closing it would mean changing the output contract. (b) The plan's
+"±1% of zinnia_noir_ucmp_20260611 / geomean ≤0.59" Step 2/3 gates were
+written against pre-Step-0c numbers; the ~20 correctness fixes invalidated
+that baseline (0389's old 65 gates was a witness-specialized mis-compile).
+Verification used wip-vs-HEAD sweeps instead, per the re-baseline rule.
+(c) Known pre-existing bug found during validation, NOT from Step 3
+(reproduced on clean HEAD): halo2-base verify panics "break points don't
+match" on k-walked cases (0318/0319/0507-0510) — verify-side re-synthesis
+doesn't use the proof's k. Must be fixed before Step 5's halo2 numbers.
+Next: Step 4. Owner: this session.
 
 ## Context
 
