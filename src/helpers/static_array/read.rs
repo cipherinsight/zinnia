@@ -298,13 +298,11 @@ enum FancyAxisPlan {
     Single(Value),
     Range {
         coords: Vec<usize>,
-        out_axis: usize,
     },
     Fancy {
         values: Vec<Value>,
         shape: Vec<usize>,
         strides: Vec<usize>,
-        out_start: usize,
     },
 }
 
@@ -408,7 +406,13 @@ fn static_range_coords(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn try_single_axis_fancy_subscript(
+/// NumPy advanced indexing on a StaticArray: any number of integer-array
+/// index axes (broadcast together per numpy rules), mixed with static
+/// Ranges and scalar Singles. Broadcast dims land at the position of the
+/// first index array when the array axes are contiguous in the index
+/// tuple, else first. Returns `None` for shapes this path doesn't cover
+/// (Ellipsis/NewAxis, dynamic range bounds, no array axis at all).
+fn try_fancy_subscript(
     b: &mut IRBuilder,
     dtype: NumberType,
     shape: &[usize],
@@ -424,8 +428,8 @@ fn try_single_axis_fancy_subscript(
     }
 
     let mut plans: Vec<FancyAxisPlan> = Vec::with_capacity(rank);
-    let mut out_shape: Vec<usize> = Vec::new();
-    let mut fancy_axes = 0usize;
+    let mut fancy_positions: Vec<usize> = Vec::new();
+    let mut fancy_shapes: Vec<Vec<usize>> = Vec::new();
 
     for ax in 0..rank {
         let idx = indices
@@ -435,18 +439,13 @@ fn try_single_axis_fancy_subscript(
         match idx {
             SliceIndex::Single(v) => {
                 if let Some((values, idx_shape)) = integer_fancy_index_payload(b, &v) {
-                    fancy_axes += 1;
-                    if fancy_axes > 1 {
-                        return None;
-                    }
-                    let out_start = out_shape.len();
-                    out_shape.extend(idx_shape.iter().copied());
+                    fancy_positions.push(ax);
+                    fancy_shapes.push(idx_shape.clone());
                     let idx_strides = row_major_strides(&idx_shape);
                     plans.push(FancyAxisPlan::Fancy {
                         values,
                         shape: idx_shape,
                         strides: idx_strides,
-                        out_start,
                     });
                 } else {
                     plans.push(FancyAxisPlan::Single(v));
@@ -454,16 +453,73 @@ fn try_single_axis_fancy_subscript(
             }
             SliceIndex::Range(start, stop, step) => {
                 let coords = static_range_coords(shape, ax, &start, &stop, &step)?;
-                let out_axis = out_shape.len();
-                out_shape.push(coords.len());
-                plans.push(FancyAxisPlan::Range { coords, out_axis });
+                plans.push(FancyAxisPlan::Range { coords });
             }
             SliceIndex::Ellipsis | SliceIndex::NewAxis => return None,
         }
     }
 
-    if fancy_axes != 1 {
+    if fancy_positions.is_empty() {
         return None;
+    }
+
+    // Broadcast all index-array shapes together (right-aligned).
+    let bndim = fancy_shapes.iter().map(|sh| sh.len()).max().unwrap();
+    let mut bshape = vec![1usize; bndim];
+    for sh in &fancy_shapes {
+        for (d, &n) in sh.iter().enumerate() {
+            let bd = bndim - sh.len() + d;
+            if n == 1 {
+                continue;
+            }
+            if bshape[bd] == 1 {
+                bshape[bd] = n;
+            } else if bshape[bd] != n {
+                panic!(
+                    "shape mismatch: indexing arrays could not be broadcast together \
+                     ({:?} vs {:?})",
+                    bshape, sh
+                );
+            }
+        }
+    }
+
+    // Placement of the broadcast block (numpy rule): at the first array
+    // axis when the array axes are contiguous in the index tuple (scalar
+    // Singles do not separate them), else first.
+    let first_f = fancy_positions[0];
+    let last_f = *fancy_positions.last().unwrap();
+    let contiguous = !plans[first_f..=last_f]
+        .iter()
+        .any(|p| matches!(p, FancyAxisPlan::Range { .. }));
+
+    let mut out_shape: Vec<usize> = Vec::new();
+    let mut bstart = 0usize;
+    let mut range_out_axis: Vec<Option<usize>> = vec![None; rank];
+    if contiguous {
+        for (ax, plan) in plans.iter().enumerate() {
+            match plan {
+                FancyAxisPlan::Single(_) => {}
+                FancyAxisPlan::Range { coords } => {
+                    range_out_axis[ax] = Some(out_shape.len());
+                    out_shape.push(coords.len());
+                }
+                FancyAxisPlan::Fancy { .. } => {
+                    if ax == first_f {
+                        bstart = out_shape.len();
+                        out_shape.extend(bshape.iter().copied());
+                    }
+                }
+            }
+        }
+    } else {
+        out_shape.extend(bshape.iter().copied());
+        for (ax, plan) in plans.iter().enumerate() {
+            if let FancyAxisPlan::Range { coords } = plan {
+                range_out_axis[ax] = Some(out_shape.len());
+                out_shape.push(coords.len());
+            }
+        }
     }
 
     let total: usize = out_shape.iter().product();
@@ -492,19 +548,25 @@ fn try_single_axis_fancy_subscript(
                         dynamic_parts.push(b.ir_mul_i(&normalized, &stride_val));
                     }
                 }
-                FancyAxisPlan::Range { coords, out_axis } => {
-                    static_addr +=
-                        coords[out_coords[*out_axis]] as i64 * strides[src_axis] as i64;
+                FancyAxisPlan::Range { coords } => {
+                    let oa = range_out_axis[src_axis].unwrap();
+                    static_addr += coords[out_coords[oa]] as i64 * strides[src_axis] as i64;
                 }
                 FancyAxisPlan::Fancy {
                     values,
                     shape: idx_shape,
                     strides: idx_strides,
-                    out_start,
                 } => {
+                    // Map the broadcast coordinates onto this index array
+                    // (right-aligned; size-1 dims pin to coordinate 0).
                     let mut idx_flat = 0usize;
-                    for ax in 0..idx_shape.len() {
-                        idx_flat += out_coords[*out_start + ax] * idx_strides[ax];
+                    for d in 0..idx_shape.len() {
+                        let coord = if idx_shape[d] == 1 {
+                            0
+                        } else {
+                            out_coords[bstart + bndim - idx_shape.len() + d]
+                        };
+                        idx_flat += coord * idx_strides[d];
                     }
                     let idx_val = values[idx_flat].clone();
                     if let Some(i) = idx_val.int_val() {
@@ -689,7 +751,7 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
         return super::super::ndarray::multidim_subscript(b, &data, indices);
     }
 
-    if let Some(out) = try_single_axis_fancy_subscript(
+    if let Some(out) = try_fancy_subscript(
         b, dtype, &shape, segment_id, imag_seg, &strides, offset, indices,
     ) {
         return out;

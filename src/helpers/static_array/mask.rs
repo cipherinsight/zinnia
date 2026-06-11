@@ -313,6 +313,12 @@ pub fn try_apply_boolean_mask_write(
         );
     }
 
+    // This write drops the payload cache at the end but only stores the
+    // VIEW's cells. A lazily-backed segment must be fully materialised
+    // first or every cell outside the view silently reverts to the
+    // segment init value (clobbered row-0 in the 0490 zip-view pattern).
+    super::base::materialize_static_array_if_lazy(b, arr);
+
     let arr_cells = payload_cells(b, arr);
     let mask_cells = payload_cells(b, mask);
     let total: usize = arr_shape.iter().product();
@@ -326,30 +332,38 @@ pub fn try_apply_boolean_mask_write(
     enum Rhs<'a> {
         Scalar(&'a Value),
         FullShape(Vec<Value>),
-        TrueCount(Vec<Value>),
+        // RHS values are PACKED (numpy semantics: `arr[mask] = rhs`
+        // consumes rhs sequentially, one element per true mask cell).
+        // Aligned at write time by a running prefix count of trues —
+        // which constant-folds when the mask is static.
+        Compacted(Vec<Value>),
     }
     let rhs = if value.is_number() {
         Rhs::Scalar(value)
     } else if let Value::StaticArray { shape: rs, .. } = value {
         let cells = payload_cells(b, value);
         if rs == &arr_shape {
+            // Same-shape RHS: positional (`arr[mask] = arr2[mask]` after
+            // the read fast-path on a fully-true mask, or np.where-style
+            // gated assignment).
             Rhs::FullShape(cells)
         } else {
-            Rhs::TrueCount(cells)
+            Rhs::Compacted(cells)
         }
     } else if matches!(value, Value::List(_) | Value::Tuple(_)) {
         let leaves = super::super::composite::flatten_composite(value);
         if leaves.len() == total {
             Rhs::FullShape(leaves)
         } else {
-            Rhs::TrueCount(leaves)
+            Rhs::Compacted(leaves)
         }
     } else if let Value::DynamicNDArray(d) = value {
-        // Aug-assign desugar `a[mask] = a[mask] + v` puts a DynamicNDArray on
-        // the RHS (the gather output, possibly broadcast-added). Materialise
-        // its underlying segment cells in row-major order; if the envelope
-        // matches the array's total cell count, treat as FullShape (each cell
-        // i maps to arr cell i, and the mask gates whether the write fires).
+        // Aug-assign desugar `a[mask] = a[mask] + v` puts a DynamicNDArray
+        // on the RHS: the mask-read gather output, which is COMPACTED
+        // (true-position values packed to the front, zero-padded). Cell i
+        // of the target therefore takes rhs[#trues before i], NOT rhs[i] —
+        // the positional mapping wrote padding into late true positions
+        // (binding-audit case 0490).
         let env_total = d.envelope.total_bound;
         let mut cells = Vec::with_capacity(env_total);
         for i in 0..env_total {
@@ -361,15 +375,16 @@ pub fn try_apply_boolean_mask_write(
                 d.dtype,
             ));
         }
-        if env_total == total {
-            Rhs::FullShape(cells)
-        } else {
-            Rhs::TrueCount(cells)
-        }
+        Rhs::Compacted(cells)
     } else {
         // Unknown RHS shape — punt to legacy path.
         return None;
     };
+    // The prefix-count alignment below is O(total^2) selects for dynamic
+    // masks; keep a sane ceiling (static masks fold to nothing).
+    if matches!(rhs, Rhs::Compacted(_)) && !mask_is_fully_static(&payload_cells(b, mask)) && total > 4096 {
+        return None;
+    }
 
     // Static fast-path bookkeeping for the TrueCount RHS form: walk the
     // mask's static cells to align rhs cells to the right positions.
@@ -388,11 +403,10 @@ pub fn try_apply_boolean_mask_write(
             let new_val: Value = match &rhs {
                 Rhs::Scalar(v) => (*v).clone(),
                 Rhs::FullShape(cells) => cells[i].clone(),
-                Rhs::TrueCount(cells) => {
-                    // For static mask, pick by surviving count. For dynamic
-                    // mask the static-count path doesn't apply — fall
-                    // through to legacy if we got a TrueCount RHS with a
-                    // dynamic mask.
+                Rhs::Compacted(cells) => {
+                    // Complex keeps the static-mask-only alignment; a
+                    // dynamic mask with a packed Complex RHS falls back
+                    // to the legacy path.
                     if !static_mask {
                         return None;
                     }
@@ -421,6 +435,9 @@ pub fn try_apply_boolean_mask_write(
 
     // Non-Complex (Integer / Float) per-cell select + write.
     let mut rhs_idx_static: usize = 0;
+    // Running count of true mask cells before position i — the packed-RHS
+    // read pointer. Constant-folds away entirely for static masks.
+    let mut prefix = b.ir_constant_int(0);
     for i in 0..total {
         let abs = arr_offset + i;
         let addr = b.ir_constant_int(abs as i64);
@@ -429,18 +446,33 @@ pub fn try_apply_boolean_mask_write(
         let new_raw: Value = match &rhs {
             Rhs::Scalar(v) => (*v).clone(),
             Rhs::FullShape(cells) => cells[i].clone(),
-            Rhs::TrueCount(cells) => {
-                if !static_mask {
-                    return None;
-                }
-                let pick = if cell_static_truth(mask_val) {
-                    let v = cells.get(rhs_idx_static).cloned();
-                    rhs_idx_static += 1;
-                    v
+            Rhs::Compacted(cells) => {
+                if static_mask {
+                    let pick = if cell_static_truth(mask_val) {
+                        let v = cells.get(rhs_idx_static).cloned();
+                        rhs_idx_static += 1;
+                        v
+                    } else {
+                        None
+                    };
+                    pick.unwrap_or_else(|| arr_cells[i].clone())
                 } else {
-                    None
-                };
-                pick.unwrap_or_else(|| arr_cells[i].clone())
+                    // rhs[#trues before i], one-hot over the prefix
+                    // counter (at most i trues can precede position i).
+                    let mut acc = arr_cells[i].clone();
+                    for (k, c) in cells.iter().enumerate().take(i + 1) {
+                        let k_c = b.ir_constant_int(k as i64);
+                        let eq = b.ir_equal_i(&prefix, &k_c);
+                        let c_cast = cast_to_dtype(b, c, arr_dtype);
+                        let a_cast = cast_to_dtype(b, &acc, arr_dtype);
+                        acc = if matches!(arr_dtype, NumberType::Float) {
+                            b.ir_select_f(&eq, &c_cast, &a_cast)
+                        } else {
+                            b.ir_select_i(&eq, &c_cast, &a_cast)
+                        };
+                    }
+                    acc
+                }
             }
         };
         let new_cast = cast_to_dtype(b, &new_raw, arr_dtype);
@@ -451,6 +483,10 @@ pub fn try_apply_boolean_mask_write(
             b.ir_select_i(&mask_bool, &new_cast, &cur_cast)
         };
         b.ir_write_memory(arr_seg, &addr, &selected);
+        if matches!(rhs, Rhs::Compacted(_)) && !static_mask {
+            let m_i = b.ir_int_cast(&mask_bool);
+            prefix = b.ir_add_i(&prefix, &m_i);
+        }
     }
     b.static_array_payload.remove(&arr_seg);
     Some(arr.clone())

@@ -1480,7 +1480,17 @@ impl IRGenerator {
                 }
             }
             ("np", "where") => {
-                crate::ops::static_ndarray_ops::np_where(&mut self.builder, visited_args)
+                // 1-arg `np.where(cond)` forwards the boolean mask (for the
+                // `a[np.where(cond)] = v` pattern). Use the ORIGINAL,
+                // un-materialised arg: the legacy-materialised List view
+                // loses the StaticArray representation the boolean-mask
+                // write dispatch recognizes, silently degrading the mask
+                // to a scalar dynamic index (binding-audit case 0490).
+                if visited_args_orig.len() == 1 {
+                    crate::ops::static_ndarray_ops::np_where(&mut self.builder, visited_args_orig)
+                } else {
+                    crate::ops::static_ndarray_ops::np_where(&mut self.builder, visited_args)
+                }
             }
             ("np", "diag") => np_diag(&mut self.builder, visited_args),
             ("np", "indices") => np_indices(&mut self.builder, visited_args),
