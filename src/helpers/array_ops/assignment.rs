@@ -423,6 +423,11 @@ pub fn dyn_setitem_slice(
                 )
             }
             Value::List(_) | Value::Tuple(_) => crate::helpers::composite::flatten_composite(value),
+            // P4a: array literals / np.asarray RHS arrive as
+            // segment-backed StaticArrays.
+            Value::StaticArray { .. } => {
+                crate::helpers::static_array::elementwise::payload_cells(b, value)
+            }
             _ => panic!("slice assignment: value must be scalar or array-like"),
         }
     };

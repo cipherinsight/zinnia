@@ -26,10 +26,10 @@ pub fn dyn_subscript(
     // Single-index special cases: boolean mask, fancy indexing.
     if indices.len() == 1 {
         if let SliceIndex::Single(idx_val) = &indices[0] {
-            if is_boolean_mask(idx_val) {
+            if crate::helpers::array_ops::is_boolean_mask_with(b, idx_val) {
                 return filter(b, &Value::DynamicNDArray(data.clone()), &[idx_val.clone()]);
             }
-            if is_fancy_index(idx_val) {
+            if is_fancy_index(b, idx_val) {
                 return dyn_fancy_index(b, data, idx_val);
             }
         }
@@ -37,10 +37,21 @@ pub fn dyn_subscript(
 
     // Multi-dim fancy: dyn[[r0,r1], [c0,c1]].
     if indices.len() >= 2 {
-        let all_fancy = indices.iter().all(|s| match s {
-            SliceIndex::Single(v) => is_fancy_index(v),
-            _ => false,
-        });
+        let mut all_fancy = true;
+        for idx in indices {
+            match idx {
+                SliceIndex::Single(v) => {
+                    if !is_fancy_index(b, v) {
+                        all_fancy = false;
+                        break;
+                    }
+                }
+                _ => {
+                    all_fancy = false;
+                    break;
+                }
+            }
+        }
         if all_fancy {
             let idx_arrays: Vec<&Value> = indices
                 .iter()
@@ -72,19 +83,34 @@ pub fn dyn_subscript(
 
 // ── Classification ──────────────────────────────────────────────────────
 
-fn is_fancy_index(val: &Value) -> bool {
+fn is_fancy_index(b: &mut IRBuilder, val: &Value) -> bool {
     match val {
         Value::List(d) | Value::Tuple(d) => {
             !d.values.is_empty() && d.values.iter().all(|v| matches!(v, Value::Integer(_)))
+        }
+        // P4a: list literals arrive as segment-backed StaticArrays now;
+        // a 1-D integer StaticArray that is not a boolean mask is a fancy
+        // index (`dyn[[0, 2, 4]]`).
+        Value::StaticArray {
+            dtype: crate::types::NumberType::Integer,
+            shape,
+            ..
+        } => {
+            shape.len() == 1
+                && shape[0] > 0
+                && !crate::helpers::static_array::mask::is_boolean_mask_static_array(b, val)
         }
         _ => false,
     }
 }
 
-fn extract_index_values(val: &Value) -> Vec<Value> {
+fn extract_index_values(b: &mut IRBuilder, val: &Value) -> Vec<Value> {
     match val {
         Value::List(d) | Value::Tuple(d) => d.values.clone(),
-        _ => panic!("extract_index_values: expected List/Tuple"),
+        Value::StaticArray { .. } => {
+            crate::helpers::static_array::elementwise::payload_cells(b, val)
+        }
+        _ => panic!("extract_index_values: expected List/Tuple/StaticArray"),
     }
 }
 
@@ -1221,7 +1247,7 @@ fn dyn_fancy_index_lower(
     idx_array: &Value,
     check_bounds: bool,
 ) -> Value {
-    let indices = extract_index_values(idx_array);
+    let indices = extract_index_values(b, idx_array);
     let rank = data.envelope.rank();
 
     if rank == 1 {
@@ -1337,7 +1363,10 @@ fn dyn_fancy_index_multidim(
 ) -> Value {
     let mode = select_stride_mode(data);
     let shape = &data.meta.logical_shape;
-    let arrays: Vec<Vec<Value>> = idx_arrays.iter().map(|v| extract_index_values(v)).collect();
+    let arrays: Vec<Vec<Value>> = idx_arrays
+        .iter()
+        .map(|v| extract_index_values(b, v))
+        .collect();
     let out_len = arrays[0].len();
     assert!(
         arrays.iter().all(|a| a.len() == out_len),

@@ -378,7 +378,8 @@ fn cumulative_axis_0(b: &mut IRBuilder, op: &str, val: &Value) -> Value {
     out.push(outer.values[0].clone());
     for i in 1..outer.values.len() {
         let prev = out.last().cloned().unwrap();
-        let next = crate::helpers::value_ops::apply_binary_op(b, op, &prev, &outer.values[i]);
+        let next =
+            crate::helpers::value_ops::elementwise_binary_numeric(b, op, &prev, &outer.values[i]);
         out.push(next);
     }
     let types = out.iter().map(|v| v.zinnia_type()).collect();

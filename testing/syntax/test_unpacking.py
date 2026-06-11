@@ -48,7 +48,9 @@ def test_tuple_unpacking_with_star_3():
         tup = (1, (2, 3), (4, ))
         a, *b, c = tup
         assert a == 1
-        assert b == (2, 3)
+        # Python semantics: a starred target collects the middle elements
+        # into a sequence — b is [(2, 3)], not (2, 3).
+        assert b == ((2, 3),)
         assert c == (4, )
 
     ZKCircuit.from_method(foo).compile()

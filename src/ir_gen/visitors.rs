@@ -1784,6 +1784,11 @@ impl IRGenerator {
             if let ASTNode::ASTStarredExpr(se) = v {
                 // Unpack starred: [*a, 7, 8] → flatten a's elements into the list
                 let inner = self.visit(&se.value);
+                let inner = if matches!(inner, Value::StaticArray { .. }) {
+                    crate::helpers::static_array::base::to_value_list(&mut self.builder, &inner)
+                } else {
+                    inner
+                };
                 if let Value::List(data) | Value::Tuple(data) = inner {
                     values.extend(data.values);
                 } else {
@@ -1794,22 +1799,19 @@ impl IRGenerator {
             }
         }
         let types: Vec<ZinniaType> = values.iter().map(|v| v.zinnia_type()).collect();
-        let lst = Value::List(CompositeData {
+        // List literals stay `Value::List`: Python list semantics (`*` is
+        // repetition, `+` is concatenation, `==` is sequence equality,
+        // `.reverse()` mutates) are NOT numpy elementwise semantics, and a
+        // segment-backed StaticArray can't tell those consumers apart —
+        // the former eager conversion silently gave `[1, 2] * 4 == [4, 8]`.
+        // Numpy constructors (`np.asarray`, `np.zeros`, ...) still build
+        // StaticArrays directly; array-consuming ops materialise Lists on
+        // demand through the existing `to_static_array` boundary shim.
+        Value::List(CompositeData {
             elements_type: types,
             values,
-
             value_id: ValueId::next(),
-        });
-        // P1 segarr-foundation: list literals of pure numeric leaves become
-        // segment-backed `Value::StaticArray`. Heterogeneous lists, lists of
-        // strings, lists of arrays, etc. stay on the legacy List path.
-        if let Some(sa) =
-            crate::helpers::static_array::base::to_static_array(&mut self.builder, &lst)
-        {
-            sa
-        } else {
-            lst
-        }
+        })
     }
 
     pub(crate) fn visit_parenthesis(&mut self, n: &ASTParenthesis) -> Value {
@@ -1818,6 +1820,11 @@ impl IRGenerator {
             if let ASTNode::ASTStarredExpr(se) = v {
                 // Unpack starred: (1, 2, *a) → flatten a's elements into the tuple
                 let inner = self.visit(&se.value);
+                let inner = if matches!(inner, Value::StaticArray { .. }) {
+                    crate::helpers::static_array::base::to_value_list(&mut self.builder, &inner)
+                } else {
+                    inner
+                };
                 if let Value::List(data) | Value::Tuple(data) = inner {
                     values.extend(data.values);
                 } else {
@@ -2237,7 +2244,10 @@ impl IRGenerator {
                             // Check for boolean mask assignment: dyn[mask] = x
                             if indices.len() == 1 {
                                 if let crate::types::SliceIndex::Single(mask_val) = &indices[0] {
-                                    if crate::helpers::array_ops::is_boolean_mask(mask_val) {
+                                    if crate::helpers::array_ops::is_boolean_mask_with(
+                                        &mut self.builder,
+                                        mask_val,
+                                    ) {
                                         let result = crate::helpers::array_ops::dyn_setitem_mask(
                                             &mut self.builder,
                                             d,

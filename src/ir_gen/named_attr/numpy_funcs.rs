@@ -2089,12 +2089,23 @@ impl IRGenerator {
             )
         {
             // Centralized unary vectorization.
-            Some(vectorize_unary_np(
+            let out = vectorize_unary_np(
                 &mut self.builder,
                 member,
                 _visited_kwargs,
                 &visited_args[0],
-            ))
+            );
+            // Keep ndarray-ness: a StaticArray input must yield a
+            // StaticArray result — a numeric List result would pick up
+            // Python sequence semantics downstream (`sin(a) + sin(b)`
+            // would CONCATENATE).
+            let out = if matches!(visited_args_orig.first(), Some(Value::StaticArray { .. })) {
+                crate::helpers::static_array::base::to_static_array(&mut self.builder, &out)
+                    .unwrap_or(out)
+            } else {
+                out
+            };
+            Some(out)
         } else if visited_args.len() == 2
             && (matches!(
                 visited_args_orig[0],

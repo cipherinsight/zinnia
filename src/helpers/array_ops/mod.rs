@@ -14,7 +14,7 @@ mod reduce;
 mod shape;
 
 pub use assignment::{dyn_setitem, dyn_setitem_mask, dyn_setitem_slice};
-pub use boolean_mask::is_boolean_mask;
+pub use boolean_mask::{is_boolean_mask, is_boolean_mask_with};
 pub(crate) use bounded_axis::bounded_axis_strict;
 pub(crate) use bounded_axis::{select_stride_mode, StrideMode};
 pub use indexing::dyn_subscript;

@@ -14,6 +14,28 @@ impl IRGenerator {
         if !self.ctx.exists(var) {
             return None;
         }
+        // P4a: list literals arrive as segment-backed StaticArrays, but
+        // every method body below pattern-matches `Value::List` — without
+        // materialisation they silently no-op (`lst.reverse()` left the
+        // list unchanged). Rebind as a List first; these are Python-list
+        // operations, so keeping the segment backing has no value.
+        if matches!(
+            ctx.member,
+            "append"
+                | "extend"
+                | "pop"
+                | "remove"
+                | "clear"
+                | "reverse"
+                | "count"
+                | "index"
+                | "insert"
+        ) {
+            if let Some(v @ Value::StaticArray { .. }) = self.ctx.get(var) {
+                let lst = crate::helpers::static_array::base::to_value_list(&mut self.builder, &v);
+                self.ctx.set(var, lst);
+            }
+        }
         let visited_args = ctx.args;
         let v = match ctx.member {
             "append" => self.list_method_append(var, visited_args),

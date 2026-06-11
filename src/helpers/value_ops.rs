@@ -7,6 +7,88 @@
 use crate::builder::IRBuilder;
 use crate::types::{CompositeData, Value, ValueId};
 
+/// Elementwise numeric binary op for INTERNAL array math on composites.
+///
+/// `apply_binary_op` implements user-facing semantics, where List/Tuple
+/// are Python sequences (`+` concatenates, `*` repeats, `==` is a single
+/// Boolean). Lowerings that hold rows/cells in Lists and need ndarray
+/// arithmetic must use this instead: it recurses structurally on
+/// composites (zipping equal-length List/Tuple sides, broadcasting a
+/// scalar side) and only delegates scalars to `apply_binary_op`.
+pub fn elementwise_binary_numeric(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) -> Value {
+    let lhs_seq = matches!(lhs, Value::List(_) | Value::Tuple(_) | Value::StaticArray { .. });
+    let rhs_seq = matches!(rhs, Value::List(_) | Value::Tuple(_) | Value::StaticArray { .. });
+    if !lhs_seq && !rhs_seq {
+        return apply_binary_op(b, op, lhs, rhs);
+    }
+    // StaticArray sides already have native elementwise dispatch.
+    if matches!(lhs, Value::StaticArray { .. }) || matches!(rhs, Value::StaticArray { .. }) {
+        if let Some(out) = crate::helpers::static_array::elementwise::try_apply_binary_op(b, op, lhs, rhs)
+        {
+            return out;
+        }
+    }
+    let mat = |b: &mut IRBuilder, v: &Value| -> Value {
+        if matches!(v, Value::StaticArray { .. }) {
+            crate::helpers::static_array::base::to_value_list(b, v)
+        } else {
+            v.clone()
+        }
+    };
+    let l = mat(b, lhs);
+    let r = mat(b, rhs);
+    match (&l, &r) {
+        (Value::List(ld) | Value::Tuple(ld), Value::List(rd) | Value::Tuple(rd)) => {
+            assert_eq!(
+                ld.values.len(),
+                rd.values.len(),
+                "elementwise_binary_numeric: length mismatch ({} vs {})",
+                ld.values.len(),
+                rd.values.len()
+            );
+            let out: Vec<Value> = ld
+                .values
+                .iter()
+                .zip(rd.values.iter())
+                .map(|(a, c)| elementwise_binary_numeric(b, op, a, c))
+                .collect();
+            let types = out.iter().map(|v| v.zinnia_type()).collect();
+            Value::List(CompositeData {
+                elements_type: types,
+                values: out,
+                value_id: ValueId::next(),
+            })
+        }
+        (Value::List(ld) | Value::Tuple(ld), _) => {
+            let out: Vec<Value> = ld
+                .values
+                .iter()
+                .map(|a| elementwise_binary_numeric(b, op, a, &r))
+                .collect();
+            let types = out.iter().map(|v| v.zinnia_type()).collect();
+            Value::List(CompositeData {
+                elements_type: types,
+                values: out,
+                value_id: ValueId::next(),
+            })
+        }
+        (_, Value::List(rd) | Value::Tuple(rd)) => {
+            let out: Vec<Value> = rd
+                .values
+                .iter()
+                .map(|c| elementwise_binary_numeric(b, op, &l, c))
+                .collect();
+            let types = out.iter().map(|v| v.zinnia_type()).collect();
+            Value::List(CompositeData {
+                elements_type: types,
+                values: out,
+                value_id: ValueId::next(),
+            })
+        }
+        _ => apply_binary_op(b, op, &l, &r),
+    }
+}
+
 /// Conditional select: if cond { tv } else { fv }, with element-wise support.
 pub fn select_value(b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value) -> Value {
     if std::env::var("ZINNIA_DEBUG_SELECT_VALUE").is_ok() {
@@ -431,6 +513,28 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
         {
             return out;
         }
+        // NumPy dominance: ndarray ⊕ numeric list applies ndarray
+        // semantics (`np.asarray([1,2]) + [10, 20]` is elementwise, not
+        // concatenation) — promote the list side and retry the native
+        // elementwise path.
+        if matches!(lhs, Value::List(_) | Value::Tuple(_)) && is_numeric_composite(lhs) {
+            if let Some(l_sa) = crate::helpers::static_array::base::to_static_array(b, lhs) {
+                if let Some(out) = crate::helpers::static_array::elementwise::try_apply_binary_op(
+                    b, op, &l_sa, rhs,
+                ) {
+                    return out;
+                }
+            }
+        }
+        if matches!(rhs, Value::List(_) | Value::Tuple(_)) && is_numeric_composite(rhs) {
+            if let Some(r_sa) = crate::helpers::static_array::base::to_static_array(b, rhs) {
+                if let Some(out) = crate::helpers::static_array::elementwise::try_apply_binary_op(
+                    b, op, lhs, &r_sa,
+                ) {
+                    return out;
+                }
+            }
+        }
         // Residual: materialise to nested List and re-dispatch through the
         // legacy path. Covers StaticArray meeting a non-numeric List, the
         // matmul route, etc.
@@ -500,60 +604,34 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
         _ => {}
     }
 
-    // List/tuple concatenation via `+` (only for different-length composites
-    // or when both are pure integer lists — same-length composites do element-wise)
+    // Python semantics: `+` on lists/tuples is CONCATENATION. NumPy
+    // elementwise addition lives on `StaticArray` operands (handled
+    // above); since list literals stay `Value::List`, a List here is a
+    // Python list, not an ndarray. (The old same-length-elementwise and
+    // broadcast carve-outs silently gave `[1, 2] + [3, 4] == [4, 6]`.)
     if op == "add" {
         match (lhs, rhs) {
             (Value::List(ld), Value::List(rd))
             | (Value::Tuple(ld), Value::List(rd))
             | (Value::List(ld), Value::Tuple(rd))
             | (Value::Tuple(ld), Value::Tuple(rd)) => {
-                // Same-length composites: element-wise addition (ndarray behavior)
-                if ld.values.len() == rd.values.len() && !ld.values.is_empty() {
-                    let results: Vec<Value> = ld
-                        .values
-                        .iter()
-                        .zip(rd.values.iter())
-                        .map(|(l, r)| apply_binary_op(b, "add", l, r))
-                        .collect();
-                    let types = results.iter().map(|v| v.zinnia_type()).collect();
-                    return Value::List(CompositeData {
+                let mut values = ld.values.clone();
+                values.extend(rd.values.clone());
+                let types = values.iter().map(|v| v.zinnia_type()).collect();
+                let is_tuple = matches!(lhs, Value::Tuple(_));
+                return if is_tuple {
+                    Value::Tuple(CompositeData {
                         elements_type: types,
-                        values: results,
+                        values,
                         value_id: ValueId::next(),
-                    });
-                }
-                // Different-length composites: by default this is Python
-                // list concatenation. But if both operands look like
-                // ndarrays (purely numeric leaves) AND their shapes are
-                // broadcast-compatible, the user means NumPy element-wise
-                // addition, not concatenation. In that case fall out of
-                // this branch and let the shared broadcasting arm further
-                // down handle it.
-                let lshape = crate::helpers::composite::get_composite_shape(lhs);
-                let rshape = crate::helpers::composite::get_composite_shape(rhs);
-                let both_numeric = is_numeric_composite(lhs) && is_numeric_composite(rhs);
-                if !(both_numeric
-                    && crate::helpers::broadcast::broadcast_shapes(&lshape, &rshape).is_some())
-                {
-                    let mut values = ld.values.clone();
-                    values.extend(rd.values.clone());
-                    let types = values.iter().map(|v| v.zinnia_type()).collect();
-                    let is_tuple = matches!(lhs, Value::Tuple(_));
-                    return if is_tuple {
-                        Value::Tuple(CompositeData {
-                            elements_type: types,
-                            values,
-                            value_id: ValueId::next(),
-                        })
-                    } else {
-                        Value::List(CompositeData {
-                            elements_type: types,
-                            values,
-                            value_id: ValueId::next(),
-                        })
-                    };
-                }
+                    })
+                } else {
+                    Value::List(CompositeData {
+                        elements_type: types,
+                        values,
+                        value_id: ValueId::next(),
+                    })
+                };
             }
             _ => {}
         }
@@ -564,8 +642,7 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
     // is handled by the broadcasting arm below.
     if op == "mul" {
         match (lhs, rhs) {
-            (Value::List(ld), _) | (Value::Tuple(ld), _)
-                if rhs.int_val().is_some() && !is_numeric_composite(lhs) =>
+            (Value::List(ld), _) | (Value::Tuple(ld), _) if rhs.int_val().is_some() =>
             {
                 let n = rhs.int_val().unwrap().max(0) as usize;
                 let mut values = Vec::new();
@@ -588,8 +665,7 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
                     })
                 };
             }
-            (_, Value::List(rd)) | (_, Value::Tuple(rd))
-                if lhs.int_val().is_some() && !is_numeric_composite(rhs) =>
+            (_, Value::List(rd)) | (_, Value::Tuple(rd)) if lhs.int_val().is_some() =>
             {
                 let n = lhs.int_val().unwrap().max(0) as usize;
                 let mut values = Vec::new();
@@ -633,49 +709,10 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
             | (Value::Tuple(ld), Value::List(rd))
             | (Value::List(ld), Value::Tuple(rd))
             | (Value::Tuple(ld), Value::Tuple(rd)) => {
-                if is_numeric_composite(lhs) && is_numeric_composite(rhs) {
-                    let lshape = crate::helpers::composite::get_composite_shape(lhs);
-                    let rshape = crate::helpers::composite::get_composite_shape(rhs);
-                    if let Some(out_shape) =
-                        crate::helpers::broadcast::broadcast_shapes(&lshape, &rshape)
-                    {
-                        let l = if lshape == out_shape {
-                            lhs.clone()
-                        } else {
-                            crate::helpers::broadcast::materialize_to_shape(lhs, &out_shape)
-                        };
-                        let r = if rshape == out_shape {
-                            rhs.clone()
-                        } else {
-                            crate::helpers::broadcast::materialize_to_shape(rhs, &out_shape)
-                        };
-                        // Walk element-wise directly. We can't just recurse
-                        // back through `apply_binary_op` on the whole
-                        // composites here, because when the shapes already
-                        // match the broadcast is a no-op and we'd re-enter
-                        // this same branch forever.
-                        let (l_data, r_data) = match (&l, &r) {
-                            (Value::List(a), Value::List(b))
-                            | (Value::List(a), Value::Tuple(b))
-                            | (Value::Tuple(a), Value::List(b))
-                            | (Value::Tuple(a), Value::Tuple(b)) => (a.clone(), b.clone()),
-                            _ => unreachable!("numeric composites guaranteed by check above"),
-                        };
-                        let results: Vec<Value> = l_data
-                            .values
-                            .iter()
-                            .zip(r_data.values.iter())
-                            .map(|(lv, rv)| apply_binary_op(b, op, lv, rv))
-                            .collect();
-                        let types = results.iter().map(|v| v.zinnia_type()).collect();
-                        return Value::List(CompositeData {
-                            elements_type: types,
-                            values: results,
-
-                            value_id: ValueId::next(),
-                        });
-                    }
-                }
+                // Python sequence comparison: `==` is a single Boolean
+                // (AND of elementwise, False on length mismatch), `<` is
+                // lexicographic. NumPy elementwise comparison stays on
+                // StaticArray operands.
                 return composite_comparison(b, op, ld, rd);
             }
             _ => {}
