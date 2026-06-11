@@ -70,12 +70,130 @@ pub struct AffineView {
     pub offset: i64,
 }
 
+impl AffineView {
+    pub fn constant(v: i64) -> Self {
+        AffineView {
+            terms: Vec::new(),
+            offset: v,
+        }
+    }
+
+    pub fn root(vid: ValueId) -> Self {
+        AffineView {
+            terms: vec![(vid, 1)],
+            offset: 0,
+        }
+    }
+
+    /// `a + sign*b`, refusing results with more than two roots or
+    /// overflowing coefficients (mirrors the backends' AffineLin/AffLin
+    /// combine; refusal means "no affine record", never wrong math).
+    pub fn combine(a: &AffineView, b: &AffineView, sign: i64) -> Option<AffineView> {
+        let offset = (a.offset as i128) + (sign as i128) * (b.offset as i128);
+        let mut terms = a.terms.clone();
+        for (root, scale) in &b.terms {
+            let s = (sign as i128) * (*scale as i128);
+            if let Some(existing) = terms.iter_mut().find(|(r, _)| r == root) {
+                let merged = (existing.1 as i128) + s;
+                if merged.abs() > i64::MAX as i128 {
+                    return None;
+                }
+                existing.1 = merged as i64;
+            } else {
+                if s.abs() > i64::MAX as i128 {
+                    return None;
+                }
+                terms.push((*root, s as i64));
+            }
+        }
+        terms.retain(|(_, s)| *s != 0);
+        if terms.len() > 2 || offset.abs() > i64::MAX as i128 {
+            return None;
+        }
+        Some(AffineView {
+            terms,
+            offset: offset as i64,
+        })
+    }
+
+    /// `self * k`, with the same refusal rules.
+    pub fn scaled(&self, k: i64) -> Option<AffineView> {
+        let offset = (self.offset as i128) * (k as i128);
+        if offset.abs() > i64::MAX as i128 {
+            return None;
+        }
+        let mut terms = Vec::with_capacity(self.terms.len());
+        for (root, scale) in &self.terms {
+            let s = (*scale as i128) * (k as i128);
+            if s.abs() > i64::MAX as i128 {
+                return None;
+            }
+            if s != 0 {
+                terms.push((*root, s as i64));
+            }
+        }
+        Some(AffineView {
+            terms,
+            offset: offset as i64,
+        })
+    }
+}
+
 /// Inclusive value bounds. The structural counterpart of the backends'
 /// `value_interval` / `interval_of` caches.
 #[derive(Clone, Copy, Debug)]
 pub struct Interval {
     pub lo: i64,
     pub hi: i64,
+}
+
+impl Interval {
+    pub const BIT: Interval = Interval { lo: 0, hi: 1 };
+
+    pub fn point(v: i64) -> Self {
+        Interval { lo: v, hi: v }
+    }
+
+    pub fn union(a: Interval, b: Interval) -> Interval {
+        Interval {
+            lo: a.lo.min(b.lo),
+            hi: a.hi.max(b.hi),
+        }
+    }
+
+    /// `a + sign*b` with overflow refusal.
+    pub fn add(a: Interval, b: Interval, sign: i64) -> Option<Interval> {
+        let (blo, bhi) = if sign >= 0 { (b.lo, b.hi) } else { (-b.hi, -b.lo) };
+        let lo = (a.lo as i128) + (blo as i128);
+        let hi = (a.hi as i128) + (bhi as i128);
+        if lo.abs() > i64::MAX as i128 || hi.abs() > i64::MAX as i128 {
+            return None;
+        }
+        Some(Interval {
+            lo: lo as i64,
+            hi: hi as i64,
+        })
+    }
+
+    /// `self * k` (k may be negative) with overflow refusal.
+    pub fn scaled(&self, k: i64) -> Option<Interval> {
+        let a = (self.lo as i128) * (k as i128);
+        let b = (self.hi as i128) * (k as i128);
+        if a.abs() > i64::MAX as i128 || b.abs() > i64::MAX as i128 {
+            return None;
+        }
+        Some(Interval {
+            lo: a.min(b) as i64,
+            hi: a.max(b) as i64,
+        })
+    }
+
+    pub fn intersect(a: Interval, b: Interval) -> Interval {
+        Interval {
+            lo: a.lo.max(b.lo),
+            hi: a.hi.min(b.hi),
+        }
+    }
 }
 
 /// How a dyn-array buffer is laid out (invariant #1). Every dyn-array
@@ -149,6 +267,11 @@ pub struct ProvenanceTable {
     /// outlive the eager-drop policy must carry the version they were
     /// built at and compare against this.
     write_version: HashMap<u32, u64>,
+    /// Per-segment value hull: union of the init value and every written
+    /// value's interval. `None` entry = poisoned (some write had no
+    /// interval). Feeds `ReadMemory` output intervals (the Noir emitter's
+    /// `segment_iv` semantics).
+    segment_hull: HashMap<u32, Option<Interval>>,
 }
 
 impl ProvenanceTable {
@@ -181,6 +304,26 @@ impl ProvenanceTable {
 
     pub fn write_version(&self, segment: u32) -> u64 {
         self.write_version.get(&segment).copied().unwrap_or(0)
+    }
+
+    // ── Segment value hulls ──────────────────────────────────────────
+
+    pub fn init_segment_hull(&mut self, segment: u32, init: i64) {
+        self.segment_hull.insert(segment, Some(Interval::point(init)));
+    }
+
+    /// Union a written value's interval into the segment hull; `None`
+    /// poisons the hull (unknown write).
+    pub fn widen_segment_hull(&mut self, segment: u32, iv: Option<Interval>) {
+        let entry = self.segment_hull.entry(segment).or_insert(None);
+        *entry = match (entry.take(), iv) {
+            (Some(a), Some(b)) => Some(Interval::union(a, b)),
+            _ => None,
+        };
+    }
+
+    pub fn segment_hull(&self, segment: u32) -> Option<Interval> {
+        self.segment_hull.get(&segment).copied().flatten()
     }
 
     // ── Record accessors ─────────────────────────────────────────────

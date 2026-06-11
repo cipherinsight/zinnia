@@ -111,7 +111,8 @@ impl ProverBackend for Halo2BaseProverBackend {
                 ..defaults.clone()
             };
             let instances = {
-                let mut synth = Halo2BaseSynthesizer::new(&mut builder, None, dry_params);
+                let mut synth =
+                Halo2BaseSynthesizer::new(&mut builder, None, dry_params, &ir.provenance);
                 interpret_ir(ir, &mut synth)?;
                 synth.public_values().len()
             };
@@ -414,7 +415,7 @@ fn build_circuit(
         public_values
     } else {
         let mut synth =
-            Halo2BaseSynthesizer::new(&mut builder, witness.cloned(), params.clone());
+            Halo2BaseSynthesizer::new(&mut builder, witness.cloned(), params.clone(), &ir.provenance);
         interpret_ir(ir, &mut synth).map_err(|e| {
             ProvingError::synthesis(format!("halo2-base synthesis failed: {}", e))
         })?;

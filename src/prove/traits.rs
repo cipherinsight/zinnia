@@ -76,6 +76,18 @@ pub trait Synthesizer {
     /// Default is a no-op.
     fn on_stmt_begin(&mut self, _stmt_id: u32) {}
 
+    /// Optional hook called by `interpret_ir` after a statement produced a
+    /// cell, with the statement's stable `ValueId`. Backends use it to
+    /// maintain a ValueId ↔ cell correspondence for consuming the
+    /// structural-provenance table (`src/provenance.rs`). Default no-op.
+    fn on_stmt_result(
+        &mut self,
+        _stmt_id: u32,
+        _value_id: crate::types::ValueId,
+        _cell: &Self::CellRef,
+    ) {
+    }
+
     // ── Constants ─────────────────────────────────────────────────────
 
     fn constant_int(&mut self, value: i64) -> Result<Self::CellRef, ProvingError>;

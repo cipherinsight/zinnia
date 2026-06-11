@@ -1074,7 +1074,194 @@ impl IRBuilder {
         let stmt = IRStatement::new(ir_id, value_id, ir.clone(), arguments, arg_values, None);
         self.stmts.push(stmt);
         self.record_value_id(&val);
+        self.deposit_provenance(ir, &materialized, &val);
         val
+    }
+
+    /// Structural-provenance derivation chokepoint: every IR op deposits
+    /// its affine/interval records here, ONCE, at construction time.
+    /// Backends consume these instead of re-deriving the same algebra in
+    /// per-backend caches (plan Step 2; the halo2 `AffineLin` and Noir
+    /// `AffLin` machineries this replaces refused the same cases —
+    /// >2 roots, coefficient overflow — so refusal here means "no
+    /// record", never wrong math).
+    fn deposit_provenance(&mut self, ir: &IR, args: &[Value], out: &Value) {
+        use crate::provenance::{AffineView, Interval};
+
+        fn static_int(v: &Value) -> Option<i64> {
+            v.int_val()
+                .or_else(|| v.bool_val().map(|b| if b { 1 } else { 0 }))
+        }
+        fn affine_of(me: &IRBuilder, v: &Value) -> Option<AffineView> {
+            if let Some(c) = static_int(v) {
+                return Some(AffineView::constant(c));
+            }
+            let vid = v.value_id()?;
+            if let Some(a) = me.provenance.affine_of(vid) {
+                return Some(a.clone());
+            }
+            Some(AffineView::root(vid))
+        }
+        fn interval_of(me: &IRBuilder, v: &Value) -> Option<Interval> {
+            if let Some(c) = static_int(v) {
+                return Some(Interval::point(c));
+            }
+            me.provenance.interval_of(v.value_id()?)
+        }
+
+        match ir {
+            IR::ConstantInt { value } => {
+                if let Some(vid) = out.value_id() {
+                    self.provenance.set_affine(vid, AffineView::constant(*value));
+                    self.provenance.set_interval(vid, Interval::point(*value));
+                }
+            }
+            IR::ConstantBool { value } => {
+                if let Some(vid) = out.value_id() {
+                    let v = if *value { 1 } else { 0 };
+                    self.provenance.set_interval(vid, Interval::point(v));
+                }
+            }
+            IR::AddI | IR::SubI => {
+                let Some(vid) = out.value_id() else { return };
+                let sign = if matches!(ir, IR::AddI) { 1 } else { -1 };
+                if let (Some(a), Some(b)) = (affine_of(self, &args[0]), affine_of(self, &args[1]))
+                {
+                    if let Some(c) = AffineView::combine(&a, &b, sign) {
+                        self.provenance.set_affine(vid, c);
+                    }
+                }
+                if let (Some(a), Some(b)) =
+                    (interval_of(self, &args[0]), interval_of(self, &args[1]))
+                {
+                    if let Some(c) = Interval::add(a, b, sign) {
+                        self.provenance.set_interval(vid, c);
+                    }
+                }
+            }
+            IR::MulI => {
+                let Some(vid) = out.value_id() else { return };
+                let (konst, other) = match (static_int(&args[0]), static_int(&args[1])) {
+                    (Some(k), _) => (Some(k), &args[1]),
+                    (_, Some(k)) => (Some(k), &args[0]),
+                    _ => (None, &args[0]),
+                };
+                if let Some(k) = konst {
+                    if let Some(a) = affine_of(self, other) {
+                        if let Some(scaled) = a.scaled(k) {
+                            self.provenance.set_affine(vid, scaled);
+                        }
+                    }
+                    if let Some(iv) = interval_of(self, other) {
+                        if let Some(scaled) = iv.scaled(k) {
+                            self.provenance.set_interval(vid, scaled);
+                        }
+                    }
+                }
+            }
+            IR::EqI
+            | IR::NeI
+            | IR::LtI
+            | IR::LtIBounded
+            | IR::LteI
+            | IR::GtI
+            | IR::GtIBounded
+            | IR::GteI
+            | IR::EqF
+            | IR::NeF
+            | IR::LtF
+            | IR::LteF
+            | IR::GtF
+            | IR::GteF
+            | IR::LogicalAnd
+            | IR::LogicalOr
+            | IR::LogicalNot
+            | IR::BoolCast
+            | IR::EqHash => {
+                if let Some(vid) = out.value_id() {
+                    self.provenance.set_interval(vid, Interval::BIT);
+                }
+            }
+            IR::SelectI | IR::SelectBitI => {
+                let Some(vid) = out.value_id() else { return };
+                let (Some(ti), Some(fi)) =
+                    (interval_of(self, &args[1]), interval_of(self, &args[2]))
+                else {
+                    return;
+                };
+                let mut iv = Interval::union(ti, fi);
+                // Min/max recognition: select(a<b, a, b) = min(a, b) →
+                // hi tightens to min(hi_a, hi_b); select(a<b, b, a) =
+                // max(a, b) → lo tightens to max(lo_a, lo_b). Same for
+                // the > comparators with branches swapped.
+                if let Some(cond_stmt) = args[0].stmt_id() {
+                    if let Some(stmt) = self.stmts.get(cond_stmt as usize) {
+                        let is_lt = matches!(stmt.ir, IR::LtI | IR::LtIBounded);
+                        let is_gt = matches!(stmt.ir, IR::GtI | IR::GtIBounded);
+                        if (is_lt || is_gt) && stmt.arg_values.len() == 2 {
+                            let (x, y) = (stmt.arg_values[0], stmt.arg_values[1]);
+                            let (t, f) = (args[1].value_id(), args[2].value_id());
+                            let straight = t == Some(x) && f == Some(y);
+                            let swapped = t == Some(y) && f == Some(x);
+                            // lt + straight = min; lt + swapped = max;
+                            // gt + straight = max; gt + swapped = min.
+                            let is_min = (is_lt && straight) || (is_gt && swapped);
+                            let is_max = (is_lt && swapped) || (is_gt && straight);
+                            if is_min {
+                                iv.hi = iv.hi.min(ti.hi.min(fi.hi));
+                            } else if is_max {
+                                iv.lo = iv.lo.max(ti.lo.max(fi.lo));
+                            }
+                        }
+                    }
+                }
+                self.provenance.set_interval(vid, iv);
+            }
+            IR::ReadMemory { segment_id } | IR::DynamicNDArrayGetItem { segment_id, .. } => {
+                if let (Some(vid), Some(hull)) =
+                    (out.value_id(), self.provenance.segment_hull(*segment_id))
+                {
+                    self.provenance.set_interval(vid, hull);
+                }
+            }
+            IR::AllocateMemory {
+                segment_id,
+                init_value,
+                ..
+            } => {
+                self.provenance.init_segment_hull(*segment_id, *init_value);
+            }
+            IR::WriteMemory { segment_id } | IR::DynamicNDArraySetItem { segment_id, .. } => {
+                let iv = interval_of(self, &args[1]);
+                self.provenance.widen_segment_hull(*segment_id, iv);
+            }
+            IR::AssertNonNegI => {
+                // `x >= 0` over the signed-i64 domain (the halo2 check
+                // enforces x in [0, 2^63)).
+                if let Some(vid) = args[0].value_id() {
+                    let bound = Interval { lo: 0, hi: i64::MAX };
+                    let tightened = match self.provenance.interval_of(vid) {
+                        Some(prev) => Interval::intersect(prev, bound),
+                        None => bound,
+                    };
+                    self.provenance.set_interval(vid, tightened);
+                }
+            }
+            IR::AssertU128Lt => {
+                // `0 <= idx < hi` with a static hi tightens idx.
+                if let (Some(idx_vid), Some(hi)) = (args[0].value_id(), static_int(&args[1])) {
+                    if hi > 0 {
+                        let bound = Interval { lo: 0, hi: hi - 1 };
+                        let tightened = match self.provenance.interval_of(idx_vid) {
+                            Some(prev) => Interval::intersect(prev, bound),
+                            None => bound,
+                        };
+                        self.provenance.set_interval(idx_vid, tightened);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     pub fn ir_assert_non_neg_i(&mut self, a: &Value) -> Value {

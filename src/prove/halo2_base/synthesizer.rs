@@ -63,12 +63,17 @@ pub struct Halo2BaseSynthesizer<'a> {
     // side is keyed by cell id for dynamic addresses and by value for
     // constant addresses (constants with equal values are interchangeable).
     overlay_eq_cache: HashMap<(u64, OverlayReadKey), Halo2BaseCell>,
-    // Constraint-derived value intervals (signed i64 view): constants are
-    // exact, select outputs take the hull of their branches, asserted bits
-    // are [0,1]. Used to shrink dynamic-read choice sets: a gather along a
-    // unit-stride axis (addr = row*W + col with col in [0,W)) muxes W slots
-    // instead of the whole segment. Witness-independent by construction.
+    // Constraint-derived value intervals (signed i64 view) for cells the
+    // provenance table can't see (synthesizer-internal helpers). IR-level
+    // cells read the table live via `vid_of_cell`. Witness-independent by
+    // construction.
     value_interval: HashMap<u64, (i64, i64)>,
+    // ValueId ↔ cell correspondence, maintained by `on_stmt_result`, for
+    // consuming the structural-provenance table (affine views and
+    // intervals are derived ONCE in the IRBuilder; see src/provenance.rs).
+    prov: &'a crate::provenance::ProvenanceTable,
+    vid_of_cell: HashMap<u64, crate::types::ValueId>,
+    cell_of_vid: HashMap<crate::types::ValueId, Halo2BaseCell>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -85,53 +90,13 @@ struct AffineLin {
     offset: i64,
 }
 
-impl AffineLin {
-    fn combine(a: &AffineLin, b: &AffineLin, sign: i64) -> Option<AffineLin> {
-        let offset = (a.offset as i128) + (sign as i128) * (b.offset as i128);
-        let mut terms = a.terms.clone();
-        for (root, scale) in &b.terms {
-            let s = (sign as i128) * (*scale as i128);
-            if let Some(existing) = terms.iter_mut().find(|(r, _)| r.id == root.id) {
-                let merged = (existing.1 as i128) + s;
-                if merged.abs() > i64::MAX as i128 {
-                    return None;
-                }
-                existing.1 = merged as i64;
-            } else {
-                terms.push((*root, s as i64));
-            }
-        }
-        terms.retain(|(_, s)| *s != 0);
-        if terms.len() > 2 || offset.abs() > i64::MAX as i128 {
-            return None;
-        }
-        Some(AffineLin { terms, offset: offset as i64 })
-    }
-
-    fn scaled(&self, k: i64) -> Option<AffineLin> {
-        let offset = (self.offset as i128) * (k as i128);
-        if offset.abs() > i64::MAX as i128 {
-            return None;
-        }
-        let mut terms = Vec::with_capacity(self.terms.len());
-        for (root, scale) in &self.terms {
-            let s = (*scale as i128) * (k as i128);
-            if s.abs() > i64::MAX as i128 {
-                return None;
-            }
-            if s != 0 {
-                terms.push((*root, s as i64));
-            }
-        }
-        Some(AffineLin { terms, offset: offset as i64 })
-    }
-}
 
 impl<'a> Halo2BaseSynthesizer<'a> {
     pub fn new(
         builder: &'a mut BaseCircuitBuilder<Fp>,
         witness: Option<ResolvedWitness>,
         params: ProvingParams,
+        provenance: &'a crate::provenance::ProvenanceTable,
     ) -> Self {
         Self {
             builder,
@@ -158,6 +123,9 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             unsigned64_cells: HashSet::new(),
             overlay_eq_cache: HashMap::new(),
             value_interval: HashMap::new(),
+            prov: provenance,
+            vid_of_cell: HashMap::new(),
+            cell_of_vid: HashMap::new(),
         }
     }
 
@@ -185,8 +153,15 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         cell
     }
 
-    /// Constraint-derived signed-i64 interval of a cell, if known.
+    /// Constraint-derived signed-i64 interval of a cell, if known. IR-level
+    /// cells read the provenance table LIVE (post-hoc tightens from later
+    /// asserts are visible); internal cells fall back to the local map.
     fn interval_of(&self, cell: &Halo2BaseCell) -> Option<(i64, i64)> {
+        if let Some(vid) = self.vid_of_cell.get(&cell.id) {
+            if let Some(iv) = self.prov.interval_of(*vid) {
+                return Some((iv.lo, iv.hi));
+            }
+        }
         if let Some(iv) = self.value_interval.get(&cell.id) {
             return Some(*iv);
         }
@@ -225,9 +200,35 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         self.const_cell_ids.contains(&cell.id)
     }
 
-    /// Affine view of `cell`. Falls back to the identity view (the cell is
-    /// its own root) for dynamic cells, and to a pure offset for constants.
+    /// Affine view of `cell`, read live from the provenance table (terms
+    /// translate root ValueIds to their cells; a root without a cell yet
+    /// degrades to the identity view). Falls back to the identity view
+    /// (the cell is its own root) for dynamic cells, and to a pure offset
+    /// for constants.
     fn affine_lin_of(&self, cell: &Halo2BaseCell) -> AffineLin {
+        if let Some(vid) = self.vid_of_cell.get(&cell.id) {
+            if let Some(av) = self.prov.affine_of(*vid) {
+                if !av.terms.is_empty() {
+                    let mut terms = Vec::with_capacity(av.terms.len());
+                    let mut ok = true;
+                    for (rvid, scale) in &av.terms {
+                        match self.cell_of_vid.get(rvid) {
+                            Some(rc) => terms.push((*rc, *scale)),
+                            None => {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+                    if ok {
+                        return AffineLin {
+                            terms,
+                            offset: av.offset,
+                        };
+                    }
+                }
+            }
+        }
         if let Some(lin) = self.addr_lineage.get(&cell.id) {
             return lin.clone();
         }
@@ -235,14 +236,6 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             return AffineLin { terms: Vec::new(), offset: kernel::fp_to_i64(cell.value) };
         }
         AffineLin { terms: vec![(*cell, 1)], offset: 0 }
-    }
-
-    fn record_lin(&mut self, out: &Halo2BaseCell, lin: Option<AffineLin>) {
-        if let Some(lin) = lin {
-            if !lin.terms.is_empty() {
-                self.addr_lineage.insert(out.id, lin);
-            }
-        }
     }
 
     /// eq(root, v) indicator bit, shared across reads on the same root.
@@ -493,6 +486,20 @@ impl<'a> Halo2BaseSynthesizer<'a> {
 }
 
 impl Synthesizer for Halo2BaseSynthesizer<'_> {
+    fn on_stmt_result(
+        &mut self,
+        _stmt_id: u32,
+        value_id: crate::types::ValueId,
+        cell: &Self::CellRef,
+    ) {
+        // Maintain the ValueId ↔ cell correspondence for live
+        // provenance-table reads (affine views translate root ValueIds to
+        // cells; intervals resolve per lookup so post-hoc assert tightens
+        // are visible).
+        self.vid_of_cell.insert(cell.id, value_id);
+        self.cell_of_vid.insert(value_id, *cell);
+    }
+
     type CellRef = Halo2BaseCell;
 
     fn constant_int(&mut self, value: i64) -> Result<Self::CellRef, ProvingError> {
@@ -513,28 +520,17 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn add_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let out = self.gate_cell(a.value + b.value, |gate, ctx| gate.add(ctx, a.assigned, b.assigned));
-        let lin = AffineLin::combine(&self.affine_lin_of(a), &self.affine_lin_of(b), 1);
-        self.record_lin(&out, lin);
-        Ok(out)
+        // Affine lineage now lives in the provenance table (derived once
+        // in the IRBuilder); `affine_lin_of` reads it live.
+        Ok(self.gate_cell(a.value + b.value, |gate, ctx| gate.add(ctx, a.assigned, b.assigned)))
     }
 
     fn sub_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let out = self.gate_cell(a.value - b.value, |gate, ctx| gate.sub(ctx, a.assigned, b.assigned));
-        let lin = AffineLin::combine(&self.affine_lin_of(a), &self.affine_lin_of(b), -1);
-        self.record_lin(&out, lin);
-        Ok(out)
+        Ok(self.gate_cell(a.value - b.value, |gate, ctx| gate.sub(ctx, a.assigned, b.assigned)))
     }
 
     fn mul_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let out = self.gate_cell(a.value * b.value, |gate, ctx| gate.mul(ctx, a.assigned, b.assigned));
-        let lin = match (self.is_const_cell(a), self.is_const_cell(b)) {
-            (false, true) => self.affine_lin_of(a).scaled(kernel::fp_to_i64(b.value)),
-            (true, false) => self.affine_lin_of(b).scaled(kernel::fp_to_i64(a.value)),
-            _ => None,
-        };
-        self.record_lin(&out, lin);
-        Ok(out)
+        Ok(self.gate_cell(a.value * b.value, |gate, ctx| gate.mul(ctx, a.assigned, b.assigned)))
     }
 
     fn div_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {

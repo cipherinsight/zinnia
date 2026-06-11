@@ -313,6 +313,9 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
         };
 
         if id < cells.len() {
+            if let Some(cell) = &result {
+                synth.on_stmt_result(stmt.stmt_id, stmt.value_id, cell);
+            }
             cells[id] = result;
         }
     }
