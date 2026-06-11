@@ -53,8 +53,13 @@ fn ravel_multi_index_f<F: ScalarField>(
     // a malicious prover could supply out-of-range index values that
     // still satisfy the Horner+assert chain below but yield a nonsense
     // linear-index public output.
+    // Honest 64-bit integer domain (same convention as Zinnia): every
+    // witness integer that feeds a comparison is range-checked to 64 bits
+    // once, and the comparison itself runs at 64-bit width.
     for k in 0..5 {
-        rc.check_less_than(ctx, index[k], dims[k], 32);
+        rc.range_check(ctx, index[k], 64);
+        rc.range_check(ctx, dims[k], 64);
+        rc.check_less_than(ctx, index[k], dims[k], 64);
     }
 
     // Fortran order: linear = sum_k index[k] * prod_{j<k} dims[j].
