@@ -126,6 +126,11 @@ pub struct IRGraph {
     /// order. Populated by IRGen at export; NOT round-tripped through
     /// `export_stmts`/`import_stmts` (a deserialized graph reports none).
     pub elided_publics: Vec<ElidedPublic>,
+    /// Structural-provenance table (see `src/provenance.rs`). Populated
+    /// by IRGen at export, carried through the optimization pipeline
+    /// (passes remap/drop records; `apply_pass` enforces liveness), and
+    /// consumed by backends. NOT serialized.
+    pub provenance: crate::provenance::ProvenanceTable,
     /// `ValueId → StmtId` (= index in `stmts`) lookup. Built and
     /// maintained by `update_graph` after Phase 3
     /// (compiler.value-id-and-fact-leaves) switched `arguments` to
@@ -165,6 +170,7 @@ impl IRGraph {
         let mut graph = IRGraph {
             stmts: Vec::new(),
             elided_publics: Vec::new(),
+            provenance: crate::provenance::ProvenanceTable::new(),
             value_to_stmt: HashMap::new(),
             in_d: Vec::new(),
             out_d: Vec::new(),

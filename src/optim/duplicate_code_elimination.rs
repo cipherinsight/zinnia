@@ -156,6 +156,18 @@ impl IRPass for DuplicateCodeElimination {
         }
 
         let mut new_graph = IRGraph::new(new_stmts);
+        // Provenance: this pass replaces value identities — re-key every
+        // record from the duplicate's ValueId to the canonical stmt's.
+        // (`apply_pass` then enforces liveness for whatever remains.)
+        let mut table = ir_graph.provenance.clone();
+        for (&dup, &canon) in &to_be_replaced {
+            let dup_vid = ir_graph.stmts.get(dup as usize).map(|s| s.value_id);
+            let canon_vid = ir_graph.stmts.get(canon as usize).map(|s| s.value_id);
+            if let (Some(d), Some(c)) = (dup_vid, canon_vid) {
+                table.remap_value(d, c);
+            }
+        }
+        new_graph.provenance = table;
         // P0 seam: signal mutation to the resolver. No-op today via
         // StaticOnlyResolver; P1 uses this for cache invalidation.
         new_graph.resolver_mut().on_ir_mutated(&[]);

@@ -445,7 +445,7 @@ fn dyn_slice_1d(
     let composed: Option<(crate::builder::SliceView, i64)> = match (
         flat_input,
         step_static.or(if is_present(step) { None } else { Some(1) }),
-        b.slice_views.get(&data.segment_id).cloned(),
+        b.provenance.slice_view(data.segment_id).cloned(),
     ) {
         (true, Some(step_c), Some(view)) if data.dtype != NumberType::Complex => {
             let vstep = b.ir_constant_int(view.step);
@@ -536,10 +536,10 @@ fn dyn_slice_1d(
     // Provenance for further composition: either the composed base view, or
     // this slice's own map over its (flat) input.
     if let Some((cview, _)) = composed {
-        b.slice_views.insert(segment_id, cview);
+        b.provenance.set_slice_view(segment_id, cview);
     } else if flat_input && data.dtype != NumberType::Complex {
         if let Some(step_c) = step_static.or(if is_present(step) { None } else { Some(1) }) {
-            b.slice_views.insert(
+            b.provenance.set_slice_view(
                 segment_id,
                 crate::builder::SliceView {
                     base_segment: data.segment_id,

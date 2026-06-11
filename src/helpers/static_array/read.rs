@@ -1363,7 +1363,7 @@ fn materialise_dynamic_1d_slice(
     // this map instead of re-materialising (see IRBuilder::slice_views).
     if let Some(step_const) = step_ir.int_val() {
         if dtype != NumberType::Complex {
-            b.slice_views.insert(
+            b.provenance.set_slice_view(
                 out_segment,
                 crate::builder::SliceView {
                     base_segment: segment_id,

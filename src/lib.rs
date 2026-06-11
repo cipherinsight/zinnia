@@ -12,6 +12,7 @@ pub mod ir_defs;
 pub mod ir_gen;
 pub mod ops;
 pub mod optim;
+pub mod provenance;
 pub mod prove;
 pub mod scope;
 pub mod types;
@@ -66,6 +67,9 @@ fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32) -> Option<IRG
     // Passes rebuild the graph via `IRGraph::new`, which starts with an
     // empty elided-publics list; carry the IRGen-recorded claim across.
     let elided = graph.elided_publics.clone();
+    // Same for the provenance table — unless the pass transferred (and
+    // possibly remapped) it itself, e.g. DuplicateCodeElimination.
+    let provenance_in = graph.provenance.clone();
     let mut out = match pass_name {
         "ExternalCallRemover" => ExternalCallRemover.exec(graph),
         "DeadCodeElimination" => DeadCodeElimination.exec(graph),
@@ -85,6 +89,14 @@ fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32) -> Option<IRG
         _ => return None,
     };
     out.elided_publics = elided;
+    if out.provenance.is_empty() && !provenance_in.is_empty() {
+        out.provenance = provenance_in;
+    }
+    // Universal liveness enforcement: whatever the pass did, records may
+    // not reference values that no longer exist in the rebuilt graph.
+    let live: std::collections::HashSet<crate::types::ValueId> =
+        out.value_to_stmt.keys().copied().collect();
+    out.provenance.retain_values(&|v| live.contains(&v));
     Some(out)
 }
 
@@ -363,6 +375,15 @@ fn compile_circuit(
                 eprintln!("[zinnia-smt] optim phase {}", t.summary());
             }
             None => eprintln!("[zinnia-smt] optim phase: no telemetry handle (default)"),
+        }
+    }
+
+    // Provenance liveness check (module invariant: records never
+    // dangle). Cheap; always-on under tests, opt-in elsewhere.
+    if cfg!(test) || std::env::var("ZINNIA_PROVENANCE_CHECK").as_deref() == Ok("1") {
+        let exists = |v: crate::types::ValueId| optimized_graph.value_to_stmt.contains_key(&v);
+        if let Err(msg) = optimized_graph.provenance.debug_consistency_check(&exists) {
+            panic!("provenance consistency check failed: {}", msg);
         }
     }
 

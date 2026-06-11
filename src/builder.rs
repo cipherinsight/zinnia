@@ -100,19 +100,7 @@ macro_rules! ir_ternary {
     };
 }
 
-/// Affine slice provenance: element `j` of the annotated array equals
-/// `base[base_offset + (start + j*step) * stride]` (axis-domain map into a
-/// flat base segment) for every in-range `j < runtime_length`. `start` is
-/// an IR value (possibly dynamic); `step`/geometry are static.
-#[derive(Clone, Debug)]
-pub struct SliceView {
-    pub base_segment: u32,
-    pub axis_len: usize,
-    pub stride: usize,
-    pub base_offset: usize,
-    pub start: Value,
-    pub step: i64,
-}
+pub use crate::provenance::SliceView;
 
 /// IR builder that accumulates IR statements and provides typed convenience
 /// methods. Mirrors Python `IRBuilderImpl` from `builder_impl.py`.
@@ -162,13 +150,11 @@ pub struct IRBuilder {
     /// been emitted. Static reads can use the cache directly; dynamic reads
     /// and writes must materialize first.
     pub lazy_static_array_segments: HashSet<u32>,
-    /// Slice provenance for materialised dynamic 1-D slices: maps the
-    /// output segment to the affine view of its source, so a slice of a
-    /// slice composes index maps instead of re-materialising (and the
-    /// composed start often folds to a constant — e.g. a reversal of a
-    /// to-the-end slice cancels the dynamic start). Invalidated on any
-    /// write to the view's segment or its base.
-    pub slice_views: HashMap<u32, SliceView>,
+    /// Structural-provenance table (see `src/provenance.rs` for the
+    /// record types and the five invariants). Owns what used to be the
+    /// ad-hoc `slice_views` cache; transferred onto the `IRGraph` at
+    /// export so backends can consume it.
+    pub provenance: crate::provenance::ProvenanceTable,
     /// P0 SMT-resolver seam: the [`Resolver`] every "must be a compile-time
     /// constant" call site routes through. Default is [`StaticOnlyResolver`]
     /// (delegates to `Value::int_val`/`bool_val`), so today's behaviour is
@@ -256,7 +242,7 @@ impl IRBuilder {
             static_array_payload: HashMap::new(),
             static_array_product_provenance: HashMap::new(),
             lazy_static_array_segments: HashSet::new(),
-            slice_views: HashMap::new(),
+            provenance: crate::provenance::ProvenanceTable::new(),
             resolver: Box::new(StaticOnlyResolver::new()),
             facts: crate::optim::predicates::FactStack::new(),
             value_to_stmt: HashMap::new(),
@@ -1097,8 +1083,10 @@ impl IRBuilder {
 
     pub fn export_ir_graph(self) -> IRGraph {
         let elided = self.elided_publics;
+        let provenance = self.provenance;
         let mut graph = IRGraph::new(self.stmts);
         graph.elided_publics = elided;
+        graph.provenance = provenance;
         graph
     }
 
@@ -2054,9 +2042,9 @@ impl IRBuilder {
         };
         let value = &stored;
         // A write invalidates slice views of this segment and any views
-        // reading through it as their base.
-        self.slice_views
-            .retain(|seg, view| *seg != segment_id && view.base_segment != segment_id);
+        // reading through it as their base, and bumps the segment's
+        // write version (provenance invariant #4).
+        self.provenance.on_segment_write(segment_id);
         // Capture per-cell bound facts at write time so a downstream
         // static-addr `ir_read_memory` of this cell can republish them on
         // the read output. Fires only for statically-pinned addresses
