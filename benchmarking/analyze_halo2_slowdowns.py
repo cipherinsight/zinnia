@@ -28,7 +28,6 @@ sys.path.insert(0, str(ROOT))
 
 
 ABANDONED_BASELINE_CASES = {
-    "0415",
     "0298",
     "0383",
     "0388",

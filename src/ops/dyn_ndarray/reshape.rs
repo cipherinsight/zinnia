@@ -1,4 +1,5 @@
 use crate::builder::IRBuilder;
+use super::value_to_scalar_i64;
 use crate::helpers::shape_arith::row_major_strides;
 use crate::optim::resolver::{require_provable_static_int, SiteKind};
 use crate::types::{
@@ -351,6 +352,19 @@ fn dyn_reshape_runtime(
         .collect();
     let envelope = crate::types::Envelope::new_with_bound(new_dims, old_total);
 
+    // True runtime strides (C-order over the RUNTIME dims, as IR cells):
+    // the logical skeleton's strides describe the padding rectangle, not
+    // the actual layout — consumers gathering with runtime geometry (e.g.
+    // axis reductions over a runtime-reshaped array) need these.
+    let mut rt_strides: Vec<ScalarValue<i64>> = vec![ScalarValue::new(Some(1), None); n_dims];
+    let mut stride_acc = b.ir_constant_int(1);
+    for i in (0..n_dims).rev() {
+        rt_strides[i] = value_to_scalar_i64(&stride_acc);
+        if i > 0 {
+            stride_acc = b.ir_mul_i(&stride_acc, &shape_values[i]);
+        }
+    }
+
     Value::DynamicNDArray(DynamicNDArrayData {
         envelope,
         dtype: data.dtype,
@@ -362,10 +376,7 @@ fn dyn_reshape_runtime(
             runtime_length: ScalarValue::new(Some(old_total as i64), None),
             runtime_rank: ScalarValue::new(Some(n_dims as i64), None),
             runtime_shape,
-            runtime_strides: new_strides
-                .iter()
-                .map(|&s| ScalarValue::new(Some(s as i64), None))
-                .collect(),
+            runtime_strides: rt_strides,
             runtime_offset: ScalarValue::new(Some(0), None),
         },
         value_id: ValueId::next(),
@@ -637,6 +648,20 @@ fn dyn_reshape_runtime_infer_unknown(
         .collect();
     let envelope = crate::types::Envelope::new_with_bound(new_dims, old_total);
 
+    // True runtime strides (C-order over the RUNTIME dims, as IR cells) —
+    // see dyn_reshape_runtime: the logical skeleton's strides describe the
+    // padding rectangle, not the actual layout.
+    let n_dims_total = shape_values.len();
+    let mut rt_strides: Vec<ScalarValue<i64>> =
+        vec![ScalarValue::new(Some(1), None); n_dims_total];
+    let mut stride_acc = b.ir_constant_int(1);
+    for i in (0..n_dims_total).rev() {
+        rt_strides[i] = value_to_scalar_i64(&stride_acc);
+        if i > 0 {
+            stride_acc = b.ir_mul_i(&stride_acc, &shape_values[i]);
+        }
+    }
+
     Value::DynamicNDArray(DynamicNDArrayData {
         envelope,
         dtype: data.dtype,
@@ -648,10 +673,7 @@ fn dyn_reshape_runtime_infer_unknown(
             runtime_length: ScalarValue::new(Some(old_total as i64), None),
             runtime_rank: ScalarValue::new(Some(dim_args.len() as i64), None),
             runtime_shape,
-            runtime_strides: new_strides
-                .iter()
-                .map(|&s| ScalarValue::new(Some(s as i64), None))
-                .collect(),
+            runtime_strides: rt_strides,
             runtime_offset: ScalarValue::new(Some(0), None),
         },
         value_id: ValueId::next(),

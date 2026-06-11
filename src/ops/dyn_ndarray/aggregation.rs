@@ -731,14 +731,55 @@ pub fn dyn_aggregate_axis(
 
     let data_owned = super::force_contiguous(b, data);
     let data = &data_owned;
-    let values =
-        crate::helpers::segment::read_all_typed(b, data.segment_id, data.max_length(), data.dtype);
-    let strides = dyn_row_major_strides(shape);
+    // Runtime-dynamic geometry: a runtime reshape (e.g. (-1, bs) with a
+    // witness bs) leaves logical_shape as a degenerate padding rectangle;
+    // enumerating it visits the wrong slots and produces the wrong number
+    // of outputs. When the runtime shape is dynamic, enumerate the
+    // envelope's per-axis BOUNDS and gather with the runtime stride cells
+    // instead of the logical layout; build_active_check already masks by
+    // the runtime dims.
+    // Per-axis enumeration bound: static axes are exact; a runtime axis
+    // can be as large as the whole storage (dyn_reshape_runtime records
+    // logical size 1 for runtime dims and documents that true bounds live
+    // in runtime_shape — the only sound static bound is total_bound).
+    let total_bound = data.envelope.total_bound.max(1);
+    let bounds: Vec<usize> = (0..ndim)
+        .map(|i| {
+            let rt_static = data.meta.runtime_shape[i].static_val;
+            if rt_static == Some(shape[i] as i64) {
+                shape[i]
+            } else {
+                let env_max = data.envelope.dims.get(i).map(|d| d.max).unwrap_or(1);
+                if env_max <= 1 && shape[i] <= 1 {
+                    // Runtime-reshape skeleton axis (logical placeholder 1
+                    // with a dynamic runtime dim): the only sound static
+                    // bound is the whole storage.
+                    total_bound
+                } else {
+                    env_max.max(shape[i])
+                }
+            }
+        })
+        .collect();
+    // Layout discriminator: a padded buffer requires runtime <= logical on
+    // every axis. When some axis bound EXCEEDS the logical size, the
+    // logical shape is a runtime-reshape skeleton and the buffer is
+    // compact — gather with the runtime stride cells. Otherwise (bounded
+    // inputs etc.) the buffer is the padded logical rectangle and the
+    // existing logical-stride path is correct (runtime masking included).
+    let runtime_dynamic = bounds != *shape;
+    let grid_shape: Vec<usize> = if runtime_dynamic { bounds } else { shape.clone() };
+    let values = if runtime_dynamic {
+        Vec::new()
+    } else {
+        crate::helpers::segment::read_all_typed(b, data.segment_id, data.max_length(), data.dtype)
+    };
+    let strides = dyn_row_major_strides(&grid_shape);
     let use_float =
         data.dtype == NumberType::Float && !matches!(agg, DynAggKind::All | DynAggKind::Any);
 
     // Output shape: remove the reduced axis
-    let out_shape: Vec<usize> = shape
+    let out_shape: Vec<usize> = grid_shape
         .iter()
         .enumerate()
         .filter(|&(i, _)| i != ax)
@@ -750,7 +791,7 @@ pub fn dyn_aggregate_axis(
         out_shape.iter().product()
     };
     let out_strides = dyn_row_major_strides(&out_shape);
-    let axis_dim = shape[ax];
+    let axis_dim = grid_shape[ax];
 
     let out_runtime_shape: Vec<ScalarValue<i64>> = data
         .meta
@@ -822,18 +863,53 @@ pub fn dyn_aggregate_axis(
         // Iterate along reduction axis
         for k in 0..axis_dim {
             in_coords[ax] = k;
-            let src_idx = dyn_encode_coords(&in_coords, &strides);
-            let elem = if src_idx < values.len() {
-                values[src_idx].clone()
+            let is_active_pre = if runtime_dynamic {
+                Some(build_active_check(
+                    b,
+                    &in_coords,
+                    &data.meta.runtime_shape,
+                    &grid_shape,
+                ))
             } else {
-                super::metadata::dyn_default_value(b, data.dtype)
+                None
             };
-            let is_active = build_active_check(
-                b,
-                &in_coords,
-                &data.meta.runtime_shape,
-                &data.meta.logical_shape,
-            );
+            let elem = if runtime_dynamic {
+                // Gather with the runtime stride cells: addr = sum of
+                // coord_i * runtime_stride_i (+ runtime offset). Inactive
+                // grid combos can compute out-of-range addresses, so the
+                // address is gated by the active mask (active implies
+                // in-bounds: every coord < its runtime dim).
+                let mut addr = scalar_to_value_i(b, &data.meta.runtime_offset);
+                for (i, &c) in in_coords.iter().enumerate() {
+                    if c == 0 {
+                        continue;
+                    }
+                    let stride_v = scalar_to_value_i(b, &data.meta.runtime_strides[i]);
+                    let c_v = b.ir_constant_int(c as i64);
+                    let term = b.ir_mul_i(&c_v, &stride_v);
+                    addr = b.ir_add_i(&addr, &term);
+                }
+                let zero = b.ir_constant_int(0);
+                let safe_addr =
+                    b.ir_select_i(is_active_pre.as_ref().unwrap(), &addr, &zero);
+                crate::helpers::segment::read_typed(b, data.segment_id, &safe_addr, data.dtype)
+            } else {
+                let src_idx = dyn_encode_coords(&in_coords, &strides);
+                if src_idx < values.len() {
+                    values[src_idx].clone()
+                } else {
+                    super::metadata::dyn_default_value(b, data.dtype)
+                }
+            };
+            let is_active = match is_active_pre {
+                Some(v) => v,
+                None => build_active_check(
+                    b,
+                    &in_coords,
+                    &data.meta.runtime_shape,
+                    &grid_shape,
+                ),
+            };
             let k_val = b.ir_constant_int(k as i64);
             if matches!(
                 agg,
