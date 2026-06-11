@@ -1,10 +1,13 @@
 # Provenance Consolidation & Quality-Hardening Plan
 
-Date: 2026-06-11. Status: Steps 0a (a34555e), 0b (d28d4d5/51b33ba/a65d329 —
-audit green 131 + 3 documented xfails deferred to Step 3) and 0c
-(26dd5d7/d90f477/f4cb2bb — all four suites at 0 failures, from 78
-pre-session; ~20 compiler bugs fixed along the way, see commit messages)
-are DONE. Next: Step 1. Owner: this session.
+Date: 2026-06-11. Status: Step 0 (a34555e..f4cb2bb — safety nets caught and
+fixed ~20 compiler bugs; suites 78→0 failures; audit green 131 + 3 xfails
+deferred to Step 3), Step 1 (60455b1 — table + slice_views pilot,
+bit-identical), and Step 2 (28aa4c9 halo2 + 99d15ce Noir — both backends
+read the table live; derivation happens once in create_ir; affine algebra
+single-definition; halo2 0391 dropped 533,943→14,040 advice cells, 38x;
+Noir emissions byte-identical on the probe set) are DONE.
+Next: Step 3. Owner: this session.
 
 ## Context
 
