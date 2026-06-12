@@ -48,6 +48,12 @@ pub struct DriverOutput {
     pub vk_bytes: Vec<u8>,
     pub public_inputs_bytes: Vec<u8>,
     pub verify_ok: bool,
+    /// Combined stdout+stderr tail from `bb verify` when it rejected the
+    /// proof (`verify_ok == false`). `None` on the success path or when no
+    /// `public_inputs` file was emitted (verify skipped). Surfaced by
+    /// `prove()` in the `ProvingFailed` error so a bb-rejected proof carries
+    /// the verifier's own diagnostics.
+    pub verify_detail: Option<String>,
 }
 
 pub fn run_pipeline(pkg_dir: &Path, paths: &DriverPaths) -> Result<DriverOutput, NoirError> {
@@ -145,7 +151,7 @@ pub fn run_pipeline(pkg_dir: &Path, paths: &DriverPaths) -> Result<DriverOutput,
 
     // 4. bb verify.
     let pi_path = target.join("public_inputs");
-    let verify_ok = if pi_path.exists() {
+    let (verify_ok, verify_detail) = if pi_path.exists() {
         let out = Command::new(&paths.bb)
             .arg("verify")
             .arg("-k")
@@ -160,11 +166,18 @@ pub fn run_pipeline(pkg_dir: &Path, paths: &DriverPaths) -> Result<DriverOutput,
             .arg("noir-recursive-no-zk")
             .output()
             .map_err(|e| NoirError::Io(format!("spawn bb verify: {}", e)))?;
-        out.status.success()
+        if out.status.success() {
+            (true, None)
+        } else {
+            // Capture the verifier's own diagnostics so prove() can ship
+            // them in the ProvingFailed error rather than silently emitting
+            // a bb-rejected proof as a valid artifact.
+            (false, Some(tail_combined(&out.stdout, &out.stderr, 1200)))
+        }
     } else {
         // No public_inputs file emitted (kernel without exposes) — treat
         // the bb prove return code as sufficient.
-        true
+        (true, None)
     };
 
     let proof_bytes = std::fs::read(&proof_path).unwrap_or_default();
@@ -177,6 +190,7 @@ pub fn run_pipeline(pkg_dir: &Path, paths: &DriverPaths) -> Result<DriverOutput,
         vk_bytes,
         public_inputs_bytes,
         verify_ok,
+        verify_detail,
     })
 }
 
