@@ -1637,11 +1637,20 @@ impl Synthesizer for NoirEmitter<'_> {
             self.fold_i(&v, folded);
             return Ok(v);
         }
-        // Witnessed-quotient pattern via noir_fpc::q_floor_div_hint.
-        // Hint runs unconstrained; downstream IR-gen pins the quotient.
-        self.use_lib("q_floor_div_hint");
+        // Field-path floor division. Emit the self-sound `q_floor_div`
+        // (asserts `q*d + r == n` with `0 <= r < |d|`, pinning a unique
+        // quotient for any sign). User-level `a // b` lowers to a bare IR
+        // FloorDivI with NO downstream circuit pin, so the previously-used
+        // unconstrained `q_floor_div_hint` let a malicious prover substitute
+        // any quotient (C04). The emitter has no witness-independent signal
+        // here to distinguish the (rare) compiler-generated divisions whose
+        // quotient is already pinned downstream, so it always emits the
+        // self-contained sound form. See the commit message for the gate
+        // cost of this on the pinned reshape cases (still < 0.5% of the
+        // sweep) and the pinned-marker follow-up.
+        self.use_lib("q_floor_div");
         let v = self.bind(&format!(
-            "q_floor_div_hint({}, {})",
+            "q_floor_div({}, {})",
             self.as_field(a),
             self.as_field(b)
         ));
@@ -1649,10 +1658,13 @@ impl Synthesizer for NoirEmitter<'_> {
         Ok(v)
     }
     fn mod_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        // Euclidean remainder (matches the IR's `rem_euclid` ground truth and
+        // the sound `q_mod` circuit form below) -- NOT Rust's truncated `%`,
+        // which would disagree for negative operands.
         let folded =
             self.int_of(a)
                 .zip(self.int_of(b))
-                .and_then(|(x, y)| if y == 0 { None } else { Some(x % y) });
+                .and_then(|(x, y)| if y == 0 { None } else { Some(x.rem_euclid(y)) });
         if self.is_u32(a) && self.is_u32(b) {
             let bound = self
                 .bound_of(b)
@@ -1662,9 +1674,14 @@ impl Synthesizer for NoirEmitter<'_> {
             self.fold_i(&v, folded);
             return Ok(v);
         }
-        self.use_lib("q_mod_hint");
+        // Field-path modulo. Emit the self-sound `q_mod` for the same
+        // soundness reason as floor division (C04): user-level `a % b` lowers
+        // to a bare IR ModI with no downstream pin, so the unconstrained
+        // `q_mod_hint` was substitutable. `q_mod` asserts `q*d + r == n` with
+        // `0 <= r < |d|`, pinning r uniquely.
+        self.use_lib("q_mod");
         let v = self.bind(&format!(
-            "q_mod_hint({}, {})",
+            "q_mod({}, {})",
             self.as_field(a),
             self.as_field(b)
         ));
@@ -2321,12 +2338,17 @@ impl Synthesizer for NoirEmitter<'_> {
         // Int and read it back via FloatCast) — each iteration scaled the
         // value by an extra Q, exploding the magnitude past noir_fpc's
         // MAG_BOUND = 2^126 after ~4 IIR steps and failing `to_signed`.
-        // Use u128 floor division (signed values are wrapped Field elements
-        // so this matches Zinnia's signed Q-floor semantic for the kernels
-        // in scope; full negative-aware floor needs a sign-aware path).
-        self.use_lib("q_div_q_hint");
+        // Default to the self-sound, sign-aware `q_div_q` (Euclidean floor of
+        // v / Q, asserts `q*Q + r == v` with `0 <= r < Q`). User-level
+        // `int(x)` lowers to a bare IR op with no downstream pin, so the
+        // unconstrained `q_div_q_hint` would let a malicious prover substitute
+        // any integer part (C04). The round-trip `int(float_cast(x))` still
+        // cancels exactly because q_div_q(x*Q) == x.
+        self.use_lib("q_div_q");
+        // Truncation toward zero (Rust `as i128` on the f64 ratio), matching
+        // the IR's int_cast convention and the circuit form for negatives.
         let folded = self.float_of(a).map(|f| (f / Q_U64 as f64) as i128);
-        let v = self.bind(&format!("q_div_q_hint({})", self.as_field(a)));
+        let v = self.bind(&format!("q_div_q({})", self.as_field(a)));
         self.fold_i(&v, folded);
         Ok(v)
     }

@@ -98,22 +98,113 @@ pub fn qadd(a: Field, b: Field) -> Field { a + b }
 pub fn qsub(a: Field, b: Field) -> Field { a - b }
 pub fn qneg(a: Field) -> Field { -a }
 
+// Euclidean integer division hint: returns (q, r) such that n == q*d + r
+// with 0 <= r < |d|. Sign-aware on both operands -- the previous body did
+// `n as u64`, which wraps negative Field elements (p - |n|) into a huge
+// u64 and corrupts the quotient. Matches Zinnia's IR semantics for FloorDivI
+// (`i128::div_euclid`) and ModI (`i128::rem_euclid`), so all backends agree.
+// NOTE: this Euclidean convention coincides with Python/numpy floor-div and
+// floor-mod whenever d > 0 (including negative dividends). It diverges from
+// Python only for d < 0 (Python's remainder takes the sign of d); the mock
+// and halo2 backends ship the same Euclidean convention, so Noir stays
+// consistent with the rest of the pipeline.
 unconstrained fn hint_idiv(n: Field, d: Field) -> (Field, Field) {
-    let nu: u64 = n as u64;
-    let du: u64 = d as u64;
-    let q: u64 = nu / du;
-    let r: u64 = nu - q * du;
-    (q as Field, r as Field)
+    let (n_neg, n_mag) = hint_split_sign(n);
+    let (d_neg, d_mag) = hint_split_sign(d);
+    // Magnitude truncated division, then Euclidean sign correction.
+    let qm: u128 = n_mag / d_mag;
+    let rm: u128 = n_mag - qm * d_mag;
+    let q_neg: bool = n_neg ^ d_neg;
+    // Truncated quotient/remainder in signed Field form.
+    let q_trunc: Field = if q_neg { -(qm as Field) } else { qm as Field };
+    let r_trunc: Field = if n_neg { -(rm as Field) } else { rm as Field };
+    // Euclidean adjustment: force 0 <= r < |d|. When r_trunc < 0, add |d|
+    // to r and step q by -sign(d) (i.e. q decreases by 1 when d > 0).
+    if (rm != 0) & n_neg {
+        let r_eucl: Field = (d_mag as Field) - (rm as Field);
+        let q_adj: Field = if d_neg { q_trunc + 1 } else { q_trunc - 1 };
+        (q_adj, r_eucl)
+    } else {
+        (q_trunc, r_trunc)
+    }
+}
+
+// Integer floor (Euclidean) division, self-soundproof for ALL signs.
+// Constraints: `q*d + r == n` and `0 <= r < |d|`. Those three facts pin a
+// UNIQUE (q, r) for any (n, d), so the unconstrained hint cannot be
+// substituted. The `r < |d|` check goes through `to_signed` (an internal
+// Field-to-u128 range check, ~2840 gates). This is the default emitter
+// lowering for user-level `a // b` on the Field path.
+pub fn q_floor_div(n: Field, d: Field) -> Field {
+    // Safety: q is constrained by the reconstruction + range check below.
+    let (q, r) = unsafe { hint_idiv(n, d) };
+    assert(q * d + r == n, "q_floor_div: reconstruction failed");
+    let (r_neg, r_mag) = to_signed(r);
+    let (_d_neg, d_mag) = to_signed(d);
+    assert(!r_neg, "q_floor_div: negative remainder");
+    assert(r_mag < d_mag, "q_floor_div: r >= |d|");
+    q
+}
+
+// Integer floor (Euclidean) remainder, self-soundproof for ALL signs.
+// Same constraint set as `q_floor_div`; returns r in [0, |d|). Default
+// emitter lowering for user-level `a % b` on the Field path.
+pub fn q_mod(n: Field, d: Field) -> Field {
+    // Safety: r is constrained by the reconstruction + range check below.
+    let (q, r) = unsafe { hint_idiv(n, d) };
+    assert(q * d + r == n, "q_mod: reconstruction failed");
+    let (r_neg, r_mag) = to_signed(r);
+    let (_d_neg, d_mag) = to_signed(d);
+    assert(!r_neg, "q_mod: negative remainder");
+    assert(r_mag < d_mag, "q_mod: r >= |d|");
+    r
+}
+
+// Truncate-toward-zero division of v by Q, sign-aware.
+// Returns (q, r) such that v == q*Q + r, |r| < Q, and r has the same sign
+// as v (or is zero). This is the IR's int_cast convention (`vi / scale`,
+// Rust truncating division -- NOT Euclidean floor), matching the mock and
+// halo2 backends so int(x) agrees across the stack for negatives.
+unconstrained fn hint_trunc_div_q(v: Field) -> (Field, Field) {
+    let (v_neg, v_mag) = hint_split_sign(v);
+    let qm: u128 = v_mag / Q_U128;
+    let rm: u128 = v_mag - qm * Q_U128;
+    let q: Field = if v_neg { -(qm as Field) } else { qm as Field };
+    let r: Field = if v_neg { -(rm as Field) } else { rm as Field };
+    (q, r)
+}
+
+// Divide-by-Q with truncation toward zero, self-soundproof for ALL signs.
+// Default emitter lowering for float-to-int casts (int_cast) on the Field
+// path: int(x) = trunc(x_q / Q). Pinning argument: the reconstruction
+// `q*Q + r == v` with `|r| < Q` alone admits TWO candidates for negative v
+// (the floor and the truncation differ by one), so we additionally force r
+// to carry v's sign (r == 0 when v's integer part divides evenly). That
+// triple uniquely pins q to the truncating quotient -- the unconstrained
+// hint cannot be substituted.
+pub fn q_div_q(v: Field) -> Field {
+    // Safety: q is constrained by the reconstruction + sign/range checks.
+    let (q, r) = unsafe { hint_trunc_div_q(v) };
+    assert(q * Q + r == v, "q_div_q: reconstruction failed");
+    let (v_neg, _v_mag) = to_signed(v);
+    let (r_neg, r_mag) = to_signed(r);
+    assert(r_mag < Q_U128, "q_div_q: |r| >= Q");
+    // r must share v's sign (or be zero) -- forbids the floor alternative.
+    if r_mag != 0 {
+        assert(r_neg == v_neg, "q_div_q: remainder sign mismatch (not truncation)");
+    }
+    q
 }
 
 // Hint-only quotient: returns the integer floor q = n/d as a Field, with
-// NO standalone soundness constraint. Caller is responsible for binding q
-// via a follow-up assertion. The IR-gen sites that call `floor_div_i`
-// (reshape, slice-length, arange-length, repeat-index) all already emit
-// downstream constraints that pin the quotient (e.g. `q*d == n` for
-// reshape, or expose the resulting length so the verifier sees its claim).
-// A standalone `q_floor_div` with sound range-check exists below for
-// callers that need self-contained soundness.
+// NO standalone soundness constraint -- the caller must bind q via a
+// downstream assertion. As of the C04 fix the Noir emitter no longer emits
+// any unpinned division (every Field-path `a // b` / `a % b` / `int(x)`
+// lowers to the self-sound `q_floor_div` / `q_mod` / `q_div_q`), so this
+// hint is currently UNUSED. It is retained for a future structural
+// pinned-marker that would let compiler-generated, downstream-constrained
+// reshape / slice divisions reclaim the range-check cost; such a marker
+// MUST be witness-independent and survive the IR roundtrip.
 pub fn q_floor_div_hint(n: Field, d: Field) -> Field {
     // Safety: caller-side constraint pins q.
     let (q, _r) = unsafe { hint_idiv(n, d) };
@@ -128,29 +219,11 @@ pub fn q_mod_hint(n: Field, d: Field) -> Field {
     r
 }
 
-// Hint-only divide-by-Q: returns floor(v / Q). The bounded-int round-trip
-// of int_cast(float_cast(x)) reduces to x by construction (each cancels
-// the other), so the IR-gen contexts that use this never need a standalone
-// soundness binding.
+// Hint-only divide-by-Q: returns floor(v / Q). Same soundness caveat as
+// `q_floor_div_hint`; retained for symmetry but not currently emitted.
 pub fn q_div_q_hint(v: Field) -> Field {
-    // Safety: round-trip with float_cast cancels.
+    // Safety: caller-side constraint pins q.
     let (q, _r) = unsafe { hint_idiv(v, Q) };
-    q
-}
-
-// Integer floor division for non-negative operands, self-soundproof.
-// Constraints: `q*d + r == n` and `0 <= r < d`. The `r < d` check goes
-// through `to_signed` which itself does an internal Field-to-u128 range
-// check (~2840 gates). Use `q_floor_div_hint` when the caller already
-// provides a sound binding for q.
-pub fn q_floor_div(n: Field, d: Field) -> Field {
-    // Safety: q is constrained by the reconstruction + range check below.
-    let (q, r) = unsafe { hint_idiv(n, d) };
-    assert(q * d + r == n, "q_floor_div: reconstruction failed");
-    let (r_neg, r_mag) = to_signed(r);
-    let (_d_neg, d_mag) = to_signed(d);
-    assert(!r_neg, "q_floor_div: negative remainder");
-    assert(r_mag < d_mag, "q_floor_div: r >= d");
     q
 }
 
@@ -331,6 +404,41 @@ fn test_qlt() {
     assert(qlt(-q_from_int(2), q_from_int(0)));
     assert(qlt(q_from_int(1), q_from_int(2)));
     assert(!qlt(q_from_int(5), q_from_int(5)));
+}
+
+// Euclidean floor-div / mod soundness across all sign combinations.
+// Values are raw integers (NOT Q-scaled); these helpers operate on the
+// integer Field cells the emitter feeds them.
+#[test]
+fn test_q_floor_div_signs() {
+    // d > 0: Euclidean == Python floor for any dividend sign.
+    assert(q_floor_div(7, 3) == 2);
+    assert(q_floor_div(-7, 3) == -3);
+    assert(q_floor_div(6, 3) == 2);
+    assert(q_floor_div(-6, 3) == -2);
+    // d < 0: Euclidean convention (matches mock/halo2, not Python).
+    assert(q_floor_div(7, -3) == -2);
+    assert(q_floor_div(-7, -3) == 3);
+}
+
+#[test]
+fn test_q_mod_signs() {
+    // Remainder is always in [0, |d|).
+    assert(q_mod(7, 3) == 1);
+    assert(q_mod(-7, 3) == 2);
+    assert(q_mod(6, 3) == 0);
+    assert(q_mod(7, -3) == 1);
+    assert(q_mod(-7, -3) == 2);
+}
+
+#[test]
+fn test_q_div_q_signs() {
+    // trunc(v / Q) toward zero. v is a raw Q-scaled Field value here.
+    assert(q_div_q(3 * Q) == 3);
+    assert(q_div_q(3 * Q + 5) == 3);
+    assert(q_div_q(-(3 * Q)) == -3);
+    // -(3Q) - 5: truncates toward zero to -3 (remainder -5 shares v's sign).
+    assert(q_div_q(-(3 * Q) - 5) == -3);
 }
 
 // ---------------------------------------------------------------------------
