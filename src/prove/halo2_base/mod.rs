@@ -462,6 +462,14 @@ fn try_build_public_layout_only(
 ) -> Result<Option<Vec<Fp>>, ProvingError> {
     let mut reads: Vec<Option<(AssignedValue<Fp>, Fp)>> = vec![None; ir.stmts.len()];
     let mut public_values = Vec::new();
+    // Buffer the instance cells locally rather than pushing them into the
+    // shared `builder.assigned_instances` as we go. If this fast path bails
+    // out partway (returns `None`), `build_circuit` re-runs the full
+    // synthesizer on the SAME builder; any instance cells leaked here would
+    // survive and be appended to the full-synthesis instances, leaving
+    // `assigned_instances` longer than the public-input vector and breaking
+    // the instance copy constraints (C17). We only commit on success.
+    let mut pending_instances: Vec<AssignedValue<Fp>> = Vec::new();
 
     for stmt in &ir.stmts {
         match &stmt.ir {
@@ -476,7 +484,7 @@ fn try_build_public_layout_only(
                 }
                 reads[idx] = Some((assigned, value));
                 if *is_public {
-                    builder.assigned_instances[0].push(assigned);
+                    pending_instances.push(assigned);
                     public_values.push(value);
                 }
             }
@@ -488,7 +496,7 @@ fn try_build_public_layout_only(
                 let Some((assigned, value)) = reads.get(arg).and_then(|v| *v) else {
                     return Ok(None);
                 };
-                builder.assigned_instances[0].push(assigned);
+                pending_instances.push(assigned);
                 public_values.push(value);
             }
             IR::AllocateMemory { .. }
@@ -501,6 +509,8 @@ fn try_build_public_layout_only(
     if public_values.is_empty() {
         return Ok(None);
     }
+    // Success: commit the buffered instance cells exactly once.
+    builder.assigned_instances[0].extend(pending_instances);
     Ok(Some(public_values))
 }
 
