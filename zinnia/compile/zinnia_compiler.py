@@ -24,6 +24,7 @@ class ZinniaCompiler:
             chips: Dict[str, InternalChipObject],
             externals: Dict[str, InternalExternalFuncObject]
     ) -> ZKCompiledProgram:
+        circuit_name = name
         time_checkpoint_s = time.time()
 
         # 1. Parse Python source -> AST dict (no intermediate AST objects)
@@ -57,15 +58,15 @@ class ZinniaCompiler:
         }
         # Build chips dict: name -> {chip_ast, return_dt}
         chips_dict = {}
-        for name, chip in chips.items():
-            chips_dict[name] = {
+        for chip_name, chip in chips.items():
+            chips_dict[chip_name] = {
                 "chip_ast": chip.chip_ast,
                 "return_dt": chip.return_dt,
             }
         # Build externals dict: name -> {return_dt}
         externals_dict = {}
-        for name, ext in externals.items():
-            externals_dict[name] = {
+        for ext_name, ext in externals.items():
+            externals_dict[ext_name] = {
                 "return_dt": ext.return_dt,
             }
         compiled_ir = compile_circuit(
@@ -84,7 +85,7 @@ class ZinniaCompiler:
         total_time = time.time() - time_checkpoint_s
 
         return ZKCompiledProgram(
-            name=name,
+            name=circuit_name,
             backend=self.config.get_backend(),
             compiled_ir=compiled_ir,
             program_inputs=program_inputs,
