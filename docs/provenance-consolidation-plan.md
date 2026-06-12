@@ -32,7 +32,13 @@ spot set proves + verifies.
 
 Step 4 DONE (a240525): compile runs on a dedicated 512 MiB-stack thread;
 5 consecutive combined-suite runs at an 8 MiB limit, zero segfaults.
-Next: Step 5 (fresh four-way re-baseline). Owner: this session.
+
+Step 5 DONE: fresh four-way sweep, single epoch, repeats 3 — canonical
+numbers in `benchmarking/FOUR_WAY_20260611.md` (Noir gates geomean
+0.601 / warm time 0.755, n=126; halo2-base warm time 0.514, n=124; all
+compared proofs verify on both sides; audit 134/134, no xfails).
+
+PLAN COMPLETE.
 
 ## Context
 
