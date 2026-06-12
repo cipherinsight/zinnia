@@ -140,6 +140,18 @@ pub struct Halo2Synthesizer {
 
 const MAX_RANGE_LOOKUP_BITS: u32 = 16;
 
+/// Bit-width of the magnitude window used to bind the `abs`/`sign`
+/// decomposition produced by the `sub_sd` and `cond_neg` gates (see
+/// `range_check_signed_magnitude`). Any honest difference or absolute value
+/// in the Zinnia integer/Q-fixed-point domain fits in this window, while the
+/// field-negation a malicious prover would need to flip `sign` lands ~254
+/// bits wide and is rejected by the lookup-backed chunk check. This is the
+/// legacy-backend analogue of halo2-base's `range_check(_, 64)` on the
+/// 2^63-shifted operands in `signed_lt`. 56 = the largest multiple of the
+/// default `lookup_bits = 8` that stays within the 63-bit `range_check_chunks`
+/// cap; for other `lookup_bits` the helper rounds down to a multiple.
+const SIGNED_MAGNITUDE_BITS: u32 = 56;
+
 impl Halo2Synthesizer {
     pub fn new(
         config: ZinniaConfig,
@@ -654,7 +666,7 @@ impl Halo2Synthesizer {
         &mut self,
         a: &Halo2CellRef,
         b: &Halo2CellRef,
-    ) -> (Halo2CellRef, Halo2CellRef, Halo2CellRef) {
+    ) -> Result<(Halo2CellRef, Halo2CellRef, Halo2CellRef), ProvingError> {
         let diff_val = a.value - b.value;
         let (abs_fp, is_neg) = kernel::signed_decompose(diff_val);
         let sign_fp = if is_neg { Fp::one() } else { Fp::zero() };
@@ -669,12 +681,18 @@ impl Halo2Synthesizer {
         let abs_cell = self.rec_advice(4, abs_fp, "ssd_abs");
         self.offset += 1;
         self.mark_bit(&sign_cell);
-        (diff_cell, abs_cell, sign_cell)
+        // Bind `abs` to the honest magnitude window so `sign` is no longer a
+        // free witness (closes C10: comparison/abs/sign malleability).
+        self.range_check_signed_magnitude(&abs_cell, "ssd_abs_rc")?;
+        Ok((diff_cell, abs_cell, sign_cell))
     }
 
     /// Constrained signed decomposition: returns (abs, is_neg) where is_neg ∈ {0,1}.
     /// Uses cond_neg gate + bit constraint on the sign.
-    fn signed_decompose(&mut self, val: &Halo2CellRef) -> (Halo2CellRef, Halo2CellRef) {
+    fn signed_decompose(
+        &mut self,
+        val: &Halo2CellRef,
+    ) -> Result<(Halo2CellRef, Halo2CellRef), ProvingError> {
         let (abs_fp, is_neg) = kernel::signed_decompose(val.value);
         let sign_fp = if is_neg { Fp::one() } else { Fp::zero() };
 
@@ -691,7 +709,11 @@ impl Halo2Synthesizer {
         // `cond_neg` gate — no separate constrain_bit row needed.
         self.mark_bit(&sign_cell);
 
-        (abs_cell, sign_cell)
+        // Bind `abs` to the honest magnitude window so `sign` is no longer a
+        // free witness (closes C10: comparison/abs/sign malleability).
+        self.range_check_signed_magnitude(&abs_cell, "sd_abs_rc")?;
+
+        Ok((abs_cell, sign_cell))
     }
 
     /// Constrained polynomial evaluation via Horner's method, in fixed-point Q
@@ -1260,6 +1282,67 @@ impl Halo2Synthesizer {
         self.range_check_chunks_with_override(val, n_bits, ann, None)
     }
 
+    /// Bind a claimed non-negative magnitude (the `abs` output of `sub_sd` /
+    /// `cond_neg`) to the honest `[0, 2^SIGNED_MAGNITUDE_BITS)` window via the
+    /// lookup-backed chunk check. Without this, `abs = diff*(1 - 2*sign)` is
+    /// satisfiable for *either* `sign`, leaving the half-field sign of `diff`
+    /// a free witness — so `lt_i`/`gt_i`/`le_i`/`ge_i`, `abs_i` and `sign_i`
+    /// would all be malleable. Range-checking `abs` rejects the field-negation
+    /// branch (which is ~254 bits wide) and pins `sign` to the true sign.
+    ///
+    /// `n_bits` is rounded down to a multiple of `lookup_bits` so the chunk
+    /// recomposition is exact (`range_check_chunks` requires the divisibility).
+    /// The rounded width still comfortably exceeds any honest i64/Q-fixed-point
+    /// magnitude in the supported range while remaining far below the modulus.
+    fn range_check_signed_magnitude(
+        &mut self,
+        abs: &Halo2CellRef,
+        ann: &str,
+    ) -> Result<(), ProvingError> {
+        let lookup_bits = self.params.lookup_bits;
+        if lookup_bits == 0 {
+            return Err(ProvingError::synthesis(
+                "range_check_signed_magnitude requires lookup_bits >= 1",
+            ));
+        }
+        let effective = lookup_bits.min(MAX_RANGE_LOOKUP_BITS);
+        // Largest multiple of `effective` that is <= SIGNED_MAGNITUDE_BITS and
+        // <= 63 (the range_check_chunks ceiling).
+        let cap = SIGNED_MAGNITUDE_BITS.min(63);
+        let n_bits = (cap / effective) * effective;
+        if n_bits == 0 {
+            return Err(ProvingError::synthesis(format!(
+                "range_check_signed_magnitude: lookup_bits ({}) too wide for the {}-bit magnitude window",
+                lookup_bits, cap
+            )));
+        }
+        self.range_check_chunks(abs, n_bits, ann)
+    }
+
+    /// Bind the remainder of a `div_mod` row to the Euclidean window
+    /// `0 <= r < |b|`. Without this the bare `a = b*q + r` gate leaves `(q, r)`
+    /// malleable — a prover can shift any multiple of `b` between `q` and `r`.
+    /// We range-check `r` (non-negativity) and `|b| - 1 - r` (the gap to the
+    /// divisor magnitude); the latter forces `r <= |b| - 1`, i.e. `r < |b|`.
+    /// `|b|` is materialised via `signed_decompose` (itself magnitude-bound).
+    fn constrain_div_mod_remainder(
+        &mut self,
+        r: &Halo2CellRef,
+        b: &Halo2CellRef,
+        ann: &str,
+    ) -> Result<(), ProvingError> {
+        // 0 <= r  (a negative r would be a ~254-bit field element, rejected).
+        self.range_check_signed_magnitude(r, &format!("{}_r_nonneg", ann))?;
+        // |b|, with its own magnitude binding.
+        let (abs_b, _) = self.signed_decompose(b)?;
+        // gap = |b| - 1 - r ; honest r in [0, |b|) makes gap in [0, |b|).
+        let one = self.constant_int(1)?;
+        let abs_b_minus_one = self.sub_i(&abs_b, &one)?;
+        let gap = self.sub_i(&abs_b_minus_one, r)?;
+        self.range_check_signed_magnitude(&gap, &format!("{}_r_lt_absb", ann))?;
+        Ok(())
+    }
+
     fn range_check_chunks_with_override(
         &mut self,
         val: &Halo2CellRef,
@@ -1583,6 +1666,92 @@ impl Halo2Synthesizer {
             Some(chunks),
         )
     }
+
+    /// C10 malicious-witness harness: emit a `lt_i`-shaped constraint bundle
+    /// (the `sub_sd` row plus its closing `is_nonzero_and`) with caller-chosen
+    /// `(diff, sign, abs)` witnesses. An honest `lt_i(a, b)` derives all three
+    /// from `a - b`; this lets a test flip `sign` (and supply the matching
+    /// field-negated `abs`) to attempt proving the *wrong* ordering. The
+    /// returned cell is the boolean `a < b` output. The `range_check_signed_
+    /// magnitude` binding on `abs` is what should reject the tamper.
+    #[cfg(test)]
+    pub(crate) fn debug_lt_i_with_witness(
+        &mut self,
+        a: Fp,
+        b: Fp,
+        diff: Fp,
+        sign: Fp,
+        abs: Fp,
+    ) -> Result<Halo2CellRef, ProvingError> {
+        let a_cell = self.alloc_free_advice(a, "dbg_lt_a");
+        let b_cell = self.alloc_free_advice(b, "dbg_lt_b");
+        let row = self.offset;
+        self.rec_sel("sub_sd");
+        let _ = self.rec_advice(0, a, "dbg_ssd_a");
+        self.rec_copy(&a_cell, 0, row);
+        let _ = self.rec_advice(1, b, "dbg_ssd_b");
+        self.rec_copy(&b_cell, 1, row);
+        let diff_cell = self.rec_advice(2, diff, "dbg_ssd_diff");
+        let sign_cell = self.rec_advice(3, sign, "dbg_ssd_sign");
+        let abs_cell = self.rec_advice(4, abs, "dbg_ssd_abs");
+        self.offset += 1;
+        self.mark_bit(&sign_cell);
+        self.range_check_signed_magnitude(&abs_cell, "dbg_ssd_abs_rc")?;
+        Ok(self.is_nonzero_and_gadget(&diff_cell, &sign_cell))
+    }
+
+    /// C10 malicious-witness harness: emit an `abs_i`-shaped `cond_neg` row
+    /// with caller-chosen `(sign, abs)`. Honest `abs_i(a)` sets `sign` to a's
+    /// true sign and `abs = |a|`; this lets a test pass `sign=1, abs=-a` to
+    /// attempt returning `-a` for a positive `a`. The magnitude range check on
+    /// `abs` is what should reject it.
+    #[cfg(test)]
+    pub(crate) fn debug_abs_i_with_witness(
+        &mut self,
+        a: Fp,
+        sign: Fp,
+        abs: Fp,
+    ) -> Result<Halo2CellRef, ProvingError> {
+        let a_cell = self.alloc_free_advice(a, "dbg_abs_a");
+        let row = self.offset;
+        self.rec_sel("cond_neg");
+        let _ = self.rec_advice(0, a, "dbg_sd_val");
+        self.rec_copy(&a_cell, 0, row);
+        let sign_cell = self.rec_advice(1, sign, "dbg_sd_sign");
+        let abs_cell = self.rec_advice(2, abs, "dbg_sd_abs");
+        self.offset += 1;
+        self.mark_bit(&sign_cell);
+        self.range_check_signed_magnitude(&abs_cell, "dbg_sd_abs_rc")?;
+        Ok(abs_cell)
+    }
+
+    /// C10 malicious-witness harness: emit a `mod_i`-shaped `div_mod` row with
+    /// caller-chosen `(q, r)`. Honest `mod_i(a, b)` uses the Euclidean
+    /// `(q, r)`; this lets a test shift a multiple of `b` between `q` and `r`
+    /// (so `a == b*q + r` still holds) and observe whether the remainder
+    /// binding `0 <= r < |b|` rejects it. Returns the `r` cell.
+    #[cfg(test)]
+    pub(crate) fn debug_mod_i_with_witness(
+        &mut self,
+        a: Fp,
+        b: Fp,
+        q: Fp,
+        r: Fp,
+    ) -> Result<Halo2CellRef, ProvingError> {
+        let a_cell = self.alloc_free_advice(a, "dbg_mod_a");
+        let b_cell = self.alloc_free_advice(b, "dbg_mod_b");
+        let row = self.offset;
+        self.rec_sel("div_mod");
+        let _ = self.rec_advice(0, a, "dbg_mod_a_g");
+        self.rec_copy(&a_cell, 0, row);
+        let _ = self.rec_advice(1, b, "dbg_mod_b_g");
+        self.rec_copy(&b_cell, 1, row);
+        let _ = self.rec_advice(2, q, "dbg_mod_q");
+        let r_cell = self.rec_advice(3, r, "dbg_mod_r");
+        self.offset += 1;
+        self.constrain_div_mod_remainder(&r_cell, &b_cell, "dbg_mod")?;
+        Ok(r_cell)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1657,8 +1826,11 @@ impl Synthesizer for Halo2Synthesizer {
         let _ = self.rec_advice(1, b.value, "fdiv_b");
         self.rec_copy(b, 1, row);
         let qc = self.rec_advice(2, q_fp, "fdiv_q");
-        let _ = self.rec_advice(3, r_fp, "fdiv_r");
+        let rc = self.rec_advice(3, r_fp, "fdiv_r");
         self.offset += 1;
+        // Bind 0 <= r < |b| so (q, r) are uniquely determined (closes C10
+        // div_mod malleability for floor_div_i / mod_i).
+        self.constrain_div_mod_remainder(&rc, b, "fdiv")?;
         Ok(qc)
     }
     fn mod_i(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
@@ -1684,6 +1856,8 @@ impl Synthesizer for Halo2Synthesizer {
         let _ = self.rec_advice(2, q_fp, "mod_q");
         let rc = self.rec_advice(3, r_fp, "mod_r");
         self.offset += 1;
+        // Bind 0 <= r < |b| so (q, r) are uniquely determined.
+        self.constrain_div_mod_remainder(&rc, b, "mod")?;
         Ok(rc)
     }
     fn pow_i(
@@ -1714,7 +1888,7 @@ impl Synthesizer for Halo2Synthesizer {
         Ok(result)
     }
     fn abs_i(&mut self, a: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        let (abs_cell, _) = self.signed_decompose(a);
+        let (abs_cell, _) = self.signed_decompose(a)?;
         Ok(abs_cell)
     }
 
@@ -1838,7 +2012,7 @@ impl Synthesizer for Halo2Synthesizer {
         // sign = (1 - is_zero) * (1 - 2*is_neg)
         // Compute each part with constrained gates.
         let iz = self.is_zero_gadget(a);
-        let (_, is_neg) = self.signed_decompose(a);
+        let (_, is_neg) = self.signed_decompose(a)?;
         // not_zero = 1 - iz (constrained via bool_not gate)
         let not_zero = self.logical_not(&iz)?;
         // two_neg = 2 * is_neg (constrained: is_neg + is_neg = two_neg)
@@ -1955,13 +2129,10 @@ impl Synthesizer for Halo2Synthesizer {
         // producing field-wrap garbage for non-exact quotients).
         //
         // Constraint shape: `div_mod` gate enforces `a_scaled == b * result + rem`,
-        // where a_scaled = a * scale (constrained via mul_i).
-        //
-        // Note: a full soundness fix would also range-check `0 <= rem < |b|`.
-        // |b| is dynamic so this is more involved than the static-`scale` range
-        // check in `mul_f`; deferred to a follow-up. The witness-side correctness
-        // (which is what makes the value-pipeline match the mock backend and
-        // matches integer division) is what this change unblocks.
+        // where a_scaled = a * scale (constrained via mul_i). The `rem` is then
+        // bound to `0 <= rem < |b|` (Euclidean window) so (result, rem) are
+        // uniquely determined — without it the bare div_mod left them malleable
+        // (closes C10 for div_f / floor_div_f / mod_f).
         let precision_bits = self.params.precision_bits;
         let scale_i = crate::prove::field::quantization_scale(precision_bits) as i64;
         let scale_cell = self.constant_int(scale_i)?;
@@ -1977,8 +2148,9 @@ impl Synthesizer for Halo2Synthesizer {
         let _ = self.rec_advice(1, b.value, "divf_b");
         self.rec_copy(b, 1, row);
         let result_cell = self.rec_advice(2, result_val, "divf_result");
-        let _ = self.rec_advice(3, rem_val, "divf_rem");
+        let rem_cell = self.rec_advice(3, rem_val, "divf_rem");
         self.offset += 1;
+        self.constrain_div_mod_remainder(&rem_cell, b, "divf")?;
         Ok(result_cell)
     }
     fn floor_div_f(
@@ -2026,7 +2198,7 @@ impl Synthesizer for Halo2Synthesizer {
         //   1. sub_sd: fused sub + signed_decompose (replaces 2 rows).
         //   2. is_nonzero_and: fused is_nonzero(diff) AND sign
         //      (replaces is_zero + bool_not + 2× truthy_bit + bool_and = 5 rows).
-        let (diff, _abs, is_neg) = self.sub_signed_decompose(a, b);
+        let (diff, _abs, is_neg) = self.sub_signed_decompose(a, b)?;
         Ok(self.is_nonzero_and_gadget(&diff, &is_neg))
     }
 
@@ -2086,7 +2258,7 @@ impl Synthesizer for Halo2Synthesizer {
         //
         // q is bounded by |a| / π; for typical Q32 inputs (|a| < 2^31) this
         // fits comfortably in i64. Parity is extracted via mod_i with b=2.
-        let (a_abs, a_sign) = self.signed_decompose(a);
+        let (a_abs, a_sign) = self.signed_decompose(a)?;
 
         // Range-reduce |a| mod π. `floor_div_i` and `mod_i` operate on the
         // i64 interpretations of Q-encoded values, which is exactly integer
@@ -2285,8 +2457,8 @@ impl Synthesizer for Halo2Synthesizer {
         x: &Halo2CellRef,
     ) -> Result<Halo2CellRef, ProvingError> {
         // Absolute values and signs.
-        let (abs_y, neg_y) = self.signed_decompose(y);
-        let (abs_x, neg_x) = self.signed_decompose(x);
+        let (abs_y, neg_y) = self.signed_decompose(y)?;
+        let (abs_x, neg_x) = self.signed_decompose(x)?;
 
         // swap = (abs_y > abs_x): use t = abs_x / abs_y instead, then a = π/2 - poly(t).
         let swap = self.gt_f(&abs_y, &abs_x)?;
@@ -2661,11 +2833,18 @@ impl Synthesizer for Halo2Synthesizer {
     // ── Casting (constrained) ─────────────────────────────────────────
 
     fn int_cast(&mut self, a: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        // Float→Int: result * scale + rem = a (constrained via div_mod)
+        // Float→Int: truncation toward zero, q = trunc(a/scale), with a
+        // *signed* remainder r (sign(r) == sign(a), |r| < scale). Soundness:
+        //   1. div_mod gate: a == scale*q + r,
+        //   2. |r| < scale = 2^precision_bits (range check on the magnitude),
+        //   3. sign(r) == sign(a) (r rebuilt from a's true sign via select),
+        // which together pin the unique truncating (q, r) — without (2)+(3)
+        // the bare div_mod left (q, r) malleable (closes C10 for int_cast).
+        let precision_bits = self.params.precision_bits;
         let scale =
-            Fp::from(crate::prove::field::quantization_scale(self.params.precision_bits) as u64);
+            Fp::from(crate::prove::field::quantization_scale(precision_bits) as u64);
         let v = kernel::fp_to_i64(a.value);
-        let scale_i = crate::prove::field::quantization_scale(self.params.precision_bits) as i64;
+        let scale_i = crate::prove::field::quantization_scale(precision_bits) as i64;
         let q = v / scale_i;
         let r = v - q * scale_i;
         let q_fp = if q >= 0 {
@@ -2684,8 +2863,26 @@ impl Synthesizer for Halo2Synthesizer {
         self.rec_copy(a, 0, row);
         let _ = self.rec_advice(1, scale, "icast_scale");
         let qc = self.rec_advice(2, q_fp, "icast_q");
-        let _ = self.rec_advice(3, r_fp, "icast_r");
+        let r_cell = self.rec_advice(3, r_fp, "icast_r");
         self.offset += 1;
+
+        // |r| < scale: range-check the remainder magnitude to precision_bits.
+        let r_mag_val = if r >= 0 {
+            Fp::from(r as u64)
+        } else {
+            Fp::from((-r) as u64)
+        };
+        let r_mag = self.alloc_free_advice(r_mag_val, "icast_r_mag");
+        self.range_check_chunks(&r_mag, precision_bits, "icast_r_mag_rc")?;
+
+        // sign(r) == sign(a): rebuild r from a's true sign bit. `lt_i(a, 0)`
+        // is the sound sign bit (now magnitude-bound), and select pins r so
+        // the prover cannot flip its sign independently of `a`.
+        let zero = self.constant_int(0)?;
+        let sign = self.lt_i(a, &zero)?;
+        let neg_r_mag = self.sub_i(&zero, &r_mag)?;
+        let r_rebuilt = self.select(&sign, &neg_r_mag, &r_mag)?;
+        self.constrain_equal_cells(&r_rebuilt, &r_cell, "icast_r_signed");
         Ok(qc)
     }
     fn float_cast(&mut self, a: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {

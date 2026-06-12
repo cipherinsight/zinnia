@@ -329,6 +329,141 @@ impl Circuit<Fp> for MaliciousProductSumFStepCircuit {
     }
 }
 
+// ── C10: comparison / abs / div_mod malleability (malicious witnesses) ──
+//
+// These circuits tamper at the halo2 witness level — exactly the threat
+// model a malicious prover operates in (they bypass Zinnia's synthesizer,
+// which would compute the honest witness). Each builds the raw gate bundle
+// for a gadget (`lt_i`, `abs_i`, `mod_i`) with attacker-chosen sign / abs /
+// (q, r) witnesses that still satisfy the *algebraic* gate (`a-b=diff`,
+// `diff*(1-2*sign)=abs`, `a=b*q+r`), then relies on the range-check binding
+// added in the C10 fix to reject the out-of-window magnitude. Before the fix
+// these all verified (sign / abs / (q,r) were free witnesses); after the fix
+// the lookup-backed magnitude check rejects them.
+
+#[derive(Clone)]
+struct MaliciousLtSignFlipCircuit {
+    params: ProvingParams,
+}
+
+#[derive(Clone)]
+struct MaliciousAbsNegateCircuit {
+    params: ProvingParams,
+}
+
+#[derive(Clone)]
+struct MaliciousModRemainderCircuit {
+    params: ProvingParams,
+}
+
+impl Circuit<Fp> for MaliciousLtSignFlipCircuit {
+    type Config = ZinniaConfig;
+    type FloorPlanner = SimpleFloorPlanner;
+    type Params = ();
+    fn without_witnesses(&self) -> Self {
+        self.clone()
+    }
+    fn configure(meta: &mut ConstraintSystem<Fp>) -> Self::Config {
+        ZinniaConfig::configure(meta)
+    }
+    fn synthesize(
+        &self,
+        config: Self::Config,
+        mut layouter: impl Layouter<Fp>,
+    ) -> Result<(), Error> {
+        let mut synth = Halo2Synthesizer::new(config, None, self.params.clone());
+        // Honest: a=7, b=3, so a<b is FALSE (diff=4>0, sign=0).
+        // Malicious: claim a<b TRUE by flipping sign to 1, which forces the
+        // matching abs = diff*(1-2*sign) = 4 * (1-2) = -4 = p-4 (a ~254-bit
+        // field element). The sub_sd gate is still satisfied; only the
+        // abs range check can reject the negated magnitude.
+        let a = Fp::from(7u64);
+        let b = Fp::from(3u64);
+        let diff = a - b; // 4
+        let malicious_sign = Fp::one();
+        let malicious_abs = diff * (Fp::one() - Fp::from(2u64) * malicious_sign); // -4
+        synth
+            .debug_lt_i_with_witness(a, b, diff, malicious_sign, malicious_abs)
+            .map_err(|_| Error::Synthesis)?;
+        synth.load_range_table(&mut layouter)?;
+        let assigned = layouter.assign_region(
+            || "malicious_lt_sign_flip",
+            |mut region| synth.replay_into_region(&mut region),
+        )?;
+        synth.expose_instances(&mut layouter, &assigned)
+    }
+}
+
+impl Circuit<Fp> for MaliciousAbsNegateCircuit {
+    type Config = ZinniaConfig;
+    type FloorPlanner = SimpleFloorPlanner;
+    type Params = ();
+    fn without_witnesses(&self) -> Self {
+        self.clone()
+    }
+    fn configure(meta: &mut ConstraintSystem<Fp>) -> Self::Config {
+        ZinniaConfig::configure(meta)
+    }
+    fn synthesize(
+        &self,
+        config: Self::Config,
+        mut layouter: impl Layouter<Fp>,
+    ) -> Result<(), Error> {
+        let mut synth = Halo2Synthesizer::new(config, None, self.params.clone());
+        // Honest abs(5) = 5 (sign=0, abs=5). Malicious: sign=1 makes
+        // abs = 5*(1-2) = -5 = p-5, i.e. abs_i returns the negation. The
+        // cond_neg gate is satisfied; the magnitude range check must reject.
+        let a = Fp::from(5u64);
+        let malicious_sign = Fp::one();
+        let malicious_abs = a * (Fp::one() - Fp::from(2u64) * malicious_sign); // -5
+        synth
+            .debug_abs_i_with_witness(a, malicious_sign, malicious_abs)
+            .map_err(|_| Error::Synthesis)?;
+        synth.load_range_table(&mut layouter)?;
+        let assigned = layouter.assign_region(
+            || "malicious_abs_negate",
+            |mut region| synth.replay_into_region(&mut region),
+        )?;
+        synth.expose_instances(&mut layouter, &assigned)
+    }
+}
+
+impl Circuit<Fp> for MaliciousModRemainderCircuit {
+    type Config = ZinniaConfig;
+    type FloorPlanner = SimpleFloorPlanner;
+    type Params = ();
+    fn without_witnesses(&self) -> Self {
+        self.clone()
+    }
+    fn configure(meta: &mut ConstraintSystem<Fp>) -> Self::Config {
+        ZinniaConfig::configure(meta)
+    }
+    fn synthesize(
+        &self,
+        config: Self::Config,
+        mut layouter: impl Layouter<Fp>,
+    ) -> Result<(), Error> {
+        let mut synth = Halo2Synthesizer::new(config, None, self.params.clone());
+        // a=17, b=5. Honest mod: q=3, r=2 (0 <= r < 5). Malicious: shift one
+        // multiple of b out of q into r: q=2, r=7. `a == b*q + r` still holds
+        // (5*2+7 = 17), but r=7 >= |b|=5, so `mod_i(17,5)` would return 7
+        // instead of 2. The remainder binding 0 <= r < |b| must reject it.
+        let a = Fp::from(17u64);
+        let b = Fp::from(5u64);
+        let malicious_q = Fp::from(2u64);
+        let malicious_r = Fp::from(7u64);
+        synth
+            .debug_mod_i_with_witness(a, b, malicious_q, malicious_r)
+            .map_err(|_| Error::Synthesis)?;
+        synth.load_range_table(&mut layouter)?;
+        let assigned = layouter.assign_region(
+            || "malicious_mod_remainder",
+            |mut region| synth.replay_into_region(&mut region),
+        )?;
+        synth.expose_instances(&mut layouter, &assigned)
+    }
+}
+
 /// ProductSumF operands are adjacent float pairs:
 /// `[lhs0, rhs0, lhs1, rhs1, ...]`. The `len` payload is the number of
 /// pairs. Raw products are accumulated first, then the total is rescaled once,
@@ -559,8 +694,10 @@ fn test_floor_div() {
         (IR::ConstantInt { value: 3 }, vec![]),
         (IR::FloorDivI, vec![0, 1]),
     ]);
+    // floor_div_i now range-checks 0 <= r < |b| (C10 fix) → needs the lookup
+    // table; k=5 no longer fits.
     let params = ProvingParams {
-        k: 5,
+        k: 12,
         ..Default::default()
     };
     mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
@@ -573,8 +710,9 @@ fn test_mod() {
         (IR::ConstantInt { value: 3 }, vec![]),
         (IR::ModI, vec![0, 1]),
     ]);
+    // mod_i now range-checks 0 <= r < |b| (C10 fix) → needs the lookup table.
     let params = ProvingParams {
-        k: 5,
+        k: 12,
         ..Default::default()
     };
     mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
@@ -639,8 +777,11 @@ fn test_lt() {
         (IR::ConstantInt { value: 5 }, vec![]),
         (IR::LtI, vec![0, 1]),
     ]);
+    // lt_i now magnitude-range-checks its decomposition (C10 soundness fix),
+    // so the circuit needs the lookup table (2^lookup_bits rows) plus the
+    // chunk rows — k=7 (128 rows) no longer fits.
     let params = ProvingParams {
-        k: 7,
+        k: 12,
         ..Default::default()
     };
     mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
@@ -652,8 +793,9 @@ fn test_sign() {
         (IR::ConstantInt { value: 5 }, vec![]),
         (IR::SignI, vec![0]),
     ]);
+    // sign_i decomposes via signed_decompose, now magnitude-bound (C10 fix).
     let params = ProvingParams {
-        k: 8,
+        k: 12,
         ..Default::default()
     };
     mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
@@ -665,8 +807,9 @@ fn test_abs() {
         (IR::ConstantInt { value: -7 }, vec![]),
         (IR::AbsI, vec![0]),
     ]);
+    // abs_i now magnitude-range-checks its decomposition (C10 fix).
     let params = ProvingParams {
-        k: 6,
+        k: 12,
         ..Default::default()
     };
     mock_prove(&ir, &empty_resolved(&params), &params, vec![]).unwrap();
@@ -927,6 +1070,87 @@ fn test_product_sum_f_step_rejects_accumulator_mismatch() {
         .expect_err("ProductSumF step must reject acc_cur != acc_prev+q");
 }
 
+// ── C10 malleability rejection tests ────────────────────────────────────
+//
+// Each asserts the tampered comparison / abs / div_mod witness is *rejected*
+// by MockProver after the C10 fix. The rejection is the lookup-backed
+// `range_check_signed_magnitude` (`abs`) or `constrain_div_mod_remainder`
+// (`r`): the field-negated magnitude / out-of-window remainder fails the
+// range table. Before the fix these circuits verified (documented in the
+// C10 commit body).
+
+#[test]
+fn test_lt_i_rejects_sign_flip() {
+    let params = ProvingParams {
+        k: 12,
+        precision_bits: 32,
+        lookup_bits: 8,
+    };
+    let circuit = MaliciousLtSignFlipCircuit {
+        params: params.clone(),
+    };
+    let prover = MockProver::run(params.k, &circuit, vec![vec![]]).unwrap();
+    let err = prover.verify().expect_err(
+        "lt_i must reject a flipped sign witness (claiming 7 < 3) even though the sub_sd gate holds",
+    );
+    // The magnitude binding rejects either at the lookup (chunk not in table)
+    // or at the recomposition copy-constraint: the field-negated abs (p-4)
+    // decomposes from its truncated i64 to chunks that cannot recompose back
+    // to p-4, so the chunk-sum copy equality fails. Either is the C10 binding
+    // doing its job; before the fix there was no such check and it verified.
+    let msg = format!("{:?}", err);
+    assert!(
+        msg.contains("Lookup") || msg.contains("Equality constraint not satisfied"),
+        "expected a magnitude range-check rejection (lookup or recomposition) for the negated abs, got {msg}",
+    );
+}
+
+#[test]
+fn test_abs_i_rejects_negation() {
+    let params = ProvingParams {
+        k: 12,
+        precision_bits: 32,
+        lookup_bits: 8,
+    };
+    let circuit = MaliciousAbsNegateCircuit {
+        params: params.clone(),
+    };
+    let prover = MockProver::run(params.k, &circuit, vec![vec![]]).unwrap();
+    let err = prover
+        .verify()
+        .expect_err("abs_i must reject sign=1 / abs=-a (returning the negation) even though cond_neg holds");
+    let msg = format!("{:?}", err);
+    assert!(
+        msg.contains("Lookup") || msg.contains("Equality constraint not satisfied"),
+        "expected a magnitude range-check rejection (lookup or recomposition) for the negated abs, got {msg}",
+    );
+}
+
+#[test]
+fn test_mod_i_rejects_out_of_window_remainder() {
+    let params = ProvingParams {
+        k: 12,
+        precision_bits: 32,
+        lookup_bits: 8,
+    };
+    let circuit = MaliciousModRemainderCircuit {
+        params: params.clone(),
+    };
+    let prover = MockProver::run(params.k, &circuit, vec![vec![]]).unwrap();
+    // r=7, |b|=5: the gap |b|-1-r = -3 is a ~254-bit field element. Its
+    // magnitude check rejects either at the lookup or, as the negated gap
+    // decomposes from its truncated i64, at the recomposition copy-constraint.
+    // (r itself is in range.) Before the fix r was unconstrained and verified.
+    let err = prover.verify().expect_err(
+        "mod_i must reject r >= |b| (shifting a multiple of b between q and r) even though a==b*q+r holds",
+    );
+    let msg = format!("{:?}", err);
+    assert!(
+        msg.contains("Lookup") || msg.contains("Equality constraint not satisfied"),
+        "expected a remainder range-check rejection (lookup or recomposition) for r >= |b|, got {msg}",
+    );
+}
+
 #[test]
 fn test_mulf_rejects_unsupported_lookup_chunk_shape() {
     let ir = make_graph(vec![
@@ -983,6 +1207,9 @@ fn halo2_metadata_assertion_rejects_corrupted_runtime_shape() {
             vec![1, 2],
         ),
     ]);
+    // AssertDynamicNDArrayMeta lowers to comparisons, which now carry
+    // magnitude range checks (C10 fix) → needs the lookup table; k=8 (256
+    // rows) no longer fits the table plus the chunk/gadget rows.
     let witness = CircuitInputs {
         params: vec![InputParam {
             name: "x".to_string(),
@@ -1003,7 +1230,7 @@ fn halo2_metadata_assertion_rejects_corrupted_runtime_shape() {
         }],
     };
     let params = ProvingParams {
-        k: 8,
+        k: 12,
         ..Default::default()
     };
     let resolved = ResolvedWitness::new(witness, params.precision_bits);
@@ -1857,3 +2084,4 @@ fn hex_decode_for_test(s: &str) -> Vec<u8> {
 fn hex_encode_for_test(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
+
