@@ -99,6 +99,72 @@ pub fn resolve_axis(axis: i64, ndim: usize, op: &str) -> usize {
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// Slice coordinate resolution
+// ────────────────────────────────────────────────────────────────────────
+
+/// CPython `slice.indices()` semantics: sign-dependent defaults, negative
+/// wrapping, and clamping. Returns the enumerated coordinates the slice
+/// selects, in iteration order.
+///
+/// `None` for any of `start`/`stop`/`step` means the bound is absent and the
+/// Pythonic default for the step sign applies:
+///   step > 0 → start = 0,       stop = len
+///   step < 0 → start = len - 1,  stop = -1 (exclusive, "before index 0")
+///
+/// Explicit negative bounds wrap by `len` and clamp to `[0, len]`. `step == 0`
+/// panics (matching CPython's `ValueError: slice step cannot be zero`).
+///
+/// This is the single source of truth for static slice-coordinate
+/// enumeration; read- and write-side paths both build on it.
+pub fn resolve_slice(
+    len: usize,
+    start: Option<i64>,
+    stop: Option<i64>,
+    step: Option<i64>,
+) -> Vec<usize> {
+    let len_i = len as i64;
+    let st = step.unwrap_or(1);
+    assert!(st != 0, "slice step cannot be zero");
+    let s = match start {
+        None => {
+            if st > 0 {
+                0
+            } else {
+                len_i - 1
+            }
+        }
+        Some(raw) if raw < 0 => (len_i + raw).max(0),
+        Some(raw) => raw.min(len_i),
+    };
+    let e = match stop {
+        None => {
+            if st > 0 {
+                len_i
+            } else {
+                -1
+            }
+        }
+        Some(raw) if raw < 0 => (len_i + raw).max(0),
+        Some(raw) => raw.min(len_i),
+    };
+    let mut coords = Vec::new();
+    if st > 0 {
+        let mut i = s;
+        while i < e {
+            coords.push(i as usize);
+            i += st;
+        }
+    } else {
+        let mut i = s;
+        while i > e {
+            coords.push(i as usize);
+            i += st;
+        }
+    }
+    coords
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // Tests
 // ────────────────────────────────────────────────────────────────────────
 
@@ -191,5 +257,51 @@ mod tests {
     #[should_panic(expected = "out of bounds")]
     fn resolve_axis_too_negative() {
         resolve_axis(-5, 3, "test");
+    }
+
+    // resolve_slice mirrors CPython slice.indices(); cases checked against
+    // numpy/CPython directly.
+    #[test]
+    fn resolve_slice_positive_defaults() {
+        assert_eq!(resolve_slice(5, None, None, None), vec![0, 1, 2, 3, 4]);
+        assert_eq!(resolve_slice(5, Some(1), Some(4), None), vec![1, 2, 3]);
+        assert_eq!(resolve_slice(8, Some(1), Some(7), Some(2)), vec![1, 3, 5]);
+    }
+
+    #[test]
+    fn resolve_slice_negative_step_defaults() {
+        // a[::-1] over len 5 → [4,3,2,1,0]
+        assert_eq!(resolve_slice(5, None, None, Some(-1)), vec![4, 3, 2, 1, 0]);
+        // a[::-2] over len 7 → [6,4,2,0]
+        assert_eq!(resolve_slice(7, None, None, Some(-2)), vec![6, 4, 2, 0]);
+        // a[3::-1] → [3,2,1,0]
+        assert_eq!(resolve_slice(5, Some(3), None, Some(-1)), vec![3, 2, 1, 0]);
+        // a[:1:-1] over len 5 → [4,3,2]
+        assert_eq!(resolve_slice(5, None, Some(1), Some(-1)), vec![4, 3, 2]);
+    }
+
+    #[test]
+    fn resolve_slice_negative_bounds_wrap() {
+        // a[-2::-1] over len 5 → start = 3 → [3,2,1,0]
+        assert_eq!(resolve_slice(5, Some(-2), None, Some(-1)), vec![3, 2, 1, 0]);
+        // a[-4:-1] over len 5 → [1,2,3]
+        assert_eq!(resolve_slice(5, Some(-4), Some(-1), None), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn resolve_slice_empty() {
+        // a[3:1] positive step, start past stop → empty
+        assert_eq!(resolve_slice(5, Some(3), Some(1), None), Vec::<usize>::new());
+        // a[1:3:-1] negative step, start before stop → empty
+        assert_eq!(
+            resolve_slice(5, Some(1), Some(3), Some(-1)),
+            Vec::<usize>::new()
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "slice step cannot be zero")]
+    fn resolve_slice_zero_step_panics() {
+        resolve_slice(5, None, None, Some(0));
     }
 }

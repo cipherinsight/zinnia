@@ -358,41 +358,19 @@ pub fn static_array_setitem(
                 match idx {
                     SliceIndex::Single(_) => { /* axis collapsed */ }
                     SliceIndex::Range(s, e, st) => {
-                        let dim = shape[ax] as i64;
-                        let resolve = |v: &Option<Value>, def: i64| -> i64 {
+                        let resolve = |v: &Option<Value>| -> Option<i64> {
                             match v.as_ref() {
-                                Some(Value::None) | None => def,
-                                Some(val) => val.int_val().unwrap_or(def),
+                                Some(Value::None) | None => None,
+                                Some(val) => val.int_val(),
                             }
                         };
-                        let ss = resolve(s, 0);
-                        let ee = resolve(e, dim);
-                        let stst = resolve(st, 1);
-                        let ss = if ss < 0 {
-                            (dim + ss).max(0)
-                        } else {
-                            ss.min(dim)
-                        };
-                        let ee = if ee < 0 {
-                            (dim + ee).max(0)
-                        } else {
-                            ee.min(dim)
-                        };
-                        let mut count = 0usize;
-                        if stst > 0 {
-                            let mut i = ss;
-                            while i < ee {
-                                count += 1;
-                                i += stst;
-                            }
-                        } else if stst < 0 {
-                            let mut i = ss;
-                            while i > ee {
-                                count += 1;
-                                i += stst;
-                            }
-                        }
-                        target_cells *= count;
+                        let coords = super::super::shape_arith::resolve_slice(
+                            shape[ax],
+                            resolve(s),
+                            resolve(e),
+                            resolve(st),
+                        );
+                        target_cells *= coords.len();
                     }
                     _ => {}
                 }
@@ -698,28 +676,21 @@ fn legacy_set_nested(
             current.clone()
         }
         SliceIndex::Range(start, stop, step) => {
-            let len = data.values.len() as i64;
-            let start_i = start.as_ref().and_then(|v| v.int_val()).unwrap_or(0);
-            let stop_i = stop.as_ref().and_then(|v| v.int_val()).unwrap_or(len);
-            let step_val = step.as_ref().and_then(|v| v.int_val()).unwrap_or(1);
-            let start_idx = if start_i < 0 {
-                (len + start_i).max(0)
-            } else {
-                start_i.min(len)
-            } as usize;
-            let stop_idx = if stop_i < 0 {
-                (len + stop_i).max(0)
-            } else {
-                stop_i.min(len)
-            } as usize;
+            let coords = super::super::shape_arith::resolve_slice(
+                data.values.len(),
+                start.as_ref().and_then(|v| v.int_val()),
+                stop.as_ref().and_then(|v| v.int_val()),
+                step.as_ref().and_then(|v| v.int_val()),
+            );
 
             let mut new_values = data.values.clone();
             let mut new_types = data.elements_type.clone();
             if indices.len() > 1 {
                 if let Value::List(rhs_data) | Value::Tuple(rhs_data) = value {
-                    let mut rhs_idx = 0;
-                    let mut i = start_idx;
-                    while i < stop_idx && rhs_idx < rhs_data.values.len() {
+                    for (rhs_idx, &i) in coords.iter().enumerate() {
+                        if rhs_idx >= rhs_data.values.len() {
+                            break;
+                        }
                         new_values[i] = legacy_set_nested(
                             b,
                             &new_values[i],
@@ -727,33 +698,26 @@ fn legacy_set_nested(
                             &rhs_data.values[rhs_idx],
                         );
                         new_types[i] = new_values[i].zinnia_type();
-                        rhs_idx += 1;
-                        i += step_val as usize;
                     }
                 } else {
                     // Scalar RHS — broadcast inner.
-                    let mut i = start_idx;
-                    while i < stop_idx {
+                    for &i in &coords {
                         new_values[i] = legacy_set_nested(b, &new_values[i], &indices[1..], value);
                         new_types[i] = new_values[i].zinnia_type();
-                        i += step_val as usize;
                     }
                 }
             } else if let Value::List(rhs_data) | Value::Tuple(rhs_data) = value {
-                let mut rhs_idx = 0;
-                let mut i = start_idx;
-                while i < stop_idx && rhs_idx < rhs_data.values.len() {
+                for (rhs_idx, &i) in coords.iter().enumerate() {
+                    if rhs_idx >= rhs_data.values.len() {
+                        break;
+                    }
                     new_values[i] = rhs_data.values[rhs_idx].clone();
                     new_types[i] = new_values[i].zinnia_type();
-                    rhs_idx += 1;
-                    i += step_val as usize;
                 }
             } else {
-                let mut i = start_idx;
-                while i < stop_idx {
+                for &i in &coords {
                     new_values[i] = value.clone();
                     new_types[i] = new_values[i].zinnia_type();
-                    i += step_val as usize;
                 }
             }
             if is_tuple {
@@ -1085,26 +1049,9 @@ fn static_array_slice_setitem(
                     && (!is_present(step) || st_static.is_some());
 
                 if all_static {
-                    let s = s_static.unwrap_or(0);
-                    let e = e_static.unwrap_or(dim);
-                    let st = st_static.unwrap_or(1);
-                    let s = if s < 0 { (dim + s).max(0) } else { s.min(dim) };
-                    let e = if e < 0 { (dim + e).max(0) } else { e.min(dim) };
-                    assert!(st != 0, "slice step cannot be zero");
-                    let mut coords: Vec<usize> = Vec::new();
-                    if st > 0 {
-                        let mut i = s;
-                        while i < e {
-                            coords.push(i as usize);
-                            i += st;
-                        }
-                    } else {
-                        let mut i = s;
-                        while i > e {
-                            coords.push(i as usize);
-                            i += st;
-                        }
-                    }
+                    let coords = super::super::shape_arith::resolve_slice(
+                        shape[ax], s_static, e_static, st_static,
+                    );
                     value_shape.push(coords.len());
                     axis_specs.push((ax, AxisCoords::Static(coords)));
                 } else {

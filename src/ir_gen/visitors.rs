@@ -1764,29 +1764,16 @@ impl IRGenerator {
         slice: &SliceIndex,
     ) -> Value {
         if let SliceIndex::Range(start, stop, step) = slice {
-            let len = data.values.len() as i64;
-            let start_idx = start.as_ref().and_then(|v| v.int_val()).unwrap_or(0);
-            let stop_idx = stop.as_ref().and_then(|v| v.int_val()).unwrap_or(len);
-            let step_val = step.as_ref().and_then(|v| v.int_val()).unwrap_or(1);
-            let start_idx = if start_idx < 0 {
-                (len + start_idx).max(0)
-            } else {
-                start_idx.min(len)
-            };
-            let stop_idx = if stop_idx < 0 {
-                (len + stop_idx).max(0)
-            } else {
-                stop_idx.min(len)
-            };
-
-            let mut result_values = Vec::new();
-            let mut i = start_idx;
-            while (step_val > 0 && i < stop_idx) || (step_val < 0 && i > stop_idx) {
-                if i >= 0 && (i as usize) < data.values.len() {
-                    result_values.push(data.values[i as usize].clone());
-                }
-                i += step_val;
-            }
+            let coords = crate::helpers::shape_arith::resolve_slice(
+                data.values.len(),
+                start.as_ref().and_then(|v| v.int_val()),
+                stop.as_ref().and_then(|v| v.int_val()),
+                step.as_ref().and_then(|v| v.int_val()),
+            );
+            let result_values: Vec<Value> = coords
+                .iter()
+                .map(|&i| data.values[i].clone())
+                .collect();
             let types = result_values.iter().map(|v| v.zinnia_type()).collect();
             Value::List(CompositeData {
                 elements_type: types,

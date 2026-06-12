@@ -340,25 +340,12 @@ pub fn dyn_setitem_slice(
                         || st_static.is_some());
 
                 if all_static {
-                    let s = s_static.unwrap_or(0);
-                    let e = e_static.unwrap_or(dim);
-                    let st = st_static.unwrap_or(1);
-                    let s = if s < 0 { (dim + s).max(0) } else { s.min(dim) } as usize;
-                    let e = if e < 0 { (dim + e).max(0) } else { e.min(dim) } as usize;
-                    let mut coords = Vec::new();
-                    if st > 0 {
-                        let mut i = s;
-                        while i < e {
-                            coords.push(i);
-                            i += st as usize;
-                        }
-                    } else {
-                        let mut i = s;
-                        while i > e {
-                            coords.push(i);
-                            i = i.wrapping_sub((-st) as usize);
-                        }
-                    }
+                    let coords = crate::helpers::shape_arith::resolve_slice(
+                        shape[ax],
+                        s_static,
+                        e_static,
+                        st_static,
+                    );
                     value_shape.push(coords.len());
                     axis_specs.push(AxisSpec {
                         coords: AxisCoords::Static(coords),
