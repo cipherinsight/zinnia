@@ -41,6 +41,22 @@ pub fn emit_circuit(
     witness: &ResolvedWitness,
     params: &ProvingParams,
 ) -> Result<EmitOutput, ProvingError> {
+    // Honest cap: the Noir baselines (and `noir_fpc`'s `Q` global) hardcode
+    // Q32 fixed-point. The float quantization here (`Q_BITS`) and the
+    // library's rescale arithmetic both assume scale == 2^32, so a caller
+    // requesting a different `precision_bits` would silently get the wrong
+    // fixed-point semantics. Reject loudly rather than mis-quantize. True
+    // parameterization would require code-generating the lib's `Q` global.
+    if params.precision_bits != Q_BITS {
+        return Err(ProvingError::synthesis(format!(
+            "Noir backend only supports precision_bits == {} (Q32 fixed-point is \
+             hardcoded in noir_fpc's `Q` global); got precision_bits == {}. \
+             Re-run with precision_bits=32 or use the halo2 backend for other \
+             precisions.",
+            Q_BITS, params.precision_bits
+        )));
+    }
+
     let prover_toml = emit_prover_toml(witness);
 
     let input_params = derive_input_params(witness);
@@ -92,7 +108,11 @@ fn write_param(out: &mut String, name: &str, node: &InputNode) {
             let _ = writeln!(out, "{} = \"{}\"", name, q);
         }
         InputNode::Bool(v) => {
-            let _ = writeln!(out, "{} = {}", name, v);
+            // The parameter is declared `Field` in `fn main` (booleans
+            // arrive as Field 0/1), so the Prover.toml value must be the
+            // string-quoted field literal `"1"`/`"0"`. A bare TOML
+            // `true`/`false` is a nargo type error against a Field param.
+            let _ = writeln!(out, "{} = \"{}\"", name, if *v { 1u8 } else { 0 });
         }
         InputNode::Hex(s) => {
             let _ = writeln!(out, "{} = \"{}\"", name, s);
@@ -1481,34 +1501,40 @@ fn input_node_concrete(node: &InputNode) -> (String, ConcreteValue) {
 // We do not bind redundant indexes — each read is a new SSA var so the
 // IR's ValueId semantics are preserved.
 
-fn input_index_expr(path: &InputPath, inputs: &[EmittedInput]) -> String {
+fn input_index_expr(
+    path: &InputPath,
+    inputs: &[EmittedInput],
+) -> Result<String, ProvingError> {
     let kind = inputs
         .iter()
         .find(|i| i.name == path.param)
         .map(|i| &i.kind);
     match kind {
-        Some(InputKind::ScalarField) | Some(InputKind::Bool) | None => path.param.clone(),
+        Some(InputKind::ScalarField) | Some(InputKind::Bool) | None => Ok(path.param.clone()),
         Some(InputKind::ArrayField { .. }) => {
-            // Compute the flat index from the segments.
-            let mut flat: u64 = 0;
-            for s in &path.segments {
-                if let PathSegment::Index(i) = s {
-                    flat = flat.saturating_mul(1).saturating_add(*i as u64);
-                }
-            }
-            // Single-axis case: just use the first Index segment.
+            // Zinnia's IR-gen flattens `path.segments` to a single Index
+            // for NDArray reads on every kernel we emit — the witness
+            // Array reaching us is already flat-leaves. The single-axis
+            // case is therefore the only sound one to index here.
             if path.segments.len() == 1 {
                 if let Some(PathSegment::Index(i)) = path.segments.first() {
-                    return format!("{}[{}]", path.param, i);
+                    return Ok(format!("{}[{}]", path.param, i));
                 }
             }
-            // Multi-axis: the witness Array we get is already flat-leaves,
-            // so the flat index is just the LAST Index segment + rolling
-            // sum scaled by per-segment widths — but Zinnia's IR-gen
-            // already flattens path.segments to a single Index for
-            // NDArray reads on most kernels we care about. As a fallback,
-            // use the flat composition above.
-            format!("{}[{}]", path.param, flat)
+            // Multi-axis fallback removed: the previous code summed index
+            // segments (`flat += i`) which is wrong for any genuine
+            // multi-axis input (strides are unavailable in `EmittedInput`).
+            // Fail loud rather than emit a silently-wrong flat index. If a
+            // real kernel ever lands here, thread shape/stride info through
+            // `EmittedInput` and compute the true flat index.
+            Err(ProvingError::UnsupportedIR {
+                op_name: format!(
+                    "noir-emit:multi-axis input index ({} segments) on param `{}` — \
+                     IR-gen did not flatten; flat index unavailable without strides",
+                    path.segments.len(),
+                    path.param
+                ),
+            })
         }
     }
 }
@@ -2366,13 +2392,42 @@ impl Synthesizer for NoirEmitter<'_> {
         Ok(self.bind(&format!("{} * {}", self.as_field(a), Q_U64)))
     }
     fn bool_cast(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
-        // Treat any nonzero as 1 — we lack a generic field-to-bool. For
-        // the kernels in scope (0/1 already), identity suffices.
-        Ok(a.clone())
+        // `bool(x)` must map any nonzero `x` to 1 and 0 to 0 — matching the
+        // mock backend and Python truthiness. `bound_analysis` stamps the
+        // result `<= 1`, so the circuit MUST actually produce 0/1.
+        //
+        // Fast path (identity, 0 gates): the operand is provably already in
+        // {0,1}. Two STRUCTURAL signals (witness-independent, per the
+        // witness-independence rule — never `int_of`/`bound_of`-via-witness):
+        //   - a structural literal 0/1 (`s_int_of`), or
+        //   - a forward-dataflow analysis bound of <= 1 (`bound_of`, which
+        //     is populated from IR constants + dataflow, not witness folding;
+        //     e.g. the output of a prior comparison/BoolCast).
+        let already_boolean = matches!(self.s_int_of(a), Some(0) | Some(1))
+            || matches!(self.bound_of(a), Some(b) if b <= 1);
+
+        let folded = self.int_of(a).map(|x| if x != 0 { 1i128 } else { 0 });
+
+        if already_boolean {
+            // Identity suffices; carry the (now provably-true) <= 1 bound and
+            // any folded value forward.
+            let v = self.bind(&self.as_field(a));
+            self.set_bound(&v, 1);
+            self.fold_i(&v, folded);
+            return Ok(v);
+        }
+
+        // General Field path: real truthiness gadget. `if x == 0 { 0 } else
+        // { 1 }` is ~2 ACIR gates (one equality, one select) and is sound for
+        // any field value. The result is a genuine 0/1 cell.
+        let v = self.bind(&format!("if {} == 0 {{ 0 }} else {{ 1 }}", self.as_field(a)));
+        self.set_bound(&v, 1);
+        self.fold_i(&v, folded);
+        Ok(v)
     }
 
     fn read_input(&mut self, path: &InputPath, _is_public: bool) -> Result<CellRef, ProvingError> {
-        let expr = input_index_expr(path, &self.inputs);
+        let expr = input_index_expr(path, &self.inputs)?;
         let v = self.bind(&expr);
         if let Some((_decimal, concrete)) = self.resolve_path_concrete(path) {
             self.value_cache.insert(v.clone(), concrete);
