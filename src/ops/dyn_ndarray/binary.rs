@@ -179,6 +179,37 @@ pub fn dyn_scalar_binary_op(
 
     let segment_id = crate::helpers::segment::alloc_and_write_values(b, &out_elements, out_dtype);
 
+    // Mask-read view propagation: lane k of the output is `op(lane k)`,
+    // so the packed-kept-sources invariant survives with the same op
+    // applied to each source. Restricted to add/sub (plain field ops —
+    // harmless if the transformed view is never consumed) plus integer
+    // mul; float mul/div would duplicate expensive rescales.
+    let cheap = matches!(op, "add" | "sub")
+        || (op == "mul" && out_dtype == NumberType::Integer);
+    if cheap {
+        if let Some(view) = b.provenance.mask_read_view(arr.segment_id).cloned() {
+            let new_sources: Vec<Value> = view
+                .sources
+                .iter()
+                .map(|src| {
+                    if scalar_is_lhs {
+                        apply_scalar_binary_op(b, op, scalar, src)
+                    } else {
+                        apply_scalar_binary_op(b, op, src, scalar)
+                    }
+                })
+                .collect();
+            b.provenance.set_mask_read_view(
+                segment_id,
+                crate::provenance::MaskReadView {
+                    mask_cells: view.mask_cells,
+                    sources: new_sources,
+                    count_stmt: view.count_stmt,
+                },
+            );
+        }
+    }
+
     // Scalar broadcast: output envelope = input array's envelope (§3.2).
     let out_val = Value::DynamicNDArray(DynamicNDArrayData {
         envelope: arr.envelope.clone(),

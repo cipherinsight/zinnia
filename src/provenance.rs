@@ -248,6 +248,32 @@ pub struct SliceView {
     pub step: i64,
 }
 
+/// Mask-read provenance (builder-phase only, like [`SliceView`]: carries
+/// `Value`s, never serialized): the annotated segment holds `arr[mask]`
+/// — the elements of `sources` whose `mask_cells` bit is true, packed to
+/// the front in source order, default-padded. Both vectors are indexed
+/// by SOURCE position and snapshot read-time SSA values, so the record
+/// stays correct under later writes to the source array (numpy evaluates
+/// the RHS of `a[mask] op= v` before the store).
+///
+/// Deposited by `dynamic_mask_read` (whole-element masks only),
+/// re-deposited lane-transformed by `dyn_scalar_binary_op`, and consumed
+/// by `try_apply_boolean_mask_write` to cancel the pack/unpack round
+/// trip of `a[mask] op= v` into per-element selects (O(N) instead of
+/// the O(N^2) shift network + prefix one-hot). Eagerly dropped when the
+/// segment is written (`on_segment_write`).
+#[derive(Clone, Debug)]
+pub struct MaskReadView {
+    pub mask_cells: Vec<Value>,
+    pub sources: Vec<Value>,
+    /// Producing stmt of the packed array's runtime length (the true
+    /// count). Consumers must require the consumed dyn value's
+    /// `runtime_length` to carry this stmt — a sliced/reshaped re-view
+    /// of the same segment mints a different length and must NOT be
+    /// consumed positionally.
+    pub count_stmt: Option<StmtId>,
+}
+
 /// Structural clamp: the annotated value is `min(source, bound)` (or
 /// `max(source, bound)` when `is_min` is false) with a compile-time
 /// constant `bound`. Deposited by the `SelectI` min/max recognizer when
@@ -298,6 +324,10 @@ pub struct ProvenanceTable {
     /// OUTPUT segment. Invalidated when either the view's own segment or
     /// its base segment is written (invariant #4; eager-drop form).
     slice_views: HashMap<u32, SliceView>,
+    /// Mask-read provenance keyed by the OUTPUT segment (builder-phase
+    /// only, like `slice_views`). Eagerly dropped when the segment is
+    /// written.
+    mask_read_views: HashMap<u32, MaskReadView>,
     /// Monotone per-segment write counters (invariant #4). Bumped
     /// unconditionally by `ir_write_memory`; segment-derived records that
     /// outlive the eager-drop policy must carry the version they were
@@ -543,6 +573,7 @@ impl ProvenanceTable {
             && self.layout.is_empty()
             && self.compaction.is_empty()
             && self.slice_views.is_empty()
+            && self.mask_read_views.is_empty()
             && self.runtime_extents.is_empty()
             && self.clamps.is_empty()
             && self.block_views.is_empty()
@@ -558,6 +589,7 @@ impl ProvenanceTable {
         *self.write_version.entry(segment).or_insert(0) += 1;
         self.slice_views
             .retain(|seg, view| *seg != segment && view.base_segment != segment);
+        self.mask_read_views.remove(&segment);
         self.compaction.retain(|(seg, _), _| *seg != segment);
         self.runtime_extents.remove(&segment);
     }
@@ -602,6 +634,14 @@ impl ProvenanceTable {
 
     pub fn set_slice_view(&mut self, segment: u32, view: SliceView) {
         self.slice_views.insert(segment, view);
+    }
+
+    pub fn mask_read_view(&self, segment: u32) -> Option<&MaskReadView> {
+        self.mask_read_views.get(&segment)
+    }
+
+    pub fn set_mask_read_view(&mut self, segment: u32, view: MaskReadView) {
+        self.mask_read_views.insert(segment, view);
     }
 
     pub fn affine_of(&self, vid: ValueId) -> Option<&AffineView> {
@@ -723,6 +763,12 @@ impl ProvenanceTable {
         self.slice_views.retain(|_, view| {
             view.start.value_id().map(|v| live(v)).unwrap_or(true)
         });
+        self.mask_read_views.retain(|_, view| {
+            view.mask_cells
+                .iter()
+                .chain(view.sources.iter())
+                .all(|c| c.value_id().map(|v| live(v)).unwrap_or(true))
+        });
         self.runtime_extents
             .retain(|_, exts| exts.iter().all(|v| live(*v)));
         self.clamps
@@ -808,6 +854,18 @@ impl ProvenanceTable {
                         "slice view for segment {} has dead start value {:?}",
                         seg, vid
                     ));
+                }
+            }
+        }
+        for (seg, view) in &self.mask_read_views {
+            for cell in view.mask_cells.iter().chain(view.sources.iter()) {
+                if let Some(vid) = cell.value_id() {
+                    if !value_exists(vid) {
+                        return Err(format!(
+                            "mask-read view for segment {} references dead value {:?}",
+                            seg, vid
+                        ));
+                    }
                 }
             }
         }

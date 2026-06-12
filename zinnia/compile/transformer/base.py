@@ -517,6 +517,37 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
             # for subscript targets produced stale-neighbour reads
             # (fuzz-finding-v3-aug-assign-subscript).
             rhs = self.visit_expr(node.value)
+            # Python evaluates the index of `a[idx] op= v` ONCE. When the
+            # index is a non-trivial expression (e.g. a boolean mask), hoist
+            # it into a synthetic temp so the desugared read and write share
+            # the same index values — identity-based lowerings (mask-read
+            # round-trip cancellation) depend on it, and double evaluation
+            # also duplicated compile work. Names/constants are pure and
+            # cheap; slices and tuple indices are not first-class temp-able
+            # expressions, so those keep the duplicate-expression form.
+            sl = node.target.slice
+            hoistable = not isinstance(
+                sl, (ast.Name, ast.Constant, ast.Slice, ast.Tuple, ast.List))
+            if hoistable:
+                self._aug_idx_counter = getattr(self, "_aug_idx_counter", 0) + 1
+                tmp_name = f"__zinnia_aug_idx_{self._aug_idx_counter}"
+                idx_assign = {"__class__": "ASTAssignStatement",
+                              "targets": [{"__class__": "ASTNameAssignTarget",
+                                           "name": tmp_name, "star": False}],
+                              "value": self.visit_expr(sl)}
+                slicing = {"__class__": "ASTSlice",
+                           "data": [{"__class__": "ASTLoad", "name": tmp_name}]}
+                lhs = {"__class__": "ASTSubscriptExp",
+                       "val": self.visit_expr(node.target.value),
+                       "slicing": slicing}
+                bin_op = {"__class__": "ASTBinaryOperator",
+                          "operator": op_type, "lhs": lhs, "rhs": rhs}
+                target = {"__class__": "ASTSubscriptAssignTarget",
+                          "target": self.visit_expr(node.target.value),
+                          "slicing": slicing, "star": False}
+                return [idx_assign,
+                        {"__class__": "ASTAssignStatement",
+                         "targets": [target], "value": bin_op}]
             lhs = self.visit_expr(node.target)
             bin_op = {"__class__": "ASTBinaryOperator", "operator": op_type, "lhs": lhs, "rhs": rhs}
             return {"__class__": "ASTAssignStatement",
@@ -777,7 +808,10 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
                 )
             else:
                 raise InvalidCircuitStatementException(dbg_info, f"Invalid circuit statement defined: {type(stmt)}.")
-            stmts.append(parsed_stmt)
+            if isinstance(parsed_stmt, list):
+                stmts.extend(parsed_stmt)
+            else:
+                stmts.append(parsed_stmt)
         return stmts
 
     def visit_expr(self, node):

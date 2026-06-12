@@ -364,18 +364,56 @@ pub fn try_apply_boolean_mask_write(
         // of the target therefore takes rhs[#trues before i], NOT rhs[i] —
         // the positional mapping wrote padding into late true positions
         // (binding-audit case 0490).
-        let env_total = d.envelope.total_bound;
-        let mut cells = Vec::with_capacity(env_total);
-        for i in 0..env_total {
-            let addr = b.ir_constant_int(i as i64);
-            cells.push(crate::helpers::segment::read_typed(
-                b,
-                d.segment_id,
-                &addr,
-                d.dtype,
-            ));
+        //
+        // Round-trip cancellation: when the RHS carries a mask-read view
+        // whose mask is THIS mask (same cell SSA values), the packed
+        // invariant gives rhs[#trues before i] == view.sources[i] for
+        // every true position — the write is positional after all, with
+        // no unpack network needed.
+        // Identity-view guard: the consumed value must be the packed
+        // array itself, not a re-view of its segment (a slice/reverse/
+        // reshape shares the segment but reorders or truncates lanes,
+        // breaking the positional mapping). Flat 1-D meta + the original
+        // runtime-length stmt pin the identity.
+        let meta_identity = d.meta.logical_offset == 0
+            && d.meta.runtime_offset.static_val == Some(0)
+            && d.meta.logical_shape.as_slice() == [total]
+            && d.meta.logical_strides.as_slice() == [1]
+            && d.meta.runtime_length.stmt_id.is_some();
+        let view_sources = b
+            .provenance
+            .mask_read_view(d.segment_id)
+            .filter(|view| {
+                meta_identity
+                    && view.count_stmt == d.meta.runtime_length.stmt_id
+                    && view.sources.len() == total
+                    && view.mask_cells.len() == mask_cells.len()
+                    && view
+                        .mask_cells
+                        .iter()
+                        .zip(mask_cells.iter())
+                        .all(|(a, c)| match (a.value_id(), c.value_id()) {
+                            (Some(x), Some(y)) => x == y,
+                            _ => false,
+                        })
+            })
+            .map(|view| view.sources.clone());
+        if let Some(sources) = view_sources {
+            Rhs::FullShape(sources)
+        } else {
+            let env_total = d.envelope.total_bound;
+            let mut cells = Vec::with_capacity(env_total);
+            for i in 0..env_total {
+                let addr = b.ir_constant_int(i as i64);
+                cells.push(crate::helpers::segment::read_typed(
+                    b,
+                    d.segment_id,
+                    &addr,
+                    d.dtype,
+                ));
+            }
+            Rhs::Compacted(cells)
         }
-        Rhs::Compacted(cells)
     } else {
         // Unknown RHS shape — punt to legacy path.
         return None;
@@ -573,12 +611,14 @@ fn dynamic_mask_read(
 
     let is_const_zero = |v: &Value| v.int_val() == Some(0);
 
+    let mut cast_sources: Vec<Value> = Vec::with_capacity(total);
     for i in 0..leading_total {
         let mask_bool = ensure_bool(b, &mask_cells[i]);
         let mut deposit: Vec<Value> = Vec::with_capacity(trailing_total);
         for t in 0..trailing_total {
             let src = &arr_cells[i * trailing_total + t];
             let cell_cast = cast_to_dtype(b, src, dtype);
+            cast_sources.push(cell_cast.clone());
             deposit.push(if dtype == NumberType::Float {
                 b.ir_select_f(&mask_bool, &cell_cast, &default_val)
             } else {
@@ -616,6 +656,22 @@ fn dynamic_mask_read(
     }
 
     let segment_id = crate::helpers::segment::alloc_and_write_values(b, &acc, dtype);
+
+    // Whole-element mask (no trailing tail): deposit the mask-read view
+    // so an `a[mask] op= v` round trip can cancel the shift network into
+    // per-element selects at the write (see `MaskReadView`). Deposit
+    // AFTER the alloc writes — `on_segment_write` eager-drops the record
+    // on any later write to this segment.
+    if trailing_total == 1 && cast_sources.len() == leading_total {
+        b.provenance.set_mask_read_view(
+            segment_id,
+            crate::provenance::MaskReadView {
+                mask_cells: mask_cells.to_vec(),
+                sources: cast_sources,
+                count_stmt: write_row.stmt_id(),
+            },
+        );
+    }
 
     // Envelope: leading dim is dynamic in `[0, leading_total]`; trailing
     // dims keep their compile-time size.

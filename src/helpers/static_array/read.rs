@@ -522,6 +522,47 @@ fn try_fancy_subscript(
         }
     }
 
+    // Normalize + bound-assert every runtime index once per axis (numpy
+    // contract: -n <= i < n). Doing it here — after the last early-return,
+    // before the per-element loop — keeps the IR off abandoned paths and
+    // lets the AssertU128Lt interval hook bound each index to [0, n), so
+    // the backends' gather lowerings stay axis-sized instead of sweeping
+    // every address the unbounded root could reach.
+    for (ax, plan) in plans.iter_mut().enumerate() {
+        let axis_len = shape[ax];
+        match plan {
+            FancyAxisPlan::Fancy { values, .. } => {
+                for val in values.iter_mut() {
+                    if val.int_val().is_none() {
+                        let normalized = normalize_dynamic_index(b, val, axis_len);
+                        crate::optim::resolver::discharge_index_in_range(
+                            b,
+                            &normalized,
+                            0,
+                            axis_len as i64,
+                            "fancy_index",
+                        );
+                        *val = normalized;
+                    }
+                }
+            }
+            FancyAxisPlan::Single(v) => {
+                if v.int_val().is_none() {
+                    let normalized = normalize_dynamic_index(b, v, axis_len);
+                    crate::optim::resolver::discharge_index_in_range(
+                        b,
+                        &normalized,
+                        0,
+                        axis_len as i64,
+                        "fancy_index",
+                    );
+                    *v = normalized;
+                }
+            }
+            FancyAxisPlan::Range { .. } => {}
+        }
+    }
+
     let total: usize = out_shape.iter().product();
     let out_strides = row_major_strides(&out_shape);
     let src_total: usize = shape.iter().product();
@@ -543,9 +584,9 @@ fn try_fancy_subscript(
                         };
                         static_addr += i * strides[src_axis] as i64;
                     } else {
-                        let normalized = normalize_dynamic_index(b, v, shape[src_axis]);
+                        // Already normalized + bound-asserted above.
                         let stride_val = b.ir_constant_int(strides[src_axis] as i64);
-                        dynamic_parts.push(b.ir_mul_i(&normalized, &stride_val));
+                        dynamic_parts.push(b.ir_mul_i(v, &stride_val));
                     }
                 }
                 FancyAxisPlan::Range { coords } => {
@@ -577,9 +618,9 @@ fn try_fancy_subscript(
                         };
                         static_addr += i * strides[src_axis] as i64;
                     } else {
-                        let normalized = normalize_dynamic_index(b, &idx_val, shape[src_axis]);
+                        // Already normalized + bound-asserted above.
                         let stride_val = b.ir_constant_int(strides[src_axis] as i64);
-                        dynamic_parts.push(b.ir_mul_i(&normalized, &stride_val));
+                        dynamic_parts.push(b.ir_mul_i(&idx_val, &stride_val));
                     }
                 }
             }
