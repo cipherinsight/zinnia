@@ -1283,6 +1283,15 @@ impl IRBuilder {
                 self.provenance.init_segment_hull(*segment_id, *init_value);
             }
             IR::WriteMemory { segment_id } | IR::DynamicNDArraySetItem { segment_id, .. } => {
+                // Invalidation chokepoint (provenance invariant #4): EVERY
+                // write-shaped op bumps the segment version and eager-drops
+                // segment-derived records here, so `ir_write_memory` and
+                // `ir_dynamic_ndarray_set_item` (and any future write op)
+                // get invalidation for free. Deposits made by helpers AFTER
+                // their writes — e.g. `mask.rs` deposits its `MaskReadView`
+                // after `alloc_and_write_values` — survive, because this
+                // fires during the write, before the later deposit.
+                self.provenance.on_segment_write(*segment_id);
                 let iv = interval_of(self, &args[1]);
                 self.provenance.widen_segment_hull(*segment_id, iv);
             }
@@ -2281,8 +2290,32 @@ impl IRBuilder {
         let value = &stored;
         // A write invalidates slice views of this segment and any views
         // reading through it as their base, and bumps the segment's
-        // write version (provenance invariant #4).
-        self.provenance.on_segment_write(segment_id);
+        // write version (provenance invariant #4). The invalidation now
+        // lives in `deposit_provenance`'s `WriteMemory | …SetItem` arm —
+        // the chokepoint that sees every write-shaped op — so the
+        // `create_ir` call below triggers it. (Done there, not here, so
+        // `ir_dynamic_ndarray_set_item` gets the same invalidation.)
+        //
+        // Per-cell bound invalidation (provenance invariant #4 applied to
+        // the builder-owned `segment_cell_bounds` / `segment_default_bounds`
+        // maps, which `on_segment_write` can't reach): a static-addr write
+        // must drop the OLD cell's bound before the conditional re-capture
+        // below (otherwise a re-write that doesn't re-capture leaves the
+        // stale bound, and a later static read republishes it as a fact
+        // about the NEW value). A dynamic-addr write could land on any
+        // cell, so it clears the whole per-cell map and the segment-wide
+        // default bound.
+        match address.int_val() {
+            Some(addr_i) => {
+                if let Some(cells) = self.segment_cell_bounds.get_mut(&segment_id) {
+                    cells.remove(&(addr_i as usize));
+                }
+            }
+            None => {
+                self.segment_cell_bounds.remove(&segment_id);
+                self.segment_default_bounds.remove(&segment_id);
+            }
+        }
         // Capture per-cell bound facts at write time so a downstream
         // static-addr `ir_read_memory` of this cell can republish them on
         // the read output. Fires only for statically-pinned addresses
@@ -2436,6 +2469,16 @@ impl IRBuilder {
         let Some(stored) = self.apply_write_predicate(segment_id, address, value) else {
             return value.clone();
         };
+        // Invalidate the builder-owned per-cell bound maps. A set_item is a
+        // mutation that can change the addressed cell's value; we never
+        // capture per-cell bounds for set_item, so the safe move is to drop
+        // the whole segment's per-cell map and its default bound (otherwise
+        // a later static read republishes a pre-set_item bound as a fact
+        // about the post-set_item value — the `value_ops.rs` swap-and-read
+        // shape). Segment-version / slice / mask-read invalidation is
+        // handled by `deposit_provenance` when `create_ir` builds the op.
+        self.segment_cell_bounds.remove(&segment_id);
+        self.segment_default_bounds.remove(&segment_id);
         self.create_ir(
             &IR::DynamicNDArraySetItem {
                 array_id,
@@ -3118,5 +3161,143 @@ mod tests {
         let fv = b.ir_constant_int(20);
         let result = b.create_ir(&IR::SelectI, &[cond, tv, fv]);
         assert_eq!(result.int_val(), Some(10));
+    }
+
+    /// Read back the `(lo, hi)` bound the read output carries via facts,
+    /// the same way `derive_bounds_from_facts` does — i.e. exactly what
+    /// downstream `prove()` / requires-discharge would see.
+    fn read_bound_fact(b: &IRBuilder, read: &Value) -> Option<(i64, i64)> {
+        let vid = read.value_id()?;
+        crate::optim::resolver::derive_bounds_from_facts(&b.facts, vid)
+    }
+
+    /// Mint a fresh, dynamic (non-constant, fact-free) integer value with a
+    /// real stmt_id — a read from a throwaway scratch segment. Used where a
+    /// test needs an unbounded runtime scalar (a dynamic address, or a
+    /// written value that must NOT trigger per-cell bound capture).
+    fn fresh_dynamic_int(b: &mut IRBuilder) -> Value {
+        let scratch = b.alloc_segment_id();
+        b.ir_allocate_memory(scratch, 1, 0);
+        let z = b.ir_constant_int(0);
+        b.ir_read_memory(scratch, &z)
+    }
+
+    /// C06 hole 2 regression — the `value_ops.rs:1175` swap-and-read shape.
+    /// Write bounded cells statically, overwrite one via dynamic set_item,
+    /// then read every cell back. The read of the overwritten cell must NOT
+    /// republish the pre-set_item cell bound as a fact about the new value.
+    /// At `4b69c08` (before this fix) `set_item` invalidated nothing, so the
+    /// overwritten cell's stale `(7, 7)` bound survived and was republished.
+    #[test]
+    fn test_set_item_invalidates_stale_cell_bound() {
+        let mut b = IRBuilder::new();
+        let seg = b.alloc_segment_id();
+        let arr = b.alloc_array_id();
+        b.ir_allocate_memory(seg, 2, 0);
+
+        // Write constant 7 @ cell 0 and constant 3 @ cell 1. Constants
+        // carry an `Eq` fact, so the per-cell bound capture fires.
+        let v7 = b.ir_constant_int(7);
+        let a0 = b.ir_constant_int(0);
+        b.ir_write_memory(seg, &a0, &v7);
+        let v3 = b.ir_constant_int(3);
+        let a1 = b.ir_constant_int(1);
+        b.ir_write_memory(seg, &a1, &v3);
+
+        // Sanity: before any overwrite, a static read republishes (7, 7).
+        {
+            let mut probe = IRBuilder::new();
+            let pseg = probe.alloc_segment_id();
+            probe.ir_allocate_memory(pseg, 1, 0);
+            let pv = probe.ir_constant_int(7);
+            let pa = probe.ir_constant_int(0);
+            probe.ir_write_memory(pseg, &pa, &pv);
+            let pr = probe.ir_read_memory(pseg, &pa);
+            assert_eq!(
+                read_bound_fact(&probe, &pr),
+                Some((7, 7)),
+                "baseline: static write+read should republish the cell bound"
+            );
+        }
+
+        // Overwrite cell 0 via dynamic set_item with a value whose runtime
+        // address is not statically pinned (a fresh dynamic scalar).
+        let idx = fresh_dynamic_int(&mut b);
+        let v99 = b.ir_constant_int(99);
+        b.ir_dynamic_ndarray_set_item(arr, seg, &idx, &v99);
+
+        // Read cell 0 back. The stale (7, 7) bound must be gone.
+        let r0 = b.ir_read_memory(seg, &a0);
+        assert_eq!(
+            read_bound_fact(&b, &r0),
+            None,
+            "set_item must invalidate the stale per-cell bound; \
+             republishing (7,7) here is a fact about the new value 99"
+        );
+    }
+
+    /// C06 hole 2 regression, static-write variant: a later static write to
+    /// a cell whose new value does NOT trigger capture must still drop the
+    /// previous cell's stale bound (unconditional remove before re-capture).
+    #[test]
+    fn test_restatic_write_drops_stale_cell_bound() {
+        let mut b = IRBuilder::new();
+        let seg = b.alloc_segment_id();
+        b.ir_allocate_memory(seg, 1, 0);
+
+        // First write: constant 7 captures bound (7, 7).
+        let v7 = b.ir_constant_int(7);
+        let a0 = b.ir_constant_int(0);
+        b.ir_write_memory(seg, &a0, &v7);
+
+        // Second write of a value with NO fact-derived bound: a fresh
+        // dynamic scalar. `should_capture` is false, so nothing re-captures;
+        // the unconditional remove must clear the old (7, 7).
+        let fresh = fresh_dynamic_int(&mut b);
+        b.ir_write_memory(seg, &a0, &fresh);
+
+        let r0 = b.ir_read_memory(seg, &a0);
+        assert_eq!(
+            read_bound_fact(&b, &r0),
+            None,
+            "re-writing a cell with an unbounded value must drop its stale bound"
+        );
+    }
+
+    /// C06 hole 1 regression — `set_item` must trigger the segment-version /
+    /// slice-view invalidation that previously only `ir_write_memory` did.
+    /// We deposit a `MaskReadView` (the `mask.rs` after-write deposit), then
+    /// mutate the segment via `set_item`; the view must be dropped.
+    #[test]
+    fn test_set_item_invalidates_mask_read_view() {
+        use crate::provenance::MaskReadView;
+        let mut b = IRBuilder::new();
+        let seg = b.alloc_segment_id();
+        let arr = b.alloc_array_id();
+        b.ir_allocate_memory(seg, 2, 0);
+        let v = b.ir_constant_int(1);
+        let a0 = b.ir_constant_int(0);
+        b.ir_write_memory(seg, &a0, &v);
+
+        // Deposit a mask-read view (mirrors mask.rs depositing AFTER the
+        // alloc writes).
+        b.provenance.set_mask_read_view(
+            seg,
+            MaskReadView {
+                mask_cells: vec![],
+                sources: vec![],
+                count_stmt: None,
+            },
+        );
+        assert!(b.provenance.mask_read_view(seg).is_some());
+
+        // A set_item mutation must invalidate it (was a no-op at 4b69c08).
+        let idx = fresh_dynamic_int(&mut b);
+        let nv = b.ir_constant_int(5);
+        b.ir_dynamic_ndarray_set_item(arr, seg, &idx, &nv);
+        assert!(
+            b.provenance.mask_read_view(seg).is_none(),
+            "set_item must drop the segment's mask-read view (hole 1)"
+        );
     }
 }
