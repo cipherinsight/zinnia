@@ -506,13 +506,62 @@ pub trait Synthesizer {
         param_name: &str,
         args: &[Self::CellRef],
     ) -> Result<(), ProvingError>;
+    /// Return the `(total_length_bound, per_axis_bounds)` recorded for
+    /// `array_id` at `allocate_dynamic_ndarray_meta` time. Backends store
+    /// these (e.g. in a `dyn_meta_bounds` map keyed by `array_id`) and must
+    /// surface them here so the trait-default `assert_dynamic_ndarray_meta`
+    /// can range-check the runtime shape against them. The fallback mirrors
+    /// the allocation default (`vec![max_length; max_rank]`) for arrays the
+    /// backend never recorded.
+    fn dyn_meta_axis_bounds(
+        &self,
+        array_id: u32,
+        max_rank: u32,
+        max_length: u32,
+    ) -> (u32, Vec<u32>);
+    /// Constrain a DynamicNDArray's runtime shape against its allocation
+    /// envelope: every runtime axis dim is non-negative and `<=` its
+    /// per-axis bound, and the product of the dims is `<=` the total length
+    /// bound. `args[..max_rank]` are the runtime shape cells; the injection
+    /// pass (`DynamicNDArrayMetaAssertInjection`) may append a second block
+    /// of `max_rank` constant cells carrying the per-axis bounds, but those
+    /// are exactly the values already recorded at allocation time, so this
+    /// default reads the bounds from `dyn_meta_axis_bounds` and only uses the
+    /// trailing args to validate arity. Provided as a trait default so every
+    /// constraint-emitting backend gets the real check; mock overrides it
+    /// with a diagnostic (value-inspecting) variant.
     fn assert_dynamic_ndarray_meta(
         &mut self,
         array_id: u32,
         max_rank: u32,
         max_length: u32,
         args: &[Self::CellRef],
-    ) -> Result<(), ProvingError>;
+    ) -> Result<(), ProvingError> {
+        let rank = max_rank as usize;
+        if args.len() != rank && args.len() != rank * 2 {
+            return Err(ProvingError::synthesis(format!(
+                "DynamicNDArray metadata assertion failed for array {}: expected {} runtime shape axes with optional bounds, got {} args",
+                array_id, max_rank, args.len()
+            )));
+        }
+        let (total_bound, axis_bounds) =
+            self.dyn_meta_axis_bounds(array_id, max_rank, max_length);
+        let mut runtime_len = self.constant_int(1)?;
+        for (axis, dim) in args[..rank].iter().enumerate() {
+            let zero = self.constant_int(0)?;
+            let non_negative = self.gte_i(dim, &zero)?;
+            self.assert_true(&non_negative)?;
+            let axis_bound = axis_bounds.get(axis).copied().unwrap_or(max_length);
+            let bound = self.constant_int(axis_bound as i64)?;
+            let in_axis_bound = self.lte_i(dim, &bound)?;
+            self.assert_true(&in_axis_bound)?;
+            runtime_len = self.mul_i(&runtime_len, dim)?;
+        }
+        let total_bound = self.constant_int(total_bound as i64)?;
+        let in_total_bound = self.lte_i(&runtime_len, &total_bound)?;
+        self.assert_true(&in_total_bound)?;
+        Ok(())
+    }
     fn dynamic_ndarray_get_item(
         &mut self,
         array_id: u32,

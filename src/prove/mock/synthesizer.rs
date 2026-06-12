@@ -527,6 +527,20 @@ impl Synthesizer for MockSynthesizer {
     ) -> Result<(), ProvingError> {
         Ok(())
     }
+    fn dyn_meta_axis_bounds(
+        &self,
+        array_id: u32,
+        max_rank: u32,
+        max_length: u32,
+    ) -> (u32, Vec<u32>) {
+        self.dyn_meta_bounds
+            .get(&array_id)
+            .cloned()
+            .unwrap_or_else(|| (max_length, vec![max_length; max_rank as usize]))
+    }
+    // Mock overrides the trait-default lowering with a value-inspecting
+    // diagnostic: it flips `satisfied` and records a human-readable failure
+    // instead of emitting (unenforceable) constraints into the mock backend.
     fn assert_dynamic_ndarray_meta(
         &mut self,
         array_id: u32,

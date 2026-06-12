@@ -253,6 +253,55 @@ def foo(x: Float[Array, "N<=4 M<=3"]):
     assert "axis 0 expected 0..=4, got 5" in proof.proof_bytes_hex
 
 
+def test_dynamic_ndarray_metadata_assertion_is_live_in_halo2_base_backend():
+    """Code review C15: `assert_dynamic_ndarray_meta` on halo2-base was a
+    no-op (`Ok(())`) at commit 4b69c08 — it constrained nothing, so a prover
+    could witness a DynamicNDArray runtime shape outside its allocation
+    envelope and the benchmarked backend would prove AND verify it. The mock
+    backend caught this (test above); halo2-base did not.
+
+    The fix hoists the legacy lowering into a `Synthesizer` trait default,
+    which halo2-base now inherits. This test pins the contract end-to-end: an
+    honest in-envelope shape proves and verifies, while a corrupted runtime
+    shape (axis past its per-axis bound) produces a proof that fails to
+    verify. At 4b69c08 the corrupted proof verified `True`.
+    """
+    import json
+
+    from zinnia.compile._bridge import prove_circuit
+    from zinnia.exec.input_parser import build_circuit_inputs
+    from zinnia.exec.proof_result import ZKProofResult
+
+    source = """
+def foo(x: Float[Array, "N<=4 M<=3"]):
+    assert x.sum() == 4.0
+"""
+    program = ZKCircuit.from_source("foo", source).compile()
+    witness = np.ones((2, 2))
+
+    # Honest in-envelope shape proves and verifies.
+    honest = program.prove(witness, backend="halo2-base")
+    assert program.verify(honest) is True
+
+    # Corrupt only the runtime-shape metadata after Python witness parsing:
+    # claim axis 0 = 5, which exceeds its per-axis bound 4. The payload still
+    # carries 4 ones so the value assert is satisfiable; soundness now rests
+    # entirely on the meta-assert the fix restored.
+    witness_json = build_circuit_inputs(program.get_program_inputs(), (witness,))
+    witness_json["params"][0]["value"]["Array"]["runtime_shape"] = [5, 2]
+    tampered = ZKProofResult.from_json(
+        prove_circuit(
+            program._compiled_ir,
+            json.dumps(witness_json),
+            {},
+            "halo2-base",
+            None,
+        )
+    )
+    # The constraint is live: the out-of-envelope proof does not verify.
+    assert program.verify(tampered) is False
+
+
 def test_symbolic_bounded_dynamic_slice_reshape_and_transpose():
     source = """
 def foo(x: Float[Array, "N<=6"]):

@@ -2706,6 +2706,17 @@ impl Synthesizer for NoirEmitter<'_> {
     ) -> Result<(), ProvingError> {
         noop_unsupported!(self, "witness_dynamic_ndarray_meta")
     }
+    fn dyn_meta_axis_bounds(
+        &self,
+        _array_id: u32,
+        max_rank: u32,
+        max_length: u32,
+    ) -> (u32, Vec<u32>) {
+        // The Noir backend does not support DynamicNDArrays; the meta-assert
+        // override below errors before this is consulted. Return the
+        // allocation-default fallback for completeness.
+        (max_length, vec![max_length; max_rank as usize])
+    }
     fn assert_dynamic_ndarray_meta(
         &mut self,
         _array_id: u32,
@@ -2713,6 +2724,8 @@ impl Synthesizer for NoirEmitter<'_> {
         _max_length: u32,
         _args: &[CellRef],
     ) -> Result<(), ProvingError> {
+        // Overrides the trait default: dyn ndarrays are unsupported on Noir,
+        // so signal that rather than emitting the default lowering.
         noop_unsupported!(self, "assert_dynamic_ndarray_meta")
     }
     fn dynamic_ndarray_get_item(

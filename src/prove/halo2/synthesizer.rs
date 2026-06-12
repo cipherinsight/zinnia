@@ -2908,47 +2908,18 @@ impl Synthesizer for Halo2Synthesizer {
     ) -> Result<(), ProvingError> {
         Ok(())
     }
-    fn assert_dynamic_ndarray_meta(
-        &mut self,
+    fn dyn_meta_axis_bounds(
+        &self,
         array_id: u32,
         max_rank: u32,
         max_length: u32,
-        args: &[Halo2CellRef],
-    ) -> Result<(), ProvingError> {
-        let rank = max_rank as usize;
-        if args.len() != rank && args.len() != rank * 2 {
-            return Err(ProvingError::synthesis(format!(
-                "DynamicNDArray metadata assertion failed for array {}: expected {} runtime shape axes with optional bounds, got {} args",
-                array_id, max_rank, args.len()
-            )));
-        }
-        let (total_bound, mut axis_bounds) = self
-            .dyn_meta_bounds
+    ) -> (u32, Vec<u32>) {
+        self.dyn_meta_bounds
             .get(&array_id)
             .cloned()
-            .unwrap_or_else(|| (max_length, vec![max_length; max_rank as usize]));
-        if args.len() == rank * 2 {
-            axis_bounds = args[rank..]
-                .iter()
-                .map(|cell| kernel::fp_to_i64(cell.value).max(0) as u32)
-                .collect();
-        }
-        let mut runtime_len = self.constant_int(1)?;
-        for (axis, dim) in args[..rank].iter().enumerate() {
-            let zero = self.constant_int(0)?;
-            let non_negative = self.gte_i(dim, &zero)?;
-            self.assert_true(&non_negative)?;
-            let axis_bound = axis_bounds.get(axis).copied().unwrap_or(max_length);
-            let bound = self.constant_int(axis_bound as i64)?;
-            let in_axis_bound = self.lte_i(dim, &bound)?;
-            self.assert_true(&in_axis_bound)?;
-            runtime_len = self.mul_i(&runtime_len, dim)?;
-        }
-        let total_bound = self.constant_int(total_bound as i64)?;
-        let in_total_bound = self.lte_i(&runtime_len, &total_bound)?;
-        self.assert_true(&in_total_bound)?;
-        Ok(())
+            .unwrap_or_else(|| (max_length, vec![max_length; max_rank as usize]))
     }
+    // assert_dynamic_ndarray_meta uses the trait-default lowering.
     fn dynamic_ndarray_get_item(
         &mut self,
         array_id: u32,

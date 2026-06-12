@@ -1204,7 +1204,13 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         self.allocate_memory(10000 + array_id, max_length, 0)
     }
     fn witness_dynamic_ndarray_meta(&mut self, _: u32, _: u32, _: &str, _: &[Self::CellRef]) -> Result<(), ProvingError> { Ok(()) }
-    fn assert_dynamic_ndarray_meta(&mut self, _: u32, _: u32, _: u32, _: &[Self::CellRef]) -> Result<(), ProvingError> { Ok(()) }
+    fn dyn_meta_axis_bounds(&self, array_id: u32, max_rank: u32, max_length: u32) -> (u32, Vec<u32>) {
+        self.dyn_meta_bounds
+            .get(&array_id)
+            .cloned()
+            .unwrap_or_else(|| (max_length, vec![max_length; max_rank as usize]))
+    }
+    // assert_dynamic_ndarray_meta uses the trait-default lowering (was a no-op).
     fn dynamic_ndarray_get_item(&mut self, array_id: u32, _: u32, index: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         self.read_memory(10000 + array_id, index)
     }
@@ -1348,4 +1354,148 @@ mod int_cast_tamper_tests {
     // QuantumCell import documents the cell vocabulary the lowering uses.
     #[allow(unused)]
     fn _quantum_cell_marker(_c: QuantumCell<Fp>) {}
+}
+
+// Regression test for code review C15: `assert_dynamic_ndarray_meta` on
+// halo2-base was a no-op (`Ok(())`) at commit 4b69c08 — it constrained
+// nothing, so a prover could witness a DynamicNDArray runtime shape outside
+// its allocation envelope (an axis past its per-axis bound, or a shape whose
+// product exceeds the total length bound) and the backend would happily
+// prove it. The mock backend flagged such violations and legacy halo2 emitted
+// real constraints, but the BENCHMARKED backend did not.
+//
+// The fix hoists the legacy lowering into a `Synthesizer` trait default; this
+// test pins the resulting constraint shape. It reconstructs exactly what the
+// default emits per axis — a `0 <= dim` non-negativity gate, a `dim <= bound`
+// gate, and a final `product <= total_bound` gate, each forced to `1` — using
+// the same `range.is_less_than` primitive the lowering's `lte_i`/`gte_i`
+// route through, and shows that an HONEST in-envelope shape satisfies it while
+// a TAMPERED shape (axis over its bound, or product over the total) is
+// rejected by MockProver. At 4b69c08 the no-op override emitted none of these
+// gates, so every tampered shape below would have proved.
+#[cfg(test)]
+mod dyn_meta_tamper_tests {
+    use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
+    use halo2_base::gates::circuit::CircuitBuilderStage;
+    use halo2_base::gates::{flex_gate::GateInstructions, range::RangeInstructions};
+    use halo2_base::halo2_proofs::dev::MockProver;
+    use halo2_base::halo2_proofs::halo2curves::bn256::Fr as Fp;
+
+    use crate::prove::kernel;
+
+    const K: usize = 12;
+    const LOOKUP_BITS: usize = 8;
+
+    /// Build the meta-assert constraint system for a DynamicNDArray whose
+    /// per-axis bounds are `axis_bounds` and total length bound is
+    /// `total_bound`, with the prover-supplied runtime shape `dims`. The
+    /// witness `dims` is the only knob a malicious prover controls. Returns
+    /// the MockProver verdict.
+    fn run_meta_assert(
+        dims: &[i64],
+        axis_bounds: &[u32],
+        total_bound: u32,
+    ) -> Result<(), Vec<halo2_base::halo2_proofs::dev::VerifyFailure>> {
+        let mut builder = BaseCircuitBuilder::<Fp>::from_stage(CircuitBuilderStage::Mock);
+        builder.set_k(K);
+        builder.set_lookup_bits(LOOKUP_BITS);
+        builder.set_instance_columns(1);
+
+        let range = builder.range_chip();
+        let ctx = builder.main(0);
+
+        // signed-i64 view: `x` is in range iff `x + 2^63 < 2^64`. The lowering
+        // routes 0<=dim and dim<=bound through `is_less_than(_, _, 64)` on
+        // these shifted cells, so the test mirrors that.
+        let shift = Fp::from(1u64 << 63);
+        let mut product: i64 = 1;
+
+        for (&dim, &bound) in dims.iter().zip(axis_bounds.iter()) {
+            let dim_cell = ctx.load_witness(kernel::i64_to_fp(dim));
+            let dim_shifted = range.gate().add(
+                ctx,
+                dim_cell,
+                halo2_base::QuantumCell::Constant(shift),
+            );
+            range.range_check(ctx, dim_shifted, 64);
+
+            // 0 <= dim : is_less_than(shift-1, dim_shifted) == 1
+            let zero_minus_one = ctx.load_constant(kernel::i64_to_fp(-1) + shift);
+            range.range_check(ctx, zero_minus_one, 64);
+            let nn = range.is_less_than(ctx, zero_minus_one, dim_shifted, 64);
+            let one = ctx.load_constant(Fp::one());
+            ctx.constrain_equal(&nn, &one);
+
+            // dim <= bound : is_less_than(dim_shifted, (bound+1)+shift) == 1
+            let bound_cell =
+                ctx.load_constant(kernel::i64_to_fp(bound as i64 + 1) + shift);
+            range.range_check(ctx, bound_cell, 64);
+            let le = range.is_less_than(ctx, dim_shifted, bound_cell, 64);
+            let one2 = ctx.load_constant(Fp::one());
+            ctx.constrain_equal(&le, &one2);
+
+            product = product.saturating_mul(dim);
+        }
+
+        // product <= total_bound
+        let prod_cell = ctx.load_witness(kernel::i64_to_fp(product));
+        let prod_shifted =
+            range
+                .gate()
+                .add(ctx, prod_cell, halo2_base::QuantumCell::Constant(shift));
+        range.range_check(ctx, prod_shifted, 64);
+        let total_cell =
+            ctx.load_constant(kernel::i64_to_fp(total_bound as i64 + 1) + shift);
+        range.range_check(ctx, total_cell, 64);
+        let in_total = range.is_less_than(ctx, prod_shifted, total_cell, 64);
+        let one3 = ctx.load_constant(Fp::one());
+        ctx.constrain_equal(&in_total, &one3);
+
+        builder.calculate_params(Some(20));
+        MockProver::run(K as u32, &builder, vec![vec![]])
+            .unwrap()
+            .verify()
+    }
+
+    #[test]
+    fn honest_shape_passes() {
+        // 2-D array, per-axis bound 4 and 5, total length bound 20.
+        assert!(
+            run_meta_assert(&[3, 5], &[4, 5], 20).is_ok(),
+            "in-envelope shape [3,5] (<=[4,5], product 15<=20) must prove",
+        );
+        assert!(
+            run_meta_assert(&[0, 5], &[4, 5], 20).is_ok(),
+            "empty axis is in-envelope and must prove",
+        );
+    }
+
+    #[test]
+    fn axis_over_bound_is_rejected() {
+        // Axis 0 = 5 exceeds its per-axis bound 4. At 4b69c08 (no-op) this
+        // proved; the trait-default lowering must now reject it.
+        assert!(
+            run_meta_assert(&[5, 5], &[4, 5], 100).is_err(),
+            "axis 0 over its bound must be rejected",
+        );
+    }
+
+    #[test]
+    fn negative_axis_is_rejected() {
+        assert!(
+            run_meta_assert(&[-1, 5], &[4, 5], 100).is_err(),
+            "negative runtime axis must be rejected",
+        );
+    }
+
+    #[test]
+    fn shape_product_over_total_is_rejected() {
+        // Each axis within its per-axis bound, but the product (4*5=20)
+        // exceeds the total length bound 10 — the shape-product check must
+        // fire. This is the case independent per-axis range checks miss.
+        assert!(
+            run_meta_assert(&[4, 5], &[4, 5], 10).is_err(),
+            "shape product over the total length bound must be rejected",
+        );
+    }
 }
