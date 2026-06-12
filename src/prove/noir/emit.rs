@@ -462,7 +462,8 @@ pub struct NoirEmitter<'a> {
     /// `select(lt(x, 0), x + N, x)`: maps lt(x,0) outputs to x, add-const
     /// outputs to (x, c), and recognized normalized indices to (x, N).
     /// `eq_i(norm, j)` then emits the signed-machinery-free identity
-    /// `(x == j) | (x == j - N)` — exact for every x.
+    /// `(x == j) | (x == j - N)` — exact for every x only when the compared
+    /// constant satisfies `0 <= j < N` (see eq_i for the guard and proof).
     lt_zero_of: HashMap<String, String>,
     add_const_of: HashMap<String, (String, i64)>,
     norm_index_of: HashMap<String, (String, i64)>,
@@ -1844,9 +1845,16 @@ impl Synthesizer for NoirEmitter<'_> {
     fn eq_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x == y);
         // Normalized-index dual equality: for norm = select(lt(x,0), x+N, x),
-        // eq(norm, j) == (x == j) | (x == j - N) for every x — two Field
-        // equalities instead of the signed-comparison machinery that the
-        // normalization otherwise drags in (~600 ACIR gates per index).
+        // eq(norm, j) == (x == j) | (x == j - N) — two Field equalities
+        // instead of the signed-comparison machinery that the normalization
+        // otherwise drags in (~600 ACIR gates per index). The identity is
+        // exact ONLY for slot constants in range, i.e. 0 <= j < N: norm lands
+        // in [0, N), so the two pre-images of j under normalization are
+        // exactly {j, j - N}. For j >= N the `x == j - N` disjunct fires
+        // spuriously on the non-negative pre-image j - N (which normalizes to
+        // itself, not j); for j < 0 the `x == j` disjunct fires on negative
+        // x = j (which normalizes to j + N, not j). Out of range we fall
+        // through to the generic equality path.
         {
             let hit = self
                 .norm_index_of
@@ -1862,19 +1870,20 @@ impl Synthesizer for NoirEmitter<'_> {
                         .filter(|(_, j)| j.is_some())
                 });
             if let Some(((x, n), Some(j))) = hit {
-                let xf = self.as_field(&x);
                 let j = j as i64;
-                let second = if j - n >= 0 {
-                    format!("({} == {})", xf, j - n)
-                } else {
-                    format!("({} + {} == 0)", xf, n - j)
-                };
-                let v = self.bind(&format!(
-                    "if ({} == {}) | {} {{ 1 }} else {{ 0 }}",
-                    xf, j, second
-                ));
-                self.fold_b(&v, folded);
-                return Ok(v);
+                if j >= 0 && j < n {
+                    // In range: j - n < 0 always, so the second pre-image is
+                    // j - n, written branch-free as (x + (n - j) == 0).
+                    let xf = self.as_field(&x);
+                    let v = self.bind(&format!(
+                        "if ({} == {}) | ({} + {} == 0) {{ 1 }} else {{ 0 }}",
+                        xf, j, xf, n - j
+                    ));
+                    self.fold_b(&v, folded);
+                    return Ok(v);
+                }
+                // j out of [0, N): peephole identity does not hold, fall
+                // through to the generic equality path below.
             }
         }
         // Only bind u32 when operands are already u32. Unconditional
@@ -2819,4 +2828,89 @@ fn render_main_nr(inputs: &[EmittedInput], emitter: &NoirEmitter) -> Result<Stri
     out.push_str("}\n");
     let _ = emitter.params; // params currently unused at render time
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::circuit_input::CircuitInputs;
+    use crate::prove::traits::Synthesizer;
+
+    /// Build a bare emitter with no inputs/witness, sufficient to drive
+    /// the pure-string `eq_i` peephole in isolation.
+    fn bare_emitter(prov: &crate::provenance::ProvenanceTable) -> NoirEmitter<'_> {
+        let witness = ResolvedWitness::new(CircuitInputs::default(), Q_BITS);
+        NoirEmitter::new(
+            Vec::new(),
+            witness,
+            ProvingParams::default(),
+            HashMap::new(),
+            0,
+            prov,
+        )
+    }
+
+    /// Register a compile-time integer literal cell so `s_int_of` resolves it.
+    fn lit_int(em: &mut NoirEmitter<'_>, name: &str, v: i128) {
+        em.value_cache.insert(name.to_string(), ConcreteValue::Int(v));
+        em.literal_cells.insert(name.to_string());
+    }
+
+    /// Register a recognized normalized index `name = select(lt(x,0), x+n, x)`.
+    fn norm_index(em: &mut NoirEmitter<'_>, name: &str, x: &str, n: i64) {
+        em.norm_index_of
+            .insert(name.to_string(), (x.to_string(), n));
+    }
+
+    // C05 regression: the eq_i normalized-index dual-equality peephole
+    // rewrites eq(norm, j) -> (x == j) | (x == j - N). That identity is exact
+    // ONLY for 0 <= j < N. For out-of-range j the emitter must fall through to
+    // the generic equality path, NOT emit the dual-disjunct form (which would
+    // be a wrong circuit). These tests assert the guard on both boundaries.
+
+    #[test]
+    fn eq_i_norm_index_in_range_uses_peephole() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        // norm over axis of length N=5, x is some Field-typed cell.
+        norm_index(&mut em, "norm", "x", 5);
+        lit_int(&mut em, "j", 3); // in [0, 5)
+        let _ = em.eq_i(&"norm".to_string(), &"j".to_string()).unwrap();
+        // Expect the dual-disjunct peephole: (x == 3) | (x + 2 == 0).
+        assert!(
+            em.body.contains("(x == 3) | (x + 2 == 0)"),
+            "in-range j=3 should use the dual-equality peephole, body was:\n{}",
+            em.body
+        );
+    }
+
+    #[test]
+    fn eq_i_norm_index_j_equals_n_falls_through() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        norm_index(&mut em, "norm", "x", 5);
+        lit_int(&mut em, "j", 5); // j == N, OUT of range
+        let _ = em.eq_i(&"norm".to_string(), &"j".to_string()).unwrap();
+        // The spurious second disjunct would be (x + 0 == 0) / (x == 0); the
+        // first would be (x == 5). Neither dual form must appear.
+        assert!(
+            !em.body.contains(" | "),
+            "j==N must NOT emit the dual-equality peephole, body was:\n{}",
+            em.body
+        );
+    }
+
+    #[test]
+    fn eq_i_norm_index_j_negative_falls_through() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        norm_index(&mut em, "norm", "x", 5);
+        lit_int(&mut em, "j", -1); // j < 0, OUT of range
+        let _ = em.eq_i(&"norm".to_string(), &"j".to_string()).unwrap();
+        assert!(
+            !em.body.contains(" | "),
+            "j<0 must NOT emit the dual-equality peephole, body was:\n{}",
+            em.body
+        );
+    }
 }
