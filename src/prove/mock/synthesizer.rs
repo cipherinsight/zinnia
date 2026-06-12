@@ -394,11 +394,9 @@ impl Synthesizer for MockSynthesizer {
     // ── Casting ───────────────────────────────────────────────────────
 
     fn int_cast(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {
-        // Float→Int: divide by scale (truncate)
-        let scale_i = crate::prove::field::quantization_scale(self.prec()) as i64;
-        let v = kernel::fp_to_i64(a.fp());
-        let q = v / scale_i;
-        Ok(MockCell(kernel::i64_to_fp(q)))
+        // Float→Int: truncate toward zero (shared convention, see kernel).
+        let (q, _r) = kernel::fp_int_cast(a.fp(), self.prec());
+        Ok(MockCell(q))
     }
 
     fn float_cast(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {

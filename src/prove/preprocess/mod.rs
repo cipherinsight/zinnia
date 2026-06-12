@@ -401,8 +401,8 @@ impl<'a> Preprocessor<'a> {
             }
             // Casting
             IR::IntCast => {
-                let s = crate::prove::field::quantization_scale(prec) as i64;
-                Ok(Some(kernel::i64_to_fp(kernel::fp_to_i64(args[0]) / s)))
+                let (q, _r) = kernel::fp_int_cast(args[0], prec);
+                Ok(Some(q))
             }
             IR::FloatCast => Ok(Some(args[0] * kernel::scale_fp(prec))),
             IR::BoolCast => Ok(Some(if args[0] != Fp::zero() {

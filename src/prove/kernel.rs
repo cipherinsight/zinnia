@@ -366,6 +366,28 @@ pub fn i128_to_fp(v: i128) -> Fp {
     }
 }
 
+/// Float→int cast convention (truncation toward zero), shared by every
+/// backend so the value semantics have a single home.
+///
+/// Interprets `v` as a fixed-point value scaled by `scale = 2^precision_bits`
+/// and returns the truncated-toward-zero integer quotient `q = trunc(v/scale)`
+/// together with the signed remainder `r = v - q*scale`. By construction:
+///   * `q*scale + r == v` (exact recomposition),
+///   * `sign(r) == sign(v)` (or `r == 0`),
+///   * `|r| < scale`.
+///
+/// This matches Python's `int()` and the mock/preprocess/legacy-halo2 backends
+/// (all of which use truncating `/`). It deliberately differs from
+/// `fp_floor_div` (Euclidean / flooring), which is the wrong convention for a
+/// cast and disagrees on negative inputs.
+pub fn fp_int_cast(v: Fp, precision_bits: u32) -> (Fp, Fp) {
+    let scale = crate::prove::field::quantization_scale(precision_bits) as i64;
+    let vi = fp_to_i64(v);
+    let q = vi / scale; // Rust `/` truncates toward zero
+    let r = vi - q * scale; // same sign as vi, |r| < scale
+    (i64_to_fp(q), i64_to_fp(r))
+}
+
 /// Floor division: returns (quotient, remainder) such that a = b*q + r.
 pub fn fp_floor_div(a: Fp, b: Fp) -> (Fp, Fp) {
     let sa = fp_to_i64(a);

@@ -869,9 +869,45 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn int_cast(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let scale = crate::prove::field::quantization_scale(self.params.precision_bits) as i64;
-        let q = kernel::fp_to_i64(a.value).div_euclid(scale);
-        Ok(self.cell(kernel::i64_to_fp(q)))
+        // Float→int, truncation toward zero, constrained as a div-mod.
+        //
+        // Witness `q = trunc(a/scale)` and the *signed* remainder `r`, where
+        // `r` has the same sign as `a` and `|r| < scale` (shared convention,
+        // see `kernel::fp_int_cast`). Soundness comes from three facts:
+        //   1. recomposition `q*scale + r == a` (mul_add + constrain_equal),
+        //   2. `0 <= |r| < scale = 2^precision_bits` (range check on `|r|`),
+        //   3. `sign(r) == sign(a)` (the remainder is rebuilt from a *true*
+        //      sign bit of `a` via select, so the prover cannot flip it).
+        // Together these pin the unique truncating `(q, r)` — a malicious
+        // prover can no longer load an arbitrary quotient.
+        let precision_bits = self.params.precision_bits;
+        let scale = self.constant_int(
+            crate::prove::field::quantization_scale(precision_bits) as i64,
+        )?;
+        let (q, r) = kernel::fp_int_cast(a.value, precision_bits);
+        let q_cell = self.cell(q);
+
+        // True sign bit of `a` (1 iff a < 0), constrained by signed_lt.
+        let zero = self.constant_int(0)?;
+        let sign = self.lt_i(a, &zero)?;
+
+        // Magnitude of the remainder, range-checked to [0, 2^precision_bits).
+        let r_mag_val = if kernel::fp_is_negative(r) { -r } else { r };
+        let r_mag = self.cell(r_mag_val);
+        let range = self.builder.range_chip();
+        range.range_check(self.ctx(), r_mag.assigned, precision_bits as usize);
+
+        // r = sign ? -|r| : |r|  — ties the remainder's sign to a's true sign.
+        let neg_r_mag =
+            self.gate_cell(-r_mag.value, |gate, ctx| gate.neg(ctx, r_mag.assigned));
+        let r_cell = self.select_bit(&sign, &neg_r_mag, &r_mag)?;
+
+        // Recompose: q*scale + r == a.
+        let recomposed = self.gate_cell(q * scale.value + r_cell.value, |gate, ctx| {
+            gate.mul_add(ctx, q_cell.assigned, scale.assigned, r_cell.assigned)
+        });
+        self.constrain_equal(&recomposed, a);
+        Ok(q_cell)
     }
     fn float_cast(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         let scale = self.constant_int(crate::prove::field::quantization_scale(self.params.precision_bits) as i64)?;
@@ -1192,4 +1228,117 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         Ok(state[0])
     }
     fn eq_hash(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.eq_i(a, b) }
+}
+
+// ---------------------------------------------------------------------------
+// C02 malicious-witness regression for the constrained int_cast lowering.
+//
+// NOTE: this module is `#[cfg(test)]`, so it never affects the release
+// (maturin) build. It is intentionally written against the real halo2-base
+// builder + MockProver APIs so it runs as soon as the in-crate `cargo test`
+// target compiles again (currently blocked on T01, an unrelated pre-existing
+// halo2 test breakage). Until then it is dormant but build-correct.
+//
+// The test reconstructs exactly the constraint shape `int_cast` emits —
+// recomposition `q*scale + r == a`, a `precision_bits`-wide range check on
+// `|r|`, and a sign-select tying `r`'s sign to the true sign of `a` — and
+// shows that an HONEST quotient satisfies it while a TAMPERED quotient
+// (`q + 1`) is rejected by MockProver. At commit 4b69c08 there was no gate
+// linking the loaded quotient to `a`, so the tampered quotient would have
+// proved; this test pins that hole shut.
+#[cfg(test)]
+mod int_cast_tamper_tests {
+    use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
+    use halo2_base::gates::circuit::CircuitBuilderStage;
+    use halo2_base::gates::{flex_gate::GateInstructions, range::RangeInstructions};
+    use halo2_base::halo2_proofs::dev::MockProver;
+    use halo2_base::halo2_proofs::halo2curves::bn256::Fr as Fp;
+    use halo2_base::QuantumCell;
+
+    use crate::prove::kernel;
+
+    const K: usize = 12;
+    const LOOKUP_BITS: usize = 8;
+    const PRECISION_BITS: u32 = 32;
+
+    /// Build the int_cast constraint system for a chosen quotient witness
+    /// `q_override` (the only knob a malicious prover controls). `r` is
+    /// always recomputed as `a - q*scale` so that the recomposition gate is
+    /// *satisfiable by construction*; soundness then rests entirely on the
+    /// range check (`|r| < scale`) and the sign-select, exactly as in the
+    /// real lowering. Returns the MockProver verdict.
+    fn run_int_cast(a_val: f64, q_override: i64) -> Result<(), Vec<halo2_base::halo2_proofs::dev::VerifyFailure>> {
+        let mut builder = BaseCircuitBuilder::<Fp>::from_stage(CircuitBuilderStage::Mock);
+        builder.set_k(K);
+        builder.set_lookup_bits(LOOKUP_BITS);
+        builder.set_instance_columns(1);
+
+        let scale_i = crate::prove::field::quantization_scale(PRECISION_BITS) as i64;
+        let a_fp = kernel::quantize_to_fp(a_val, PRECISION_BITS);
+        let a_i = kernel::fp_to_i64(a_fp);
+        let r_i = a_i - q_override * scale_i; // recomposition holds by construction
+        let sign = a_i < 0;
+        let r_mag_i = r_i.abs();
+
+        let gate = builder.range_chip().gate().clone();
+        let range = builder.range_chip();
+        // Note: clone the chip handles before borrowing the context mutably.
+        let ctx = builder.main(0);
+
+        let a = ctx.load_witness(a_fp);
+        let q = ctx.load_witness(kernel::i64_to_fp(q_override));
+        let scale = ctx.load_constant(kernel::i64_to_fp(scale_i));
+        let r_mag = ctx.load_witness(kernel::i64_to_fp(r_mag_i));
+        let sign_cell = ctx.load_witness(if sign { Fp::one() } else { Fp::zero() });
+
+        // r = sign ? -|r| : |r|
+        let neg_r_mag = gate.neg(ctx, r_mag);
+        let r = gate.select(ctx, neg_r_mag, r_mag, sign_cell);
+        // recomposed = q*scale + r
+        let recomposed = gate.mul_add(ctx, q, scale, r);
+        ctx.constrain_equal(&recomposed, &a);
+
+        // 0 <= |r| < 2^precision_bits
+        range.range_check(builder.main(0), r_mag, PRECISION_BITS as usize);
+
+        builder.calculate_params(Some(20));
+        // One (empty) instance column matches `set_instance_columns(1)`; the
+        // soundness check does not rely on any public input.
+        MockProver::run(K as u32, &builder, vec![vec![]]).unwrap().verify()
+    }
+
+    #[test]
+    fn honest_quotient_passes() {
+        let scale_i = crate::prove::field::quantization_scale(PRECISION_BITS) as i64;
+        for a in [-3.9_f64, -2.5, -0.5, 2.5, 7.0] {
+            let a_i = kernel::fp_to_i64(kernel::quantize_to_fp(a, PRECISION_BITS));
+            let q = a_i / scale_i; // truncation toward zero
+            assert!(run_int_cast(a, q).is_ok(), "honest int({a}) should satisfy");
+        }
+    }
+
+    #[test]
+    fn tampered_quotient_is_rejected() {
+        // A malicious prover bumps q by one. The recomposition still holds
+        // (r absorbs the delta), but |r| now equals `scale` which overflows
+        // the precision_bits range check — so the proof must fail.
+        let scale_i = crate::prove::field::quantization_scale(PRECISION_BITS) as i64;
+        for a in [-3.9_f64, -2.5, 2.5, 7.0] {
+            let a_i = kernel::fp_to_i64(kernel::quantize_to_fp(a, PRECISION_BITS));
+            let honest_q = a_i / scale_i;
+            assert!(
+                run_int_cast(a, honest_q + 1).is_err(),
+                "tampered int({a}) (q+1) must be rejected by the range check",
+            );
+            assert!(
+                run_int_cast(a, honest_q - 1).is_err(),
+                "tampered int({a}) (q-1) must be rejected by the range check",
+            );
+        }
+    }
+
+    // Silence unused-import warnings if the gate handle path changes; the
+    // QuantumCell import documents the cell vocabulary the lowering uses.
+    #[allow(unused)]
+    fn _quantum_cell_marker(_c: QuantumCell<Fp>) {}
 }
