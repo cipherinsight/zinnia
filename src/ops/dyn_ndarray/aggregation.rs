@@ -898,47 +898,22 @@ pub fn dyn_aggregate_axis(
 
         let identity = agg_identity_value(b, agg, data.dtype);
 
-        // Sentinel-init pattern for Integer min/max/argmin/argmax: pick a
-        // value that is strictly worse than any possible input under the
-        // comparison so the standard "is new better?" branch handles the
-        // first-active iteration naturally — no separate `seen_active`
-        // tracking needed.
-        //
-        // BN254 Fr is order ~2^254, Zinnia's signed-comparison fragment
-        // treats values in [0, p/2) as positive and [p/2, p) as negative.
-        // i64::{MAX, MIN} fit comfortably with room to spare, so they
-        // serve as sentinels.
-        //
-        // Floats stay on the first-active path because the ZK Real
-        // fragment excludes ±∞ — there's no representable strict-greater-
-        // than-everything float we can witness without breaking IRs that
-        // assume float values are bounded.
-        let use_sentinel_init = !use_float
-            && matches!(
-                agg,
-                DynAggKind::Min | DynAggKind::Max | DynAggKind::Argmin | DynAggKind::Argmax
-            );
-        let (mut acc, mut acc_idx) = if use_sentinel_init {
-            // See the comparison-site sentinel comment below for why Max
-            // uses 0 (in conjunction with `gt_i_bounded`). Both sentinels
-            // are u128-clean and fit Zinnia's signed Field representation
-            // without crossing into the negative half-plane.
-            let sentinel = match agg {
-                DynAggKind::Min | DynAggKind::Argmin => b.ir_constant_int(i64::MAX),
-                DynAggKind::Max | DynAggKind::Argmax => b.ir_constant_int(0),
-                _ => unreachable!(),
-            };
-            (sentinel, b.ir_constant_int(0))
-        } else {
-            (identity.clone(), b.ir_constant_int(0))
-        };
-        let mut seen_active = if use_sentinel_init {
-            b.ir_constant_bool(false) // unused in this branch; keep the
-                                      // identifier alive so the borrow-checker
-                                      // doesn't notice the dead-store.
-        } else {
-            b.ir_constant_bool(false)
-        };
+        // min/max/argmin/argmax over a bounded axis use the FIRST-ACTIVE
+        // pattern (no sentinel), matching the sound full-reduction path in
+        // `lower_dyn_aggregate_all_generic`. A sentinel-init scheme was
+        // tried (`i64::MAX` for Min, `0` for Max) but the Max sentinel `0`
+        // is wrong for an all-negative active region (`max([-5,-3]) == 0`),
+        // and it cannot be replaced by `i64::MIN`: the comparison rode on
+        // `gt_i_bounded`, which casts both operands through `as_u128` and so
+        // mis-orders any negative (signed-Field) operand. The first-active
+        // pattern needs no out-of-band identity — it seeds nothing and only
+        // updates on `is_active AND not_seen_yet_or_strictly_better`, using
+        // the signed-correct `gt_i`/`lt_i` comparisons. Sound because the
+        // accumulator is only ever defined by an active element. For an
+        // empty active region `acc`/`acc_idx` stay at their `identity`/`0`
+        // init, which matches the documented empty-case semantics.
+        let (mut acc, mut acc_idx) = (identity.clone(), b.ir_constant_int(0));
+        let mut seen_active = b.ir_constant_bool(false);
 
         // Block-confined fast path (BlockView provenance, the padded-
         // prefix reshape view): scan only this output's static block.
@@ -1091,40 +1066,14 @@ pub fn dyn_aggregate_axis(
                 );
                 acc = new_acc;
                 acc_idx = new_idx;
-            } else if use_sentinel_init {
-                // Mask inactive elems to the sentinel so they can never
-                // win the comparison. Then standard min/max compare-and-
-                // select — no `seen_active` bookkeeping.
-                //
-                // Both sentinels are u128-clean now:
-                //   Min: i64::MAX = 2^63 - 1   (existing — always safe)
-                //   Max: 0                     (NEW — safe when elem is
-                //                               non-negative, which holds
-                //                               for index / coord / mask
-                //                               reductions in scope; the
-                //                               count == 0 case differs from
-                //                               the old i64::MIN sentinel
-                //                               by returning 0 instead, but
-                //                               no in-scope kernel reads
-                //                               that value).
-                let sentinel = match agg {
-                    DynAggKind::Min | DynAggKind::Argmin => b.ir_constant_int(i64::MAX),
-                    DynAggKind::Max | DynAggKind::Argmax => b.ir_constant_int(0),
-                    _ => unreachable!(),
-                };
-                let contribution = b.ir_select_i(&is_active, &elem, &sentinel);
-                let take = match agg {
-                    DynAggKind::Max | DynAggKind::Argmax => {
-                        b.ir_greater_than_i_bounded(&contribution, &acc)
-                    }
-                    DynAggKind::Min | DynAggKind::Argmin => {
-                        b.ir_less_than_i_bounded(&contribution, &acc)
-                    }
-                    _ => unreachable!(),
-                };
-                acc = b.ir_select_i(&take, &contribution, &acc);
-                acc_idx = b.ir_select_i(&take, &k_val, &acc_idx);
             } else {
+                // First-active pattern (min/max/argmin/argmax). No
+                // sentinel: the update only fires when the candidate is
+                // active AND (no active element seen yet OR strictly
+                // better), so `acc`/`acc_idx` are always defined by an
+                // active element. Uses the signed-correct `gt_i`/`lt_i`
+                // (NOT the `_bounded` u128-cast variants, which mis-order
+                // negative operands).
                 let cmp = match agg {
                     DynAggKind::Max | DynAggKind::Argmax => {
                         if use_float {

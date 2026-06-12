@@ -176,6 +176,31 @@ impl IRGenerator {
             _ => panic!("dispatch_dyn_ndarray_method called on non-DynamicNDArray"),
         };
 
+        // `keepdims=True` is not threaded through the bounded-dynamic
+        // reduction lowering (the axis is unconditionally removed from the
+        // output meta). Silently ignoring it would mis-shape the result
+        // (numpy keeps the reduced axis as extent 1). Reject loudly rather
+        // than return the wrong rank. Static arrays DO honour keepdims via
+        // `static_array::reductions`.
+        let keepdims = kwargs
+            .get("keepdims")
+            .and_then(|v| v.bool_val().or_else(|| v.int_val().map(|i| i != 0)))
+            .unwrap_or(false);
+        if keepdims
+            && matches!(
+                method,
+                "sum" | "prod" | "max" | "min" | "all" | "any" | "argmax" | "argmin" | "mean"
+            )
+        {
+            panic!(
+                "DynamicNDArray.{}(keepdims=True) is not supported for \
+                 bounded-dynamic arrays; the reduced axis is dropped (keepdims \
+                 is not honoured). Use keepdims=False, or convert to a static \
+                 array before this reduction.",
+                method
+            );
+        }
+
         match method {
             // Pure metadata
             "ndim" => metadata::dyn_ndim(&mut self.builder, &data),
