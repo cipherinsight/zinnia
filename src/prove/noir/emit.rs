@@ -637,16 +637,19 @@ impl<'a> NoirEmitter<'a> {
 
     fn sub_i_inner(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let folded = self.int_of(a).zip(self.int_of(b)).map(|(x, y)| x - y);
-        // u32 path is only sound if we can prove the result is
-        // non-negative — u32 subtraction wraps on underflow. The
-        // strongest evidence we have is folded value: if the witness
-        // sample is non-negative AND both operands are u32, take the
-        // path. Otherwise fall back to Field (signed-encoded).
-        if self.is_u32(a) && self.is_u32(b) && folded.map_or(false, |v| v >= 0) {
-            let bound = self.bound_of(a).unwrap_or(u32::MAX as u64);
-            let v = self.bind_u32_with_bound(&format!("{} - {}", a, b), bound);
-            self.fold_i(&v, folded);
-            return Ok(v);
+        // u32 path is only sound if the result is provably non-negative
+        // — u32 subtraction wraps on underflow. Gate on the bound
+        // analysis for THIS statement (`current_stmt_bound`): a SubI
+        // result only ever receives a bound through a provenance
+        // interval with `lo >= 0`, i.e. a structural non-negativity
+        // proof. (The previous gate keyed off the WITNESS SAMPLE's sign
+        // (`folded >= 0`) — a witness-dependent emission shape.)
+        if self.is_u32(a) && self.is_u32(b) {
+            if let Some(bound) = self.current_stmt_bound {
+                let v = self.bind_u32_with_bound(&format!("{} - {}", a, b), bound);
+                self.fold_i(&v, folded);
+                return Ok(v);
+            }
         }
         let v = self.bind(&format!("{} - {}", self.as_field(a), self.as_field(b)));
         self.fold_i(&v, folded);
@@ -965,6 +968,12 @@ impl<'a> NoirEmitter<'a> {
         // u32 path: both operands already bound u32 AND sum still fits.
         // Bound-propagation lets axis-dim chains (`row_has`, sums, scan
         // accumulators) stay u32 without any RANGE cast.
+        //
+        // (Measured 2026-06-12: flipping these chains to Field adds +
+        // endpoint promotion casts regressed the bbox family by ~1,000
+        // gates each — on current bb a checked u32 add is cheaper than
+        // a Field add plus its share of a Field→u32 truncation cast at
+        // the compare sink. Keep the u32-chain policy.)
         if self.is_u32(a) && self.is_u32(b) {
             if let Some(sum) = self
                 .bound_of(a)

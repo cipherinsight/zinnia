@@ -235,7 +235,27 @@ pub fn run(graph: &IRGraph) -> BoundMap {
             IR::PoseidonHash | IR::EqHash => None,
         };
 
-        if let Some(b) = result {
+        // Provenance fallback / tightening: the ProvenanceTable carries
+        // structural intervals the local dataflow can't see — segment
+        // hulls on ReadMemory outputs, the SelectI min/max recognizer,
+        // AssertU128Lt / AssertNonNegI hooks (the assert constraint is
+        // itself part of the emitted circuit, so the bound holds for any
+        // accepted witness). Intervals are deposited at IR-build time
+        // from structure, never from witness evaluation, so consuming
+        // them here cannot specialize the circuit; a wrong bound could
+        // only over-constrain (Noir u32 ops are overflow-checked), never
+        // accept a bad witness.
+        let prov_bound = graph
+            .provenance
+            .interval_of(stmt.value_id)
+            .filter(|iv| iv.lo >= 0)
+            .and_then(|iv| u64::try_from(iv.hi).ok());
+        let combined = match (result, prov_bound) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+
+        if let Some(b) = combined {
             if b <= U32_MAX {
                 bounds.insert(id, b);
             }
