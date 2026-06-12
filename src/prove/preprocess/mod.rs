@@ -100,11 +100,23 @@ impl<'a> Preprocessor<'a> {
         self.values.resize(graph.stmts.len(), None);
         for stmt in &graph.stmts {
             let id = stmt.stmt_id as usize;
+            // Collect operand values positionally. A missing value here means
+            // a CONSUMED operand has no produced value — error loudly rather
+            // than letting `filter_map` compact the list and silently shift
+            // every later operand left (mirrors `interpreter.rs` strictness).
             let args: Vec<Fp> = stmt
                 .arguments
                 .iter()
-                .filter_map(|&arg_id| self.values[arg_id as usize])
-                .collect();
+                .map(|&arg_id| {
+                    self.values[arg_id as usize].ok_or_else(|| {
+                        ProvingError::synthesis(format!(
+                            "Statement {} references operand {} with no produced value \
+                             (preprocessor cannot evaluate its producer)",
+                            id, arg_id
+                        ))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             let result = self.eval_ir(&stmt.ir, &args, id)?;
             if id < self.values.len() {
                 self.values[id] = result;
@@ -130,21 +142,35 @@ impl<'a> Preprocessor<'a> {
             // Inputs
             IR::ReadInteger { path, .. }
             | IR::ReadFloat { path, .. }
-            | IR::ReadHash { path, .. } => Ok(Some(
-                self.witness
-                    .resolve(path, self.precision_bits)
-                    .unwrap_or(Fp::zero()),
-            )),
+            | IR::ReadHash { path, .. } => {
+                // The preprocessor only runs on the prove path with a real
+                // witness present (keygen never calls it). A missing path here
+                // means a misspelled/absent input — propagate the
+                // `witness_missing` error instead of silently substituting zero
+                // (which would yield a consistent all-zeros run that proves and
+                // verifies, masking the user's typo).
+                Ok(Some(self.witness.resolve(path, self.precision_bits)?))
+            }
             IR::ReadExternalResult {
                 store_idx,
                 output_idx,
                 ..
-            } => Ok(Some(
+            } => {
+                // Reading an external result that was never produced (e.g. an
+                // `output_idx` the call never returned) must error, not silently
+                // yield zero — mirrors `ResolvedWitness::resolve_external` and
+                // the mock/halo2 synthesizers' `witness_missing` behaviour.
                 self.external_results
                     .get(&(*store_idx, *output_idx))
                     .copied()
-                    .unwrap_or(Fp::zero()),
-            )),
+                    .map(Some)
+                    .ok_or_else(|| {
+                        ProvingError::witness_missing(format!(
+                            "__ext.{}.{}",
+                            store_idx, output_idx
+                        ))
+                    })
+            }
 
             // Integer arithmetic
             IR::AddI => Ok(Some(args[0] + args[1])),
@@ -446,11 +472,24 @@ impl<'a> Preprocessor<'a> {
             }
             IR::WriteMemory { segment_id } => {
                 let addr = kernel::fp_to_i64(args[0]) as usize;
-                if let Some(mem) = self.memories.get_mut(segment_id) {
-                    if addr < mem.len() {
-                        mem[addr] = args[1];
-                    }
+                // Match `mock/synthesizer.rs::write_memory`: a write to an
+                // unallocated segment or out-of-bounds address is an error, not
+                // a silent no-op.
+                let mem = self.memories.get_mut(segment_id).ok_or_else(|| {
+                    ProvingError::synthesis(format!(
+                        "Memory write to unallocated segment {}",
+                        segment_id
+                    ))
+                })?;
+                if addr >= mem.len() {
+                    return Err(ProvingError::synthesis(format!(
+                        "Memory write out of bounds: segment {} addr {} len {}",
+                        segment_id,
+                        addr,
+                        mem.len()
+                    )));
                 }
+                mem[addr] = args[1];
                 Ok(None)
             }
             IR::ReadMemory { segment_id } => {
@@ -557,13 +596,34 @@ impl<'a> Preprocessor<'a> {
         // Call external function
         let result = self.callback.call(func_name, call_args)?;
 
-        // Convert result Value → Fp
-        let result_fp = kernel::value_to_fp(&result, self.precision_bits)?;
-
-        // Store as external result
-        self.external_results.insert((store_idx, 0), result_fp);
-
-        Ok(Some(result_fp))
+        // Store external results keyed by (store_idx, output_idx). A list return
+        // fans out to one entry per element so reads of higher output indices
+        // resolve to the correct value instead of silently returning zero. A
+        // scalar return is stored at output index 0.
+        match &result {
+            Value::List(items) => {
+                if items.is_empty() {
+                    return Err(ProvingError::synthesis(format!(
+                        "External function '{}' returned an empty list",
+                        func_name
+                    )));
+                }
+                let mut first_fp = Fp::zero();
+                for (k, item) in items.iter().enumerate() {
+                    let fp = kernel::value_to_fp(item, self.precision_bits)?;
+                    self.external_results.insert((store_idx, k as u32), fp);
+                    if k == 0 {
+                        first_fp = fp;
+                    }
+                }
+                Ok(Some(first_fp))
+            }
+            _ => {
+                let result_fp = kernel::value_to_fp(&result, self.precision_bits)?;
+                self.external_results.insert((store_idx, 0), result_fp);
+                Ok(Some(result_fp))
+            }
+        }
     }
 }
 
@@ -621,6 +681,65 @@ mod tests {
         )
         .unwrap();
         assert!(result.external_results.is_empty());
+    }
+
+    #[test]
+    fn test_preprocess_errors_on_missing_operand() {
+        // stmt1 (Print) produces no value; stmt2 consumes it as an operand.
+        // The preprocessor must error loudly rather than `filter_map`-compact
+        // the operand list (which would silently shift later operands left and
+        // here would evaluate AddI with a single operand, panicking or — worse —
+        // producing a wrong-but-valid value).
+        let graph = make_graph(vec![
+            (IR::ConstantInt { value: 7 }, vec![]),
+            (IR::Print, vec![0]),
+            (IR::AddI, vec![1, 0]),
+        ]);
+        let cb = callback::NoExternalCallback;
+        let err = run_preprocess(
+            &graph,
+            &CircuitInputs::new(),
+            &ProvingParams::default(),
+            &cb,
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("no produced value") && msg.contains("operand"),
+            "expected a missing-operand error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_preprocess_errors_on_missing_witness_path() {
+        // A ReadInteger whose path is absent from the witness must surface a
+        // `witness_missing` error instead of silently substituting zero.
+        let path = crate::circuit_input::InputPath {
+            param: "nonexistent_param".to_string(),
+            segments: vec![],
+        };
+        let graph = make_graph(vec![(
+            IR::ReadInteger {
+                path,
+                is_public: false,
+            },
+            vec![],
+        )]);
+        let cb = callback::NoExternalCallback;
+        let err = run_preprocess(
+            &graph,
+            &CircuitInputs::new(),
+            &ProvingParams::default(),
+            &cb,
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.to_lowercase().contains("nonexistent_param")
+                || msg.to_lowercase().contains("witness")
+                || msg.to_lowercase().contains("missing"),
+            "expected a witness-missing error, got: {msg}"
+        );
     }
 
     #[test]
