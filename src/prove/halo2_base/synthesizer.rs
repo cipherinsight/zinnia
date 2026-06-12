@@ -74,6 +74,14 @@ pub struct Halo2BaseSynthesizer<'a> {
     prov: &'a crate::provenance::ProvenanceTable,
     vid_of_cell: HashMap<u64, crate::types::ValueId>,
     cell_of_vid: HashMap<crate::types::ValueId, Halo2BaseCell>,
+    /// First assert/bit constraint whose concrete witness violates its
+    /// gate, captured during synthesis when a witness is present.
+    /// halo2's `create_proof` happily emits a (verify-rejected) proof for
+    /// an unsatisfiable witness; the prove path queries this to surface
+    /// `assert(False)`-style failures before spending MSM time. Populated
+    /// only when `witness.is_some()` so the witness-less verify-side
+    /// re-keygen (placeholder zeros) never trips it.
+    first_unsat: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -126,11 +134,27 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             prov: provenance,
             vid_of_cell: HashMap::new(),
             cell_of_vid: HashMap::new(),
+            first_unsat: None,
         }
     }
 
     pub fn public_values(&self) -> &[Fp] {
         &self.public_values
+    }
+
+    /// The first constraint whose witness value violated its gate during
+    /// synthesis, or `None` if every recorded assert/bit constraint is
+    /// satisfied (or no witness was bound). See `first_unsat`.
+    pub fn first_unsat(&self) -> Option<&str> {
+        self.first_unsat.as_deref()
+    }
+
+    /// Record (once) that a recorded constraint is unsatisfied by the
+    /// concrete witness. No-op when no witness is bound.
+    fn note_unsat(&mut self, detail: impl FnOnce() -> String) {
+        if self.witness.is_some() && self.first_unsat.is_none() {
+            self.first_unsat = Some(detail());
+        }
     }
 
     fn ctx(&mut self) -> &mut halo2_base::Context<Fp> {
@@ -942,6 +966,18 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         Ok(())
     }
     fn assert_true(&mut self, a: &Self::CellRef) -> Result<(), ProvingError> {
+        // assert_const pins the cell to 1; an unsatisfiable witness (e.g.
+        // `assert(False)`) would otherwise create_proof a verify-rejected
+        // proof. Catch it during synthesis instead.
+        if a.value != Fp::one() {
+            let v = a.value;
+            self.note_unsat(move || {
+                format!(
+                    "Witness does not satisfy circuit constraints: assert gate expected 1 but witness is {}",
+                    kernel::fp_to_i64(v)
+                )
+            });
+        }
         self.assert_const(a, Fp::one());
         Ok(())
     }
@@ -989,6 +1025,15 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         // so the skip is witness-independent and sound.
         if self.bit_cell_ids.contains(&a.id) {
             return Ok(());
+        }
+        if a.value != Fp::zero() && a.value != Fp::one() {
+            let v = a.value;
+            self.note_unsat(move || {
+                format!(
+                    "Witness does not satisfy circuit constraints: bit gate expected 0 or 1 but witness is {}",
+                    kernel::fp_to_i64(v)
+                )
+            });
         }
         GateChip::<Fp>::default().assert_bit(self.ctx(), a.assigned);
         self.mark_bit(a);

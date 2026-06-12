@@ -270,7 +270,6 @@ def test_dynamic_ndarray_metadata_assertion_is_live_in_halo2_base_backend():
 
     from zinnia.compile._bridge import prove_circuit
     from zinnia.exec.input_parser import build_circuit_inputs
-    from zinnia.exec.proof_result import ZKProofResult
 
     source = """
 def foo(x: Float[Array, "N<=4 M<=3"]):
@@ -289,7 +288,14 @@ def foo(x: Float[Array, "N<=4 M<=3"]):
     # entirely on the meta-assert the fix restored.
     witness_json = build_circuit_inputs(program.get_program_inputs(), (witness,))
     witness_json["params"][0]["value"]["Array"]["runtime_shape"] = [5, 2]
-    tampered = ZKProofResult.from_json(
+    # The constraint is live: since C18 (always-on witness-satisfaction
+    # check) halo2-base REFUSES the out-of-envelope witness at prove time —
+    # the restored meta-assert lowers to an `assert` gate cell pinned to 0,
+    # which the always-on check rejects before `create_proof`. This is a
+    # strictly stronger contract than the prove-then-verify-false form this
+    # test originally pinned (at 4b69c08 the meta-assert was a no-op and the
+    # tampered artifact verified True).
+    with pytest.raises(RuntimeError, match="Witness does not satisfy"):
         prove_circuit(
             program._compiled_ir,
             json.dumps(witness_json),
@@ -297,9 +303,6 @@ def foo(x: Float[Array, "N<=4 M<=3"]):
             "halo2-base",
             None,
         )
-    )
-    # The constraint is live: the out-of-envelope proof does not verify.
-    assert program.verify(tampered) is False
 
 
 def test_symbolic_bounded_dynamic_slice_reshape_and_transpose():

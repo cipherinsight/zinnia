@@ -310,6 +310,25 @@ impl ProverBackend for Halo2BaseProverBackend {
                 detail: format!("Failed to decode halo2-base payload: {}", e),
             })?;
 
+        // ── IR-hash binding check (before re-keygen / proof verify) ────
+        //
+        // Recompute the IR hash from the shipped IR and require it to match
+        // the artifact's recorded `ir_hash`. A mismatch means the verifier
+        // is being handed a proof for a different circuit than the IR it is
+        // told it is checking. Surface the typed `IrHashMismatch` (not a
+        // generic invalid result) so artifact-transport regressions are
+        // attributable. Mirrors the legacy halo2-IPA verify path.
+        let computed_ir_hash =
+            compute_ir_hash(&payload.ir_stmts).map_err(|e| ProvingError::VerificationFailed {
+                detail: format!("ir_hash recompute failed: {}", e),
+            })?;
+        if computed_ir_hash != artifact.ir_hash {
+            return Err(ProvingError::ir_hash_mismatch(
+                artifact.ir_hash.clone(),
+                computed_ir_hash,
+            ));
+        }
+
         let mut graph = IRGraph::import_stmts(&payload.ir_stmts).map_err(|e| {
             ProvingError::VerificationFailed {
                 detail: format!("IR import failed: {}", e),
@@ -436,6 +455,19 @@ fn build_circuit(
         interpret_ir(ir, &mut synth).map_err(|e| {
             ProvingError::synthesis(format!("halo2-base synthesis failed: {}", e))
         })?;
+        // Always-on witness-satisfaction check: halo2's `create_proof` does
+        // NOT verify the witness satisfies the gates (it emits a proof that
+        // `verify_proof` later rejects). The synthesizer records, during
+        // this same walk, the first assert/bit gate whose concrete witness
+        // violates the gate; surface it so an unsatisfiable witness (e.g.
+        // `assert(False)`) fails fast rather than producing a valid-looking
+        // artifact. Fires only when a witness is bound (prove-side keygen +
+        // prover stages), never on the witness-less verify re-keygen.
+        if let Some(detail) = synth.first_unsat() {
+            return Err(ProvingError::ProvingFailed {
+                detail: detail.to_string(),
+            });
+        }
         synth.public_values().to_vec()
     };
 

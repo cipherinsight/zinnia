@@ -149,6 +149,22 @@ fn collect_public_values(
     interpret_ir(ir, &mut synth)
         .map_err(|e| ProvingError::synthesis(format!("Public-input scan failed: {}", e)))?;
 
+    // ── Always-on witness-satisfaction check ────────────────────────────
+    //
+    // `create_proof` does NOT check that the witness satisfies the gate
+    // polynomials — it will happily emit a proof that `verify_proof` later
+    // rejects. MockProver caught this at prove time but was removed for
+    // perf (commit bb67c32, ~2× prove wall-time). The synthesizer now
+    // records, during this same Phase-1 walk, the first assert/bit gate
+    // whose concrete witness violates the gate; surface it here so an
+    // unsatisfiable witness (e.g. `assert(False)`) fails fast rather than
+    // producing a valid-looking artifact for an unsatisfiable circuit.
+    if let Some(detail) = synth.first_unsat() {
+        return Err(ProvingError::ProvingFailed {
+            detail: detail.to_string(),
+        });
+    }
+
     Ok(synth.public_values().to_vec())
 }
 
@@ -275,17 +291,14 @@ impl Halo2ProverBackend {
             params: params.clone(),
         };
 
-        // Collect public inputs by re-walking the IR.
+        // Collect public inputs by re-walking the IR. This walk also runs
+        // the always-on witness-satisfaction check (assert/bit gate cells
+        // vs. the concrete witness) and returns `ProvingFailed` on an
+        // unsatisfiable witness — the cheap replacement for the removed
+        // MockProver pass (see `collect_public_values`). The full
+        // MockProver doubled prove wall-time; this check is O(asserts) and
+        // piggybacks on a walk we already do.
         let public_inputs: Vec<Fp> = collect_public_values(ir, witness, params)?;
-
-        // ── Witness validation via MockProver ──────────────────────────
-        //
-        // (MockProver-based witness validation removed — see
-        // `mock_prove` for the standalone testing/debug entrypoint that
-        // still uses it. Skipping the mock check matches halo2-graph's
-        // harness and roughly halves prove wall time. Witness errors
-        // now surface at `create_proof`/`verify_proof` time instead of
-        // here.)
 
         // Generate or reuse the proving key for this exact proof shape. The
         // key is conservative: canonical IR hash plus every ProvingParams
@@ -429,18 +442,31 @@ impl Halo2ProverBackend {
                 detail: format!("Failed to decode halo2-ipa-rekeygen-v1 vk_bytes: {}", e),
             })?;
 
-        // ── IR-hash diagnostic check ───────────────────────────────────
+        // ── IR-hash binding check (before proof verification) ──────────
         //
-        // Recompute the IR hash from the payload and use that as the
-        // verify-side cache key. The top-level artifact hash is kept as a
-        // diagnostic field only: if JSON canonicalization drifts, rejecting
-        // here would block otherwise valid proofs, while a genuinely wrong
-        // IR payload still re-keygens a different VK and fails inside
-        // `verify_proof` via the Fiat-Shamir VK binding.
+        // Recompute the IR hash from the payload and require it to match
+        // the artifact's recorded `ir_hash` *before* spending any keygen /
+        // proof-verify work. A mismatch means the verifier was handed an
+        // artifact whose advertised circuit (`ir_hash`) differs from the IR
+        // actually shipped in `vk_bytes` — i.e. a proof for a DIFFERENT
+        // circuit than the IR the caller thinks they are checking. The
+        // Fiat-Shamir VK-bind inside `verify_proof` would also reject a
+        // wrong-IR proof at the transcript level (see the module soundness
+        // note), but we surface the typed `IrHashMismatch` here so the
+        // failure is attributable to artifact-transport rather than
+        // masquerading as a generic proof-invalid. Returning the typed
+        // error (not a `VerifyResult { valid: false }`) lets the
+        // differential fuzzer's auto-filer route it as `ir_mismatch`.
         let computed_ir_hash =
             compute_ir_hash(&payload.ir_stmts).map_err(|e| ProvingError::VerificationFailed {
                 detail: format!("ir_hash recompute failed: {}", e),
             })?;
+        if computed_ir_hash != artifact.ir_hash {
+            return Err(ProvingError::ir_hash_mismatch(
+                artifact.ir_hash.clone(),
+                computed_ir_hash,
+            ));
+        }
         let cache_ir_hash = computed_ir_hash.as_str();
 
         // ── VK lookup (or re-keygen on miss) ───────────────────────────
@@ -527,26 +553,6 @@ impl Halo2ProverBackend {
     }
 }
 
-/// Format a list of `VerifyFailure`s for inclusion in a `ProvingError`.
-///
-/// We truncate the list to keep error messages tractable on circuits
-/// with thousands of failing rows.
-fn format_mock_failures(failures: &[halo2_proofs::dev::VerifyFailure]) -> String {
-    const MAX_SHOWN: usize = 5;
-    let n = failures.len();
-    let shown = failures
-        .iter()
-        .take(MAX_SHOWN)
-        .map(|f| format!("{:?}", f))
-        .collect::<Vec<_>>()
-        .join("; ");
-    if n > MAX_SHOWN {
-        format!("{} failures (showing first {}): {}", n, MAX_SHOWN, shown)
-    } else {
-        format!("{} failure(s): {}", n, shown)
-    }
-}
-
 /// Prove a minimal-eligible circuit (no gates — just reads / constants /
 /// exposes). Cuts ~3-4× MSM cost vs the full circuit by configuring only
 /// 1 advice + 1 instance column. Verifier-side dispatch in `verify`
@@ -574,8 +580,11 @@ fn prove_minimal(
         witnesses_present: true,
     };
 
-    // (MockProver validation removed in both prove paths — matches the
-    // skip in the full ZinniaCircuit path. See comment there.)
+    // No witness-satisfaction check here: minimal-eligible kernels are
+    // gate-free (reads / constants / exposes only — see
+    // `is_minimal_eligible`), so they contain no assert/bit constraint a
+    // witness could violate. The always-on check lives on the full
+    // ZinniaCircuit path (`collect_public_values`).
 
     let pk = if let Some(pk) =
         proving_key_cache_get(ir_hash, k, params.precision_bits, params.lookup_bits)

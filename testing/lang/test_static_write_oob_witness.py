@@ -159,7 +159,11 @@ def test_static_write_oob_index_refused_backend():
     assert prog.verify(r_ok) is True
 
     # Out-of-range write: the bounds-discharge witness assertion cannot be
-    # satisfied, so the resulting proof does not verify (at 4b69c08 the
-    # write silently no-op'd and this verified True).
-    r_bad = prog.prove(8, 999, backend="halo2")
-    assert prog.verify(r_bad) is False
+    # satisfied. Since C18 (always-on witness-satisfaction check), the
+    # halo2 prove path REFUSES the unsatisfiable witness up front rather
+    # than emitting an artifact that only `verify` would reject — a
+    # strictly stronger contract than the prove-then-verify-false form this
+    # test originally pinned (at 4b69c08 the write silently no-op'd and the
+    # artifact verified True).
+    with pytest.raises(RuntimeError, match="Witness does not satisfy"):
+        prog.prove(8, 999, backend="halo2")

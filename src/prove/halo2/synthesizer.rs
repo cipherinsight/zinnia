@@ -128,6 +128,14 @@ pub struct Halo2Synthesizer {
     u128_lt_bit_cache: HashMap<(usize, usize, i64, u32), Vec<Halo2CellRef>>,
     /// Cached vector-select lanes keyed by condition and branch cells.
     select_many_cache: HashMap<Vec<(usize, usize)>, Vec<Halo2CellRef>>,
+    /// First recorded constraint whose witness value does not satisfy its
+    /// gate, captured during Phase-1 recording when a concrete witness is
+    /// present. `create_proof` happily produces a (verify-rejected) proof
+    /// for an unsatisfiable witness, so the prove path queries this to
+    /// surface `assert(false)`-style failures *before* spending MSM time.
+    /// Populated only when `witness.is_some()` so the witness-less keygen
+    /// pass (which threads placeholder zeros) never trips it.
+    first_unsat: Option<String>,
 }
 
 const MAX_RANGE_LOOKUP_BITS: u32 = 16;
@@ -156,6 +164,23 @@ impl Halo2Synthesizer {
             bit_cells: HashSet::new(),
             u128_lt_bit_cache: HashMap::new(),
             select_many_cache: HashMap::new(),
+            first_unsat: None,
+        }
+    }
+
+    /// The first constraint whose witness value violated its gate during
+    /// recording, or `None` if every recorded assert/bit constraint is
+    /// satisfied (or no witness was present). See `first_unsat`.
+    pub fn first_unsat(&self) -> Option<&str> {
+        self.first_unsat.as_deref()
+    }
+
+    /// Record (once) that a recorded constraint is unsatisfied by the
+    /// concrete witness. No-op when no witness is bound — the keygen pass
+    /// threads placeholder zeros and must not be flagged.
+    fn note_unsat(&mut self, detail: impl FnOnce() -> String) {
+        if self.witness.is_some() && self.first_unsat.is_none() {
+            self.first_unsat = Some(detail());
         }
     }
 
@@ -507,6 +532,15 @@ impl Halo2Synthesizer {
 
     /// Constrain that a value is a bit (0 or 1): a*(a-1) = 0.
     fn constrain_bit(&mut self, a: &Halo2CellRef) {
+        // Gate "bit": s * a * (a - 1) = 0, i.e. the witness must be in {0, 1}.
+        if a.value != Fp::zero() && a.value != Fp::one() {
+            self.note_unsat(|| {
+                format!(
+                    "Witness does not satisfy circuit constraints: bit gate expected 0 or 1 but witness is {}",
+                    kernel::fp_to_i64(a.value)
+                )
+            });
+        }
         let row = self.offset;
         self.rec_sel("bit");
         let _ = self.rec_advice(0, a.value, "bit_check");
@@ -2699,6 +2733,17 @@ impl Synthesizer for Halo2Synthesizer {
         Ok(())
     }
     fn assert_true(&mut self, a: &Halo2CellRef) -> Result<(), ProvingError> {
+        // Gate "assert": s * (1 - a) = 0, i.e. the witness must equal 1.
+        // Check the recorded value against the gate so an unsatisfiable
+        // witness (e.g. `assert(False)`) is caught before create_proof.
+        if a.value != Fp::one() {
+            self.note_unsat(|| {
+                format!(
+                    "Witness does not satisfy circuit constraints: assert gate expected 1 but witness is {}",
+                    kernel::fp_to_i64(a.value)
+                )
+            });
+        }
         let row = self.offset;
         self.rec_sel("assert");
         let _ = self.rec_advice(0, a.value, "assert_a");
