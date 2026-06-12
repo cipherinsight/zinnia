@@ -268,10 +268,122 @@ pub fn run(graph: &IRGraph) -> BoundMap {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ir::IRStatement;
+    use crate::provenance::Interval;
+    use crate::types::ValueId;
+
+    /// Build a statement whose `stmt_id == index` (the graph invariant) and
+    /// whose `value_id == ValueId(index)`, so the `bounds` map (keyed by
+    /// stmt_id, a u32) and `interval_of` (keyed by value_id) line up trivially
+    /// in these tests. `arguments` are stmt_ids; `arg_values` are the matching
+    /// ValueIds.
+    fn stmt(index: u32, ir: IR, args: Vec<u32>) -> IRStatement {
+        let arg_values = args.iter().map(|a| ValueId(*a as u64)).collect();
+        IRStatement::new(index, ValueId(index as u64), ir, args, arg_values, None)
+    }
+
+    fn graph_of(stmts: Vec<IRStatement>) -> IRGraph {
+        IRGraph::new(stmts)
+    }
 
     #[test]
     fn empty_graph_yields_empty_map() {
-        let graph = IRGraph { stmts: Vec::new() };
+        let graph = IRGraph::empty_for_tests();
         assert!(run(&graph).is_empty());
+    }
+
+    #[test]
+    fn add_i_of_small_constants_is_bounded_by_their_sum() {
+        // 100 + 200 = 300, well under U32_MAX → bound recorded.
+        let graph = graph_of(vec![
+            stmt(0, IR::ConstantInt { value: 100 }, vec![]),
+            stmt(1, IR::ConstantInt { value: 200 }, vec![]),
+            stmt(2, IR::AddI, vec![0, 1]),
+        ]);
+        let bounds = run(&graph);
+        assert_eq!(bounds.get(&2).copied(), Some(300));
+    }
+
+    #[test]
+    fn add_i_bound_exceeding_u32_collapses_to_none() {
+        // Both operands fit u32 individually, but their sum exceeds U32_MAX
+        // (4_294_967_295), so AddI can no longer be proven to fit u32 and is
+        // dropped from the bound map (the emitter falls back to the Field
+        // path). The operand constants themselves remain bounded.
+        let big = 3_000_000_000i64; // < U32_MAX, > U32_MAX/2
+        let graph = graph_of(vec![
+            stmt(0, IR::ConstantInt { value: big }, vec![]),
+            stmt(1, IR::ConstantInt { value: big }, vec![]),
+            stmt(2, IR::AddI, vec![0, 1]),
+        ]);
+        let bounds = run(&graph);
+        assert_eq!(bounds.get(&0).copied(), Some(big as u64));
+        assert_eq!(bounds.get(&1).copied(), Some(big as u64));
+        // 6_000_000_000 > U32_MAX → no bound kept.
+        assert_eq!(bounds.get(&2).copied(), None);
+    }
+
+    #[test]
+    fn mul_i_checked_overflow_collapses_to_none() {
+        // u64 checked_mul genuinely overflows here: (1<<40) * (1<<40) = 1<<80.
+        // The dataflow's checked_mul returns None, so even before the U32
+        // gate the product is unbounded.
+        let huge = 1i64 << 40;
+        let graph = graph_of(vec![
+            stmt(0, IR::ConstantInt { value: huge }, vec![]),
+            stmt(1, IR::ConstantInt { value: huge }, vec![]),
+            stmt(2, IR::MulI, vec![0, 1]),
+        ]);
+        let bounds = run(&graph);
+        // Operands themselves exceed U32_MAX so they are also dropped.
+        assert_eq!(bounds.get(&2).copied(), None);
+    }
+
+    #[test]
+    fn provenance_interval_min_merges_with_local_bound() {
+        // A ModI by a large constant gives a loose local bound (modulus-1),
+        // but the ProvenanceTable carries a tighter structural interval on
+        // the result value. The two must min-merge to the tighter bound.
+        //
+        //   v0 = read (unbounded witness)
+        //   v1 = const 1000
+        //   v2 = v0 % v1     → local bound 999
+        // Provenance says v2 ∈ [0, 7]  → merged bound = min(999, 7) = 7.
+        let mut graph = graph_of(vec![
+            stmt(0, IR::ConstantFloat { value: 0.0 }, vec![]),
+            stmt(1, IR::ConstantInt { value: 1000 }, vec![]),
+            stmt(2, IR::ModI, vec![0, 1]),
+        ]);
+        // Statement 2's value_id is 2 (set by `stmt`).
+        graph
+            .provenance
+            .set_interval(ValueId(2), Interval { lo: 0, hi: 7 });
+
+        let bounds = run(&graph);
+        assert_eq!(bounds.get(&2).copied(), Some(7));
+
+        // Sanity: without the provenance interval the bound is the loose 999.
+        let plain = graph_of(vec![
+            stmt(0, IR::ConstantFloat { value: 0.0 }, vec![]),
+            stmt(1, IR::ConstantInt { value: 1000 }, vec![]),
+            stmt(2, IR::ModI, vec![0, 1]),
+        ]);
+        assert_eq!(run(&plain).get(&2).copied(), Some(999));
+    }
+
+    #[test]
+    fn provenance_interval_with_negative_lo_is_ignored() {
+        // `interval_of` is only consulted when lo >= 0 (the bound must be a
+        // non-negative upper bound). A negative-lo interval is discarded and
+        // the local bound stands.
+        let mut graph = graph_of(vec![
+            stmt(0, IR::ConstantFloat { value: 0.0 }, vec![]),
+            stmt(1, IR::ConstantInt { value: 1000 }, vec![]),
+            stmt(2, IR::ModI, vec![0, 1]),
+        ]);
+        graph
+            .provenance
+            .set_interval(ValueId(2), Interval { lo: -5, hi: 7 });
+        assert_eq!(run(&graph).get(&2).copied(), Some(999));
     }
 }

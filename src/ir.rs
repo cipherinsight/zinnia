@@ -183,6 +183,15 @@ impl IRGraph {
         graph
     }
 
+    /// Construct an empty graph for unit tests. `IRGraph` has private fields
+    /// (`resolver`, `astgen_telemetry`) so test modules in other files cannot
+    /// build one with struct-literal syntax; this is the test-visible seam.
+    /// Equivalent to `IRGraph::new(Vec::new())` but named for intent.
+    #[cfg(test)]
+    pub fn empty_for_tests() -> Self {
+        IRGraph::new(Vec::new())
+    }
+
     /// Stash an AST→IR-phase telemetry handle on the graph (P5). Read by
     /// `compile_circuit` for the end-of-compilation summary.
     pub fn set_astgen_telemetry(

@@ -91,6 +91,7 @@ struct MaliciousProductSumFStepCircuit {
 impl Circuit<Fp> for MaliciousMulFRemainderCircuit {
     type Config = ZinniaConfig;
     type FloorPlanner = SimpleFloorPlanner;
+    type Params = ();
 
     fn without_witnesses(&self) -> Self {
         self.clone()
@@ -126,6 +127,7 @@ impl Circuit<Fp> for MaliciousMulFRemainderCircuit {
 impl Circuit<Fp> for MaliciousRangeRecomposeCircuit {
     type Config = ZinniaConfig;
     type FloorPlanner = SimpleFloorPlanner;
+    type Params = ();
 
     fn without_witnesses(&self) -> Self {
         self.clone()
@@ -156,6 +158,7 @@ impl Circuit<Fp> for MaliciousRangeRecomposeCircuit {
 impl Circuit<Fp> for MaliciousProductSumFRangeCircuit {
     type Config = ZinniaConfig;
     type FloorPlanner = SimpleFloorPlanner;
+    type Params = ();
 
     fn without_witnesses(&self) -> Self {
         self.clone()
@@ -221,6 +224,7 @@ impl Circuit<Fp> for MaliciousProductSumFRangeCircuit {
 impl Circuit<Fp> for MaliciousCompactMulFCircuit {
     type Config = ZinniaConfig;
     type FloorPlanner = SimpleFloorPlanner;
+    type Params = ();
 
     fn without_witnesses(&self) -> Self {
         self.clone()
@@ -273,6 +277,7 @@ impl Circuit<Fp> for MaliciousCompactMulFCircuit {
 impl Circuit<Fp> for MaliciousProductSumFStepCircuit {
     type Config = ZinniaConfig;
     type FloorPlanner = SimpleFloorPlanner;
+    type Params = ();
 
     fn without_witnesses(&self) -> Self {
         self.clone()
@@ -774,9 +779,14 @@ fn test_range_check_rejects_chunks_not_equal_to_checked_cell() {
         .verify()
         .expect_err("range chunks must recompose to the exact checked cell through copy equality");
     let msg = format!("{:?}", err);
+    // PSE halo2 v0.3 gives `VerifyFailure` a custom `Debug` that delegates to
+    // `Display`, so the copy-constraint failure now prints as "Equality
+    // constraint not satisfied by cell (...)" rather than the old zcash
+    // `Permutation { .. }` struct dump. The variant is still
+    // `VerifyFailure::Permutation`; only the rendered text changed.
     assert!(
-        msg.contains("Permutation"),
-        "expected permutation failure for recomposition mismatch, got {msg}",
+        msg.contains("Equality constraint not satisfied"),
+        "expected permutation (copy-constraint) failure for recomposition mismatch, got {msg}",
     );
 }
 
@@ -840,9 +850,12 @@ fn test_product_sum_f_range_rejects_recomposition_mismatch() {
         .verify()
         .expect_err("ProductSumF chunk rows must copy-bind recomposition to the exact remainder");
     let msg = format!("{:?}", err);
+    // See note in `test_range_check_rejects_chunks_not_equal_to_checked_cell`:
+    // PSE halo2 v0.3 renders the `Permutation` copy-constraint failure via its
+    // `Display` impl ("Equality constraint not satisfied by cell ...").
     assert!(
-        msg.contains("Permutation"),
-        "expected ProductSumF chunk recomposition permutation failure, got {msg}",
+        msg.contains("Equality constraint not satisfied"),
+        "expected ProductSumF chunk recomposition (copy-constraint) failure, got {msg}",
     );
 }
 
@@ -1404,6 +1417,10 @@ use crate::prove::halo2::vk_cache::{
 use crate::prove::halo2::Halo2ProverBackend;
 use crate::prove::traits::ProverBackend;
 use crate::prove::types::ProofArtifact;
+// PSE halo2 v0.3 moved `k()` onto the `Params` commitment trait (the old
+// zcash `ParamsIPA::k()` inherent method is gone); bring it into scope so the
+// IPA-params cache tests below can read back the stored `k`.
+use halo2_proofs::poly::commitment::Params as _;
 
 #[test]
 fn halo2_prove_rejects_unsat_witness() {
