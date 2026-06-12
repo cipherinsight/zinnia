@@ -183,78 +183,141 @@ pub fn dyn_setitem_mask(
         );
     }
 
-    let value_is_scalar = value.is_number();
-    let value_elements: Vec<Value> = if value_is_scalar {
-        vec![]
+    // Resolve the RHS. numpy `a[mask] = rhs` consumes `rhs` SEQUENTIALLY,
+    // one element per true mask cell — so a non-scalar RHS is fundamentally
+    // PACKED to the true count, NOT positionally aligned to the target.
+    //
+    // Three shapes (mirrors the StaticArray classification in
+    // `helpers/static_array/mask.rs`):
+    //   - `Scalar`     : broadcast across all true positions.
+    //   - `FullShape`  : one cell per target element, written positionally.
+    //     Only minted when an identity MaskReadView proves it (the
+    //     `a[mask] op= v` round-trip cancellation: the packed-kept-sources
+    //     invariant gives `rhs[#trues before i] == sources[i]` at every true
+    //     position, so the positional write is correct and the pack/unpack
+    //     shift network cancels) OR for a genuinely target-sized composite.
+    //   - `Compacted`  : PACKED values (true-count-sized or a filter output
+    //     whose view was dropped); aligned at write time by a running prefix
+    //     count of trues.
+    enum Rhs {
+        Scalar(Value),
+        FullShape(Vec<Value>),
+        Compacted(Vec<Value>),
+    }
+
+    let rhs = if value.is_number() {
+        Rhs::Scalar(value.clone())
     } else {
         match value {
             Value::DynamicNDArray(vd) => {
-                if vd.meta.logical_shape != *target_shape {
-                    panic!(
-                        "masked assignment RHS shape mismatch: array has shape {:?} but RHS has shape {:?}",
-                        target_shape,
-                        vd.meta.logical_shape
+                // Round-trip cancellation: when the RHS carries a mask-read
+                // view whose mask is THIS mask (same cell SSA values) and the
+                // value is the packed array itself (identity meta + the
+                // original runtime-length stmt), the packed invariant makes
+                // the positional write correct with no unpack network.
+                let meta_identity = vd.meta.logical_offset == 0
+                    && vd.meta.runtime_offset.static_val == Some(0)
+                    && vd.meta.logical_shape.as_slice() == [max_len]
+                    && vd.meta.logical_strides.as_slice() == [1]
+                    && vd.meta.runtime_length.stmt_id.is_some();
+                let view_sources = b
+                    .provenance
+                    .mask_read_view(vd.segment_id)
+                    .filter(|view| {
+                        meta_identity
+                            && view.count_stmt == vd.meta.runtime_length.stmt_id
+                            && view.sources.len() == max_len
+                            && view.mask_cells.len() == mask_elements.len()
+                            && view.mask_cells.iter().zip(mask_elements.iter()).all(
+                                |(a, c)| match (a.value_id(), c.value_id()) {
+                                    (Some(x), Some(y)) => x == y,
+                                    _ => false,
+                                },
+                            )
+                    })
+                    .map(|view| view.sources.clone());
+                if let Some(sources) = view_sources {
+                    Rhs::FullShape(sources)
+                } else {
+                    let vd_owned = crate::ops::dyn_ndarray::force_contiguous(b, vd);
+                    let cells = crate::helpers::segment::read_all_typed(
+                        b,
+                        vd_owned.segment_id,
+                        vd_owned.max_length(),
+                        vd_owned.dtype,
                     );
+                    // Discriminate a genuinely full-shape RHS from a packed
+                    // (filter-output / true-count) one by its runtime length:
+                    // a fully-populated array of the target shape has a
+                    // STATIC runtime_length == max_len, so its cell i lands at
+                    // target position i (the `arr[mask] = arr2` / np.where
+                    // gated-assignment shape, matching the StaticArray
+                    // `FullShape` case). A compaction output's runtime length
+                    // is data-dependent (`static_val == None`) — its kept
+                    // values are PACKED to the front and must be aligned by a
+                    // prefix count of trues.
+                    let is_full_shape = vd.meta.logical_shape == *target_shape
+                        && vd.max_length() == max_len
+                        && vd.meta.runtime_length.static_val == Some(max_len as i64);
+                    if is_full_shape {
+                        Rhs::FullShape(cells)
+                    } else {
+                        Rhs::Compacted(cells)
+                    }
                 }
-                if vd.max_length() != max_len {
-                    panic!(
-                        "masked assignment RHS shape mismatch: array has {} elements but RHS has {}",
-                        max_len,
-                        vd.max_length()
-                    );
-                }
-                let vd_owned = crate::ops::dyn_ndarray::force_contiguous(b, vd);
-                crate::helpers::segment::read_all_typed(
-                    b,
-                    vd_owned.segment_id,
-                    vd_owned.max_length(),
-                    vd_owned.dtype,
-                )
             }
             Value::List(_) | Value::Tuple(_) | Value::StaticArray { .. } => {
                 let shape = crate::helpers::composite::get_composite_shape(value);
-                if shape != *target_shape {
-                    panic!(
-                        "masked assignment RHS shape mismatch: array has shape {:?} but RHS has shape {:?}",
-                        target_shape, shape
-                    );
+                let cells = crate::helpers::composite::flatten_composite_with_builder(b, value);
+                if shape == *target_shape && cells.len() == max_len {
+                    // Genuinely target-sized composite (np.where-style gated
+                    // assignment): positional.
+                    Rhs::FullShape(cells)
+                } else {
+                    // True-count-sized (or otherwise compacted) RHS.
+                    Rhs::Compacted(cells)
                 }
-                let value_total: usize = shape.iter().product();
-                if value_total != max_len {
-                    panic!(
-                        "masked assignment RHS shape mismatch: array has {} elements but RHS has {}",
-                        max_len, value_total
-                    );
-                }
-                crate::helpers::composite::flatten_composite_with_builder(b, value)
             }
             _ => panic!("masked assignment: value must be scalar or array-like"),
         }
     };
-    if !value_is_scalar && value_elements.len() != max_len {
-        panic!(
-            "masked assignment RHS shape mismatch: array has {} elements but RHS has {}",
-            max_len,
-            value_elements.len()
-        );
-    }
 
     let current_vals =
         crate::helpers::segment::read_all_typed(b, data.segment_id, max_len, data.dtype);
     let mut out_elements = Vec::with_capacity(max_len);
 
+    // Running count of true mask cells before position i — the packed-RHS
+    // read pointer. Constant-folds away entirely for static masks.
+    let mut prefix = b.ir_constant_int(0);
     for i in 0..max_len {
         let keep = b.ir_bool_cast(&mask_elements[i]);
 
-        let new_val = if value_is_scalar {
-            cast_to_dtype(b, value, data.dtype)
-        } else {
-            cast_to_dtype(b, &value_elements[i], data.dtype)
+        let new_val = match &rhs {
+            Rhs::Scalar(v) => cast_to_dtype(b, v, data.dtype),
+            Rhs::FullShape(cells) => cast_to_dtype(b, &cells[i], data.dtype),
+            Rhs::Compacted(cells) => {
+                // rhs[#trues before i], one-hot over the prefix counter (at
+                // most i trues can precede position i, and no more than the
+                // packed RHS length).
+                let mut acc = current_vals[i].clone();
+                for (k, c) in cells.iter().enumerate().take(i + 1) {
+                    let k_c = b.ir_constant_int(k as i64);
+                    let eq = b.ir_equal_i(&prefix, &k_c);
+                    let c_cast = cast_to_dtype(b, c, data.dtype);
+                    acc = crate::helpers::value_ops::select_value(b, &eq, &c_cast, &acc);
+                }
+                acc
+            }
         };
 
         let selected =
             crate::helpers::value_ops::select_value(b, &keep, &new_val, &current_vals[i]);
         out_elements.push(selected);
+
+        if matches!(rhs, Rhs::Compacted(_)) {
+            let m_i = b.ir_int_cast(&keep);
+            prefix = b.ir_add_i(&prefix, &m_i);
+        }
     }
 
     let segment_id = crate::helpers::segment::alloc_and_write_values(b, &out_elements, data.dtype);

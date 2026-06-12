@@ -19,6 +19,106 @@ fn cast_to_dtype(b: &mut IRBuilder, value: &Value, dtype: NumberType) -> Value {
     }
 }
 
+/// Output of the shared boolean-mask compaction network ([`compact_by_mask`]).
+pub(crate) struct Compaction {
+    /// The compacted, default-padded buffer (`leading_total * trailing_total`
+    /// elements): kept blocks packed to the front in source order, defaults
+    /// behind.
+    pub acc: Vec<Value>,
+    /// Number of KEPT leading blocks (rows). This is the runtime row count,
+    /// NOT multiplied by `trailing_total`.
+    pub kept_rows: Value,
+}
+
+/// The single boolean-mask compaction network. `cast_cells` is the source
+/// payload already cast to `default_val`'s dtype (`leading_total *
+/// trailing_total` cells, row-major); `mask_cells` carries one mask cell per
+/// leading block. Returns the compacted buffer plus the kept-row count.
+///
+/// Compaction via a one-hot shift network — no memory ops. `row[j]` one-hot
+/// encodes the landing *row* of input block i (the prefix count of kept rows
+/// before i): it starts as e_0 and shifts right by one whenever a row is
+/// kept. Each input row select-writes its (masked) cells into the landing
+/// row: kept rows deposit their values, non-kept rows deposit defaults at the
+/// still-unowned next free row — exactly the previous write-pointer
+/// semantics, so the output layout is bit-identical (compacted rows, default
+/// padding). The row region is triangular (landing row <= i), so entries
+/// beyond i+1 stay constant 0 and emit nothing.
+///
+/// This is the SINGLE copy of the triangular shift loop: `dynamic_mask_read`
+/// (StaticArray boolean-mask read, trailing tail support) and `dyn_filter`
+/// (DynamicNDArray `arr[mask]` / `.filter`, trailing_total == 1) both call it.
+pub(crate) fn compact_by_mask(
+    b: &mut IRBuilder,
+    cast_cells: &[Value],
+    mask_cells: &[Value],
+    default_val: &Value,
+    trailing_total: usize,
+) -> Compaction {
+    let trailing_total = trailing_total.max(1);
+    let leading_total = mask_cells.len();
+    let total = leading_total * trailing_total;
+    debug_assert_eq!(cast_cells.len(), total);
+
+    let one = b.ir_constant_int(1);
+    let zero = b.ir_constant_int(0);
+    let mut row: Vec<Value> = (0..leading_total)
+        .map(|j| if j == 0 { one.clone() } else { zero.clone() })
+        .collect();
+    let mut acc: Vec<Value> = vec![default_val.clone(); total];
+    let mut kept_rows = b.ir_constant_int(0);
+
+    let is_const_zero = |v: &Value| v.int_val() == Some(0);
+
+    for i in 0..leading_total {
+        let mask_bool = ensure_bool(b, &mask_cells[i]);
+        let mut deposit: Vec<Value> = Vec::with_capacity(trailing_total);
+        for t in 0..trailing_total {
+            let src = &cast_cells[i * trailing_total + t];
+            deposit.push(crate::helpers::value_ops::select_value(
+                b,
+                &mask_bool,
+                src,
+                default_val,
+            ));
+        }
+
+        for j in 0..(i + 1).min(leading_total) {
+            if is_const_zero(&row[j]) {
+                continue;
+            }
+            for (t, dep) in deposit.iter().enumerate() {
+                let slot = &acc[j * trailing_total + t];
+                acc[j * trailing_total + t] =
+                    crate::helpers::value_ops::select_value(b, &row[j], dep, slot);
+            }
+        }
+
+        // Shift the one-hot row right when this input row was kept.
+        let mut new_row = row.clone();
+        for j in (0..(i + 2).min(leading_total)).rev() {
+            let prev = if j == 0 { &zero } else { &row[j - 1] };
+            if is_const_zero(prev) && is_const_zero(&row[j]) {
+                continue;
+            }
+            new_row[j] = b.ir_select_i(&mask_bool, prev, &row[j]);
+        }
+        row = new_row;
+
+        let inc = b.ir_select_i(&mask_bool, &one, &zero);
+        kept_rows = b.ir_add_i(&kept_rows, &inc);
+    }
+
+    Compaction { acc, kept_rows }
+}
+
+fn ensure_bool(b: &mut IRBuilder, v: &Value) -> Value {
+    match v {
+        Value::Boolean(_) => v.clone(),
+        _ => b.ir_bool_cast(v),
+    }
+}
+
 pub fn dyn_filter(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) -> Value {
     let mask = args.first().expect("filter: requires a mask argument");
     let data_owned = super::force_contiguous(b, data);
@@ -79,58 +179,35 @@ pub fn dyn_filter(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) 
         );
     }
 
-    // Compaction via a one-hot shift network — no memory ops. Row `row[j]`
-    // one-hot encodes the landing slot of element i (the prefix count of
-    // keeps before i): row starts as e_0 and shifts right by one whenever
-    // an element is kept. Each element then select-writes into its landing
-    // slot: a kept element deposits its value; a non-kept element deposits
-    // the default at the (still unowned) next free slot, exactly mirroring
-    // the previous write-pointer semantics, so the output layout is
-    // bit-identical (compacted prefix, default padding). The row region is
-    // triangular (prefix_i <= i), so entries beyond i+1 stay the constant 0
-    // and emit nothing.
+    // Compact `elements` to the front under `mask_elements` via the shared
+    // one-hot shift network (`compact_by_mask`). `elements` already carry
+    // `data.dtype`, so they are their own cast sources (1-to-1 with source
+    // positions) — exactly what the MaskReadView deposit below needs.
     let default_val = super::metadata::dyn_default_value(b, data.dtype);
-    let zero = b.ir_constant_int(0);
-    let one = b.ir_constant_int(1);
-    let zero_bit = b.ir_constant_int(0);
-    let one_bit = b.ir_constant_int(1);
-
-    let mut row: Vec<Value> = (0..max_len)
-        .map(|j| if j == 0 { one_bit.clone() } else { zero_bit.clone() })
-        .collect();
-    let mut acc: Vec<Value> = vec![default_val.clone(); max_len];
-    let mut write_ptr = b.ir_constant_int(0);
-
-    let is_const_zero = |v: &Value| v.int_val() == Some(0);
-
-    for i in 0..max_len.min(elements.len()) {
-        let keep = b.ir_bool_cast(&mask_elements[i]);
-        let deposit =
-            crate::helpers::value_ops::select_value(b, &keep, &elements[i], &default_val);
-
-        for (j, slot) in acc.iter_mut().enumerate().take((i + 1).min(max_len)) {
-            if is_const_zero(&row[j]) {
-                continue;
-            }
-            *slot = crate::helpers::value_ops::select_value(b, &row[j], &deposit, slot);
-        }
-
-        // Shift the one-hot row right when this element was kept.
-        let mut new_row = row.clone();
-        for j in (0..(i + 2).min(max_len)).rev() {
-            let prev = if j == 0 { &zero_bit } else { &row[j - 1] };
-            if is_const_zero(prev) && is_const_zero(&row[j]) {
-                continue;
-            }
-            new_row[j] = b.ir_select_i(&keep, prev, &row[j]);
-        }
-        row = new_row;
-
-        let inc = b.ir_select_i(&keep, &one, &zero);
-        write_ptr = b.ir_add_i(&write_ptr, &inc);
-    }
+    let Compaction {
+        acc,
+        kept_rows: write_ptr,
+    } = compact_by_mask(b, &elements, &mask_elements, &default_val, 1);
 
     let segment_id = crate::helpers::segment::alloc_and_write_values(b, &acc, data.dtype);
+
+    // Deposit the mask-read view so an `a[mask] op= v` round trip can cancel
+    // the shift network into per-element selects at the write (see
+    // `MaskReadView` and `try_apply_boolean_mask_write` /
+    // `dyn_setitem_mask`). 1-D whole-element masks only; deposit AFTER the
+    // alloc writes — `on_segment_write` eager-drops the record on any later
+    // write to this segment. The `count_stmt` pins the runtime-length
+    // identity so a sliced/reshaped re-view is not consumed positionally.
+    if data.dtype != NumberType::Complex && elements.len() == max_len {
+        b.provenance.set_mask_read_view(
+            segment_id,
+            crate::provenance::MaskReadView {
+                mask_cells: mask_elements.clone(),
+                sources: elements.clone(),
+                count_stmt: write_ptr.stmt_id(),
+            },
+        );
+    }
 
     // After filter, the runtime length is unknown (depends on the mask) but
     // bounded by the input's max. total_bound conserved from source (§3.8).

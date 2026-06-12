@@ -591,69 +591,25 @@ fn dynamic_mask_read(
         NumberType::Float => b.ir_constant_float(0.0),
         NumberType::Complex => unreachable!("Complex mask read rejected upstream"),
     };
-    // Compaction via a one-hot shift network — no memory ops. `row[j]`
-    // one-hot encodes the landing *row* of input block i (the prefix count
-    // of kept rows before i): it starts as e_0 and shifts right by one
-    // whenever a row is kept. Each input row select-writes its (masked)
-    // cells into the landing row: kept rows deposit their values, non-kept
-    // rows deposit defaults at the still-unowned next free row — exactly
-    // the previous write-pointer semantics, so the output layout is
-    // bit-identical (compacted rows, default padding). The row region is
-    // triangular (landing row <= i), so entries beyond i+1 stay constant 0
-    // and emit nothing.
-    let one = b.ir_constant_int(1);
-    let zero = b.ir_constant_int(0);
-    let mut row: Vec<Value> = (0..leading_total)
-        .map(|j| if j == 0 { one.clone() } else { zero.clone() })
+    // Cast every source cell up to `dtype` (Boolean cells in an Integer
+    // array, etc.). These cast values double as the MaskReadView sources.
+    let cast_sources: Vec<Value> = arr_cells
+        .iter()
+        .map(|src| cast_to_dtype(b, src, dtype))
         .collect();
-    let mut acc: Vec<Value> = vec![default_val.clone(); total];
-    let mut write_row = b.ir_constant_int(0);
 
-    let is_const_zero = |v: &Value| v.int_val() == Some(0);
-
-    let mut cast_sources: Vec<Value> = Vec::with_capacity(total);
-    for i in 0..leading_total {
-        let mask_bool = ensure_bool(b, &mask_cells[i]);
-        let mut deposit: Vec<Value> = Vec::with_capacity(trailing_total);
-        for t in 0..trailing_total {
-            let src = &arr_cells[i * trailing_total + t];
-            let cell_cast = cast_to_dtype(b, src, dtype);
-            cast_sources.push(cell_cast.clone());
-            deposit.push(if dtype == NumberType::Float {
-                b.ir_select_f(&mask_bool, &cell_cast, &default_val)
-            } else {
-                b.ir_select_i(&mask_bool, &cell_cast, &default_val)
-            });
-        }
-
-        for j in 0..(i + 1).min(leading_total) {
-            if is_const_zero(&row[j]) {
-                continue;
-            }
-            for (t, dep) in deposit.iter().enumerate() {
-                let slot = &mut acc[j * trailing_total + t];
-                *slot = if dtype == NumberType::Float {
-                    b.ir_select_f(&row[j], dep, slot)
-                } else {
-                    b.ir_select_i(&row[j], dep, slot)
-                };
-            }
-        }
-
-        // Shift the one-hot row right when this input row was kept.
-        let mut new_row = row.clone();
-        for j in (0..(i + 2).min(leading_total)).rev() {
-            let prev = if j == 0 { &zero } else { &row[j - 1] };
-            if is_const_zero(prev) && is_const_zero(&row[j]) {
-                continue;
-            }
-            new_row[j] = b.ir_select_i(&mask_bool, prev, &row[j]);
-        }
-        row = new_row;
-
-        let inc = b.ir_select_i(&mask_bool, &one, &zero);
-        write_row = b.ir_add_i(&write_row, &inc);
-    }
+    // Compact via the SHARED one-hot shift network (the single copy of the
+    // triangular shift loop, also used by `dyn_filter`).
+    let crate::ops::dyn_ndarray::memory_ops::Compaction {
+        acc,
+        kept_rows: write_row,
+    } = crate::ops::dyn_ndarray::memory_ops::compact_by_mask(
+        b,
+        &cast_sources,
+        mask_cells,
+        &default_val,
+        trailing_total,
+    );
 
     let segment_id = crate::helpers::segment::alloc_and_write_values(b, &acc, dtype);
 

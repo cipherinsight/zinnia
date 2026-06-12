@@ -314,20 +314,25 @@ def test_masked_assign_dynamic_mask_same_shape_2d_rhs():
     assert foo()
 
 
-def test_masked_assign_dynamic_mask_rejects_mismatched_rhs_shape():
-    """dyn[mask] = dyn rejects non-scalar RHS that is not target-shaped."""
+def test_masked_assign_dynamic_mask_packed_rhs_true_count():
+    """dyn[mask] = packed_rhs (sized to the runtime true count) consumes the
+    RHS sequentially, one value per true mask cell — numpy's actual
+    boolean-mask-write contract. mask = a > 3 = [F,T,F,T,F] (2 trues);
+    packing [10, 20] -> a[1]=10, a[3]=20.
+
+    (Previously this path STATICALLY REJECTED any non-target-shaped RHS,
+    which was non-numpy: numpy sizes the RHS to the true count, C08.)"""
     @zk_circuit
     def foo():
         a = np.promote_to_dynamic(np.asarray([1, 5, 3, 7, 2]))
-        rhs = np.promote_to_dynamic(np.asarray([10, 20, 30]))
+        rhs = np.promote_to_dynamic(np.asarray([10, 20]))
         threshold = np.promote_to_dynamic(np.asarray([3, 3, 3, 3, 3]))
-        mask = a > threshold
+        mask = a > threshold  # [0, 1, 0, 1, 0]
         a[mask] = rhs
-        assert a.sum() == 66
+        # [1, 10, 3, 20, 2] -> sum = 36
+        assert a.sum() == 36
 
-    with pytest.raises(ZinniaException) as exc_info:
-        ZKCircuit.from_method(foo).compile()
-    assert "masked assignment RHS shape mismatch" in str(exc_info.value)
+    assert foo()
 
 
 def test_masked_assign_rejects_same_product_different_mask_shape():
@@ -344,20 +349,24 @@ def test_masked_assign_rejects_same_product_different_mask_shape():
     assert "masked assignment shape mismatch" in str(exc_info.value)
 
 
-def test_masked_assign_rejects_same_product_different_rhs_shape():
-    """dyn2d[mask2d] = dyn1d rejects even when flattened counts match."""
+def test_masked_assign_dynamic_mask_packed_rhs_full_coverage_2d():
+    """dyn2d[mask2d] = packed_dyn1d consumes the RHS by the (row-major) true
+    count. Here the mask `a > 0` is all-true, so the 6-element packed RHS
+    fills the whole array in C-order.
+
+    (Previously this STATICALLY REJECTED a non-target-shaped RHS even though
+    numpy sizes the RHS to the runtime true count, C08.)"""
     @zk_circuit
     def foo():
         a = np.promote_to_dynamic(np.asarray([[1, 5, 3], [7, 2, 8]]))
         rhs = np.promote_to_dynamic(np.asarray([10, 20, 30, 40, 50, 60]))
-        threshold = np.promote_to_dynamic(np.asarray([[3, 3, 3], [3, 3, 3]]))
-        mask = a > threshold
+        threshold = np.promote_to_dynamic(np.asarray([[0, 0, 0], [0, 0, 0]]))
+        mask = a > threshold  # all True
         a[mask] = rhs
-        assert a.sum() == 126
+        # [[10, 20, 30], [40, 50, 60]] -> sum = 210
+        assert a.sum() == 210
 
-    with pytest.raises(ZinniaException) as exc_info:
-        ZKCircuit.from_method(foo).compile()
-    assert "masked assignment RHS shape mismatch" in str(exc_info.value)
+    assert foo()
 
 
 def test_masked_assign_broadcast_scalar():
