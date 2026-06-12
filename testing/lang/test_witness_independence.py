@@ -107,3 +107,37 @@ def test_halo2_base_cells_are_witness_independent(case, compiled_cases):
         f"case {case}: halo2-base cell statistics differ between witnesses "
         f"(witness-specialized circuit):\n  a: {fp_a}\n  b: {fp_b}"
     )
+
+
+def test_halo2_base_is_bit_is_witness_independent():
+    """Regression for code review C03: halo2-base `is_bit` must not decide
+    gate emission from the witness sample's value.
+
+    `is_bit` used to return true whenever a cell's runtime value was 0 or 1,
+    so a `select`/logical condition that happened to be 0/1 for one witness
+    skipped the booleanization gadget while a non-0/1 witness emitted it —
+    witness-dependent gate counts, and a verify-breaker (prove-side keygen
+    runs with the real witness, verify-side re-keygen with `None`, all zeros).
+
+    Compile a circuit whose select condition is the *value* of a private
+    input (so it is 5 for one witness, 0 for another, 1 for a third) and
+    assert the keygen structural fingerprint is identical for all three.
+    """
+    from zinnia import Public, Integer
+    from zinnia.api.zk_circuit import ZKCircuit
+
+    def kernel(v: Public[Integer]) -> Integer:
+        # `if v:` booleanizes the raw value v; under the old is_bit a 0/1
+        # witness skipped the truthy_bit gadget, a non-0/1 witness emitted it.
+        if v:
+            return v * 2
+        return v + 100
+
+    compiled = ZKCircuit.from_method(kernel).compile()
+    fp_nonbool = compiled.emit_structural(5, backend="halo2-base")
+    fp_zero = compiled.emit_structural(0, backend="halo2-base")
+    fp_one = compiled.emit_structural(1, backend="halo2-base")
+    assert fp_nonbool == fp_zero == fp_one, (
+        "halo2-base is_bit leaked witness data into gate emission:\n"
+        f"  cond=5: {fp_nonbool}\n  cond=0: {fp_zero}\n  cond=1: {fp_one}"
+    )

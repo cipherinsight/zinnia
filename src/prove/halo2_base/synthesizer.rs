@@ -185,15 +185,22 @@ impl<'a> Halo2BaseSynthesizer<'a> {
     }
 
     fn is_bit(&self, cell: &Halo2BaseCell) -> bool {
+        // Only structural sources of bit-ness qualify — the skip decision
+        // must be identical for keygen (Some/None witness) and prove, or the
+        // gate count diverges and the VK no longer matches the proof. The
+        // value heuristic (cell.value == 0/1) is witness-dependent and was
+        // deliberately removed (code review C03). A constant cell whose fixed
+        // value is exactly 0 or 1 is witness-independent and so still counts.
         if self.bit_cell_ids.contains(&cell.id) {
+            return true;
+        }
+        if self.is_const_cell(cell) && (cell.value == Fp::zero() || cell.value == Fp::one()) {
             return true;
         }
         cell.assigned
             .cell
             .map(|ptr| self.bit_cells.contains(&ptr))
             .unwrap_or(false)
-            || cell.value == Fp::zero()
-            || cell.value == Fp::one()
     }
 
     fn is_const_cell(&self, cell: &Halo2BaseCell) -> bool {
