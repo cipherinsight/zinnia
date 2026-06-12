@@ -11,17 +11,16 @@ global COLS: u32 = 6;
 
 fn main(a: [Field; 48], permutation: [Field; 6]) -> pub [Field; 48] {
     // Inverse permutation: c[k] = j with perm[j] == k (mod COLS, numpy
-    // negative-index semantics).
+    // negative-index semantics). Select-chain scatter form, mirroring
+    // Zinnia's lowering.
     let mut c: [Field; 6] = [0; 6];
-    for k in 0..COLS {
-        let mut acc: Field = 0;
-        for j in 0..COLS {
-            let p = permutation[j];
+    for j in 0..COLS {
+        let p = permutation[j];
+        for k in 0..COLS {
             let hit = (p == k as Field) | (p + ((COLS - k) as Field) == 0);
             let is_eq: Field = if hit { 1 } else { 0 };
-            acc = acc + (j as Field) * is_eq;
+            c[k] = is_eq * (j as Field) + (1 - is_eq) * c[k];
         }
-        c[k] = acc;
     }
     // Gather: out[i][j] = a[i][c[j]] via indicator vector, with a one-hot
     // membership assert per index.

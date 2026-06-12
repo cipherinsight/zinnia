@@ -1,35 +1,64 @@
 // DS-1000 case 0347 -- Noir baseline. Field convention (CONVENTIONS.md sec 3).
 // a[row-1, :] /= divide_number; result = np.multiply.reduce(a[row-1, :])
 // on Float[8,6].
+// Mirrors Zinnia's lowering ALGORITHM (division variant of 0346):
+// select-chain mux gather over rows, surviving max-stride bound assert,
+// per-column qdiv, dual-equality scatter-back, second post-write gather,
+// product chain.
 
-use noir_fpc::{qmul, qdiv, Q};
+use noir_fpc::{qdiv, qmul, Q};
 
 global ROWS: u32 = 8;
 global COLS: u32 = 6;
 
 fn main(a: [Field; 48], row: Field, divide_number: Field) -> pub Field {
-    let row_idx = row - 1;
-    // Full numpy semantics: negative row indices wrap. Dual-equality
-    // indicators + membership-sum bound (see 0345).
-    let mut ind: [Field; 8] = [0; 8];
-    let mut hits: Field = 0;
-    for i in 0..ROWS {
-        let pos_match: Field = if row_idx == (i as Field) { 1 } else { 0 };
-        let neg_match: Field =
-            if row_idx == ((i as Field) - (ROWS as Field)) { 1 } else { 0 };
-        ind[i] = pos_match + neg_match;
-        hits = hits + ind[i];
+    let idx = row - 1;
+    let mut sel: [Field; 8] = [0; 8];
+    for i in 1..ROWS {
+        sel[i] = if idx == (i as Field) { 1 } else { 0 };
     }
-    assert(hits == 1, "0347: row out of range");
-    let dn_fp = divide_number * Q;
-    let mut prod: Field = Q;  // multiplicative identity in Q-scale
+    // First gather: select-chain mux per column.
+    let mut g: [Field; 6] = [0; 6];
     for j in 0..COLS {
-        let mut a_at: Field = 0;
-        for i in 0..ROWS {
-            a_at = a_at + ind[i] * a[i * COLS + j];
+        let mut cur: Field = a[j];
+        for i in 1..ROWS {
+            cur = sel[i] * a[i * COLS + j] + (1 - sel[i]) * cur;
         }
-        let v = qdiv(a_at, dn_fp);
-        prod = qmul(prod, v);
+        g[j] = cur;
+    }
+    // Max-stride flat-address bound assert.
+    let flat: Field = idx * (COLS as Field) + 5;
+    assert((flat as u128) < (48 as u128));
+    // In-place row divide.
+    let dn_fp = divide_number * Q;
+    let mut scaled: [Field; 6] = [0; 6];
+    for j in 0..COLS {
+        scaled[j] = qdiv(g[j], dn_fp);
+    }
+    // Scatter-back with dual-equality indicators.
+    let mut ind: [Field; 8] = [0; 8];
+    for i in 0..ROWS {
+        let hit = (idx == i as Field) | (idx + ((ROWS - i) as Field) == 0);
+        ind[i] = if hit { 1 } else { 0 };
+    }
+    let mut b: [Field; 48] = a;
+    for i in 0..ROWS {
+        for j in 0..COLS {
+            b[i * COLS + j] = ind[i] * scaled[j] + (1 - ind[i]) * a[i * COLS + j];
+        }
+    }
+    // Second gather (post-write) + product chain.
+    let mut prod: Field = 0;
+    for j in 0..COLS {
+        let mut cur: Field = b[j];
+        for i in 1..ROWS {
+            cur = sel[i] * b[i * COLS + j] + (1 - sel[i]) * cur;
+        }
+        if j == 0 {
+            prod = cur;
+        } else {
+            prod = qmul(prod, cur);
+        }
     }
     prod
 }
