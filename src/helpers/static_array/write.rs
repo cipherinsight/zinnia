@@ -127,6 +127,75 @@ fn select_typed(
     }
 }
 
+/// Normalize a runtime index to numpy's `-n <= i < n` contract: negative
+/// indices wrap by `+axis_len`. Mirrors `read.rs::normalize_dynamic_index`.
+/// A statically-non-negative index (per `ask_bounds`) is returned as-is.
+fn normalize_dynamic_index(b: &mut IRBuilder, idx: &Value, axis_len: usize) -> Value {
+    if b.ask_bounds(idx).map(|(min, _)| min >= 0).unwrap_or(false) {
+        return idx.clone();
+    }
+    let zero_v = b.ir_constant_int(0);
+    let len_v = b.ir_constant_int(axis_len as i64);
+    let is_neg = b.ir_less_than_i(idx, &zero_v);
+    let wrapped = b.ir_add_i(idx, &len_v);
+    b.ir_select_i(&is_neg, &wrapped, idx)
+}
+
+/// Bounds chokepoint for the dynamic-index write paths. For every runtime
+/// (non-literal) index axis, discharge numpy's validity contract
+/// `-axis_len <= i < axis_len` through the Phase-E resolver — the write-side
+/// analogue of the read chokepoints (`read.rs:82-88, 254-260, 531-564`).
+///
+/// This is load-bearing soundness: without it an out-of-range dynamic write
+/// silently no-ops on the overlay path (the per-cell `index_equals_coord`
+/// matches nothing) or writes an unconstrained address on the memory-write
+/// fallback; the read path has discharged at its chokepoint all along.
+///
+/// We discharge against the *raw* index (no normalize wire) rather than the
+/// numpy-wrapped value: `-n <= i < n` is exactly the numpy validity window,
+/// and discharging it directly anchors on the input wire's `value_id` while
+/// avoiding the `to_signed`/select normalization fan-out per element (which
+/// would balloon scatter cases like 0318 that recurse here per index). When
+/// the index is provably non-negative (`ask_bounds`), we tighten to `[0, n)`
+/// so the `AssertU128Lt` interval hook (`builder.rs`) can deposit the same
+/// `[0, n)` interval the read side relies on. The actual write address is
+/// numpy-wrapped downstream — `index_equals_coord` (overlay) and
+/// `normalize_for_address` (memory-write fallback) both handle the negative
+/// wrap — so the discharged window and the written address agree.
+fn discharge_dynamic_write_indices(b: &mut IRBuilder, shape: &[usize], idx_vals: &[Value]) {
+    for (ax, idx) in idx_vals.iter().enumerate() {
+        let axis_len = shape[ax] as i64;
+        // Literal indices: compile-time checked against [0, n) after numpy
+        // wrap (negative literals are valid down to -n). `int_val()` is the
+        // post-wrap-agnostic raw literal, so use the [-n, n) window.
+        let non_negative = idx
+            .int_val()
+            .map(|v| v >= 0)
+            .or_else(|| b.ask_bounds(idx).map(|(min, _)| min >= 0))
+            .unwrap_or(false);
+        let lo = if non_negative { 0 } else { -axis_len };
+        crate::optim::resolver::discharge_index_in_range(
+            b,
+            idx,
+            lo,
+            axis_len,
+            "static_array_setitem",
+        );
+    }
+}
+
+/// Numpy-wrap a runtime index for use in an address computation: negative
+/// indices become `i + axis_len`. Statically-non-negative indices pass
+/// through. Used on the memory-write fallback where `compute_addr` consumes
+/// the index directly (unlike the overlay, whose `index_equals_coord` wraps
+/// internally).
+fn normalize_for_address(b: &mut IRBuilder, idx: &Value, axis_len: usize) -> Value {
+    if idx.int_val().is_some() {
+        return idx.clone();
+    }
+    normalize_dynamic_index(b, idx, axis_len)
+}
+
 fn index_equals_coord(b: &mut IRBuilder, idx: &Value, coord: usize, axis_len: usize) -> Value {
     if let Some(i) = idx.int_val() {
         let i = if i < 0 { axis_len as i64 + i } else { i };
@@ -908,6 +977,17 @@ fn static_array_element_setitem(
         return val.clone();
     }
 
+    // Dynamic-index write chokepoint. Discharge numpy's validity window
+    // `-n <= i < n` per axis BEFORE any of the three dynamic write paths
+    // (overlay, memory-write fallback, fancy scatter — which recurses back
+    // through here). Without this, an OOB dynamic write silently no-ops on
+    // the overlay path or writes an unconstrained address on the memory-write
+    // fallback; the read path has discharged at its chokepoint all along.
+    // See C09.
+    discharge_dynamic_write_indices(b, shape, &idx_vals);
+
+    // Overlay path: `index_equals_coord` numpy-wraps each index internally,
+    // so it consumes the raw (possibly-negative) indices directly.
     if try_overlay_dynamic_element_setitem(
         b, dtype, shape, segment_id, strides, offset, &idx_vals, &cast_val,
     ) {
@@ -915,8 +995,15 @@ fn static_array_element_setitem(
     }
 
     // At least one dynamic index → invalidate cache, single segment write.
+    // The memory-write `compute_addr` does NOT wrap dynamic indices, so we
+    // numpy-wrap each axis here before forming the address.
     super::base::materialize_static_array_if_lazy(b, val);
-    let addr = compute_addr(b, offset, strides, &idx_vals, shape);
+    let wrapped: Vec<Value> = idx_vals
+        .iter()
+        .enumerate()
+        .map(|(ax, idx)| normalize_for_address(b, idx, shape[ax]))
+        .collect();
+    let addr = compute_addr(b, offset, strides, &wrapped, shape);
     b.ir_write_memory(segment_id, &addr, &cast_val);
     cache_invalidate(b, segment_id);
     val.clone()
