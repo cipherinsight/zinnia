@@ -16,6 +16,16 @@ fn main(a: [Field; 48], permutation: [Field; 6]) -> pub [Field; 48] {
     let mut c: [Field; 6] = [0; 6];
     for j in 0..COLS {
         let p = permutation[j];
+        // Soundness: enforce numpy's valid-index window -COLS <= p < COLS.
+        // The membership assert below does NOT catch an out-of-range p: the
+        // scattered `c[k]` is always in [0, COLS), so the one-hot always sums
+        // to 1 even when an OOB p left a column at its default 0 (silent wrong
+        // column). Exact-window bit-decomposition check (p + COLS in
+        // [0, 2*COLS), 2*COLS = 12 < 2^4), matching Zinnia's FloorDivIPinned-era
+        // discharge -- sound-vs-sound parity.
+        let sh = p + (COLS as Field);
+        sh.assert_max_bit_size::<4>();
+        ((2 * COLS - 1) as Field - sh).assert_max_bit_size::<4>();
         for k in 0..COLS {
             let hit = (p == k as Field) | (p + ((COLS - k) as Field) == 0);
             let is_eq: Field = if hit { 1 } else { 0 };

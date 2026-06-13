@@ -8,14 +8,18 @@
 // (nrow * ncol == len). Bound as [nrow, ncol, padded payload] (numpy
 // dyn-shape contract).
 
-use noir_fpc::{q_floor_div_hint, qlt_signed, to_signed};
+// Sound floor-div via `q_floor_div_bounded`: bit-decomposition range checks
+// pin both quotients to the true Euclidean floor (operands fit in 2^6 > 23)
+// and reject the `ncol = N*q^{-1}` field-inverse cheat a bare hint would admit.
+// Mirrors Zinnia's `FloorDivIPinned` lowering.
+use noir_fpc::{q_floor_div_bounded, qlt_signed, to_signed};
 
 global N: u32 = 23;
 
 fn main(a: [Field; 23], ncol: Field) -> pub [Field; 25] {
     let nz: Field = if ncol == 0 { 0 } else { 1 };
     assert(nz == 1);
-    let q0 = q_floor_div_hint(N as Field, ncol);
+    let q0 = q_floor_div_bounded::<6>(N as Field, ncol);
     let col = q0 * ncol;
     let rem = (N as Field) - col;
     assert((rem as u128) < (24 as u128));
@@ -31,7 +35,7 @@ fn main(a: [Field; 23], ncol: Field) -> pub [Field; 25] {
         payload[k] = ind * a[N - 1 - k];
     }
     // Reshape divisibility: nrow * ncol == len.
-    let nrow = q_floor_div_hint(len, ncol);
+    let nrow = q_floor_div_bounded::<6>(len, ncol);
     let ok: Field = if nrow * ncol == len { 1 } else { 0 };
     assert(ok == 1);
     let mut out: [Field; 25] = [0; 25];

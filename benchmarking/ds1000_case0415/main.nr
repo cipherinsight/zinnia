@@ -1,13 +1,15 @@
 // DS-1000 case 0415 -- Noir baseline. Field convention (CONVENTIONS.md sec 3).
 // bin-max on Float[8] with runtime bin_size. Output max-bound [Field; 8].
 
-use noir_fpc::{qgt, q_floor_div_hint};
+use noir_fpc::{qgt, q_floor_div_bounded};
 
 global N: u32 = 8;
 
 fn main(data: [Field; 8], bin_size: Field) -> pub [Field; 8] {
     assert(bin_size != 0, "0415: bin_size must be > 0");
-    let n_bins = q_floor_div_hint(N as Field, bin_size);
+    // Sound floor-div (operands fit in 2^5 > 8): pins n_bins to the true floor
+    // and rejects the field-inverse cheat `n_bins*bin_size == N` alone admits.
+    let n_bins = q_floor_div_bounded::<5>(N as Field, bin_size);
     assert(n_bins * bin_size == N as Field, "bin_size must divide N");
     let mut out: [Field; 8] = [0; 8];
     for bin in 0..N {

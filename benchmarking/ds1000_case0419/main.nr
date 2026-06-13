@@ -1,14 +1,16 @@
 // DS-1000 case 0419 -- Noir baseline. Field convention (CONVENTIONS.md sec 3).
 // data[:, ::-1] then bin-mean axis=-1 then [::-1] on Float[8,6].
 
-use noir_fpc::{qadd, qdiv, Q, q_floor_div_hint};
+use noir_fpc::{qadd, qdiv, Q, q_floor_div_bounded};
 
 global ROWS: u32 = 8;
 global COLS: u32 = 6;
 
 fn main(data: [Field; 48], bin_size: Field) -> pub [Field; 48] {
     assert(bin_size != 0, "0419: bin_size must be > 0");
-    let n_bins = q_floor_div_hint(COLS as Field, bin_size);
+    // Sound floor-div (operands fit in 2^4 > 6): pins n_bins to the true floor
+    // and rejects the field-inverse cheat `n_bins*bin_size == COLS` alone admits.
+    let n_bins = q_floor_div_bounded::<4>(COLS as Field, bin_size);
     assert(n_bins * bin_size == COLS as Field, "bin_size must divide COLS");
     let bs_q: Field = bin_size * Q;
     let mut out: [Field; 48] = [0; 48];

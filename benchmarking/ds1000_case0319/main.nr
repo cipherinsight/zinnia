@@ -15,6 +15,15 @@ fn main(a: [Field; 384], permutation: [Field; 8]) -> pub [Field; 384] {
     let mut c: [Field; 8] = [0; 8];
     for j in 0..D0 {
         let p = permutation[j];
+        // Soundness: enforce numpy's valid-index window -D0 <= p < D0. The
+        // membership assert below cannot catch an out-of-range p (the scattered
+        // c[k] is always in [0, D0), so the one-hot always sums to 1 even when
+        // an OOB p left a row at its default 0 -- a silent wrong row). Exact-
+        // window bit-decomposition check (p + D0 in [0, 2*D0), 2*D0 = 16 <=
+        // 2^4), matching Zinnia's discharge for sound-vs-sound parity.
+        let sh = p + (D0 as Field);
+        sh.assert_max_bit_size::<4>();
+        ((2 * D0 - 1) as Field - sh).assert_max_bit_size::<4>();
         for k in 0..D0 {
             let hit = (p == k as Field) | (p + ((D0 - k) as Field) == 0);
             let is_eq: Field = if hit { 1 } else { 0 };
