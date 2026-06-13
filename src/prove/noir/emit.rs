@@ -1378,43 +1378,52 @@ impl<'a> NoirEmitter<'a> {
             .and_then(|s| s.strip_suffix(" as Field)"))
             .unwrap_or(cell);
         // Fold IR-literal constants into a direct (sign, magnitude)
-        // pair without going through `to_signed`. **Gated on
-        // `literal_cells`** — value_cache also holds witness-resolved
+        // pair without going through `to_signed`. **Read via the
+        // structural accessors `s_int_of`/`s_float_of`** — these are
+        // gated on `literal_cells` and so never surface witness-folded
         // values propagated by `bind_val` during emit (e.g. the result
         // of `add_i` on two constant args stores its computed value).
         // Inlining a witness-derived value into the circuit would
-        // specialise it to one witness — *unsound* for any other
-        // input. `literal_cells` is populated only by `constant_int`/
-        // `constant_float`/`constant_bool`, where the value really is
-        // a compile-time constant.
+        // specialise it to one witness — *unsound* for any other input.
+        // `literal_cells` is populated only by `constant_int`/
+        // `constant_float`/`constant_bool`, where the value really is a
+        // compile-time constant.
         //
-        //   - Int(n) literal: magnitude = n (Field value already = n)
-        //   - Bool(b) literal: magnitude = 0 or 1
-        //   - Float(f) literal: magnitude = f * 2^32 (Q-scaling — the
-        //     Field value is the quantized form). Negatives skipped;
-        //     they need a signed-Field wrap that the runtime
-        //     `to_signed` handles cleanly.
-        let folded_magnitude: Option<i128> = if self.literal_cells.contains(raw) {
-            match self.value_cache.get(raw) {
-                Some(ConcreteValue::Int(n)) if *n >= 0 => Some(*n),
-                Some(ConcreteValue::Bool(b)) => Some(if *b { 1 } else { 0 }),
-                Some(ConcreteValue::Float(f)) if *f >= 0.0 && f.is_finite() => {
-                    let scaled = (*f * (Q_U64 as f64)).round();
-                    if scaled >= 0.0 && scaled < (1i128 << 126) as f64 {
-                        Some(scaled as i128)
-                    } else {
-                        None
-                    }
+        // `to_signed`'s convention is `(sign, mag)` with `sign == true`
+        // for negative values and `mag == |v|` (see noir_fpc lib). We
+        // mirror it for both signs:
+        //
+        //   - Int(n) literal: sign = n < 0, magnitude = |n| (the Field
+        //     value is `n`, or `BN254_PRIME - |n|` when negative).
+        //   - Float(f) literal: magnitude = |f| * 2^32 (Q-scaling — the
+        //     Field value is the quantized form), sign = f < 0.
+        //   Bool literals are non-negative {0,1} and fold via s_int_of.
+        let folded: Option<(bool, i128)> = if let Some(n) = self.s_int_of(raw) {
+            let sign = n < 0;
+            // `i128::MIN.unsigned_abs()` would overflow i128 on cast;
+            // guard it (no real literal hits this, but stay total).
+            match i128::try_from(n.unsigned_abs()) {
+                Ok(mag) => Some((sign, mag)),
+                Err(_) => None,
+            }
+        } else if let Some(f) = self.s_float_of(raw) {
+            if f.is_finite() {
+                let scaled = (f.abs() * (Q_U64 as f64)).round();
+                if scaled < (1i128 << 126) as f64 {
+                    Some((f < 0.0, scaled as i128))
+                } else {
+                    None
                 }
-                _ => None,
+            } else {
+                None
             }
         } else {
             None
         };
-        if let Some(v) = folded_magnitude {
-            if v >= 0 && v < (1i128 << 126) {
-                let s_lit = "false".to_string();
-                let m_lit = v.to_string();
+        if let Some((sign, mag)) = folded {
+            if mag >= 0 && mag < (1i128 << 126) {
+                let s_lit = if sign { "true" } else { "false" }.to_string();
+                let m_lit = mag.to_string();
                 self.signed_proj
                     .insert(cell.to_string(), (s_lit.clone(), m_lit.clone()));
                 return (s_lit, m_lit);
@@ -1850,7 +1859,18 @@ impl Synthesizer for NoirEmitter<'_> {
     }
     fn abs_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qabs");
-        Ok(self.bind(&format!("qabs({})", self.as_field(a))))
+        let v = self.bind(&format!("qabs({})", self.as_field(a)));
+        // Literal propagation: |literal| is itself a compile-time
+        // constant. Fold the structural value and carry `literal_cells`
+        // membership so downstream fast paths (e.g. project_signed,
+        // select zero-branch) fire. Read the STRUCTURAL value only
+        // (`s_float_of`), never the witness fold, per the
+        // witness-independence rule.
+        if let Some(f) = self.s_float_of(a) {
+            self.fold_f(&v, Some(f.abs()));
+            self.literal_cells.insert(v.clone());
+        }
+        Ok(v)
     }
     fn sign_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qsign");
@@ -2219,7 +2239,17 @@ impl Synthesizer for NoirEmitter<'_> {
     }
     fn sqrt_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qsqrt");
-        Ok(self.bind(&format!("qsqrt({})", self.as_field(a))))
+        let v = self.bind(&format!("qsqrt({})", self.as_field(a)));
+        // Literal propagation: sqrt(literal) is a compile-time constant.
+        // Structural read only (`s_float_of`); carry literal_cells so
+        // downstream fast paths fire.
+        if let Some(f) = self.s_float_of(a) {
+            if f >= 0.0 {
+                self.fold_f(&v, Some(f.sqrt()));
+                self.literal_cells.insert(v.clone());
+            }
+        }
+        Ok(v)
     }
     fn exp_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qexp");
@@ -2389,7 +2419,21 @@ impl Synthesizer for NoirEmitter<'_> {
     }
     fn float_cast(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         // Integer-to-float in Q32 means *= 2^32.
-        Ok(self.bind(&format!("{} * {}", self.as_field(a), Q_U64)))
+        let v = self.bind(&format!("{} * {}", self.as_field(a), Q_U64));
+        // Literal propagation: float(literal int) is a compile-time
+        // constant. The value_cache stores the *conceptual* float value
+        // (the Q-scaling lives in the emitted Field expr, not the cache),
+        // so fold `a`'s integer value as a float and carry literal_cells
+        // membership. Structural read only (`s_int_of`/`s_float_of`).
+        let lit = self
+            .s_int_of(a)
+            .map(|n| n as f64)
+            .or_else(|| self.s_float_of(a));
+        if let Some(f) = lit {
+            self.fold_f(&v, Some(f));
+            self.literal_cells.insert(v.clone());
+        }
+        Ok(v)
     }
     fn bool_cast(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         // `bool(x)` must map any nonzero `x` to 1 and 0 to 0 — matching the
