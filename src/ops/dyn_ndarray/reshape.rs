@@ -949,10 +949,21 @@ fn dyn_reshape_runtime_infer_unknown(
             b.ir_constant_int(static_len)
         }
     };
-    let inferred_v = b.ir_floor_div_i(&length_v, &runtime_divisor);
+    // The `-1` dim is `inferred = length / divisor`, pinned downstream by the
+    // `prod(all_dims) == length` reconstruction assert below. Every quantity
+    // here is bounded by the source total: a valid divisor divides it, the
+    // length never exceeds the storage envelope, and so the quotient is at most
+    // the total. Emit the bound-certified `FloorDivIPinned` so the Noir backend
+    // range-checks via cheap bit-decomposition (~3*bits constraints) instead of
+    // the general `q_floor_div`'s two ~126-bit `to_signed` projections. `bits`
+    // is `bit_length(old_total) + 1` — a structural, witness-independent
+    // constant comfortably above the largest legal quotient/divisor. Other
+    // backends treat the op exactly like `FloorDivI`.
+    let divisor_bits = (u64::BITS - (old_total as u64).leading_zeros()).max(1) + 1;
+    let inferred_v = b.ir_floor_div_i_pinned(&length_v, &runtime_divisor, divisor_bits);
     let inferred_sv = match &inferred_v {
         Value::Integer(s) => s.clone(),
-        _ => unreachable!("ir_floor_div_i returns Value::Integer"),
+        _ => unreachable!("ir_floor_div_i_pinned returns Value::Integer"),
     };
     runtime_shape.insert(unknown_axis, inferred_sv.clone());
     shape_values.insert(unknown_axis, inferred_v.clone());

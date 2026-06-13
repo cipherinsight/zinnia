@@ -177,7 +177,7 @@ impl<'a> Preprocessor<'a> {
             IR::SubI => Ok(Some(args[0] - args[1])),
             IR::MulI => Ok(Some(args[0] * args[1])),
             IR::DivI => Ok(Some(args[0] * args[1].invert().unwrap_or(Fp::zero()))),
-            IR::FloorDivI => {
+            IR::FloorDivI | IR::FloorDivIPinned { .. } => {
                 let (q, _) = kernel::fp_floor_div(args[0], args[1]);
                 Ok(Some(q))
             }

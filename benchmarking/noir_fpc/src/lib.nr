@@ -146,6 +146,31 @@ pub fn q_floor_div(n: Field, d: Field) -> Field {
     q
 }
 
+// Euclidean floor division for operands the CALLER certifies fit in BITS bits
+// (non-negative). Used by the emitter for `FloorDivIPinned` -- compiler-
+// generated reshape / slice dim divisions where the quotient, remainder and
+// divisor are all bounded by the source total (a small structural constant).
+//
+// Soundness: `q*d + r == n` plus `0 <= q < 2^BITS`, `0 <= r < 2^BITS`, and
+// `0 <= d - r - 1 < 2^BITS` (i.e. `0 <= r < d`, `d >= 1`) uniquely pin the
+// Euclidean (q, r) -- the standard division-with-remainder uniqueness, with
+// every quantity forced to be a genuine BITS-bit integer. A field-inverse
+// substitution (small q, huge divisor) is rejected: `d - r - 1` would exceed
+// BITS bits. The three `assert_max_bit_size` checks bit-decompose (no lookup
+// table), so this costs ~3*BITS constraints instead of `q_floor_div`'s two
+// ~126-bit `to_signed` projections. BITS must satisfy `2^BITS > total` so the
+// largest legal quotient/divisor still fits.
+pub fn q_floor_div_bounded<let BITS: u32>(n: Field, d: Field) -> Field {
+    // Safety: q is constrained by the reconstruction + bit-size checks below.
+    let (q, r) = unsafe { hint_idiv(n, d) };
+    assert(q * d + r == n, "q_floor_div_bounded: reconstruction failed");
+    q.assert_max_bit_size::<BITS>();
+    r.assert_max_bit_size::<BITS>();
+    // 0 <= r < d (and d >= 1): `d - r - 1` is a non-negative BITS-bit value.
+    (d - r - 1).assert_max_bit_size::<BITS>();
+    q
+}
+
 // Integer floor (Euclidean) remainder, self-soundproof for ALL signs.
 // Same constraint set as `q_floor_div`; returns r in [0, |d|). Default
 // emitter lowering for user-level `a % b` on the Field path.

@@ -214,7 +214,7 @@ impl IROp for IR {
                 let b = args[1].as_int();
                 Z3Term::Int(Int::mul(&[&a, &b]))
             }
-            IR::DivI | IR::FloorDivI => {
+            IR::DivI | IR::FloorDivI | IR::FloorDivIPinned { .. } => {
                 // Z3's `Int::div` is integer division (truncating toward
                 // zero in SMT-LIB semantics). The Python ref uses `/`
                 // for both DivI and FloorDivI; we mirror that.

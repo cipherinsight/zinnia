@@ -105,7 +105,9 @@ pub fn run(graph: &IRGraph) -> BoundMap {
                     .flatten()
                     .and_then(|b| a.checked_mul(b))
             }),
-            IR::DivI | IR::FloorDivI => arg_bounds.get(0).copied().flatten(),
+            IR::DivI | IR::FloorDivI | IR::FloorDivIPinned { .. } => {
+                arg_bounds.get(0).copied().flatten()
+            }
             IR::ModI => {
                 // result < |b|. If b is bounded, result <= b - 1; if not,
                 // fall back to a's bound.

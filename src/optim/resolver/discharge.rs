@@ -337,6 +337,25 @@ fn emit_index_bound_assert(b: &mut crate::builder::IRBuilder, idx: &Value, lo: &
         b.ir_assert_u128_lt(idx, hi);
         return;
     }
+    // General window `lo <= idx < hi` (e.g. numpy's negative-index window
+    // `-n <= idx < n`): rewrite as `0 <= idx - lo < hi - lo` and discharge
+    // with a single zero-based bound check. When the span is a small constant
+    // the backend lowers it to cheap bit-decomposition range checks (~2*bits
+    // gates) instead of the two-comparison chain, whose signed compares each
+    // force a ~126-bit `to_signed` projection. This is the Pattern-B fix for
+    // permutation / fancy-index bounds (cases 0318/0319). Soundness is exact:
+    // `idx - lo < 0` (idx below `lo`) or `>= hi - lo` (idx at/above `hi`) both
+    // fail the bound. Falls back to the comparison chain only when a bound is
+    // not a compile-time constant.
+    if let (Some(lo_n), Some(hi_n)) = (lo.int_val(), hi.int_val()) {
+        if hi_n > lo_n {
+            let neg_lo = b.ir_constant_int(-lo_n);
+            let shifted = b.ir_add_i(idx, &neg_lo);
+            let span = b.ir_constant_int(hi_n - lo_n);
+            b.ir_assert_u128_lt(&shifted, &span);
+            return;
+        }
+    }
     let ge = b.ir_greater_than_or_equal_i(idx, lo);
     let lt = b.ir_less_than_i(idx, hi);
     let ok = b.ir_logical_and(&ge, &lt);

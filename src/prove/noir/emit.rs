@@ -1789,15 +1789,57 @@ impl Synthesizer for NoirEmitter<'_> {
         // quotient for any sign). User-level `a // b` lowers to a bare IR
         // FloorDivI with NO downstream circuit pin, so the previously-used
         // unconstrained `q_floor_div_hint` let a malicious prover substitute
-        // any quotient (C04). The emitter has no witness-independent signal
-        // here to distinguish the (rare) compiler-generated divisions whose
-        // quotient is already pinned downstream, so it always emits the
-        // self-contained sound form. See the commit message for the gate
-        // cost of this on the pinned reshape cases (still < 0.5% of the
-        // sweep) and the pinned-marker follow-up.
+        // any quotient (C04). The general form has no witness-independent
+        // signal that the operands are small, so it always pays the two
+        // ~126-bit `to_signed` projections. Compiler-generated divisions whose
+        // operands ARE structurally bounded (reshape / slice dims) are emitted
+        // as `FloorDivIPinned` instead and take the cheap path in
+        // `floor_div_i_pinned`.
         self.use_lib("q_floor_div");
         let v = self.bind(&format!(
             "q_floor_div({}, {})",
+            self.as_field(a),
+            self.as_field(b)
+        ));
+        self.fold_i(&v, folded);
+        Ok(v)
+    }
+
+    fn floor_div_i_pinned(
+        &mut self,
+        a: &CellRef,
+        b: &CellRef,
+        divisor_bits: u32,
+    ) -> Result<CellRef, ProvingError> {
+        let folded = self.int_of(a).zip(self.int_of(b)).and_then(|(x, y)| {
+            if y == 0 {
+                None
+            } else {
+                Some(x.div_euclid(y))
+            }
+        });
+        // Both operands already u32-typed: Noir's checked u32 division is sound
+        // by construction and cheaper still than the bounded Field form.
+        if self.is_u32(a) && self.is_u32(b) {
+            let bound = self.bound_of(a).unwrap_or(u32::MAX as u64);
+            let v = self.bind_u32_with_bound(&format!("{} / {}", a, b), bound);
+            self.fold_i(&v, folded);
+            return Ok(v);
+        }
+        // Bounded sound division: the producer (e.g. reshape `-1` dim inference)
+        // certifies the quotient, remainder, and divisor all fit in
+        // `divisor_bits` bits. `q_floor_div_bounded` enforces exactly that with
+        // three `assert_max_bit_size` bit-decomposition checks (no lookup
+        // table) — ~3*BITS constraints versus `q_floor_div`'s two ~126-bit
+        // `to_signed` projections. Soundness is preserved (it still pins a
+        // unique Euclidean quotient and rejects field-inverse substitutions);
+        // see the noir_fpc definition. `divisor_bits` is clamped to >= 1 so the
+        // generic instantiation is always valid.
+        let bits = divisor_bits.max(1);
+        self.use_lib("q_floor_div_bounded");
+        let v = self.bind(&format!(
+            "q_floor_div_bounded::<{}>({}, {})",
+            bits,
             self.as_field(a),
             self.as_field(b)
         ));
@@ -2688,6 +2730,35 @@ impl Synthesizer for NoirEmitter<'_> {
         if self.is_u32(&idx_p) && self.is_u32(&hi_p) {
             let _ = writeln!(self.body, "    assert({} < {});", idx_p, hi_p);
             return Ok(());
+        }
+        // Small constant upper bound: enforce `0 <= idx < H` with two
+        // bit-decomposition range checks instead of the 128-bit `as u128`
+        // cast. `idx.assert_max_bit_size::<BITS>()` pins `idx ∈ [0, 2^BITS)`
+        // (a negative Field ≈ p-|x| exceeds BITS bits and fails, so this also
+        // enforces non-negativity); `(H-1 - idx).assert_max_bit_size::<BITS>()`
+        // pins `idx <= H-1`. With `BITS = bit_length(H)` (so `2^BITS > H-1`)
+        // the intersection is exactly `[0, H)`. Each check is ~BITS gates of
+        // decomposition (no lookup table) versus the cast's 128-bit RANGE —
+        // the dominant Pattern-B win for negative-index windows shifted here
+        // by `emit_index_bound_assert`, and a smaller win for slice bounds.
+        if let Some(h) = self.s_int_of(hi) {
+            if h > 0 && h <= u32::MAX as i128 {
+                let bits = u64::BITS - (h as u64).leading_zeros();
+                let idxf = self.as_field(&idx_p);
+                let lo_t = self.fresh();
+                let _ = writeln!(self.body, "    let {}: Field = {};", lo_t, idxf);
+                let _ = writeln!(self.body, "    {}.assert_max_bit_size::<{}>();", lo_t, bits);
+                let hi_t = self.fresh();
+                let _ = writeln!(
+                    self.body,
+                    "    let {}: Field = {} - {};",
+                    hi_t,
+                    h - 1,
+                    lo_t
+                );
+                let _ = writeln!(self.body, "    {}.assert_max_bit_size::<{}>();", hi_t, bits);
+                return Ok(());
+            }
         }
         let _ = writeln!(
             self.body,

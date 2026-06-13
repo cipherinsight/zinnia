@@ -1551,6 +1551,26 @@ impl IRBuilder {
         ir_inv_i  => IR::InvI, contract = "inv_i",
     );
 
+    /// Euclidean floor division with a producer-certified bit-width on the
+    /// quotient/remainder/divisor (see [`crate::ir::IR::FloorDivIPinned`]).
+    /// Semantically identical to [`Self::ir_floor_div_i`] — fires the same
+    /// `floor_div_i` contract — but the Noir backend can lower it to a cheap
+    /// bit-decomposition-range-checked division. `divisor_bits` must satisfy
+    /// `2^divisor_bits > max(numerator, divisor)`; the caller guarantees this
+    /// structurally (e.g. the reshape source total).
+    pub fn ir_floor_div_i_pinned(&mut self, a: &Value, b: &Value, divisor_bits: u32) -> Value {
+        let out = self.create_ir(&IR::FloorDivIPinned { divisor_bits }, &[a.clone(), b.clone()]);
+        if let (Some(vid), Some(lhs_vid), Some(rhs_vid)) =
+            (out.value_id(), a.value_id(), b.value_id())
+        {
+            let mut formals = HashMap::new();
+            formals.insert("lhs".to_string(), lhs_vid);
+            formals.insert("rhs".to_string(), rhs_vid);
+            self.fire_contract("floor_div_i", vid, &formals);
+        }
+        out
+    }
+
     /// Integer `sign`. Fires the `sign_i` op contract so the output
     /// value carries the `-1 <= Output <= 1` fact for downstream
     /// resolvers.
@@ -2555,7 +2575,7 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
         IR::SubI => int_binary_ir(ir_id, args, |a, b| a.checked_sub(b)),
         IR::MulI => int_binary_ir(ir_id, args, |a, b| a.checked_mul(b)),
         IR::DivI => int_binary_ir(ir_id, args, |a, b| if b != 0 { Some(a / b) } else { None }),
-        IR::FloorDivI => int_binary_ir(ir_id, args, |a, b| {
+        IR::FloorDivI | IR::FloorDivIPinned { .. } => int_binary_ir(ir_id, args, |a, b| {
             if b != 0 {
                 Some(a.div_euclid(b))
             } else {
@@ -2940,6 +2960,7 @@ fn min_required_arity(ir: &IR) -> usize {
         | IR::MulI
         | IR::DivI
         | IR::FloorDivI
+        | IR::FloorDivIPinned { .. }
         | IR::ModI
         | IR::PowI
         | IR::BitAndI

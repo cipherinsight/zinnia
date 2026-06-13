@@ -34,6 +34,21 @@ pub enum IR {
     MulI,
     DivI,
     FloorDivI,
+    /// Euclidean floor division, semantically identical to [`IR::FloorDivI`],
+    /// but additionally certifying that the quotient, remainder, and divisor
+    /// all fit in `divisor_bits` bits — a witness-INDEPENDENT structural fact
+    /// the producer guarantees (e.g. a reshape `-1` dim: the divisor is a
+    /// product of dims that divides the source total, so it is bounded by the
+    /// total). Backends that only care about the value treat this exactly like
+    /// `FloorDivI`; the Noir backend uses the bound to emit a cheap
+    /// bit-decomposition-range-checked division (`q_floor_div_bounded`) instead
+    /// of the general `q_floor_div`'s two ~126-bit `to_signed` projections.
+    /// Soundness is NOT weakened: the bit-size checks still pin a unique
+    /// Euclidean quotient and reject any out-of-range (e.g. field-inverse)
+    /// substitution.
+    FloorDivIPinned {
+        divisor_bits: u32,
+    },
     ModI,
     PowI,
     AbsI,
@@ -335,6 +350,7 @@ impl IR {
             IR::MulI => "mul_i".to_string(),
             IR::DivI => "div_i".to_string(),
             IR::FloorDivI => "floor_divide_i".to_string(),
+            IR::FloorDivIPinned { divisor_bits } => format!("floor_divide_i_pinned[{}]", divisor_bits),
             IR::ModI => "mod_i".to_string(),
             IR::PowI => "pow_i".to_string(),
             IR::AbsI => "abs_i".to_string(),
@@ -615,6 +631,7 @@ impl IR {
             IR::MulI => "MulIIR",
             IR::DivI => "DivIIR",
             IR::FloorDivI => "FloorDivIIR",
+            IR::FloorDivIPinned { .. } => "FloorDivIPinnedIR",
             IR::ModI => "ModIIR",
             IR::PowI => "PowIIR",
             IR::AbsI => "AbsIIR",
@@ -769,6 +786,7 @@ impl IR {
             }
             IR::ProductSumF { len } => serde_json::json!({ "len": len }),
             IR::SumF { len } => serde_json::json!({ "len": len }),
+            IR::FloorDivIPinned { divisor_bits } => serde_json::json!({ "divisor_bits": divisor_bits }),
             IR::AssertU128LtBit { hi, bit, bits } => {
                 serde_json::json!({ "hi": hi, "bit": bit, "bits": bits })
             }
@@ -927,6 +945,9 @@ impl IR {
             "MulIIR" => Ok(IR::MulI),
             "DivIIR" => Ok(IR::DivI),
             "FloorDivIIR" => Ok(IR::FloorDivI),
+            "FloorDivIPinnedIR" => Ok(IR::FloorDivIPinned {
+                divisor_bits: data["divisor_bits"].as_u64().unwrap_or(0) as u32,
+            }),
             "ModIIR" => Ok(IR::ModI),
             "PowIIR" => Ok(IR::PowI),
             "AbsIIR" => Ok(IR::AbsI),
@@ -1279,6 +1300,7 @@ mod tests {
     #[test]
     fn test_export_import_round_trip_parametric() {
         let irs = vec![
+            IR::FloorDivIPinned { divisor_bits: 6 },
             IR::ConstantInt { value: 42 },
             IR::ConstantFloat { value: 3.14 },
             IR::ConstantBool { value: true },

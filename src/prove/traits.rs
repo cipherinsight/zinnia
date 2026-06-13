@@ -121,6 +121,21 @@ pub trait Synthesizer {
         a: &Self::CellRef,
         b: &Self::CellRef,
     ) -> Result<Self::CellRef, ProvingError>;
+    /// Euclidean floor division with a producer-certified bound: `a`, `b`, the
+    /// quotient and the remainder all fit in `divisor_bits` bits (see
+    /// [`crate::ir::IR::FloorDivIPinned`]). The default ignores the bound and
+    /// delegates to [`Self::floor_div_i`] — correct for every backend whose
+    /// `floor_div_i` is already sound. Backends with an expensive general
+    /// division (the Noir Field path) override this to emit a cheaper
+    /// bit-decomposition-range-checked form.
+    fn floor_div_i_pinned(
+        &mut self,
+        a: &Self::CellRef,
+        b: &Self::CellRef,
+        _divisor_bits: u32,
+    ) -> Result<Self::CellRef, ProvingError> {
+        self.floor_div_i(a, b)
+    }
     fn mod_i(
         &mut self,
         a: &Self::CellRef,

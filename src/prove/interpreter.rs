@@ -48,6 +48,9 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
             IR::MulI => Some(synth.mul_i(&args[0], &args[1])?),
             IR::DivI => Some(synth.div_i(&args[0], &args[1])?),
             IR::FloorDivI => Some(synth.floor_div_i(&args[0], &args[1])?),
+            IR::FloorDivIPinned { divisor_bits } => {
+                Some(synth.floor_div_i_pinned(&args[0], &args[1], *divisor_bits)?)
+            }
             IR::ModI => Some(synth.mod_i(&args[0], &args[1])?),
             IR::PowI => Some(synth.pow_i(&args[0], &args[1])?),
             IR::AbsI => Some(synth.abs_i(&args[0])?),
