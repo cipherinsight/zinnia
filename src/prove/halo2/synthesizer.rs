@@ -2993,6 +2993,18 @@ impl Synthesizer for Halo2Synthesizer {
                 let idx_u = if idx_i >= 0 && (idx_i as u64) < hi {
                     idx_i as u64
                 } else {
+                    // Out-of-range witness: the bit gate below pins the real
+                    // `idx` against a 0-decomposition, so the circuit is
+                    // unsatisfiable and `verify` rejects. Record it so the
+                    // always-on witness-satisfaction check (`first_unsat`)
+                    // also refuses it at PROVE time — the strong contract the
+                    // bounds-discharge relies on (e.g. OOB dynamic writes).
+                    self.note_unsat(|| {
+                        format!(
+                            "Witness does not satisfy circuit constraints: index {} out of range [0, {})",
+                            idx_i, hi
+                        )
+                    });
                     0
                 };
                 let row = self.offset;
