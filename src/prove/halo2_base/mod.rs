@@ -404,8 +404,30 @@ pub fn structural_fingerprint(
     witness: &ResolvedWitness,
     params: &ProvingParams,
 ) -> Result<String, ProvingError> {
+    fingerprint_with_witness(ir, Some(witness), params)
+}
+
+/// Witness-LESS keygen fingerprint — exactly the synthesis the verifier
+/// re-runs (all reads default to zero). A sound synthesizer yields the
+/// same structural fingerprint here as for any concrete witness; a
+/// mismatch with [`structural_fingerprint`] means the prover-side circuit
+/// shape leaked the witness and the resulting proof would fail verify-side
+/// re-keygen. The two-witness test asserts
+/// `Some(a) == Some(b) == None`.
+pub fn structural_fingerprint_witnessless(
+    ir: &IRGraph,
+    params: &ProvingParams,
+) -> Result<String, ProvingError> {
+    fingerprint_with_witness(ir, None, params)
+}
+
+fn fingerprint_with_witness(
+    ir: &IRGraph,
+    witness: Option<&ResolvedWitness>,
+    params: &ProvingParams,
+) -> Result<String, ProvingError> {
     let (builder, public_values) =
-        build_circuit(ir, Some(witness), params, CircuitBuilderStage::Keygen, None)?;
+        build_circuit(ir, witness, params, CircuitBuilderStage::Keygen, None)?;
     let stats = builder.statistics();
     Ok(format!(
         "advice={:?} lookup={:?} fixed={} instances={}",

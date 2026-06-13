@@ -101,11 +101,18 @@ def test_noir_emission_is_witness_independent(case, compiled_cases):
 def test_halo2_base_cells_are_witness_independent(case, compiled_cases):
     compiled = compiled_cases[case]
     wit_a, wit_b = CASES[case]
+    # Three syntheses: two concrete witnesses (Some(a), Some(b)) and the
+    # witness-LESS keygen (None — exactly what the verifier re-runs, all
+    # reads default to zero). A sound, witness-independent circuit yields
+    # ONE fingerprint for all three; any drift between Some(a)/Some(b) is a
+    # prove-time leak, and a drift to None is a verify-breaking leak.
     fp_a = compiled.emit_structural(*wit_a, backend="halo2-base")
     fp_b = compiled.emit_structural(*wit_b, backend="halo2-base")
-    assert fp_a == fp_b, (
-        f"case {case}: halo2-base cell statistics differ between witnesses "
-        f"(witness-specialized circuit):\n  a: {fp_a}\n  b: {fp_b}"
+    fp_none = compiled.emit_structural(*wit_a, backend="halo2-base-witnessless")
+    assert fp_a == fp_b == fp_none, (
+        f"case {case}: halo2-base cell statistics differ across "
+        f"Some(a)/Some(b)/None (witness-specialized circuit):\n"
+        f"  Some(a): {fp_a}\n  Some(b): {fp_b}\n  None:    {fp_none}"
     )
 
 
@@ -137,7 +144,11 @@ def test_halo2_base_is_bit_is_witness_independent():
     fp_nonbool = compiled.emit_structural(5, backend="halo2-base")
     fp_zero = compiled.emit_structural(0, backend="halo2-base")
     fp_one = compiled.emit_structural(1, backend="halo2-base")
-    assert fp_nonbool == fp_zero == fp_one, (
+    # The witness-less (verifier re-keygen) shape must also match: this is
+    # the Some(a) vs Some(b) vs None assertion R06 calls for.
+    fp_none = compiled.emit_structural(5, backend="halo2-base-witnessless")
+    assert fp_nonbool == fp_zero == fp_one == fp_none, (
         "halo2-base is_bit leaked witness data into gate emission:\n"
-        f"  cond=5: {fp_nonbool}\n  cond=0: {fp_zero}\n  cond=1: {fp_one}"
+        f"  cond=5: {fp_nonbool}\n  cond=0: {fp_zero}\n  cond=1: {fp_one}\n"
+        f"  None:   {fp_none}"
     )

@@ -447,10 +447,14 @@ pub struct NoirEmitter<'a> {
     /// the resolved witness — we constant-fold by tracking a parallel
     /// value cache keyed by variable name.
     pub public_decimal: Vec<String>,
-    /// Variable-name -> known concrete value, when we constant-folded the
-    /// expression at emit time. Used for public-input bookkeeping only;
-    /// the proof itself derives values from witness execution by nargo.
-    value_cache: HashMap<String, ConcreteValue>,
+    /// Variable-name -> known WITNESS-folded concrete value, when we
+    /// constant-folded the expression at emit time. Used for public-input
+    /// bookkeeping only; the proof itself derives values from witness
+    /// execution by nargo. STRUCTURALLY private (see `wfold::WitnessFold`):
+    /// it can only be read through the witness-read accessors, never by
+    /// the structural `s_int_of`/`s_float_of` path. This is what makes a
+    /// witness-dependent emission unrepresentable rather than convention.
+    witness_vals: wfold::WitnessFold,
     /// Affine address lineage: var == sum of root_i * scale_i + offset,
     /// with at most two dynamic roots (mirrors the halo2 backend's
     /// AffineLin). Lets dynamic-address memory reads gather with shared
@@ -536,13 +540,17 @@ pub struct NoirEmitter<'a> {
     /// embedding (Noir generates no constraint for u32 → Field).
     /// See `bind_typed` / `as_field` for the call sites.
     cell_type: HashMap<String, CellType>,
-    /// SSA names that were bound from an IR-level *constant* op
-    /// (`ConstantInt` / `ConstantFloat` / `ConstantBool`). Distinguishes
-    /// "literal known at circuit-build time" from "value happens to be
-    /// in the value_cache because the resolved witness was propagated"
-    /// — the latter must NEVER be inlined into the circuit, or the
-    /// circuit becomes witness-specific (unsound for any other witness).
-    literal_cells: HashSet<String>,
+    /// STRUCTURAL constant store: SSA name -> concrete value that is known
+    /// at circuit-BUILD time (IR-level `ConstantInt`/`ConstantFloat`/
+    /// `ConstantBool`, or values derived purely from such constants via
+    /// the structural accessors). This is the ONLY map the structural
+    /// accessors `s_int_of`/`s_float_of` read; it is wholly separate from
+    /// `witness_vals`. A "value happens to be folded from the resolved
+    /// witness" can therefore never reach a structural emission decision —
+    /// inlining a witness-derived value would specialise the circuit to one
+    /// witness (unsound for any other input). Replaces the former
+    /// `literal_cells: HashSet` + shared `value_cache` arrangement.
+    literal_vals: HashMap<String, ConcreteValue>,
     /// IR-level forward-dataflow `fits-u32` bounds, keyed by stmt_id.
     /// Populated by [`super::bound_analysis::run`] before emit. The
     /// interpreter's per-stmt hook (`on_stmt_begin`) advances
@@ -582,6 +590,98 @@ enum ConcreteValue {
     /// Stored as a raw field-element decimal string; used for unresolvable
     /// values (e.g. complex expressions where we can't statically fold).
     Field(String),
+}
+
+/// Witness-folded value store — STRUCTURALLY isolated from circuit emission.
+///
+/// This module exists to make the project's hardest soundness invariant
+/// — *a witness-folded value must never influence emitted circuit
+/// structure* — UNREPRESENTABLE rather than convention-only. The inner
+/// map is a private field, so the only way to read a witness value is
+/// through one of the named accessor methods below (`int_of`/`float_of`/
+/// `bool_of`/`decimal_of`). None of those can be confused with the
+/// emitter's *structural* accessors (`s_int_of`/`s_float_of`, which read
+/// the wholly separate `literal_vals` map on the emitter). A future
+/// feature that wants to branch the circuit on a folded value would have
+/// to call a method whose name advertises the witness read — the loud
+/// visibility change R06 requires.
+///
+/// Whitelisted readers (all inside this module or the emitter's
+/// fold/expose paths): `fold_*` (write+propagate), `expose_public` /
+/// `public_decimal` rendering (via `decimal_of`), and
+/// `resolve_path_concrete` (via `insert`).
+mod wfold {
+    use super::ConcreteValue;
+    use std::collections::HashMap;
+
+    /// Witness-derived constant-fold cache, keyed by SSA variable name.
+    /// Populated during emit purely for public-input bookkeeping; the
+    /// proof itself derives values from witness execution by nargo.
+    #[derive(Default)]
+    pub(super) struct WitnessFold {
+        /// PRIVATE: never expose the map itself. Reads go through the
+        /// typed accessors so a witness value cannot silently leak into a
+        /// structural decision.
+        vals: HashMap<String, ConcreteValue>,
+    }
+
+    impl WitnessFold {
+        /// Insert a fully-resolved concrete value (used by the
+        /// read-input / resolve-path and memory-propagation paths).
+        pub(super) fn insert(&mut self, var: String, val: ConcreteValue) {
+            self.vals.insert(var, val);
+        }
+
+        /// Witness read: integer view of the folded value, if any.
+        /// Only `fold_*` and bookkeeping should consume this.
+        pub(super) fn int_of(&self, var: &str) -> Option<i128> {
+            match self.vals.get(var)? {
+                ConcreteValue::Int(i) => Some(*i),
+                ConcreteValue::Bool(b) => Some(if *b { 1 } else { 0 }),
+                _ => None,
+            }
+        }
+
+        /// Witness read: float view of the folded value, if any.
+        pub(super) fn float_of(&self, var: &str) -> Option<f64> {
+            match self.vals.get(var)? {
+                ConcreteValue::Float(f) => Some(*f),
+                ConcreteValue::Int(i) => Some(*i as f64),
+                _ => None,
+            }
+        }
+
+        /// Witness read: bool view of the folded value, if any.
+        pub(super) fn bool_of(&self, var: &str) -> Option<bool> {
+            match self.vals.get(var)? {
+                ConcreteValue::Bool(b) => Some(*b),
+                ConcreteValue::Int(i) => Some(*i != 0),
+                _ => None,
+            }
+        }
+
+        /// Whitelisted expose/public-decimal read: the raw concrete value
+        /// behind a cell (cloned), for rendering the public-inputs file.
+        pub(super) fn get(&self, var: &str) -> Option<ConcreteValue> {
+            self.vals.get(var).cloned()
+        }
+
+        pub(super) fn fold_f(&mut self, v: &str, val: Option<f64>) {
+            if let Some(f) = val {
+                self.vals.insert(v.to_string(), ConcreteValue::Float(f));
+            }
+        }
+        pub(super) fn fold_i(&mut self, v: &str, val: Option<i128>) {
+            if let Some(i) = val {
+                self.vals.insert(v.to_string(), ConcreteValue::Int(i));
+            }
+        }
+        pub(super) fn fold_b(&mut self, v: &str, val: Option<bool>) {
+            if let Some(b) = val {
+                self.vals.insert(v.to_string(), ConcreteValue::Bool(b));
+            }
+        }
+    }
 }
 
 impl<'a> NoirEmitter<'a> {
@@ -1097,7 +1197,7 @@ impl<'a> NoirEmitter<'a> {
             used_libs: BTreeMap::new(),
             exposes: Vec::new(),
             public_decimal: Vec::new(),
-            value_cache: HashMap::new(),
+            witness_vals: wfold::WitnessFold::default(),
             affine_of: HashMap::new(),
             ind_cache: HashMap::new(),
             membership_done: std::collections::HashSet::new(),
@@ -1117,7 +1217,7 @@ impl<'a> NoirEmitter<'a> {
             cse_cache: HashMap::new(),
             cell_bound: HashMap::new(),
             cell_type: HashMap::new(),
-            literal_cells: HashSet::new(),
+            literal_vals: HashMap::new(),
             stmt_bounds,
             current_stmt_bound: None,
             u32_amortizable,
@@ -1197,7 +1297,7 @@ impl<'a> NoirEmitter<'a> {
         // indicator gathers.
         if let Some(aff) = self.affine_of.get(cell).cloned() {
             self.affine_of.insert(v.clone(), aff);
-        } else if !self.literal_cells.contains(cell) {
+        } else if !self.literal_vals.contains_key(cell) {
             self.affine_of.insert(
                 v.clone(),
                 AffLin { terms: vec![(cell.to_string(), 1)], offset: 0 },
@@ -1271,78 +1371,90 @@ impl<'a> NoirEmitter<'a> {
         // bind_u32_with_bound).
         let _ = writeln!(self.body, "    let {}: Field = {};", v, expr);
         self.cse_cache.insert(expr.to_string(), v.clone());
-        // Forward-annotate the IR-analysis bound for the current
-        // statement so downstream emit-time u32-path conditions see
-        // the richer info even when this method chose Field.
-        self.annotate_with_analysis_bound(&v);
+        // NOTE: the IR-analysis bound is NOT stamped here. `bind()` runs
+        // for every *intermediate* cell produced while dispatching a
+        // statement, but `current_stmt_bound` describes only the
+        // statement's RESULT. Stamping it on intermediates (especially
+        // indicator cells, which are cached in `ind_cache` and reused
+        // across statements) could poison a later interval query with a
+        // spuriously tight bound. The bound is applied to the actual
+        // result cell in `on_stmt_result` instead.
         v
     }
 
+    /// Bind a compile-time STRUCTURAL constant: the value is known at
+    /// circuit-build time, so it lands in `literal_vals` (the only map the
+    /// structural accessors read), never in the witness fold cache.
     fn bind_val(&mut self, expr: &str, val: ConcreteValue) -> String {
         let v = self.bind(expr);
-        self.value_cache.insert(v.clone(), val);
+        self.literal_vals.insert(v.clone(), val);
         v
     }
 
-    /// Structural-constant accessors: like int_of/float_of but only for
-    /// values that are compile-time literals (`literal_cells`). The plain
-    /// accessors also surface WITNESS-folded values; emission decisions
-    /// keyed on those specialize the circuit to the prover's witness
-    /// (soundness bug — a select whose else-branch happens to be 0 under
-    /// the current witness would lose the branch structurally).
-    fn s_int_of(&self, var: &str) -> Option<i128> {
-        if self.literal_cells.contains(var) {
-            self.int_of(var)
-        } else {
-            None
-        }
-    }
-    fn s_float_of(&self, var: &str) -> Option<f64> {
-        if self.literal_cells.contains(var) {
-            self.float_of(var)
-        } else {
-            None
-        }
-    }
+    // ── Structural-constant accessors (BUILD-time only) ──────────────
+    // These read `literal_vals` exclusively. They are the ONLY accessors
+    // an emission decision (a branch on a value, a gate elision) is
+    // allowed to consult. By construction `literal_vals` never receives a
+    // witness-folded value, so keying structure on these can never
+    // specialise the circuit to one witness. The plain witness reads
+    // (`int_of`/`float_of`/`bool_of`) live on `wfold::WitnessFold` and are
+    // reachable only for bookkeeping (fold/expose).
 
-    fn float_of(&self, var: &str) -> Option<f64> {
-        match self.value_cache.get(var)? {
-            ConcreteValue::Float(f) => Some(*f),
-            ConcreteValue::Int(i) => Some(*i as f64),
-            _ => None,
-        }
-    }
-    fn int_of(&self, var: &str) -> Option<i128> {
-        match self.value_cache.get(var)? {
+    fn s_int_of(&self, var: &str) -> Option<i128> {
+        match self.literal_vals.get(var)? {
             ConcreteValue::Int(i) => Some(*i),
             ConcreteValue::Bool(b) => Some(if *b { 1 } else { 0 }),
             _ => None,
         }
     }
-    fn bool_of(&self, var: &str) -> Option<bool> {
-        match self.value_cache.get(var)? {
+    fn s_float_of(&self, var: &str) -> Option<f64> {
+        match self.literal_vals.get(var)? {
+            ConcreteValue::Float(f) => Some(*f),
+            ConcreteValue::Int(i) => Some(*i as f64),
+            _ => None,
+        }
+    }
+    fn s_bool_of(&self, var: &str) -> Option<bool> {
+        match self.literal_vals.get(var)? {
             ConcreteValue::Bool(b) => Some(*b),
             ConcreteValue::Int(i) => Some(*i != 0),
             _ => None,
         }
     }
+
+    // ── Witness-fold accessors (bookkeeping only) ────────────────────
+    // Thin forwarders to the privacy-enforced `witness_vals` store. The
+    // results MUST flow only into `fold_*` / public-input rendering, never
+    // into a structural decision — that is exactly what the `wfold` module
+    // boundary + the two-witness diff test guard.
+
+    fn float_of(&self, var: &str) -> Option<f64> {
+        self.witness_vals.float_of(var)
+    }
+    fn int_of(&self, var: &str) -> Option<i128> {
+        self.witness_vals.int_of(var)
+    }
+    fn bool_of(&self, var: &str) -> Option<bool> {
+        self.witness_vals.bool_of(var)
+    }
     fn fold_f(&mut self, v: &str, val: Option<f64>) {
-        if let Some(f) = val {
-            self.value_cache
-                .insert(v.to_string(), ConcreteValue::Float(f));
-        }
+        self.witness_vals.fold_f(v, val);
     }
     fn fold_i(&mut self, v: &str, val: Option<i128>) {
-        if let Some(i) = val {
-            self.value_cache
-                .insert(v.to_string(), ConcreteValue::Int(i));
-        }
+        self.witness_vals.fold_i(v, val);
     }
     fn fold_b(&mut self, v: &str, val: Option<bool>) {
-        if let Some(b) = val {
-            self.value_cache
-                .insert(v.to_string(), ConcreteValue::Bool(b));
-        }
+        self.witness_vals.fold_b(v, val);
+    }
+
+    /// Register a STRUCTURAL literal value for a cell that was derived
+    /// purely from other structural literals (e.g. `abs_f` of a literal,
+    /// `float_cast` of a literal int). Mirrors what the old code did by
+    /// pairing a `fold_*` write with a `literal_cells.insert`, but routes
+    /// the value into `literal_vals` so the structural accessors can see
+    /// it without ever consulting the witness cache.
+    fn fold_literal(&mut self, v: &str, val: ConcreteValue) {
+        self.literal_vals.insert(v.to_string(), val);
     }
 
     fn use_lib(&mut self, sym: &'static str) {
@@ -1379,15 +1491,14 @@ impl<'a> NoirEmitter<'a> {
             .unwrap_or(cell);
         // Fold IR-literal constants into a direct (sign, magnitude)
         // pair without going through `to_signed`. **Read via the
-        // structural accessors `s_int_of`/`s_float_of`** — these are
-        // gated on `literal_cells` and so never surface witness-folded
-        // values propagated by `bind_val` during emit (e.g. the result
-        // of `add_i` on two constant args stores its computed value).
+        // structural accessors `s_int_of`/`s_float_of`** — these read the
+        // `literal_vals` store ONLY and so never surface witness-folded
+        // values (which live in the privacy-enforced `witness_vals`).
         // Inlining a witness-derived value into the circuit would
         // specialise it to one witness — *unsound* for any other input.
-        // `literal_cells` is populated only by `constant_int`/
-        // `constant_float`/`constant_bool`, where the value really is a
-        // compile-time constant.
+        // `literal_vals` is populated only by `constant_int`/
+        // `constant_float`/`constant_bool` and structural-literal
+        // derivations, where the value really is a compile-time constant.
         //
         // `to_signed`'s convention is `(sign, mag)` with `sign == true`
         // for negative values and `mag == |v|` (see noir_fpc lib). We
@@ -1574,6 +1685,15 @@ impl Synthesizer for NoirEmitter<'_> {
         // Name ↔ ValueId correspondence for live provenance-table reads.
         self.vid_of_var.insert(cell.clone(), value_id);
         self.var_of_vid.insert(value_id, cell.clone());
+        // Stamp the IR-analysis bound on the statement RESULT only. This
+        // populates `cell_bound` so downstream emit-time u32-path
+        // conditions see the richer info even when the producing method
+        // chose Field. Doing it here (rather than inside `bind()`) keeps
+        // the bound off shared intermediate cells such as cached
+        // indicators, which would otherwise inherit a statement-result
+        // bound that does not describe them and poison later interval
+        // queries.
+        self.annotate_with_analysis_bound(cell);
     }
 
     fn on_stmt_begin(&mut self, stmt_id: u32) {
@@ -1592,20 +1712,17 @@ impl Synthesizer for NoirEmitter<'_> {
         // compares. Negative or large constants stay on Field.
         if value >= 0 && (value as u64) < (1u64 << 32) {
             let v = self.bind_u32_with_bound(&value.to_string(), value as u64);
-            self.value_cache
-                .insert(v.clone(), ConcreteValue::Int(value as i128));
-            self.literal_cells.insert(v.clone());
+            self.fold_literal(&v, ConcreteValue::Int(value as i128));
             return Ok(v);
         }
+        // `bind_val` registers the structural literal in `literal_vals`.
         let v = self.bind_val(&expr, ConcreteValue::Int(value as i128));
-        self.literal_cells.insert(v.clone());
         Ok(v)
     }
 
     fn constant_float(&mut self, value: f64) -> Result<Self::CellRef, ProvingError> {
         let expr = quantize_to_field_string(value);
         let v = self.bind_val(&expr, ConcreteValue::Float(value));
-        self.literal_cells.insert(v.clone());
         Ok(v)
     }
 
@@ -1614,7 +1731,6 @@ impl Synthesizer for NoirEmitter<'_> {
         // logical-not / and / or routes treat 0/1 in Field.
         let expr = if value { "1" } else { "0" };
         let v = self.bind_val(expr, ConcreteValue::Bool(value));
-        self.literal_cells.insert(v.clone());
         Ok(v)
     }
 
@@ -1861,14 +1977,13 @@ impl Synthesizer for NoirEmitter<'_> {
         self.use_lib("qabs");
         let v = self.bind(&format!("qabs({})", self.as_field(a)));
         // Literal propagation: |literal| is itself a compile-time
-        // constant. Fold the structural value and carry `literal_cells`
+        // constant. Fold the structural value and carry `literal_vals`
         // membership so downstream fast paths (e.g. project_signed,
         // select zero-branch) fire. Read the STRUCTURAL value only
         // (`s_float_of`), never the witness fold, per the
         // witness-independence rule.
         if let Some(f) = self.s_float_of(a) {
-            self.fold_f(&v, Some(f.abs()));
-            self.literal_cells.insert(v.clone());
+            self.fold_literal(&v, ConcreteValue::Float(f.abs()));
         }
         Ok(v)
     }
@@ -2241,12 +2356,11 @@ impl Synthesizer for NoirEmitter<'_> {
         self.use_lib("qsqrt");
         let v = self.bind(&format!("qsqrt({})", self.as_field(a)));
         // Literal propagation: sqrt(literal) is a compile-time constant.
-        // Structural read only (`s_float_of`); carry literal_cells so
+        // Structural read only (`s_float_of`); carry literal_vals so
         // downstream fast paths fire.
         if let Some(f) = self.s_float_of(a) {
             if f >= 0.0 {
-                self.fold_f(&v, Some(f.sqrt()));
-                self.literal_cells.insert(v.clone());
+                self.fold_literal(&v, ConcreteValue::Float(f.sqrt()));
             }
         }
         Ok(v)
@@ -2374,12 +2488,28 @@ impl Synthesizer for NoirEmitter<'_> {
             };
             self.bind(&expr)
         };
-        // Fold value through cond. We propagate either side based on
-        // concrete cond; falls back to no-fold if cond unknown.
+        // Bookkeeping value propagation when the WITNESS knows the cond.
+        // This mirrors the historical `value_cache` fold exactly: the
+        // picked branch is chosen by a witness read (`bool_of`), so the
+        // propagated value is witness-flavoured and lands ONLY in the
+        // witness fold cache (public-input bookkeeping — never a structural
+        // input). It is deliberately NOT carried into `literal_vals`:
+        // making a select result structurally constant from a
+        // witness-selected branch would specialise the circuit (the C03/
+        // sub_i class of bug, caught by the two-witness diff test on 0442).
         if let Some(c) = self.bool_of(cond) {
             let picked = if c { if_true } else { if_false };
-            if let Some(cv) = self.value_cache.get(picked).cloned() {
-                self.value_cache.insert(v.clone(), cv);
+            if let Some(cv) = self.witness_vals.get(picked) {
+                self.witness_vals.insert(v.clone(), cv);
+            }
+        }
+        // STRUCTURAL fold: only when the cond is a BUILD-time literal may a
+        // select of two structural literals stay structural. This never
+        // depends on the witness, so it cannot specialise the circuit.
+        if let Some(c) = self.s_bool_of(cond) {
+            let picked = if c { if_true } else { if_false };
+            if let Some(cv) = self.literal_vals.get(picked).cloned() {
+                self.literal_vals.insert(v.clone(), cv);
             }
         }
         // Interval propagation (hulls, min/max recognition) comes from the
@@ -2421,17 +2551,16 @@ impl Synthesizer for NoirEmitter<'_> {
         // Integer-to-float in Q32 means *= 2^32.
         let v = self.bind(&format!("{} * {}", self.as_field(a), Q_U64));
         // Literal propagation: float(literal int) is a compile-time
-        // constant. The value_cache stores the *conceptual* float value
-        // (the Q-scaling lives in the emitted Field expr, not the cache),
-        // so fold `a`'s integer value as a float and carry literal_cells
-        // membership. Structural read only (`s_int_of`/`s_float_of`).
+        // constant. `literal_vals` stores the *conceptual* float value
+        // (the Q-scaling lives in the emitted Field expr, not the store),
+        // so fold `a`'s integer value as a float into `literal_vals`.
+        // Structural read only (`s_int_of`/`s_float_of`).
         let lit = self
             .s_int_of(a)
             .map(|n| n as f64)
             .or_else(|| self.s_float_of(a));
         if let Some(f) = lit {
-            self.fold_f(&v, Some(f));
-            self.literal_cells.insert(v.clone());
+            self.fold_literal(&v, ConcreteValue::Float(f));
         }
         Ok(v)
     }
@@ -2474,7 +2603,8 @@ impl Synthesizer for NoirEmitter<'_> {
         let expr = input_index_expr(path, &self.inputs)?;
         let v = self.bind(&expr);
         if let Some((_decimal, concrete)) = self.resolve_path_concrete(path) {
-            self.value_cache.insert(v.clone(), concrete);
+            // Witness-derived value: bookkeeping store only.
+            self.witness_vals.insert(v.clone(), concrete);
         }
         Ok(v)
     }
@@ -2493,13 +2623,17 @@ impl Synthesizer for NoirEmitter<'_> {
         // typed `[Field; N]`, so u32 cells need the free `(v as Field)`
         // embedding before they hit the array literal.
         self.exposes.push(self.as_field(a));
-        // Compute the public-input decimal-field representation if we
-        // can constant-fold.
-        let dec = match self.value_cache.get(a) {
-            Some(ConcreteValue::Int(v)) => signed_to_field_decimal(*v),
-            Some(ConcreteValue::Float(v)) => quantize_to_field_string(*v),
+        // Compute the public-input decimal-field representation if we can
+        // constant-fold. This is the whitelisted expose path: it may read
+        // the witness fold cache (the exposed value is, by definition,
+        // determined by the witness). Fall back to the structural literal
+        // store when the exposed cell is a build-time constant.
+        let folded = self.witness_vals.get(a).or_else(|| self.literal_vals.get(a).cloned());
+        let dec = match folded {
+            Some(ConcreteValue::Int(v)) => signed_to_field_decimal(v),
+            Some(ConcreteValue::Float(v)) => quantize_to_field_string(v),
             Some(ConcreteValue::Bool(v)) => {
-                if *v {
+                if v {
                     "1".to_string()
                 } else {
                     "0".to_string()
@@ -2839,10 +2973,16 @@ impl Synthesizer for NoirEmitter<'_> {
             }
             return Ok(expr);
         }
-        let prior_val = self.value_cache.get(&expr).cloned();
+        // Propagate the witness fold across the memory read for
+        // public-input bookkeeping (mirrors the historical `value_cache`
+        // carry exactly). The structural literal store is deliberately NOT
+        // carried: a value loaded out of segment memory is treated as a
+        // fresh runtime cell, exactly as before the witness/literal split,
+        // keeping emission gate-identical.
+        let prior_witness = self.witness_vals.get(&expr);
         let v = self.bind(&expr);
-        if let Some(val) = prior_val {
-            self.value_cache.insert(v.clone(), val);
+        if let Some(val) = prior_witness {
+            self.witness_vals.insert(v.clone(), val);
         }
         Ok(v)
     }
@@ -3036,8 +3176,8 @@ mod tests {
 
     /// Register a compile-time integer literal cell so `s_int_of` resolves it.
     fn lit_int(em: &mut NoirEmitter<'_>, name: &str, v: i128) {
-        em.value_cache.insert(name.to_string(), ConcreteValue::Int(v));
-        em.literal_cells.insert(name.to_string());
+        em.literal_vals
+            .insert(name.to_string(), ConcreteValue::Int(v));
     }
 
     /// Register a recognized normalized index `name = select(lt(x,0), x+n, x)`.
@@ -3096,5 +3236,77 @@ mod tests {
             "j<0 must NOT emit the dual-equality peephole, body was:\n{}",
             em.body
         );
+    }
+
+    // R06: the structural literal store (`literal_vals`) must never carry a
+    // witness-folded value. The witness fold cache (`witness_vals`) is a
+    // distinct, privacy-enforced store; the structural accessors read only
+    // `literal_vals`. This test pins that separation: a value present only
+    // in the witness fold cache is invisible to `s_int_of`/`s_float_of`.
+    #[test]
+    fn witness_fold_invisible_to_structural_accessors() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        // Simulate a witness-folded value (e.g. add_i of two read_input
+        // cells): it lands ONLY in the witness cache.
+        em.fold_i("wcell", Some(7));
+        // The witness read sees it (bookkeeping path)...
+        assert_eq!(em.int_of("wcell"), Some(7));
+        // ...but the STRUCTURAL accessors must NOT — keying a gate on this
+        // would specialise the circuit to the prover's witness.
+        assert_eq!(em.s_int_of("wcell"), None);
+        assert_eq!(em.s_float_of("wcell"), None);
+
+        // A build-time literal, by contrast, is visible structurally and is
+        // NOT in the witness cache.
+        em.fold_literal("lcell", ConcreteValue::Int(3));
+        assert_eq!(em.s_int_of("lcell"), Some(3));
+        assert_eq!(em.int_of("lcell"), None);
+    }
+
+    // R06: `annotate_with_analysis_bound` moved out of `bind()` and into
+    // `on_stmt_result`. Intermediate cells bound while a statement is
+    // dispatched must NOT inherit the statement's RESULT bound; only the
+    // actual result cell may. A shared indicator-style cell reused by a
+    // later statement must keep its own correct bound.
+    #[test]
+    fn analysis_bound_lands_on_stmt_result_not_intermediates() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+
+        // ── Statement 0: result bound is 1000. ──────────────────────────
+        em.current_stmt_bound = Some(1000);
+        // An *intermediate* cell bound mid-statement (e.g. a cached
+        // indicator `if x == 3 { 1 } else { 0 }`, value in {0,1}).
+        let shared_ind = em.bind("if x == 3 { 1 } else { 0 }");
+        // The intermediate must NOT have been stamped with stmt 0's bound.
+        assert_eq!(
+            em.bound_of(&shared_ind),
+            None,
+            "intermediate cell wrongly inherited the statement-result bound"
+        );
+        // The statement RESULT cell (a different cell) gets the bound.
+        let result0 = em.bind("x * 2");
+        em.on_stmt_result(0, crate::types::ValueId(0), &result0);
+        assert_eq!(em.bound_of(&result0), Some(1000));
+
+        // ── Statement 1 reuses the shared indicator, with a tiny result
+        //    bound (1). The reused indicator must keep ITS OWN bound (none
+        //    set here, definitely not statement 1's spuriously tight 1 nor
+        //    statement 0's 1000). on_stmt_result stamps only the result.
+        em.current_stmt_bound = Some(1);
+        // Reusing the indicator expression hits CSE -> same cell, no new bound.
+        let reused = em.bind("if x == 3 { 1 } else { 0 }");
+        assert_eq!(reused, shared_ind, "CSE should reuse the indicator cell");
+        let result1 = em.bind(&format!("{} + 5", reused));
+        em.on_stmt_result(1, crate::types::ValueId(1), &result1);
+        // The shared indicator still carries no stmt-result bound — it was
+        // never a statement result, so it is not poisoned by either stmt.
+        assert_eq!(
+            em.bound_of(&shared_ind),
+            None,
+            "shared indicator was poisoned by a later statement's result bound"
+        );
+        assert_eq!(em.bound_of(&result1), Some(1));
     }
 }

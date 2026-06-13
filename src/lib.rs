@@ -529,7 +529,15 @@ fn emit_structural_circuit(
             pyo3::exceptions::PyValueError::new_err(format!("Witness JSON parse error: {}", e))
         })?;
 
-    let prover = prove::create_prover_backend(backend)
+    // `halo2-base-witnessless` is a structural-rendering pseudo-backend
+    // (the witness-LESS keygen fingerprint, see below); it reuses the real
+    // `halo2-base` prover for param estimation / preprocessing.
+    let effective_backend = match backend {
+        "halo2-base-witnessless" => "halo2-base",
+        other => other,
+    };
+
+    let prover = prove::create_prover_backend(effective_backend)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
     let mut params: prove::types::ProvingParams = if let Some(pj) = params_json {
@@ -542,7 +550,7 @@ fn emit_structural_circuit(
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
     };
     // halo2-base needs a real k to size the builder; k=0 means "estimate".
-    if backend == "halo2-base" && params.k == 0 {
+    if effective_backend == "halo2-base" && params.k == 0 {
         params = prover
             .estimate_params(ir_graph)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
@@ -564,6 +572,17 @@ fn emit_structural_circuit(
         #[cfg(feature = "halo2-base-backend")]
         "halo2-base" => {
             prove::halo2_base::structural_fingerprint(ir_graph, &resolved_witness, &params)
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+        }
+        // Witness-LESS keygen fingerprint: the synthesis the verifier
+        // re-runs (all reads default to zero). A sound circuit fingerprints
+        // identically with a concrete witness or with none; a mismatch is a
+        // verify-breaking witness leak. The witness is still parsed +
+        // preprocessed above (it sizes params / public layout), but the
+        // circuit is built with `None`.
+        #[cfg(feature = "halo2-base-backend")]
+        "halo2-base-witnessless" => {
+            prove::halo2_base::structural_fingerprint_witnessless(ir_graph, &params)
                 .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
         }
         other => Err(pyo3::exceptions::PyValueError::new_err(format!(
