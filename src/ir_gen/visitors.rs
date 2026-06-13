@@ -2145,9 +2145,21 @@ impl IRGenerator {
                             return;
                         }
                     }
-                    // Fall through to legacy chained-subscript handling
-                    // (which is currently a no-op for non-StaticArray
-                    // chains). This preserves prior behaviour.
+                    // C12a: any chained-subscript assignment that reaches here
+                    // (a non-StaticArray inner such as `DynamicNDArray`, or a
+                    // StaticArray inner with a `NewAxis`) was a SILENT NO-OP —
+                    // the inner subscript yields a fresh value, the write lands
+                    // on that temporary, and nothing flows back to the source
+                    // array. Same silent-drop class as the 2026-05-30
+                    // setitem-dispatcher bug. Fail loudly rather than
+                    // miscompute until write-through views are implemented.
+                    panic!(
+                        "chained subscript assignment (a[i][j] = v) is unsupported here: \
+                         the inner subscript produces a temporary, so the write would be \
+                         silently dropped (this covers dynamic arrays and new-axis views). \
+                         Index in a single step (a[i, j] = v), or assign the inner row to a \
+                         variable, mutate it, and write it back."
+                    );
                 }
                 // Get the variable name from target
                 if let ASTNode::ASTLoad(load) = &*t.target {

@@ -465,10 +465,26 @@ impl IRGenerator {
             if let Some(emitter) =
                 crate::optim::predicates::witness_emitters().get(req.kind.as_str())
             {
+                // Resolve each predicate arg against the input bindings.
+                // Args that are not context variables are numeric literals
+                // baked into the predicate (e.g. the `0` / `5` bounds of
+                // `forall(x, in_range(0, 5))`); materialise them as IR
+                // constants. Previously these resolved to `Value::None` and
+                // were silently coerced to constant 0 by `ensure_ptr`'s
+                // (now-removed) lenient arm — which happened to match a `0`
+                // bound but turned every non-zero literal bound (e.g. the
+                // `hi = 5`) into a wrong `0`, a silent miscompile (C12b).
                 let arg_values: Vec<crate::types::Value> = req
                     .args
                     .iter()
-                    .map(|name| self.ctx.get(name).unwrap_or(crate::types::Value::None))
+                    .map(|name| {
+                        self.ctx.get(name).unwrap_or_else(|| {
+                            match name.parse::<i64>() {
+                                Ok(n) => self.builder.ir_constant_int(n),
+                                Err(_) => crate::types::Value::None,
+                            }
+                        })
+                    })
                     .collect();
                 let bound_value = req.bound.as_ref().and_then(|name| {
                     self.ctx.get(name).or_else(|| {

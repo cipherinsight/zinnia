@@ -127,19 +127,7 @@ fn select_typed(
     }
 }
 
-/// Normalize a runtime index to numpy's `-n <= i < n` contract: negative
-/// indices wrap by `+axis_len`. Mirrors `read.rs::normalize_dynamic_index`.
-/// A statically-non-negative index (per `ask_bounds`) is returned as-is.
-fn normalize_dynamic_index(b: &mut IRBuilder, idx: &Value, axis_len: usize) -> Value {
-    if b.ask_bounds(idx).map(|(min, _)| min >= 0).unwrap_or(false) {
-        return idx.clone();
-    }
-    let zero_v = b.ir_constant_int(0);
-    let len_v = b.ir_constant_int(axis_len as i64);
-    let is_neg = b.ir_less_than_i(idx, &zero_v);
-    let wrapped = b.ir_add_i(idx, &len_v);
-    b.ir_select_i(&is_neg, &wrapped, idx)
-}
+use super::base::{index_equals_coord, normalize_dynamic_index};
 
 /// Bounds chokepoint for the dynamic-index write paths. For every runtime
 /// (non-literal) index axis, discharge numpy's validity contract
@@ -194,20 +182,6 @@ fn normalize_for_address(b: &mut IRBuilder, idx: &Value, axis_len: usize) -> Val
         return idx.clone();
     }
     normalize_dynamic_index(b, idx, axis_len)
-}
-
-fn index_equals_coord(b: &mut IRBuilder, idx: &Value, coord: usize, axis_len: usize) -> Value {
-    if let Some(i) = idx.int_val() {
-        let i = if i < 0 { axis_len as i64 + i } else { i };
-        return b.ir_constant_bool(i == coord as i64);
-    }
-    let zero = b.ir_constant_int(0);
-    let len = b.ir_constant_int(axis_len as i64);
-    let coord_v = b.ir_constant_int(coord as i64);
-    let is_neg = b.ir_less_than_i(idx, &zero);
-    let wrapped = b.ir_add_i(idx, &len);
-    let normalized = b.ir_select_i(&is_neg, &wrapped, idx);
-    b.ir_equal_i(&normalized, &coord_v)
 }
 
 fn and_all(b: &mut IRBuilder, parts: Vec<Value>) -> Value {

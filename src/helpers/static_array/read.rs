@@ -178,14 +178,7 @@ fn select_typed(
     }
 }
 
-fn index_equals_coord(b: &mut IRBuilder, idx: &Value, coord: usize, axis_len: usize) -> Value {
-    if let Some(i) = idx.int_val() {
-        let i = if i < 0 { axis_len as i64 + i } else { i };
-        return b.ir_constant_bool(i == coord as i64);
-    }
-    let coord_v = b.ir_constant_int(coord as i64);
-    b.ir_equal_i(idx, &coord_v)
-}
+use super::base::{index_equals_coord, normalize_dynamic_index};
 
 fn and_all(b: &mut IRBuilder, parts: Vec<Value>) -> Value {
     let mut it = parts.into_iter();
@@ -281,17 +274,6 @@ fn try_read_dynamic_single_from_payload(
         acc = select_typed(b, dtype, cond, value, &acc);
     }
     Some(acc)
-}
-
-fn normalize_dynamic_index(b: &mut IRBuilder, idx: &Value, axis_len: usize) -> Value {
-    if b.ask_bounds(idx).map(|(min, _)| min >= 0).unwrap_or(false) {
-        return idx.clone();
-    }
-    let zero_v = b.ir_constant_int(0);
-    let len_v = b.ir_constant_int(axis_len as i64);
-    let is_neg = b.ir_less_than_i(idx, &zero_v);
-    let wrapped = b.ir_add_i(idx, &len_v);
-    b.ir_select_i(&is_neg, &wrapped, idx)
 }
 
 enum FancyAxisPlan {
@@ -2377,9 +2359,19 @@ fn multidim_subscript_static_array(
                     let i = if i < 0 { shape[ax] as i64 + i } else { i };
                     static_base += i * strides[ax] as i64;
                 } else {
+                    // C12c: numpy-wrap the runtime index ONCE here so the flat
+                    // address (`dynamic_parts`, consumed by the memory-read
+                    // fallback and Complex path) and the per-candidate
+                    // `index_equals_coord` match agree for negative `i`.
+                    // Previously the raw index flowed into both: the address
+                    // added `i*stride` (negative) and the unwrapped equals
+                    // matched no candidate, so `arr[i, 2:5]` with `i == -1`
+                    // silently returned the wrong row (caught only by a flat-
+                    // address discharge failing at prove time).
+                    let vn = normalize_dynamic_index(b, v, shape[ax]);
                     let stride_val = b.ir_constant_int(strides[ax] as i64);
-                    dynamic_parts.push(b.ir_mul_i(v, &stride_val));
-                    dynamic_single_axes.push((ax, v.clone()));
+                    dynamic_parts.push(b.ir_mul_i(&vn, &stride_val));
+                    dynamic_single_axes.push((ax, vn));
                 }
             }
             AxisSel::Coords(coords) => {

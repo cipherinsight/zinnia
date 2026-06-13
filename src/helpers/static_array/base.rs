@@ -486,6 +486,60 @@ pub fn to_value_list(b: &mut IRBuilder, val: &Value) -> Value {
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// Shared dynamic-index helpers (read + write)
+// ────────────────────────────────────────────────────────────────────────
+
+/// Numpy-wrap a runtime index to the `-axis_len <= i < axis_len` contract:
+/// a negative index becomes `i + axis_len`. A literal or provably-non-negative
+/// index (per `ask_bounds`) passes through unchanged so we don't emit a
+/// needless `select` wire.
+///
+/// This is the single canonical wrap used by both the read and write static
+/// array paths. The read path normalizes its dynamic `Single` index once at
+/// plan-build time so the flat address (`dynamic_parts`) and the per-candidate
+/// `index_equals_coord` match agree; the write path's `compute_addr` fallback
+/// normalizes here before forming the address. See C12c.
+pub(crate) fn normalize_dynamic_index(b: &mut IRBuilder, idx: &Value, axis_len: usize) -> Value {
+    if idx.int_val().is_some() {
+        return idx.clone();
+    }
+    if b.ask_bounds(idx).map(|(min, _)| min >= 0).unwrap_or(false) {
+        return idx.clone();
+    }
+    let zero_v = b.ir_constant_int(0);
+    let len_v = b.ir_constant_int(axis_len as i64);
+    let is_neg = b.ir_less_than_i(idx, &zero_v);
+    let wrapped = b.ir_add_i(idx, &len_v);
+    b.ir_select_i(&is_neg, &wrapped, idx)
+}
+
+/// Build the boolean "this runtime index selects coordinate `coord`" condition.
+///
+/// This is the single canonical copy shared by the read and write overlay /
+/// candidate-select paths (C12c unified the previously-divergent read and write
+/// twins — the read copy compared *unwrapped*, so a mixed `Single+Range` read
+/// with a negative dynamic index matched no candidate and returned garbage).
+///
+/// It numpy-wraps the index internally, so callers may pass a raw
+/// (possibly-negative) index. Passing an already-`normalize_dynamic_index`-d
+/// value is idempotent (the wrap predicate is statically false / pruned for a
+/// non-negative value).
+pub(crate) fn index_equals_coord(
+    b: &mut IRBuilder,
+    idx: &Value,
+    coord: usize,
+    axis_len: usize,
+) -> Value {
+    if let Some(i) = idx.int_val() {
+        let i = if i < 0 { axis_len as i64 + i } else { i };
+        return b.ir_constant_bool(i == coord as i64);
+    }
+    let normalized = normalize_dynamic_index(b, idx, axis_len);
+    let coord_v = b.ir_constant_int(coord as i64);
+    b.ir_equal_i(&normalized, &coord_v)
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // Tests
 // ────────────────────────────────────────────────────────────────────────
 

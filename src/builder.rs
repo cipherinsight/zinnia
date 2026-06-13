@@ -1030,13 +1030,28 @@ impl IRBuilder {
                     val.clone()
                 }
             }
+            // C12b: previously these arms silently coerced garbage to a
+            // scalar — None/Class became `ir_constant_int(0)` and a
+            // List/Tuple was replaced by its FIRST element. A caller passing
+            // a composite (or None) to a scalar IR op then got a structurally
+            // valid statement computing the WRONG thing, undermining the
+            // hard-panic in `create_ir` two steps down. Fail loudly instead:
+            // the correct fix is at the call site that passed the wrong value.
             Value::None | Value::Class(_) => {
-                // Materialize None/Class as constant 0 to avoid panics downstream
-                self.ir_constant_int(0)
+                panic!(
+                    "IRBuilder::ensure_ptr: cannot materialize {:?} as a scalar IR pointer. \
+                     A None/Class value reached a scalar IR op; fix the call site that passed it.",
+                    val
+                );
             }
-            // For composites, extract first scalar element as fallback
-            Value::List(data) | Value::Tuple(data) if !data.values.is_empty() => {
-                self.ensure_ptr(&data.values[0])
+            Value::List(_) | Value::Tuple(_) => {
+                panic!(
+                    "IRBuilder::ensure_ptr: cannot materialize a composite (List/Tuple) as a \
+                     scalar IR pointer; got {:?}. A composite reached a scalar IR op; the right \
+                     fix is at the call site (e.g. dispatch a per-element loop or convert to a \
+                     StaticArray), not silently taking the first element.",
+                    val
+                );
             }
             _ => val.clone(),
         }
