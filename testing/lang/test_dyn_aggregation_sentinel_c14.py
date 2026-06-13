@@ -139,3 +139,110 @@ def foo(x: Int[Array, "2 N<=3"]):
     assert s[1] == 6
 """
     assert _prove(src, np.asarray([[1, 2], [3, 4]])) == "mock_satisfied"
+
+
+# ─────────── G01: static runtime-length fast path (compact full reduction) ───────────
+#
+# Slicing a bounded dynamic array (`x[:k]` with constant `k`) yields a
+# compact dyn array whose `runtime_length.static_val == Some(k)`, with an
+# envelope strictly larger than `k`. The full-reduction lowering now iterates
+# the static prefix `0..k` with the unmasked reduction step (no per-slot
+# `LtI + LogicalAnd` active machinery), which must NOT change which elements
+# are active: only the first `k` slots participate, regardless of trailing
+# buffer contents. Each expectation is numpy-checked against `arr[:k]`.
+
+
+def test_dyn_static_len_sum():
+    # numpy: sum([1,2,3,4]) == 10  (trailing 5,6,7,8 must be excluded)
+    src = """
+def foo(x: Int[Array, "N<=8"]):
+    y = x[:4]
+    assert y.sum() == 10
+"""
+    assert _prove(src, np.asarray([1, 2, 3, 4, 5, 6, 7, 8])) == "mock_satisfied"
+
+
+def test_dyn_static_len_prod():
+    # numpy: prod([2,3,4]) == 24
+    src = """
+def foo(x: Int[Array, "N<=8"]):
+    y = x[:3]
+    assert y.prod() == 24
+"""
+    assert _prove(src, np.asarray([2, 3, 4, 5, 6])) == "mock_satisfied"
+
+
+def test_dyn_static_len_max_all_negative():
+    # numpy: max([-5,-3,-7,-2]) == -2 (trailing positives excluded)
+    src = """
+def foo(x: Int[Array, "N<=8"]):
+    y = x[:4]
+    assert y.max() == -2
+"""
+    assert _prove(src, np.asarray([-5, -3, -7, -2, 9, 9, 9, 9])) == "mock_satisfied"
+
+
+def test_dyn_static_len_min():
+    # numpy: min([-5,-3,-7,-2,1]) == -7
+    src = """
+def foo(x: Int[Array, "N<=8"]):
+    y = x[:5]
+    assert y.min() == -7
+"""
+    assert _prove(src, np.asarray([-5, -3, -7, -2, 1, 99])) == "mock_satisfied"
+
+
+def test_dyn_static_len_argmax_all_negative():
+    # numpy: argmax([-5,-3,-7,-2]) == 3
+    src = """
+def foo(x: Int[Array, "N<=8"]):
+    y = x[:4]
+    assert y.argmax() == 3
+"""
+    assert _prove(src, np.asarray([-5, -3, -7, -2, 9])) == "mock_satisfied"
+
+
+def test_dyn_static_len_float_sum():
+    # numpy: sum([1.5,2.5,3.0]) == 7.0
+    src = """
+def foo(x: Float[Array, "N<=8"]):
+    y = x[:3]
+    assert y.sum() == 7.0
+"""
+    assert _prove(src, np.asarray([1.5, 2.5, 3.0, 9.0, 9.0])) == "mock_satisfied"
+
+
+# ─────────── G01: factored per-axis-position mask (axis reduction) ───────────
+#
+# The 2D bounded-axis reductions exercise the hoisted-mask path: the active
+# indicator now factors into a precomputed per-axis-position part AND a
+# per-output part, combined with a single LogicalAnd. The active region (and
+# thus every result) must be identical to the unfactored emission.
+
+
+def test_dyn_axis_sum_bounded_2d():
+    # numpy sum(axis=1) of [[1,2,3],[4,5,6],[7,8,9]] == [6,15,24]
+    src = """
+def foo(x: Int[Array, "3 N<=4"]):
+    m = x.sum(axis=1)
+    assert m[0] == 6
+    assert m[1] == 15
+    assert m[2] == 24
+"""
+    assert (
+        _prove(src, np.asarray([[1, 2, 3], [4, 5, 6], [7, 8, 9]])) == "mock_satisfied"
+    )
+
+
+def test_dyn_axis0_max_bounded_2d():
+    # numpy max(axis=0) of [[1,2,3],[4,5,6],[7,8,9]] == [7,8,9]
+    src = """
+def foo(x: Int[Array, "M<=4 3"]):
+    m = x.max(axis=0)
+    assert m[0] == 7
+    assert m[1] == 8
+    assert m[2] == 9
+"""
+    assert (
+        _prove(src, np.asarray([[1, 2, 3], [4, 5, 6], [7, 8, 9]])) == "mock_satisfied"
+    )

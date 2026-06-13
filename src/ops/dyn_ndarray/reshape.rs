@@ -778,16 +778,28 @@ pub fn dyn_reshape(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value])
         old_total, new_shape, new_total
     );
 
-    let runtime_length_v = if let Some(v) = data.meta.runtime_length.static_val {
-        b.ir_constant_int(v)
-    } else if let Some(ptr) = data.meta.runtime_length.stmt_id {
-        Value::Integer(ScalarValue::new(None, Some(ptr)))
+    // Length-conformance assert. When the source `runtime_length` is a
+    // compile-time constant the check is fully static: fold it to a
+    // compile-time comparison (emit nothing on success, a compile error on
+    // mismatch) instead of an unconditional in-circuit `assert(== )`.
+    if let Some(v) = data.meta.runtime_length.static_val {
+        assert_eq!(
+            v as usize, new_total,
+            "reshape: cannot reshape array of runtime length {} into shape {:?} (size {})",
+            v, new_shape, new_total
+        );
+        // Both sides are compile-time constant and equal — no runtime
+        // assertion needed.
     } else {
-        b.ir_constant_int(old_total as i64)
-    };
-    let new_total_v = b.ir_constant_int(new_total as i64);
-    let length_matches = b.ir_equal_i(&runtime_length_v, &new_total_v);
-    b.ir_assert(&length_matches);
+        let runtime_length_v = if let Some(ptr) = data.meta.runtime_length.stmt_id {
+            Value::Integer(ScalarValue::new(None, Some(ptr)))
+        } else {
+            b.ir_constant_int(old_total as i64)
+        };
+        let new_total_v = b.ir_constant_int(new_total as i64);
+        let length_matches = b.ir_equal_i(&runtime_length_v, &new_total_v);
+        b.ir_assert(&length_matches);
+    }
 
     let new_strides = row_major_strides(&new_shape);
     let new_dims: Vec<crate::types::Dim> = new_shape

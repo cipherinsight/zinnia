@@ -462,6 +462,41 @@ fn lower_dyn_aggregate_all_generic(b: &mut IRBuilder, inputs: &DynAggAllInputs) 
     }
 
     let strides = dyn_row_major_strides(&data.meta.logical_shape);
+
+    // Static-length fast path: when the buffer is compact (flat
+    // runtime-length masking) and `runtime_length` is a compile-time
+    // constant `k`, the active region is exactly the flat prefix `[0, k)`.
+    // Every slot < k is statically active and every slot >= k is statically
+    // inactive, so we can iterate `0..k` with the *unmasked* reduction step
+    // and drop the per-slot `LtI + LogicalAnd` active machinery entirely.
+    // (The padded, non-compact rectangle layout is handled per-axis below;
+    // its activity does not collapse to a single flat prefix.)
+    let static_compact_len = if any_bounded && compact_buffer {
+        data.meta
+            .runtime_length
+            .static_val
+            .map(|k| (k.max(0) as usize).min(buffer_size).min(values.len()))
+    } else {
+        None
+    };
+
+    if let Some(active_len) = static_compact_len {
+        // active_len >= 1 here: an empty active region (k == 0) cannot reach
+        // this loop because buffer_size == 0 already returned the identity
+        // above, and a compact buffer with k == 0 implies buffer_size == 0.
+        let mut acc = values[0].clone();
+        let mut acc_idx = b.ir_constant_int(0);
+        for i in 1..active_len {
+            let elem = values[i].clone();
+            let idx_val = b.ir_constant_int(i as i64);
+            let (new_acc, new_idx) =
+                dyn_agg_step(b, &acc, &acc_idx, &elem, &idx_val, agg, use_float);
+            acc = new_acc;
+            acc_idx = new_idx;
+        }
+        return finalize_dyn_aggregate_all(b, agg, acc, acc_idx, buffer_size, data);
+    }
+
     let first_active = if any_bounded {
         if compact_buffer {
             build_flat_active_check(b, 0, &data.meta.runtime_length)
@@ -517,6 +552,20 @@ fn lower_dyn_aggregate_all_generic(b: &mut IRBuilder, inputs: &DynAggAllInputs) 
         }
     }
 
+    finalize_dyn_aggregate_all(b, agg, acc, acc_idx, buffer_size, data)
+}
+
+/// Shared finalization for the full (axis=None) reduction: select the
+/// argextremum index vs. the reduced value, and (for argmin/argmax) fire the
+/// `dyn_argextremum` contract and publish the `<= buffer_size - 1` bound.
+fn finalize_dyn_aggregate_all(
+    b: &mut IRBuilder,
+    agg: DynAggKind,
+    acc: Value,
+    acc_idx: Value,
+    buffer_size: usize,
+    data: &DynamicNDArrayData,
+) -> Value {
     if matches!(agg, DynAggKind::Argmax | DynAggKind::Argmin) {
         if let Some(idx_vid) = acc_idx.value_id() {
             let runtime_length_v = scalar_to_value_i(b, &data.meta.runtime_length);
@@ -636,6 +685,60 @@ fn build_active_check(
         all_active = b.ir_logical_and(&all_active, &lt);
     }
     all_active
+}
+
+/// Per-output activity for the axis-reduction factoring: the conjunction of
+/// `coord[ax'] < runtime_shape[ax']` over every axis `ax' != reduce_ax`.
+/// This is the loop-invariant (per-output) half of the full per-slot active
+/// mask, hoisted out of the inner axis-scan loop. Combined with the
+/// precomputed per-axis-position `axis_active[k]` it reconstructs exactly the
+/// same predicate `build_active_check` would emit over the full in-coords
+/// (AND is associative/commutative), so the active region is unchanged.
+fn build_out_active_check(
+    b: &mut IRBuilder,
+    in_coords: &[usize],
+    reduce_ax: usize,
+    runtime_shape: &[ScalarValue<i64>],
+    grid_shape: &[usize],
+) -> Value {
+    let mut all_active = b.ir_constant_bool(true);
+    for (ax, &c) in in_coords.iter().enumerate() {
+        if ax == reduce_ax {
+            continue;
+        }
+        if runtime_shape[ax].static_val == Some(grid_shape[ax] as i64) {
+            continue;
+        }
+        let runtime_size_v = scalar_to_value_i(b, &runtime_shape[ax]);
+        let c_const = b.ir_constant_int(c as i64);
+        let lt = b.ir_less_than_i(&c_const, &runtime_size_v);
+        all_active = b.ir_logical_and(&all_active, &lt);
+    }
+    all_active
+}
+
+/// Combine the hoisted per-output activity with the precomputed per-axis-
+/// position activity into the full per-slot active mask.
+///
+/// `out_active` is `None` only when the factoring is disabled (mask-form
+/// path), in which case this is never called. An empty `axis_active` means
+/// the reduced axis's runtime extent is statically full (every position
+/// active), so the result is just `out_active`. When both are present a
+/// single `LogicalAnd` reconstructs the full predicate; the builder folds it
+/// away when either operand is the constant `true`.
+fn combine_active(
+    b: &mut IRBuilder,
+    out_active: Option<&Value>,
+    axis_active: &[Value],
+    k: usize,
+) -> Value {
+    let out = out_active
+        .cloned()
+        .unwrap_or_else(|| b.ir_constant_bool(true));
+    match axis_active.get(k) {
+        Some(ax_act) => b.ir_logical_and(&out, ax_act),
+        None => out,
+    }
 }
 
 fn build_flat_active_check(
@@ -884,6 +987,32 @@ pub fn dyn_aggregate_axis(
 
     let mut out_elements: Vec<Value> = Vec::with_capacity(out_numel);
 
+    // Per-axis-position activity, hoisted out of the O(out_numel × steps)
+    // inner loop. For the gather / logical-stride sub-paths the per-slot
+    // active mask factors as `axis_active[k] AND out_active`, where
+    // `axis_active[k] = (k < runtime_shape[ax])` depends only on the axis
+    // position and `out_active` depends only on the output coordinates.
+    // Precomputing the `axis_dim` axis indicators once (and the per-output
+    // `out_active` once per output) turns O(out × steps) comparison
+    // emissions into O(out + steps); the inner loop then spends a single
+    // `LogicalAnd` per pair (folded away when either factor is the static
+    // constant `true`). The mask-form / block-view window membership test is
+    // genuinely (output, position)-dependent and is left untouched below.
+    let axis_runtime_static =
+        data.meta.runtime_shape[ax].static_val == Some(grid_shape[ax] as i64);
+    let factor_active = !mask_form;
+    let axis_active: Vec<Value> = if factor_active && !axis_runtime_static {
+        let dim_v = scalar_to_value_i(b, &data.meta.runtime_shape[ax]);
+        (0..axis_dim)
+            .map(|k| {
+                let k_c = b.ir_constant_int(k as i64);
+                b.ir_less_than_i(&k_c, &dim_v)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     for out_idx in 0..out_numel {
         // Decode output coordinates
         let out_coords = if out_shape.is_empty() {
@@ -992,6 +1121,23 @@ pub fn dyn_aggregate_axis(
             None => axis_dim,
         };
 
+        // Per-output activity for the factored (non-mask-form) sub-paths,
+        // hoisted out of the k-loop: the conjunction over the non-reduced
+        // axes. Combined with the precomputed `axis_active[k]` this is
+        // exactly `build_active_check` over the full in-coords, but emitted
+        // once per output instead of once per (output, position).
+        let out_active = if factor_active {
+            Some(build_out_active_check(
+                b,
+                &in_coords,
+                ax,
+                &data.meta.runtime_shape,
+                &grid_shape,
+            ))
+        } else {
+            None
+        };
+
         // Iterate: storage positions (mask form) or axis coordinates.
         for k in 0..steps {
             let (elem, is_active, k_val) = if let Some((base, hi, out_active)) = &mask_ctx {
@@ -1013,12 +1159,10 @@ pub fn dyn_aggregate_axis(
                 (elem, active, pos)
             } else if runtime_dynamic {
                 in_coords[ax] = k;
-                let is_active = build_active_check(
-                    b,
-                    &in_coords,
-                    &data.meta.runtime_shape,
-                    &grid_shape,
-                );
+                // Factored active mask: out_active (per-output, hoisted) AND
+                // axis_active[k] (per-position, precomputed). Equivalent to
+                // build_active_check over the full in_coords.
+                let is_active = combine_active(b, out_active.as_ref(), &axis_active, k);
                 // Gather with the runtime stride cells: addr = sum of
                 // coord_i * runtime_stride_i (+ runtime offset). Inactive
                 // grid combos can compute out-of-range addresses, so the
@@ -1048,12 +1192,8 @@ pub fn dyn_aggregate_axis(
                 } else {
                     super::metadata::dyn_default_value(b, data.dtype)
                 };
-                let is_active = build_active_check(
-                    b,
-                    &in_coords,
-                    &data.meta.runtime_shape,
-                    &grid_shape,
-                );
+                // Factored active mask (see the gather branch above).
+                let is_active = combine_active(b, out_active.as_ref(), &axis_active, k);
                 let k_val = b.ir_constant_int(k as i64);
                 (elem, is_active, k_val)
             };
