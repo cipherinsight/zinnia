@@ -2525,6 +2525,78 @@ impl Synthesizer for NoirEmitter<'_> {
         Ok(())
     }
 
+    /// Override the trait default's per-bit `floor_div + mod` extraction.
+    ///
+    /// The default `assert_u128_lt_bit` extracts bit `bit` of `idx` with a
+    /// `floor_div_i(idx, 2^bit)` followed by `mod_i(.., 2)`. On the Field
+    /// Noir backend each of those lowers to a self-sound `q_floor_div` /
+    /// `q_mod` library call (a quotient/remainder witness pinned by
+    /// `q*d + r == n` with an internal `0 <= r < |d|` range check) — roughly
+    /// 100+ ACIR per bit. The small-axis `take_along_axis` routing
+    /// (`ir_assert_u128_lt_bits`, axis size 3..=8) calls this once PER BIT
+    /// PER gathered cell, so a 13x13 axis-5 gather paid ~3 q-divisions x 169
+    /// cells = ~1000 q-ops (the C19 51k-gate cost).
+    ///
+    /// Here, once `idx` is constrained to `[0, hi)` (the `as u32` promotion's
+    /// 32-bit RANGE plus the explicit `< hi`), `idx` is a u32 in a small
+    /// range and bit `bit` is the deterministic native `(idx >> bit) & 1` —
+    /// no Field division, no extra range check. `assert_bit` on the result is
+    /// then statically discharged (a u32 `& 1` is provably a bit), so we skip
+    /// it. CSE collapses the shared `idx < hi` and `idx as u32` across the
+    /// `bits` calls for the same cell, leaving just one cheap shift+mask per
+    /// bit. Soundness is unchanged: the bound is asserted exactly as the
+    /// default did (`assert_u128_lt`), and the extracted bit is a pure
+    /// function of the bounded `idx`.
+    fn assert_u128_lt_bit(
+        &mut self,
+        idx: &CellRef,
+        hi: u64,
+        bit: u32,
+        _bits: u32,
+    ) -> Result<CellRef, ProvingError> {
+        // Constant-fold when the index is a compile-time literal.
+        if let Some(i) = self.s_int_of(idx) {
+            let bit_val = if i >= 0 && (i as u128) < hi as u128 {
+                (((i as u128) >> bit) & 1) as i64
+            } else {
+                0
+            };
+            let v = self.constant_int(bit_val)?;
+            return Ok(v);
+        }
+        // Enforce the `[0, hi)` bound (same soundness obligation as the
+        // default, which calls `assert_u128_lt` first).
+        let hi_cell = self.constant_int(hi as i64)?;
+        self.assert_u128_lt(idx, &hi_cell)?;
+        // Promote to u32 (bounded by hi-1) so the bit extraction is a native
+        // u32 shift+mask rather than a Field division. `assert_u128_lt` set
+        // the interval; pin the cell_bound so `maybe_promote_to_u32` fires.
+        if self.bound_of(idx).is_none() && hi > 0 {
+            self.set_bound(idx, hi - 1);
+        }
+        let idx_u = self.maybe_promote_to_u32(idx);
+        let folded = self
+            .int_of(idx)
+            .map(|i| (((i as u128) >> bit) & 1) as i128);
+        let out = if self.is_u32(&idx_u) {
+            // Native u32 path: shift + mask is a single cheap blackbox-free op.
+            self.bind_u32_with_bound(&format!("({} >> {}) & 1", idx_u, bit), 1)
+        } else {
+            // Fallback (u32 promotion declined, e.g. non-amortizable circuit):
+            // keep the sound default's division-based extraction.
+            let divisor = self.constant_int(1_i64 << bit)?;
+            let shifted = self.floor_div_i(idx, &divisor)?;
+            let two = self.constant_int(2)?;
+            let m = self.mod_i(&shifted, &two)?;
+            self.assert_bit(&m)?;
+            m
+        };
+        if let Some(f) = folded {
+            self.fold_i(&out, Some(f));
+        }
+        Ok(out)
+    }
+
     fn allocate_memory(
         &mut self,
         segment_id: u32,

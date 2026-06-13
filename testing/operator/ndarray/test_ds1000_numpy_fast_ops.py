@@ -106,6 +106,48 @@ def test_take_along_axis_static_runtime_indices():
     assert compiled is not None
 
 
+def test_take_along_axis_oob_runtime_index_refused():
+    """Soundness for the small-axis `take_along_axis` routing (C19).
+
+    The axis-3..=8 fast path (`ir_assert_u128_lt_bits`) and the axis-2
+    fast path (`ir_select_bit_i`) both discharge `0 <= idx < axis_size`
+    on every gathered runtime index. An out-of-range or negative index
+    must refuse the witness — the gather is unsound without it. The C19
+    Noir bit-extraction rewrite preserves exactly that `idx < hi`
+    obligation, so these must still refuse.
+    """
+    # axis_size == 5 → bit-routing path (the C19-rewritten branch).
+    # `np.sum(out)` keeps EVERY gathered cell (and its bound discharge)
+    # load-bearing so DCE cannot drop an unconsumed OOB index's assert.
+    @zk_circuit
+    def gather5(a: Float[Array, "2 5"], b: Integer[Array, "2"]):
+        out = np.take_along_axis(a, b[..., np.newaxis], axis=-1)[..., 0]
+        assert np.sum(out) >= -1000000.0
+
+    grid = np.arange(10.0).reshape(2, 5)
+    # In-range indices satisfy and read the selected column.
+    assert gather5(grid, np.array([4, 0])).satisfied is True
+    assert gather5(grid, np.array([4, 4])).satisfied is True
+    # Index == 5 is out of bounds for axis size 5.
+    assert gather5(grid, np.array([5, 0])).satisfied is False
+    # A negative index is OOB for numpy take_along_axis (no wrap).
+    assert gather5(grid, np.array([0, -1])).satisfied is False
+    assert gather5(grid, np.array([-1, 0])).satisfied is False
+    # Far-out-of-range index is refused.
+    assert gather5(grid, np.array([99, 0])).satisfied is False
+
+    # axis_size == 2 → select-bit path.
+    @zk_circuit
+    def gather2(a: Float[Array, "2 2"], b: Integer[Array, "2"]):
+        out = np.take_along_axis(a, b[..., np.newaxis], axis=-1)[..., 0]
+        assert np.sum(out) >= -1000000.0
+
+    grid2 = np.arange(4.0).reshape(2, 2)
+    assert gather2(grid2, np.array([1, 0])).satisfied is True
+    assert gather2(grid2, np.array([2, 0])).satisfied is False
+    assert gather2(grid2, np.array([0, -1])).satisfied is False
+
+
 def test_insert_pad_ravel_multi_index_and_in1d_static_ops():
     @zk_circuit
     @requires(lambda pos: 0 <= pos <= 4)
