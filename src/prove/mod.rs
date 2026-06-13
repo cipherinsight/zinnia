@@ -27,6 +27,7 @@
 pub mod error;
 pub mod field;
 pub mod interpreter;
+pub mod ir_hash;
 pub mod kernel;
 pub mod mock;
 pub mod preprocess;

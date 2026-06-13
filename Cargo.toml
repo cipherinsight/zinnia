@@ -9,7 +9,7 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = ["halo2-backend", "extension-module"]
-halo2-backend = ["halo2_proofs", "rand", "blake2b_simd"]
+halo2-backend = ["halo2_proofs", "rand"]
 halo2-base-backend = ["halo2-backend", "halo2-base"]
 # Source-to-source Noir backend: emits .nr text from IR and shells out to
 # nargo + bb. No new Rust deps; the Q32 fixed-point library lives in
@@ -32,13 +32,28 @@ num-integer = "0.1"
 # the HW baselines (under halo2-base/halo2-pse) run on the SAME library
 # AND the SAME curve.
 halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", tag = "v0.3.0", features = ["circuit-params", "derive_serde"], optional = true }
+# Light-weight curve crate carrying BN254 (`halo2curves::bn256::Fr`) and the
+# `ff` field traits. This is the SAME version (`0.6.1`) that `halo2_proofs`
+# v0.3.0 depends on, so `Fr` is ABI-identical across both — a witness field
+# element built here is the exact same type the halo2 backend constrains
+# (cargo feature unification guarantees a single monomorphization). Made
+# NON-optional so the always-compiled core (`ResolvedWitness`, kernel, mock,
+# preprocess) has a field type *without* pulling in the entire `halo2_proofs`
+# proving system. That is what makes `halo2_proofs` genuinely optional: only
+# the two halo2 backends (`src/prove/halo2*/`) link it now, so
+# `--no-default-features --features noir-backend` builds without it. The
+# `derive_serde` feature matches what halo2_proofs requests, keeping a single
+# unified feature set whether or not the halo2 backends are enabled.
+halo2curves = { version = "0.6.1", features = ["derive_serde"] }
 halo2-base = { git = "https://github.com/axiom-crypto/halo2-lib.git", branch = "community-edition", default-features = false, features = ["halo2-pse"], optional = true }
 rand = { version = "0.8", optional = true }
-# BLAKE2b for the `ir_hash` diagnostic field on `ProofArtifact`
-# (halo2-cross-process-vk-serialization, D' direction). Already pulled in
-# transitively by halo2_proofs; named directly so the prove crate has a
-# stable API surface and the dep is visible in `cargo tree`.
-blake2b_simd = { version = "1.0", optional = true }
+# BLAKE2b for the canonical `ir_hash` (`ProofArtifact.ir_hash` + the
+# halo2-IPA VK-cache key). NON-optional: the hash is computed eagerly on the
+# always-compiled prove path (`crate::prove::ir_hash`, cached on `CompiledIR`)
+# so it must be available without any backend feature. The crate is light and
+# already pulled in transitively by `halo2curves`, so naming it directly costs
+# nothing while keeping the dep visible in `cargo tree`.
+blake2b_simd = { version = "1.0" }
 # P1 SMT-resolver foundation. The 0.20 line is the latest stable on
 # crates.io as of 2026-05-07. We deliberately do NOT enable the
 # `bundled` feature: it builds libz3 from source, which adds ~5 min to

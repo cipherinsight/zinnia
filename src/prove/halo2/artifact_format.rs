@@ -129,14 +129,11 @@ pub fn decode(s: &str) -> Result<Halo2IpaRekeygenV1Payload, String> {
 /// hex-encoded for transport. This is the canonical hash used both as the
 /// `ProofArtifact.ir_hash` field and as the cache key for the VK cache.
 pub fn compute_ir_hash(ir_stmts: &[serde_json::Value]) -> Result<String, String> {
-    use blake2b_simd::Params as Blake2bParams;
-    let bytes =
-        serde_json::to_vec(ir_stmts).map_err(|e| format!("ir_stmts JSON encode failed: {}", e))?;
-    let hash = Blake2bParams::new()
-        .hash_length(32)
-        .personal(b"zinnia-ir-hash-1")
-        .hash(&bytes);
-    Ok(hex_encode(hash.as_bytes()))
+    // Delegate to the always-compiled core helper so the wire hash is shared
+    // with the eager `CompiledIR::cached_artifact_inputs` path and cannot
+    // drift. Output is byte-for-byte identical (same BLAKE2b-256 +
+    // `personal(b"zinnia-ir-hash-1")`).
+    crate::prove::ir_hash::compute_ir_hash(ir_stmts)
 }
 
 // ---- Local hex helpers (matching the rest of the halo2 backend) ----------

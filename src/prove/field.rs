@@ -1,4 +1,4 @@
-//! Fixed-point field arithmetic helpers.
+//! Fixed-point field arithmetic helpers and the core field-type seam.
 //!
 //! Floats are represented as fixed-point integers in the prime field:
 //!
@@ -6,6 +6,34 @@
 //!
 //! This preserves ordering and allows field-native add/sub while requiring
 //! rescaling after multiplication.
+//!
+//! # The `F` seam
+//!
+//! [`F`] is the single field type used by the always-compiled core
+//! (`ResolvedWitness`, the shared `kernel`, the mock synthesizer, and the
+//! preprocessor). It aliases `halo2curves::bn256::Fr` — the BN254 scalar
+//! field — pulled from the *light* `halo2curves` crate rather than the full
+//! `halo2_proofs` proving system. Because `halo2_proofs` v0.3.0 depends on
+//! this same `halo2curves` version, `F` is ABI-identical to the `Fr` the
+//! halo2 backends constrain, so no conversion happens at the backend
+//! boundary. Routing the core through this alias is what lets
+//! `halo2_proofs` be a genuinely optional dependency: a `--features
+//! noir-backend` build never links it.
+
+/// The proving field: BN254's scalar field, `halo2curves::bn256::Fr`.
+///
+/// This is the one place the concrete curve is named for the core. The two
+/// halo2 backends use `halo2_proofs::halo2curves::bn256::Fr`, which resolves
+/// to this identical type (same `halo2curves` crate version).
+pub type F = halo2curves::bn256::Fr;
+
+/// Re-export of the `ff::Field` trait so core modules can call `.invert()`,
+/// `Field::zero()`, etc. on [`F`] without naming `halo2curves` directly.
+/// Equivalent to `halo2_proofs::arithmetic::Field` (that is just `ff::Field`).
+pub use halo2curves::ff::Field;
+
+/// Re-export of `ff::PrimeField` for `.to_repr()` / `from_repr` byte access.
+pub use halo2curves::ff::PrimeField;
 
 /// Quantize a float to a fixed-point integer representation.
 ///

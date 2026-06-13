@@ -48,7 +48,7 @@ impl CompiledIR {
         let mut error: Option<String> = None;
         let result = self.artifact_cache.get_or_init(|| {
             let stmts = self.graph.export_stmts();
-            match crate::prove::halo2::artifact_format::compute_ir_hash(&stmts) {
+            match crate::prove::ir_hash::compute_ir_hash(&stmts) {
                 Ok(hash) => (stmts, hash),
                 Err(e) => {
                     error = Some(e);
@@ -630,8 +630,7 @@ fn import_ir_json(ir_json: &str) -> PyResult<CompiledIR> {
 /// This ensures Python-side hash computation matches the prover exactly.
 #[pyfunction]
 fn poseidon_hash(values: Vec<i64>) -> String {
-    use halo2_proofs::halo2curves::bn256::Fr as Fp;
-    use halo2_proofs::halo2curves::ff::PrimeField;
+    use prove::field::{PrimeField, F as Fp};
     let fps: Vec<Fp> = values
         .iter()
         .map(|v| prove::kernel::i64_to_fp(*v))

@@ -6,14 +6,16 @@
 //! semantic consistency: the mock backend produces the exact same values
 //! that the halo2 backend constrains.
 //!
-//! All functions operate on `halo2_proofs::halo2curves::bn256::Fr` — the Pasta base field
-//! used by zcash/halo2 with IPA commitment.
+//! All functions operate on [`crate::prove::field::F`] — BN254's scalar field
+//! (`halo2curves::bn256::Fr`). This is the same `Fr` the halo2 backends
+//! constrain, sourced from the light `halo2curves` crate so the shared kernel
+//! does not link the full `halo2_proofs` proving system.
 
-use halo2_proofs::halo2curves::bn256::Fr as Fp;
-use halo2_proofs::halo2curves::ff::PrimeField;
+use crate::prove::field::F as Fp;
+use crate::prove::field::PrimeField;
 
 /// Re-export the Field trait so backends can call `.invert()` etc.
-pub use halo2_proofs::arithmetic::Field;
+pub use crate::prove::field::Field;
 
 // ---------------------------------------------------------------------------
 // Remez polynomial coefficients

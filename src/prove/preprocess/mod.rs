@@ -23,7 +23,7 @@ pub mod py_callback;
 
 use std::collections::HashMap;
 
-use halo2_proofs::halo2curves::bn256::Fr as Fp;
+use crate::prove::field::F as Fp;
 
 use std::collections::HashMap as StdHashMap;
 

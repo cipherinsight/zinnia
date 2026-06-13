@@ -1,13 +1,13 @@
-//! `MockSynthesizer` — concrete evaluation of IR operations using Pasta Fp.
+//! `MockSynthesizer` — concrete evaluation of IR operations using BN254 Fr.
 //!
-//! Uses the same field (Pasta Fp), the same fixed-point quantization, and
-//! the same Remez polynomial approximations as the halo2 synthesizer.
-//! This ensures semantic consistency: mock execution produces the exact
-//! same values that halo2 would constrain.
+//! Uses the same field ([`crate::prove::field::F`]), the same fixed-point
+//! quantization, and the same Remez polynomial approximations as the halo2
+//! synthesizer. This ensures semantic consistency: mock execution produces
+//! the exact same values that halo2 would constrain.
 
 use std::collections::HashMap;
 
-use halo2_proofs::halo2curves::bn256::Fr as Fp;
+use crate::prove::field::F as Fp;
 
 use crate::circuit_input::{InputPath, ResolvedWitness};
 use crate::prove::error::ProvingError;

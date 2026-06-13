@@ -19,6 +19,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::prove::error::ProvingError;
+use crate::prove::field::F as Fp;
 use crate::prove::kernel;
 use crate::types::ZinniaType;
 
@@ -204,11 +205,7 @@ impl InputNode {
     }
 
     /// Convert a leaf node to an Fp field element.
-    pub fn to_fp(
-        &self,
-        precision_bits: u32,
-    ) -> Result<halo2_proofs::halo2curves::bn256::Fr, ProvingError> {
-        use halo2_proofs::halo2curves::bn256::Fr as Fp;
+    pub fn to_fp(&self, precision_bits: u32) -> Result<Fp, ProvingError> {
         match self {
             InputNode::Int(v) => Ok(kernel::i64_to_fp(*v)),
             InputNode::Float(v) => Ok(kernel::quantize_to_fp(*v, precision_bits)),
@@ -259,7 +256,7 @@ impl CircuitInputs {
         &self,
         path: &InputPath,
         precision_bits: u32,
-    ) -> Result<halo2_proofs::halo2curves::bn256::Fr, ProvingError> {
+    ) -> Result<Fp, ProvingError> {
         let param = self
             .params
             .iter()
@@ -333,8 +330,7 @@ pub struct ResolvedWitness {
     /// The structured circuit inputs.
     pub input: CircuitInputs,
     /// External function results, keyed by (store_idx, output_idx).
-    pub external_results:
-        std::collections::HashMap<(u32, u32), halo2_proofs::halo2curves::bn256::Fr>,
+    pub external_results: std::collections::HashMap<(u32, u32), Fp>,
     /// Precision bits for fixed-point quantization.
     pub precision_bits: u32,
 }
@@ -349,10 +345,7 @@ impl ResolvedWitness {
     }
 
     /// Resolve a circuit input path to Fp.
-    pub fn resolve_path(
-        &self,
-        path: &InputPath,
-    ) -> Result<halo2_proofs::halo2curves::bn256::Fr, ProvingError> {
+    pub fn resolve_path(&self, path: &InputPath) -> Result<Fp, ProvingError> {
         self.input.resolve(path, self.precision_bits)
     }
 
@@ -361,7 +354,7 @@ impl ResolvedWitness {
         &self,
         store_idx: u32,
         output_idx: u32,
-    ) -> Result<halo2_proofs::halo2curves::bn256::Fr, ProvingError> {
+    ) -> Result<Fp, ProvingError> {
         self.external_results
             .get(&(store_idx, output_idx))
             .copied()
