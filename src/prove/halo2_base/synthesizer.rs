@@ -4,7 +4,7 @@ use halo2_base::{
     gates::{
         circuit::builder::BaseCircuitBuilder,
         flex_gate::{GateChip, GateInstructions},
-        range::RangeInstructions,
+        range::{RangeChip, RangeInstructions},
     },
     halo2_proofs::halo2curves::bn256::Fr as Fp,
     AssignedValue, QuantumCell,
@@ -82,6 +82,16 @@ pub struct Halo2BaseSynthesizer<'a> {
     /// only when `witness.is_some()` so the witness-less verify-side
     /// re-keygen (placeholder zeros) never trips it.
     first_unsat: Option<String>,
+    /// One `GateChip`, constructed once in `new()` and reused for every IR
+    /// op. Constructing a `GateChip` precomputes a 254-entry `pow_of_two`
+    /// table and a 1024-entry `field_element_cache` (~1.3k Montgomery
+    /// conversions); doing that per op dominated gate emission. The chip is
+    /// stateless after construction, so a single shared instance is sound.
+    gate: GateChip<Fp>,
+    /// Lazily-built `RangeChip`, sharing the builder's `LookupAnyManager`s
+    /// (cheap `Arc` clones). Built on first range use so circuits without
+    /// range checks pay no setup. Byte-identical to `builder.range_chip()`.
+    range: Option<RangeChip<Fp>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -135,7 +145,25 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             vid_of_cell: HashMap::new(),
             cell_of_vid: HashMap::new(),
             first_unsat: None,
+            gate: GateChip::<Fp>::new(),
+            range: None,
         }
+    }
+
+    /// The shared `RangeChip`, built on first use. Identical to
+    /// `self.builder.range_chip()` (same `lookup_bits`, same `Arc`-shared
+    /// `LookupAnyManager`s), but constructed at most once. The chip is
+    /// stateless w.r.t. emission (lookups are queued through the shared
+    /// managers), so a returned clone behaves identically to the cached
+    /// instance — clone out to dodge borrow conflicts with `self.builder`.
+    fn range_chip(&mut self) -> RangeChip<Fp> {
+        if self.range.is_none() {
+            // `builder.range_chip()` = `RangeChip::new(lookup_bits,
+            // lookup_manager.clone())`; build it once, then hand out cheap
+            // clones (Arc-shared managers, memcpy'd limb bases).
+            self.range = Some(self.builder.range_chip());
+        }
+        self.range.as_ref().unwrap().clone()
     }
 
     pub fn public_values(&self) -> &[Fp] {
@@ -366,8 +394,10 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         value: Fp,
         f: impl FnOnce(&GateChip<Fp>, &mut halo2_base::Context<Fp>) -> AssignedValue<Fp>,
     ) -> Halo2BaseCell {
-        let gate = GateChip::<Fp>::default();
-        let assigned = f(&gate, self.ctx());
+        // Disjoint field borrows: `&self.gate` and `self.builder.main(0)`
+        // touch different fields, so the borrow checker allows both live at
+        // once (going through `self.ctx()` would borrow all of `self`).
+        let assigned = f(&self.gate, self.builder.main(0));
         self.wrap(assigned, value)
     }
 
@@ -375,8 +405,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         if self.is_bit(a) {
             return *a;
         }
-        let gate = GateChip::<Fp>::default();
-        let assigned = gate.is_zero(self.ctx(), a.assigned);
+        let assigned = self.gate.is_zero(self.builder.main(0), a.assigned);
         let is_zero = if a.value == Fp::zero() { Fp::one() } else { Fp::zero() };
         let iz = self.wrap(assigned, is_zero);
         self.mark_bit(&iz);
@@ -392,7 +421,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
     }
 
     fn assert_const(&mut self, a: &Halo2BaseCell, c: Fp) {
-        GateChip::<Fp>::default().assert_is_const(self.ctx(), &a.assigned, &c);
+        self.gate.assert_is_const(self.builder.main(0), &a.assigned, &c);
     }
 
     fn unsupported<T>(&self, op: &str) -> Result<T, ProvingError> {
@@ -465,7 +494,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         } else {
             Fp::zero()
         };
-        let range = self.builder.range_chip();
+        let range = self.range_chip();
         if !a_known {
             range.range_check(self.ctx(), a_shifted.assigned, 64);
             self.signed64_cells.insert(a.id);
@@ -645,7 +674,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
             gate.mul_add(ctx, result_cell.assigned, scale.assigned, rem_cell.assigned)
         });
         self.constrain_equal(&recomposed, &raw);
-        let range = self.builder.range_chip();
+        let range = self.range_chip();
         range.range_check(self.ctx(), rem_cell.assigned, precision_bits as usize);
         Ok(result_cell)
     }
@@ -667,7 +696,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         });
         self.constrain_equal(&recomposed, &raw);
         let precision_bits = self.params.precision_bits;
-        let range = self.builder.range_chip();
+        let range = self.range_chip();
         range.range_check(self.ctx(), rem_cell.assigned, precision_bits as usize);
         Ok(result_cell)
     }
@@ -694,7 +723,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
     fn pow_f_int(&mut self, base: &Self::CellRef, exp: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         let max_exp = 8usize;
-        let range = self.builder.range_chip();
+        let range = self.range_chip();
         range.check_less_than_safe(self.ctx(), exp.assigned, (max_exp + 1) as u64);
 
         let mut powers = Vec::with_capacity(max_exp + 1);
@@ -733,7 +762,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         let value = if kernel::fp_to_i64(a.value) < kernel::fp_to_i64(b.value) { Fp::one() } else { Fp::zero() };
         let a_known = self.is_unsigned64_known(a);
         let b_known = self.is_unsigned64_known(b);
-        let range = self.builder.range_chip();
+        let range = self.range_chip();
         if !a_known {
             range.range_check(self.ctx(), a.assigned, 64);
             self.unsigned64_cells.insert(a.id);
@@ -925,7 +954,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         // Magnitude of the remainder, range-checked to [0, 2^precision_bits).
         let r_mag_val = if kernel::fp_is_negative(r) { -r } else { r };
         let r_mag = self.cell(r_mag_val);
-        let range = self.builder.range_chip();
+        let range = self.range_chip();
         range.range_check(self.ctx(), r_mag.assigned, precision_bits as usize);
 
         // r = sign ? -|r| : |r|  — ties the remainder's sign to a's true sign.
@@ -988,9 +1017,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn assert_u128_lt_bit(&mut self, idx: &Self::CellRef, hi: u64, bit: u32, bits: u32) -> Result<Self::CellRef, ProvingError> {
         let key = (idx.id, hi, bits);
         if !self.u128_lt_bit_cache.contains_key(&key) {
-            let range = self.builder.range_chip();
+            let range = self.range_chip();
             range.check_less_than_safe(self.ctx(), idx.assigned, hi);
-            let decomposed = GateChip::<Fp>::default().num_to_bits(self.ctx(), idx.assigned, bits as usize);
+            let decomposed = self.gate.num_to_bits(self.builder.main(0), idx.assigned, bits as usize);
             let cells = decomposed
                 .into_iter()
                 .map(|assigned| {
@@ -1007,7 +1036,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn assert_non_neg_i(&mut self, a: &Self::CellRef) -> Result<(), ProvingError> {
         // For signed-i64-domain values, x >= 0 is exactly x in [0, 2^63):
         // negatives encode as field elements near p and fail the check.
-        let range = self.builder.range_chip();
+        let range = self.range_chip();
         range.range_check(self.ctx(), a.assigned, 63);
         // The check enforces a in [0, 2^63); tighten any known interval.
         let tightened = match self.interval_of(a) {
@@ -1035,7 +1064,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
                 )
             });
         }
-        GateChip::<Fp>::default().assert_bit(self.ctx(), a.assigned);
+        self.gate.assert_bit(self.builder.main(0), a.assigned);
         self.mark_bit(a);
         Ok(())
     }
@@ -1068,7 +1097,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
             .get(&segment_id)
             .ok_or_else(|| ProvingError::synthesis("segment not allocated"))?
             .len();
-        let range = self.builder.range_chip();
+        let range = self.range_chip();
         range.check_less_than_safe(self.ctx(), addr.assigned, len as u64);
 
         self.dynamic_writes
@@ -1167,7 +1196,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
                     vs
                 };
                 if !w_choices.is_empty() && !v_union.is_empty() {
-                    let range = self.builder.range_chip();
+                    let range = self.range_chip();
                     range.check_less_than_safe(self.ctx(), addr.assigned, len as u64);
                     let mut acc = self.cell(init);
                     for w in &w_choices {
