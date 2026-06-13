@@ -68,8 +68,19 @@ fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32) -> Option<IRG
     // empty elided-publics list; carry the IRGen-recorded claim across.
     let elided = graph.elided_publics.clone();
     // Same for the provenance table — unless the pass transferred (and
-    // possibly remapped) it itself, e.g. DuplicateCodeElimination.
-    let provenance_in = graph.provenance.clone();
+    // possibly remapped) it itself, e.g. DuplicateCodeElimination. Move the
+    // table out for the restore-fallback instead of cloning; if the pass
+    // produced its own table we just drop this one.
+    //
+    // DuplicateCodeElimination is the sole pass that READS the input table
+    // (it re-keys it), so for that pass alone we leave the table in the
+    // graph it receives and fall back through an empty `provenance_in`.
+    let mut graph = graph;
+    let provenance_in = if pass_name == "DuplicateCodeElimination" {
+        crate::provenance::ProvenanceTable::default()
+    } else {
+        std::mem::take(&mut graph.provenance)
+    };
     let mut out = match pass_name {
         "ExternalCallRemover" => ExternalCallRemover.exec(graph),
         "DeadCodeElimination" => DeadCodeElimination.exec(graph),
@@ -94,9 +105,12 @@ fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32) -> Option<IRG
     }
     // Universal liveness enforcement: whatever the pass did, records may
     // not reference values that no longer exist in the rebuilt graph.
-    let live: std::collections::HashSet<crate::types::ValueId> =
-        out.value_to_stmt.keys().copied().collect();
-    out.provenance.retain_values(&|v| live.contains(&v));
+    // `value_to_stmt` already keys exactly the live values, so use its
+    // membership directly rather than materializing a fresh HashSet.
+    let value_to_stmt = std::mem::take(&mut out.value_to_stmt);
+    out.provenance
+        .retain_values(&|v| value_to_stmt.contains_key(&v));
+    out.value_to_stmt = value_to_stmt;
     Some(out)
 }
 

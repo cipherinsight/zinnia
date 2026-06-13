@@ -695,40 +695,51 @@ impl ProvenanceTable {
     // ── Pass hooks ───────────────────────────────────────────────────
 
     /// A pass replaced every use of `old` with `new` (duplicate-code
-    /// elimination): re-key records and rewrite term lists.
+    /// elimination): re-key records and rewrite term lists. Delegates to
+    /// [`remap_values`](Self::remap_values) with a singleton map so there is
+    /// only one implementation.
     pub fn remap_value(&mut self, old: ValueId, new: ValueId) {
         if old == new {
             return;
         }
-        if let Some(v) = self.affine.remove(&old) {
-            self.affine.entry(new).or_insert(v);
+        let mut map = HashMap::with_capacity(1);
+        map.insert(old, new);
+        self.remap_values(&map);
+    }
+
+    /// Batch form of [`remap_value`](Self::remap_value): a pass replaced
+    /// every use of each `old` key with its `new` value. Does a SINGLE pass
+    /// over the table — re-keying records and rewriting term lists via map
+    /// lookups — so cost is O(table + map) instead of O(table) per pair.
+    ///
+    /// Re-keying preserves first-wins-on-collision (`or_insert`) semantics:
+    /// if two `old` keys remap onto the same `new` key, the entry already
+    /// present (or remapped first) is kept.
+    pub fn remap_values(&mut self, map: &HashMap<ValueId, ValueId>) {
+        if map.is_empty() {
+            return;
         }
-        if let Some(v) = self.interval.remove(&old) {
-            self.interval.entry(new).or_insert(v);
-        }
-        if let Some(v) = self.clamps.remove(&old) {
-            self.clamps.entry(new).or_insert(v);
-        }
-        if let Some(v) = self.block_views.remove(&old) {
-            self.block_views.entry(new).or_insert(v);
-        }
+        let lookup = |v: ValueId| map.get(&v).copied().unwrap_or(v);
+
+        // Re-key the value-keyed maps. Collect the records whose key moves,
+        // then re-insert with `or_insert` so existing/earlier entries win.
+        Self::remap_keyed(&mut self.affine, &lookup);
+        Self::remap_keyed(&mut self.interval, &lookup);
+        Self::remap_keyed(&mut self.clamps, &lookup);
+        Self::remap_keyed(&mut self.block_views, &lookup);
+
+        // Rewrite vids embedded inside record bodies.
         for view in self.clamps.values_mut() {
-            if view.source == old {
-                view.source = new;
-            }
+            view.source = lookup(view.source);
         }
         for exts in self.runtime_extents.values_mut() {
             for vid in exts.iter_mut() {
-                if *vid == old {
-                    *vid = new;
-                }
+                *vid = lookup(*vid);
             }
         }
         for view in self.affine.values_mut() {
             for (vid, _) in view.terms.iter_mut() {
-                if *vid == old {
-                    *vid = new;
-                }
+                *vid = lookup(*vid);
             }
         }
         for info in self.compaction.values_mut() {
@@ -738,13 +749,27 @@ impl ProvenanceTable {
                 .chain(info.source.iter_mut())
                 .chain(info.prefix.iter_mut())
             {
-                if *vid == old {
-                    *vid = new;
-                }
+                *vid = lookup(*vid);
             }
-            if info.count == old {
-                info.count = new;
-            }
+            info.count = lookup(info.count);
+        }
+    }
+
+    /// Re-key a `ValueId`-keyed map by `lookup`, keeping the first-inserted
+    /// entry on collision (mirrors the old `remove`+`or_insert` dance).
+    fn remap_keyed<V>(table: &mut HashMap<ValueId, V>, lookup: &dyn Fn(ValueId) -> ValueId) {
+        // Pull out only the entries whose key actually moves, leaving the
+        // rest (including any that are remap targets) in place so they win.
+        let moved: Vec<(ValueId, V)> = table
+            .keys()
+            .copied()
+            .filter(|&k| lookup(k) != k)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .filter_map(|k| table.remove(&k).map(|v| (lookup(k), v)))
+            .collect();
+        for (new_key, v) in moved {
+            table.entry(new_key).or_insert(v);
         }
     }
 

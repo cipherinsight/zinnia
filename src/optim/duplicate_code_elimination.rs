@@ -160,13 +160,21 @@ impl IRPass for DuplicateCodeElimination {
         // record from the duplicate's ValueId to the canonical stmt's.
         // (`apply_pass` then enforces liveness for whatever remains.)
         let mut table = ir_graph.provenance.clone();
+        // Build the vid→vid remap once and apply it in a single table pass
+        // (`remap_values` is O(table + dups); per-pair `remap_value` was
+        // O(table) each, i.e. quadratic on duplicate-heavy kernels).
+        let mut vid_map: HashMap<crate::types::ValueId, crate::types::ValueId> =
+            HashMap::with_capacity(to_be_replaced.len());
         for (&dup, &canon) in &to_be_replaced {
             let dup_vid = ir_graph.stmts.get(dup as usize).map(|s| s.value_id);
             let canon_vid = ir_graph.stmts.get(canon as usize).map(|s| s.value_id);
             if let (Some(d), Some(c)) = (dup_vid, canon_vid) {
-                table.remap_value(d, c);
+                if d != c {
+                    vid_map.insert(d, c);
+                }
             }
         }
+        table.remap_values(&vid_map);
         new_graph.provenance = table;
         // P0 seam: signal mutation to the resolver. No-op today via
         // StaticOnlyResolver; P1 uses this for cache invalidation.
