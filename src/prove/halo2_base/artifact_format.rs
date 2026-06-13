@@ -30,7 +30,11 @@ pub struct Halo2BasePinnedRekeygenV1Payload {
 pub const HALO2_BASE_PINNED_REKEYGEN_V1: &str = "halo2-base-pinned-rekeygen-v1";
 
 pub fn compute_ir_hash(ir_stmts: &[serde_json::Value]) -> Result<String, String> {
-    let canonical = serde_json::to_vec(ir_stmts).map_err(|e| e.to_string())?;
+    // Transport-canonical bytes so the prover's pre-`vk_bytes` hash matches the
+    // verifier's post-`vk_bytes` recompute even when an `f64` constant drifts
+    // 1 ULP across serde_json's serialize→parse cycle. See
+    // `crate::prove::ir_hash::canonical_ir_bytes`.
+    let canonical = crate::prove::ir_hash::canonical_ir_bytes(ir_stmts)?;
     let hash = blake2b_simd::Params::new()
         .hash_length(32)
         .hash(&canonical);
