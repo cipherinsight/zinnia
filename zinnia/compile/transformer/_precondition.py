@@ -713,71 +713,6 @@ def _structural_compare_left_is_predicate(node: ast.Compare) -> bool:
     )
 
 
-def _extract_from_lambda_body(
-    body: ast.AST,
-    dbg: DebugInfo,
-) -> List[dict]:
-    """Extract precondition specs from a lambda body.
-
-    Recognized shapes (in order of precedence):
-      - ``forall(arr, P)`` — synthesized `forall_<inner>` structural kind.
-      - ``predicate(args...)`` — unary structural predicate call.
-      - ``predicate(args...) <op> rhs`` — structural predicate comparison.
-      - Any other Bool-typed expression — falls through to the scalar
-        precondition path (see `_build_bool_term`).
-    """
-    # Special-case: forall(arr, P).
-    if isinstance(body, ast.Call) \
-            and isinstance(body.func, ast.Name) \
-            and body.func.id == "forall":
-        if body.keywords:
-            raise InvalidProgramException(
-                dbg,
-                "forall(arr, P) does not accept keyword arguments"
-            )
-        return _extract_forall(body, dbg)
-
-    # Bare structural-predicate call.
-    if _is_registered_predicate_call(body) and body.func.id != "forall":
-        if body.keywords:
-            raise InvalidProgramException(
-                dbg,
-                f"predicate `{body.func.id}` does not accept keyword arguments"
-            )
-        return [_build_spec(body.func.id, body.args, None, None, dbg)]
-
-    # Structural-predicate comparison (`nnz(x) == k`, etc.).
-    if isinstance(body, ast.Compare) and _structural_compare_left_is_predicate(body):
-        op_cls = type(body.ops[0])
-        op_str = _COMPARE_OPS.get(op_cls)
-        if op_str is None:
-            raise InvalidProgramException(
-                dbg,
-                f"unsupported comparison operator `{op_cls.__name__}` in "
-                f"structural precondition"
-            )
-        left = body.left
-        if left.keywords:
-            raise InvalidProgramException(
-                dbg,
-                f"predicate `{left.func.id}` does not accept keyword arguments"
-            )
-        return [_build_spec(
-            left.func.id, left.args, op_str, body.comparators[0], dbg
-        )]
-
-    # Everything else: scalar precondition. Build a ContractTerm.
-    term = _build_bool_term(body, [], dbg) if False else None
-    # We need fn_param_names here; the caller passes them via a closure-
-    # style — but the existing `_extract_from_lambda_body` doesn't take
-    # them. Plumb through _extract_one_lambda instead (see below).
-    raise InvalidProgramException(
-        dbg,
-        "internal: scalar precondition extraction must be invoked via "
-        "_extract_from_lambda_body_with_params"
-    )
-
-
 def _extract_from_lambda_body_with_params(
     body: ast.AST,
     fn_param_names: List[str],
@@ -785,9 +720,16 @@ def _extract_from_lambda_body_with_params(
     dbg: DebugInfo,
     shape_symbol_names: Optional[set[str]] = None,
 ) -> List[dict]:
-    """Same as `_extract_from_lambda_body` but with the surrounding
+    """Extract precondition specs from a lambda body, with the surrounding
     function's parameter names available for scalar-extraction Name
-    validation. Always preferred over the no-params variant.
+    validation.
+
+    Recognized shapes (in order of precedence):
+      - ``forall(arr, P)`` — synthesized `forall_<inner>` structural kind.
+      - ``predicate(args...)`` — unary structural predicate call.
+      - ``predicate(args...) <op> rhs`` — structural predicate comparison.
+      - Any other Bool-typed expression — falls through to the scalar
+        precondition path (see `_build_bool_term`).
     """
     # Structural-predicate fast paths first.
     if isinstance(body, ast.Call) \

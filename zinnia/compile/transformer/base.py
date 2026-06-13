@@ -24,8 +24,10 @@ _TYPE_ALIASES = {
     "PoseidonHashed": "PoseidonHashed",
 }
 
-# Scalar types that need no arguments.
-_SCALAR_TYPES = {"Integer", "Float", "Boolean", "Complex", "String", "None", "Class"}
+# Scalar types that need no arguments. Note: every Boolean alias collapses to
+# "Integer" via `_TYPE_ALIASES`, so "Boolean" never reaches `make_type_dict` as
+# a resolved variant and is intentionally absent here.
+_SCALAR_TYPES = {"Integer", "Float", "Complex", "String", "None", "Class"}
 _DTYPE_FRONT_ALIASES = {
     "Float": "Float",
     "Int": "Integer",
@@ -256,7 +258,9 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
                                            f"Invalid compare operator {type(node).__name__} in circuit.")
 
     def get_dbg(self, node) -> DebugInfo:
-        raise NotImplementedError()
+        raise NotImplementedError(
+            "get_dbg is abstract; concrete transformer subclasses must override it."
+        )
 
     def visit(self, node):
         if isinstance(node, ast.FunctionDef):
@@ -321,42 +325,11 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
             # Generate a fresh index name. Use a simple counter on the
             # transformer instance to avoid collisions across nested loops.
             idx_name = self._fresh_name("__rev_idx")
-            iter_name = self._fresh_name("__rev_iter")
-            # __rev_iter = inner; for __rev_idx in range(len(__rev_iter)-1, -1, -1):
-            #     <target> = __rev_iter[__rev_idx]; <body>
-            new_body = [
-                ast.Assign(
-                    targets=[node.target],
-                    value=ast.Subscript(
-                        value=ast.Name(id=iter_name, ctx=ast.Load()),
-                        slice=ast.Name(id=idx_name, ctx=ast.Load()),
-                        ctx=ast.Load(),
-                    ),
-                ),
-                *node.body,
-            ]
-            len_call = ast.Call(
-                func=ast.Name(id="len", ctx=ast.Load()),
-                args=[ast.Name(id=iter_name, ctx=ast.Load())],
-                keywords=[],
-            )
-            range_call = ast.Call(
-                func=ast.Name(id="range", ctx=ast.Load()),
-                args=[
-                    ast.BinOp(left=len_call, op=ast.Sub(), right=ast.Constant(value=1)),
-                    ast.UnaryOp(op=ast.USub(), operand=ast.Constant(value=1)),
-                    ast.UnaryOp(op=ast.USub(), operand=ast.Constant(value=1)),
-                ],
-                keywords=[],
-            )
-            # Wrap in a containing block: aliasing the iterable to a
-            # local first lets us reference it twice without re-evaluating.
-            # We can't return multiple statements, so we inline by
-            # substituting `inner` directly twice (cheap when it's a Name
-            # or Subscript). For arbitrary expressions, prefer the alias
-            # form via a synthesized For with a Tuple ()-target trick —
-            # but for the benchmark cases (`range(r)`) the inner is a
-            # simple call, so substitute directly.
+            # Desugar `for <target> in reversed(inner)` to
+            # `for __rev_idx in range(len(inner)-1, -1, -1):
+            #      <target> = inner[__rev_idx]; <body>`.
+            # `inner` is substituted directly twice (cheap when it's a Name,
+            # Subscript, or simple call such as the benchmark `range(r)`).
             range_call_inner = ast.Call(
                 func=ast.Name(id="range", ctx=ast.Load()),
                 args=[
@@ -557,6 +530,15 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
 
     def visit_AnnAssign(self, node: ast.AnnAssign):
         dbg_info = self.get_dbg(node)
+        # A bare annotation such as `y: Integer` carries no value. The
+        # annotation itself is otherwise ignored by the compiler (types are
+        # inferred), but a value-less annotation cannot become an assignment.
+        if node.value is None:
+            raise InvalidAssignStatementException(
+                dbg_info,
+                "A bare annotation like `x: Integer` has no value to assign; "
+                "write `x: Integer = <value>` or drop the annotation.",
+            )
         if isinstance(node.target, ast.Name):
             expr = self.visit_expr(node.value)
             return {"__class__": "ASTAssignStatement", "targets": [self.visit_assign_target(node.target)], "value": expr}
@@ -1179,4 +1161,8 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
             return {"__class__": "ASTListAssignTarget", "targets": elements, "star": starred}
         elif isinstance(node, ast.Starred):
             return self.visit_assign_target(node.value, True)
-        raise NotImplementedError()
+        raise InvalidAssignStatementException(
+            self.get_dbg(node),
+            f"Unsupported assignment target `{type(node).__name__}`; "
+            f"only names, subscripts, and (nested) tuple/list targets are supported.",
+        )

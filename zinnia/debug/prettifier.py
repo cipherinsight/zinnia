@@ -8,6 +8,11 @@ def prettify_debug_info(dbg: DebugInfo):
     if dbg.end_lineno != dbg.lineno:
         error_report_msg += f' to {dbg.end_lineno}'
     error_report_msg += '\n'
+    # Synthetic debug info (e.g. lineno == 0) or out-of-range line numbers
+    # cannot be pointed at a source line; emit just the header rather than
+    # printing the wrong line or raising IndexError while formatting an error.
+    if not (1 <= dbg.lineno <= len(source_lines)):
+        return error_report_msg
     if dbg.end_lineno != dbg.lineno:
         for i, line in enumerate(source_lines):
             line_no = i + 1

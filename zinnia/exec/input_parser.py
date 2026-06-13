@@ -1,7 +1,6 @@
 from typing import List, Any
 
 from zinnia.api.zk_program_input import ZKProgramInput
-from zinnia.api.zk_parsed_input import ZKParsedInput
 from zinnia.debug.exception import ZinniaException
 
 
@@ -46,9 +45,6 @@ def _build_input_node(value: Any, dt, name: str) -> dict:
 
     elif variant == "Float":
         return {"Float": _coerce_float(value, name)}
-
-    elif variant == "Boolean":
-        return {"Bool": bool(value)}
 
     elif variant == "NDArray":
         shape = data["shape"]
@@ -110,6 +106,12 @@ def _build_input_node(value: Any, dt, name: str) -> dict:
             }
         }
 
+    elif variant in ("Complex", "String"):
+        raise ZinniaException(
+            f"Cannot build witness for `{name}`: `{variant}` values are not "
+            f"supported as circuit inputs."
+        )
+
     else:
         raise ZinniaException(f"Unsupported type `{variant}` for `{name}`")
 
@@ -138,36 +140,6 @@ def _collect_scalars(node: dict) -> list:
     return []
 
 
-# ---------------------------------------------------------------------------
-# Legacy interface (kept for argparse compatibility)
-# ---------------------------------------------------------------------------
-
-def parse_inputs(program_inputs: List[ZKProgramInput], args: tuple) -> list:
-    """Flatten user arguments into input entries (legacy flat format).
-
-    Returns a list of dicts: [{"key": "0_0", "kind": "Integer", "value": 42}, ...]
-    """
-    if len(args) != len(program_inputs):
-        raise ZinniaException(
-            f"Expected {len(program_inputs)} arguments, got {len(args)}"
-        )
-
-    entries = []
-    for i, (pi, arg) in enumerate(zip(program_inputs, args)):
-        _flatten_value(entries, arg, pi.dt, (0, i), pi.name)
-    return entries
-
-
-def parse_inputs_to_parsed_input(program_inputs: List[ZKProgramInput], args: tuple) -> ZKParsedInput:
-    """Flatten user arguments into a ZKParsedInput object."""
-    entries = parse_inputs(program_inputs, args)
-    parsed_entries = []
-    for e in entries:
-        indices = tuple(int(x) for x in e["key"].split("_"))
-        parsed_entries.append(ZKParsedInput.Entry(indices, e["kind"], e["value"]))
-    return ZKParsedInput(parsed_entries)
-
-
 def _get_type_variant(dt):
     """Extract the type variant name and data from a ZinniaType serde dict."""
     if isinstance(dt, str):
@@ -176,79 +148,6 @@ def _get_type_variant(dt):
         variant = next(iter(dt))
         return variant, dt[variant]
     raise ZinniaException(f"Invalid type descriptor: {dt}")
-
-
-def _flatten_value(entries: list, value: Any, dt, indices: tuple, name: str):
-    """Recursively flatten a value according to its type descriptor (legacy)."""
-    variant, data = _get_type_variant(dt)
-
-    if variant == "Integer":
-        int_val = _coerce_integer(value, name)
-        key = "_".join(str(i) for i in indices)
-        entries.append({"key": key, "kind": "Integer", "value": int_val})
-
-    elif variant == "Float":
-        float_val = _coerce_float(value, name)
-        key = "_".join(str(i) for i in indices)
-        entries.append({"key": key, "kind": "Float", "value": float_val})
-
-    elif variant == "NDArray":
-        shape = data["shape"]
-        dtype = data["dtype"]
-        flat = _flatten_ndarray(value, shape, name)
-        for flat_idx, elem in enumerate(flat):
-            _flatten_value(entries, elem, dtype, indices + (flat_idx,), name)
-
-    elif variant == "SymbolicNDArray":
-        concrete_dt = _concretize_symbolic_ndarray(data, name)
-        _flatten_value(entries, value, concrete_dt, indices, name)
-
-    elif variant == "List":
-        elements_dt = data["elements"]
-        if not isinstance(value, (list, tuple)):
-            raise ZinniaException(f"Expected list for `{name}`, got {type(value).__name__}")
-        if len(value) != len(elements_dt):
-            raise ZinniaException(f"Expected list of length {len(elements_dt)} for `{name}`, got {len(value)}")
-        for j, (elem, elem_dt) in enumerate(zip(value, elements_dt)):
-            _flatten_value(entries, elem, elem_dt, indices + (j,), name)
-
-    elif variant == "Tuple":
-        elements_dt = data["elements"]
-        if not isinstance(value, (list, tuple)):
-            raise ZinniaException(f"Expected tuple for `{name}`, got {type(value).__name__}")
-        if len(value) != len(elements_dt):
-            raise ZinniaException(f"Expected tuple of length {len(elements_dt)} for `{name}`, got {len(value)}")
-        for j, (elem, elem_dt) in enumerate(zip(value, elements_dt)):
-            _flatten_value(entries, elem, elem_dt, indices + (j,), name)
-
-    elif variant == "PoseidonHashed":
-        from zinnia.lang.type import PoseidonHashed as PoseidonHashedType
-        from zinnia.compile._bridge import poseidon_hash as _rust_poseidon_hash
-        inner_dt = data["dtype"]
-        if isinstance(value, PoseidonHashedType):
-            actual = value.actual_value
-        else:
-            actual = value
-        inner_entries_start = len(entries)
-        _flatten_value(entries, actual, inner_dt, indices + (0,), name)
-        scalar_values = [e["value"] for e in entries[inner_entries_start:]]
-        hash_hex = _rust_poseidon_hash(scalar_values)
-        hash_key = "_".join(str(i) for i in indices + (1,))
-        entries.append({"key": hash_key, "kind": "Str", "value": hash_hex})
-
-    elif variant == "DynamicNDArray":
-        dtype = data["dtype"]
-        max_length = data["max_length"]
-        max_rank = data.get("max_rank", 1)
-        max_shape = data.get("max_shape")
-        flat, _runtime_shape = _flatten_bounded_dynarray_with_shape(
-            value, max_length, max_rank, dtype, name, max_shape
-        )
-        for flat_idx, elem in enumerate(flat):
-            _flatten_value(entries, elem, dtype, indices + (flat_idx,), name)
-
-    else:
-        raise ZinniaException(f"Unsupported type `{variant}` for `{name}`")
 
 
 def _concretize_symbolic_ndarray(data: dict, name: str) -> dict:
@@ -328,7 +227,17 @@ def _flatten_ndarray(value: Any, expected_shape: list, name: str) -> list:
     except ImportError:
         pass
 
-    # Handle nested Python lists
+    # Handle nested Python lists. Compare the full rectangular shape (not
+    # just the element count) so that ragged or mis-shaped nested lists are
+    # rejected even when they happen to flatten to the right number of
+    # elements (e.g. [[1,2,3],[4]] for an NDArray[Integer, 2, 2]).
+    if isinstance(value, (list, tuple)):
+        actual_shape = _nested_shape(value, name)
+        if actual_shape != list(expected_shape):
+            raise ZinniaException(
+                f"Shape mismatch for `{name}`. Expected {list(expected_shape)}, got {actual_shape}."
+            )
+
     flat = []
     _flatten_nested_list(value, flat)
     import math
@@ -442,8 +351,6 @@ def _zero_value_for_dtype(dtype):
     variant, _ = _get_type_variant(dtype)
     if variant == "Float":
         return 0.0
-    if variant == "Boolean":
-        return False
     if variant == "Complex":
         return 0j
     return 0
@@ -470,6 +377,6 @@ def _nested_shape(value: Any, name: str) -> list[int]:
     for child in child_shapes[1:]:
         if child != first:
             raise ZinniaException(
-                f"Shape mismatch for `{name}`. DynamicNDArray inputs must be rectangular."
+                f"Shape mismatch for `{name}`. Nested-list array inputs must be rectangular."
             )
     return [length] + first

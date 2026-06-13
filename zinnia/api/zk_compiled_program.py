@@ -41,36 +41,6 @@ class ZKCompiledProgram:
     def get_eval_data(self) -> Dict:
         return self.eval_data
 
-    def argparse(self, *args):
-        """Parse positional arguments into a ZKParsedInput."""
-        from zinnia.exec.input_parser import parse_inputs_to_parsed_input
-        return parse_inputs_to_parsed_input(self.program_inputs, args)
-
-    def get_execution_context(self):
-        """Validate externals and return an execution context dict."""
-        from zinnia.debug.exception import ZinniaException
-
-        serialized = json.loads(self.serialize())
-        expected_names = set(serialized.get("external_funcs", []))
-        provided_names = set(self.external_funcs.keys())
-
-        for name in provided_names - expected_names:
-            raise ZinniaException(f"External function {name} provided, but not expected")
-        for name in expected_names - provided_names:
-            raise ZinniaException(f"External function {name} expected, but not provided")
-
-        return {
-            "program": self,
-            "external_funcs": self.external_funcs,
-        }
-
-    def mock_execute(self, *args, externals=None, config=None):
-        """Convenience: parse inputs and mock-execute in one call."""
-        from zinnia.exec.exec_result import ZKExecResult
-        proof_result = self.prove(*args, backend="mock", externals=externals)
-        satisfied = proof_result.proof_bytes_hex == "mock_satisfied"
-        return ZKExecResult(satisfied, proof=proof_result)
-
     def prove(self, *args, backend="mock", params=None, externals=None):
         """Generate a proof for this compiled program.
 

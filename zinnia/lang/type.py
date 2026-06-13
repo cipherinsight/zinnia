@@ -214,10 +214,16 @@ class NDArray(metaclass=NDArrayMeta):
         return result
 
     def transpose(self, axes: Tuple[int, ...] = None) -> 'NDArray':
-        pass
+        raise RuntimeError(
+            "`NDArray.transpose` is only valid inside a `@zk_circuit`; "
+            "it has no runtime behaviour and must not be called directly."
+        )
 
     def moveaxis(self, source: int, destination: int) -> 'NDArray':
-        pass
+        raise RuntimeError(
+            "`NDArray.moveaxis` is only valid inside a `@zk_circuit`; "
+            "it has no runtime behaviour and must not be called directly."
+        )
 
     @staticmethod
     def __parse_slicing_params(key):

@@ -138,53 +138,63 @@ def _poseidon_hash_of_scalars(values: list[int]) -> int:
     return state[1] % _POSEIDON_FIELD
 
 
+def _circuit_only(name: str):
+    """Raise: these operators are markers recognised by the AST transformer
+    and only have meaning inside a `@zk_circuit`; they have no pure-Python
+    runtime semantics."""
+    raise RuntimeError(
+        f"`{name}` is only valid inside a `@zk_circuit`; "
+        f"it has no runtime behaviour and must not be called directly."
+    )
+
+
 def add(lhs: Any, rhs: Any) -> Any:
-    pass
+    _circuit_only("add")
 
 def sub(lhs: Any, rhs: Any) -> Any:
-    pass
+    _circuit_only("sub")
 
 def mul(lhs: Any, rhs: Any) -> Any:
-    pass
+    _circuit_only("mul")
 
 def div(lhs: Any, rhs: Any) -> Any:
-    pass
+    _circuit_only("div")
 
 def sin(x: Any) -> Any:
-    pass
+    _circuit_only("sin")
 
 def cos(x: Any) -> Any:
-    pass
+    _circuit_only("cos")
 
 def tan(x: Any) -> Any:
-    pass
+    _circuit_only("tan")
 
 def sinh(x: Any) -> Any:
-    pass
+    _circuit_only("sinh")
 
 def cosh(x: Any) -> Any:
-    pass
+    _circuit_only("cosh")
 
 def tanh(x: Any) -> Any:
-    pass
+    _circuit_only("tanh")
 
 def exp(x: Any) -> Any:
-    pass
+    _circuit_only("exp")
 
 def log(x: Any) -> Any:
-    pass
+    _circuit_only("log")
 
 def concatenate(arrays: Tuple, axis: Integer = 0) -> NDArray:
-    pass
+    _circuit_only("concatenate")
 
 def stack(arrays: Tuple, axis: Integer = 0) -> NDArray:
-    pass
+    _circuit_only("stack")
 
 def argmax(array: NDArray, axis: Integer = None) -> Any:
-    pass
+    _circuit_only("argmax")
 
 def argmin(array: NDArray, axis: Integer = None) -> Any:
-    pass
+    _circuit_only("argmin")
 
 
 def poseidon_hash(x: Any) -> Integer:
@@ -205,4 +215,4 @@ def poseidon_hash(x: Any) -> Integer:
 
 
 def merkle_verify(leaf: Integer, root: Integer, siblings: Any, directions: Any) -> bool:
-    pass
+    _circuit_only("merkle_verify")
