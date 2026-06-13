@@ -491,9 +491,6 @@ pub struct NoirEmitter<'a> {
     lt_zero_of: HashMap<String, String>,
     add_const_of: HashMap<String, (String, i64)>,
     norm_index_of: HashMap<String, (String, i64)>,
-    /// Track whether the lookup-table-style cmp helper is used (records
-    /// which noir_fpc symbols to `use ...`-import).
-    needs_lib: HashMap<&'static str, bool>,
     /// Tracks how each statement was emitted so we can detect ID reuse.
     params: ProvingParams,
     /// In-Rust simulation of Zinnia's segment-keyed scratch memory.
@@ -1208,7 +1205,6 @@ impl<'a> NoirEmitter<'a> {
             lt_zero_of: HashMap::new(),
             add_const_of: HashMap::new(),
             norm_index_of: HashMap::new(),
-            needs_lib: HashMap::new(),
             params,
             memories: HashMap::new(),
             memory_init: HashMap::new(),
@@ -1458,7 +1454,6 @@ impl<'a> NoirEmitter<'a> {
     }
 
     fn use_lib(&mut self, sym: &'static str) {
-        self.needs_lib.insert(sym, true);
         self.used_libs.insert(sym, ());
     }
 

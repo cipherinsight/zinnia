@@ -389,7 +389,16 @@ impl IRGraph {
 
 impl Clone for IRGraph {
     fn clone(&self) -> Self {
+        // `IRGraph::new` rebuilds the dependency indices from `stmts` but
+        // starts the graph-phase records empty, so copy the export-time
+        // fields (`elided_publics`, `provenance`) explicitly — backends
+        // (e.g. the halo2 `ZinniaCircuit`) clone the graph and would
+        // otherwise lose them. The `resolver` is a pipeline-scoped cache
+        // seam, not graph data, so the fresh `StaticOnlyResolver` default
+        // from `new` is the correct reset.
         let mut g = IRGraph::new(self.stmts.clone());
+        g.elided_publics = self.elided_publics.clone();
+        g.provenance = self.provenance.clone();
         if let Some(t) = self.astgen_telemetry.as_ref() {
             g.astgen_telemetry = Some(std::sync::Arc::clone(t));
         }

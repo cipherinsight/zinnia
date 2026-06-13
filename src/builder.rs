@@ -2536,10 +2536,8 @@ impl IRBuilder {
 /// Build an IR statement and compute the result value.
 /// This implements the `build_ir(ir_id, args, dbg)` method for all 79 IR types.
 fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
-    if let Some(min_arity) = min_required_arity(ir) {
-        if args.len() < min_arity {
-            return unknown_value_for_ir(ir, ir_id);
-        }
+    if args.len() < min_required_arity(ir) {
+        return unknown_value_for_ir(ir, ir_id);
     }
 
     match ir {
@@ -2882,8 +2880,8 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
     }
 }
 
-fn min_required_arity(ir: &IR) -> Option<usize> {
-    Some(match ir {
+fn min_required_arity(ir: &IR) -> usize {
+    match ir {
         IR::ConstantInt { .. }
         | IR::ConstantFloat { .. }
         | IR::ConstantBool { .. }
@@ -2985,7 +2983,7 @@ fn min_required_arity(ir: &IR) -> Option<usize> {
         IR::SumF { len } => *len as usize,
         IR::ProductSumF { len } => (*len as usize).saturating_mul(2),
         IR::IndexInBox { rank } => rank.saturating_mul(3),
-    })
+    }
 }
 
 fn unknown_value_for_ir(ir: &IR, ir_id: StmtId) -> Value {

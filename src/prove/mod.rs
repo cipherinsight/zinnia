@@ -3,23 +3,26 @@
 //! # Architecture
 //!
 //! ```text
-//!                         ProverBackend trait
-//!                     ┌───────────┴───────────┐
-//!                     │                       │
-//!              MockProverBackend       Halo2ProverBackend
-//!                     │                       │
-//!              MockSynthesizer         Halo2Synthesizer
-//!                     │                       │
-//!                     └─────── kernel ────────┘
-//!                       (shared Fp arithmetic,
-//!                        quantization, Remez
-//!                        polynomials, Poseidon)
+//!                              ProverBackend trait
+//!         ┌──────────────┬──────────────┴───────────┬──────────────┐
+//!         │              │                          │              │
+//!  MockProver-    Halo2Prover-            Halo2BaseProver-    NoirProver-
+//!    Backend         Backend                  Backend           Backend
+//!         │              │                          │              │
+//!    Mock-         Halo2-                  Halo2Base-         NoirEmitter
+//! Synthesizer    Synthesizer              Synthesizer    (emits Noir source)
+//!         │              │                          │
+//!         └───── kernel ─┴── (shared Fp arithmetic, quantization, Remez
+//!                            polynomials, Poseidon — value-level semantics)
 //! ```
 //!
-//! Both backends share the same computation kernel (`kernel.rs`), ensuring
-//! that the mock backend produces the exact same values that the halo2
-//! backend constrains. The only difference is that halo2 additionally
-//! records gate constraints for proof generation.
+//! The mock and halo2 backends share the same computation kernel
+//! (`kernel.rs`), ensuring that the mock backend produces the exact same
+//! values that halo2 constrains. The halo2-base backend constrains the
+//! same value semantics via the `halo2-base` gadget library, and the noir
+//! backend emits Noir source (`noir_fpc`) rather than synthesizing a
+//! circuit in-process. All four are selected behind the `ProverBackend`
+//! trait; the halo2/halo2-base/noir backends are feature-gated.
 //!
 //! The `Synthesizer` trait is the per-operation dispatch interface.
 //! The `ProverBackend` trait is the top-level prove/verify API.

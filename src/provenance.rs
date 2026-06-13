@@ -594,10 +594,6 @@ impl ProvenanceTable {
         self.runtime_extents.remove(&segment);
     }
 
-    pub fn write_version(&self, segment: u32) -> u64 {
-        self.write_version.get(&segment).copied().unwrap_or(0)
-    }
-
     // ── Segment value hulls ──────────────────────────────────────────
 
     pub fn init_segment_hull(&mut self, segment: u32, init: i64) {

@@ -133,13 +133,13 @@ pub fn fp_to_i64(v: Fp) -> i64 {
 
 /// Check if a field element represents a negative value (> (p-1)/2).
 ///
-/// The Pasta Fp field has p ≈ 2^254. The "negative" half is [(p+1)/2, p-1].
+/// The BN254 scalar field has p ≈ 2^254. The "negative" half is [(p+1)/2, p-1].
 /// We compute (p-1)/2 and compare using big-endian byte ordering.
 pub fn fp_is_negative(v: Fp) -> bool {
     if v == Fp::zero() {
         return false;
     }
-    // half = (p-1)/2. In the Pasta field, -1 = p-1, so (p-1)/2 = (-1) * 2^{-1}.
+    // half = (p-1)/2. In the field, -1 = p-1, so (p-1)/2 = (-1) * 2^{-1}.
     let half = (Fp::zero() - Fp::one()) * Fp::from(2).invert().unwrap();
     // to_repr() returns little-endian bytes. Compare as big-endian for correct ordering.
     let v_bytes = v.to_repr();

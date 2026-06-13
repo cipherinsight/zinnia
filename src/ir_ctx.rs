@@ -62,7 +62,6 @@ impl IRContext {
     /// Get a variable value from the scope chain.
     pub fn get(&self, key: &str) -> Option<Value> {
         let n = self.scopes.len();
-        let _type_locked = self.scopes[n - 1].lock_parent_variable_types();
 
         // Search from current scope upward
         for i in (0..n).rev() {
@@ -196,7 +195,6 @@ impl IRContext {
 
         self.scopes.push(Scope::Conditional(ConditionalScopeData {
             var_table: HashMap::new(),
-            condition,
             return_guaranteed: false,
             loop_terminated_guaranteed: false,
             calculated_branching_condition: calc,

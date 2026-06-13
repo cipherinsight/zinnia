@@ -302,10 +302,7 @@ fn integer_fancy_index_payload(
         return None;
     }
     let flat = super::super::composite::flatten_composite_with_builder(b, &list_value);
-    if flat
-        .iter()
-        .all(|v| matches!(v, Value::Integer(_)) && !matches!(v, Value::Boolean(_)))
-    {
+    if flat.iter().all(|v| matches!(v, Value::Integer(_))) {
         Some((flat, shape))
     } else {
         None
@@ -1847,12 +1844,10 @@ fn materialise_dynamic_axis_slice(
 /// static-Range axes have already been absorbed into `static_base` and
 /// `out_shape` by the caller (mirroring `multidim_subscript_static_array`).
 ///
-/// NOTE: this helper is preserved for future patterns / external
-/// callers that want a single-call multi-axis slice. The dispatcher
-/// in `multidim_subscript_static_array` does NOT use it today because
-/// Noir's ACIR optimizer already elides the axis-0 intermediate that
-/// the recursive per-axis path produces — see the comment there.
-#[allow(dead_code)]
+/// Called by `multidim_subscript_static_array` for the multi-axis dynamic
+/// Range case (two-or-more dynamic Range axes with no remaining dynamic
+/// single-index parts): it materialises all such axes in one pass instead
+/// of the recursive per-axis path.
 fn materialise_dynamic_multi_axis_slice(
     b: &mut IRBuilder,
     dtype: NumberType,

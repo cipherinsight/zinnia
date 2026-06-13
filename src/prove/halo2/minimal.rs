@@ -23,8 +23,6 @@
 //! `ExposePublicF` and `ExposePublicI` — any improvement here applies
 //! to both variants identically.
 
-use std::collections::HashMap;
-
 use halo2_proofs::halo2curves::bn256::Fr as Fp;
 use halo2_proofs::{
     circuit::{AssignedCell, Layouter, SimpleFloorPlanner, Value as HaloValue},
@@ -36,7 +34,6 @@ use crate::ir::IRGraph;
 use crate::ir_defs::IR;
 use crate::prove::kernel;
 use crate::prove::types::ProvingParams;
-use crate::types::StmtId;
 
 /// IR ops the minimal circuit can synthesise.
 fn op_is_minimal(op: &IR) -> bool {
@@ -202,53 +199,6 @@ impl MinimalCircuit {
         (row_values, exposes, publics)
     }
 
-    /// Legacy IR-walking public-values function. Retained for the verify
-    /// path (`prove_minimal` itself now calls `resolve` which returns
-    /// `(row_values, exposes, publics)` in one walk).
-    pub fn public_values(
-        ir: &IRGraph,
-        witness: &ResolvedWitness,
-        params: &ProvingParams,
-    ) -> Vec<Fp> {
-        let mut stmt_to_value: HashMap<StmtId, Fp> = HashMap::new();
-        let mut publics: Vec<Fp> = Vec::new();
-        for stmt in &ir.stmts {
-            match &stmt.ir {
-                IR::ReadInteger { path, .. } => {
-                    let v = witness.resolve_path(path).unwrap_or(Fp::zero());
-                    stmt_to_value.insert(stmt.stmt_id, v);
-                }
-                IR::ReadFloat { path, .. } => {
-                    let v = witness.resolve_path(path).unwrap_or(Fp::zero());
-                    stmt_to_value.insert(stmt.stmt_id, v);
-                }
-                IR::ConstantInt { value } => {
-                    let v = if *value >= 0 {
-                        Fp::from(*value as u64)
-                    } else {
-                        -Fp::from((-*value) as u64)
-                    };
-                    stmt_to_value.insert(stmt.stmt_id, v);
-                }
-                IR::ConstantFloat { value } => {
-                    let v = kernel::quantize_to_fp(*value, params.precision_bits);
-                    stmt_to_value.insert(stmt.stmt_id, v);
-                }
-                IR::ConstantBool { value } => {
-                    let v = if *value { Fp::one() } else { Fp::zero() };
-                    stmt_to_value.insert(stmt.stmt_id, v);
-                }
-                IR::ExposePublicF | IR::ExposePublicI => {
-                    let src = stmt.arguments[0];
-                    if let Some(v) = stmt_to_value.get(&src) {
-                        publics.push(*v);
-                    }
-                }
-                _ => {}
-            }
-        }
-        publics
-    }
 }
 
 impl Circuit<Fp> for MinimalCircuit {

@@ -14,22 +14,11 @@ use crate::types::{Value, ZinniaType};
 #[derive(Debug, Clone)]
 pub struct ValueStore {
     pub value: Value,
-    pub type_locked: bool,
 }
 
 impl ValueStore {
     pub fn new(value: Value) -> Self {
-        Self {
-            value,
-            type_locked: false,
-        }
-    }
-
-    pub fn new_locked(value: Value) -> Self {
-        Self {
-            value,
-            type_locked: true,
-        }
+        Self { value }
     }
 }
 
@@ -97,7 +86,6 @@ pub struct CircuitScopeData {
 #[derive(Debug)]
 pub struct ConditionalScopeData {
     pub var_table: HashMap<String, ValueStore>,
-    pub condition: Value, // BooleanValue
     pub return_guaranteed: bool,
     pub loop_terminated_guaranteed: bool,
     pub calculated_branching_condition: Option<Value>, // BooleanValue
@@ -393,29 +381,6 @@ impl Scope {
                     Some(current) => builder.ir_logical_and(current, sup),
                 });
             }
-        }
-    }
-
-    /// Whether variable types from parent should be locked (cannot change type).
-    /// Python: `lock_parent_variable_types()`
-    pub fn lock_parent_variable_types(&self) -> bool {
-        match self {
-            Scope::Conditional(d) => {
-                // Lock if condition is not statically known
-                d.condition.bool_val().is_none() && d.condition.int_val().is_none()
-            }
-            Scope::Loop(d) => {
-                let brk_unknown = d
-                    .break_condition
-                    .as_ref()
-                    .is_some_and(|v| v.bool_val().is_none() || v.bool_val() == Some(false));
-                let cont_unknown = d
-                    .continue_condition
-                    .as_ref()
-                    .is_some_and(|v| v.bool_val().is_none() || v.bool_val() == Some(false));
-                brk_unknown || cont_unknown
-            }
-            _ => false,
         }
     }
 
