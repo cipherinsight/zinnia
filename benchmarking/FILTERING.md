@@ -6,8 +6,8 @@ This directory is initialized from canonical upstream NPBench and Pythran source
 
 ## Source Universe
 
-- NPBench canonical NumPy kernels: `54` from `npbench/npbench/benchmarks/**/*_numpy.py`
-- Pythran raw test-case files: `131` from `pythran/pythran/tests/cases/*.py`
+- NPBench canonical NumPy kernels: `54` from the upstream NPBench benchmark tree used during initialization
+- Pythran raw test-case files: `131` from the upstream Pythran test-case tree used during initialization
 - Pythran selected kernel families: `126`; when multiple implementations exist for the same kernel, the smallest source file is selected
 - Raw file total before same-kernel de-duplication: `185`
 - Selected source-family total before filtering: `180`

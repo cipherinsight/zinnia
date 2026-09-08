@@ -8,8 +8,8 @@
 #   (a green `cargo build` says nothing about `cargo test`). This bit us once
 #   already — the zcash→PSE halo2 v0.3 migration broke `src/prove/halo2/tests.rs`
 #   (missing `type Params`, removed `ParamsIPA::k()`), which in turn masked a
-#   never-compiled test module in `src/prove/noir/bound_analysis.rs`. See
-#   code_review_20260612/T01-restore-in-crate-test-suite.md.
+#   never-compiled test module in `src/prove/noir/bound_analysis.rs`. The
+#   historical review notes referenced here were removed during cleanup.
 #
 # WHAT IT DOES
 #   Type-checks the test targets (no run, no proving) with the pinned toolchain

@@ -9,7 +9,7 @@
 #   preprocessor, and the eager `ir_hash`) routes its field type through the
 #   `crate::prove::field::F` seam (= `halo2curves::bn256::Fr`, the light curve
 #   crate) so that `--features noir-backend` alone builds WITHOUT the entire
-#   halo2 proving system. See code_review_20260612/T02-feature-flag-decoupling.md.
+#   halo2 proving system. Historical review notes for T02 were removed during cleanup.
 #
 #   Before T02 the flags were a fiction: the core hard-linked
 #   `halo2_proofs::...::Fr`, so a noir-only build failed to compile. This guard

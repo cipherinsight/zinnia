@@ -1,27 +1,12 @@
-import os
+"""Legacy setuptools entry point.
 
-from setuptools import setup
+Zinnia is a Rust-backed Python extension built by maturin through
+pyproject.toml. A plain setuptools install would miss the native module, so
+fail early with the supported commands instead of creating a broken package.
+"""
 
-package = ["zinnia"]
-version = "0.0.1"
-description = (
-    "A compiler for compiling Python code to low-level zero-knowledge circuit."
-)
-author = "CipherInsight Ltd."
-
-if os.path.exists("README.md"):
-    with open("README.md", "r") as f:
-        long_description = f.read()
-else:
-    long_description = description
-
-setup(
-    name="zinnia",
-    version=version,
-    description=description,
-    long_description=long_description,
-    long_description_content_type="text/markdown",
-    author=author,
-    packages=package,
-    python_requires=">=3.10",
+raise SystemExit(
+    "setup.py is intentionally disabled. Use `scripts/develop.sh` for a local "
+    "editable build, or use `python -m pip install .` / `python -m pip install "
+    "-e .` so pip invokes the maturin backend from pyproject.toml."
 )

@@ -1,4 +1,4 @@
-"""Lang smoke for `code_review_20260612/C09-static-write-bounds-discharge`.
+"""Lang smoke for the static write bounds-discharge regression.
 
 The static-array dynamic-index WRITE path (`a[i] = v` where `a` is a
 segment-backed `Value::StaticArray` and `i` is a runtime witness) had
