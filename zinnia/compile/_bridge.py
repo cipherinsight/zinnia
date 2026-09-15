@@ -7,6 +7,7 @@ and the Rust implementation.
 
 from zinnia._zinnia_core import (
     CompiledIR,
+    analyze_shapes,
     compile_circuit,
     prove_circuit,
     emit_structural_circuit,

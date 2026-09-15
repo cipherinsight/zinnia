@@ -12,8 +12,9 @@ pub mod ir_defs;
 pub mod ir_gen;
 pub mod ops;
 pub mod optim;
-pub mod provenance;
+pub mod phase0;
 pub mod prove;
+pub mod provenance;
 pub mod scope;
 pub mod types;
 
@@ -663,6 +664,52 @@ fn poseidon_hash(values: Vec<i64>) -> String {
         .collect()
 }
 
+/// Run phase 0 (`revision/phase0/definition.md`) on a circuit and return its
+/// record as JSON.
+///
+/// The arguments are the ones `compile_circuit` takes, so a harness can call
+/// both on the same inputs. The result is the JSON of
+/// `phase0::export` on success, and `{"rejected": {"reason": ..., "detail":
+/// ...}}` on a rejection — a rejection is a property of the program, not an
+/// error, and `testing/phase0/test_coverage.py` histograms the reasons
+/// (`revision/phase0/acceptance.md` §1). Only a malformed argument raises.
+#[pyfunction]
+#[pyo3(signature = (ast_json, config_json, chips_json="{}", externals_json="{}", pretty=true))]
+fn analyze_shapes(
+    ast_json: &str,
+    config_json: &str,
+    chips_json: &str,
+    externals_json: &str,
+    pretty: bool,
+) -> PyResult<String> {
+    let parse = |what: &str, text: &str| {
+        serde_json::from_str::<serde_json::Value>(text).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("{} JSON parse error: {}", what, e))
+        })
+    };
+    let circuit: ast::ASTCircuit = serde_json::from_str(ast_json).map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("AST JSON parse error: {}", e))
+    })?;
+    let config = phase0::Phase0Config::from_json(&parse("Config", config_json)?);
+    let chips: std::collections::HashMap<String, serde_json::Value> =
+        serde_json::from_str(chips_json).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Chips JSON parse error: {}", e))
+        })?;
+    let externals: std::collections::HashMap<String, serde_json::Value> =
+        serde_json::from_str(externals_json).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Externals JSON parse error: {}", e))
+        })?;
+
+    let options = phase0::export::ExportOptions { pretty };
+    let payload = match phase0::analyze(&circuit, &chips, &externals, &config) {
+        Ok(result) => phase0::export::to_json(&result, &options),
+        Err(reject) => serde_json::json!({"rejected": reject.to_json()}),
+    };
+    serde_json::to_string(&payload).map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e))
+    })
+}
+
 /// Read-and-reset the prove-layer counters. Returns a tuple
 /// `(call_count, proved, disproved, unknown, z3_invocations, fastpath_hits)`.
 /// Used by the acceptance/rejection sweep to attribute compile cost.
@@ -694,5 +741,6 @@ fn _zinnia_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(import_ir_json, m)?)?;
     m.add_function(wrap_pyfunction!(poseidon_hash, m)?)?;
     m.add_function(wrap_pyfunction!(get_and_reset_prove_counters, m)?)?;
+    m.add_function(wrap_pyfunction!(analyze_shapes, m)?)?;
     Ok(())
 }

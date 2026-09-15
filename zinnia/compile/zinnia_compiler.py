@@ -6,7 +6,7 @@ from typing import Dict
 from zinnia.compile.transformer import ZinniaExternalFuncASTTransformer, ZinniaCircuitASTTransformer
 from zinnia.compile.transformer.chip import ZinniaChipASTTransformer
 from zinnia.compile.transformer.base import _eval_shape_expr, _parse_shape_expr_token
-from zinnia.compile._bridge import compile_circuit
+from zinnia.compile._bridge import analyze_shapes, compile_circuit
 from zinnia.config.zinnia_config import ZinniaConfig
 from zinnia.api.zk_compiled_program import ZKCompiledProgram
 from zinnia.api.zk_program_input import ZKProgramInput
@@ -18,25 +18,25 @@ class ZinniaCompiler:
     def __init__(self, config: ZinniaConfig):
         self.config = config
 
-    def compile(
+    def _core_payloads(
             self,
             source: str, name: str,
             chips: Dict[str, InternalChipObject],
             externals: Dict[str, InternalExternalFuncObject]
-    ) -> ZKCompiledProgram:
-        circuit_name = name
-        time_checkpoint_s = time.time()
+    ) -> tuple[ZinniaCircuitASTTransformer, dict, dict, dict, dict]:
+        """Build the four JSON payloads the Rust core reads.
 
-        # 1. Parse Python source -> AST dict (no intermediate AST objects)
+        Returns ``(transformer, ast_dict, config_dict, chips_dict,
+        externals_dict)``; the transformer carries the input side-data that
+        :meth:`compile` needs afterwards. Shared by :meth:`compile` and
+        :meth:`analyze_shapes` so the two always hand the core the same
+        program.
+        """
         fixed_source = ZinniaCompiler.fix_source_indentation(source)
         python_ast = ast.parse(fixed_source)
         transformer = ZinniaCircuitASTTransformer(fixed_source, name)
         ast_dict = transformer.visit(python_ast.body[0])
-        time_transform = time.time() - time_checkpoint_s
 
-        # 2. Compile in Rust: IR generation + all optimization passes in one call.
-        #    Returns a CompiledIR handle (opaque, no JSON round-trip).
-        time_checkpoint_compile_s = time.time()
         config_dict = {
             "backend": self.config.get_backend(),
             "loop_limit": self.config.loop_limit(),
@@ -56,6 +56,14 @@ class ZinniaCompiler:
                 "duplicate_code_elimination": self.config.optimization_config().duplicate_code_elimination(),
             }
         }
+        # Phase 0's work budget (`revision/phase0/implementation.md` §8).
+        # `ZinniaConfig` has no accessor of its own for it, so it is read
+        # through the generic one: a caller raises it with
+        # `config.set("phase0_work_budget", n)`. Omitted when unset, so the
+        # Rust default applies; `compile_circuit` ignores the key.
+        work_budget = self.config.get("phase0_work_budget")
+        if work_budget is not None:
+            config_dict["phase0_work_budget"] = work_budget
         # Build chips dict: name -> {chip_ast, return_dt}
         chips_dict = {}
         for chip_name, chip in chips.items():
@@ -69,6 +77,52 @@ class ZinniaCompiler:
             externals_dict[ext_name] = {
                 "return_dt": ext.return_dt,
             }
+        return transformer, ast_dict, config_dict, chips_dict, externals_dict
+
+    def analyze_shapes(
+            self,
+            source: str, name: str,
+            chips: Dict[str, InternalChipObject],
+            externals: Dict[str, InternalExternalFuncObject],
+            pretty: bool = True
+    ) -> dict:
+        """Run phase 0 (array-level shape analysis) without compiling.
+
+        Returns the parsed JSON of `revision/phase0/export.rs`'s schema, or
+        ``{"rejected": {"reason": ..., "detail": ...}}`` when phase 0 refuses
+        the program.
+
+        ``pretty`` writes the ``*_pretty`` fields, which are a convenience:
+        the term DAG and the SMT-LIB text carry the same information. Turning
+        them off makes the record of a large unrolled circuit much smaller.
+        """
+        _, ast_dict, config_dict, chips_dict, externals_dict = self._core_payloads(
+            source, name, chips, externals,
+        )
+        return json.loads(analyze_shapes(
+            json.dumps(ast_dict), json.dumps(config_dict),
+            json.dumps(chips_dict), json.dumps(externals_dict),
+            pretty,
+        ))
+
+    def compile(
+            self,
+            source: str, name: str,
+            chips: Dict[str, InternalChipObject],
+            externals: Dict[str, InternalExternalFuncObject]
+    ) -> ZKCompiledProgram:
+        circuit_name = name
+        time_checkpoint_s = time.time()
+
+        # 1. Parse Python source -> AST dict (no intermediate AST objects)
+        transformer, ast_dict, config_dict, chips_dict, externals_dict = self._core_payloads(
+            source, name, chips, externals,
+        )
+        time_transform = time.time() - time_checkpoint_s
+
+        # 2. Compile in Rust: IR generation + all optimization passes in one call.
+        #    Returns a CompiledIR handle (opaque, no JSON round-trip).
+        time_checkpoint_compile_s = time.time()
         compiled_ir = compile_circuit(
             json.dumps(ast_dict), json.dumps(config_dict),
             json.dumps(chips_dict), json.dumps(externals_dict),
