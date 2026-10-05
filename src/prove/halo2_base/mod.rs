@@ -439,6 +439,22 @@ pub fn keygen(ir: &IRGraph, params: &ProvingParams) -> Result<Halo2BaseKeys, Pro
     Ok(Halo2BaseKeys { params: params.clone(), ipa_params, pk, base_params, break_points, ir_hash })
 }
 
+/// [`keygen`] at `params` (from `estimate_params`); should the layout still
+/// fail at that `k` (an error naming it), the next `k` is tried, up to the
+/// estimate's upper bound.
+pub fn keygen_or_next_k(ir: &IRGraph, params: &ProvingParams) -> Result<Halo2BaseKeys, ProvingError> {
+    let mut params = params.clone();
+    loop {
+        match keygen(ir, &params) {
+            Err(ProvingError::ProvingFailed { detail }) if detail.contains("failed at k=") && params.k < ESTIMATE_K_MAX => {
+                params.k += 1;
+                params.lookup_bits = ProvingParams::default().lookup_bits.min(params.k - 1);
+            }
+            other => return other,
+        }
+    }
+}
+
 /// Prove `ir` on `witness` with keys from [`keygen`] (no parameter
 /// generation, no keygen).
 pub fn prove_with_keys(
@@ -657,7 +673,7 @@ fn build_circuit(
     };
 
     if stage != CircuitBuilderStage::Prover {
-        builder.calculate_params(Some(UNUSABLE_ROWS));
+        calculate_layout(&mut builder);
         if std::env::var("ZINNIA_HALO2_BASE_DEBUG_CELLS").is_ok() {
             let stats = builder.statistics();
             eprintln!(
@@ -670,6 +686,23 @@ fn build_circuit(
         }
     }
     Ok((builder, public_values))
+}
+
+/// The column layout for the builder's cells at its `k`, reserving
+/// `UNUSABLE_ROWS` rows per column.
+///
+/// halo2-base's `calculate_params` reserves those rows for advice and lookup
+/// columns but sizes the constants' fixed columns as `ceil(fixed / 2^k)`,
+/// although the constants cannot use the blinding rows either: a circuit
+/// with many constants then fails to lay out (`NotEnoughRowsAvailable` at
+/// key generation). The fixed columns are sized like the others here, which
+/// is also what `estimate_params`' cost model assumes.
+fn calculate_layout(builder: &mut BaseCircuitBuilder<Fp>) {
+    let mut params = builder.calculate_params(Some(UNUSABLE_ROWS));
+    let usable = (1usize << params.k).saturating_sub(UNUSABLE_ROWS).max(1);
+    let fixed = builder.statistics().gate.total_fixed;
+    params.num_fixed = fixed.div_ceil(usable).max(params.num_fixed);
+    builder.set_params(params);
 }
 
 fn try_build_public_layout_only(

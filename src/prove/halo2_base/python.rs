@@ -13,7 +13,7 @@ use std::time::Instant;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-use super::{cell_profile, cell_stats, fp_from_hex, fp_to_hex, keygen, prove_with_keys, verify_with_keys, Halo2BaseKeys, Halo2BaseProverBackend};
+use super::{cell_profile, cell_stats, fp_from_hex, fp_to_hex, keygen, keygen_or_next_k, prove_with_keys, verify_with_keys, Halo2BaseKeys, Halo2BaseProverBackend};
 use crate::prove::traits::ProverBackend;
 use crate::prove::types::ProvingParams;
 use crate::CompiledIR;
@@ -55,13 +55,19 @@ impl PyHalo2BaseKeys {
 }
 
 /// Generate keys for `compiled_ir`. `params_json` (`{"k", "lookup_bits",
-/// "precision_bits"}`) defaults to the backend's `estimate_params`.
+/// "precision_bits"}`) defaults to the backend's `estimate_params` (with a
+/// retry at the next `k` if the layout fails, see `keygen_or_next_k`).
+/// `keygen_seconds` covers key generation, not the estimate.
 #[pyfunction]
 #[pyo3(signature = (compiled_ir, params_json=None))]
 fn halo2_base_keygen(compiled_ir: &CompiledIR, params_json: Option<&str>) -> PyResult<PyHalo2BaseKeys> {
     let params = params_or_estimate(compiled_ir, params_json)?;
     let started = Instant::now();
-    let keys = keygen(&compiled_ir.graph, &params).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    let keys = match params_json {
+        Some(_) => keygen(&compiled_ir.graph, &params),
+        None => keygen_or_next_k(&compiled_ir.graph, &params),
+    }
+    .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
     Ok(PyHalo2BaseKeys { inner: Arc::new(keys), keygen_seconds: started.elapsed().as_secs_f64() })
 }
 
