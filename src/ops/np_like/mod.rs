@@ -58,6 +58,14 @@ pub(crate) fn vectorize_minmax(
     // lockstep.
     let lshape = crate::helpers::composite::get_composite_shape(x1);
     let rshape = crate::helpers::composite::get_composite_shape(x2);
+    if let Some(shape) = crate::helpers::broadcast::broadcast_shapes(&lshape, &rshape) {
+        if shape.contains(&0) {
+            let float = [x1, x2].iter().any(|v| matches!(v,
+                Value::Float(_) | Value::StaticArray { dtype: crate::types::NumberType::Float, .. }));
+            return crate::helpers::static_array::base::build_static_array_from_flat(
+                builder, vec![], shape, if float { crate::types::NumberType::Float } else { crate::types::NumberType::Integer });
+        }
+    }
     let (l, r) = if lshape == rshape {
         (x1.clone(), x2.clone())
     } else if let Some(target) = crate::helpers::broadcast::broadcast_shapes(&lshape, &rshape) {
@@ -462,10 +470,10 @@ macro_rules! define_np_minmax {
                     (a, b)
                         if matches!(
                             a,
-                            crate::types::Value::List(_) | crate::types::Value::Tuple(_)
+                            crate::types::Value::List(_) | crate::types::Value::Tuple(_) | crate::types::Value::StaticArray { .. }
                         ) || matches!(
                             b,
-                            crate::types::Value::List(_) | crate::types::Value::Tuple(_)
+                            crate::types::Value::List(_) | crate::types::Value::Tuple(_) | crate::types::Value::StaticArray { .. }
                         ) =>
                     {
                         // Vectorize over composites by recursing through

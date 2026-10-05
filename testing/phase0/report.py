@@ -250,9 +250,8 @@ def section_consistency(payload: dict[str, Any] | None) -> str:
             _tightening_table(compared),
             "\nUnmatched arrays, both sides.\n",
             _unmatched_table(compared),
-            "\nObligations, by kind and answer; `not_attempted` is the "
-            "per-circuit budget.\n",
-            _obligation_table(compared),
+            "\nChecks, by answer; `not_attempted` is the per-circuit budget.\n",
+            _check_table(compared),
             "\nThe baseline's enforced checks against phase 0's.\n",
             _facts_table(compared),
             "\nDelivered shapes outside the `allowed_meta` oracle: a "
@@ -382,39 +381,33 @@ def _unmatched_table(rows: list[dict[str, Any]]) -> str:
     )
 
 
-def _obligation_table(rows: list[dict[str, Any]]) -> str:
-    """Answers by kind: distinct questions, and the obligations they stand for.
+def _check_table(rows: list[dict[str, Any]]) -> str:
+    """Answers by verdict: distinct questions, and the checks they stand for.
 
-    Phase 0 records one obligation per operation per unrolled iteration, and
-    the term arena is hash-consed, so many are the same `(kind, term, path)`
+    Phase 0 records one check per operation per unrolled iteration, and the
+    term arena is hash-consed, so many are the same `(path, defcond)`
     question; the harness answers each distinct question once.
     """
-    distinct: Counter[tuple[str, str]] = Counter()
-    total: Counter[tuple[str, str]] = Counter()
+    distinct: Counter[str] = Counter()
+    total: Counter[str] = Counter()
     for row in rows:
-        for result in row["obligations"]:
-            key = (result["kind"], result["answer"])
-            distinct[key] += result["distinct"]
-            total[key] += result["occurrences"]
+        for result in row["checks"]:
+            distinct[result["answer"]] += result["distinct"]
+            total[result["answer"]] += result["occurrences"]
     return table(
-        ["kind", "answer", "distinct questions", "obligations"],
-        [
-            [kind, answer, distinct[(kind, answer)], count]
-            for (kind, answer), count in total.most_common()
-        ],
+        ["answer", "distinct questions", "checks"],
+        [[answer, distinct[answer], count] for answer, count in total.most_common()],
     )
 
 
 def _facts_table(rows: list[dict[str, Any]]) -> str:
     enforced: Counter[str] = Counter()
     checks = 0
-    obligations: Counter[str] = Counter()
     exact = 0
     for row in rows:
         facts = row.get("facts") or {}
         enforced.update(facts.get("baseline_enforced", {}))
         checks += facts.get("phase0_checks", 0)
-        obligations.update(facts.get("phase0_obligations", {}))
         exact += len(facts.get("exact_shape_resolutions", []))
     return "\n".join(
         [
@@ -425,9 +418,8 @@ def _facts_table(rows: list[dict[str, Any]]) -> str:
             "",
             table(
                 ["phase 0", "count"],
-                [["checks in Φ", checks]]
-                + [[f"{kind} obligations", count] for kind, count in obligations.most_common()]
-                + [["exact symbolic shape resolutions the baseline made", exact]],
+                [["checks in Φ", checks],
+                 ["exact symbolic shape resolutions the baseline made", exact]],
             ),
         ]
     )
@@ -477,20 +469,19 @@ def section_record(rows: list[dict[str, Any]] | None) -> str:
             ),
             f"\nThe {len(largest)} largest records by entry count.\n",
             table(
-                ["circuit", "entries", "named", "merges", "alias", "applied",
-                 "obligations", "MB"],
+                ["circuit", "entries", "named", "merges", "alias", "applied", "MB"],
                 [
                     [
                         f"{r['program']}::{r['function']}",
                         r["record"]["entries"], r["record"]["named"],
                         r["record"]["merges"], r["record"]["alias"],
-                        r["record"]["applied"], r["obligations"],
+                        r["record"]["applied"],
                         f"{r['record']['bytes'] / 1e6:.2f}",
                     ]
                     for r in largest
                 ],
             ),
-            f"\nRecord invariants (I1 to I4, `record.py`): "
+            f"\nRecord invariants (I1 to I5, `record.py`): "
             f"{len(accepted) - violations} of {len(accepted)} accepted "
             f"circuits hold them, {violations} violations.\n",
         ]

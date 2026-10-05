@@ -316,7 +316,6 @@ def _analyze_worker(kernel_path: str, function: str, queue) -> None:
             "constraints": len(result["constraints"]),
             "terms": len(result["terms"]["nodes"]),
             "descriptors": len(result["descriptors"]),
-            "obligations": len(result["obligations"]),
             "record": record.summary(result),
         }
     )

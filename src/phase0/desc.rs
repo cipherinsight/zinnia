@@ -331,6 +331,12 @@ impl Desc {
         }
     }
 
+    /// $\psi$, the execution condition: the path condition at the value's
+    /// creation (`definition.md` §2). For a *merged* value it is the path
+    /// condition of the merge point — the condition under which the binding
+    /// exists — and not either arm's (§6.1). A composite has none of its
+    /// own: §3.3 makes it a list of descriptors and the condition reaches
+    /// its elements instead.
     pub fn psi(&self) -> Option<BoolId> {
         match self {
             Desc::Scalar(s) => Some(s.psi),
@@ -443,6 +449,14 @@ pub struct CallSite {
 ///   statement, counting from 0 and restarting at every statement and at
 ///   every inlined call.
 ///
+/// - `step` is 0 for the value the expression node itself denotes and `s+1`
+///   for its `s`-th *intermediate*: the value an operator's own chain of
+///   transfer rules builds on the way, and the elements of a composite whose
+///   rules ran one per element (`definition.md` §3.3). It is the only
+///   component that does not come from the traversal, and it is written
+///   `#s` after the expression index, so every key a traversal mints keeps
+///   the text form it had before intermediates existed.
+///
 /// Two traversals of the same AST with the same unrolling produce the same
 /// keys. [`ValueKey::encode`] is the canonical string form that the JSON
 /// export and `testing/phase0/refeval.py` share.
@@ -452,6 +466,9 @@ pub struct ValueKey {
     pub iters: Vec<u32>,
     pub calls: Vec<CallSite>,
     pub expr_index: u32,
+    /// Which value of the expression node this key names: 0 the node's own
+    /// value, `s + 1` its `s`-th intermediate (`definition.md` §3.3).
+    pub step: u32,
 }
 
 impl ValueKey {
@@ -488,7 +505,20 @@ impl ValueKey {
             .map(|c| format!("{}@{}", c.callee, c.site))
             .collect::<Vec<_>>()
             .join(".");
-        format!("{}|{}|{}|{}", path, iters, calls, self.expr_index)
+        let key = format!("{}|{}|{}|{}", path, iters, calls, self.expr_index);
+        match self.step {
+            0 => key,
+            step => format!("{}#{}", key, step - 1),
+        }
+    }
+
+    /// The key of intermediate `index` of this value (`definition.md` §3.3),
+    /// counted from 0 in the order the rules ran.
+    pub fn intermediate(&self, index: u32) -> ValueKey {
+        ValueKey {
+            step: index + 1,
+            ..self.clone()
+        }
     }
 
     /// The key of element `index` of a composite value.
@@ -523,6 +553,7 @@ impl ValueKey {
             "iters": self.iters,
             "calls": calls,
             "expr_index": self.expr_index,
+            "step": self.step,
         })
     }
 }
@@ -647,6 +678,7 @@ impl KeyCursor {
             iters: self.iters.clone(),
             calls: self.calls.clone(),
             expr_index,
+            step: 0,
         }
     }
 }

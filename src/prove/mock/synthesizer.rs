@@ -219,13 +219,11 @@ impl Synthesizer for MockSynthesizer {
     }
 
     fn floor_div_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
-        self.div_f(a, b)
+        Ok(MockCell(kernel::fp_float_floor_div(a.fp(), b.fp(), self.prec())))
     }
 
     fn mod_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
-        let q = kernel::fp_div_prescale(a.fp(), b.fp(), self.prec());
-        let (qb, _) = kernel::fp_mul_rescale(q, b.fp(), self.prec());
-        Ok(MockCell(a.fp() - qb))
+        Ok(MockCell(kernel::fp_float_mod(a.fp(), b.fp())))
     }
 
     fn pow_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {

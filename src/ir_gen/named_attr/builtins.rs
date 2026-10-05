@@ -19,6 +19,21 @@ impl IRGenerator {
         let visited_args_orig = ctx.args_orig;
         let member = ctx.member;
         let v = match member {
+            "zip" => {
+                let sequences: Vec<Vec<Value>> = visited_args.iter().map(|v| match v {
+                    Value::List(d) | Value::Tuple(d) => d.values.clone(),
+                    _ => panic!("zip: expected statically bounded iterables"),
+                }).collect();
+                let n = sequences.iter().map(Vec::len).min().unwrap_or(0);
+                if super::kwarg_static_truthy(ctx.kwargs, "strict", false) {
+                    assert!(sequences.iter().all(|v| v.len() == n), "zip: argument lengths differ with strict=True");
+                }
+                let values: Vec<Value> = (0..n).map(|i| {
+                    let row: Vec<_> = sequences.iter().map(|v| v[i].clone()).collect();
+                    Value::Tuple(CompositeData::new(row.iter().map(Value::zinnia_type).collect(), row))
+                }).collect();
+                Value::Tuple(CompositeData::new(values.iter().map(Value::zinnia_type).collect(), values))
+            }
             "range" => {
                 crate::ops::static_ndarray_ops::builtin_range(&mut self.builder, visited_args)
             }
@@ -137,7 +152,7 @@ impl IRGenerator {
             }
             "enumerate" => {
                 // enumerate(iterable) → list of (index, element) tuples
-                if let Some(iter_val) = visited_args.first() {
+                if let Some(iter_val) = visited_args_orig.first() {
                     crate::ops::static_ndarray_ops::builtin_enumerate(&mut self.builder, iter_val)
                 } else {
                     Value::None
@@ -146,7 +161,11 @@ impl IRGenerator {
             "sum" => {
                 if let Some(iter_val) = visited_args.first() {
                     // Python sum() iterates over the first level
-                    let mut result = if let Value::List(data) | Value::Tuple(data) = iter_val {
+                    let mut result = if let Value::DynamicNDArray(data) = iter_val {
+                        assert_eq!(data.envelope.dims.len(), 1, "sum: dynamic iterable must have rank one");
+                        crate::ops::dyn_ndarray::aggregation::dyn_aggregate_all(
+                            &mut self.builder, data, crate::ops::dyn_ndarray::DynAggKind::Sum)
+                    } else if let Value::List(data) | Value::Tuple(data) = iter_val {
                         // Check if elements are composites (2D+ array)
                         if !data.values.is_empty()
                             && matches!(&data.values[0], Value::List(_) | Value::Tuple(_))
@@ -173,7 +192,10 @@ impl IRGenerator {
                         crate::helpers::ndarray::builtin_reduce(&mut self.builder, "sum", iter_val)
                     };
                     // sum(iterable, start) — add start value
-                    if let Some(start) = visited_args.get(1) {
+                    if let Some(start) = visited_args_orig.get(1).or_else(|| ctx.kwargs_orig.get("start")) {
+                        if matches!(start, Value::StaticArray { .. }) {
+                            result = crate::helpers::static_array::base::to_static_array(&mut self.builder, &result).unwrap_or(result);
+                        }
                         result = crate::helpers::value_ops::apply_binary_op(
                             &mut self.builder,
                             "add",

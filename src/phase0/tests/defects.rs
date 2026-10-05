@@ -8,7 +8,7 @@
 use serde_json::{json, Value};
 
 use crate::phase0::desc::{Desc, Dtype};
-use crate::phase0::phi::{ConstraintKind, ObligationKind};
+use crate::phase0::phi::ConstraintKind;
 use crate::phase0::{Phase0Result, Reject};
 
 use super::fixtures::*;
@@ -61,15 +61,6 @@ fn checks(result: &Phase0Result) -> Vec<String> {
         .iter()
         .filter(|c| matches!(c.kind, ConstraintKind::Check { .. }))
         .map(|c| format!("{}: {}", c.provenance, result.terms.pretty_bool(c.formula)))
-        .collect()
-}
-
-fn obligations_of(result: &Phase0Result, kind: ObligationKind) -> Vec<String> {
-    result
-        .obligations()
-        .iter()
-        .filter(|o| o.kind == kind)
-        .map(|o| o.provenance.clone())
         .collect()
 }
 
@@ -196,6 +187,10 @@ fn np_insert_bounds_its_position() {
 // 4. `np.ravel_multi_index` records a definedness condition (§5.4)
 // ---------------------------------------------------------------------------
 
+/// A `dims` spelled as a run-time array gives no extents, so the flat index
+/// is a fresh data variable and the coordinate condition the unconstrained
+/// Boolean of `E-Take` (§5.4). The constant-shape form is in
+/// [`super::coverage_e`].
 #[test]
 fn ravel_multi_index_records_a_definedness_condition() {
     let result = run(
@@ -422,8 +417,13 @@ fn the_two_arms_of_a_conditional_expression_get_distinct_keys() {
 
 #[test]
 fn a_bounded_range_loop_guards_its_loop_variable() {
-    // `for i in range(n)` with `0 <= n <= 4`: iteration 3 runs under
-    // `3 < max(0, n)`, so the `i` it binds must carry that in ψ.
+    // `for i in range(n)` with `0 <= n <= 4`: iteration 0 runs under
+    // `0 < max(0, n)`, so the `i` it creates carries that in ψ. Iteration 3
+    // *merges* its `i` against the version before it, and a merged value is
+    // created at the merge point (§6.1), whose path condition is the
+    // enclosing scope's: the binding exists there on every path, because
+    // under `¬guard` it is the previous version. The guard is in the term
+    // instead, as the `ite` the merge built.
     let result = run_full(
         vec![scalar_input("n")],
         vec![
@@ -439,22 +439,39 @@ fn a_bounded_range_loop_guards_its_loop_variable() {
         vec![requires_between("n", 0, 4)],
     )
     .expect("a bounded range unrolls");
-    let last = result
-        .descriptors
-        .iter()
-        .filter(|entry| entry.name.as_deref() == Some("i"))
-        .filter(|entry| entry.key.iters == vec![3])
-        .map(|entry| {
-            result
-                .terms
-                .pretty_bool(entry.desc.psi().expect("a scalar"))
-        })
-        .next()
-        .expect("iteration 3 binds `i`");
+    let binding = |iteration: i128| {
+        result
+            .descriptors
+            .iter()
+            .find(|entry| {
+                entry.name.as_deref() == Some("i") && entry.key.iters == vec![iteration as u32]
+            })
+            .unwrap_or_else(|| panic!("iteration {} binds `i`", iteration))
+    };
+    let first = binding(0);
     assert!(
-        last.contains("3 <"),
-        "ψ carries the iteration's guard, got {}",
-        last
+        result
+            .terms
+            .pretty_bool(first.desc.psi().expect("a scalar"))
+            .contains("0 <"),
+        "the first binding is created inside the guard, got {}",
+        result.terms.pretty_bool(first.desc.psi().expect("a scalar"))
+    );
+    let merged = binding(3);
+    let psi = merged.desc.psi().expect("a scalar");
+    assert!(
+        result.terms.is_true(psi),
+        "a merged binding exists at the merge point, got {}",
+        result.terms.pretty_bool(psi)
+    );
+    let term = match merged.desc.as_scalar().expect("a scalar").term {
+        crate::phase0::desc::ScalarTerm::Int(t) => result.terms.pretty(t),
+        other => panic!("an integer term, got {:?}", other),
+    };
+    assert!(
+        term.contains("3 <"),
+        "the guard is in the merged term, got {}",
+        term
     );
 }
 
@@ -728,45 +745,6 @@ fn an_unreadable_dtype_rejects() {
         ),
         other => panic!("expected a rejection, got {:?}", other.err()),
     }
-}
-
-// ---------------------------------------------------------------------------
-// Consistency finding 7: CONST and PROVE obligations are recorded (§4)
-// ---------------------------------------------------------------------------
-
-#[test]
-fn a_count_and_a_broadcast_record_their_obligations() {
-    // `s = a[a != 0]; return s + b`: the count is a CONST question and the
-    // broadcast of `[c]` against `[8]` a PROVE one.
-    let result = run(
-        vec![array_input("a", &[8]), array_input("b", &[8])],
-        vec![
-            assign(
-                name_target("s"),
-                subscript(load("a"), binop("ne", load("a"), int(0))),
-            ),
-            ret(binop("add", load("s"), load("b"))),
-        ],
-    )
-    .expect("a filtered array is in scope");
-    assert!(
-        obligations_of(&result, ObligationKind::Const)
-            .iter()
-            .any(|p| p.contains("count")),
-        "the count is a CONST question, got {:?}",
-        obligations_of(&result, ObligationKind::Const)
-    );
-    assert!(
-        obligations_of(&result, ObligationKind::Prove)
-            .iter()
-            .any(|p| p.contains("broadcast")),
-        "the broadcast is a PROVE question, got {:?}",
-        obligations_of(&result, ObligationKind::Prove)
-    );
-    assert!(
-        !obligations_of(&result, ObligationKind::CanFail).is_empty(),
-        "CANFAIL obligations are still recorded"
-    );
 }
 
 // ---------------------------------------------------------------------------

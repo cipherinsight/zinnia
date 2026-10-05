@@ -1,0 +1,6 @@
+- `calibrate.py`: Apply the affine calibration elementwise, then clip to the inclusive limits.
+- `background.py`: Find each column minimum and let NumPy broadcast it across samples.
+- `threshold_energy.py`: Mask readings at or below their channel floors before summing squares by observation.
+- `distances.py`: Broadcast the point collections to all pairs, square coordinate differences, and sum across coordinates.
+- `pool.py`: Add the four strided views corresponding to each non-overlapping 2-by-2 block.
+- `smooth.py`: Copy the grid each round so all interior updates read the preceding round while edges remain fixed.

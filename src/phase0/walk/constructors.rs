@@ -153,7 +153,7 @@ impl Walker<'_> {
     /// `np.array` / `np.asarray`: the composite becomes an array (§5.8).
     pub(super) fn asarray(&mut self, args: &Args) -> Result<Desc, Reject> {
         let value = args.require(Rule::EStack, 0, "a")?.clone();
-        let a = self.as_array(&value, Rule::EStack)?;
+        let (a, _) = self.as_array_keyed(&value, args.key(0, "a"), Rule::EStack)?;
         let dtype = dtype_kwarg(args, a.dtype)?;
         if dtype == a.dtype {
             // The identity on descriptors, which `E-Copy` names (§8).

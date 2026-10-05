@@ -12,8 +12,8 @@
 //! sub-expression into the enclosing frame's operand list, and every rule that
 //! runs appends its name to the innermost frame
 //! ([`crate::phase0::rules::RuleCtx::applied`]). The innermost frame's key is
-//! also the *subject* of every check and obligation the rule records: the
-//! operation instance the condition belongs to.
+//! also the *subject* of every check the rule records: the operation instance
+//! the condition belongs to.
 
 use crate::phase0::desc::{Desc, ValueKey};
 use crate::phase0::rules::Rule;
@@ -75,6 +75,25 @@ impl Producer {
         }
     }
 
+    /// The value this producer only re-labels, when it does: a use of a name
+    /// under a new key, an `E-Copy`, which returns the descriptor of its
+    /// first operand unchanged (§5.11), or a binding `S-Assign` of one value
+    /// that merges nothing. Following these edges gives the value a key
+    /// names, which is what `Count` is keyed by (§5.5).
+    pub fn relabels(&self) -> Option<&ValueKey> {
+        match self {
+            Producer::Alias(key) => Some(key),
+            Producer::Applied {
+                rules, operands, ..
+            } if matches!(rules[..], [Rule::ECopy] | [Rule::SAssign])
+                && operands.len() == 1 =>
+            {
+                operands.first()
+            }
+            _ => None,
+        }
+    }
+
     /// Every key this value was built from: the operands of an
     /// [`Producer::Applied`], the target of an [`Producer::Alias`].
     pub fn inputs(&self) -> Vec<&ValueKey> {
@@ -129,6 +148,9 @@ pub(crate) struct ValueFrame {
     /// Set when the value is another value under a new key, so that the
     /// producer is an [`Producer::Alias`] rather than a rule application.
     alias: Option<ValueKey>,
+    /// How many intermediates of this value have been closed off already
+    /// (`definition.md` §3.3): the step index the next one takes.
+    steps: u32,
 }
 
 impl ValueFrame {
@@ -147,6 +169,11 @@ impl ValueFrame {
     pub fn into_rules(self) -> Vec<Rule> {
         self.rules
     }
+
+    /// The key the frame was opened for.
+    pub fn key(&self) -> &ValueKey {
+        &self.key
+    }
 }
 
 /// The open value frames, innermost last.
@@ -163,7 +190,28 @@ impl ValueStack {
             rules: Vec::new(),
             operands: Vec::new(),
             alias: None,
+            steps: 0,
         });
+    }
+
+    /// Open the frame of an *intermediate* of the value being built
+    /// (`definition.md` §3.3) and return its key.
+    ///
+    /// The intermediate takes the value's key with the next step index. Its
+    /// own frame collects the rules that run until it is closed, and its key
+    /// is the subject of the checks they record, exactly as for a value the
+    /// source wrote.
+    pub fn open_step(&mut self) -> ValueKey {
+        let key = match self.frames.last_mut() {
+            Some(frame) => {
+                let key = frame.key.intermediate(frame.steps);
+                frame.steps += 1;
+                key
+            }
+            None => unreachable!("an intermediate belongs to a value under construction"),
+        };
+        self.open(&key);
+        key
     }
 
     /// Close the innermost frame. Paired with [`ValueStack::open`] by
@@ -205,8 +253,8 @@ impl ValueStack {
         }
     }
 
-    /// The key of the value being built: the subject of every check and
-    /// obligation a rule records now (`implementation.md` §5a).
+    /// The key of the value being built: the subject of every check a rule
+    /// records now (`implementation.md` §5a).
     pub fn subject(&self) -> &ValueKey {
         match self.frames.last() {
             Some(frame) => &frame.key,

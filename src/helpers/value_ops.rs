@@ -582,6 +582,11 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
             }
             return apply_binary_op(b, op, &lhs_n, &rhs_n);
         }
+        let ls = crate::helpers::composite::get_composite_shape(lhs);
+        let rs = crate::helpers::composite::get_composite_shape(rhs);
+        if ls.len() > 2 || rs.len() > 2 || ls.contains(&0) || rs.contains(&0) {
+            return crate::helpers::static_array::matmul::matmul(b, lhs, rhs);
+        }
         // Residual: materialise to nested List and re-dispatch through the
         // legacy path (the matmul route).
         let lhs_n = crate::helpers::static_array::base::to_value_list(b, lhs);
@@ -935,10 +940,8 @@ pub fn apply_scalar_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Va
             "mul" => b.ir_mul_f(&lf, &rf),
             "div" => b.ir_div_f(&lf, &rf),
             "pow" => b.ir_pow_f(&lf, &rf),
-            "mod" | "floor_div" => {
-                // Fallback to integer ops for these
-                b.ir_mod_i(lhs, rhs)
-            }
+            "floor_div" => b.ir_floor_div_f(&lf, &rf),
+            "mod" => b.ir_mod_f(&lf, &rf),
             "eq" => b.ir_equal_f(&lf, &rf),
             "ne" => {
                 let eq = b.ir_equal_f(&lf, &rf);

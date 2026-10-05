@@ -30,7 +30,7 @@
 
 use crate::phase0::desc::KeyCursor;
 use crate::phase0::desc::{ArrayDesc, Desc, Dtype, Origin, ScalarDesc, ScalarTerm, ValueKey};
-use crate::phase0::phi::{ConstraintKind, ObligationKind, ObligationTerm, Phi, VarOrigin};
+use crate::phase0::phi::{ConstraintKind, Phi, VarOrigin};
 use crate::phase0::source::ValueStack;
 use crate::phase0::term::{BoolId, Sort, TermArena, TermId};
 
@@ -125,10 +125,15 @@ pub struct RuleCtx<'a> {
     pub materialisable: i128,
     /// The values under construction (`implementation.md` §5a). The innermost
     /// open frame is the value this rule is producing: its key is the subject
-    /// of every check and obligation recorded here, and the rules applied to
-    /// it are collected there. A `RuleCtx` cannot be built without one, so a
-    /// check cannot be recorded without a subject.
+    /// of every check recorded here, and the rules applied to it are
+    /// collected there. A `RuleCtx` cannot be built without one, so a check
+    /// cannot be recorded without a subject.
     pub(crate) values: &'a mut ValueStack,
+    /// The element path inside the value being produced (§3.4): the index
+    /// sequence a composite rule has descended into. Empty at the value
+    /// itself; [`merge_composite`] extends it element by element, so a fresh
+    /// variable born inside a composite records where it came from.
+    pub element: Vec<usize>,
 }
 
 impl RuleCtx<'_> {
@@ -158,6 +163,14 @@ impl RuleCtx<'_> {
         self.terms.tt()
     }
 
+    /// The same context inside element `index` of the value being produced
+    /// (§3.4), for a rule that merges one element of a composite without
+    /// descending through [`merge_composite`].
+    pub fn in_element(mut self, index: usize) -> Self {
+        self.element.push(index);
+        self
+    }
+
     /// `Φ += (φ ⇒ defcond)`, the effect line of §4. Every descriptor
     /// constructor below funnels through here, and a rule that returns a
     /// descriptor it did not build calls [`RuleCtx::check`] instead, so the
@@ -170,49 +183,6 @@ impl RuleCtx<'_> {
             defcond,
             self.values.subject(),
             &provenance,
-        );
-    }
-
-    /// Record the CONST question of `implementation.md` §4: phase 1 has to
-    /// know whether `term` is constant.
-    ///
-    /// The subjects are the lengths a representation decision turns on — the
-    /// trip count of a bounded loop, the inferred extent of a reshape, the
-    /// declared length of `E-ValueSized`, every count variable. A term that
-    /// is already a literal raises no question and is dropped.
-    pub fn record_const(&mut self, rule: impl Into<Provenance>, term: TermId) {
-        if self.terms.constant_value(term).is_some() {
-            return;
-        }
-        self.phi.record_obligation(
-            ObligationKind::Const,
-            ObligationTerm::Int(term),
-            self.path,
-            self.values.subject(),
-            &rule.into().to_string(),
-        );
-    }
-
-    /// Record the PROVE question of `implementation.md` §4: a premise-like
-    /// condition the rule would have discharged by folding, but could not.
-    ///
-    /// `definition.md` §4 splits premises, which are decided here, from
-    /// definedness conditions, which are decided at run time. A few
-    /// conditions sit between the two — broadcast compatibility, a reshape's
-    /// size equality, a matmul's inner dimensions — because they fold to
-    /// `true` on constant shapes and are a question for phase 1 otherwise.
-    /// That question is recorded here; the same condition is also a check, so
-    /// that a run which violates it has no proof (§2).
-    pub fn prove(&mut self, rule: impl Into<Provenance>, premise: BoolId) {
-        if self.terms.is_true(premise) {
-            return;
-        }
-        self.phi.record_obligation(
-            ObligationKind::Prove,
-            ObligationTerm::Bool(premise),
-            self.path,
-            self.values.subject(),
-            &rule.into().to_string(),
         );
     }
 
@@ -279,6 +249,29 @@ impl RuleCtx<'_> {
         })
     }
 
+    /// One element of a multi-element result: the descriptor alone.
+    ///
+    /// A rule tag and the effect line `φ ⇒ defcond` belong to the
+    /// *operation*, not to each element, so an operator that returns a tuple
+    /// of scalars calls [`RuleCtx::applied`] and [`RuleCtx::check`] itself,
+    /// once, and builds its elements with this
+    /// (`../walk/gather.rs`, `np.unravel_index`).
+    pub fn element_scalar(
+        &mut self,
+        dtype: Dtype,
+        term: ScalarTerm,
+        origin: Origin,
+        defcond: BoolId,
+    ) -> Desc {
+        Desc::Scalar(ScalarDesc {
+            dtype,
+            term,
+            origin,
+            defcond,
+            psi: self.path,
+        })
+    }
+
     /// A scalar of origin `data` (§3.2): its term is a fresh variable whose
     /// range comes from the dtype or from the structure of the source.
     ///
@@ -315,6 +308,7 @@ impl RuleCtx<'_> {
             None,
             None,
         );
+        self.phi.set_element_path(var, self.element.clone());
         self.terms.bool_var(var)
     }
 
@@ -341,6 +335,7 @@ impl RuleCtx<'_> {
                 None,
                 None,
             );
+            self.phi.set_element_path(v, self.element.clone());
             return ScalarTerm::Bool(self.terms.bool_var(v));
         }
         let sort = if dtype == Dtype::I64 {
@@ -358,6 +353,7 @@ impl RuleCtx<'_> {
             range.lo,
             range.hi,
         );
+        self.phi.set_element_path(v, self.element.clone());
         ScalarTerm::Int(self.terms.var(v))
     }
 }

@@ -9,7 +9,7 @@ use super::helpers::in_bounds;
 use super::Rule;
 use super::{require_int_term, RuleCtx, VarRange};
 use crate::phase0::desc::{ArrayDesc, Desc, Dtype, Origin, ScalarDesc, ScalarTerm, ValueKey};
-use crate::phase0::term::TermId;
+use crate::phase0::term::{BoolId, TermId};
 use crate::phase0::Reject;
 
 /// The scalar arithmetic operators. §5.2's `E-Arith-Shape` covers
@@ -94,6 +94,9 @@ pub fn e_shape(ctx: &mut RuleCtx, a: &ArrayDesc, k: i64) -> Result<Desc, Reject>
 /// with the dtype range, and the arithmetic relation dropped — a deliberate
 /// loss, because keeping it would make $\Phi$ record arbitrary scalar
 /// computation (§3.2).
+/// `nonzero` is the Boolean the caller prepared for "the divisor is not
+/// zero" where the divisor carries no term to compare with 0 (§5.2's
+/// `defcond_div`); it is `None` for every operator that cannot divide.
 pub fn e_arith(
     ctx: &mut RuleCtx,
     op: ArithOp,
@@ -101,6 +104,7 @@ pub fn e_arith(
     rhs: &ScalarDesc,
     value: &ValueKey,
     base: &str,
+    nonzero: Option<BoolId>,
 ) -> Result<Desc, Reject> {
     let dtype = Dtype::promote(lhs.dtype, rhs.dtype).ok_or_else(|| Reject::Premise {
         rule: Rule::EArithData,
@@ -111,7 +115,7 @@ pub fn e_arith(
             return Ok(desc);
         }
     }
-    Ok(e_arith_data(ctx, op, rhs, dtype, value, base))
+    Ok(e_arith_data(ctx, op, rhs, dtype, value, base, nonzero))
 }
 
 /// `E-Arith-Shape` (§5.2). `None` when the premise fails, which sends the
@@ -156,7 +160,10 @@ fn e_arith_shape(
 /// `E-Arith-Data` (§5.2): a fresh variable with the dtype range.
 ///
 /// `defcond_div` is `t2 ≠ 0` for `//` and `%` on `Idx`; on `I64` it is true,
-/// where NumPy returns 0 on division by zero.
+/// where NumPy returns 0 on division by zero. A divisor that carries no term
+/// at all — a `Float` or `Complex` scalar — is compared with 0 by the data
+/// Boolean the caller prepared, so that the condition still enters $\Phi$
+/// and the circuit enforces it.
 fn e_arith_data(
     ctx: &mut RuleCtx,
     op: ArithOp,
@@ -164,6 +171,7 @@ fn e_arith_data(
     dtype: Dtype,
     value: &ValueKey,
     base: &str,
+    nonzero: Option<BoolId>,
 ) -> Desc {
     let defcond = match (op.divides(), dtype, rhs.term.as_int()) {
         (true, Dtype::Idx, Some(b)) => {
@@ -171,6 +179,7 @@ fn e_arith_data(
             let is_zero = ctx.terms.eq(b, zero);
             ctx.terms.not(is_zero)
         }
+        (true, _, None) => nonzero.unwrap_or_else(|| ctx.tt()),
         _ => ctx.tt(),
     };
     let range = VarRange::of_dtype(ctx.terms, dtype);
@@ -285,7 +294,7 @@ mod tests {
         let mut f = Fixture::new();
         let (a, b) = (f.literal(6), f.literal(4));
         let key = f.key();
-        let sum = e_arith(&mut f.ctx(), ArithOp::Add, &a, &b, &key, "t").unwrap();
+        let sum = e_arith(&mut f.ctx(), ArithOp::Add, &a, &b, &key, "t", None).unwrap();
         let scalar = f.scalar_of(&sum);
         assert_eq!(scalar.origin, Origin::Shape);
         assert_eq!(
@@ -304,7 +313,8 @@ mod tests {
         let a = f.literal(6);
         let b = f.data_scalar(Dtype::I64);
         let key = f.key();
-        let divided = e_arith(&mut f.ctx(), ArithOp::FloorDiv, &a, &b, &key, "t").unwrap();
+        let divided =
+            e_arith(&mut f.ctx(), ArithOp::FloorDiv, &a, &b, &key, "t", None).unwrap();
         assert_eq!(f.scalar_of(&divided).origin, Origin::Data);
     }
 

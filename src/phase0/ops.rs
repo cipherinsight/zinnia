@@ -414,9 +414,14 @@ fn numpy_elementwise(member: &str) -> Option<Class> {
         // unary, real result
         "exp" | "sin" | "cos" | "tan" | "sinh" | "cosh" | "tanh" | "arctan" | "atan"
         | "reciprocal" | "inv" => map(MapOut::Float),
+        // unary, real result: the front end multiplies by a float constant
+        // (`src/ir_gen/named_attr/numpy_funcs.rs`, `np.deg2rad`), so an
+        // integer operand is promoted to `Float` like `np.sin`'s
+        // (`coverage.md` §5.1).
+        "deg2rad" | "radians" | "rad2deg" | "degrees" => map(MapOut::Float),
         // unary, dtype preserved
         "negative" | "positive" | "sign" | "square" | "floor" | "ceil" | "trunc" | "round"
-        | "deg2rad" | "radians" | "rad2deg" | "degrees" | "conj" | "conjugate" => map(MapOut::Same),
+        | "conj" | "conjugate" => map(MapOut::Same),
         "abs" | "absolute" | "fabs" | "real" | "imag" => map(MapOut::RealPart),
         "logical_not" => map(MapOut::Bool),
         // binary
@@ -523,7 +528,7 @@ fn numpy_other(member: &str) -> Option<Class> {
         "bincount" => Class::Bincount,
         "unravel_index" => Class::UnravelIndex,
         "ravel_multi_index" => Class::RavelMultiIndex,
-        "dot" | "matmul" | "inner" => Class::Matmul,
+        "dot" | "matmul" => Class::Matmul,
         "tensordot" => Class::Tensordot,
         "einsum" => Class::Einsum,
         "corrcoef" => Class::Corrcoef,

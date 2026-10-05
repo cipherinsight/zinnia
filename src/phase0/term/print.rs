@@ -258,7 +258,10 @@ impl TermArena {
         serde_json::json!({"vars": vars, "nodes": nodes})
     }
 
-    fn node_json(&self, i: usize) -> serde_json::Value {
+    /// One node as JSON. `pub(crate)` for phase 1's export, which writes the
+    /// nodes it built above phase 0's `node_count()` in this very format so
+    /// that a term id in A resolves (`revision/phase1/README.md` §1.1).
+    pub(crate) fn node_json(&self, i: usize) -> serde_json::Value {
         let int = |op: &str, args: Vec<u32>| serde_json::json!({"id": i, "sort": "int", "op": op, "args": args});
         let boolean = |op: &str, args: Vec<u32>| serde_json::json!({"id": i, "sort": "bool", "op": op, "args": args});
         match self.nodes[i] {

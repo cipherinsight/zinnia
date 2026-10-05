@@ -12,9 +12,9 @@ is where they are answered. It holds two pieces:
   the per-circuit time budget every query is charged against.
 
 The three decisions behind the queries — the DAG rather than the SMT-LIB
-text, CANFAIL answered without the check it is about, and the product facts
-of §3.4 asserted and dropped on `unknown` — are argued in `consistency/`'s
-module docstring, which is where a reader meets them.
+text, a check answered without assuming itself, and the product facts of §3.4
+asserted and dropped on `unknown` — are argued in `consistency/`'s module
+docstring, which is where a reader meets them.
 """
 
 from __future__ import annotations
@@ -48,13 +48,12 @@ class Answer:
     `unknown` for :meth:`PhiSolver.exceeds`, `bounded` / `unbounded` /
     `unsatisfiable` / `unknown` for :meth:`PhiSolver.maximize_expr`,
     `entailed` / `refutable` / `vacuous` / `unknown` for
-    :meth:`PhiSolver.entails`, `constant <n>` / `not_constant` / `vacuous` /
-    `unknown` for :meth:`PhiSolver.is_constant`, and the four verdicts of
+    :meth:`PhiSolver.entails`, and the four verdicts of
     :meth:`PhiSolver.bound`. `value` is the maximum where the query found
     one, `seconds` what it cost, and `note` why the answer is weaker than it
     could be (a dropped product fact, a timeout).
 
-    One type for all five, so that a caller unpacks by name and cannot get
+    One type for all four, so that a caller unpacks by name and cannot get
     the order of a tuple wrong.
     """
 
@@ -284,22 +283,6 @@ class PhiSolver:
                 return Answer("entailed", None, self._charge(started), note)
             if answer == z3.sat:
                 return Answer("refutable", None, self._charge(started), note)
-        return Answer("unknown", None, self._charge(started), "Z3 timed out")
-
-    def is_constant(self, term_id: int, path_id: int) -> "Answer":
-        """Does $\\Phi\\wedge\\mathrm{path}$ pin the term to one value?"""
-        started = time.time()
-        term = self.arena[term_id]
-        path = self.arena[path_id]
-        solver = self._solver(checks=True, products=bool(self.products))
-        if solver.check(path) != z3.sat:
-            return Answer("vacuous", None, self._charge(started))
-        witness = solver.model().eval(term, model_completion=True)
-        answer = solver.check(path, term != witness)
-        if answer == z3.unsat:
-            return Answer(f"constant {witness}", None, self._charge(started))
-        if answer == z3.sat:
-            return Answer("not_constant", None, self._charge(started))
         return Answer("unknown", None, self._charge(started), "Z3 timed out")
 
     def _assertion_sets(self, checks: bool) -> Iterable[tuple[list[Any], str | None]]:

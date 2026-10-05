@@ -22,7 +22,7 @@
 //! explicit.
 
 use crate::ast::{ASTForInStatement, ASTNode, ASTWhileStatement};
-use crate::phase0::desc::{ArrayDesc, Desc, ScalarTerm, ValueKey};
+use crate::phase0::desc::{ArrayDesc, Desc, Dtype, Origin, ScalarTerm, ValueKey};
 use crate::phase0::rules::VarRange;
 use crate::phase0::source::Producer;
 use crate::phase0::term::TermId;
@@ -91,24 +91,42 @@ impl ForPlan {
     /// condition.
     fn element(&self, w: &mut Walker, j: usize) -> Result<Element, Reject> {
         match &self.elements {
-            Elements::Ready(values) => values
-                .get(j)
-                .cloned()
-                .map(|desc| Element::new(desc, self.source.clone()))
-                .ok_or_else(|| self.no_element(j)),
-            // A `range` element is a shape scalar and takes no key of its
-            // own (§5a); the rule that builds it belongs to the iterable.
+            // A composite's elements are built once, with the composite;
+            // element `j` is named by its own entry of Δ where it has one
+            // (§3.3, "Elements of a composite") and by the composite
+            // otherwise, so the binding's operand is the narrowest name the
+            // element has.
+            Elements::Ready(values) => {
+                let desc = values.get(j).cloned().ok_or_else(|| self.no_element(j))?;
+                let source = self.source.clone();
+                let named = source
+                    .as_ref()
+                    .and_then(|key| w.an.element_key(key, j))
+                    .or(source);
+                Ok(Element::new(desc, named))
+            }
+            // A `range` element is a shape scalar with no expression node
+            // of its own, so it is an intermediate of the `range` call
+            // (§3.3): iteration `j` takes the call's key with step index
+            // `j`. Without an entry the name a `for` binds to it has an
+            // empty operand list and no row phase 1 can answer.
             Elements::Range { start, step } => {
                 let (start, step) = (*start, *step);
-                let desc = w.in_iterable(self.source.as_ref(), |w| {
-                    Ok(w.range_element(start, step, j))
-                })?;
-                Ok(Element::new(desc, None))
+                let Some(source) = self.source.clone() else {
+                    let desc = w.range_element(start, step, j);
+                    return Ok(Element::new(desc, None));
+                };
+                let key = source.intermediate(j as u32);
+                let (desc, frame) =
+                    w.in_value(&key, |w| Ok(w.range_element(start, step, j)))?;
+                let producer = frame.into_producer(&desc);
+                w.record(key.clone(), None, &desc, producer);
+                Ok(Element::new(desc, Some(key)))
             }
             Elements::Slots { array, keys } => {
                 let array = array.clone();
                 let key = keys.get(j).cloned().ok_or_else(|| self.no_element(j))?;
-                let desc = w.array_element(&array, &key, self.source.as_ref())?;
+                let desc = w.array_element(&array, &key, self.source.as_ref(), j)?;
                 Ok(Element::new(desc, Some(key)))
             }
         }
@@ -287,9 +305,7 @@ impl Walker<'_> {
                 cap,
             } => {
                 // `S-For-Range-Bounded` unrolls to the cap `Φ`'s ranges give
-                // `T`; phase 1 has to answer whether `T` is constant.
-                self.ctx()
-                    .record_const(Rule::SForRangeBounded.detail("the trip count"), trip);
+                // the trip count `T`.
                 (start, step, cap, Some(trip))
             }
         };
@@ -361,10 +377,7 @@ impl Walker<'_> {
                 let (count, guard) = match self.an.terms.constant_value(extent) {
                     Some(count) => (count.max(0) as usize, None),
                     None => {
-                        // `S-For-Dyn` unrolls to the declared bound; phase 1
-                        // has to answer whether the length is constant.
-                        self.ctx()
-                            .record_const(Rule::SForDyn.detail("the length"), extent);
+                        // `S-For-Dyn` unrolls to the declared bound.
                         (self.declared_bound(extent)?, Some(extent))
                     }
                 };
@@ -413,12 +426,27 @@ impl Walker<'_> {
         a: &ArrayDesc,
         key: &ValueKey,
         source: Option<&ValueKey>,
+        at: usize,
     ) -> Result<Desc, Reject> {
         let a = a.clone();
         let (desc, frame) = self.in_value(key, |w| {
             if let Some(source) = source {
                 w.an.operand(source);
             }
+            // Which element of the iterated array this is: a constant of the
+            // unrolling with no expression node, so it is an intermediate of
+            // the element (§3.3) and the index operand `E-Index` reads.
+            w.an.open_step();
+            let position = w.an.terms.constant(at as i128);
+            let tt = w.ctx().tt();
+            let index = w.ctx().scalar(
+                Rule::EConst,
+                Dtype::Idx,
+                ScalarTerm::Int(position),
+                Origin::Shape,
+                tt,
+            );
+            w.an.close_step(index, Vec::new());
             let tail: Vec<TermId> = a.dims[1..].to_vec();
             let tt = w.ctx().tt();
             if tail.is_empty() {

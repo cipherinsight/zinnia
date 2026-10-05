@@ -716,8 +716,27 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         Ok(result_cell)
     }
 
-    fn floor_div_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.div_f(a, b) }
-    fn mod_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.mod_i(a, b) }
+    fn floor_div_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        let zero = self.constant_int(0)?;
+        let negative = self.lt_i(b, &zero)?;
+        let neg_a = self.sub_i(&zero, a)?;
+        let neg_b = self.sub_i(&zero, b)?;
+        let numerator = self.select(&negative, &neg_a, a)?;
+        let denominator = self.select(&negative, &neg_b, b)?;
+        let quotient = self.floor_div_i(&numerator, &denominator)?;
+        self.float_cast(&quotient)
+    }
+    fn mod_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        let zero = self.constant_int(0)?;
+        let negative = self.lt_i(b, &zero)?;
+        let neg_a = self.sub_i(&zero, a)?;
+        let neg_b = self.sub_i(&zero, b)?;
+        let numerator = self.select(&negative, &neg_a, a)?;
+        let denominator = self.select(&negative, &neg_b, b)?;
+        let remainder = self.mod_i(&numerator, &denominator)?;
+        let neg_remainder = self.sub_i(&zero, &remainder)?;
+        self.select(&negative, &neg_remainder, &remainder)
+    }
     fn pow_f(&mut self, base: &Self::CellRef, exp: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         self.pow_f_int(base, exp)
     }

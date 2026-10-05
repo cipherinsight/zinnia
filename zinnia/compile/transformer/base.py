@@ -600,12 +600,21 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
             and node.func.value.value.id == "np"
         ):
             binop = node.func.value.attr
-            if node.func.attr in ("outer",):
+            if node.func.attr in ("outer", "accumulate", "reduceat"):
                 return {"__class__": "ASTNamedAttribute",
                         "target": "np", "member": f"{binop}_{node.func.attr}",
                         "args": args, "kwargs": kwargs}
-            if node.func.attr == "reduce" and binop in ("add", "multiply"):
-                member = "sum" if binop == "add" else "prod"
+            if node.func.attr == "reduce" and binop in ("add", "multiply", "minimum", "maximum", "logical_or", "logical_and"):
+                member = {"add":"sum", "multiply":"prod", "minimum":"min", "maximum":"max", "logical_or":"any", "logical_and":"all"}[binop]
+                # ufunc reductions all use the same positional signature,
+                # unlike np.min/np.max, whose third argument is out.
+                if len(args) > 7:
+                    raise ValueError("ufunc.reduce: too many positional arguments")
+                for key, value in zip(("axis", "dtype", "out", "keepdims", "initial", "where"), args[1:]):
+                    if key in kwargs:
+                        raise ValueError(f"ufunc.reduce: multiple values for {key}")
+                    kwargs[key] = value
+                args = args[:1]
                 # NumPy ufunc.reduce defaults axis to 0, while np.sum/prod
                 # default to axis=None. Preserve ufunc semantics when the
                 # call did not spell axis positionally or by keyword.
@@ -614,6 +623,9 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
                 return {"__class__": "ASTNamedAttribute",
                         "target": "np", "member": member,
                         "args": args, "kwargs": kwargs}
+        if (isinstance(node.func, ast.Attribute) and node.func.attr=="sliding_window_view"
+                and ast.unparse(node.func.value)=="np.lib.stride_tricks"):
+            return {"__class__":"ASTNamedAttribute", "target":"np", "member":"sliding_window_view", "args":args, "kwargs":kwargs}
         if isinstance(node.func, ast.Attribute):
             if isinstance(node.func.value, ast.Name):
                 return {"__class__": "ASTNamedAttribute",

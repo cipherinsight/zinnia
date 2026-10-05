@@ -8,7 +8,7 @@
 
 use super::{Rule, RuleCtx};
 use crate::phase0::desc::ValueKey;
-use crate::phase0::phi::VarOrigin;
+use crate::phase0::phi::{ConstraintKind, VarOrigin};
 use crate::phase0::term::{BoolId, Sort, TermArena, TermId};
 use crate::phase0::Reject;
 
@@ -204,9 +204,59 @@ pub fn size_term(ctx: &mut RuleCtx, dims: &[TermId], value: &ValueKey, base: &st
         let k = ctx.terms.constant(constant_factor);
         factors.insert(0, k);
     }
+    let size = ctx.terms.var(sigma);
+    declare_factor_bounds(ctx, size, &factors);
     ctx.phi
         .add_product_fact(sigma, factors, "size of a multi-axis dynamic array");
-    ctx.terms.var(sigma)
+    size
+}
+
+/// The linear consequences of $\sigma = \prod_k f_k$ that §3.4 records as
+/// declarations beside the product fact.
+///
+/// The product itself is outside the term language, so without these a
+/// question about one factor falls back to its dtype range and a capacity
+/// taken from it is the whole range. Every factor is an extent and so is
+/// non-negative, whence for each `k`
+///
+/// ```text
+/// (⋀_{j ≠ k} f_j ≥ 1) ⇒ f_k ≤ σ           and           f_k = 0 ⇒ σ = 0
+/// ```
+///
+/// Both are sound: the first because a product of non-negative factors is at
+/// least any one of them once the others are at least one, the second because
+/// a product with a zero factor is zero. The first is stated conditionally
+/// because the unconditioned `f_k ≤ σ` is false when another factor is `0`,
+/// which is exactly the run the second one describes.
+fn declare_factor_bounds(ctx: &mut RuleCtx, size: TermId, factors: &[TermId]) {
+    let zero = ctx.terms.constant(0);
+    let one = ctx.terms.constant(1);
+    let empty = ctx.terms.eq(size, zero);
+    for (k, &factor) in factors.iter().enumerate() {
+        let others: Vec<BoolId> = factors
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| *j != k)
+            .map(|(_, &other)| ctx.terms.le(one, other))
+            .collect();
+        let occupied = ctx.terms.all(&others);
+        let bounded = ctx.terms.le(factor, size);
+        let formula = ctx.terms.implies(occupied, bounded);
+        ctx.phi.add_fact(
+            ctx.terms,
+            formula,
+            ConstraintKind::Declaration,
+            "a factor of a size product is at most the product",
+        );
+        let vanishes = ctx.terms.eq(factor, zero);
+        let formula = ctx.terms.implies(vanishes, empty);
+        ctx.phi.add_fact(
+            ctx.terms,
+            formula,
+            ConstraintKind::Declaration,
+            "a size product with a zero factor is zero",
+        );
+    }
 }
 
 /// The product of `dims` as a term, when at most one factor is non-constant.

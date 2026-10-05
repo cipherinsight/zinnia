@@ -278,6 +278,7 @@ mod tests {
             iters: Vec::new(),
             calls: Vec::new(),
             expr_index: 0,
+            step: 0,
         }
     }
 

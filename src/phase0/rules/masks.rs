@@ -2,9 +2,11 @@
 //!
 //! `Count` is keyed by the value key of the mask and returns the same
 //! variable for the same mask ([`crate::phase0::phi::Phi::count_var`]). That
-//! is how $\Phi$ remembers that one mask was used twice. Phase 0 records no
-//! relation between the counts of different masks: the count of `~m` is a
-//! fresh variable, not `N - c` (§3.4).
+//! is how $\Phi$ remembers that one mask was used twice: the `mask` these
+//! rules take is the value a use of the mask names, so two reads of one mask
+//! share one count. Phase 0 records no relation between the counts of
+//! different masks: the count of `~m` is a fresh variable, not `N - c`
+//! (§3.4).
 
 use super::helpers::{broadcast_dims, dims_equal, size_term};
 use super::Rule;
@@ -56,7 +58,6 @@ pub fn e_filter_axis0(
     let upper = m.dims[0];
     let c = ctx.phi.count_var(ctx.terms, mask, upper, base);
     let count = ctx.terms.var(c);
-    ctx.record_const(Rule::EFilterAxis0.detail("the count"), count);
     let defcond = ctx.terms.eq(a.dims[0], m.dims[0]);
     let mut dims = vec![count];
     dims.extend_from_slice(&a.dims[1..]);
@@ -84,13 +85,15 @@ pub fn e_filter_same(
     let upper = size_term(ctx, &m.dims, mask, &format!("sigma_{}", base));
     let c = ctx.phi.count_var(ctx.terms, mask, upper, base);
     let count = ctx.terms.var(c);
-    ctx.record_const(Rule::EFilterSame.detail("the count"), count);
     let defcond = dims_equal(ctx.terms, &a.dims, &m.dims);
     Ok(ctx.array(Rule::EFilterSame, a.dtype, vec![count], defcond))
 }
 
-/// `E-Nonzero` (§5.5): `nonzero(m)`, `flatnonzero(m)`, the index form of
-/// `where(m)`.
+/// `E-Nonzero` (§5.5): `nonzero(m)` and `flatnonzero(m)`.
+///
+/// `np.where(m)` with one argument is *not* this rule: the baseline returns
+/// the mask itself, so the value is `m` and the rule is `E-Copy` (§5.5,
+/// §5.11, `coverage.md` §5.5).
 ///
 /// As `E-Filter-Same`, with element dtype `Idx`; the elements have the
 /// structural range `[0, size(m))`, which phase 0 notes but does not record,
@@ -107,7 +110,6 @@ pub fn e_nonzero(
     let upper = size_term(ctx, &m.dims, mask, &format!("sigma_{}", base));
     let c = ctx.phi.count_var(ctx.terms, mask, upper, base);
     let count = ctx.terms.var(c);
-    ctx.record_const(Rule::ENonzero.detail("the count"), count);
     let tt = ctx.tt();
     Ok(ctx.array(Rule::ENonzero, Dtype::Idx, vec![count], tt))
 }
@@ -131,7 +133,6 @@ pub fn e_where3(
         .collect::<Result<_, _>>()?;
     let refs: Vec<&[_]> = dims.iter().map(|d| d.as_slice()).collect();
     let (out_dims, defcond) = broadcast_dims(ctx.terms, &refs);
-    ctx.prove(Rule::EWhere3.detail("broadcast compatibility"), defcond);
     Ok(ctx.array(Rule::EWhere3, out, out_dims, defcond))
 }
 

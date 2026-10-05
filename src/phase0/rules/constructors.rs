@@ -71,7 +71,6 @@ pub fn e_value_sized(
         Some(m),
     );
     let ell_term = ctx.terms.var(ell);
-    ctx.record_const(Rule::EValueSized.detail("the declared length"), ell_term);
     let clamped = ctx.terms.max(zero, t_n);
     let declaration = ctx.terms.eq(ell_term, clamped);
     ctx.declare(Rule::EValueSized.detail("declared length"), declaration);

@@ -64,7 +64,6 @@ class Row:
     constraints: int | None
     terms: int | None
     descriptors: int | None
-    obligations: int | None
     #: `record.summary` of Δ, which `report.py`'s record section prints.
     record: dict[str, int] | None
 
@@ -82,7 +81,6 @@ def row_of(circuit: Circuit, answer: dict[str, Any]) -> Row:
         constraints=answer.get("constraints"),
         terms=answer.get("terms"),
         descriptors=answer.get("descriptors"),
-        obligations=answer.get("obligations"),
         record=answer.get("record"),
     )
 

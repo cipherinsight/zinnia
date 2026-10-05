@@ -51,7 +51,7 @@ pub fn matmul(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
     // (forall_eq_const(_, 0)), the matmul output is the zero matrix of the
     // broadcast shape. Falls through to the generic body when no fact is
     // visible or when either operand lacks a `value_id`.
-    if let (Some(lhs_vid), Some(rhs_vid)) = (lhs.value_id(), rhs.value_id()) {
+    let result = if let (Some(lhs_vid), Some(rhs_vid)) = (lhs.value_id(), rhs.value_id()) {
         let out_shape = compute_matmul_output_shape(&lhs_shape, &rhs_shape);
         let inputs = MatmulInputs {
             lhs: lhs.clone(),
@@ -61,10 +61,19 @@ pub fn matmul(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
             use_complex,
         };
         let set = matmul_strategy_set(lhs_vid, rhs_vid);
-        return crate::optim::dispatch_strategy(b, "matmul", &inputs, &set);
+        crate::optim::dispatch_strategy(b, "matmul", &inputs, &set)
+    } else {
+        matmul_generic(b, lhs, rhs)
+    };
+    // A matrix product is an ndarray, even though the legacy dot-product
+    // implementation assembles nested Lists. Leaving it as a Python List
+    // makes `2 * (a @ b)` repeat rows instead of multiplying their values.
+    if matches!(result, Value::List(_) | Value::Tuple(_)) {
+        crate::helpers::static_array::base::to_static_array(b, &result)
+            .expect("matmul must produce a rectangular numeric array")
+    } else {
+        result
     }
-
-    matmul_generic(b, lhs, rhs)
 }
 
 /// Compute the matmul broadcast output shape from `lhs_shape` and

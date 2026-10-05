@@ -75,7 +75,9 @@ pub fn np_square(b: &mut IRBuilder, args: &[Value]) -> Value {
         Some(v) => v,
         None => return Value::None,
     };
-    elementwise_binary(b, "mul", x, x)
+    if matches!(x, Value::StaticArray { .. } | Value::DynamicNDArray(_)) {
+        crate::helpers::value_ops::apply_binary_op(b,"mul",x,x)
+    } else { elementwise_binary(b,"mul",x,x) }
 }
 
 /// Discrete difference along the last axis: `out[i] = x[i+1] - x[i]` over 1-D
@@ -323,6 +325,10 @@ pub fn builtin_len(b: &mut IRBuilder, args: &[Value]) -> Value {
     if let Some(val) = args.first() {
         match val {
             Value::List(data) | Value::Tuple(data) => b.ir_constant_int(data.values.len() as i64),
+            Value::DynamicNDArray(data) => {
+                assert!(!data.envelope.dims.is_empty(), "len() of an unsized array");
+                Value::Integer(data.meta.runtime_shape[0].clone())
+            }
             _ => b.ir_constant_int(0),
         }
     } else {
@@ -636,6 +642,12 @@ pub fn np_where(b: &mut IRBuilder, args: &[Value]) -> Value {
             cx, ys
         )
     });
+    if target.contains(&0) {
+        let float = [x,y].iter().any(|v| matches!(v,
+            Value::Float(_) | Value::StaticArray { dtype: crate::types::NumberType::Float, .. }));
+        return crate::helpers::static_array::base::build_static_array_from_flat(
+            b, vec![], target, if float { crate::types::NumberType::Float } else { crate::types::NumberType::Integer });
+    }
     let cond_b = crate::helpers::broadcast::materialize_to_shape(cond, &target);
     let x_b = crate::helpers::broadcast::materialize_to_shape(x, &target);
     let y_b = crate::helpers::broadcast::materialize_to_shape(y, &target);

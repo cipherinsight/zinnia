@@ -1,0 +1,421 @@
+[
+  {
+    "id": "shape",
+    "title": [
+      "Shapes and indexing",
+      "形状与索引"
+    ],
+    "description": {
+      "rust": [
+        "Read dimensions with a.dim() or a.shape(). For a matrix, let (rows, cols) = a.dim(); axis 0 is rows and axis 1 is columns. a.shape()[0] or a.nrows() gives the row count; a.ncols() gives the column count. For rank 3, unpack (height, width, channels). a.len() counts ALL elements, not rows. The example has 2 rows and 3 columns; out is its second row.",
+        "用 a.dim() 或 a.shape() 读取维度。矩阵可用 let (rows, cols) = a.dim(); 解包，轴 0 为行、轴 1 为列。a.shape()[0] 或 a.nrows() 返回行数，a.ncols() 返回列数。三维数组可解包为 (height, width, channels)。a.len() 是全部元素的数量，不是行数。本例有 2 行、3 列，out 为第二行。"
+      ],
+      "zinnia": [
+        "Read dimensions with a.shape. For a matrix, rows, cols = a.shape; a.shape[0] is the row count and a.shape[1] is the column count. For rank 3, unpack height, width, channels = a.shape. Axes are numbered from zero. The example has 2 rows and 3 columns; out is its second row.",
+        "用 a.shape 读取维度。矩阵可用 rows, cols = a.shape 解包；a.shape[0] 为行数，a.shape[1] 为列数。三维数组可用 height, width, channels = a.shape 解包。轴从 0 编号。本例有 2 行、3 列，out 为第二行。"
+      ]
+    },
+    "code": {
+      "zinnia": "a = np.array([[2, 4, 6], [1, 3, 5]])\nrows, cols = a.shape\nrow_count = a.shape[0]\ncol_count = a.shape[1]\ncube = np.zeros((2, 3, 4), dtype=int)\nheight, width, channels = cube.shape\nout = a[1].copy()",
+      "rust": "let a = array![[2_i64, 4, 6], [1, 3, 5]];\nlet (rows, cols) = a.dim();\nlet row_count = a.shape()[0];\nlet col_count = a.ncols();\nlet cube = Array3::<i64>::zeros((2, 3, 4));\nlet (height, width, channels) = cube.dim();\nlet out = a.row(1).to_owned();"
+    },
+    "expected": [
+      1,
+      3,
+      5
+    ]
+  },
+  {
+    "id": "sum",
+    "title": [
+      "Sum reduction along an axis",
+      "沿轴求和归约"
+    ],
+    "description": {
+      "zinnia": [
+        "A reduction combines values along one axis and removes that axis. For [2,3], summing axis 0 produces [3] column totals; summing axis 1 produces [2] row totals. A sum over all elements produces a scalar.",
+        "归约会合并指定轴上的元素，并去掉该轴。对于 [2,3]，沿轴 0 求和得到 [3] 个列总和；沿轴 1 求和得到 [2] 个行总和。所有元素求和得到标量。"
+      ],
+      "rust": [
+        "A reduction combines values along one axis and removes that axis. For [2,3], summing axis 0 produces [3] column totals; summing axis 1 produces [2] row totals. A sum over all elements produces a scalar.",
+        "归约会合并指定轴上的元素，并去掉该轴。对于 [2,3]，沿轴 0 求和得到 [3] 个列总和；沿轴 1 求和得到 [2] 个行总和。所有元素求和得到标量。"
+      ]
+    },
+    "code": {
+      "zinnia": "a = np.array([[2, 4, 6], [1, 3, 5]])\nrow_totals = np.sum(a, axis=1)\ntotal = np.sum(a)\nout = np.sum(a, axis=0)",
+      "rust": "let a = array![[2_i64, 4, 6], [1, 3, 5]];\nlet row_totals = a.sum_axis(Axis(1));\nlet total = a.sum();\nlet out = a.sum_axis(Axis(0));"
+    },
+    "expected": [
+      3,
+      7,
+      11
+    ]
+  },
+  {
+    "id": "minmax",
+    "title": [
+      "Minimum and maximum reductions",
+      "最小值与最大值归约"
+    ],
+    "description": {
+      "zinnia": [
+        "Reduce axis 0 to find one minimum per column. Reduce axis 1 for one value per row. Minimum and maximum require nonempty inputs. The example produces [3] column minima.",
+        "沿轴 0 归约得到每列的最小值；沿轴 1 归约得到每行的值。最小值和最大值要求输入非空。本例得到形状 [3] 的列最小值。"
+      ],
+      "rust": [
+        "Reduce axis 0 to find one minimum per column. Reduce axis 1 for one value per row. Minimum and maximum require nonempty inputs. The example produces [3] column minima.",
+        "沿轴 0 归约得到每列的最小值；沿轴 1 归约得到每行的值。最小值和最大值要求输入非空。本例得到形状 [3] 的列最小值。"
+      ]
+    },
+    "code": {
+      "zinnia": "a = np.array([[2, 4, 6], [1, 3, 5]])\nrow_maxima = np.max(a, axis=1)\nout = np.min(a, axis=0)",
+      "rust": "let a = array![[2_i64, 4, 6], [1, 3, 5]];\nlet row_maxima = a.map_axis(Axis(1), |row| *row.iter().max().unwrap());\nlet out = a.map_axis(Axis(0), |col| *col.iter().min().unwrap());"
+    },
+    "expected": [
+      1,
+      3,
+      5
+    ]
+  },
+  {
+    "id": "aggregate",
+    "title": [
+      "Conditional aggregation and masks",
+      "条件聚合与掩码"
+    ],
+    "description": {
+      "zinnia": [
+        "To aggregate only selected values, test each value, replace excluded values with zero, and sum. This preserves a fixed shape and gives zero for an empty selection. The example sums values strictly greater than 3 in each row.",
+        "只聚合满足条件的元素时，可先判断，将不符合条件的元素置零，再求和。这样可以保持固定形状，没有符合条件的元素时结果为零。本例对每行严格大于 3 的值求和。"
+      ],
+      "rust": [
+        "To aggregate only selected values, test each value, replace excluded values with zero, and sum. This preserves a fixed shape and gives zero for an empty selection. The example sums values strictly greater than 3 in each row.",
+        "只聚合满足条件的元素时，可先判断，将不符合条件的元素置零，再求和。这样可以保持固定形状，没有符合条件的元素时结果为零。本例对每行严格大于 3 的值求和。"
+      ]
+    },
+    "code": {
+      "zinnia": "a = np.array([[2, 4, 6], [1, 3, 5]])\nselected = np.where(a > 3, a, 0)\nout = np.sum(selected, axis=1)",
+      "rust": "let a = array![[2_i64, 4, 6], [1, 3, 5]];\nlet selected = a.mapv(|v| if v > 3 { v } else { 0 });\nlet out = selected.sum_axis(Axis(1));"
+    },
+    "expected": [
+      10,
+      5
+    ]
+  },
+  {
+    "id": "slicing",
+    "title": [
+      "Slicing, steps, and copies",
+      "切片、步长与复制"
+    ],
+    "description": {
+      "rust": [
+        "Use a.slice(s![.., start..end;step]) to select a region. Stops are exclusive and must stay within the axis bounds. A step of 2 selects every other element. Slices are views; use .to_owned() for an independent copy. Check dimensions before slicing an interior region that could be empty. The example selects columns 0 and 2, copies them, changes one value, and sums each row.",
+        "用 a.slice(s![.., start..end;step]) 选择区域。终点不包含在内，且必须在轴边界内。步长 2 表示隔一个取一个。切片是视图，用 .to_owned() 独立复制。内部区域可能为空时，应先检查维度。本例选择第 0、2 列并复制，修改一个值后按行求和。"
+      ],
+      "zinnia": [
+        "Use a[:, start:end:step] to select a region. Stops are exclusive; a step of 2 selects every other element. Slice endpoints are clipped to array bounds. Slices may share storage; use .copy() when changes must not affect the source. The example selects columns 0 and 2, copies them, changes one value, and sums each row.",
+        "用 a[:, start:end:step] 选择区域，终点不包含在内。步长 2 表示隔一个取一个，超出数组范围的切片终点会被截断。切片可能共享存储；若修改不能影响源数组，请用 .copy()。本例选择第 0、2 列并复制，修改一个值后按行求和。"
+      ]
+    },
+    "code": {
+      "zinnia": "a = np.array([[2, 4, 6], [1, 3, 5]])\npart = a[:, 0:3:2].copy()\npart[0, 0] = 9\nout = np.sum(part, axis=1)",
+      "rust": "let a = array![[2_i64, 4, 6], [1, 3, 5]];\nlet mut part = a.slice(s![.., 0..3;2]).to_owned();\npart[[0, 0]] = 9;\nlet out = part.sum_axis(Axis(1));"
+    },
+    "expected": [
+      15,
+      6
+    ]
+  },
+  {
+    "id": "slice_assign",
+    "title": [
+      "Assign to a slice, row, or column",
+      "切片、行与列赋值"
+    ],
+    "description": {
+      "rust": [
+        "The destination must be mutable. Use a.slice_mut(s![rows,cols]).assign(&values) to write an array into a region. Slice stops are exclusive; match the source shape to the selected region. For one row use a.row_mut(i).assign(&row), and for a column use a.column_mut(j).assign(&col). Use .fill(value) on a mutable slice to fill it with a scalar. When reading and writing the same array, copy the source slice with .to_owned() first to avoid conflicting borrows. For synchronous updates, read from current and write to next.",
+        "目标数组必须可变。用 a.slice_mut(s![行,列]).assign(&values) 将数组写入区域。切片不包含终点，源数组形状应与选中区域一致。整行用 a.row_mut(i).assign(&row)，整列用 a.column_mut(j).assign(&col)。在可变切片上用 .fill(value) 填充标量。如果读取和写入同一个数组，先用 .to_owned() 复制源切片，避免借用冲突。同步更新时从 current 读取，写入 next。"
+      ],
+      "zinnia": [
+        "Use a[rows,cols] = values to assign into a slice of the original array. Slice stops are exclusive; match the source shape to the selected region. For a row use a[i,:] = row; for a column use a[:,j] = col. Assign a scalar to fill a slice, for example a[:,0] = 9. If the source and destination overlap, first copy the source slice with .copy(). For synchronous updates, read from current and write to next.",
+        "用 a[行,列] = values 对原数组的切片赋值。切片不包含终点，源数组形状应与选中区域一致。整行用 a[i,:] = row，整列用 a[:,j] = col。赋标量可填充切片，例如 a[:,0] = 9。源和目标重叠时，先用 .copy() 复制源切片。同步更新时从 current 读取，写入 next。"
+      ]
+    },
+    "code": {
+      "zinnia": "a = np.zeros((3,4), dtype=int)\nblock = np.array([[1,2],[3,4]])\na[0:2,1:3] = block\nrow = np.array([5,6,7,8])\na[2,:] = row\na[:,0] = 9\nsource = a[0,1:3].copy()\na[1,1:3] = source\nout = a.sum(axis=0)",
+      "rust": "let mut a = Array2::<i64>::zeros((3,4));\nlet block = array![[1_i64,2],[3,4]];\na.slice_mut(s![0..2,1..3]).assign(&block);\nlet row = array![5_i64,6,7,8];\na.row_mut(2).assign(&row);\na.column_mut(0).fill(9);\nlet source = a.slice(s![0,1..3]).to_owned();\na.slice_mut(s![1,1..3]).assign(&source);\nlet out = a.sum_axis(Axis(0));"
+    },
+    "expected": [
+      27,
+      8,
+      11,
+      8
+    ]
+  },
+  {
+    "id": "broadcast",
+    "title": [
+      "Broadcasting and elementwise arithmetic",
+      "广播与逐元素运算"
+    ],
+    "description": {
+      "zinnia": [
+        "Broadcasting aligns trailing dimensions: a vector [3] can be added to every row of a matrix [2,3]. Dimensions must match or be 1. Multiplication of arrays here is elementwise, not matrix multiplication.",
+        "广播从末尾维度对齐：[3] 的向量可加到 [2,3] 矩阵的每一行。对应维度必须相等或为 1。这里的数组乘法为逐元素乘法，不是矩阵乘法。"
+      ],
+      "rust": [
+        "Broadcasting aligns trailing dimensions: a vector [3] can be added to every row of a matrix [2,3]. Dimensions must match or be 1. Multiplication of arrays here is elementwise, not matrix multiplication.",
+        "广播从末尾维度对齐：[3] 的向量可加到 [2,3] 矩阵的每一行。对应维度必须相等或为 1。这里的数组乘法为逐元素乘法，不是矩阵乘法。"
+      ]
+    },
+    "code": {
+      "zinnia": "a = np.array([[2, 4, 6], [1, 3, 5]])\noffset = np.array([10, 20, 30])\nshifted = a + offset\nout = shifted[0].copy()",
+      "rust": "let a = array![[2_i64, 4, 6], [1, 3, 5]];\nlet offset = array![10_i64, 20, 30];\nlet shifted = &a + &offset;\nlet out = shifted.row(0).to_owned();"
+    },
+    "expected": [
+      12,
+      24,
+      36
+    ]
+  },
+  {
+    "id": "reshape",
+    "title": [
+      "Reshaping and grouping",
+      "重塑形状与分组"
+    ],
+    "description": {
+      "zinnia": [
+        "Reshape changes dimensions while preserving element order and total element count. Splitting an axis into a group index and an index within each group lets you reduce within groups. Here six values become three groups of two, then each group is summed.",
+        "重塑形状会改变维度，但保留元素顺序及总数量。把一个轴拆为组索引和组内索引后，可在组内归约。本例将六个值分为三组，每组两个，再分别求和。"
+      ],
+      "rust": [
+        "Reshape changes dimensions while preserving element order and total element count. Splitting an axis into a group index and an index within each group lets you reduce within groups. Here six values become three groups of two, then each group is summed.",
+        "重塑形状会改变维度，但保留元素顺序及总数量。把一个轴拆为组索引和组内索引后，可在组内归约。本例将六个值分为三组，每组两个，再分别求和。"
+      ]
+    },
+    "code": {
+      "zinnia": "a = np.array([2, 4, 6, 1, 3, 5])\ngroups = a.reshape((3, 2))\nout = np.sum(groups, axis=1)",
+      "rust": "let a = array![2_i64, 4, 6, 1, 3, 5];\nlet groups = a.into_shape_with_order((3, 2)).unwrap();\nlet out = groups.sum_axis(Axis(1));"
+    },
+    "expected": [
+      6,
+      7,
+      8
+    ]
+  },
+  {
+    "id": "updates",
+    "title": [
+      "Allocation, loops, and repeated updates",
+      "创建数组、循环与迭代更新"
+    ],
+    "description": {
+      "zinnia": [
+        "Create an output array with the required shape. For simultaneous updates, read only from the old array and write into a separate copy, then replace the old array after the round. This example increments just the interior positions twice and preserves both ends. Integer division rounds down for nonnegative values.",
+        "创建所需形状的输出数组。同步更新时，只读旧数组，将结果写入独立副本，一轮结束后再替换旧数组。本例只将内部位置加一，共两轮，保留两端。非负值的整数除法向下取整。"
+      ],
+      "rust": [
+        "Create an output array with the required shape. For simultaneous updates, read only from the old array and write into a separate copy, then replace the old array after the round. This example increments just the interior positions twice and preserves both ends. Integer division rounds down for nonnegative values.",
+        "创建所需形状的输出数组。同步更新时，只读旧数组，将结果写入独立副本，一轮结束后再替换旧数组。本例只将内部位置加一，共两轮，保留两端。非负值的整数除法向下取整。"
+      ]
+    },
+    "code": {
+      "zinnia": "a = np.array([2, 4, 6, 1])\ncurrent = a.copy()\nfor round_index in range(2):\n    next_values = current.copy()\n    for i in range(1, current.shape[0] - 1):\n        next_values[i] = current[i] + 1\n    current = next_values\nout = current",
+      "rust": "let a = array![2_i64, 4, 6, 1];\nlet mut current = a.clone();\nfor _ in 0..2 {\n    let mut next_values = current.clone();\n    for i in 1..current.len()-1 {\n        next_values[i] = current[i] + 1;\n    }\n    current = next_values;\n}\nlet out = current;"
+    },
+    "expected": [
+      2,
+      6,
+      8,
+      1
+    ]
+  },
+  {
+    "id": "allocate",
+    "title": [
+      "Creating arrays and assigning values",
+      "创建数组与赋值"
+    ],
+    "description": {
+      "rust": [
+        "Use Array1/Array2/Array3::<i64>::zeros to create zero-filled integer arrays, or ::from_elem(shape, value) to fill with a chosen value. The type number is the rank. For a vector pass its length; for a matrix use (rows, cols); for rank 3 use (height, width, channels). Shape values can come from input dimensions. Use a.clone() to independently copy an owned array. Use let mut for arrays you will modify. The example returns [0,0,7].",
+        "用 Array1/Array2/Array3::<i64>::zeros 创建全零整数数组，用 ::from_elem(shape, value) 填充指定值。类型中的数字为维数。一维传入长度，二维用 (rows, cols)，三维用 (height, width, channels)。形状可以使用输入的维度。拥有数据的数组用 a.clone() 独立复制；需要修改的数组用 let mut 声明。本例返回 [0,0,7]。"
+      ],
+      "zinnia": [
+        "Use np.zeros(shape, dtype=int) for zero-filled integer arrays, or np.full(shape, value, dtype=int) to fill with a chosen value. For a vector pass its length; for a matrix use (rows, cols); for rank 3 use (height, width, channels). Shape values can come from input dimensions. Use a.copy() for an independent copy. The example returns [0,0,7].",
+        "用 np.zeros(shape, dtype=int) 创建全零整数数组，用 np.full(shape, value, dtype=int) 填充指定值。一维传入长度，二维用 (rows, cols)，三维用 (height, width, channels)。形状可以使用输入的维度。用 a.copy() 独立复制。本例返回 [0,0,7]。"
+      ]
+    },
+    "code": {
+      "zinnia": "rows, cols = 2, 3\nvector = np.zeros(cols, dtype=int)\na = np.zeros((rows, cols), dtype=int)\ncube = np.zeros((rows, cols, 4), dtype=int)\nfilled = np.full((rows, cols), 5, dtype=int)\na[1, 2] = 7\ncopy = a.copy()\nout = copy.sum(axis=0)",
+      "rust": "let (rows, cols) = (2, 3);\nlet vector = Array1::<i64>::zeros(cols);\nlet mut a = Array2::<i64>::zeros((rows, cols));\nlet cube = Array3::<i64>::zeros((rows, cols, 4));\nlet filled = Array2::<i64>::from_elem((rows, cols), 5);\na[[1, 2]] = 7;\nlet copy = a.clone();\nlet out = copy.sum_axis(Axis(0));"
+    },
+    "expected": [
+      0,
+      0,
+      7
+    ]
+  },
+  {
+    "id": "clamp",
+    "title": [
+      "Elementwise bounds and clamping",
+      "逐元素上下界与截断"
+    ],
+    "description": {
+      "zinnia": [
+        "Clamping to [low,high] means replacing values below low with low and values above high with high; values already inside the interval stay unchanged. For [0,255], replace negative values with 0 and values greater than 255 with 255. This is elementwise and preserves shape. The example uses [0,10].",
+        "限制到 [low,high] 的意思是：小于 low 的值改为 low，大于 high 的值改为 high，范围内的值保持不变。例如限制到 [0,255]：小于 0 的改为 0，大于 255 的改为 255。对每个元素分别处理，数组形状不变。本例使用 [0,10]。"
+      ],
+      "rust": [
+        "Clamping to [low,high] means replacing values below low with low and values above high with high; values already inside the interval stay unchanged. For [0,255], replace negative values with 0 and values greater than 255 with 255. This is elementwise and preserves shape. The example uses [0,10].",
+        "限制到 [low,high] 的意思是：小于 low 的值改为 low，大于 high 的值改为 high，范围内的值保持不变。例如限制到 [0,255]：小于 0 的改为 0，大于 255 的改为 255。对每个元素分别处理，数组形状不变。本例使用 [0,10]。"
+      ]
+    },
+    "code": {
+      "zinnia": "a = np.array([-4, 2, 8])\nscaled = a * 3\nout = np.clip(scaled, 0, 10)",
+      "rust": "let a = array![-4_i64, 2, 8];\nlet out = a.mapv(|v| (v * 3).clamp(0, 10));"
+    },
+    "expected": [
+      0,
+      6,
+      10
+    ]
+  },
+  {
+    "id": "expand",
+    "title": [
+      "Adding axes for broadcasting",
+      "添加维度进行广播"
+    ],
+    "description": {
+      "zinnia": [
+        "Insert a length-one axis to align different dimensions. Here [2,3] becomes [2,1,3], and [2,3] becomes [1,2,3]. Adding broadcasts to [2,2,3]; reducing the last axis produces [2,2]. The example returns the first row, shape [2].",
+        "插入长度为 1 的轴以对齐不同维度。本例将 [2,3] 分别变成 [2,1,3] 和 [1,2,3]，相加广播为 [2,2,3]，沿最后一个轴求和得到 [2,2]。最后返回第一行，形状为 [2]。"
+      ],
+      "rust": [
+        "Insert a length-one axis to align different dimensions. Here [2,3] becomes [2,1,3], and [2,3] becomes [1,2,3]. Adding broadcasts to [2,2,3]; reducing the last axis produces [2,2]. The example returns the first row, shape [2].",
+        "插入长度为 1 的轴以对齐不同维度。本例将 [2,3] 分别变成 [2,1,3] 和 [1,2,3]，相加广播为 [2,2,3]，沿最后一个轴求和得到 [2,2]。最后返回第一行，形状为 [2]。"
+      ]
+    },
+    "code": {
+      "zinnia": "a = np.array([[1, 2, 3], [4, 5, 6]])\nb = np.array([[10, 20, 30], [1, 1, 1]])\ncombined = a[:, None, :] + b[None, :, :]\ntotals = np.sum(combined, axis=2)\nout = totals[0].copy()",
+      "rust": "let a = array![[1_i64, 2, 3], [4, 5, 6]];\nlet b = array![[10_i64, 20, 30], [1, 1, 1]];\nlet left = a.view().insert_axis(Axis(1));\nlet right = b.view().insert_axis(Axis(0));\nlet combined = &left + &right;\nlet totals = combined.sum_axis(Axis(2));\nlet out = totals.row(0).to_owned();"
+    },
+    "expected": [
+      66,
+      9
+    ]
+  },
+  {
+    "id": "matmul",
+    "title": [
+      "Matrix products and channel contraction",
+      "矩阵乘积与通道收缩"
+    ],
+    "description": {
+      "rust": [
+        "Use a.dot(&w) for matrix multiplication. If a has shape [rows,channels] and w has shape [channels,outputs], the result has shape [rows,outputs]. Products are summed over the shared channel axis. The * operator instead multiplies elementwise. The example flattens the result for display.",
+        "用 a.dot(&w) 做矩阵乘法。a 为 [rows,channels]、w 为 [channels,outputs] 时，结果为 [rows,outputs]，沿共同的通道轴累加乘积。* 运算符则表示逐元素相乘。本例将结果展平成一维展示。"
+      ],
+      "zinnia": [
+        "Use a @ w or np.matmul(a,w) for matrix multiplication. If a has shape [rows,channels] and w has shape [channels,outputs], the result has shape [rows,outputs]. Products are summed over the shared channel axis. The * operator instead multiplies elementwise. The example flattens the result for display.",
+        "用 a @ w 或 np.matmul(a,w) 做矩阵乘法。a 为 [rows,channels]、w 为 [channels,outputs] 时，结果为 [rows,outputs]，沿共同的通道轴累加乘积。* 运算符则表示逐元素相乘。本例将结果展平成一维展示。"
+      ]
+    },
+    "code": {
+      "zinnia": "a = np.array([[1,2],[3,4]])\nw = np.array([[2,0],[1,3]])\nproduct = a @ w\nout = product.reshape(-1)",
+      "rust": "let a = array![[1_i64,2],[3,4]];\nlet w = array![[2_i64,0],[1,3]];\nlet product = a.dot(&w);\nlet out = Array1::from_iter(product.iter().copied());"
+    },
+    "expected": [
+      4,
+      6,
+      10,
+      12
+    ]
+  },
+  {
+    "id": "transpose",
+    "title": [
+      "Transpose matrices and reorder axes",
+      "矩阵转置与轴顺序调整"
+    ],
+    "description": {
+      "rust": [
+        "Use a.t() to transpose a matrix from [rows,cols] to [cols,rows]: result[j,i] = a[i,j]. For rank 3, a.view().permuted_axes([0,2,1]) changes [B,T,C] to [B,C,T]; the list gives the old axes in their new order. Transpose returns a borrowed view; .to_owned() makes an owned result. Before reshaping a transposed view, use .as_standard_layout().to_owned() for contiguous row-major storage. Transpose does not reshape a 1D vector into a column; use insert_axis for that.",
+        "用 a.t() 将矩阵从 [rows,cols] 转置为 [cols,rows]，即 result[j,i] = a[i,j]。三维数组用 a.view().permuted_axes([0,2,1]) 将 [B,T,C] 改为 [B,C,T]，列表按新顺序列出原轴编号。转置返回借用视图，.to_owned() 得到拥有数据的数组。转置后需要 reshape 时，先用 .as_standard_layout().to_owned() 确保按行连续存储。一维向量转置不会变成列向量，应使用 insert_axis。"
+      ],
+      "zinnia": [
+        "Use a.T to transpose a matrix from [rows,cols] to [cols,rows]: result[j,i] = a[i,j]. For rank 3, a.transpose(0,2,1) changes [B,T,C] to [B,C,T]; the list gives the old axes in their new order. Transpose changes axis order, while reshape changes the grouping of elements. Transposing a 1D vector leaves its shape unchanged; use a[:,None] to make a column. The example transposes a matrix and lists its values in row order.",
+        "用 a.T 将矩阵从 [rows,cols] 转置为 [cols,rows]，即 result[j,i] = a[i,j]。三维数组用 a.transpose(0,2,1) 将 [B,T,C] 改为 [B,C,T]，参数按新顺序列出原轴编号。转置改变轴顺序，reshape 改变元素分组。一维向量转置不改变形状，用 a[:,None] 可变为列向量。本例将矩阵转置后按行列出元素。"
+      ]
+    },
+    "code": {
+      "zinnia": "a = np.array([[1,2,3],[4,5,6]])\ntransposed = a.T\n# transposed has shape [3,2]\ncube = np.zeros((2,3,4), dtype=int)\nreordered = cube.transpose(0,2,1)\n# reordered has shape [2,4,3]\nout = transposed.reshape(-1)",
+      "rust": "let a = array![[1_i64,2,3],[4,5,6]];\nlet transposed = a.t();\n// transposed has shape [3,2]\nlet owned = transposed.to_owned();\nlet cube = Array3::<i64>::zeros((2,3,4));\nlet reordered = cube.view().permuted_axes([0,2,1]);\n// reordered has shape [2,4,3]\nlet out = Array1::from_iter(transposed.iter().copied());"
+    },
+    "expected": [
+      1,
+      4,
+      2,
+      5,
+      3,
+      6
+    ]
+  },
+  {
+    "id": "batches",
+    "title": [
+      "Batch dimensions and array sizes",
+      "批次维度与数组大小"
+    ],
+    "description": {
+      "rust": [
+        "For [B,T,C], reducing axis 1 keeps batches and channels separate. dot accepts matrices or vectors: extract each batch with index_axis(Axis(0), b), then use dot on that matrix. len() counts every element; use shape()[axis] for a dimension or nrows()/ncols() on a matrix.",
+        "对于 [B,T,C]，沿轴 1 归约可保留批次与通道。dot 接受矩阵或向量：用 index_axis(Axis(0), b) 提取每批矩阵，再使用 dot。len() 统计全部元素，读取维度应使用 shape()[axis]，矩阵也可用 nrows()/ncols()。"
+      ],
+      "zinnia": [
+        "For [B,T,C], reducing axis 1 keeps batches and channels separate. np.matmul or @ broadcasts the leading batch axes and multiplies matrices over their final two axes. Read a dimension with shape[axis].",
+        "对于 [B,T,C]，沿轴 1 归约可保留批次与通道。np.matmul 或 @ 广播前面的批次轴，并沿最后两个轴做矩阵乘法。用 shape[axis] 读取指定维度。"
+      ]
+    },
+    "code": {
+      "zinnia": "a = np.array([[[1,2],[3,4]],[[5,6],[7,8]]])\nout = a.sum(axis=1).reshape(-1)",
+      "rust": "let a = Array3::from_shape_vec((2,2,2), vec![1_i64,2,3,4,5,6,7,8]).unwrap();\nlet summed = a.sum_axis(Axis(1));\nlet out = Array1::from_iter(summed.iter().copied());"
+    },
+    "expected": [
+      4,
+      6,
+      12,
+      14
+    ]
+  },
+  {
+    "id": "windows",
+    "title": [
+      "Sliding windows and output steps",
+      "滑动窗口与输出步长"
+    ],
+    "description": {
+      "zinnia": [
+        "A sliding window groups neighboring values. Choose the window extent, the step between output positions, and sampling inside each window separately. This example sums length-3 windows whose starts are two elements apart.",
+        "滑动窗口把相邻值分组。分别确定窗口覆盖范围、输出位置之间的步长，以及窗口内部的采样间隔。本例对长度为 3、起点相隔两个元素的窗口求和。"
+      ],
+      "rust": [
+        "A sliding window groups neighboring values. Choose the window extent, the step between output positions, and sampling inside each window separately. This example sums length-3 windows whose starts are two elements apart.",
+        "滑动窗口把相邻值分组。分别确定窗口覆盖范围、输出位置之间的步长，以及窗口内部的采样间隔。本例对长度为 3、起点相隔两个元素的窗口求和。"
+      ]
+    },
+    "code": {
+      "zinnia": "a = np.array([1,2,3,4,5,6])\nwindows = np.lib.stride_tricks.sliding_window_view(a,3)\nout = windows[::2].sum(axis=1)",
+      "rust": "let a = array![1_i64,2,3,4,5,6];\nlet out = Array1::from_iter(a.windows(3).into_iter().step_by(2).map(|window| window.sum()));"
+    },
+    "expected": [
+      6,
+      12
+    ]
+  }
+]

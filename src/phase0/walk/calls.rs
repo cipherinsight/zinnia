@@ -39,6 +39,14 @@ pub(crate) struct Args {
     pub kw: BTreeMap<String, Desc>,
     keys: Vec<Option<ValueKey>>,
     kw_keys: BTreeMap<String, Option<ValueKey>>,
+    /// The text of every argument the source wrote as a string literal, by
+    /// keyword name and by position.
+    ///
+    /// A string carries no term and no shape (§3.2), so its descriptor is the
+    /// opaque `String` scalar and the text is lost there. One operator needs
+    /// it: `np.unravel_index` / `np.ravel_multi_index` compute a coordinate
+    /// from the flat index, and `order=` says in which direction (§5.4).
+    strings: BTreeMap<String, String>,
 }
 
 impl Args {
@@ -56,7 +64,17 @@ impl Args {
             kw: values,
             keys,
             kw_keys,
+            strings: BTreeMap::new(),
         }
+    }
+
+    /// The text of the argument at `index`, or of the keyword spelled
+    /// `name`, when the source wrote it as a string literal.
+    pub(crate) fn string(&self, index: usize, name: &str) -> Option<&str> {
+        self.strings
+            .get(&index.to_string())
+            .or_else(|| self.strings.get(name))
+            .map(String::as_str)
     }
 
     /// Put the receiver of a method call in front, keeping the keys in step
@@ -64,6 +82,16 @@ impl Args {
     fn with_receiver(&mut self, receiver: Desc, key: Option<ValueKey>) {
         self.pos.insert(0, receiver);
         self.keys.insert(0, key);
+        // The positional string literals are numbered by position, so they
+        // shift with it.
+        self.strings = self
+            .strings
+            .iter()
+            .map(|(at, text)| match at.parse::<usize>() {
+                Ok(index) => ((index + 1).to_string(), text.clone()),
+                Err(_) => (at.clone(), text.clone()),
+            })
+            .collect();
     }
 
     /// The keys of every argument that has one, in evaluation order: the
@@ -78,8 +106,9 @@ impl Args {
     }
 
     /// The key of the argument at `index`, or of the keyword spelled `name`:
-    /// the value a chip parameter is bound to.
-    fn key(&self, index: usize, name: &str) -> Option<ValueKey> {
+    /// the value a chip parameter is bound to, and the value a mask's count
+    /// is keyed by (§5.5).
+    pub(crate) fn key(&self, index: usize, name: &str) -> Option<ValueKey> {
         match self.keys.get(index) {
             Some(key) => key.clone(),
             None => self.kw_keys.get(name).cloned().flatten(),
@@ -203,6 +232,14 @@ impl Walker<'_> {
         if let Some(Class::ListMethod(method)) = ops::method(member) {
             return self.list_method(target, receiver, receiver_key, method, args, key);
         }
+        // The receiver is a name, not an expression the walker evaluated, so
+        // nothing has pushed it into this value's frame. It is the value the
+        // method reads, and without this the rule's operand list is empty and
+        // phase 1 cannot find the array a reduction ran over
+        // (`../../../phase1/rules/README.md` §10 item 10).
+        if let Some(receiver_key) = &receiver_key {
+            self.an.operand(receiver_key);
+        }
         args.with_receiver(receiver, receiver_key);
         self.dispatch(ops::method(member), args, key, member, target)
     }
@@ -230,6 +267,7 @@ impl Walker<'_> {
         kwargs: &std::collections::HashMap<String, ASTNode>,
     ) -> Result<Args, Reject> {
         let mut pos = Vec::with_capacity(args.len());
+        let mut strings = BTreeMap::new();
         for arg in args {
             match arg {
                 ASTNode::ASTStarredExpr(starred) => {
@@ -237,6 +275,9 @@ impl Walker<'_> {
                     self.spread(&inner, Some(&source), &mut pos)?;
                 }
                 other => {
+                    if let ASTNode::ASTConstantString(text) = other {
+                        strings.insert(pos.len().to_string(), text.value.clone());
+                    }
                     let (desc, key) = self.expr_keyed(other)?;
                     pos.push(Element::new(desc, Some(key)));
                 }
@@ -246,10 +287,15 @@ impl Walker<'_> {
         names.sort();
         let mut kw = BTreeMap::new();
         for name in names {
+            if let ASTNode::ASTConstantString(text) = &kwargs[name] {
+                strings.insert(name.clone(), text.value.clone());
+            }
             let (desc, key) = self.expr_keyed(&kwargs[name])?;
             kw.insert(name.clone(), Element::new(desc, Some(key)));
         }
-        Ok(Args::new(pos, kw))
+        let mut built = Args::new(pos, kw);
+        built.strings = strings;
+        Ok(built)
     }
 
     // ── `S-Call`: chip inlining (§5.10) ───────────────────────────────

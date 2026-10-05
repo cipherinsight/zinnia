@@ -13,10 +13,12 @@
 //! `lo hi step d start stop len` as CPython's `slice.indices` and
 //! `len(range(...))` report it, with `*` for an omitted bound.
 
+mod coverage_e;
 mod defects;
 mod examples;
 mod fixtures;
 mod invariants;
+mod steps;
 mod walk;
 
 use super::desc::{ArrayDesc, Desc, Dtype, Origin, PathStep, ScalarDesc, ScalarTerm, ValueKey};
@@ -79,6 +81,7 @@ impl Fixture {
             iters: vec![],
             calls: vec![],
             expr_index: 0,
+            step: 0,
         };
         self.analysis.open_value(&key);
     }
@@ -91,6 +94,7 @@ impl Fixture {
             iters: vec![],
             calls: vec![],
             expr_index: self.next_expr,
+            step: 0,
         }
     }
 
@@ -645,6 +649,43 @@ fn e_slice_uses_the_same_formula() {
     assert!(f.checks().is_empty(), "a slice cannot fail");
 }
 
+/// The rule itself over the same table, on an extent that is a variable.
+///
+/// The three tests above check the two formulas and their constant forms;
+/// this one checks `E-Slice` end to end, so that the rule's own choice of
+/// default endpoints — `d - 1` and `-d-1` for a negative step — is pinned to
+/// CPython rather than transcribed a second time. A negative step is where
+/// §5.4's clamp bounds differ from the positive ones, and `d = 0` is where
+/// the two meet.
+#[test]
+fn e_slice_matches_python_on_every_row_of_the_table() {
+    let mut f = Fixture::new();
+    let a = f.symbolic_input(Dtype::I64, "d", 8);
+    let var = f
+        .analysis
+        .terms
+        .var_of(a.dims[0])
+        .expect("a symbolic input's extent is a variable");
+    for case in slice_cases() {
+        let lo = case.lo.map(|n| f.literal(n));
+        let hi = case.hi.map(|n| f.literal(n));
+        let sliced = e_slice(&mut f.ctx(), &a, 0, lo.as_ref(), hi.as_ref(), case.step)
+            .expect("a constant step is in scope");
+        let len = f.array_of(&sliced).dims[0];
+        let mut theta = Assignment::default();
+        theta.set_int(var, case.d as i128);
+        assert_eq!(
+            f.analysis.terms.eval(len, &theta),
+            Ok(case.len as i128),
+            "len of [{:?}:{:?}:{}] on d={}",
+            case.lo,
+            case.hi,
+            case.step,
+            case.d
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Broadcasting (§5.3)
 // ---------------------------------------------------------------------------
@@ -804,17 +845,12 @@ fn export_carries_the_documented_schema() {
         json["descriptors"][1]["producer"]["operands"][0],
         mask_key.encode()
     );
-    // Every check names the value whose operation it belongs to.
-    let checks = json["constraints"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|c| c["kind"] == "check")
-        .count();
-    assert!(json["obligations"].as_array().unwrap().len() >= checks);
-    // A subject is the canonical key string too.
-    for obligation in json["obligations"].as_array().unwrap() {
-        assert!(obligation["subject"].is_string(), "{:?}", obligation);
+    // Every check names the value whose operation it belongs to, and a
+    // subject is the canonical key string too.
+    for constraint in json["constraints"].as_array().unwrap() {
+        if constraint["kind"] == "check" {
+            assert!(constraint["subject"].is_string(), "{:?}", constraint);
+        }
     }
     assert_eq!(json["delivery"].as_array().unwrap().len(), 1);
     assert_eq!(json["variables"][0]["name"], "c");

@@ -163,6 +163,60 @@ pub enum IntNode {
     Opaque,
 }
 
+/// One node of the arena, whichever sort it has, with its children as raw
+/// arena indices.
+///
+/// [`IntNode`] is the integer half, shaped for interval evaluation. Phase 1
+/// needs the whole DAG — it builds one Z3 expression per node
+/// (`revision/phase1/README.md` §4) and compiles Boolean terms to wires — so
+/// it gets this view instead. Children are raw indices because a consumer
+/// that memoises per node indexes by them; [`TermId::index`] and
+/// [`BoolId::index`] are the same numbering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeView {
+    Const(i128),
+    Var(VarId),
+    Add(u32, u32),
+    Sub(u32, u32),
+    /// `k * t`, `k` a constant.
+    Mul(i128, u32),
+    /// `t div k`, floor semantics.
+    Div(u32, i128),
+    /// `t mod k`, floor semantics.
+    Mod(u32, i128),
+    Min(u32, u32),
+    Max(u32, u32),
+    /// `ite(c, a, b)`, the condition first.
+    Ite(u32, u32, u32),
+    True,
+    False,
+    BVar(VarId),
+    Eq(u32, u32),
+    Lt(u32, u32),
+    Le(u32, u32),
+    Not(u32),
+    And(u32, u32),
+    Or(u32, u32),
+}
+
+impl NodeView {
+    /// Whether the node is Boolean-sorted.
+    pub fn is_bool(self) -> bool {
+        matches!(
+            self,
+            NodeView::True
+                | NodeView::False
+                | NodeView::BVar(_)
+                | NodeView::Eq(..)
+                | NodeView::Lt(..)
+                | NodeView::Le(..)
+                | NodeView::Not(_)
+                | NodeView::And(..)
+                | NodeView::Or(..)
+        )
+    }
+}
+
 /// `2^63`, the offset of [`TermArena::wrap64`] (`definition.md` §3.2).
 const TWO_POW_63: i128 = 1 << 63;
 /// `2^64`, the modulus of [`TermArena::wrap64`].
@@ -192,6 +246,14 @@ pub fn floor_mod(a: i128, b: i128) -> i128 {
 /// because every printer (pretty, SMT-LIB, JSON) needs names and sorts.
 /// `Phi` holds the range and provenance of the same `VarId`s and keeps its
 /// own vector in step with this one.
+///
+/// `Clone` because phase 1 works on an arena of its own that starts as a
+/// copy of this one and grows with the terms phase 1 builds over the same
+/// variables (`revision/phase1/README.md` §1.1). Cloning copies the node
+/// vector and the hash-cons table, so the ids phase 0 handed out keep their
+/// meaning in the copy and a node phase 1 interns lands above phase 0's
+/// `node_count()`.
+#[derive(Clone)]
 pub struct TermArena {
     nodes: Vec<Node>,
     memo: HashMap<Node, u32>,
@@ -295,6 +357,54 @@ impl TermArena {
             // what the two id newtypes keep apart. `Opaque` rather than a
             // panic, and the evaluator reads it as "no information".
             _ => IntNode::Opaque,
+        }
+    }
+
+    /// The node at arena index `index`, whichever sort it has.
+    ///
+    /// The read-only view phase 1 walks the DAG with: it builds a Z3
+    /// expression per node and compiles a term to wires node by node
+    /// (`revision/phase1/rules/scalar_control/term_to_wires.md`), and both
+    /// need the Boolean half that [`TermArena::int_node`] does not show.
+    pub fn node_at(&self, index: usize) -> NodeView {
+        match self.nodes[index] {
+            Node::Const(n) => NodeView::Const(n),
+            Node::Var(v) => NodeView::Var(v),
+            Node::Add(a, b) => NodeView::Add(a.0, b.0),
+            Node::Sub(a, b) => NodeView::Sub(a.0, b.0),
+            Node::Mul(k, t) => NodeView::Mul(k, t.0),
+            Node::Div(t, k) => NodeView::Div(t.0, k),
+            Node::Mod(t, k) => NodeView::Mod(t.0, k),
+            Node::Min(a, b) => NodeView::Min(a.0, b.0),
+            Node::Max(a, b) => NodeView::Max(a.0, b.0),
+            Node::Ite(c, a, b) => NodeView::Ite(c.0, a.0, b.0),
+            Node::True => NodeView::True,
+            Node::False => NodeView::False,
+            Node::BVar(v) => NodeView::BVar(v),
+            Node::Eq(a, b) => NodeView::Eq(a.0, b.0),
+            Node::Lt(a, b) => NodeView::Lt(a.0, b.0),
+            Node::Le(a, b) => NodeView::Le(a.0, b.0),
+            Node::Not(b) => NodeView::Not(b.0),
+            Node::And(a, b) => NodeView::And(a.0, b.0),
+            Node::Or(a, b) => NodeView::Or(a.0, b.0),
+        }
+    }
+
+    /// The integer-sorted term at arena index `index`, when the node is one.
+    pub fn int_at(&self, index: u32) -> Option<TermId> {
+        if self.node_at(index as usize).is_bool() {
+            None
+        } else {
+            Some(TermId(index))
+        }
+    }
+
+    /// The Boolean-sorted term at arena index `index`, when the node is one.
+    pub fn bool_at(&self, index: u32) -> Option<BoolId> {
+        if self.node_at(index as usize).is_bool() {
+            Some(BoolId(index))
+        } else {
+            None
         }
     }
 

@@ -1,6 +1,6 @@
 //! The rule names phase 0 records, as a closed set.
 //!
-//! Every constraint, obligation and fact of $\Phi$ carries the name of the
+//! Every constraint and fact of $\Phi$ carries the name of the
 //! rule that produced it ([`crate::phase0::phi::Constraint::provenance`]), and
 //! that name is what makes the exported record diffable against the
 //! specification. A free string cannot be diffed — it can name a rule that

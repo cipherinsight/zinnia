@@ -5,11 +5,28 @@ use super::IRGenerator;
 impl IRGenerator {
     pub(crate) fn list_method_append(&mut self, var: &str, args: &[Value]) -> Value {
         if let Some(new_elem) = args.first() {
-            if let Some(Value::List(mut data)) = self.ctx.get(var) {
-                data.elements_type.push(new_elem.zinnia_type());
-                data.values.push(new_elem.clone());
-                self.ctx.set(var, Value::List(data));
-            }
+            let old = self.ctx.get(var).expect("append: missing list");
+            let updated = match &old {
+                Value::List(data) => {
+                    let mut data = data.clone();
+                    data.elements_type.push(new_elem.zinnia_type());
+                    data.values.push(new_elem.clone());
+                    Value::List(data)
+                }
+                Value::DynamicNDArray(data) => {
+                    assert_eq!(data.envelope.dims.len(), 1, "append: dynamic list must have rank one");
+                    let tail = Value::List(CompositeData::new(vec![new_elem.zinnia_type()], vec![new_elem.clone()]));
+                    let tail = crate::helpers::promote::promote_static_to_dynamic(&mut self.builder, &tail);
+                    let arrays = Value::Tuple(CompositeData::new(vec![old.zinnia_type(), tail.zinnia_type()], vec![old.clone(), tail]));
+                    crate::ops::dyn_ndarray::memory_ops::dyn_concatenate(&mut self.builder, &[arrays], &std::collections::HashMap::new())
+                }
+                _ => panic!("append: expected a list"),
+            };
+            let merged = if self.ctx.has_nontrivial_condition() {
+                let cond = self.ctx.get_condition_value(&mut self.builder);
+                crate::helpers::value_ops::select_value(&mut self.builder, &cond, &updated, &old)
+            } else { updated };
+            self.ctx.set(var, merged);
         }
         Value::None
     }

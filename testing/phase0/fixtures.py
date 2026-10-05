@@ -56,6 +56,7 @@ class Arena:
                 "hi": self.const(hi),
                 "hi_pretty": str(hi),
                 "origin": {"kind": "input_length"},
+                "element_path": [],
             }
         )
         return node
@@ -69,7 +70,7 @@ class Arena:
     def record(self, **overrides: Any) -> dict[str, Any]:
         """A phase 0 record carrying this arena, with empty defaults."""
         payload = {
-            "schema": "zinnia.phase0/2",
+            "schema": "zinnia.phase0/6",
             "config": {"loop_limit": 1000, "recursion_limit": 16,
                        "work_budget": 4_000_000},
             "terms": {"vars": self.vars, "nodes": self.nodes},
@@ -78,7 +79,6 @@ class Arena:
             "products": [],
             "descriptors": [],
             "delivery": [],
-            "obligations": [],
             "smtlib": "",
         }
         payload.update(overrides)
@@ -92,8 +92,10 @@ def array_descriptor(name: str, dims: list[int], psi: int) -> dict[str, Any]:
     entry stands on its own (`implementation.md` §5a).
     """
     return {
-        "key": {"key": name, "stmt_path": [0], "iters": [], "calls": [], "expr_index": 0},
+        "key": {"key": name, "stmt_path": [0], "iters": [], "calls": [],
+                "expr_index": 0, "step": 0},
         "name": name,
+        "checks": 0,
         "producer": {"kind": "input", "alias": None, "rules": None,
                      "operands": None, "condition": None},
         "desc": {

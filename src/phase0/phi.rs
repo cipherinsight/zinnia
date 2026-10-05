@@ -4,8 +4,7 @@
 //! and its provenance, plus every constraint: range constraints, the checks
 //! $\varphi \Rightarrow \mathrm{defcond}$ of §2, the declared facts read off
 //! `scalar_requires`, and the product facts of §3.4. It also carries the
-//! `Count` memo of §5.5 and the obligations of `implementation.md` §4, which
-//! phase 0 records and does not answer.
+//! `Count` memo of §5.5.
 //!
 //! # Invariants
 //!
@@ -16,7 +15,9 @@
 //! - $\Phi$ only grows (§2, the table of the abstract state).
 //! - `Count` is keyed by the value key of the mask and returns the same
 //!   variable for the same mask (§5.5). That is how $\Phi$ remembers that one
-//!   mask was used twice.
+//!   mask was used twice: the caller resolves the value a use names
+//!   ([`crate::phase0::Analysis::defining_key`]) before asking for the count,
+//!   so `x[m]` and `y[m]` share one variable.
 
 use std::collections::{HashMap, HashSet};
 
@@ -28,7 +29,9 @@ use crate::phase0::term::{BoolId, Sort, TermArena, TermId, VarId};
 pub enum VarOrigin {
     /// $n_x$: the logical length of a variable-length input axis (§5.1).
     InputLength { input: String, axis: usize },
-    /// $c$: the count of one mask used as a selector (§5.5).
+    /// $c$: the count of one mask used as a selector (§5.5), keyed by the
+    /// value the mask names — `E-Comp`'s count is keyed by the comprehension
+    /// itself (§5.11), whose value is the elements it kept.
     Count { mask: ValueKey },
     /// A data integer scalar (§3.2).
     DataScalar { value: ValueKey },
@@ -96,6 +99,12 @@ pub struct VarInfo {
     /// Inclusive upper bound, when the variable has one.
     pub hi: Option<TermId>,
     pub origin: VarOrigin,
+    /// Where inside the value its origin names the variable was introduced:
+    /// the index sequence from that value's descriptor down to the element
+    /// that introduced it (§3.4). Empty for a scalar value, which is its own
+    /// element; `[1]` for the second element of a merged composite, whose
+    /// elements $\Delta$ does not key separately (§3.3).
+    pub element_path: Vec<usize>,
 }
 
 /// Why a constraint is in $\Phi$.
@@ -140,48 +149,6 @@ pub struct ProductFact {
     pub provenance: String,
 }
 
-/// The kinds of question phase 1 answers (`definition.md` §1, "decided here
-/// versus deferred"). MAX and MIN are asked by phase 1 itself and are not
-/// recorded here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ObligationKind {
-    /// "Is this term constant?"
-    Const,
-    /// "Does $\Phi$ entail this premise?"
-    Prove,
-    /// "Can this condition be false?"
-    CanFail,
-}
-
-impl ObligationKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ObligationKind::Const => "CONST",
-            ObligationKind::Prove => "PROVE",
-            ObligationKind::CanFail => "CANFAIL",
-        }
-    }
-}
-
-/// The subject of an obligation: an integer term for CONST, a Boolean
-/// formula for PROVE and CANFAIL.
-#[derive(Debug, Clone, Copy)]
-pub enum ObligationTerm {
-    Int(TermId),
-    Bool(BoolId),
-}
-
-/// A question phase 0 records and phase 1 answers (`implementation.md` §4).
-#[derive(Debug, Clone)]
-pub struct Obligation {
-    pub kind: ObligationKind,
-    pub term: ObligationTerm,
-    pub path: BoolId,
-    /// The value whose operation asks the question (`implementation.md` §5a).
-    pub subject: ValueKey,
-    pub provenance: String,
-}
-
 /// The relation system.
 #[derive(Debug, Default)]
 pub struct Phi {
@@ -193,9 +160,11 @@ pub struct Phi {
     /// naive scan quadratic.
     next_suffix: HashMap<String, u32>,
     constraints: Vec<Constraint>,
+    /// How many of `constraints` are checks, which is the watermark every
+    /// entry of $\Delta$ records (`implementation.md` §5a).
+    checks: u32,
     counts: HashMap<ValueKey, VarId>,
     products: Vec<ProductFact>,
-    obligations: Vec<Obligation>,
 }
 
 impl Phi {
@@ -211,12 +180,14 @@ impl Phi {
         &self.constraints
     }
 
-    pub fn products(&self) -> &[ProductFact] {
-        &self.products
+    /// How many checks $\Phi$ holds: the watermark an entry of $\Delta$
+    /// recorded now would carry (`implementation.md` §5a).
+    pub fn check_count(&self) -> u32 {
+        self.checks
     }
 
-    pub fn obligations(&self) -> &[Obligation] {
-        &self.obligations
+    pub fn products(&self) -> &[ProductFact] {
+        &self.products
     }
 
     pub fn var_info(&self, v: VarId) -> &VarInfo {
@@ -240,9 +211,17 @@ impl Phi {
         let name = self.unique_name(base);
         let id = terms.declare_var(name.clone(), sort);
         debug_assert_eq!(id.0 as usize, self.vars.len(), "Phi and the arena agree");
-        self.vars.push(VarInfo { lo, hi, origin });
+        self.vars.push(VarInfo { lo, hi, origin, element_path: Vec::new() });
         self.add_range_constraint(terms, id, sort, lo, hi, &name);
         id
+    }
+
+    /// Record where inside its origin value a variable was introduced
+    /// (§3.4). The path is empty for every variable but the ones a composite
+    /// merge builds element by element, so the caller sets it right after
+    /// [`Phi::fresh_var`] rather than passing it to every introduction site.
+    pub fn set_element_path(&mut self, v: VarId, path: Vec<usize>) {
+        self.vars[v.0 as usize].element_path = path;
     }
 
     fn unique_name(&mut self, base: &str) -> String {
@@ -317,8 +296,7 @@ impl Phi {
         v
     }
 
-    /// Record `path ⇒ defcond` (§2, the "effect" line of §4's rule format)
-    /// and the CANFAIL obligation that goes with it.
+    /// Record `path ⇒ defcond` (§2, the "effect" line of §4's rule format).
     ///
     /// A trivially true `defcond` adds nothing: the guard of §2 already makes
     /// a check inside an untaken branch vacuous, and a check that folded to
@@ -347,13 +325,7 @@ impl Phi {
             },
             provenance: provenance.to_string(),
         });
-        self.obligations.push(Obligation {
-            kind: ObligationKind::CanFail,
-            term: ObligationTerm::Bool(defcond),
-            path,
-            subject: subject.clone(),
-            provenance: provenance.to_string(),
-        });
+        self.checks += 1;
     }
 
     /// Assert a fact that holds by declaration rather than by a check: a
@@ -381,28 +353,6 @@ impl Phi {
         self.products.push(ProductFact {
             var,
             factors,
-            provenance: provenance.to_string(),
-        });
-    }
-
-    /// Record a question for phase 1. CANFAIL obligations come from
-    /// [`Phi::add_check`]; CONST and PROVE come from
-    /// [`crate::phase0::rules::RuleCtx::record_const`] and
-    /// [`crate::phase0::rules::RuleCtx::prove`], where a rule needs a fact it
-    /// cannot decide (`implementation.md` §4).
-    pub fn record_obligation(
-        &mut self,
-        kind: ObligationKind,
-        term: ObligationTerm,
-        path: BoolId,
-        subject: &ValueKey,
-        provenance: &str,
-    ) {
-        self.obligations.push(Obligation {
-            kind,
-            term,
-            path,
-            subject: subject.clone(),
             provenance: provenance.to_string(),
         });
     }

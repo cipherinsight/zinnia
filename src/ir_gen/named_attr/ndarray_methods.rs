@@ -110,6 +110,11 @@ impl IRGenerator {
             }
         }
 
+        if matches!(member, "sum" | "prod" | "min" | "max" | "any" | "all") {
+            let mut args = vec![self.ctx.get(var).unwrap()]; args.extend(visited_args_orig.iter().cloned());
+            return Some(super::array_compat::reduction(&mut self.builder,member,&args,visited_kwargs_orig));
+        }
+
         // ── DynamicNDArray method dispatch ────────────────────────
         if matches!(self.ctx.get(var), Some(Value::DynamicNDArray(_))) {
             let val = self.ctx.get(var).unwrap();
@@ -125,6 +130,15 @@ impl IRGenerator {
         //
         // Unified ops: each entry point handles static/dynamic internally.
         let v = match member {
+            "squeeze" => {
+                let val=self.ctx.get(var).unwrap();
+                crate::helpers::static_array::shape::try_apply_squeeze(&mut self.builder,&val,visited_kwargs_orig.get("axis").or_else(||visited_args_orig.first())).expect("squeeze requires array")
+            }
+            "clip" => {
+                let mut args = vec![self.ctx.get(var).unwrap()];
+                args.extend(visited_args_orig.iter().cloned());
+                super::array_compat::clip(&mut self.builder, &args, visited_kwargs_orig)
+            }
             "sum" | "any" | "all" | "prod" | "min" | "max" => {
                 let method = member;
                 let val = self.ctx.get(var).unwrap_or(Value::None);
@@ -193,17 +207,9 @@ impl IRGenerator {
             }
             "astype" => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);
-                // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val =
-                    crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
-                // Determine target type from the argument (int or float class)
-                let target_float =
-                    if let Some(Value::Class(ZinniaType::Float)) = visited_args.first() {
-                        true
-                    } else {
-                        false
-                    };
-                self.cast_composite(&val, target_float)
+                let dtype = visited_args_orig.first().or_else(|| visited_kwargs_orig.get("dtype"))
+                    .expect("astype requires a dtype");
+                super::array_compat::astype(&mut self.builder, &val, dtype)
             }
             "argmax" | "argmin" => {
                 let method = member;

@@ -1,7 +1,7 @@
 """The record invariants of `revision/phase0/implementation.md` §5a, over the
 exported JSON, and the summary of $\\Delta$ the report prints.
 
-The same four checks as `src/phase0/tests/invariants.rs`, on the other side of
+The same five checks as `src/phase0/tests/invariants.rs`, on the other side of
 the export: the coverage worker runs them on every accepted circuit, so a
 producer, an operand or a subject that a rule forgets is a failure row of the
 parity run rather than something phase 1 discovers.
@@ -11,9 +11,11 @@ parity run rather than something phase 1 discovers.
   content (a dtype or module name, or `None`).
 - I2 every operand and every alias resolves to an entry recorded *earlier* in
   Δ, so the traversal order is a topological order of the source graph.
-- I3 every check constraint and every obligation has a subject that resolves
-  to an entry.
+- I3 every check constraint has a subject that resolves to an entry.
 - I4 keys are unique.
+- I5 the check watermarks do not fall along Δ and none exceeds the number of
+  check constraints: Φ only grows, and every watermark is the count it held
+  when the entry was recorded.
 """
 
 from __future__ import annotations
@@ -57,6 +59,8 @@ def violations(record: dict[str, Any], limit: int = 20) -> list[str]:
     """Every invariant an accepted record breaks, one line each."""
     problems: list[str] = []
     seen: set[str] = set()
+    checks = sum(1 for c in record["constraints"] if c["kind"] == "check")
+    watermark = 0
     for entry in record["descriptors"]:
         key = entry["key"]["key"]
         problems.extend(_producer_problems(key, entry))
@@ -71,6 +75,8 @@ def violations(record: dict[str, Any], limit: int = 20) -> list[str]:
         if key in seen:
             problems.append(f"I4: two values share the key {key}")
         seen.add(key)
+        problems.extend(_watermark_problems(key, entry, watermark, checks))
+        watermark = entry["checks"]
         if len(problems) >= limit:
             return problems[:limit]
     problems.extend(_subject_problems(record, seen))
@@ -94,8 +100,25 @@ def _producer_problems(key: str, entry: dict[str, Any]) -> list[str]:
     return []
 
 
+def _watermark_problems(
+    key: str, entry: dict[str, Any], previous: int, checks: int
+) -> list[str]:
+    """I5 for one entry: its watermark is the number of checks Φ held when it
+    was recorded, so it lies between the previous entry's and the number of
+    checks Φ ends up holding.
+    """
+    watermark = entry["checks"]
+    if watermark < previous:
+        return [f"I5: the check watermark of {key} is {watermark}, "
+                f"below the {previous} of the entry before it"]
+    if watermark > checks:
+        return [f"I5: the check watermark of {key} is {watermark}, "
+                f"above the number of checks in Φ ({checks})"]
+    return []
+
+
 def _subject_problems(record: dict[str, Any], seen: set[str]) -> list[str]:
-    """I3 over the checks and the obligations."""
+    """I3 over the checks."""
     problems: list[str] = []
     for constraint in record["constraints"]:
         if constraint["kind"] != "check":
@@ -105,14 +128,6 @@ def _subject_problems(record: dict[str, Any], seen: set[str]) -> list[str]:
             problems.append(
                 f"I3: the check from {constraint['provenance']} points at "
                 f"{subject}, which Δ does not record"
-            )
-    for obligation in record["obligations"]:
-        subject = obligation["subject"]
-        if subject not in seen:
-            problems.append(
-                f"I3: the {obligation['kind']} obligation from "
-                f"{obligation['provenance']} points at {subject}, "
-                "which Δ does not record"
             )
     return problems
 

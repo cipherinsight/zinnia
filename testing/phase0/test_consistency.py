@@ -13,8 +13,8 @@ accepts and the baseline compiles, this harness compares the two records
   a symbolic input axis and nothing else, because the IR keeps no record of
   a fact the baseline proved.
 
-The tightening list, the unmatched arrays and the obligation answers are
-outputs, not conditions.
+The tightening list, the unmatched arrays and the check answers are outputs,
+not conditions.
 
 A circuit phase 0 rejects is skipped with the rejection reason, and so is one
 the baseline no longer compiles; `coverage.md` §9 is the list of why, and
@@ -137,7 +137,7 @@ def summarize(rows: list[C.CircuitConsistency]) -> dict[str, Any]:
     compared = [row for row in rows if row.status == "ok"]
     answers: Counter[str] = Counter()
     for row in compared:
-        answers.update(result.answer for result in row.obligations)
+        answers.update(result.answer for result in row.checks)
     static: Counter[str] = Counter()
     dynamic: Counter[str] = Counter()
     for row in compared:
@@ -167,7 +167,7 @@ def summarize(rows: list[C.CircuitConsistency]) -> dict[str, Any]:
         "dynamic_matches": dict(dynamic),
         "dynamic_axis_verdicts": dict(axes),
         "return_verdicts": dict(returns),
-        "obligation_answers": dict(answers),
+        "check_answers": dict(answers),
         "z3_seconds": round(sum(row.seconds.get("z3", 0.0) for row in compared), 1),
     }
 
@@ -187,7 +187,7 @@ def print_summary(rows: list[C.CircuitConsistency], summary: dict[str, Any]) -> 
         "dynamic_matches",
         "dynamic_axis_verdicts",
         "return_verdicts",
-        "obligation_answers",
+        "check_answers",
     ):
         entries = sorted(summary[name].items(), key=lambda kv: -kv[1])
         rendered = ", ".join(f"{count} {key}" for key, count in entries) or "none"

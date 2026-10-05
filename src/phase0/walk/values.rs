@@ -240,7 +240,8 @@ impl Walker<'_> {
     /// over a sequence of sequences, as `builtins.rs` splits the two cases.
     fn builtin_sum(&mut self, args: &Args, key: &ValueKey) -> Result<Desc, Reject> {
         let value = args.require(Rule::EReduceScalar, 0, "iterable")?.clone();
-        let reduced = self.reduce_outer(&value, ReduceKind::Sum, key, "sum")?;
+        let source = args.key(0, "iterable");
+        let reduced = self.reduce_outer(&value, source, ReduceKind::Sum, key, "sum")?;
         match args.get(1, "start") {
             Some(start) => {
                 let start = start.clone();
@@ -267,7 +268,8 @@ impl Walker<'_> {
             return Ok(result);
         }
         let value = args.require(Rule::EReduceScalar, 0, "iterable")?.clone();
-        self.reduce_outer(&value, kind, key, if max { "max" } else { "min" })
+        let source = args.key(0, "iterable");
+        self.reduce_outer(&value, source, kind, key, if max { "max" } else { "min" })
     }
 
     /// The reduction a builtin performs: over every element when the value is
@@ -275,11 +277,12 @@ impl Walker<'_> {
     fn reduce_outer(
         &mut self,
         value: &Desc,
+        source: Option<ValueKey>,
         kind: ReduceKind,
         key: &ValueKey,
         base: &str,
     ) -> Result<Desc, Reject> {
-        let a = self.as_array(value, Rule::EReduceScalar)?;
+        let (a, _) = self.as_array_keyed(value, source, Rule::EReduceScalar)?;
         if a.rank() >= 2 {
             return e_reduce_axis(&mut self.ctx(), &a, kind, &[0], false);
         }
@@ -338,6 +341,10 @@ impl Walker<'_> {
             self.ctx().applied(Rule::ECopy);
             return Ok(e_composite(kind, elems));
         }
+        // Where each element of the receiver came from, so that the new
+        // version can name its own elements (§3.3).
+        let kept = self.composite_element_sources(receiver_key.as_ref(), elems.len());
+        let before = elems.len();
         let result = self.mutate_list(method, &mut elems, &args, key)?;
         // The receiver's new version takes one further key, after the call's
         // arguments, exactly as an assignment's binding does (§5a rule 3);
@@ -345,16 +352,76 @@ impl Walker<'_> {
         let version = self.an.keys.next_expr();
         // The new version is made here, so it takes the ψ of this state (§2).
         let updated = super::created_at(e_composite(kind, elems), self.path());
-        let mut operands: Vec<ValueKey> = receiver_key.into_iter().collect();
+        let mut operands: Vec<ValueKey> = receiver_key.clone().into_iter().collect();
         operands.extend(args.operand_keys());
         let producer = Producer::Applied {
             rules: vec![Rule::SListMethod],
-            operands,
+            operands: operands.clone(),
             condition: None,
         };
         self.record(version.clone(), None, &updated, producer);
+        // `append` keeps every element where it was and adds the argument at
+        // the end, so the new version's elements are named one by one
+        // (§3.3). Every other method moves elements about, and the ones it
+        // leaves are named by the method's own producer instead.
+        let length = updated_len(&updated);
+        let mut sources = vec![None; length];
+        if method == ListMethod::Append && length == before + 1 {
+            sources[..before].clone_from_slice(&kept);
+            sources[before] = args.key(0, "object");
+        }
+        self.record_list_elements(&version, &updated, &sources, &operands);
         self.frame_mut().set(name, updated, Some(version));
         Ok(result)
+    }
+
+    /// The key of each element of a composite already in $\Delta$, when the
+    /// element has one (§3.3): the composite's key with the element's
+    /// position as the step index, through every entry that only relabels it.
+    fn composite_element_sources(
+        &self,
+        composite: Option<&ValueKey>,
+        length: usize,
+    ) -> Vec<Option<ValueKey>> {
+        let Some(composite) = composite else {
+            return vec![None; length];
+        };
+        let defining = self.an.defining_key(composite);
+        (0..length)
+            .map(|at| {
+                let element = defining.intermediate(at as u32);
+                self.an.entry(&element).map(|_| element)
+            })
+            .collect()
+    }
+
+    /// Record one entry per element of the composite a list method rebound
+    /// (§3.3), so that a consumer can name an element whose descriptor
+    /// carries no term. An element the method kept is that value under a new
+    /// key; one it moved is named by the method's own producer.
+    fn record_list_elements(
+        &mut self,
+        version: &ValueKey,
+        updated: &Desc,
+        sources: &[Option<ValueKey>],
+        operands: &[ValueKey],
+    ) {
+        let Some(composite) = updated.as_composite() else {
+            return;
+        };
+        for (at, element) in composite.elems.clone().iter().enumerate() {
+            let key = version.intermediate(at as u32);
+            let producer = match sources.get(at).cloned().flatten() {
+                Some(source) => Producer::Alias(source),
+                None => Producer::of(
+                    element,
+                    vec![Rule::SListMethod],
+                    operands.to_vec(),
+                    None,
+                ),
+            };
+            self.record(key, None, element, producer);
+        }
     }
 
     /// §3.3: a composite's length is a compile-time constant, so an
@@ -554,8 +621,10 @@ impl Walker<'_> {
             let here = self.an.terms.constant(k as i128);
             let moved = self.an.terms.le(at, here);
             let base = format!("shift_{}", k);
+            // Element `k` of the new composite, so a fresh variable the
+            // merge introduces records that path (§3.4).
             shifted.push(merge_desc(
-                &mut self.ctx(),
+                &mut self.ctx().in_element(k),
                 moved,
                 &elems[k + 1],
                 &elems[k],
@@ -760,4 +829,9 @@ pub(super) fn dtype_kwarg(args: &Args, fallback: Dtype) -> Result<Dtype, Reject>
         return Ok(fallback);
     };
     Ok(dtype_of_value(given)?.unwrap_or(fallback))
+}
+
+/// How many elements a composite descriptor has; 0 for anything else.
+fn updated_len(desc: &Desc) -> usize {
+    desc.as_composite().map_or(0, |c| c.elems.len())
 }

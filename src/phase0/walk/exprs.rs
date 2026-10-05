@@ -62,7 +62,8 @@ impl Walker<'_> {
         // carries it, an alias would otherwise carry the ψ of the value it
         // names (`implementation.md` §5a, defect 14).
         let desc = super::created_at(desc, self.path());
-        self.record(key.clone(), None, &desc, producer);
+        self.record(key.clone(), None, &desc, producer.clone());
+        self.record_composite_elements(key, &desc, &producer);
         Ok(desc)
     }
 
@@ -168,7 +169,8 @@ impl Walker<'_> {
 
     fn binary(&mut self, n: &ASTBinaryOperator, key: &ValueKey) -> Result<Desc, Reject> {
         let lhs = self.expr(&n.lhs)?;
-        let rhs = self.expr(&n.rhs)?;
+        let (rhs, rhs_key) = self.expr_keyed(&n.rhs)?;
+        let rhs_key = Some(rhs_key);
         match n.operator.as_str() {
             // `x in v` scans a static container; the result is one Boolean
             // and no shape changes (`value_ops.rs`'s `apply_membership_op`).
@@ -192,7 +194,7 @@ impl Walker<'_> {
                 let op = ZipOp::from_ast(operator).ok_or_else(|| Reject::UnsupportedOperator {
                     name: operator.to_string(),
                 })?;
-                self.apply_zip(op, &lhs, &rhs, key)
+                self.apply_zip_keyed(op, &lhs, &rhs, rhs_key.as_ref(), key)
             }
         }
     }
@@ -207,13 +209,27 @@ impl Walker<'_> {
         rhs: &Desc,
         key: &ValueKey,
     ) -> Result<Desc, Reject> {
+        self.apply_zip_keyed(op, lhs, rhs, None, key)
+    }
+
+    /// [`Walker::apply_zip`], with the key of the right-hand operand, which
+    /// a division needs: the condition that its divisor is not zero is a
+    /// comparison of that value (§5.2's `defcond_div`).
+    pub fn apply_zip_keyed(
+        &mut self,
+        op: ZipOp,
+        lhs: &Desc,
+        rhs: &Desc,
+        rhs_key: Option<&ValueKey>,
+        key: &ValueKey,
+    ) -> Result<Desc, Reject> {
         if lhs.as_array().is_some() || rhs.as_array().is_some() {
             return self.array_zip(op, lhs, rhs);
         }
         if lhs.as_composite().is_some() || rhs.as_composite().is_some() {
             return self.composite_zip(op, lhs, rhs, key);
         }
-        self.scalar_zip(op, lhs, rhs, key)
+        self.scalar_zip(op, lhs, rhs, rhs_key, key)
     }
 
     /// `E-Zip` (§5.3) with both operands seen as arrays.
@@ -349,6 +365,7 @@ impl Walker<'_> {
         op: ZipOp,
         lhs: &Desc,
         rhs: &Desc,
+        rhs_key: Option<&ValueKey>,
         key: &ValueKey,
     ) -> Result<Desc, Reject> {
         let (a, b) = match (lhs.as_scalar(), rhs.as_scalar()) {
@@ -363,18 +380,27 @@ impl Walker<'_> {
                 })
             }
         };
+        let nonzero = self.divisor_nonzero(op, &b, rhs_key);
         if op == ZipOp::Div {
             // Python's `/` is real division. It never contributes a length,
-            // so the descriptor carries no term (§3.2).
+            // so the descriptor carries no term (§3.2); its divisor still
+            // has to be non-zero, which is `defcond_div` (§5.2).
             let dtype = if a.dtype == Dtype::Complex || b.dtype == Dtype::Complex {
                 Dtype::Complex
             } else {
                 Dtype::Float
             };
-            return Ok(e_const_opaque(&mut self.ctx(), dtype));
+            let defcond = nonzero.unwrap_or_else(|| self.ctx().tt());
+            return Ok(self.ctx().scalar(
+                Rule::EArithData,
+                dtype,
+                ScalarTerm::Opaque,
+                Origin::Data,
+                defcond,
+            ));
         }
         if let Some(arith) = op.arith() {
-            return e_arith(&mut self.ctx(), arith, &a, &b, key, "arith");
+            return e_arith(&mut self.ctx(), arith, &a, &b, key, "arith", nonzero);
         }
         if let Some(cmp) = op.cmp() {
             return Ok(e_cmp(&mut self.ctx(), cmp, &a, &b, key, "cmp"));
@@ -787,17 +813,79 @@ impl Walker<'_> {
         }
     }
 
+    /// [`Walker::as_array`], with the key of the value the array rule reads.
+    ///
+    /// For a value that is already an array, or a scalar the rule treats as
+    /// rank 0, that is the value's own key, which the caller passes in. For a
+    /// composite it is the key of the `E-Stack` intermediate the conversion
+    /// records (`definition.md` §3.3), and the caller's key becomes that
+    /// intermediate's operand.
+    pub fn as_array_keyed(
+        &mut self,
+        d: &Desc,
+        key: Option<ValueKey>,
+        rule: Rule,
+    ) -> Result<(ArrayDesc, Option<ValueKey>), Reject> {
+        if let Desc::Composite(c) = d {
+            let elems = c.elems.clone();
+            let (stacked, stack_key) = self.stack_descs_of(&elems, key, rule)?;
+            return Ok((require_array(rule, &stacked)?.clone(), Some(stack_key)));
+        }
+        Ok((self.as_array(d, rule)?, key))
+    }
+
     /// `E-Stack` over a list of descriptors of the same shape: the
     /// composite-to-array conversion, and `np.array([a, b])`.
     pub fn stack_descs(&mut self, elems: &[Desc], rule: Rule) -> Result<Desc, Reject> {
-        if elems.is_empty() {
+        self.stack_descs_of(elems, None, rule).map(|(desc, _)| desc)
+    }
+
+    /// [`Walker::stack_descs`], recording the stacked array as an
+    /// intermediate of the value being evaluated (`definition.md` §3.3) and
+    /// returning its key.
+    ///
+    /// `owner` is the key of the composite the array was built from, when the
+    /// caller knows it; it is the intermediate's operand, which is how phase
+    /// 1 reaches the elements the stack read.
+    pub fn stack_descs_of(
+        &mut self,
+        elems: &[Desc],
+        owner: Option<ValueKey>,
+        rule: Rule,
+    ) -> Result<(Desc, ValueKey), Reject> {
+        let mut operands: Vec<ValueKey> = owner.into_iter().collect();
+        // The elements are converted in the enclosing value's frame, so a
+        // nested composite's own `E-Stack` is an intermediate of that value
+        // too and the step indices stay one sequence.
+        let mut parts = Vec::with_capacity(elems.len());
+        for element in elems {
+            let (part, part_key) = self.as_array_keyed(element, None, rule)?;
+            // An element that is itself a composite was stacked in turn, and
+            // that intermediate is this one's operand.
+            operands.extend(part_key);
+            parts.push(part);
+        }
+        let key = self.an.open_step();
+        let built = self.stacked_desc(&parts, rule);
+        match built {
+            Ok(stacked) => {
+                self.an.close_step(stacked.clone(), operands);
+                Ok((stacked, key))
+            }
+            Err(reject) => {
+                self.an.close_step(Desc::None, operands);
+                Err(reject)
+            }
+        }
+    }
+
+    /// `E-Stack` over the array views of a composite's elements, inside the
+    /// intermediate's own frame.
+    fn stacked_desc(&mut self, parts: &[ArrayDesc], rule: Rule) -> Result<Desc, Reject> {
+        if parts.is_empty() {
             let zero = self.an.terms.constant(0);
             let tt = self.ctx().tt();
             return Ok(self.ctx().array(rule, Dtype::I64, vec![zero], tt));
-        }
-        let mut parts = Vec::with_capacity(elems.len());
-        for element in elems {
-            parts.push(self.as_array(element, rule)?);
         }
         let dtype = parts
             .iter()
@@ -809,6 +897,62 @@ impl Walker<'_> {
         let mut array = require_array(rule, &stacked)?.clone();
         array.dtype = dtype;
         Ok(Desc::Array(array))
+    }
+
+    /// `defcond_div` of §5.2: the condition that the divisor of `/`, `//` or
+    /// `%` is not zero.
+    ///
+    /// A divisor that carries an integer term is compared with 0 in the term
+    /// language. One that carries none — a `Float`, a `Complex` — is compared
+    /// by a fresh data Boolean, and that comparison is a value of $\Delta$ in
+    /// its own right: the intermediate `#0` of the division (§3.3), an
+    /// `E-Cmp` over the divisor, so that phase 1 has a value to build the
+    /// wire the check is enforced on. `None` for every other operator, and
+    /// where the divisor has no key for the comparison to read.
+    fn divisor_nonzero(
+        &mut self,
+        op: ZipOp,
+        divisor: &ScalarDesc,
+        divisor_key: Option<&ValueKey>,
+    ) -> Option<BoolId> {
+        if !matches!(op, ZipOp::Div | ZipOp::FloorDiv | ZipOp::Mod) {
+            return None;
+        }
+        if let ScalarTerm::Int(t) = divisor.term {
+            let zero = self.an.terms.constant(0);
+            let is_zero = self.an.terms.eq(t, zero);
+            return Some(self.an.terms.not(is_zero));
+        }
+        let divisor_key = divisor_key?.clone();
+        let comparison = self.an.open_step();
+        let range = VarRange::default();
+        let beta = self
+            .ctx()
+            .fresh_data_term(Dtype::Bool, "nonzero", &comparison, range);
+        let tt = self.ctx().tt();
+        let desc = match beta {
+            ScalarTerm::Bool(beta) => Some((
+                beta,
+                self.ctx().scalar(
+                    Rule::ECmp,
+                    Dtype::Bool,
+                    ScalarTerm::Bool(beta),
+                    Origin::Data,
+                    tt,
+                ),
+            )),
+            _ => None,
+        };
+        match desc {
+            Some((beta, desc)) => {
+                self.an.close_step(desc, vec![divisor_key]);
+                Some(beta)
+            }
+            None => {
+                self.an.close_step(Desc::None, vec![divisor_key]);
+                None
+            }
+        }
     }
 
     /// `to_scalar_bool`: the Boolean term a value contributes as a condition

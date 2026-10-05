@@ -136,7 +136,6 @@ fn reshape_exact(
     let dims = target_dims(ctx, shape, None)?;
     let target = size_term(ctx, &dims, value, "sigma_reshape_out");
     let defcond = ctx.terms.eq(size, target);
-    ctx.prove(Rule::EReshape.detail("the sizes agree"), defcond);
     Ok(ctx.array(Rule::EReshape, a.dtype, dims, defcond))
 }
 
@@ -173,7 +172,6 @@ fn reshape_declared(
         Some(size),
     );
     let inferred = ctx.terms.var(ell);
-    ctx.record_const(Rule::EReshape.detail("the inferred extent"), inferred);
     let dims = target_dims(ctx, shape, Some(inferred))?;
     let others: Vec<TermId> = dims
         .iter()
@@ -185,7 +183,6 @@ fn reshape_declared(
     let positive = ctx.terms.lt(zero, p);
     let target = size_term(ctx, &dims, value, "sigma_reshape_out");
     let sizes_agree = ctx.terms.eq(size, target);
-    ctx.prove(Rule::EReshape.detail("the sizes agree"), sizes_agree);
     let defcond = ctx.terms.and(positive, sizes_agree);
     Ok(ctx.array(Rule::EReshape, a.dtype, dims, defcond))
 }
@@ -211,7 +208,6 @@ fn reshape_inferred(
     let zero = ctx.terms.constant(0);
     let defcond = ctx.terms.eq(remainder, zero);
     let inferred = ctx.terms.div_const(size, p).ok_or_else(not_divisible)?;
-    ctx.record_const(Rule::EReshape.detail("the inferred extent"), inferred);
     let mut dims = target_dims(ctx, shape, Some(inferred))?;
     dims[axis] = inferred;
     Ok(ctx.array(Rule::EReshape, a.dtype, dims, defcond))
@@ -393,6 +389,11 @@ mod tests {
 
     /// `implementation.md` §8: a `-1` beside a non-constant extent takes the
     /// declared-variable path instead of a division.
+    ///
+    /// §5.6 gives that path `defcond = (p > 0 ∧ size(a) = ℓ · p)`. Both
+    /// conjuncts are asserted here: without `p > 0` the equation alone holds
+    /// on `reshape(a, (n, -1))` with `n = 0` and `size(a) = 0`, a run NumPy
+    /// refuses.
     #[test]
     fn e_reshape_declares_a_variable_beside_a_non_constant_extent() {
         let mut f = Fixture::new();
@@ -409,6 +410,40 @@ mod tests {
         let dims = f.dims_of(&built);
         assert_eq!(dims, vec![None, None], "both extents are terms");
         assert_eq!(f.check_rules(), vec!["E-Reshape".to_string()]);
+        let checks = f.checks();
+        assert!(
+            checks[0].contains("0 < n"),
+            "the p > 0 conjunct, got {}",
+            checks[0]
+        );
+        assert!(
+            checks[0].contains(" = "),
+            "the size equation, got {}",
+            checks[0]
+        );
+    }
+
+    /// The same condition where the product of the other extents is the
+    /// literal `0`: `reshape(a, (0, -1))` is refused on every input, the
+    /// empty one included, so `defcond` is false outright.
+    #[test]
+    fn e_reshape_refuses_an_inferred_axis_beside_a_zero_extent() {
+        let mut f = Fixture::new();
+        let a = f.symbolic_input(Dtype::I64, "n", 8);
+        let key = f.key();
+        let built = e_reshape(
+            &mut f.ctx(),
+            &a,
+            &[ReshapeExtent::Const(0), ReshapeExtent::Infer],
+            &key,
+        )
+        .unwrap();
+        let defcond = f.array_of(&built).defcond;
+        assert!(
+            f.analysis.terms.is_false(defcond),
+            "0 > 0 is false, got {}",
+            f.analysis.terms.pretty_bool(defcond)
+        );
     }
 
     /// Two `-1`s have no rule at all (§5.6: "exactly one `-1`").

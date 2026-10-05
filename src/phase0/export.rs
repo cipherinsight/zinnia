@@ -2,9 +2,9 @@
 //! `acceptance.md` §2.3 and §3.
 //!
 //! Every value the walk keys has an entry, with the producer that made it;
-//! every check and every obligation names the value it belongs to. The
-//! invariants those two carry are `implementation.md` §5a's, and
-//! `testing/phase0/record.py` checks them on the JSON.
+//! every check names the value it belongs to. The invariants these carry are
+//! `implementation.md` §5a's, and `testing/phase0/record.py` checks them on
+//! the JSON.
 //!
 //! # Schema
 //!
@@ -12,7 +12,7 @@
 //!
 //! ```text
 //! {
-//!   "schema":      "zinnia.phase0/2",
+//!   "schema":      "zinnia.phase0/6",
 //!   "config":      {"loop_limit": u32, "recursion_limit": u32,
 //!                   "work_budget": u64},   // the parameters of S the pass read
 //!   "terms":       {"vars": [...], "nodes": [...]},   // the term DAG
@@ -21,7 +21,6 @@
 //!   "products":    [...],                             // σ = ∏ dims facts
 //!   "descriptors": [...],                             // Δ, in traversal order
 //!   "delivery":    [key, ...],                        // R
-//!   "obligations": [...],                             // CONST / PROVE / CANFAIL
 //!   "smtlib":      "..."                              // Φ as SMT-LIB 2 text
 //! }
 //! ```
@@ -39,8 +38,13 @@
 //!  "hi": term id | null, "hi_pretty": str | null,
 //!  "origin": {"kind": "input_length"|"count"|"data_scalar"|"data_bool"
 //!                     |"shape_symbol"|"unique_count"|"value_sized"|"size_product",
-//!             ...}}
+//!             ...},
+//!  "element_path": [usize, ...]}
 //! ```
+//!
+//! `element_path` is where inside the value the origin names the variable was
+//! introduced (§3.4): empty for a scalar value, one index per composite level
+//! for an element of a merged composite, whose elements $\Delta$ does not key.
 //!
 //! An element of `constraints` is `{"formula": bool term id, "pretty": str,
 //! "kind": "var_range"|"check"|"precondition"|"declaration",
@@ -50,14 +54,22 @@
 //! A value is named in two ways. Where the record *defines* one — an entry of
 //! `descriptors`, a member of `delivery` — the full key object
 //! [`ValueKey::to_json`] produces is written, whose `"key"` field is the
-//! canonical string `acceptance.md` §2.2 fixes. Where the record *refers* to
-//! one — a producer's `alias` and `operands`, a check's or an obligation's
-//! `subject` — only that canonical string is written: the components are
-//! already in the entry it resolves to, and an unrolled circuit has several
-//! references per entry, so the objects would be most of the JSON.
+//! canonical string `acceptance.md` §2.2 fixes. Since `zinnia.phase0/6` the
+//! key object carries a fifth field, `"step"`: 0 for the value an expression
+//! node denotes and `s + 1` for its `s`-th *intermediate* (`definition.md`
+//! §3.3), which the canonical string spells `…#s` after the expression
+//! index. Every key a traversal mints for an expression node keeps the text
+//! form it had under `zinnia.phase0/5`. Where the record *refers* to
+//! one — a producer's `alias` and `operands`, a check's `subject` — only that
+//! canonical string is written: the components are already in the entry it
+//! resolves to, and an unrolled circuit has several references per entry, so
+//! the objects would be most of the JSON.
 //!
-//! An element of `descriptors` is `{"key": key, "name": str | null, "desc":
-//! desc, "producer": producer}`, where a *producer* is
+//! An element of `descriptors` is `{"key": key, "name": str | null, "checks":
+//! u32, "desc": desc, "producer": producer}`, where `checks` is the number of
+//! check constraints $\Phi$ held when the entry was recorded — the value's
+//! own among them — so that a consumer can tell which checks precede a value
+//! in the traversal, and a *producer* is
 //!
 //! ```text
 //! {"kind": "input"|"alias"|"opaque"|"applied",
@@ -78,12 +90,6 @@
 //! {"kind": "none"}
 //! ```
 //!
-//! An element of `obligations` is `{"kind": "CONST"|"PROVE"|"CANFAIL",
-//! "term": {"sort": "int"|"bool", "id": id}, "pretty": str, "path": bool
-//! term id, "path_pretty": str, "subject": key string, "provenance": str}`.
-//! MAX and MIN are asked by phase 1 and are not recorded (`definition.md`
-//! §1).
-//!
 //! # Pretty strings
 //!
 //! Every `*_pretty` field is a convenience: the term DAG carries the same
@@ -99,18 +105,17 @@
 //! comment.
 
 use crate::phase0::desc::{Desc, ScalarTerm};
-use crate::phase0::phi::{Constraint, ConstraintKind, Obligation, ObligationTerm};
+use crate::phase0::phi::{Constraint, ConstraintKind};
 use crate::phase0::term::{BoolId, TermArena, TermId};
 use crate::phase0::Phase0Result;
 
 /// The schema tag; bump it when the layout above changes.
-pub const SCHEMA: &str = "zinnia.phase0/2";
+pub const SCHEMA: &str = "zinnia.phase0/6";
 
 /// What to put in the JSON besides the record itself.
 #[derive(Debug, Clone, Copy)]
 pub struct ExportOptions {
-    /// Write the `*_pretty` fields of terms, constraints, obligations and
-    /// descriptors.
+    /// Write the `*_pretty` fields of terms, constraints and descriptors.
     pub pretty: bool,
 }
 
@@ -182,16 +187,12 @@ pub fn to_json(result: &Phase0Result, options: &ExportOptions) -> serde_json::Va
             .map(|entry| serde_json::json!({
                 "key": entry.key.to_json(),
                 "name": entry.name,
+                "checks": entry.checks,
                 "desc": desc_json(&pretty, &entry.desc),
                 "producer": entry.producer.to_json(),
             }))
             .collect::<Vec<_>>(),
         "delivery": result.delivery.iter().map(|k| k.to_json()).collect::<Vec<_>>(),
-        "obligations": result
-            .obligations()
-            .iter()
-            .map(|o| obligation_json(&pretty, o))
-            .collect::<Vec<_>>(),
         "smtlib": smtlib(result),
     })
 }
@@ -214,6 +215,7 @@ fn variables_json(result: &Phase0Result, pretty: &Pretty) -> Vec<serde_json::Val
                 "hi": info.hi.map(|t| t.index()),
                 "hi_pretty": info.hi.map(|t| pretty.int(t)),
                 "origin": info.origin.to_json(),
+                "element_path": info.element_path,
             })
         })
         .collect()
@@ -270,28 +272,6 @@ fn constraint_json(pretty: &Pretty, c: &Constraint) -> serde_json::Value {
         }
     }
     value
-}
-
-fn obligation_json(pretty: &Pretty, o: &Obligation) -> serde_json::Value {
-    let (term, text) = match o.term {
-        ObligationTerm::Int(t) => (
-            serde_json::json!({"sort": "int", "id": t.index()}),
-            pretty.int(t),
-        ),
-        ObligationTerm::Bool(b) => (
-            serde_json::json!({"sort": "bool", "id": b.index()}),
-            pretty.bool(b),
-        ),
-    };
-    serde_json::json!({
-        "kind": o.kind.as_str(),
-        "term": term,
-        "pretty": text,
-        "path": o.path.index(),
-        "path_pretty": pretty.bool(o.path),
-        "subject": o.subject.encode(),
-        "provenance": o.provenance,
-    })
 }
 
 fn desc_json(pretty: &Pretty, desc: &Desc) -> serde_json::Value {

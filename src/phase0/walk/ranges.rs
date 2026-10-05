@@ -208,12 +208,18 @@ impl Walker<'_> {
     ///
     /// It is built inside iteration `j`, so its $\psi$ is that iteration's
     /// path condition — the bounded form's guard `j < T` included (§2).
+    ///
+    /// The rule is `E-Const` and not the loop's: the value is the constant
+    /// `t_lo + j*step`, and the loop rule is the statement's. The element is
+    /// an intermediate of the `range` call (§3.3), so it is a value of
+    /// $\Delta$ with a row phase 1 can answer rather than a binding with an
+    /// empty operand list.
     pub(super) fn range_element(&mut self, start: TermId, step: i128, j: usize) -> Desc {
         let offset = self.an.terms.constant(step * j as i128);
         let value = self.an.terms.add(start, offset);
         let tt = self.ctx().tt();
         self.ctx().scalar(
-            Rule::SForRangeBounded,
+            Rule::EConst,
             Dtype::Idx,
             ScalarTerm::Int(value),
             Origin::Shape,

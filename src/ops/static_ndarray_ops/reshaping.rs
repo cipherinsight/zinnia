@@ -1372,10 +1372,8 @@ fn compute_split_boundaries(
     match sections {
         Value::Integer(_) => {
             let n = require_provable_static_int(b, sections, SiteKind::SplitSections);
+            assert!(n > 0, "split: number of sections must be > 0");
             let n = n as usize;
-            if n == 0 {
-                panic!("split: number of sections must be > 0");
-            }
             if !allow_uneven && length % n != 0 {
                 panic!(
                     "split: array of length {} cannot be split into {} equal sections",
@@ -1400,6 +1398,7 @@ fn compute_split_boundaries(
                 .iter()
                 .map(|v| {
                     let i = require_provable_static_int(b, v, SiteKind::SplitSections);
+                    let i = if i < 0 { i.saturating_add(length as i64) } else { i };
                     i.max(0).min(length as i64) as usize
                 })
                 .collect();
@@ -1408,7 +1407,9 @@ fn compute_split_boundaries(
             let mut prev = 0usize;
             for &i in &indices {
                 out.push((prev, i.max(prev)));
-                prev = i.max(prev);
+                // A decreasing boundary emits an empty part, then the next
+                // part starts at that boundary (it may overlap older parts).
+                prev = i;
             }
             out
         }
@@ -1432,10 +1433,28 @@ fn split_impl(
     }
     let ax = resolve_axis(axis, ndim, op);
     let length = shape[ax];
-    let bounds = compute_split_boundaries(b, length, sections, allow_uneven);
+    let sections = crate::helpers::static_array::base::deep_to_value_list(b, sections);
+    let bounds = compute_split_boundaries(b, length, &sections, allow_uneven);
     let parts: Vec<Value> = bounds
         .into_iter()
-        .map(|(s, e)| slice_along_axis(val, ax, s, e))
+        .map(|(s, e)| {
+            if let Value::StaticArray { dtype, shape, segment_id, strides, offset,
+                imag_segment_id, .. } = val {
+                let mut part_shape = shape.clone();
+                part_shape[ax] = e - s;
+                // NumPy split returns aliasing views, even when splitting
+                // columns or a noncontiguous view. Keep its source strides
+                // rather than passing through a materializing slice helper.
+                Value::StaticArray {
+                    dtype: *dtype, shape: part_shape, segment_id: *segment_id,
+                    strides: strides.clone(), offset: offset + s * strides[ax],
+                    imag_segment_id: *imag_segment_id, value_id: ValueId::next(),
+                }
+            } else {
+                let part = slice_along_axis(val, ax, s, e);
+                crate::helpers::static_array::base::to_static_array(b, &part).unwrap_or(part)
+            }
+        })
         .collect();
     let types = parts.iter().map(|v| v.zinnia_type()).collect();
     Value::List(CompositeData {

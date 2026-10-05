@@ -2,11 +2,14 @@
 //! §5.5's `E-Nonzero` and `E-Filter`, and §5.7's `E-Matmul`, together with
 //! the statistics of `coverage.md` §5.6.
 
-use crate::phase0::desc::{ArrayDesc, CompositeKind, Desc, Dtype, ValueKey};
+use crate::phase0::desc::{
+    ArrayDesc, CompositeKind, Desc, Dtype, Origin, ScalarTerm, ValueKey,
+};
 use crate::phase0::ops::{Class, ZipOp};
 use crate::phase0::rules::{
     e_composite, e_filter_axis0, e_matmul, e_nonzero, e_take, e_value_sized, e_where3,
-    helpers::normalise_axis, product_term, VarRange,
+    helpers::normalise_axis,
+    VarRange,
 };
 use crate::phase0::term::TermId;
 use crate::phase0::Reject;
@@ -120,7 +123,8 @@ impl Walker<'_> {
     /// the mask (§5.5).
     fn nonzero(&mut self, args: &Args, key: &ValueKey, flat: bool) -> Result<Desc, Reject> {
         let m = self.arg_array(args, Rule::ENonzero, 0, "a")?;
-        let single = e_nonzero(&mut self.ctx(), &m, key, "c_nonzero")?;
+        let mask = self.mask_key(args, 0, "a", key);
+        let single = e_nonzero(&mut self.ctx(), &m, &mask, "c_nonzero")?;
         if flat || m.rank() <= 1 {
             return Ok(if flat {
                 single
@@ -136,7 +140,8 @@ impl Walker<'_> {
     fn argwhere(&mut self, args: &Args, key: &ValueKey) -> Result<Desc, Reject> {
         let m = self.arg_array(args, Rule::ENonzero, 0, "a")?;
         let rank = m.rank();
-        let single = e_nonzero(&mut self.ctx(), &m, key, "c_argwhere")?;
+        let mask = self.mask_key(args, 0, "a", key);
+        let single = e_nonzero(&mut self.ctx(), &m, &mask, "c_argwhere")?;
         let count = single
             .as_array()
             .and_then(|a| a.dims.first().copied())
@@ -187,81 +192,202 @@ impl Walker<'_> {
             .array(Rule::EValueSized, dtype, vec![sized.length], sized.defcond))
     }
 
-    /// `np.unravel_index(i, shape)`: one index scalar per axis
-    /// (`coverage.md` §5.5). An extent phase 0 knows gives the coordinate its
-    /// structural range `[0, d)`; one read out of an array does not.
-    fn unravel_index(&mut self, args: &Args, key: &ValueKey) -> Result<Desc, Reject> {
-        let shape = args.require(Rule::ETake, 1, "shape")?.clone();
-        let extents = self.shape_terms(&shape)?;
+    /// `np.unravel_index(i, shape)`: one coordinate per axis, as arithmetic
+    /// on the flat index (§5.4).
+    ///
+    /// Coordinate `k` is `(i div stride_k) mod dims_k`, with `stride_k` the
+    /// product of the extents NumPy varies faster than axis `k` — the axes
+    /// after it in C order, before it in F order. Every extent is a
+    /// compile-time constant here, so both strides and both divisors are
+    /// constants and the coordinate is a term of §3.1; a shape whose extents
+    /// are not constants is rejected, since §3.1 has no division by a
+    /// runtime value. The `div` is dropped where the stride is 1 and the
+    /// `mod` where `stride_k * dims_k` is the whole size, because `i < size`
+    /// already bounds the quotient there.
+    ///
+    /// The coordinates are elements of the tuple and take no key of their
+    /// own: each is a term over the flat index's variable, so phase 1 names
+    /// it by that term (§3.3, "Elements of a composite").
+    fn unravel_index(&mut self, args: &Args, _key: &ValueKey) -> Result<Desc, Reject> {
+        let shape = args.require(Rule::EArithData, 1, "shape")?.clone();
+        let extents = self.constant_extents(&shape, "np.unravel_index")?;
+        let flat = args.require(Rule::EArithData, 0, "indices")?.clone();
+        let flat = flat
+            .as_scalar()
+            .and_then(|s| s.term.as_int())
+            .ok_or_else(|| Reject::Unsupported {
+                construct: "np.unravel_index of an index that is not an integer scalar"
+                    .to_string(),
+            })?;
+        let size: i128 = extents.iter().product();
+        // NumPy raises for a flat index outside `[0, size)`, and outside it
+        // the arithmetic below is not the coordinate either, so the identity
+        // this rule records holds exactly where the operation is defined.
+        let total = self.an.terms.constant(size);
+        let defcond = self.within(flat, total);
+        // The rule tag and the effect line are the operation's, not each
+        // coordinate's, so they are recorded once here (§4's rule format).
+        self.ctx().applied(Rule::EArithData);
+        self.ctx().check(Rule::EArithData, defcond);
+        let fortran = matches!(args.string(2, "order"), Some("F") | Some("f"));
         let mut coordinates = Vec::with_capacity(extents.len());
-        for (axis, extent) in extents.iter().enumerate() {
-            let range = match extent {
-                Some(extent) => {
-                    let zero = self.an.terms.constant(0);
-                    crate::phase0::rules::VarRange::structural(&mut self.an.terms, zero, *extent)
-                }
-                None => VarRange::of_dtype(&mut self.an.terms, Dtype::Idx),
+        for (axis, &extent) in extents.iter().enumerate() {
+            let stride: i128 = if fortran {
+                extents[..axis].iter().product()
+            } else {
+                extents[axis + 1..].iter().product()
             };
-            let tt = self.ctx().tt();
-            let name = format!("coord{}", axis);
-            coordinates.push(self.ctx().data_scalar(
-                Rule::ETake,
+            let mut t = flat;
+            if stride != 1 {
+                t = self
+                    .an
+                    .terms
+                    .div_const(t, stride)
+                    .ok_or_else(|| Reject::Unsupported {
+                        construct: "np.unravel_index with a zero stride".to_string(),
+                    })?;
+            }
+            if stride * extent != size {
+                t = self
+                    .an
+                    .terms
+                    .mod_const(t, extent)
+                    .ok_or_else(|| Reject::Unsupported {
+                        construct: "np.unravel_index with a zero extent".to_string(),
+                    })?;
+            }
+            coordinates.push(self.ctx().element_scalar(
                 Dtype::Idx,
-                &name,
-                key,
-                range,
-                tt,
+                ScalarTerm::Int(t),
+                Origin::Data,
+                defcond,
             ));
         }
         Ok(e_composite(CompositeKind::Tuple, coordinates))
     }
 
-    /// `np.ravel_multi_index(multi_index, dims)`: a flat index whose range is
-    /// the product of the extents.
+    /// `np.ravel_multi_index(multi_index, dims)`: the flat index
+    /// `Σ_k index_k · stride_k` (§5.4).
     ///
-    /// NumPy raises when a coordinate lies outside its own extent
-    /// (`ValueError: invalid entry in coordinates array`). That is a
-    /// condition on element values, which $\Phi$ does not model, so it is an
-    /// unconstrained Boolean of the `E-Take` kind (§5.4) rather than a term.
+    /// The inverse of [`Walker::unravel_index`] and linear in the same
+    /// place: the strides are products of the extents, so the sum is a term
+    /// of §3.1 once `dims` is a tuple of constants. NumPy raises when a
+    /// coordinate lies outside its own extent (`ValueError: invalid entry in
+    /// coordinates array`), which is then `0 ≤ index_k < dims_k` per axis and
+    /// a term too, since the coordinates carry terms.
+    ///
+    /// Two forms keep the older record. A `multi_index` of rank 2 holds one
+    /// coordinate tuple per column and yields one flat index per column, an
+    /// array and no scalar arithmetic. A `dims` spelled as a run-time array
+    /// gives no extents, and a stride would be a product of run-time terms,
+    /// which §3.1 has none; the result is a fresh data variable and the
+    /// coordinate condition an unconstrained Boolean, as for `E-Take` (§5.4).
     fn ravel_multi_index(&mut self, args: &Args, key: &ValueKey) -> Result<Desc, Reject> {
-        let shape = args.require(Rule::ETake, 1, "dims")?.clone();
-        let extents = self.shape_terms(&shape)?;
-        let known: Option<Vec<TermId>> = extents.iter().copied().collect();
-        let size = known.and_then(|e| product_term(&mut self.an.terms, &e));
-        let multi = args.require(Rule::ETake, 0, "multi_index")?.clone();
+        let shape = args.require(Rule::EArithData, 1, "dims")?.clone();
+        let multi = args.require(Rule::EArithData, 0, "multi_index")?.clone();
+        // A per-element multi-index yields one flat index per element.
+        if let Some(a) = multi.as_array() {
+            if a.rank() == 2 {
+                let count = a.dims[1];
+                let in_dims = self.ctx().definedness("in_ravel_multi_index", key);
+                return Ok(self
+                    .ctx()
+                    .array(Rule::ETake, Dtype::Idx, vec![count], in_dims));
+            }
+        }
+        let Ok(extents) = self.constant_extents(&shape, "np.ravel_multi_index") else {
+            return self.ravel_multi_index_opaque(&shape, key);
+        };
+        let entries = super::entries(&multi);
+        if entries.len() != extents.len() {
+            return Err(Reject::Premise {
+                rule: Rule::EArithData,
+                detail: format!(
+                    "with {} coordinates for a shape of {} axes",
+                    entries.len(),
+                    extents.len()
+                ),
+            });
+        }
+        let fortran = matches!(args.string(2, "order"), Some("F") | Some("f"));
+        let mut flat = self.an.terms.constant(0);
+        let mut conditions = Vec::with_capacity(entries.len());
+        for (axis, entry) in entries.iter().enumerate() {
+            let coordinate = entry
+                .as_scalar()
+                .and_then(|s| s.term.as_int())
+                .ok_or_else(|| Reject::Unsupported {
+                    construct: "np.ravel_multi_index of a coordinate that is not an \
+                                integer scalar"
+                        .to_string(),
+                })?;
+            let extent = self.an.terms.constant(extents[axis]);
+            conditions.push(self.within(coordinate, extent));
+            let stride: i128 = if fortran {
+                extents[..axis].iter().product()
+            } else {
+                extents[axis + 1..].iter().product()
+            };
+            let scaled = self.an.terms.mul_const(stride, coordinate);
+            flat = self.an.terms.add(flat, scaled);
+        }
+        let defcond = self.an.terms.all(&conditions);
+        Ok(self.ctx().scalar(
+            Rule::EArithData,
+            Dtype::Idx,
+            ScalarTerm::Int(flat),
+            Origin::Data,
+            defcond,
+        ))
+    }
+
+    /// The fallback of [`Walker::ravel_multi_index`] for a `dims` whose
+    /// extents are not compile-time constants: a fresh data variable, ranged
+    /// by the product when that product is a term, with the coordinate
+    /// condition as the unconstrained Boolean of `E-Take` (§5.4).
+    fn ravel_multi_index_opaque(
+        &mut self,
+        shape: &Desc,
+        key: &ValueKey,
+    ) -> Result<Desc, Reject> {
+        let extents = self.shape_terms(shape)?;
+        let known: Option<Vec<TermId>> = extents.into_iter().collect();
+        let size = known.and_then(|e| {
+            crate::phase0::rules::product_term(&mut self.an.terms, &e)
+        });
         let zero = self.an.terms.constant(0);
         let range = match size {
-            Some(size) => {
-                crate::phase0::rules::VarRange::structural(&mut self.an.terms, zero, size)
-            }
+            Some(size) => VarRange::structural(&mut self.an.terms, zero, size),
             None => VarRange::default(),
         };
         let in_dims = self.ctx().definedness("in_ravel_multi_index", key);
-        // A per-element multi-index yields one flat index per element.
-        let count = match multi.as_array() {
-            Some(a) if a.rank() == 2 => Some(a.dims[1]),
-            _ => None,
-        };
-        match count {
-            Some(count) => Ok(self
-                .ctx()
-                .array(Rule::ETake, Dtype::Idx, vec![count], in_dims)),
-            None => Ok(self.ctx().data_scalar(
-                Rule::ETake,
-                Dtype::Idx,
-                "flat_index",
-                key,
-                range,
-                in_dims,
-            )),
-        }
+        Ok(self.ctx().data_scalar(
+            Rule::EArithData,
+            Dtype::Idx,
+            "flat_index",
+            key,
+            range,
+            in_dims,
+        ))
     }
 
     /// `a.filter(mask)`: the compaction of `E-Filter-1D` (§5.5).
     fn filter(&mut self, args: &Args, key: &ValueKey) -> Result<Desc, Reject> {
         let a = self.arg_array(args, Rule::EFilter1D, 0, "self")?;
         let mask = self.arg_array(args, Rule::EFilter1D, 1, "mask")?;
-        e_filter_axis0(&mut self.ctx(), &a, &mask, key, "c_filter")
+        let mask_key = self.mask_key(args, 1, "mask", key);
+        e_filter_axis0(&mut self.ctx(), &a, &mask, &mask_key, "c_filter")
+    }
+
+    /// The key `Count` is keyed by for a mask passed as an argument: the
+    /// value that argument names (§5.5), or `key` — the value being built —
+    /// when the argument has no key of its own, which leaves the count
+    /// unshared rather than shared with the wrong mask.
+    fn mask_key(&self, args: &Args, index: usize, name: &str, key: &ValueKey) -> ValueKey {
+        match args.key(index, name) {
+            Some(argument) => self.an.defining_key(&argument),
+            None => key.clone(),
+        }
     }
 
     /// `E-Matmul` (§5.7), also `np.dot`. Two rank-1 operands contract to a
@@ -443,6 +569,53 @@ impl Walker<'_> {
             defcond: a.defcond,
             psi: a.psi,
         })
+    }
+
+    /// `0 ≤ t < d`, the range NumPy's `'raise'` mode demands of a flat index
+    /// and of a coordinate. It is not [`in_bounds`], which admits Python's
+    /// negative indices: `np.unravel_index(-1, shape)` raises, and the
+    /// arithmetic of §5.4 is the coordinate only on the non-negative side.
+    fn within(&mut self, t: TermId, d: TermId) -> crate::phase0::term::BoolId {
+        let zero = self.an.terms.constant(0);
+        let low = self.an.terms.le(zero, t);
+        let high = self.an.terms.lt(t, d);
+        self.an.terms.and(low, high)
+    }
+
+    /// The extents of a shape argument as compile-time constants, one per
+    /// axis, for the two operators that turn a shape into arithmetic (§5.4).
+    ///
+    /// A shape spelled as a run-time array, or one whose extents are terms
+    /// rather than numerals, gives no constants, and §3.1 has no division by
+    /// a runtime value; the rejection names the operator and the axis.
+    fn constant_extents(&mut self, shape: &Desc, member: &str) -> Result<Vec<i128>, Reject> {
+        let extents = self.shape_terms(shape)?;
+        let mut out = Vec::with_capacity(extents.len());
+        for (axis, extent) in extents.iter().enumerate() {
+            let value = extent
+                .and_then(|t| self.an.terms.constant_value(t))
+                .ok_or_else(|| Reject::Unsupported {
+                    construct: format!(
+                        "{} with a shape whose axis {} is not a compile-time constant",
+                        member, axis
+                    ),
+                })?;
+            if value <= 0 {
+                return Err(Reject::Unsupported {
+                    construct: format!(
+                        "{} with a shape whose axis {} has the extent {}",
+                        member, axis, value
+                    ),
+                });
+            }
+            out.push(value);
+        }
+        if out.is_empty() {
+            return Err(Reject::Unsupported {
+                construct: format!("{} with an empty shape", member),
+            });
+        }
+        Ok(out)
     }
 
     /// The extent terms of a shape argument, one entry per axis.

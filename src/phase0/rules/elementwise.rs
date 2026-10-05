@@ -44,7 +44,6 @@ pub fn e_zip(ctx: &mut RuleCtx, a: &Desc, b: &Desc, out: Dtype) -> Result<Desc, 
         });
     }
     let (dims, defcond) = broadcast_dims(ctx.terms, &[&da, &db]);
-    ctx.prove(Rule::EZip.detail("broadcast compatibility"), defcond);
     Ok(ctx.array(Rule::EZip, out, dims, defcond))
 }
 

@@ -2153,7 +2153,16 @@ impl Synthesizer for Halo2Synthesizer {
         a: &Halo2CellRef,
         b: &Halo2CellRef,
     ) -> Result<Halo2CellRef, ProvingError> {
-        self.div_f(a, b)
+        // Q scaling cancels in the integer quotient. Normalize the divisor
+        // sign because integer division uses a nonnegative remainder window.
+        let zero = self.constant_int(0)?;
+        let negative = self.lt_i(b, &zero)?;
+        let neg_a = self.sub_i(&zero, a)?;
+        let neg_b = self.sub_i(&zero, b)?;
+        let numerator = self.select(&negative, &neg_a, a)?;
+        let denominator = self.select(&negative, &neg_b, b)?;
+        let quotient = self.floor_div_i(&numerator, &denominator)?;
+        self.float_cast(&quotient)
     }
     fn mod_f(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
         // Previous implementation composed `a - div_f(a, b) * b`. `div_f`
@@ -2165,7 +2174,15 @@ impl Synthesizer for Halo2Synthesizer {
         // floats (the scale factor cancels in both the quotient's int-floor
         // and the remainder), so `mod_i(a, b)` on Q-rep cells directly yields
         // the Q-rep of `a mod b` with the same floor-mod semantics as numpy.
-        self.mod_i(a, b)
+        let zero = self.constant_int(0)?;
+        let negative = self.lt_i(b, &zero)?;
+        let neg_a = self.sub_i(&zero, a)?;
+        let neg_b = self.sub_i(&zero, b)?;
+        let numerator = self.select(&negative, &neg_a, a)?;
+        let denominator = self.select(&negative, &neg_b, b)?;
+        let remainder = self.mod_i(&numerator, &denominator)?;
+        let neg_remainder = self.sub_i(&zero, &remainder)?;
+        self.select(&negative, &neg_remainder, &remainder)
     }
     fn pow_f(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
         let log_a = self.log_f(a)?;

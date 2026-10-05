@@ -347,6 +347,9 @@ pub fn deep_to_value_list(b: &mut IRBuilder, val: &Value) -> Value {
         return val.clone();
     }
     match val {
+        // A nested list cannot represent trailing dimensions after a zero
+        // axis. Preserve the array metadata for native NumPy dispatch.
+        Value::StaticArray { shape, .. } if shape.contains(&0) => val.clone(),
         Value::StaticArray { .. } => to_value_list(b, val),
         Value::List(data) => {
             let new_vals: Vec<Value> = data

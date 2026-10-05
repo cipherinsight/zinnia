@@ -16,13 +16,16 @@ Three tables and nothing else:
 A name absent from a table is an unsupported construct, which the harness
 reports as a gap rather than as a phase 0 failure (`acceptance.md` §2.5).
 
-Two Zinnia-specific semantics are implemented here rather than delegated,
-because NumPy spells them differently (`coverage.md` §5.1, §5.5):
+Three Zinnia-specific semantics are implemented here rather than delegated,
+because NumPy spells them differently (`coverage.md` §5.1, §5.2, §5.5):
 
 * `np.where(m)` with one argument is the mask itself, as the baseline returns
   it and as phase 0's `E-Filter` reads it;
 * `int`, `float` and `bool` are elementwise casts on an array, where Python
-  would raise.
+  would raise;
+* `np.mean`, `np.var` and `np.std` fail on an empty axis, where NumPy returns
+  `nan` with a warning: they divide by the count, and the baseline's every
+  division carries `rhs != 0`.
 """
 
 from __future__ import annotations
@@ -129,6 +132,46 @@ def _where(*args: Any) -> Any:
     if len(args) == 1:
         return args[0]
     return np.where(*args)
+
+
+def _averaging_reduction(name: str) -> Callable[..., Any]:
+    """`np.mean`, `np.var` and `np.std`, which are undefined on an empty axis.
+
+    NumPy returns `nan` with a warning. The three divide by the number of
+    elements they reduce, and in the baseline every division carries
+    `rhs != 0` as a requires (`src/optim/predicates/contracts.rs`), which a
+    non-constant count turns into a runtime assertion — `np.mean` on a
+    bounded-dynamic array asserts the length outright
+    (`src/ops/dyn_ndarray/aggregation.rs`). So the run fails where NumPy
+    warns, which is what `definition.md` §5.7 records as
+    `defcond = (dims_a[k] > 0)`, and this is the value half of it.
+    """
+    reduce = getattr(np, name)
+
+    def apply(a: Any, axis: Any = None, *rest: Any, **kwargs: Any) -> Any:
+        if _reduced_count(np.asarray(a), axis) == 0:
+            raise ZeroDivisionError(f"np.{name} over an empty axis")
+        return reduce(a, axis, *rest, **kwargs)
+
+    return apply
+
+
+def _reduced_count(a: np.ndarray, axis: Any) -> int | None:
+    """How many elements one cell of a reduction's output averages over.
+
+    `None` where the axis is not one of `a`'s: NumPy has its own error for
+    that and this wrapper must not pre-empt it.
+    """
+    if axis is None:
+        return int(a.size)
+    axes = axis if isinstance(axis, (tuple, list)) else (axis,)
+    count = 1
+    for entry in axes:
+        k = int(entry)
+        if not -a.ndim <= k < a.ndim:
+            return None
+        count *= a.shape[k]
+    return count
 
 
 def _outer(op: Callable[..., Any]) -> Callable[..., Any]:
@@ -243,15 +286,15 @@ NUMPY: dict[str, Callable[..., Any]] = {
     **{
         name: getattr(np, name)
         for name in ("sum", "prod", "min", "max", "amin", "amax", "any", "all",
-                     "mean", "var", "std", "argmax", "argmin", "cumsum", "cumprod",
-                     "percentile")
+                     "argmax", "argmin", "cumsum", "cumprod", "percentile")
     },
+    **{name: _averaging_reduction(name) for name in ("mean", "var", "std")},
     # indexing and gather
     **{
         name: getattr(np, name)
         for name in ("take", "take_along_axis", "nonzero", "argwhere",
                      "flatnonzero", "bincount", "unravel_index",
-                     "ravel_multi_index", "dot", "matmul", "inner", "tensordot",
+                     "ravel_multi_index", "dot", "matmul", "tensordot",
                      "einsum", "corrcoef", "correlate")
     },
     "where": _where,

@@ -948,17 +948,9 @@ impl IRGenerator {
             }
             Value::List(data) | Value::Tuple(data) => data.values.clone(),
             Value::DynamicNDArray(data) => {
-                // Bounded-dynamic iteration: the per-axis max is statically
-                // known, so we unroll exactly that many iterations and let
-                // the user's body run on each cell. Iterations beyond
-                // `runtime_length` see whatever the segment was last
-                // written with (typically a compaction default — e.g.
-                // `np.unique` initialises trailing cells to 0). The
-                // caller is responsible for ensuring those trailing
-                // iterations are semantically harmless (idempotent
-                // writes to a fixed slot, etc.) — this matches numpy's
-                // iteration *trip count* up to the static bound rather
-                // than the runtime length.
+                // Materialize the public capacity. The loop below predicates
+                // every iteration on the logical runtime length, so padding
+                // never becomes an element visible to the program.
                 if data.envelope.dims.len() != 1 {
                     panic!(
                         "iteration over rank-{} DynamicNDArray is not supported (only rank-1 for now)",
@@ -997,6 +989,15 @@ impl IRGenerator {
                 panic!("'{}' object is not iterable", iter_val.zinnia_type());
             }
         };
+        // Loop targets are bound unconditionally during symbolic unrolling so
+        // indices remain static. Preserve their old values when an enclosing
+        // branch does not execute; branch joins expect pre-merged bindings.
+        let entry_condition = self.ctx.get_condition_value(&mut self.builder);
+        let mut target_names = BTreeSet::new();
+        Self::collect_assigned_names_from_target(&n.target, &mut target_names);
+        let previous_targets: Vec<_> = target_names.into_iter()
+            .filter_map(|name| self.ctx.get(&name).map(|value| (name, value)))
+            .collect();
         let for_frame = Self::for_frame_from_elements(&n.target, &elements);
 
         // Unroll the loop: for each element, bind the target variable and run the block
@@ -1022,8 +1023,14 @@ impl IRGenerator {
             self.clear_induction_origins_from(&frame.var_name);
             self.for_loop_frames.push(frame);
         }
-        for elem in &elements {
+        for (position, elem) in elements.iter().enumerate() {
             self.ctx.loop_reiter(&mut self.builder);
+            if let Value::DynamicNDArray(data) = &iter_val {
+                let index = self.builder.ir_constant_int(position as i64);
+                let length = Value::Integer(data.meta.runtime_length.clone());
+                let inactive = self.builder.ir_greater_than_or_equal_i(&index, &length);
+                self.ctx.loop_break(Some(inactive), &mut self.builder);
+            }
             if pushed_frame {
                 if let Some(frame) = self.for_loop_frames.last_mut() {
                     frame.current_bound = elem
@@ -1066,6 +1073,15 @@ impl IRGenerator {
             }
         }
         let _loop_facts = self.builder.facts.leave();
+        if entry_condition.bool_val() != Some(true) {
+            for (name, previous) in previous_targets {
+                if let Some(current) = self.ctx.get(&name) {
+                    let merged = crate::helpers::value_ops::select_value(
+                        &mut self.builder, &entry_condition, &current, &previous);
+                    self.ctx.set(&name, merged);
+                }
+            }
+        }
         if returned {
             self.ctx.set_return_guarantee();
         }
@@ -1860,7 +1876,22 @@ impl IRGenerator {
         }
 
         let mut result_values = Vec::new();
-        self.expand_generators(&n.generators, 0, &n.elt, &mut result_values);
+        let mut result_guards = Vec::new();
+        let active = self.builder.ir_constant_bool(true);
+        self.expand_generators(&n.generators, 0, &n.elt, &mut result_values, &mut result_guards, &active);
+
+        // Runtime comprehension filters select a prefix of a bounded array;
+        // they must not be discarded simply because their truth is unknown.
+        if result_guards.iter().any(|g| g.bool_val() != Some(true)) {
+            let types = result_values.iter().map(Value::zinnia_type).collect();
+            let raw = Value::List(CompositeData::new(types, result_values));
+            let promoted = crate::helpers::promote::promote_static_to_dynamic(&mut self.builder, &raw);
+            let Value::DynamicNDArray(data) = promoted else { unreachable!() };
+            assert_eq!(data.envelope.dims.len(), 1, "filtered comprehensions currently require scalar elements");
+            let mask = Value::List(CompositeData::new(
+                result_guards.iter().map(Value::zinnia_type).collect(), result_guards));
+            return crate::ops::dyn_ndarray::memory_ops::dyn_filter(&mut self.builder, &data, &[mask]);
+        }
 
         let types: Vec<ZinniaType> = result_values.iter().map(|v| v.zinnia_type()).collect();
         if n.kind == "list" {
@@ -1884,9 +1915,12 @@ impl IRGenerator {
         idx: usize,
         elt: &ASTNode,
         result: &mut Vec<Value>,
+        guards: &mut Vec<Value>,
+        active: &Value,
     ) {
         if idx >= generators.len() {
             result.push(self.visit(elt));
+            guards.push(active.clone());
             return;
         }
 
@@ -1915,27 +1949,33 @@ impl IRGenerator {
         for elem in &elements {
             self.do_recursive_assign(&gen.target, elem.clone(), false);
 
-            let mut passes = true;
+            let mut guard = active.clone();
             for if_expr in &gen.ifs {
                 let cond = self.visit(if_expr);
-                let cond_static = cond.bool_val().or_else(|| cond.int_val().map(|v| v != 0));
-                if cond_static == Some(false) {
-                    passes = false;
+                let cond = crate::helpers::value_ops::to_scalar_bool(&mut self.builder, &cond);
+                guard = self.builder.ir_logical_and(&guard, &cond);
+                if guard.bool_val() == Some(false) {
                     break;
                 }
             }
 
-            if passes {
-                self.expand_generators(generators, idx + 1, elt, result);
+            if guard.bool_val() != Some(false) {
+                self.expand_generators(generators, idx + 1, elt, result, guards, &guard);
             }
         }
     }
 
     pub(crate) fn visit_cond_exp(&mut self, n: &ASTCondExp) -> Value {
         let cond = self.visit(&n.cond);
+        let cond_bool = crate::helpers::value_ops::to_scalar_bool(&mut self.builder, &cond);
+        // Python evaluates only the selected arm. When the condition is
+        // compile-time known, do not visit an unreachable arm (which may
+        // legitimately contain an out-of-bounds neighbor access).
+        if let Some(take_true) = cond_bool.bool_val() {
+            return self.visit(if take_true { &n.t_expr } else { &n.f_expr });
+        }
         let true_val = self.visit(&n.t_expr);
         let false_val = self.visit(&n.f_expr);
-        let cond_bool = crate::helpers::value_ops::to_scalar_bool(&mut self.builder, &cond);
         crate::helpers::value_ops::select_value(
             &mut self.builder,
             &cond_bool,
@@ -2142,6 +2182,16 @@ impl IRGenerator {
                                 &indices,
                                 &value,
                             );
+                            return;
+                        }
+                    }
+                    if matches!(inner_val, Value::List(_)) {
+                        let updated = self.set_nested_value(inner_val, &indices, value);
+                        if let ASTNode::ASTSubscriptExp(parent) = &*t.target {
+                            let target = ASTNode::ASTSubscriptAssignTarget(ASTSubscriptAssignTarget {
+                                target: parent.val.clone(), slicing: parent.slicing.clone(), star: false, dbg: parent.dbg.clone(),
+                            });
+                            self.do_recursive_assign(&target, updated, conditional_select);
                             return;
                         }
                     }

@@ -280,12 +280,8 @@ impl<'a> Preprocessor<'a> {
                 Ok(Some(result))
             }
             IR::DivF => Ok(Some(kernel::fp_div_prescale(args[0], args[1], prec))),
-            IR::FloorDivF => Ok(Some(kernel::fp_div_prescale(args[0], args[1], prec))),
-            IR::ModF => {
-                let q = kernel::fp_div_prescale(args[0], args[1], prec);
-                let (qb, _) = kernel::fp_mul_rescale(q, args[1], prec);
-                Ok(Some(args[0] - qb))
-            }
+            IR::FloorDivF => Ok(Some(kernel::fp_float_floor_div(args[0], args[1], prec))),
+            IR::ModF => Ok(Some(kernel::fp_float_mod(args[0], args[1]))),
             IR::PowF => {
                 let log_a = kernel::fp_log(args[0], prec);
                 let (bl, _) = kernel::fp_mul_rescale(args[1], log_a, prec);

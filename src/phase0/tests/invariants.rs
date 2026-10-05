@@ -4,7 +4,7 @@
 //! Every walk test goes through [`super::fixtures::run_full`], which calls
 //! [`assert_record_invariants`] on the record it produces, so a rule or a
 //! handler that forgets a producer, an operand or a subject fails the test
-//! that exercises it. `testing/phase0/record.py` is the same four checks over
+//! that exercises it. `testing/phase0/record.py` is the same five checks over
 //! the exported JSON, which the coverage harness runs on every accepted
 //! circuit of the parity set.
 
@@ -15,7 +15,7 @@ use crate::phase0::phi::ConstraintKind;
 use crate::phase0::source::Producer;
 use crate::phase0::Phase0Result;
 
-/// Check the four invariants of $\Delta$ and panic with the offending key if
+/// Check the five invariants of $\Delta$ and panic with the offending key if
 /// one fails.
 ///
 /// - I1 every entry has a producer; an `Applied` producer of a scalar or an
@@ -24,10 +24,19 @@ use crate::phase0::Phase0Result;
 /// - I2 every operand and every alias resolves to an entry recorded *earlier*
 ///   in $\Delta$, so the traversal order is a topological order of the source
 ///   graph.
-/// - I3 every check and every obligation has a subject that resolves to an
-///   entry.
+/// - I3 every check has a subject that resolves to an entry.
 /// - I4 keys are unique.
+/// - I5 the check watermarks do not fall along $\Delta$ and none exceeds the
+///   number of checks $\Phi$ holds: $\Phi$ only grows, and every watermark
+///   is read off it in traversal order.
 pub(super) fn assert_record_invariants(result: &Phase0Result) {
+    let checks = result
+        .phi
+        .constraints()
+        .iter()
+        .filter(|c| matches!(c.kind, ConstraintKind::Check { .. }))
+        .count() as u32;
+    let mut watermark = 0;
     let mut seen: HashSet<&ValueKey> = HashSet::new();
     for entry in &result.descriptors {
         check_producer(entry.key.encode(), &entry.desc, &entry.producer);
@@ -46,6 +55,15 @@ pub(super) fn assert_record_invariants(result: &Phase0Result) {
             "I4: two values share the key {}",
             entry.key.encode()
         );
+        assert!(
+            entry.checks >= watermark && entry.checks <= checks,
+            "I5: the check watermark of {} is {}, outside {}..={}",
+            entry.key.encode(),
+            entry.checks,
+            watermark,
+            checks
+        );
+        watermark = entry.checks;
     }
     for constraint in result.phi.constraints() {
         if let ConstraintKind::Check { subject, .. } = &constraint.kind {
@@ -56,15 +74,6 @@ pub(super) fn assert_record_invariants(result: &Phase0Result) {
                 subject.encode()
             );
         }
-    }
-    for obligation in result.obligations() {
-        assert!(
-            seen.contains(&obligation.subject),
-            "I3: the {} obligation from {} points at {}, which Δ does not record",
-            obligation.kind.as_str(),
-            obligation.provenance,
-            obligation.subject.encode()
-        );
     }
 }
 

@@ -31,11 +31,14 @@ def producer(kind: str, **fields: Any) -> dict[str, Any]:
     return payload
 
 
-def entry(name: str, prod: dict[str, Any], kind: str = "array") -> dict[str, Any]:
+def entry(
+    name: str, prod: dict[str, Any], kind: str = "array", checks: int = 0
+) -> dict[str, Any]:
     desc = {"array": {"kind": "array", "dtype": "I64", "rank": 1, "dims": [],
                       "dims_pretty": [], "defcond": 0, "psi": 0},
             "none": {"kind": "none"}}[kind]
-    return {"key": key(name), "name": None, "desc": desc, "producer": prod}
+    return {"key": key(name), "name": None, "checks": checks, "desc": desc,
+            "producer": prod}
 
 
 def clean() -> dict[str, Any]:
@@ -44,14 +47,11 @@ def clean() -> dict[str, Any]:
         "descriptors": [
             entry("a", producer("input")),
             entry("b", producer("applied", rules=["E-Slice"],
-                                 operands=["a"])),
+                                 operands=["a"]), checks=1),
         ],
         "constraints": [
             {"kind": "check", "provenance": "E-Slice", "subject": "b"},
             {"kind": "var_range", "provenance": "range of n"},
-        ],
-        "obligations": [
-            {"kind": "CANFAIL", "provenance": "E-Slice", "subject": "b"},
         ],
     }
 
@@ -89,23 +89,41 @@ def test_i2_an_operand_is_recorded_earlier() -> None:
     ]
 
 
-def test_i3_a_check_and_an_obligation_name_an_entry() -> None:
+def test_i3_a_check_names_an_entry() -> None:
     def elsewhere(payload: dict[str, Any]) -> None:
         payload["constraints"][0]["subject"] = "c"
-        payload["obligations"][0]["subject"] = "c"
 
     assert broken(elsewhere) == [
-        "I3: the check from E-Slice points at c, which Δ does not record",
-        "I3: the CANFAIL obligation from E-Slice points at c, "
-        "which Δ does not record",
+        "I3: the check from E-Slice points at c, which Δ does not record"
     ]
 
 
 def test_i4_keys_are_unique() -> None:
     def twice(payload: dict[str, Any]) -> None:
-        payload["descriptors"].append(copy.deepcopy(payload["descriptors"][0]))
+        # With the watermark of the entry it follows, so that the repeated key
+        # is the only thing the record breaks.
+        duplicate = copy.deepcopy(payload["descriptors"][0])
+        duplicate["checks"] = payload["descriptors"][-1]["checks"]
+        payload["descriptors"].append(duplicate)
 
     assert broken(twice) == ["I4: two values share the key a"]
+
+
+def test_i5_a_watermark_neither_falls_nor_outruns_phi() -> None:
+    def backwards(payload: dict[str, Any]) -> None:
+        payload["descriptors"][0]["checks"] = 1
+        payload["descriptors"][1]["checks"] = 0
+
+    assert broken(backwards) == [
+        "I5: the check watermark of b is 0, below the 1 of the entry before it"
+    ]
+
+    def beyond(payload: dict[str, Any]) -> None:
+        payload["descriptors"][1]["checks"] = 2
+
+    assert broken(beyond) == [
+        "I5: the check watermark of b is 2, above the number of checks in Φ (1)"
+    ]
 
 
 def test_a_composite_needs_no_rule_of_its_own() -> None:

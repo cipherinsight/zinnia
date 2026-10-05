@@ -82,10 +82,7 @@ impl Walker<'_> {
             Class::Repeat => self.repeat(args, key),
             Class::Tile => self.tile(args),
             Class::Diff => self.diff(args),
-            Class::Sort { index_result } => {
-                let a = self.arg_array(args, Rule::ESort, 0, "a")?;
-                e_sort(&mut self.ctx(), &a, index_result)
-            }
+            Class::Sort { index_result } => self.sort(args, index_result, member),
             Class::Unique => self.unique(args, key),
             Class::Zeros | Class::Full => self.zeros(args, key, class == Class::Full),
             Class::Like => self.like(args),
@@ -152,7 +149,8 @@ impl Walker<'_> {
         name: &str,
     ) -> Result<ArrayDesc, Reject> {
         let value = args.require(rule, index, name)?.clone();
-        self.as_array(&value, rule)
+        let (array, _) = self.as_array_keyed(&value, args.key(index, name), rule)?;
+        Ok(array)
     }
 
     /// The parts of a `concatenate` / `stack` call: one composite argument,
@@ -291,6 +289,25 @@ impl Walker<'_> {
         }
     }
 
+    /// `E-Sort` (§5.7): `np.sort(a, axis=k)` and `np.argsort(a, axis=k)`.
+    ///
+    /// An omitted `axis` sorts the last one and an integer `axis` sorts that
+    /// one, both leaving the dimensions alone. `axis=None` flattens first,
+    /// which the baseline implements only where the flattening is the
+    /// identity — a rank-1 operand — and rejects on rank ≥ 2
+    /// (`helpers/static_array/sorting.rs::try_apply_sort`). Phase 0 rejects
+    /// the same form, so that no program it accepts has a shape the baseline
+    /// will not build.
+    fn sort(&mut self, args: &Args, index_result: bool, member: &str) -> Result<Desc, Reject> {
+        let a = self.arg_array(args, Rule::ESort, 0, "a")?;
+        if matches!(args.get(1, "axis"), Some(Desc::None)) && a.rank() > 1 {
+            return Err(Reject::Unsupported {
+                construct: format!("np.{} with axis=None on a rank-{} array", member, a.rank()),
+            });
+        }
+        e_sort(&mut self.ctx(), &a, index_result)
+    }
+
     /// `cumsum` / `cumprod`: the dimensions are unchanged along an axis, and
     /// the array is flattened first when `axis` is omitted (§5.7).
     fn cumulative(&mut self, args: &Args, key: &ValueKey) -> Result<Desc, Reject> {
@@ -298,7 +315,14 @@ impl Walker<'_> {
         let a = self.as_array(&value, Rule::ECumsum)?;
         match self.optional_axis(args, 1, "axis")? {
             Some(_) => e_cumsum(&mut self.ctx(), &a),
-            None => self.ravel(&value, key),
+            None if a.dims.len() == 1 => e_cumsum(&mut self.ctx(), &a),
+            // NumPy scans the flattened array: `E-Reshape` to `[size(a)]`,
+            // then `E-Cumsum` over it; Δ records both rules.
+            None => {
+                let flat = self.ravel(&value, key)?;
+                let flat = self.as_array(&flat, Rule::ECumsum)?;
+                e_cumsum(&mut self.ctx(), &flat)
+            }
         }
     }
 
@@ -404,8 +428,6 @@ impl Walker<'_> {
             })?);
         }
         let (_, defcond) = broadcast_dims(&mut self.an.terms, &[&a.dims, &dims]);
-        self.ctx()
-            .prove(Rule::EBroadcast.detail("broadcast compatibility"), defcond);
         Ok(self.ctx().array(Rule::EBroadcast, a.dtype, dims, defcond))
     }
 

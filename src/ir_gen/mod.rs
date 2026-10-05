@@ -333,6 +333,21 @@ impl IRGenerator {
     // ── Visitor dispatch ──────────────────────────────────────────────
 
     fn visit(&mut self, node: &ASTNode) -> Value {
+        // Side effects must obey the complete live path, including earlier
+        // conditional continue/break/return statements in the same block.
+        let mutating_statement = matches!(node, ASTNode::ASTAssignStatement(_)
+            | ASTNode::ASTAugAssignStatement(_) | ASTNode::ASTExprStatement(_)
+            | ASTNode::ASTReturnStatement(_));
+        let previous = if mutating_statement {
+            let condition = self.ctx.get_condition_value(&mut self.builder);
+            Some(self.builder.swap_write_predicate(Some(condition)))
+        } else { None };
+        let result = self.visit_inner(node);
+        if let Some(previous) = previous { self.builder.swap_write_predicate(previous); }
+        result
+    }
+
+    fn visit_inner(&mut self, node: &ASTNode) -> Value {
         match node {
             ASTNode::ASTCircuit(n) => {
                 self.visit_circuit(n);

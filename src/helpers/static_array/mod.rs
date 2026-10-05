@@ -9,3 +9,5 @@ pub mod reductions;
 pub mod shape;
 pub mod sorting;
 pub mod write;
+
+pub mod matmul;

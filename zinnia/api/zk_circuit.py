@@ -171,6 +171,25 @@ class ZKCircuit:
             pretty,
         )
 
+    def build_candidates(
+        self,
+        query_timeout_ms: int = 3000,
+        program_timeout_ms: int = 60000,
+    ) -> Dict[str, Any]:
+        """Run phase 0 and then phase 1 on this circuit.
+
+        Mirrors :meth:`analyze_shapes` — same chips, same externals, same
+        config — but continues into phase 1 and returns its candidate graph,
+        answer record and statistics, or the rejection of whichever phase
+        refused the program.
+        """
+        return ZinniaCompiler(self.config).build_candidates(
+            self.source, self.name,
+            {k: v.to_internal_object() for k, v in self.chips.items()},
+            {k: v.to_internal_object() for k, v in self.externals.items()},
+            query_timeout_ms, program_timeout_ms,
+        )
+
     def __call__(self, *args):
         """Execute the circuit using the mock backend (default).
 

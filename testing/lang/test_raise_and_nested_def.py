@@ -65,20 +65,21 @@ def test_nested_def_without_annotations_is_lifted_and_inferred():
 
 
 @zk_circuit
-def _circuit_with_closure_helper(a: int):
+def _circuit_with_closure_helper(a: int, expected: int):
     captured = a + 1
 
     def helper(x: int) -> int:
         _zinnia_result = x + captured
 
     c = helper(a)
+    assert c == expected
 
 
-def test_nested_def_with_closure_rejected_with_hint():
-    with pytest.raises(Exception) as excinfo:
-        _circuit_with_closure_helper(5)
-    msg = str(excinfo.value)
-    assert "captures variables" in msg or "outer function" in msg, f"missing closure hint, got: {msg}"
+def test_nested_def_with_closure_compiles_and_checks_the_claimed_result():
+    circuit = ZKCircuit.from_method(_circuit_with_closure_helper)
+    circuit.compile()
+    assert circuit.prove(5, 11, backend="mock").proof_bytes_hex == "mock_satisfied"
+    assert circuit.prove(5, 12, backend="mock").proof_bytes_hex != "mock_satisfied"
 
 
 def test_conditional_branch_join_rebinds_common_name():

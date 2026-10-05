@@ -13,11 +13,9 @@
 //!   stride/shape. Cheap and matches NumPy semantics; the chained subscript
 //!   form `arr[i][j]` lands here on the first step.
 //! - **Static slice** (`arr[a:b]`, `arr[a:b, c]`):
-//!   - step=1, contiguous in memory: view (same segment, adjusted
-//!     offset+shape).
-//!   - step != 1, reversed, or non-contiguous slab: materialise into a fresh
-//!     segment so downstream consumers see contiguous storage. This matches
-//!     the policy used by `dyn_ndarray::reshape::dyn_transpose`.
+//!   - positive step, including non-contiguous slabs: aliasing view (same
+//!     segment, adjusted offset, shape and strides).
+//!   - reversed slices: materialise while StaticArray strides remain unsigned.
 //! - **Dynamic slice** (`arr[a:b]` with runtime `a` / `b`): always
 //!   materialise (mirrors `dyn_slice_axis`).
 //!
@@ -655,6 +653,66 @@ fn try_fancy_subscript(
     ))
 }
 
+/// Basic indexing with compile-time scalar indices and nonnegative strides
+/// returns a NumPy view. This includes strided columns and mixed scalar/slice
+/// indexing; copying these loses mutations through aliases and ufunc out=.
+fn static_basic_view(b: &mut IRBuilder, value: &Value, indices: &[SliceIndex]) -> Option<Value> {
+    let Value::StaticArray { dtype, shape, segment_id, strides, offset,
+        imag_segment_id, .. } = value else { return None };
+    if indices.len() > shape.len() { return None; }
+    let bound = |v: &Option<Value>| -> Option<Option<i64>> {
+        match v { None | Some(Value::None) => Some(None), Some(v) => v.int_val().map(Some) }
+    };
+    let mut out_shape = Vec::new();
+    let mut out_strides = Vec::new();
+    let mut out_offset = *offset;
+    for ax in 0..shape.len() {
+        match indices.get(ax) {
+            None => {
+                out_shape.push(shape[ax]);
+                out_strides.push(strides[ax]);
+            }
+            Some(SliceIndex::Single(value)) => {
+                let raw = value.int_val()?;
+                let index = if raw < 0 { raw.saturating_add(shape[ax] as i64) } else { raw };
+                assert!(index >= 0 && index < shape[ax] as i64, "array index out of bounds");
+                out_offset += index as usize * strides[ax];
+            }
+            Some(SliceIndex::Range(start, stop, step)) => {
+                let start = bound(start)?;
+                let stop = bound(stop)?;
+                let step = bound(step)?.unwrap_or(1);
+                assert!(step != 0, "slice step cannot be zero");
+                // StaticArray strides are unsigned. Keep reversed slicing
+                // on the existing materializing path until signed strides
+                // can be represented throughout the array implementation.
+                if step < 0 { return None; }
+                let len = shape[ax] as i64;
+                let normalize = |raw: i64| {
+                    let normalized = if raw < 0 { raw.saturating_add(len) } else { raw };
+                    normalized.max(0).min(len) as usize
+                };
+                let start = start.map(normalize).unwrap_or(0);
+                let stop = stop.map(normalize).unwrap_or(shape[ax]);
+                let step = step as usize;
+                let length = if start >= stop { 0 } else { 1 + (stop - start - 1) / step };
+                out_offset += start * strides[ax];
+                out_shape.push(length);
+                out_strides.push(strides[ax].checked_mul(step).expect("slice stride overflow"));
+            }
+            _ => return None,
+        }
+    }
+    if out_shape.is_empty() { return None; }
+    let out = Value::StaticArray { dtype: *dtype, shape: out_shape,
+        segment_id: *segment_id, strides: out_strides, offset: out_offset,
+        imag_segment_id: *imag_segment_id, value_id: ValueId::next() };
+    if let (Some(input), Some(output)) = (value.value_id(), out.value_id()) {
+        crate::optim::resolver::relay_forall_eq_const_from_input(b, input, output);
+    }
+    Some(out)
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // Public dispatch
 // ────────────────────────────────────────────────────────────────────────
@@ -775,6 +833,10 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
         b, dtype, &shape, segment_id, imag_seg, &strides, offset, indices,
     ) {
         return out;
+    }
+
+    if let Some(view) = static_basic_view(b, val, indices) {
+        return view;
     }
 
     // ── Fast path: all-Single, fully-resolved index across all axes →

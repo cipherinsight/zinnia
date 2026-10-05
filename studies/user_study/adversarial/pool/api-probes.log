@@ -1,0 +1,95 @@
+split_column_alias {'name': 'split_column_alias', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+split_negative_boundary {'name': 'split_negative_boundary', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+split_descending_boundary_alias {'name': 'split_descending_boundary_alias', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+split_array_boundaries {'name': 'split_array_boundaries', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+hsplit_alias {'name': 'hsplit_alias', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+dsplit_alias {'name': 'dsplit_alias', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+subsample_write_alias {'name': 'subsample_write_alias', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+subsample_source_alias {'name': 'subsample_source_alias', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+reduction_into_column_view {'name': 'reduction_into_column_view', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+ufunc_into_strided_view {'name': 'ufunc_into_strided_view', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+ndindex_tuple {'name': 'ndindex_tuple', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+ndindex_args {'name': 'ndindex_args', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+minimum_dtype_int {'name': 'minimum_dtype_int', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+maximum_dtype_numpy {'name': 'maximum_dtype_numpy', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+minimum_dtype_attribute {'name': 'minimum_dtype_attribute', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+maximum_dtype_string {'name': 'maximum_dtype_string', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+reduceat_dtype_int {'name': 'reduceat_dtype_int', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+reduceat_dtype_numpy {'name': 'reduceat_dtype_numpy', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+minimum_axis0 {'name': 'minimum_axis0', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+maximum_negative_axis {'name': 'maximum_negative_axis', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+minimum_out_alias {'name': 'minimum_out_alias', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+reduceat_descending {'name': 'reduceat_descending', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+reduceat_repeated_negative_axis {'name': 'reduceat_repeated_negative_axis', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+reduceat_noncontiguous {'name': 'reduceat_noncontiguous', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+reduceat_out {'name': 'reduceat_out', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+window_axes {'name': 'window_axes', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+window_repeated_axes {'name': 'window_repeated_axes', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+window_noncontiguous {'name': 'window_noncontiguous', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+window_alias {'name': 'window_alias', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+roll_axis_none {'name': 'roll_axis_none', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+roll_repeated_axes {'name': 'roll_repeated_axes', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+roll_scalar_broadcast {'name': 'roll_scalar_broadcast', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+roll_shift_broadcast {'name': 'roll_shift_broadcast', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+roll_noncontiguous {'name': 'roll_noncontiguous', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+pad_scalar {'name': 'pad_scalar', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+pad_asymmetric_axes {'name': 'pad_asymmetric_axes', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+pad_broadcast_pair {'name': 'pad_broadcast_pair', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+pad_noncontiguous {'name': 'pad_noncontiguous', 'status': 'pass', 'fixtures': 3, 'negative_control': True}
+
+thread 'zinnia-compile' (89) panicked at src/ir_gen/named_attr/array_iteration.rs:150:5:
+assertion `left == right` failed: minimum: converting the accumulator dtype is not supported
+  left: Float
+ right: Integer
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+scan_converting_dtype {'name': 'scan_converting_dtype', 'status': 'pass', 'kind': 'argument_rejection', 'error': 'ZinniaException: IR generation failed: assertion `left == right` failed: minimum: converting the accumulator dtype is not supported\n  left: Float\n right: Integer'}
+
+thread 'zinnia-compile' (90) panicked at src/ir_gen/named_attr/array_iteration.rs:146:22:
+np.add.reduceat: unsupported accumulator dtype int8
+reduceat_narrow_string_dtype {'name': 'reduceat_narrow_string_dtype', 'status': 'pass', 'kind': 'argument_rejection', 'error': 'ZinniaException: IR generation failed: np.add.reduceat: unsupported accumulator dtype int8'}
+
+thread 'zinnia-compile' (91) panicked at src/ops/static_ndarray_ops/reshaping.rs:1375:13:
+split: number of sections must be > 0
+split_negative_sections {'name': 'split_negative_sections', 'status': 'pass', 'kind': 'argument_rejection', 'error': 'ZinniaException: IR generation failed: split: number of sections must be > 0'}
+
+thread 'zinnia-compile' (92) panicked at src/ir_gen/named_attr/array_iteration.rs:166:5:
+np.ndindex: negative dimensions are not allowed
+negative_ndindex {'name': 'negative_ndindex', 'status': 'pass', 'kind': 'argument_rejection', 'error': 'ZinniaException: IR generation failed: np.ndindex: negative dimensions are not allowed'}
+
+thread 'zinnia-compile' (93) panicked at src/ir_gen/named_attr/array_iteration.rs:71:5:
+minimum: axis 3 is out of bounds for rank 3
+scan_axis_oob {'name': 'scan_axis_oob', 'status': 'pass', 'kind': 'argument_rejection', 'error': 'ZinniaException: IR generation failed: minimum: axis 3 is out of bounds for rank 3'}
+
+thread 'zinnia-compile' (94) panicked at src/ir_gen/named_attr/array_iteration.rs:19:28:
+maximum: requires a compile-time integer
+scan_tuple_axis {'name': 'scan_tuple_axis', 'status': 'pass', 'kind': 'argument_rejection', 'error': 'ZinniaException: IR generation failed: maximum: requires a compile-time integer'}
+
+thread 'zinnia-compile' (95) panicked at src/ir_gen/named_attr/array_iteration.rs:276:9:
+np.add.reduceat: index is out of bounds
+reduceat_negative_index {'name': 'reduceat_negative_index', 'status': 'pass', 'kind': 'argument_rejection', 'error': 'ZinniaException: IR generation failed: np.add.reduceat: index is out of bounds'}
+
+thread 'zinnia-compile' (96) panicked at src/ir_gen/named_attr/array_iteration.rs:276:9:
+np.add.reduceat: index is out of bounds
+reduceat_index_oob {'name': 'reduceat_index_oob', 'status': 'pass', 'kind': 'argument_rejection', 'error': 'ZinniaException: IR generation failed: np.add.reduceat: index is out of bounds'}
+
+thread 'zinnia-compile' (97) panicked at src/ir_gen/named_attr/array_iteration.rs:372:9:
+np.lib.stride_tricks.sliding_window_view: window shape exceeds the input extent
+window_too_large {'name': 'window_too_large', 'status': 'pass', 'kind': 'argument_rejection', 'error': 'ZinniaException: IR generation failed: np.lib.stride_tricks.sliding_window_view: window shape exceeds the input extent'}
+
+thread 'zinnia-compile' (98) panicked at src/ir_gen/named_attr/array_iteration.rs:361:5:
+assertion `left == right` failed: np.lib.stride_tricks.sliding_window_view: window_shape and axis lengths differ
+  left: 2
+ right: 1
+window_axis_mismatch {'name': 'window_axis_mismatch', 'status': 'pass', 'kind': 'argument_rejection', 'error': 'ZinniaException: IR generation failed: assertion `left == right` failed: np.lib.stride_tricks.sliding_window_view: window_shape and axis lengths differ\n  left: 2\n right: 1'}
+
+thread 'zinnia-compile' (99) panicked at src/ir_gen/named_attr/array_iteration.rs:333:13:
+np.lib.stride_tricks.sliding_window_view: writeable=True is not supported
+window_writeable {'name': 'window_writeable', 'status': 'pass', 'kind': 'argument_rejection', 'error': 'ZinniaException: IR generation failed: np.lib.stride_tricks.sliding_window_view: writeable=True is not supported'}
+
+thread 'zinnia-compile' (100) panicked at src/ir_gen/named_attr/array_iteration.rs:71:5:
+np.roll: axis 3 is out of bounds for rank 3
+roll_axis_oob {'name': 'roll_axis_oob', 'status': 'pass', 'kind': 'argument_rejection', 'error': 'ZinniaException: IR generation failed: np.roll: axis 3 is out of bounds for rank 3'}
+
+thread 'zinnia-compile' (101) panicked at src/ir_gen/named_attr/array_iteration.rs:458:9:
+np.pad: negative pad widths are not allowed
+pad_negative {'name': 'pad_negative', 'status': 'pass', 'kind': 'argument_rejection', 'error': 'ZinniaException: IR generation failed: np.pad: negative pad widths are not allowed'}

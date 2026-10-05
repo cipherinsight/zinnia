@@ -7,6 +7,7 @@
 
 mod constructors;
 mod elementwise;
+pub mod einsum;
 mod indexing;
 mod linalg;
 mod matmul;

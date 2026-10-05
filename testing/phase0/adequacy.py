@@ -19,7 +19,8 @@ which recorded value gives the variable its actual value:
 |---|---|
 | `input_length` | the actual length of that input axis |
 | `shape_symbol` | the actual value of the scalar input or axis of that name |
-| `count`, `unique_count`, `value_sized` | the leading extent of the value at the key |
+| `count` | the elements the mask at the key selects; for `E-Comp`'s count, keyed by the comprehension itself, the length of what it kept |
+| `unique_count`, `value_sized` | the leading extent of the value at the key |
 | `data_scalar` | the number recorded at the key |
 | `data_bool` | the truth of the value at the key |
 | `definedness` | whether the run produced a value at the key at all: the witness stands for "the operation was defined" (`E-Take`'s `inrange`, an `E-Map` domain condition, `list.remove`) |
@@ -313,7 +314,9 @@ def _value_of(variable: dict[str, Any], trace: Trace) -> Any:
         return observed is not None
     if observed is None:
         return None
-    if kind in ("count", "unique_count", "value_sized"):
+    if kind == "count":
+        return observed.count
+    if kind in ("unique_count", "value_sized"):
         return observed.leading_extent
     if kind == "data_bool":
         return _boolean(observed)
@@ -437,6 +440,16 @@ def _check_descriptors(
     problems: list[Mismatch] = []
     for entry in record.analysis["descriptors"]:
         key = entry["key"]["key"]
+        if entry["key"].get("step", 0):
+            # An *intermediate* of `definition.md` §3.3 — the array an
+            # operator stacks a composite operand into, a coordinate of
+            # `unravel_index`, the element index of an unrolled iteration,
+            # the comparison a division records for `defcond_div`. The
+            # reference evaluator mints no key for one, because the source
+            # never wrote it, so there is no observed value to compare
+            # against; its shape reaches this harness through the operands
+            # of the rules that read it (`acceptance.md` §3).
+            continue
         observed = trace.values.get(key)
         problems.extend(
             _check_entry(values, entry["desc"], observed, key, entry.get("name"))

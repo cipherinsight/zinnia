@@ -190,7 +190,8 @@ fn merge_binding(
         .collect();
     let producer = Producer::of(&desc, frame.into_rules(), operands, Some(b));
     // The merge binds the name to a new version, so the entry carries it.
-    w.record(key.clone(), Some(name), &desc, producer);
+    w.record(key.clone(), Some(name), &desc, producer.clone());
+    w.record_composite_elements(key, &desc, &producer);
     Ok(desc)
 }
 

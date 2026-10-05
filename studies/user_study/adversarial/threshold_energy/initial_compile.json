@@ -1,0 +1,187 @@
+[
+  {
+    "name": "mask_product",
+    "approach": "broadcast mask / multiply / sum",
+    "path": "mask_product.py",
+    "compiled": true,
+    "seconds": 0.003
+  },
+  {
+    "name": "sum_where",
+    "approach": "NumPy reduction with where and initial",
+    "path": "sum_where.py",
+    "compiled": true,
+    "seconds": 0.013
+  },
+  {
+    "name": "where_square",
+    "approach": "zero inactive readings before squaring",
+    "path": "where_square.py",
+    "compiled": true,
+    "seconds": 0.003
+  },
+  {
+    "name": "add_reduce",
+    "approach": "ufunc reduction",
+    "path": "add_reduce.py",
+    "compiled": true,
+    "seconds": 0.003
+  },
+  {
+    "name": "einsum_masked",
+    "approach": "einsum of masked readings",
+    "path": "einsum_masked.py",
+    "compiled": true,
+    "seconds": 0.003
+  },
+  {
+    "name": "row_filtered_dot",
+    "approach": "Boolean selection followed by dot",
+    "path": "row_filtered_dot.py",
+    "compiled": false,
+    "error": "ZinniaException: IR generation failed: np.dot is not yet supported for bounded-dynamic arrays; use static arrays or keep matmul outside the bounded-dynamic surface",
+    "seconds": 0.001
+  },
+  {
+    "name": "row_filtered_sum",
+    "approach": "Boolean selection followed by sum",
+    "path": "row_filtered_sum.py",
+    "compiled": true,
+    "seconds": 0.022
+  },
+  {
+    "name": "generator_filter",
+    "approach": "generator with filter clause",
+    "path": "generator_filter.py",
+    "compiled": true,
+    "seconds": 0.008
+  },
+  {
+    "name": "helper_closure",
+    "approach": "local helper captures floor",
+    "path": "helper_closure.py",
+    "compiled": false,
+    "error": "ZinniaException:   In method \"kernel\", line 3 to 4\n        def energy(row):\n        ^^^^^^^^^^^^^^^^\n            return sum((v * v for v, f in zip(row, floor) if v > f))\n    \nInvalidCircuitStatementException: nested `def energy` cannot be defined inside a circuit body. It captures variables from the outer function. Move it to module level and pass any captured values as arguments, decorating it with @zk_chip.",
+    "seconds": 0.0
+  },
+  {
+    "name": "helper_explicit",
+    "approach": "local helper with explicit argument",
+    "path": "helper_explicit.py",
+    "compiled": false,
+    "error": "ZinniaException:   In method \"kernel\", line 3 to 8\n        def energy(row, limits):\n        ^^^^^^^^^^^^^^^^^^^^^^^^\n            total = 0\n    ^^^^^^^^^^^^^^^^^\n            for v, f in zip(row, limits):\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                if v > f:\n    ^^^^^^^^^^^^^^^^^^^^^\n                    total += v ** 2\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n            return total\n    \nInvalidCircuitStatementException: nested `def energy` cannot be defined inside a circuit body. It captures variables from the outer function. Move it to module level and pass any captured values as arguments, decorating it with @zk_chip.",
+    "seconds": 0.0
+  },
+  {
+    "name": "map_lambda",
+    "approach": "map lambda over rows",
+    "path": "map_lambda.py",
+    "compiled": false,
+    "error": "ZinniaException:   In method \"kernel\", line 2\n        return np.array(list(map(lambda row: np.sum(np.where(row > floor, row * row, 0)), x)))\n                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nUnsupportedLangFeatureException: Lambda expressions are not supported inside @zk_circuit. Define a named helper function or inline the expression instead.",
+    "seconds": 0.0
+  },
+  {
+    "name": "filter_lambda",
+    "approach": "filter pairs then map contribution",
+    "path": "filter_lambda.py",
+    "compiled": false,
+    "error": "ZinniaException:   In method \"kernel\", line 4\n            pairs = filter(lambda pair: pair[0] > pair[1], zip(row, floor))\n                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nUnsupportedLangFeatureException: Lambda expressions are not supported inside @zk_circuit. Define a named helper function or inline the expression instead.",
+    "seconds": 0.0
+  },
+  {
+    "name": "apply_along_axis",
+    "approach": "apply row helper along channel axis",
+    "path": "apply_along_axis.py",
+    "compiled": false,
+    "error": "ZinniaException:   In method \"kernel\", line 3 to 4\n        def energy(row):\n        ^^^^^^^^^^^^^^^^\n            return np.sum(np.where(row > floor, row * row, 0))\n    \nInvalidCircuitStatementException: nested `def energy` cannot be defined inside a circuit body. It captures variables from the outer function. Move it to module level and pass any captured values as arguments, decorating it with @zk_chip.",
+    "seconds": 0.0
+  },
+  {
+    "name": "compress_rows",
+    "approach": "compress selects channel values",
+    "path": "compress_rows.py",
+    "compiled": false,
+    "error": "ZinniaException: IR generation failed: np.compress is not implemented",
+    "seconds": 0.001
+  },
+  {
+    "name": "nonzero_indices",
+    "approach": "nonzero channel index iteration",
+    "path": "nonzero_indices.py",
+    "compiled": true,
+    "seconds": 0.074
+  },
+  {
+    "name": "flatnonzero_take",
+    "approach": "flatnonzero and take gather",
+    "path": "flatnonzero_take.py",
+    "compiled": false,
+    "error": "ZinniaException: IR generation failed: np.take: indices must be a static integer or static integer array",
+    "seconds": 0.002
+  },
+  {
+    "name": "masked_copyto",
+    "approach": "copyto inactive positions",
+    "path": "masked_copyto.py",
+    "compiled": false,
+    "error": "ZinniaException: IR generation failed: np.copyto is not implemented",
+    "seconds": 0.001
+  },
+  {
+    "name": "boolean_assignment",
+    "approach": "Boolean assignment on copy",
+    "path": "boolean_assignment.py",
+    "compiled": true,
+    "seconds": 0.016
+  },
+  {
+    "name": "channel_accumulation",
+    "approach": "column iteration accumulates output vector",
+    "path": "channel_accumulation.py",
+    "compiled": true,
+    "seconds": 0.014
+  },
+  {
+    "name": "continue_loop",
+    "approach": "nested loops with continue",
+    "path": "continue_loop.py",
+    "compiled": true,
+    "seconds": 0.004
+  },
+  {
+    "name": "while_indices",
+    "approach": "static while loops with conditional scalar",
+    "path": "while_indices.py",
+    "compiled": true,
+    "seconds": 0.006
+  },
+  {
+    "name": "list_filtered_append",
+    "approach": "dynamic filtered list append and reduction",
+    "path": "list_filtered_append.py",
+    "compiled": true,
+    "seconds": 0.021
+  },
+  {
+    "name": "transpose_builtin_sum",
+    "approach": "transpose channels and built-in sum",
+    "path": "transpose_builtin_sum.py",
+    "compiled": true,
+    "seconds": 0.003
+  },
+  {
+    "name": "masked_matmul",
+    "approach": "masked rows times all-ones vector",
+    "path": "masked_matmul.py",
+    "compiled": true,
+    "seconds": 0.002
+  },
+  {
+    "name": "reduce_keepdims_squeeze",
+    "approach": "sum tuple axis and squeeze",
+    "path": "reduce_keepdims_squeeze.py",
+    "compiled": false,
+    "error": "ZinniaException: IR generation failed: Expr attribute `.squeeze` not yet implemented in Rust IR generator",
+    "seconds": 0.009
+  }
+]

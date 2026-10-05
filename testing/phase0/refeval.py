@@ -50,8 +50,9 @@ Three smaller differences, all deliberate:
   keep the element, as Python does; phase 0 evaluates it whenever the clauses
   are not *statically* false, so the two disagree on the keys inside a
   filtered-out element (`_expand_generators`);
-* the two Zinnia-specific readings of `np.where(m)` and of `int` / `float` /
-  `bool` on an array, which `ops.py` documents;
+* the three Zinnia-specific readings — `np.where(m)`, `int` / `float` /
+  `bool` on an array, and the empty axis of `np.mean` / `np.var` / `np.std` —
+  which `ops.py` documents;
 * `evaluate` runs on deep copies of the inputs, because a circuit may write
   its inputs in place and the caller's values must come back untouched.
 """
@@ -181,23 +182,34 @@ class ParsedKey(NamedTuple):
     iters: tuple[int, ...]
     calls: tuple[str, ...]
     expr_index: int
+    #: Which value of the expression node the key names: 0 the node's own
+    #: value, `s + 1` its `s`-th intermediate, written `#s` after the
+    #: expression index (`definition.md` §3.3).
+    step: int = 0
 
     @staticmethod
     def parse(key: str) -> "ParsedKey":
         path, iters, calls, expr = key.split("|")
+        expr, _, step = expr.partition("#")
         return ParsedKey(
             stmt_path=tuple(path.split(".")) if path else (),
             iters=tuple(int(n) for n in iters.split(".")) if iters else (),
             calls=tuple(calls.split(".")) if calls else (),
             expr_index=int(expr),
+            step=int(step) + 1 if step else 0,
         )
 
     def encode(self) -> str:
+        expr = (
+            str(self.expr_index)
+            if self.step == 0
+            else f"{self.expr_index}#{self.step - 1}"
+        )
         return "{}|{}|{}|{}".format(
             ".".join(self.stmt_path),
             ".".join(str(n) for n in self.iters),
             ".".join(self.calls),
-            self.expr_index,
+            expr,
         )
 
     def component(self, index: int) -> "ParsedKey":
@@ -227,14 +239,17 @@ class Observed:
     dtype: str | None = None
     number: Any = None
     elems: tuple["Observed", ...] | None = None
+    #: How many elements the array selects when it is used as a mask: the
+    #: non-zero ones. `None` for anything that cannot be a mask.
+    selected: int | None = None
 
     @property
     def leading_extent(self) -> int | None:
-        """The extent a `Count`, a `UniqueCount` or a `ValueSized` variable
-        stands for: axis 0 of an array, the length of a list.
+        """The extent a `UniqueCount` or a `ValueSized` variable stands for:
+        axis 0 of an array, the length of a list.
 
         A *tuple* of arrays is `np.nonzero`'s result, whose members share the
-        one count (§5.5), so the count is their common leading extent.
+        one count (§5.5), so the extent is their common leading one.
         """
         if self.kind == "array":
             return self.shape[0] if self.shape else None
@@ -244,6 +259,19 @@ class Observed:
             return len(self.elems)
         return None
 
+    @property
+    def count(self) -> int | None:
+        """The value of a `Count` variable keyed at this value (§5.5).
+
+        `Count(m)` is keyed by the mask, and what it counts is the elements
+        the mask selects. `E-Comp`'s count is keyed by the comprehension
+        itself (§5.11), whose value is the list of elements it kept, so there
+        the count is that list's length.
+        """
+        if self.kind == "array":
+            return self.selected
+        return self.leading_extent
+
 
 def observe(value: Any) -> Observed:
     """Compress a runtime value into an `Observed`."""
@@ -252,7 +280,7 @@ def observe(value: Any) -> Observed:
     if isinstance(value, np.ndarray):
         return Observed(
             kind="array", shape=tuple(int(n) for n in value.shape),
-            dtype=str(value.dtype),
+            dtype=str(value.dtype), selected=_selected(value),
         )
     if isinstance(value, (list, tuple)):
         return Observed(
@@ -273,6 +301,18 @@ def observe(value: Any) -> Observed:
     if isinstance(value, (complex, np.complexfloating)):
         return Observed(kind="scalar", dtype="Complex", number=complex(value))
     return Observed(kind="scalar", dtype=type(value).__name__, number=None)
+
+
+def _selected(value: np.ndarray) -> int | None:
+    """How many elements an array selects as a mask: the non-zero ones.
+
+    Only a Boolean or an integer array can be a mask (§5.5's premise, read at
+    the dtype-family level as `rules/masks.rs` reads it), and counting is a
+    pass over the array, so nothing else is counted.
+    """
+    if value.dtype.kind not in "bui":
+        return None
+    return int(np.count_nonzero(value))
 
 
 @dataclass

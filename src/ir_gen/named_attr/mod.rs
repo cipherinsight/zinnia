@@ -6,6 +6,9 @@ use crate::types::{CompositeData, Value, ValueId, ZinniaType};
 use super::IRGenerator;
 
 mod builtins;
+mod array_compat;
+mod array_iteration;
+mod dynamic_array_compat;
 mod list_methods;
 mod ndarray_methods;
 mod numpy_funcs;
@@ -46,6 +49,7 @@ impl IRGenerator {
         for a in &n.args {
             if let ASTNode::ASTStarredExpr(se) = a {
                 let inner = self.visit(&se.value);
+                let inner = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &inner);
                 if let Value::List(data) | Value::Tuple(data) = inner {
                     visited_args.extend(data.values);
                 } else {
@@ -81,22 +85,13 @@ impl IRGenerator {
         // on the StaticArray representation.
         let visited_args_orig: Vec<Value> = visited_args.clone();
         let visited_kwargs_orig: HashMap<String, Value> = _visited_kwargs.clone();
-        if target == Some("np") && matches!(member, "sum" | "prod" | "min" | "max" | "any" | "all")
-        {
-            let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
-            let axis_arg_orig = visited_kwargs_orig
-                .get("axis")
-                .or_else(|| visited_args_orig.get(1));
-            let keepdims = kwarg_static_truthy(&visited_kwargs_orig, "keepdims", false);
-            if let Some(out) = crate::helpers::static_array::reductions::try_apply_reduce(
-                &mut self.builder,
-                member,
-                &val_orig,
-                axis_arg_orig,
-                keepdims,
-            ) {
-                return out;
-            }
+        if target==Some("np") {
+            if let Some(value)=array_iteration::dispatch(&mut self.builder,member,&visited_args_orig,&visited_kwargs_orig) {return value;}
+            if let Some(value)=dynamic_array_compat::dispatch(&mut self.builder,member,&visited_args_orig,&visited_kwargs_orig) {return value;}
+        }
+        if target == Some("np") && matches!(member, "sum" | "prod" | "min" | "amin" | "max" | "amax" | "any" | "all") {
+            let op = match member { "amin" => "min", "amax" => "max", other => other };
+            return array_compat::reduction(&mut self.builder,op,&visited_args_orig,&visited_kwargs_orig);
         }
         if target.is_none() && self.registered_chips.contains_key(member) {
             return self.visit_chip_call(member, &visited_args_orig, &visited_kwargs_orig);
@@ -155,7 +150,7 @@ impl IRGenerator {
             return v;
         }
         if let Some(v) = self.try_numpy_func(&ctx) {
-            return v;
+            return self.finish_numpy_out(&ctx, v);
         }
         if let Some(v) = self.try_list_method(&ctx) {
             return v;
@@ -164,7 +159,7 @@ impl IRGenerator {
             return v;
         }
         if let Some(v) = self.try_np_fallback(&ctx) {
-            return v;
+            return self.finish_numpy_out(&ctx, v);
         }
 
         // ── Chip calls (no target or target not a known variable) ─
@@ -202,6 +197,15 @@ impl IRGenerator {
         )
     }
 
+    fn finish_numpy_out(&mut self, ctx: &DispatchCtx, value: Value) -> Value {
+        if ctx.target == Some("np") && ctx.member != "clip" {
+            if let Some(target) = ctx.kwargs_orig.get("out") {
+                return array_compat::write_output(&mut self.builder, &value, target, ctx.kwargs_orig.get("where"));
+            }
+        }
+        value
+    }
+
     pub(crate) fn visit_expr_attr(&mut self, n: &ASTExprAttribute) -> Value {
         if let Some(out) = self.try_np_linalg_expr_attr(n) {
             return out;
@@ -212,6 +216,7 @@ impl IRGenerator {
         for a in &n.args {
             if let ASTNode::ASTStarredExpr(se) = a {
                 let inner = self.visit(&se.value);
+                let inner = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &inner);
                 if let Value::List(data) | Value::Tuple(data) = inner {
                     visited_args.extend(data.values);
                 } else {
@@ -235,6 +240,13 @@ impl IRGenerator {
         // migrated reduction entry points can route through
         // `static_array_reductions` directly on the StaticArray
         // representation.
+        if matches!(n.member.as_str(), "sum" | "prod" | "min" | "max" | "any" | "all") {
+            let mut args = vec![target.clone()]; args.extend(visited_args.iter().cloned());
+            return array_compat::reduction(&mut self.builder, &n.member, &args, &visited_kwargs);
+        }
+        if n.member=="squeeze" {
+            if let Some(value)=crate::helpers::static_array::shape::try_apply_squeeze(&mut self.builder,&target,visited_kwargs.get("axis").or_else(||visited_args.first())) {return value;}
+        }
         let target_orig = target.clone();
         let visited_args_orig: Vec<Value> = visited_args.clone();
         let visited_kwargs_orig: HashMap<String, Value> = visited_kwargs.clone();
@@ -322,6 +334,12 @@ impl IRGenerator {
         }
 
         match n.member.as_str() {
+            "clip" => {
+                let mut args = vec![target_orig.clone()];
+                args.extend(visited_args_orig.iter().cloned());
+                array_compat::clip(&mut self.builder, &args, &visited_kwargs_orig)
+            }
+            "copy" => array_compat::copy_array(&mut self.builder, &target_orig),
             method @ ("sum" | "any" | "all" | "prod" | "min" | "max" | "mean") => {
                 // P4b: native StaticArray dispatch before the legacy boundary.
                 let axis_arg_orig = visited_kwargs_orig
@@ -405,13 +423,9 @@ impl IRGenerator {
             }
             "tolist" => target,
             "astype" => {
-                let target_float =
-                    if let Some(Value::Class(ZinniaType::Float)) = visited_args.first() {
-                        true
-                    } else {
-                        false
-                    };
-                self.cast_composite(&target, target_float)
+                let dtype = visited_args_orig.first().or_else(|| visited_kwargs_orig.get("dtype"))
+                    .expect("astype requires a dtype");
+                array_compat::astype(&mut self.builder, &target_orig, dtype)
             }
             "ndim" => {
                 let shape = crate::helpers::composite::get_composite_shape(&target);
@@ -515,7 +529,7 @@ impl IRGenerator {
                     Value::Class(ZinniaType::Integer)
                 }
             }
-            "append" | "extend" | "pop" | "remove" | "clear" | "copy" | "reverse" | "count"
+            "append" | "extend" | "pop" | "remove" | "clear" | "reverse" | "count"
             | "index" => {
                 // These should be handled via visit_named_attr with a target variable name
                 panic!(
@@ -544,6 +558,7 @@ impl IRGenerator {
         for a in &n.args {
             if let ASTNode::ASTStarredExpr(se) = a {
                 let inner = self.visit(&se.value);
+                let inner = crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &inner);
                 if let Value::List(data) | Value::Tuple(data) = inner {
                     visited_args.extend(data.values);
                 } else {

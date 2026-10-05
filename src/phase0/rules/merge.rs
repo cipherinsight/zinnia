@@ -153,6 +153,13 @@ fn selection(
 /// Composite merge (§6.1 applied to §3.3's composites): same kind and same
 /// static length, merged element by element.
 ///
+/// $\Delta$ keys the composite and not its elements (§3.3), so a fresh
+/// variable this merge introduces would name the composite and nothing more.
+/// The element index is pushed on [`RuleCtx::element`] around each element,
+/// so every such variable records the path from the composite's key down to
+/// the element that introduced it (§3.4), which is what lets a consumer name
+/// the element.
+///
 /// Two lengths that differ would make the merged length depend on `b`, which
 /// §3.3 forbids: a composite's length is a compile-time constant. That is the
 /// `+` and `*` half of the rule [`crate::phase0::walk`]'s
@@ -190,14 +197,10 @@ pub fn merge_composite(
     }
     let mut elems = Vec::with_capacity(c1.elems.len());
     for (i, (e1, e2)) in c1.elems.iter().zip(c2.elems.iter()).enumerate() {
-        elems.push(merge_desc(
-            ctx,
-            b,
-            e1,
-            e2,
-            value,
-            &format!("{}_{}", base, i),
-        )?);
+        ctx.element.push(i);
+        let merged = merge_desc(ctx, b, e1, e2, value, &format!("{}_{}", base, i));
+        ctx.element.pop();
+        elems.push(merged?);
     }
     Ok(Desc::Composite(CompositeDesc {
         kind: c1.kind,

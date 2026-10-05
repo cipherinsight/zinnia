@@ -19,11 +19,11 @@ from typing import Any
 from testing.phase0.phi_solver import PhiSolver
 from testing.phase0.terms import TermDag
 
-#: Distinct obligations answered per circuit. An unrolled loop nest records
-#: one CANFAIL per iteration per operation, so a program can have tens of
+#: Distinct checks answered per circuit. An unrolled loop nest records one
+#: check per iteration per operation, so a program can have tens of
 #: thousands; answering them all would take hours and say nothing the first
 #: few hundred do not. The rest are reported as `not_attempted`.
-OBLIGATION_BUDGET = int(os.environ.get("ZINNIA_PHASE0_OBLIGATION_BUDGET", "200"))
+CHECK_BUDGET = int(os.environ.get("ZINNIA_PHASE0_CHECK_BUDGET", "200"))
 
 #: How much of a term's pretty form a report row keeps.
 PRETTY_CUTOFF = 240
@@ -136,17 +136,16 @@ class ReturnCheck:
 
 
 @dataclass(frozen=True)
-class ObligationResult:
-    """Z3's answer to one obligation phase 0 recorded."""
+class CheckResult:
+    """Z3's answer to one check $\\Phi$ records: can its `defcond` be false?"""
 
     index: int
-    kind: str
     provenance: str
     pretty: str
     answer: str
     seconds: float
-    #: Obligations this row stands for: identical `(kind, term, path)`
-    #: questions are answered once.
+    #: Checks this row stands for: identical `(path, defcond)` questions are
+    #: answered once.
     occurrences: int = 1
     #: Distinct questions this row stands for; above one only in the
     #: aggregated `not_attempted` row.
@@ -155,7 +154,7 @@ class ObligationResult:
 
     @property
     def discharged(self) -> bool:
-        """The obligation got a definite answer."""
+        """The check got a definite answer."""
         return self.answer not in ("unknown", "not_attempted")
 
 
@@ -165,7 +164,6 @@ class FactSummary:
 
     baseline_enforced: dict[str, int]
     phase0_checks: int
-    phase0_obligations: dict[str, int]
     exact_shape_resolutions: list[str]
     unextractable: list[str]
 
@@ -182,7 +180,7 @@ class CircuitConsistency:
     static_arrays: list[StaticMatch] = field(default_factory=list)
     dynamic_arrays: list[DynamicMatch] = field(default_factory=list)
     returns: list[ReturnCheck] = field(default_factory=list)
-    obligations: list[ObligationResult] = field(default_factory=list)
+    checks: list[CheckResult] = field(default_factory=list)
     facts: FactSummary | None = None
     sizes: dict[str, int] = field(default_factory=dict)
     seconds: dict[str, float] = field(default_factory=dict)

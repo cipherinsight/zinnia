@@ -12,7 +12,8 @@ Covers two confirmed bugs in `src/ops/dyn_ndarray/aggregation.rs`:
 
 2. `keepdims=True` was silently ignored on the bounded-dynamic reduction
    dispatch (`dispatch_dyn_ndarray_method`), mis-shaping the result. It
-   now rejects loudly.
+   now preserves unit axes for numeric/Boolean reductions; unsupported
+   argmax/mean dispatch still rejects loudly.
 
 All numeric expectations are cross-checked against numpy in the comments.
 These fail at 4b69c08 (pre-fix): the max/argmax cases return 0, and the
@@ -115,10 +116,34 @@ def foo(x: Int[Array, "N<=6"]):
     assert _prove(src, np.asarray([-5, -3, -7, -2])) == "mock_satisfied"
 
 
-# ─────────── keepdims must reject loudly on the dyn path ───────────
+# ─────────── keepdims preserves shape on the bounded reduction path ───────────
 
 
-@pytest.mark.parametrize("method", ["sum", "max", "min", "argmax", "mean"])
+@pytest.mark.parametrize("method", ["sum", "prod", "max", "min", "any", "all"])
+@pytest.mark.parametrize("axis, expected_shape", [(0, "1 N<=3"), (1, "2 1"),
+                                                   (-1, "2 1"), (None, "1 1"),
+                                                   ((0, 1), "1 1"), ((), "2 N<=3")])
+def test_dyn_keepdims_matches_numpy(method, axis, expected_shape):
+    src = f"""
+def foo(x: Int[Array, "2 N<=3"], expected: Int[Array, "{expected_shape}"]):
+    s = x.{method}(axis={axis!r}, keepdims=True)
+    assert s.ndim == 2
+    assert s.shape[0] == expected.shape[0]
+    assert s.shape[1] == expected.shape[1]
+    assert np.all(s == expected)
+"""
+    circuit = ZKCircuit.from_source("foo", src)
+    circuit.compile()
+    for values in (np.asarray([[-4], [-2]]), np.asarray([[0, 3], [-1, 0]]),
+                   np.asarray([[-4, 0, 7], [2, -3, 4]])):
+        expected = getattr(np, method)(values, axis=axis, keepdims=True).astype(np.int64)
+        assert circuit.prove(values, expected, backend="mock").proof_bytes_hex == "mock_satisfied"
+    wrong = expected.copy()
+    wrong.flat[0] += 1
+    assert circuit.prove(values, wrong, backend="mock").proof_bytes_hex != "mock_satisfied"
+
+
+@pytest.mark.parametrize("method", ["argmax", "mean"])
 def test_dyn_keepdims_rejects_loudly(method):
     src = f"""
 def foo(x: Int[Array, "2 N<=3"]):

@@ -162,19 +162,14 @@ fn a_scalar_no_arm_rebinds_keeps_its_declared_range() {
         vec![requires_between("n", 0, 4)],
     )
     .expect("`n` keeps the range its contract declared");
-    let trip_counts: Vec<String> = result
-        .obligations()
-        .iter()
-        .filter(|o| o.kind == crate::phase0::phi::ObligationKind::Const)
-        .map(|o| match o.term {
-            crate::phase0::phi::ObligationTerm::Int(t) => result.terms.pretty(t),
-            crate::phase0::phi::ObligationTerm::Bool(b) => result.terms.pretty_bool(b),
-        })
+    let rebound: Vec<&str> = (0..result.phi.vars().len() as u32)
+        .map(|i| result.terms.var_name(crate::phase0::term::VarId(i)))
+        .filter(|name| name.starts_with("n_"))
         .collect();
-    assert_eq!(
-        trip_counts,
-        vec!["max(0, n)".to_string()],
-        "the trip count is the CONST question, over `n` itself"
+    assert!(
+        rebound.is_empty(),
+        "the merge rebound `n` to {:?}, so the loop lost its declared maximum",
+        rebound
     );
 }
 
@@ -818,4 +813,373 @@ fn a_constant_range_past_the_materialisation_limit_is_a_budget_rejection() {
         }
         other => panic!("got {:?}", other.err()),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Operators the baseline does not have, and the ones it spells differently
+// ---------------------------------------------------------------------------
+
+/// `None` as an argument, which is how `axis=None` arrives.
+fn none() -> Value {
+    json!({"__class__": "ASTConstantNone"})
+}
+
+/// §5.7: `np.sort(a, axis=None)` flattens, which the baseline implements
+/// only where the flattening is the identity. Phase 0 rejects the rank-2
+/// form rather than keeping the dims, which would be the wrong shape.
+#[test]
+fn a_sort_with_axis_none_rejects_above_rank_one() {
+    for member in ["sort", "argsort"] {
+        let outcome = run(
+            vec![array_input("a", &[2, 3])],
+            vec![ret(call_kw(
+                Some("np"),
+                member,
+                vec![load("a")],
+                vec![("axis", none())],
+            ))],
+        );
+        match outcome {
+            Err(Reject::Unsupported { construct }) => assert!(
+                construct.contains("axis=None") && construct.contains("rank-2"),
+                "the message names the form, got {}",
+                construct
+            ),
+            other => panic!(
+                "expected a rejection for np.{}, got {:?}",
+                member,
+                other.err()
+            ),
+        }
+    }
+}
+
+/// The same call on a rank-1 operand: flattening is the identity there, the
+/// baseline compiles it, and phase 0 keeps the extent.
+#[test]
+fn a_sort_with_axis_none_on_a_vector_keeps_the_extent() {
+    let result = run(
+        vec![array_input("a", &[5])],
+        vec![ret(call_kw(
+            Some("np"),
+            "sort",
+            vec![load("a")],
+            vec![("axis", none())],
+        ))],
+    )
+    .expect("a rank-1 flatten is the identity");
+    assert_eq!(delivered_length(&result), Some(5));
+}
+
+/// A sort along an axis leaves every extent alone (§5.7).
+#[test]
+fn a_sort_along_an_axis_keeps_the_dims() {
+    let result = run(
+        vec![array_input("a", &[2, 3])],
+        vec![ret(call_kw(
+            Some("np"),
+            "sort",
+            vec![load("a")],
+            vec![("axis", int(0))],
+        ))],
+    )
+    .expect("an integer axis is the ordinary rule");
+    let array = delivered(&result).as_array().expect("an array");
+    let dims: Vec<Option<i128>> = array
+        .dims
+        .iter()
+        .map(|&d| result.terms.constant_value(d))
+        .collect();
+    assert_eq!(dims, vec![Some(2), Some(3)]);
+}
+
+/// §5.7: `np.inner` contracts the last axis of *both* operands, so it is not
+/// `E-Matmul`; the baseline does not implement it, and phase 0 rejects the
+/// name rather than giving `inner(a, b)` matmul's shape.
+#[test]
+fn np_inner_has_no_rule() {
+    let outcome = run(
+        vec![array_input("a", &[3, 4]), array_input("b", &[2, 4])],
+        vec![ret(call(Some("np"), "inner", vec![load("a"), load("b")]))],
+    );
+    match outcome {
+        Err(Reject::UnsupportedOperator { name }) => assert_eq!(name, "np.inner"),
+        other => panic!("expected an unsupported operator, got {:?}", other.err()),
+    }
+}
+
+/// §5.5 and §5.11: `np.where(m)` with one argument is the mask itself.
+///
+/// NumPy returns the index arrays of `nonzero(m)`; the baseline returns `m`,
+/// so the rule is `E-Copy` and the descriptor is unchanged — a Boolean array
+/// of the mask's extent, not an `Idx` array of `Count(m)`. The read `a[w]`
+/// is then the boolean-mask read of `E-Filter`, whose extent is a count, and
+/// no `E-Take` check is recorded, which is what a gather would add. `Count`
+/// is keyed by the mask (§5.5), so the two reads `a[w]` share one variable.
+#[test]
+fn a_one_argument_where_is_the_mask_itself() {
+    let result = run(
+        vec![array_input("a", &[8])],
+        vec![
+            assign(name_target("m"), binop("gt", load("a"), int(0))),
+            assign(name_target("w"), call(Some("np"), "where", vec![load("m")])),
+            assign(name_target("x"), subscript(load("a"), load("w"))),
+            assign(name_target("y"), subscript(load("a"), load("w"))),
+            ret(load("x")),
+        ],
+    )
+    .expect("a mask read");
+    let bound = |name: &str| {
+        result
+            .descriptors
+            .iter()
+            .find(|entry| entry.name.as_deref() == Some(name))
+            .and_then(|entry| entry.desc.as_array())
+            .unwrap_or_else(|| panic!("`{}` is an array in Δ", name))
+            .clone()
+    };
+    let w = bound("w");
+    assert_eq!(w.dtype, crate::phase0::desc::Dtype::Bool, "`w` is the mask");
+    assert_eq!(result.terms.constant_value(w.dims[0]), Some(8));
+    let x = bound("x");
+    let count = result
+        .terms
+        .var_of(x.dims[0])
+        .expect("the read's extent is a variable");
+    assert!(
+        matches!(
+            result.phi.var_info(count).origin,
+            crate::phase0::phi::VarOrigin::Count { .. }
+        ),
+        "the read is `E-Filter`, so its extent is a count"
+    );
+    assert!(
+        !check_provenances(&result)
+            .iter()
+            .any(|p| p.starts_with("E-Take")),
+        "the read is a mask read, not a gather: {:?}",
+        check_provenances(&result)
+    );
+    assert_eq!(
+        bound("y").dims[0],
+        x.dims[0],
+        "the two reads are of one mask, so they share its count"
+    );
+    assert_eq!(count_variables(&result), 1, "one mask, one count variable");
+}
+
+/// §5.5: `Count` is keyed by the mask value, and a copy of a mask is that
+/// value under a new key (`E-Copy`, §5.11), so `a[np.where(m)]` and `a[m]`
+/// are reads of one mask and take one count variable between them.
+#[test]
+fn a_copy_of_a_mask_reads_the_same_count() {
+    let result = run(
+        vec![array_input("a", &[8])],
+        vec![
+            assign(name_target("m"), binop("gt", load("a"), int(0))),
+            assign(
+                name_target("x"),
+                subscript(load("a"), call(Some("np"), "where", vec![load("m")])),
+            ),
+            assign(name_target("y"), subscript(load("a"), load("m"))),
+            ret(load("x")),
+        ],
+    )
+    .expect("two mask reads");
+    let extent = |name: &str| {
+        result
+            .descriptors
+            .iter()
+            .find(|entry| entry.name.as_deref() == Some(name))
+            .and_then(|entry| entry.desc.as_array())
+            .unwrap_or_else(|| panic!("`{}` is an array in Δ", name))
+            .dims[0]
+    };
+    assert_eq!(extent("x"), extent("y"), "one mask, one count");
+    assert_eq!(count_variables(&result), 1);
+}
+
+/// How many count variables (§5.5) $\Phi$ holds.
+fn count_variables(result: &crate::phase0::Phase0Result) -> usize {
+    result
+        .phi
+        .vars()
+        .iter()
+        .filter(|v| matches!(v.origin, crate::phase0::phi::VarOrigin::Count { .. }))
+        .count()
+}
+
+// ---------------------------------------------------------------------------
+// §6.1, the execution condition of a merged value
+// ---------------------------------------------------------------------------
+//
+// A merged value is created at the merge point, so it carries the path
+// condition of the enclosing scope and not the arm's: the merge exists for
+// the runs the arm was not taken on as well. One fixture per merge site
+// kind, each asserting ψ of the value the merge recorded.
+
+/// ψ of the entry Δ records for `name`, pretty-printed, and whether it is the
+/// unconditional `true`.
+fn psi_of(result: &Phase0Result, name: &str) -> (bool, String) {
+    let entry = result
+        .descriptors
+        .iter()
+        .rev()
+        .find(|entry| entry.name.as_deref() == Some(name))
+        .unwrap_or_else(|| panic!("`{}` has an entry in Δ", name));
+    let psi = entry.desc.psi().expect("a scalar or an array");
+    (result.terms.is_true(psi), result.terms.pretty_bool(psi))
+}
+
+#[test]
+fn an_if_merge_exists_at_the_merge_point() {
+    // `if k > 0: s = 1 else: s = 2`: each arm binds under its own branch
+    // condition, and the merge after the `if` exists on both paths.
+    let result = run(
+        vec![scalar_input("k")],
+        vec![
+            assign(name_target("s"), int(0)),
+            cond(
+                binop("gt", load("k"), int(0)),
+                vec![assign(name_target("s"), int(1))],
+                vec![assign(name_target("s"), int(2))],
+            ),
+            ret(load("s")),
+        ],
+    )
+    .expect("both arms bind a scalar");
+    let (unconditional, psi) = psi_of(&result, "s");
+    assert!(unconditional, "the merge is at the merge point, got {}", psi);
+}
+
+#[test]
+fn a_conditional_expression_merges_at_the_merge_point() {
+    // `s = 1 if k > 0 else 2`: the arms are evaluated under `k > 0` and
+    // `¬(k > 0)`, the value they merge to under neither.
+    let cond_exp = json!({"__class__": "ASTCondExp",
+                          "cond": binop("gt", load("k"), int(0)),
+                          "t_expr": int(1), "f_expr": int(2)});
+    let result = run(
+        vec![scalar_input("k")],
+        vec![assign(name_target("s"), cond_exp), ret(load("s"))],
+    )
+    .expect("both arms are scalars");
+    let (unconditional, psi) = psi_of(&result, "s");
+    assert!(unconditional, "the merge is at the merge point, got {}", psi);
+}
+
+#[test]
+fn a_guarded_iteration_merges_at_the_merge_point() {
+    // `for _ in range(n): s = s + 1`: iteration j runs under `j < T`, and
+    // the binding it merges against the previous version exists after the
+    // iteration whatever the guard did.
+    let result = run_full(
+        vec![scalar_input("n")],
+        vec![
+            assign(name_target("s"), int(0)),
+            for_in(
+                "i",
+                call(None, "range", vec![load("n")]),
+                vec![assign(name_target("s"), binop("add", load("s"), int(1)))],
+            ),
+            ret(load("s")),
+        ],
+        Default::default(),
+        Phase0Config::default(),
+        vec![requires_between("n", 0, 3)],
+    )
+    .expect("a bounded range unrolls");
+    let (unconditional, psi) = psi_of(&result, "s");
+    assert!(unconditional, "the merge is at the merge point, got {}", psi);
+}
+
+#[test]
+fn the_return_merge_exists_where_the_circuit_returned() {
+    // Two returns on exclusive paths: the delivery exists exactly where one
+    // of them fired, which is the condition of the merge point and not of
+    // either arm.
+    let result = run(
+        vec![scalar_input("k")],
+        vec![
+            cond(
+                binop("gt", load("k"), int(0)),
+                vec![ret(int(1))],
+                vec![],
+            ),
+            ret(int(2)),
+        ],
+    )
+    .expect("two returns of one dtype");
+    let (unconditional, psi) = psi_of(&result, "return");
+    assert!(
+        unconditional || psi.contains("||"),
+        "the delivery exists where the circuit returned — the disjunction of \
+         the paths the returns were taken on — got {}",
+        psi
+    );
+}
+
+#[test]
+fn a_composite_merge_carries_the_merge_point_into_its_elements() {
+    // A tuple bound in both arms: §3.3 gives a composite no ψ of its own, so
+    // the merge point's condition reaches its elements instead.
+    let result = run(
+        vec![scalar_input("k")],
+        vec![
+            cond(
+                binop("gt", load("k"), int(0)),
+                vec![assign(name_target("p"), tuple(vec![int(1), int(2)]))],
+                vec![assign(name_target("p"), tuple(vec![int(3), int(4)]))],
+            ),
+            ret(subscript(load("p"), int(0))),
+        ],
+    )
+    .expect("two tuples of one shape");
+    let entry = result
+        .descriptors
+        .iter()
+        .rev()
+        .find(|entry| entry.name.as_deref() == Some("p"))
+        .expect("`p` has an entry in Δ");
+    let composite = entry.desc.as_composite().expect("a composite");
+    for (at, element) in composite.elems.iter().enumerate() {
+        let psi = element.psi().expect("a scalar element");
+        assert!(
+            result.terms.is_true(psi),
+            "element {} of the merge is at the merge point, got {}",
+            at,
+            result.terms.pretty_bool(psi)
+        );
+    }
+}
+
+#[test]
+fn a_merged_composite_element_records_its_element_path() {
+    // §3.4: Δ keys the composite and not its elements, so a fresh variable a
+    // composite merge introduces records the path from the composite's key
+    // down to the element that introduced it.
+    let result = run(
+        vec![scalar_input("k"), scalar_input("m")],
+        vec![
+            cond(
+                binop("gt", load("k"), int(0)),
+                vec![assign(name_target("p"), tuple(vec![load("k"), load("m")]))],
+                vec![assign(name_target("p"), tuple(vec![load("m"), load("k")]))],
+            ),
+            ret(subscript(load("p"), int(0))),
+        ],
+    )
+    .expect("two tuples of two data scalars");
+    let paths: Vec<Vec<usize>> = result
+        .phi
+        .vars()
+        .iter()
+        .filter(|info| !info.element_path.is_empty())
+        .map(|info| info.element_path.clone())
+        .collect();
+    assert_eq!(
+        paths,
+        vec![vec![0], vec![1]],
+        "one variable per merged element, each naming its position"
+    );
 }

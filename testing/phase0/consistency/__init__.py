@@ -13,7 +13,7 @@ driver.
 | `inputs.py` | (a) input descriptors |
 | `arrays.py` | (b) static array shapes and (c) dynamic envelopes |
 | `returns.py` | (d) returned shapes and the public payload |
-| `obligations.py` | (e) the obligations, and the baseline's facts |
+| `checks.py` | (e) the checks of $\\Phi$, and the baseline's facts |
 
 This module holds :func:`compare`, which runs all five, and the three
 decisions below, which every one of them rests on.
@@ -24,18 +24,18 @@ decisions below, which every one of them rests on.
 | static array shapes | :func:`match_static_arrays` | flat sizes, matched in allocation order |
 | dynamic envelopes | :func:`compare_dynamic_envelopes` | per axis, $\\max(\\mathrm{dims}[k])$ over $\\Phi\\wedge\\psi$ at most the baseline's bound |
 | returned shapes | :func:`check_returns` | the delivery dims at their bound lie in the baseline's `allowed_meta` |
-| SMT-resolved facts | :func:`discharge_obligations`, :func:`compare_facts` | every obligation answered with Z3; the baseline's own facts listed |
+| SMT-resolved facts | :func:`discharge_checks`, :func:`compare_facts` | every check answered with Z3; the baseline's own facts listed |
 
-### Answering an obligation
+### Answering a check
 
-Z3 answers the obligations phase 0 records, under the terms the export
-carries. Three decisions, each made once here:
+Z3 answers the checks phase 0 records, under the terms the export carries.
+Three decisions, each made once here:
 
 * **The terms are built from the JSON DAG, not from the exported SMT-LIB
-  text.** Every descriptor, constraint and obligation of the record addresses
-  a term by its *node id*, so a harness that parsed the text would have to
-  rebuild that id map anyway, and would inherit the text's
-  `define-fun`-per-node indirection. The DAG is one upward sweep
+  text.** Every descriptor and constraint of the record addresses a term by
+  its *node id*, so a harness that parsed the text would have to rebuild that
+  id map anyway, and would inherit the text's `define-fun`-per-node
+  indirection. The DAG is one upward sweep
   (:class:`Z3Arena`), and the floor `div` / `mod` rewrites are the ones
   `src/phase0/term/print.rs` states: SMT-LIB's `div` is Euclidean and agrees
   with Python's floor division only for a positive divisor, so a negative
@@ -43,15 +43,14 @@ carries. Three decisions, each made once here:
   `term/mod.rs::wrap64` builds it from `add`, `mod` and `sub`. The text has a second
   problem the DAG does not: a variable named after a composite element, such
   as `a[0]`, is written into the SMT-LIB unquoted, which no parser accepts.
-* **A CANFAIL obligation is answered without assuming the check it is about.**
-  `definition.md` §2 makes every check a constraint of $\\Phi$, so asking
-  "can this `defcond` be false under $\\Phi$" with the full $\\Phi$ is
-  vacuous: the constraint forbids it. The harness answers CANFAIL, and PROVE,
-  under the *facts* of $\\Phi$ — the variable ranges, the `scalar_requires`
-  preconditions and the rules' declarations — which is what README 6.1's
-  acyclicity condition allows a circuit to rely on. CONST and the MAX queries
-  of the dynamic envelopes use the full $\\Phi$, checks included, which is
-  what §2 prescribes for a phase 1 question.
+* **A check is answered without assuming itself.** `definition.md` §2 makes
+  every check a constraint of $\\Phi$, so asking "can this `defcond` be false
+  under $\\Phi$" with the full $\\Phi$ is vacuous: the constraint forbids it.
+  The harness answers under the *facts* of $\\Phi$ — the variable ranges, the
+  `scalar_requires` preconditions and the rules' declarations — which is what
+  README 6.1's acyclicity condition allows a circuit to rely on. The MAX
+  queries of the dynamic envelopes use the full $\\Phi$, checks included,
+  which is what §2 prescribes for a phase 1 question.
 * **The product facts of §3.4 are asserted, and dropped on `unknown`.**
   $\\sigma=\\prod_k\\mathrm{dims}[k]$ is nonlinear and therefore absent from
   the SMT-LIB text, but it is a true fact and it is what makes a reshape
@@ -68,10 +67,10 @@ shortens the statement list, a reshape extent proved constant becomes a
 number in a shape, an index proved in range emits nothing. What survives in
 the IR is the complement — the checks the baseline could **not** discharge,
 which it emitted as `Assert*` statements. :func:`compare_facts` therefore
-reports the enforced checks against phase 0's CANFAIL obligations and names
-the discharged facts as unextractable, rather than approximating them. The
-one exception is a symbolic input axis the baseline resolved *exactly*: that
-answer survives in `program_inputs[i].export()["dt"]` as a concrete
+reports the enforced checks against phase 0's and names the discharged facts
+as unextractable, rather than approximating them. The one exception is a
+symbolic input axis the baseline resolved *exactly*: that answer survives in
+`program_inputs[i].export()["dt"]` as a concrete
 `NDArray` shape where the annotation named a symbol, and
 :func:`compare_inputs` checks it.
 """
@@ -86,16 +85,16 @@ from testing.phase0.consistency.arrays import (
     compare_dynamic_envelopes,
     match_static_arrays,
 )
+from testing.phase0.consistency.checks import compare_facts, discharge_checks
 from testing.phase0.consistency.inputs import compare_inputs
-from testing.phase0.consistency.obligations import compare_facts, discharge_obligations
 from testing.phase0.consistency.records import (
     ArrayEntry,
     AxisBound,
+    CheckResult,
     CircuitConsistency,
     DynamicMatch,
     FactSummary,
     InputCheck,
-    ObligationResult,
     StaticMatch,
     ReturnCheck,
     allocated_arrays,
@@ -110,11 +109,11 @@ from testing.phase0.terms import TermDag
 __all__ = [
     "ArrayEntry",
     "AxisBound",
+    "CheckResult",
     "CircuitConsistency",
     "DynamicMatch",
     "FactSummary",
     "InputCheck",
-    "ObligationResult",
     "PhiSolver",
     "ReturnCheck",
     "StaticMatch",
@@ -128,7 +127,7 @@ __all__ = [
     "compare_inputs",
     "cut",
     "descriptor_leaves",
-    "discharge_obligations",
+    "discharge_checks",
     "input_descriptors",
     "match_static_arrays",
 ]
@@ -150,7 +149,6 @@ def compare(
         "constraints": len(phase0["constraints"]),
         "terms": len(phase0["terms"]["nodes"]),
         "descriptors": len(phase0["descriptors"]),
-        "obligations": len(phase0["obligations"]),
         "baseline_ir_statements": baseline.ir_statements,
     }
 
@@ -167,9 +165,9 @@ def compare(
     row.seconds["shapes"] = time.time() - at
 
     at = time.time()
-    row.obligations = discharge_obligations(phase0, solver)
+    row.checks = discharge_checks(phase0, solver)
     row.facts = compare_facts(phase0, baseline)
-    row.seconds["obligations"] = time.time() - at
+    row.seconds["checks"] = time.time() - at
     row.seconds["z3"] = solver.spent_seconds if solver else 0.0
     return row
 

@@ -6,7 +6,8 @@ from typing import Dict
 from zinnia.compile.transformer import ZinniaExternalFuncASTTransformer, ZinniaCircuitASTTransformer
 from zinnia.compile.transformer.chip import ZinniaChipASTTransformer
 from zinnia.compile.transformer.base import _eval_shape_expr, _parse_shape_expr_token
-from zinnia.compile._bridge import analyze_shapes, compile_circuit
+from zinnia.compile._bridge import analyze_shapes, build_candidates, compile_circuit
+from zinnia.compile.function_lowering import lower_function_source
 from zinnia.config.zinnia_config import ZinniaConfig
 from zinnia.api.zk_compiled_program import ZKCompiledProgram
 from zinnia.api.zk_program_input import ZKProgramInput
@@ -33,7 +34,9 @@ class ZinniaCompiler:
         program.
         """
         fixed_source = ZinniaCompiler.fix_source_indentation(source)
-        python_ast = ast.parse(fixed_source)
+        fixed_source, generated_helpers = lower_function_source(fixed_source, name)
+        from .counted_loops import normalize_counted_loops
+        python_ast = normalize_counted_loops(ast.parse(fixed_source))
         transformer = ZinniaCircuitASTTransformer(fixed_source, name)
         ast_dict = transformer.visit(python_ast.body[0])
 
@@ -71,6 +74,11 @@ class ZinniaCompiler:
                 "chip_ast": chip.chip_ast,
                 "return_dt": chip.return_dt,
             }
+        for helper_name, helper_source in generated_helpers:
+            if helper_name in chips_dict or helper_name in externals:
+                raise ValueError(f"Generated helper name collides with registered function: {helper_name}")
+            helper_ast, return_dt = self.chip_ast_parse(helper_source, helper_name)
+            chips_dict[helper_name] = {"chip_ast": helper_ast, "return_dt": return_dt}
         # Build externals dict: name -> {return_dt}
         externals_dict = {}
         for ext_name, ext in externals.items():
@@ -103,6 +111,29 @@ class ZinniaCompiler:
             json.dumps(ast_dict), json.dumps(config_dict),
             json.dumps(chips_dict), json.dumps(externals_dict),
             pretty,
+        ))
+
+    def build_candidates(
+            self,
+            source: str, name: str,
+            chips: Dict[str, InternalChipObject],
+            externals: Dict[str, InternalExternalFuncObject],
+            query_timeout_ms: int = 3000,
+            program_timeout_ms: int = 60000,
+    ) -> dict:
+        """Run phase 0 and then phase 1 (`revision/phase1/README.md`).
+
+        Returns the parsed JSON of `src/phase1/export.rs`'s schema, or
+        ``{"phase": n, "rejected": {"reason": ..., "detail": ...}}`` when one
+        of the two phases refuses the program.
+        """
+        _, ast_dict, config_dict, chips_dict, externals_dict = self._core_payloads(
+            source, name, chips, externals,
+        )
+        return json.loads(build_candidates(
+            json.dumps(ast_dict), json.dumps(config_dict),
+            json.dumps(chips_dict), json.dumps(externals_dict),
+            query_timeout_ms, program_timeout_ms,
         ))
 
     def compile(
@@ -155,7 +186,8 @@ class ZinniaCompiler:
     def chip_ast_parse(source: str, name: str):
         """Parse chip source code. Returns (ast_dict, return_dt_full)."""
         fixed_source = ZinniaCompiler.fix_source_indentation(source)
-        python_ast = ast.parse(fixed_source)
+        from .counted_loops import normalize_counted_loops
+        python_ast = normalize_counted_loops(ast.parse(fixed_source))
         transformer = ZinniaChipASTTransformer(fixed_source, name)
         ast_dict = transformer.visit(python_ast.body[0])
         return ast_dict, transformer.return_dt_full
@@ -164,14 +196,17 @@ class ZinniaCompiler:
     def external_func_ast_parse(source: str, name: str):
         """Parse external function source code. Returns full type dict."""
         fixed_source = ZinniaCompiler.fix_source_indentation(source)
-        python_ast = ast.parse(fixed_source)
+        from .counted_loops import normalize_counted_loops
+        python_ast = normalize_counted_loops(ast.parse(fixed_source))
         return ZinniaExternalFuncASTTransformer(fixed_source, name).visit(python_ast.body[0])
 
     @staticmethod
     def circuit_ast_parse(source: str, name: str) -> dict:
         """Parse circuit source code. Returns AST dict."""
         fixed_source = ZinniaCompiler.fix_source_indentation(source)
-        python_ast = ast.parse(fixed_source)
+        fixed_source, _ = lower_function_source(fixed_source, name)
+        from .counted_loops import normalize_counted_loops
+        python_ast = normalize_counted_loops(ast.parse(fixed_source))
         return ZinniaCircuitASTTransformer(fixed_source, name).visit(python_ast.body[0])
 
     @staticmethod

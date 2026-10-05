@@ -125,8 +125,8 @@ pub(super) fn return_stmt(w: &mut Walker, n: &ASTReturnStatement) -> Result<Flow
     Ok(Flow::Terminated)
 }
 
-/// `S-Assert` (`coverage.md` §3): `Φ += (φ ⇒ e)`, plus the CANFAIL obligation
-/// that [`crate::phase0::rules::RuleCtx::check`] records with it.
+/// `S-Assert` (`coverage.md` §3): `Φ += (φ ⇒ e)`, the check
+/// [`crate::phase0::rules::RuleCtx::check`] records.
 pub(super) fn assert_stmt(w: &mut Walker, n: &ASTAssertStatement) -> Result<Flow, Reject> {
     let key = w.an.keys.next_expr();
     let desc = w.expr_at(&n.expr, &key)?;
@@ -255,6 +255,15 @@ impl Walker<'_> {
     /// `CA = CB` inside a branch hands on an input's descriptor, whose
     /// $\psi$ is `true` — and then $\Delta$ would claim the binding exists on
     /// every path.
+    ///
+    /// A binding that *merges* is created at the merge point, so it takes the
+    /// path condition of the enclosing scope (§6.1): the liveness condition
+    /// is the merge's own condition, and what is left of `φ` when it is
+    /// removed is the branch part. The merged binding exists there on every
+    /// path, because under `¬live` it is the previous version. Giving it
+    /// `φ` instead — the condition *inside* the guard — would make it a value
+    /// no consumer after the loop can name, since those consumers run under
+    /// the enclosing condition and not under the guard.
     fn bind_name(
         &mut self,
         name: &str,
@@ -268,12 +277,21 @@ impl Walker<'_> {
         let unconditional = self.an.terms.is_true(live);
         let previous = self.frame().binding(name).cloned();
         let merged = !unconditional && previous.is_some();
+        // The merge point: `φ` without the liveness the merge selects on.
+        let merge_point = self.branch;
         let (bound, frame) = self.in_value(&key, |w| match (merged, previous.as_ref()) {
-            (true, Some(old)) => merge_desc(&mut w.ctx(), live, &value, &old.desc, &key, name),
+            (true, Some(old)) => merge_desc(
+                &mut w.an.ctx(merge_point),
+                live,
+                &value,
+                &old.desc,
+                &key,
+                name,
+            ),
             _ => Ok(value),
         })?;
         let path = self.path();
-        let bound = created_at(bound, path);
+        let bound = created_at(bound, if merged { merge_point } else { path });
         // `S-Assign` binds the name to the right-hand side; a binding the
         // liveness condition guards also merges against the previous version
         // (`implementation.md` §5a).

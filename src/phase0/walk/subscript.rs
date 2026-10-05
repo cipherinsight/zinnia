@@ -28,7 +28,12 @@ use crate::phase0::rules::Rule;
 
 /// One entry of a subscript.
 pub(crate) enum Index {
-    Single(Desc),
+    /// An expression entry, with the key of the value it evaluated to: a
+    /// Boolean mask is what `Count` is keyed by (§5.5).
+    Single {
+        desc: Desc,
+        key: ValueKey,
+    },
     Range {
         lo: Option<Desc>,
         hi: Option<Desc>,
@@ -42,7 +47,7 @@ impl Index {
     /// How many axes of the indexed array the entry consumes.
     fn axes(&self) -> usize {
         match self {
-            Index::Single(d) => match d.as_array() {
+            Index::Single { desc, .. } => match desc.as_array() {
                 // A boolean mask consumes as many axes as it has.
                 Some(a) if a.dtype == Dtype::Bool => a.rank(),
                 Some(_) => 1,
@@ -87,8 +92,12 @@ enum NewAxisMarker {
 enum Entry<'i> {
     /// An integer scalar: `E-Index` (§5.4), or `E-Elem` on a rank-1 array.
     Scalar(ScalarDesc),
-    /// A Boolean array: `E-Filter` (§5.5).
-    Mask(ArrayDesc),
+    /// A Boolean array: `E-Filter` (§5.5), with the key of the mask value
+    /// its count is keyed by.
+    Mask {
+        desc: ArrayDesc,
+        key: ValueKey,
+    },
     /// An integer array: `E-Take` (§5.4).
     Advanced(ArrayDesc),
     /// `lo:hi:step`: `E-Slice` (§5.4). The bounds stay on the node, because
@@ -155,7 +164,10 @@ impl Walker<'_> {
                     hi: self.slice_endpoint(triple.get(1))?,
                     step: self.slice_endpoint(triple.get(2))?,
                 },
-                SliceEntry::Single(node) => Index::Single(self.expr(&node)?),
+                SliceEntry::Single(node) => {
+                    let (desc, key) = self.expr_keyed(&node)?;
+                    Index::Single { desc, key }
+                }
             });
         }
         Ok(indices)
@@ -200,8 +212,8 @@ impl Walker<'_> {
         indices: &[Index],
         key: &ValueKey,
     ) -> Result<Desc, Reject> {
-        if let [Index::Single(index)] = indices {
-            if let Some(scalar) = index.as_scalar() {
+        if let [Index::Single { desc, .. }] = indices {
+            if let Some(scalar) = desc.as_scalar() {
                 let (c, scalar) = (c.clone(), scalar.clone());
                 return e_composite_index(&mut self.ctx(), &c, &scalar, key, "item");
             }
@@ -279,11 +291,20 @@ impl Walker<'_> {
             Index::Ellipsis => unreachable!("expand_ellipsis removed every ellipsis"),
             Index::NewAxis => Ok(Entry::NewAxis),
             Index::Range { .. } => Ok(Entry::Slice(index)),
-            Index::Single(Desc::Scalar(s)) => Ok(Entry::Scalar(s.clone())),
-            Index::Single(other) => {
-                let indexer = self.as_array(other, Rule::ETake)?;
+            Index::Single {
+                desc: Desc::Scalar(s),
+                ..
+            } => Ok(Entry::Scalar(s.clone())),
+            Index::Single { desc, key } => {
+                let indexer = self.as_array(desc, Rule::ETake)?;
                 Ok(if indexer.dtype == Dtype::Bool {
-                    Entry::Mask(indexer)
+                    // `Count` is keyed by the mask value (§5.5), so the entry
+                    // carries the value the index names rather than the index
+                    // itself: two reads of one mask then share one count.
+                    Entry::Mask {
+                        desc: indexer,
+                        key: self.an.defining_key(key),
+                    }
                 } else {
                     Entry::Advanced(indexer)
                 })
@@ -318,9 +339,9 @@ impl Walker<'_> {
                 let s = s.clone();
                 self.index_by_scalar(a, &s, *axis, key, position)
             }
-            Entry::Mask(mask) => {
-                let mask = mask.clone();
-                self.index_by_mask(a, &mask, axis, key, position)
+            Entry::Mask { desc, key } => {
+                let (mask, mask_key) = (desc.clone(), key.clone());
+                self.index_by_mask(a, &mask, &mask_key, axis, position)
             }
             Entry::Advanced(indexer) => {
                 let indexer = indexer.clone();
@@ -398,7 +419,7 @@ impl Walker<'_> {
                     slots.push(Slot::Block);
                     axis += 1;
                 }
-                Entry::Mask(_) => {
+                Entry::Mask { .. } => {
                     return Err(Reject::Unsupported {
                         construct: "a boolean mask beside several integer-array indices"
                             .to_string(),
@@ -410,10 +431,6 @@ impl Walker<'_> {
         let refs: Vec<&[TermId]> = index_dims.iter().map(|d| d.as_slice()).collect();
         let (block, compatible) = broadcast_dims(&mut self.an.terms, &refs);
         conditions.push(compatible);
-        self.ctx().prove(
-            Rule::ETakeBroadcast.detail("the advanced indices broadcast"),
-            compatible,
-        );
         let defcond = self.an.terms.all(&conditions);
         let dims = place_block(&slots, &block);
         Ok(self
@@ -458,13 +475,14 @@ impl Walker<'_> {
         e_index(&mut self.ctx(), a, axis, s, key, &base)
     }
 
-    /// A Boolean mask index: `E-Filter` (§5.5).
+    /// A Boolean mask index: `E-Filter` (§5.5). `mask_key` is the value the
+    /// mask names, which its count is keyed by.
     fn index_by_mask(
         &mut self,
         a: &ArrayDesc,
         mask: &ArrayDesc,
+        mask_key: &ValueKey,
         axis: &mut usize,
-        key: &ValueKey,
         position: usize,
     ) -> Result<Desc, Reject> {
         if *axis != 0 {
@@ -474,9 +492,9 @@ impl Walker<'_> {
         }
         let base = format!("c{}", position);
         let filtered = if mask.rank() == a.rank() && a.rank() > 1 {
-            e_filter_same(&mut self.ctx(), a, mask, key, &base)?
+            e_filter_same(&mut self.ctx(), a, mask, mask_key, &base)?
         } else {
-            e_filter_axis0(&mut self.ctx(), a, mask, key, &base)?
+            e_filter_axis0(&mut self.ctx(), a, mask, mask_key, &base)?
         };
         *axis += 1;
         Ok(filtered)
@@ -589,8 +607,6 @@ impl Walker<'_> {
         // The check is about the written region, which is the value at the
         // write key (`implementation.md` §5a).
         self.with_subject(write, |w| {
-            w.ctx()
-                .prove(Rule::SSetItem.detail("broadcast compatibility"), defcond);
             w.ctx().check(Rule::SSetItem, defcond);
             Ok(())
         })
@@ -605,7 +621,7 @@ impl Walker<'_> {
         value: Desc,
         key: &ValueKey,
     ) -> Result<Desc, Reject> {
-        let [Index::Single(index)] = indices else {
+        let [Index::Single { desc: index, .. }] = indices else {
             return Err(Reject::Unsupported {
                 construct: "composite element assignment with a compound index".to_string(),
             });
@@ -645,7 +661,14 @@ impl Walker<'_> {
                     })?;
                     let hit = self.an.terms.eq(index_term, target);
                     let old = elems[at].clone();
-                    elems[at] = merge_desc(&mut self.ctx(), hit, &value, &old, key, "setitem")?;
+                    elems[at] = merge_desc(
+                        &mut self.ctx().in_element(at),
+                        hit,
+                        &value,
+                        &old,
+                        key,
+                        "setitem",
+                    )?;
                 }
             }
         }

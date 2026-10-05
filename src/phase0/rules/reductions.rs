@@ -29,11 +29,24 @@ pub enum ReduceKind {
 
 impl ReduceKind {
     /// Whether the reduction is undefined on an empty axis, which is
-    /// §5.7's `defcond = (dims_a[k] > 0 for max, min, argmax)`.
+    /// §5.7's `defcond = (dims_a[k] > 0 for max, min, argmax, argmin, mean,
+    /// var, std)`.
+    ///
+    /// The extrema have no value to return; `mean`, `var` and `std` divide by
+    /// the number of elements they reduce, and the baseline's every division
+    /// carries `rhs ≠ 0` as a requires. `Norm` is the statistic that does not
+    /// divide — a sum of squares under a square root, which NumPy gives `0`
+    /// on an empty input — so it keeps `defcond = true`.
     pub fn needs_nonempty(self) -> bool {
         matches!(
             self,
-            ReduceKind::Min | ReduceKind::Max | ReduceKind::ArgMin | ReduceKind::ArgMax
+            ReduceKind::Min
+                | ReduceKind::Max
+                | ReduceKind::ArgMin
+                | ReduceKind::ArgMax
+                | ReduceKind::Mean
+                | ReduceKind::Var
+                | ReduceKind::Std
         )
     }
 
@@ -62,7 +75,8 @@ impl ReduceKind {
 ///
 /// The result is a fresh data variable. `sum` gets the dtype range;
 /// `argmax` gets the structural range `0 ≤ v < size(a)`. `defcond` is
-/// `size(a) > 0` for `max`, `min` and `argmax`, true otherwise.
+/// `size(a) > 0` for the kinds [`ReduceKind::needs_nonempty`] names, true
+/// otherwise.
 pub fn e_reduce_scalar(
     ctx: &mut RuleCtx,
     a: &ArrayDesc,
@@ -90,7 +104,8 @@ pub fn e_reduce_scalar(
 /// `E-Reduce-Axis` (§5.7): `sum(a, axis=k)`, `max(a, axis=k)`, …
 ///
 /// The reduced axes are removed, or set to 1 with `keepdims`. `defcond` is
-/// `dims_a[k] > 0` for `max`, `min` and `argmax`.
+/// `dims_a[k] > 0` on every reduced axis, for the kinds
+/// [`ReduceKind::needs_nonempty`] names.
 pub fn e_reduce_axis(
     ctx: &mut RuleCtx,
     a: &ArrayDesc,
@@ -156,14 +171,6 @@ pub fn e_matmul(ctx: &mut RuleCtx, a: &ArrayDesc, b: &ArrayDesc) -> Result<Desc,
         &[&left[..left.len() - 2], &right[..right.len() - 2]],
     );
     let contract_ok = ctx.terms.eq(k, k2);
-    ctx.prove(
-        Rule::EMatmul.detail("the inner dimensions agree"),
-        contract_ok,
-    );
-    ctx.prove(
-        Rule::EMatmul.detail("broadcast compatibility of the batch axes"),
-        broadcast_ok,
-    );
     let defcond = ctx.terms.and(contract_ok, broadcast_ok);
     let mut dims = batch;
     if !promoted_left {
@@ -176,12 +183,14 @@ pub fn e_matmul(ctx: &mut RuleCtx, a: &ArrayDesc, b: &ArrayDesc) -> Result<Desc,
     Ok(ctx.array(Rule::EMatmul, dtype, dims, defcond))
 }
 
-/// `E-Sort` (§5.7): `sort(a)` and `argsort(a)`.
+/// `E-Sort` (§5.7): `sort(a, axis=k)` and `argsort(a, axis=k)`.
 ///
-/// The dimensions are unchanged and the rule cannot fail. `argsort`
-/// (`index_result`) has element dtype `Idx`; its elements lie in
-/// `[0, dims_a[0])`, a structural range on elements that $\Phi$ does not
-/// record because it does not model elements.
+/// Sorting along an axis leaves the dimensions alone, so the rule takes no
+/// axis and cannot fail; the flattening form `axis=None` is not this rule
+/// and the walker handles it (`walk::arrays`). `argsort` (`index_result`)
+/// has element dtype `Idx`; its elements lie in `[0, dims_a[k])`, a
+/// structural range on elements that $\Phi$ does not record because it does
+/// not model elements.
 pub fn e_sort(ctx: &mut RuleCtx, a: &ArrayDesc, index_result: bool) -> Result<Desc, Reject> {
     let dtype = if index_result { Dtype::Idx } else { a.dtype };
     let dims = a.dims.clone();
@@ -229,7 +238,6 @@ pub fn e_unique(
         Some(size),
     );
     let c_term = ctx.terms.var(c);
-    ctx.record_const(Rule::EUnique.detail("the count"), c_term);
     let nonempty: BoolId = ctx.terms.lt(zero, size);
     let one = ctx.terms.constant(1);
     let at_least_one = ctx.terms.le(one, c_term);
@@ -261,6 +269,67 @@ mod tests {
         let key = f.key();
         e_reduce_scalar(&mut f.ctx(), &a, ReduceKind::Max, &key, "m").unwrap();
         assert_eq!(f.check_rules(), vec!["E-Reduce-Scalar".to_string()]);
+    }
+
+    /// §5.7: `mean`, `var` and `std` divide by the count, so each demands a
+    /// non-empty fiber; `sum`, `prod`, `any` and `all` have an identity to
+    /// return and do not.
+    #[test]
+    fn the_averaging_statistics_demand_a_non_empty_fiber() {
+        for kind in [ReduceKind::Mean, ReduceKind::Var, ReduceKind::Std] {
+            let mut f = Fixture::new();
+            let a = f.symbolic_input(Dtype::Float, "n", 16);
+            let key = f.key();
+            e_reduce_scalar(&mut f.ctx(), &a, kind, &key, "m").unwrap();
+            let checks = f.checks();
+            assert_eq!(
+                checks.len(),
+                1,
+                "{:?} records one check, got {:?}",
+                kind,
+                checks
+            );
+            assert!(
+                checks[0].contains("0 < n"),
+                "{:?} demands a non-empty fiber, got {}",
+                kind,
+                checks[0]
+            );
+        }
+        for kind in [
+            ReduceKind::Sum,
+            ReduceKind::Prod,
+            ReduceKind::Any,
+            ReduceKind::All,
+        ] {
+            let mut f = Fixture::new();
+            let a = f.symbolic_input(Dtype::Float, "n", 16);
+            let key = f.key();
+            e_reduce_scalar(&mut f.ctx(), &a, kind, &key, "s").unwrap();
+            assert!(
+                f.checks().is_empty(),
+                "{:?} is defined on an empty fiber",
+                kind
+            );
+        }
+    }
+
+    /// The same condition per reduced axis (§5.7's `E-Reduce-Axis`), and not
+    /// on the axes that survive.
+    #[test]
+    fn a_mean_over_an_axis_demands_that_axis_to_be_non_empty() {
+        let mut f = Fixture::new();
+        let a = f.input(Dtype::Float, &[0, 3]);
+        e_reduce_axis(&mut f.ctx(), &a, ReduceKind::Mean, &[1], false).unwrap();
+        assert!(f.checks().is_empty(), "axis 1 has extent 3");
+        e_reduce_axis(&mut f.ctx(), &a, ReduceKind::Mean, &[0], false).unwrap();
+        let checks = f.checks();
+        assert_eq!(checks.len(), 1, "axis 0 is empty, got {:?}", checks);
+        assert!(
+            checks[0].contains("false"),
+            "an empty constant extent makes it unprovable, got {}",
+            checks[0]
+        );
     }
 
     /// §5.2: `argmax` has the structural range `[0, size(a))` (§3.4).

@@ -1,4 +1,4 @@
-"""Diagnostics for deliberately unsupported Python expression forms."""
+"""Lambda lowering and diagnostics for unsupported container expressions."""
 
 import pytest
 
@@ -15,16 +15,16 @@ def _compile_error(fn):
     return msg
 
 
-def test_lambda_expression_rejected_with_prescriptive_diagnostic():
+def test_lambda_expression_compiles_and_checks_the_claimed_result():
     @zk_circuit
-    def foo(n: int):
+    def foo(n: int, expected: int):
         f = lambda x: x + 1
-        assert f(n) == n + 1
+        assert f(n) == expected
 
-    msg = _compile_error(foo)
-    assert "Lambda expressions are not supported" in msg
-    assert "named helper" in msg
-    assert "inline the expression" in msg
+    circuit = ZKCircuit.from_method(foo)
+    circuit.compile()
+    assert circuit.prove(5, 6, backend="mock").proof_bytes_hex == "mock_satisfied"
+    assert circuit.prove(5, 7, backend="mock").proof_bytes_hex != "mock_satisfied"
 
 
 def test_set_literal_rejected_with_membership_hint():

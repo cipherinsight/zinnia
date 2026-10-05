@@ -107,7 +107,7 @@ pub fn i64_to_fp(v: i64) -> Fp {
     if v >= 0 {
         Fp::from(v as u64)
     } else {
-        -Fp::from((-v) as u64)
+        -Fp::from(v.unsigned_abs())
     }
 }
 
@@ -123,7 +123,9 @@ pub fn fp_to_i64(v: Fp) -> i64 {
         let pos = -v; // pos = p - v, which is the absolute value
         let pos_bytes = pos.to_repr();
         let low = u64::from_le_bytes(pos_bytes.as_ref()[0..8].try_into().unwrap());
-        -(low as i64)
+        // The magnitude of i64::MIN is representable only as an unsigned
+        // integer; negate there before interpreting the signed bit pattern.
+        low.wrapping_neg() as i64
     } else {
         let bytes = v.to_repr();
         let low = u64::from_le_bytes(bytes.as_ref()[0..8].try_into().unwrap());
@@ -400,6 +402,24 @@ pub fn fp_floor_div(a: Fp, b: Fp) -> (Fp, Fp) {
     let q = sa.div_euclid(sb);
     let r = sa.rem_euclid(sb);
     (i64_to_fp(q), Fp::from(r as u64))
+}
+
+/// Divide two Q-encoded values, floor the quotient, and restore Q scaling.
+pub fn fp_float_floor_div(a: Fp, b: Fp, precision_bits: u32) -> Fp {
+    let negative_divisor = fp_to_i64(b) < 0;
+    let (a, b) = if negative_divisor { (-a, -b) } else { (a, b) };
+    let (q, _) = fp_floor_div(a, b);
+    q * quantize_to_fp(1.0, precision_bits)
+}
+
+/// Floating remainder has the divisor's sign, as in Python and NumPy.
+pub fn fp_float_mod(a: Fp, b: Fp) -> Fp {
+    if fp_to_i64(b) < 0 {
+        let (_, r) = fp_floor_div(-a, -b);
+        -r
+    } else {
+        fp_floor_div(a, b).1
+    }
 }
 
 /// Compute sin(x) using native f64 math on the dequantized value.

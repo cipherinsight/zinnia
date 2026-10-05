@@ -56,7 +56,7 @@ use std::rc::Rc;
 use crate::ast::{ASTChip, ASTCircuit, ASTNode};
 use crate::phase0::desc::{Desc, ValueKey};
 use crate::phase0::rules::inputs::ContractSymbols;
-use crate::phase0::rules::RuleCtx;
+use crate::phase0::rules::{Rule, RuleCtx};
 use crate::phase0::source::{Producer, ValueFrame};
 use crate::phase0::term::BoolId;
 use crate::phase0::{Analysis, Phase0Config, Phase0Result, Reject};
@@ -209,13 +209,15 @@ impl<'a> Walker<'a> {
             iters: Vec::new(),
             calls: Vec::new(),
             expr_index: DELIVERY_EXPR_INDEX,
+            step: 0,
         };
         let (merged, frame) =
             self.in_value(&key, |w| stmts::merge_returns(w, returns, &key, "return"))?;
         if !matches!(merged.desc, Desc::None) {
             let producer = merged.producer(frame.into_rules());
             let desc = created_at(merged.desc, delivered_when);
-            self.record(key.clone(), Some("return"), &desc, producer);
+            self.record(key.clone(), Some("return"), &desc, producer.clone());
+            self.record_composite_elements(&key, &desc, &producer);
             self.an.delivery.push(key);
         }
         Ok(self.an.finish())
@@ -298,15 +300,33 @@ impl<'a> Walker<'a> {
     /// turns a program that would not finish — a loop nest whose trip counts
     /// are declared maxima rather than compilation parameters (§6.2) — into a
     /// rejection the coverage report can name.
+    ///
+    /// The budget bounds the record as well as the walk: the entries of Δ,
+    /// the variables of Φ and the nodes of the term arena are counted
+    /// alongside the units (§6.2). Work alone does not bound memory — one
+    /// unrolled iteration that merges a long composite keys one entry per
+    /// element — so a budget on units alone is reached only after the pass
+    /// has already built a record too large to hold, and the process dies
+    /// instead of rejecting.
     pub fn spend(&mut self, units: u64) -> Result<(), Reject> {
         self.visited = self.visited.saturating_add(units);
-        if self.visited > self.config.work_budget {
+        let spent = self.spent();
+        if spent > self.config.work_budget {
             return Err(Reject::BudgetExceeded {
-                units: self.visited,
+                units: spent,
                 budget: self.config.work_budget,
             });
         }
         Ok(())
+    }
+
+    /// The budget spent so far: the units walked plus the size of the record
+    /// built. Every summand is monotone, so this is monotone too.
+    fn spent(&self) -> u64 {
+        self.visited
+            .saturating_add(self.an.descriptors.len() as u64)
+            .saturating_add(self.an.phi.vars().len() as u64)
+            .saturating_add(self.an.terms.node_count() as u64)
     }
 
     /// One statement. Mirrors the statement arms of `IRGenerator::visit`.
@@ -507,6 +527,79 @@ impl<'a> Walker<'a> {
     pub fn record(&mut self, key: ValueKey, name: Option<&str>, desc: &Desc, producer: Producer) {
         self.an
             .record(key, name.map(str::to_string), desc.clone(), producer);
+    }
+
+    /// Record one entry per element of a composite value, where
+    /// `definition.md` §3.3 gives the elements keys.
+    ///
+    /// Two cases. A composite a *merge* produced keys each element under the
+    /// composite's key with the element's position as the step index,
+    /// carrying the merge's rules, arms and condition: $\Delta$ keys the
+    /// composite and not its elements, so an element whose descriptor
+    /// carries no term — a `Float` scalar, an array — would otherwise have
+    /// no name a consumer can use. A composite a value *passes through* — a
+    /// chip call with one `return`, an operator that hands its operand back
+    /// — keys each element as that operand's element under a new key, so
+    /// that an element keeps its name across the call. A composite a rule
+    /// *built* from one operand per element — a list or tuple written in the
+    /// source — keys no elements, because those operands already name them.
+    pub fn record_composite_elements(&mut self, key: &ValueKey, desc: &Desc, producer: &Producer) {
+        let Desc::Composite(composite) = desc else {
+            return;
+        };
+        let Producer::Applied { rules, operands, condition } = producer else {
+            return;
+        };
+        let elements = composite.elems.clone();
+        if rules
+            .iter()
+            .any(|rule| matches!(rule, Rule::MergeArray | Rule::MergeScalar))
+        {
+            for (at, element) in elements.iter().enumerate() {
+                let element_key = key.intermediate(at as u32);
+                let element_producer =
+                    Producer::of(element, rules.clone(), operands.clone(), *condition);
+                self.record(element_key, None, element, element_producer);
+            }
+            return;
+        }
+        let Some(source) = self.passed_through(operands, elements.len()) else {
+            return;
+        };
+        for at in 0..elements.len() {
+            let element_key = key.intermediate(at as u32);
+            let producer = Producer::Alias(source.intermediate(at as u32));
+            self.record(element_key, None, &elements[at], producer);
+        }
+    }
+
+    /// The one operand a composite of `length` elements was passed through
+    /// from: an operand that is a composite of the same length whose
+    /// elements $\Delta$ already keys, and the only such operand.
+    fn passed_through(&self, operands: &[ValueKey], length: usize) -> Option<ValueKey> {
+        let mut found: Option<ValueKey> = None;
+        for operand in operands {
+            let source = self.an.defining_key(operand);
+            let same_length = self
+                .an
+                .entry(&source)
+                .and_then(|entry| entry.desc.as_composite())
+                .map(|composite| composite.elems.len() == length)
+                .unwrap_or(false);
+            if !same_length || self.an.entry(&source.intermediate(0)).is_none() {
+                continue;
+            }
+            // One value may be an operand more than once — the returned
+            // value of a chip is both a statement's value and the call's —
+            // so only a *second, different* candidate makes the source
+            // ambiguous.
+            match &found {
+                Some(previous) if previous != &source => return None,
+                Some(_) => {}
+                None => found = Some(source),
+            }
+        }
+        found
     }
 
     /// Evaluate `body` as the value at `key`: the frame it opens collects the

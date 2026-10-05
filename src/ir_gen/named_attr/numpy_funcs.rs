@@ -354,27 +354,6 @@ fn np_corrcoef_ds1000(b: &mut crate::builder::IRBuilder, args: &[Value]) -> Valu
     )
 }
 
-fn np_einsum_ds1000(b: &mut crate::builder::IRBuilder, args: &[Value]) -> Value {
-    assert!(args.len() >= 2, "np.einsum: requires subscript and operand");
-    let subscript = args[0]
-        .string_val()
-        .unwrap_or_else(|| panic!("np.einsum: DS1000 slice requires a static subscript string"));
-    if subscript != "ii->i" {
-        panic!("np.einsum: DS1000 slice supports only 'ii->i'");
-    }
-    let (dtype, shape) = static_array_meta(&args[1], "np.einsum");
-    if shape.len() != 2 || shape[0] != shape[1] {
-        panic!("np.einsum('ii->i'): operand must be a square rank-2 StaticArray");
-    }
-    let cells = static_cells(b, &args[1], "np.einsum");
-    let n = shape[0];
-    let mut out = Vec::with_capacity(n);
-    for i in 0..n {
-        out.push(cells[i * n + i].clone());
-    }
-    crate::helpers::static_array::base::build_static_array_from_flat(b, out, vec![n], dtype)
-}
-
 fn np_tensordot_ds1000(
     b: &mut crate::builder::IRBuilder,
     args: &[Value],
@@ -991,7 +970,22 @@ impl IRGenerator {
                     method
                 );
             }
-            ("np", "dot" | "matmul") => {
+            ("np", "inner") => {
+                let lhs = &visited_args_orig[0]; let rhs = &visited_args_orig[1];
+                if crate::helpers::composite::get_composite_shape(lhs).is_empty() || crate::helpers::composite::get_composite_shape(rhs).is_empty() {
+                    crate::helpers::value_ops::apply_binary_op(&mut self.builder,"mul",lhs,rhs)
+                } else {
+                    let minus = self.builder.ir_constant_int(-1);
+                    let axis = Value::Tuple(CompositeData::new(vec![ZinniaType::Integer],vec![minus]));
+                    let axes = Value::Tuple(CompositeData::new(vec![axis.zinnia_type(),axis.zinnia_type()],vec![axis.clone(),axis]));
+                    let mut kw=HashMap::new();kw.insert("axes".to_string(),axes);
+                    np_tensordot_ds1000(&mut self.builder,visited_args_orig,&kw)
+                }
+            }
+            ("np", "matmul") => {
+                crate::helpers::value_ops::apply_binary_op(&mut self.builder, "mat_mul", &visited_args_orig[0], &visited_args_orig[1])
+            }
+            ("np", "dot") => {
                 let lhs = visited_args.first().cloned().unwrap_or(Value::None);
                 let rhs = visited_args.get(1).cloned().unwrap_or(Value::None);
                 if matches!(lhs, Value::DynamicNDArray(_)) || matches!(rhs, Value::DynamicNDArray(_)) {
@@ -1003,7 +997,7 @@ impl IRGenerator {
                 crate::ops::static_ndarray_ops::matmul(&mut self.builder, &lhs, &rhs)
             }
             ("np", "square") => {
-                crate::ops::static_ndarray_ops::np_square(&mut self.builder, visited_args)
+                crate::ops::static_ndarray_ops::np_square(&mut self.builder, visited_args_orig)
             }
             ("np", "deg2rad" | "radians") => {
                 let x = visited_args.first().cloned().unwrap_or(Value::None);
@@ -1390,8 +1384,8 @@ impl IRGenerator {
                 } else {
                     crate::ops::static_ndarray_ops::np_split(
                         &mut self.builder,
-                        visited_args,
-                        _visited_kwargs,
+                        visited_args_orig,
+                        visited_kwargs_orig,
                     )
                 }
             }
@@ -1410,8 +1404,8 @@ impl IRGenerator {
                 } else {
                     crate::ops::static_ndarray_ops::np_array_split(
                         &mut self.builder,
-                        visited_args,
-                        _visited_kwargs,
+                        visited_args_orig,
+                        visited_kwargs_orig,
                     )
                 }
             }
@@ -1435,7 +1429,7 @@ impl IRGenerator {
                         &kw,
                     )
                 } else {
-                    crate::ops::static_ndarray_ops::np_hsplit(&mut self.builder, visited_args)
+                    crate::ops::static_ndarray_ops::np_hsplit(&mut self.builder, visited_args_orig)
                 }
             }
             ("np", "vsplit") => {
@@ -1456,7 +1450,7 @@ impl IRGenerator {
                         &kw,
                     )
                 } else {
-                    crate::ops::static_ndarray_ops::np_vsplit(&mut self.builder, visited_args)
+                    crate::ops::static_ndarray_ops::np_vsplit(&mut self.builder, visited_args_orig)
                 }
             }
             ("np", "dsplit") => {
@@ -1477,7 +1471,7 @@ impl IRGenerator {
                         &kw,
                     )
                 } else {
-                    crate::ops::static_ndarray_ops::np_dsplit(&mut self.builder, visited_args)
+                    crate::ops::static_ndarray_ops::np_dsplit(&mut self.builder, visited_args_orig)
                 }
             }
             ("np", "floor") => {
@@ -1669,7 +1663,10 @@ impl IRGenerator {
                 visited_kwargs_orig,
             ),
             ("np", "corrcoef") => np_corrcoef_ds1000(&mut self.builder, visited_args_orig),
-            ("np", "einsum") => np_einsum_ds1000(&mut self.builder, visited_args_orig),
+            ("np", "einsum") => {
+                ensure_no_kwargs("np.einsum", visited_kwargs_orig, &["optimize"]);
+                crate::ops::static_ndarray_ops::einsum::einsum(&mut self.builder, visited_args_orig)
+            }
             ("np", "tensordot") => np_tensordot_ds1000(
                 &mut self.builder,
                 visited_args_orig,
@@ -1685,8 +1682,36 @@ impl IRGenerator {
                 visited_args_orig,
                 visited_kwargs_orig,
             ),
+            ("np", "copyto" | "putmask") => {
+                let target = &visited_args_orig[0];
+                let truth = self.builder.ir_constant_bool(true);
+                let (source, mask) = if member=="putmask" { (&visited_args_orig[2], &visited_args_orig[1]) }
+                    else { (&visited_args_orig[1], visited_kwargs_orig.get("where").unwrap_or(&truth)) };
+                super::array_compat::write_output(&mut self.builder,source,target,Some(mask));
+                Value::None
+            }
+            ("np", "select") => {
+                let conditions = match &visited_args[0] { Value::List(d)|Value::Tuple(d)=>&d.values,_=>panic!("select: expected condition list") };
+                let choices = match &visited_args[1] { Value::List(d)|Value::Tuple(d)=>&d.values,_=>panic!("select: expected choice list") };
+                assert_eq!(conditions.len(),choices.len(),"select: lists must have equal length");
+                assert!(!conditions.is_empty(),"select: empty condition list");
+                let mut result = _visited_kwargs.get("default").or_else(||visited_args.get(2)).cloned().unwrap_or_else(||self.builder.ir_constant_int(0));
+                for (cond,choice) in conditions.iter().zip(choices).rev() {
+                    result = crate::ops::static_ndarray_ops::np_where(&mut self.builder,&[cond.clone(),choice.clone(),result]);
+                }
+                crate::helpers::static_array::base::to_static_array(&mut self.builder,&result).unwrap_or(result)
+            }
+            ("np", "median") => super::array_compat::median(&mut self.builder,visited_args_orig,visited_kwargs_orig),
+            ("np", "abs" | "absolute") => {
+                np_abs_value(&mut self.builder, &visited_args_orig[0])
+            }
             ("np", "clip") => {
-                crate::ops::static_ndarray_ops::np_clip(&mut self.builder, visited_args)
+                super::array_compat::clip(&mut self.builder, visited_args_orig, visited_kwargs_orig)
+            }
+            ("np", "copy") => {
+                ensure_no_kwargs("np.copy", visited_kwargs_orig, &["order", "subok"]);
+                let input = visited_args_orig.first().expect("np.copy: requires an array");
+                super::array_compat::copy_array(&mut self.builder, input)
             }
             ("np", "mean") => {
                 let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);

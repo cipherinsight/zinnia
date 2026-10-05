@@ -40,6 +40,19 @@ use super::super::shape_arith::{decode_coords, row_major_strides};
 // Helpers
 // ────────────────────────────────────────────────────────────────────────
 
+/// Conditional memory writes read the previous physical cell. A lazy
+/// StaticArray keeps that content only in its cached payload until forced;
+/// without this boundary, skipped writes select allocation zeros instead.
+/// Unconditional static writes still update the cache without forcing it.
+fn materialize_before_predicated_write(b: &mut IRBuilder, val: &Value) {
+    let conditional = b
+        .write_predicate()
+        .is_some_and(|p| p.bool_val().or_else(|| p.int_val().map(|v| v != 0)) != Some(true));
+    if conditional {
+        super::base::materialize_static_array_if_lazy(b, val);
+    }
+}
+
 /// Cast a value to match the target dtype before storing it in a segment.
 fn cast_to_dtype(b: &mut IRBuilder, v: &Value, dtype: NumberType) -> Value {
     match dtype {
@@ -270,6 +283,15 @@ pub fn static_array_setitem(
     };
 
     if indices.is_empty() {
+        return val.clone();
+    }
+    // A statically dead mutation must not update either storage or its
+    // cached payload. ir_write_memory intentionally emits no write in this
+    // case; caching its return value would otherwise replace the old cell.
+    if b.write_predicate()
+        .and_then(|p| p.bool_val().or_else(|| p.int_val().map(|v| v != 0)))
+        == Some(false)
+    {
         return val.clone();
     }
 
@@ -520,6 +542,7 @@ fn complex_element_setitem(
     // Static fast path: known offset → both component writes are direct.
     let all_static = idx_vals.iter().all(|v| v.int_val().is_some());
     if all_static && idx_vals.len() == shape.len() {
+        materialize_before_predicated_write(b, val);
         let mut flat: i64 = offset as i64;
         for (ax, v) in idx_vals.iter().enumerate() {
             let i = v.int_val().unwrap();
@@ -937,6 +960,7 @@ fn static_array_element_setitem(
     // All-static path: use the cached-wire-update strategy.
     let all_static = idx_vals.iter().all(|v| v.int_val().is_some());
     if all_static {
+        materialize_before_predicated_write(b, val);
         let mut flat_rel: i64 = 0;
         for (ax, v) in idx_vals.iter().enumerate() {
             let i = v.int_val().unwrap();
@@ -1165,8 +1189,7 @@ fn static_array_slice_setitem(
             Value::StaticArray { .. } => {
                 // Use to_value_list to flatten — the cache-aware materialiser
                 // returns the original wires when possible.
-                let flat_list = super::base::to_value_list(b, value);
-                super::super::composite::flatten_composite_with_builder(b, &flat_list)
+                super::elementwise::payload_cells(b, value)
             }
             Value::DynamicNDArray(vd) => {
                 let vd_owned = crate::ops::dyn_ndarray::force_contiguous(b, vd);
@@ -1237,6 +1260,8 @@ fn static_array_slice_setitem(
         }
         if has_dynamic_single {
             super::base::materialize_static_array_if_lazy(b, val);
+        } else {
+            materialize_before_predicated_write(b, val);
         }
 
         // All static bounds: iterate over target positions and emit
@@ -1453,7 +1478,12 @@ fn try_overlay_dynamic_single_slice_setitem(
         for (src_axis, spec) in axis_specs {
             match spec {
                 AxisCoords::Single(v) => {
-                    conds.push(index_equals_coord(b, v, coords[*src_axis], shape[*src_axis]));
+                    conds.push(index_equals_coord(
+                        b,
+                        v,
+                        coords[*src_axis],
+                        shape[*src_axis],
+                    ));
                 }
                 AxisCoords::Static(valid_coords) => {
                     if let Some(pos) = valid_coords.iter().position(|c| *c == coords[*src_axis]) {

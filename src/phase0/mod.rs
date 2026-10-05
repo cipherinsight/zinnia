@@ -10,8 +10,8 @@
 //! dimension terms, definedness condition and execution condition, together
 //! with the rules that produced it and the values they read; $R$ is the
 //! delivery set, the returned values the circuit must make observable. Every
-//! check and every obligation names the value its operation produced, so a
-//! consumer can tell which operation instance a condition belongs to. It
+//! check names the value its operation produced, so a consumer can tell which
+//! operation instance a condition belongs to. It
 //! computes a symbolic over-approximation of the program's shape behaviour —
 //! lengths, counts, shapes, and success or failure — and models no element
 //! values. It emits no wires, calls no solver, computes no numeric bound and
@@ -23,7 +23,7 @@
 //! | Module | Content |
 //! |---|---|
 //! | [`term`] | the hash-consed term language of §3.1, with evaluation, pretty, SMT-LIB and JSON printers |
-//! | [`phi`] | variables, ranges, constraints, the `Count` memo of §5.5, product facts, obligations |
+//! | [`phi`] | variables, ranges, constraints, the `Count` memo of §5.5, product facts |
 //! | [`desc`] | the descriptors of §3.2 and §3.3, and the value keys of `acceptance.md` §2.2 |
 //! | [`source`] | the producer of every value: the source graph of §3.3 |
 //! | [`interval`] | the syntactic upper bound of a term over $\Phi$'s ranges, for §5.9 and §6.2 |
@@ -86,7 +86,7 @@ use crate::optim::predicates::formula::ContractTerm;
 use crate::types::ZinniaType;
 
 use desc::{Desc, KeyCursor, ValueKey};
-use phi::{Obligation, Phi};
+use phi::Phi;
 use rules::inputs::{add_scalar_requires, e_input, ContractSymbols};
 use rules::RuleCtx;
 use source::{Producer, ValueFrame, ValueStack};
@@ -128,12 +128,14 @@ pub enum Reject {
     /// at all, which is [`Reject::Unsupported`]; the coverage histogram
     /// keeps them apart for the same reason.
     Premise { rule: rules::Rule, detail: String },
-    /// The unrolled program is larger than phase 0 will walk.
+    /// The unrolled program is larger than phase 0 will walk, or the record
+    /// it has built is larger than phase 0 will hold.
     ///
     /// Not a reason of §1: unrolling a loop nest whose trip counts come from
     /// declared maxima can be quadratic in those maxima (§6.2 assumes the
     /// trip count is a compilation parameter), and a pass that never returns
-    /// is worse than one that says why. See "Additions" in
+    /// — or that is killed for its size — is worse than one that says why.
+    /// `units` is the sum the budget bounds (§6.2). See "Additions" in
     /// `implementation.md`.
     BudgetExceeded { units: u64, budget: u64 },
     /// Anything else phase 0 does not handle yet.
@@ -176,8 +178,8 @@ impl Reject {
             Reject::UnsupportedOperator { name } => name.clone(),
             Reject::Premise { rule, detail } => format!("{} {}", rule.name(), detail),
             Reject::BudgetExceeded { units, budget } => format!(
-                "the unrolled program reached {} units of work, past the budget of {} \
-                 (raise `phase0_work_budget`)",
+                "the unrolled program reached {} units of work and record, past the \
+                 budget of {} (raise `phase0_work_budget`)",
                 units, budget
             ),
         }
@@ -265,10 +267,15 @@ pub struct DescriptorEntry {
     /// Where the value came from: the source graph of §3.3
     /// (`implementation.md` §5a).
     pub producer: Producer,
+    /// How many checks $\Phi$ held when the entry was recorded, the value's
+    /// own among them: the entry is made once its rules have run. It is what
+    /// orders the values of $\Delta$ against the checks of $\Phi$
+    /// (`implementation.md` §5a).
+    pub checks: u32,
 }
 
-/// The result of phase 0: $(\Phi, \Delta, R)$ plus the recorded obligations
-/// and the term arena every term id refers to.
+/// The result of phase 0: $(\Phi, \Delta, R)$ and the term arena every term
+/// id refers to.
 pub struct Phase0Result {
     pub terms: TermArena,
     pub phi: Phi,
@@ -281,14 +288,15 @@ pub struct Phase0Result {
 }
 
 impl Phase0Result {
-    /// The obligations recorded during the pass. They live in $\Phi$, which
-    /// is where [`rules::RuleCtx`] can reach them.
-    pub fn obligations(&self) -> &[Obligation] {
-        self.phi.obligations()
+    pub fn descriptor(&self, key: &ValueKey) -> Option<&Desc> {
+        self.entry(key).map(|entry| &entry.desc)
     }
 
-    pub fn descriptor(&self, key: &ValueKey) -> Option<&Desc> {
-        self.index.get(key).map(|&i| &self.descriptors[i].desc)
+    /// The whole entry under `key`: the descriptor together with the
+    /// producer and the check watermark phase 1 reads
+    /// (`revision/phase1/README.md` §1).
+    pub fn entry(&self, key: &ValueKey) -> Option<&DescriptorEntry> {
+        self.index.get(key).map(|&i| &self.descriptors[i])
     }
 }
 
@@ -325,8 +333,8 @@ impl Analysis {
     /// The rule context for the current path condition.
     ///
     /// A rule runs inside the value frame of the value it produces, which is
-    /// what gives every check and obligation its subject, so this may only be
-    /// called with a frame open ([`Analysis::open_value`]).
+    /// what gives every check its subject, so this may only be called with a
+    /// frame open ([`Analysis::open_value`]).
     pub fn ctx(&mut self, path: BoolId) -> RuleCtx<'_> {
         RuleCtx {
             terms: &mut self.terms,
@@ -335,6 +343,7 @@ impl Analysis {
             path,
             materialisable: self.config.work_budget as i128,
             values: &mut self.values,
+            element: Vec::new(),
         }
     }
 
@@ -371,7 +380,77 @@ impl Analysis {
             name,
             desc,
             producer,
+            checks: self.phi.check_count(),
         });
+    }
+
+    /// The entry under `key`, when the walk has already recorded one.
+    pub fn entry(&self, key: &ValueKey) -> Option<&DescriptorEntry> {
+        self.index.get(key).map(|&at| &self.descriptors[at])
+    }
+
+    /// Open the frame of an *intermediate* of the value being built
+    /// (`definition.md` §3.3) and return its key.
+    ///
+    /// The key is the value's own with the next step index, so it resolves
+    /// to the same AST node (`crate::phase1::ast_index`) and a rule reads the
+    /// operator's constant parameters off it. Until [`Analysis::close_step`]
+    /// the intermediate is the value under construction: the rules that run
+    /// are its, and it is the subject of the checks they record.
+    pub fn open_step(&mut self) -> ValueKey {
+        self.values.open_step()
+    }
+
+    /// Close an intermediate's frame: record its entry, with the rules it
+    /// collected and the `operands` those rules read, and make it an operand
+    /// of the value it belongs to.
+    pub fn close_step(&mut self, desc: Desc, operands: Vec<ValueKey>) -> ValueKey {
+        let frame = self.values.close();
+        let key = frame.key().clone();
+        let producer = Producer::of(&desc, frame.into_rules(), operands, None);
+        self.record(key.clone(), None, desc, producer);
+        self.operand(&key);
+        key
+    }
+
+    /// The key Δ gives element `at` of the composite at `key`, when it gives
+    /// it one (§3.3, "Elements of a composite"): the composite's key with the
+    /// element's position as the step index, looked up through every entry
+    /// that only relabels the composite.
+    ///
+    /// Phase 1 reads the same relation (`../phase1/build.rs`,
+    /// `element_key`); here it is what names the operand an unpacking or an
+    /// iteration binds.
+    pub fn element_key(&self, key: &ValueKey, at: usize) -> Option<ValueKey> {
+        let mut current = key.clone();
+        for _ in 0..self.descriptors.len() {
+            let candidate = current.intermediate(at as u32);
+            if self.index.contains_key(&candidate) {
+                return Some(candidate);
+            }
+            current = self
+                .index
+                .get(&current)
+                .and_then(|&at| self.descriptors[at].producer.relabels())?
+                .clone();
+        }
+        None
+    }
+
+    /// The key of the value `key` names, with every entry that only
+    /// re-labels a value followed to the one that defines it: a use of a name
+    /// and an `E-Copy` (§5.11). `Count` is keyed by this, so that two reads
+    /// of one mask share one count variable (§5.5).
+    pub fn defining_key(&self, key: &ValueKey) -> ValueKey {
+        let mut current = key;
+        while let Some(source) = self
+            .index
+            .get(current)
+            .and_then(|&at| self.descriptors[at].producer.relabels())
+        {
+            current = source;
+        }
+        current.clone()
     }
 
     /// Called once the circuit body has been walked.
@@ -511,7 +590,24 @@ fn build_input_descriptors(
         let desc = e_input(&mut analysis.ctx(tt), name, &key, dt, symbols);
         analysis.close_value();
         let desc = desc?;
-        analysis.record(key, Some(name.clone()), desc.clone(), Producer::Input);
+        analysis.record(key.clone(), Some(name.clone()), desc.clone(), Producer::Input);
+        // A composite parameter is a tuple or list of parameters, and each
+        // element is a value of the circuit in its own right: §3.3 keys the
+        // elements of a composite wherever an element has no other name, and
+        // an element of an input has none. The producer is `Input` too — the
+        // element is bound by the front end like any other parameter — which
+        // is what lets phase 1 answer `a_min_val` in
+        // `benchmarking/pythran_extrema` (`../phase1/rules/sources/input_scalar.md`).
+        if let Desc::Composite(composite) = &desc {
+            for (at, element) in composite.elems.iter().enumerate() {
+                analysis.record(
+                    key.intermediate(at as u32),
+                    None,
+                    element.clone(),
+                    Producer::Input,
+                );
+            }
+        }
         inputs.push((name.clone(), desc));
     }
     Ok(inputs)

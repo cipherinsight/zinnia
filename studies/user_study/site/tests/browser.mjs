@@ -1,0 +1,311 @@
+import {chromium} from 'playwright';
+import assert from 'node:assert/strict';
+import {spawn, execFileSync} from 'node:child_process';
+import {mkdtemp, readFile, mkdir, rm, writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {existsSync} from 'node:fs';
+import {homedir} from 'node:os';
+
+const site=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+const repo=path.resolve(site,'../../..');
+const python=path.join(repo,'.venv/bin/python');
+const runtime=await mkdtemp(path.join(tmpdir(),'zinnia-study-browser-'));
+const artifacts=path.join(site,'test-results');
+await mkdir(artifacts,{recursive:true});
+const port=18877, origin=`http://127.0.0.1:${port}`;
+const source=JSON.parse(execFileSync(python,['-c','import json; from studies.user_study.site.tests.reference import PYTHON,RUST; print(json.dumps({"zinnia":PYTHON,"rust":RUST}))'],{cwd:repo,encoding:'utf8'}));
+const server=spawn(python,['-m','studies.user_study.site.server','--port',String(port),'--runtime',runtime],{cwd:repo,stdio:['ignore','pipe','pipe']});
+let log='';server.stdout.on('data',b=>log+=b);server.stderr.on('data',b=>log+=b);
+const delay=ms=>new Promise(r=>setTimeout(r,ms));
+async function until(fn, timeout=20000) {const start=Date.now();while(Date.now()-start<timeout){const value=await fn();if(value)return value;await delay(100);}throw new Error('Timed out waiting for condition');}
+let browser;
+const errors=[];
+try {
+  await until(async()=>{try{return (await fetch(origin+'/health')).ok;}catch{return false;}});
+  const config=JSON.parse(await readFile(path.join(runtime,'config.json'),'utf8'));
+  async function api(route, data, admin=false, expected=200) {
+    const headers={...(data?{'Content-Type':'application/json'}:{}),...(admin?{Authorization:`Bearer ${config.admin_key}`}:{})};
+    const r=await fetch(origin+route,{method:data?'POST':'GET',headers,body:data?JSON.stringify(data):undefined});
+    assert.equal(r.status,expected,await r.clone().text());return r.json();
+  }
+  const cached=path.join(homedir(),'.cache/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-linux64/chrome-headless-shell');
+  const executablePath=process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE||(existsSync(chromium.executablePath())?chromium.executablePath():existsSync(cached)?cached:undefined);
+  browser=await chromium.launch({headless:true,executablePath});
+  const admin=await browser.newPage({viewport:{width:1440,height:1000}});
+  admin.on('pageerror',e=>errors.push(e.message));
+  await admin.goto(`${origin}/admin#key=${config.admin_key}`);
+  await admin.locator('#assignment-design').selectOption('between_subjects');
+  await admin.locator('#participant-count').fill('2');
+  await admin.locator('#assignment-order').selectOption('progressive');
+  await admin.locator('#create-participants').click();
+  await until(async()=>await admin.locator('[data-inspect]').count()===2);
+  let dashboard=await api('/api/admin',undefined,true);
+  assert.equal(dashboard.readiness.zinnia,true,JSON.stringify(dashboard.readiness));
+  assert.equal(dashboard.readiness.rust,true,JSON.stringify(dashboard.readiness));
+  assert.deepEqual(dashboard.participants.map(p=>p.condition).sort(),['rust','zinnia']);
+  await api('/api/admin',undefined,false,401);
+  let totalRuns=0;
+  for(const p of dashboard.participants) {
+    console.log(`Checking ${p.condition}: onboarding, practice, and six tasks`);
+    const page=await browser.newPage({viewport:{width:1440,height:1050}});
+    page.on('pageerror',e=>errors.push(e.message));
+    const route=`/api/p/${p.token}`;
+    await page.goto(`${origin}/p/${p.token}`);
+    await page.locator('#consent').check();
+    await page.locator('.topbar [data-lang=zh]').click();
+    await until(async()=>await page.locator('html').getAttribute('lang')==='zh-Hans');
+    assert.equal(await page.locator('#consent').isChecked(),true);
+    await page.reload();await page.locator('#consent').waitFor();
+    assert.equal(await page.locator('html').getAttribute('lang'),'zh-Hans');
+    await page.locator('#consent').check();await page.locator('#consent-next').click();
+    await page.locator('[name=python]').selectOption('regular');
+    await page.locator('.topbar [data-lang=en]').click();
+    await until(async()=>await page.locator('html').getAttribute('lang')==='en');
+    assert.equal(await page.locator('[name=python]').inputValue(),'regular');
+    await page.reload();await page.locator('#background-form').waitFor();
+    assert.equal(await page.locator('[name=python]').inputValue(),'regular');
+    assert.equal((await api(route+'/state')).stage,'background');
+    for(const field of ['python','rust','arrays','zk'])await page.locator(`[name=${field}]`).selectOption('basic');
+    await page.locator('#background-form button').click();
+    await page.locator('#practice-start').click();
+    await page.locator('.cm-content').waitFor();
+    await page.locator('.cm-content').click();
+    await page.keyboard.press('Control+Home');await page.keyboard.press('End');await page.keyboard.press('Enter');
+    const indent=await page.locator('.cm-line').nth(1).textContent();
+    assert.ok(indent.startsWith('    ') && !indent.startsWith('     '), `Expected four spaces: ${JSON.stringify(indent)}`);
+    await page.keyboard.press('Control+z');
+    // Selection must work with both keyboard and pointer, and survive polling.
+    await page.locator('.cm-content').click();
+    await page.keyboard.press('Control+Home');
+    await page.keyboard.press('Shift+End');
+    const keyboardSelection=await page.evaluate(()=>window.getSelection().toString());
+    assert.ok(keyboardSelection.length>5);
+    await delay(2200);
+    assert.equal(await page.evaluate(()=>window.getSelection().toString()),keyboardSelection);
+    const bounds=await page.locator('.cm-line').first().boundingBox();
+    await page.mouse.move(bounds.x+3,bounds.y+10);await page.mouse.down();
+    await page.mouse.move(bounds.x+90,bounds.y+10,{steps:12});await page.mouse.up();
+    assert.ok((await page.evaluate(()=>window.getSelection().toString())).length>3);
+    await page.screenshot({path:path.join(artifacts,`${p.condition}-selection.png`)});
+    await page.locator('#reference').click();
+    await page.locator('#manual-search').fill('reduction');
+    assert.ok(await page.locator('.manual-entry').count()>=2);
+    await page.locator('#manual-search').fill('no_such_operation_123');
+    assert.equal(await page.locator('.manual-entry').count(),0);
+    await page.locator('#dialog [data-lang=zh]').click();
+    await page.getByRole('heading',{name:'编程操作手册',exact:true}).waitFor();
+    await page.locator('#manual-search').fill('切片');
+    assert.ok(await page.locator('.manual-entry').count()>0);
+    await page.locator('#dialog [data-lang=en]').click();
+    await page.getByRole('heading',{name:'Programming manual',exact:true}).waitFor();
+    await page.locator('#close-reference').click();
+    await api(route+'/action',{action:'practice_done'},false,409);
+    await api(route+'/action',{action:'locale',locale:'en',condition:p.condition==='rust'?'zinnia':'rust'},false,403);
+    async function edit(code) {
+      await page.locator('.cm-content').click();
+      await page.keyboard.press('Control+a');await page.keyboard.insertText(code);
+      await until(async()=>await page.locator('#save-status').textContent()==='Saved');
+      const stored=(await api(route+'/state')).session.code;
+      const normalize=text=>p.condition==='rust'?text.split('\n').map(line=>line.trim()).join('\n'):text;
+      assert.equal(normalize(stored),normalize(code));
+    }
+    async function runExamples(expectPass=true) {
+      const before=(await api(route+'/state')).runs.length;
+      await page.locator('#run-examples').click();
+      const run=await until(async()=>{
+        const s=await api(route+'/state');const r=s.runs[0];
+        return r&&r.status==='complete'&&s.runs.length>before?r:null;
+      });
+      if(expectPass)assert.equal(run.result.status,'passed',JSON.stringify(run.result));
+      await until(async()=>await page.locator('#run-examples').isEnabled());
+      totalRuns++;return run;
+    }
+    await edit('invalid code !!!');
+    const bad=await runExamples(false);assert.equal(bad.result.status,'compile_error');
+    await page.locator('.console').waitFor();
+    await edit(source[p.condition].practice);
+    const beforeUndo=(await api(route+'/state')).session.code;
+    const comment=p.condition==='zinnia'?'\n# undo test':'\n// undo test';
+    await page.locator('.cm-content').click();await page.keyboard.press('Control+End');await page.keyboard.insertText(comment);
+    await until(async()=>await page.locator('#save-status').textContent()==='Saved');
+    const afterUndoEdit=(await api(route+'/state')).session.code;
+    assert.notEqual(afterUndoEdit,beforeUndo);
+    await page.keyboard.press('Control+z');
+    await until(async()=>(await api(route+'/state')).session.code===beforeUndo);
+    await page.keyboard.press('Control+Shift+z');
+    try {await until(async()=>(await api(route+'/state')).session.code===afterUndoEdit);} catch(error) {console.error(JSON.stringify({expected:afterUndoEdit,actual:(await api(route+'/state')).session.code,editor:await page.locator('.cm-content').innerText(),notification:await page.locator('#notification').textContent(),errors}));throw error;}
+    await page.locator('.topbar [data-lang=zh]').click();
+    await until(async()=>await page.locator('html').getAttribute('lang')==='zh-Hans');
+    await page.locator('.cm-content').click();await page.keyboard.press('Control+z');
+    await until(async()=>(await api(route+'/state')).session.code===beforeUndo);
+    await page.locator('#redo-code').click();
+    await until(async()=>(await api(route+'/state')).session.code===afterUndoEdit);
+    await page.reload();await page.locator('.cm-content').waitFor();
+    await page.locator('#undo-code').click();
+    await until(async()=>(await api(route+'/state')).session.code===beforeUndo);
+    await page.keyboard.press('Control+y');
+    await until(async()=>(await api(route+'/state')).session.code===afterUndoEdit);
+    await page.keyboard.press('Control+z');
+    await until(async()=>(await api(route+'/state')).session.code===beforeUndo);
+    await page.locator('.topbar [data-lang=en]').click();
+    await until(async()=>await page.locator('html').getAttribute('lang')==='en');
+    await runExamples();
+    await page.locator('[data-tab=custom]').click();
+    await page.locator('#custom-input').fill('{"x":[9],"y":[-3]}');
+    await page.locator('#run-custom').click();
+    await until(async()=>{const r=(await api(route+'/state')).runs[0];return r?.purpose==='custom'&&r.status==='complete';});
+    await until(async()=>await page.locator('#run-examples').isEnabled());
+    await page.locator('[data-tab=examples]').click();
+    assert.equal(await page.locator('.case').count(),3,'custom result must not replace example cases');
+    await page.locator('.topbar [data-lang=zh]').click();
+    await until(async()=>/练习/.test(await page.locator('.description h1').textContent()));
+    assert.match(await page.locator('.description h1').textContent(),/练习/);
+    await page.locator('.topbar [data-lang=en]').click();
+    await until(async()=>/Practice/.test(await page.locator('.description h1').textContent()));
+    await page.reload();await page.locator('.cm-content').waitFor();
+    assert.equal((await api(route+'/state')).session.code,source[p.condition].practice);
+    await page.locator('#finish-task').click();await page.locator('#task-start').waitFor();
+    for(let index=0;index<6;index++) {
+      const ready=await api(route+'/state');assert.equal(ready.condition,p.condition);
+      assert.equal(ready.stage,'ready');assert.equal(ready.task_index,index);assert.equal(ready.next_task.descriptions,undefined);
+      await page.locator('#task-start').click();await page.locator('.cm-content').waitFor();
+      const s=await api(route+'/state'), task=s.task.id;
+      await page.locator('.task-hint summary').click();
+      assert.ok((await page.locator('.task-hint p').textContent()).length>30);
+      await page.locator('[data-manual-topic]').first().click();
+      assert.ok(await page.locator('.manual-entry').count()>0);
+      await page.locator('#close-reference').click();
+      await edit(source[p.condition][task]);
+      if(index===0) {
+        const remaining=s.remaining;
+        const savedBeforePause=(await api(route+'/state')).session.code;
+        await page.locator('#participant-pause').click();
+        await page.locator('#participant-resume').waitFor();
+        assert.equal(await page.locator('.workspace').isVisible(),false);
+        assert.equal(await page.locator('.workspace').evaluate(el=>el.inert),true);
+        assert.equal(await page.locator('.pause-cover').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(245, 246, 242)');
+        const stopped=(await api(route+'/state')).remaining;
+        await delay(1200);
+        assert.equal((await api(route+'/state')).remaining,stopped);
+        await page.locator('.topbar [data-lang=zh]').click();
+        await until(async()=>await page.locator('html').getAttribute('lang')==='zh-Hans');
+        assert.equal(await page.locator('.workspace').isVisible(),false);
+        await page.reload();await page.locator('#participant-resume').waitFor();
+        assert.equal((await api(route+'/state')).remaining,stopped);
+        await page.locator('.topbar [data-lang=en]').click();
+        await until(async()=>await page.locator('html').getAttribute('lang')==='en');
+        await page.locator('#participant-resume').click();
+        await page.locator('.pause-cover').waitFor({state:'detached'});
+        await page.goto('about:blank');
+        await until(async()=>(await api(route+'/state')).session.pause_reason==='closed');
+        const closedRemaining=(await api(route+'/state')).remaining;
+        await delay(1200);
+        assert.equal((await api(route+'/state')).remaining,closedRemaining);
+        await page.goto(`${origin}/p/${p.token}`);
+        await page.locator('.cm-content').waitFor();
+        assert.equal((await api(route+'/state')).session.paused_at,null);
+        assert.ok(Math.abs((await api(route+'/state')).remaining-closedRemaining)<2);
+        assert.equal((await api(route+'/state')).session.code,savedBeforePause);
+        await page.reload();await page.locator('.cm-content').waitFor();
+        assert.ok((await api(route+'/state')).remaining<=remaining);
+        await api('/api/admin/pause',{token:p.token,paused:true},true);
+        await page.locator('.pause-cover').waitFor({timeout:10000});
+        const paused=(await api(route+'/state')).remaining;
+        await api(route+'/save',{code:'bad',revision:1,task},false,409);
+        await delay(350);assert.equal((await api(route+'/state')).remaining,paused);
+        await api('/api/admin/pause',{token:p.token,paused:false},true);
+        await page.locator('.pause-cover').waitFor({state:'detached',timeout:10000});
+        await page.locator('#reference').click();await page.locator('#close-reference').click();
+      }
+      const run=await runExamples();
+      const other=dashboard.participants.find(x=>x.token!==p.token);
+      await api(`/api/p/${other.token}/runs/${run.id}`,undefined,false,404);
+      await api(route+'/run',{purpose:'grade',code:source[p.condition][task],revision:1,task},false,400);
+      if(index===0) {
+        await page.screenshot({path:path.join(artifacts,`${p.condition}-workspace.png`),fullPage:true});
+        await page.setViewportSize({width:390,height:844});
+        await page.screenshot({path:path.join(artifacts,`${p.condition}-mobile.png`),fullPage:true});
+        const widths=await page.evaluate(()=>[document.documentElement.scrollWidth,innerWidth]);
+        assert.ok(widths[0]<=widths[1]+1,`mobile overflow: ${widths}`);
+        await page.setViewportSize({width:1440,height:1050});
+      }
+      await page.locator('#finish-task').click();
+      await page.locator('#submit-form').waitFor();
+      assert.equal((await api(route+'/state')).session.pause_reason,'submission');
+      assert.equal(await page.locator('.workspace').isVisible(),false);
+      assert.equal(await page.locator('input[name=difficulty]').count(),7);
+      const labels=await page.locator('.rating-choice span').allTextContents();
+      assert.ok(labels.every(label=>!/[0-9]/.test(label)));
+      await page.locator('[name=difficulty][value="3"]').check();await page.locator('[name=confidence][value="6"]').check();
+      if(index===0) {
+        const ratingRemaining=(await api(route+'/state')).remaining;
+        await delay(2300);
+        assert.equal((await api(route+'/state')).remaining,ratingRemaining);
+        await page.locator('#dialog [data-lang=zh]').click();
+        await page.getByRole('heading',{name:'提交本任务',exact:true}).waitFor();
+        assert.equal(await page.locator('[name=difficulty][value="3"]').isChecked(),true);
+        await page.reload();await page.locator('#submit-form').waitFor();
+        assert.equal((await api(route+'/state')).remaining,ratingRemaining);
+        assert.equal(await page.locator('[name=confidence][value="6"]').isChecked(),true);
+        await page.locator('#dialog [data-lang=en]').click();
+        await page.getByRole('heading',{name:'Submit this task',exact:true}).waitFor();
+        await page.keyboard.press('Escape');
+        await page.locator('.pause-cover').waitFor({state:'detached'});
+        assert.equal((await api(route+'/state')).session.paused_at,null);
+        await page.locator('#finish-task').click();await page.locator('#submit-form').waitFor();
+        await page.screenshot({path:path.join(artifacts,`${p.condition}-ratings.png`)});
+      }
+      await page.locator('#submit-form button[type=submit]').click();
+      await until(async()=>!(await api(route+'/state')).session);
+      const detail=await api(`/api/admin/participant/${p.token}`,undefined,true);
+      const grade=detail.runs.find(r=>r.task===task&&r.purpose==='grade');
+      assert.equal((await api(route+'/runs/'+grade.id)).result,undefined);
+    }
+    await until(async()=>await page.locator('#step-content h1').textContent()==="Thank you. You're all done.");
+    await page.close();
+  }
+  await until(async()=>{
+    const d=await api('/api/admin',undefined,true);
+    return d.participants.every(p=>p.sessions.filter(s=>s.task!=='practice').every(s=>s.grade?.result?.status==='passed'));
+  });
+  await until(async()=>{
+    const exported=await api('/api/admin/export',undefined,true);
+    const attempts=exported.runs.filter(r=>r.purpose==='attempt_grade');
+    return attempts.length===12&&attempts.every(r=>r.status==='complete'&&JSON.parse(r.result).status==='passed');
+  },120000);
+  await admin.reload();await admin.locator('[data-inspect]').first().click();
+  await admin.getByRole('heading',{name:'Attempt trail and hidden scores',exact:true}).waitFor();
+  assert.equal(await admin.locator('.detail-grid .table-scroll tbody tr').count(),12);
+
+  await admin.locator('#snapshot-select').selectOption({index:1});
+  const selected=await admin.locator('#snapshot-select').inputValue();await admin.locator('#refresh-detail').click();
+  await until(async()=>await admin.locator('#snapshot-select').inputValue()===selected);
+  await admin.locator('#back-monitor').click();
+  await admin.screenshot({path:path.join(artifacts,'researcher-dashboard.png'),fullPage:true});
+  const downloadPromise=admin.waitForEvent('download');await admin.locator('#export-json').click();
+  const downloaded=await downloadPromise;await downloaded.saveAs(path.join(artifacts,'browser-study-export.json'));
+  const exported=JSON.parse(await readFile(path.join(artifacts,'browser-study-export.json'),'utf8'));
+  assert.equal(exported.participants.length,2);assert.equal(exported.runs.filter(r=>r.purpose==='grade').length,12);
+  assert.equal(exported.attempt_trail.length,24);
+  const hiddenAttempts=exported.runs.filter(r=>r.purpose==='attempt_grade');
+  assert.equal(hiddenAttempts.length,12);
+  for(const score of hiddenAttempts) {
+    const parent=exported.runs.find(r=>r.id===score.parent_run_id);
+    assert.equal(score.code,parent.code);assert.equal(score.source_sha256,parent.source_sha256);
+    assert.equal(score.attempt_index,1);assert.equal(score.active_elapsed,parent.active_elapsed);
+    await api(`/api/p/${score.token}/runs/${score.id}`,undefined,false,404);
+  }
+  assert.ok(exported.events.some(e=>e.kind==='researcher_pause'));assert.ok(exported.events.some(e=>e.kind==='reference_open'));
+  const preview=await api('/api/admin/create',{count:1,preview:true,condition:'rust'},true);
+  assert.equal((await api('/api/admin/export',undefined,true)).participants.length,2);assert.ok(preview.participants[0].preview);
+  assert.deepEqual(errors,[]);
+  const summary={status:'passed',participants:2,programmingConditions:['zinnia','rust'],completedTasks:12,exampleRuns:totalRuns,hiddenGrades:12,attemptGrades:12,browserErrors:errors,screenshots:artifacts};
+  await writeFile(path.join(artifacts,'browser-report.json'),JSON.stringify(summary,null,2));console.log(JSON.stringify(summary,null,2));
+} catch(error) {await writeFile(path.join(artifacts,'browser-server.log'),log);throw error;}
+finally {
+  if(browser)await browser.close();server.kill('SIGINT');
+  await until(async()=>server.exitCode!==null||server.signalCode!==null,10000).catch(()=>server.kill('SIGKILL'));
+  await rm(runtime,{recursive:true,force:true});
+}
