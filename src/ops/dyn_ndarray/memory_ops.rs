@@ -45,6 +45,14 @@ pub(crate) struct Compaction {
 /// padding). The row region is triangular (landing row <= i), so entries
 /// beyond i+1 stay constant 0 and emit nothing.
 ///
+/// With a zero default (every real dtype), slot `j` is accumulated as the
+/// sum `sum_i row_i[j] * deposit_i` instead of a chain of selects: the rows
+/// whose landing row is `j` are the run of non-kept rows after the j-th kept
+/// row, which deposit 0, and the (j+1)-th kept row itself, so the sum is
+/// that row's value, or 0 when fewer rows are kept, as the select chain
+/// gives. The sum costs one product and one addition per term and needs no
+/// bit check of the one-hot entry, which a select's condition does.
+///
 /// This is the SINGLE copy of the triangular shift loop: `dynamic_mask_read`
 /// (StaticArray boolean-mask read, trailing tail support) and `dyn_filter`
 /// (DynamicNDArray `arr[mask]` / `.filter`, trailing_total == 1) both call it.
@@ -69,6 +77,7 @@ pub(crate) fn compact_by_mask(
     let mut kept_rows = b.ir_constant_int(0);
 
     let is_const_zero = |v: &Value| v.int_val() == Some(0);
+    let zero_default = is_zero_scalar(default_val);
 
     for i in 0..leading_total {
         let mask_bool = ensure_bool(b, &mask_cells[i]);
@@ -89,8 +98,11 @@ pub(crate) fn compact_by_mask(
             }
             for (t, dep) in deposit.iter().enumerate() {
                 let slot = &acc[j * trailing_total + t];
-                acc[j * trailing_total + t] =
-                    crate::helpers::value_ops::select_value(b, &row[j], dep, slot);
+                acc[j * trailing_total + t] = if zero_default {
+                    add_weighted(b, slot, &row[j], dep)
+                } else {
+                    crate::helpers::value_ops::select_value(b, &row[j], dep, slot)
+                };
             }
         }
 
@@ -110,6 +122,30 @@ pub(crate) fn compact_by_mask(
     }
 
     Compaction { acc, kept_rows }
+}
+
+/// Whether `v` is a real (not complex) compile-time zero.
+fn is_zero_scalar(v: &Value) -> bool {
+    v.int_val() == Some(0) || v.float_val() == Some(0.0)
+}
+
+/// `acc + hit * value` for a 0/1 `hit`, as a field product and sum (no
+/// rescale: a Float `value` is scaled by 0 or 1), typed as `value`.
+fn add_weighted(b: &mut IRBuilder, acc: &Value, hit: &Value, value: &Value) -> Value {
+    let product = b.create_ir(&crate::ir_defs::IR::MulI, &[hit.clone(), value.clone()]);
+    let term = match (product, value) {
+        (Value::Integer(sv), Value::Float(_)) => Value::Float(ScalarValue {
+            static_val: None,
+            stmt_id: sv.stmt_id,
+            value_id: sv.value_id,
+        }),
+        (product, _) => product,
+    };
+    match (acc, value) {
+        _ if is_zero_scalar(acc) => term,
+        (_, Value::Float(_)) => b.ir_add_f(acc, &term),
+        _ => b.ir_add_i(acc, &term),
+    }
 }
 
 fn ensure_bool(b: &mut IRBuilder, v: &Value) -> Value {

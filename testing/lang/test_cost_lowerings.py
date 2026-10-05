@@ -380,3 +380,36 @@ def test_corrcoef_rescales_each_sum_once():
 
 def test_corrcoef_halo2_base_matches_mock():
     assert_backends_agree(CORRCOEF, np.array([2, 5, 6, 8]), np.array([10, 6, 1, 3]))
+
+
+# ── boolean-mask compaction as sums of products ─────────────────────────
+
+@pytest.mark.parametrize("source, args", [
+    ('def kernel(x: Float[Array, "8"]):\n    return x[x >= 0]\n',
+     (np.array([0.5, -1.0, 2.0, 0.0, -3.5, 4.25, -0.1, 1.0]),)),
+    ('def kernel(x: Float[Array, "6"]):\n    return x[x > 100]\n', (np.arange(6.0),)),
+    ('def kernel(x: Integer[Array, "6"]):\n    return x[x != 0]\n', (np.array([0, 3, 0, -2, 5, 0]),)),
+    ('def kernel(x: Integer[Array, "4 3"]):\n    return x[x[:, 0] > 1]\n',
+     (np.array([[1, 2, 3], [4, 5, 6], [0, 8, 9], [7, 1, 2]]),)),
+])
+def test_mask_compaction_matches_numpy(source, args):
+    expected = np.asarray(numpy_kernel(source)(*[np.copy(a) for a in args]))
+    satisfied, outputs = run_mock(compile_kernel(source), *args)
+    assert satisfied
+    assert outputs[0] == expected.size  # runtime length (element count)
+    flat = expected.ravel().tolist()
+    payload = outputs[-args[0].size:]
+    assert payload[:len(flat)] == flat
+    assert all(v == 0 for v in payload[len(flat):])
+
+
+def test_mask_compaction_has_no_selects_per_slot():
+    program = compile_kernel('def kernel(x: Integer[Array, "8"]):\n    return x[x != 0]\n')
+    classes = ir_classes(program)
+    # The landing one-hot shifts by selects; the slots are sums of products.
+    assert classes.count("SelectIIR") < 8 * 9 // 2 + 8
+
+
+def test_mask_compaction_halo2_base_matches_mock():
+    assert_backends_agree('def kernel(x: Float[Array, "6"]):\n    return x[x >= 0]\n',
+                          np.array([0.5, -1.0, 2.0, 0.0, -3.5, 4.25]))
