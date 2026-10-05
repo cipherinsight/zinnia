@@ -516,6 +516,41 @@ pub(crate) fn normalize_dynamic_index(b: &mut IRBuilder, idx: &Value, axis_len: 
     b.ir_select_i(&is_neg, &wrapped, idx)
 }
 
+/// Bounds-check an index on axis `axis` (of length `axis_len`) and return
+/// its NumPy-wrapped value.
+///
+/// NumPy accepts `-axis_len <= idx < axis_len` (a negative index counts
+/// from the end) and raises `IndexError` otherwise. This returns
+/// `w = idx + axis_len if idx < 0 else idx` and requires `0 <= w <
+/// axis_len`, which holds exactly when `idx` is valid: for `idx >= 0` it
+/// says `idx < axis_len`, for `idx < 0` it says `-axis_len <= idx`. A
+/// runtime index gets the requirement as a resolver discharge (an
+/// in-circuit range check unless the facts prove it); a literal index is
+/// checked now and rejected with a compile error.
+///
+/// Every index axis must be checked on its own. A check on the flat
+/// address alone accepts `a[0, 5]` on a 4x4 array (flat address 5 is in
+/// range) and reads `a[1, 1]`; checking each axis makes every address
+/// built from the wrapped indices land inside the array (or view).
+pub(crate) fn checked_axis_index(
+    b: &mut IRBuilder,
+    idx: &Value,
+    axis: usize,
+    axis_len: usize,
+    op_name: &'static str,
+) -> Value {
+    let len = axis_len as i64;
+    if let Some(i) = idx.int_val() {
+        if !(-len <= i && i < len) {
+            panic!("index {i} is out of bounds for axis {axis} with size {axis_len}");
+        }
+        return if i < 0 { b.ir_constant_int(i + len) } else { idx.clone() };
+    }
+    let wrapped = normalize_dynamic_index(b, idx, axis_len);
+    crate::optim::resolver::discharge_index_in_range(b, &wrapped, 0, len, op_name);
+    wrapped
+}
+
 /// Build the boolean "this runtime index selects coordinate `coord`" condition.
 ///
 /// This is the single canonical copy shared by the read and write overlay /

@@ -1091,59 +1091,29 @@ pub fn composite_comparison(
     }
 }
 
-/// For larger arrays: uses DynamicNDArrayGetItem IR (lowered to memory by opt pass).
+/// `data[idx]` for a Python list/tuple and a runtime `idx`.
+///
+/// Python accepts `-n <= idx < n` (negative indices count from the end)
+/// and raises `IndexError` otherwise, so the index is wrapped and
+/// bounds-checked first (`checked_axis_index`); the element is then
+/// picked with a select chain over the `n` positions. Without the check
+/// an out-of-range index would silently return the last element.
 pub fn dynamic_list_subscript(b: &mut IRBuilder, data: &CompositeData, idx: &Value) -> Value {
-    if data.values.is_empty() {
-        return Value::None;
-    }
     let n = data.values.len();
-
-    // Composite or Complex element type: ir_select_i can't accept these
-    // (it expects a single ptr per arg). Dispatch to select_value, which
-    // handles List/Tuple recursion and Complex per-component selection.
-    let needs_composite_select = matches!(
-        data.values.first(),
-        Some(Value::List(_) | Value::Tuple(_) | Value::Complex { .. })
-    );
-    if needs_composite_select {
-        let mut result = data.values.last().unwrap().clone();
-        for i in (0..n - 1).rev() {
-            let const_i = b.ir_constant_int(i as i64);
-            let cmp = b.ir_equal_i(idx, &const_i);
-            result = select_value(b, &cmp, &data.values[i], &result);
-        }
-        return result;
+    let idx = checked_list_index(b, idx, n);
+    let mut result = data.values[n - 1].clone();
+    for i in (0..n - 1).rev() {
+        let const_i = b.ir_constant_int(i as i64);
+        let cmp = b.ir_equal_i(&idx, &const_i);
+        result = select_value(b, &cmp, &data.values[i], &result);
     }
-
-    if n < 100 {
-        // Mux path: SelectI chain
-        let mut result = data.values.last().unwrap().clone();
-        for i in (0..n - 1).rev() {
-            let const_i = b.ir_constant_int(i as i64);
-            let cmp = b.ir_equal_i(idx, &const_i);
-            result = b.ir_select_i(&cmp, &data.values[i], &result);
-        }
-        result
-    } else {
-        // Memory path: allocate segment, write all values, read at dynamic index
-        let seg_id = b.alloc_segment_id();
-        let arr_id = b.alloc_array_id();
-
-        // Allocate memory segment
-        b.ir_allocate_memory(seg_id, n as u32, 0);
-
-        // Write all values to the segment
-        for (i, val) in data.values.iter().enumerate() {
-            let addr = b.ir_constant_int(i as i64);
-            b.ir_write_memory(seg_id, &addr, val);
-        }
-
-        // Read at dynamic index using DynamicNDArrayGetItem
-        b.ir_dynamic_ndarray_get_item(arr_id, seg_id, idx)
-    }
+    result
 }
 
-/// Returns the updated composite.
+/// `data[idx] = value` for a Python list and a runtime `idx`; returns the
+/// updated list. The index is wrapped and bounds-checked as in
+/// [`dynamic_list_subscript`], so an out-of-range index is rejected
+/// instead of leaving the list unchanged.
 pub fn dynamic_list_set_item(
     b: &mut IRBuilder,
     data: &CompositeData,
@@ -1151,84 +1121,28 @@ pub fn dynamic_list_set_item(
     value: &Value,
 ) -> Value {
     let n = data.values.len();
+    let idx = checked_list_index(b, idx, n);
+    let mut new_values = Vec::with_capacity(n);
+    for (i, old) in data.values.iter().enumerate() {
+        let const_i = b.ir_constant_int(i as i64);
+        let cmp = b.ir_equal_i(&idx, &const_i);
+        new_values.push(select_value(b, &cmp, value, old));
+    }
+    Value::List(CompositeData {
+        elements_type: new_values.iter().map(|v| v.zinnia_type()).collect(),
+        values: new_values,
+        value_id: ValueId::next(),
+    })
+}
+
+/// Wrap and bounds-check a runtime index into a sequence of length `n`
+/// (Python semantics; see `checked_axis_index`). An empty sequence has no
+/// valid index at all.
+fn checked_list_index(b: &mut IRBuilder, idx: &Value, n: usize) -> Value {
     if n == 0 {
-        return Value::List(data.clone());
+        panic!("IndexError: index into an empty list or tuple");
     }
-
-    // Composite or Complex elements: dispatch to select_value, which
-    // handles List/Tuple recursion and Complex per-component selection.
-    let needs_composite_select = matches!(
-        value,
-        Value::List(_) | Value::Tuple(_) | Value::Complex { .. }
-    ) || matches!(
-        data.values.first(),
-        Some(Value::List(_) | Value::Tuple(_) | Value::Complex { .. })
-    );
-    if needs_composite_select {
-        let mut new_values = Vec::with_capacity(n);
-        let mut new_types = Vec::with_capacity(n);
-        for i in 0..n {
-            let const_i = b.ir_constant_int(i as i64);
-            let cmp = b.ir_equal_i(idx, &const_i);
-            let selected = select_value(b, &cmp, value, &data.values[i]);
-            new_types.push(selected.zinnia_type());
-            new_values.push(selected);
-        }
-        return Value::List(CompositeData {
-            elements_type: new_types,
-            values: new_values,
-            value_id: ValueId::next(),
-        });
-    }
-
-    if n < 100 {
-        // Mux path: for each position, conditionally replace
-        let mut new_values = Vec::new();
-        let mut new_types = Vec::new();
-        for i in 0..n {
-            let const_i = b.ir_constant_int(i as i64);
-            let cmp = b.ir_equal_i(idx, &const_i);
-            let selected = b.ir_select_i(&cmp, value, &data.values[i]);
-            new_types.push(selected.zinnia_type());
-            new_values.push(selected);
-        }
-        Value::List(CompositeData {
-            elements_type: new_types,
-            values: new_values,
-            value_id: ValueId::next(),
-        })
-    } else {
-        // Memory path: allocate, write all, then overwrite at dynamic index, read all back
-        let seg_id = b.alloc_segment_id();
-        let arr_id = b.alloc_array_id();
-
-        // Allocate memory segment
-        b.ir_allocate_memory(seg_id, n as u32, 0);
-
-        // Write all original values
-        for (i, val) in data.values.iter().enumerate() {
-            let addr = b.ir_constant_int(i as i64);
-            b.ir_write_memory(seg_id, &addr, val);
-        }
-
-        // Write the new value at the dynamic index
-        b.ir_dynamic_ndarray_set_item(arr_id, seg_id, idx, value);
-
-        // Read all values back to reconstruct the list
-        let mut new_values = Vec::new();
-        let mut new_types = Vec::new();
-        for i in 0..n {
-            let addr = b.ir_constant_int(i as i64);
-            let read_val = b.ir_read_memory(seg_id, &addr);
-            new_types.push(read_val.zinnia_type());
-            new_values.push(read_val);
-        }
-        Value::List(CompositeData {
-            elements_type: new_types,
-            values: new_values,
-            value_id: ValueId::next(),
-        })
-    }
+    crate::helpers::static_array::base::checked_axis_index(b, idx, 0, n, "list_subscript")
 }
 
 /// Returns true if `val` is a composite (or scalar) whose every leaf is a
