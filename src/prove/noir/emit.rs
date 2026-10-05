@@ -38,6 +38,9 @@ use crate::prove::traits::Synthesizer;
 use crate::prove::types::ProvingParams;
 
 const Q_BITS: u32 = 32;
+/// bb gates of one `if x == v { 1 } else { 0 }` indicator (an inverse hint
+/// and two arithmetic gates).
+const INDICATOR_GATES: usize = 3;
 const Q_U64: u64 = 1u64 << 32;
 
 /// Output of [`emit_circuit`].
@@ -84,6 +87,7 @@ pub fn emit_circuit(
         intrinsic_count,
         &ir.provenance,
     );
+    emitter.dynamic_reads_per_epoch = count_dynamic_reads_per_epoch(ir);
     interpret_ir(ir, &mut emitter)?;
 
     let main_nr = render_main_nr(&input_params, &emitter);
@@ -100,6 +104,37 @@ pub fn emit_circuit(
         public_input_count,
         return_count,
     })
+}
+
+/// For every memory segment and write epoch (the writes to the segment seen
+/// so far, the emitter's `write_version`), the number of `ReadMemory`
+/// statements whose address is not an IR constant. A native array read
+/// shares the cost of materializing the epoch's array with these reads.
+fn count_dynamic_reads_per_epoch(ir: &IRGraph) -> HashMap<(u32, u64), usize> {
+    let constants: HashSet<u32> = ir
+        .stmts
+        .iter()
+        .filter(|s| matches!(s.ir, crate::ir_defs::IR::ConstantInt { .. }))
+        .map(|s| s.stmt_id)
+        .collect();
+    let mut epoch: HashMap<u32, u64> = HashMap::new();
+    let mut counts: HashMap<(u32, u64), usize> = HashMap::new();
+    for stmt in &ir.stmts {
+        match &stmt.ir {
+            crate::ir_defs::IR::WriteMemory { segment_id } => {
+                *epoch.entry(*segment_id).or_insert(0) += 1;
+            }
+            crate::ir_defs::IR::ReadMemory { segment_id } => {
+                let dynamic = stmt.arguments.first().is_some_and(|a| !constants.contains(a));
+                if dynamic {
+                    let e = epoch.get(segment_id).copied().unwrap_or(0);
+                    *counts.entry((*segment_id, e)).or_insert(0) += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    counts
 }
 
 // ---------------------------------------------------------------------------
@@ -492,6 +527,11 @@ pub struct NoirEmitter<'a> {
     plane_cache: HashMap<(u32, u64, String, i64, i64), String>,
     /// Bumped on every write to a segment; invalidates plane_cache.
     write_version: HashMap<u32, u64>,
+    /// Dynamic reads per (segment, write epoch), from the IR (see
+    /// `count_dynamic_reads_per_epoch`).
+    dynamic_reads_per_epoch: HashMap<(u32, u64), usize>,
+    /// Native Noir arrays holding a segment's slots, per (segment, epoch).
+    segment_arrays: HashMap<(u32, u64), String>,
     /// Per-segment value hull: the interval union of every value written
     /// to the segment (plus its init). `None` once any written value
     /// lacks a derivable interval. Read results inherit this hull, which
@@ -568,6 +608,8 @@ pub struct NoirEmitter<'a> {
     scaled_bit: HashMap<String, String>,
     /// `low_bits::<NB>(x)` decompositions already emitted: x -> (NB, name).
     low_bits_of: HashMap<String, (u32, String)>,
+    /// Bit decompositions of bounded indices: (idx, width) -> name.
+    index_bits_of: HashMap<(String, u32), String>,
     /// IR-level forward-dataflow `fits-u32` bounds, keyed by stmt_id.
     /// Populated by [`super::bound_analysis::run`] before emit. The
     /// interpreter's per-stmt hook (`on_stmt_begin`) advances
@@ -1303,6 +1345,131 @@ impl<'a> NoirEmitter<'a> {
         a_lo + b_lo + offset >= 0 && a_hi + b_hi + offset < len as i64
     }
 
+    /// Whether a single-root dynamic read whose one-hot gather costs about
+    /// `one_hot_gates` is cheaper through a native array (`native_read`).
+    /// Measured costs (bb gates): about 10 per native read (the ROM read and
+    /// `array_index`'s two range checks) plus 3 per element to build the
+    /// epoch's array, which the epoch's dynamic reads share. Two-root reads
+    /// always gather: their stage-1 planes are shared across reads, which
+    /// measured cheaper than native reads on every case that has them.
+    fn prefer_native_read(&self, segment_id: u32, one_hot_gates: usize) -> bool {
+        const NATIVE_READ_GATES: usize = 10;
+        const ARRAY_ELEMENT_GATES: usize = 3;
+        let epoch = self.write_version.get(&segment_id).copied().unwrap_or(0);
+        let len = self.memories.get(&segment_id).map_or(0, |m| m.len());
+        let build = if self.segment_arrays.contains_key(&(segment_id, epoch)) {
+            0
+        } else {
+            (ARRAY_ELEMENT_GATES * len).div_ceil(self.epoch_dynamic_reads(segment_id))
+        };
+        len > 0 && len < (1 << 27) && build + NATIVE_READ_GATES < one_hot_gates
+    }
+
+    /// Dynamic reads of the segment's current write epoch (at least 1).
+    fn epoch_dynamic_reads(&self, segment_id: u32) -> usize {
+        let epoch = self.write_version.get(&segment_id).copied().unwrap_or(0);
+        self.dynamic_reads_per_epoch
+            .get(&(segment_id, epoch))
+            .copied()
+            .unwrap_or(1)
+            .max(1)
+    }
+
+    /// `mem[addr]` through a native Noir array (a ROM block in bb). The
+    /// library's `array_index` proves `0 <= addr < len` on its own (an
+    /// out-of-range address fails the proof, as the mock rejects it); it
+    /// does not rely on bb's memory check, which the pinned bb version does
+    /// not enforce for index p - 1 (see `array_index`).
+    fn native_read(&mut self, segment_id: u32, addr: &str) -> String {
+        let array = self.segment_array(segment_id);
+        let len = self.memories[&segment_id].len() as u64;
+        let address = self.affine_field_expr(addr);
+        let index = self.array_index(&address, len);
+        let out = self.bind(&format!("{array}[{index}]"));
+        self.apply_segment_iv(segment_id, &out);
+        out
+    }
+
+    /// The value of `cell` as a Field expression of its affine view
+    /// (`sum root_i * scale_i + offset`, see `aff_of`). Address cells are
+    /// often built by checked u32 arithmetic, each op a truncation with
+    /// range checks; the same value as a linear Field expression is free,
+    /// and the u32 chain is then dead code.
+    fn affine_field_expr(&self, cell: &str) -> String {
+        let aff = self.aff_of(cell);
+        if aff.terms.is_empty() {
+            return self.as_field(cell);
+        }
+        let mut parts: Vec<String> = aff
+            .terms
+            .iter()
+            .map(|(root, scale)| match scale {
+                1 => self.as_field(root),
+                _ => format!("{} * {}", self.as_field(root), signed_to_field_decimal(*scale as i128)),
+            })
+            .collect();
+        if aff.offset != 0 {
+            parts.push(signed_to_field_decimal(aff.offset as i128));
+        }
+        format!("({})", parts.join(" + "))
+    }
+
+    /// `addr` as a checked `u32` index into an array of `len >= 1` elements
+    /// (library `array_index`), once per (addr, len).
+    fn array_index(&mut self, addr: &str, len: u64) -> String {
+        self.use_lib("array_index");
+        let af = self.as_field(addr);
+        let last = len - 1;
+        let width = if last < 1 << 7 { 8 } else { 28 };
+        self.bind_typed(&format!("array_index::<{width}>({af}, {last})"), "u32")
+    }
+
+    /// The segment's current slots as a Noir array, built once per write
+    /// epoch.
+    fn segment_array(&mut self, segment_id: u32) -> String {
+        let epoch = self.write_version.get(&segment_id).copied().unwrap_or(0);
+        if let Some(name) = self.segment_arrays.get(&(segment_id, epoch)) {
+            return name.clone();
+        }
+        let cells: Vec<String> = self.memories[&segment_id]
+            .iter()
+            .map(|c| self.as_field(c))
+            .collect();
+        let name = self.fresh();
+        let _ = writeln!(
+            self.body,
+            "    let {}: [Field; {}] = [{}];",
+            name,
+            cells.len(),
+            cells.join(", ")
+        );
+        self.segment_arrays.insert((segment_id, epoch), name.clone());
+        name
+    }
+
+    /// The `width` low bits of an index known to satisfy `0 <= idx < hi`
+    /// (with `hi <= 2^width`), emitted once per (idx, width) together with
+    /// the bound: `to_le_bits` proves `idx < 2^width`, and a `width`-bit
+    /// check of `hi - 1 - idx` the rest. The pair is recorded as asserted,
+    /// so a later `AssertU128Lt(idx, hi)` is not repeated.
+    fn index_bits(&mut self, idx: &str, hi: i64, width: u32) -> String {
+        if let Some(name) = self.index_bits_of.get(&(idx.to_string(), width)) {
+            return name.clone();
+        }
+        let name = self.fresh();
+        let idx_field = self.as_field(idx);
+        let _ = writeln!(self.body, "    let {}: [bool; {}] = {}.to_le_bits();", name, width, idx_field);
+        if (hi as u128) < (1u128 << width) {
+            let gap = self.fresh();
+            let _ = writeln!(self.body, "    let {}: Field = {} - {};", gap, hi - 1, idx_field);
+            let _ = writeln!(self.body, "    {}.assert_max_bit_size::<{}>();", gap, width);
+        }
+        let hi_cell = self.literal_int(hi);
+        self.emitted_u128_asserts.insert((idx.to_string(), hi_cell));
+        self.index_bits_of.insert((idx.to_string(), width), name.clone());
+        name
+    }
+
     /// Stage-1 plane for factored two-root gathers: sum over feasible v of
     /// ind(root, v) * mem[v*scale + resid]. Cached by (segment, version,
     /// root, scale, resid).
@@ -1414,6 +1581,8 @@ impl<'a> NoirEmitter<'a> {
             membership_done: std::collections::HashSet::new(),
             plane_cache: HashMap::new(),
             write_version: HashMap::new(),
+            dynamic_reads_per_epoch: HashMap::new(),
+            segment_arrays: HashMap::new(),
             interval_of: HashMap::new(),
             segment_iv: HashMap::new(),
             lt_zero_of: HashMap::new(),
@@ -1431,6 +1600,7 @@ impl<'a> NoirEmitter<'a> {
             nonneg_by_construction: HashSet::new(),
             scaled_bit: HashMap::new(),
             low_bits_of: HashMap::new(),
+            index_bits_of: HashMap::new(),
             stmt_bounds,
             current_stmt_bound: None,
             u32_amortizable,
@@ -2419,35 +2589,39 @@ impl Synthesizer for NoirEmitter<'_> {
     }
 
     /// Constrain `0 <= idx < hi` and return bit `bit` of `idx`.
+    /// `0 <= idx < hi` and bit `bit` of idx, from one decomposition of idx
+    /// into `width` bits (shared by every bit of the same index) plus, when
+    /// `hi` is not a power of two, a `width`-bit check of `hi - 1 - idx`.
+    /// The decomposition itself proves `0 <= idx < 2^width` (Noir's
+    /// `to_le_bits` fails for a larger value), so no other check is needed.
     fn assert_u128_lt_bit(
         &mut self,
         idx: &CellRef,
         hi: u64,
         bit: u32,
-        _bits: u32,
+        bits: u32,
     ) -> Result<CellRef, ProvingError> {
         if let Some(i) = self.s_int_of(idx) {
-            let bit_val = if i >= 0 && (i as u128) < hi as u128 {
-                (((i as u128) >> bit) & 1) as i64
-            } else {
-                0
-            };
-            return self.constant_int(bit_val);
+            if i < 0 || i as u128 >= hi as u128 {
+                // The mock rejects an out-of-range constant index.
+                let _ = writeln!(self.body, "    assert(1 == 0);");
+                return Ok(self.literal_int(0));
+            }
+            return Ok(self.literal_int((((i as u128) >> bit) & 1) as i64));
         }
         let hi_i64 = i64::try_from(hi).map_err(|_| {
             ProvingError::synthesis(format!("AssertU128LtBit bound {} exceeds i64", hi))
         })?;
-        let hi_cell = self.constant_int(hi_i64)?;
-        self.assert_u128_lt(idx, &hi_cell)?;
-        // idx is now known to lie in [0, hi), so the range-checked
-        // conversion below cannot fail; the bit is a native shift and mask.
-        if hi <= 1u64 << 32 {
-            let iu = self.to_uint(idx, UintWidth::U32);
-            Ok(self.bind_u32_with_bound(&format!("({} >> {}) & 1", iu, bit), 1))
-        } else {
-            let iu = self.to_uint(idx, UintWidth::U64);
-            Ok(self.bind_flag(&format!("(({} >> {}) & 1) as Field", iu, bit)))
+        if hi == 0 {
+            let _ = writeln!(self.body, "    assert(1 == 0);");
+            return Ok(self.literal_int(0));
         }
+        let width = bits.max(64 - (hi - 1).leading_zeros()).max(1);
+        let decomposition = self.index_bits(idx, hi_i64, width);
+        if bit >= width {
+            return Ok(self.literal_int(0));
+        }
+        Ok(self.bind_flag(&format!("{decomposition}[{bit}] as Field")))
     }
 
     /// `a >= 0` over the signed-i64 domain: one 63-bit range check on the
@@ -2642,6 +2816,20 @@ impl Synthesizer for NoirEmitter<'_> {
                 // assert below; surface it as an explicit contradiction.
                 let _ = writeln!(self.body, "    assert(1 == 0);");
                 return Ok(init);
+            }
+            // One-hot cost of this read: one product per candidate slot, and
+            // one equality per indicator of the root not built yet, which
+            // the epoch's other dynamic reads may share (counted as shared
+            // evenly; reads on another root do not share them, so this
+            // leans toward the one-hot gather).
+            let new_indicators = vs
+                .iter()
+                .filter(|&&v| !self.ind_cache.contains_key(&(root.clone(), v)))
+                .count();
+            let indicator_share =
+                (INDICATOR_GATES * new_indicators).div_ceil(self.epoch_dynamic_reads(segment_id));
+            if self.prefer_native_read(segment_id, indicator_share + vs.len()) {
+                return Ok(self.native_read(segment_id, addr));
             }
             self.assert_one_hot(&root.clone(), &vs);
             let mut parts: Vec<String> = Vec::with_capacity(vs.len());
@@ -3004,6 +3192,25 @@ mod tests {
         em.bit_and_i(&x, &neg).unwrap();
         em.bit_or_i(&x, &"y".to_string()).unwrap();
         assert!(em.body.contains("bitand(x, y)"), "{}", em.body);
+    }
+
+    // `AssertU128LtBit` on the same index shares one bit decomposition,
+    // which with one check of `hi - 1 - idx` is the whole bound check.
+    #[test]
+    fn index_bits_share_one_decomposition() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        let idx = "idx".to_string();
+        for bit in 0..3 {
+            em.assert_u128_lt_bit(&idx, 5, bit, 3).unwrap();
+        }
+        assert_eq!(em.body.matches("idx.to_le_bits()").count(), 1, "{}", em.body);
+        assert_eq!(em.body.matches("assert_max_bit_size::<3>()").count(), 1, "{}", em.body);
+        // The bound is recorded: a later AssertU128Lt(idx, 5) adds nothing.
+        let before = em.body.clone();
+        let hi = em.constant_int(5).unwrap();
+        em.assert_u128_lt(&idx, &hi).unwrap();
+        assert_eq!(em.body, before);
     }
 
     #[test]

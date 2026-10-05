@@ -305,7 +305,44 @@ fn two_root_read_out_of_range_is_rejected() {
     assert_rejected(execute(&graph, &witness(&[("r", 1), ("c", 3)])));
 }
 
-/// M6: logic ops and selects use Python truthiness, as the mock: `not 5` is
+/// Dynamic reads through a native Noir array (chosen when several dynamic
+/// reads share one array): honest addresses read the written values, and
+/// the addresses -1 and len are rejected by `array_index`'s own checks (the
+/// pinned bb does not bound a memory index at p - 1 by itself).
+#[test]
+fn native_array_read_rejects_out_of_range_addresses() {
+    if !toolchain_present(false) {
+        return;
+    }
+    let mut g = Graph::default();
+    g.push(
+        IR::AllocateMemory {
+            segment_id: 0,
+            size: 64,
+            init_value: 0,
+        },
+        &[],
+    );
+    for slot in 0..64 {
+        let a = g.int(slot);
+        let v = g.int(10 + slot);
+        g.push(IR::WriteMemory { segment_id: 0 }, &[a, v]);
+    }
+    let addrs: Vec<u32> = ["x", "y"].iter().map(|n| g.read_int(n)).collect();
+    for addr in addrs {
+        let read = g.push(IR::ReadMemory { segment_id: 0 }, &[addr]);
+        g.expose(read);
+    }
+    let graph = g.finish();
+    let honest = witness(&[("x", 0), ("y", 63)]);
+    let emitted = emit_circuit(&graph, &honest, &ProvingParams::default()).unwrap();
+    assert!(emitted.main_nr.contains("array_index::<8>("), "{}", emitted.main_nr);
+    assert_eq!(execute(&graph, &honest).unwrap(), vec![10, 73]);
+    assert_rejected(execute(&graph, &witness(&[("x", -1), ("y", 5)])));
+    assert_rejected(execute(&graph, &witness(&[("x", 0), ("y", 64)])));
+}
+
+/// M6: logic ops and selects use Python truthiness, as the mock: `not 5` is/// M6: logic ops and selects use Python truthiness, as the mock: `not 5` is
 /// 0 (it was 1 - 5 = -4) and a select on 5 takes the true branch.
 #[test]
 fn logic_ops_use_truthiness() {

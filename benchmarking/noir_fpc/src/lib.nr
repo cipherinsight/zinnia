@@ -87,6 +87,27 @@ pub fn assert_in_window(x: Field) {
     (x + WINDOW_OFFSET).assert_max_bit_size::<64>();
 }
 
+/// `idx` as the index of an array of `last + 1` elements, after proving
+/// 0 <= idx <= last, for `last < 2^(W-1)` and W <= 32. The checks are on
+/// 2 * idx and last - idx, never on idx itself: ACVM drops a range check of a
+/// memory index (it trusts the backend's memory check), and Barretenberg
+/// before its 2026-05-13 fix (the pinned bb 5.0.0-nightly.20260324 included)
+/// admits a read at index p - 1 because a sorted memory chain may start
+/// there. Soundness: 2 * idx in [0, 2^W) leaves idx in [0, 2^(W-1)) or a
+/// field element (p + t) / 2 with t odd, about p / 2; last - idx in
+/// [0, 2^W) rules out the latter and every idx > last. Callers pick W = 8 or
+/// W = 28, widths whose lookup tables bb already builds for 64-bit checks
+/// (4 limbs of 14 bits and one of 8). The final range check only lets Noir
+/// drop the truncation of the cast (which is then exact).
+pub fn array_index<let W: u32>(idx: Field, last: Field) -> u32 {
+    assert(W <= 32, "array_index: W must be <= 32");
+    assert(last.lt(2.pow_32((W - 1) as Field)), "array_index: array too long for W");
+    (2 * idx).assert_max_bit_size::<W>();
+    (last - idx).assert_max_bit_size::<W>();
+    idx.assert_max_bit_size::<32>();
+    idx as u32
+}
+
 // ---------------------------------------------------------------------------
 // Sign and magnitude
 // ---------------------------------------------------------------------------
@@ -164,25 +185,34 @@ unconstrained fn hint_lt(a: Field, b: Field) -> bool {
     hint_is_negative(a - b)
 }
 
-/// Constraints for `qlt`: the claimed answer c selects which of
-/// b - a - 1 (c = true) and a - b (c = false) must be a 64-bit value. The two
-/// sum to -1, so when one of them is a value in [0, 2^64) the other is a
-/// field element above p - 2^65: at most one c passes, and one does exactly
-/// when a - b reads as an integer in [-2^64, 2^64).
-fn constrain_lt(a: Field, b: Field, c: bool) {
+/// Constraints for `qlt_bits::<W>`: the claimed answer c selects which of
+/// b - a - 1 (c = true) and a - b (c = false) must be a W-bit value. The two
+/// sum to -1, so when one of them is a value in [0, 2^W) the other is a field
+/// element above p - 2^(W+1): for W <= 250 at most one c passes, and one does
+/// exactly when a - b reads as an integer in [-2^W, 2^W).
+fn constrain_lt<let W: u32>(a: Field, b: Field, c: bool) {
     let gap = if c { b - a - 1 } else { a - b };
-    gap.assert_max_bit_size::<64>();
+    gap.assert_max_bit_size::<W>();
 }
 
-/// a < b for signed values whose difference lies in [-2^64, 2^64) (any two
-/// values of the signed 64-bit window); the proof fails otherwise. The mock's
+/// a < b for signed values whose difference lies in [-2^W, 2^W) (W <= 250);
+/// the proof fails otherwise, never returns a wrong answer. The mock's
 /// `lt_i` reads the sign of a - b, so the two agree wherever this is
-/// accepted. One 64-bit range check, no check of a or b themselves.
-pub fn qlt(a: Field, b: Field) -> bool {
+/// accepted. One W-bit range check, no check of a or b themselves; a caller
+/// that knows the operands' ranges picks a small W (a W below 14 avoids
+/// Barretenberg's 14-bit lookup table).
+pub fn qlt_bits<let W: u32>(a: Field, b: Field) -> bool {
+    assert(W <= 250, "qlt_bits: W must be <= 250");
     // Safety: constrain_lt pins c (see there).
     let c = unsafe { hint_lt(a, b) };
-    constrain_lt(a, b, c);
+    constrain_lt::<W>(a, b, c);
     c
+}
+
+/// a < b for any two values of the signed 64-bit window (any pair whose
+/// difference lies in [-2^64, 2^64)).
+pub fn qlt(a: Field, b: Field) -> bool {
+    qlt_bits::<64>(a, b)
 }
 
 pub fn qle(a: Field, b: Field) -> bool {
@@ -971,6 +1001,22 @@ fn test_qlt_rejects_a_difference_of_2_pow_64() {
 }
 
 #[test]
+fn test_qlt_bits() {
+    assert(qlt_bits::<3>(-4, 3) & !qlt_bits::<3>(3, -4) & !qlt_bits::<3>(2, 2));
+}
+
+#[test(should_fail)]
+fn test_qlt_bits_rejects_a_difference_beyond_its_width() {
+    // 5 - (-4) = 9 needs 4 bits.
+    let _ = qlt_bits::<3>(5, -4);
+}
+
+#[test(should_fail)]
+fn test_lt_narrow_rejects_a_wrong_answer() {
+    constrain_lt::<3>(2, 1, true);
+}
+
+#[test]
 fn test_q_floor_div_signs() {
     // Python floor division: -7 // 2 == -4, 7 // -2 == -4, -7 // -2 == 3.
     assert(q_floor_div(7, 3) == 2);
@@ -1225,6 +1271,40 @@ fn test_bitand_rejects_values_outside_the_window() {
 }
 
 #[test]
+fn test_array_index() {
+    let a = [10, 11, 12, 13, 14, 15];
+    assert(a[array_index::<8>(0, 5)] == 10);
+    assert(a[array_index::<8>(5, 5)] == 15);
+}
+
+#[test]
+fn test_array_index_28() {
+    let a = [10, 11, 12, 13, 14, 15];
+    assert(a[array_index::<28>(4, 5)] == 14);
+}
+
+#[test(should_fail)]
+fn test_array_index_28_rejects_minus_one() {
+    let _ = array_index::<28>(-1, 5);
+}
+
+#[test(should_fail)]
+fn test_array_index_rejects_minus_one() {
+    let _ = array_index::<8>(-1, 5);
+}
+
+#[test(should_fail)]
+fn test_array_index_rejects_the_length() {
+    let _ = array_index::<8>(6, 5);
+}
+
+#[test(should_fail)]
+fn test_array_index_rejects_an_odd_half() {
+    // 2 * ((p + 1) / 2) = 1: passes the first check, fails the second.
+    let _ = array_index::<8>(1 / 2, 5);
+}
+
+#[test]
 fn test_checked_casts() {
     assert(checked_u8(255) == 255);
     assert(checked_u32(4294967295) == 4294967295);
@@ -1250,31 +1330,33 @@ fn test_checked_u32_rejects_negative() {
 
 #[test]
 fn test_lt_accepts_honest() {
-    constrain_lt(3, 5, true);
-    constrain_lt(5, 3, false);
-    constrain_lt(5, 5, false);
-    constrain_lt(-5, 3, true);
+    constrain_lt::<64>(3, 5, true);
+    constrain_lt::<64>(5, 3, false);
+    constrain_lt::<64>(5, 5, false);
+    constrain_lt::<64>(-5, 3, true);
+    constrain_lt::<3>(-4, 3, true);
+    constrain_lt::<3>(3, -4, false);
 }
 
 #[test(should_fail)]
 fn test_lt_rejects_false_for_less() {
-    constrain_lt(3, 5, false);
+    constrain_lt::<64>(3, 5, false);
 }
 
 #[test(should_fail)]
 fn test_lt_rejects_true_for_greater() {
-    constrain_lt(5, 3, true);
+    constrain_lt::<64>(5, 3, true);
 }
 
 #[test(should_fail)]
 fn test_lt_rejects_true_for_equal() {
-    constrain_lt(5, 5, true);
+    constrain_lt::<64>(5, 5, true);
 }
 
 #[test(should_fail)]
 fn test_lt_rejects_true_across_zero() {
     // -1 < 0 is false for (0, -1).
-    constrain_lt(0, -1, true);
+    constrain_lt::<64>(0, -1, true);
 }
 
 #[test(should_fail)]
