@@ -1,33 +1,28 @@
 //! DS-1000 case 0326, halo2-base baseline.
 //! Kernel: `np.degrees(np.arcsin(value))` for a `Float` value.
 //! No proof unless -1 <= value <= 1 (NumPy returns NaN outside).
-//! arcsin has no exact gadget. The prover supplies y = round(arcsin(value) *
-//! 2^32); the circuit checks -pi/2 <= y <= pi/2 and |S(y) - value| <= EPS,
-//! where S(y) = y (1 + u (c3 + u (c5 + u (c7 + u c9)))), u = y^2, is a degree-9
-//! odd polynomial fitted to sin on [-pi/2, pi/2] (minimax error 4.6e-9; the
-//! library's degree-14 polynomial is meant for np.sin on [0, pi] and costs 14
-//! rescales here instead of 6). With its Q32 coefficients S is within 7.3e-9
-//! of sin on [-pi/2, pi/2], and flooring its 6 products adds at most 40 ulp;
-//! pointwise the two stay below 1.5e-8, so EPS = 2e-8 accepts the honest y.
-//! Every accepted y has |sin(y) - value| <= 3.5e-8: it lies within
-//! 3.5e-8 / sqrt(1 - (|value| + 3.5e-8)^2) rad of arcsin(value), and never
-//! more than sqrt(2 * 3.5e-8) = 2.7e-4 rad (0.015 degrees, reached at
-//! |value| = 1). degrees = y * (180 / pi), one rescaled product.
+//! arcsin(v) = 2 atan(t) with t = v / (1 + sqrt(1 - v^2)), |t| <= 1: the
+//! square root is the exact integer root of 2^64 - v_q^2 (no rounded v^2), t
+//! a positive-divisor division, atan(t) = t P(t^2) with P a degree-9
+//! Chebyshev fit of atan(t)/t on [0, 1] (fit error 2.1e-9 rad), and degrees =
+//! atan(t) * 360/pi. Every step is a pinned function of the input, so the
+//! output is unique; measured error against NumPy below 2e-7 degrees on
+//! [-1, 1].
 
 use crate::prelude::*;
 
-/// round(pi / 2 * 2^32): arcsin lies in [-HALF_PI_Q, HALF_PI_Q] in Q32.
-const HALF_PI_Q: u64 = 6_746_518_852;
-/// round(2e-8 * 2^32), the tolerance on S(y) - value.
-const EPS_Q: u64 = 86;
-/// c9, c7, c5, c3, 1 (highest first), each a Q32 value k / 2^32 (k =
-/// 11167, -850688, 35790037, -715827472), so `q.polynomial` quantizes them exactly.
-const SIN9: [f64; 5] = [
-    11_167.0 / 4_294_967_296.0,
-    -850_688.0 / 4_294_967_296.0,
-    35_790_037.0 / 4_294_967_296.0,
-    -715_827_472.0 / 4_294_967_296.0,
-    1.0,
+/// P(u) = atan(t)/t, u = t^2, highest degree first.
+const ATAN_U: [f64; 10] = [
+    -0.001804437510348226,
+    0.010962195309438757,
+    -0.0312640164156834,
+    0.0580399231381612,
+    -0.08407845425531969,
+    0.10953436857600397,
+    -0.14264386880640922,
+    0.19998541917604715,
+    -0.33333296696567116,
+    0.9999999990510089,
 ];
 
 pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
@@ -40,19 +35,17 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let shifted = q.add(ctx, v, Constant(fe(SCALE)));
     q.range.check_less_than_safe(ctx, shifted, 2 * SCALE as u64 + 1);
 
-    // Hint y = round(arcsin(value) * 2^32), pinned to the window above by
-    // y + pi/2 in [0, pi] and S(y) - value + EPS in [0, 2 EPS].
-    let y = ctx.load_witness(fe(quantize((quantize(value) as f64 / SCALE as f64).asin())));
-    let y_shifted = q.add(ctx, y, Constant(fe(HALF_PI_Q as i128)));
-    q.range.check_less_than_safe(ctx, y_shifted, 2 * HALF_PI_Q + 1);
-    let u = q.mul(ctx, y, y);
-    let s_over_y = q.polynomial(ctx, u.cell, &SIN9);
-    let s = q.mul(ctx, y, s_over_y);
-    let gap = q.sub(ctx, s.cell, v);
-    let gap = q.add(ctx, gap, Constant(fe(EPS_Q as i128)));
-    q.range.check_less_than_safe(ctx, gap, 2 * EPS_Q + 1);
-
-    let degrees = q.mul(ctx, y, Constant(fe(quantize(180.0 / std::f64::consts::PI))));
+    // sqrt(1 - v^2) in Q32: floor(sqrt(2^64 - v_q^2)), exact.
+    let v_sq = q.gate.mul(ctx, v, v);
+    let rest = q.sub(ctx, Constant(fe(SCALE * SCALE)), v_sq);
+    let root = q.isqrt(ctx, rest);
+    let denominator = q.add(ctx, root.cell, Constant(fe(SCALE))); // 1 + sqrt(1 - v^2) >= 1
+    let denominator = q.bound(ctx, denominator);
+    let t = q.div_pos(ctx, v, denominator);
+    let u = q.mul(ctx, t.cell, t.cell);
+    let p = q.polynomial(ctx, u.cell, &ATAN_U);
+    let atan = q.mul(ctx, t.cell, p);
+    let degrees = q.mul(ctx, atan.cell, Constant(fe(quantize(360.0 / std::f64::consts::PI))));
     out.float(degrees.cell);
     Ok(())
 }
