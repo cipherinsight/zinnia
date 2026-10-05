@@ -11,16 +11,5 @@ pub type Output = i64;
 
 pub fn main(input: &mut impl Input) -> Output {
     let a: Vec<Q32> = input.read_vec(8 * 6);
-    argmin(&a) as i64
-}
-
-/// Index of the first occurrence of the minimum, as NumPy defines it.
-fn argmin(values: &[Q32]) -> usize {
-    let mut best = 0;
-    for (i, &v) in values.iter().enumerate().skip(1) {
-        if v < values[best] {
-            best = i;
-        }
-    }
-    best
+    np::argmin(&a) as i64
 }

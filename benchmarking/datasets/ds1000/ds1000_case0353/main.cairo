@@ -8,6 +8,7 @@
 //!         return output
 // output: [i64]
 use core::cmp::max;
+use crate::np::contains;
 
 const A_ROWS: u32 = 2;
 const B_ROWS: u32 = 7;
@@ -64,14 +65,4 @@ fn ravel_multi_index(row: Span<i64>, dims: Span<i64>) -> i64 {
         flat = flat * dim + coord;
     }
     flat
-}
-
-/// `np.in1d` for one value: whether `value` occurs in `set`.
-fn contains(set: Span<i64>, value: i64) -> bool {
-    for v in set {
-        if *v == value {
-            return true;
-        }
-    }
-    false
 }

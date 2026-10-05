@@ -6,7 +6,8 @@
 //!         bin_data_mean = data[:,:(data.shape[1] // bin_size) * bin_size].reshape(data.shape[0], -1, bin_size).mean(axis=-1)
 //!         return bin_data_mean
 // output: [q32]
-use crate::q32::{Q32, Q32Trait, ZERO};
+use crate::np::mean;
+use crate::q32::Q32;
 
 const ROWS: u32 = 8;
 const COLS: u32 = 6;
@@ -24,12 +25,4 @@ fn main(data: Array<Q32>) -> Array<Q32> {
         }
     }
     means
-}
-
-fn mean(bin: Span<Q32>) -> Q32 {
-    let mut sum = ZERO;
-    for v in bin {
-        sum = sum + *v;
-    }
-    sum.div_int(bin.len().into())
 }

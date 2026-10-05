@@ -6,6 +6,7 @@
 //!         result = np.pad(a, ((0, shape[0]-a.shape[0]), (0, shape[1]-a.shape[1])), 'constant', constant_values=element)
 //!         return result
 // output: [q32]
+use crate::np::append_repeated;
 use crate::q32::{Q32, Q32Trait};
 
 const ROWS: u32 = 42;
@@ -27,10 +28,4 @@ fn main(a: Array<Q32>, element: i64) -> Array<Q32> {
     }
     append_repeated(ref result, fill, (OUT_ROWS - ROWS) * OUT_COLS);
     result
-}
-
-fn append_repeated(ref out: Array<Q32>, value: Q32, count: u32) {
-    for _ in 0..count {
-        out.append(value);
-    }
 }

@@ -4,6 +4,8 @@
 //!         C = A[~np.in1d(A,B)]
 //!         return C
 // output: [i64]
+use crate::np::contains;
+
 #[executable]
 fn main(A: Array<i64>, B: Array<i64>) -> Array<i64> {
     assert!(A.len() == 20 && B.len() == 3, "inputs have the wrong length");
@@ -15,14 +17,4 @@ fn main(A: Array<i64>, B: Array<i64>) -> Array<i64> {
         }
     }
     kept
-}
-
-/// `np.in1d` for one value: whether `value` occurs in `set`.
-fn contains(set: Span<i64>, value: i64) -> bool {
-    for v in set {
-        if *v == value {
-            return true;
-        }
-    }
-    false
 }

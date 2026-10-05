@@ -13,8 +13,6 @@ pub type Output = Vec<i64>;
 
 pub fn main(input: &mut impl Input) -> Output {
     let a: Vec<Q32> = input.read_vec(N);
-    let mut order: Vec<usize> = (0..N).collect();
     // A stable sort: ties stay in index order.
-    order.sort_by_key(|&i| a[i]);
-    order.into_iter().map(|i| i as i64).collect()
+    np::argsort(&a).into_iter().map(|i| i as i64).collect()
 }

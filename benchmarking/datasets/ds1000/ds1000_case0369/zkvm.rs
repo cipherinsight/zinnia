@@ -9,18 +9,11 @@ use crate::prelude::*;
 
 const N: usize = 3;
 
-/// NumPy's default `rtol = 1e-5`, quantized: `round(1e-5 * 2^32)`.
-const RTOL: Q32 = Q32::from_bits(42_950);
-
 pub type Output = bool;
 
 pub fn main(input: &mut impl Input) -> Output {
     let a: [[Q32; N]; N] = input.read_matrix();
+    let close = |x, y| np::isclose(x, y, np::DEFAULT_RTOL, Q32::ZERO);
     // Column 0 is trivially close to itself.
-    a.iter().all(|row| row[1..].iter().all(|&x| isclose(x, row[0])))
-}
-
-/// `np.isclose(x, y, atol=0)`: `|x - y| <= rtol * |y|`.
-fn isclose(x: Q32, y: Q32) -> bool {
-    (x - y).abs() <= RTOL * y.abs()
+    a.iter().all(|row| row[1..].iter().all(|&x| close(x, row[0])))
 }

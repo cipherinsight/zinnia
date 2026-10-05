@@ -4,6 +4,7 @@
 //!         result = np.unravel_index(a.argmin(), a.shape)
 //!         return result
 // output: (i64, i64)
+use crate::np::argmin;
 use crate::q32::Q32;
 
 const ROWS: u32 = 5;
@@ -14,15 +15,4 @@ fn main(a: Array<Q32>) -> (i64, i64) {
     assert!(a.len() == ROWS * COLS, "a has the wrong length");
     let flat = argmin(a.span());
     ((flat / COLS).into(), (flat % COLS).into())
-}
-
-/// Index of the first occurrence of the minimum, as NumPy defines it.
-fn argmin(values: Span<Q32>) -> u32 {
-    let mut best: u32 = 0;
-    for i in 1..values.len() {
-        if *values.at(i) < *values.at(best) {
-            best = i;
-        }
-    }
-    best
 }

@@ -7,7 +7,7 @@
 //!         c = b[sort_indices, static_indices[1], static_indices[2]]
 //!         return c
 // output: [i64]
-use crate::np::argsort;
+use crate::np::argsort_axis0;
 use crate::q32::Q32;
 
 /// Length of the sorted first axis.
@@ -18,7 +18,7 @@ const PLANE: u32 = 3 * 3;
 #[executable]
 fn main(a: Array<Q32>, b: Array<i64>) -> Array<i64> {
     assert!(a.len() == DEPTH * PLANE && b.len() == DEPTH * PLANE, "inputs have the wrong length");
-    let orders = argsort_axis0(a.span());
+    let orders = argsort_axis0(a.span(), PLANE);
     let mut c = array![];
     for i in 0..DEPTH {
         for pos in 0..PLANE {
@@ -27,18 +27,4 @@ fn main(a: Array<Q32>, b: Array<i64>) -> Array<i64> {
         }
     }
     c
-}
-
-/// `np.argsort(a, axis=0)`: for every position of the last two axes, the
-/// first-axis indices that sort `a` there (stable, ties in index order).
-fn argsort_axis0(a: Span<Q32>) -> Array<Span<u32>> {
-    let mut orders = array![];
-    for pos in 0..PLANE {
-        let mut column = array![];
-        for i in 0..DEPTH {
-            column.append(*a.at(i * PLANE + pos));
-        }
-        orders.append(argsort(column.span()).span());
-    }
-    orders
 }

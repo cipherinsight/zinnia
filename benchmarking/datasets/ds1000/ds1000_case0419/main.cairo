@@ -11,7 +11,8 @@
 //! equals plain left-to-right binning (case 0416); the program follows the
 //! kernel, which aligns the bins to the end of the row.
 // output: [q32]
-use crate::q32::{Q32, Q32Trait, ZERO};
+use crate::np::mean;
+use crate::q32::Q32;
 
 const ROWS: u32 = 8;
 const COLS: u32 = 6;
@@ -36,12 +37,4 @@ fn main(data: Array<Q32>) -> Array<Q32> {
         }
     }
     means
-}
-
-fn mean(bin: Span<Q32>) -> Q32 {
-    let mut sum = ZERO;
-    for v in bin {
-        sum = sum + *v;
-    }
-    sum.div_int(bin.len().into())
 }

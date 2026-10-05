@@ -6,6 +6,7 @@
 //!         result = np.pad(a, ((0, shape[0]-a.shape[0]), (0, shape[1]-a.shape[1])), 'constant')
 //!         return result
 // output: [q32]
+use crate::np::append_repeated;
 use crate::q32::{Q32, ZERO};
 
 const ROWS: u32 = 42;
@@ -21,14 +22,8 @@ fn main(a: Array<Q32>) -> Array<Q32> {
     let mut result = array![];
     for r in 0..ROWS {
         result.append_span(a.slice(r * COLS, COLS));
-        append_zeros(ref result, OUT_COLS - COLS);
+        append_repeated(ref result, ZERO, OUT_COLS - COLS);
     }
-    append_zeros(ref result, (OUT_ROWS - ROWS) * OUT_COLS);
+    append_repeated(ref result, ZERO, (OUT_ROWS - ROWS) * OUT_COLS);
     result
-}
-
-fn append_zeros(ref out: Array<Q32>, count: u32) {
-    for _ in 0..count {
-        out.append(ZERO);
-    }
 }

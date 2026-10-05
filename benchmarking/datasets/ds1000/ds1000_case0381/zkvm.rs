@@ -14,7 +14,5 @@ pub type Output = Vec<i64>;
 
 pub fn main(input: &mut impl Input) -> Output {
     let a: Vec<Q32> = input.read_vec(N);
-    let mut order: Vec<usize> = (0..N).collect();
-    order.sort_by_key(|&i| a[i]);
-    order.iter().rev().map(|&i| i as i64).collect()
+    np::argsort(&a).iter().rev().map(|&i| i as i64).collect()
 }

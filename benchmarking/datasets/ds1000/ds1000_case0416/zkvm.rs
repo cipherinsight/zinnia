@@ -18,9 +18,5 @@ pub type Output = Vec<Q32>;
 pub fn main(input: &mut impl Input) -> Output {
     let data: Vec<Q32> = input.read_vec(ROWS * COLS);
     // `chunks_exact` drops a partial last bin, like the slice in the kernel.
-    data.chunks_exact(COLS).flat_map(|row| row.chunks_exact(BIN_SIZE).map(mean)).collect()
-}
-
-fn mean(bin: &[Q32]) -> Q32 {
-    bin.iter().sum::<Q32>() / bin.len() as i64
+    data.chunks_exact(COLS).flat_map(|row| row.chunks_exact(BIN_SIZE).map(np::mean)).collect()
 }

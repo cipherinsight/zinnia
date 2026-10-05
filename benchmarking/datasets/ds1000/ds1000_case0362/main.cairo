@@ -8,6 +8,7 @@
 //!         result = np.delete(a, del_col, axis=1)
 //!         return result
 // output: [q32]
+use crate::np::contains;
 use crate::q32::Q32;
 
 const ROWS: u32 = 8;
@@ -34,13 +35,7 @@ fn main(a: Array<Q32>) -> Array<Q32> {
 fn kept_columns() -> Span<u32> {
     let mut kept = array![];
     for j in 0..COLS {
-        let mut is_deleted = false;
-        for d in DEL_COL.span() {
-            if *d == j + 1 {
-                is_deleted = true;
-            }
-        }
-        if !is_deleted {
+        if !contains(DEL_COL.span(), j + 1) {
             kept.append(j);
         }
     }

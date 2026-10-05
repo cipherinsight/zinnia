@@ -5,6 +5,7 @@
 //!         result = X / l1.reshape(-1, 1)
 //!         return result
 // output: [q32]
+use crate::np::abs;
 use crate::q32::{Q32, Q32Trait};
 
 const ROWS: u32 = 5;
@@ -28,12 +29,4 @@ fn main(X: Array<i64>) -> Array<Q32> {
         }
     }
     out
-}
-
-fn abs(v: i64) -> i64 {
-    if v < 0 {
-        -v
-    } else {
-        v
-    }
 }
