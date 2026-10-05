@@ -11,7 +11,7 @@ def _ir_classes(decorated):
     ]
 
 
-def test_in_static_list_uses_equality_or_fold():
+def test_in_static_list_is_one_zero_test():
     @zk_circuit
     def foo(x: int):
         assert x in [1, 3, 5]
@@ -19,8 +19,9 @@ def test_in_static_list_uses_equality_or_fold():
     assert foo(3)
     assert not foo(4)
     classes = _ir_classes(foo)
-    assert "EqualIIR" in classes
-    assert "LogicalOrIR" in classes
+    # One zero test of (x - 1)(x - 3)(x - 5) (PatternMatchOptim's membership fusion).
+    assert "EqualIIR" in classes and "MulIIR" in classes
+    assert "LogicalOrIR" not in classes
 
 
 def test_not_in_static_tuple_negates_equality_fold():

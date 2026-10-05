@@ -219,3 +219,42 @@ def test_complementary_comparisons_share_one_less_than():
 def test_comparison_on_equal_and_unequal_values(op):
     source = f'def kernel(a: Integer[Array, "5"], b: Integer[Array, "5"]):\n    return a {op} b\n'
     assert_matches_numpy(source, np.array([1, 2, 3, -4, 5]), np.array([1, 3, 2, -4, -5]))
+
+
+# ── membership tests as one zero test ────────────────────────────────────
+
+@pytest.mark.parametrize("source, args", [
+    ('def kernel(a: Integer[Array, "4"], number: Integer):\n    return number in a\n',
+     (np.array([3, -7, 11, 0]), -7)),
+    ('def kernel(a: Integer[Array, "4"], number: Integer):\n    return number in a\n',
+     (np.array([3, -7, 11, 0]), 5)),
+    ('def kernel(A: Integer[Array, "8"], B: Integer[Array, "3"]):\n'
+     '    return A[np.in1d(A, B)]\n',
+     (np.array([1, 5, 2, 9, 5, -3, 0, 2]), np.array([5, 0, -3]))),
+    ('def kernel(A: Float[Array, "5"], B: Float[Array, "2"]):\n'
+     '    return np.in1d(A, B)\n',
+     (np.array([0.5, 1.5, -2.25, 0.5, 3.0]), np.array([0.5, -2.25]))),
+])
+def test_membership_matches_numpy(source, args):
+    expected = np.asarray(numpy_kernel(source)(*[np.copy(a) for a in args]))
+    satisfied, outputs = run_mock(compile_kernel(source), *args)
+    assert satisfied
+    if "A[" in source:  # runtime-shaped: length, dim, padded payload
+        assert outputs[0] == len(expected)
+        assert outputs[2:2 + len(expected)] == list(expected)
+    else:
+        assert np.array_equal(np.asarray(outputs, dtype=float).ravel(), expected.astype(float).ravel())
+
+
+def test_membership_is_one_zero_test():
+    program = compile_kernel(
+        'def kernel(a: Integer[Array, "4"], number: Integer):\n    return number in a\n')
+    classes = ir_classes(program)
+    assert "LogicalOrIR" not in classes
+    assert classes.count("EqualIIR") == 1 and classes.count("MulIIR") == 3
+
+
+def test_membership_halo2_base_matches_mock():
+    assert_backends_agree(
+        'def kernel(A: Integer[Array, "6"], B: Integer[Array, "3"]):\n    return np.in1d(A, B)\n',
+        np.array([1, 5, 2, 9, 0, -3]), np.array([5, 0, -3]))

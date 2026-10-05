@@ -286,8 +286,10 @@ def test_set_membership_desugars_to_or_of_equalities():
 def test_set_membership_witness():
     stmts = _dump_ir(_set_membership)
     classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
-    assert classes.count("EqualIIR") >= 3
-    assert "LogicalOrIR" in classes
+    # The or of the three equality tests is one zero test of
+    # (k - 1)(k - 3)(k - 5) (PatternMatchOptim's membership fusion).
+    assert classes.count("EqualIIR") == 1 and classes.count("MulIIR") == 2
+    assert "LogicalOrIR" not in classes
 
 
 # ── 10. not in membership ───────────────────────────────────────────────
