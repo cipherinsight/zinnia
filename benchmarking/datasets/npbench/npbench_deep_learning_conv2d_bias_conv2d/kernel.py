@@ -19,5 +19,5 @@ def conv2d(input, weights):
     return output
 
 @zk_circuit
-def conv2d_bias(input: Float[Array, '8 32 32 3'], weights: Float[Array, '2 2 3 16'], bias: Float[Array, '16']):
+def conv2d_bias(input: Float[Array, '4 16 16 2'], weights: Float[Array, '2 2 2 8'], bias: Float[Array, '8']):
     return conv2d(input, weights) + bias

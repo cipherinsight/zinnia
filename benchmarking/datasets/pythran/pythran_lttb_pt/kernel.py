@@ -13,7 +13,7 @@ def _areas_of_triangles(a, bs, c):
 
 @zk_circuit
 @requires(lambda data, n_out: 0 <= n_out <= 1024)
-def downsample(data: Float[Array, '100 2'], n_out: Integer):
+def downsample(data: Float[Array, '16 2'], n_out: Integer):
     if n_out > data.shape[0]:
         raise ValueError('n_out must be <= number of rows in data')
     if n_out == data.shape[0]:

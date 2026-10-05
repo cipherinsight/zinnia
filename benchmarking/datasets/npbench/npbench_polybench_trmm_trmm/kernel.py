@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def kernel(alpha: Float, A: Float[Array, '65 65'], B: Float[Array, '65 80']):
+def kernel(alpha: Float, A: Float[Array, '13 13'], B: Float[Array, '13 16']):
     for i in range(B.shape[0]):
         for j in range(B.shape[1]):
             B[i, j] += np.dot(A[i + 1:, i], B[i + 1:, j])

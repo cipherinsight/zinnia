@@ -6,5 +6,5 @@ from zinnia import *
 import numpy
 
 @zk_circuit
-def calculate_vibr_energy(harmonic: Float[Array, '1000000'], anharmonic: Float[Array, '1000000'], i: Float[Array, '1000000']):
+def calculate_vibr_energy(harmonic: Float[Array, '16'], anharmonic: Float[Array, '16'], i: Float[Array, '16']):
     return numpy.exp(-harmonic * i - anharmonic * i ** 2)

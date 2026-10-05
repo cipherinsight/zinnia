@@ -1,0 +1,29 @@
+{
+ "case": "pythran_convnet",
+ "function": "convnet",
+ "parameters": [
+  {"name": "conv_matrix", "kind": "array", "dtype": "float", "shape": [4, 4]},
+  {"name": "qcnn_filter", "kind": "array", "dtype": "float", "shape": [4, 4]},
+  {"name": "length", "kind": "scalar", "dtype": "int"},
+  {"name": "batch_size", "kind": "scalar", "dtype": "int"},
+  {"name": "state_size", "kind": "scalar", "dtype": "int"}
+ ],
+ "constants": {},
+ "inputs": {
+  "A": {
+   "conv_matrix": [[0.0, 1.0, 2.0, 3.0], [4.0, 5.0, 6.0, 7.0], [8.0, 9.0, 10.0, 11.0], [12.0, 13.0, 14.0, 15.0]],
+   "qcnn_filter": [[0.0, 1.0, 2.0, 3.0], [4.0, 5.0, 6.0, 7.0], [8.0, 9.0, 10.0, 11.0], [12.0, 13.0, 14.0, 15.0]],
+   "length": 4,
+   "batch_size": 1,
+   "state_size": 1
+  },
+  "B": {
+   "conv_matrix": [[-0.08321748765718037, 0.15799044177336063, 1.675291312752413, 6.998185323482076], [0.4710478609621558, 3.236622723318054, 6.262145283042357, 5.642717194899992], [10.412097087520472, 5.549149597616545, 8.581525351978957, 10.918581356112288], [12.155829418996584, 11.703045731103279, 12.834724419481736, 17.61644669812844]],
+   "qcnn_filter": [[-0.17130356670536873, 2.324014501997696, -0.9104161001441695, 2.185672015041444], [1.7767865411666866, 2.2938147629767522, 5.62922185546694, 7.7199793883909775], [6.860281597227792, 6.753010665624577, 8.818999273198074, 10.226476099603806], [12.002674595467884, 14.129488710359627, 13.431828183783205, 15.236637914222378]],
+   "length": 4,
+   "batch_size": 1,
+   "state_size": 1
+  }
+ },
+ "notes": "A is the arguments of the example call `import numpy as np; x = np.arange(16., dtype=np.float32).reshape(4,4); y= np.arange(16., dtype=np.float32).reshape(4,4); convnet(x, y, 4,1,1)`. B is a seeded perturbation of A (numpy RandomState(2467005)): noise 10 % of the largest magnitude; integer arrays redrawn in their range."
+}

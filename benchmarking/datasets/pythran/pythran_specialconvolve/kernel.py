@@ -5,7 +5,7 @@
 from zinnia import *
 
 @zk_circuit
-def specialconvolve(a: Integer[Array, '100 100']):
+def specialconvolve(a: Integer[Array, '16 16']):
     rowconvol = a[1:-1, :] + a[:-2, :] + a[2:, :]
     colconvol = rowconvol[:, 1:-1] + rowconvol[:, :-2] + rowconvol[:, 2:] - 9 * a[1:-1, 1:-1]
     return colconvol

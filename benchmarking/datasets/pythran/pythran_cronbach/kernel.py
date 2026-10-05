@@ -5,7 +5,7 @@
 from zinnia import *
 
 @zk_circuit
-def cronbach(itemscores: Float[Array, '800 800']):
+def cronbach(itemscores: Float[Array, '16 16']):
     itemvars = itemscores.var(1, None, None, 1)
     tscores = itemscores.sum(0)
     nitems = len(itemscores)

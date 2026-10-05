@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def kernel(alpha: Float, beta: Float, A: Float[Array, '1000 1000'], u1: Float[Array, '1000'], v1: Float[Array, '1000'], u2: Float[Array, '1000'], v2: Float[Array, '1000'], w: Float[Array, '1000'], x: Float[Array, '1000'], y: Float[Array, '1000'], z: Float[Array, '1000']):
+def kernel(alpha: Float, beta: Float, A: Float[Array, '16 16'], u1: Float[Array, '16'], v1: Float[Array, '16'], u2: Float[Array, '16'], v2: Float[Array, '16'], w: Float[Array, '16'], x: Float[Array, '16'], y: Float[Array, '16'], z: Float[Array, '16']):
     A += np.outer(u1, v1) + np.outer(u2, v2)
     x += beta * y @ A + z
     w += alpha * A @ x

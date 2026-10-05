@@ -99,7 +99,7 @@ class ScopeVisitor(ast.NodeVisitor):
         root = module.split(".")[0]
         if root not in ALLOWED_MODULES and root not in IGNORED_IMPORTS:
             self.hits.add("imports", f"import {module}")
-        if root in {"random", "time", "datetime", "uuid", "secrets"}:
+        if root in {"random", "time", "datetime", "uuid", "secrets"} or module.startswith("numpy.random"):
             self.hits.add("nondeterminism", f"import {module}")
         if root in {"importlib"}:
             self.hits.add("opaque_runtime", f"import {module}")

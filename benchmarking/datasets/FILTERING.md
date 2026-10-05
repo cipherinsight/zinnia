@@ -133,7 +133,7 @@ module constants the kernel needs, and the imports it needs. Runners, data
 generators, unused alternate kernels and scaffolding were removed.
 
 What is added: the `@zk_circuit` / `@zk_chip` decorators, Zinnia type
-annotations on the parameters of entry functions, and, on 47 entry functions,
+annotations on the parameters of entry functions, and, on 46 entry functions,
 `@requires` preconditions. (The 2026-05-19 version of this file said "no
 function signatures were modified"; that was wrong.)
 
@@ -149,11 +149,13 @@ annotation from upstream:
 * dtype and rank: NPBench's `initialize()` output for the argument (or its
   preset parameter); Pythran's exported signature (Pythran lists become
   arrays; a list of k-tuples becomes an array whose last axis has length k).
-* shape: the upstream example input. NPBench: preset S, its smallest. Pythran:
-  the first `#runas` call of the function that an exported signature accepts,
-  else the first such `#bench` call; with neither (8 functions), every axis
-  has length 8. When a function has several exported signatures, the one that
-  accepts that example is used; without an example, the first all-numeric one.
+* shape: the small inputs of the next section. The shape at the upstream
+  example input is kept in `case_sets/acceptance.json` as
+  `upstream_signature` (NPBench: preset S, its smallest; Pythran: the first
+  `#runas` call of the function that an exported signature accepts, else the
+  first such `#bench` call). When a function has several exported signatures,
+  the one that accepts the example is used; without an example, the first
+  all-numeric one.
 * helper functions carry no annotations (`@zk_chip` infers them at the call).
 
 Other kernel changes made on 2026-10-06:
@@ -167,19 +169,107 @@ Other kernel changes made on 2026-10-06:
   helper the entry instead (for example `emin.Eandg`).
 * `@requires` preconditions are kept on entry functions and listed per entry
   in `case_sets/acceptance.json` with their kind (trip-count bound or non-zero
-  divisor) and whether the upstream example satisfies them. They are machine
-  drafts that nobody reviewed; preconditions on functions that are now
-  helpers are dropped (also listed).
+  divisor) and whether the example input (at the small size) satisfies them;
+  every kept precondition of an in-scope entry does. They are machine drafts
+  that nobody reviewed; preconditions on functions that are now helpers are
+  dropped (listed per program), and so is `spectraldns.add_pressure_diffusion`'s `0 <= K <= 1024`,
+  drafted when the array `K` was taken for an integer (listed under
+  `preconditions_dropped`). Their bounds (1024 for trip counts) are not
+  lowered to the small sizes.
 
-NPBench's preset S is large for a circuit compiler (up to 64 million input
-elements, `deep_learning/mlp`); `--npbench-preset` selects another preset.
+### Sizes (2026-10-06)
 
-Result (2026-10-06, entry functions): NPBench 54 in scope, 0 out; Pythran 111
-in scope, 11 out (`imports`: `descent` (itertools), `extrema` (functools),
-`ramsurf` (cmath); `non_numeric_data`: `build_system` (a module parameter),
-`comp_unrolling` (its only example is a ragged list), `euler_challenge13`
-(`str()`), `rc4`, `roman_decode`, `scrabble` (2 functions), `train_equalizer`
-(string parameters)). Parameters an export does not list keep their default and
+The acceptance study asks which programs Zinnia accepts, not how it scales, and
+the upstream inputs are far too large for any ZK system (NPBench's preset S, its
+smallest, multiplies a 1000x1200 by a 1200x1100 matrix; `deep_learning/mlp`
+takes 64 million input elements). Every NPBench and Pythran entry is therefore
+typed and run at a small size, stated in `tools/acceptance_sizes.py`:
+
+* every array dimension of an input is at most 16;
+* scalars that are sizes or trip counts are at most 16; other scalars keep their
+  upstream value (crc16's polynomial 33800, `is_square(12**5)`,
+  `gf2mulmod(2**10, 2**6-1, 2**5-1)`, `times(200, 3)`);
+* relations among dimensions are kept: what is equal stays equal, n and n+1
+  stay n and n+1, a dimension computed from a parameter is still computed from
+  it;
+* where a loop runs once per permutation of n items (`fannkuch`, `n_queens`,
+  `permutations`), n is 4: 24 iterations instead of 120 to 362880.
+
+NPBench: preset "T" is preset S with every integer parameter p replaced by
+max(min(p, 2), ceil(p / d)), for the smallest whole d such that NPBench's
+`initialize()` succeeds and every integer parameter, integer input and array
+dimension is at most 16 (gemm: NI, NJ, NK = 1000, 1100, 1200 -> 14, 15, 16 with
+d = 75). Inputs come from `initialize()` at T, so shapes stay consistent with
+each other (spmv's M+1 row pointers and nnz entries, hdiff's I+4 halo,
+stockham's N = R^K). Two exceptions:
+
+* `deep_learning/lenet`: N = 2 and H = W = 16. Two 5x5 convolutions and two 2x2
+  poolings need H, W >= 16 for a non-empty feature map. The fully connected
+  widths 120, 84 and 10 are constants of lenet's `initialize()`, not
+  parameters, so `fc1w`, `fc1b`, `fc2w`, `fc2b`, `fc3w` keep dimensions 120 and
+  84.
+* `nbody`: the trip count Nt = ceil(tEnd / dt) comes from the float tEnd, which
+  the integer rule leaves alone; tEnd = 0.8 (S: 2.0) gives Nt = 16.
+
+The divisor and preset T of each benchmark are in the entry's `sizing` record.
+
+Pythran: the upstream example line (`#runas`, else `#bench`) with its sizes
+scaled down by hand, keeping how the line builds its arguments; each scaled
+line is listed in `PYTHRAN_SMALL_EXAMPLES` next to what it changes (for
+example `diffusion`: grid 2**7 -> 2**4 with the impulse still at the centre,
+trip count 500 -> 16; `factorize_naive`: 12222 -> 12, since n bounds the loop
+and its precondition n <= 1024 rejects 12222). A line whose arrays and size
+scalars are already at most 16 is used as it is. Six exported functions that
+no upstream example calls get an example chosen here
+(`PYTHRAN_NO_UPSTREAM_EXAMPLE`: `sqr_dists_loops`, `fbcorr`, `fweb`,
+`Decoding_logBP`, `_make_circle_one_point`, `solve`); before 2026-10-06 they
+had every axis of length 8.
+
+Sizes written in a function body are not inputs and stay as upstream wrote
+them, since bodies are verbatim: emin's 1,000,000 steps, the 600 x d and
+200 x d point sets of `allpairs_distances` (500 x d and 200 x d in
+`allpairs_distances_loops`), guerre's 50-entry work lists.
+
+### Inputs A and B (fixtures)
+
+Every in-scope entry function has two inputs, A and B, in a `fixture.json` next
+to its kernel (`fixture.<function>.json` when the program has several entry
+functions), with the schema of the performance set's fixtures
+(`tools/acceptance_fixtures.py`):
+
+* NPBench: A is `initialize()` at preset T (NumPy's global generator seeded
+  with 42 first, since mlp draws its input from it).
+* Pythran: A is the arguments of the example call above; `np.empty` in an
+  example becomes `np.zeros` (spectraldns's `cross2` output buffer would
+  otherwise be uninitialized memory).
+* DS-1000: the performance set's draws A and B for the problem when it has a
+  performance case (135 functions), with the shape parameters the
+  performance kernel binds as constants at their DS-1000 value; otherwise
+  (28) A is DS-1000's own last test input.
+* B, when not given: a seeded perturbation of A that keeps sizes, trip counts
+  and integer scalars: Gaussian noise of 10 % of the largest magnitude on
+  floats with integer arrays redrawn in their range, else multiplicative noise
+  of 5 %, else the same with integer arrays kept, else one random factor in
+  [1.05, 1.25] on every float (keeps the Cholesky inputs positive definite).
+  A kernel with only integer scalars gets each minus one (plus one for 0 and
+  1). The first B on which the kernel runs is kept.
+
+Check: for A and B the kernel body runs as plain NumPy (division by zero,
+overflow and invalid operations raise) and every output, and every argument
+after the call, is finite. Zinnia is not run. The notes flag values Q32 cannot
+hold: `lu.factorMatrix1`'s A (upstream calls it on the result of
+`factorMatrix0` on a singular matrix) has nonzero entries below 2^-32, and
+`calculate_u.timeloop`'s NumPy outputs exceed 2^31. Running the generator
+twice gives byte-identical fixtures.
+
+Result (2026-10-06, entry functions): NPBench 54 in scope, 0 out; Pythran 110
+in scope, 12 out (`imports`: `descent` (itertools), `extrema` (functools),
+`ramsurf` (cmath); `nondeterminism`: `rand_mat_stat` (`from numpy.random import
+randn`, which the rule missed until 2026-10-06 because it only looked for
+`np.random.*` attributes); `non_numeric_data`: `build_system` (a module
+parameter), `comp_unrolling` (its only example is a ragged list),
+`euler_challenge13` (`str()`), `rc4`, `roman_decode`, `scrabble` (2 functions),
+`train_equalizer` (string parameters)). Parameters an export does not list keep their default and
 are annotated from it (`check_mask.mask`, `ising_step.beta`, `weights.threshold`);
 `nd_local_maxima.local_maxima`'s `mode=wrap` (a function) stays unannotated.
 
