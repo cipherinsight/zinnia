@@ -1,44 +1,30 @@
-// DS-1000 case 417 — Halo2 baseline.
-// Kernel: data[::-1] then bin-mean with bs=2 on Float[8] → (4,).
-// Reverse is a compile-time index permutation; only the bin-mean is computed.
+//! DS-1000 case 0417, halo2-base baseline.
+//! Kernel: `data[::-1][:(8 // 4) * 4].reshape(-1, 4).mean(axis=1)` with the
+//! constant `bin_size = 4` on `Float[8]`: the means of the reversed data's
+//! bins, `data[7:3:-1]` and `data[3::-1]`.
+//! A Q32 mean of 4 values is `floor(sum / 4)` (the quotient
+//! `floor(sum * 2^32 / (4 * 2^32))`), a division by the constant 4: a 2-bit
+//! remainder check and a window bound on the quotient. The reversal is a
+//! fixed relabelling of the cells.
 
-use clap::Parser;
-use halo2_base::utils::{ScalarField, BigPrimeField};
-use halo2_graph::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};
-use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use serde::{Serialize, Deserialize};
-use halo2_base::AssignedValue;
-#[allow(unused_imports)] use halo2_graph::scaffold::cmd::Cli;
-use halo2_graph::scaffold::run;
+use crate::prelude::*;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CircuitInput { pub data: Vec<f64>, pub bin_size: u32 }
+const BIN_SIZE: usize = 4;
 
-fn rev_bin_mean_1d<F: ScalarField>(
-    b: &mut BaseCircuitBuilder<F>, input: CircuitInput, make_public: &mut Vec<AssignedValue<F>>,
-) where F: BigPrimeField {
-    const P: u32 = 32;
-    const N: usize = 8;
-    let fpc = FixedPointChip::<F, P>::default(b);
-    let ctx = b.main(0);
-    assert_eq!(input.data.len(), N);
-    let bs = input.bin_size as usize;
-    let n_bins = N / bs;
+pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
+    let data = inputs.floats("data", &[8])?;
+    let q = Q32::new(builder);
+    let ctx = builder.main(0);
 
-    let cells: Vec<AssignedValue<F>> = input.data.iter()
-        .map(|v| ctx.load_witness(fpc.quantization(*v))).collect();
-    // new_data[k] = data[N-1-k]
-    let rev: Vec<AssignedValue<F>> = (0..N).map(|k| cells[N - 1 - k]).collect();
-    let bs_fp = ctx.load_witness(fpc.quantization(bs as f64));
-
-    for bin in 0..n_bins {
-        let mut sum = rev[bin * bs];
-        for j in 1..bs {
-            sum = fpc.qadd(ctx, sum, rev[bin * bs + j]);
-        }
-        let mean = fpc.qdiv(ctx, sum, bs_fp);
-        make_public.push(mean);
-    }
+    let data = q.load_floats(ctx, &data);
+    let reversed: Vec<Cell> = data.iter().rev().copied().collect();
+    let means: Vec<Cell> = reversed
+        .chunks(BIN_SIZE)
+        .map(|bin| {
+            let total = q.sum(ctx, bin.iter().copied());
+            q.floor_div_const(ctx, total, BIN_SIZE as u64).0.cell
+        })
+        .collect();
+    out.floats(&means);
+    Ok(())
 }
-
-fn main() { env_logger::init(); let args = Cli::parse(); run(rev_bin_mean_1d, args); }

@@ -1,92 +1,86 @@
-// DS-1000 case 347 — Halo2 baseline.
-// Kernel:
-//   a[row-1, :] /= divide_number
-//   result = np.multiply.reduce(a[row-1, :])
-// On Float[8, 6] with runtime integer `row` and `divide_number`. Output: scalar float.
-// Mirror kernel.py: pick the row via select over i=0..8, divide each cell by
-// the (int → fp) divisor, then multiply all 6 results together.
+//! DS-1000 case 0347, halo2-base baseline.
+//! Kernel: `a[row-1, :] /= divide_number; np.multiply.reduce(a[row-1, :])` on
+//! `a: Float[8, 6]`, `row: Integer`, `divide_number: Float`.
+//! Only the selected row reaches the output: it is gathered once (one-hot over
+//! the 8 rows, built once and reused for the 6 columns; NumPy wrap and bounds
+//! for `row - 1`), divided by `divide_number` (6 float divisions sharing one
+//! sign test of the divisor; a zero divisor has no proof) and multiplied out
+//! left to right (5 rescaled products).
 
-use clap::Parser;
-use halo2_base::utils::{ScalarField, BigPrimeField};
-use halo2_graph::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};
-use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use halo2_base::gates::{GateChip, GateInstructions};
-use serde::{Serialize, Deserialize};
-use halo2_base::AssignedValue;
-#[allow(unused_imports)] use halo2_graph::scaffold::cmd::Cli;
-use halo2_graph::scaffold::run;
+use crate::prelude::*;
+use crate::q32::signed;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CircuitInput {
-    pub a: Vec<f64>,            // 48 floats row-major (8 x 6)
-    pub row: String,            // signed decimal integer
-    pub divide_number: String,  // signed decimal integer
+const ROWS: usize = 8;
+const COLS: usize = 6;
+
+pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
+    let a = inputs.floats("a", &[ROWS, COLS])?;
+    let row = inputs.int("row")?;
+    let divide_number = inputs.float("divide_number")?;
+    let q = Q32::new(builder);
+    let ctx = builder.main(0);
+
+    let a = q.load_floats(ctx, &a);
+    let row = q.load_int(ctx, row);
+    let divide_number = q.load_float(ctx, divide_number);
+
+    let hit = position_onehot(&q, ctx, row, 1, ROWS);
+    let divisor = q.bound(ctx, divide_number);
+    let divisor_abs = q.abs(ctx, divisor);
+    let rem_limit = q.gate.sub(ctx, divisor_abs, Constant(Fr::ONE)); // |b| - 1
+    let quotients: Vec<Cell> = (0..COLS)
+        .map(|j| {
+            let column = (0..ROWS).map(|i| Existing(a[i * COLS + j]));
+            let picked = q.gate.inner_product(ctx, hit.iter().map(|h| Existing(*h)), column);
+            div_by(&q, ctx, picked, divisor.cell, rem_limit).cell
+        })
+        .collect();
+    let product = quotients[1..].iter().fold(quotients[0], |acc, x| q.mul(ctx, acc, *x).cell);
+    out.float(product);
+    Ok(())
 }
 
-fn rowdiv_product<F: ScalarField>(
-    b: &mut BaseCircuitBuilder<F>, input: CircuitInput, make_public: &mut Vec<AssignedValue<F>>,
-) where F: BigPrimeField {
-    const P: u32 = 32;
-    let gate = GateChip::<F>::default();
-    let fpc = FixedPointChip::<F, P>::default(b);
-    let ctx = b.main(0);
-
-    assert_eq!(input.a.len(), 48);
-    let cells: Vec<AssignedValue<F>> = input.a.iter()
-        .map(|v| ctx.load_witness(fpc.quantization(*v))).collect();
-
-    // Load `row` and `divide_number` as signed integers.
-    let row_abs = ctx.load_witness(F::from_u128(
-        input.row.trim_start_matches('-').parse::<u128>().unwrap()));
-    let row = if input.row.starts_with('-') { gate.neg(ctx, row_abs) } else { row_abs };
-    let one = ctx.load_constant(F::ONE);
-    let row_idx = gate.sub(ctx, row, one);
-
-    let dn_abs = ctx.load_witness(F::from_u128(
-        input.divide_number.trim_start_matches('-').parse::<u128>().unwrap()));
-    let dn_int = if input.divide_number.starts_with('-') { gate.neg(ctx, dn_abs) } else { dn_abs };
-    // FloatCast: divide_number int → fp. This is a plain field multiply by
-    // Q; using qmul here would divide by Q again and leave the raw integer.
-    let one_fp = ctx.load_witness(fpc.quantization(1.0));
-    let dn_fp = gate.mul(ctx, dn_int, one_fp);
-
-    let zero_fp = ctx.load_witness(fpc.quantization(0.0));
-
-    // Full numpy semantics: negative indices wrap (row = 0 selects the
-    // last row). Dual-equality indicators, hoisted across columns:
-    // ind[i] = (idx == i) + (idx == i - 8); membership sum == 1 enforces
-    // -8 <= idx < 8 (numpy IndexError otherwise).
-    let mut inds = Vec::with_capacity(8);
-    let mut hits = ctx.load_constant(F::ZERO);
-    for i in 0..8usize {
-        let i_cell = ctx.load_constant(F::from(i as u64));
-        let in_cell = ctx.load_constant(-F::from((8 - i) as u64));
-        let is_i = gate.is_equal(ctx, row_idx, i_cell);
-        let is_in = gate.is_equal(ctx, row_idx, in_cell);
-        let ind = gate.add(ctx, is_i, is_in);
-        hits = gate.add(ctx, hits, ind);
-        inds.push(ind);
-    }
-    let one_c = ctx.load_constant(F::ONE);
-    let hits_ok = gate.is_equal(ctx, hits, one_c);
-    gate.assert_is_const(ctx, &hits_ok, &F::ONE);
-    let mut row_vals: Vec<AssignedValue<F>> = Vec::with_capacity(6);
-    for j in 0..6usize {
-        let mut chosen = zero_fp;
-        for i in 0..8usize {
-            chosen = gate.select(ctx, cells[i * 6 + j], chosen, inds[i]);
-        }
-        // Divide cell by divide_number.
-        let divided = fpc.qdiv(ctx, chosen, dn_fp);
-        row_vals.push(divided);
-    }
-
-    // np.multiply.reduce: chain qmul over the 6 divided values.
-    let mut prod = row_vals[0];
-    for k in 1..6usize {
-        prod = fpc.qmul(ctx, prod, row_vals[k]);
-    }
-    make_public.push(prod);
+/// The one-hot of the position a NumPy index `idx - shift` selects on an axis
+/// of `len` elements, by the construction of `q.index_onehot`, returned so
+/// that every gather by the same index shares it: position `p` is hit when
+/// `idx` is `u = p + shift` or `v = p + shift - len` (the wrapped negative
+/// index), i.e. when `(idx - u) * (idx - v)` is zero (no zero divisors in the
+/// field), and the assertion that exactly one position is hit pins `idx` to
+/// one of the `2 * len` valid values: any other index has no witness, as
+/// NumPy raises `IndexError`. The product is `idx * (idx - u - v) + u * v`,
+/// one `mul_add` with a constant.
+fn position_onehot(q: &Q32, ctx: &mut Ctx, idx: Cell, shift: i128, len: usize) -> Vec<Cell> {
+    let n = len as i128;
+    let hit: Vec<Cell> = (0..n)
+        .map(|p| {
+            let (u, v) = (p + shift, p + shift - n);
+            let shifted = q.gate.sub(ctx, idx, Constant(fe(u + v)));
+            let prod = q.gate.mul_add(ctx, idx, shifted, Constant(fe(u * v)));
+            q.gate.is_zero(ctx, prod)
+        })
+        .collect();
+    let total = q.gate.sum(ctx, hit.iter().map(|h| Existing(*h)));
+    q.gate.assert_is_const(ctx, &total, &Fr::ONE);
+    hit
 }
 
-fn main() { env_logger::init(); let args = Cli::parse(); run(rowdiv_product, args); }
+/// `q.div` for a divisor `b` (in the window) whose `rem_limit = |b| - 1` the
+/// caller computed once: `floor(a * 2^32 / b)` with remainder in `[0, |b|)`.
+/// Constraints, as in `q.div`: `a * 2^32 = quot * b + rem`, `rem` in
+/// `[0, 2^64)`, `|b| - 1 - rem` in `[0, 2^64)` (so `rem < |b|` and `b != 0`),
+/// `quot` in the window. With `|b| <= 2^63` every term is below `2^127`, so
+/// the identity holds over the integers and fixes `(quot, rem)`.
+fn div_by(q: &Q32, ctx: &mut Ctx, a: Cell, b: Cell, rem_limit: Cell) -> I64 {
+    let num = signed(a.value()) * SCALE;
+    let bv = signed(b.value());
+    let (quot, rem) = if bv == 0 { (0, 0) } else { (num.div_euclid(bv), num.rem_euclid(bv)) };
+    let scaled = q.gate.mul(ctx, a, Constant(fe(SCALE)));
+    let quot = ctx.load_witness(fe(quot));
+    let rem = ctx.load_witness(fe(rem));
+    let recomposed = q.gate.mul_add(ctx, quot, b, rem);
+    ctx.constrain_equal(&recomposed, &scaled);
+    q.range.range_check(ctx, rem, 64);
+    let gap = q.gate.sub(ctx, rem_limit, rem);
+    q.range.range_check(ctx, gap, 64);
+    q.bound(ctx, quot)
+}
