@@ -11,12 +11,14 @@
 //!   `fp_div_prescale`).
 //! * [`dot`] accumulates the raw products and rescales once (Zinnia
 //!   `fp_product_sum_rescale`, halo2-graph `inner_product`).
-//! * [`Q32::sqrt`] is `floor(sqrt(a * 2^32))`, the integer square root.
-//! * [`Q32::sin`] and [`Q32::cos`] use Zinnia's halo2-base definition: reduce
-//!   `|x|` modulo pi, evaluate the degree-14 Remez polynomial on `[0, pi)`
-//!   with Horner's rule, and fix the sign.
-//! * [`Q32::asin`] is `atan2(x, sqrt(1 - x^2))` with the degree-15 atan
-//!   polynomial on `[-1, 1]` (Zinnia `ATAN_COEFS`).
+//! * [`Q32::sqrt`] is `floor(sqrt(a * 2^32))`, the exact integer square root
+//!   (Zinnia `fp_sqrt`).
+//! * [`Q32::sin`], [`Q32::cos`] and [`Q32::asin`] are Zinnia's fixed-point
+//!   algorithms (`fp_sin`, `fp_cos`, `fp_arcsin`, which the halo2-base circuit
+//!   constrains): range reduction to `[0, pi/4]` and Taylor polynomials in
+//!   `s^2` for sin/cos, `2 * atan(x / (1 + sqrt(1 - x^2)))` with an odd atan
+//!   polynomial for arcsin; Horner's rule rescales every product. Error
+//!   against libm: about 1e-9 for sin/cos on `[-20, 20]`, 6e-9 for arcsin.
 //!
 //! The crate is `no_std` and never touches floating point unless the `std`
 //! feature is enabled; that feature only adds the host-side encoding and
@@ -48,6 +50,8 @@ impl Q32 {
     pub const PI: Q32 = Q32(13_493_037_705);
     /// `round(pi / 2 * 2^32)`.
     pub const FRAC_PI_2: Q32 = Q32(6_746_518_852);
+    /// `round(pi / 4 * 2^32)`.
+    pub const FRAC_PI_4: Q32 = Q32(3_373_259_426);
     /// `round(pi / 180 * 2^32)`, the factor of `np.deg2rad`.
     pub const DEG_TO_RAD: Q32 = Q32(74_961_321);
     /// `round(180 / pi * 2^32)`, the factor of `np.degrees`.
@@ -93,97 +97,95 @@ impl Q32 {
         Q32(root as i64)
     }
 
-    /// `np.sin` (Zinnia halo2-base `sin_f`).
+    /// `np.sin` (Zinnia `fp_sin`): reduce `|x|` modulo `2*pi`, fold onto
+    /// `[0, pi)` (`sin(r) = -sin(r - pi)`), mirror onto `[0, pi/2]`
+    /// (`sin(r) = sin(pi - r)`), and above `pi/4` use `cos(pi/2 - r)`, so the
+    /// Taylor polynomials run on `s` in `[0, pi/4]`, in `u = s^2`.
     pub fn sin(self) -> Q32 {
         let magnitude = self.0.abs();
-        let half_turns = magnitude / Self::PI.0;
-        let reduced = Q32(magnitude % Self::PI.0);
-        let value = horner(reduced, SIN_COEFS_HIGH_FIRST.iter().copied());
-        if self.is_negative() != (half_turns % 2 == 1) {
+        let r = magnitude % (2 * Self::PI.0);
+        let (r, folded) = if r >= Self::PI.0 { (r - Self::PI.0, true) } else { (r, false) };
+        let r = if r > Self::FRAC_PI_2.0 { Self::PI.0 - r } else { r };
+        let value = if r > Self::FRAC_PI_4.0 {
+            let s = Q32(Self::FRAC_PI_2.0 - r);
+            horner(s * s, &COS_TAYLOR)
+        } else {
+            let s = Q32(r);
+            s * horner(s * s, &SIN_OVER_X_TAYLOR)
+        };
+        if self.is_negative() != folded {
             -value
         } else {
             value
         }
     }
 
-    /// `np.cos(x) = sin(x + pi/2)` (Zinnia halo2-base `cos_f`).
+    /// `np.cos(x) = sin(x + pi/2)` (Zinnia `fp_cos`).
     pub fn cos(self) -> Q32 {
         (self + Self::FRAC_PI_2).sin()
     }
 
-    /// `np.arcsin` for `x` in `[-1, 1]`: `atan2(x, sqrt(1 - x^2))`.
+    /// `np.arcsin` for `x` in `[-1, 1]` (Zinnia `fp_arcsin`):
+    /// `2 * atan(x / (1 + sqrt(1 - x^2)))`. The root is the exact integer root
+    /// of `2^64 - x^2` in raw units, and `atan(t) = t * P(t^2)` with `t` in
+    /// `[-1, 1]`.
     pub fn asin(self) -> Q32 {
         assert!(-Self::ONE <= self && self <= Self::ONE, "arcsin argument outside [-1, 1]");
-        let cosine = (Self::ONE - self * self).sqrt();
-        atan2(self, cosine)
-    }
-}
-
-/// `np.arctan2(y, x)`: reduce to a ratio in `[0, 1]`, evaluate the atan
-/// polynomial, and move the angle to the right octant and quadrant.
-pub fn atan2(y: Q32, x: Q32) -> Q32 {
-    let (ay, ax) = (y.abs(), x.abs());
-    if ay == Q32::ZERO && ax == Q32::ZERO {
-        return Q32::ZERO;
-    }
-    let steep = ay > ax;
-    let ratio = if steep { ax / ay } else { ay / ax };
-    let base = horner(ratio, ATAN_COEFS_LOW_FIRST.iter().rev().copied());
-    let first_quadrant = if steep { Q32::FRAC_PI_2 - base } else { base };
-    let upper_half = if x.is_negative() { Q32::PI - first_quadrant } else { first_quadrant };
-    if y.is_negative() {
-        -upper_half
-    } else {
-        upper_half
+        let one = Self::ONE.0 as i128;
+        let x = self.0 as i128;
+        let root = ((one * one - x * x) as u128).isqrt() as i64;
+        let t = self / Q32(Self::ONE.0 + root);
+        let half = t * horner(t * t, &ATAN_OVER_X);
+        half + half
     }
 }
 
 /// Horner evaluation with the coefficients given from the highest degree
 /// down; every step rescales the product (Zinnia `horner_eval`).
-fn horner(x: Q32, mut coefs_high_first: impl Iterator<Item = Q32>) -> Q32 {
-    let first = coefs_high_first.next().unwrap_or(Q32::ZERO);
-    coefs_high_first.fold(first, |acc, c| acc * x + c)
+fn horner(x: Q32, coefs_high_first: &[Q32]) -> Q32 {
+    let (&first, rest) = coefs_high_first.split_first().expect("a polynomial has coefficients");
+    rest.iter().fold(first, |acc, &c| acc * x + c)
 }
 
-/// `round(c * 2^32)` of Zinnia's `SIN_COEFS` (sin on `[0, pi)`, degree 14),
-/// highest degree first.
-const SIN_COEFS_HIGH_FIRST: [Q32; 15] = [
-    Q32(0),
+/// `round(c * 2^32)` of `(-1)^k / (2k+1)!` for k = 6 down to 0: Taylor
+/// coefficients of `sin(s) / s` in `u = s^2` (Zinnia `sin_taylor_q`).
+const SIN_OVER_X_TAYLOR: [Q32; 7] = [
     Q32(1),
-    Q32(-2),
-    Q32(-102),
-    Q32(-13),
-    Q32(11_858),
-    Q32(-28),
-    Q32(-852_151),
-    Q32(-16),
-    Q32(35_791_402),
-    Q32(-2),
-    Q32(-715_827_882),
-    Q32(0),
+    Q32(-108),
+    Q32(11_836),
+    Q32(-852_176),
+    Q32(35_791_394),
+    Q32(-715_827_883),
     Q32(4_294_967_296),
-    Q32(0),
 ];
 
-/// `round(c * 2^32)` of Zinnia's `ATAN_COEFS` (atan on `[-1, 1]`, degree
-/// 15), constant term first.
-const ATAN_COEFS_LOW_FIRST: [Q32; 16] = [
+/// `round(c * 2^32)` of `(-1)^k / (2k)!` for k = 7 down to 0: Taylor
+/// coefficients of `cos(s)` in `u = s^2` (Zinnia `cos_taylor_q`).
+const COS_TAYLOR: [Q32; 8] = [
     Q32(0),
-    Q32(4_294_964_071),
-    Q32(0),
-    Q32(-1_431_492_759),
-    Q32(0),
-    Q32(856_548_815),
-    Q32(0),
-    Q32(-596_658_626),
-    Q32(0),
-    Q32(412_388_002),
-    Q32(0),
-    Q32(-237_862_581),
-    Q32(0),
-    Q32(92_381_544),
-    Q32(0),
-    Q32(-17_009_175),
+    Q32(9),
+    Q32(-1_184),
+    Q32(106_522),
+    Q32(-5_965_232),
+    Q32(178_956_971),
+    Q32(-2_147_483_648),
+    Q32(4_294_967_296),
+];
+
+/// `round(c * 2^32)` of Zinnia's `ATAN_ODD_U_COEFS` (`atan(t) / t` as a
+/// degree-9 polynomial in `u = t^2`, a least-squares fit on `[-1, 1]`),
+/// highest degree first.
+const ATAN_OVER_X: [Q32; 10] = [
+    Q32(-7_489_138),
+    Q32(45_873_335),
+    Q32(-131_930_687),
+    Q32(246_804_093),
+    Q32(-359_577_404),
+    Q32(469_877_966),
+    Q32(-612_529_925),
+    Q32(858_917_466),
+    Q32(-1_431_653_573),
+    Q32(4_294_967_285),
 ];
 
 /// Fused inner product `floor(sum(a_i * b_i) / 2^32)`: the raw products are
@@ -345,16 +347,16 @@ mod tests {
 
     #[test]
     fn transcendentals_match_libm() {
-        // Zinnia's sin quantizes the Remez coefficients to Q32, which costs
-        // accuracy in the high-degree terms: the error reaches 1.4e-4 near pi.
-        for i in -40..=40 {
-            let x = i as f64 * 0.37;
-            assert!(close(Q32::from_f64(x).sin(), x.sin(), 2e-4), "sin {x}");
-            assert!(close(Q32::from_f64(x).cos(), x.cos(), 2e-4), "cos {x}");
+        // Against libm on the encoded argument, on the grids Zinnia's kernel
+        // documents (max error 1.1e-9 for sin/cos, 5.9e-9 for arcsin).
+        for i in -4000..=4000 {
+            let q = Q32::from_f64(i as f64 / 200.0);
+            assert!(close(q.sin(), q.to_f64().sin(), 2e-9), "sin {q:?}");
+            assert!(close(q.cos(), q.to_f64().cos(), 2e-9), "cos {q:?}");
         }
-        for i in -20..=20 {
-            let x = i as f64 / 20.0;
-            assert!(close(Q32::from_f64(x).asin(), x.asin(), 1e-6), "asin {x}");
+        for i in -4000..=4000 {
+            let q = Q32::from_f64(i as f64 / 4000.0);
+            assert!(close(q.asin(), q.to_f64().asin(), 1e-8), "asin {q:?}");
         }
         for v in [0.0, 1e-9, 0.25, 2.0, 10.5, 12345.678] {
             // Exact up to the final floor: compare with the root of the encoded input.
