@@ -589,6 +589,27 @@ fn compare_exchange_shares_the_difference() {
     assert!(shared_cost + 8 <= separate_cost, "shared {shared_cost}, separate {separate_cost}");
 }
 
+/// A select between bits is a bit, and a two-valued cell's truth value is
+/// its bit: neither needs an `is_zero` conversion when used as a condition.
+#[test]
+fn selects_of_bits_are_conditions_without_conversion() {
+    let nested: Box<Op> = Box::new(|s, c| {
+        let below = s.lt_i(&c[0], &c[1])?;
+        let (zero, one, seven) = (s.constant_int(0)?, s.constant_int(1)?, s.constant_int(7)?);
+        let flipped = s.select(&below, &zero, &one)?; // not(below), as a select
+        let either = s.select(&flipped, &below, &one)?; // a select between bits
+        let scaled = s.select(&below, &seven, &zero)?; // two-valued {0, 7}
+        Ok(vec![s.select(&flipped, &c[0], &c[1])?, s.select(&either, &c[1], &c[0])?, s.logical_not(&scaled)?])
+    });
+    for (a, b) in [(1i64, 2i64), (2, 1), (3, 3)] {
+        let below = a < b;
+        let either = if !below { below } else { true };
+        let expected = [int(if !below { a } else { b }), int(if either { b } else { a }), int(!below as i64)];
+        assert_sound(&format!("nested({a}, {b})"), &*nested, &[int(a), int(b)], &expected, &[]);
+        assert_eq!(synthesize(&*nested, &[int(a), int(b)], &[]).hints, 1, "only the comparison bit is a hint");
+    }
+}
+
 // ── Bitwise operations (two's complement, as NumPy int64) ──────────────
 
 const BIT_PAIRS: [(i64, i64); 7] =

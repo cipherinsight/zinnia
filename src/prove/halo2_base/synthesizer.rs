@@ -335,6 +335,19 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         if self.is_bit(a) {
             return *a;
         }
+        // `bit ? v1 : v0` is non-zero exactly when the bit selects a
+        // non-zero value (the two values differ).
+        if let Some(tv) = self.two_valued_of(a) {
+            match (tv.if_zero != 0, tv.if_one != 0) {
+                (false, true) => return tv.bit,
+                (true, false) => {
+                    let out = self.gate_cell(Fp::one() - tv.bit.value, |gate, ctx| gate.not(ctx, tv.bit.assigned));
+                    self.mark_bit(&out);
+                    return out;
+                }
+                _ => {}
+            }
+        }
         let iz = self.is_zero_bit(a);
         let out = self.gate_cell(Fp::one() - iz.value, |gate, ctx| {
             gate.not(ctx, iz.assigned)
@@ -835,8 +848,12 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
             self.gate_cell(value, |gate, ctx| gate.mul_add(ctx, cond.assigned, diff.assigned, if_false.assigned))
         };
         // The select gate pins out to one of the branches (cond is a bit), so
-        // the hull of the branches' proven ranges holds for the output.
+        // the hull of the branches' proven ranges holds for the output, and
+        // a select between bits is a bit.
         self.propagate_range(&out, if_true, if_false, |t, f| Some(t.hull(f)));
+        if self.is_bit(if_true) && self.is_bit(if_false) {
+            self.mark_bit(&out);
+        }
         let constant = |s: &Self, x: &Halo2BaseCell| s.is_const_cell(x).then(|| kernel::fp_to_i128(x.value)).flatten();
         if let (Some(t), Some(f)) = (constant(self, if_true), constant(self, if_false)) {
             self.set_two_valued(&out, TwoValued { bit: *cond, if_zero: f, if_one: t });
