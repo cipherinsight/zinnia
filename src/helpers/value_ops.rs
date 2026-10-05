@@ -537,19 +537,6 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
         return apply_membership_op(b, op, lhs, rhs);
     }
 
-    let has_array_like_operand = matches!(
-        lhs,
-        Value::List(_) | Value::Tuple(_) | Value::StaticArray { .. }
-    ) || matches!(
-        rhs,
-        Value::List(_) | Value::Tuple(_) | Value::StaticArray { .. }
-    );
-    let op = match op {
-        "bit_and" if has_array_like_operand => "and",
-        "bit_or" if has_array_like_operand => "or",
-        other => other,
-    };
-
     // ── StaticArray native dispatch (P4a) ────────────────────────────
     // For two StaticArrays (or one StaticArray + numeric scalar), apply
     // the elementwise op on the segment-backed payload. Falls back to
@@ -943,7 +930,16 @@ pub fn apply_scalar_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Va
                 op
             );
         }
+        // NumPy: `&`, `|`, `^` on two booleans are the logical
+        // connectives (and stay boolean, e.g. for mask indexing); on
+        // integers they are bitwise. (Array operands used to be mapped
+        // to the logical connectives wholesale, so `a & 4` on an integer
+        // array computed `a != 0 and 4 != 0`.)
+        let both_boolean = matches!(lhs, Value::Boolean(_)) && matches!(rhs, Value::Boolean(_));
         return match op {
+            "bit_and" if both_boolean => b.ir_logical_and(lhs, rhs),
+            "bit_or" if both_boolean => b.ir_logical_or(lhs, rhs),
+            "bit_xor" if both_boolean => b.ir_not_equal_i(lhs, rhs),
             "bit_and" => b.ir_bit_and_i(lhs, rhs),
             "bit_or" => b.ir_bit_or_i(lhs, rhs),
             "bit_xor" => b.ir_bit_xor_i(lhs, rhs),

@@ -78,6 +78,13 @@ pub fn dyn_subscript(
         return cur;
     }
 
+    // A tuple index addresses one axis per entry (`a[t]` is
+    // `a[t[0], t[1], ...]`); only a list is a fancy index.
+    if let [SliceIndex::Single(Value::Tuple(tuple))] = indices {
+        let expanded: Vec<SliceIndex> =
+            tuple.values.iter().cloned().map(SliceIndex::Single).collect();
+        return dyn_subscript(b, data, &expanded);
+    }
     let rank = data.envelope.rank();
     if indices.len() > rank {
         panic!(

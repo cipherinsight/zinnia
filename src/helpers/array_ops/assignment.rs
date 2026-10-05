@@ -14,6 +14,13 @@ pub fn dyn_setitem(
     indices: &[SliceIndex],
     value: &Value,
 ) -> Value {
+    // A tuple index addresses one axis per entry (`a[t] = v` is
+    // `a[t[0], t[1], ...] = v`); only a list is a fancy index.
+    if let [SliceIndex::Single(Value::Tuple(tuple))] = indices {
+        let expanded: Vec<SliceIndex> =
+            tuple.values.iter().cloned().map(SliceIndex::Single).collect();
+        return dyn_setitem(b, data, &expanded, value);
+    }
     // Fancy-index scatter: any axis indexed by an integer array (StaticArray /
     // List / Tuple) means `for k in 0..L: dst[idx_axes[k]] = rhs[k] | rhs`.
     // Without this branch, `compute_flat_addr` would try to multiply an array

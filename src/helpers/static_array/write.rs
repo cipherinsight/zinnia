@@ -294,18 +294,17 @@ pub fn static_array_setitem(
     {
         return val.clone();
     }
-    // `a[np.nonzero(m)] = v` (also spelt `a[np.where(m)] = v`) assigns
-    // the positions where `m` is nonzero, in row-major order: exactly
-    // NumPy's `a[m] = v`.
-    if let [SliceIndex::Single(Value::Tuple(tuple))] = indices {
-        if let Some(mask) = b.nonzero_index_masks.get(&tuple.value_id).cloned() {
-            if matches!(&mask, Value::StaticArray { shape: m, .. } if *m == shape) {
-                if let Some(out) =
-                    super::mask::try_apply_boolean_mask_write(b, val, &mask, value)
-                {
-                    return out;
-                }
-            }
+    // A tuple index: `a[np.nonzero(m)] = v` (also `np.where(m)`) is
+    // NumPy's `a[m] = v`; any other tuple `t` addresses one entry per
+    // axis, `a[t[0], t[1], ...] = v`.
+    match super::read::tuple_index(b, indices, &shape) {
+        super::read::TupleIndex::NotATuple => {}
+        super::read::TupleIndex::Mask(mask) => {
+            return super::mask::try_apply_boolean_mask_write(b, val, &mask, value)
+                .expect("nonzero mask has the array's shape")
+        }
+        super::read::TupleIndex::Axes(expanded) => {
+            return static_array_setitem(b, val, &expanded, value)
         }
     }
 

@@ -26,13 +26,21 @@ def _statement_id(entry: str) -> int:
 
 def run_mock(program, *args):
     """Prove on the mock backend. Returns ``(satisfied, outputs)`` where
-    ``outputs`` are the exposed publics in exposure order (floats decoded)."""
+    ``outputs`` is the full output sequence in return order: the exposed
+    publics in exposure order (floats decoded), with the constants the
+    compiler elided from the public instance put back at their slots."""
     proof = program.prove(*args, backend="mock")
-    outputs = []
+    exposed = []
     for entry in sorted(proof.public_values, key=_statement_id):
         label, _, raw = entry.partition("=")
         value = int(raw)
-        outputs.append(value / Q32 if label.startswith("public_f_") else value)
+        exposed.append(value / Q32 if label.startswith("public_f_") else value)
+    elided = program.get_elided_publics()
+    slots = [None] * (len(exposed) + len(elided))
+    for e in elided:
+        slots[e["slot"]] = e["Int"] if "Int" in e else e["Float"]
+    rest = iter(exposed)
+    outputs = [v if v is not None else next(rest) for v in slots]
     return proof.proof_bytes_hex == "mock_satisfied", outputs
 
 

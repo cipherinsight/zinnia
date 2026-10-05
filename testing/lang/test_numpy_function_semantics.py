@@ -13,7 +13,7 @@ Every test compares the circuit's outputs with NumPy position by position.
 import numpy as np
 import pytest
 
-from testing.lang.mock_outputs import assert_matches_numpy, compile_kernel, run_mock
+from testing.lang.mock_outputs import assert_matches_numpy, compile_kernel, numpy_kernel, run_mock
 
 
 # ── true division ────────────────────────────────────────────────────────
@@ -135,3 +135,76 @@ def test_folded_integer_remainder_matches_runtime(expr, args):
 def test_folded_float_remainder_has_divisor_sign():
     folded = compile_kernel("def kernel():\n    return 7.5 % -2.0\n")
     assert [e["Float"] for e in folded.get_elided_publics()] == [7.5 % -2.0]
+
+
+# ── bitwise operators on integer arrays ──────────────────────────────────
+
+@pytest.mark.parametrize("source, args", [
+    # Cases 0425/0426: binary digits via `&` with powers of two. `&` on
+    # integer arrays used to be the logical and.
+    ('def kernel(a: Integer[Array, "4"]):\n'
+     '    return ((a[:, None] & (1 << np.arange(5))[::-1]) > 0).astype(int)\n',
+     (np.array([3, 22, -7, 9]),)),
+    ('def kernel(a: Integer[Array, "4"], b: Integer[Array, "4"]):\n    return a | b\n',
+     (np.array([1, 4, 6, 0]), np.array([2, 4, 3, 0]))),
+    ('def kernel(a: Integer[Array, "4"]):\n    return a ^ 5\n', (np.array([1, 4, 6, 0]),)),
+    # Booleans keep the logical meaning (and stay usable as a mask).
+    ('def kernel(a: Integer[Array, "4"]):\n    return a[(a > 1) & (a < 6)]\n',
+     (np.array([0, 2, 7, 5]),)),
+])
+def test_bitwise_operators_match_numpy(source, args):
+    expected = np.asarray(numpy_kernel(source)(*[np.copy(a) for a in args])).ravel()
+    satisfied, outputs = run_mock(compile_kernel(source), *args)
+    assert satisfied
+    if len(outputs) != expected.size:  # 1-D dynamic: length, dim, padded payload
+        assert outputs[0] == expected.size
+        outputs = outputs[2:2 + expected.size]
+    assert outputs == list(expected)
+
+
+# ── tuple indices address one axis per entry ─────────────────────────────
+
+M23 = np.array([[1.0, 5.0, 2.0], [7.0, 3.0, 0.0]])
+
+
+@pytest.mark.parametrize("source, extra", [
+    ('def kernel(a: Float[Array, "2 3"]):\n    idx = (1, 0)\n    return a[idx]\n', ()),
+    ('def kernel(a: Float[Array, "2 3"], i: Integer, j: Integer):\n    idx = (i, j)\n    return a[idx]\n',
+     (1, 2)),
+    # Case 0314: assignment through the tuple from np.unravel_index used to
+    # be read as fancy rows and overwrote whole rows.
+    ('def kernel(a: Float[Array, "2 3"]):\n'
+     '    idx = np.unravel_index(a.argmax(), a.shape)\n'
+     '    a[idx] = a.min()\n'
+     '    return np.unravel_index(a.argmax(), a.shape)\n', ()),
+    ('def kernel(a: Float[Array, "2 3"], i: Integer, j: Integer):\n'
+     '    a[(i, j)] = -1.0\n    return a\n', (0, 1)),
+])
+def test_tuple_index_matches_numpy(source, extra):
+    assert_matches_numpy(source, M23, *extra)
+
+
+def test_list_index_is_still_fancy():
+    assert_matches_numpy('def kernel(a: Float[Array, "2 3"]):\n    return a[[1, 0]]\n', M23)
+
+
+# ── einsum relabelings are views ─────────────────────────────────────────
+
+def test_einsum_diagonal_is_a_writeable_view():
+    # Case 0478: the saved diagonal is written back through the einsum
+    # result; with a copy every output was zero.
+    assert_matches_numpy(
+        'def kernel(a: Integer[Array, "3 3"]):\n'
+        "    result = np.einsum('ii->i', a)\n"
+        '    save = result.copy()\n'
+        '    a[...] = 0\n'
+        '    result[...] = save\n'
+        '    return a\n',
+        np.arange(9).reshape(3, 3))
+
+
+@pytest.mark.parametrize("spec", ["ij->ji", "ii->i", "ij->ij", "ij->i"])
+def test_einsum_single_operand_matches_numpy(spec):
+    assert_matches_numpy(
+        f"def kernel(a: Integer[Array, \"3 3\"]):\n    return np.einsum('{spec}', a)\n",
+        np.arange(9).reshape(3, 3) - 4)

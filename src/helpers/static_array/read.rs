@@ -675,6 +675,15 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
         return val.clone();
     }
 
+    match tuple_index(b, indices, &shape) {
+        TupleIndex::NotATuple => {}
+        TupleIndex::Mask(mask) => {
+            return super::mask::try_apply_boolean_mask_read(b, val, &mask)
+                .expect("nonzero mask has the array's shape")
+        }
+        TupleIndex::Axes(expanded) => return static_array_subscript(b, val, &expanded),
+    }
+
     // Expand a single Ellipsis (`...`) into the right number of full-range
     // slices, based on the source rank.
     if indices.iter().any(|i| matches!(i, SliceIndex::Ellipsis)) {
@@ -1519,6 +1528,37 @@ fn slice_axis(
         crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
     }
     out
+}
+
+/// How a subscript whose single index is a tuple value is read.
+pub(crate) enum TupleIndex {
+    /// The index is not a single tuple value.
+    NotATuple,
+    /// The tuple came from `np.nonzero(m)` / `np.where(m)` on an array of
+    /// this shape: indexing with it is indexing with the mask `m`.
+    Mask(Value),
+    /// Any other tuple `t`: NumPy reads `a[t]` as `a[t[0], t[1], ...]`, one
+    /// entry per axis (a list, by contrast, is a fancy index on axis 0).
+    Axes(Vec<SliceIndex>),
+}
+
+/// Classify a subscript `a[t]` whose index `t` is a tuple value (e.g. the
+/// result of `np.unravel_index`). Both the read and the write path use it;
+/// it used to be read as a fancy index on axis 0, so `a[(1, 0)]` gave rows
+/// 1 and 0 and `a[np.unravel_index(k, a.shape)] = v` wrote whole rows.
+pub(crate) fn tuple_index(b: &IRBuilder, indices: &[SliceIndex], shape: &[usize]) -> TupleIndex {
+    let [SliceIndex::Single(Value::Tuple(tuple))] = indices else {
+        return TupleIndex::NotATuple;
+    };
+    if let Some(mask) = b.nonzero_index_masks.get(&tuple.value_id) {
+        if matches!(mask, Value::StaticArray { shape: m, .. } if m.as_slice() == shape) {
+            return TupleIndex::Mask(mask.clone());
+        }
+    }
+    if tuple.values.iter().any(|v| matches!(v, Value::DynamicNDArray(_))) {
+        crate::helpers::composite::reject_runtime_shaped_operand();
+    }
+    TupleIndex::Axes(tuple.values.iter().cloned().map(SliceIndex::Single).collect())
 }
 
 /// Hand out a dynamic-bounds slice as a `DynamicNDArray`.

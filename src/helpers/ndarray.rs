@@ -251,8 +251,11 @@ pub fn try_advanced_index_static(
     data: &CompositeData,
     idx: &Value,
 ) -> Result<Option<Value>, String> {
+    // Only a list is an advanced index. A tuple `t` indexes one axis per
+    // entry (`a[t]` is `a[t[0], t[1], ...]`); the caller's subscript
+    // handles it (see `static_array::read::tuple_index`).
     match idx {
-        Value::List(_) | Value::Tuple(_) => {}
+        Value::List(_) => {}
         _ => return Ok(None),
     }
     if all_const_bool(idx) {
