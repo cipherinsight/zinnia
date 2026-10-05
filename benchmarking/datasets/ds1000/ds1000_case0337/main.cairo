@@ -1,24 +1,23 @@
-// DS-1000 case 337 — Cairo baseline.
-// Kernel: `np.diag(np.fliplr(a))` on Float[8, 10] — pure static-index gather of
-// the anti-diagonal a[i][9 - i].
+//! DS-1000 case 0337: the diagonal of `a` flipped left to right,
+//! `np.diag(np.fliplr(a))`, for a wide matrix.
+//!
+//!     def kernel(a: Float[Array, "8 10"]):
+//!         result = np.diag(np.fliplr(a))
+//!         return result
+// output: [q32]
+use crate::q32::Q32;
 
+const ROWS: u32 = 8;
+const COLS: u32 = 10;
+
+/// `np.fliplr` reverses every row, so entry `i` of its diagonal is
+/// `a[i][COLS - 1 - i]`; the diagonal has `min(ROWS, COLS) = ROWS` entries.
 #[executable]
-pub fn main() {
-    const Q: u128 = 4_294_967_296;
-    let mut a: Array<u128> = ArrayTrait::new();
-    for i in 0_u32..8 {
-        for j in 0_u32..10 {
-            let v_int: u128 = ((i + 1) * 10 + (j + 1)).into();
-            a.append(v_int * Q);
-        };
-    };
-    let mut claimed: Array<u128> = ArrayTrait::new();
-    for i in 0_u32..8 {
-        claimed.append(*a.at(i * 10 + (9 - i)));
-    };
-
-    for i in 0_u32..8 {
-        let v = *a.at(i * 10 + (9 - i));
-        assert!(v == *claimed.at(i));
-    };
+fn main(a: Array<Q32>) -> Array<Q32> {
+    assert!(a.len() == ROWS * COLS, "a has the wrong length");
+    let mut result = array![];
+    for i in 0..ROWS {
+        result.append(*a.at(i * COLS + (COLS - 1 - i)));
+    }
+    result
 }

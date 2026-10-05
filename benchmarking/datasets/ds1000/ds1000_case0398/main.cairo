@@ -1,52 +1,27 @@
-// DS-1000 case 398 — Cairo baseline.
-// Kernel (effective):
-//   B = np.empty(N); B[0] = a*A[0]; B[k] = a*A[k] + b*B[k-1] for k>=1.
-// Sample: N=8, a=b=0.5, A=[4,2,1,3,2,0,1,4] → B=[2, 2, 1.5, 2.25, 2.125,
-// 1.0625, 1.03125, 2.515625]. Quantisation ×2^32; qmul = (a*b)/Q.
+//! DS-1000 case 0398: the first-order recurrence `B[k] = a*A[k] + b*B[k-1]`.
+//!
+//!     def kernel(A: Float[Array, "30"], a: Integer, b: Integer):
+//!         B = np.empty(len(A))
+//!         for k in range(0, len(B)):
+//!             if k == 0:
+//!                 B[k] = a*A[k]
+//!             else:
+//!                 B[k] = a*A[k] + b*B[k-1]
+//!         return B
+// output: [q32]
+use crate::q32::{Q32, Q32Trait};
+
+const N: u32 = 30;
 
 #[executable]
-pub fn main() {
-    const Q: u128 = 4_294_967_296;
-    let n: u32 = 8;
-    let a_q: u128 = Q / 2;
-    let b_q: u128 = Q / 2;
-
-    let mut a_arr: Array<u128> = ArrayTrait::new();
-    a_arr.append(4 * Q);
-    a_arr.append(2 * Q);
-    a_arr.append(1 * Q);
-    a_arr.append(3 * Q);
-    a_arr.append(2 * Q);
-    a_arr.append(0 * Q);
-    a_arr.append(1 * Q);
-    a_arr.append(4 * Q);
-
-    let mut expected: Array<u128> = ArrayTrait::new();
-    expected.append(2 * Q);                            // 2.0
-    expected.append(2 * Q);                            // 2.0
-    expected.append(1 * Q + Q / 2);                    // 1.5
-    expected.append(2 * Q + Q / 4);                    // 2.25
-    expected.append(2 * Q + Q / 8);                    // 2.125
-    expected.append(1 * Q + Q / 16);                   // 1.0625
-    expected.append(1 * Q + Q / 32);                   // 1.03125
-    expected.append(2 * Q + Q / 2 + Q / 64);           // 2.515625
-
-    let mut b_arr: Array<u128> = ArrayTrait::new();
-    let mut prev: u128 = 0;
-    for k in 0_u32..n {
-        let ak: u128 = *a_arr.at(k.try_into().unwrap());
-        let v: u128 = if k == 0 {
-            (a_q * ak) / Q
-        } else {
-            (a_q * ak) / Q + (b_q * prev) / Q
-        };
-        b_arr.append(v);
-        prev = v;
-    };
-
-    for k in 0_u32..n {
-        let got: u128 = *b_arr.at(k.try_into().unwrap());
-        let want: u128 = *expected.at(k.try_into().unwrap());
-        assert!(got == want);
-    };
+fn main(big_a: Array<Q32>, a: i64, b: i64) -> Array<Q32> {
+    assert!(big_a.len() == N, "A has the wrong length");
+    let mut big_b = array![];
+    let mut previous = big_a.at(0).mul_int(a);
+    big_b.append(previous);
+    for k in 1..N {
+        previous = big_a.at(k).mul_int(a) + previous.mul_int(b);
+        big_b.append(previous);
+    }
+    big_b
 }

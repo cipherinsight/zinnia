@@ -1,80 +1,68 @@
-// DS-1000 case 353 — rows of A not contained in B (via ravel_multi_index trick).
-// A: Integer[2,3], B: Integer[7,3]. Output: variable rows of length 3.
-// Integers; no fractional rescale.
+//! DS-1000 case 0353: the rows of `A` that do not occur in `B`. Each row is
+//! turned into one integer with `np.ravel_multi_index` over a grid just large
+//! enough for both arrays, and the integers are compared with `np.in1d`.
+//!
+//!     def kernel(A: Integer[Array, "2 3"], B: Integer[Array, "7 3"]):
+//!         dims = np.maximum(B.max(0),A.max(0))+1
+//!         output = A[~np.in1d(np.ravel_multi_index(A.T,dims),np.ravel_multi_index(B.T,dims))]
+//!         return output
+// output: [i64]
+use core::cmp::max;
+use crate::np::contains;
 
+const A_ROWS: u32 = 2;
+const B_ROWS: u32 = 7;
+const COLS: u32 = 3;
+
+/// The kept rows of `A`, flattened row-major (shape `(k, 3)`).
 #[executable]
-pub fn main() {
-    // A: 2x3 row-major. B: 7x3 row-major.
-    let a: Array<u128> = array![
-        1, 2, 3,
-        4, 5, 6,
-    ];
-    let b: Array<u128> = array![
-        0, 0, 0,
-        1, 1, 1,
-        1, 2, 3,
-        2, 2, 2,
-        3, 3, 3,
-        7, 8, 9,
-        9, 9, 9,
-    ];
-    // Expected output: 1 row [4, 5, 6].
-    let claim_n: u32 = 1;
-    let claimed: Array<u128> = array![4, 5, 6];
-
-    // dims = elementwise max(A.max(0), B.max(0)) + 1
-    let mut dims: Array<u128> = ArrayTrait::new();
-    for k in 0_u32..3 {
-        let mut m: u128 = *a.at(0 * 3 + k);
-        for i in 1_u32..2 {
-            let v: u128 = *a.at(i * 3 + k);
-            if v > m { m = v; }
-        };
-        for i in 0_u32..7 {
-            let v: u128 = *b.at(i * 3 + k);
-            if v > m { m = v; }
-        };
-        dims.append(m + 1);
-    };
-
-    let d1: u128 = *dims.at(1);
-    let d2: u128 = *dims.at(2);
-
-    let mut a_idx: Array<u128> = ArrayTrait::new();
-    for r in 0_u32..2 {
-        let v: u128 = ((*a.at(r * 3 + 0)) * d1 + *a.at(r * 3 + 1)) * d2 + *a.at(r * 3 + 2);
-        a_idx.append(v);
-    };
-    let mut b_idx: Array<u128> = ArrayTrait::new();
-    for r in 0_u32..7 {
-        let v: u128 = ((*b.at(r * 3 + 0)) * d1 + *b.at(r * 3 + 1)) * d2 + *b.at(r * 3 + 2);
-        b_idx.append(v);
-    };
-
-    // in1d(a_idx, b_idx); ~in_b filter.
-    let mut in_b: Array<bool> = ArrayTrait::new();
-    for r in 0_u32..2 {
-        let av: u128 = *a_idx.at(r);
-        let mut found = false;
-        for s in 0_u32..7 {
-            if av == *b_idx.at(s) { found = true; }
-        };
-        in_b.append(found);
-    };
-
-    let mut out_rows: u32 = 0;
-    let mut out: Array<u128> = ArrayTrait::new();
-    for r in 0_u32..2 {
-        if !*in_b.at(r) {
-            out.append(*a.at(r * 3 + 0));
-            out.append(*a.at(r * 3 + 1));
-            out.append(*a.at(r * 3 + 2));
-            out_rows = out_rows + 1;
+fn main(A: Array<i64>, B: Array<i64>) -> Array<i64> {
+    assert!(A.len() == A_ROWS * COLS && B.len() == B_ROWS * COLS, "inputs have the wrong shape");
+    let (a, b) = (A.span(), B.span());
+    let dims = grid_dims(a, b);
+    let mut b_keys = array![];
+    for r in 0..B_ROWS {
+        b_keys.append(ravel_multi_index(b.slice(r * COLS, COLS), dims));
+    }
+    let b_keys = b_keys.span();
+    let mut kept = array![];
+    for r in 0..A_ROWS {
+        let row = a.slice(r * COLS, COLS);
+        if !contains(b_keys, ravel_multi_index(row, dims)) {
+            kept.append_span(row);
         }
-    };
+    }
+    kept
+}
 
-    assert!(out_rows == claim_n);
-    for k in 0_u32..(claim_n * 3) {
-        assert!(*out.at(k) == *claimed.at(k));
-    };
+/// `np.maximum(B.max(0), A.max(0)) + 1`: one more than the largest entry of
+/// each column. Like NumPy, refuses a grid whose size overflows an `int64`
+/// (the `i64` product panics on overflow).
+fn grid_dims(a: Span<i64>, b: Span<i64>) -> Span<i64> {
+    let mut dims = array![];
+    let mut size: i64 = 1;
+    for c in 0..COLS {
+        let mut largest = *a.at(c);
+        for r in 1..A_ROWS {
+            largest = max(largest, *a.at(r * COLS + c));
+        }
+        for r in 0..B_ROWS {
+            largest = max(largest, *b.at(r * COLS + c));
+        }
+        size = size * (largest + 1);
+        dims.append(largest + 1);
+    }
+    dims.span()
+}
+
+/// `np.ravel_multi_index(row, dims)` in C order; like NumPy, fails on a
+/// coordinate outside `[0, dim)`.
+fn ravel_multi_index(row: Span<i64>, dims: Span<i64>) -> i64 {
+    let mut flat = 0;
+    for c in 0..COLS {
+        let (coord, dim) = (*row.at(c), *dims.at(c));
+        assert!(0 <= coord && coord < dim, "invalid entry in coordinates array");
+        flat = flat * dim + coord;
+    }
+    flat
 }

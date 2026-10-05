@@ -1,33 +1,31 @@
-// DS-1000 case 480 — Cairo baseline.
-// kernel.py: result = ((x==a) & (y==b)).argmax(); if x[result]!=a or y[result]!=b: result = -1.
-// Integers, no Q scaling.
+//! DS-1000 case 0480: the first index `i` with `(x[i], y[i]) == (a, b)`, or -1
+//! if there is none.
+//!
+//!     def kernel(x: Integer[Array, "8"], y: Integer[Array, "8"], a: Integer, b: Integer):
+//!         result = ((x == a) & (y == b)).argmax()
+//!         if x[result] != a or y[result] != b:
+//!             result = -1
+//!         return result
+//!
+//! `argmax` of the match mask is the first match, or 0 when nothing matches; in
+//! that case index 0 fails the check and the result is -1.
+// output: i64
+const N: u32 = 8;
 
 #[executable]
-pub fn main() {
-    let x: Array<i128> = array![10, 20, 30, 40, 50, 60, 70, 80];
-    let y: Array<i128> = array![1, 2, 3, 4, 5, 6, 7, 8];
-    let a: i128 = 50;
-    let b: i128 = 5;
-    let claimed: i128 = 4;
+fn main(x: Array<i64>, y: Array<i64>, a: i64, b: i64) -> i64 {
+    assert!(x.len() == N && y.len() == N, "inputs have the wrong length");
+    match first_match(x.span(), y.span(), a, b) {
+        Some(i) => i.into(),
+        None => -1,
+    }
+}
 
-    let mut mask: Array<u128> = ArrayTrait::new();
-    for k in 0_u32..8 {
-        let xa: bool = *x.at(k) == a;
-        let yb: bool = *y.at(k) == b;
-        mask.append(if xa && yb { 1 } else { 0 });
-    };
-
-    let mut best_val: u128 = *mask.at(0);
-    let mut best_idx: i128 = 0;
-    for k in 1_u32..8 {
-        let v = *mask.at(k);
-        if v > best_val {
-            best_val = v;
-            best_idx = k.into();
+fn first_match(x: Span<i64>, y: Span<i64>, a: i64, b: i64) -> Option<u32> {
+    for i in 0..N {
+        if *x.at(i) == a && *y.at(i) == b {
+            return Some(i);
         }
-    };
-
-    let best_u: u32 = best_idx.try_into().unwrap();
-    let result: i128 = if *x.at(best_u) != a || *y.at(best_u) != b { -1 } else { best_idx };
-    assert!(result == claimed);
+    }
+    None
 }

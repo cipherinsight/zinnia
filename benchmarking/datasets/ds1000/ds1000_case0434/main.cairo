@@ -1,43 +1,50 @@
-// DS-1000 case 434 — Cairo baseline.
-// Kernel: a[zero_rows, :] = 0; a[:, zero_cols] = 0 on Integer[4, 4]
-// with zero_rows: Integer[2], zero_cols: Integer[2].
-// Sample: a[i][j] = i*4+j+1; zero_rows = [0, 2]; zero_cols = [1, 3].
+//! DS-1000 case 0434: zero the listed rows and columns of a 4x4 matrix.
+//!
+//!     def kernel(a: Integer[Array, "4 4"], zero_rows: Integer[Array, "2"], zero_cols: Integer[Array, "2"]):
+//!         a[zero_rows, :] = 0
+//!         a[:, zero_cols] = 0
+//!         return a
+// output: [i64]
+use crate::np::np_index;
+
+const N: u32 = 4;
+const K: u32 = 2;
 
 #[executable]
-pub fn main() {
-    let mut a: Array<i128> = ArrayTrait::new();
-    for i in 0_i128..4 {
-        for j in 0_i128..4 {
-            a.append(i * 4 + j + 1);
-        };
-    };
-    let zero_rows: Array<i128> = array![0, 2];
-    let zero_cols: Array<i128> = array![1, 3];
+fn main(a: Array<i64>, zero_rows: Array<i64>, zero_cols: Array<i64>) -> Array<i64> {
+    assert!(a.len() == N * N, "a has the wrong length");
+    assert!(zero_rows.len() == K && zero_cols.len() == K, "index arrays have the wrong length");
+    let row_zeroed = selected(zero_rows.span());
+    let col_zeroed = selected(zero_cols.span());
+    let mut out = array![];
+    for i in 0..N {
+        for j in 0..N {
+            out.append(if *row_zeroed.at(i) || *col_zeroed.at(j) {
+                0
+            } else {
+                *a.at(i * N + j)
+            });
+        }
+    }
+    out
+}
 
-    // Build expected.
-    let mut expected: Array<i128> = ArrayTrait::new();
-    for i in 0_i128..4 {
-        for j in 0_i128..4 {
-            let rz: bool = i == *zero_rows.at(0) || i == *zero_rows.at(1);
-            let cz: bool = j == *zero_cols.at(0) || j == *zero_cols.at(1);
-            let idx: u32 = (i * 4 + j).try_into().unwrap();
-            let v: i128 = *a.at(idx.try_into().unwrap());
-            let out: i128 = if rz || cz { 0 } else { v };
-            expected.append(out);
-        };
-    };
-
-    for i in 0_u32..4 {
-        let i_i: i128 = i.into();
-        let rz: bool = i_i == *zero_rows.at(0) || i_i == *zero_rows.at(1);
-        for j in 0_u32..4 {
-            let j_i: i128 = j.into();
-            let cz: bool = j_i == *zero_cols.at(0) || j_i == *zero_cols.at(1);
-            let any: bool = rz || cz;
-            let idx: u32 = i * 4 + j;
-            let v: i128 = *a.at(idx.try_into().unwrap());
-            let out: i128 = if any { 0 } else { v };
-            assert!(out == *expected.at(idx.try_into().unwrap()));
-        };
-    };
+/// For each of the `N` positions of an axis, whether one of the
+/// (Python-style) `indices` selects it.
+fn selected(indices: Span<i64>) -> Span<bool> {
+    let mut wrapped = array![];
+    for i in indices {
+        wrapped.append(np_index(*i, N));
+    }
+    let mut hit = array![];
+    for p in 0..N {
+        let mut found = false;
+        for w in wrapped.span() {
+            if *w == p {
+                found = true;
+            }
+        }
+        hit.append(found);
+    }
+    hit.span()
 }

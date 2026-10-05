@@ -1,35 +1,21 @@
-// DS-1000 case 360 — np.delete(a, 2, axis=0) on Float[4, 4] -> Float[3, 4].
+//! DS-1000 case 0360: drop the third row, `np.delete(a, 2, axis=0)`.
+//!
+//!     def kernel(a: Float[Array, "4 4"]):
+//!         a = np.delete(a, 2, axis = 0)
+//!         return a
+// output: [q32]
+use crate::q32::Q32;
+
+const ROWS: u32 = 4;
+const COLS: u32 = 4;
+const DELETED: u32 = 2;
 
 #[executable]
-pub fn main() {
-    const Q: u128 = 4_294_967_296;
-
-    let mut data: Array<u128> = ArrayTrait::new();
-    for i in 0_u32..4 {
-        for j in 0_u32..4 {
-            let num: u128 = ((i + 1) * 10 + (j + 1)).into();
-            data.append((num * Q) / 10);
-        };
-    };
-    let kept: Array<u32> = array![0, 1, 3];
-    let mut claimed: Array<u128> = ArrayTrait::new();
-    for io in 0_u32..3 {
-        let i: u32 = *kept.at(io);
-        for j in 0_u32..4 {
-            let num: u128 = ((i + 1) * 10 + (j + 1)).into();
-            claimed.append((num * Q) / 10);
-        };
-    };
-
-    let mut result: Array<u128> = ArrayTrait::new();
-    for io in 0_u32..3 {
-        let i: u32 = *kept.at(io);
-        for j in 0_u32..4 {
-            result.append(*data.at(i * 4 + j));
-        };
-    };
-
-    for k in 0_u32..12 {
-        assert!(*result.at(k) == *claimed.at(k));
-    };
+fn main(a: Array<Q32>) -> Array<Q32> {
+    assert!(a.len() == ROWS * COLS, "a has the wrong length");
+    let a = a.span();
+    let mut result = array![];
+    result.append_span(a.slice(0, DELETED * COLS));
+    result.append_span(a.slice((DELETED + 1) * COLS, (ROWS - DELETED - 1) * COLS));
+    result
 }

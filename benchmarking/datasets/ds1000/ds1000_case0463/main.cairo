@@ -1,46 +1,25 @@
-// DS-1000 case 463 — Cairo baseline.
-// Kernel removes adjacent (pre-removal) duplicates and zeros from an Int[20,1] array.
-// Inputs are integers — no Q scaling needed. The compact output length is dynamic
-// so the claim is a padded buffer plus its actual length.
+//! DS-1000 case 0463: case 0462 on a column vector: drop the zeros and the
+//! repeats of the previous entry, as a `(k, 1)` column (the shape follows
+//! from the count).
+//!
+//!     def kernel(a: Integer[Array, "20 1"]):
+//!         selection = np.ones((len(a), 1), dtype = bool)
+//!         selection[1:] = a[1:] != a[:-1]
+//!         selection &= a != 0
+//!         result = a[selection].reshape(-1, 1)
+//!         return result
+// output: [i64]
+const N: u32 = 20;
 
 #[executable]
-pub fn main() {
-    let a: Array<i128> = array![
-        0, 0, 1, 1, 1, 2, 2, 0, 1, 3, 3, 3, 0, 0, 5, 5, 4, 4, 0, 7,
-    ];
-
-    let claimed_len: u32 = 7;
-    let claimed: Array<i128> = array![1, 2, 1, 3, 5, 4, 7];
-
-    // selection[0] = true; selection[k] = (a[k] != a[k-1]) for k>=1.
-    let mut selection: Array<bool> = ArrayTrait::new();
-    selection.append(true);
-    for k in 1_u32..20 {
-        let cur = *a.at(k);
-        let prev = *a.at(k - 1);
-        selection.append(cur != prev);
-    };
-
-    // selection &= (a != 0).
-    let mut selection2: Array<bool> = ArrayTrait::new();
-    for k in 0_u32..20 {
-        let s = *selection.at(k);
-        let v = *a.at(k);
-        selection2.append(s && v != 0);
-    };
-
-    // Gather.
-    let mut out: Array<i128> = ArrayTrait::new();
-    let mut out_len: u32 = 0;
-    for k in 0_u32..20 {
-        if *selection2.at(k) {
-            out.append(*a.at(k));
-            out_len += 1;
+fn main(a: Array<i64>) -> Array<i64> {
+    assert!(a.len() == N, "a has the wrong length");
+    let mut kept = array![];
+    for i in 0..N {
+        let v = *a.at(i);
+        if v != 0 && (i == 0 || v != *a.at(i - 1)) {
+            kept.append(v);
         }
-    };
-
-    assert!(out_len == claimed_len);
-    for k in 0_u32..7 {
-        assert!(*out.at(k) == *claimed.at(k));
-    };
+    }
+    kept
 }

@@ -1,45 +1,41 @@
-// DS-1000 case 450 — `a[:, second.reshape(-1,1), third]`.
-// a: Float[7,8,9], second, third: Integer[2]. Result: Float[7,2,2].
-// result[i][p][q] = a[i][second[p]][third[q]].
-// Quantisation ×2^32 (Q). a[i][j][k] encodes i*100 + j*10 + k.
+//! DS-1000 case 0450: `a[:, second.reshape(-1, 1), third]`. The two index
+//! arrays broadcast to shape `(2, 2)` and replace axes 1 and 2, so the result
+//! has shape `(7, 2, 2)`: `result[i][p][q] = a[i][second[p]][third[q]]`.
+//!
+//!     def kernel(a: Float[Array, "7 8 9"], second: Integer[Array, "2"], third: Integer[Array, "2"]):
+//!         result = a[:, np.array(second).reshape(-1,1), third]
+//!         return result
+// output: [q32]
+use crate::np::np_index;
+use crate::q32::Q32;
+
+const PLANES: u32 = 7;
+const ROWS: u32 = 8;
+const COLS: u32 = 9;
+const PICKS: u32 = 2;
 
 #[executable]
-pub fn main() {
-    const Q: u128 = 4_294_967_296;
-    let mut a: Array<u128> = ArrayTrait::new();
-    for i in 0_u32..7 {
-        for j in 0_u32..8 {
-            for k in 0_u32..9 {
-                let v: u128 = (i * 100 + j * 10 + k).into();
-                a.append(v * Q);
-            };
-        };
-    };
-    let second: Array<u32> = array![2_u32, 5_u32];
-    let third: Array<u32> = array![3_u32, 7_u32];
+fn main(a: Array<Q32>, second: Array<i64>, third: Array<i64>) -> Array<Q32> {
+    assert!(a.len() == PLANES * ROWS * COLS, "a has the wrong length");
+    assert!(second.len() == PICKS && third.len() == PICKS, "index arrays have the wrong length");
+    let rows = wrap_indices(second.span(), ROWS);
+    let cols = wrap_indices(third.span(), COLS);
+    let mut out = array![];
+    for plane in 0..PLANES {
+        for r in rows.span() {
+            for c in cols.span() {
+                out.append(*a.at((plane * ROWS + *r) * COLS + *c));
+            }
+        }
+    }
+    out
+}
 
-    let mut result: Array<u128> = ArrayTrait::new();
-    for i in 0_u32..7 {
-        for p in 0_u32..2 {
-            for q in 0_u32..2 {
-                let j: u32 = *second.at(p);
-                let k: u32 = *third.at(q);
-                let idx: u32 = i * 72 + j * 9 + k;
-                result.append(*a.at(idx));
-            };
-        };
-    };
-
-    // Claimed is the same map, computed directly.
-    for i in 0_u32..7 {
-        for p in 0_u32..2 {
-            for q in 0_u32..2 {
-                let j: u32 = *second.at(p);
-                let k: u32 = *third.at(q);
-                let expected: u128 = ((i * 100 + j * 10 + k).into()) * Q;
-                let off: u32 = (i * 2 + p) * 2 + q;
-                assert!(*result.at(off) == expected);
-            };
-        };
-    };
+/// Every index of `indices` checked and wrapped into an axis of length `len`.
+fn wrap_indices(indices: Span<i64>, len: u32) -> Array<u32> {
+    let mut wrapped = array![];
+    for i in indices {
+        wrapped.append(np_index(*i, len));
+    }
+    wrapped
 }
