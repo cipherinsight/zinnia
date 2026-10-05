@@ -886,7 +886,12 @@ fn while_guard_throttle_skips_repeated_unresolved_resolver_queries() {
         .builder
         .resolver_telemetry()
         .expect("SMT-enabled generator should have telemetry");
-    gen.visit_circuit(&circuit);
+    // `while x > 0` never changes `x`: the trip count has no bound, so the
+    // loop is rejected once the quota is used up (it is no longer truncated).
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        gen.visit_circuit(&circuit)
+    }));
+    assert!(outcome.is_err(), "an unbounded while loop must be rejected");
 
     assert!(
         telemetry
@@ -933,7 +938,6 @@ fn static_for_while_cap_fixture_with_iter_and_guard(
         guard_lhs,
         guard_rhs,
         "j",
-        false,
     )
 }
 
@@ -945,20 +949,9 @@ fn static_for_while_cap_fixture_full(
     guard_lhs: &str,
     guard_rhs: &str,
     decrement_target: &str,
-    decrement_as_augassign: bool,
 ) -> String {
     let iter_values = iter_values.join(",\n                            ");
-    let decrement_stmt = if decrement_as_augassign {
-        format!(
-            r#"{{
-                                    "__class__": "ASTAugAssignStatement",
-                                    "targets": [{{"__class__": "ASTNameAssignTarget", "name": "{decrement_target}"}}],
-                                    "op_type": "sub",
-                                    "value": {decrement_rhs}
-                                }}"#
-        )
-    } else {
-        format!(
+    let decrement_stmt = format!(
             r#"{{
                                     "__class__": "ASTAssignStatement",
                                     "targets": [{{"__class__": "ASTNameAssignTarget", "name": "{decrement_target}"}}],
@@ -969,8 +962,7 @@ fn static_for_while_cap_fixture_full(
                                         "rhs": {decrement_rhs}
                                     }}
                                 }}"#
-        )
-    };
+        );
     format!(
         r#"{{
             "__class__": "ASTCircuit",
@@ -1846,144 +1838,44 @@ fn same_index_different_static_array_identity_does_not_reuse_guard_rhs_read() {
 }
 
 #[test]
-fn unrelated_origin_keeps_existing_loop_limit_behavior() {
+#[should_panic(expected = "loop bound depends on a private value with no provable maximum")]
+/// Without a structural cap or provable bound, a private-guard `while` must be rejected, never truncated at loop_limit (it used to "fail open" to loop_limit iterations).
+fn unrelated_origin_without_bound_is_rejected() {
     let init = r#"{"__class__": "ASTLoad", "name": "x"}"#;
     let decrement = r#"{"__class__": "ASTConstantInteger", "value": 1}"#;
     let mut cfg = IRGenConfig::default();
     cfg.loop_limit = 32;
-    let graph =
+    let _graph =
         IRGenerator::generate_from_json(cfg, &static_for_while_cap_fixture(init, decrement))
             .unwrap();
-
-    assert!(
-        graph.len() > 700,
-        "unrelated-origin loop should fail open to loop_limit; got {} stmts",
-        graph.len()
-    );
 }
 
 #[test]
-fn non_unit_decrement_keeps_existing_loop_limit_behavior() {
+#[should_panic(expected = "loop bound depends on a private value with no provable maximum")]
+/// A non-unit decrement takes no structural cap; with no other bound the loop is rejected.
+fn non_unit_decrement_without_bound_is_rejected() {
     let init = r#"{"__class__": "ASTLoad", "name": "i"}"#;
     let decrement = r#"{"__class__": "ASTConstantInteger", "value": 2}"#;
     let mut cfg = IRGenConfig::default();
     cfg.loop_limit = 32;
-    let graph =
+    let _graph =
         IRGenerator::generate_from_json(cfg, &static_for_while_cap_fixture(init, decrement))
             .unwrap();
-
-    assert!(
-        graph.len() > 700,
-        "non-unit decrement loop should fail open to loop_limit; got {} stmts",
-        graph.len()
-    );
 }
 
 #[test]
-fn pre_decrement_rebind_keeps_existing_loop_limit_behavior() {
+#[should_panic(expected = "loop bound depends on a private value with no provable maximum")]
+/// A rebind before the decrement takes no structural cap; with no other bound the loop is rejected.
+fn pre_decrement_rebind_without_bound_is_rejected() {
     let mut cfg = IRGenConfig::default();
     cfg.loop_limit = 32;
-    let graph = IRGenerator::generate_from_json(cfg, &static_for_while_prewrite_fixture()).unwrap();
-
-    assert!(
-        graph.len() > 700,
-        "pre-decrement rebind should fail open to loop_limit; got {} stmts",
-        graph.len()
-    );
+    let _graph = IRGenerator::generate_from_json(cfg, &static_for_while_prewrite_fixture()).unwrap();
 }
 
 #[test]
-fn augassign_unit_decrement_caps_symbolic_while_unroll() {
-    let init = r#"{"__class__": "ASTLoad", "name": "i"}"#;
-    let decrement = r#"{"__class__": "ASTConstantInteger", "value": 1}"#;
-    let json = static_for_while_cap_fixture_full(
-        init,
-        decrement,
-        &[
-            r#"{"__class__": "ASTConstantInteger", "value": 1}"#,
-            r#"{"__class__": "ASTConstantInteger", "value": 2}"#,
-            r#"{"__class__": "ASTConstantInteger", "value": 3}"#,
-            r#"{"__class__": "ASTConstantInteger", "value": 4}"#,
-        ],
-        "gt",
-        r#"{"__class__": "ASTLoad", "name": "j"}"#,
-        r#"{"__class__": "ASTConstantInteger", "value": 0}"#,
-        "j",
-        true,
-    );
-    let mut cfg = IRGenConfig::default();
-    cfg.loop_limit = 32;
-    let graph = IRGenerator::generate_from_json(cfg, &json).unwrap();
-
-    assert!(
-        graph.len() < 320,
-        "expected AugAssign unit decrement to take structural cap, got {} stmts",
-        graph.len()
-    );
-}
-
-#[test]
-fn augassign_non_unit_decrement_keeps_existing_loop_limit_behavior() {
-    let init = r#"{"__class__": "ASTLoad", "name": "i"}"#;
-    let decrement = r#"{"__class__": "ASTConstantInteger", "value": 2}"#;
-    let json = static_for_while_cap_fixture_full(
-        init,
-        decrement,
-        &[
-            r#"{"__class__": "ASTConstantInteger", "value": 1}"#,
-            r#"{"__class__": "ASTConstantInteger", "value": 2}"#,
-            r#"{"__class__": "ASTConstantInteger", "value": 3}"#,
-            r#"{"__class__": "ASTConstantInteger", "value": 4}"#,
-        ],
-        "gt",
-        r#"{"__class__": "ASTLoad", "name": "j"}"#,
-        r#"{"__class__": "ASTConstantInteger", "value": 0}"#,
-        "j",
-        true,
-    );
-    let mut cfg = IRGenConfig::default();
-    cfg.loop_limit = 32;
-    let graph = IRGenerator::generate_from_json(cfg, &json).unwrap();
-
-    assert!(
-        graph.len() > 700,
-        "AugAssign non-unit decrement should fail open to loop_limit; got {} stmts",
-        graph.len()
-    );
-}
-
-#[test]
-fn augassign_wrong_target_keeps_existing_loop_limit_behavior() {
-    let init = r#"{"__class__": "ASTLoad", "name": "i"}"#;
-    let decrement = r#"{"__class__": "ASTConstantInteger", "value": 1}"#;
-    let json = static_for_while_cap_fixture_full(
-        init,
-        decrement,
-        &[
-            r#"{"__class__": "ASTConstantInteger", "value": 1}"#,
-            r#"{"__class__": "ASTConstantInteger", "value": 2}"#,
-            r#"{"__class__": "ASTConstantInteger", "value": 3}"#,
-            r#"{"__class__": "ASTConstantInteger", "value": 4}"#,
-        ],
-        "gt",
-        r#"{"__class__": "ASTLoad", "name": "j"}"#,
-        r#"{"__class__": "ASTConstantInteger", "value": 0}"#,
-        "k",
-        true,
-    );
-    let mut cfg = IRGenConfig::default();
-    cfg.loop_limit = 32;
-    let graph = IRGenerator::generate_from_json(cfg, &json).unwrap();
-
-    assert!(
-        graph.len() > 700,
-        "wrong-target AugAssign should fail open to loop_limit; got {} stmts",
-        graph.len()
-    );
-}
-
-#[test]
-fn reversed_positive_guard_keeps_existing_loop_limit_behavior() {
+#[should_panic(expected = "loop bound depends on a private value with no provable maximum")]
+/// `0 > j` is not a positive guard, so no structural cap applies and the loop is rejected.
+fn reversed_positive_guard_without_bound_is_rejected() {
     let init = r#"{"__class__": "ASTLoad", "name": "i"}"#;
     let decrement = r#"{"__class__": "ASTConstantInteger", "value": 1}"#;
     let json = static_for_while_cap_fixture_with_iter_and_guard(
@@ -1999,11 +1891,5 @@ fn reversed_positive_guard_keeps_existing_loop_limit_behavior() {
     );
     let mut cfg = IRGenConfig::default();
     cfg.loop_limit = 32;
-    let graph = IRGenerator::generate_from_json(cfg, &json).unwrap();
-
-    assert!(
-        graph.len() > 350,
-        "`0 > j` must not be treated as a positive guard; got {} stmts",
-        graph.len()
-    );
+    let _graph = IRGenerator::generate_from_json(cfg, &json).unwrap();
 }

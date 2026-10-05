@@ -37,7 +37,12 @@ impl IRGenerator {
             "range" => {
                 crate::ops::static_ndarray_ops::builtin_range(&mut self.builder, visited_args)
             }
-            "len" => crate::ops::static_ndarray_ops::builtin_len(&mut self.builder, visited_args),
+            "len" => {
+                if let Some(Value::DynamicNDArray(data)) = visited_args_orig.first() {
+                    self.note_len_bounds(data);
+                }
+                crate::ops::static_ndarray_ops::builtin_len(&mut self.builder, visited_args)
+            }
             "int" => {
                 if visited_args.is_empty() {
                     self.builder.ir_constant_int(0)
@@ -300,7 +305,11 @@ impl IRGenerator {
                     })
                 } else {
                     match &visited_args[0] {
-                        Value::List(_) => visited_args[0].clone(),
+                        // `list(a)` is a new (shallow) list, not `a` itself.
+                        Value::List(data) => Value::List(CompositeData {
+                            value_id: ValueId::next(),
+                            ..data.clone()
+                        }),
                         Value::Tuple(data) => Value::List(CompositeData {
                             elements_type: data.elements_type.clone(),
                             values: data.values.clone(),

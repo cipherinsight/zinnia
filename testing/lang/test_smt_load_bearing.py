@@ -33,36 +33,37 @@ def test_shape_axis_via_smt_required_obligation():
     assert shape_via_smt(42)
 
 
-def test_binary_search_dyn_index_bound():
+def test_binary_search_without_a_trip_count_bound_is_rejected():
     """Classic binary search on a fixed-size sorted array.
 
-    `arr[mid]` is read with a runtime-computed `mid = (lo + hi) // 2`. The
-    `dyn_index_bound` chokepoint asks the resolver to prove
-    `mid ∈ [0, 16)` per iteration. Range analysis pins it tightly because
-    `lo`, `hi` themselves carry tight intervals. The program compiles to a
-    bounded-unroll circuit and returns the index of the target on each
-    iteration where the guard matches.
+    `while lo < hi` ends because `hi - lo` shrinks every iteration, an
+    argument the compiler does not make: `lo` and `hi` become runtime values
+    after the first guarded iteration, so the guard is never provably false.
+    The loop used to be unrolled to `loop_limit` and silently truncated; a
+    loop whose trip count has no provable maximum is now rejected.
     """
-    @zk_circuit
-    def binsearch(arr: NDArray[Integer, 16], target: int):
-        lo = 0
-        hi = 16
-        found = -1
-        while lo < hi:
-            mid = (lo + hi) // 2
-            v = arr[mid]
-            if v == target:
-                found = mid
-                break
-            elif v < target:
-                lo = mid + 1
-            else:
-                hi = mid
-        _zinnia_result = found
+    import pytest
+    from zinnia.debug.exception import ZinniaException
 
-    a = np.array([1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31])
-    # target=13 → expected index 6
-    assert binsearch(a, 13)
+    with pytest.raises(ZinniaException, match="no provable maximum"):
+        @zk_circuit
+        def binsearch(arr: NDArray[Integer, 16], target: int):
+            lo = 0
+            hi = 16
+            found = -1
+            while lo < hi:
+                mid = (lo + hi) // 2
+                v = arr[mid]
+                if v == target:
+                    found = mid
+                    break
+                elif v < target:
+                    lo = mid + 1
+                else:
+                    hi = mid
+            _zinnia_result = found
+
+        binsearch(np.array([1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31]), 13)
 
 
 def test_dyn_index_via_smt_required_obligation():

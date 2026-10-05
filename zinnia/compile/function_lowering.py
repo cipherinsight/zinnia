@@ -13,9 +13,21 @@ import copy
 from dataclasses import dataclass
 import textwrap
 
+from zinnia.compile.import_scope import check_import_statement
+
 
 class FunctionLoweringError(ValueError):
     """A callable cannot be faithfully represented by the circuit source API."""
+
+
+def _module_expr(module):
+    """The circuit expression for an allowed module: NumPy is always spelled
+    ``np``; ``math`` keeps its name; submodules are attribute chains."""
+    root, *parts = module.split('.')
+    value = _name('np' if root == 'numpy' else root)
+    for part in parts:
+        value = ast.Attribute(value=value, attr=part, ctx=ast.Load())
+    return value
 
 
 @dataclass
@@ -464,30 +476,23 @@ class _NumpyImports(ast.NodeTransformer):
 
     @staticmethod
     def bindings(node):
+        """Names bound by an allowed import, mapped to the expression the
+        circuit uses for them (``np...`` or ``math...``). Imports of other
+        modules are out of scope (``import_scope``)."""
+        check_import_statement(node)
         result = {}
-        allowed = {'numpy', 'numpy.lib', 'numpy.lib.stride_tricks'}
-        def module_expr(module):
-            value = _name('np')
-            for part in module.split('.')[1:]:
-                value = ast.Attribute(value=value, attr=part, ctx=ast.Load())
-            return value
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name not in allowed:
-                    raise FunctionLoweringError('Only supported NumPy imports are allowed in circuit source')
-                # Python binds the top-level package without an explicit alias.
-                result[alias.asname or 'numpy'] = module_expr(alias.name) if alias.asname else _name('np')
+                # `import numpy.linalg` binds `numpy`; with `as`, the alias
+                # names the submodule itself.
+                module = alias.name if alias.asname else alias.name.split('.')[0]
+                result[alias.asname or module] = _module_expr(module)
         else:
-            if node.level or node.module not in allowed:
-                raise FunctionLoweringError('Only absolute supported NumPy imports are allowed in circuit source')
             for alias in node.names:
                 if alias.name == '*':
-                    raise FunctionLoweringError('Wildcard NumPy imports require explicit member names')
-                if node.module == 'numpy.lib' and alias.name != 'stride_tricks':
-                    raise FunctionLoweringError('Only stride_tricks imports are supported from numpy.lib')
-                if node.module == 'numpy.lib.stride_tricks' and alias.name != 'sliding_window_view':
-                    raise FunctionLoweringError('Only sliding_window_view imports are supported from numpy.lib.stride_tricks')
-                result[alias.asname or alias.name] = ast.Attribute(value=module_expr(node.module), attr=alias.name, ctx=ast.Load())
+                    raise FunctionLoweringError('Wildcard imports require explicit member names')
+                result[alias.asname or alias.name] = ast.Attribute(
+                    value=_module_expr(node.module), attr=alias.name, ctx=ast.Load())
         return result
 
     def visit_Name(self, node):
@@ -565,7 +570,8 @@ class _NumpyImports(ast.NodeTransformer):
     visit_DictComp = comprehension
 
     def visit_Import(self, node):
-        raise FunctionLoweringError('NumPy imports must occur directly in a module or function body')
+        check_import_statement(node)
+        raise FunctionLoweringError('An import must occur directly in a module or function body')
 
     visit_ImportFrom = visit_Import
 

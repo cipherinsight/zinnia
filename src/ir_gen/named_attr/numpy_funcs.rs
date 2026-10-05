@@ -917,39 +917,6 @@ impl IRGenerator {
             ("np", "identity" | "eye") => {
                 crate::ops::static_ndarray_ops::np_identity(&mut self.builder, visited_args)
             }
-            // numpy reduction aliases — forward to the existing reduce/argmax_argmin path used by x.sum() / x.argmin().
-            // `amax`/`amin` are the historical numpy spellings (still in
-            // the public API); they share semantics with `max`/`min`.
-            ("np", method @ (
-                "sum" | "prod"
-                | "min" | "amin"
-                | "max" | "amax"
-                | "any" | "all"
-            )) => {
-                let method = match method {
-                    "amin" => "min",
-                    "amax" => "max",
-                    m => m,
-                };
-                // P4b: native StaticArray dispatch before the legacy boundary.
-                let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
-                let axis_arg_orig = visited_kwargs_orig
-                    .get("axis")
-                    .or_else(|| visited_args_orig.get(1));
-                let keepdims = super::kwarg_static_truthy(visited_kwargs_orig, "keepdims", false);
-                if let Some(out) = crate::helpers::static_array::reductions::try_apply_reduce(
-                    &mut self.builder,
-                    method,
-                    &val_orig,
-                    axis_arg_orig,
-                    keepdims,
-                ) {
-                    return Some(out);
-                }
-                let val = visited_args.first().cloned().unwrap_or(Value::None);
-                let axis_arg = _visited_kwargs.get("axis").or_else(|| visited_args.get(1));
-                crate::helpers::array_ops::reduce(&mut self.builder, method, &val, axis_arg)
-            }
             ("np", method @ ("argmax" | "argmin")) => {
                 // P4b: native StaticArray dispatch before the legacy boundary.
                 let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
@@ -1705,12 +1672,22 @@ impl IRGenerator {
                 visited_args_orig,
                 visited_kwargs_orig,
             ),
-            ("np", "copyto" | "putmask") => {
-                let target = &visited_args_orig[0];
+            ("np", "copyto") => {
+                let [target, source] = visited_args_orig else {
+                    panic!("np.copyto(dst, src, where=...) takes two positional arguments");
+                };
                 let truth = self.builder.ir_constant_bool(true);
-                let (source, mask) = if member=="putmask" { (&visited_args_orig[2], &visited_args_orig[1]) }
-                    else { (&visited_args_orig[1], visited_kwargs_orig.get("where").unwrap_or(&truth)) };
-                super::array_compat::write_output(&mut self.builder,source,target,Some(mask));
+                let mask = visited_kwargs_orig.get("where").unwrap_or(&truth);
+                let written = super::array_compat::write_output(&mut self.builder, source, target, Some(mask));
+                self.note_array_write(&written);
+                Value::None
+            }
+            ("np", "putmask") => {
+                let [target, mask, values] = visited_args_orig else {
+                    panic!("np.putmask(a, mask, values) takes three positional arguments");
+                };
+                let written = super::array_compat::putmask(&mut self.builder, target, mask, values);
+                self.note_array_write(&written);
                 Value::None
             }
             ("np", "select") => {

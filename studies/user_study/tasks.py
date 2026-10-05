@@ -59,6 +59,22 @@ TASKS = [
                 i += 1
             return result
         """),
+        # Audit regressions (eval-redo X5, X6, X1): positional ufunc `out`,
+        # np.putmask with repeated values, and a helper that writes into its
+        # array argument under a private branch.
+        "positional_out": "y = 2 * x + 5\nnp.maximum(y, 0, y)\nnp.minimum(y, 255, y)\nreturn y",
+        "putmask": "y = 2 * x + 5\nnp.putmask(y, y < 0, 0)\nnp.putmask(y, y > 255, [255, 255])\nreturn y",
+        "helper_mutation": body("""
+            def set_at(out, i, value):
+                out[i] = value
+            result = 2 * x + 5
+            for i in range(len(x)):
+                if result[i] < 0:
+                    set_at(result, i, 0)
+                elif result[i] > 255:
+                    set_at(result, i, 255)
+            return result
+        """),
     }),
     Task("background", "Subtract channel background", ({"T": 3, "C": 2}, {"T": 1, "C": 1}, {"T": 16, "C": 4}), {
         "function": "return x - np.min(x, axis=0)",
@@ -97,6 +113,9 @@ TASKS = [
         "generator": "return np.array([sum(v * v for v, f in zip(row, floor) if v > f) for row in x])",
         "conditional_expression": "return np.array([sum(row[c] * row[c] if row[c] > floor[c] else 0 for c in range(len(floor))) for row in x])",
         "filtered_comprehension": "return np.array([sum([row[c] ** 2 for c in range(len(floor)) if row[c] > floor[c]]) for row in x])",
+        # Audit regression (eval-redo X9): a filtered element that calls a
+        # lifted helper runs only for kept candidates.
+        "filtered_helper": "square = lambda v: v * v\nreturn np.array([sum([square(row[c]) for c in range(len(floor)) if row[c] > floor[c]]) for row in x])",
         "mask_assignment": "squares = x * x\nsquares[x <= floor] = 0\nreturn squares.sum(axis=1)",
         "filtered_iteration": body("""
             result = []
@@ -234,6 +253,39 @@ TASKS = [
             return a
         """),
     }),
+    # Audit regressions (eval-redo X1, X4): writes whose target row is a
+    # private value, through a chained subscript and through a helper called
+    # under a private branch.
+    Task("scatter_add", "Add positive amounts into keyed buckets", ({"N": 5}, {"N": 1}, {"N": 16}), {
+        "single_step": body("""
+            out = np.zeros(4, dtype=int)
+            for i in range(x.shape[0]):
+                if x[i, 1] > 0:
+                    out[x[i, 0] % 4] += x[i, 1]
+            return out
+        """),
+        "chained_private_row": body("""
+            grid = np.zeros((4, 1), dtype=int)
+            for i in range(x.shape[0]):
+                if x[i, 1] > 0:
+                    grid[x[i, 0] % 4][0] += x[i, 1]
+            return grid[:, 0]
+        """),
+        "helper_under_branch": body("""
+            def add_to(out, key, amount):
+                out[key] += amount
+            out = np.zeros(4, dtype=int)
+            for i in range(x.shape[0]):
+                if x[i, 1] > 0:
+                    add_to(out, x[i, 0] % 4, x[i, 1])
+            return out
+        """),
+        "masked_sums": body("""
+            keys = x[:, 0] % 4
+            amounts = np.where(x[:, 1] > 0, x[:, 1], 0)
+            return np.array([np.sum(np.where(keys == k, amounts, 0)) for k in range(4)])
+        """),
+    }),
 ]
 
 
@@ -274,6 +326,9 @@ def signatures(task, p):
     elif task.name == "pool":
         shapes = {"x": tuple(p[k] for k in ("B", "H", "W", "C"))}
         out = (p["B"], p["H"] // 2, p["W"] // 2, p["C"])
+    elif task.name == "scatter_add":
+        shapes = {"x": (p["N"], 2)}
+        out = (4,)
     else:
         shapes = {"x": (p["H"], p["W"])}
         out = shapes["x"]
@@ -349,6 +404,10 @@ def oracle(task, profile, values):
     elif task.name == "pool":
         for b, i, j, c in np.ndindex(shape):
             result[b, i, j, c] = sum(int(x[b, 2*i+u, 2*j+v, c]) for u in range(2) for v in range(2))
+    elif task.name == "scatter_add":
+        for key, amount in x.tolist():
+            if amount > 0:
+                result[key % 4] += amount
     else:
         result = x.copy()
         for _ in range(profile["R"]):

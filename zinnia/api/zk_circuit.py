@@ -260,7 +260,9 @@ def zk_circuit(method=None, *, config: ZinniaConfig = ZinniaConfig(), requires=N
         extract_module_constants, substitute_module_constants,
     )
     from zinnia.compile.nested_def_lift import autolift_nested_defs
+    from zinnia.compile.import_scope import check_module_level_imports
     raw_source = inspect.getsource(method)
+    check_module_level_imports(method, raw_source)
     module_consts = extract_module_constants(method)
     source_code = substitute_module_constants(raw_source, module_consts)
     module_globals = getattr(method, "__globals__", {}) or {}

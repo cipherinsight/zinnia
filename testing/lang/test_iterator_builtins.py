@@ -1,7 +1,7 @@
 """Regression tests for `compiler.iterator-builtins-zip-reversed-itertools`.
 
-Iterator-shaped builtins (zip, reversed, itertools.repeat) are desugared
-to range-based iteration when used in for-loop position.
+Iterator-shaped builtins (zip, reversed) are desugared to range-based
+iteration when used in for-loop position. `itertools` is out of scope.
 """
 from zinnia import *
 import itertools as it
@@ -63,23 +63,15 @@ def test_reversed_range_descending_sum():
     assert foo(0)
 
 
-def test_itertools_repeat_with_count():
-    @zk_circuit
-    def foo(x: int):
-        count = 0
-        for _ in it.repeat(None, 5):
-            count += 1
-        assert count == 5
-
-    assert foo(0)
-
-
-def test_itertools_repeat_carries_value():
-    @zk_circuit
-    def foo(x: int):
-        total = 0
-        for v in it.repeat(7, 3):
-            total += v
-        assert total == 21
-
-    assert foo(0)
+def test_itertools_is_out_of_scope():
+    # Kernels may import only NumPy and math (zinnia/compile/import_scope.py);
+    # `itertools.repeat` was desugared before that rule existed.
+    import pytest
+    from zinnia.debug.exception import ZinniaException
+    with pytest.raises(ZinniaException, match="out of scope: imports itertools"):
+        @zk_circuit
+        def foo(x: int):
+            count = 0
+            for _ in it.repeat(None, 5):
+                count += 1
+            assert count == 5

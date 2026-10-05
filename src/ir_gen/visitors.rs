@@ -200,32 +200,30 @@ impl IRGenerator {
                         if load.name == var_name && one.value == 1
                 )
             }
-            ASTNode::ASTAugAssignStatement(assign) => {
-                assign.targets.len() == 1
-                    && Self::assigned_name(&assign.targets[0]) == Some(var_name)
-                    && assign.op_type == "sub"
-                    && matches!(&*assign.value, ASTNode::ASTConstantInteger(one) if one.value == 1)
-            }
             _ => false,
         }
     }
 
-    fn stmt_writes_name_before_decrement(stmt: &ASTNode, var_name: &str) -> bool {
+    fn stmt_writes_name(stmt: &ASTNode, var_name: &str) -> bool {
         let mut names = BTreeSet::new();
         Self::collect_assigned_names_from_stmt(stmt, &mut names);
         names.contains(var_name)
     }
 
-    fn body_has_first_write_unit_decrement(block: &[ASTNode], var_name: &str) -> bool {
+    /// Whether the only write to `var_name` in `block` is one top-level
+    /// `var_name = var_name - 1`. Then every executed iteration lowers it by
+    /// exactly one (inactive iterations leave it unchanged), which is what
+    /// makes the structural `while var > 0` cap a bound on the trip count.
+    fn body_has_only_unit_decrement(block: &[ASTNode], var_name: &str) -> bool {
+        let mut decrements = 0;
         for stmt in block {
             if Self::is_unit_decrement_assignment(var_name, stmt) {
-                return true;
-            }
-            if Self::stmt_writes_name_before_decrement(stmt, var_name) {
+                decrements += 1;
+            } else if Self::stmt_writes_name(stmt, var_name) {
                 return false;
             }
         }
-        false
+        decrements == 1
     }
 
     fn structural_while_unroll_cap(&self, n: &ASTWhileStatement) -> Option<u32> {
@@ -235,7 +233,7 @@ impl IRGenerator {
         if origin != &frame.var_name || frame.max_bound == 0 {
             return None;
         }
-        if !Self::body_has_first_write_unit_decrement(&n.block, var_name) {
+        if !Self::body_has_only_unit_decrement(&n.block, var_name) {
             return None;
         }
         frame
@@ -258,7 +256,7 @@ impl IRGenerator {
         if current_bound == 0 {
             return None;
         }
-        if !Self::body_has_first_write_unit_decrement(&n.block, var_name) {
+        if !Self::body_has_only_unit_decrement(&n.block, var_name) {
             return None;
         }
         Some(LoopIndexBoundContext {
@@ -291,7 +289,7 @@ impl IRGenerator {
         }
     }
 
-    fn collect_assigned_names_from_stmt(stmt: &ASTNode, names: &mut BTreeSet<String>) {
+    pub(crate) fn collect_assigned_names_from_stmt(stmt: &ASTNode, names: &mut BTreeSet<String>) {
         match stmt {
             ASTNode::ASTAssignStatement(assign) => {
                 for target in &assign.targets {
@@ -343,7 +341,7 @@ impl IRGenerator {
         }
     }
 
-    fn bool_value_fact(val: &Value, expected: bool) -> Option<ContractTerm> {
+    pub(crate) fn bool_value_fact(val: &Value, expected: bool) -> Option<ContractTerm> {
         val.value_id().map(|vid| ContractTerm::Cmp {
             op: CmpOp::Eq,
             lhs: Box::new(ContractTerm::Var(ContractVar::Value(vid))),
@@ -664,19 +662,17 @@ impl IRGenerator {
             return;
         }
         let val = self.visit(&n.value);
+        if n.augmented {
+            if let [ASTNode::ASTNameAssignTarget(target)] = n.targets.as_slice() {
+                if self.update_in_place(&target.name, &val) {
+                    return;
+                }
+            }
+        }
         for target in &n.targets {
             self.maybe_record_induction_alias(target, &n.value);
             self.do_recursive_assign(target, val.clone(), true);
         }
-    }
-
-    pub(crate) fn visit_aug_assign(&mut self, n: &ASTAugAssignStatement) {
-        if self.ctx.check_return_guaranteed() || self.ctx.check_loop_terminated_guaranteed() {
-            return;
-        }
-        // AugAssign on subscript — delegate to builder
-        let _val = self.visit(&n.value);
-        // TODO: full aug assign implementation
     }
 
     pub(crate) fn visit_cond(&mut self, n: &ASTCondStatement) {
@@ -731,16 +727,11 @@ impl IRGenerator {
                 crate::optim::predicates::ScopeKind::Conditional,
                 path_predicate,
             );
-            // Segment writes inside this arm only take effect when the
-            // arm's path condition holds (statically-true predicates are
-            // free; see IRBuilder::write_predicate).
-            let prev_wp = self
-                .builder
-                .swap_write_predicate(self.ctx.get_branching_condition_value());
+            // Each statement in the arm sets the write predicate to its own
+            // full execution condition, which includes this arm's condition.
             for stmt in &n.t_block {
                 self.visit(stmt);
             }
-            self.builder.swap_write_predicate(prev_wp);
             scope_true_ret_guaranteed = self.ctx.check_return_guaranteed();
             scope_true_term_guaranteed = self.ctx.check_loop_terminated_guaranteed();
             let scope_true = self.ctx.if_leave();
@@ -760,13 +751,9 @@ impl IRGenerator {
                 crate::optim::predicates::ScopeKind::Conditional,
                 path_predicate,
             );
-            let prev_wp = self
-                .builder
-                .swap_write_predicate(self.ctx.get_branching_condition_value());
             for stmt in &n.f_block {
                 self.visit(stmt);
             }
-            self.builder.swap_write_predicate(prev_wp);
             scope_false_ret_guaranteed = self.ctx.check_return_guaranteed();
             scope_false_term_guaranteed = self.ctx.check_loop_terminated_guaranteed();
             let scope_false = self.ctx.if_leave();
@@ -927,84 +914,39 @@ impl IRGenerator {
         if self.ctx.check_return_guaranteed() || self.ctx.check_loop_terminated_guaranteed() {
             return;
         }
+        let items = self.iteration_items(&n.iter_expr);
+        self.unroll_loop(&n.target, &items, &n.block, &n.orelse);
+    }
 
-        let iter_val = self.visit(&n.iter_expr);
-
-        // P2 segarr-read-paths: iterate StaticArray natively. Each iteration
-        // returns either a leaf (1-D source) or a (D-1)-rank StaticArray
-        // view (≥2-D source). Avoids the legacy `to_value_list` shim.
-        let elements: Vec<Value> = match &iter_val {
-            Value::StaticArray { shape, .. } => {
-                let n_iter = shape[0];
-                (0..n_iter)
-                    .map(|i| {
-                        crate::helpers::static_array::read::iter_element(
-                            &mut self.builder,
-                            &iter_val,
-                            i,
-                        )
-                    })
-                    .collect()
-            }
-            Value::List(data) | Value::Tuple(data) => data.values.clone(),
-            Value::DynamicNDArray(data) => {
-                // Materialize the public capacity. The loop below predicates
-                // every iteration on the logical runtime length, so padding
-                // never becomes an element visible to the program.
-                if data.envelope.dims.len() != 1 {
-                    panic!(
-                        "iteration over rank-{} DynamicNDArray is not supported (only rank-1 for now)",
-                        data.envelope.dims.len()
-                    );
-                }
-                let dim = data.envelope.dims[0];
-                let n_iter = dim.max;
-                // Contiguous, offset-0 layout is the only case the
-                // current bounded-dynamic producers emit. A view with
-                // non-trivial strides or a non-zero offset would need
-                // address arithmetic per cell; we'd add it when a
-                // caller actually needs it.
-                if data.meta.logical_offset != 0
-                    || data.meta.logical_strides.first().copied() != Some(1)
-                {
-                    panic!(
-                        "iteration over a strided / offset DynamicNDArray view is not supported (offset={}, stride={:?})",
-                        data.meta.logical_offset, data.meta.logical_strides
-                    );
-                }
-                let dtype = data.dtype;
-                (0..n_iter)
-                    .map(|k| {
-                        let addr = self.builder.ir_constant_int(k as i64);
-                        crate::helpers::segment::read_typed(
-                            &mut self.builder,
-                            data.segment_id,
-                            &addr,
-                            dtype,
-                        )
-                    })
-                    .collect()
-            }
-            _ => {
-                panic!("'{}' object is not iterable", iter_val.zinnia_type());
-            }
-        };
+    /// Unroll a `for` loop over `items` (see [`super::iteration`]). The
+    /// target is bound to each item's value unconditionally, so indices
+    /// built from it stay compile-time constants inside the body; an
+    /// inactive item skips its body like a `continue`. After the loop a
+    /// simple-name target holds its value at the end of the last item that
+    /// actually ran, as in Python.
+    pub(crate) fn unroll_loop(
+        &mut self,
+        target: &ASTNode,
+        items: &[super::iteration::LoopItem],
+        block: &[ASTNode],
+        orelse: &[ASTNode],
+    ) {
+        let elements: Vec<Value> = items.iter().map(|item| item.value.clone()).collect();
         // Loop targets are bound unconditionally during symbolic unrolling so
         // indices remain static. Preserve their old values when an enclosing
         // branch does not execute; branch joins expect pre-merged bindings.
         let entry_condition = self.ctx.get_condition_value(&mut self.builder);
         let mut target_names = BTreeSet::new();
-        Self::collect_assigned_names_from_target(&n.target, &mut target_names);
+        Self::collect_assigned_names_from_target(target, &mut target_names);
         let previous_targets: Vec<_> = target_names.into_iter()
             .filter_map(|name| self.ctx.get(&name).map(|value| (name, value)))
             .collect();
-        let for_frame = Self::for_frame_from_elements(&n.target, &elements);
+        let for_frame = Self::for_frame_from_elements(target, &elements);
 
-        // Unroll the loop: for each element, bind the target variable and run the block
         if elements.is_empty() {
             let mut names = BTreeSet::new();
-            Self::collect_assigned_names_from_target(&n.target, &mut names);
-            for stmt in &n.block {
+            Self::collect_assigned_names_from_target(target, &mut names);
+            for stmt in block {
                 Self::collect_assigned_names_from_stmt(stmt, &mut names);
             }
             for name in names {
@@ -1023,27 +965,32 @@ impl IRGenerator {
             self.clear_induction_origins_from(&frame.var_name);
             self.for_loop_frames.push(frame);
         }
-        for (position, elem) in elements.iter().enumerate() {
+        let target_name = Self::simple_name_target(target);
+        let guarded = items.iter().any(|item| item.active.is_some());
+        // The target's value at the end of the last item that ran.
+        let mut exit_target: Option<Value> =
+            target_name.and_then(|name| self.ctx.get(name));
+        for item in items {
             self.ctx.loop_reiter(&mut self.builder);
-            if let Value::DynamicNDArray(data) = &iter_val {
-                let index = self.builder.ir_constant_int(position as i64);
-                let length = Value::Integer(data.meta.runtime_length.clone());
-                let inactive = self.builder.ir_greater_than_or_equal_i(&index, &length);
-                self.ctx.loop_break(Some(inactive), &mut self.builder);
+            // An inactive item skips its body like a `continue`, so a later
+            // `else` block still sees the loop as exhausted, not broken.
+            if let Some(active) = &item.active {
+                let inactive = self.builder.ir_logical_not(active);
+                self.ctx.loop_skip_iteration_if(inactive, &mut self.builder);
             }
             if pushed_frame {
                 if let Some(frame) = self.for_loop_frames.last_mut() {
-                    frame.current_bound = elem
+                    frame.current_bound = item
+                        .value
                         .int_val()
                         .and_then(|n| (n >= 0).then(|| (n as u32).saturating_add(1)));
                 }
             }
 
-            // Bind the loop variable
-            self.do_recursive_assign(&n.target, elem.clone(), false);
+            self.do_recursive_assign(target, item.value.clone(), false);
 
             let mut terminated = false;
-            for stmt in &n.block {
+            for stmt in block {
                 self.visit(stmt);
                 if self.ctx.check_return_guaranteed() || self.ctx.check_loop_terminated_guaranteed()
                 {
@@ -1051,13 +998,27 @@ impl IRGenerator {
                     break;
                 }
             }
+            if guarded {
+                if let Some(end) = target_name.and_then(|name| self.ctx.get(name)) {
+                    exit_target = Some(match (&item.active, exit_target.take()) {
+                        (Some(active), Some(previous)) => crate::helpers::value_ops::select_value(
+                            &mut self.builder, active, &end, &previous),
+                        _ => end,
+                    });
+                }
+            }
             if terminated {
                 break;
             }
         }
 
-        // Handle orelse block
-        for stmt in &n.orelse {
+        // The `else` block runs when the loop was not broken. A `continue`
+        // (or an inactive item) in the last iteration does not affect it, so
+        // reset the per-iteration skip condition first.
+        if !orelse.is_empty() {
+            self.ctx.loop_reiter(&mut self.builder);
+        }
+        for stmt in orelse {
             self.visit(stmt);
         }
 
@@ -1073,6 +1034,9 @@ impl IRGenerator {
             }
         }
         let _loop_facts = self.builder.facts.leave();
+        if let (true, Some(name), Some(exit)) = (guarded, target_name, exit_target) {
+            self.ctx.set(name, exit);
+        }
         if entry_condition.bool_val() != Some(true) {
             for (name, previous) in previous_targets {
                 if let Some(current) = self.ctx.get(&name) {
@@ -1092,6 +1056,21 @@ impl IRGenerator {
             return;
         }
 
+        if !n.orelse.is_empty() && Self::block_has_loop_break(&n.block) {
+            panic!(
+                "`while ... else` with `break` in the loop body is not supported: \
+                 the `else` block must run only when the loop ends without `break`"
+            );
+        }
+        if let Some((counter, items)) = self.counted_while_items(n) {
+            let target = ASTNode::ASTNameAssignTarget(ASTNameAssignTarget {
+                name: counter,
+                star: false,
+                dbg: None,
+            });
+            self.unroll_loop(&target, &items, &n.block, &n.orelse);
+            return;
+        }
         let structural_cap = self.structural_while_unroll_cap(n);
         let loop_limit = structural_cap.unwrap_or(self.config.loop_limit);
         let mut loop_quota = loop_limit + 1;
@@ -1127,14 +1106,6 @@ impl IRGenerator {
             let test = self.visit_while_guard_expr(&n.test_expr, loop_index_bound_context.as_ref());
             let test_bool = crate::helpers::value_ops::to_scalar_bool(&mut self.builder, &test);
             loop_quota -= 1;
-
-            if loop_quota == 0 {
-                // Loop limit reached
-                if pushed_reuse_context {
-                    self.loop_read_reuse_contexts.pop();
-                }
-                break;
-            }
 
             // P4 round 1: route the guard resolution through the active
             // Resolver (instead of only the value's static_val cache). Static
@@ -1189,6 +1160,22 @@ impl IRGenerator {
                     resolved
                 }
             };
+
+            // Bound-based exit: the guard can no longer hold for any input
+            // the compiler admits (e.g. `i < n` once `i` reaches the proven
+            // maximum of `n`).
+            let test_static = match test_static {
+                None if self.provably_false(&test_bool) => Some(false),
+                other => other,
+            };
+
+            if test_static != Some(false) && loop_quota == 0 {
+                if pushed_reuse_context {
+                    self.loop_read_reuse_contexts.pop();
+                }
+                self.finish_unroll_limit(&test_bool, structural_cap.is_some(), loop_limit);
+                break;
+            }
 
             if test_static == Some(false) {
                 if loop_quota == loop_limit {
@@ -1250,6 +1237,51 @@ impl IRGenerator {
         if returned_guaranteed_outside {
             self.ctx.set_return_guarantee();
         }
+        // Without a `break`, Python runs the `else` block whenever the loop
+        // ends, which (after the termination check above) it always does.
+        for stmt in &n.orelse {
+            self.visit(stmt);
+        }
+    }
+
+    /// The unroll of a `while` loop used up its iteration quota and the guard
+    /// is not known to be false. If no path can still be iterating, the loop
+    /// has ended. A structural cap is a bound by construction: the guard
+    /// requires `j > 0`, `j` starts at most at the enclosing for-loop's
+    /// current item, and the body's only write to `j` lowers it by one per
+    /// executed iteration (`body_has_only_unit_decrement`), so after `cap`
+    /// iterations no path can still be iterating. Otherwise the trip count
+    /// has no provable maximum and the program is rejected: truncating the
+    /// loop would prove a different result.
+    fn finish_unroll_limit(&mut self, guard: &Value, structural_cap: bool, limit: u32) {
+        if structural_cap {
+            return;
+        }
+        let condition = self.ctx.get_condition_value(&mut self.builder);
+        let still_running = self.builder.ir_logical_and(&condition, guard);
+        if still_running.bool_val() == Some(false) || self.provably_false(&still_running) {
+            return;
+        }
+        panic!(
+            "{}: the `while` condition was not proven false within loop_limit={} unrolled \
+             iterations. Bound the values the condition depends on (a bounded array \
+             annotation or a `requires` precondition), or raise ZinniaConfig loop_limit if a \
+             larger bound exists",
+            super::iteration::UNBOUNDED_LOOP_ERROR,
+            limit
+        );
+    }
+
+    /// Whether `block` contains a `break` that exits the loop owning
+    /// `block` (breaks inside nested loops belong to those loops).
+    fn block_has_loop_break(block: &[ASTNode]) -> bool {
+        block.iter().any(|stmt| match stmt {
+            ASTNode::ASTBreakStatement(_) => true,
+            ASTNode::ASTCondStatement(cond) => {
+                Self::block_has_loop_break(&cond.t_block) || Self::block_has_loop_break(&cond.f_block)
+            }
+            _ => false,
+        })
     }
 
     pub(crate) fn visit_break(&mut self) {
@@ -1435,7 +1467,7 @@ impl IRGenerator {
     }
 
     pub(crate) fn visit_load(&mut self, n: &ASTLoad) -> Value {
-        self.ctx.get(&n.name).unwrap_or_else(|| {
+        let value = self.ctx.get(&n.name).unwrap_or_else(|| {
             if let Some(reason) = self.ctx.unreachable_loop_binding_reason(&n.name) {
                 panic!(
                     "Variable `{}` is not definitely bound after loop: {}",
@@ -1443,7 +1475,9 @@ impl IRGenerator {
                 );
             }
             panic!("Variable `{}` not found", n.name)
-        })
+        });
+        self.check_not_stale(&n.name, &value);
+        value
     }
 
     pub(crate) fn visit_subscript(&mut self, n: &ASTSubscriptExp) -> Value {
@@ -1599,6 +1633,7 @@ impl IRGenerator {
             // content fact, and probing it for every dynamic scalar read is
             // expensive pre-optimizer work with no shaped output to inform.
             self.relay_forall_eq_const_to_shaped_subscript_output(&val, &out);
+            self.record_subscript_copy(&val, &slice_values, &out);
             let index_key = self.loop_index_expr_key(&n.slicing);
             self.record_loop_guard_read_reuse(array_identity, index_key, &out);
             return out;
@@ -1707,10 +1742,30 @@ impl IRGenerator {
                 }
             }
             Value::DynamicNDArray(d) => {
-                crate::helpers::array_ops::dyn_subscript(&mut self.builder, d, &slice_values)
+                let out = crate::helpers::array_ops::dyn_subscript(&mut self.builder, d, &slice_values);
+                self.record_subscript_copy(&val, &slice_values, &out);
+                out
             }
-            _ => Value::None,
+            Value::String(text) => self.string_subscript(&text.val, &slice_values),
+            other => panic!("'{}' object is not subscriptable", other.zinnia_type()),
         }
+    }
+
+    /// `"text"[i]` with a compile-time index (strings are compile-time
+    /// constants in circuits).
+    fn string_subscript(&mut self, text: &str, indices: &[SliceIndex]) -> Value {
+        let [SliceIndex::Single(index)] = indices else {
+            panic!("string subscripts support a single integer index");
+        };
+        let chars: Vec<char> = text.chars().collect();
+        let raw = index
+            .int_val()
+            .unwrap_or_else(|| panic!("string index must be a compile-time integer"));
+        let position = if raw < 0 { raw + chars.len() as i64 } else { raw };
+        let Some(ch) = usize::try_from(position).ok().and_then(|p| chars.get(p)) else {
+            panic!("IndexError: string index out of range");
+        };
+        self.builder.ir_constant_str(ch.to_string())
     }
 
     /// Evaluate slice indices by visiting AST nodes (not just extracting constants).
@@ -1909,6 +1964,12 @@ impl IRGenerator {
         }
     }
 
+    /// Expand comprehension generators `idx..` for every item, collecting
+    /// the element values and, for each, the runtime condition under which
+    /// Python produces it (`active`: the conjunction of the enclosing items'
+    /// activity and filters). Filters, nested iterables and the element are
+    /// evaluated under that condition, as Python evaluates them only for
+    /// produced candidates.
     fn expand_generators(
         &mut self,
         generators: &[ASTGenerator],
@@ -1919,44 +1980,29 @@ impl IRGenerator {
         active: &Value,
     ) {
         if idx >= generators.len() {
-            result.push(self.visit(elt));
+            let value = self.with_guard(active, |gen| gen.visit(elt));
+            result.push(value);
             guards.push(active.clone());
             return;
         }
 
         let gen = &generators[idx];
-        let iter_val = self.visit(&gen.iter_expr);
+        let items = self.with_guard(active, |this| this.iteration_items(&gen.iter_expr));
 
-        // P2 segarr-read-paths: iterate StaticArray natively (per-iteration
-        // leaf or (D-1)-rank view).
-        let elements: Vec<Value> = match &iter_val {
-            Value::StaticArray { shape, .. } => {
-                let n_iter = shape[0];
-                (0..n_iter)
-                    .map(|i| {
-                        crate::helpers::static_array::read::iter_element(
-                            &mut self.builder,
-                            &iter_val,
-                            i,
-                        )
-                    })
-                    .collect()
-            }
-            Value::List(data) | Value::Tuple(data) => data.values.clone(),
-            _ => return,
-        };
+        for item in &items {
+            self.do_recursive_assign(&gen.target, item.value.clone(), false);
 
-        for elem in &elements {
-            self.do_recursive_assign(&gen.target, elem.clone(), false);
-
-            let mut guard = active.clone();
+            let mut guard = match &item.active {
+                Some(item_active) => self.builder.ir_logical_and(active, item_active),
+                None => active.clone(),
+            };
             for if_expr in &gen.ifs {
-                let cond = self.visit(if_expr);
-                let cond = crate::helpers::value_ops::to_scalar_bool(&mut self.builder, &cond);
-                guard = self.builder.ir_logical_and(&guard, &cond);
                 if guard.bool_val() == Some(false) {
                     break;
                 }
+                let cond = self.with_guard(&guard, |this| this.visit(if_expr));
+                let cond = crate::helpers::value_ops::to_scalar_bool(&mut self.builder, &cond);
+                guard = self.builder.ir_logical_and(&guard, &cond);
             }
 
             if guard.bool_val() != Some(false) {
@@ -1974,8 +2020,11 @@ impl IRGenerator {
         if let Some(take_true) = cond_bool.bool_val() {
             return self.visit(if take_true { &n.t_expr } else { &n.f_expr });
         }
-        let true_val = self.visit(&n.t_expr);
-        let false_val = self.visit(&n.f_expr);
+        // Each arm runs only on its side of the condition: writes, chip calls
+        // and assertions inside an arm are predicated on it.
+        let true_val = self.with_guard(&cond_bool, |this| this.visit(&n.t_expr));
+        let not_cond = self.builder.ir_logical_not(&cond_bool);
+        let false_val = self.with_guard(&not_cond, |this| this.visit(&n.f_expr));
         crate::helpers::value_ops::select_value(
             &mut self.builder,
             &cond_bool,
@@ -2162,204 +2211,211 @@ impl IRGenerator {
                         self.clear_loop_read_reuse();
                     }
                 }
-                // Subscript assignment: e.g. array[0, 1] = value or lst[0] = value
-                // P3 segarr-write-paths: chained subscript writes
-                // (`a[i][j] = v`) parse as a nested ASTSubscriptExp target.
-                // For StaticArray, the inner subscript yields a view sharing
-                // the underlying segment, so a setitem into the view writes
-                // through to the source segment. No rebind needed.
-                if let ASTNode::ASTSubscriptExp(_) = &*t.target {
-                    let inner_val = self.visit(&t.target);
-                    let indices = self.eval_slice_indices(&t.slicing);
-                    if let Value::StaticArray { .. } = &inner_val {
-                        let has_new_axis = indices
-                            .iter()
-                            .any(|i| matches!(i, crate::types::SliceIndex::NewAxis));
-                        if !has_new_axis {
-                            crate::helpers::static_array::write::static_array_setitem(
-                                &mut self.builder,
-                                &inner_val,
-                                &indices,
-                                &value,
-                            );
-                            return;
-                        }
+                match &*t.target {
+                    ASTNode::ASTLoad(load) => {
+                        let indices = self.eval_slice_indices(&t.slicing);
+                        self.assign_to_subscript_of_name(&load.name, indices, value);
                     }
-                    if matches!(inner_val, Value::List(_)) {
-                        let updated = self.set_nested_value(inner_val, &indices, value);
-                        if let ASTNode::ASTSubscriptExp(parent) = &*t.target {
-                            let target = ASTNode::ASTSubscriptAssignTarget(ASTSubscriptAssignTarget {
-                                target: parent.val.clone(), slicing: parent.slicing.clone(), star: false, dbg: parent.dbg.clone(),
-                            });
-                            self.do_recursive_assign(&target, updated, conditional_select);
-                            return;
-                        }
+                    ASTNode::ASTSubscriptExp(inner) => {
+                        self.assign_chained_subscript(inner, &t.slicing, value, conditional_select);
                     }
-                    // C12a: any chained-subscript assignment that reaches here
-                    // (a non-StaticArray inner such as `DynamicNDArray`, or a
-                    // StaticArray inner with a `NewAxis`) was a SILENT NO-OP —
-                    // the inner subscript yields a fresh value, the write lands
-                    // on that temporary, and nothing flows back to the source
-                    // array. Same silent-drop class as the 2026-05-30
-                    // setitem-dispatcher bug. Fail loudly rather than
-                    // miscompute until write-through views are implemented.
-                    panic!(
-                        "chained subscript assignment (a[i][j] = v) is unsupported here: \
-                         the inner subscript produces a temporary, so the write would be \
-                         silently dropped (this covers dynamic arrays and new-axis views). \
-                         Index in a single step (a[i, j] = v), or assign the inner row to a \
-                         variable, mutate it, and write it back."
-                    );
-                }
-                // Get the variable name from target
-                if let ASTNode::ASTLoad(load) = &*t.target {
-                    let var_name = &load.name;
-                    let indices = self.eval_slice_indices(&t.slicing);
-                    if let Some(current) = self.ctx.get(var_name) {
-                        // Check if target is a tuple — tuples don't support item assignment
-                        if matches!(&current, Value::Tuple(_)) {
-                            panic!("'tuple' object does not support item assignment");
-                        }
-                        // P3 segarr-write-paths: native StaticArray writes
-                        // run through `static_array::write::static_array_setitem`,
-                        // emitting a single `ir_write_memory` per cell instead
-                        // of the legacy O(N) mux chain. Element / multi-dim /
-                        // slice / chained-view writes all land here.
-                        if let Value::StaticArray { .. } = &current {
-                            // P5b: boolean-mask write on a StaticArray
-                            // (`arr[mask] = v`). Dispatch before the
-                            // generic setitem so the cached Boolean cells
-                            // are seen, not materialised to a List that
-                            // collapses the bool/int distinction.
-                            //
-                            // Op contract for in-place mutation: snapshot
-                            // pre-write element bounds NOW, deposit the
-                            // widened union on the post-write SSA value
-                            // so downstream reductions can see bounds.
-                            let mask_write_pre = if indices.len() == 1 {
-                                if let crate::types::SliceIndex::Single(mask_val) = &indices[0] {
-                                    if matches!(mask_val, Value::StaticArray { .. })
-                                        && crate::helpers::static_array::mask::is_boolean_mask_static_array(
-                                            &mut self.builder, mask_val,
-                                        )
-                                    {
-                                        Some(crate::helpers::static_array::mask::capture_mask_write_pre_bounds(
-                                            &mut self.builder, &current, &value,
-                                        ))
-                                    } else { None }
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            };
-                            if indices.len() == 1 {
-                                if let crate::types::SliceIndex::Single(mask_val) = &indices[0] {
-                                    if matches!(mask_val, Value::StaticArray { .. })
-                                        && crate::helpers::static_array::mask::is_boolean_mask_static_array(
-                                            &mut self.builder, mask_val,
-                                        )
-                                    {
-                                        if let Some(updated) =
-                                            crate::helpers::static_array::mask::try_apply_boolean_mask_write(
-                                                &mut self.builder, &current, mask_val, &value,
-                                            )
-                                        {
-                                            if let Some(pre) = mask_write_pre {
-                                                crate::helpers::static_array::mask::deposit_mask_write_post(
-                                                    &mut self.builder, pre, &updated,
-                                                );
-                                            }
-                                            self.rebind_subscript_target(var_name, &current, updated);
-                                            return;
-                                        }
-                                    }
-                                }
-                            }
-                            // NewAxis on a setitem target is rare; defer to
-                            // legacy via materialisation.
-                            let has_new_axis = indices
-                                .iter()
-                                .any(|i| matches!(i, crate::types::SliceIndex::NewAxis));
-                            if !has_new_axis {
-                                let updated =
-                                    crate::helpers::static_array::write::static_array_setitem(
-                                        &mut self.builder,
-                                        &current,
-                                        &indices,
-                                        &value,
-                                    );
-                                if let Some(pre) = mask_write_pre {
-                                    crate::helpers::static_array::mask::deposit_mask_write_post(
-                                        &mut self.builder,
-                                        pre,
-                                        &updated,
-                                    );
-                                }
-                                self.rebind_subscript_target(var_name, &current, updated);
-                                return;
-                            }
-                            // NewAxis fallback path: materialise then run
-                            // legacy.
-                            let current_lst = crate::helpers::static_array::base::to_value_list(
-                                &mut self.builder,
-                                &current,
-                            );
-                            let updated = self.set_nested_value(current_lst, &indices, value);
-                            self.rebind_subscript_target(var_name, &current, updated);
-                            return;
-                        }
-                        let updated = if let Value::DynamicNDArray(d) = &current {
-                            // Check for boolean mask assignment: dyn[mask] = x
-                            if indices.len() == 1 {
-                                if let crate::types::SliceIndex::Single(mask_val) = &indices[0] {
-                                    if crate::helpers::array_ops::is_boolean_mask_with(
-                                        &mut self.builder,
-                                        mask_val,
-                                    ) {
-                                        let result = crate::helpers::array_ops::dyn_setitem_mask(
-                                            &mut self.builder,
-                                            d,
-                                            mask_val,
-                                            &value,
-                                        );
-                                        self.rebind_subscript_target(var_name, &current, result);
-                                        return;
-                                    }
-                                }
-                            }
-                            // Check for slice assignment: any Range index.
-                            let has_range = indices
-                                .iter()
-                                .any(|idx| matches!(idx, crate::types::SliceIndex::Range(_, _, _)));
-                            if has_range {
-                                let result = crate::helpers::array_ops::dyn_setitem_slice(
-                                    &mut self.builder,
-                                    d,
-                                    &indices,
-                                    &value,
-                                );
-                                self.rebind_subscript_target(var_name, &current, result);
-                                return;
-                            }
-                            crate::helpers::array_ops::dyn_setitem(
-                                &mut self.builder,
-                                d,
-                                &indices,
-                                &value,
-                            )
-                        } else {
-                            self.set_nested_value(current.clone(), &indices, value)
-                        };
-                        self.rebind_subscript_target(var_name, &current, updated);
-                    }
+                    _ => panic!(
+                        "assignment to a subscript of this expression is not supported; \
+                         assign to a subscript of a variable (name[...] = value)"
+                    ),
                 }
             }
-            _ => {
-                // Unsupported assignment target
-            }
+            _ => panic!("unsupported assignment target"),
         }
     }
 
+    /// `a[i1, ...][j1, ...] = v` (any depth). When every index of the inner
+    /// subscripts is a scalar integer, NumPy writes `a[i1, ..., j1, ...] = v`,
+    /// so the assignment is flattened onto the root array, which handles
+    /// private indices. Otherwise the inner subscript must be a view that
+    /// shares the root's memory (a constant slice); a materialised
+    /// temporary would silently drop the write, so it is rejected.
+    fn assign_chained_subscript(
+        &mut self,
+        inner: &ASTSubscriptExp,
+        outer: &ASTSlice,
+        value: Value,
+        conditional_select: bool,
+    ) {
+        // Bounded-dynamic roots are not flattened: their single-step writes
+        // are handed off to the core (a write into `np.zeros((3, n))` is
+        // lost), so a chained write into one stays rejected below.
+        if let Some((root, mut indices)) = self.scalar_index_chain(inner) {
+            if matches!(self.ctx.get(&root), Some(Value::StaticArray { .. })) {
+                indices.extend(self.eval_slice_indices(outer));
+                self.assign_to_subscript_of_name(&root, indices, value);
+                return;
+            }
+        }
+        let inner_val = self.visit_subscript(inner);
+        let indices = self.eval_slice_indices(outer);
+        let root_segment = chain_root(inner)
+            .and_then(|root| self.ctx.get(root))
+            .and_then(|root| super::detached_copies::array_segment(&root));
+        let shares_root = super::detached_copies::array_segment(&inner_val)
+            .is_some_and(|segment| Some(segment) == root_segment);
+        let has_new_axis = indices.iter().any(|i| matches!(i, SliceIndex::NewAxis));
+        if shares_root && matches!(inner_val, Value::StaticArray { .. }) && !has_new_axis {
+            crate::helpers::static_array::write::static_array_setitem(
+                &mut self.builder,
+                &inner_val,
+                &indices,
+                &value,
+            );
+            self.note_array_write(&inner_val);
+            return;
+        }
+        if matches!(inner_val, Value::List(_)) {
+            if let Some(root) = chain_root(inner) {
+                self.ensure_list_not_shared(root, &inner_val);
+            }
+            let updated = self.set_nested_value(inner_val, &indices, value);
+            let target = ASTNode::ASTSubscriptAssignTarget(ASTSubscriptAssignTarget {
+                target: inner.val.clone(),
+                slicing: inner.slicing.clone(),
+                star: false,
+                dbg: inner.dbg.clone(),
+            });
+            self.do_recursive_assign(&target, updated, conditional_select);
+            return;
+        }
+        panic!(
+            "chained subscript assignment (a[i][j] = v) is unsupported here: the inner \
+             subscript produces a temporary copy (a slice with a runtime bound or a negative \
+             step, a new axis, or a dynamic array), so the write would be silently dropped. \
+             Index in a single step (a[i, j] = v)."
+        );
+    }
+
+    /// For `root[i...][j...]...` where every index is a scalar integer,
+    /// return the root name and the concatenated indices. Indices are
+    /// evaluated left to right, as Python does.
+    fn scalar_index_chain(&mut self, node: &ASTSubscriptExp) -> Option<(String, Vec<SliceIndex>)> {
+        let (root, mut indices) = match &*node.val {
+            ASTNode::ASTLoad(load) => (load.name.clone(), Vec::new()),
+            ASTNode::ASTSubscriptExp(inner) => self.scalar_index_chain(inner)?,
+            _ => return None,
+        };
+        if node.slicing.data.iter().any(|d| d.is_array() || d.get("__class__").is_some_and(|c| {
+            c == "ASTSliceEllipsis" || c == "ASTSliceNewAxis"
+        })) {
+            return None;
+        }
+        let evaluated = self.eval_slice_indices(&node.slicing);
+        if !evaluated.iter().all(|i| matches!(i, SliceIndex::Single(Value::Integer(_)))) {
+            return None;
+        }
+        indices.extend(evaluated);
+        Some((root, indices))
+    }
+
+    /// `name[indices] = value` for any subscriptable value bound to `name`.
+    fn assign_to_subscript_of_name(&mut self, var_name: &str, indices: Vec<SliceIndex>, value: Value) {
+        let Some(current) = self.ctx.get(var_name) else {
+            panic!("Variable `{}` not found", var_name);
+        };
+        let updated = match &current {
+            Value::Tuple(_) => panic!("'tuple' object does not support item assignment"),
+            Value::StaticArray { .. } => self.static_array_setitem(&current, &indices, value),
+            Value::DynamicNDArray(data) => self.dynamic_array_setitem(data, &indices, &value),
+            _ => {
+                self.ensure_list_not_shared(var_name, &current);
+                self.set_nested_value(current.clone(), &indices, value)
+            }
+        };
+        self.note_array_write(&current);
+        self.note_array_write(&updated);
+        self.rebind_subscript_target(var_name, &current, updated);
+    }
+
+    /// Write into a segment-backed static array (element, multi-dim, slice,
+    /// boolean-mask). Returns the array value to rebind.
+    fn static_array_setitem(&mut self, current: &Value, indices: &[SliceIndex], value: Value) -> Value {
+        // Boolean-mask write (`arr[mask] = v`): dispatch before the generic
+        // setitem so the cached Boolean cells are seen, not materialised to
+        // a List that collapses the bool/int distinction. Snapshot the
+        // pre-write element bounds and deposit their widened union on the
+        // post-write value so downstream reductions keep bounds.
+        if let [SliceIndex::Single(mask)] = indices {
+            if matches!(mask, Value::StaticArray { .. })
+                && crate::helpers::static_array::mask::is_boolean_mask_static_array(
+                    &mut self.builder,
+                    mask,
+                )
+            {
+                let pre = crate::helpers::static_array::mask::capture_mask_write_pre_bounds(
+                    &mut self.builder,
+                    current,
+                    &value,
+                );
+                let updated = crate::helpers::static_array::mask::try_apply_boolean_mask_write(
+                    &mut self.builder,
+                    current,
+                    mask,
+                    &value,
+                )
+                .unwrap_or_else(|| {
+                    crate::helpers::static_array::write::static_array_setitem(
+                        &mut self.builder,
+                        current,
+                        indices,
+                        &value,
+                    )
+                });
+                crate::helpers::static_array::mask::deposit_mask_write_post(
+                    &mut self.builder,
+                    pre,
+                    &updated,
+                );
+                return updated;
+            }
+        }
+        if indices.iter().any(|i| matches!(i, SliceIndex::NewAxis)) {
+            // A new axis on a setitem target is rare; materialise and use
+            // the generic nested-value writer.
+            let current_list =
+                crate::helpers::static_array::base::to_value_list(&mut self.builder, current);
+            return self.set_nested_value(current_list, indices, value);
+        }
+        crate::helpers::static_array::write::static_array_setitem(
+            &mut self.builder,
+            current,
+            indices,
+            &value,
+        )
+    }
+
+    /// Write into a bounded-dynamic array (boolean mask, slice or element).
+    fn dynamic_array_setitem(
+        &mut self,
+        data: &crate::types::DynamicNDArrayData,
+        indices: &[SliceIndex],
+        value: &Value,
+    ) -> Value {
+        if let [SliceIndex::Single(mask)] = indices {
+            if crate::helpers::array_ops::is_boolean_mask_with(&mut self.builder, mask) {
+                return crate::helpers::array_ops::dyn_setitem_mask(&mut self.builder, data, mask, value);
+            }
+        }
+        if indices.iter().any(|i| matches!(i, SliceIndex::Range(..))) {
+            return crate::helpers::array_ops::dyn_setitem_slice(&mut self.builder, data, indices, value);
+        }
+        crate::helpers::array_ops::dyn_setitem(&mut self.builder, data, indices, value)
+    }
+
     // ── Built-in function helpers ────────────────────────────────────
+}
+
+/// The variable at the bottom of a subscript chain `name[...][...]`.
+fn chain_root(node: &ASTSubscriptExp) -> Option<&str> {
+    match &*node.val {
+        ASTNode::ASTLoad(load) => Some(load.name.as_str()),
+        ASTNode::ASTSubscriptExp(inner) => chain_root(inner),
+        _ => None,
+    }
 }
