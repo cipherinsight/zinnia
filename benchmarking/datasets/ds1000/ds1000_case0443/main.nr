@@ -1,42 +1,28 @@
-// DS-1000 case 0443 -- Noir baseline. A[np.in1d(A, B)] on Integer[20]x[3].
-// Output 21: length + 20 padded buffer.
+// DS-1000 case 0443, Noir baseline.
+// Kernel: `A[np.in1d(A, B)]` on A: Integer[20], B: Integer[3] (data-dependent length).
+// Output: the count of kept values, then the kept values in order, zero-padded
+// to 20 (compaction: noir_hw::compact).
+// Membership: A[i] is in B iff (A[i] - B[0]) (A[i] - B[1]) (A[i] - B[2]) = 0
+// (a field has no zero divisors): one zero test instead of three.
+// @outputs: dynamic int[20x1]
 
-global NA: u32 = 20;
-global NB: u32 = 3;
+use noir_hw::compact;
 
-fn main(a: [Field; 20], b: [Field; 3],
-        claimed_len: Field, claimed: [Field; 20]) -> pub [Field; 21] {
-    let _ = claimed[0];
-    let _ = claimed_len;
+fn main(A: [Field; 20], B: [Field; 3]) -> pub [Field; 21] {
     let mut keep: [Field; 20] = [0; 20];
-    for i in 0..NA {
-        let mut any_eq: Field = 0;
-        for j in 0..NB {
-            let eq: Field = if a[i] == b[j] { 1 } else { 0 };
-            any_eq = any_eq + eq - any_eq * eq;
-        }
-        keep[i] = any_eq;
+    let mut w: [Field; 20] = [0; 20];
+    let mut count: Field = 0;
+    for i in 0..20 {
+        keep[i] = ((A[i] - B[0]) * (A[i] - B[1]) * (A[i] - B[2]) == 0) as Field;
+        w[i] = keep[i] * A[i];
+        count += keep[i];
     }
-    let mut rank_after: [Field; 20] = [0; 20];
-    let mut running: Field = 0;
-    for i in 0..NA {
-        running = running + keep[i];
-        rank_after[i] = running;
-    }
-    let total = rank_after[NA - 1];
-    let mut out_padded: [Field; 20] = [0; 20];
-    for k in 0..NA {
-        let target = (k + 1) as Field;
-        let mut chosen: Field = 0;
-        for i in 0..NA {
-            let rank_eq: Field = if rank_after[i] == target { 1 } else { 0 };
-            let pick = keep[i] * rank_eq;
-            chosen = chosen + a[i] * pick;
-        }
-        out_padded[k] = chosen;
-    }
+    let kept = compact(keep, w);
     let mut out: [Field; 21] = [0; 21];
-    out[0] = total;
-    for k in 0..NA { out[k + 1] = out_padded[k]; }
+    out[0] = count;
+    for j in 0..20 {
+        out[j + 1] = kept[j];
+    }
     out
 }
+

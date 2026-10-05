@@ -1,38 +1,30 @@
-// DS-1000 case 0431 -- Noir baseline.
-// ~np.logical_and(a > lo, a < hi) on Integer[8] with lo/hi = mean +/- 2*std.
+// DS-1000 case 0431, Noir baseline.
+// Kernel: `~((a > mean - 2*std) & (a < mean + 2*std))` on Float[8].
+// a.mean() and a.std() appear twice in the kernel and are computed once; the
+// squared deviations are summed with one rescale.
+// @outputs: bool[8]
 
-use noir_fpc::{qadd, qsub, qmul, qdiv, qsqrt, qlt, q_from_int, Q};
+use noir_hw::{divmod_pos, rescale, sqrt, window};
 
-global N: u32 = 8;
-
-fn main(a: [Field; 8]) -> pub [Field; 8] {
-    let mut cells: [Field; 8] = [0; 8];
-    for k in 0..N {
-        cells[k] = a[k] * Q;
+fn main(a: [Field; 8]) -> pub [bool; 8] {
+    let mut total: Field = 0;
+    for i in 0..8 {
+        total += a[i];
     }
-    let mut sum: Field = cells[0];
-    for k in 1..N { sum = qadd(sum, cells[k]); }
-    let n_q = q_from_int(N as u64);
-    let mean = qdiv(sum, n_q);
-    let mut sq: Field = {
-        let d = qsub(cells[0], mean); qmul(d, d)
-    };
-    for k in 1..N {
-        let d = qsub(cells[k], mean);
-        sq = qadd(sq, qmul(d, d));
+    let mean = divmod_pos(total, 8).0;
+    let mut sq_sum: Field = 0;
+    for i in 0..8 {
+        let d = a[i] - mean;
+        sq_sum += d * d;
     }
-    let var = qdiv(sq, n_q);
-    let std = qsqrt(var);
-    let two = q_from_int(2);
-    let two_std = qmul(two, std);
-    let lo = qsub(mean, two_std);
-    let hi = qadd(mean, two_std);
-    let mut out: [Field; 8] = [0; 8];
-    for k in 0..N {
-        let gt_lo = qlt(lo, cells[k]);
-        let lt_hi = qlt(cells[k], hi);
-        let inside = gt_lo & lt_hi;
-        out[k] = if inside { 0 } else { 1 };
+    let var = divmod_pos(rescale(sq_sum), 8).0;
+    let std = sqrt(var);
+    let low = window(mean - 2 * std);
+    let high = window(mean + 2 * std);
+    let mut outlier = [false; 8];
+    for i in 0..8 {
+        let x = window(a[i]);
+        outlier[i] = !((x > low) & (x < high));
     }
-    out
+    outlier
 }

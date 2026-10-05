@@ -1,37 +1,27 @@
-// DS-1000 case 0481 -- Noir baseline.
-// indices where (x==a) & (y==b). Output: length + 9 padded buffer.
+// DS-1000 case 0481, Noir baseline.
+// Kernel: `((x == a) & (y == b)).nonzero()[0]` on x, y: Integer[9] (data-dependent length).
+// Output: the number of matching indices, then the indices in increasing
+// order, zero-padded to 9 (compaction: noir_hw::compact; the payload of item i
+// is the constant i).
+// @outputs: dynamic int[9x1]
 
-global N: u32 = 9;
+use noir_hw::compact;
 
-fn main(x: [Field; 9], y: [Field; 9], a: Field, b_val: Field,
-        claimed_len: Field, claimed: [Field; 9]) -> pub [Field; 10] {
-    let _ = claimed[0];
-    let _ = claimed_len;
-    let mut keep: [Field; 9] = [0; 9];
-    for k in 0..N {
-        let m = (x[k] == a) & (y[k] == b_val);
-        keep[k] = if m { 1 } else { 0 };
+fn main(x: [Field; 9], y: [Field; 9], a: Field, b: Field) -> pub [Field; 10] {
+    let mut hit: [Field; 9] = [0; 9];
+    let mut w: [Field; 9] = [0; 9];
+    let mut count: Field = 0;
+    for i in 0..9 {
+        hit[i] = ((x[i] == a) & (y[i] == b)) as Field;
+        w[i] = hit[i] * (i as Field);
+        count += hit[i];
     }
-    let mut rank_after: [Field; 9] = [0; 9];
-    let mut running: Field = 0;
-    for i in 0..N {
-        running = running + keep[i];
-        rank_after[i] = running;
-    }
-    let total = rank_after[N - 1];
-    let mut out_padded: [Field; 9] = [0; 9];
-    for k in 0..N {
-        let target = (k + 1) as Field;
-        let mut chosen: Field = 0;
-        for i in 0..N {
-            let rank_eq: Field = if rank_after[i] == target { 1 } else { 0 };
-            let pick = keep[i] * rank_eq;
-            chosen = chosen + (i as Field) * pick;
-        }
-        out_padded[k] = chosen;
-    }
+    let indices = compact(hit, w);
     let mut out: [Field; 10] = [0; 10];
-    out[0] = total;
-    for k in 0..N { out[k + 1] = out_padded[k]; }
+    out[0] = count;
+    for j in 0..9 {
+        out[j + 1] = indices[j];
+    }
     out
 }
+
