@@ -92,7 +92,7 @@ gadgets. Concretely:
   `select_from_idx` behind `q.index`, Noir native array indexing after
   `noir_hw::index_pos`. For short axes a one-hot over the valid index values
   `-len..len` is cheaper and needs no range check (`q.index` switches to it up to
-  4 elements, measured by the `index_cost` test; in Noir use `noir_hw::pick` for
+  8 elements, measured by the `index_cost` test; in Noir use `noir_hw::pick` for
   rows of up to 8). Never scan the whole input per output when one index selects
   it.
 - Constant divisors use the constant-divisor gadget (one remainder check against

@@ -350,14 +350,16 @@ pub fn index_pos(idx: Field, len: u32) -> u32 {
 }
 
 // row[idx] with NumPy semantics by a one-hot over the 2K valid index values
-// -K..K: one equality per value, and the assertion that exactly one holds
-// pins idx to a valid index (no range check). Cheaper than `index_pos` for
-// short rows.
+// -K..K: position p is hit when idx is p or p - K, i.e. when
+// (idx - p) (idx - p + K) is zero (no zero divisors in a field), one zero test
+// per position; the assertion that exactly one position is hit pins idx to a
+// valid index (no range check). Cheaper than `index_pos` for short rows.
 pub fn pick<let K: u32>(row: [Field; K], idx: Field) -> Field {
     let mut total: Field = 0;
     let mut value: Field = 0;
     for p in 0..K {
-        let hit = (idx == p as Field) as Field + (idx == (p as Field) - (K as Field)) as Field;
+        let at = idx - (p as Field);
+        let hit = (at * (at + (K as Field)) == 0) as Field;
         total += hit;
         value += hit * row[p];
     }

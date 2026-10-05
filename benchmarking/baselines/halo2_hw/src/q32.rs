@@ -112,7 +112,7 @@ impl From<I64> for QuantumCell<Fr> {
 const OFFSET: u128 = 1 << 63;
 
 /// Longest axis indexed by the one-hot form in [`Q32::index`].
-pub const ONEHOT_MAX_LEN: usize = 4;
+pub const ONEHOT_MAX_LEN: usize = 8;
 
 /// The Q32 chip: halo2-base's gate and range chips plus the fixed-point gadgets.
 #[derive(Clone, Debug)]
@@ -679,16 +679,19 @@ impl Q32 {
     }
 
     /// `arr[idx]` with NumPy semantics by a one-hot over the `2 * len` valid
-    /// index values `-len..len`: one equality test per value, and the
-    /// assertion that exactly one holds pins `idx` to a valid index (no range
+    /// index values `-len..len`: position `p` is hit when `idx` is `p` or
+    /// `p - len`, i.e. when `(idx - p) * (idx - p + len)` is zero (a field has
+    /// no zero divisors), one zero test per position; the assertion that
+    /// exactly one position is hit pins `idx` to a valid index (no range
     /// check). Cheaper than [`Q32::index`] for short axes.
     pub fn index_onehot(&self, ctx: &mut Ctx, arr: &[Cell], idx: Cell) -> Cell {
         let len = arr.len() as i128;
         let mut hits = Vec::with_capacity(arr.len());
         for p in 0..len {
-            let at = self.gate.is_equal(ctx, idx, Constant(fe(p)));
-            let wrapped = self.gate.is_equal(ctx, idx, Constant(fe(p - len)));
-            hits.push(self.gate.add(ctx, at, wrapped));
+            let at = self.gate.sub(ctx, idx, Constant(fe(p)));
+            let wrapped = self.gate.add(ctx, at, Constant(fe(len)));
+            let both = self.gate.mul(ctx, at, wrapped);
+            hits.push(self.gate.is_zero(ctx, both));
         }
         let total = self.gate.sum(ctx, hits.iter().map(|h| Existing(*h)));
         self.gate.assert_is_const(ctx, &total, &Fr::ONE);
