@@ -989,10 +989,16 @@ impl IRGenerator {
 
             self.do_recursive_assign(target, item.value.clone(), false);
 
-            self.builder.facts.enter(
-                crate::optim::predicates::ScopeKind::Conditional,
-                super::iteration::conjunction(item.active_facts.clone()),
-            );
+            // An active item's facts (e.g. `k < len(x)`) are path conditions
+            // for its body. Items without them run in the loop's fact scope,
+            // as before, so facts from one iteration stay visible in the next.
+            let item_scope = super::iteration::conjunction(item.active_facts.clone());
+            let pushed_item_scope = item_scope.is_some();
+            if pushed_item_scope {
+                self.builder
+                    .facts
+                    .enter(crate::optim::predicates::ScopeKind::Conditional, item_scope);
+            }
             let mut terminated = false;
             for stmt in block {
                 self.visit(stmt);
@@ -1002,7 +1008,9 @@ impl IRGenerator {
                     break;
                 }
             }
-            let _item_facts = self.builder.facts.leave();
+            if pushed_item_scope {
+                let _item_facts = self.builder.facts.leave();
+            }
             if guarded {
                 if let Some(end) = target_name.and_then(|name| self.ctx.get(name)) {
                     exit_target = Some(match (&item.active, exit_target.take()) {
@@ -1207,9 +1215,12 @@ impl IRGenerator {
             } else {
                 None
             };
-            self.builder
-                .facts
-                .enter(crate::optim::predicates::ScopeKind::Conditional, guard_facts);
+            let pushed_guard_scope = guard_facts.is_some();
+            if pushed_guard_scope {
+                self.builder
+                    .facts
+                    .enter(crate::optim::predicates::ScopeKind::Conditional, guard_facts);
+            }
             let mut terminated = false;
             let pushed_loop_index_context = if let Some(ctx) = loop_index_bound_context.clone() {
                 self.loop_index_bound_contexts.push(ctx);
@@ -1236,7 +1247,9 @@ impl IRGenerator {
                     break;
                 }
             }
-            let _guard_facts = self.builder.facts.leave();
+            if pushed_guard_scope {
+                let _guard_facts = self.builder.facts.leave();
+            }
             if pushed_loop_index_context {
                 self.loop_index_bound_contexts.pop();
             }
@@ -2258,8 +2271,11 @@ impl IRGenerator {
         value: Value,
         conditional_select: bool,
     ) {
+        // Bounded-dynamic roots are not flattened: their single-step writes
+        // are handed off to the core (a write into `np.zeros((3, n))` is
+        // lost), so a chained write into one stays rejected below.
         if let Some((root, mut indices)) = self.scalar_index_chain(inner) {
-            if matches!(self.ctx.get(&root), Some(Value::StaticArray { .. } | Value::DynamicNDArray(_))) {
+            if matches!(self.ctx.get(&root), Some(Value::StaticArray { .. })) {
                 indices.extend(self.eval_slice_indices(outer));
                 self.assign_to_subscript_of_name(&root, indices, value);
                 return;
