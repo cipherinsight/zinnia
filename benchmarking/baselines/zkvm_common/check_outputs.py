@@ -21,6 +21,10 @@ An entry function that returns None has as outputs the array arguments it
 writes, in parameter order; its program declares them on a line
 `// outputs: mutated A, B` inside the entry function's module.
 
+A fixture whose notes flag it as unusable under Q32 (values of magnitude 2^31
+or more, or nonzero inputs below 2^-32; see datasets/tools/acceptance_fixtures.py)
+is not checked: its cases are reported as skipped, with the note.
+
 Usage:
   .venv/bin/python benchmarking/baselines/zkvm_common/check_outputs.py \
       [--systems native,sp1,risc0,cairo] [--cases ds1000_case0300,pythran_lu/factorMatrix0,...] \
@@ -52,6 +56,9 @@ TARGET = BASELINES / "target" / "release"
 # Used when the case set does not give a tolerance for a case.
 DEFAULT_RTOL = 1e-6
 DEFAULT_ATOL = 1e-6
+
+# Phrases by which a fixture's notes flag it as unusable under Q32.
+Q32_UNUSABLE = ("outside the Q32 range", "Q32 rounds them to 0")
 
 HOSTS = {
     "native": [str(TARGET / "kernels-native")],
@@ -92,6 +99,7 @@ class Result:
     detail: str = ""
     max_abs_err: float = 0.0
     mismatches: list = field(default_factory=list)
+    skipped: bool = False
 
 
 # --------------------------------------------------------------------------
@@ -288,6 +296,11 @@ def main() -> int:
             results += [Result(case.name, s, False, "no fixture") for s in case_systems]
             continue
         fixture = json.loads(path.read_text())
+        flags = [n.strip() + "." for n in fixture.get("notes", "").split(".") if any(f in n for f in Q32_UNUSABLE)]
+        if flags:
+            results += [Result(case.name, s, True, "skipped, fixture unusable under Q32: " + " ".join(flags),
+                               skipped=True) for s in case_systems]
+            continue
         try:
             expected = numpy_reference(case, kernel_dir, fixture, args.input)
         except Exception as exc:  # the reference itself failed: report, do not hide
@@ -304,12 +317,13 @@ def main() -> int:
 
     width = max((len(r.case) for r in results), default=4)
     for r in results:
-        status = "ok  " if r.ok else "FAIL"
+        status = "skip" if r.skipped else "ok  " if r.ok else "FAIL"
         extra = f" max|err|={r.max_abs_err:.2e}" if r.max_abs_err else ""
         mism = f" first mismatches (pos, got, want): {r.mismatches}" if r.mismatches else ""
         print(f"{status} {r.case:<{width}} {r.system:<6} {r.detail}{extra}{mism}")
     failed = [r for r in results if not r.ok]
-    print(f"\n{len(results) - len(failed)} of {len(results)} checks passed")
+    skipped = sum(r.skipped for r in results)
+    print(f"\n{len(results) - len(failed) - skipped} of {len(results)} checks passed, {skipped} skipped")
     if args.report:
         args.report.write_text(json.dumps([r.__dict__ for r in results], indent=1))
     return 1 if failed else 0
