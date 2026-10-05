@@ -102,3 +102,48 @@ def test_fractional_constant_keeps_the_rescale():
 ])
 def test_product_over_empty_axis_matches_numpy(source, args):
     assert_matches_numpy(source, *args)
+
+
+# ── sorting networks ─────────────────────────────────────────────────────
+
+def _with_ties(n, seed):
+    rng = np.random.default_rng(seed)
+    return np.round(rng.normal(size=n) * 2) / 2  # many equal values
+
+
+@pytest.mark.parametrize("n", [5, 20, 60])
+def test_sort_matches_numpy(n):
+    assert_matches_numpy(f'def kernel(a: Float[Array, "{n}"]):\n    return np.sort(a)\n',
+                         _with_ties(n, n))
+
+
+@pytest.mark.parametrize("n", [5, 20, 60])
+def test_argsort_is_the_stable_order(n):
+    # 5 and 20 use the adjacent-swap network, 60 Batcher's network with the
+    # (value, index) tie-break; NumPy's stable sort is the reference.
+    source = f'def kernel(a: Float[Array, "{n}"]):\n    return np.argsort(a)\n'
+    a = _with_ties(n, n)
+    expected = np.argsort(a, kind="stable")
+    satisfied, outputs = run_mock(compile_kernel(source), a)
+    assert satisfied
+    assert outputs == list(expected)
+
+
+def test_argsort_of_integers_with_ties():
+    a = np.array([3, 1, 2, 1, 3, 0, 2, 2] * 8)
+    source = 'def kernel(a: Integer[Array, "64"]):\n    return np.argsort(a)[::-1]\n'
+    satisfied, outputs = run_mock(compile_kernel(source), a)
+    assert satisfied
+    assert outputs == list(np.argsort(a, kind="stable")[::-1])
+
+
+def test_argsort_halo2_base_matches_mock():
+    assert_backends_agree('def kernel(a: Float[Array, "40"]):\n    return np.argsort(a)\n',
+                          _with_ties(40, 7))
+
+
+def test_batcher_network_size():
+    # 60 keys: Batcher's merge exchange has 505 comparators where the
+    # adjacent-swap network has 1,770.
+    program = compile_kernel('def kernel(a: Float[Array, "60"]):\n    return np.sort(a)\n')
+    assert ir_classes(program).count("LessThanFIR") == 505
