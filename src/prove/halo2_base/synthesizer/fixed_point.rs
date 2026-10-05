@@ -143,7 +143,8 @@ impl Halo2BaseSynthesizer<'_> {
     ///
     /// Constraints (A, B, Q, R are the integers the cells encode):
     ///   * `r = a - b*q` (one gate, exact in the field), `q` a hint;
-    ///   * `q + 2^63 ∈ [0, 2^64)`: Q is in the signed 64-bit window;
+    ///   * `q` bounded by `bound_quotient`: the signed 64-bit window, or the
+    ///     narrower range a constant divisor and `a`'s proven range imply;
     ///   * `0 <= r_adj < |B|`, where `r_adj = ±r` strips the convention's
     ///     remainder sign (Euclid: none; Floor: the divisor's; Trunc: the
     ///     dividend's, from `sign_and_abs`). For a constant divisor this is
@@ -151,7 +152,7 @@ impl Halo2BaseSynthesizer<'_> {
     ///     [`Self::assert_below_cell`] against `|b|`, which also proves
     ///     `1 <= |B| <= 2^65` and with it the hinted sign of `b`.
     ///
-    /// Soundness: `|B·Q + R| < 2^65·2^63 + 2^65`, far below p/2, so
+    /// Soundness: `|B·Q + R| < 2^65·2^64 + 2^65`, far below p/2, so
     /// `A = B·Q + R` holds over the integers. A second solution would give
     /// `B(Q - Q') = R' - R` with `|R' - R| < |B|` and equal remainder signs,
     /// so `Q = Q'` and `R = R'`: `q` and `r` are functions of `(a, b)`. An
@@ -179,7 +180,11 @@ impl Halo2BaseSynthesizer<'_> {
         let r = self.gate_cell(a.value - b_fp * q.value, |gate, ctx| {
             gate.sub_mul(ctx, a.assigned, b_quantum, q.assigned)
         });
-        self.ensure_signed64(&q)?;
+        let implied = match divisor {
+            Divisor::Constant(c) => self.proven_range(a).and_then(|range| quotient_range(range, c)),
+            _ => None,
+        };
+        self.bound_quotient(&q, implied)?;
 
         // A dynamic divisor's hinted sign and magnitude, pinned by the
         // remainder bound below.
@@ -205,6 +210,11 @@ impl Halo2BaseSynthesizer<'_> {
             (Divisor::Positive(b), _) => self.assert_below_cell(&r_adj, &b),
             (Divisor::NonZero(_), None) => unreachable!("non-zero divisor without a sign"),
         }
+        // With A = B·Q + R over the integers and |R| < |B|, Q = (A - R) / B
+        // lies within one of A / B, so in `implied`.
+        if let Some(range) = implied {
+            self.prove_range(&q, range);
+        }
         Ok((q, r))
     }
 
@@ -225,7 +235,14 @@ impl Halo2BaseSynthesizer<'_> {
             gate.sub_mul(ctx, raw.assigned, q.assigned, QuantumCell::Constant(scale))
         });
         self.range_check(&rem, shift as usize);
-        self.ensure_signed64(&q)?;
+        // A proven range [lo, hi] of `raw` bounds the floor to
+        // [lo >> shift, hi >> shift]; once the identity holds over the
+        // integers, `q` lies there (`rem` is non-negative and below 2^shift).
+        let implied = self.proven_range(raw).and_then(|r| Interval::new(r.lo >> shift, r.hi >> shift));
+        self.bound_quotient(&q, implied)?;
+        if let Some(range) = implied {
+            self.prove_range(&q, range);
+        }
         Ok(q)
     }
 
@@ -477,13 +494,6 @@ impl Halo2BaseSynthesizer<'_> {
     }
 
 
-    /// `c - x` for a constant `c` (one gate).
-    pub(super) fn constant_minus(&mut self, c: i128, x: &Halo2BaseCell) -> Halo2BaseCell {
-        let c_fp = kernel::i128_to_fp(c);
-        self.gate_cell(c_fp - x.value, |gate, ctx| gate.sub(ctx, QuantumCell::Constant(c_fp), x.assigned))
-    }
-
-
     /// Horner evaluation with leading-first Q coefficients, every product
     /// rounded down by `mul_f`: the algorithm of `kernel::horner_eval`.
     pub(super) fn poly_eval_horner(&mut self, x: &Halo2BaseCell, coefs: &[Fp]) -> Result<Halo2BaseCell, ProvingError> {
@@ -493,9 +503,8 @@ impl Halo2BaseSynthesizer<'_> {
         let mut acc = self.const_cell(*first);
         for coef in rest {
             let prod = self.mul_f(x, &acc)?;
-            acc = self.gate_cell(prod.value + coef, |gate, ctx| {
-                gate.add(ctx, prod.assigned, QuantumCell::Constant(*coef))
-            });
+            let coef = kernel::fp_to_i128(*coef).ok_or_else(|| ProvingError::synthesis("polynomial coefficient out of range"))?;
+            acc = self.add_constant(&prod, coef);
         }
         Ok(acc)
     }
@@ -517,4 +526,15 @@ impl Halo2BaseSynthesizer<'_> {
         }
         Ok(acc)
     }
+}
+
+/// The quotients `(a - r) / c` can take for `a` in `range` and `|r| < |c|`:
+/// within one of `a / c`, so between `floor(min) - 1` and `floor(max) + 2`.
+fn quotient_range(range: Interval, c: i128) -> Option<Interval> {
+    if c == 0 {
+        return None;
+    }
+    let floor = |a: i128| kernel::div_rem_or_zero(a, c, Rounding::Floor).0;
+    let (x, y) = (floor(range.lo), floor(range.hi));
+    Interval::new(x.min(y) - 1, x.max(y) + 2)
 }

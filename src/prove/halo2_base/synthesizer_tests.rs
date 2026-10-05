@@ -321,6 +321,44 @@ fn powers_follow_the_mock_and_are_pinned() {
     assert!(fractional(&mut synth, &[x]).is_err(), "a fractional exponent must be rejected, not proved");
 }
 
+/// Quotients of dividends with a proven range are checked against the range
+/// that implies, not the 64-bit window: still pinned, and cheaper.
+#[test]
+fn quotients_of_ranged_dividends_are_pinned_by_narrow_checks() {
+    let ranged: Box<Op> = Box::new(|s, c| {
+        let bound = s.constant_int(1 << 40)?;
+        s.assert_u128_lt(&c[0], &bound)?;
+        s.assert_u128_lt(&c[1], &bound)?;
+        let seven = s.constant_int(7)?;
+        let product = s.mul_f(&c[0], &c[1])?;
+        Ok(vec![product, s.floor_div_i(&c[0], &seven)?, s.mod_i(&c[1], &seven)?])
+    });
+    for (a, b) in [(3i64 << 32, 5i64 << 31), (12345, 678910), (0, (1 << 40) - 1)] {
+        let expected = [
+            kernel::fp_mul_rescale(int(a), int(b), PRECISION_BITS).0,
+            kernel::fp_floor_div(int(a), int(7)).0,
+            kernel::fp_floor_div(int(b), int(7)).1,
+        ];
+        assert_sound(&format!("ranged {a}, {b}"), &*ranged, &[int(a), int(b)], &expected, &[7]);
+    }
+    let unranged: Box<Op> = Box::new(|s, c| Ok(vec![s.mul_f(&c[0], &c[1])?]));
+    let ranged_product: Box<Op> = Box::new(|s, c| {
+        let bound = s.constant_int(1 << 40)?;
+        s.assert_u128_lt(&c[0], &bound)?;
+        s.assert_u128_lt(&c[1], &bound)?;
+        Ok(vec![s.mul_f(&c[0], &c[1])?])
+    });
+    let unranged_cost = cells_of(&*unranged, &[int(3), int(5)]);
+    let ranged_cost = cells_of(&*ranged_product, &[int(3), int(5)]);
+    let bounds_cost = cells_of(&*Box::new(|s: &mut Halo2BaseSynthesizer<'_>, c: &[Halo2BaseCell]| {
+        let bound = s.constant_int(1 << 40)?;
+        s.assert_u128_lt(&c[0], &bound)?;
+        s.assert_u128_lt(&c[1], &bound)?;
+        Ok(vec![])
+    }) as &Op, &[int(3), int(5)]);
+    assert!(ranged_cost.1 - bounds_cost.1 < unranged_cost.1, "the 48-bit quotient check is not narrower");
+}
+
 // ── Transcendentals (B2) ────────────────────────────────────────────────
 
 #[test]

@@ -728,10 +728,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn sinh_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("sinh_f") }
     /// `cos(a) = sin(a + pi/2)`, as `kernel::fp_cos`.
     fn cos_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let half_pi = kernel::i128_to_fp(kernel::half_pi_q(self.params.precision_bits));
-        let shifted = self.gate_cell(a.value + half_pi, |gate, ctx| {
-            gate.add(ctx, a.assigned, QuantumCell::Constant(half_pi))
-        });
+        let shifted = self.add_constant(a, kernel::half_pi_q(self.params.precision_bits));
         self.sin_f(&shifted)
     }
     fn cosh_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("cosh_f") }

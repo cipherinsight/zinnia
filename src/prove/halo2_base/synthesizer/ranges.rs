@@ -299,6 +299,60 @@ impl Halo2BaseSynthesizer<'_> {
         Ok(())
     }
 
+    /// Constrain a hinted quotient `q` so that its division identity holds
+    /// over the integers and has one solution: into `implied` (the range the
+    /// dividend's proven range and the divisor allow) when that lies inside
+    /// the signed 64-bit window and its check is cheaper, else into the
+    /// window. Either way `|q|` stays below `2^64`, which is all the callers'
+    /// uniqueness arguments need, and the honest quotient satisfies the check.
+    pub(super) fn bound_quotient(&mut self, q: &Halo2BaseCell, implied: Option<Interval>) -> Result<(), ProvingError> {
+        let narrow = implied.filter(|r| r.within(&Interval::SIGNED64)).filter(|r| {
+            let width = self.lookup_aligned(bits_above(r.hi - r.lo).max(1));
+            width < 64
+        });
+        match narrow {
+            Some(range) => {
+                let width = self.lookup_aligned(bits_above(range.hi - range.lo).max(1));
+                let shifted = if range.lo == 0 {
+                    *q
+                } else {
+                    let lo = kernel::i128_to_fp(range.lo);
+                    self.gate_cell(q.value - lo, |gate, ctx| gate.sub(ctx, q.assigned, QuantumCell::Constant(lo)))
+                };
+                self.range_check(&shifted, width);
+                if let Some(checked) = Interval::new(range.lo, range.lo + (1i128 << width) - 1) {
+                    self.prove_range(q, checked);
+                }
+                Ok(())
+            }
+            None => self.ensure_signed64(q),
+        }
+    }
+
+    /// `x + c` for a constant `c` (one gate), with `x`'s range and
+    /// two-valued facts shifted.
+    pub(super) fn add_constant(&mut self, x: &Halo2BaseCell, c: i128) -> Halo2BaseCell {
+        let c_fp = kernel::i128_to_fp(c);
+        let out = self.gate_cell(x.value + c_fp, |gate, ctx| gate.add(ctx, x.assigned, QuantumCell::Constant(c_fp)));
+        if let Some(range) = self.proven_range(x).and_then(|r| r.offset(c)) {
+            self.prove_range(&out, range);
+        }
+        if let Some(tv) = self.two_valued_of(x).and_then(|tv| tv.map(|v| v.checked_add(c))) {
+            self.set_two_valued(&out, tv);
+        }
+        out
+    }
+
+    /// `c - x` for a constant `c` (one gate), with the range carried over.
+    pub(super) fn constant_minus(&mut self, c: i128, x: &Halo2BaseCell) -> Halo2BaseCell {
+        let c_fp = kernel::i128_to_fp(c);
+        let out = self.gate_cell(c_fp - x.value, |gate, ctx| gate.sub(ctx, QuantumCell::Constant(c_fp), x.assigned));
+        if let Some(range) = self.proven_range(x).and_then(|r| r.neg().offset(c)) {
+            self.prove_range(&out, range);
+        }
+        out
+    }
+
     pub(super) fn ensure_signed64(&mut self, x: &Halo2BaseCell) -> Result<(), ProvingError> {
         self.ensure_within(x, Interval::SIGNED64)
     }
