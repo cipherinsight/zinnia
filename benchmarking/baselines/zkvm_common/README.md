@@ -184,7 +184,7 @@ is specific to NPBench/Pythran.
 
 Every parameter travels as one buffer of 64-bit little-endian words (a Q32
 by its encoding, an integer as itself, a boolean as 0/1, a complex number as
-two Q32 words; a shape-generic program's arrays start with their dimensions),
+two Q32 words; a shape-generic program's arrays end with their dimensions),
 read with the zkVM's raw-slice call (SP1 `io::read_vec`, RISC Zero
 `env::read_slice` of a length word and then the words). The output is
 encoded into one word buffer (`Publics::encode`: a scalar is its words, a
