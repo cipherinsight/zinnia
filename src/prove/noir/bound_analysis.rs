@@ -350,9 +350,9 @@ mod tests {
 
     #[test]
     fn division_by_a_possibly_negative_divisor_is_unbounded() {
-        // 7 // y with y unbounded can be negative (y = -2 gives -4 in Python,
-        // -3 under the Euclidean IR semantics): the dividend's bound must not
-        // be copied to the quotient. Field division (DivI) has no bound.
+        // 7 // y with y unbounded can be negative (y = -2 gives -4, as in
+        // Python and the kernel): the dividend's bound must not be copied to
+        // the quotient. Field division (DivI) has no bound.
         let graph = graph_of(vec![
             stmt(0, IR::ConstantInt { value: 7 }, vec![]),
             stmt(

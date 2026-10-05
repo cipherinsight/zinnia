@@ -23,7 +23,8 @@
 //!   facts guaranteed by a lowering (0/1 results of comparisons and logic
 //!   ops, see [`NoirEmitter::is_boolean`]).
 //! - Integer, logic and division semantics follow the mock backend
-//!   (Euclidean `//` and `%`, Python truthiness); see
+//!   (`kernel.rs`: Python `//` and `%`, a zero divisor gives 0, Python
+//!   truthiness, the kernel's fixed-point sqrt/sin/cos/arcsin); see
 //!   `benchmarking/noir_differential.py`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -526,7 +527,7 @@ pub struct NoirEmitter<'a> {
     /// same operand participates in many comparisons (slice masks, clamp
     /// chains) we project once and feed the pair into `qlt_signed` etc.
     signed_proj: HashMap<String, (String, String)>,
-    /// Cache: `euclid_divmod*` call text -> its (quotient, remainder) names.
+    /// Cache: division call text -> its (quotient, remainder) names.
     divmod_cache: HashMap<String, (String, String)>,
     /// Pairs `(idx, hi)` already emitted via `assert_u128_lt`. Zinnia's
     /// IR layer can re-issue the same bound discharge (e.g. multiple
@@ -1730,7 +1731,7 @@ impl Synthesizer for NoirEmitter<'_> {
         // The producer (e.g. reshape `-1` dim inference) promises a, b, the
         // quotient and the remainder are non-negative `divisor_bits`-bit
         // values. `q_floor_div_bounded` checks exactly that (so a false
-        // promise fails the proof) and pins the unique Euclidean quotient.
+        // promise fails the proof) and pins the unique quotient.
         let bits = divisor_bits.max(1);
         self.use_lib("q_floor_div_bounded");
         let (af, bf) = (self.as_field(a), self.as_field(b));
