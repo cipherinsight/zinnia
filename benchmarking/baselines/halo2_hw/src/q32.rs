@@ -111,6 +111,9 @@ impl From<I64> for QuantumCell<Fr> {
 
 const OFFSET: u128 = 1 << 63;
 
+/// Longest axis indexed by the one-hot form in [`Q32::index`].
+pub const ONEHOT_MAX_LEN: usize = 4;
+
 /// The Q32 chip: halo2-base's gate and range chips plus the fixed-point gadgets.
 #[derive(Clone, Debug)]
 pub struct Q32 {
@@ -400,6 +403,14 @@ impl Q32 {
         (self.bound(ctx, q_cell), r_cell)
     }
 
+    /// `(a // d, a % d)` for an `a` the circuit already knows is a non-negative
+    /// integer below `2^a_bits` (for example an index selected from loop
+    /// constants), by halo2-base's `div_mod`: it checks `q < 2^a_bits / d + 1`
+    /// and `r < d`, which pins `(q, r)` under that precondition.
+    pub fn divmod_small(&self, ctx: &mut Ctx, a: Cell, d: u64, a_bits: usize) -> (Cell, Cell) {
+        self.range.div_mod(ctx, a, d, a_bits)
+    }
+
     /// Integer floor division and remainder by a private divisor that must be
     /// positive (Python `//`, `%`): `a = q * b + r`, `0 <= r < b`; `b <= 0` has
     /// no witness. Same uniqueness argument as [`Q32::div`].
@@ -553,12 +564,42 @@ impl Q32 {
 
     // ---------------------------------------------------------------- indexing
 
-    /// `arr[idx]` for a private index, NumPy semantics for `-len <= idx < len`
+    /// `arr[idx]` for a private index, NumPy semantics: `-len <= idx < len`
     /// (negative indices count from the end); any other index has no witness,
-    /// as NumPy raises `IndexError`.
-    pub fn index(&self, ctx: &mut Ctx, arr: &[Cell], idx: I64) -> Cell {
+    /// as NumPy raises `IndexError`. Picks the cheaper of the two forms below:
+    /// the one-hot form up to `ONEHOT_MAX_LEN` elements, the range-checked one
+    /// beyond (crossover measured by the `index_cost` test).
+    pub fn index(&self, ctx: &mut Ctx, arr: &[Cell], idx: Cell) -> Cell {
+        if arr.len() <= ONEHOT_MAX_LEN {
+            self.index_onehot(ctx, arr, idx)
+        } else {
+            let idx = self.bound(ctx, idx);
+            self.index_i64(ctx, arr, idx)
+        }
+    }
+
+    /// `arr[idx]` for an index that already carries a window proof: wrap,
+    /// range-check the position, then halo2-base's `select_from_idx`.
+    pub fn index_i64(&self, ctx: &mut Ctx, arr: &[Cell], idx: I64) -> Cell {
         let pos = self.wrap_index(ctx, idx, arr.len());
         self.gate.select_from_idx(ctx, arr.iter().map(|c| Existing(*c)), pos)
+    }
+
+    /// `arr[idx]` with NumPy semantics by a one-hot over the `2 * len` valid
+    /// index values `-len..len`: one equality test per value, and the
+    /// assertion that exactly one holds pins `idx` to a valid index (no range
+    /// check). Cheaper than [`Q32::index`] for short axes.
+    pub fn index_onehot(&self, ctx: &mut Ctx, arr: &[Cell], idx: Cell) -> Cell {
+        let len = arr.len() as i128;
+        let mut hits = Vec::with_capacity(arr.len());
+        for p in 0..len {
+            let at = self.gate.is_equal(ctx, idx, Constant(fe(p)));
+            let wrapped = self.gate.is_equal(ctx, idx, Constant(fe(p - len)));
+            hits.push(self.gate.add(ctx, at, wrapped));
+        }
+        let total = self.gate.sum(ctx, hits.iter().map(|h| Existing(*h)));
+        self.gate.assert_is_const(ctx, &total, &Fr::ONE);
+        self.gate.inner_product(ctx, hits.iter().map(|h| Existing(*h)), arr.iter().map(|c| Existing(*c)))
     }
 
     /// Maps a NumPy index in `[-len, len)` to its position in `[0, len)`,
@@ -839,8 +880,12 @@ mod tests {
             accepts(move |c, ctx| {
                 let cells = c.load_ints(ctx, &arr.map(|v| v as i64));
                 let i = ctx.load_witness(fe(idx));
-                let i = c.bound(ctx, i);
                 let v = c.index(ctx, &cells, i);
+                let ib = c.bound(ctx, i);
+                let w = c.index_i64(ctx, &cells, ib);
+                let u = c.index_onehot(ctx, &cells, i);
+                assert_eq!(v.value(), w.value());
+                assert_eq!(v.value(), u.value());
                 let want = arr[idx.rem_euclid(5) as usize];
                 if (-5..5).contains(&idx) {
                     assert_eq!(*v.value(), fe(want));
@@ -850,5 +895,34 @@ mod tests {
         assert!(run(0) && run(4) && run(-1) && run(-5));
         assert!(!run(5));
         assert!(!run(-6));
+    }
+
+    /// Prints the cell counts of the two indexing forms (run with
+    /// `cargo test --lib index_cost -- --nocapture`).
+    #[test]
+    fn index_cost() {
+        for len in [2usize, 3, 4, 5, 6, 8, 10, 16] {
+            let cost = |onehot: bool| {
+                let mut b = BaseCircuitBuilder::<Fr>::from_stage(CircuitBuilderStage::Keygen);
+                b.set_k(K as usize);
+                b.set_lookup_bits(8);
+                b.set_instance_columns(1);
+                let q = Q32::new(&b);
+                let ctx = b.main(0);
+                let arr = q.load_ints(ctx, &vec![1; len]);
+                let i = ctx.load_witness(fe(0));
+                if onehot {
+                    q.index_onehot(ctx, &arr, i);
+                } else {
+                    let ib = q.bound(ctx, i);
+                    q.index_i64(ctx, &arr, ib);
+                }
+                let st = b.statistics();
+                let c = (st.gate.total_advice_per_phase[0], st.total_lookup_advice_per_phase[0]);
+                b.clear();
+                c
+            };
+            println!("len {len}: onehot {:?} ranged {:?}", cost(true), cost(false));
+        }
     }
 }

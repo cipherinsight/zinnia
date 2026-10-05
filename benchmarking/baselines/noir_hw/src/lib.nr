@@ -247,13 +247,31 @@ pub fn cos(x: Field) -> Field {
 // ---------------------------------------------------------------- indexing
 
 // Position of a NumPy index in [-len, len) (negative counts from the end);
-// any other index has no witness, as NumPy raises IndexError.
+// any other index has no witness, as NumPy raises IndexError. Shifting by len
+// maps the valid indices onto [0, 2 len): one 32-bit range check of the
+// shifted Field (so the u32 cast is exact) and one u32 comparison prove it.
 pub fn index_pos(idx: Field, len: u32) -> u32 {
-    let pos = if is_neg(idx) { idx + (len as Field) } else { idx };
-    pos.assert_max_bit_size::<32>();
-    let p = pos as u32;
-    assert(p < len, "index out of bounds");
-    p
+    let shifted = idx + (len as Field);
+    shifted.assert_max_bit_size::<32>();
+    let s = shifted as u32;
+    assert(s < 2 * len, "index out of bounds");
+    if s >= len { s - len } else { s }
+}
+
+// row[idx] with NumPy semantics by a one-hot over the 2K valid index values
+// -K..K: one equality per value, and the assertion that exactly one holds
+// pins idx to a valid index (no range check). Cheaper than `index_pos` for
+// short rows.
+pub fn pick<let K: u32>(row: [Field; K], idx: Field) -> Field {
+    let mut total: Field = 0;
+    let mut value: Field = 0;
+    for p in 0..K {
+        let hit = (idx == p as Field) as Field + (idx == (p as Field) - (K as Field)) as Field;
+        total += hit;
+        value += hit * row[p];
+    }
+    assert(total == 1, "index out of bounds");
+    value
 }
 
 // ------------------------------------------------------------------- tests
@@ -377,6 +395,25 @@ fn test_parity_field_half() {
 fn test_index_pos() {
     assert(index_pos(-1, 5) == 4);
     assert(index_pos(2, 5) == 2);
+}
+
+#[test]
+fn test_pick() {
+    let row = [10, 11, 12];
+    assert(pick(row, 0) == 10);
+    assert(pick(row, 2) == 12);
+    assert(pick(row, -1) == 12);
+    assert(pick(row, -3) == 10);
+}
+
+#[test(should_fail)]
+fn test_pick_out_of_bounds() {
+    let _ = pick([10, 11, 12], 3);
+}
+
+#[test(should_fail)]
+fn test_pick_too_negative() {
+    let _ = pick([10, 11, 12], -4);
 }
 
 #[test(should_fail)]
