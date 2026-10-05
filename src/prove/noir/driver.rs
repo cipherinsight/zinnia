@@ -1,16 +1,18 @@
 //! Subprocess driver for the Noir toolchain: `nargo execute` (compile and
-//! solve the witness), `bb write_vk`, `bb prove` (the timed window, matching
-//! `benchmarking/run_noir_baselines.py`) and `bb verify`.
+//! solve the witness), `bb write_vk`, `bb prove` (the timed window, as the
+//! `prove_core` window of the benchmark harness) and `bb verify`.
 //!
-//! Every `bb` call uses the same verifier target, `VERIFIER_TARGET`
-//! (UltraHonk without zero knowledge, as the handwritten-baseline runner).
+//! Every `bb` call uses the same verifier target, `VERIFIER_TARGET`:
+//! zero-knowledge UltraHonk with a Poseidon2 transcript, as the handwritten
+//! Noir baselines and the benchmark harness (author's decision: Noir proofs
+//! are zero-knowledge on both sides).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::Instant;
 
 /// `bb --verifier_target` for every call (write_vk, prove, verify).
-pub const VERIFIER_TARGET: &str = "noir-recursive-no-zk";
+pub const VERIFIER_TARGET: &str = "noir-recursive";
 
 /// Package name written into the staged `Nargo.toml`; nargo names its
 /// bytecode and witness files after it.
@@ -161,8 +163,8 @@ pub fn run_pipeline(pkg_dir: &Path, paths: &DriverPaths) -> Result<DriverOutput,
             .args(["--scheme", "ultra_honk", "--verifier_target", VERIFIER_TARGET]),
     )?;
 
-    // bb prove: the timed window (run_noir_baselines.py measures the same
-    // call after the VK exists).
+    // bb prove: the timed window (the harness times the same call after the
+    // VK exists).
     let t = Instant::now();
     run(
         "bb prove",
