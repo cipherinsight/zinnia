@@ -13,7 +13,6 @@
 //!     c *= 1j
 //!     return c
 //!
-//! @requires(lambda dU, U_hat, K2, K, P_hat, K_over_K2, nu: 0 <= K <= 1024)
 //! def add_pressure_diffusion(dU: Complex[Array, '3 2 5 7'], U_hat: Complex[Array, '3 2 5 7'], K2: Float[Array, '2 5 7'], K: Float[Array, '3 2 5 7'], P_hat: Complex[Array, '2 5 7'], K_over_K2: Float[Array, '3 2 5 7'], nu: Float):
 //!     du0, du1, du2 = (dU[0], dU[1], dU[2])
 //!     k_0, k_1, k_2 = (K_over_K2[0], K_over_K2[1], K_over_K2[2])
@@ -59,20 +58,13 @@ pub mod add_pressure_diffusion {
     // The update of dU is not an output (the function returns P_hat), so the
     // parameters only it reads are unused; Zinnia's dead-code elimination
     // drops them as well.
-    // unused parameters: U_hat, K2, nu
+    // unused parameters: U_hat, K2, K, nu
     pub type Output = Array3<C32>;
 
     pub fn main(args: &mut Args<impl Input>) -> Output {
         let du: Array4<C32> = args.array4();
-        let k: Array4<Q32> = args.array4();
         let mut p_hat: Array3<C32> = args.array3();
         let k_over_k2: Array4<Q32> = args.array4();
-        // The precondition on the array K holds for every element.
-        assert!(
-            k.iter()
-                .all(|&v| Q32::ZERO <= v && v <= Q32::from_int(1024)),
-            "requires 0 <= K <= 1024"
-        );
         assert_eq!(
             &du.shape()[1..],
             p_hat.shape(),
