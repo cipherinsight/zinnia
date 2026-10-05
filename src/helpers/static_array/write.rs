@@ -294,6 +294,20 @@ pub fn static_array_setitem(
     {
         return val.clone();
     }
+    // `a[np.nonzero(m)] = v` (also spelt `a[np.where(m)] = v`) assigns
+    // the positions where `m` is nonzero, in row-major order: exactly
+    // NumPy's `a[m] = v`.
+    if let [SliceIndex::Single(Value::Tuple(tuple))] = indices {
+        if let Some(mask) = b.nonzero_index_masks.get(&tuple.value_id).cloned() {
+            if matches!(&mask, Value::StaticArray { shape: m, .. } if *m == shape) {
+                if let Some(out) =
+                    super::mask::try_apply_boolean_mask_write(b, val, &mask, value)
+                {
+                    return out;
+                }
+            }
+        }
+    }
 
     // Expand a single Ellipsis (`...`) into the right number of full-range
     // slices, based on the source rank. Mirrors the read-path behaviour.

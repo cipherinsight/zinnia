@@ -425,11 +425,13 @@ pub fn np_nonzero(b: &mut IRBuilder, args: &[Value]) -> Value {
     let one = b.ir_constant_int(1);
     let zero = b.ir_constant_int(0);
 
+    let mut keep_cells: Vec<Value> = Vec::with_capacity(cells.len());
     let mut keep_vids: Vec<crate::types::ValueId> = Vec::with_capacity(cells.len());
     let mut source_vids: Vec<Vec<crate::types::ValueId>> = vec![Vec::with_capacity(cells.len()); rank];
     let mut prefix_vids: Vec<crate::types::ValueId> = Vec::with_capacity(cells.len());
     for (flat_idx, cell) in cells.iter().enumerate() {
         let keep = nonzero_indicator(b, cell);
+        keep_cells.push(keep.clone());
         let coords = static_row_major_coords(flat_idx, &shape);
         for (axis, coord) in coords.iter().enumerate() {
             let coord_val = b.ir_constant_int(*coord as i64);
@@ -507,7 +509,17 @@ pub fn np_nonzero(b: &mut IRBuilder, args: &[Value]) -> Value {
         };
         outputs.len()
     ];
-    Value::Tuple(CompositeData::new(types, outputs))
+    let index_tuple = Value::Tuple(CompositeData::new(types, outputs));
+    let mask = crate::helpers::static_array::base::build_static_array_from_flat(
+        b,
+        keep_cells,
+        shape,
+        NumberType::Integer,
+    );
+    if let Some(vid) = index_tuple.value_id() {
+        b.nonzero_index_masks.insert(vid, mask);
+    }
+    index_tuple
 }
 
 /// `np.unique(arr, return_inverse=...)` returning a bounded-dynamic

@@ -141,6 +141,12 @@ pub struct IRBuilder {
     /// while ops are still being migrated. Once P6 lands and the legacy
     /// path goes away, this cache (and the shim) go with it.
     pub static_array_payload: HashMap<u32, Vec<Value>>,
+    /// Index tuples produced by `np.nonzero` / one-argument `np.where`,
+    /// keyed by the tuple's `ValueId`, mapped to a snapshot of the boolean
+    /// mask they enumerate (taken when the tuple was built, so later writes
+    /// to the source array do not change it). Assigning through such a
+    /// tuple, `a[np.where(m)] = v`, is NumPy's `a[m] = v`.
+    pub nonzero_index_masks: HashMap<crate::types::ValueId, Value>,
     /// Small expression-provenance side table for StaticArray results whose
     /// concrete payload can be reconstructed exactly, but may be consumed by
     /// a fused lowering before materializing every intermediate cell.
@@ -230,6 +236,7 @@ impl IRBuilder {
             next_array_id: 0,
             dim_table: crate::types::DimTable::new(),
             static_array_payload: HashMap::new(),
+            nonzero_index_masks: HashMap::new(),
             static_array_product_provenance: HashMap::new(),
             lazy_static_array_segments: HashSet::new(),
             provenance: crate::provenance::ProvenanceTable::new(),
