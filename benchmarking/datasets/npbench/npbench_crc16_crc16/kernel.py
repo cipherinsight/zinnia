@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def crc16(data: Integer[Array, '1600'], poly: Integer=33800):
+def crc16(data: Integer[Array, '16'], poly: Integer=33800):
     """
     CRC-16-CCITT Algorithm
     """

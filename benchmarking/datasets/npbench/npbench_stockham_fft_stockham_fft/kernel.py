@@ -7,7 +7,7 @@ import numpy as np
 
 @zk_circuit
 @requires(lambda N, R, K, x, y: R != 0)
-def stockham_fft(N: Integer, R: Integer, K: Integer, x: Complex[Array, '32768'], y: Complex[Array, '32768']):
+def stockham_fft(N: Integer, R: Integer, K: Integer, x: Complex[Array, '16'], y: Complex[Array, '16']):
     i_coord, j_coord = np.mgrid[0:R, 0:R]
     dft_mat = np.empty((R, R), dtype=np.complex128)
     dft_mat = np.exp(-2j * np.pi * i_coord * j_coord / R)

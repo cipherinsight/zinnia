@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def summation(pos: Float[Array, '30 3'], weights: Float[Array, '30'], points: Float[Array, '30 3']):
+def summation(pos: Float[Array, '16 3'], weights: Float[Array, '16'], points: Float[Array, '16 3']):
     n_points = len(points)
     n_weights = len(weights)
     sum_array3d = np.zeros((n_points, 3))

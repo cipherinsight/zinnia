@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def kernel(alpha: Float, beta: Float, C: Float[Array, '40 50'], A: Float[Array, '40 40'], B: Float[Array, '40 50']):
+def kernel(alpha: Float, beta: Float, C: Float[Array, '10 13'], A: Float[Array, '10 10'], B: Float[Array, '10 13']):
     temp2 = np.empty((C.shape[1],), dtype=C.dtype)
     C *= beta
     for i in range(C.shape[0]):

@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def dist(x: Float[Array, '200'], y: Float[Array, '200'], z: Float[Array, '200'], L: Integer, periodicX: Boolean, periodicY: Boolean, periodicZ: Boolean):
+def dist(x: Float[Array, '16'], y: Float[Array, '16'], z: Float[Array, '16'], L: Integer, periodicX: Boolean, periodicY: Boolean, periodicZ: Boolean):
     """ Computes distances between all particles and places the result in a matrix such that the ij th matrix entry corresponds to the distance between particle i and j """
     N = len(x)
     xtemp = np.tile(x, (N, 1))

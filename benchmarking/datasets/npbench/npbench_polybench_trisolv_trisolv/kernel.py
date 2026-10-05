@@ -6,6 +6,6 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def kernel(L: Float[Array, '2000 2000'], x: Float[Array, '2000'], b: Float[Array, '2000']):
+def kernel(L: Float[Array, '16 16'], x: Float[Array, '16'], b: Float[Array, '16']):
     for i in range(x.shape[0]):
         x[i] = (b[i] - L[i, :i] @ x[:i]) / L[i, i]

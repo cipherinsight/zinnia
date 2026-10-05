@@ -7,7 +7,7 @@ import numpy
 
 @zk_circuit
 @requires(lambda inRGB, sigma: sigma != 0)
-def goodExpoMeasure(inRGB: Integer[Array, '20 20 20'], sigma: Float):
+def goodExpoMeasure(inRGB: Integer[Array, '16 16 16'], sigma: Float):
     """
     Compute the good exposition image quality measure on 1 input image.
     """

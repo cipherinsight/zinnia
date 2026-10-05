@@ -8,7 +8,7 @@ import math
 @zk_circuit
 @requires(lambda xmin, ymin, xmax, ymax, step, range_, range_x, range_y, t: step != 0.0)
 @requires(lambda xmin, ymin, xmax, ymax, step, range_, range_x, range_y, t: range_ != 0.0)
-def run(xmin: Float, ymin: Float, xmax: Float, ymax: Float, step: Float, range_: Float, range_x: Integer, range_y: Integer, t: Float[Array, '80 3']):
+def run(xmin: Float, ymin: Float, xmax: Float, ymax: Float, step: Float, range_: Float, range_x: Integer, range_y: Integer, t: Float[Array, '16 3']):
     pt = [[0] * range_y for _ in range(range_x)]
     'omp parallel for'
     for i in range(range_x):

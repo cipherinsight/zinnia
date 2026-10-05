@@ -27,7 +27,7 @@ def pressure_poisson(nit, p, dx, dy, b):
 @requires(lambda nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu: dt != 0.0)
 @requires(lambda nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu: dx != 0.0)
 @requires(lambda nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu: dy != 0.0)
-def cavity_flow(nx: Integer, ny: Integer, nt: Integer, nit: Integer, u: Float[Array, '61 61'], v: Float[Array, '61 61'], dt: Float, dx: Float, dy: Float, p: Float[Array, '61 61'], rho: Float, nu: Float):
+def cavity_flow(nx: Integer, ny: Integer, nt: Integer, nit: Integer, u: Float[Array, '16 16'], v: Float[Array, '16 16'], dt: Float, dx: Float, dy: Float, p: Float[Array, '16 16'], rho: Float, nu: Float):
     un = np.empty_like(u)
     vn = np.empty_like(v)
     b = np.zeros((ny, nx))

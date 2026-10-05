@@ -6,5 +6,5 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def kernel(A: Float[Array, '1000 1000']):
+def kernel(A: Float[Array, '16 16']):
     A[:] = np.linalg.cholesky(A) + np.triu(A, k=1)

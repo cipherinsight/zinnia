@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def spmv(A_row: Integer[Array, '4097'], A_col: Integer[Array, '8192'], A_val: Float[Array, '8192'], x: Float[Array, '4096']):
+def spmv(A_row: Integer[Array, '9'], A_col: Integer[Array, '16'], A_val: Float[Array, '16'], x: Float[Array, '8']):
     y = np.empty(A_row.size - 1, A_val.dtype)
     for i in range(A_row.size - 1):
         cols = A_col[A_row[i]:A_row[i + 1]]

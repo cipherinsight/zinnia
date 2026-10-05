@@ -9,7 +9,7 @@ def zero(n, m):
     return [[0 for row in range(n)] for col in range(m)]
 
 @zk_circuit
-def matrix_multiply(m0: Float[Array, '60 60'], m1: Float[Array, '60 60']):
+def matrix_multiply(m0: Float[Array, '16 16'], m1: Float[Array, '16 16']):
     new_matrix = zero(len(m0), len(m1[0]))
     for i in range(len(m0)):
         for j in range(len(m1[0])):

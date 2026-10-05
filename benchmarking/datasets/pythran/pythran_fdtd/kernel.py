@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def fdtd(input_grid: Float[Array, '1000 1000'], steps: Integer):
+def fdtd(input_grid: Float[Array, '16 16'], steps: Integer):
     grid = input_grid.copy()
     old_grid = np.zeros_like(input_grid)
     previous_grid = np.zeros_like(input_grid)

@@ -26,22 +26,32 @@ def _identity(fn: Callable | None = None, **_kwargs: Any) -> Any:
     return fn if fn is not None else (lambda f: f)
 
 
+def _requires(*_predicates: Any, **_kwargs: Any) -> Callable[[Callable], Callable]:
+    """`@requires(lambda ...: ...)` states a precondition; NumPy ignores it."""
+    return lambda fn: fn
+
+
 def _namespace() -> dict[str, Any]:
     names = ["Float", "Integer", "Int", "Boolean", "Bool", "Complex", "Array", "DynArray", "Vec",
              "NDArray", "DynamicNDArray", "Public", "Private", "List", "Tuple"]
     namespace: dict[str, Any] = {name: _Annotation() for name in names}
-    namespace.update({"zk_circuit": _identity, "zk_chip": _identity, "requires": _identity, "np": np})
+    namespace.update({"zk_circuit": _identity, "zk_chip": _identity, "requires": _requires, "np": np})
     return namespace
 
 
-def load_kernel(kernel_path: Path) -> Callable[..., Any]:
+def load_kernel(kernel_path: Path, function: str = "kernel") -> Callable[..., Any]:
     source = kernel_path.read_text(encoding="utf-8").replace("from zinnia import *", "")
     namespace = _namespace()
     exec(compile(source, str(kernel_path), "exec"), namespace)
-    return namespace["kernel"]
+    return namespace[function]
 
 
-def run_kernel(kernel_path: Path, args: list[Any]) -> Any:
+def run_kernel(kernel_path: Path, args: list[Any], function: str = "kernel") -> Any:
     copies = [np.array(a, copy=True) if isinstance(a, np.ndarray) else a for a in args]
+    return run_kernel_in_place(kernel_path, copies, function)
+
+
+def run_kernel_in_place(kernel_path: Path, args: list[Any], function: str = "kernel") -> Any:
+    """Like run_kernel, but the kernel may update `args` (no copies)."""
     with np.errstate(divide="raise", over="raise", invalid="raise", under="ignore"):
-        return load_kernel(kernel_path)(*copies)
+        return load_kernel(kernel_path, function)(*args)

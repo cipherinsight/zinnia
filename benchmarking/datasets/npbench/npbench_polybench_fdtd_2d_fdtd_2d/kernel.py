@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def kernel(TMAX: Integer, ex: Float[Array, '200 220'], ey: Float[Array, '200 220'], hz: Float[Array, '200 220'], _fict_: Float[Array, '20']):
+def kernel(TMAX: Integer, ex: Float[Array, '15 16'], ey: Float[Array, '15 16'], hz: Float[Array, '15 16'], _fict_: Float[Array, '2']):
     for t in range(TMAX):
         ey[0, :] = _fict_[t]
         ey[1:, :] -= 0.5 * (hz[1:, :] - hz[:-1, :])

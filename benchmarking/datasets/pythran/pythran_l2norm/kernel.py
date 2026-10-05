@@ -6,5 +6,5 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def l2_norm(x: Float[Array, '100 100']):
+def l2_norm(x: Float[Array, '16 16']):
     return np.sqrt(np.sum(np.abs(x) ** 2, 1))

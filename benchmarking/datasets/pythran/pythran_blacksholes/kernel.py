@@ -8,7 +8,7 @@ import math
 @zk_circuit
 @requires(lambda stock_price, option_strike, option_years, Riskfree, Volatility, nb_opt: Volatility != 0.0)
 @requires(lambda stock_price, option_strike, option_years, Riskfree, Volatility, nb_opt: 0 <= nb_opt <= 1024)
-def BlackScholes(stock_price: Integer[Array, '99'], option_strike: Integer[Array, '99'], option_years: Integer[Array, '99'], Riskfree: Float, Volatility: Float, nb_opt: Integer):
+def BlackScholes(stock_price: Integer[Array, '14'], option_strike: Integer[Array, '14'], option_years: Integer[Array, '14'], Riskfree: Float, Volatility: Float, nb_opt: Integer):
     RSQRT2PI = 1 / math.sqrt(math.pi * 2)
     A1 = 0.31938153
     A2 = -0.356563782

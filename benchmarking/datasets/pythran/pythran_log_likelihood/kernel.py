@@ -7,7 +7,7 @@ import numpy
 
 @zk_circuit
 @requires(lambda data, mean, sigma: sigma != 0.0)
-def log_likelihood(data: Float[Array, '10000'], mean: Float, sigma: Float):
+def log_likelihood(data: Float[Array, '16'], mean: Float, sigma: Float):
     s = (data - mean) ** 2 / (2 * sigma ** 2)
     pdfs = numpy.exp(-s)
     pdfs /= numpy.sqrt(2 * numpy.pi) * sigma

@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def md(E: Complex[Array, '160'], symbols: Complex[Array, '80']):
+def md(E: Complex[Array, '16'], symbols: Complex[Array, '8']):
     L = E.shape[0]
     M = symbols.shape[0]
     syms_out = np.zeros(L, dtype=E.dtype)

@@ -18,7 +18,6 @@ def cross2(c: Complex[Array, '3 2 5 7'], a: Float[Array, '3 2 5 7'], b: Complex[
     return c
 
 @zk_circuit
-@requires(lambda dU, U_hat, K2, K, P_hat, K_over_K2, nu: 0 <= K <= 1024)
 def add_pressure_diffusion(dU: Complex[Array, '3 2 5 7'], U_hat: Complex[Array, '3 2 5 7'], K2: Float[Array, '2 5 7'], K: Float[Array, '3 2 5 7'], P_hat: Complex[Array, '2 5 7'], K_over_K2: Float[Array, '3 2 5 7'], nu: Float):
     du0, du1, du2 = (dU[0], dU[1], dU[2])
     k_0, k_1, k_2 = (K_over_K2[0], K_over_K2[1], K_over_K2[2])
