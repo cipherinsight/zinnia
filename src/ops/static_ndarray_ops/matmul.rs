@@ -39,6 +39,10 @@ pub fn matmul(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
         );
     }
 
+    if lhs_shape.contains(&0) || rhs_shape.contains(&0) {
+        return product_with_empty_axis(b, lhs, rhs, &lhs_shape, &rhs_shape);
+    }
+
     // Determine if we should use float ops (if either operand has float elements)
     let lhs_flat = crate::helpers::composite::flatten_composite(lhs);
     let rhs_flat = crate::helpers::composite::flatten_composite(rhs);
@@ -74,6 +78,68 @@ pub fn matmul(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
     } else {
         result
     }
+}
+
+/// The element dtype of a matmul operand: a static array's own dtype, or
+/// the widest scalar kind among a nested list's elements.
+fn operand_dtype(v: &Value) -> crate::types::NumberType {
+    use crate::types::NumberType;
+    if let Value::StaticArray { dtype, .. } = v {
+        return *dtype;
+    }
+    let flat = crate::helpers::composite::flatten_composite(v);
+    if flat.iter().any(|x| matches!(x, Value::Complex { .. })) {
+        NumberType::Complex
+    } else if flat.iter().any(|x| matches!(x, Value::Float(_))) {
+        NumberType::Float
+    } else {
+        NumberType::Integer
+    }
+}
+
+/// `lhs @ rhs` when an operand has a zero-length axis (e.g.
+/// `np.dot(a[:0], b[:0])`). Every output element is an empty sum, so the
+/// result is NumPy's: zeros of the output shape (a scalar zero for two
+/// 1-D operands), or an empty array when an output axis is zero. The
+/// dtype is the operands' promoted dtype, which the element walk of the
+/// generic body cannot see when there are no elements.
+fn product_with_empty_axis(
+    b: &mut IRBuilder,
+    lhs: &Value,
+    rhs: &Value,
+    lhs_shape: &[usize],
+    rhs_shape: &[usize],
+) -> Value {
+    use crate::types::NumberType;
+    let dtype = match (operand_dtype(lhs), operand_dtype(rhs)) {
+        (NumberType::Complex, _) | (_, NumberType::Complex) => NumberType::Complex,
+        (NumberType::Float, _) | (_, NumberType::Float) => NumberType::Float,
+        _ => NumberType::Integer,
+    };
+    if lhs_shape.len() > 2 || rhs_shape.len() > 2 {
+        panic!(
+            "matmul with a zero-length axis supports operands of rank 1 or 2, got {:?} @ {:?}",
+            lhs_shape, rhs_shape
+        );
+    }
+    let out_shape = compute_matmul_output_shape(lhs_shape, rhs_shape);
+    if out_shape.is_empty() {
+        let is_complex = dtype == NumberType::Complex;
+        return build_zeros_of_shape(b, &[], dtype != NumberType::Integer, is_complex);
+    }
+    let total: usize = out_shape.iter().product();
+    let zero = |b: &mut IRBuilder| match dtype {
+        NumberType::Integer => b.ir_constant_int(0),
+        _ => b.ir_constant_float(0.0),
+    };
+    let cells: Vec<Value> = (0..total).map(|_| zero(b)).collect();
+    if dtype == NumberType::Complex {
+        let imag: Vec<Value> = (0..total).map(|_| b.ir_constant_float(0.0)).collect();
+        return crate::helpers::static_array::base::build_static_array_from_flat_complex(
+            b, cells, imag, out_shape,
+        );
+    }
+    crate::helpers::static_array::base::build_static_array_from_flat(b, cells, out_shape, dtype)
 }
 
 /// Compute the matmul broadcast output shape from `lhs_shape` and
