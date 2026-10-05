@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def kernel(A: Float[Array, '70 60']):
+def kernel(A: Float[Array, '14 12']):
     Q = np.zeros_like(A)
     R = np.zeros((A.shape[1], A.shape[1]), dtype=A.dtype)
     for k in range(A.shape[1]):

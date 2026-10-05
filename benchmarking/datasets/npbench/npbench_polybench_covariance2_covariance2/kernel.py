@@ -7,5 +7,5 @@ import numpy as np
 
 @zk_circuit
 @requires(lambda M, float_n, data: 0 <= M <= 1024)
-def kernel(M: Integer, float_n: Float, data: Float[Array, '600 500']):
+def kernel(M: Integer, float_n: Float, data: Float[Array, '16 14']):
     return np.cov(np.transpose(data))

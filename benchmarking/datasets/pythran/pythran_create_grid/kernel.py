@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def create_grid(x: Float[Array, '1000']):
+def create_grid(x: Float[Array, '16']):
     N = x.shape[0]
     z = np.zeros((N, N, 3))
     z[:, :, 0] = x.reshape(-1, 1)

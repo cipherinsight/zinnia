@@ -5,7 +5,7 @@
 from zinnia import *
 
 @zk_circuit
-def smoothing(x: Float[Array, '100'], alpha: Float):
+def smoothing(x: Float[Array, '16'], alpha: Float):
     """
   Exponential smoothing of a time series
   For x = 10**6 floats

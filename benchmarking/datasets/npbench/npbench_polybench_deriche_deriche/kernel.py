@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def kernel(alpha: Float, imgIn: Float[Array, '400 200']):
+def kernel(alpha: Float, imgIn: Float[Array, '16 8']):
     k = (1.0 - np.exp(-alpha)) * (1.0 - np.exp(-alpha)) / (1.0 + alpha * np.exp(-alpha) - np.exp(2.0 * alpha))
     a1 = a5 = k
     a2 = a6 = k * np.exp(-alpha) * (alpha - 1.0)

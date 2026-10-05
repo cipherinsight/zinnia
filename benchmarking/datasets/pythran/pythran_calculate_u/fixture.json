@@ -1,0 +1,38 @@
+{
+ "case": "pythran_calculate_u",
+ "function": "timeloop",
+ "parameters": [
+  {"name": "t", "kind": "scalar", "dtype": "float"},
+  {"name": "t_stop", "kind": "scalar", "dtype": "float"},
+  {"name": "dt", "kind": "scalar", "dtype": "float"},
+  {"name": "dx", "kind": "scalar", "dtype": "float"},
+  {"name": "dy", "kind": "scalar", "dtype": "float"},
+  {"name": "u", "kind": "array", "dtype": "int", "shape": [5, 10]},
+  {"name": "um", "kind": "array", "dtype": "int", "shape": [5, 10]},
+  {"name": "k", "kind": "array", "dtype": "int", "shape": [5, 10]}
+ ],
+ "constants": {},
+ "inputs": {
+  "A": {
+   "t": 1.0,
+   "t_stop": 2.0,
+   "dt": 0.1,
+   "dx": 0.1,
+   "dy": 0.2,
+   "u": [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]],
+   "um": [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]],
+   "k": [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]]
+  },
+  "B": {
+   "t": 0.9475490367573527,
+   "t_stop": 1.9758629669873755,
+   "dt": 0.09523507496520145,
+   "dx": 0.10812416420049344,
+   "dy": 0.21803986370758657,
+   "u": [[6, 0, 6, 8, 2, 7, 6, 2, 6, 0], [9, 8, 8, 9, 8, 2, 9, 5, 9, 1], [0, 4, 3, 8, 8, 3, 5, 4, 4, 7], [5, 3, 9, 1, 8, 0, 9, 0, 8, 7], [8, 7, 4, 7, 7, 7, 2, 3, 6, 4]],
+   "um": [[3, 4, 1, 2, 2, 3, 1, 2, 5, 7], [4, 1, 9, 2, 2, 5, 3, 1, 4, 3], [4, 3, 5, 3, 8, 8, 4, 9, 7, 8], [0, 2, 7, 7, 0, 4, 3, 0, 1, 3], [0, 3, 3, 3, 0, 1, 2, 4, 9, 5]],
+   "k": [[9, 8, 2, 7, 4, 1, 8, 1, 3, 1], [0, 0, 6, 7, 1, 9, 5, 0, 2, 7], [8, 0, 4, 4, 1, 6, 4, 5, 0, 7], [9, 1, 2, 9, 2, 6, 6, 4, 4, 7], [1, 3, 7, 1, 9, 3, 7, 5, 7, 8]]
+  }
+ },
+ "notes": "A is the arguments of the example call `A=[list(range(10)) for i in range(5)] ; B=[list(range(10)) for i in range(5)] ; C=[list(range(10)) for i in range(5)] ; timeloop(1.,2.,.1,.1,.2, A,B,C )`. B is a seeded perturbation of A (numpy RandomState(2968478)): noise 10 % of the largest magnitude; integer arrays redrawn in their range. The NumPy outputs reach magnitude 2^31 or more: outside the Q32 range."
+}

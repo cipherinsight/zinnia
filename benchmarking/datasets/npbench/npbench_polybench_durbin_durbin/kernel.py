@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def kernel(r: Float[Array, '1000']):
+def kernel(r: Float[Array, '16']):
     y = np.empty_like(r)
     alpha = -r[0]
     beta = 1.0

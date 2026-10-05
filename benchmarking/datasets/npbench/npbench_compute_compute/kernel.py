@@ -6,5 +6,5 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def compute(array_1: Integer[Array, '2000 2000'], array_2: Integer[Array, '2000 2000'], a: Integer, b: Integer, c: Integer):
+def compute(array_1: Integer[Array, '16 16'], array_2: Integer[Array, '16 16'], a: Integer, b: Integer, c: Integer):
     return np.clip(array_1, 2, 10) * a + array_2 * b + c

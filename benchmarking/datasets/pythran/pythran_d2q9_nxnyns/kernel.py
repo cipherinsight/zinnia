@@ -80,7 +80,7 @@ def periodic_bc(f):
             f[i, ny - 1, k] = f[i, 1, k]
 
 @zk_circuit
-def one_time_step(f1: Float[Array, '50 50 9'], f2: Float[Array, '50 50 9']):
+def one_time_step(f1: Float[Array, '16 16 9'], f2: Float[Array, '16 16 9']):
     nx, ny, ns = f1.shape
     floc = np.zeros(ns)
     mloc = np.zeros(ns)

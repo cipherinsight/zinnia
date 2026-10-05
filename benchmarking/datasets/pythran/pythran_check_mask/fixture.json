@@ -1,0 +1,23 @@
+{
+ "case": "pythran_check_mask",
+ "function": "check_mask",
+ "parameters": [
+  {"name": "db", "kind": "array", "dtype": "bool", "shape": [3, 4]},
+  {"name": "out", "kind": "array", "dtype": "bool", "shape": [3]},
+  {"name": "mask", "kind": "tuple", "items": [{"kind": "scalar", "dtype": "int"}, {"kind": "scalar", "dtype": "int"}, {"kind": "scalar", "dtype": "int"}]}
+ ],
+ "constants": {},
+ "inputs": {
+  "A": {
+   "db": [[false, true, true, false], [true, false, true, true], [true, true, true, true]],
+   "out": [false, false, false],
+   "mask": [1, 0, 1]
+  },
+  "B": {
+   "db": [[false, false, true, false], [true, false, false, false], [true, true, false, true]],
+   "out": [false, false, true],
+   "mask": [1, 0, 1]
+  }
+ },
+ "notes": "A is the arguments of the example call `import numpy as np; db = np.array([[0,1,1,0], [1,0,1,1], [1,1,1,1]], dtype=bool); out = np.zeros(3,dtype=bool); check_mask(db, out)`. B is a seeded perturbation of A (numpy RandomState(3007829)): noise 10 % of the largest magnitude; integer arrays redrawn in their range."
+}
