@@ -7,8 +7,9 @@ Every case gets exactly one status, decided by the first rule that applies:
                      rules in `datasets/FILTERING.md`).
 2. `degenerate`    - no output depends on a private input: every output is fixed by
                      the parameter types and the constants, so there is nothing to prove.
-3. `duplicate`     - the kernel computes the same function as a case with a lower id
-                     (same kernel after renaming local variables, same types and constants).
+3. `duplicate`     - the kernel computes the same function as a case with a lower id:
+                     the same kernel after renaming local variables, or the same outputs
+                     up to a fixed reordering or reshaping (`functional_duplicates`).
 4. `zinnia_rejects`- the current Zinnia compiler refuses the kernel (provisional: it
                      depends on the compiler commit recorded in the case set).
 5. `perf`          - none of the above.
@@ -23,10 +24,14 @@ folders listed here.
 from __future__ import annotations
 
 import ast
+import itertools
 import sys
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ds1000_records as records  # noqa: E402
@@ -182,3 +187,124 @@ def find_duplicates(kernels: dict[int, str]) -> dict[int, Duplicate]:
         if pid in kernels:
             found.setdefault(pid, Duplicate(of, reason))
     return found
+
+
+# ---------------------------------------------------------------------------
+# Functional duplicates
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Candidate:
+    """A case with a kernel and fixture inputs, for the functional duplicate test."""
+
+    kernel: Path
+    parameters: list[dict[str, Any]]     # fixture.json "parameters"
+    inputs: list[list[Any]]              # argument lists (fixture inputs A and B)
+    data_movement_only: bool
+
+
+def _outputs(candidate: Candidate, flat_args: list[Any]) -> list[complex] | None:
+    """The kernel's outputs as one flat list (rounded to 9 decimals), or None on error."""
+    import numpy_reference
+
+    args = [np.asarray(v).reshape(p["shape"]) if p["kind"] == "array" else v
+            for v, p in zip(flat_args, candidate.parameters)]
+    try:
+        result = numpy_reference.run_kernel(candidate.kernel, args)
+    except Exception:  # noqa: BLE001 - an input this kernel does not accept: not a duplicate
+        return None
+
+    def flat(value: Any) -> list[complex]:
+        if isinstance(value, (list, tuple)):
+            return [x for item in value for x in flat(item)]
+        return [complex(round(complex(v).real, 9), round(complex(v).imag, 9)) for v in np.asarray(value).ravel()]
+
+    return flat(result)
+
+
+def _flat_inputs(candidate: Candidate) -> list[list[Any]]:
+    return [[np.asarray(a).ravel() if p["kind"] == "array" else a for a, p in zip(args, candidate.parameters)]
+            for args in candidate.inputs]
+
+
+def _sizes(candidate: Candidate) -> list[tuple[str, int]]:
+    return [(p["dtype"], int(np.prod(p.get("shape", [1])))) for p in candidate.parameters]
+
+
+def same_up_to_reordering(x: Candidate, y: Candidate) -> bool:
+    """Fed the same input values (reshaped to each kernel's shapes), y's outputs are a
+    fixed reordering of x's: the multisets of per-position value tuples over all test
+    inputs are equal. Outputs of data-dependent length must be identical."""
+    if _sizes(x) != _sizes(y):
+        return False
+    inputs = _flat_inputs(x) + _flat_inputs(y)
+    xs = [_outputs(x, i) for i in inputs]
+    ys = [_outputs(y, i) for i in inputs]
+    if any(o is None for o in xs + ys):
+        return False
+    if len({len(o) for o in xs + ys}) == 1:
+        return Counter(zip(*xs)) == Counter(zip(*ys))
+    return all(a == b for a, b in zip(xs, ys))
+
+
+def copy_signature(candidate: Candidate) -> tuple | None:
+    """For a data-movement kernel: how often each read input cell is copied to an
+    output, and the constant outputs. Every input cell gets a distinct value, so each
+    output is identified as a copy of one cell or as a constant."""
+    values, start = [], 1000
+    for p in candidate.parameters:
+        n = int(np.prod(p.get("shape", [1])))
+        cells = np.arange(start, start + n) + (0.5 if p["dtype"] == "float" else 0)
+        values.append(cells if p["kind"] == "array" else cells[0].item())
+        start += n
+    outputs = _outputs(candidate, values)
+    if outputs is None:
+        return None
+    cells = {complex(c) for v in values for c in np.atleast_1d(v).tolist()}
+    copies = Counter(o for o in outputs if o in cells)
+    constants = Counter(o for o in outputs if o not in cells)
+    return tuple(sorted(copies.values())), tuple(sorted((c.real, c.imag, n) for c, n in constants.items()))
+
+
+def functional_duplicates(candidates: dict[int, Candidate]) -> dict[int, Duplicate]:
+    """Cases whose outputs equal a lower-id case's up to a fixed reordering or
+    reshaping. Two numeric tests:
+
+    * same input sizes and dtypes: `same_up_to_reordering` on the fixture inputs of
+      both cases;
+    * data-movement kernels (every output is a copy of an input cell or a constant):
+      the same `copy_signature`, i.e. the same number of cells copied the same number
+      of times and the same constants. Input cells no output reads are ignored: no
+      system needs to load them (0303 copies 20 of its 23 cells, like 0301).
+
+    Each class is represented by its lowest id."""
+    parent = {pid: pid for pid in candidates}
+
+    def find(pid: int) -> int:
+        while parent[pid] != pid:
+            pid = parent[pid]
+        return pid
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+
+    reasons: dict[int, str] = {}
+    for x, y in itertools.combinations(sorted(candidates), 2):
+        if same_up_to_reordering(candidates[x], candidates[y]):
+            reasons.setdefault(y, "same outputs up to a fixed reordering or reshaping, on the same inputs")
+            union(x, y)
+    by_signature: dict[tuple, list[int]] = {}
+    for pid in sorted(candidates):
+        signature = copy_signature(candidates[pid]) if candidates[pid].data_movement_only else None
+        if signature is not None:
+            by_signature.setdefault(signature, []).append(pid)
+    for signature, group in by_signature.items():
+        for y in group[1:]:
+            reasons.setdefault(y, f"copies {len(signature[0])} input cells to outputs with no arithmetic "
+                                  "(only which cells, their order and unread input cells differ)")
+            union(group[0], y)
+    return {pid: Duplicate(find(pid), f"{reasons[pid]}, like {find(pid):04d}")
+            for pid in sorted(candidates) if find(pid) != pid}
