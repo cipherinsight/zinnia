@@ -595,6 +595,55 @@ impl Q32 {
         self.sin(ctx, shifted)
     }
 
+    // ------------------------------------------------------------- selection
+
+    /// Boolean-mask selection: the payloads of the kept items, in item order, at
+    /// the front of `keep.len()` slots of `unit` cells each, zeros after them.
+    /// `weights[i][u]` is `keep_i * payload_i[u]`, or `None` where the payload is
+    /// the constant 0.
+    ///
+    /// `hot` is the one-hot vector of the number of items kept before item `i`,
+    /// i.e. of the slot item `i` fills if it is kept. Slot `j` is the sum over `i`
+    /// of `hot_i[j] * weights[i]`, and `hot` moves one slot on after each kept
+    /// item. Item `i` can only reach slots `0..=i`, so the network is triangular.
+    /// Every cell is a gate of `keep` and the weights; there is no hint. The
+    /// `keep` cells must be bits (outputs of a comparison, an equality test or a
+    /// boolean gate).
+    pub fn compact(&self, ctx: &mut Ctx, keep: &[Cell], weights: &[Vec<Option<Cell>>]) -> Vec<Cell> {
+        let unit = weights[0].len();
+        let mut slots: Vec<(Vec<Cell>, Vec<QuantumCell<Fr>>)> = vec![(Vec::new(), Vec::new()); keep.len() * unit];
+        let mut hot = vec![Constant(Fr::ONE)]; // nothing kept before item 0
+        for (i, (k, w)) in keep.iter().zip(weights).enumerate() {
+            for (u, w) in w.iter().enumerate() {
+                if let Some(w) = w {
+                    for (j, h) in hot.iter().enumerate() {
+                        slots[j * unit + u].0.push(*w);
+                        slots[j * unit + u].1.push(*h);
+                    }
+                }
+            }
+            if i + 1 < keep.len() {
+                hot = self.shift(ctx, &hot, *k);
+            }
+        }
+        slots
+            .into_iter()
+            .map(|(w, h)| if w.is_empty() { ctx.load_zero() } else { self.gate.inner_product(ctx, w, h) })
+            .collect()
+    }
+
+    /// `hot` moved one slot on if `keep` is set: `next[j] = keep ? hot[j - 1] : hot[j]`
+    /// for `j` in `0..=hot.len()`, reading `hot` as 0 outside its range.
+    fn shift(&self, ctx: &mut Ctx, hot: &[QuantumCell<Fr>], keep: Cell) -> Vec<QuantumCell<Fr>> {
+        let mut next = Vec::with_capacity(hot.len() + 1);
+        next.push(Existing(self.gate.sub_mul(ctx, hot[0], hot[0], keep)));
+        for j in 1..hot.len() {
+            next.push(Existing(self.gate.select(ctx, hot[j - 1], hot[j], keep)));
+        }
+        next.push(Existing(self.gate.mul(ctx, hot[hot.len() - 1], keep)));
+        next
+    }
+
     // ---------------------------------------------------------------- indexing
 
     /// `arr[idx]` for a private index, NumPy semantics: `-len <= idx < len`

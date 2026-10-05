@@ -66,7 +66,7 @@ pub mod prelude {
     pub use halo2_base::gates::{GateInstructions, RangeInstructions};
     pub use halo2_base::halo2_proofs::arithmetic::Field;
     pub use halo2_base::halo2_proofs::halo2curves::bn256::Fr;
-    pub use halo2_base::QuantumCell::{Constant, Existing, Witness};
+    pub use halo2_base::QuantumCell::{self, Constant, Existing, Witness};
 
     pub type Result<T> = std::result::Result<T, Error>;
 }

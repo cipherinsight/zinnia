@@ -280,6 +280,60 @@ pub fn cos(x: Field) -> Field {
     sin(x + HALF_PI_Q)
 }
 
+// --------------------------------------------------------------- selection
+
+// Boolean-mask selection: the kept items' payloads, in item order, at the
+// front of N slots, zeros after them; w[i] is keep[i] * payload[i]. `hot` is
+// the one-hot vector of the number of items kept before item i, i.e. of the
+// slot item i fills if it is kept: slot j is the sum over i of hot_i[j] w[i],
+// and `hot` moves one slot on after each kept item. Item i can only reach
+// slots 0..=i, so the network is triangular; it is all Field arithmetic (no
+// dynamic array writes, no range checks). keep[i] must be 0 or 1 (a bool
+// cast to Field). Cheaper than native dynamic writes at these sizes (0442:
+// 807 gates against 7,346).
+pub fn compact<let N: u32>(keep: [Field; N], w: [Field; N]) -> [Field; N] {
+    let mut slots: [Field; N] = [0; N];
+    let mut hot: [Field; N] = [0; N];
+    hot[0] = 1;
+    for i in 0..N {
+        for j in 0..i + 1 {
+            slots[j] += hot[j] * w[i];
+        }
+        if i + 1 < N {
+            let mut next: [Field; N] = [0; N];
+            next[0] = hot[0] - keep[i] * hot[0];
+            for j in 1..i + 2 {
+                next[j] = hot[j] + keep[i] * (hot[j - 1] - hot[j]);
+            }
+            hot = next;
+        }
+    }
+    slots
+}
+
+// `compact` for payloads of U cells: w[i][u] is keep[i] * payload_i[u].
+pub fn compact_rows<let N: u32, let U: u32>(keep: [Field; N], w: [[Field; U]; N]) -> [[Field; U]; N] {
+    let mut slots: [[Field; U]; N] = [[0; U]; N];
+    let mut hot: [Field; N] = [0; N];
+    hot[0] = 1;
+    for i in 0..N {
+        for j in 0..i + 1 {
+            for u in 0..U {
+                slots[j][u] += hot[j] * w[i][u];
+            }
+        }
+        if i + 1 < N {
+            let mut next: [Field; N] = [0; N];
+            next[0] = hot[0] - keep[i] * hot[0];
+            for j in 1..i + 2 {
+                next[j] = hot[j] + keep[i] * (hot[j - 1] - hot[j]);
+            }
+            hot = next;
+        }
+    }
+    slots
+}
+
 // ---------------------------------------------------------------- indexing
 
 // Position of a NumPy index in [-len, len) (negative counts from the end);
@@ -438,6 +492,15 @@ fn test_max_smaller_member() {
 #[test(should_fail)]
 fn test_max_not_member() {
     check_max([-3, 5, 2], 6);
+}
+
+#[test]
+fn test_compact() {
+    let keep = [0, 1, 1, 0, 1];
+    let w = [0, 11, 12, 0, 14];
+    assert(compact(keep, w) == [11, 12, 14, 0, 0]);
+    let rows = compact_rows(keep, [[0, 0], [1, 2], [3, 4], [0, 0], [5, 6]]);
+    assert(rows == [[1, 2], [3, 4], [5, 6], [0, 0], [0, 0]]);
 }
 
 #[test]
