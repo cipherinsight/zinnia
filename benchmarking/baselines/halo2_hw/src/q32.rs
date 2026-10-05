@@ -268,10 +268,20 @@ impl Q32 {
     }
 
     fn max_of_with(&self, ctx: &mut Ctx, xs: &[Cell], m: Fr) -> Cell {
+        self.extremum_with(ctx, xs, m, true)
+    }
+
+    /// `min(xs)` of a few values: [`Q32::max_of`] with the gaps `x - m`.
+    pub fn min_of(&self, ctx: &mut Ctx, xs: &[Cell]) -> Cell {
+        let hint = xs.iter().map(|x| signed(x.value())).min().expect("non-empty");
+        self.extremum_with(ctx, xs, fe(hint), false)
+    }
+
+    fn extremum_with(&self, ctx: &mut Ctx, xs: &[Cell], m: Fr, is_max: bool) -> Cell {
         let m = ctx.load_witness(m);
         let mut prod: Option<Cell> = None;
         for x in xs {
-            let gap = self.gate.sub(ctx, m, *x);
+            let gap = if is_max { self.gate.sub(ctx, m, *x) } else { self.gate.sub(ctx, *x, m) };
             self.range.range_check(ctx, gap, 64);
             prod = Some(match prod {
                 None => gap,
@@ -968,6 +978,15 @@ mod tests {
         assert!(!run(fe(2 << 32))); // a smaller value of the set
         assert!(!run(fe((5 << 32) + 1))); // above the max, not in the set
         assert!(!run(fe(5 << 32) * fe(3).invert().unwrap()));
+        let run_min = |m: Fr| {
+            accepts(move |c, ctx| {
+                let xs: Vec<Cell> = vals.iter().map(|v| ctx.load_witness(fe(*v))).collect();
+                c.extremum_with(ctx, &xs, m, false);
+            })
+        };
+        assert!(run_min(fe(-3 << 32)));
+        assert!(!run_min(fe(2 << 32)));
+        assert!(!run_min(fe((-3 << 32) - 1)));
     }
 
     #[test]

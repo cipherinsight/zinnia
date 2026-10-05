@@ -138,7 +138,7 @@ halo2-base (`q32::Q32`, built on `GateChip`/`RangeChip` of halo2-base 0.4.1):
 | `np.sqrt` | `q.sqrt` (exact floor square root) |
 | `np.sin`, `np.cos` | `q.sin`, `q.cos` |
 | `<`, `<=`, `>`, `>=` | `q.bound` once per value, then `q.lt`/`le`/`gt`/`ge`, `q.lt_const` |
-| `max`, `min`, `abs` | `q.max`, `q.min`, `q.abs`; `q.max_of` (hint pinned by range checks and a product) for the maximum of a few values |
+| `max`, `min`, `abs` | `q.max`, `q.min`, `q.abs`; `q.max_of` / `q.min_of` (hint pinned by range checks and a product) for the extremum of a few values |
 | `==`, `!=` | `q.eq`, `q.gate.not` |
 | `where`, `if` on data | `q.gate.select`, `q.select_i64` |
 | `a[i]` (private `i`) | `q.index` (NumPy wrap and bounds; one-hot or range-checked form by length), `q.index_i64` if `i` already has a window proof |
