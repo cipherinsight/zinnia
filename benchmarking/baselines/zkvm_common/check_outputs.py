@@ -101,6 +101,7 @@ class Result:
     max_abs_err: float = 0.0
     mismatches: list = field(default_factory=list)
     skipped: bool = False
+    execution: dict = field(default_factory=dict)  # the host's execution sizes (cycles, steps)
 
 
 # --------------------------------------------------------------------------
@@ -249,7 +250,11 @@ def compare(case: str, system: str, publics: list, expected: Expected, rtol: flo
     return Result(case, system, not mismatches, detail, max_err, mismatches[:5])
 
 
-def run_system(system: str, case: Case, fixture_path: Path, input_name: str, timeout: int) -> list:
+# The execution-size fields of a host report, kept in the check report.
+EXECUTION_FIELDS = ("cycles", "user_cycles", "total_cycles", "segments", "resources")
+
+
+def run_system(system: str, case: Case, fixture_path: Path, input_name: str, timeout: int) -> dict:
     cmd = HOSTS[system] + ["--case-dir", str(case.folder), "--fixture", str(fixture_path),
                            "--input", input_name, "--mode", "execute"]
     if case.function:
@@ -260,7 +265,7 @@ def run_system(system: str, case: Case, fixture_path: Path, input_name: str, tim
     if proc.returncode != 0 or not report.get("ok"):
         detail = report.get("error") or " | ".join((proc.stderr or proc.stdout).strip().splitlines()[-3:])
         raise RuntimeError(f"exit {proc.returncode}: {detail}")
-    return report["publics"]
+    return report
 
 
 def main() -> int:
@@ -320,11 +325,13 @@ def main() -> int:
         rtol, atol = tol.get(case.name, (DEFAULT_RTOL, DEFAULT_ATOL))
         for system in case_systems:
             try:
-                publics = run_system(system, case, path, args.input, args.timeout)
+                report = run_system(system, case, path, args.input, args.timeout)
             except Exception as exc:
                 results.append(Result(case.name, system, False, f"run failed: {exc}"))
                 continue
-            results.append(compare(case.name, system, publics, expected, rtol, atol))
+            result = compare(case.name, system, report["publics"], expected, rtol, atol)
+            result.execution = {k: report[k] for k in EXECUTION_FIELDS if report.get(k) is not None}
+            results.append(result)
 
     width = max((len(r.case) for r in results), default=4)
     for r in results:
