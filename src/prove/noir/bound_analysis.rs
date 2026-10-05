@@ -1,13 +1,14 @@
-//! Forward-dataflow `fits-u32` bound analysis over `IRGraph`.
+//! Forward-dataflow bound analysis over `IRGraph`.
 //!
 //! Walks IR statements in order and, for each result-producing statement,
-//! records a tight upper bound on the (non-negative) value the result can
-//! take. The Noir emitter consults this map to decide whether to bind a
-//! cell as `u32` (saving a `BLACKBOX::RANGE` per `Field as u32` cast) or
-//! fall back to `Field`.
+//! records a tight upper bound (below 2^32) on the (non-negative) value the
+//! result can take. The Noir emitter reads these bounds as intervals
+//! (`NoirEmitter::ival`): they choose the width of a comparison's range
+//! check, the slots a dynamic gather enumerates (whose one-hot membership
+//! assert enforces them), and which cells are 0/1.
 //!
 //! Conservative by construction:
-//! - Anything we can't bound returns `None` (Field path).
+//! - Anything we can't bound returns `None`.
 //! - Arithmetic is bounded via `checked_add` / `checked_mul`; overflow
 //!   collapses to `None`.
 //! - Float ops, Q-function results, hashes, dynamic-NDArray reads, and
@@ -28,28 +29,6 @@ use crate::ir_defs::IR;
 /// integer value of that statement's result. Absence means "no provable
 /// bound" — the emitter should default to `Field`.
 pub type BoundMap = HashMap<u32, u64>;
-
-/// Count of operations whose Noir lowering needs a u32/u128 range check
-/// (`AssertU128Lt`, `AssertU128LtBit`, `LtIBounded`, `GtIBounded`,
-/// `IndexInBox`). The emitter uses it as a proxy for "bb's range table is
-/// paid for anyway": above the threshold in `NoirEmitter::new`, it promotes
-/// bounded cells to u32 eagerly.
-pub fn count_u32_intrinsic_ops(graph: &IRGraph) -> usize {
-    graph
-        .stmts
-        .iter()
-        .filter(|s| {
-            matches!(
-                &s.ir,
-                IR::AssertU128Lt
-                    | IR::AssertU128LtBit { .. }
-                    | IR::LtIBounded
-                    | IR::GtIBounded
-                    | IR::IndexInBox { .. }
-            )
-        })
-        .count()
-}
 
 const U32_MAX: u64 = (1u64 << 32) - 1;
 
@@ -251,9 +230,10 @@ pub fn run(graph: &IRGraph) -> BoundMap {
         // Intervals are deposited at IR-build time from structure, never
         // from witness values, so they cannot specialize the circuit. The
         // emitter uses a bound only to choose a cheaper form whose own
-        // range checks enforce it (`checked_u32`, checked u32 arithmetic),
-        // so a wrong bound fails the proof rather than accepting a wrong
-        // value.
+        // checks enforce it (a comparison's range-check width, a gather's
+        // membership assert), so a wrong bound fails the proof rather than
+        // accepting a wrong value; 0/1 facts come from lowerings that
+        // guarantee them.
         let prov_bound = graph
             .provenance
             .interval_of(stmt.value_id)

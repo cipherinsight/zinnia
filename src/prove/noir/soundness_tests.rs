@@ -191,8 +191,9 @@ fn assert_non_neg_rejects_negative_input() {
     assert_rejected(execute(&graph, &witness(&[("x", -3)])));
 }
 
-/// B4(b): with u32 promotion on (>= 20 intrinsic ops), `AssertU128Lt` used
-/// to check only the low 32 bits of the index (`idx as u32 < hi`).
+/// B4(b): with u32 promotion on (>= 20 intrinsic ops, an emitter policy
+/// since removed), `AssertU128Lt` used to check only the low 32 bits of the
+/// index (`idx as u32 < hi`).
 #[test]
 fn assert_u128_lt_rejects_index_above_u32() {
     if !toolchain_present(false) {

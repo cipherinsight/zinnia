@@ -80,13 +80,7 @@ pub fn emit_circuit(
 
     let input_params = derive_input_params(witness);
     let bounds = super::bound_analysis::run(ir);
-    let intrinsic_count = super::bound_analysis::count_u32_intrinsic_ops(ir);
-    let mut emitter = NoirEmitter::new(
-        input_params.clone(),
-        bounds,
-        intrinsic_count,
-        &ir.provenance,
-    );
+    let mut emitter = NoirEmitter::new(input_params.clone(), bounds, &ir.provenance);
     emitter.dynamic_reads_per_epoch = count_dynamic_reads_per_epoch(ir);
     interpret_ir(ir, &mut emitter)?;
 
@@ -400,8 +394,8 @@ fn dce_body(body: &str, exposes: &[String]) -> String {
                 let lhs = rest[..eq].trim();
                 let expr = &rest[eq + 3..];
                 // Drop an optional type annotation `vN: TYPE` so the name
-                // matches downstream identifier refs. Both `let v: u32 =`
-                // (u32-tagged cells from `bind_u32`) and `let (a, b) =`
+                // matches downstream identifier refs. Both `let v: u8 =`
+                // (typed cells from `bind_typed`) and `let (a, b) =`
                 // tuple destructures (`floor_divmod_cells`) must be
                 // tracked, otherwise DCE silently drops them and we get
                 // "not found in this scope" errors at nargo time.
@@ -578,18 +572,11 @@ pub struct NoirEmitter<'a> {
     /// `assert_u128_lt(dup_idx, hi)` lines that the bound-dedupe set
     /// above can't catch because the names differ).
     cse_cache: HashMap<String, String>,
-    /// Per-cell inclusive upper bound on the (non-negative) value.
-    /// Populated from non-negative constants, the IR bound analysis and
-    /// checked u32 arithmetic. When every operand of an integer op is a u32
-    /// cell and the result bound fits `u32`, the op is emitted as
-    /// `let v: u32 = ...;` (Noir checks u32 overflow).
+    /// Per-cell inclusive upper bound on the (non-negative) value, from the
+    /// IR bound analysis (statement results, see `on_stmt_result`) and from
+    /// lowerings whose results are 0/1 (`bind_flag`). Read through `ival`
+    /// and `is_boolean`.
     cell_bound: HashMap<String, u64>,
-    /// Cells bound with type `u32` (all others are `Field`). Every entry
-    /// holds a genuine u32 value: it is a non-negative literal, the result
-    /// of checked u32 arithmetic, or a range-checked `checked_u32`
-    /// conversion. A u32 cell used in a Field context takes the free
-    /// `(v as Field)` embedding (see `as_field`).
-    u32_cells: HashSet<String>,
     /// Compile-time constant store: SSA name -> value known at circuit-build
     /// time (IR `ConstantInt`/`ConstantFloat`/`ConstantBool`, or values
     /// derived only from such constants). Read by `s_int_of`/`s_float_of`/
@@ -610,26 +597,14 @@ pub struct NoirEmitter<'a> {
     low_bits_of: HashMap<String, (u32, String)>,
     /// Bit decompositions of bounded indices: (idx, width) -> name.
     index_bits_of: HashMap<(String, u32), String>,
-    /// IR-level forward-dataflow `fits-u32` bounds, keyed by stmt_id.
-    /// Populated by [`super::bound_analysis::run`] before emit. The
-    /// interpreter's per-stmt hook (`on_stmt_begin`) advances
-    /// `current_stmt_bound` to the upcoming statement's entry so the
-    /// active synth method can promote results to `u32` even when
-    /// the local emit-time tracking would have missed the bound
-    /// (e.g. results that flow through `select` or come from constants
-    /// the IR analysis can fold but emit cannot).
+    /// IR-level forward-dataflow bounds, keyed by stmt_id, from
+    /// [`super::bound_analysis::run`]. The interpreter's per-stmt hook
+    /// (`on_stmt_begin`) sets `current_stmt_bound` to the upcoming
+    /// statement's entry, which `on_stmt_result` stamps on its result.
     stmt_bounds: super::bound_analysis::BoundMap,
     /// Bound for the statement currently being dispatched (set by
-    /// `on_stmt_begin`). Read by the integer-result methods; not all
-    /// methods consult it (Float ops + Q-functions always emit Field).
+    /// `on_stmt_begin`).
     current_stmt_bound: Option<u64>,
-    /// Kernel-wide flag: enable Field→u32 promotion (one explicit cast
-    /// per Field operand) when the IR analysis identifies enough
-    /// u32-eligible cells that the per-cast RANGE checks are
-    /// amortized against the savings on downstream u32 ops. Computed
-    /// from the bound map at construction; see `new` for the
-    /// threshold derivation.
-    u32_amortizable: bool,
 }
 
 /// A compile-time constant known to the emitter (an IR literal, or a value
@@ -702,37 +677,28 @@ impl UintWidth {
 impl<'a> NoirEmitter<'a> {
 
 
-    fn sub_i_inner(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        // u32 path is only sound if the result is provably non-negative
-        // — u32 subtraction wraps on underflow. Gate on the bound
-        // analysis for THIS statement (`current_stmt_bound`): a SubI
-        // result only ever receives a bound through a provenance
-        // interval with `lo >= 0`, i.e. a structural non-negativity
-        // proof. (The previous gate keyed off the WITNESS SAMPLE's sign
-        // (`folded >= 0`) — a witness-dependent emission shape.)
-        if self.is_u32(a) && self.is_u32(b) {
-            if let Some(bound) = self.current_stmt_bound {
-                let v = self.bind_u32_with_bound(&format!("{} - {}", a, b), bound);
-                return Ok(v);
+    /// `a op b` for an integer `+`, `-` or `*` as a Field expression, with
+    /// the interval of the result when both operands have one (exact
+    /// integer arithmetic: the values involved stay far below p).
+    fn integer_arith(&mut self, a: &str, b: &str, op: char) -> String {
+        let v = self.bind(&format!("{a} {op} {b}"));
+        if let (Some((al, ah)), Some((bl, bh))) = (self.ival(a), self.ival(b)) {
+            let (al, ah, bl, bh) = (al as i128, ah as i128, bl as i128, bh as i128);
+            let (lo, hi) = match op {
+                '+' => (al + bl, ah + bh),
+                '-' => (al - bh, ah - bl),
+                _ => {
+                    let corners = [al * bl, al * bh, ah * bl, ah * bh];
+                    (*corners.iter().min().unwrap(), *corners.iter().max().unwrap())
+                }
+            };
+            if let (Ok(lo), Ok(hi)) = (i64::try_from(lo), i64::try_from(hi)) {
+                if !self.interval_of.contains_key(&v) {
+                    self.interval_of.insert(v.clone(), (lo, hi));
+                }
             }
         }
-        let v = self.bind(&format!("{} - {}", self.as_field(a), self.as_field(b)));
-        Ok(v)
-    }
-    fn mul_i_inner(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        if self.is_u32(a) && self.is_u32(b) {
-            if let Some(prod) = self
-                .bound_of(a)
-                .zip(self.bound_of(b))
-                .and_then(|(x, y)| x.checked_mul(y))
-                .filter(|p| *p < (1u64 << 32))
-            {
-                let v = self.bind_u32_with_bound(&format!("{} * {}", a, b), prod);
-                return Ok(v);
-            }
-        }
-        let v = self.bind(&format!("{} * {}", self.as_field(a), self.as_field(b)));
-        Ok(v)
+        v
     }
 
     /// Affine view of a cell: explicit lineage, a literal constant, or a
@@ -787,9 +753,8 @@ impl<'a> NoirEmitter<'a> {
                 return Some((c, c));
             }
         }
-        // Cells with a known analysis bound are in [0, bound] — the
-        // bound sources (AssertU128Lt discharges, LtIBounded, u32 typing)
-        // all imply nonnegativity.
+        // Cells with a known analysis bound are in [0, bound]: the bound
+        // analysis only bounds non-negative values.
         if let Some(b) = self.bound_of(var) {
             if let Ok(b) = i64::try_from(b) {
                 return Some((0, b));
@@ -838,20 +803,13 @@ impl<'a> NoirEmitter<'a> {
     /// `a cmp b` as a 0/1 cell, the mock's signed comparison (the sign of
     /// `a - b`), for every IR comparison (`LtI`..`GteI`, `LtF`..`GteF`,
     /// `LtIBounded`, `GtIBounded`, the axes of `IndexInBox`). In order:
-    /// a value non-negative by construction against 0 is a zero test; two
-    /// u32 cells (genuine u32 values, see `u32_cells`) compare natively;
-    /// operands with non-negative intervals compare as unsigned integers
+    /// a value non-negative by construction against 0 is a zero test;
+    /// operands with non-negative intervals below 2^8 compare as u8
     /// (`unsigned_compare`); anything else goes through the library's
     /// gap-pinned `qlt_bits` (`gap_compare`).
     fn compare(&mut self, a: &str, b: &str, cmp: Cmp) -> String {
         if let Some(v) = self.compare_nonneg_with_zero(a, b, cmp) {
             return v;
-        }
-        if self.is_u32(a) && self.is_u32(b) {
-            return self.bind_u32_with_bound(
-                &format!("if {} {} {} {{ 1 }} else {{ 0 }}", a, cmp.op(), b),
-                1,
-            );
         }
         if let Some(v) = self.unsigned_compare(a, b, cmp) {
             return v;
@@ -859,26 +817,23 @@ impl<'a> NoirEmitter<'a> {
         self.gap_compare(a, b, cmp)
     }
 
-    /// `a cmp b` for operands whose intervals are non-negative and below
-    /// 2^8 or 2^32: both are converted to u8 / u32 by range-checked
-    /// conversions and compared natively. A conversion is shared by every
-    /// comparison of the same cell (and free for a constant), which makes
-    /// this cheaper than `gap_compare` when one operand meets many others
-    /// (e.g. `i < pos` for every i). The interval only picks the width; an
-    /// operand outside it fails the proof.
+    /// `a cmp b` for operands whose intervals lie in [0, 2^8): both are
+    /// converted to u8 by range-checked conversions and compared natively.
+    /// A conversion is shared by every comparison of the same cell (and
+    /// free for a constant), which makes this cheaper than `gap_compare`
+    /// when one operand meets many others (e.g. `i < pos` for every i).
+    /// The interval only picks the path; an operand outside it fails the
+    /// proof. Wider operands use `gap_compare`: a u32 conversion would cost
+    /// two 32-bit checks (and pull bb's 14-bit lookup table into circuits
+    /// that may not need it) where `gap_compare` costs one.
     fn unsigned_compare(&mut self, a: &str, b: &str, cmp: Cmp) -> Option<String> {
         let (al, ah) = self.ival(a)?;
         let (bl, bh) = self.ival(b)?;
-        if al < 0 || bl < 0 {
+        if al < 0 || bl < 0 || ah.max(bh) > 0xff {
             return None;
         }
-        let width = match ah.max(bh) {
-            0..=0xff => UintWidth::U8,
-            0x100..=0xffff_ffff => UintWidth::U32,
-            _ => return None,
-        };
-        let ca = self.to_uint(a, width);
-        let cb = self.to_uint(b, width);
+        let ca = self.to_uint(a, UintWidth::U8);
+        let cb = self.to_uint(b, UintWidth::U8);
         Some(self.bind_flag(&format!("if {} {} {} {{ 1 }} else {{ 0 }}", ca, cmp.op(), cb)))
     }
 
@@ -896,7 +851,7 @@ impl<'a> NoirEmitter<'a> {
             Cmp::Ge => (a, b, true),
         };
         let width = self.comparison_width(lhs, rhs);
-        let (lf, rf) = (self.as_field(lhs), self.as_field(rhs));
+        let (lf, rf) = (lhs, rhs);
         self.use_lib("qlt_bits");
         let less = self.bind_typed(&format!("qlt_bits::<{width}>({lf}, {rf})"), "bool");
         let flag = if negate { format!("(!{less}) as Field") } else { format!("{less} as Field") };
@@ -928,24 +883,15 @@ impl<'a> NoirEmitter<'a> {
         }
     }
 
-    /// Expression of unsigned type `width` holding the value of `cell`.
-    /// A u32 cell widens for free (a u8 target takes a range check); a
-    /// Field cell goes through the library's range-checked `checked_uN`, so
-    /// a value outside [0, 2^N) fails the proof. The emitter never writes a
-    /// bare `Field as uN`: that cast truncates to the low N bits and is not
-    /// a range check.
+    /// Expression of unsigned type `width` holding the value of `cell`,
+    /// through the library's range-checked `checked_uN`, so a value outside
+    /// [0, 2^N) fails the proof. The emitter never writes a bare
+    /// `Field as uN`: that cast truncates to the low N bits and is not a
+    /// range check.
     fn to_uint(&mut self, cell: &str, width: UintWidth) -> String {
-        if self.is_u32(cell) {
-            match width {
-                UintWidth::U32 => return cell.to_string(),
-                UintWidth::U64 => return format!("({} as u64)", cell),
-                UintWidth::U8 => {}
-            }
-        }
         let f = width.checked_fn();
         self.use_lib(f);
-        let arg = self.as_field(cell);
-        self.bind_typed(&format!("{}({})", f, arg), width.ty())
+        self.bind_typed(&format!("{}({})", f, cell), width.ty())
     }
 
     /// `c` as a 0/1 value with Python truthiness (non-zero is 1), the mock's
@@ -956,7 +902,7 @@ impl<'a> NoirEmitter<'a> {
         if self.is_boolean(c) {
             return c.to_string();
         }
-        let expr = format!("if {} == 0 {{ 0 }} else {{ 1 }}", self.as_field(c));
+        let expr = format!("if {} == 0 {{ 0 }} else {{ 1 }}", c);
         self.bind_flag(&expr)
     }
 
@@ -1027,7 +973,7 @@ impl<'a> NoirEmitter<'a> {
             return self.bind_flag(&expr);
         }
         let (t, f) = if nonzero { (0, 1) } else { (1, 0) };
-        let xf = self.as_field(x);
+        let xf = x;
         self.bind_flag(&format!("if {xf} == 0 {{ {t} }} else {{ {f} }}"))
     }
 
@@ -1042,7 +988,7 @@ impl<'a> NoirEmitter<'a> {
         }
         self.use_lib("low_bits");
         let name = self.fresh();
-        let xf = self.as_field(x);
+        let xf = x;
         let _ = writeln!(self.body, "    let {}: [bool; {}] = low_bits::<{}>({});", name, nb * 8, nb, xf);
         self.low_bits_of.insert(x.to_string(), (nb, name.clone()));
         name
@@ -1063,13 +1009,13 @@ impl<'a> NoirEmitter<'a> {
         }
         if mask < 0 {
             let complement = self.and_with_mask(x, !mask);
-            let xf = self.as_field(x);
-            return self.bind(&format!("{} - {}", xf, self.as_field(&complement)));
+            let xf = x;
+            return self.bind(&format!("{} - {}", xf, &complement));
         }
         let width = 64 - mask.leading_zeros();
         if width > 56 {
             self.use_lib("bitand");
-            return self.bind(&format!("bitand({}, {})", self.as_field(x), mask));
+            return self.bind(&format!("bitand({}, {})", x, mask));
         }
         let bits = self.low_bits(x, width.div_ceil(8));
         let terms: Vec<String> = (0..width)
@@ -1105,7 +1051,7 @@ impl<'a> NoirEmitter<'a> {
     /// `a | b` (`times == 1`) or `a ^ b` (`times == 2`) from the two's
     /// complement identity `a + b - times * (a & b)`.
     fn or_xor_from_and(&mut self, a: &str, b: &str, and: &str, times: u32) -> String {
-        let (af, bf, nf) = (self.as_field(a), self.as_field(b), self.as_field(and));
+        let (af, bf, nf) = (a, b, and);
         if times == 1 {
             self.bind(&format!("{af} + {bf} - {nf}"))
         } else {
@@ -1119,10 +1065,21 @@ impl<'a> NoirEmitter<'a> {
     /// with no rescale and so no range check. `None` otherwise.
     fn exact_product(&self, a: &str, b: &str) -> Option<String> {
         if let Some(n) = self.integral_float.get(a) {
-            return Some(format!("{} * {}", n, self.as_field(b)));
+            return Some(format!("{} * {}", n, b));
         }
         let n = self.integral_float.get(b)?;
-        Some(format!("{} * {}", self.as_field(a), n))
+        Some(format!("{} * {}", a, n))
+    }
+
+    /// Python `(a // b, a % b)` of two compile-time integers, with the
+    /// mock's zero-divisor convention (`kernel::div_rem_or_zero`).
+    fn constant_floor_divmod(&self, a: &str, b: &str) -> Option<(i64, i64)> {
+        let (x, y) = self.constant_pair(a, b)?;
+        if y == 0 {
+            return Some((0, 0));
+        }
+        let (q, r) = (x.checked_div(y)?, x % y);
+        Some(if r != 0 && (r < 0) != (y < 0) { (q - 1, r + y) } else { (q, r) })
     }
 
     /// Python `(a // b, a % b)` as two cells, shared between the integer and
@@ -1132,7 +1089,7 @@ impl<'a> NoirEmitter<'a> {
     /// `floor_divmod` (one sign projection of b; a zero divisor gives
     /// (0, 0), as the mock). Both pin the unique quotient and remainder.
     fn floor_divmod_cells(&mut self, a: &str, b: &str) -> (String, String) {
-        let (af, bf) = (self.as_field(a), self.as_field(b));
+        let (af, bf) = (a, b);
         let call = match self.s_int_of(b) {
             Some(d) if d > 0 && d < (1i128 << 120) => {
                 let bits = (128 - ((d - 1) as u128).leading_zeros()).max(1);
@@ -1153,27 +1110,14 @@ impl<'a> NoirEmitter<'a> {
         (q, r)
     }
 
-    /// Operands for a native u32 `/` or `%`. A divisor that may be zero is
-    /// replaced by 1 and the dividend by 0, so a zero divisor gives 0 (the
-    /// mock's convention) instead of failing the proof.
-    fn u32_division_operands(&mut self, a: &str, b: &str) -> (String, String) {
-        if matches!(self.s_int_of(b), Some(d) if d > 0) {
-            return (a.to_string(), b.to_string());
-        }
-        let zero = self.bind_flag(&format!("if {} == 0 {{ 1 }} else {{ 0 }}", self.as_field(b)));
-        let n = self.bind_u32_with_bound(&format!("if {} == 1 {{ 0 }} else {{ {} }}", zero, a), self.bound_of(a).unwrap_or(u32::MAX as u64));
-        let d = self.bind_u32_with_bound(&format!("if {} == 1 {{ 1 }} else {{ {} }}", zero, b), self.bound_of(b).unwrap_or(u32::MAX as u64).max(1));
-        (n, d)
-    }
-
     /// Emit `0 <= cell < 2^bits` as a standalone range check on the Field
     /// value (never removed by `dce_body`, which only drops `let` lines).
     fn emit_range_check(&mut self, cell: &str, bits: u32) {
-        let target = if is_identifier(cell) && !self.is_u32(cell) {
+        let target = if is_identifier(cell) {
             cell.to_string()
         } else {
             let t = self.fresh();
-            let _ = writeln!(self.body, "    let {}: Field = {};", t, self.as_field(cell));
+            let _ = writeln!(self.body, "    let {}: Field = {};", t, cell);
             t
         };
         let _ = writeln!(self.body, "    {}.assert_max_bit_size::<{}>();", target, bits);
@@ -1190,13 +1134,9 @@ impl<'a> NoirEmitter<'a> {
             let _ = writeln!(self.body, "    assert(1 == 0);");
             return;
         }
-        if self.is_u32(cell) && hi <= u32::MAX as i128 {
-            let _ = writeln!(self.body, "    assert({} < {});", cell, hi);
-            return;
-        }
         let bits = (128 - ((hi - 1) as u128).leading_zeros()).max(1);
         let t = self.fresh();
-        let _ = writeln!(self.body, "    let {}: Field = {};", t, self.as_field(cell));
+        let _ = writeln!(self.body, "    let {}: Field = {};", t, cell);
         let _ = writeln!(self.body, "    {}.assert_max_bit_size::<{}>();", t, bits);
         if hi == 1i128 << bits {
             return;
@@ -1236,7 +1176,6 @@ impl<'a> NoirEmitter<'a> {
         }
         let mut base = root.to_string();
         let mut val = v;
-        let mut boundary: Option<(String, i64, bool)> = None;
         for _ in 0..8 {
             let Some(vid) = self.vid_of_var.get(&base).copied() else {
                 break;
@@ -1259,24 +1198,15 @@ impl<'a> NoirEmitter<'a> {
                             base = b2;
                             continue;
                         }
-                        if val == cl.bound && cl.bound >= 0 && self.is_u32(&b2) {
-                            boundary = Some((b2, cl.bound, cl.is_min));
-                        }
                     }
                 }
             }
             break;
         }
-        let ind = if let Some((src, k, is_min)) = boundary {
-            // Saturated clamp slot: the comparison form. `src` is
-            // u32-bound (nonnegative), so the integer comparison agrees
-            // with the signed min/max semantics.
-            let op = if is_min { ">=" } else { "<=" };
-            self.bind(&format!("if {src} {op} {k} {{ 1 }} else {{ 0 }}"))
-        } else if base != root || val != v {
+        let ind = if base != root || val != v {
             self.indicator(&base, val)
         } else {
-            let rf = self.as_field(root);
+            let rf = root;
             let expr = if v >= 0 {
                 format!("if {rf} == {v} {{ 1 }} else {{ 0 }}")
             } else {
@@ -1298,8 +1228,7 @@ impl<'a> NoirEmitter<'a> {
             return;
         }
         let inds: Vec<String> = values.iter().map(|&v| self.indicator(root, v)).collect();
-        let parts: Vec<String> = inds.iter().map(|i| self.as_field(i)).collect();
-        let sum = self.bind_sum(&parts);
+        let sum = self.bind_sum(&inds);
         let _ = writeln!(self.body, "    assert({} == 1);", sum);
         self.membership_done.insert(key);
     }
@@ -1385,42 +1314,17 @@ impl<'a> NoirEmitter<'a> {
     fn native_read(&mut self, segment_id: u32, addr: &str) -> String {
         let array = self.segment_array(segment_id);
         let len = self.memories[&segment_id].len() as u64;
-        let address = self.affine_field_expr(addr);
-        let index = self.array_index(&address, len);
+        let index = self.array_index(addr, len);
         let out = self.bind(&format!("{array}[{index}]"));
         self.apply_segment_iv(segment_id, &out);
         out
-    }
-
-    /// The value of `cell` as a Field expression of its affine view
-    /// (`sum root_i * scale_i + offset`, see `aff_of`). Address cells are
-    /// often built by checked u32 arithmetic, each op a truncation with
-    /// range checks; the same value as a linear Field expression is free,
-    /// and the u32 chain is then dead code.
-    fn affine_field_expr(&self, cell: &str) -> String {
-        let aff = self.aff_of(cell);
-        if aff.terms.is_empty() {
-            return self.as_field(cell);
-        }
-        let mut parts: Vec<String> = aff
-            .terms
-            .iter()
-            .map(|(root, scale)| match scale {
-                1 => self.as_field(root),
-                _ => format!("{} * {}", self.as_field(root), signed_to_field_decimal(*scale as i128)),
-            })
-            .collect();
-        if aff.offset != 0 {
-            parts.push(signed_to_field_decimal(aff.offset as i128));
-        }
-        format!("({})", parts.join(" + "))
     }
 
     /// `addr` as a checked `u32` index into an array of `len >= 1` elements
     /// (library `array_index`), once per (addr, len).
     fn array_index(&mut self, addr: &str, len: u64) -> String {
         self.use_lib("array_index");
-        let af = self.as_field(addr);
+        let af = addr;
         let last = len - 1;
         let width = if last < 1 << 7 { 8 } else { 28 };
         self.bind_typed(&format!("array_index::<{width}>({af}, {last})"), "u32")
@@ -1433,10 +1337,7 @@ impl<'a> NoirEmitter<'a> {
         if let Some(name) = self.segment_arrays.get(&(segment_id, epoch)) {
             return name.clone();
         }
-        let cells: Vec<String> = self.memories[&segment_id]
-            .iter()
-            .map(|c| self.as_field(c))
-            .collect();
+        let cells = self.memories[&segment_id].clone();
         let name = self.fresh();
         let _ = writeln!(
             self.body,
@@ -1459,7 +1360,7 @@ impl<'a> NoirEmitter<'a> {
             return name.clone();
         }
         let name = self.fresh();
-        let idx_field = self.as_field(idx);
+        let idx_field = idx;
         let _ = writeln!(self.body, "    let {}: [bool; {}] = {}.to_le_bits();", name, width, idx_field);
         if (hi as u128) < (1u128 << width) {
             let gap = self.fresh();
@@ -1496,7 +1397,7 @@ impl<'a> NoirEmitter<'a> {
             let slot = (v * scale + resid) as usize;
             let cell = self.memories.get(&segment_id).unwrap()[slot].clone();
             let ind = self.indicator(root, v);
-            parts.push(format!("{} * {}", self.as_field(&ind), self.as_field(&cell)));
+            parts.push(format!("{} * {}", &ind, &cell));
         }
         let plane = if parts.is_empty() {
             init.to_string()
@@ -1507,68 +1408,11 @@ impl<'a> NoirEmitter<'a> {
         plane
     }
 
-    fn add_i_inner(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        // u32 path: both operands already bound u32 AND sum still fits.
-        // Bound-propagation lets axis-dim chains (`row_has`, sums, scan
-        // accumulators) stay u32 without any RANGE cast.
-        //
-        // (Measured 2026-06-12: flipping these chains to Field adds +
-        // endpoint promotion casts regressed the bbox family by ~1,000
-        // gates each — on current bb a checked u32 add is cheaper than
-        // a Field add plus its share of a Field→u32 truncation cast at
-        // the compare sink. Keep the u32-chain policy.)
-        if self.is_u32(a) && self.is_u32(b) {
-            if let Some(sum) = self
-                .bound_of(a)
-                .zip(self.bound_of(b))
-                .and_then(|(x, y)| x.checked_add(y))
-                .filter(|s| *s < (1u64 << 32))
-            {
-                let v = self.bind_u32_with_bound(&format!("{} + {}", a, b), sum);
-                return Ok(v);
-            }
-        }
-        // u32_amortizable + at-least-one-operand-u32: extend the u32
-        // add-chain across a single Field neighbour by promoting it
-        // (one CSE-d 32-bit RANGE) so accumulators keep flowing in
-        // u32. The guard avoids breaking pure-Field chains where
-        // neither operand is u32 yet — promoting both would pay two
-        // RANGE casts per add and rarely pays back (cf. 0510).
-        if self.u32_amortizable && (self.is_u32(a) || self.is_u32(b)) {
-            let ap = self.maybe_promote_to_u32(a);
-            let bp = self.maybe_promote_to_u32(b);
-            if self.is_u32(&ap) && self.is_u32(&bp) {
-                if let Some(sum) = self
-                    .bound_of(&ap)
-                    .zip(self.bound_of(&bp))
-                    .and_then(|(x, y)| x.checked_add(y))
-                    .filter(|s| *s < (1u64 << 32))
-                {
-                    let v = self.bind_u32_with_bound(&format!("{} + {}", ap, bp), sum);
-                    return Ok(v);
-                }
-            }
-        }
-        let v = self.bind(&format!("{} + {}", self.as_field(a), self.as_field(b)));
-        Ok(v)
-    }
-
     pub fn new(
         inputs: Vec<EmittedInput>,
         stmt_bounds: super::bound_analysis::BoundMap,
-        intrinsic_count: usize,
         provenance: &'a crate::provenance::ProvenanceTable,
     ) -> NoirEmitter<'a> {
-        // u32 promotion (`maybe_promote_to_u32`) range-checks a Field cell
-        // into u32 so later integer ops run natively. The first range check
-        // of 14+ bits pulls bb's range table into the circuit (~2.7k gates),
-        // so promotion only pays off when the kernel already has enough ops
-        // that need such checks; `count_u32_intrinsic_ops` counts them. The
-        // threshold affects cost only, never soundness (every promotion is
-        // range-checked). Measured 2026-10-06 on the performance set:
-        // promoting unconditionally costs 1.9% more gates (geomean) than
-        // this threshold.
-        let u32_amortizable = intrinsic_count >= 20;
         Self {
             prov: provenance,
             vid_of_var: HashMap::new(),
@@ -1596,7 +1440,6 @@ impl<'a> NoirEmitter<'a> {
             emitted_u128_asserts: HashSet::new(),
             cse_cache: HashMap::new(),
             cell_bound: HashMap::new(),
-            u32_cells: HashSet::new(),
             literal_vals: HashMap::new(),
             integral_float: HashMap::new(),
             nonneg_by_construction: HashSet::new(),
@@ -1605,91 +1448,21 @@ impl<'a> NoirEmitter<'a> {
             index_bits_of: HashMap::new(),
             stmt_bounds,
             current_stmt_bound: None,
-            u32_amortizable,
         }
     }
 
-    // ── Bound-driven u32 emit helpers ────────────────────────────────
-    // These let the integer-arithmetic / compare ops decide whether to
-    // bind a result as `u32` or as `Field` (see `u32_cells`).
+    // ── Bounds ────────────────────────────────────────────────────────
 
     fn bound_of(&self, cell: &str) -> Option<u64> {
         self.cell_bound.get(cell).copied()
-    }
-
-    fn is_u32(&self, cell: &str) -> bool {
-        self.u32_cells.contains(cell)
     }
 
     fn set_bound(&mut self, cell: &str, bound: u64) {
         self.cell_bound.insert(cell.to_string(), bound);
     }
 
-    fn mark_u32(&mut self, cell: &str) {
-        self.u32_cells.insert(cell.to_string());
-    }
-
-    /// Wrap `cell` so the expression is `Field`-typed at the call site.
-    /// `u32 -> Field` is a zero-cost embedding in Noir; `Field` cells
-    /// pass through unchanged.
-    fn as_field(&self, cell: &str) -> String {
-        if self.is_u32(cell) {
-            format!("({} as Field)", cell)
-        } else {
-            cell.to_string()
-        }
-    }
-
-    /// Route a Field-typed cell with a known u32 bound through a one-time
-    /// range-checked `checked_u32` conversion, so downstream u128 widenings
-    /// become free and CSE can deduplicate the conversion across many
-    /// compare sites. Returns the new u32-typed SSA name; subsequent uses
-    /// see `is_u32(returned) == true`. The range check makes the u32 copy
-    /// equal to the Field value for every accepted witness, so u32 cells
-    /// are genuine u32 values; a wrong bound fails the proof.
-    ///
-    /// Gated on `u32_amortizable`: the 32-bit range check pulls in bb's
-    /// range table, which is only worth paying when the kernel has enough
-    /// u32-eligible cells. In small kernels the cell stays Field.
-    fn maybe_promote_to_u32(&mut self, cell: &str) -> String {
-        if self.is_u32(cell) {
-            return cell.to_string();
-        }
-        if !self.u32_amortizable {
-            return cell.to_string();
-        }
-        let bound = match self.bound_of(cell) {
-            Some(b) if b <= u32::MAX as u64 => b,
-            _ => return cell.to_string(),
-        };
-        self.use_lib("checked_u32");
-        let v = self.bind_u32_with_bound(&format!("checked_u32({})", cell), bound);
-        // Value-preserving rebind: carry the affine lineage so address
-        // chains through the promotion keep their root for the shared
-        // indicator gathers.
-        if let Some(aff) = self.affine_of.get(cell).cloned() {
-            self.affine_of.insert(v.clone(), aff);
-        } else if !self.literal_vals.contains_key(cell) {
-            self.affine_of.insert(
-                v.clone(),
-                AffLin { terms: vec![(cell.to_string(), 1)], offset: 0 },
-            );
-        }
-        if let Some(iv) = self.interval_of.get(cell).copied() {
-            self.interval_of.insert(v.clone(), iv);
-        }
-        // Same value, same provenance records.
-        if let Some(vid) = self.vid_of_var.get(cell).copied() {
-            self.vid_of_var.insert(v.clone(), vid);
-        }
-        v
-    }
-
-    /// Apply the IR-analysis bound to a freshly-bound cell, regardless
-    /// of how the producing method emitted it. This populates
-    /// `cell_bound` so downstream emit-time tracking has richer info
-    /// even when the producing method chose Field; it does NOT
-    /// retroactively flip the cell's binding type.
+    /// Apply the IR-analysis bound to a statement's result cell, so that
+    /// later interval queries (`ival`) see it.
     fn annotate_with_analysis_bound(&mut self, cell: &str) {
         if let Some(b) = self.current_stmt_bound {
             // Only overwrite if the new bound is tighter, or no bound exists.
@@ -1701,22 +1474,6 @@ impl<'a> NoirEmitter<'a> {
                 }
             }
         }
-    }
-
-    /// Bind `expr` as a `u32`-typed cell with the given upper bound.
-    /// Caller asserts the expression on the RHS evaluates within
-    /// `0..=bound` (which the bound-propagation in the integer ops
-    /// guarantees by construction).
-    fn bind_u32_with_bound(&mut self, expr: &str, bound: u64) -> String {
-        if let Some(existing) = self.cse_cache.get(expr) {
-            return existing.clone();
-        }
-        let v = self.fresh();
-        let _ = writeln!(self.body, "    let {}: u32 = {};", v, expr);
-        self.cse_cache.insert(expr.to_string(), v.clone());
-        self.mark_u32(&v);
-        self.set_bound(&v, bound);
-        v
     }
 
     fn fresh(&mut self) -> String {
@@ -1740,7 +1497,7 @@ impl<'a> NoirEmitter<'a> {
         // variables and panics ("Type recursion limit reached") past a few
         // thousand bindings. Every bind() expression is Field-valued by
         // construction (bools are 0/1 Fields; typed lets go through
-        // bind_u32_with_bound).
+        // bind_typed).
         let _ = writeln!(self.body, "    let {}: Field = {};", v, expr);
         self.cse_cache.insert(expr.to_string(), v.clone());
         // NOTE: the IR-analysis bound is NOT stamped here. `bind()` runs
@@ -1790,15 +1547,8 @@ impl<'a> NoirEmitter<'a> {
     }
 
     /// A cell holding the integer constant `value`, registered in
-    /// `literal_vals`. Small non-negative constants are bound as u32 so any
-    /// chain of integer ops they take part in (counters, axis dims, loop
-    /// indices) stays native; negative or large constants stay Field.
+    /// `literal_vals`.
     fn literal_int(&mut self, value: i64) -> String {
-        if value >= 0 && (value as u64) < (1u64 << 32) {
-            let v = self.bind_u32_with_bound(&value.to_string(), value as u64);
-            self.fold_literal(&v, ConcreteValue::Int(value as i128));
-            return v;
-        }
         let expr = signed_to_field_decimal(value as i128);
         self.bind_val(&expr, ConcreteValue::Int(value as i128))
     }
@@ -1898,10 +1648,8 @@ impl Synthesizer for NoirEmitter<'_> {
         // Name ↔ ValueId correspondence for live provenance-table reads.
         self.vid_of_var.insert(cell.clone(), value_id);
         self.var_of_vid.insert(value_id, cell.clone());
-        // Stamp the IR-analysis bound on the statement RESULT only. This
-        // populates `cell_bound` so downstream emit-time u32-path
-        // conditions see the richer info even when the producing method
-        // chose Field. Doing it here (rather than inside `bind()`) keeps
+        // Stamp the IR-analysis bound on the statement RESULT only, for
+        // later interval queries. Doing it here (rather than inside `bind()`) keeps
         // the bound off shared intermediate cells such as cached
         // indicators, which would otherwise inherit a statement-result
         // bound that does not describe them and poison later interval
@@ -1910,9 +1658,7 @@ impl Synthesizer for NoirEmitter<'_> {
     }
 
     fn on_stmt_begin(&mut self, stmt_id: u32) {
-        // Stash the IR-analysis bound for the result of this statement
-        // so the producing method can choose `u32` over `Field` when
-        // the analysis proves the value fits.
+        // Stash the IR-analysis bound for the result of this statement.
         self.current_stmt_bound = self.stmt_bounds.get(&stmt_id).copied();
     }
 
@@ -1940,7 +1686,7 @@ impl Synthesizer for NoirEmitter<'_> {
     }
 
     fn add_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        let out = self.add_i_inner(a, b)?;
+        let out = self.integer_arith(a, b, '+');
         if let Some(c) = self.s_int_of(b) {
             self.add_const_of.insert(out.clone(), (a.clone(), c as i64));
         } else if let Some(c) = self.s_int_of(a) {
@@ -1950,27 +1696,23 @@ impl Synthesizer for NoirEmitter<'_> {
     }
 
     fn sub_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        self.sub_i_inner(a, b)
+        Ok(self.integer_arith(a, b, '-'))
     }
 
     fn mul_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        self.mul_i_inner(a, b)
+        Ok(self.integer_arith(a, b, '*'))
     }
 
     fn div_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         // `DivI` is field division a * b^-1 (it equals integer division when b
         // divides a), and 0 for b == 0, as the mock's `div_i`.
         self.use_lib("field_div_or_zero");
-        let (af, bf) = (self.as_field(a), self.as_field(b));
+        let (af, bf) = (a, b);
         Ok(self.bind(&format!("field_div_or_zero({}, {})", af, bf)))
     }
     fn floor_div_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        // u32 cells are non-negative, where Noir's u32 division is the floor
-        // quotient.
-        if self.is_u32(a) && self.is_u32(b) {
-            let bound = self.bound_of(a).unwrap_or(u32::MAX as u64);
-            let (n, d) = self.u32_division_operands(a, b);
-            return Ok(self.bind_u32_with_bound(&format!("{} / {}", n, d), bound));
+        if let Some((q, _r)) = self.constant_floor_divmod(a, b) {
+            return Ok(self.literal_int(q));
         }
         let (q, _r) = self.floor_divmod_cells(a, b);
         Ok(q)
@@ -1982,9 +1724,8 @@ impl Synthesizer for NoirEmitter<'_> {
         b: &CellRef,
         divisor_bits: u32,
     ) -> Result<CellRef, ProvingError> {
-        if self.is_u32(a) && self.is_u32(b) {
-            let bound = self.bound_of(a).unwrap_or(u32::MAX as u64);
-            return Ok(self.bind_u32_with_bound(&format!("{} / {}", a, b), bound));
+        if let Some((q, _r)) = self.constant_floor_divmod(a, b) {
+            return Ok(self.literal_int(q));
         }
         // The producer (e.g. reshape `-1` dim inference) promises a, b, the
         // quotient and the remainder are non-negative `divisor_bits`-bit
@@ -1992,18 +1733,13 @@ impl Synthesizer for NoirEmitter<'_> {
         // promise fails the proof) and pins the unique quotient.
         let bits = divisor_bits.max(1);
         self.use_lib("q_floor_div_bounded");
-        let (af, bf) = (self.as_field(a), self.as_field(b));
+        let (af, bf) = (a, b);
         Ok(self.bind(&format!("q_floor_div_bounded::<{}>({}, {})", bits, af, bf)))
     }
     fn mod_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         // Python remainder (the divisor's sign; 0 for a zero divisor).
-        if self.is_u32(a) && self.is_u32(b) {
-            let bound = self
-                .bound_of(b)
-                .unwrap_or(u32::MAX as u64)
-                .saturating_sub(1);
-            let (n, d) = self.u32_division_operands(a, b);
-            return Ok(self.bind_u32_with_bound(&format!("{} % {}", n, d), bound));
+        if let Some((_q, r)) = self.constant_floor_divmod(a, b) {
+            return Ok(self.literal_int(r));
         }
         let (_q, r) = self.floor_divmod_cells(a, b);
         Ok(r)
@@ -2013,12 +1749,12 @@ impl Synthesizer for NoirEmitter<'_> {
     }
     fn abs_i(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qabs_i");
-        let v = self.bind(&format!("qabs_i({})", self.as_field(a)));
+        let v = self.bind(&format!("qabs_i({})", a));
         Ok(v)
     }
     fn sign_i(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qsign_i");
-        let v = self.bind(&format!("qsign_i({})", self.as_field(a)));
+        let v = self.bind(&format!("qsign_i({})", a));
         Ok(v)
     }
     fn inv_i(&mut self, _a: &CellRef) -> Result<CellRef, ProvingError> {
@@ -2038,7 +1774,7 @@ impl Synthesizer for NoirEmitter<'_> {
             return Ok(self.and_with_mask(&x, mask));
         }
         self.use_lib("bitand");
-        Ok(self.bind(&format!("bitand({}, {})", self.as_field(a), self.as_field(b))))
+        Ok(self.bind(&format!("bitand({}, {})", a, b)))
     }
     fn bit_or_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         if let Some((x, y)) = self.constant_pair(a, b) {
@@ -2065,17 +1801,17 @@ impl Synthesizer for NoirEmitter<'_> {
         if let Some(x) = self.s_int_of(a).and_then(|x| i64::try_from(x).ok()) {
             return Ok(self.literal_int(!x));
         }
-        Ok(self.bind(&format!("0 - {} - 1", self.as_field(a))))
+        Ok(self.bind(&format!("0 - {} - 1", a)))
     }
 
     fn add_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qadd");
-        let v = self.bind(&format!("qadd({}, {})", self.as_field(a), self.as_field(b)));
+        let v = self.bind(&format!("qadd({}, {})", a, b));
         Ok(v)
     }
     fn sub_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qsub");
-        let v = self.bind(&format!("qsub({}, {})", self.as_field(a), self.as_field(b)));
+        let v = self.bind(&format!("qsub({}, {})", a, b));
         Ok(v)
     }
     fn mul_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
@@ -2083,7 +1819,7 @@ impl Synthesizer for NoirEmitter<'_> {
             return Ok(self.bind(&exact));
         }
         self.use_lib("qmul");
-        let v = self.bind(&format!("qmul({}, {})", self.as_field(a), self.as_field(b)));
+        let v = self.bind(&format!("qmul({}, {})", a, b));
         Ok(v)
     }
     fn product_sum_f(&mut self, pairs: &[(CellRef, CellRef)]) -> Result<CellRef, ProvingError> {
@@ -2095,7 +1831,7 @@ impl Synthesizer for NoirEmitter<'_> {
         for (a, b) in pairs {
             match self.exact_product(a, b) {
                 Some(term) => exact.push(format!("({term})")),
-                None => raw.push(format!("({} * {})", self.as_field(a), self.as_field(b))),
+                None => raw.push(format!("({} * {})", a, b)),
             }
         }
         if !raw.is_empty() {
@@ -2112,14 +1848,14 @@ impl Synthesizer for NoirEmitter<'_> {
     }
     fn div_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qdiv");
-        let v = self.bind(&format!("qdiv({}, {})", self.as_field(a), self.as_field(b)));
+        let v = self.bind(&format!("qdiv({}, {})", a, b));
         Ok(v)
     }
     fn floor_div_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         // floor(a / b) as a float: the Python floor quotient of the raw Q32
         // integers, re-scaled (kernel::fp_float_floor_div).
         let (q, _r) = self.floor_divmod_cells(a, b);
-        Ok(self.bind(&format!("{} * {}", self.as_field(&q), Q_U64)))
+        Ok(self.bind(&format!("{} * {}", &q, Q_U64)))
     }
     fn mod_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         // a % b with the divisor's sign: the floor remainder of the raw Q32
@@ -2129,7 +1865,7 @@ impl Synthesizer for NoirEmitter<'_> {
     }
     fn pow_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qpow");
-        let v = self.bind(&format!("qpow({}, {})", self.as_field(a), self.as_field(b)));
+        let v = self.bind(&format!("qpow({}, {})", a, b));
         Ok(v)
     }
     fn pow_f_int(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
@@ -2139,12 +1875,12 @@ impl Synthesizer for NoirEmitter<'_> {
         // used the low bits of a negative exponent's field encoding).
         self.use_lib("qpow_int_q32");
         let e = self.to_uint(b, UintWidth::U32);
-        let af = self.as_field(a);
+        let af = a;
         Ok(self.bind(&format!("qpow_int_q32({}, {} as u64)", af, e)))
     }
     fn abs_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qabs");
-        let v = self.bind(&format!("qabs({})", self.as_field(a)));
+        let v = self.bind(&format!("qabs({})", a));
         // Literal propagation: |literal| is itself a compile-time
         // constant. Fold the structural value and carry `literal_vals`
         // membership so downstream fast paths (e.g. the select
@@ -2158,7 +1894,7 @@ impl Synthesizer for NoirEmitter<'_> {
     }
     fn sign_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qsign");
-        let v = self.bind(&format!("qsign({})", self.as_field(a)));
+        let v = self.bind(&format!("qsign({})", a));
         Ok(v)
     }
 
@@ -2196,7 +1932,7 @@ impl Synthesizer for NoirEmitter<'_> {
                 if j >= 0 && j < n {
                     // In range: j - n < 0 always, so the second pre-image is
                     // j - n, written branch-free as (x + (n - j) == 0).
-                    let xf = self.as_field(&x);
+                    let xf = &x;
                     let v = self.bind_flag(&format!(
                         "if ({} == {}) | ({} + {} == 0) {{ 1 }} else {{ 0 }}",
                         xf, j, xf, n - j
@@ -2207,38 +1943,10 @@ impl Synthesizer for NoirEmitter<'_> {
                 // through to the generic equality path below.
             }
         }
-        // Only bind u32 when operands are already u32. Unconditional
-        // u32-binding adds a `BLACKBOX::RANGE` per compare on
-        // otherwise-Field-pure kernels (0441/0442/0443 regressed +2700
-        // each in v10 when we forced u32 here).
-        if self.is_u32(a) && self.is_u32(b) {
-            let v = self.bind_u32_with_bound(&format!("if {} == {} {{ 1 }} else {{ 0 }}", a, b), 1);
-            return Ok(v);
-        }
-        // u32_amortizable + at-least-one-operand-u32: bind the {0,1}
-        // result as u32 even on Field-vs-u32 compares. The conditional's
-        // then/else branches are integer literals so Noir infers u32
-        // freely. Bool kept in u32-land lets sum-chain accumulators
-        // (`row_has[i]` against a u32 sentinel) stay u32 through add_i
-        // without per-cell casts. The at-least-one-u32 guard skips
-        // chains where both operands are pure-Field witness values —
-        // those promote one accumulator cell per compare without
-        // amortising savings downstream (cf. 0510 regression).
-        if self.u32_amortizable && (self.is_u32(a) || self.is_u32(b)) {
-            let v = self.bind_u32_with_bound(
-                &format!(
-                    "if {} == {} {{ 1 }} else {{ 0 }}",
-                    self.as_field(a),
-                    self.as_field(b)
-                ),
-                1,
-            );
-            return Ok(v);
-        }
         let v = self.bind_flag(&format!(
             "if {} == {} {{ 1 }} else {{ 0 }}",
-            self.as_field(a),
-            self.as_field(b)
+            a,
+            b
         ));
         Ok(v)
     }
@@ -2246,25 +1954,10 @@ impl Synthesizer for NoirEmitter<'_> {
         if let Some(v) = self.scaled_bit_zero_test(a, b, true) {
             return Ok(v);
         }
-        if self.is_u32(a) && self.is_u32(b) {
-            let v = self.bind_u32_with_bound(&format!("if {} == {} {{ 0 }} else {{ 1 }}", a, b), 1);
-            return Ok(v);
-        }
-        if self.u32_amortizable && (self.is_u32(a) || self.is_u32(b)) {
-            let v = self.bind_u32_with_bound(
-                &format!(
-                    "if {} == {} {{ 0 }} else {{ 1 }}",
-                    self.as_field(a),
-                    self.as_field(b)
-                ),
-                1,
-            );
-            return Ok(v);
-        }
         let v = self.bind_flag(&format!(
             "if {} == {} {{ 0 }} else {{ 1 }}",
-            self.as_field(a),
-            self.as_field(b)
+            a,
+            b
         ));
         Ok(v)
     }
@@ -2302,8 +1995,8 @@ impl Synthesizer for NoirEmitter<'_> {
         for (idx, lo, hi) in triples {
             let above = self.compare(idx, lo, Cmp::Ge);
             let below = self.compare(idx, hi, Cmp::Lt);
-            parts.push(self.as_field(&above));
-            parts.push(self.as_field(&below));
+            parts.push(above);
+            parts.push(below);
         }
         Ok(self.bind_flag(&parts.join(" * ")))
     }
@@ -2318,11 +2011,11 @@ impl Synthesizer for NoirEmitter<'_> {
     }
 
     fn eq_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        let (af, bf) = (self.as_field(a), self.as_field(b));
+        let (af, bf) = (a, b);
         Ok(self.bind_flag(&format!("if {} == {} {{ 1 }} else {{ 0 }}", af, bf)))
     }
     fn ne_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        let (af, bf) = (self.as_field(a), self.as_field(b));
+        let (af, bf) = (a, b);
         Ok(self.bind_flag(&format!("if {} == {} {{ 0 }} else {{ 1 }}", af, bf)))
     }
     // Float comparisons are signed comparisons of the Q32 integers (the
@@ -2342,91 +2035,82 @@ impl Synthesizer for NoirEmitter<'_> {
 
     fn sin_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qsin");
-        let v = self.bind(&format!("qsin({})", self.as_field(a)));
+        let v = self.bind(&format!("qsin({})", a));
         Ok(v)
     }
     fn sinh_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qsinh");
-        let v = self.bind(&format!("qsinh({})", self.as_field(a)));
+        let v = self.bind(&format!("qsinh({})", a));
         Ok(v)
     }
     fn cos_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qcos");
-        let v = self.bind(&format!("qcos({})", self.as_field(a)));
+        let v = self.bind(&format!("qcos({})", a));
         Ok(v)
     }
     fn cosh_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qcosh");
-        let v = self.bind(&format!("qcosh({})", self.as_field(a)));
+        let v = self.bind(&format!("qcosh({})", a));
         Ok(v)
     }
     fn tan_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qtan");
-        let v = self.bind(&format!("qtan({})", self.as_field(a)));
+        let v = self.bind(&format!("qtan({})", a));
         Ok(v)
     }
     fn tanh_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qtanh");
-        let v = self.bind(&format!("qtanh({})", self.as_field(a)));
+        let v = self.bind(&format!("qtanh({})", a));
         Ok(v)
     }
     fn sqrt_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         // (No literal propagation: the circuit's floor root of a constant
         // need not equal the f64 sqrt the literal store would record.)
         self.use_lib("qsqrt");
-        Ok(self.bind(&format!("qsqrt({})", self.as_field(a))))
+        Ok(self.bind(&format!("qsqrt({})", a)))
     }
     fn exp_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qexp");
-        let v = self.bind(&format!("qexp({})", self.as_field(a)));
+        let v = self.bind(&format!("qexp({})", a));
         Ok(v)
     }
     fn log_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qlog");
-        let v = self.bind(&format!("qlog({})", self.as_field(a)));
+        let v = self.bind(&format!("qlog({})", a));
         Ok(v)
     }
     fn arcsin_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qarcsin");
-        let v = self.bind(&format!("qarcsin({})", self.as_field(a)));
+        let v = self.bind(&format!("qarcsin({})", a));
         Ok(v)
     }
     fn arccos_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qarccos");
-        let v = self.bind(&format!("qarccos({})", self.as_field(a)));
+        let v = self.bind(&format!("qarccos({})", a));
         Ok(v)
     }
     fn arctan2_f(&mut self, y: &CellRef, x: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qarctan2");
         let v = self.bind(&format!(
             "qarctan2({}, {})",
-            self.as_field(y),
-            self.as_field(x)
+            y,
+            x
         ));
         Ok(v)
     }
 
     fn logical_and(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let (a, b) = (self.booleanize(a), self.booleanize(b));
-        if self.is_u32(&a) && self.is_u32(&b) {
-            return Ok(self.bind_u32_with_bound(&format!("{} * {}", a, b), 1));
-        }
-        let (af, bf) = (self.as_field(&a), self.as_field(&b));
+        let (af, bf) = (&a, &b);
         Ok(self.bind_flag(&format!("{} * {}", af, bf)))
     }
     fn logical_or(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         let (a, b) = (self.booleanize(a), self.booleanize(b));
-        if self.is_u32(&a) && self.is_u32(&b) {
-            return Ok(self.bind_u32_with_bound(&format!("{} + {} - {} * {}", a, b, a, b), 1));
-        }
-        let (af, bf) = (self.as_field(&a), self.as_field(&b));
+        let (af, bf) = (&a, &b);
         Ok(self.bind_flag(&format!("{} + {} - {} * {}", af, bf, af, bf)))
     }
     fn logical_not(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         let a = self.booleanize(a);
-        if self.is_u32(&a) {
-            return Ok(self.bind_u32_with_bound(&format!("1 - {}", a), 1));
-        }
         Ok(self.bind_flag(&format!("1 - {}", a)))
     }
 
@@ -2443,36 +2127,12 @@ impl Synthesizer for NoirEmitter<'_> {
         let c = self.booleanize(cond);
         let is_zero_int = self.s_int_of(if_false) == Some(0);
         let is_zero_flt = self.s_float_of(if_false) == Some(0.0);
-        let all_u32 = self.is_u32(&c)
-            && self.is_u32(if_true)
-            && (is_zero_int || is_zero_flt || self.is_u32(if_false));
-        let v = if all_u32 {
-            // Stay u32-clean: c * t (zero-default fast path) or
-            // c * t + (1 - c) * f. Bound is max of t/f bounds.
-            let t_bound = self.bound_of(if_true).unwrap_or(u32::MAX as u64);
-            let f_bound = if is_zero_int || is_zero_flt {
-                0
-            } else {
-                self.bound_of(if_false).unwrap_or(u32::MAX as u64)
-            };
-            let bound = t_bound.max(f_bound).min(u32::MAX as u64);
-            let expr = if is_zero_int || is_zero_flt {
-                format!("{} * {}", c, if_true)
-            } else {
-                format!("{} * {} + (1 - {}) * {}", c, if_true, c, if_false)
-            };
-            self.bind_u32_with_bound(&expr, bound)
+        let expr = if is_zero_int || is_zero_flt {
+            format!("{} * {}", c, if_true)
         } else {
-            let cf = self.as_field(&c);
-            let t = self.as_field(if_true);
-            let expr = if is_zero_int || is_zero_flt {
-                format!("{} * {}", cf, t)
-            } else {
-                let f = self.as_field(if_false);
-                format!("{} * {} + (1 - {}) * {}", cf, t, cf, f)
-            };
-            self.bind(&expr)
+            format!("{} * {} + (1 - {}) * {}", c, if_true, c, if_false)
         };
+        let v = self.bind(&expr);
         // A literal condition picking a literal branch keeps the result a
         // compile-time constant.
         if let Some(c) = self.s_bool_of(cond) {
@@ -2498,12 +2158,12 @@ impl Synthesizer for NoirEmitter<'_> {
     fn int_cast(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         // Float -> int: trunc(a / Q) toward zero, the mock's `fp_int_cast`.
         self.use_lib("q_div_q");
-        Ok(self.bind(&format!("q_div_q({})", self.as_field(a))))
+        Ok(self.bind(&format!("q_div_q({})", a)))
     }
     fn float_cast(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         // Integer-to-float in Q32 means *= 2^32.
-        let v = self.bind(&format!("{} * {}", self.as_field(a), Q_U64));
-        self.integral_float.insert(v.clone(), self.as_field(a));
+        let v = self.bind(&format!("{} * {}", a, Q_U64));
+        self.integral_float.insert(v.clone(), a.clone());
         // float(literal int) is a compile-time constant; `literal_vals`
         // stores the real value (the Q-scaling lives in the Noir text).
         let lit = self
@@ -2535,9 +2195,8 @@ impl Synthesizer for NoirEmitter<'_> {
     }
 
     fn expose_public(&mut self, a: &CellRef, _label: &str) -> Result<(), ProvingError> {
-        // Exposed values become the `pub` return array of `main`, which is
-        // typed `[Field; N]`, so u32 cells take the free `as Field`.
-        self.exposes.push(self.as_field(a));
+        // Exposed values become the `pub` return array of `main`.
+        self.exposes.push(a.clone());
         Ok(())
     }
 
@@ -2546,7 +2205,7 @@ impl Synthesizer for NoirEmitter<'_> {
         if self.is_boolean(a) {
             let _ = writeln!(self.body, "    assert({} == 1);", a);
         } else {
-            let _ = writeln!(self.body, "    assert({} != 0);", self.as_field(a));
+            let _ = writeln!(self.body, "    assert({} != 0);", a);
         }
         Ok(())
     }
@@ -2625,18 +2284,13 @@ impl Synthesizer for NoirEmitter<'_> {
     /// Field value (as halo2-base). Self-standing for the same reason as
     /// `assert_u128_lt`: the builder records `a >= 0` from this assert.
     fn assert_non_neg_i(&mut self, a: &CellRef) -> Result<(), ProvingError> {
-        if self.is_u32(a) {
-            // A u32 cell holds a genuine u32 value (every Field -> u32 entry
-            // is range-checked), so it is non-negative by construction.
-            return Ok(());
-        }
         self.emit_range_check(a, 63);
         Ok(())
     }
 
     /// `a` in {0, 1}, checked directly (no bound or interval consulted).
     fn assert_bit(&mut self, a: &CellRef) -> Result<(), ProvingError> {
-        let af = self.as_field(a);
+        let af = a;
         let _ = writeln!(self.body, "    assert({} * ({} - 1) == 0);", af, af);
         Ok(())
     }
@@ -2713,13 +2367,13 @@ impl Synthesizer for NoirEmitter<'_> {
             return Ok(());
         }
         self.assert_one_hot(&root, &vs);
-        let vf = self.as_field(value);
+        let vf = value;
         for &v in &vs {
             let slot = (v * scale + offset) as usize;
             let ind = self.indicator(&root, v);
             let old_v = self.memories.get(&segment_id).unwrap()[slot].clone();
-            let of = self.as_field(&old_v);
-            let indf = self.as_field(&ind);
+            let of = &old_v;
+            let indf = &ind;
             let nv = self.bind(&format!("{of} + {indf} * ({vf} - {of})"));
             self.memories.get_mut(&segment_id).unwrap()[slot] = nv;
         }
@@ -2792,8 +2446,8 @@ impl Synthesizer for NoirEmitter<'_> {
                         let ind = self.indicator(&r2, w);
                         parts.push(format!(
                             "{} * {}",
-                            self.as_field(&ind),
-                            self.as_field(&plane)
+                            &ind,
+                            &plane
                         ));
                     }
                     let out = self.bind_sum(&parts);
@@ -2836,8 +2490,8 @@ impl Synthesizer for NoirEmitter<'_> {
                 let ind = self.indicator(&root, v);
                 parts.push(format!(
                     "{} * {}",
-                    self.as_field(&ind),
-                    self.as_field(&cell)
+                    &ind,
+                    &cell
                 ));
             }
             let out = self.bind_sum(&parts);
@@ -3043,7 +2697,7 @@ mod tests {
     /// Build a bare emitter with no inputs, sufficient to drive single
     /// lowering methods in isolation.
     fn bare_emitter(prov: &crate::provenance::ProvenanceTable) -> NoirEmitter<'_> {
-        NoirEmitter::new(Vec::new(), HashMap::new(), 0, prov)
+        NoirEmitter::new(Vec::new(), HashMap::new(), prov)
     }
 
     /// Register a compile-time integer literal cell so `s_int_of` resolves it.
@@ -3108,11 +2762,6 @@ mod tests {
             "j<0 must NOT emit the dual-equality peephole, body was:\n{}",
             em.body
         );
-    }
-
-    /// Emitter with u32 promotion enabled (the intrinsic-op threshold met).
-    fn promoting_emitter(prov: &crate::provenance::ProvenanceTable) -> NoirEmitter<'_> {
-        NoirEmitter::new(Vec::new(), HashMap::new(), 20, prov)
     }
 
     // Comparisons size their gap check by the operands' intervals: the
@@ -3231,24 +2880,13 @@ mod tests {
         assert_eq!(em.body, before);
     }
 
-    #[test]
-    fn u32_promotion_is_range_checked() {
-        let prov = crate::provenance::ProvenanceTable::default();
-        let mut em = promoting_emitter(&prov);
-        em.set_bound("x", 9);
-        let p = em.maybe_promote_to_u32("x");
-        assert!(em.is_u32(&p));
-        assert!(em.body.contains("checked_u32(x)"), "{}", em.body);
-        assert!(!em.body.contains("x as u32"), "{}", em.body);
-    }
-
     // B4(b): the index of `AssertU128Lt` carries the interval the builder
-    // derives from this assert; the lowering must not use it (no u32
-    // promotion of idx, a direct range check on the Field value instead).
+    // derives from this assert; the lowering must not use it (a direct
+    // range check on the Field value).
     #[test]
     fn assert_u128_lt_does_not_use_its_own_interval() {
         let prov = crate::provenance::ProvenanceTable::default();
-        let mut em = promoting_emitter(&prov);
+        let mut em = bare_emitter(&prov);
         em.set_bound("idx", 9);
         em.interval_of.insert("idx".to_string(), (0, 9));
         lit_int(&mut em, "hi", 10);
