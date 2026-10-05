@@ -547,10 +547,12 @@ impl Q32 {
         acc
     }
 
-    /// `sin(x)`: reduce `|x| = q * pi + r` with `r` in `[0, pi)`, evaluate the
-    /// degree-14 minimax polynomial for `sin` on `[0, pi]` (the same
-    /// coefficients Zinnia and halo2-graph use) at `r`, and negate when exactly
-    /// one of `x < 0` and `q odd` holds.
+    /// `sin(x)`: reduce `|x| = q * pi + r` with `r` in `[0, pi)`, reflect `r`
+    /// into `[0, pi/2]` (`sin(r) = sin(pi - r)`), evaluate the degree-14 minimax
+    /// polynomial for `sin` on `[0, pi]` (the coefficients Zinnia and
+    /// halo2-graph use) there, and negate when exactly one of `x < 0` and
+    /// `q odd` holds. The reflection keeps the Q32-quantized coefficients'
+    /// error below 1e-7; evaluated up to pi it reaches 1.4e-4.
     pub fn sin(&self, ctx: &mut Ctx, x: I64) -> Cell {
         let neg = self.is_neg(ctx, x);
         let minus_x = self.gate.neg(ctx, x.cell);
@@ -558,6 +560,11 @@ impl Q32 {
         let pi = quantize(std::f64::consts::PI) as u64;
         let (q, r) = self.floor_div_const(ctx, abs_x, pi);
         let odd = self.is_odd(ctx, q);
+        // r < pi < 2^34 is proven by floor_div_const, as is_less_than requires.
+        let half_pi = Constant(fe(quantize(std::f64::consts::FRAC_PI_2)));
+        let upper = self.range.is_less_than(ctx, half_pi, r, 34);
+        let reflected = self.gate.sub(ctx, Constant(fe(pi as i128)), r);
+        let r = self.gate.select(ctx, reflected, r, upper);
         let y = self.polynomial(ctx, r, &SIN_COEFS);
         let flip = self.gate.xor(ctx, neg, odd);
         let minus_y = self.gate.neg(ctx, y);
@@ -887,14 +894,14 @@ mod tests {
 
     #[test]
     fn sin_and_cos_match_f64() {
-        for v in [0.3, -0.3, 2.0, -2.0, 4.0, -7.5, 10.0, 100.0] {
+        for v in [0.3, -0.3, 1.5, 2.0, -2.0, 3.1, 4.0, -7.5, 10.0, 100.0, 6.2657] {
             assert!(accepts(|c, ctx| {
                 let x = ctx.load_witness(fe(quantize(v)));
                 let xb = c.bound(ctx, x);
                 let s = dequantize(c.sin(ctx, xb).value());
                 let k = dequantize(c.cos(ctx, x).value());
-                assert!((s - v.sin()).abs() < 1e-4, "sin({v}) = {s}");
-                assert!((k - v.cos()).abs() < 1e-4, "cos({v}) = {k}");
+                assert!((s - v.sin()).abs() < 1e-6, "sin({v}) = {s}");
+                assert!((k - v.cos()).abs() < 1e-6, "cos({v}) = {k}");
             }));
         }
     }

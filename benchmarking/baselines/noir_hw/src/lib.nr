@@ -21,6 +21,7 @@ pub global OFFSET: Field = 9223372036854775808; // 2^63
 global OFFSET_U64: u64 = 9223372036854775808;
 global PI_Q: Field = 13493037705; // round(pi * 2^32)
 global HALF_PI_Q: Field = 6746518852; // round(pi / 2 * 2^32)
+global HALF_PI_U64: u64 = 6746518852;
 // round(c * 2^32) of the degree-14 minimax polynomial for sin on [0, pi]
 // (highest degree first); the same coefficients as Zinnia and halo2-graph.
 global SIN_COEFS_Q: [Field; 15] =
@@ -259,13 +260,17 @@ fn check_parity(q: Field, h: Field) -> bool {
     odd == 1
 }
 
-// sin(x): |x| = q * pi + r with r in [0, pi), the minimax polynomial at r,
-// negated when exactly one of (x < 0) and (q odd) holds.
+// sin(x): |x| = q * pi + r with r in [0, pi), r reflected into [0, pi/2]
+// (sin(r) = sin(pi - r)), the minimax polynomial there, negated when exactly
+// one of (x < 0) and (q odd) holds. The reflection keeps the Q32-quantized
+// coefficients' error below 1e-7; evaluated up to pi it reaches 1.4e-4.
 pub fn sin(x: Field) -> Field {
     let neg = is_neg(x);
     let ax = if neg { -x } else { x };
     let (q, r) = divmod_pos(ax, PI_Q);
     let odd = is_odd(q);
+    // divmod_pos proved 0 <= r < PI_Q < 2^64, so the cast is exact.
+    let r = if (r as u64) > HALF_PI_U64 { PI_Q - r } else { r };
     let y = poly(r, SIN_COEFS_Q);
     if neg != odd { -y } else { y }
 }
@@ -341,12 +346,9 @@ fn test_sqrt() {
 
 #[test]
 fn test_sin_cos() {
-    // sin(pi/6) ~ 0.5, cos(pi/3) ~ 0.5, sin(-7pi/6) ~ 0.5. With Q32
-    // coefficients the polynomial is accurate to about 3e-5 near pi (the
-    // same holds for Zinnia, which evaluates the same polynomial), so the
-    // test allows 1e-4.
+    // sin(pi/6) ~ 0.5, cos(pi/3) ~ 0.5, sin(-7pi/6) ~ 0.5, within 1e-6.
     let half = SCALE / 2;
-    let e = 429497; // 1e-4 * 2^32
+    let e = 4295; // 1e-6 * 2^32
     let s = sin(2248839617); // round(pi/6 * 2^32)
     assert(lt(abs(s - half), e));
     let c = cos(4497679235); // round(pi/3 * 2^32)

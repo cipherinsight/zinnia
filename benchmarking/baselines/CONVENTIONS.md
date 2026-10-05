@@ -60,8 +60,11 @@ Terms:
   - a float quotient is `floor(a * 2^32 / b)` with remainder in `[0, |b|)`;
   - `int(x)` and `astype(int)` truncate toward zero; `//` and `%` follow Python
     (floor, remainder with the sign of the divisor);
-  - `sin`/`cos` reduce the argument by pi and evaluate the degree-14 minimax
-    polynomial Zinnia evaluates (`q32::SIN_COEFS`); `cos(x) = sin(x + pi/2)`.
+  - `sin`/`cos` reduce the argument by pi, reflect it into `[0, pi/2]` and
+    evaluate the degree-14 minimax polynomial Zinnia evaluates
+    (`q32::SIN_COEFS`); `cos(x) = sin(x + pi/2)`. With Q32 coefficients the
+    polynomial is accurate to 1e-7 on `[0, pi/2]` but only 1.4e-4 near pi, so the
+    reflection is what lets the result meet the case set's 1e-6 tolerance.
 - Comparisons are on the window (64-bit), the width Zinnia uses.
 - `==` in the kernel is exact equality, also on floats. `np.isclose` uses NumPy's
   formula `|a - b| <= atol + rtol * |b|` with the kernel's (or NumPy's default)
