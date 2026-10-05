@@ -840,6 +840,8 @@ fn _zinnia_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(execute_noir_circuit, m)?)?;
     m.add_function(wrap_pyfunction!(get_elided_publics, m)?)?;
     m.add_function(wrap_pyfunction!(verify_proof_artifact, m)?)?;
+    #[cfg(feature = "halo2-base-backend")]
+    prove::halo2_base::python::register(m)?;
     m.add_function(wrap_pyfunction!(export_ir_json, m)?)?;
     m.add_function(wrap_pyfunction!(import_ir_json, m)?)?;
     m.add_function(wrap_pyfunction!(poseidon_hash, m)?)?;
