@@ -256,6 +256,32 @@ impl Q32 {
         self.select_i64(ctx, b, a, b_lt_a)
     }
 
+    /// `max(xs)` of a few values by a hint `m`, pinned by `m - x` in
+    /// `[0, 2^64)` for every `x` and `prod_x (m - x) = 0`. For window values
+    /// `m - x` lies in `(-2^64, 2^64)` and a negative difference is a field
+    /// element above `p - 2^64`, so the range checks give `m >= x`; the product
+    /// puts `m` among the `xs`. Cheaper than a compare-and-select chain for a
+    /// handful of values (one range check per value, no comparison).
+    pub fn max_of(&self, ctx: &mut Ctx, xs: &[Cell]) -> Cell {
+        let hint = xs.iter().map(|x| signed(x.value())).max().expect("non-empty");
+        self.max_of_with(ctx, xs, fe(hint))
+    }
+
+    fn max_of_with(&self, ctx: &mut Ctx, xs: &[Cell], m: Fr) -> Cell {
+        let m = ctx.load_witness(m);
+        let mut prod: Option<Cell> = None;
+        for x in xs {
+            let gap = self.gate.sub(ctx, m, *x);
+            self.range.range_check(ctx, gap, 64);
+            prod = Some(match prod {
+                None => gap,
+                Some(p) => self.gate.mul(ctx, p, gap),
+            });
+        }
+        self.gate.assert_is_const(ctx, &prod.expect("non-empty"), &Fr::ZERO);
+        m
+    }
+
     /// `|a|` (for floats and integers; `|-2^63|` leaves the window and is
     /// returned unbounded).
     pub fn abs(&self, ctx: &mut Ctx, a: I64) -> Cell {
@@ -871,6 +897,21 @@ mod tests {
                 assert!((k - v.cos()).abs() < 1e-4, "cos({v}) = {k}");
             }));
         }
+    }
+
+    #[test]
+    fn max_of_is_pinned() {
+        let vals = [-3i128 << 32, 5 << 32, 2 << 32];
+        let run = |m: Fr| {
+            accepts(move |c, ctx| {
+                let xs: Vec<Cell> = vals.iter().map(|v| ctx.load_witness(fe(*v))).collect();
+                c.max_of_with(ctx, &xs, m);
+            })
+        };
+        assert!(run(fe(5 << 32)));
+        assert!(!run(fe(2 << 32))); // a smaller value of the set
+        assert!(!run(fe((5 << 32) + 1))); // above the max, not in the set
+        assert!(!run(fe(5 << 32) * fe(3).invert().unwrap()));
     }
 
     #[test]

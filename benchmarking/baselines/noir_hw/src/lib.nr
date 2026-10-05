@@ -67,6 +67,37 @@ pub fn min(a: Field, b: Field) -> Field {
     if window(b) < window(a) { b } else { a }
 }
 
+unconstrained fn max_hint<let N: u32>(xs: [Field; N]) -> Field {
+    let mut m = xs[0];
+    for i in 1..N {
+        if window(xs[i]) > window(m) {
+            m = xs[i];
+        }
+    }
+    m
+}
+
+// max(xs) of a few values by a hint m, pinned by m - x in [0, 2^64) for every
+// x and prod (m - x) = 0. For window values m - x lies in (-2^64, 2^64) and a
+// negative difference is a Field element above p - 2^64, so the range checks
+// give m >= x; the product puts m among the xs.
+pub fn max_of<let N: u32>(xs: [Field; N]) -> Field {
+    // Safety: m is pinned by `check_max`.
+    let m = unsafe { max_hint(xs) };
+    check_max(xs, m);
+    m
+}
+
+fn check_max<let N: u32>(xs: [Field; N], m: Field) {
+    let mut prod: Field = 1;
+    for i in 0..N {
+        let gap = m - xs[i];
+        gap.assert_max_bit_size::<64>();
+        prod *= gap;
+    }
+    assert(prod == 0, "max: not one of the values");
+}
+
 // --------------------------------------------------------------- arithmetic
 
 // (negative, magnitude) of a Field encoding a signed integer below 2^127.
@@ -389,6 +420,22 @@ fn test_sqrt_negative_root() {
 #[test(should_fail)]
 fn test_parity_field_half() {
     let _ = check_parity(7, 7 / 2);
+}
+
+#[test]
+fn test_max_of() {
+    assert(max_of([-3 * SCALE, 5 * SCALE, 2 * SCALE]) == 5 * SCALE);
+    check_max([-3, 5, 2], 5);
+}
+
+#[test(should_fail)]
+fn test_max_smaller_member() {
+    check_max([-3, 5, 2], 2);
+}
+
+#[test(should_fail)]
+fn test_max_not_member() {
+    check_max([-3, 5, 2], 6);
 }
 
 #[test]

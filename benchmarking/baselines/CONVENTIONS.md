@@ -135,7 +135,7 @@ halo2-base (`q32::Q32`, built on `GateChip`/`RangeChip` of halo2-base 0.4.1):
 | `np.sqrt` | `q.sqrt` (exact floor square root) |
 | `np.sin`, `np.cos` | `q.sin`, `q.cos` |
 | `<`, `<=`, `>`, `>=` | `q.bound` once per value, then `q.lt`/`le`/`gt`/`ge`, `q.lt_const` |
-| `max`, `min`, `abs` | `q.max`, `q.min`, `q.abs` |
+| `max`, `min`, `abs` | `q.max`, `q.min`, `q.abs`; `q.max_of` (hint pinned by range checks and a product) for the maximum of a few values |
 | `==`, `!=` | `q.eq`, `q.gate.not` |
 | `where`, `if` on data | `q.gate.select`, `q.select_i64` |
 | `a[i]` (private `i`) | `q.index` (NumPy wrap and bounds; one-hot or range-checked form by length), `q.index_i64` if `i` already has a window proof |
@@ -154,7 +154,7 @@ Noir (`noir_hw`, on top of the Noir standard library):
 | `astype(float)`, `int(x)`, `np.floor` | `from_int`, `to_int`, `floor` |
 | `np.sqrt`, `np.sin`, `np.cos` | `sqrt`, `sin`, `cos` |
 | comparisons | `let w = window(x)` once per value, then `u64` comparisons; `lt`, `gt`, ... for one-off tests |
-| `max`, `min`, `abs` | `max`, `min`, `abs` (or `window` and select) |
+| `max`, `min`, `abs` | `max`, `min`, `abs` (or `window` and select); `max_of` for the maximum of a few values |
 | `a[i]` (private `i`) | `a[index_pos(i, len)]` (native indexing); `pick(row, i)` for rows of up to 8 |
 | `u32` index arithmetic (`k // 6` on an index built from loop constants) | native `u32` operators |
 
