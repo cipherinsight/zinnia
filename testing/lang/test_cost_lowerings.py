@@ -33,6 +33,55 @@ def assert_backends_agree(source, *args):
     assert got == expected
 
 
+# ── integer x float products without a rescale ───────────────────────────
+
+INT_TIMES_FLOAT = [
+    ('def kernel(a: Float[Array, "4"], k: Integer):\n    return k * a\n',
+     (np.array([0.5, -1.25, 3.0, 1e-3]), -7)),
+    ('def kernel(a: Float[Array, "4"], k: Integer):\n    return a * k\n',
+     (np.array([0.5, -1.25, 3.0, 1e-3]), 12)),
+    ('def kernel(a: Float[Array, "3"]):\n    return 3 * a - 2.0 * a * a\n',
+     (np.array([0.1, -0.7, 2.5]),)),
+    ('def kernel(x: Float, k: Integer):\n    return float(k) * x\n', (-0.3, 5)),
+    ('def kernel(a: Float[Array, "3"], m: Integer[Array, "3"]):\n    return m * a\n',
+     (np.array([0.25, -0.5, 1.75]), np.array([3, -4, 0]))),
+    # A recurrence with integer coefficients (DS-1000 0399).
+    ('def kernel(A: Float[Array, "6"], a: Integer, b: Integer, c: Integer):\n'
+     '    B = np.empty(len(A))\n'
+     '    for k in range(0, len(B)):\n'
+     '        if k == 0:\n'
+     '            B[k] = a*A[k]\n'
+     '        elif k == 1:\n'
+     '            B[k] = a*A[k] + b*B[k-1]\n'
+     '        else:\n'
+     '            B[k] = a*A[k] + b*B[k-1] + c*B[k-2]\n'
+     '    return B\n',
+     (np.array([0.5, -1.0, 0.25, 2.0, -0.125, 1.5]), 2, -3, 1)),
+]
+
+
+@pytest.mark.parametrize("source, args", INT_TIMES_FLOAT)
+def test_integer_times_float_matches_numpy(source, args):
+    assert_matches_numpy(source, *args)
+
+
+@pytest.mark.parametrize("source, args", INT_TIMES_FLOAT[:3])
+def test_integer_times_float_halo2_base_matches_mock(source, args):
+    assert_backends_agree(source, *args)
+
+
+@pytest.mark.parametrize("source", [s for s, _ in INT_TIMES_FLOAT[:2]] + [INT_TIMES_FLOAT[5][0]])
+def test_integer_times_float_has_no_rescale(source):
+    # The old lowering cast the integer to Q32 and paid a MulF rescale
+    # (remainder and window range checks) per product.
+    assert "MulFIR" not in ir_classes(compile_kernel(source))
+
+
+def test_fractional_constant_keeps_the_rescale():
+    program = compile_kernel('def kernel(a: Float[Array, "2"]):\n    return 0.5 * a\n')
+    assert "MulFIR" in ir_classes(program)
+
+
 # ── products over a zero-length axis ─────────────────────────────────────
 
 @pytest.mark.parametrize("source, args", [

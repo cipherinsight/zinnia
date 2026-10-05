@@ -1727,9 +1727,14 @@ impl IRBuilder {
         out
     }
 
-    /// Interval bounds via input facts (call-site-fact, no SMT).
+    /// Float product. Interval bounds via input facts (call-site-fact, no
+    /// SMT). A factor that is an integer in float form is multiplied
+    /// without a rescale, see [`Self::exact_product_with_integer`].
     pub fn ir_mul_f(&mut self, a: &Value, b: &Value) -> Value {
-        let out = self.create_ir(&IR::MulF, &[a.clone(), b.clone()]);
+        let out = match self.exact_product_with_integer(a, b) {
+            Some(product) => product,
+            None => self.create_ir(&IR::MulF, &[a.clone(), b.clone()]),
+        };
         if let (Some(a_vid), Some(b_vid), Some(out_vid)) =
             (a.value_id(), b.value_id(), out.value_id())
         {
@@ -1744,6 +1749,72 @@ impl IRBuilder {
             }
         }
         out
+    }
+
+    /// `a * b` for Float operands of which one holds an integer `k`: the
+    /// `FloatCast` of an integer cell, or an integral constant inside the
+    /// Q32 window. Returns the Float-typed field product `k * raw(x)` of
+    /// `k` and the other factor's raw fixed-point value, or `None` when
+    /// neither factor is integer-valued (or both are constants, which
+    /// folding handles).
+    ///
+    /// Exactness: `raw(k * x) = k * 2^P * x = k * raw(x)`, so this is the
+    /// value `MulF` computes: its rescale divides `raw(k) * raw(x) =
+    /// 2^P * k * raw(x)` by `2^P` with remainder zero. The product is a
+    /// deterministic function of the operand cells, so no hint is added.
+    /// What it omits is the rescale's signed 64-bit window check on the
+    /// quotient: a product outside the Q32 window is now the exact field
+    /// value instead of having no proof. That is not an obligation of the
+    /// multiplication: every consumer that needs a bounded operand
+    /// (comparisons, rescales, divisions, casts) checks it itself, as it
+    /// must for unchecked circuit inputs.
+    fn exact_product_with_integer(&mut self, a: &Value, b: &Value) -> Option<Value> {
+        if a.float_val().is_some() && b.float_val().is_some() {
+            return None;
+        }
+        let (k, x) = match self.integer_in_float(a) {
+            Some(k) => (k, b),
+            None => (self.integer_in_float(b)?, a),
+        };
+        if !matches!(x, Value::Float(_)) {
+            return None;
+        }
+        match self.create_ir(&IR::MulI, &[k, x.clone()]) {
+            Value::Integer(sv) => Some(Value::Float(ScalarValue {
+                static_val: None,
+                stmt_id: sv.stmt_id,
+                value_id: sv.value_id,
+            })),
+            other => unreachable!("MulI built a non-integer value {:?}", other),
+        }
+    }
+
+    /// The integer cell behind an integer-valued Float operand: the
+    /// argument of the `FloatCast` statement that produced it, or a
+    /// constant for an integral float constant `|c| < 2^31` (a Q32 value
+    /// in the signed 64-bit window).
+    fn integer_in_float(&mut self, v: &Value) -> Option<Value> {
+        if !matches!(v, Value::Float(_)) {
+            return None;
+        }
+        if let Some(c) = v.float_val() {
+            let in_window = c.abs() < (1u64 << 31) as f64;
+            return (c.fract() == 0.0 && in_window).then(|| self.ir_constant_int(c as i64));
+        }
+        let stmt = self.stmts.get(v.stmt_id()? as usize)?;
+        if !matches!(stmt.ir, IR::FloatCast) {
+            return None;
+        }
+        let (arg_stmt, arg_vid) = (stmt.arguments[0], stmt.arg_values[0]);
+        let static_val = match self.stmts[arg_stmt as usize].ir {
+            IR::ConstantInt { value } => Some(value),
+            _ => None,
+        };
+        Some(Value::Integer(ScalarValue {
+            static_val,
+            stmt_id: Some(arg_stmt),
+            value_id: arg_vid,
+        }))
     }
 
     /// ProductSumF operands are adjacent Float pairs:
