@@ -43,6 +43,8 @@ pub struct Halo2BaseSynthesizer<'a> {
     float_casts: HashMap<u64, Halo2BaseCell>,
     /// Cells known to be one of two constants by a bit (see `ranges.rs`).
     two_valued: HashMap<u64, TwoValued>,
+    /// `a - b` cells by `(a.id, b.id)`, shared by comparisons and selects.
+    differences: HashMap<(u64, u64), Halo2BaseCell>,
     /// Low two's-complement bits per cell id (see `bitwise.rs`).
     bit_cache: HashMap<u64, Vec<Halo2BaseCell>>,
     dyn_meta_bounds: HashMap<u32, (u32, Vec<u32>)>,
@@ -115,6 +117,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             float_casts: HashMap::new(),
             two_valued: HashMap::new(),
             bit_cache: HashMap::new(),
+            differences: HashMap::new(),
             dyn_meta_bounds: HashMap::new(),
             next_id: 0,
             bit_cells: HashSet::new(),
@@ -444,7 +447,10 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn sub_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        // A fresh cell per IR value (provenance maps cells to values one to
+        // one); later selects on the same operands may reuse it.
         let out = self.gate_cell(a.value - b.value, |gate, ctx| gate.sub(ctx, a.assigned, b.assigned));
+        self.differences.entry((a.id, b.id)).or_insert(out);
         self.propagate_range(&out, a, b, Interval::sub);
         self.propagate_two_valued(&out, a, b, |x, c| x.checked_sub(c));
         self.propagate_two_valued(&out, b, a, |x, c| c.checked_sub(x));
@@ -815,12 +821,18 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         // select(c, x, 0) == c*x — one gate instead of two.
         let t_zero = self.is_const_cell(if_true) && if_true.value == Fp::zero();
         let f_zero = self.is_const_cell(if_false) && if_false.value == Fp::zero();
+        // Otherwise `f + c·(t - f)`, one gate when the difference exists
+        // already (the comparison that produced `c`, or the select with the
+        // branches swapped, made it): `f - c·(f - t)` for the swapped one.
         let out = if t_zero {
             self.gate_cell(value, |gate, ctx| gate.mul_not(ctx, cond.assigned, if_false.assigned))
         } else if f_zero {
             self.gate_cell(value, |gate, ctx| gate.mul(ctx, cond.assigned, if_true.assigned))
+        } else if let Some(swapped) = self.differences.get(&(if_false.id, if_true.id)).copied() {
+            self.gate_cell(value, |gate, ctx| gate.sub_mul(ctx, if_false.assigned, cond.assigned, swapped.assigned))
         } else {
-            self.gate_cell(value, |gate, ctx| gate.select(ctx, if_true.assigned, if_false.assigned, cond.assigned))
+            let diff = self.difference(if_true, if_false);
+            self.gate_cell(value, |gate, ctx| gate.mul_add(ctx, cond.assigned, diff.assigned, if_false.assigned))
         };
         // The select gate pins out to one of the branches (cond is a bit), so
         // the hull of the branches' proven ranges holds for the output.

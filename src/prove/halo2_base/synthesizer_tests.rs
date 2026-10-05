@@ -567,6 +567,28 @@ fn signed_comparison_rejects_inputs_outside_the_64_bit_window() {
     assert!(!synthesize(&*lt, &[huge, int(1)], &[]).accepted);
 }
 
+/// A compare-exchange `(min, max)`: both selects reuse the comparison's
+/// difference `a - b` (one gate each) and stay pinned by the comparison bit.
+#[test]
+fn compare_exchange_shares_the_difference() {
+    let exchange: Box<Op> = Box::new(|s, c| {
+        let below = s.lt_i(&c[1], &c[0])?;
+        Ok(vec![s.select(&below, &c[1], &c[0])?, s.select(&below, &c[0], &c[1])?])
+    });
+    for (a, b) in [(3i64, 5i64), (5, 3), (4, 4), (-7, 2), (i64::MAX, i64::MIN)] {
+        assert_sound(&format!("exchange({a}, {b})"), &*exchange, &[int(a), int(b)], &[int(a.min(b)), int(a.max(b))], &[]);
+    }
+    let separate: Box<Op> = Box::new(|s, c| {
+        let below = s.lt_i(&c[1], &c[0])?;
+        let x = s.add_i(&c[0], &c[2])?; // operands the comparison did not subtract
+        let y = s.add_i(&c[1], &c[2])?;
+        Ok(vec![s.select(&below, &y, &x)?, s.select(&below, &x, &y)?])
+    });
+    let shared_cost = cells_of(&*exchange, &[int(3), int(5)]).0;
+    let separate_cost = cells_of(&*separate, &[int(3), int(5), int(0)]).0;
+    assert!(shared_cost + 8 <= separate_cost, "shared {shared_cost}, separate {separate_cost}");
+}
+
 // ── Bitwise operations (two's complement, as NumPy int64) ──────────────
 
 const BIT_PAIRS: [(i64, i64); 7] =
