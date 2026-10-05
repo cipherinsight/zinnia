@@ -264,7 +264,8 @@ impl IRGenerator {
         let mut result = returns[0].0.clone();
         for i in 1..returns.len() {
             let (val, cond) = &returns[i];
-            result = crate::helpers::value_ops::select_value(&mut self.builder, cond, val, &result);
+            // A helper returns one of its argument arrays itself in Python.
+            result = self.merge_binding(cond, val, &result);
         }
         if let Some(return_dt) = return_dt {
             if result.zinnia_type() != return_dt {

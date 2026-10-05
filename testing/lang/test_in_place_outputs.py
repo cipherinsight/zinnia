@@ -162,3 +162,55 @@ def test_in_place_outputs_are_bound_by_the_proof():
         value = int.from_bytes(bytes.fromhex(tampered["public_values"][index]), "little")
         tampered["public_values"][index] = ((value + 1) % BN254).to_bytes(32, "little").hex()
         assert not program.verify_with_keys(keys, tampered)
+
+
+def test_path_dependent_aliases_are_rejected_when_written():
+    """`c = a` on one path and `c = b` on another makes `c` the same object as
+    `a` or `b` in Python; Zinnia merges them into a copy, so a write through
+    `c` must not prove unchanged `a` and `b`."""
+    returned = '''
+def kernel(A: NDArray[int, 3], B: NDArray[int, 3], c: Integer):
+    C = A
+    if c > 0:
+        C = B
+    C[0] = 9
+    return A, B
+'''
+    in_place = returned.replace("    return A, B\n", "")
+    conditional_expression = '''
+def kernel(A: NDArray[int, 3], B: NDArray[int, 3], c: Integer):
+    C = A if c > 0 else B
+    C[0] = 9
+    return A
+'''
+    for source in (returned, in_place, conditional_expression):
+        with pytest.raises(ZinniaException, match="depends on the path"):
+            compile_kernel(source)
+
+
+def test_path_dependent_aliases_without_writes_still_compile():
+    source = '''
+def kernel(A: NDArray[int, 3], B: NDArray[int, 3], c: Integer):
+    C = A
+    if c > 0:
+        C = B
+    return C + 1
+'''
+    from testing.lang.mock_outputs import numpy_outputs
+    for c in (0, 1):
+        args = (np.array([1, 2, 3]), np.array([4, 5, 6]), c)
+        satisfied, values, _ = run_mock_layout(compile_kernel(source), *args)
+        assert satisfied and values == numpy_outputs(source, *args)[0]
+
+
+def test_an_update_that_makes_a_new_array_reaches_other_names():
+    source = '''
+def kernel(A: NDArray[int, 4], m: NDArray[int, 4]):
+    B = A
+    B[m > 0] = 0
+    return A
+'''
+    from testing.lang.mock_outputs import numpy_outputs
+    args = (np.array([1, 2, 3, 4]), np.array([1, 0, 1, 0]))
+    satisfied, values, _ = run_mock_layout(compile_kernel(source), *args)
+    assert satisfied and values == numpy_outputs(source, *args)[0] == [0, 2, 0, 4]

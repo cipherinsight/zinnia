@@ -340,7 +340,7 @@ impl IRGenerator {
     /// assignment, `op=` via [`Self::update_in_place`], `out=`, writes through
     /// views, aliases and helpers) writes into that segment, under the write
     /// predicate of the statement that makes it (see
-    /// [`Self::write_back_to_argument`] for updates that produce a new array
+    /// [`Self::write_back_if_shared`] for updates that produce a new array
     /// value). Rebinding the parameter name (`A = A + 1`, or swapping two
     /// names) makes the name denote another object and leaves the caller's
     /// array alone, as in Python. So an argument is written exactly when a
@@ -369,20 +369,27 @@ impl IRGenerator {
         outputs
     }
 
-    /// After an in-place update of `current` produced `updated` in another
-    /// memory segment: when `current` is (a view of) an argument of an
-    /// in-place kernel, write `updated` back into it and return `current`, so
-    /// the caller's array keeps its segment (see [`Self::in_place_outputs`]).
-    /// Returns `None` when `current` is not caller-visible.
-    pub(crate) fn write_back_to_argument(&mut self, current: &Value, updated: &Value) -> Option<Value> {
+    /// After an in-place update of the array `current` (bound to `name`)
+    /// produced `updated` in another memory segment: when another binding or
+    /// the caller (an argument of an in-place kernel) still holds `current`,
+    /// write `updated` back into it and return `current`, so every holder
+    /// sees the update, as Python's single object would. Returns `None` when
+    /// rebinding `name` to `updated` is equivalent.
+    pub(crate) fn write_back_if_shared(&mut self, name: &str, current: &Value, updated: &Value) -> Option<Value> {
         let segment = super::detached_copies::array_segment(current)?;
-        if !self.is_caller_visible_segment(segment) {
+        let shared = self.is_caller_visible_segment(segment)
+            || self
+                .ctx
+                .find_other_binding(name, |v| super::detached_copies::array_segment(v) == Some(segment))
+                .is_some();
+        if !shared {
             return None;
         }
         if !matches!(current, Value::StaticArray { .. }) {
             panic!(
-                "an in-place update of a bounded-dynamic array argument of a function that \
-                 returns no value is not supported"
+                "this in-place update of the bounded-dynamic array `{}` is not supported while \
+                 another name (or the caller) refers to the same array",
+                name
             );
         }
         Some(super::named_attr::write_into(&mut self.builder, updated, current))
