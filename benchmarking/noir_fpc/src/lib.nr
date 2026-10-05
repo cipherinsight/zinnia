@@ -1,16 +1,17 @@
-// noir_fpc -- Q32 fixed-point library shared by Zinnia's Noir backend and the
-// handwritten Noir baselines.
+// noir_fpc -- the Q32 fixed-point library of Zinnia's Noir backend.
 //
 // Encoding. A float x is the field element round(x * 2^32) ("Q32"); an
 // integer n is the field element n. A negative value v is stored as p - |v|
 // (p is the BN254 scalar modulus, about 2^253.6). Helpers interpret a field
 // element as the signed integer of smallest magnitude it represents.
 //
-// Value range. Every helper that needs an order (comparisons, division,
-// rescaling, abs, sign) accepts operands whose magnitude is below 2^126 and
-// is unsatisfiable (the proof fails) otherwise. 2^126 is far above any
-// legitimate Q32 intermediate and far below p/2, which is what makes the
-// uniqueness arguments below work.
+// Value window. Zinnia's integers are int64 and its Q32 floats are int64
+// fixed-point values, so every value of a program lives in the signed 64-bit
+// window [-2^63, 2^63). The helpers that need an order (comparisons, abs,
+// sign, division, rescaling) accept the window (and slightly more, as each
+// doc comment states) and are unsatisfiable (the proof fails) outside it,
+// as Zinnia's halo2-base backend. All range checks are 64 bits or narrower,
+// far below p/2, which is what makes the uniqueness arguments below work.
 //
 // Soundness convention. A helper that asks the prover for a value through an
 // `unconstrained` hint then constrains that value so that it is the ONLY one
@@ -29,18 +30,19 @@
 //
 // Range checks. `x.assert_max_bit_size::<N>()` constrains 0 <= x < 2^N. A
 // truncating cast `x as uN` on a Field is NOT a range check: it silently keeps
-// the low N bits. Use `checked_u8` .. `checked_u128` to convert a Field to an
+// the low N bits. Use `checked_u8` .. `checked_u64` to convert a Field to an
 // unsigned integer type; after the range check Noir elides the truncation, so
-// the checked form is also cheaper than the bare cast.
+// the checked form is also cheaper than the bare cast. Barretenberg pays a
+// lookup table per distinct width, so the helpers use 64 and 32 bits wherever
+// a wider check would also be sound.
 
 pub global Q: Field = 4294967296;
-pub global Q_U128: u128 = 4294967296;
-pub global HALF_Q: u128 = 2147483648;
+global Q_U128: u128 = 4294967296;
 
-// 2^126: offset that maps the signed range [-2^126, 2^126) onto [0, 2^127).
-global SIGNED_OFFSET: Field = 85070591730234615865843651857942052864;
+// 2^63: x + 2^63 is a 64-bit value exactly when x lies in [-2^63, 2^63).
+global WINDOW_OFFSET: Field = 9223372036854775808;
 
-// pi, pi/2, pi/4 in Q32 (kernel::pi_q, half_pi_q, quarter_pi_q).
+// pi, pi/2 in Q32 (kernel::pi_q, half_pi_q).
 global PI_Q: Field = 13493037705;
 global TWO_PI_Q: Field = 26986075410;
 global HALF_PI_Q: Field = 6746518852;
@@ -79,54 +81,57 @@ pub fn checked_u128(x: Field) -> u128 {
     x as u128
 }
 
-/// Constrains x to the signed range [-2^126, 2^126): x + 2^126 must be a
-/// 127-bit value. A value outside the range wraps to a field element of about
-/// 254 bits and fails the check.
-pub fn assert_signed_range(x: Field) {
-    (x + SIGNED_OFFSET).assert_max_bit_size::<127>();
+/// Constrains x to the signed 64-bit window [-2^63, 2^63): x + 2^63 must be a
+/// 64-bit value. Any other x wraps to a field element of about 254 bits.
+pub fn assert_in_window(x: Field) {
+    (x + WINDOW_OFFSET).assert_max_bit_size::<64>();
 }
 
 // ---------------------------------------------------------------------------
-// Sign / magnitude
+// Sign and magnitude
 // ---------------------------------------------------------------------------
 
-// Hint: (negative, |v|) for the signed reading of v. v is negative when its
+// Hint: whether v is negative in its signed reading, i.e. whether its
 // additive inverse is the smaller field element of the two.
+unconstrained fn hint_is_negative(v: Field) -> bool {
+    (-v).lt(v)
+}
+
+// Hint: (negative, |v|) for the signed reading of v.
 unconstrained fn hint_sign_magnitude(v: Field) -> (bool, Field) {
-    if (-v).lt(v) {
+    if hint_is_negative(v) {
         (true, -v)
     } else {
         (false, v)
     }
 }
 
-/// Constraints for `to_signed`. Uniqueness: `mag < 2^126` and `v == +-mag`
-/// leave one candidate per sign; both signs can only hold together when
-/// mag + mag' == 0 mod p, i.e. mag == mag' == 0, and the last check rules out
-/// a negative zero. So (negative, mag) is a function of v.
-fn constrain_sign_magnitude(v: Field, negative: bool, mag: Field) {
-    mag.assert_max_bit_size::<126>();
-    let signed: Field = if negative { -mag } else { mag };
-    assert(v == signed, "to_signed: sign/magnitude decomposition mismatch");
-    assert(!negative | (mag != 0), "to_signed: negative zero");
+/// Constraints for `sign_abs`; returns |v| for the claimed sign. The
+/// magnitude m = (negative ? -v : v) must satisfy m - negative in [0, 2^64).
+/// Uniqueness: with the wrong sign m is the field negation of a value in
+/// [0, 2^64] (v = 0 claimed negative gives m - 1 = -1), a field element
+/// above p - 2^65, which fails. So the sign and |v| are functions of v, and
+/// exactly the v in [-2^64, 2^64) are accepted.
+fn constrain_sign_abs(v: Field, negative: bool) -> Field {
+    let mag = if negative { -v } else { v };
+    (mag - (negative as Field)).assert_max_bit_size::<64>();
+    mag
 }
 
-/// Signed reading of v as (negative, |v|). Fails when |v| >= 2^126.
-pub fn to_signed(v: Field) -> (bool, u128) {
-    // Safety: constrain_sign_magnitude pins the hint uniquely (see there).
-    let (negative, mag) = unsafe { hint_sign_magnitude(v) };
-    constrain_sign_magnitude(v, negative, mag);
-    (negative, mag as u128)
+/// (v < 0, |v|) for v in [-2^64, 2^64); the proof fails for any other v.
+/// One 64-bit range check.
+pub fn sign_abs(v: Field) -> (bool, Field) {
+    // Safety: constrain_sign_abs pins the sign (see there).
+    let negative = unsafe { hint_is_negative(v) };
+    (negative, constrain_sign_abs(v, negative))
 }
 
 pub fn is_negative(v: Field) -> bool {
-    let (s, _m) = to_signed(v);
-    s
+    sign_abs(v).0
 }
 
 pub fn qabs(v: Field) -> Field {
-    let (_s, m) = to_signed(v);
-    m as Field
+    sign_abs(v).1
 }
 
 pub fn qabs_i(v: Field) -> Field {
@@ -135,10 +140,10 @@ pub fn qabs_i(v: Field) -> Field {
 
 /// Integer sign: -1, 0 or 1.
 pub fn qsign_i(v: Field) -> Field {
-    let (s, m) = to_signed(v);
-    if m == 0 {
+    let (negative, mag) = sign_abs(v);
+    if mag == 0 {
         0
-    } else if s {
+    } else if negative {
         -1
     } else {
         1
@@ -151,59 +156,53 @@ pub fn qsign(v: Field) -> Field {
 }
 
 // ---------------------------------------------------------------------------
-// Comparisons (signed, for values with magnitude < 2^126)
+// Comparisons
 // ---------------------------------------------------------------------------
 
+// Hint: a < b in the signed reading of a - b.
+unconstrained fn hint_lt(a: Field, b: Field) -> bool {
+    hint_is_negative(a - b)
+}
+
+/// Constraints for `qlt`: the claimed answer c selects which of
+/// b - a - 1 (c = true) and a - b (c = false) must be a 64-bit value. The two
+/// sum to -1, so when one of them is a value in [0, 2^64) the other is a
+/// field element above p - 2^65: at most one c passes, and one does exactly
+/// when a - b reads as an integer in [-2^64, 2^64).
+fn constrain_lt(a: Field, b: Field, c: bool) {
+    let gap = if c { b - a - 1 } else { a - b };
+    gap.assert_max_bit_size::<64>();
+}
+
+/// a < b for signed values whose difference lies in [-2^64, 2^64) (any two
+/// values of the signed 64-bit window); the proof fails otherwise. The mock's
+/// `lt_i` reads the sign of a - b, so the two agree wherever this is
+/// accepted. One 64-bit range check, no check of a or b themselves.
 pub fn qlt(a: Field, b: Field) -> bool {
-    let (sa, ma) = to_signed(a);
-    let (sb, mb) = to_signed(b);
-    qlt_signed(sa, ma, sb, mb)
+    // Safety: constrain_lt pins c (see there).
+    let c = unsafe { hint_lt(a, b) };
+    constrain_lt(a, b, c);
+    c
 }
 
 pub fn qle(a: Field, b: Field) -> bool {
     !qlt(b, a)
 }
+
 pub fn qgt(a: Field, b: Field) -> bool {
     qlt(b, a)
 }
+
 pub fn qge(a: Field, b: Field) -> bool {
     !qlt(a, b)
-}
-
-// Pre-projected forms: callers that compare the same operand many times
-// project it once with `to_signed` and feed the pairs here. Correct for any
-// pair produced by `to_signed` (zero is never negative there).
-pub fn qlt_signed(sa: bool, ma: u128, sb: bool, mb: u128) -> bool {
-    if sa {
-        if !sb {
-            (ma != 0) | (mb != 0)
-        } else {
-            ma > mb
-        }
-    } else if sb {
-        false
-    } else {
-        ma < mb
-    }
-}
-pub fn qle_signed(sa: bool, ma: u128, sb: bool, mb: u128) -> bool {
-    !qlt_signed(sb, mb, sa, ma)
-}
-pub fn qgt_signed(sa: bool, ma: u128, sb: bool, mb: u128) -> bool {
-    qlt_signed(sb, mb, sa, ma)
-}
-pub fn qge_signed(sa: bool, ma: u128, sb: bool, mb: u128) -> bool {
-    !qlt_signed(sa, ma, sb, mb)
 }
 
 pub fn qadd(a: Field, b: Field) -> Field {
     a + b
 }
+
 pub fn qsub(a: Field, b: Field) -> Field {
     a - b
-}
-pub fn qneg(a: Field) -> Field {
-    -a
 }
 
 // ---------------------------------------------------------------------------
@@ -214,7 +213,8 @@ pub fn qneg(a: Field) -> Field {
 //   floor  (Python `//`, `%`; FloorDivI, ModI): r is 0 or has the sign of d;
 //   Euclid (fixed-point `/`, DivF):              0 <= r < |d|;
 //   trunc  (Python `int()`, IntCast):            r is 0 or has the sign of n;
-// and a zero divisor gives (0, 0).
+// and a zero divisor gives (0, 0). Quotients lie in the signed 64-bit window;
+// an input whose quotient leaves it has no proof.
 
 // Hint: (q, r) of the signed readings of n and d with the remainder made
 // non-negative (`remainder_negative == false`) or non-positive; (0, 0) when
@@ -246,23 +246,24 @@ unconstrained fn hint_divmod(n: Field, d: Field, remainder_negative: bool) -> (F
 }
 
 /// Constraints shared by the signed divisions, for a divisor of magnitude
-/// `d_mag` and a remainder whose sign the caller fixes (`remainder_negative`).
-/// Uniqueness: |q| <= 2^126, |d| < 2^126 and |r| < |d| bound the integer
-/// q*d + r by 2^252 + 2^126 < (p - 1) / 2, so `q*d + r == n (mod p)` forces
-/// q*d + r to equal the signed reading of n, and integer division with a
-/// remainder of fixed sign and |r| < |d| has exactly one (q, r). A zero
-/// divisor fails `|r| < |d|`.
-fn constrain_divmod(n: Field, d: Field, q: Field, r: Field, d_mag: u128, remainder_negative: bool) {
-    assert_signed_range(q);
+/// `d_mag` (from `sign_abs`, so at most 2^64) and a remainder whose sign the
+/// caller fixes (`remainder_negative`). With r_mag = |r|: r_mag and
+/// d_mag - 1 - r_mag are 64-bit values, so 0 <= r_mag < d_mag (a zero divisor
+/// fails), and q lies in the signed 64-bit window. Uniqueness: |q*d + r| <
+/// 2^63 * 2^64 + 2^64 < p / 2, so `q*d + r == n (mod p)` forces q*d + r to
+/// equal the signed reading of n, and integer division with a remainder of
+/// fixed sign and |r| < |d| has exactly one (q, r).
+fn constrain_divmod(n: Field, d: Field, q: Field, r: Field, d_mag: Field, remainder_negative: bool) {
+    assert_in_window(q);
     let r_mag = if remainder_negative { -r } else { r };
-    r_mag.assert_max_bit_size::<126>();
-    assert((r_mag as u128) < d_mag, "divmod: |remainder| >= |divisor| (or divisor is zero)");
+    r_mag.assert_max_bit_size::<64>();
+    (d_mag - 1 - r_mag).assert_max_bit_size::<64>();
     assert(q * d + r == n, "divmod: reconstruction failed");
 }
 
 /// Python `(n // d, n % d)` for d != 0: the remainder takes d's sign.
 fn floor_divmod_nonzero(n: Field, d: Field) -> (Field, Field) {
-    let (d_negative, d_mag) = to_signed(d);
+    let (d_negative, d_mag) = sign_abs(d);
     // Safety: constrain_divmod pins (q, r) uniquely.
     let (q, r) = unsafe { hint_divmod(n, d, d_negative) };
     constrain_divmod(n, d, q, r, d_mag, d_negative);
@@ -271,7 +272,7 @@ fn floor_divmod_nonzero(n: Field, d: Field) -> (Field, Field) {
 
 /// Euclidean `(q, r)`, 0 <= r < |d|, for d != 0.
 fn euclid_divmod_nonzero(n: Field, d: Field) -> (Field, Field) {
-    let (_d_negative, d_mag) = to_signed(d);
+    let (_d_negative, d_mag) = sign_abs(d);
     // Safety: constrain_divmod pins (q, r) uniquely.
     let (q, r) = unsafe { hint_divmod(n, d, false) };
     constrain_divmod(n, d, q, r, d_mag, false);
@@ -300,13 +301,13 @@ pub fn euclid_divmod(n: Field, d: Field) -> (Field, Field) {
 
 /// Constraints for `divmod_by_positive`. `r` and `d - 1 - r` are BITS-bit
 /// values, which gives 0 <= r <= d - 1 (so d >= 1 and d < 2^(BITS+1)); with
-/// |q| <= 2^126 and BITS <= 120 the integer q*d + r stays below p/2 in
-/// magnitude, so the argument of `constrain_divmod` applies.
+/// q in the signed 64-bit window and BITS <= 120 the integer q*d + r stays
+/// below p/2 in magnitude, so the argument of `constrain_divmod` applies.
 fn constrain_divmod_by_positive<let BITS: u32>(n: Field, d: Field, q: Field, r: Field) {
     assert(BITS <= 120, "divmod_by_positive: BITS must be <= 120");
     r.assert_max_bit_size::<BITS>();
     (d - 1 - r).assert_max_bit_size::<BITS>();
-    assert_signed_range(q);
+    assert_in_window(q);
     assert(q * d + r == n, "divmod_by_positive: reconstruction failed");
 }
 
@@ -361,10 +362,10 @@ unconstrained fn hint_divmod_q(m: Field) -> (Field, Field) {
     ((mm / Q_U128) as Field, (mm % Q_U128) as Field)
 }
 
-/// Constraints for `q_div_q`: q < 2^94, r < 2^32 and q*Q + r == |v| (no wrap:
-/// q*Q + r < 2^127), so (q, r) = (floor(|v| / Q), |v| mod Q) is unique.
+/// Constraints for `q_div_q`: q < 2^64, r < 2^32 and q*Q + r == |v| (no wrap:
+/// q*Q + r < 2^97), so (q, r) = (floor(|v| / Q), |v| mod Q) is unique.
 fn constrain_trunc_div_q(mag: Field, q: Field, r: Field) {
-    q.assert_max_bit_size::<94>();
+    q.assert_max_bit_size::<64>();
     r.assert_max_bit_size::<32>();
     assert(q * Q + r == mag, "q_div_q: reconstruction failed");
 }
@@ -372,11 +373,10 @@ fn constrain_trunc_div_q(mag: Field, q: Field, r: Field) {
 /// Float -> int cast: trunc(v / Q), rounding toward zero (Python `int()`),
 /// i.e. sign(v) * floor(|v| / Q).
 pub fn q_div_q(v: Field) -> Field {
-    let (negative, mag) = to_signed(v);
-    let mag_f = mag as Field;
+    let (negative, mag) = sign_abs(v);
     // Safety: constrain_trunc_div_q pins (q, r) uniquely.
-    let (q, r) = unsafe { hint_divmod_q(mag_f) };
-    constrain_trunc_div_q(mag_f, q, r);
+    let (q, r) = unsafe { hint_divmod_q(mag) };
+    constrain_trunc_div_q(mag, q, r);
     if negative {
         -q
     } else {
@@ -413,16 +413,17 @@ pub fn field_div_or_zero(a: Field, d: Field) -> Field {
 // Fixed-point multiplication and division
 // ---------------------------------------------------------------------------
 
-/// Constraints for `qscale_down_raw`: 0 <= r < 2^32 = Q and |q| <= 2^126 keep
-/// |q*Q + r| below 2^159, so `q*Q + r == v` holds over the integers and
-/// q = floor(v / Q) is unique.
+/// Constraints for `qscale_down_raw`: 0 <= r < 2^32 = Q and q in the signed
+/// 64-bit window keep |q*Q + r| below 2^96, so `q*Q + r == v` holds over the
+/// integers and q = floor(v / Q) is unique.
 fn constrain_floor_div_q(v: Field, q: Field, r: Field) {
     r.assert_max_bit_size::<32>();
-    assert_signed_range(q);
+    assert_in_window(q);
     assert(q * Q + r == v, "qscale_down_raw: reconstruction failed");
 }
 
-/// floor(v / Q) for a raw (Q^2-scaled) product or sum of products.
+/// floor(v / Q) for a raw (Q^2-scaled) product or sum of products; the
+/// result must lie in the signed 64-bit window.
 pub fn qscale_down_raw(v: Field) -> Field {
     // Safety: constrain_floor_div_q pins (q, r) uniquely.
     let (q, r) = unsafe { hint_divmod(v, Q, false) };
@@ -441,27 +442,6 @@ pub fn qdiv(a: Field, b: Field) -> Field {
     let (q, _r) = euclid_divmod(a * Q, b);
     q
 }
-
-pub fn q_from_int(x: u64) -> Field {
-    (x as Field) * Q
-}
-
-pub fn q_from_neg_int(x: u64) -> Field {
-    -((x as Field) * Q)
-}
-
-pub fn q_eq_with_tol(a: Field, b: Field, tol: u128) {
-    let (_s, m) = to_signed(a - b);
-    assert(m <= tol, "q_eq_with_tol: |a - b| > tol");
-}
-
-pub fn q_close(a: Field, b: Field, tol: u128) -> bool {
-    let (_s, m) = to_signed(a - b);
-    m <= tol
-}
-
-// Default tolerance: 0.001 * Q ~= 4_294_967.
-pub global TOL_DEFAULT: u128 = 4294967;
 
 // ---------------------------------------------------------------------------
 // Square root
@@ -483,22 +463,23 @@ unconstrained fn hint_isqrt_floor(n: Field) -> Field {
     g as Field
 }
 
-/// Constraints for `isqrt_floor` (n < 2^(2 Y_BITS), D_BITS = Y_BITS + 1):
-/// y < 2^Y_BITS and both d = n - y^2 and 2y - d are D_BITS-bit values. As
-/// every term is below 2^(2 Y_BITS + 1), a negative difference cannot pass,
-/// so y^2 <= n <= y^2 + 2y < (y + 1)^2: y is the unique floor root.
-fn constrain_isqrt_floor<let Y_BITS: u32, let D_BITS: u32>(n: Field, y: Field) {
-    y.assert_max_bit_size::<Y_BITS>();
+/// Constraints for `isqrt_floor` (0 <= n < 2^126): y, d = n - y^2 and 2y - d
+/// are 64-bit values. y^2 < 2^128 and n < 2^126 keep both differences, read
+/// as integers, inside (-2^128, 2^126]; a negative one is a field element
+/// above p - 2^128 and fails, so y^2 <= n <= y^2 + 2y < (y + 1)^2: y is the
+/// unique floor root (and honest values pass: y < 2^63, d <= 2y < 2^64).
+fn constrain_isqrt_floor(n: Field, y: Field) {
+    y.assert_max_bit_size::<64>();
     let d = n - y * y;
-    d.assert_max_bit_size::<D_BITS>();
-    (2 * y - d).assert_max_bit_size::<D_BITS>();
+    d.assert_max_bit_size::<64>();
+    (2 * y - d).assert_max_bit_size::<64>();
 }
 
-/// floor(sqrt(n)) for 0 <= n < 2^(2 Y_BITS).
-fn isqrt_floor<let Y_BITS: u32, let D_BITS: u32>(n: Field) -> Field {
+/// floor(sqrt(n)) for 0 <= n < 2^126.
+fn isqrt_floor(n: Field) -> Field {
     // Safety: constrain_isqrt_floor pins y uniquely.
     let y = unsafe { hint_isqrt_floor(n) };
-    constrain_isqrt_floor::<Y_BITS, D_BITS>(n, y);
+    constrain_isqrt_floor(n, y);
     y
 }
 
@@ -507,10 +488,9 @@ fn isqrt_floor<let Y_BITS: u32, let D_BITS: u32>(n: Field) -> Field {
 /// 0 (the kernel's convention). Fails for x >= 2^32 in real units (raw
 /// x >= 2^64), outside the kernel's fixed-point window.
 pub fn qsqrt(x: Field) -> Field {
-    let (negative, mag) = to_signed(x);
-    let m = if negative { 0 } else { mag as Field };
-    m.assert_max_bit_size::<64>();
-    isqrt_floor::<48, 49>(m * Q)
+    let (negative, mag) = sign_abs(x);
+    let m = if negative { 0 } else { mag };
+    isqrt_floor(m * Q)
 }
 
 // ---------------------------------------------------------------------------
@@ -559,8 +539,7 @@ global COS_TAYLOR_Q: [Field; 8] = [
 /// products. Error against libm: about 1e-9 on [-20, 20]. Fails for raw
 /// |x| >= 2^64, outside the kernel's fixed-point window.
 pub fn qsin(x: Field) -> Field {
-    let (negative, mag) = to_signed(x);
-    let m = mag as Field;
+    let (negative, m) = sign_abs(x);
     m.assert_max_bit_size::<64>();
     let (_k, r) = divmod_by_positive::<35>(m, TWO_PI_Q);
     // r < 2 pi_q < 2^35, so the conversion never fails; the reduction then
@@ -652,8 +631,7 @@ pub fn qexp(x: Field) -> Field {
     let y = qmul(x, INV_LN2_Q);
     let (i, f) = divmod_by_positive::<32>(y, Q);
     let two_to_f = horner_q(f, EXP2_COEFS_Q); // in [Q, 2Q]
-    let (i_negative, i_mag) = to_signed(i);
-    let e = i_mag as Field;
+    let (i_negative, e) = sign_abs(i);
     e.assert_max_bit_size::<7>();
     let scale = pow2(e);
     // Both are well defined for every e; the sign picks one.
@@ -705,14 +683,12 @@ unconstrained fn hint_log2_decompose(x: Field) -> (Field, Field) {
 /// error below 1e-12, and each Horner level adds at most one Q32 ulp, damped
 /// by s^2 < 1/9. Error: a few ulps.
 pub fn qlog(x: Field) -> Field {
-    let (negative, mag) = to_signed(x);
-    assert(!negative & (mag != 0), "qlog: non-positive input");
-    let x_f = mag as Field;
+    let (negative, x_f) = sign_abs(x);
+    assert(!negative & (x_f != 0), "qlog: non-positive input");
     // Safety: the checks below pin (k, m) uniquely.
     let (k, m) = unsafe { hint_log2_decompose(x_f) };
     (m - Q).assert_max_bit_size::<32>(); // Q <= m < 2Q
-    let (k_negative, k_mag) = to_signed(k);
-    let e = k_mag as Field;
+    let (k_negative, e) = sign_abs(k);
     e.assert_max_bit_size::<7>();
     let scale = pow2(e);
     // k < 0: x * 2^-k == m exactly; k >= 0: x - m * 2^k in [0, 2^k).
@@ -720,8 +696,8 @@ pub fn qlog(x: Field) -> Field {
     let m_scaled = if k_negative { m } else { m * scale };
     let bound = if k_negative { 1 } else { scale };
     let rem = lhs - m_scaled;
-    rem.assert_max_bit_size::<126>();
-    (bound - 1 - rem).assert_max_bit_size::<126>();
+    rem.assert_max_bit_size::<64>();
+    (bound - 1 - rem).assert_max_bit_size::<64>();
     let s = qdiv(m - Q, m + Q);
     let series = horner_q(qmul(s, s), ATANH_SERIES_Q);
     let ln_m = 2 * qmul(s, series);
@@ -783,12 +759,12 @@ pub fn qarctan(t: Field) -> Field {
 /// 2^32 + root. Outside [-1, 1] the result is 0 (the kernel's convention).
 /// Error against libm: about 6e-9.
 pub fn qarcsin(x: Field) -> Field {
-    let (_negative, mag) = to_signed(x);
-    let in_domain = mag <= Q_U128;
+    let (_negative, mag) = sign_abs(x);
+    let in_domain = !qlt(Q, mag);
     let v = if in_domain { x } else { 0 };
-    let v_mag = if in_domain { mag as Field } else { 0 };
+    let v_mag = if in_domain { mag } else { 0 };
     // 2^64 - v^2 <= 2^64, so the root is at most 2^32.
-    let root = isqrt_floor::<33, 34>(Q * Q - v_mag * v_mag);
+    let root = isqrt_floor(Q * Q - v_mag * v_mag);
     let (t, _r) = divmod_by_positive::<33>(v * Q, Q + root);
     let half = qarctan(t);
     half + half
@@ -797,22 +773,22 @@ pub fn qarcsin(x: Field) -> Field {
 /// Q32 arccos = pi/2 - arcsin x on [-1, 1]; 0 outside (where the mock's f64
 /// acos gives nan, which it encodes as 0).
 pub fn qarccos(x: Field) -> Field {
-    let (_negative, mag) = to_signed(x);
-    if mag <= Q_U128 {
-        HALF_PI_Q - qarcsin(x)
-    } else {
+    let (_negative, mag) = sign_abs(x);
+    if qlt(Q, mag) {
         0
+    } else {
+        HALF_PI_Q - qarcsin(x)
     }
 }
 
 /// Q32 atan2(y, x): the polynomial on min(|x|,|y|) / max(|x|,|y|) in [0, 1],
 /// then the octant and quadrant adjustments. atan2(0, 0) = 0.
 pub fn qarctan2(y: Field, x: Field) -> Field {
-    let (sy, my) = to_signed(y);
-    let (sx, mx) = to_signed(x);
-    let swap: bool = my > mx;
-    let num: Field = if swap { mx as Field } else { my as Field };
-    let den: Field = if swap { my as Field } else { mx as Field };
+    let (sy, my) = sign_abs(y);
+    let (sx, mx) = sign_abs(x);
+    let swap: bool = qlt(mx, my);
+    let num: Field = if swap { mx } else { my };
+    let den: Field = if swap { my } else { mx };
     let poly: Field = qarctan(qdiv(num, den));
     let a0: Field = if swap { HALF_PI_Q - poly } else { poly };
     let a1: Field = if sx { PI_Q - a0 } else { a0 };
@@ -849,6 +825,15 @@ pub fn qtanh(x: Field) -> Field {
 // Tests: honest values
 // ---------------------------------------------------------------------------
 
+fn q_from_int(x: u64) -> Field {
+    (x as Field) * Q
+}
+
+// |a - b| <= tol, for the approximate functions' tests.
+fn assert_close(a: Field, b: Field, tol: Field) {
+    assert(!qlt(tol, qabs(a - b)), "|a - b| > tol");
+}
+
 #[test]
 fn test_qmul_basic() {
     let a = q_from_int(2) + Q / 2;
@@ -863,7 +848,7 @@ fn test_qdiv_signs() {
     assert(qdiv(q_from_int(10), q_from_int(4)) == q_from_int(2) + Q / 2);
     // Euclidean floor: -1/3 = -0.333... rounds down to -1431655766 / Q.
     assert(qdiv(-Q, q_from_int(3)) == -1431655766);
-    // Negative divisor (the old helper failed here).
+    // Negative divisors.
     assert(qdiv(q_from_int(10), -q_from_int(4)) == -(q_from_int(2) + Q / 2));
     assert(qdiv(-q_from_int(10), -q_from_int(4)) == q_from_int(2) + Q / 2);
 }
@@ -880,17 +865,27 @@ fn test_neg_arithmetic() {
 }
 
 #[test]
-fn test_to_signed() {
-    let (s, m) = to_signed(-q_from_int(5));
+fn test_sign_abs() {
+    let (s, m) = sign_abs(-q_from_int(5));
     assert(s & (m == 4294967296 * 5));
-    let (s0, m0) = to_signed(0);
+    let (s0, m0) = sign_abs(0);
     assert(!s0 & (m0 == 0));
     assert(qabs(-q_from_int(5)) == q_from_int(5));
+    // The ends of the accepted range [-2^64, 2^64).
+    let (s1, m1) = sign_abs(-18446744073709551616);
+    assert(s1 & (m1 == 18446744073709551616));
+    let (s2, m2) = sign_abs(18446744073709551615);
+    assert(!s2 & (m2 == 18446744073709551615));
 }
 
 #[test(should_fail)]
-fn test_to_signed_rejects_large_magnitude() {
-    let _ = to_signed(SIGNED_OFFSET);
+fn test_sign_abs_rejects_2_pow_64() {
+    let _ = sign_abs(18446744073709551616);
+}
+
+#[test(should_fail)]
+fn test_sign_abs_rejects_below_minus_2_pow_64() {
+    let _ = sign_abs(-18446744073709551617);
 }
 
 #[test]
@@ -911,6 +906,16 @@ fn test_qlt() {
     assert(qlt(q_from_int(1), q_from_int(2)));
     assert(!qlt(q_from_int(5), q_from_int(5)));
     assert(!qlt(0, 0));
+    assert(qle(5, 5) & qge(5, 5) & qgt(6, 5) & !qgt(5, 5));
+    // The ends of the signed 64-bit window.
+    let min = -9223372036854775808;
+    let max = 9223372036854775807;
+    assert(qlt(min, max) & !qlt(max, min) & qlt(min, 0) & qlt(-1, max));
+}
+
+#[test(should_fail)]
+fn test_qlt_rejects_a_difference_of_2_pow_64() {
+    let _ = qlt(18446744073709551616, 0);
 }
 
 #[test]
@@ -956,7 +961,6 @@ fn test_field_div_or_zero() {
     assert(field_div_or_zero(21, 0) == 0);
 }
 
-
 #[test]
 fn test_divmod_by_positive() {
     let (q, r) = divmod_by_positive::<2>(-7, 3);
@@ -990,6 +994,8 @@ fn test_qsqrt_is_the_floor_root() {
     assert(qsqrt(1) == 65536);
     assert(qsqrt(4) == 131072); // Q32(1e-9) = 4
     assert(qsqrt(-Q) == 0);
+    // The largest accepted input, raw 2^64 - 1.
+    assert(qsqrt(18446744073709551615) == 281474976710655);
 }
 
 #[test(should_fail)]
@@ -1026,30 +1032,30 @@ fn test_qsin_rejects_values_outside_the_window() {
 #[test]
 fn test_qexp_qlog() {
     // e = 11674931555 / 2^32; exp(-1) = 1580030169 / 2^32.
-    q_eq_with_tol(qexp(Q), 11674931555, 64);
-    q_eq_with_tol(qexp(-Q), 1580030169, 64);
-    q_eq_with_tol(qexp(0), Q, 8);
+    assert_close(qexp(Q), 11674931555, 64);
+    assert_close(qexp(-Q), 1580030169, 64);
+    assert_close(qexp(0), Q, 8);
     // round(ln(X / 2^32) * 2^32) for the Q32 inputs X of e, 0.5, 3, 0.001
     // and 12345.678.
-    q_eq_with_tol(qlog(11674931555), Q, 8);
-    q_eq_with_tol(qlog(Q / 2), -2977044472, 8);
-    q_eq_with_tol(qlog(q_from_int(3)), 4718503851, 8);
-    q_eq_with_tol(qlog(4294967), -29668583308, 8);
-    q_eq_with_tol(qlog(53024283256947), 40463150269, 8);
+    assert_close(qlog(11674931555), Q, 8);
+    assert_close(qlog(Q / 2), -2977044472, 8);
+    assert_close(qlog(q_from_int(3)), 4718503851, 8);
+    assert_close(qlog(4294967), -29668583308, 8);
+    assert_close(qlog(53024283256947), 40463150269, 8);
     assert(qlog(Q) == 0);
 }
 
 #[test]
 fn test_qsinh_qcosh() {
     // round(sinh(1) * 2^32), round(cosh(1) * 2^32).
-    q_eq_with_tol(qsinh(Q), 5047450693, 64);
-    q_eq_with_tol(qcosh(Q), 6627480862, 64);
+    assert_close(qsinh(Q), 5047450693, 64);
+    assert_close(qcosh(Q), 6627480862, 64);
 }
 
 #[test]
 fn test_qpow_small() {
     // 2.0 ^ 3.0 = 8 through log/exp.
-    q_eq_with_tol(qpow(q_from_int(2), q_from_int(3)), q_from_int(8), 512);
+    assert_close(qpow(q_from_int(2), q_from_int(3)), q_from_int(8), 512);
     assert(qpow_int_q32(q_from_int(2), 3) == q_from_int(8));
     assert(qpow_int_q32(-q_from_int(2), 2) == q_from_int(4));
 }
@@ -1058,7 +1064,6 @@ fn test_qpow_small() {
 fn test_qpow_int_large_exponent_fails() {
     let _ = qpow_int_q32(Q, 4294967296);
 }
-
 
 #[test]
 fn test_qarctan_against_libm() {
@@ -1078,7 +1083,7 @@ fn test_qarctan_against_libm() {
     ];
     for i in 0..11 {
         let (t, want) = cases[i];
-        q_eq_with_tol(qarctan(t), want, 16);
+        assert_close(qarctan(t), want, 16);
     }
 }
 
@@ -1103,8 +1108,8 @@ fn test_qarcsin_matches_the_kernel() {
         assert(qarcsin(x) == want);
     }
     // arccos = pi/2 - arcsin on [-1, 1] (libm values within 32 ulps).
-    q_eq_with_tol(qarccos(2147483648), 4497679235, 32); // acos(0.5)
-    q_eq_with_tol(qarccos(-3865470566), 11555892298, 32); // acos(-0.9)
+    assert_close(qarccos(2147483648), 4497679235, 32); // acos(0.5)
+    assert_close(qarccos(-3865470566), 11555892298, 32); // acos(-0.9)
     assert(qarccos(6442450944) == 0); // acos(1.5): outside the domain
 }
 
@@ -1127,7 +1132,7 @@ fn test_qarctan2_against_libm_all_quadrants() {
     ];
     for i in 0..12 {
         let (y, x, want) = cases[i];
-        q_eq_with_tol(qarctan2(y, x), want, 32);
+        assert_close(qarctan2(y, x), want, 32);
     }
     assert(qarctan2(0, 0) == 0);
 }
@@ -1153,9 +1158,54 @@ fn test_checked_u32_rejects_negative() {
 // Tests: malicious hint values must be rejected
 // ---------------------------------------------------------------------------
 //
-// Each test calls a constraint function with the values a cheating prover
-// would return from the hint. The old helpers accepted the first one of each
-// group (no bound on the quotient).
+// Each test calls a constraint function with a value a cheating prover could
+// return from the hint instead of the honest one.
+
+#[test]
+fn test_lt_accepts_honest() {
+    constrain_lt(3, 5, true);
+    constrain_lt(5, 3, false);
+    constrain_lt(5, 5, false);
+    constrain_lt(-5, 3, true);
+}
+
+#[test(should_fail)]
+fn test_lt_rejects_false_for_less() {
+    constrain_lt(3, 5, false);
+}
+
+#[test(should_fail)]
+fn test_lt_rejects_true_for_greater() {
+    constrain_lt(5, 3, true);
+}
+
+#[test(should_fail)]
+fn test_lt_rejects_true_for_equal() {
+    constrain_lt(5, 5, true);
+}
+
+#[test(should_fail)]
+fn test_lt_rejects_true_across_zero() {
+    // -1 < 0 is false for (0, -1).
+    constrain_lt(0, -1, true);
+}
+
+#[test(should_fail)]
+fn test_sign_abs_rejects_negative_zero() {
+    let _ = constrain_sign_abs(0, true);
+}
+
+#[test(should_fail)]
+fn test_sign_abs_rejects_wrong_sign_of_negative() {
+    // -5 claimed non-negative: magnitude p - 5.
+    let _ = constrain_sign_abs(-5, false);
+}
+
+#[test(should_fail)]
+fn test_sign_abs_rejects_wrong_sign_of_positive() {
+    // 5 claimed negative: magnitude p - 5.
+    let _ = constrain_sign_abs(5, true);
+}
 
 #[test(should_fail)]
 fn test_divmod_rejects_field_inverse_quotient() {
@@ -1177,6 +1227,12 @@ fn test_divmod_rejects_remainder_too_large() {
 }
 
 #[test(should_fail)]
+fn test_divmod_rejects_remainder_equal_to_divisor() {
+    // 6 = 1*3 + 3: the remainder equals the divisor.
+    constrain_divmod(6, 3, 1, 3, 3, false);
+}
+
+#[test(should_fail)]
 fn test_divmod_rejects_remainder_of_the_wrong_sign() {
     // Euclid needs r >= 0: 7 = 3*3 - 2 is rejected ...
     constrain_divmod(7, 3, 3, -2, 3, false);
@@ -1186,6 +1242,17 @@ fn test_divmod_rejects_remainder_of_the_wrong_sign() {
 fn test_floor_divmod_rejects_euclidean_answer() {
     // ... and Python floor with d < 0 needs r <= 0: 7 = -2*-3 + 1 is rejected.
     constrain_divmod(7, -2, -3, 1, 2, true);
+}
+
+#[test(should_fail)]
+fn test_divmod_rejects_zero_divisor() {
+    constrain_divmod(7, 0, 0, 7, 0, false);
+}
+
+#[test(should_fail)]
+fn test_divmod_rejects_quotient_outside_the_window() {
+    // 2^64 = 2^63 * 2 + 0: the honest quotient 2^63 leaves the window.
+    constrain_divmod(18446744073709551616, 2, 9223372036854775808, 0, 2, false);
 }
 
 #[test]
@@ -1226,31 +1293,25 @@ fn test_floor_div_q_rejects_field_inverse_quotient() {
 }
 
 #[test(should_fail)]
-fn test_sign_magnitude_rejects_negative_zero() {
-    constrain_sign_magnitude(0, true, 0);
-}
-
-#[test(should_fail)]
-fn test_sign_magnitude_rejects_wrong_sign() {
-    // -5 claimed as +(p - 5): magnitude far above 2^126.
-    constrain_sign_magnitude(-5, false, -5);
-}
-
-#[test(should_fail)]
 fn test_isqrt_rejects_rounded_up_root() {
     // n = 2^65: floor(sqrt) = 6074000999, the rounded root 6074001000 is rejected.
-    constrain_isqrt_floor::<48, 49>(2 * Q * Q, 6074001000);
+    constrain_isqrt_floor(2 * Q * Q, 6074001000);
+}
+
+#[test(should_fail)]
+fn test_isqrt_rejects_rounded_down_root() {
+    constrain_isqrt_floor(2 * Q * Q, 6074000998);
 }
 
 #[test(should_fail)]
 fn test_isqrt_rejects_negative_root() {
-    constrain_isqrt_floor::<48, 49>(4 * Q * Q, -2 * Q);
+    constrain_isqrt_floor(4 * Q * Q, -2 * Q);
 }
 
 #[test]
 fn test_isqrt_accepts_honest() {
-    constrain_isqrt_floor::<48, 49>(2 * Q * Q, 6074000999);
-    constrain_isqrt_floor::<48, 49>(0, 0);
+    constrain_isqrt_floor(2 * Q * Q, 6074000999);
+    constrain_isqrt_floor(0, 0);
 }
 
 #[test(should_fail)]

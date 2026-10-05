@@ -355,7 +355,7 @@ fn extract_idents(s: &str) -> Vec<&str> {
 fn dce_body(body: &str, exposes: &[String]) -> String {
     // Pass 1: parse lines into (Option<names>, raw_line, ref_idents). A line
     // can bind a single name (`let vN = expr;`) or a tuple destructure
-    // (`let (vA, vB) = expr;` — used by `project_signed`); both forms are
+    // (`let (vA, vB) = expr;`, used by the division cells); both forms are
     // kept alive iff ANY of their bound names is live.
     let mut entries: Vec<(Option<Vec<String>>, &str, Vec<String>)> = Vec::new();
     for line in body.lines() {
@@ -367,7 +367,7 @@ fn dce_body(body: &str, exposes: &[String]) -> String {
                 // Drop an optional type annotation `vN: TYPE` so the name
                 // matches downstream identifier refs. Both `let v: u32 =`
                 // (u32-tagged cells from `bind_u32`) and `let (a, b) =`
-                // tuple destructures (from `project_signed`) must be
+                // tuple destructures (`floor_divmod_cells`) must be
                 // tracked, otherwise DCE silently drops them and we get
                 // "not found in this scope" errors at nargo time.
                 let names: Vec<String> =
@@ -522,11 +522,6 @@ pub struct NoirEmitter<'a> {
     memories: HashMap<u32, Vec<String>>,
     /// segment_id -> init-value-as-Field-decimal-string.
     memory_init: HashMap<u32, String>,
-    /// Cache: cell -> (sign_var, mag_var) emitted by `project_signed`.
-    /// `to_signed` does a 126-bit range check (~140 ACIR gates); when the
-    /// same operand participates in many comparisons (slice masks, clamp
-    /// chains) we project once and feed the pair into `qlt_signed` etc.
-    signed_proj: HashMap<String, (String, String)>,
     /// Cache: division call text -> its (quotient, remainder) names.
     divmod_cache: HashMap<String, (String, String)>,
     /// Pairs `(idx, hi)` already emitted via `assert_u128_lt`. Zinnia's
@@ -607,16 +602,6 @@ impl Cmp {
             Cmp::Le => "<=",
             Cmp::Gt => ">",
             Cmp::Ge => ">=",
-        }
-    }
-
-    /// The `noir_fpc` helper comparing two `to_signed` projections.
-    fn signed_fn(self) -> &'static str {
-        match self {
-            Cmp::Lt => "qlt_signed",
-            Cmp::Le => "qle_signed",
-            Cmp::Gt => "qgt_signed",
-            Cmp::Ge => "qge_signed",
         }
     }
 }
@@ -822,7 +807,7 @@ impl<'a> NoirEmitter<'a> {
 
     /// Signed integer comparison `a cmp b`: the unsigned fast path when the
     /// intervals allow it, a native u32 compare for u32 cells, else the
-    /// cached sign/magnitude projections.
+    /// library's gap-pinned `qlt` (`signed_cmp`).
     fn compare_i(&mut self, a: &str, b: &str, cmp: Cmp) -> String {
         if let Some(v) = self.unsigned_cmp(a, b, cmp) {
             return v;
@@ -836,26 +821,31 @@ impl<'a> NoirEmitter<'a> {
         self.signed_cmp(a, b, cmp)
     }
 
-    /// Signed comparison through `to_signed` projections, cached per operand
-    /// (see `project_signed`). Valid for any operands of magnitude < 2^126,
-    /// the same signed reading as the mock's `lt_i`.
+    /// Signed comparison `a cmp b` through the library's `qlt`, which pins
+    /// its answer with one 64-bit range check of the gap between the
+    /// operands: it is the mock's `lt_i` (the sign of `a - b`) for every pair
+    /// with |a - b| < 2^64, which includes any two values of the signed
+    /// 64-bit window, and fails the proof for any other pair. `a <= b` is
+    /// `!(b < a)`, `a > b` is `b < a` and `a >= b` is `!(a < b)`, so a
+    /// comparison and its negation share one `qlt`.
     fn signed_cmp(&mut self, a: &str, b: &str, cmp: Cmp) -> String {
-        let f = cmp.signed_fn();
-        self.use_lib(f);
-        let af = self.as_field(a);
-        let bf = self.as_field(b);
-        let (sa, ma) = self.project_signed(&af);
-        let (sb, mb) = self.project_signed(&bf);
-        self.bind_flag(&format!(
-            "if {}({}, {}, {}, {}) {{ 1 }} else {{ 0 }}",
-            f, sa, ma, sb, mb
-        ))
+        let (af, bf) = (self.as_field(a), self.as_field(b));
+        let (lhs, rhs, negate) = match cmp {
+            Cmp::Lt => (af, bf, false),
+            Cmp::Le => (bf, af, true),
+            Cmp::Gt => (bf, af, false),
+            Cmp::Ge => (af, bf, true),
+        };
+        self.use_lib("qlt");
+        let less = self.bind_typed(&format!("qlt({lhs}, {rhs})"), "bool");
+        let flag = if negate { format!("(!{less}) as Field") } else { format!("{less} as Field") };
+        self.bind_flag(&flag)
     }
 
     /// `a cmp b` for `LtIBounded`/`GtIBounded`, whose operands the IR
     /// promises are non-negative. The promise is not trusted: the operands
     /// go through range-checked conversions (u32 when their bound allows,
-    /// else u128), so a negative operand fails the proof.
+    /// else u64), so a negative operand fails the proof.
     fn bounded_cmp(&mut self, a: &str, b: &str, cmp: Cmp) -> String {
         let a = self.maybe_promote_to_u32(a);
         let b = self.maybe_promote_to_u32(b);
@@ -865,8 +855,8 @@ impl<'a> NoirEmitter<'a> {
                 1,
             );
         }
-        let ua = self.to_uint(&a, UintWidth::U128);
-        let ub = self.to_uint(&b, UintWidth::U128);
+        let ua = self.to_uint(&a, UintWidth::U64);
+        let ub = self.to_uint(&b, UintWidth::U64);
         self.bind_flag(&format!("if {} {} {} {{ 1 }} else {{ 0 }}", ua, cmp.op(), ub))
     }
 
@@ -1257,7 +1247,6 @@ impl<'a> NoirEmitter<'a> {
             norm_index_of: HashMap::new(),
             memories: HashMap::new(),
             memory_init: HashMap::new(),
-            signed_proj: HashMap::new(),
             divmod_cache: HashMap::new(),
             emitted_u128_asserts: HashSet::new(),
             cse_cache: HashMap::new(),
@@ -1458,93 +1447,6 @@ impl<'a> NoirEmitter<'a> {
 
     fn use_lib(&mut self, sym: &'static str) {
         self.used_libs.insert(sym, ());
-    }
-
-    /// Emit `let (sN, mN) = to_signed(cell);` once per unique `cell` and
-    /// cache the resulting (sign_var, mag_var) for later comparisons.
-    /// Returns the cached names on subsequent calls — this is the
-    /// dedup that turns 23-way slice masks from ~3200 gates into ~250.
-    ///
-    /// Fast path: if the cell has a known constant-folded non-negative
-    /// integer value, short-circuit by emitting literal `(false, N)`
-    /// instead of a `to_signed` call. `to_signed` does a 126-bit RANGE
-    /// check on the magnitude (~140 ACIR gates) — pure overhead when the
-    /// value is a compile-time constant the prover already knows fits.
-    /// Hits the np.insert / mux-indexed pattern where 100+ constant
-    /// indices each compare against a single witness pos (cf. 0363/
-    /// 0364/0365 each had 100 redundant to_signed projections).
-    fn project_signed(&mut self, cell: &str) -> (String, String) {
-        if let Some(p) = self.signed_proj.get(cell) {
-            return p.clone();
-        }
-        // Callers commonly pass the `as_field`-wrapped form
-        // `"(vN as Field)"` for u32 cells. Strip that wrapper so the
-        // int_of constant-fold lookup (keyed on the raw SSA name)
-        // hits — without this, the fast path never fires on u32
-        // constants which is exactly the np.insert / mux-indexed
-        // pattern we're trying to optimise.
-        let raw = cell
-            .strip_prefix('(')
-            .and_then(|s| s.strip_suffix(" as Field)"))
-            .unwrap_or(cell);
-        // Fold IR-literal constants into a direct (sign, magnitude)
-        // pair without going through `to_signed`. **Read via the
-        // structural accessors `s_int_of`/`s_float_of`** — these read the
-        // `literal_vals` store ONLY and so never surface witness-folded
-        // values (which live in the privacy-enforced `witness_vals`).
-        // Inlining a witness-derived value into the circuit would
-        // specialise it to one witness — *unsound* for any other input.
-        // `literal_vals` is populated only by `constant_int`/
-        // `constant_float`/`constant_bool` and structural-literal
-        // derivations, where the value really is a compile-time constant.
-        //
-        // `to_signed`'s convention is `(sign, mag)` with `sign == true`
-        // for negative values and `mag == |v|` (see noir_fpc lib). We
-        // mirror it for both signs:
-        //
-        //   - Int(n) literal: sign = n < 0, magnitude = |n| (the Field
-        //     value is `n`, or `BN254_PRIME - |n|` when negative).
-        //   - Float(f) literal: magnitude = |f| * 2^32 (Q-scaling — the
-        //     Field value is the quantized form), sign = f < 0.
-        //   Bool literals are non-negative {0,1} and fold via s_int_of.
-        let literal: Option<(bool, i128)> = if let Some(n) = self.s_int_of(raw) {
-            let sign = n < 0;
-            // `i128::MIN.unsigned_abs()` would overflow i128 on cast;
-            // guard it (no real literal hits this, but stay total).
-            match i128::try_from(n.unsigned_abs()) {
-                Ok(mag) => Some((sign, mag)),
-                Err(_) => None,
-            }
-        } else if let Some(f) = self.s_float_of(raw) {
-            if f.is_finite() {
-                let scaled = (f.abs() * (Q_U64 as f64)).round();
-                if scaled < (1i128 << 126) as f64 {
-                    Some((f < 0.0, scaled as i128))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        if let Some((sign, mag)) = literal {
-            if mag >= 0 && mag < (1i128 << 126) {
-                let s_lit = if sign { "true" } else { "false" }.to_string();
-                let m_lit = mag.to_string();
-                self.signed_proj
-                    .insert(cell.to_string(), (s_lit.clone(), m_lit.clone()));
-                return (s_lit, m_lit);
-            }
-        }
-        self.use_lib("to_signed");
-        let s = self.fresh();
-        let m = self.fresh();
-        let _ = writeln!(self.body, "    let ({}, {}) = to_signed({});", s, m, cell);
-        self.signed_proj
-            .insert(cell.to_string(), (s.clone(), m.clone()));
-        (s, m)
     }
 
     fn render_use_decls(&self) -> String {
@@ -1851,8 +1753,8 @@ impl Synthesizer for NoirEmitter<'_> {
         let v = self.bind(&format!("qabs({})", self.as_field(a)));
         // Literal propagation: |literal| is itself a compile-time
         // constant. Fold the structural value and carry `literal_vals`
-        // membership so downstream fast paths (e.g. project_signed,
-        // select zero-branch) fire. Read the STRUCTURAL value only
+        // membership so downstream fast paths (e.g. the select
+        // zero-branch) fire. Read the STRUCTURAL value only
         // (`s_float_of`), never the witness fold, per the
         // witness-independence rule.
         if let Some(f) = self.s_float_of(a) {
@@ -2001,9 +1903,9 @@ impl Synthesizer for NoirEmitter<'_> {
             let idx_p = self.maybe_promote_to_u32(idx);
             let lo_p = self.maybe_promote_to_u32(lo);
             let hi_p = self.maybe_promote_to_u32(hi);
-            let i = self.to_uint(&idx_p, UintWidth::U128);
-            let l = self.to_uint(&lo_p, UintWidth::U128);
-            let h = self.to_uint(&hi_p, UintWidth::U128);
+            let i = self.to_uint(&idx_p, UintWidth::U64);
+            let l = self.to_uint(&lo_p, UintWidth::U64);
+            let h = self.to_uint(&hi_p, UintWidth::U64);
             parts.push(format!("({} >= {})", i, l));
             parts.push(format!("({} < {})", i, h));
         }
@@ -2277,10 +2179,10 @@ impl Synthesizer for NoirEmitter<'_> {
                 }
             }
             None => {
-                // Dynamic bound: both sides range-checked to u128, then a
-                // native compare.
-                let i = self.to_uint(idx, UintWidth::U128);
-                let h = self.to_uint(hi, UintWidth::U128);
+                // Dynamic bound: both sides range-checked to u64 (no shape
+                // reaches 2^64), then a native compare.
+                let i = self.to_uint(idx, UintWidth::U64);
+                let h = self.to_uint(hi, UintWidth::U64);
                 let _ = writeln!(self.body, "    assert({} < {});", i, h);
             }
         }
@@ -2810,6 +2712,22 @@ mod tests {
         em.lt_i(&"x".to_string(), &"y".to_string()).unwrap();
         assert!(em.body.contains("checked_u8(x)") && em.body.contains("checked_u8(y)"), "{}", em.body);
         assert!(!em.body.contains("x as u8"), "{}", em.body);
+    }
+
+    // Signed comparisons go through the gap-pinned `qlt` (one 64-bit range
+    // check), and a comparison and its negation share one `qlt` call.
+    #[test]
+    fn signed_comparisons_share_one_gap_pinned_qlt() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        let (x, y) = ("x".to_string(), "y".to_string());
+        em.lt_i(&x, &y).unwrap();
+        em.gte_i(&x, &y).unwrap();
+        em.gt_i(&y, &x).unwrap();
+        assert_eq!(em.body.matches("qlt(x, y)").count(), 1, "{}", em.body);
+        assert!(!em.body.contains("to_signed"), "{}", em.body);
+        em.lte_i(&x, &y).unwrap();
+        assert!(em.body.contains("qlt(y, x)"), "{}", em.body);
     }
 
     #[test]
