@@ -52,56 +52,47 @@ fn np_array_equal(b: &mut crate::builder::IRBuilder, args: &[Value]) -> Value {
     crate::helpers::value_ops::to_scalar_bool(b, &cmp)
 }
 
+/// `np.isclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False)`:
+/// `|a - b| <= atol + rtol * |b|` element-wise, computed in Q32 fixed point
+/// (integers are converted to floats, as NumPy does, so the tolerance term
+/// is rounded to Q32 like any float constant).
+///
+/// `equal_nan` must be a compile-time boolean. Zinnia's numbers have no NaN
+/// (inputs are checked to be finite Q32 values and every operation yields a
+/// number), so over the values Zinnia computes, `equal_nan=True` and `False`
+/// give the same result.
 fn np_isclose(
     b: &mut crate::builder::IRBuilder,
     args: &[Value],
     kwargs: &HashMap<String, Value>,
 ) -> Value {
     ensure_no_kwargs("np.isclose", kwargs, &["rtol", "atol", "equal_nan"]);
-    assert!(args.len() >= 2, "np.isclose: requires a and b");
+    if args.len() < 2 || args.len() > 5 {
+        panic!("np.isclose takes 2 to 5 positional arguments (a, b, rtol, atol, equal_nan)");
+    }
     if matches!(args[0], Value::DynamicNDArray(_)) || matches!(args[1], Value::DynamicNDArray(_)) {
         panic!(
             "np.isclose is not yet supported for bounded-dynamic arrays; active-lane tolerance comparisons need runtime-shape-aware semantics"
         );
     }
-    // `equal_nan` is ignored under Zinnia's current no-NaN numeric model.
-    let rtol = kwargs
-        .get("rtol")
-        .cloned()
-        .unwrap_or_else(|| b.ir_constant_float(1e-05));
-    let atol = kwargs
-        .get("atol")
-        .cloned()
-        .unwrap_or_else(|| b.ir_constant_float(1e-08));
-    let lhs = &args[0];
-    let rhs = &args[1];
-
-    // Integer specialization: `np.isclose(int, int, atol=0)` is functionally
-    // equivalent to `int == int`. The float-tolerance chain (abs / qmul by
-    // rtol / qle) costs ~50 gates per cell on Float-Q32; for integer inputs
-    // with atol=0, the difference is always integer-valued, so |diff| <=
-    // rtol*|rhs| holds iff diff == 0 (for |rhs| < 1/rtol = 100000 under the
-    // numpy default rtol=1e-5). Drop straight to `eq` — gates fall from
-    // ~3900 to ~58 on 0368-style kernels.
-    let atol_is_zero = match &atol {
-        Value::Float(s) => s.static_val == Some(0.0),
-        Value::Integer(s) => s.static_val == Some(0),
-        Value::Boolean(s) => s.static_val == Some(false),
-        _ => false,
+    let mut argument = |position: usize, name: &str| -> Option<Value> {
+        match (args.get(position), kwargs.get(name)) {
+            (Some(_), Some(_)) => {
+                panic!("np.isclose got multiple values for argument '{}'", name)
+            }
+            (Some(v), None) | (None, Some(v)) => Some(v.clone()),
+            (None, None) => None,
+        }
     };
-    fn is_all_integer(v: &Value) -> bool {
-        match v {
-            Value::StaticArray { dtype, .. } => *dtype == NumberType::Integer,
-            Value::Integer(_) | Value::Boolean(_) => true,
-            Value::Float(_) => false,
-            Value::List(d) | Value::Tuple(d) => d.values.iter().all(is_all_integer),
-            _ => false,
+    let rtol = argument(2, "rtol").unwrap_or_else(|| b.ir_constant_float(1e-05));
+    let atol = argument(3, "atol").unwrap_or_else(|| b.ir_constant_float(1e-08));
+    if let Some(equal_nan) = argument(4, "equal_nan") {
+        if equal_nan.bool_val().or_else(|| equal_nan.int_val().map(|v| v != 0)).is_none() {
+            panic!("np.isclose: equal_nan must be a compile-time True or False");
         }
     }
-    if atol_is_zero && is_all_integer(lhs) && is_all_integer(rhs) {
-        return crate::helpers::value_ops::apply_binary_op(b, "eq", lhs, rhs);
-    }
-
+    let lhs = &args[0];
+    let rhs = &args[1];
     let diff = crate::helpers::value_ops::apply_binary_op(b, "sub", lhs, rhs);
     let abs_diff = np_abs_value(b, &diff);
     let abs_rhs = np_abs_value(b, rhs);
