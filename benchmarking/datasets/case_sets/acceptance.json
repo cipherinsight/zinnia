@@ -23,6 +23,13 @@
   "cap": 16,
   "rule": "The acceptance (coverage) study asks which programs Zinnia accepts, not how\nit scales, and the upstream examples are far too large for any ZK system\n(NPBench's smallest preset S multiplies a 1000x1200 by a 1200x1100 matrix).\nSo every NPBench and Pythran entry is typed and run at a small size:\n\n* every array dimension is at most CAP;\n* scalars that are sizes or trip counts are at most CAP (other scalars keep\n  their upstream value);\n* the relations among dimensions are kept: what is equal stays equal, n and\n  n+1 stay n and n+1, a dimension computed from a parameter is still computed\n  from it;\n* where a loop runs once per permutation of n items (fannkuch, n_queens,\n  permutations), n is 4: 4! = 24 iterations, where the upstream 5 to 9 give 120\n  to 362880.\n\nSizes written into a function body are not inputs and stay as upstream wrote\nthem, since bodies are verbatim: emin's 1,000,000 steps, the 600 x d and\n200 x d (500 x d and 200 x d) point sets of allpairs_distances(_loops), guerre's\n50-entry work lists, lenet's fully connected widths 120 and 84.\n\nNPBench: preset \"T\" is preset S with every integer parameter p replaced by\nmax(min(p, 2), ceil(p / d)), for the smallest whole d such that `initialize()`\nsucceeds and every integer parameter, integer input and array dimension is at\nmost CAP. Arrays come from NPBench's own `initialize()` at T, so shapes stay\nconsistent with each other (spmv's M+1 row pointers and nnz entries, hdiff's\nI+4 halo). NPBENCH_T_OVERRIDES lists the exceptions.\n\nPythran: the upstream `#runas` line (else `#bench`) with its sizes scaled down\nby hand to at most CAP, keeping the construction of the line, listed in\nPYTHRAN_SMALL_EXAMPLES next to the size it replaces. A line whose arrays and\nsize scalars are already at most CAP is used as it is. PYTHRAN_NO_UPSTREAM_EXAMPLE\ngives an example for the exported functions upstream never calls."
  },
+ "float_tolerance": {
+  "default": {
+   "atol": 1e-06,
+   "rtol": 1e-06
+  },
+  "rule": "Each entry's `float_tolerance`: a float (or complex) output passes when |actual - expected| <= atol + rtol * |expected|, expected being NumPy's output on the same fixture input. Integer and boolean outputs are compared exactly. The default is atol = rtol = 1e-6. An entry whose NumPy program Q32 cannot reproduce has a larger atol with the reason and the measured effect (`measure`: q32_inputs = NumPy on the inputs rounded to Q32 against NumPy on the inputs; float64_buffers = float32 buffers made float64 against as written)."
+ },
  "counts_entry_functions": {
   "ds1000_numpy": {
    "in_scope": 163,
@@ -2116,6 +2123,10 @@
    },
    "signature_source": "DS-1000 test case 4 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0291",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0291/fixture.json"
   },
   {
@@ -2133,7 +2144,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -2151,7 +2166,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -2168,7 +2187,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -2183,6 +2206,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0295",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0295/fixture.json"
   },
   {
@@ -2198,6 +2225,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0296",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0296/fixture.json"
   },
   {
@@ -2213,6 +2244,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0297",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0297/fixture.json"
   },
   {
@@ -2228,6 +2263,10 @@
    },
    "signature_source": "DS-1000 test case 3 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0298",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0298/fixture.json"
   },
   {
@@ -2243,6 +2282,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0299",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0299/fixture.json"
   },
   {
@@ -2259,6 +2302,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0300",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0300/fixture.json"
   },
   {
@@ -2275,6 +2322,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0301",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0301/fixture.json"
   },
   {
@@ -2291,6 +2342,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0302",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0302/fixture.json"
   },
   {
@@ -2307,6 +2362,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0303",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0303/fixture.json"
   },
   {
@@ -2323,6 +2382,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0304",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0304/fixture.json"
   },
   {
@@ -2339,7 +2402,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -2355,7 +2422,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -2371,7 +2442,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -2388,7 +2463,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -2403,6 +2482,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0309",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0309/fixture.json"
   },
   {
@@ -2418,6 +2501,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0310",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0310/fixture.json"
   },
   {
@@ -2433,6 +2520,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0311",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0311/fixture.json"
   },
   {
@@ -2448,6 +2539,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0312",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0312/fixture.json"
   },
   {
@@ -2463,6 +2558,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0313",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0313/fixture.json"
   },
   {
@@ -2478,6 +2577,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0314",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0314/fixture.json"
   },
   {
@@ -2495,7 +2598,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -2512,7 +2619,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -2527,6 +2638,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0317",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0317/fixture.json"
   },
   {
@@ -2543,6 +2658,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0318",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0318/fixture.json"
   },
   {
@@ -2559,6 +2678,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0319",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0319/fixture.json"
   },
   {
@@ -2574,6 +2697,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0320",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0320/fixture.json"
   },
   {
@@ -2589,6 +2716,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0321",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0321/fixture.json"
   },
   {
@@ -2604,6 +2735,10 @@
    },
    "signature_source": "DS-1000 test case 3 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0322",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0322/fixture.json"
   },
   {
@@ -2619,6 +2754,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0323",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0323/fixture.json"
   },
   {
@@ -2634,6 +2773,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0324",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0324/fixture.json"
   },
   {
@@ -2649,6 +2792,10 @@
    },
    "signature_source": "DS-1000 test case 3 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0325",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0325/fixture.json"
   },
   {
@@ -2664,6 +2811,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0326",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0326/fixture.json"
   },
   {
@@ -2680,6 +2831,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0327",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0327/fixture.json"
   },
   {
@@ -2696,6 +2851,10 @@
    },
    "signature_source": "DS-1000 test case 3 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0328",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0328/fixture.json"
   },
   {
@@ -2712,6 +2871,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0329",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0329/fixture.json"
   },
   {
@@ -2728,6 +2891,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0330",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0330/fixture.json"
   },
   {
@@ -2744,6 +2911,10 @@
    },
    "signature_source": "DS-1000 test case 3 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0331",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0331/fixture.json"
   },
   {
@@ -2760,6 +2931,10 @@
    },
    "signature_source": "DS-1000 test case 3 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0332",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0332/fixture.json"
   },
   {
@@ -2776,7 +2951,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -2793,6 +2972,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0334",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0334/fixture.json"
   },
   {
@@ -2810,6 +2993,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0335",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0335/fixture.json"
   },
   {
@@ -2825,6 +3012,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0336",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0336/fixture.json"
   },
   {
@@ -2840,6 +3031,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0337",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0337/fixture.json"
   },
   {
@@ -2855,6 +3050,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0338",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0338/fixture.json"
   },
   {
@@ -2870,6 +3069,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0339",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0339/fixture.json"
   },
   {
@@ -2885,6 +3088,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0340",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0340/fixture.json"
   },
   {
@@ -2900,6 +3107,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0341",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0341/fixture.json"
   },
   {
@@ -2915,6 +3126,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0342",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0342/fixture.json"
   },
   {
@@ -2930,6 +3145,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0343",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0343/fixture.json"
   },
   {
@@ -2946,7 +3165,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": "ds1000/ds1000_case0344"
+   "performance_set_case": "ds1000/ds1000_case0344",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -2963,6 +3186,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0345",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0345/fixture.json"
   },
   {
@@ -2980,6 +3207,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0346",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0346/fixture.json"
   },
   {
@@ -2997,6 +3228,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0347",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0347/fixture.json"
   },
   {
@@ -3012,6 +3247,10 @@
    },
    "signature_source": "DS-1000 test case 3 shapes; dtypes over all test cases",
    "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0348/fixture.json"
   },
   {
@@ -3027,6 +3266,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0349",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0349/fixture.json"
   },
   {
@@ -3043,7 +3286,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -3062,7 +3309,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -3078,7 +3329,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -3094,6 +3349,10 @@
    },
    "signature_source": "DS-1000 test case 3 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0353",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0353/fixture.json"
   },
   {
@@ -3110,6 +3369,10 @@
    },
    "signature_source": "DS-1000 test case 3 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0354",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0354/fixture.json"
   },
   {
@@ -3126,6 +3389,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0355",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0355/fixture.json"
   },
   {
@@ -3142,6 +3409,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0356",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0356/fixture.json"
   },
   {
@@ -3158,6 +3429,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0357",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0357/fixture.json"
   },
   {
@@ -3174,6 +3449,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0358",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0358/fixture.json"
   },
   {
@@ -3189,6 +3468,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0359",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0359/fixture.json"
   },
   {
@@ -3204,6 +3487,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0360",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0360/fixture.json"
   },
   {
@@ -3219,6 +3506,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0361",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0361/fixture.json"
   },
   {
@@ -3235,6 +3526,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0362",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0362/fixture.json"
   },
   {
@@ -3252,6 +3547,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0363",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0363/fixture.json"
   },
   {
@@ -3269,6 +3568,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0364",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0364/fixture.json"
   },
   {
@@ -3286,6 +3589,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0365",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0365/fixture.json"
   },
   {
@@ -3303,6 +3610,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0366",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0366/fixture.json"
   },
   {
@@ -3322,7 +3633,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": "ds1000/ds1000_case0367"
+   "performance_set_case": "ds1000/ds1000_case0367",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -3337,6 +3652,10 @@
    },
    "signature_source": "DS-1000 test case 5 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0368",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0368/fixture.json"
   },
   {
@@ -3352,6 +3671,10 @@
    },
    "signature_source": "DS-1000 test case 5 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0369",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0369/fixture.json"
   },
   {
@@ -3367,6 +3690,10 @@
    },
    "signature_source": "DS-1000 test case 5 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0370",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0370/fixture.json"
   },
   {
@@ -3383,7 +3710,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -3399,7 +3730,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -3414,6 +3749,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0373",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0373/fixture.json"
   },
   {
@@ -3430,6 +3769,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0374",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0374/fixture.json"
   },
   {
@@ -3446,6 +3789,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0375",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0375/fixture.json"
   },
   {
@@ -3462,7 +3809,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -3478,7 +3829,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -3494,7 +3849,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -3510,7 +3869,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -3526,7 +3889,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -3541,6 +3908,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0381",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0381/fixture.json"
   },
   {
@@ -3556,6 +3927,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0382",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0382/fixture.json"
   },
   {
@@ -3572,6 +3947,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0383",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0383/fixture.json"
   },
   {
@@ -3588,6 +3967,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0384/fixture.json"
   },
   {
@@ -3603,6 +3986,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0385",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0385/fixture.json"
   },
   {
@@ -3618,6 +4005,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0386/fixture.json"
   },
   {
@@ -3633,6 +4024,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0387",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0387/fixture.json"
   },
   {
@@ -3649,6 +4044,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0388",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0388/fixture.json"
   },
   {
@@ -3666,6 +4065,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0389",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0389/fixture.json"
   },
   {
@@ -3682,6 +4085,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0390",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0390/fixture.json"
   },
   {
@@ -3699,6 +4106,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0391",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0391/fixture.json"
   },
   {
@@ -3716,6 +4127,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0392",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0392/fixture.json"
   },
   {
@@ -3733,6 +4148,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0393",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0393/fixture.json"
   },
   {
@@ -3750,7 +4169,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -3766,7 +4189,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -3782,7 +4209,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -3798,7 +4229,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -3817,6 +4252,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0398",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0398/fixture.json"
   },
   {
@@ -3837,6 +4276,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0399",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0399/fixture.json"
   },
   {
@@ -3850,6 +4293,10 @@
    "signature": {},
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0400",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0400/fixture.json"
   },
   {
@@ -3863,6 +4310,10 @@
    "signature": {},
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0401",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0401/fixture.json"
   },
   {
@@ -3880,6 +4331,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0402",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0402/fixture.json"
   },
   {
@@ -3897,6 +4352,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0403",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0403/fixture.json"
   },
   {
@@ -3916,7 +4375,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -3932,6 +4395,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0405",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0405/fixture.json"
   },
   {
@@ -3948,6 +4415,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0406",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0406/fixture.json"
   },
   {
@@ -3964,6 +4435,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0407",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0407/fixture.json"
   },
   {
@@ -3980,6 +4455,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0408",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0408/fixture.json"
   },
   {
@@ -3996,6 +4475,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0409",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0409/fixture.json"
   },
   {
@@ -4013,7 +4496,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -4030,6 +4517,10 @@
    },
    "signature_source": "DS-1000 test case 3 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0411",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0411/fixture.json"
   },
   {
@@ -4045,6 +4536,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0412",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0412/fixture.json"
   },
   {
@@ -4060,6 +4555,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0413",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0413/fixture.json"
   },
   {
@@ -4076,6 +4575,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0414",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0414/fixture.json"
   },
   {
@@ -4092,6 +4595,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0415",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0415/fixture.json"
   },
   {
@@ -4108,6 +4615,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0416",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0416/fixture.json"
   },
   {
@@ -4124,6 +4635,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0417",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0417/fixture.json"
   },
   {
@@ -4140,6 +4655,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0418",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0418/fixture.json"
   },
   {
@@ -4156,6 +4675,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0419",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0419/fixture.json"
   },
   {
@@ -4173,6 +4696,10 @@
    },
    "signature_source": "DS-1000 test case 3 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0420",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0420/fixture.json"
   },
   {
@@ -4189,7 +4716,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -4205,6 +4736,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0422",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0422/fixture.json"
   },
   {
@@ -4221,7 +4756,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -4237,7 +4776,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -4253,6 +4796,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0425",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0425/fixture.json"
   },
   {
@@ -4269,6 +4816,10 @@
    },
    "signature_source": "DS-1000 test case 3 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0426",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0426/fixture.json"
   },
   {
@@ -4285,6 +4836,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0427",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0427/fixture.json"
   },
   {
@@ -4300,6 +4855,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0428",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0428/fixture.json"
   },
   {
@@ -4315,6 +4874,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0429",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0429/fixture.json"
   },
   {
@@ -4330,6 +4893,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0430",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0430/fixture.json"
   },
   {
@@ -4345,6 +4912,10 @@
    },
    "signature_source": "DS-1000 test case 3 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0431",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0431/fixture.json"
   },
   {
@@ -4362,7 +4933,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -4379,6 +4954,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0433",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0433/fixture.json"
   },
   {
@@ -4396,6 +4975,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0434",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0434/fixture.json"
   },
   {
@@ -4411,6 +4994,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0435",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0435/fixture.json"
   },
   {
@@ -4426,6 +5013,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0436",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0436/fixture.json"
   },
   {
@@ -4441,6 +5032,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0437",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0437/fixture.json"
   },
   {
@@ -4457,6 +5052,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0438",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0438/fixture.json"
   },
   {
@@ -4472,6 +5071,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0439",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0439/fixture.json"
   },
   {
@@ -4487,6 +5090,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0440",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0440/fixture.json"
   },
   {
@@ -4503,6 +5110,10 @@
    },
    "signature_source": "DS-1000 test case 3 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0441",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0441/fixture.json"
   },
   {
@@ -4519,6 +5130,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0442",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0442/fixture.json"
   },
   {
@@ -4535,6 +5150,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0443",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0443/fixture.json"
   },
   {
@@ -4551,6 +5170,10 @@
    },
    "signature_source": "DS-1000 test case 3 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0444",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0444/fixture.json"
   },
   {
@@ -4567,7 +5190,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -4583,7 +5210,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -4599,7 +5230,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -4615,6 +5250,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0448",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0448/fixture.json"
   },
   {
@@ -4631,6 +5270,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0449",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0449/fixture.json"
   },
   {
@@ -4648,6 +5291,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0450",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0450/fixture.json"
   },
   {
@@ -4661,6 +5308,10 @@
    "signature": {},
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0451",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0451/fixture.json"
   },
   {
@@ -4676,6 +5327,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0452",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0452/fixture.json"
   },
   {
@@ -4691,6 +5346,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0453",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0453/fixture.json"
   },
   {
@@ -4706,6 +5365,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0454",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0454/fixture.json"
   },
   {
@@ -4725,7 +5388,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -4740,6 +5407,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0456/fixture.json"
   },
   {
@@ -4756,6 +5427,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0457/fixture.json"
   },
   {
@@ -4772,6 +5447,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0458/fixture.json"
   },
   {
@@ -4788,7 +5467,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": "ds1000/ds1000_case0459"
+   "performance_set_case": "ds1000/ds1000_case0459",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -4804,7 +5487,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": "ds1000/ds1000_case0460"
+   "performance_set_case": "ds1000/ds1000_case0460",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -4820,7 +5507,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -4835,6 +5526,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0462",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0462/fixture.json"
   },
   {
@@ -4850,6 +5545,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0463",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0463/fixture.json"
   },
   {
@@ -4866,7 +5565,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -4882,7 +5585,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -4898,7 +5605,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -4914,6 +5625,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0467",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0467/fixture.json"
   },
   {
@@ -4930,6 +5645,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0468",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0468/fixture.json"
   },
   {
@@ -4946,7 +5665,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": "ds1000/ds1000_case0469"
+   "performance_set_case": "ds1000/ds1000_case0469",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -4962,7 +5685,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": "ds1000/ds1000_case0470"
+   "performance_set_case": "ds1000/ds1000_case0470",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -4977,6 +5704,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0471",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0471/fixture.json"
   },
   {
@@ -4992,6 +5723,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0472",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0472/fixture.json"
   },
   {
@@ -5008,7 +5743,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": "ds1000/ds1000_case0473"
+   "performance_set_case": "ds1000/ds1000_case0473",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -5025,7 +5764,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -5041,7 +5784,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -5060,7 +5807,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -5077,6 +5828,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0477/fixture.json"
   },
   {
@@ -5092,6 +5847,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0478",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0478/fixture.json"
   },
   {
@@ -5111,7 +5870,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -5129,6 +5892,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0480",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0480/fixture.json"
   },
   {
@@ -5147,6 +5914,10 @@
    },
    "signature_source": "DS-1000 test case 3 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0481",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0481/fixture.json"
   },
   {
@@ -5163,6 +5934,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0482/fixture.json"
   },
   {
@@ -5180,6 +5955,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0483/fixture.json"
   },
   {
@@ -5197,7 +5976,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -5213,6 +5996,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0485",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0485/fixture.json"
   },
   {
@@ -5229,7 +6016,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -5245,7 +6036,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -5261,7 +6056,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -5276,6 +6075,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0489",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0489/fixture.json"
   },
   {
@@ -5293,6 +6096,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0490",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0490/fixture.json"
   },
   {
@@ -5309,6 +6116,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0491",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0491/fixture.json"
   },
   {
@@ -5325,7 +6136,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": "ds1000/ds1000_case0492"
+   "performance_set_case": "ds1000/ds1000_case0492",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -5341,7 +6156,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -5358,7 +6177,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -5374,6 +6197,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0495",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0495/fixture.json"
   },
   {
@@ -5390,6 +6217,10 @@
    },
    "signature_source": "DS-1000 test case 4 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0496",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0496/fixture.json"
   },
   {
@@ -5407,6 +6238,10 @@
    },
    "signature_source": "DS-1000 test case 4 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0497",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0497/fixture.json"
   },
   {
@@ -5423,6 +6258,10 @@
    },
    "signature_source": "DS-1000 test case 1 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0498",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0498/fixture.json"
   },
   {
@@ -5439,6 +6278,10 @@
    },
    "signature_source": "DS-1000 test case 4 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0499",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0499/fixture.json"
   },
   {
@@ -5454,6 +6297,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0500",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0500/fixture.json"
   },
   {
@@ -5470,6 +6317,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0501",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0501/fixture.json"
   },
   {
@@ -5486,6 +6337,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0502",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0502/fixture.json"
   },
   {
@@ -5502,6 +6357,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0503",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0503/fixture.json"
   },
   {
@@ -5518,6 +6377,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0504",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0504/fixture.json"
   },
   {
@@ -5534,6 +6397,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0505",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0505/fixture.json"
   },
   {
@@ -5553,7 +6420,11 @@
    "kernel": null,
    "signature": {},
    "signature_source": null,
-   "performance_set_case": null
+   "performance_set_case": null,
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "ds1000_numpy",
@@ -5568,6 +6439,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0507",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0507/fixture.json"
   },
   {
@@ -5583,6 +6458,10 @@
    },
    "signature_source": "DS-1000 test case 2 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0508",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0508/fixture.json"
   },
   {
@@ -5598,6 +6477,10 @@
    },
    "signature_source": "DS-1000 test case 3 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0509",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0509/fixture.json"
   },
   {
@@ -5613,6 +6496,10 @@
    },
    "signature_source": "DS-1000 test case 3 shapes; dtypes over all test cases",
    "performance_set_case": "ds1000/ds1000_case0510",
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "ds1000_numpy/generated/case0510/fixture.json"
   },
   {
@@ -5676,6 +6563,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_azimint_hist_azimint_hist/fixture.json"
   },
   {
@@ -5745,6 +6636,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_azimint_naive_azimint_naive/fixture.json"
   },
   {
@@ -5886,6 +6781,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_cavity_flow_cavity_flow/fixture.json"
   },
   {
@@ -6011,6 +6910,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_channel_flow_channel_flow/fixture.json"
   },
   {
@@ -6086,6 +6989,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_compute_compute/fixture.json"
   },
   {
@@ -6165,6 +7072,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_contour_integral_contour_integral/fixture.json"
   },
   {
@@ -6221,6 +7132,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_crc16_crc16/fixture.json"
   },
   {
@@ -6294,6 +7209,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_deep_learning_conv2d_bias_conv2d/fixture.json"
   },
   {
@@ -6433,6 +7352,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_deep_learning_lenet_lenet/fixture.json"
   },
   {
@@ -6536,6 +7459,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_deep_learning_mlp_mlp/fixture.json"
   },
   {
@@ -6615,6 +7542,13 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 2e-06,
+    "rtol": 1e-06,
+    "measure": "float64_buffers",
+    "reason": "conv2d writes its result into a float32 buffer (np.empty(..., dtype=np.float32)), which Q32 cannot imitate: the float32 rounding alone moves the output by up to 1.7e-6",
+    "measured_max_abs_difference": 1.67e-06
+   },
    "fixture": "npbench/npbench_deep_learning_resnet_resnet/fixture.json"
   },
   {
@@ -6666,6 +7600,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_deep_learning_softmax_softmax/fixture.json"
   },
   {
@@ -6711,6 +7649,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_go_fast_go_fast/fixture.json"
   },
   {
@@ -6826,6 +7768,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_mandelbrot1_mandelbrot1/fixture.json"
   },
   {
@@ -6939,6 +7885,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_mandelbrot2_mandelbrot2/fixture.json"
   },
   {
@@ -7039,6 +7989,13 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 0.002,
+    "rtol": 1e-06,
+    "measure": "q32_inputs",
+    "reason": "the 16-step n-body integration is chaotic: rounding only the inputs to Q32 moves NumPy's own float64 output by up to 1e-3, so no Q32 implementation can be closer; atol is twice that",
+    "measured_max_abs_difference": 0.000989
+   },
    "fixture": "npbench/npbench_nbody_nbody/fixture.json"
   },
   {
@@ -7115,6 +8072,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_adi_adi/fixture.json"
   },
   {
@@ -7170,6 +8131,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_atax_atax/fixture.json"
   },
   {
@@ -7233,6 +8198,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_bicg_bicg/fixture.json"
   },
   {
@@ -7278,6 +8247,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_cholesky2_cholesky2/fixture.json"
   },
   {
@@ -7323,6 +8296,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_cholesky_cholesky/fixture.json"
   },
   {
@@ -7378,6 +8355,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_correlation_correlation/fixture.json"
   },
   {
@@ -7439,6 +8420,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_covariance2_covariance2/fixture.json"
   },
   {
@@ -7494,6 +8479,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_covariance_covariance/fixture.json"
   },
   {
@@ -7545,6 +8534,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_deriche_deriche/fixture.json"
   },
   {
@@ -7614,6 +8607,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_doitgen_doitgen/fixture.json"
   },
   {
@@ -7659,6 +8656,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_durbin_durbin/fixture.json"
   },
   {
@@ -7740,6 +8741,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_fdtd_2d_fdtd_2d/fixture.json"
   },
   {
@@ -7787,6 +8792,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_floyd_warshall_floyd_warshall/fixture.json"
   },
   {
@@ -7860,6 +8869,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_gemm_gemm/fixture.json"
   },
   {
@@ -7977,6 +8990,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_gemver_gemver/fixture.json"
   },
   {
@@ -8046,6 +9063,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_gesummv_gesummv/fixture.json"
   },
   {
@@ -8093,6 +9114,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_gramschmidt_gramschmidt/fixture.json"
   },
   {
@@ -8156,6 +9181,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_heat_3d_heat_3d/fixture.json"
   },
   {
@@ -8219,6 +9248,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_jacobi_1d_jacobi_1d/fixture.json"
   },
   {
@@ -8282,6 +9315,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_jacobi_2d_jacobi_2d/fixture.json"
   },
   {
@@ -8365,6 +9402,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_k2mm_k2mm/fixture.json"
   },
   {
@@ -8442,6 +9483,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_k3mm_k3mm/fixture.json"
   },
   {
@@ -8487,6 +9532,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_lu_lu/fixture.json"
   },
   {
@@ -8540,6 +9589,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_ludcmp_ludcmp/fixture.json"
   },
   {
@@ -8617,6 +9670,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_mvt_mvt/fixture.json"
   },
   {
@@ -8668,6 +9725,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_nussinov_nussinov/fixture.json"
   },
   {
@@ -8733,6 +9794,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_seidel_2d_seidel_2d/fixture.json"
   },
   {
@@ -8804,6 +9869,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_symm_symm/fixture.json"
   },
   {
@@ -8875,6 +9944,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_syr2k_syr2k/fixture.json"
   },
   {
@@ -8938,6 +10011,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_syrk_syrk/fixture.json"
   },
   {
@@ -8999,6 +10076,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_trisolv_trisolv/fixture.json"
   },
   {
@@ -9058,6 +10139,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_polybench_trmm_trmm/fixture.json"
   },
   {
@@ -9127,6 +10212,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_pythran_arc_distance_arc_distance/fixture.json"
   },
   {
@@ -9220,6 +10309,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_scattering_self_energies_scattering_self_energies/fixture.json"
   },
   {
@@ -9295,6 +10388,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_spmv_spmv/fixture.json"
   },
   {
@@ -9368,6 +10465,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_stockham_fft_stockham_fft/fixture.json"
   },
   {
@@ -9433,6 +10534,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_weather_stencils_hdiff_hdiff/fixture.json"
   },
   {
@@ -9465,7 +10570,8 @@
      "K": 10
     },
     "divisor": 4,
-    "exception": null
+    "exception": null,
+    "q32_change": "wcon is NPBench's draw times 0.1. With wcon uniform in [0, 1) and dtr_stage = 0.15, the Thomas sweep divides by bcol - ccol[k-1] * acol, which reaches 3.7e-5 on A (1.1e-4 on B) and amplifies Q32 rounding to 1.1e-3. With |wcon| < 0.15 the tridiagonal system is strictly diagonally dominant (|bcol| > |acol| + |ccol|) whatever the signs, and every divisor stays above 0.1; the computation is unchanged"
    },
    "signature": {
     "utens_stage": "Float[Array, \"15 15 10\"]",
@@ -9518,6 +10624,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "npbench/npbench_weather_stencils_vadv_vadv/fixture.json"
   },
   {
@@ -9566,6 +10676,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_allpairs/fixture.sqr_dists_loops.json"
   },
   {
@@ -9614,6 +10728,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_allpairs/fixture.sqr_dists.json"
   },
   {
@@ -9649,6 +10767,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_allpairs_distances/fixture.json"
   },
   {
@@ -9684,6 +10806,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_allpairs_distances_loops/fixture.json"
   },
   {
@@ -9724,6 +10850,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_another_quicksort/fixture.json"
   },
   {
@@ -9765,6 +10895,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_approximated_callgraph/fixture.json"
   },
   {
@@ -9827,6 +10961,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_arc_distance/fixture.json"
   },
   {
@@ -9865,6 +11003,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_babylonian/fixture.json"
   },
   {
@@ -9948,6 +11090,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_blacksholes/fixture.json"
   },
   {
@@ -9988,6 +11134,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_bubble_sort/fixture.json"
   },
   {
@@ -10010,6 +11160,10 @@
     "non_numeric_data": [
      "input types: every exported signature has a non-numeric type: build_system(float[:,:], float[:,:], int[:,:], numpy pkg)"
     ]
+   },
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
    }
   },
   {
@@ -10033,7 +11187,10 @@
    "entry_function": true,
    "sizing": {
     "rule": "upstream example used as it is (already within the cap)",
-    "example": "A=[list(range(10)) for i in range(5)] ; B=[list(range(10)) for i in range(5)] ; C=[list(range(10)) for i in range(5)] ; timeloop(1.,2.,.1,.1,.2, A,B,C )"
+    "example": "A=[list(range(10)) for i in range(5)] ; B=[list(range(10)) for i in range(5)] ; C=[list(range(10)) for i in range(5)] ; timeloop(1.,1.45,.1,.1,.2, A,B,C )",
+    "example_before_q32_change": "A=[list(range(10)) for i in range(5)] ; B=[list(range(10)) for i in range(5)] ; C=[list(range(10)) for i in range(5)] ; timeloop(1.,2.,.1,.1,.2, A,B,C )",
+    "example_B": null,
+    "q32_change": "t_stop 2.0 -> 1.45: the trip count 10 -> 5 (the sizing rule allows any trip count up to 16). The explicit scheme is unstable for these coefficients and grows about 30x per step: 10 steps reach 2.3e13, beyond Q32's 2^31, 5 steps reach 1.1e6. 1.45 rather than 1.5 because the loop runs while t <= t_stop with t accumulating 0.1: at 1.5 the last comparison is 1.5000000000000004 <= 1.5 in float64 and depends on whether Q32 rounds or truncates 0.1; at 1.45 the margin is 0.05"
    },
    "signature": {
     "t": "Float",
@@ -10062,9 +11219,9 @@
     "dt": "scalar",
     "dx": "scalar",
     "dy": "scalar",
-    "u": "#runas",
-    "um": "#runas",
-    "k": "#runas"
+    "u": "example changed for Q32",
+    "um": "example changed for Q32",
+    "k": "example changed for Q32"
    },
    "adaptations": [
     "u is a Pythran list; the kernel takes an array",
@@ -10104,6 +11261,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_calculate_u/fixture.json"
   },
   {
@@ -10175,6 +11336,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_caxpy/fixture.json"
   },
   {
@@ -10242,6 +11407,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_ccopy/fixture.json"
   },
   {
@@ -10309,6 +11478,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_cdotc/fixture.json"
   },
   {
@@ -10376,6 +11549,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_cdotu/fixture.json"
   },
   {
@@ -10432,6 +11609,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_check_mask/fixture.json"
   },
   {
@@ -10474,6 +11655,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_clip/fixture.json"
   },
   {
@@ -10516,6 +11701,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_clip2/fixture.json"
   },
   {
@@ -10535,7 +11724,11 @@
    "rules": {},
    "notes": [
     "exported, but called by the exported function(s) ['clip']; it is a @zk_chip helper there and is compiled as part of them"
-   ]
+   ],
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "pythran",
@@ -10574,6 +11767,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_collatz/fixture.json"
   },
   {
@@ -10607,6 +11804,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_collatz_modified/fixture.json"
   },
   {
@@ -10626,6 +11827,10 @@
     "non_numeric_data": [
      "input types: the upstream example passes a ragged sequence (lists of different lengths)"
     ]
+   },
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
    }
   },
   {
@@ -10680,6 +11885,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_compute_subpix_2d_gaussian2/fixture.json"
   },
   {
@@ -10738,6 +11947,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_convnet/fixture.json"
   },
   {
@@ -10778,6 +11991,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_create_grid/fixture.json"
   },
   {
@@ -10818,6 +12035,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_cronbach/fixture.json"
   },
   {
@@ -10863,6 +12084,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_crotg/fixture.json"
   },
   {
@@ -10911,6 +12136,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_d2q9_nxnyns/fixture.json"
   },
   {
@@ -11000,6 +12229,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_deriv/fixture.json"
   },
   {
@@ -11063,6 +12296,10 @@
     "imports": [
      "import itertools"
     ]
+   },
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
    }
   },
   {
@@ -11111,6 +12348,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_deuxd_convolution/fixture.json"
   },
   {
@@ -11167,6 +12408,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_diffusion/fixture.json"
   },
   {
@@ -11192,6 +12437,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_emin/fixture.json"
   },
   {
@@ -11238,6 +12487,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_euclidean_distance_square/fixture.json"
   },
   {
@@ -11279,6 +12532,10 @@
     "non_numeric_data": [
      "str()"
     ]
+   },
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
    }
   },
   {
@@ -11314,6 +12571,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_euler_challenge14/fixture.json"
   },
   {
@@ -11367,6 +12628,10 @@
     "imports": [
      "import functools"
     ]
+   },
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
    }
   },
   {
@@ -11408,6 +12673,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_factorize_naive/fixture.json"
   },
   {
@@ -11449,6 +12718,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_fannkuch/fixture.json"
   },
   {
@@ -11467,7 +12740,11 @@
    "rules": {},
    "notes": [
     "exported, but called by the exported function(s) ['fannkuch2']; it is a @zk_chip helper there and is compiled as part of them"
-   ]
+   ],
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "pythran",
@@ -11523,6 +12800,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_fbcorr/fixture.json"
   },
   {
@@ -11567,6 +12848,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_fdtd/fixture.json"
   },
   {
@@ -11607,6 +12892,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_fft/fixture.json"
   },
   {
@@ -11646,6 +12935,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_fibo/fixture.json"
   },
   {
@@ -11685,6 +12978,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_fibo_seq/fixture.json"
   },
   {
@@ -11744,6 +13041,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_gauss/fixture.json"
   },
   {
@@ -11794,6 +13095,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_goodexpomeasure/fixture.json"
   },
   {
@@ -11832,6 +13137,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_grouping/fixture.json"
   },
   {
@@ -11873,6 +13182,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_growcut/fixture.json"
   },
   {
@@ -11937,6 +13250,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_guerre/fixture.json"
   },
   {
@@ -11975,6 +13292,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_harris/fixture.json"
   },
   {
@@ -12043,6 +13364,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_hasting/fixture.json"
   },
   {
@@ -12089,6 +13414,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_histogram/fixture.json"
   },
   {
@@ -12113,9 +13442,12 @@
    "entry_function": true,
    "sizing": {
     "rule": "upstream example with sizes scaled to the cap (acceptance_sizes.py)",
-    "example": "run(0.,0.,90.,90., 1., 100., 16, 16, [ [i/10., i/10., i/20.] for i in range(16) ])",
+    "example": "run(0.,0.,90.,90., 1., 100., 16, 16, [ [i/10. + 0.007, i/10. + 0.007, i/20.] for i in range(16) ])",
     "change": "range_x = range_y = 80 -> 16 and the 80 points -> 16 (equal stays equal)",
-    "upstream_example": "run(0.,0.,90.,90., 1., 100., 80, 80, [ [i/10., i/10., i/20.] for i in range(80) ])"
+    "upstream_example": "run(0.,0.,90.,90., 1., 100., 80, 80, [ [i/10., i/10., i/20.] for i in range(80) ])",
+    "example_before_q32_change": "run(0.,0.,90.,90., 1., 100., 16, 16, [ [i/10., i/10., i/20.] for i in range(16) ])",
+    "example_B": "run(0.,0.,90.,90., 1., 100., 16, 16, [ [i/10. - 0.006, i/10. + 0.009, i/20. + 0.01] for i in range(16) ])",
+    "q32_change": "in A every town is moved by 0.007 rad in both coordinates. In the scaled upstream line the towns at (0, 0) and (1, 1) sit exactly on grid points, where acos(1 - eps) turns the ~1e-9 error of Q32 trigonometry into 0.28 km; now they are 51 and 63 km from the nearest grid point (still within range_ = 100 km), where acos amplifies that error by at most about 1 / sin(0.008) = 125. B is given too, built the same way (towns moved by -0.006 and +0.009 rad, weights by +0.01): its nearest towns are 49 and 69 km from a grid point, so B exercises the distance sum. A seeded perturbation of A moved every town by about 0.15 rad, left none within range_ and gave an all-zero output"
    },
    "signature": {
     "xmin": "Float",
@@ -12149,7 +13481,7 @@
     "range_": "scalar",
     "range_x": "scalar",
     "range_y": "scalar",
-    "t": "small example"
+    "t": "example changed for Q32"
    },
    "adaptations": [
     "t is a Pythran list; the kernel takes an array"
@@ -12174,6 +13506,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_hyantes_core/fixture.json"
   },
   {
@@ -12214,6 +13550,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_insertion_sort/fixture.json"
   },
   {
@@ -12258,6 +13598,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_ising/fixture.json"
   },
   {
@@ -12298,6 +13642,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_l2norm/fixture.json"
   },
   {
@@ -12348,6 +13696,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_lap/fixture.json"
   },
   {
@@ -12404,6 +13756,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_lapl2d/fixture.json"
   },
   {
@@ -12444,6 +13800,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_lapl3d/fixture.json"
   },
   {
@@ -12494,6 +13854,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_laplace/fixture.json"
   },
   {
@@ -12579,6 +13943,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_ldpc_decoder/fixture.json"
   },
   {
@@ -12598,7 +13966,11 @@
    "rules": {},
    "notes": [
     "exported, but called by the exported function(s) ['Decoding_logBP']; it is a @zk_chip helper there and is compiled as part of them"
-   ]
+   ],
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "pythran",
@@ -12617,7 +13989,11 @@
    "rules": {},
    "notes": [
     "exported, but called by the exported function(s) ['InCode']; it is a @zk_chip helper there and is compiled as part of them"
-   ]
+   ],
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "pythran",
@@ -12635,7 +14011,11 @@
    "rules": {},
    "notes": [
     "exported, but called by the exported function(s) ['Decoding_logBP']; it is a @zk_chip helper there and is compiled as part of them"
-   ]
+   ],
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "pythran",
@@ -12653,7 +14033,11 @@
    "rules": {},
    "notes": [
     "exported, but called by the exported function(s) ['G']; it is a @zk_chip helper there and is compiled as part of them"
-   ]
+   ],
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "pythran",
@@ -12701,6 +14085,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_ln/fixture.json"
   },
   {
@@ -12719,9 +14107,12 @@
    "entry_function": true,
    "sizing": {
     "rule": "upstream example with sizes scaled to the cap (acceptance_sizes.py)",
-    "example": "import numpy as np ; N = 16 ; a = np.arange(float(N)); b = 0.1; c =1.1; log_likelihood(a, b, c)",
+    "example": "import numpy as np ; N = 16 ; rs = np.random.RandomState(16) ; b = 0.1 ; c = 1.1 ; a = b + c * rs.uniform(-2., 2., N) ; log_likelihood(a, b, c)",
     "change": "N 10000 -> 16",
-    "upstream_example": "import numpy as np ; N = 10000 ; a = np.arange(float(N)); b = 0.1; c =1.1; log_likelihood(a, b, c)"
+    "upstream_example": "import numpy as np ; N = 10000 ; a = np.arange(float(N)); b = 0.1; c =1.1; log_likelihood(a, b, c)",
+    "example_before_q32_change": "import numpy as np ; N = 16 ; a = np.arange(float(N)); b = 0.1; c =1.1; log_likelihood(a, b, c)",
+    "example_B": null,
+    "q32_change": "the data are drawn (seeded) within 2 sigma of the mean instead of np.arange(16.), which reaches about 13.5 sigma, where exp(-(x-mean)^2 / 2 sigma^2) is about 1e-40, 0 in Q32, and log(0) is undefined"
    },
    "signature": {
     "data": "Float[Array, \"16\"]",
@@ -12735,7 +14126,7 @@
    },
    "signature_source": "#pythran export log_likelihood(float64[:], float64, float64)",
    "shape_source": {
-    "data": "small example",
+    "data": "example changed for Q32",
     "mean": "scalar",
     "sigma": "scalar"
    },
@@ -12755,6 +14146,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_log_likelihood/fixture.json"
   },
   {
@@ -12805,6 +14200,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_lttb_pt/fixture.json"
   },
   {
@@ -12821,7 +14220,10 @@
    "entry_function": true,
    "sizing": {
     "rule": "upstream example used as it is (already within the cap)",
-    "example": "import numpy as np; x = np.arange(1., 26.).reshape(5,5); factorMatrix0(x), factorMatrix1(x)"
+    "example": "import numpy as np ; rs = np.random.RandomState(52) ; x = rs.uniform(-1., 1., (5, 5)) ; x += np.diag(np.abs(x).sum(axis=1) + 1.) ; factorMatrix1(x)",
+    "example_before_q32_change": "import numpy as np; x = np.arange(1., 26.).reshape(5,5); factorMatrix0(x), factorMatrix1(x)",
+    "example_B": "import numpy as np ; rs = np.random.RandomState(53) ; x = rs.uniform(-1., 1., (5, 5)) ; x += np.diag(np.abs(x).sum(axis=1) + 1.) ; factorMatrix1(x)",
+    "q32_change": "A and B are seeded strictly diagonally dominant 5x5 matrices of their own (each diagonal entry exceeds the rest of its row by at least 1) instead of upstream's input, which is factorMatrix0's in-place output on the singular np.arange(1., 26.).reshape(5, 5): pivots of rounding residue (1e-15), 0 in Q32"
    },
    "signature": {
     "M": "Float[Array, \"5 5\"]"
@@ -12831,7 +14233,7 @@
    },
    "signature_source": "#pythran export factorMatrix1(float[:,:])",
    "shape_source": {
-    "M": "#runas"
+    "M": "example changed for Q32"
    },
    "adaptations": [],
    "signature_changed": {
@@ -12843,6 +14245,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_lu/fixture.factorMatrix1.json"
   },
   {
@@ -12859,7 +14265,10 @@
    "entry_function": true,
    "sizing": {
     "rule": "upstream example used as it is (already within the cap)",
-    "example": "import numpy as np; x = np.arange(1., 26.).reshape(5,5); factorMatrix0(x), factorMatrix1(x)"
+    "example": "import numpy as np ; rs = np.random.RandomState(50) ; x = rs.uniform(-1., 1., (5, 5)) ; x += np.diag(np.abs(x).sum(axis=1) + 1.) ; factorMatrix0(x)",
+    "example_before_q32_change": "import numpy as np; x = np.arange(1., 26.).reshape(5,5); factorMatrix0(x), factorMatrix1(x)",
+    "example_B": "import numpy as np ; rs = np.random.RandomState(51) ; x = rs.uniform(-1., 1., (5, 5)) ; x += np.diag(np.abs(x).sum(axis=1) + 1.) ; factorMatrix0(x)",
+    "q32_change": "A and B are seeded strictly diagonally dominant 5x5 matrices (each diagonal entry exceeds the rest of its row by at least 1, so every pivot stays away from 0) instead of upstream's np.arange(1., 26.).reshape(5, 5), which is singular (rank 2) and gives an exact zero pivot in Q32"
    },
    "signature": {
     "M": "Float[Array, \"5 5\"]"
@@ -12869,7 +14278,7 @@
    },
    "signature_source": "#pythran export factorMatrix0(float[:,:])",
    "shape_source": {
-    "M": "#runas"
+    "M": "example changed for Q32"
    },
    "adaptations": [],
    "signature_changed": {
@@ -12881,6 +14290,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_lu/fixture.factorMatrix0.json"
   },
   {
@@ -12901,7 +14314,11 @@
    "rules": {},
    "notes": [
     "exported, but called by the exported function(s) ['_make_circle_one_point']; it is a @zk_chip helper there and is compiled as part of them"
-   ]
+   ],
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "pythran",
@@ -12948,6 +14365,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_make_circle_two_points/fixture.json"
   },
   {
@@ -12967,7 +14388,11 @@
    "rules": {},
    "notes": [
     "exported, but called by the exported function(s) ['_make_circle_one_point', 'make_circle_two_points']; it is a @zk_chip helper there and is compiled as part of them"
-   ]
+   ],
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "pythran",
@@ -12986,7 +14411,11 @@
    "rules": {},
    "notes": [
     "exported, but called by the exported function(s) ['_make_circle_one_point', 'make_circle_two_points']; it is a @zk_chip helper there and is compiled as part of them"
-   ]
+   ],
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "pythran",
@@ -13006,7 +14435,11 @@
    "rules": {},
    "notes": [
     "exported, but called by the exported function(s) ['make_circle_two_points']; it is a @zk_chip helper there and is compiled as part of them"
-   ]
+   ],
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "pythran",
@@ -13029,7 +14462,11 @@
    "rules": {},
    "notes": [
     "exported, but called by the exported function(s) ['make_circle_two_points']; it is a @zk_chip helper there and is compiled as part of them"
-   ]
+   ],
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "pythran",
@@ -13077,6 +14514,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_make_decision/fixture.json"
   },
   {
@@ -13135,6 +14576,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_mandel/fixture.json"
   },
   {
@@ -13186,6 +14631,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_matmul/fixture.json"
   },
   {
@@ -13246,6 +14695,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_matrix_class_distance/fixture.json"
   },
   {
@@ -13315,6 +14768,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_monte_carlo/fixture.json"
   },
   {
@@ -13365,6 +14822,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_morphology/fixture.json"
   },
   {
@@ -13421,6 +14882,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_mulmod/fixture.json"
   },
   {
@@ -13459,6 +14924,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_multi_export/fixture.json"
   },
   {
@@ -13508,6 +14977,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_multitype/fixture.check2.json"
   },
   {
@@ -13553,6 +15026,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_multitype/fixture.check.json"
   },
   {
@@ -13601,6 +15078,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_multitype/fixture.times.json"
   },
   {
@@ -13642,6 +15123,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_nd_local_maxima/fixture.json"
   },
   {
@@ -13677,6 +15162,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_nqueens/fixture.json"
   },
   {
@@ -13717,6 +15206,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_pairwise/fixture.json"
   },
   {
@@ -13755,6 +15248,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_periodic_bc/fixture.json"
   },
   {
@@ -13839,6 +15336,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_periodic_dist/fixture.json"
   },
   {
@@ -13881,6 +15382,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_perm/fixture.json"
   },
   {
@@ -13944,6 +15449,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_pivot/fixture.json"
   },
   {
@@ -13979,6 +15488,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_primes_sieve/fixture.json"
   },
   {
@@ -14020,6 +15533,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_primes_sieve2/fixture.json"
   },
   {
@@ -14062,6 +15579,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_projection_simplex/fixture.json"
   },
   {
@@ -14101,6 +15622,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_pselect/fixture.json"
   },
   {
@@ -14139,6 +15664,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_pythagorean_triples/fixture.json"
   },
   {
@@ -14180,6 +15709,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_queens_numba/fixture.json"
   },
   {
@@ -14228,6 +15761,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_quicksort/fixture.json"
   },
   {
@@ -14314,6 +15851,10 @@
     "imports": [
      "import cmath"
     ]
+   },
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
    }
   },
   {
@@ -14355,6 +15896,10 @@
     "nondeterminism": [
      "import numpy.random"
     ]
+   },
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
    }
   },
   {
@@ -14377,6 +15922,10 @@
      "chr()",
      "input types: every exported signature has a non-numeric type: rc4_crypt(str, str)"
     ]
+   },
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
    }
   },
   {
@@ -14419,6 +15968,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_repeating/fixture.json"
   },
   {
@@ -14457,6 +16010,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_reverse_cumsum/fixture.json"
   },
   {
@@ -14476,6 +16033,10 @@
     "non_numeric_data": [
      "input types: every exported signature has a non-numeric type: decode(str)"
     ]
+   },
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
    }
   },
   {
@@ -14516,6 +16077,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_rosen/fixture.json"
   },
   {
@@ -14536,6 +16101,10 @@
     "non_numeric_data": [
      "input types: every exported signature has a non-numeric type: scrabble_imp_score(str, str:int dict)"
     ]
+   },
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
    }
   },
   {
@@ -14556,6 +16125,10 @@
     "non_numeric_data": [
      "input types: every exported signature has a non-numeric type: scrabble_fun_score(str, str:int dict)"
     ]
+   },
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
    }
   },
   {
@@ -14591,6 +16164,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_sexy_primes/fixture.json"
   },
   {
@@ -14641,6 +16218,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_shallow_water/fixture.json"
   },
   {
@@ -14733,6 +16314,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_slowparts/fixture.json"
   },
   {
@@ -14777,6 +16362,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_smoothing/fixture.json"
   },
   {
@@ -14827,6 +16416,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_sobelfilter/fixture.json"
   },
   {
@@ -14867,6 +16460,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_specialconvolve/fixture.json"
   },
   {
@@ -14955,6 +16552,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_spectraldns/fixture.add_pressure_diffusion.json"
   },
   {
@@ -15009,6 +16610,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_spectraldns/fixture.cross2.json"
   },
   {
@@ -15029,7 +16634,11 @@
    "rules": {},
    "notes": [
     "exported, but called by the exported function(s) ['cross2']; it is a @zk_chip helper there and is compiled as part of them"
-   ]
+   ],
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   }
   },
   {
    "dataset": "pythran",
@@ -15064,6 +16673,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_stone/fixture.json"
   },
   {
@@ -15105,6 +16718,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_sum_primes/fixture.json"
   },
   {
@@ -15161,6 +16778,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_sumarray3d/fixture.json"
   },
   {
@@ -15199,6 +16820,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_tax/fixture.json"
   },
   {
@@ -15283,6 +16908,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_train_eq/fixture.train_eq2.json"
   },
   {
@@ -15367,6 +16996,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_train_eq/fixture.train_eq.json"
   },
   {
@@ -15395,6 +17028,10 @@
     "non_numeric_data": [
      "input types: every exported signature has a non-numeric type: train_equaliser(complex128[:,:], int, int, int, float64, complex128[:,:,:], int[:], bool, complex128[:,:], str); train_equaliser(complex64[:,:], int, int, int, float32, complex64[:,:,:], int[:], bool, complex64[:,:], str)"
     ]
+   },
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
    }
   },
   {
@@ -15441,6 +17078,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_value_index/fixture.json"
   },
   {
@@ -15497,6 +17138,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_vibr_energy/fixture.json"
   },
   {
@@ -15532,6 +17177,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_wave_simulation/fixture.json"
   },
   {
@@ -15586,6 +17235,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_wdist/fixture.json"
   },
   {
@@ -15630,6 +17283,10 @@
    "preconditions": [],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_weights/fixture.json"
   },
   {
@@ -15680,6 +17337,10 @@
    ],
    "status": "in_scope",
    "rules": {},
+   "float_tolerance": {
+    "atol": 1e-06,
+    "rtol": 1e-06
+   },
    "fixture": "pythran/pythran_zero/fixture.json"
   }
  ]

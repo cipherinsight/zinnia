@@ -39,10 +39,12 @@ def _namespace() -> dict[str, Any]:
     return namespace
 
 
-def load_kernel(kernel_path: Path, function: str = "kernel") -> Callable[..., Any]:
+def load_kernel(kernel_path: Path, function: str = "kernel",
+                edit: Callable[[str], str] | None = None) -> Callable[..., Any]:
+    """The kernel function as plain Python; `edit` may rewrite the source first."""
     source = kernel_path.read_text(encoding="utf-8").replace("from zinnia import *", "")
     namespace = _namespace()
-    exec(compile(source, str(kernel_path), "exec"), namespace)
+    exec(compile(edit(source) if edit else source, str(kernel_path), "exec"), namespace)
     return namespace[function]
 
 
