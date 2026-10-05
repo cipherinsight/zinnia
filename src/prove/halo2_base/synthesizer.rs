@@ -12,7 +12,7 @@ use halo2_base::{
 
 use crate::circuit_input::{InputPath, ResolvedWitness};
 use crate::prove::error::ProvingError;
-use crate::prove::kernel;
+use crate::prove::kernel::{self, Rounding};
 use crate::prove::traits::Synthesizer;
 use crate::prove::types::ProvingParams;
 
@@ -59,6 +59,8 @@ pub struct Halo2BaseSynthesizer<'a> {
     // propagate the facts (the output provably equals one branch).
     signed64_cells: HashSet<u64>,
     unsigned64_cells: HashSet<u64>,
+    // (sign bit, magnitude) per cell id, see `sign_and_abs`.
+    sign_abs_cache: HashMap<u64, (Halo2BaseCell, Halo2BaseCell)>,
     // eq(write addr, read addr) bits for dynamic-write overlays. The read
     // side is keyed by cell id for dynamic addresses and by value for
     // constant addresses (constants with equal values are interchangeable).
@@ -92,12 +94,30 @@ pub struct Halo2BaseSynthesizer<'a> {
     /// (cheap `Arc` clones). Built on first range use so circuits without
     /// range checks pay no setup. Byte-identical to `builder.range_chip()`.
     range: Option<RangeChip<Fp>>,
+    /// Test-only hook that perturbs prover hints (see `hint`).
+    #[cfg(test)]
+    tamper: tamper::HintTamper,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum OverlayReadKey {
     Cell(u64),
     Const(i64),
+}
+
+/// The divisor of a constrained division, classified by what the circuit
+/// already knows about it (see `div_rem`).
+#[derive(Clone, Copy)]
+enum Divisor {
+    /// A fixed-column constant in the signed 64-bit window.
+    Constant(i128),
+    /// A cell the caller knows to be positive, so the remainder needs no
+    /// sign normalisation. The remainder bound re-proves `1 <= b <= 2^65`,
+    /// so a wrong claim makes the circuit unsatisfiable, not unsound.
+    Positive(Halo2BaseCell),
+    /// A cell about which nothing is known except that it is non-zero
+    /// (`div_rem` maps a zero divisor away before using this).
+    NonZero(Halo2BaseCell),
 }
 
 /// Affine view of an integer cell: `cell == Σ root_i * scale_i + offset`,
@@ -139,6 +159,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             write_version: HashMap::new(),
             signed64_cells: HashSet::new(),
             unsigned64_cells: HashSet::new(),
+            sign_abs_cache: HashMap::new(),
             overlay_eq_cache: HashMap::new(),
             value_interval: HashMap::new(),
             prov: provenance,
@@ -147,6 +168,8 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             first_unsat: None,
             gate: GateChip::<Fp>::new(),
             range: None,
+            #[cfg(test)]
+            tamper: tamper::HintTamper::default(),
         }
     }
 
@@ -189,9 +212,45 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         self.builder.main(0)
     }
 
+    /// A free witness cell. Used for circuit inputs; prover-computed
+    /// intermediate values go through [`Self::hint`] instead.
     fn cell(&mut self, value: Fp) -> Halo2BaseCell {
         let assigned = self.ctx().load_witness(value);
         self.wrap(assigned, value)
+    }
+
+    /// A value the prover computes outside the circuit (a quotient, a
+    /// square root, a sign bit). The cell is free when loaded; every caller
+    /// must add constraints that leave exactly one admissible value for it
+    /// given the cells it was computed from, and say why next to them. The
+    /// tamper tests (`synthesizer_tests.rs`) replace hints with other values
+    /// and check that the circuit then rejects the witness.
+    fn hint(&mut self, value: Fp) -> Halo2BaseCell {
+        #[cfg(test)]
+        let value = self.tamper.apply(value);
+        self.cell(value)
+    }
+
+    /// A boolean hint, constrained to {0, 1} and marked as a bit.
+    fn hint_bit(&mut self, value: bool) -> Halo2BaseCell {
+        let bit = self.hint(if value { Fp::one() } else { Fp::zero() });
+        self.gate.assert_bit(self.builder.main(0), bit.assigned);
+        self.mark_bit(&bit);
+        bit
+    }
+
+    /// Constrain `0 <= x < 2^bits`.
+    fn range_check(&mut self, x: &Halo2BaseCell, bits: usize) {
+        let range = self.range_chip();
+        range.range_check(self.ctx(), x.assigned, bits);
+    }
+
+    /// `bits` rounded up to a multiple of the lookup width: a range check
+    /// of that many bits costs no more limbs and needs no extra cell for a
+    /// partial top limb.
+    fn lookup_aligned(&mut self, bits: usize) -> usize {
+        let lookup = self.range_chip().lookup_bits();
+        bits.div_ceil(lookup) * lookup
     }
 
     fn const_cell(&mut self, value: Fp) -> Halo2BaseCell {
@@ -405,10 +464,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         if self.is_bit(a) {
             return *a;
         }
-        let assigned = self.gate.is_zero(self.builder.main(0), a.assigned);
-        let is_zero = if a.value == Fp::zero() { Fp::one() } else { Fp::zero() };
-        let iz = self.wrap(assigned, is_zero);
-        self.mark_bit(&iz);
+        let iz = self.is_zero_bit(a);
         let out = self.gate_cell(Fp::one() - iz.value, |gate, ctx| {
             gate.not(ctx, iz.assigned)
         });
@@ -441,27 +497,6 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             .and_then(|w| w.resolve_external(store_idx, output_idx).ok())
     }
 
-    fn signed_floor_div_pair(
-        &self,
-        a: &Halo2BaseCell,
-        b: &Halo2BaseCell,
-    ) -> Result<(Fp, Fp), ProvingError> {
-        let sa = kernel::fp_to_i64(a.value);
-        let sb = kernel::fp_to_i64(b.value);
-        if sb == 0 {
-            if self.witness.is_none() {
-                return Ok((Fp::zero(), Fp::zero()));
-            }
-            return Err(ProvingError::synthesis("division by zero"));
-        }
-        Ok((kernel::i64_to_fp(sa.div_euclid(sb)), kernel::i64_to_fp(sa.rem_euclid(sb))))
-    }
-
-    fn signed_offset_cell(&mut self, a: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
-        let offset = self.const_cell(Fp::from(1u64 << 63));
-        self.add_i(a, &offset)
-    }
-
     /// Whether `x + 2^63 < 2^64` is already enforced: previously checked,
     /// a constant (value fixed by the fixed column), or an asserted bit.
     /// Only witness-independent facts qualify — the skip decision must be
@@ -484,64 +519,338 @@ impl<'a> Halo2BaseSynthesizer<'a> {
                 && kernel::i64_to_fp(kernel::fp_to_i64(x.value)) == x.value)
     }
 
+    /// `x + 2^63`, constrained to `[0, 2^64)` (once per cell), which puts
+    /// `x` in the signed 64-bit window `[-2^63, 2^63)`.
+    fn signed64_shifted(&mut self, x: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        let known = self.is_signed64_known(x);
+        let offset = self.const_cell(Fp::from(1u64 << 63));
+        let shifted = self.add_i(x, &offset)?;
+        if !known {
+            self.range_check(&shifted, 64);
+            self.signed64_cells.insert(x.id);
+        }
+        Ok(shifted)
+    }
+
+    /// Constrain `x` to the signed 64-bit window (no-op if already known).
+    fn ensure_signed64(&mut self, x: &Halo2BaseCell) -> Result<(), ProvingError> {
+        if !self.is_signed64_known(x) {
+            self.signed64_shifted(x)?;
+        }
+        Ok(())
+    }
+
     fn signed_lt(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
-        let a_known = self.is_signed64_known(a);
-        let b_known = self.is_signed64_known(b);
-        let a_shifted = self.signed_offset_cell(a)?;
-        let b_shifted = self.signed_offset_cell(b)?;
         let value = if kernel::fp_to_i64(a.value) < kernel::fp_to_i64(b.value) {
             Fp::one()
         } else {
             Fp::zero()
         };
+        let a_shifted = self.signed64_shifted(a)?;
+        let b_shifted = self.signed64_shifted(b)?;
         let range = self.range_chip();
-        if !a_known {
-            range.range_check(self.ctx(), a_shifted.assigned, 64);
-            self.signed64_cells.insert(a.id);
-        }
-        if !b_known {
-            range.range_check(self.ctx(), b_shifted.assigned, 64);
-            self.signed64_cells.insert(b.id);
-        }
         let assigned = range.is_less_than(self.ctx(), a_shifted.assigned, b_shifted.assigned, 64);
         let out = self.wrap(assigned, value);
         self.mark_bit(&out);
         Ok(out)
     }
 
-    fn quantize_fp(&self, value: f64) -> Fp {
-        kernel::quantize_to_fp(value, self.params.precision_bits)
+    /// `[x == 0]` as a marked bit (halo2-base's inverse-witness gadget).
+    fn is_zero_bit(&mut self, x: &Halo2BaseCell) -> Halo2BaseCell {
+        let value = if x.value == Fp::zero() { Fp::one() } else { Fp::zero() };
+        let assigned = self.gate.is_zero(self.builder.main(0), x.assigned);
+        let bit = self.wrap(assigned, value);
+        self.mark_bit(&bit);
+        bit
     }
 
-    fn poly_eval_horner(&mut self, x: &Halo2BaseCell, coefs: &[Fp]) -> Result<Halo2BaseCell, ProvingError> {
-        if coefs.is_empty() {
-            return Err(ProvingError::synthesis("empty polynomial"));
+    /// `(s, s ? -x : x)` for a hinted sign bit `s = [x < 0]`. The sign is
+    /// NOT pinned here: the caller must constrain the magnitude into a
+    /// window far below p, which rules out the wrong sign (it would make
+    /// the magnitude the field negation of a small number, about p).
+    fn hinted_sign_and_magnitude(
+        &mut self,
+        x: &Halo2BaseCell,
+    ) -> Result<(Halo2BaseCell, Halo2BaseCell), ProvingError> {
+        let sign = self.hint_bit(kernel::fp_is_negative(x.value));
+        let neg_x = self.gate_cell(-x.value, |gate, ctx| gate.neg(ctx, x.assigned));
+        let magnitude = self.select_bit(&sign, &neg_x, x)?;
+        Ok((sign, magnitude))
+    }
+
+    /// `(s, m)` with `s = [x < 0]` and `m = |x|`, for `x` in `[-2^64, 2^64)`.
+    ///
+    /// Soundness: `m = s ? -x : x` with a hinted sign, and the range check
+    /// `m - s ∈ [0, 2^64)`. With the wrong sign `m` is the field negation of
+    /// a small number (about p) and fails the check; for `x = 0` the sign
+    /// `s = 1` gives `m - s = -1`, which fails too. So `s` and `m` are
+    /// functions of `x`, and an `x` outside the window has no witness.
+    fn sign_and_abs(&mut self, x: &Halo2BaseCell) -> Result<(Halo2BaseCell, Halo2BaseCell), ProvingError> {
+        if let Some(pair) = self.sign_abs_cache.get(&x.id) {
+            return Ok(*pair);
         }
-        let mut acc = self.constant_float(0.0)?;
-        let first = self.const_cell(coefs[0]);
-        acc = self.add_f(&acc, &first)?;
-        for coef in coefs.iter().skip(1) {
+        let pair = if self.is_const_cell(x) {
+            let negative = kernel::fp_is_negative(x.value);
+            let sign = self.constant_bool(negative)?;
+            let magnitude = self.const_cell(if negative { -x.value } else { x.value });
+            (sign, magnitude)
+        } else {
+            let (sign, magnitude) = self.hinted_sign_and_magnitude(x)?;
+            let shifted = self.sub_i(&magnitude, &sign)?;
+            self.range_check(&shifted, 64);
+            (sign, magnitude)
+        };
+        self.sign_abs_cache.insert(x.id, pair);
+        Ok(pair)
+    }
+
+    /// Constrain `0 <= x < n` for a constant `n >= 1`.
+    ///
+    /// Soundness: with `w >= bit_length(n - 1)`, the checks `x ∈ [0, 2^w)`
+    /// and `n - 1 - x ∈ [0, 2^w)` both hold only if `x <= n - 1`: a negative
+    /// `n - 1 - x` is a field element above `p - 2^w`. For a power of two
+    /// `n = 2^k` the first check with `w = k` is already exact.
+    fn assert_below_constant(&mut self, x: &Halo2BaseCell, n: u128) {
+        debug_assert!(n >= 1);
+        if n.is_power_of_two() {
+            self.range_check(x, n.trailing_zeros() as usize);
+            return;
+        }
+        let bits = self.lookup_aligned((128 - (n - 1).leading_zeros()) as usize);
+        self.range_check(x, bits);
+        let n_minus_one = kernel::i128_to_fp((n - 1) as i128);
+        let gap = self.gate_cell(n_minus_one - x.value, |gate, ctx| {
+            gate.sub(ctx, QuantumCell::Constant(n_minus_one), x.assigned)
+        });
+        self.range_check(&gap, bits);
+    }
+
+    /// Constrain `0 <= x < n` for a cell `n`. Both `x` and `n - 1 - x` are
+    /// range-checked to 64 bits, so `n - 1`, their sum, lies in `[0, 2^65)`
+    /// over the integers: the check also proves `1 <= n <= 2^65`.
+    fn assert_below_cell(&mut self, x: &Halo2BaseCell, n: &Halo2BaseCell) {
+        self.range_check(x, 64);
+        let gap = self.gate_cell(n.value - Fp::one() - x.value, |gate, ctx| {
+            let n_minus_x = gate.sub(ctx, n.assigned, x.assigned);
+            gate.dec(ctx, n_minus_x)
+        });
+        self.range_check(&gap, 64);
+    }
+
+    /// The divisor kind of `b` for [`Self::div_rem_nonzero`]: a constant in
+    /// the signed 64-bit window, or `None` for a cell to be handled
+    /// dynamically.
+    fn constant_divisor(&self, b: &Halo2BaseCell) -> Option<i128> {
+        if !self.is_const_cell(b) {
+            return None;
+        }
+        kernel::fp_to_i128(b.value).filter(|c| c.unsigned_abs() < 1u128 << 63)
+    }
+
+    /// Constrained signed division `a = b*q + r` with the remainder sign of
+    /// `rounding`; returns `(q, r)`. A zero divisor yields `(0, 0)`, the
+    /// shared convention of `kernel::div_rem_or_zero` and the mock backend.
+    ///
+    /// A dynamic divisor `b` is first mapped to `b' = b + [b == 0]` and the
+    /// dividend to `a' = a * [b != 0]`: for `b = 0` this is the division
+    /// `0 / 1`, which forces `(0, 0)`; otherwise it is the original one.
+    fn div_rem(
+        &mut self,
+        a: &Halo2BaseCell,
+        b: &Halo2BaseCell,
+        rounding: Rounding,
+    ) -> Result<(Halo2BaseCell, Halo2BaseCell), ProvingError> {
+        match self.constant_divisor(b) {
+            Some(0) => {
+                let zero = self.constant_int(0)?;
+                Ok((zero, zero))
+            }
+            Some(c) => self.div_rem_nonzero(a, Divisor::Constant(c), rounding),
+            None => {
+                let b_is_zero = self.is_zero_bit(b);
+                let b_nonzero = self.add_i(b, &b_is_zero)?;
+                let a_masked = self.gate_cell(
+                    (Fp::one() - b_is_zero.value) * a.value,
+                    |gate, ctx| gate.mul_not(ctx, b_is_zero.assigned, a.assigned),
+                );
+                self.div_rem_nonzero(&a_masked, Divisor::NonZero(b_nonzero), rounding)
+            }
+        }
+    }
+
+    /// Constrained division by a divisor that is non-zero by construction.
+    ///
+    /// Constraints (A, B, Q, R are the integers the cells encode):
+    ///   * `r = a - b*q` (one gate, exact in the field), `q` a hint;
+    ///   * `q + 2^63 ∈ [0, 2^64)`: Q is in the signed 64-bit window;
+    ///   * `0 <= r_adj < |B|`, where `r_adj = ±r` strips the convention's
+    ///     remainder sign (Euclid: none; Floor: the divisor's; Trunc: the
+    ///     dividend's, from `sign_and_abs`). For a constant divisor this is
+    ///     [`Self::assert_below_constant`]; for a cell it is
+    ///     [`Self::assert_below_cell`] against `|b|`, which also proves
+    ///     `1 <= |B| <= 2^65` and with it the hinted sign of `b`.
+    ///
+    /// Soundness: `|B·Q + R| < 2^65·2^63 + 2^65`, far below p/2, so
+    /// `A = B·Q + R` holds over the integers. A second solution would give
+    /// `B(Q - Q') = R' - R` with `|R' - R| < |B|` and equal remainder signs,
+    /// so `Q = Q'` and `R = R'`: `q` and `r` are functions of `(a, b)`. An
+    /// input whose true quotient leaves the window has no witness.
+    fn div_rem_nonzero(
+        &mut self,
+        a: &Halo2BaseCell,
+        divisor: Divisor,
+        rounding: Rounding,
+    ) -> Result<(Halo2BaseCell, Halo2BaseCell), ProvingError> {
+        let (b_fp, b_value, b_quantum) = match divisor {
+            Divisor::Constant(c) => {
+                let fp = kernel::i128_to_fp(c);
+                (fp, Some(c), QuantumCell::Constant(fp))
+            }
+            Divisor::Positive(b) | Divisor::NonZero(b) => {
+                (b.value, kernel::fp_to_i128(b.value), QuantumCell::Existing(b.assigned))
+            }
+        };
+        let q_value = match (kernel::fp_to_i128(a.value), b_value) {
+            (Some(av), Some(bv)) => kernel::div_rem_or_zero(av, bv, rounding).0,
+            _ => 0,
+        };
+        let q = self.hint(kernel::i128_to_fp(q_value));
+        let r = self.gate_cell(a.value - b_fp * q.value, |gate, ctx| {
+            gate.sub_mul(ctx, a.assigned, b_quantum, q.assigned)
+        });
+        self.ensure_signed64(&q)?;
+
+        // A dynamic divisor's hinted sign and magnitude, pinned by the
+        // remainder bound below.
+        let dynamic_sign = match divisor {
+            Divisor::NonZero(b) => Some(self.hinted_sign_and_magnitude(&b)?),
+            _ => None,
+        };
+        let r_adj = match rounding {
+            Rounding::Euclid => r,
+            Rounding::Floor => match (divisor, dynamic_sign) {
+                (Divisor::Constant(c), _) if c < 0 => self.negate(&r),
+                (_, Some((b_sign, _))) => self.negate_if(&r, &b_sign)?,
+                _ => r,
+            },
+            Rounding::Trunc => {
+                let (a_sign, _) = self.sign_and_abs(a)?;
+                self.negate_if(&r, &a_sign)?
+            }
+        };
+        match (divisor, dynamic_sign) {
+            (Divisor::Constant(c), _) => self.assert_below_constant(&r_adj, c.unsigned_abs()),
+            (_, Some((_, b_magnitude))) => self.assert_below_cell(&r_adj, &b_magnitude),
+            (Divisor::Positive(b), _) => self.assert_below_cell(&r_adj, &b),
+            (Divisor::NonZero(_), None) => unreachable!("non-zero divisor without a sign"),
+        }
+        Ok((q, r))
+    }
+
+    /// `floor(raw / 2^P)` for the raw product of Q values (`mul_f`,
+    /// `product_sum_f`); `q_value` is the quotient the kernel computed.
+    ///
+    /// Soundness: `rem = raw - q*2^P` (gate) is range-checked to
+    /// `[0, 2^P)` and `q` to the signed 64-bit window, so `q*2^P + rem` lies
+    /// in `[-2^95, 2^95)`: it equals `raw` over the integers and `q` is the
+    /// unique floor. Without the window check every remainder in
+    /// `[0, 2^P)` would be accepted, each with its own (huge) `q`.
+    fn rescale(&mut self, raw: &Halo2BaseCell, q_value: Fp) -> Result<Halo2BaseCell, ProvingError> {
+        let precision_bits = self.params.precision_bits;
+        let scale = kernel::scale_fp(precision_bits);
+        let q = self.hint(q_value);
+        let rem = self.gate_cell(raw.value - q.value * scale, |gate, ctx| {
+            gate.sub_mul(ctx, raw.assigned, q.assigned, QuantumCell::Constant(scale))
+        });
+        self.range_check(&rem, precision_bits as usize);
+        self.ensure_signed64(&q)?;
+        Ok(q)
+    }
+
+    /// `floor(sqrt(x * 2^P))`, the Q-encoded square root, for a cell `x`
+    /// the caller has proven to lie in `[0, 2^64)`.
+    ///
+    /// Soundness: with `X = x * 2^P`, the hint `y` and `d = X - y^2` (gate),
+    /// the checks `y ∈ [0, 2^wy)`, `d ∈ [0, 2^wd)` and `2y - d ∈ [0, 2^wd)`
+    /// give `X = y^2 + d` over the integers (both terms are far below p) and
+    /// `0 <= d <= 2y`, i.e. `y^2 <= X < (y + 1)^2`. Exactly one `y >= 0`
+    /// satisfies that, so `y` is a function of `x`. `wy` and `wd` are sized
+    /// for the largest `X < 2^(64 + P)`.
+    fn sqrt_nonneg(&mut self, x: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        let precision_bits = self.params.precision_bits;
+        let scale = kernel::scale_fp(precision_bits);
+        let big_x = self.gate_cell(x.value * scale, |gate, ctx| {
+            gate.mul(ctx, x.assigned, QuantumCell::Constant(scale))
+        });
+        let y = self.hint(kernel::fp_sqrt(x.value, precision_bits));
+        let d = self.gate_cell(big_x.value - y.value * y.value, |gate, ctx| {
+            gate.sub_mul(ctx, big_x.assigned, y.assigned, y.assigned)
+        });
+        let root_bits = 32 + precision_bits.div_ceil(2) as usize;
+        let wy = self.lookup_aligned(root_bits + 1);
+        let wd = self.lookup_aligned(root_bits + 2);
+        self.range_check(&y, wy);
+        self.range_check(&d, wd);
+        let two_y = self.add_i(&y, &y)?;
+        let slack = self.sub_i(&two_y, &d)?;
+        self.range_check(&slack, wd);
+        Ok(y)
+    }
+
+    /// Horner evaluation with leading-first Q coefficients, every product
+    /// rounded down by `mul_f`: the algorithm of `kernel::horner_eval`.
+    fn poly_eval_horner(&mut self, x: &Halo2BaseCell, coefs: &[Fp]) -> Result<Halo2BaseCell, ProvingError> {
+        let (first, rest) = coefs
+            .split_first()
+            .ok_or_else(|| ProvingError::synthesis("empty polynomial"))?;
+        let mut acc = self.const_cell(*first);
+        for coef in rest {
             let prod = self.mul_f(x, &acc)?;
-            let coef_cell = self.const_cell(*coef);
-            acc = self.add_f(&prod, &coef_cell)?;
+            acc = self.gate_cell(prod.value + coef, |gate, ctx| {
+                gate.add(ctx, prod.assigned, QuantumCell::Constant(*coef))
+            });
         }
         Ok(acc)
     }
 
-    fn signed_negate_if(&mut self, value: &Halo2BaseCell, sign: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
-        let neg = self.gate_cell(-value.value, |gate, ctx| gate.neg(ctx, value.assigned));
+    /// `[x < c]` as a marked bit, for an `x` the caller has proven to lie
+    /// in `[0, 2^bits)` and a constant `c < 2^bits` (the precondition of
+    /// halo2-base's `is_less_than`).
+    fn below_constant_bit(&mut self, x: &Halo2BaseCell, c: i128, bits: usize) -> Halo2BaseCell {
+        let c_fp = kernel::i128_to_fp(c);
+        let range = self.range_chip();
+        let assigned = range.is_less_than(self.ctx(), x.assigned, QuantumCell::Constant(c_fp), bits);
+        let value = if kernel::fp_to_i128(x.value).is_some_and(|v| v < c) { Fp::one() } else { Fp::zero() };
+        let bit = self.wrap(assigned, value);
+        self.mark_bit(&bit);
+        bit
+    }
+
+    fn negate(&mut self, value: &Halo2BaseCell) -> Halo2BaseCell {
+        self.gate_cell(-value.value, |gate, ctx| gate.neg(ctx, value.assigned))
+    }
+
+    /// `sign ? -value : value` for a bit `sign`.
+    fn negate_if(&mut self, value: &Halo2BaseCell, sign: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        let neg = self.negate(value);
         self.select_bit(sign, &neg, value)
     }
 
-    fn assert_close_f(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell, epsilon: f64) -> Result<(), ProvingError> {
-        let diff = self.sub_f(a, b)?;
-        let eps_pos = self.constant_float(epsilon)?;
-        let eps_neg = self.constant_float(-epsilon)?;
-        let lt_pos = self.lt_f(&diff, &eps_pos)?;
-        let gt_neg = self.lt_f(&eps_neg, &diff)?;
-        self.assert_true(&lt_pos)?;
-        self.assert_true(&gt_neg)?;
-        Ok(())
+    /// `base^e` for a constant `e >= 0`, by square-and-multiply.
+    fn pow_const(&mut self, base: &Halo2BaseCell, e: u64) -> Result<Halo2BaseCell, ProvingError> {
+        let mut acc = self.constant_int(1)?;
+        let mut power = *base;
+        let mut rest = e;
+        while rest > 0 {
+            if rest & 1 == 1 {
+                acc = self.mul_i(&acc, &power)?;
+            }
+            rest >>= 1;
+            if rest > 0 {
+                power = self.mul_i(&power, &power)?;
+            }
+        }
+        Ok(acc)
     }
 }
 
@@ -593,64 +902,86 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         Ok(self.gate_cell(a.value * b.value, |gate, ctx| gate.mul(ctx, a.assigned, b.assigned)))
     }
 
+    /// The IR's `DivI`: field division `a * b^-1`, total, with a zero
+    /// divisor giving 0 as in the mock backend.
+    ///
+    /// Soundness: `b' = b + [b == 0]` is non-zero and `a' = a * [b != 0]`;
+    /// the hint `q` is pinned by `q * b' == a'`, whose only solution is
+    /// `a' / b'` (0 when `b = 0`). halo2-base's `div_unsafe` is not used: it
+    /// panics on a zero divisor during keygen and leaves `0 / 0` free.
     fn div_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let value = b.value.invert().unwrap_or(Fp::zero()) * a.value;
-        Ok(self.gate_cell(value, |gate, ctx| gate.div_unsafe(ctx, a.assigned, b.assigned)))
+        let b_is_zero = self.is_zero_bit(b);
+        let b_nonzero = self.add_i(b, &b_is_zero)?;
+        let a_masked = self.gate_cell((Fp::one() - b_is_zero.value) * a.value, |gate, ctx| {
+            gate.mul_not(ctx, b_is_zero.assigned, a.assigned)
+        });
+        let q_value = a_masked.value * b_nonzero.value.invert().unwrap_or(Fp::zero());
+        let q = self.hint(q_value);
+        let product = self.mul_i(&q, &b_nonzero)?;
+        self.constrain_equal(&product, &a_masked);
+        Ok(q)
     }
 
+    /// Python floor division `a // b` (remainder has the divisor's sign);
+    /// see `div_rem` for the constraints and the zero-divisor convention.
     fn floor_div_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let (q, r) = self.signed_floor_div_pair(a, b)?;
-        let q_cell = self.cell(q);
-        let r_cell = self.cell(r);
-        let recomposed = self.gate_cell(b.value * q + r, |gate, ctx| {
-            gate.mul_add(ctx, b.assigned, q_cell.assigned, r_cell.assigned)
-        });
-        self.constrain_equal(&recomposed, a);
-        Ok(q_cell)
+        Ok(self.div_rem(a, b, Rounding::Floor)?.0)
     }
 
+    /// Python remainder `a % b` (sign of the divisor).
     fn mod_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let (q, r) = self.signed_floor_div_pair(a, b)?;
-        let q_cell = self.cell(q);
-        let r_cell = self.cell(r);
-        let recomposed = self.gate_cell(b.value * q + r, |gate, ctx| {
-            gate.mul_add(ctx, b.assigned, q_cell.assigned, r_cell.assigned)
-        });
-        self.constrain_equal(&recomposed, a);
-        Ok(r_cell)
+        Ok(self.div_rem(a, b, Rounding::Floor)?.1)
     }
 
+    /// `base ** exp`. A constant exponent is unrolled by square-and-multiply
+    /// (a negative one inverts the result, as the mock does). A dynamic
+    /// exponent is decomposed into 6 bits, which constrains it to `[0, 64)`
+    /// (larger or negative exponents have no witness), and multiplies the
+    /// selected squares; the circuit shape does not depend on its value.
     fn pow_i(&mut self, base: &Self::CellRef, exp: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let e = kernel::fp_to_i64(exp.value);
-        if e < 0 {
-            let neg_exp = self.constant_int(-e)?;
-            let pos = self.pow_i(base, &neg_exp)?;
-            return self.inv_i(&pos);
+        const DYNAMIC_EXP_BITS: usize = 6;
+        if self.is_const_cell(exp) {
+            let e = kernel::fp_to_i64(exp.value);
+            let power = self.pow_const(base, e.unsigned_abs())?;
+            return if e < 0 { self.inv_i(&power) } else { Ok(power) };
         }
-        let mut acc = self.constant_int(1)?;
-        for _ in 0..e.min(64) {
-            acc = self.mul_i(&acc, base)?;
+        let bits = self.gate.num_to_bits(self.builder.main(0), exp.assigned, DYNAMIC_EXP_BITS);
+        let one = self.constant_int(1)?;
+        let mut acc = one;
+        let mut square = *base;
+        for (i, assigned) in bits.into_iter().enumerate() {
+            if i > 0 {
+                square = self.mul_i(&square, &square)?;
+            }
+            let value = *assigned.value();
+            let bit = self.wrap(assigned, value);
+            self.mark_bit(&bit);
+            let factor = self.select_bit(&bit, &square, &one)?;
+            acc = self.mul_i(&acc, &factor)?;
         }
         Ok(acc)
     }
 
     fn abs_i(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let neg = self.gate_cell(-a.value, |gate, ctx| gate.neg(ctx, a.assigned));
-        let zero = self.constant_int(0)?;
-        let is_neg = self.lt_i(a, &zero)?;
-        self.select_bit(&is_neg, &neg, a)
+        Ok(self.sign_and_abs(a)?.1)
     }
 
+    /// `sign(a) = [a != 0] - 2 * [a < 0]`, from the pinned sign bit of
+    /// `sign_and_abs`.
     fn sign_i(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let zero = self.constant_int(0)?;
-        let is_pos = self.lt_i(&zero, a)?;
-        let is_neg = self.lt_i(a, &zero)?;
-        self.sub_i(&is_pos, &is_neg)
+        let (negative, _) = self.sign_and_abs(a)?;
+        let is_zero = self.is_zero_bit(a);
+        let nonzero = self.logical_not(&is_zero)?;
+        let two = Fp::from(2u64);
+        Ok(self.gate_cell(nonzero.value - two * negative.value, |gate, ctx| {
+            gate.sub_mul(ctx, nonzero.assigned, negative.assigned, QuantumCell::Constant(two))
+        }))
     }
 
+    /// `1 / a` in the field (the IR's `InvI`); 0 for `a = 0`, as in the mock.
     fn inv_i(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let value = a.value.invert().unwrap_or(Fp::zero());
-        Ok(self.gate_cell(value, |gate, ctx| gate.div_unsafe(ctx, QuantumCell::Constant(Fp::one()), a.assigned)))
+        let one = self.constant_int(1)?;
+        self.div_i(&one, a)
     }
 
     fn bit_and_i(&mut self, _: &Self::CellRef, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("bit_and_i") }
@@ -664,19 +995,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn sub_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.sub_i(a, b) }
 
     fn mul_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let precision_bits = self.params.precision_bits;
-        let (result, rem) = kernel::fp_mul_rescale(a.value, b.value, precision_bits);
+        let (q, _) = kernel::fp_mul_rescale(a.value, b.value, self.params.precision_bits);
         let raw = self.mul_i(a, b)?;
-        let result_cell = self.cell(result);
-        let rem_cell = self.cell(rem);
-        let scale = self.constant_int(crate::prove::field::quantization_scale(precision_bits) as i64)?;
-        let recomposed = self.gate_cell(result * scale.value + rem, |gate, ctx| {
-            gate.mul_add(ctx, result_cell.assigned, scale.assigned, rem_cell.assigned)
-        });
-        self.constrain_equal(&recomposed, &raw);
-        let range = self.range_chip();
-        range.range_check(self.ctx(), rem_cell.assigned, precision_bits as usize);
-        Ok(result_cell)
+        self.rescale(&raw, q)
     }
 
     fn product_sum_f(&mut self, pairs: &[(Self::CellRef, Self::CellRef)]) -> Result<Self::CellRef, ProvingError> {
@@ -687,55 +1008,32 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
             });
         }
         let values: Vec<(Fp, Fp)> = pairs.iter().map(|(a, b)| (a.value, b.value)).collect();
-        let (result, rem) = kernel::fp_product_sum_rescale(&values, self.params.precision_bits);
-        let result_cell = self.cell(result);
-        let rem_cell = self.cell(rem);
-        let scale = self.constant_int(crate::prove::field::quantization_scale(self.params.precision_bits) as i64)?;
-        let recomposed = self.gate_cell(result * scale.value + rem, |gate, ctx| {
-            gate.mul_add(ctx, result_cell.assigned, scale.assigned, rem_cell.assigned)
-        });
-        self.constrain_equal(&recomposed, &raw);
-        let precision_bits = self.params.precision_bits;
-        let range = self.range_chip();
-        range.range_check(self.ctx(), rem_cell.assigned, precision_bits as usize);
-        Ok(result_cell)
+        let (q, _) = kernel::fp_product_sum_rescale(&values, self.params.precision_bits);
+        self.rescale(&raw, q)
     }
 
+    /// Fixed-point `a / b`: `(a * 2^P) / b` rounded by `Rounding::Euclid`,
+    /// as `kernel::fp_div_prescale`; 0 for a zero divisor.
     fn div_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let precision_bits = self.params.precision_bits;
-        let scale = self.constant_int(crate::prove::field::quantization_scale(precision_bits) as i64)?;
-        let scaled = self.mul_i(a, &scale)?;
-        let result = kernel::fp_div_prescale(a.value, b.value, precision_bits);
-        let result_cell = self.cell(result);
-        let rem = scaled.value - b.value * result;
-        let rem_cell = self.cell(rem);
-        let recomposed = self.gate_cell(b.value * result + rem, |gate, ctx| {
-            gate.mul_add(ctx, b.assigned, result_cell.assigned, rem_cell.assigned)
+        let scale = kernel::scale_fp(self.params.precision_bits);
+        let scaled = self.gate_cell(a.value * scale, |gate, ctx| {
+            gate.mul(ctx, a.assigned, QuantumCell::Constant(scale))
         });
-        self.constrain_equal(&recomposed, &scaled);
-        Ok(result_cell)
+        Ok(self.div_rem(&scaled, b, Rounding::Euclid)?.0)
     }
 
+    /// Float `a // b = floor(a / b)` as a Q value. The ratio of two Q values
+    /// is the ratio of their raw integers, so this is the integer floor
+    /// division of the raw values, re-encoded.
     fn floor_div_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let zero = self.constant_int(0)?;
-        let negative = self.lt_i(b, &zero)?;
-        let neg_a = self.sub_i(&zero, a)?;
-        let neg_b = self.sub_i(&zero, b)?;
-        let numerator = self.select(&negative, &neg_a, a)?;
-        let denominator = self.select(&negative, &neg_b, b)?;
-        let quotient = self.floor_div_i(&numerator, &denominator)?;
+        let (quotient, _) = self.div_rem(a, b, Rounding::Floor)?;
         self.float_cast(&quotient)
     }
+
+    /// Float `a % b` (sign of the divisor): the integer remainder of the raw
+    /// Q values, which is already a Q value.
     fn mod_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let zero = self.constant_int(0)?;
-        let negative = self.lt_i(b, &zero)?;
-        let neg_a = self.sub_i(&zero, a)?;
-        let neg_b = self.sub_i(&zero, b)?;
-        let numerator = self.select(&negative, &neg_a, a)?;
-        let denominator = self.select(&negative, &neg_b, b)?;
-        let remainder = self.mod_i(&numerator, &denominator)?;
-        let neg_remainder = self.sub_i(&zero, &remainder)?;
-        self.select(&negative, &neg_remainder, &remainder)
+        Ok(self.div_rem(a, b, Rounding::Floor)?.1)
     }
     fn pow_f(&mut self, base: &Self::CellRef, exp: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         self.pow_f_int(base, exp)
@@ -818,60 +1116,97 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         self.logical_not(&lt)
     }
 
+    /// `sin` by the algorithm of `kernel::fp_sin`: range reduction modulo
+    /// `2 * pi_q`, fold onto `[0, pi_q)`, mirror onto `[0, pi_q / 2]`, Remez
+    /// polynomial, sign.
+    ///
+    /// Soundness: `sign_and_abs`, the division by the constant `2 * pi_q`
+    /// and every `mul_f` of the polynomial are functions of their inputs
+    /// (see each). The two comparisons take operands already proven to lie
+    /// in `[0, 2 * pi_q)`, inside the comparison's bit width. The rest are
+    /// gates, so the output is a function of `a`.
     fn sin_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let a_abs = self.abs_i(a)?;
-        let zero = self.constant_int(0)?;
-        let a_sign = self.lt_i(a, &zero)?;
-        let pi = self.constant_float(std::f64::consts::PI)?;
-        let q_cell = self.floor_div_i(&a_abs, &pi)?;
-        let r_cell = self.mod_i(&a_abs, &pi)?;
-        let two = self.constant_int(2)?;
-        let q_parity = self.mod_i(&q_cell, &two)?;
+        let precision_bits = self.params.precision_bits;
+        let pi = kernel::pi_q(precision_bits);
+        let compare_bits = self.lookup_aligned((128 - (2 * pi).leading_zeros()) as usize);
+        let (negative, magnitude) = self.sign_and_abs(a)?;
+        let (_, r) = self.div_rem_nonzero(&magnitude, Divisor::Constant(2 * pi), Rounding::Euclid)?;
 
-        let coefs: Vec<Fp> = kernel::SIN_COEFS.iter().map(|c| self.quantize_fp(*c)).collect();
-        let sin_val = self.poly_eval_horner(&r_cell, &coefs)?;
+        let below_pi = self.below_constant_bit(&r, pi, compare_bits);
+        let folded_bit = self.logical_not(&below_pi)?;
+        let pi_fp = kernel::i128_to_fp(pi);
+        let folded = self.gate_cell(r.value - folded_bit.value * pi_fp, |gate, ctx| {
+            gate.sub_mul(ctx, r.assigned, folded_bit.assigned, QuantumCell::Constant(pi_fp))
+        });
+        let in_first_quarter = self.below_constant_bit(&folded, pi / 2 + 1, compare_bits);
+        let mirrored = self.gate_cell(pi_fp - folded.value, |gate, ctx| {
+            gate.sub(ctx, QuantumCell::Constant(pi_fp), folded.assigned)
+        });
+        let argument = self.select_bit(&in_first_quarter, &folded, &mirrored)?;
 
-        let both = self.mul_i(&a_sign, &q_parity)?;
-        let two_both = self.add_i(&both, &both)?;
-        let sum = self.add_i(&a_sign, &q_parity)?;
-        let final_sign = self.sub_i(&sum, &two_both)?;
-        self.assert_bit(&final_sign)?;
-        self.signed_negate_if(&sin_val, &final_sign)
+        let poly = self.poly_eval_horner(&argument, &kernel::sin_coefs_q(precision_bits))?;
+        let flip_value = negative.value + folded_bit.value - Fp::from(2u64) * negative.value * folded_bit.value;
+        let flip = self.gate_cell(flip_value, |gate, ctx| gate.xor(ctx, negative.assigned, folded_bit.assigned));
+        self.mark_bit(&flip);
+        self.negate_if(&poly, &flip)
     }
     fn sinh_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("sinh_f") }
+    /// `cos(a) = sin(a + pi/2)`, as `kernel::fp_cos`.
     fn cos_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let half_pi = self.constant_float(std::f64::consts::FRAC_PI_2)?;
-        let shifted = self.add_f(a, &half_pi)?;
+        let half_pi = kernel::i128_to_fp(kernel::half_pi_q(self.params.precision_bits));
+        let shifted = self.gate_cell(a.value + half_pi, |gate, ctx| {
+            gate.add(ctx, a.assigned, QuantumCell::Constant(half_pi))
+        });
         self.sin_f(&shifted)
     }
     fn cosh_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("cosh_f") }
     fn tan_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("tan_f") }
     fn tanh_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("tanh_f") }
+    /// `sqrt` as `kernel::fp_sqrt`: `floor(sqrt(a * 2^P))`, and 0 for a
+    /// negative input. The pinned sign bit of `sign_and_abs` zeroes a
+    /// negative input; `sqrt_nonneg` pins the root.
     fn sqrt_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let a_f64 = kernel::dequantize_from_fp(a.value, self.params.precision_bits);
-        let y_f64 = if a_f64.is_finite() && a_f64 >= 0.0 {
-            a_f64.sqrt()
-        } else {
-            0.0
-        };
-        let y = self.cell(self.quantize_fp(y_f64));
-        let y_sq = self.mul_f(&y, &y)?;
-        self.assert_close_f(&y_sq, a, 0.001)?;
-        Ok(y)
+        let (negative, _) = self.sign_and_abs(a)?;
+        let clamped = self.gate_cell((Fp::one() - negative.value) * a.value, |gate, ctx| {
+            gate.mul_not(ctx, negative.assigned, a.assigned)
+        });
+        self.sqrt_nonneg(&clamped)
     }
     fn exp_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("exp_f") }
     fn log_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("log_f") }
+    /// `arcsin(x) = 2 * atan(x / (1 + sqrt(1 - x^2)))`, as `kernel::fp_arcsin`
+    /// (0 outside `[-1, 1]`).
+    ///
+    /// Soundness: every step is a function of its inputs. The domain bit
+    /// compares the pinned magnitude `|x| <= 2^64` against `1` within 65
+    /// bits. With `x'` = x inside the domain and 0 outside, `x'^2` (a pinned
+    /// `mul_f`) lies in `[0, 1]`, so `1 - x'^2` meets `sqrt_nonneg`'s
+    /// precondition; the divisor `1 + sqrt(..)` is positive, and the
+    /// remainder bound of `div_rem_nonzero` re-proves it.
     fn arcsin_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let a_f64 = kernel::dequantize_from_fp(a.value, self.params.precision_bits);
-        let y_f64 = if (-1.0..=1.0).contains(&a_f64) {
-            a_f64.asin()
-        } else {
-            0.0
-        };
-        let y = self.cell(self.quantize_fp(y_f64));
-        let sin_y = self.sin_f(&y)?;
-        self.assert_close_f(&sin_y, a, 0.001)?;
-        Ok(y)
+        let precision_bits = self.params.precision_bits;
+        let one = kernel::scale_fp(precision_bits);
+        let (_, magnitude) = self.sign_and_abs(a)?;
+        let in_domain = self.below_constant_bit(&magnitude, (1i128 << precision_bits) + 1, 65);
+        let x = self.mul_i(&in_domain, a)?;
+
+        let x_squared = self.mul_f(&x, &x)?;
+        let one_minus_x_squared = self.gate_cell(one - x_squared.value, |gate, ctx| {
+            gate.sub(ctx, QuantumCell::Constant(one), x_squared.assigned)
+        });
+        let root = self.sqrt_nonneg(&one_minus_x_squared)?;
+        let denominator = self.gate_cell(root.value + one, |gate, ctx| {
+            gate.add(ctx, root.assigned, QuantumCell::Constant(one))
+        });
+        let scaled = self.gate_cell(x.value * one, |gate, ctx| {
+            gate.mul(ctx, x.assigned, QuantumCell::Constant(one))
+        });
+        let (t, _) = self.div_rem_nonzero(&scaled, Divisor::Positive(denominator), Rounding::Euclid)?;
+
+        let t_squared = self.mul_f(&t, &t)?;
+        let odd_part = self.poly_eval_horner(&t_squared, &kernel::atan_odd_coefs_q(precision_bits))?;
+        let half = self.mul_f(&t, &odd_part)?;
+        self.add_i(&half, &half)
     }
     fn arccos_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("arccos_f") }
     fn arctan2_f(&mut self, _: &Self::CellRef, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("arctan2_f") }
@@ -947,46 +1282,15 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         self.select_many_cache.get(&key).and_then(|v| v.get(lane)).copied().ok_or_else(|| ProvingError::synthesis("select_many lane out of bounds"))
     }
 
+    /// Float→int, truncation toward zero (Python's `int()`), as
+    /// `kernel::fp_int_cast`: the division of the raw Q value by `2^P` with
+    /// the remainder taking the dividend's sign. `div_rem_nonzero` pins the
+    /// quotient (including its signed 64-bit window, which the earlier
+    /// lowering lacked: any remainder magnitude below `2^P` was accepted
+    /// with a matching non-integer quotient).
     fn int_cast(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        // Float→int, truncation toward zero, constrained as a div-mod.
-        //
-        // Witness `q = trunc(a/scale)` and the *signed* remainder `r`, where
-        // `r` has the same sign as `a` and `|r| < scale` (shared convention,
-        // see `kernel::fp_int_cast`). Soundness comes from three facts:
-        //   1. recomposition `q*scale + r == a` (mul_add + constrain_equal),
-        //   2. `0 <= |r| < scale = 2^precision_bits` (range check on `|r|`),
-        //   3. `sign(r) == sign(a)` (the remainder is rebuilt from a *true*
-        //      sign bit of `a` via select, so the prover cannot flip it).
-        // Together these pin the unique truncating `(q, r)` — a malicious
-        // prover can no longer load an arbitrary quotient.
-        let precision_bits = self.params.precision_bits;
-        let scale = self.constant_int(
-            crate::prove::field::quantization_scale(precision_bits) as i64,
-        )?;
-        let (q, r) = kernel::fp_int_cast(a.value, precision_bits);
-        let q_cell = self.cell(q);
-
-        // True sign bit of `a` (1 iff a < 0), constrained by signed_lt.
-        let zero = self.constant_int(0)?;
-        let sign = self.lt_i(a, &zero)?;
-
-        // Magnitude of the remainder, range-checked to [0, 2^precision_bits).
-        let r_mag_val = if kernel::fp_is_negative(r) { -r } else { r };
-        let r_mag = self.cell(r_mag_val);
-        let range = self.range_chip();
-        range.range_check(self.ctx(), r_mag.assigned, precision_bits as usize);
-
-        // r = sign ? -|r| : |r|  — ties the remainder's sign to a's true sign.
-        let neg_r_mag =
-            self.gate_cell(-r_mag.value, |gate, ctx| gate.neg(ctx, r_mag.assigned));
-        let r_cell = self.select_bit(&sign, &neg_r_mag, &r_mag)?;
-
-        // Recompose: q*scale + r == a.
-        let recomposed = self.gate_cell(q * scale.value + r_cell.value, |gate, ctx| {
-            gate.mul_add(ctx, q_cell.assigned, scale.assigned, r_cell.assigned)
-        });
-        self.constrain_equal(&recomposed, a);
-        Ok(q_cell)
+        let scale = 1i128 << self.params.precision_bits;
+        Ok(self.div_rem_nonzero(a, Divisor::Constant(scale), Rounding::Trunc)?.0)
     }
     fn float_cast(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         let scale = self.constant_int(crate::prove::field::quantization_scale(self.params.precision_bits) as i64)?;
@@ -1336,259 +1640,39 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn eq_hash(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.eq_i(a, b) }
 }
 
-// ---------------------------------------------------------------------------
-// C02 malicious-witness regression for the constrained int_cast lowering.
-//
-// NOTE: this module is `#[cfg(test)]`, so it never affects the release
-// (maturin) build. It is intentionally written against the real halo2-base
-// builder + MockProver APIs so it runs as soon as the in-crate `cargo test`
-// target compiles again (currently blocked on T01, an unrelated pre-existing
-// halo2 test breakage). Until then it is dormant but build-correct.
-//
-// The test reconstructs exactly the constraint shape `int_cast` emits —
-// recomposition `q*scale + r == a`, a `precision_bits`-wide range check on
-// `|r|`, and a sign-select tying `r`'s sign to the true sign of `a` — and
-// shows that an HONEST quotient satisfies it while a TAMPERED quotient
-// (`q + 1`) is rejected by MockProver. At commit 4b69c08 there was no gate
-// linking the loaded quotient to `a`, so the tampered quotient would have
-// proved; this test pins that hole shut.
+/// Test-only hint perturbation: the tamper tests replay a synthesis with
+/// some hints changed, playing a prover that controls every hint.
 #[cfg(test)]
-mod int_cast_tamper_tests {
-    use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-    use halo2_base::gates::circuit::CircuitBuilderStage;
-    use halo2_base::gates::{flex_gate::GateInstructions, range::RangeInstructions};
-    use halo2_base::halo2_proofs::dev::MockProver;
-    use halo2_base::halo2_proofs::halo2curves::bn256::Fr as Fp;
-    use halo2_base::QuantumCell;
+mod tamper {
+    use super::Fp;
 
-    use crate::prove::kernel;
-
-    const K: usize = 12;
-    const LOOKUP_BITS: usize = 8;
-    const PRECISION_BITS: u32 = 32;
-
-    /// Build the int_cast constraint system for a chosen quotient witness
-    /// `q_override` (the only knob a malicious prover controls). `r` is
-    /// always recomputed as `a - q*scale` so that the recomposition gate is
-    /// *satisfiable by construction*; soundness then rests entirely on the
-    /// range check (`|r| < scale`) and the sign-select, exactly as in the
-    /// real lowering. Returns the MockProver verdict.
-    fn run_int_cast(a_val: f64, q_override: i64) -> Result<(), Vec<halo2_base::halo2_proofs::dev::VerifyFailure>> {
-        let mut builder = BaseCircuitBuilder::<Fp>::from_stage(CircuitBuilderStage::Mock);
-        builder.set_k(K);
-        builder.set_lookup_bits(LOOKUP_BITS);
-        builder.set_instance_columns(1);
-
-        let scale_i = crate::prove::field::quantization_scale(PRECISION_BITS) as i64;
-        let a_fp = kernel::quantize_to_fp(a_val, PRECISION_BITS);
-        let a_i = kernel::fp_to_i64(a_fp);
-        let r_i = a_i - q_override * scale_i; // recomposition holds by construction
-        let sign = a_i < 0;
-        let r_mag_i = r_i.abs();
-
-        let gate = builder.range_chip().gate().clone();
-        let range = builder.range_chip();
-        // Note: clone the chip handles before borrowing the context mutably.
-        let ctx = builder.main(0);
-
-        let a = ctx.load_witness(a_fp);
-        let q = ctx.load_witness(kernel::i64_to_fp(q_override));
-        let scale = ctx.load_constant(kernel::i64_to_fp(scale_i));
-        let r_mag = ctx.load_witness(kernel::i64_to_fp(r_mag_i));
-        let sign_cell = ctx.load_witness(if sign { Fp::one() } else { Fp::zero() });
-
-        // r = sign ? -|r| : |r|
-        let neg_r_mag = gate.neg(ctx, r_mag);
-        let r = gate.select(ctx, neg_r_mag, r_mag, sign_cell);
-        // recomposed = q*scale + r
-        let recomposed = gate.mul_add(ctx, q, scale, r);
-        ctx.constrain_equal(&recomposed, &a);
-
-        // 0 <= |r| < 2^precision_bits
-        range.range_check(builder.main(0), r_mag, PRECISION_BITS as usize);
-
-        builder.calculate_params(Some(20));
-        // One (empty) instance column matches `set_instance_columns(1)`; the
-        // soundness check does not rely on any public input.
-        MockProver::run(K as u32, &builder, vec![vec![]]).unwrap().verify()
+    #[derive(Default)]
+    pub(super) struct HintTamper {
+        seen: usize,
+        /// `(index, delta)` pairs: add `delta` to the `index`-th hint.
+        targets: Vec<(usize, Fp)>,
     }
 
-    #[test]
-    fn honest_quotient_passes() {
-        let scale_i = crate::prove::field::quantization_scale(PRECISION_BITS) as i64;
-        for a in [-3.9_f64, -2.5, -0.5, 2.5, 7.0] {
-            let a_i = kernel::fp_to_i64(kernel::quantize_to_fp(a, PRECISION_BITS));
-            let q = a_i / scale_i; // truncation toward zero
-            assert!(run_int_cast(a, q).is_ok(), "honest int({a}) should satisfy");
+    impl HintTamper {
+        pub(super) fn targeting(targets: &[(usize, Fp)]) -> Self {
+            Self { seen: 0, targets: targets.to_vec() }
+        }
+
+        pub(super) fn apply(&mut self, value: Fp) -> Fp {
+            let index = self.seen;
+            self.seen += 1;
+            self.targets
+                .iter()
+                .filter(|(i, _)| *i == index)
+                .fold(value, |v, (_, delta)| v + delta)
+        }
+
+        pub(super) fn hints_seen(&self) -> usize {
+            self.seen
         }
     }
-
-    #[test]
-    fn tampered_quotient_is_rejected() {
-        // A malicious prover bumps q by one. The recomposition still holds
-        // (r absorbs the delta), but |r| now equals `scale` which overflows
-        // the precision_bits range check — so the proof must fail.
-        let scale_i = crate::prove::field::quantization_scale(PRECISION_BITS) as i64;
-        for a in [-3.9_f64, -2.5, 2.5, 7.0] {
-            let a_i = kernel::fp_to_i64(kernel::quantize_to_fp(a, PRECISION_BITS));
-            let honest_q = a_i / scale_i;
-            assert!(
-                run_int_cast(a, honest_q + 1).is_err(),
-                "tampered int({a}) (q+1) must be rejected by the range check",
-            );
-            assert!(
-                run_int_cast(a, honest_q - 1).is_err(),
-                "tampered int({a}) (q-1) must be rejected by the range check",
-            );
-        }
-    }
-
-    // Silence unused-import warnings if the gate handle path changes; the
-    // QuantumCell import documents the cell vocabulary the lowering uses.
-    #[allow(unused)]
-    fn _quantum_cell_marker(_c: QuantumCell<Fp>) {}
 }
 
-// Regression test for code review C15: `assert_dynamic_ndarray_meta` on
-// halo2-base was a no-op (`Ok(())`) at commit 4b69c08 — it constrained
-// nothing, so a prover could witness a DynamicNDArray runtime shape outside
-// its allocation envelope (an axis past its per-axis bound, or a shape whose
-// product exceeds the total length bound) and the backend would happily
-// prove it. The mock backend flagged such violations and legacy halo2 emitted
-// real constraints, but the BENCHMARKED backend did not.
-//
-// The fix hoists the legacy lowering into a `Synthesizer` trait default; this
-// test pins the resulting constraint shape. It reconstructs exactly what the
-// default emits per axis — a `0 <= dim` non-negativity gate, a `dim <= bound`
-// gate, and a final `product <= total_bound` gate, each forced to `1` — using
-// the same `range.is_less_than` primitive the lowering's `lte_i`/`gte_i`
-// route through, and shows that an HONEST in-envelope shape satisfies it while
-// a TAMPERED shape (axis over its bound, or product over the total) is
-// rejected by MockProver. At 4b69c08 the no-op override emitted none of these
-// gates, so every tampered shape below would have proved.
 #[cfg(test)]
-mod dyn_meta_tamper_tests {
-    use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-    use halo2_base::gates::circuit::CircuitBuilderStage;
-    use halo2_base::gates::{flex_gate::GateInstructions, range::RangeInstructions};
-    use halo2_base::halo2_proofs::dev::MockProver;
-    use halo2_base::halo2_proofs::halo2curves::bn256::Fr as Fp;
-
-    use crate::prove::kernel;
-
-    const K: usize = 12;
-    const LOOKUP_BITS: usize = 8;
-
-    /// Build the meta-assert constraint system for a DynamicNDArray whose
-    /// per-axis bounds are `axis_bounds` and total length bound is
-    /// `total_bound`, with the prover-supplied runtime shape `dims`. The
-    /// witness `dims` is the only knob a malicious prover controls. Returns
-    /// the MockProver verdict.
-    fn run_meta_assert(
-        dims: &[i64],
-        axis_bounds: &[u32],
-        total_bound: u32,
-    ) -> Result<(), Vec<halo2_base::halo2_proofs::dev::VerifyFailure>> {
-        let mut builder = BaseCircuitBuilder::<Fp>::from_stage(CircuitBuilderStage::Mock);
-        builder.set_k(K);
-        builder.set_lookup_bits(LOOKUP_BITS);
-        builder.set_instance_columns(1);
-
-        let range = builder.range_chip();
-        let ctx = builder.main(0);
-
-        // signed-i64 view: `x` is in range iff `x + 2^63 < 2^64`. The lowering
-        // routes 0<=dim and dim<=bound through `is_less_than(_, _, 64)` on
-        // these shifted cells, so the test mirrors that.
-        let shift = Fp::from(1u64 << 63);
-        let mut product: i64 = 1;
-
-        for (&dim, &bound) in dims.iter().zip(axis_bounds.iter()) {
-            let dim_cell = ctx.load_witness(kernel::i64_to_fp(dim));
-            let dim_shifted = range.gate().add(
-                ctx,
-                dim_cell,
-                halo2_base::QuantumCell::Constant(shift),
-            );
-            range.range_check(ctx, dim_shifted, 64);
-
-            // 0 <= dim : is_less_than(shift-1, dim_shifted) == 1
-            let zero_minus_one = ctx.load_constant(kernel::i64_to_fp(-1) + shift);
-            range.range_check(ctx, zero_minus_one, 64);
-            let nn = range.is_less_than(ctx, zero_minus_one, dim_shifted, 64);
-            let one = ctx.load_constant(Fp::one());
-            ctx.constrain_equal(&nn, &one);
-
-            // dim <= bound : is_less_than(dim_shifted, (bound+1)+shift) == 1
-            let bound_cell =
-                ctx.load_constant(kernel::i64_to_fp(bound as i64 + 1) + shift);
-            range.range_check(ctx, bound_cell, 64);
-            let le = range.is_less_than(ctx, dim_shifted, bound_cell, 64);
-            let one2 = ctx.load_constant(Fp::one());
-            ctx.constrain_equal(&le, &one2);
-
-            product = product.saturating_mul(dim);
-        }
-
-        // product <= total_bound
-        let prod_cell = ctx.load_witness(kernel::i64_to_fp(product));
-        let prod_shifted =
-            range
-                .gate()
-                .add(ctx, prod_cell, halo2_base::QuantumCell::Constant(shift));
-        range.range_check(ctx, prod_shifted, 64);
-        let total_cell =
-            ctx.load_constant(kernel::i64_to_fp(total_bound as i64 + 1) + shift);
-        range.range_check(ctx, total_cell, 64);
-        let in_total = range.is_less_than(ctx, prod_shifted, total_cell, 64);
-        let one3 = ctx.load_constant(Fp::one());
-        ctx.constrain_equal(&in_total, &one3);
-
-        builder.calculate_params(Some(20));
-        MockProver::run(K as u32, &builder, vec![vec![]])
-            .unwrap()
-            .verify()
-    }
-
-    #[test]
-    fn honest_shape_passes() {
-        // 2-D array, per-axis bound 4 and 5, total length bound 20.
-        assert!(
-            run_meta_assert(&[3, 5], &[4, 5], 20).is_ok(),
-            "in-envelope shape [3,5] (<=[4,5], product 15<=20) must prove",
-        );
-        assert!(
-            run_meta_assert(&[0, 5], &[4, 5], 20).is_ok(),
-            "empty axis is in-envelope and must prove",
-        );
-    }
-
-    #[test]
-    fn axis_over_bound_is_rejected() {
-        // Axis 0 = 5 exceeds its per-axis bound 4. At 4b69c08 (no-op) this
-        // proved; the trait-default lowering must now reject it.
-        assert!(
-            run_meta_assert(&[5, 5], &[4, 5], 100).is_err(),
-            "axis 0 over its bound must be rejected",
-        );
-    }
-
-    #[test]
-    fn negative_axis_is_rejected() {
-        assert!(
-            run_meta_assert(&[-1, 5], &[4, 5], 100).is_err(),
-            "negative runtime axis must be rejected",
-        );
-    }
-
-    #[test]
-    fn shape_product_over_total_is_rejected() {
-        // Each axis within its per-axis bound, but the product (4*5=20)
-        // exceeds the total length bound 10 — the shape-product check must
-        // fire. This is the case independent per-axis range checks miss.
-        assert!(
-            run_meta_assert(&[4, 5], &[4, 5], 10).is_err(),
-            "shape product over the total length bound must be rejected",
-        );
-    }
-}
+#[path = "synthesizer_tests.rs"]
+mod tests;

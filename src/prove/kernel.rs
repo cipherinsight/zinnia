@@ -59,7 +59,12 @@ pub const LOG2_COEFS: [f64; 15] = [
 
 /// atan(x) on [-1, 1], degree 15 (Chebyshev least-squares fit).
 /// Max absolute error ≈ 4.3e-8 over the input range.
-/// Even-indexed coefficients are near-zero (atan is odd).
+///
+/// Unlike the other tables this one is stored **constant-term first**
+/// (`ATAN_COEFS[k]` multiplies `x^k`; `ATAN_COEFS[1] ≈ 1`, `[3] ≈ -1/3`).
+/// The even-indexed coefficients are near zero (atan is odd); see
+/// [`atan_odd_coefs`] for the leading-first odd-part table used by the
+/// fixed-point `arcsin`.
 pub const ATAN_COEFS: [f64; 16] = [
     3.8945708106325862e-17,
     9.9999924908801763e-01,
@@ -158,6 +163,24 @@ pub fn fp_is_negative(v: Fp) -> bool {
         }
     }
     false // equal to half, treat as non-negative
+}
+
+/// The signed integer a field element encodes, if its magnitude is below
+/// 2^126 (the window every fixed-point intermediate of the kernel lives in).
+/// `None` for anything larger, so callers never silently truncate.
+pub fn fp_to_i128(v: Fp) -> Option<i128> {
+    let negative = fp_is_negative(v);
+    let magnitude = if negative { -v } else { v };
+    let bytes = magnitude.to_repr();
+    let bytes = bytes.as_ref();
+    if bytes[16..].iter().any(|b| *b != 0) {
+        return None;
+    }
+    let m = u128::from_le_bytes(bytes[..16].try_into().unwrap());
+    if m >= 1u128 << 126 {
+        return None;
+    }
+    Some(if negative { -(m as i128) } else { m as i128 })
 }
 
 // ---------------------------------------------------------------------------
@@ -259,8 +282,9 @@ pub fn fp_to_value(v: Fp, is_float: bool, precision_bits: u32) -> Value {
 /// Recurrence: `acc_0 = coefs[0]`, `acc_{i+1} = x * acc_i + coefs[i+1]`.
 /// All values are Fp field elements in fixed-point representation (scaled by 2^precision_bits).
 ///
-/// NOTE: This matches the layout of `LOG2_COEFS`, `EXP2_COEFS`, `SIN_COEFS`, and
-/// `ATAN_COEFS` in this module — they are all stored leading-first. A previous
+/// NOTE: This matches the layout of `LOG2_COEFS`, `EXP2_COEFS` and `SIN_COEFS`
+/// in this module — they are stored leading-first (`ATAN_COEFS` is not; use
+/// [`atan_odd_coefs`]). A previous
 /// version of this function iterated in the opposite direction and treated
 /// `coefs[0]` as the constant term, which silently produced wrong values for
 /// the transcendentals (log(2) ≈ -11097 instead of 0.693, etc).
@@ -321,23 +345,14 @@ pub fn fp_product_sum_rescale(pairs: &[(Fp, Fp)], precision_bits: u32) -> (Fp, F
     fp_rescale_raw_i128(raw, precision_bits)
 }
 
-/// Fixed-point division with pre-scaling.
-///
-/// Computes `result = floor((a * scale) / b)` where `scale = 2^precision_bits`.
-/// Uses i128 integer division so the result is value-correct (the previous
-/// implementation used field modular inverse and produced wrap-around garbage
-/// for non-trivial inputs). For divide-by-zero, returns zero (matching the prior
-/// `b.invert().unwrap_or(Fp::zero())` behavior).
+/// Fixed-point division with pre-scaling: `a * 2^P / b`, rounded by
+/// [`Rounding::Euclid`] (remainder in `[0, |b|)`), i.e. toward negative
+/// infinity for a positive divisor and toward positive infinity for a
+/// negative one. Division by zero yields zero (see [`div_rem_or_zero`]).
 pub fn fp_div_prescale(a: Fp, b: Fp, precision_bits: u32) -> Fp {
-    let b_signed = fp_to_i64(b) as i128;
-    if b_signed == 0 {
-        return Fp::zero();
-    }
-    let a_signed = fp_to_i64(a) as i128;
-    let scale = 1i128 << precision_bits;
-    let numerator = a_signed * scale;
-    let quotient = numerator.div_euclid(b_signed);
-    i128_to_fp(quotient)
+    let numerator = (fp_to_i64(a) as i128) << precision_bits;
+    let (q, _) = div_rem_or_zero(numerator, fp_to_i64(b) as i128, Rounding::Euclid);
+    i128_to_fp(q)
 }
 
 /// Encode a signed i128 as an Fp field element.
@@ -370,62 +385,199 @@ pub fn i128_to_fp(v: i128) -> Fp {
     }
 }
 
-/// Float→int cast convention (truncation toward zero), shared by every
-/// backend so the value semantics have a single home.
+// ---------------------------------------------------------------------------
+// Integer division conventions
+// ---------------------------------------------------------------------------
+
+/// How a signed integer division rounds its quotient. Each convention fixes
+/// the sign of the remainder `r = a - b*q`; in all three `|r| < |b|`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rounding {
+    /// Toward negative infinity: `r` is zero or has the sign of `b`.
+    /// Python's `//` and `%`, NumPy's `floor_divide` and `remainder`.
+    Floor,
+    /// Euclidean: `0 <= r < |b|`. Used by fixed-point `/` ([`fp_div_prescale`]).
+    Euclid,
+    /// Toward zero: `r` is zero or has the sign of `a`. Python's `int()`.
+    Trunc,
+}
+
+/// `(q, r)` with `a == b*q + r` and `|r| < |b|`, rounded by `rounding`.
 ///
-/// Interprets `v` as a fixed-point value scaled by `scale = 2^precision_bits`
-/// and returns the truncated-toward-zero integer quotient `q = trunc(v/scale)`
-/// together with the signed remainder `r = v - q*scale`. By construction:
-///   * `q*scale + r == v` (exact recomposition),
-///   * `sign(r) == sign(v)` (or `r == 0`),
-///   * `|r| < scale`.
+/// A zero divisor yields `(0, 0)`. This is the one division-by-zero
+/// convention of the mock, preprocess and halo2-base backends. NumPy integer
+/// arrays give the same result; NumPy floats give ±inf or nan, which fixed
+/// point cannot represent. Callers keep `|a|` below 2^126 (every fixed-point
+/// intermediate does), so the native operations cannot overflow.
+pub fn div_rem_or_zero(a: i128, b: i128, rounding: Rounding) -> (i128, i128) {
+    if b == 0 {
+        return (0, 0);
+    }
+    match rounding {
+        Rounding::Euclid => (a.div_euclid(b), a.rem_euclid(b)),
+        Rounding::Trunc => (a / b, a % b),
+        Rounding::Floor => {
+            let (q, r) = (a / b, a % b);
+            if r != 0 && ((r < 0) != (b < 0)) {
+                (q - 1, r + b)
+            } else {
+                (q, r)
+            }
+        }
+    }
+}
+
+/// Float→int cast (truncation toward zero, Python's `int()`).
 ///
-/// This matches Python's `int()` and the mock/preprocess/legacy-halo2 backends
-/// (all of which use truncating `/`). It deliberately differs from
-/// `fp_floor_div` (Euclidean / flooring), which is the wrong convention for a
-/// cast and disagrees on negative inputs.
+/// Interprets `v` as a fixed-point value scaled by `2^precision_bits` and
+/// returns `q = trunc(v / 2^P)` with the remainder `r = v - q*2^P`, which has
+/// the sign of `v` (or is zero) and `|r| < 2^P`.
 pub fn fp_int_cast(v: Fp, precision_bits: u32) -> (Fp, Fp) {
-    let scale = crate::prove::field::quantization_scale(precision_bits) as i64;
-    let vi = fp_to_i64(v);
-    let q = vi / scale; // Rust `/` truncates toward zero
-    let r = vi - q * scale; // same sign as vi, |r| < scale
-    (i64_to_fp(q), i64_to_fp(r))
+    let (q, r) = div_rem_or_zero(fp_to_i64(v) as i128, 1i128 << precision_bits, Rounding::Trunc);
+    (i128_to_fp(q), i128_to_fp(r))
 }
 
-/// Floor division: returns (quotient, remainder) such that a = b*q + r.
+/// Integer floor division and remainder with Python semantics
+/// ([`Rounding::Floor`]): `-7 // 2 == -4`, `-7 % 2 == 1`, `7 % -2 == -1`.
+/// A zero divisor yields `(0, 0)` (see [`div_rem_or_zero`]).
 pub fn fp_floor_div(a: Fp, b: Fp) -> (Fp, Fp) {
-    let sa = fp_to_i64(a);
-    let sb = fp_to_i64(b);
-    if sb == 0 {
-        return (Fp::zero(), Fp::zero());
-    }
-    let q = sa.div_euclid(sb);
-    let r = sa.rem_euclid(sb);
-    (i64_to_fp(q), Fp::from(r as u64))
+    let (q, r) = div_rem_or_zero(fp_to_i64(a) as i128, fp_to_i64(b) as i128, Rounding::Floor);
+    (i128_to_fp(q), i128_to_fp(r))
 }
 
-/// Divide two Q-encoded values, floor the quotient, and restore Q scaling.
+/// Float floor division `a // b` on Q-encoded values: `floor(a / b)`,
+/// re-encoded as a Q value.
 pub fn fp_float_floor_div(a: Fp, b: Fp, precision_bits: u32) -> Fp {
-    let negative_divisor = fp_to_i64(b) < 0;
-    let (a, b) = if negative_divisor { (-a, -b) } else { (a, b) };
-    let (q, _) = fp_floor_div(a, b);
-    q * quantize_to_fp(1.0, precision_bits)
+    fp_floor_div(a, b).0 * scale_fp(precision_bits)
 }
 
-/// Floating remainder has the divisor's sign, as in Python and NumPy.
+/// Float remainder `a % b` on Q-encoded values. It has the divisor's sign,
+/// as in Python and NumPy.
 pub fn fp_float_mod(a: Fp, b: Fp) -> Fp {
-    if fp_to_i64(b) < 0 {
-        let (_, r) = fp_floor_div(-a, -b);
-        -r
-    } else {
-        fp_floor_div(a, b).1
+    fp_floor_div(a, b).1
+}
+
+// ---------------------------------------------------------------------------
+// Fixed-point square root and trigonometry
+//
+// These are the exact integer algorithms the halo2-base circuit constrains
+// (`prove/halo2_base/synthesizer.rs`), so the mock backend and the circuit
+// compute bit-identical values. A Q value whose magnitude is 2^64 or more is
+// outside the fixed-point window: the circuit is unsatisfiable on it and
+// these functions return 0.
+// ---------------------------------------------------------------------------
+
+/// Integer square root: the largest `y` with `y * y <= n`, for `n < 2^127`.
+pub fn isqrt_u128(n: u128) -> u128 {
+    let mut y = (n as f64).sqrt() as u128;
+    while y * y > n {
+        y -= 1;
+    }
+    while (y + 1) * (y + 1) <= n {
+        y += 1;
+    }
+    y
+}
+
+/// `sqrt` on Q-encoded values, rounded down: the largest `y` with
+/// `y^2 <= x * 2^P`. A negative input yields 0 (NumPy gives nan, which fixed
+/// point cannot represent; 0 is the shared backend convention).
+pub fn fp_sqrt(x: Fp, precision_bits: u32) -> Fp {
+    match fp_to_i128(x) {
+        Some(v) if v > 0 && v < (1i128 << 64) => {
+            i128_to_fp(isqrt_u128((v as u128) << precision_bits) as i128)
+        }
+        _ => Fp::zero(),
     }
 }
 
-/// Compute sin(x) using native f64 math on the dequantized value.
+/// π in Q-encoding. Sine reduces its argument modulo `2 * pi_q` exactly, so
+/// the folded argument lands in `[0, pi_q)`, the fit interval of [`SIN_COEFS`].
+pub fn pi_q(precision_bits: u32) -> i128 {
+    crate::prove::field::quantize(std::f64::consts::PI, precision_bits)
+}
+
+/// π/2 in Q-encoding; `cos(x)` is computed as `sin(x + half_pi_q)`.
+pub fn half_pi_q(precision_bits: u32) -> i128 {
+    crate::prove::field::quantize(std::f64::consts::FRAC_PI_2, precision_bits)
+}
+
+/// [`SIN_COEFS`] in Q-encoding (leading-first, for [`horner_eval`]).
+pub fn sin_coefs_q(precision_bits: u32) -> Vec<Fp> {
+    SIN_COEFS.iter().map(|c| quantize_to_fp(*c, precision_bits)).collect()
+}
+
+/// The odd part of [`ATAN_COEFS`] in Q-encoding, leading-first:
+/// `[c15, c13, ..., c3, c1]`, so that `atan(t) ≈ t * P(t^2)` with `P`
+/// evaluated by [`horner_eval`]. The dropped even coefficients are below
+/// 1e-12 in magnitude, far under one Q32 unit.
+pub fn atan_odd_coefs_q(precision_bits: u32) -> Vec<Fp> {
+    ATAN_COEFS
+        .iter()
+        .enumerate()
+        .rev()
+        .filter(|(k, _)| k % 2 == 1)
+        .map(|(_, c)| quantize_to_fp(*c, precision_bits))
+        .collect()
+}
+
+/// `sin` on Q-encoded values, by the circuit's algorithm:
+///
+/// 1. `m = |x|`; `r = m mod (2 * pi_q)`;
+/// 2. fold `r >= pi_q` onto `r - pi_q` (sin(r) = -sin(r - π));
+/// 3. mirror `r > pi_q / 2` onto `pi_q - r` (sin(r) = sin(π - r)), so the
+///    argument lies in `[0, π/2]`;
+/// 4. evaluate [`SIN_COEFS`] there by [`horner_eval`] (every product
+///    rounded down, as `mul_f` does);
+/// 5. negate when exactly one of "x < 0" and "folded" holds.
+///
+/// Step 3 bounds the rounding error: Horner's rounding errors grow with
+/// `|argument|^degree`, about 1e-4 on `[0, π)` and 1e-7 on `[0, π/2]`.
 pub fn fp_sin(x: Fp, precision_bits: u32) -> Fp {
-    let v = dequantize_from_fp(x, precision_bits);
-    quantize_to_fp(v.sin(), precision_bits)
+    let Some(v) = fp_to_i128(x) else {
+        return Fp::zero();
+    };
+    let m = v.unsigned_abs();
+    if m >= 1u128 << 64 {
+        return Fp::zero();
+    }
+    let pi = pi_q(precision_bits) as u128;
+    let r = m % (2 * pi);
+    let (r, folded) = if r >= pi { (r - pi, true) } else { (r, false) };
+    let r = if r > pi / 2 { pi - r } else { r };
+    let p = horner_eval(i128_to_fp(r as i128), &sin_coefs_q(precision_bits), precision_bits);
+    if (v < 0) != folded {
+        -p
+    } else {
+        p
+    }
+}
+
+/// `cos(x) = sin(x + π/2)` on Q-encoded values (the circuit's algorithm).
+pub fn fp_cos(x: Fp, precision_bits: u32) -> Fp {
+    fp_sin(x + i128_to_fp(half_pi_q(precision_bits)), precision_bits)
+}
+
+/// `arcsin` on Q-encoded values, by the circuit's algorithm:
+/// `arcsin(x) = 2 * atan(x / (1 + sqrt(1 - x^2)))`. The atan argument lies in
+/// `[-1, 1]` for every `|x| <= 1`, the fit interval of [`ATAN_COEFS`]. Every
+/// product rounds down, the square root is [`fp_sqrt`] and the division is
+/// [`fp_div_prescale`]. Outside `[-1, 1]` (where NumPy gives nan) the result
+/// is 0.
+pub fn fp_arcsin(x: Fp, precision_bits: u32) -> Fp {
+    let one = 1i128 << precision_bits;
+    let v = match fp_to_i128(x) {
+        Some(v) if v.abs() <= one => v,
+        _ => 0,
+    };
+    let x_q = i128_to_fp(v);
+    let (x2, _) = fp_mul_rescale(x_q, x_q, precision_bits);
+    let root = fp_sqrt(i128_to_fp(one) - x2, precision_bits);
+    let t = fp_div_prescale(x_q, i128_to_fp(one) + root, precision_bits);
+    let (u, _) = fp_mul_rescale(t, t, precision_bits);
+    let p = horner_eval(u, &atan_odd_coefs_q(precision_bits), precision_bits);
+    let (half, _) = fp_mul_rescale(t, p, precision_bits);
+    half + half
 }
 
 /// Compute exp(x) using native f64 math on the dequantized value.
@@ -438,18 +590,6 @@ pub fn fp_exp(x: Fp, precision_bits: u32) -> Fp {
 pub fn fp_log(x: Fp, precision_bits: u32) -> Fp {
     let v = dequantize_from_fp(x, precision_bits);
     quantize_to_fp(v.ln(), precision_bits)
-}
-
-/// Compute cos(x) using native f64 math on the dequantized value.
-pub fn fp_cos(x: Fp, precision_bits: u32) -> Fp {
-    let v = dequantize_from_fp(x, precision_bits);
-    quantize_to_fp(v.cos(), precision_bits)
-}
-
-/// Compute sqrt(x) using native f64 math on the dequantized value.
-pub fn fp_sqrt(x: Fp, precision_bits: u32) -> Fp {
-    let v = dequantize_from_fp(x, precision_bits);
-    quantize_to_fp(v.sqrt(), precision_bits)
 }
 
 /// Compute sinh: (exp(x) - exp(-x)) / 2.
@@ -495,12 +635,6 @@ pub fn fp_atan2(y: Fp, x: Fp, precision_bits: u32) -> Fp {
 pub fn fp_arccos(x: Fp, precision_bits: u32) -> Fp {
     let v = dequantize_from_fp(x, precision_bits);
     quantize_to_fp(v.acos(), precision_bits)
-}
-
-/// Compute arcsin(x) using native f64 math on the dequantized value.
-pub fn fp_arcsin(x: Fp, precision_bits: u32) -> Fp {
-    let v = dequantize_from_fp(x, precision_bits);
-    quantize_to_fp(v.asin(), precision_bits)
 }
 
 /// Simplified Poseidon permutation (4 rounds, t=3).
@@ -789,6 +923,95 @@ mod tests {
                 "fp_div_prescale({a}, {b}) -> {got}; expected {expected}; err {err:.2e}, tol {tol:.2e}",
             );
         }
+    }
+
+    #[test]
+    fn division_conventions() {
+        // (a, b) -> (floor, euclid, trunc) quotient/remainder pairs.
+        let cases = [
+            (7, 2, (3, 1), (3, 1), (3, 1)),
+            (-7, 2, (-4, 1), (-4, 1), (-3, -1)),
+            (7, -2, (-4, -1), (-3, 1), (-3, 1)),
+            (-7, -2, (3, -1), (4, 1), (3, -1)),
+            (6, -3, (-2, 0), (-2, 0), (-2, 0)),
+        ];
+        for (a, b, floor, euclid, trunc) in cases {
+            assert_eq!(div_rem_or_zero(a, b, Rounding::Floor), floor, "{a} floor {b}");
+            assert_eq!(div_rem_or_zero(a, b, Rounding::Euclid), euclid, "{a} euclid {b}");
+            assert_eq!(div_rem_or_zero(a, b, Rounding::Trunc), trunc, "{a} trunc {b}");
+        }
+        for rounding in [Rounding::Floor, Rounding::Euclid, Rounding::Trunc] {
+            assert_eq!(div_rem_or_zero(5, 0, rounding), (0, 0));
+        }
+    }
+
+    #[test]
+    fn integer_floor_division_follows_python() {
+        let q = |a: i64, b: i64| fp_to_i64(fp_floor_div(i64_to_fp(a), i64_to_fp(b)).0);
+        let r = |a: i64, b: i64| fp_to_i64(fp_floor_div(i64_to_fp(a), i64_to_fp(b)).1);
+        assert_eq!((q(-7, 2), r(-7, 2)), (-4, 1));
+        assert_eq!((q(7, -2), r(7, -2)), (-4, -1));
+        assert_eq!((q(-7, -2), r(-7, -2)), (3, -1));
+        assert_eq!((q(5, 0), r(5, 0)), (0, 0));
+        let prec = 32;
+        let mod_f = |a: f64, b: f64| dequantize_from_fp(fp_float_mod(quantize_to_fp(a, prec), quantize_to_fp(b, prec)), prec);
+        let fdiv_f = |a: f64, b: f64| {
+            dequantize_from_fp(fp_float_floor_div(quantize_to_fp(a, prec), quantize_to_fp(b, prec), prec), prec)
+        };
+        assert_eq!((fdiv_f(7.5, -2.0), mod_f(7.5, -2.0)), (-4.0, -0.5));
+        assert_eq!((fdiv_f(-7.5, 2.0), mod_f(-7.5, 2.0)), (-4.0, 0.5));
+    }
+
+    #[test]
+    fn fp_to_i128_round_trips_and_rejects_large_values() {
+        for v in [0i128, 1, -1, 1 << 95, -(1 << 95), (1 << 126) - 1] {
+            assert_eq!(fp_to_i128(i128_to_fp(v)), Some(v));
+        }
+        assert_eq!(fp_to_i128(i128_to_fp(1 << 126)), None);
+        assert_eq!(fp_to_i128(i128_to_fp(1 << 126) * Fp::from(4u64)), None);
+    }
+
+    #[test]
+    fn fp_sqrt_is_the_exact_floor_root() {
+        let prec = 32;
+        for x in [0.0, 1e-9, 0.25, 2.0, 3.0, 1e6, 2e9] {
+            let v = fp_to_i128(quantize_to_fp(x, prec)).unwrap() as u128;
+            let y = fp_to_i128(fp_sqrt(quantize_to_fp(x, prec), prec)).unwrap() as u128;
+            let n = v << prec;
+            assert!(y * y <= n && n < (y + 1) * (y + 1), "sqrt({x})");
+        }
+        assert_eq!(fp_sqrt(quantize_to_fp(-4.0, prec), prec), Fp::zero());
+    }
+
+    #[test]
+    fn fixed_point_trigonometry_is_accurate() {
+        let prec = 32;
+        let close = |got: Fp, want: f64| (dequantize_from_fp(got, prec) - want).abs();
+        let mut worst: f64 = 0.0;
+        for i in 0..=4000 {
+            let x = -20.0 + 40.0 * i as f64 / 4000.0;
+            let xq = quantize_to_fp(x, prec);
+            let exact = dequantize_from_fp(xq, prec);
+            worst = worst.max(close(fp_sin(xq, prec), exact.sin()));
+            worst = worst.max(close(fp_cos(xq, prec), exact.cos()));
+        }
+        assert!(worst < 2e-7, "sin/cos error {worst}");
+        let mut worst: f64 = 0.0;
+        for i in 0..=4000 {
+            let x = -1.0 + 2.0 * i as f64 / 4000.0;
+            let xq = quantize_to_fp(x, prec);
+            worst = worst.max(close(fp_arcsin(xq, prec), dequantize_from_fp(xq, prec).asin()));
+        }
+        assert!(worst < 2e-7, "arcsin error {worst}");
+        assert_eq!(fp_arcsin(quantize_to_fp(1.5, prec), prec), Fp::zero());
+    }
+
+    #[test]
+    fn atan_odd_coefficients_are_leading_first() {
+        let coefs = atan_odd_coefs_q(32);
+        assert_eq!(coefs.len(), 8);
+        assert_eq!(coefs[7], quantize_to_fp(ATAN_COEFS[1], 32));
+        assert_eq!(coefs[0], quantize_to_fp(ATAN_COEFS[15], 32));
     }
 
     #[test]
