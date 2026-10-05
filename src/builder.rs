@@ -1822,8 +1822,16 @@ impl IRBuilder {
     }
 
     /// `sum_i a_i * b_i` over Float pairs, rescaled once: `ProductSumF` for
-    /// two or more pairs (a product, `0.0` for none).
+    /// two or more pairs (a product, `0.0` for none). Compile-time operands
+    /// fold in f64, as `MulF`/`AddF` fold.
     pub fn ir_dot_f(&mut self, pairs: &[(Value, Value)]) -> Value {
+        let folded: Option<f64> = pairs
+            .iter()
+            .map(|(a, b)| Some(a.float_val()? * b.float_val()?))
+            .sum();
+        if let Some(sum) = folded {
+            return self.ir_constant_float(sum);
+        }
         match pairs {
             [] => self.ir_constant_float(0.0),
             [(a, b)] => self.ir_mul_f(a, b),
