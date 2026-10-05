@@ -16,13 +16,10 @@ use std::{
 
 use anyhow::{Context, Result};
 use clap::{Args, ValueEnum};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::Serialize;
 use serde_json::{json, Map, Value};
 
-use crate::{
-    fixture::{Arg, ArgWriter, Fixture},
-    Input, Public,
-};
+use crate::{fixture::Fixture, Input, Public};
 
 /// The arguments every host takes.
 #[derive(Args, Debug)]
@@ -76,7 +73,7 @@ impl CommonArgs {
 
     /// The encoded kernel arguments of the chosen fixture input, without the
     /// parameters the case never reads.
-    pub fn kernel_args(&self) -> Result<Vec<Arg>> {
+    pub fn kernel_args(&self) -> Result<Vec<Vec<i64>>> {
         let unused = crate::unused_params(&self.case()?);
         Fixture::load(&self.fixture_path())?.args(&self.input, unused)
     }
@@ -189,20 +186,14 @@ pub fn tamper_byte(public_values: &mut [u8]) -> Result<()> {
     Ok(())
 }
 
-/// The private input of a native run: one bincode buffer per argument, the
-/// same encoding `SP1Stdin` uses.
-#[derive(Default)]
+/// The private input of a native run: the argument buffers in order.
 pub struct NativeInput {
-    buffers: VecDeque<Vec<u8>>,
+    buffers: VecDeque<Vec<i64>>,
 }
 
 impl NativeInput {
-    pub fn new(args: &[Arg]) -> NativeInput {
-        let mut input = NativeInput::default();
-        for arg in args {
-            arg.write_to(&mut input);
-        }
-        input
+    pub fn new(args: Vec<Vec<i64>>) -> NativeInput {
+        NativeInput { buffers: args.into() }
     }
 
     /// Whether the guest read every argument.
@@ -211,25 +202,22 @@ impl NativeInput {
     }
 }
 
-impl ArgWriter for NativeInput {
-    fn write<T: Serialize>(&mut self, value: &T) {
-        self.buffers.push_back(bincode::serialize(value).expect("bincode serialization"));
-    }
-}
-
 impl Input for NativeInput {
-    fn read<T: DeserializeOwned>(&mut self) -> T {
-        let buffer = self.buffers.pop_front().expect("the guest read past the last argument");
-        bincode::deserialize(&buffer).expect("argument has the wrong type")
+    fn read_words(&mut self) -> Vec<i64> {
+        self.buffers.pop_front().expect("the guest read past the last argument")
     }
 }
 
-/// Runs `case` natively on `args`; `None` if the case is unknown.
-pub fn run_native(case: &str, args: &[Arg]) -> Option<Vec<Public>> {
+/// Runs `case` natively on `args` and decodes its committed words the way
+/// the hosts do; `None` if the case is unknown.
+pub fn run_native(case: &str, args: Vec<Vec<i64>>) -> Option<Result<Vec<Public>>> {
     let mut input = NativeInput::new(args);
-    let publics = crate::run(case, &mut input)?;
-    assert!(input.is_exhausted(), "the guest did not read every argument");
-    Some(publics)
+    let words = crate::run(case, &mut input)?;
+    if !input.is_exhausted() {
+        return Some(Err(anyhow::anyhow!("the guest did not read every argument")));
+    }
+    let publics = crate::decode_publics(case, &words)?;
+    Some(publics.map_err(|err| anyhow::anyhow!("decoding the committed words: {err}")))
 }
 
 /// Output values as JSON (floats decoded from Q32, integers, booleans),

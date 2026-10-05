@@ -137,6 +137,22 @@ A case has the same parameters, shapes, constants and algorithm as
   Cairo driver leave it out of the private input, as Zinnia removes it from
   the circuit. Run `sync_cases.py` after adding such a line.
 
+### How the Rust guests move data
+
+Every parameter travels as one buffer of 64-bit little-endian words (a Q32
+by its encoding, an integer as itself, a boolean as 0/1; a scalar is one
+word), read with the zkVM's raw-slice call (SP1 `io::read_vec`, RISC Zero
+`env::read_slice` of a length word and then the words). The output is
+encoded into one word buffer (`Publics::encode`: a scalar is one word, a
+vector its length then its items, a tuple its items in order) and committed
+with one raw call (SP1 `io::commit_slice`, RISC Zero `env::commit_slice`).
+This is the bulk-data path both zkVMs document; their serde codecs
+(`io::read`/`env::read`, `commit`) cost hundreds of cycles per element
+(RISC Zero, 1,000-element copy 0317: 493k user cycles with serde, 52k with
+raw words; SP1 0385, 20,000 elements: 13.7M cycles with serde and software
+SHA-256, 1.7M now). The SP1 guest also uses SP1's patched `sha2`, so the
+public values are hashed on SP1's SHA-256 precompile.
+
 ### Style
 
 NumPy behaviours that several cases need (`np_index`, `argmax`, `mean`,

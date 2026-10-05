@@ -7,17 +7,18 @@ publish = false
 
 [dependencies]
 q32 = { path = "../q32" }
-serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+# Byte views of the word buffers the zkVMs read and commit.
+bytemuck = { version = "1", features = ["extern_crate_alloc"] }
 # Host side only (fixture loading, native runs, JSON output).
 anyhow = { version = "1", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
-bincode = { version = "1", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
 # float_roundtrip: parse fixture floats exactly (correctly rounded, like
 # Python), so the Q32 encoding matches Zinnia's and the Cairo driver's.
 serde_json = { version = "1", features = ["float_roundtrip"], optional = true }
 
 [features]
-std = ["q32/std", "serde/std", "dep:anyhow", "dep:bincode", "dep:clap", "dep:serde_json"]
+std = ["q32/std", "dep:serde", "dep:anyhow", "dep:clap", "dep:serde_json"]
 
 [[bin]]
 name = "ds1000-native"

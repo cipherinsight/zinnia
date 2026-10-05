@@ -22,8 +22,8 @@ fn main() -> ExitCode {
         let case = args.case()?;
         let kernel_args = args.kernel_args()?;
         let publics = report
-            .time("execute", || run_native(&case, &kernel_args))
-            .with_context(|| format!("{case} has no Q32 program"))?;
+            .time("execute", || run_native(&case, kernel_args))
+            .with_context(|| format!("{case} has no Q32 program"))??;
         report.set_publics(&publics);
         Ok(())
     })

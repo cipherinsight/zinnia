@@ -69,6 +69,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bytemuck"
+version = "1.25.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95832e849adfb21180ccb6826a99da14e5d266ae5c2e668e1602cf234f153797"
+
+[[package]]
 name = "byteorder"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -150,8 +156,8 @@ dependencies = [
 name = "ds1000-zkvm"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "q32",
- "serde",
 ]
 
 [[package]]
@@ -520,9 +526,6 @@ dependencies = [
 [[package]]
 name = "q32"
 version = "0.1.0"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "quote"
@@ -641,8 +644,7 @@ dependencies = [
 [[package]]
 name = "sha2"
 version = "0.10.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
+source = "git+https://github.com/sp1-patches/RustCrypto-hashes?tag=patch-sha2-0.10.9-sp1-6.2.0#e48b656ebc806117554bb33c2f8687e4637e37ff"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
@@ -737,7 +739,6 @@ name = "sp1-ds1000-guest"
 version = "0.1.0"
 dependencies = [
  "ds1000-zkvm",
- "serde",
  "sp1-zkvm",
 ]
 

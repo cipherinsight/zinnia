@@ -30,17 +30,13 @@ extern crate std;
 
 use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use serde::{Deserialize, Serialize};
-
 /// Number of fractional bits (Zinnia `precision_bits`).
 pub const FRAC_BITS: u32 = 32;
 const SCALE: i64 = 1 << FRAC_BITS;
 
 /// A Q32.32 fixed-point number (see the crate documentation).
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
-#[serde(transparent)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
 pub struct Q32(i64);
 
 impl Q32 {

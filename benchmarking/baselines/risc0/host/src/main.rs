@@ -18,19 +18,17 @@ use std::{
     process::ExitCode,
 };
 
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, ValueEnum};
 use ds1000_zkvm::{
-    fixture::ArgWriter,
     host::{run_host, tamper_byte, CommonArgs, Mode, Report},
-    Decoder, Public,
+    words_from_le_bytes, Public,
 };
 use risc0_ds1000_methods::GUESTS;
 use risc0_zkvm::{
-    get_prover_server, Digest, ExecutorEnv, ExecutorEnvBuilder, ExecutorImpl, ProverOpts, Receipt,
-    Session, VerifierContext,
+    get_prover_server, Digest, ExecutorEnv, ExecutorImpl, ProverOpts, Receipt, Session,
+    VerifierContext,
 };
-use serde::{de::DeserializeOwned, Serialize};
 
 const ZKVM_VERSION: &str = "3.0.3";
 
@@ -98,18 +96,14 @@ fn proof_path(work: &Path, mode: ProofMode, input: &str) -> PathBuf {
     work.join(format!("receipt-{}-{input}.bin", mode.name()))
 }
 
+/// One frame per kernel argument: its word count, then its words.
 fn executor_env(args: &CommonArgs) -> Result<ExecutorEnv<'static>> {
-    struct Writer(ExecutorEnvBuilder<'static>);
-    impl ArgWriter for Writer {
-        fn write<T: Serialize>(&mut self, value: &T) {
-            self.0.write(value).expect("serializing a kernel argument");
-        }
+    let mut builder = ExecutorEnv::builder();
+    for words in args.kernel_args()? {
+        let len = u32::try_from(words.len()).context("argument too long")?;
+        builder.write_slice(&[len]).write_slice(&words);
     }
-    let mut writer = Writer(ExecutorEnv::builder());
-    for arg in args.kernel_args()? {
-        arg.write_to(&mut writer);
-    }
-    writer.0.build()
+    builder.build()
 }
 
 /// Runs the guest in the executor and records the cycle counts.
@@ -171,24 +165,10 @@ fn verify(report: &mut Report, case: &str, guest: &Guest, cli: &Cli, work: &Path
     }
 }
 
-/// Decodes the journal with RISC Zero's serde encoding and checks that the
-/// decoded output encodes back to exactly the journal.
+/// Decodes the journal: the output's words, little-endian.
 fn decode_publics(case: &str, journal: &[u8]) -> Result<Vec<Public>> {
-    struct Journal<'a>(&'a [u8]);
-    impl Decoder for Journal<'_> {
-        type Error = anyhow::Error;
-        fn decode<T: Serialize + DeserializeOwned>(self) -> Result<T> {
-            let value: T = risc0_zkvm::serde::from_slice(self.0)?;
-            let encoded: Vec<u8> = words_to_bytes(&risc0_zkvm::serde::to_vec(&value)?);
-            ensure!(encoded == self.0, "journal has bytes beyond the output");
-            Ok(value)
-        }
-    }
-    ds1000_zkvm::decode_publics(case, Journal(journal))
-        .with_context(|| format!("unknown case {case}"))?
-        .context("decoding the journal")
-}
-
-fn words_to_bytes(words: &[u32]) -> Vec<u8> {
-    words.iter().flat_map(|w| w.to_le_bytes()).collect()
+    let words = words_from_le_bytes(journal).context("the journal is not a whole number of words")?;
+    let decoded = ds1000_zkvm::decode_publics(case, &words)
+        .with_context(|| format!("unknown case {case}"))?;
+    Ok(decoded?)
 }

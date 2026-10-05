@@ -19,12 +19,10 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use bincode::Options;
 use clap::{Parser, ValueEnum};
 use ds1000_zkvm::{
-    fixture::ArgWriter,
     host::{run_host, tamper_byte, CommonArgs, Mode, Report},
-    Decoder, Public,
+    words_as_le_bytes, words_from_le_bytes, Public,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use sp1_sdk::{
@@ -126,18 +124,13 @@ fn load_elf(case: &str) -> Result<Elf> {
     Ok(Elf::from(bytes))
 }
 
+/// One raw buffer of little-endian words per kernel argument.
 fn stdin(args: &CommonArgs) -> Result<SP1Stdin> {
-    struct Writer(SP1Stdin);
-    impl ArgWriter for Writer {
-        fn write<T: Serialize>(&mut self, value: &T) {
-            self.0.write(value);
-        }
+    let mut stdin = SP1Stdin::new();
+    for words in args.kernel_args()? {
+        stdin.write_slice(words_as_le_bytes(&words));
     }
-    let mut writer = Writer(SP1Stdin::new());
-    for arg in args.kernel_args()? {
-        arg.write_to(&mut writer);
-    }
-    Ok(writer.0)
+    Ok(stdin)
 }
 
 fn setup(report: &mut Report, elf: Elf, work: &WorkFiles) -> Result<()> {
@@ -223,19 +216,11 @@ fn record_cycles(report: &mut Report, execution: &sp1_sdk::ExecutionReport) {
 /// Decodes the committed output: the bincode encoding `sp1_zkvm::io::commit`
 /// writes, with no bytes left over.
 fn decode_publics(case: &str, public_values: &SP1PublicValues) -> Result<Vec<Public>> {
-    struct Bincode<'a>(&'a [u8]);
-    impl Decoder for Bincode<'_> {
-        type Error = bincode::Error;
-        fn decode<T: Serialize + DeserializeOwned>(self) -> Result<T, bincode::Error> {
-            bincode::DefaultOptions::new()
-                .with_fixint_encoding()
-                .reject_trailing_bytes()
-                .deserialize(self.0)
-        }
-    }
-    let decoded = ds1000_zkvm::decode_publics(case, Bincode(public_values.as_slice()))
+    let words = words_from_le_bytes(public_values.as_slice())
+        .context("the public values are not a whole number of words")?;
+    let decoded = ds1000_zkvm::decode_publics(case, &words)
         .with_context(|| format!("unknown case {case}"))?;
-    decoded.context("decoding the public values")
+    Ok(decoded?)
 }
 
 fn save<T: Serialize + ?Sized>(path: &Path, value: &T) -> Result<()> {

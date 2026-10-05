@@ -1,17 +1,17 @@
 //! Loading kernel inputs from `datasets/ds1000/<case>/fixture.json`.
 //!
-//! Parameters come in the kernel's signature order. Float values are encoded
-//! as Q32 (`round(v * 2^32)`, Zinnia's quantizer), integers as `i64`, and
-//! booleans as `bool`. Arrays are flattened in row-major order and written as
-//! one vector each, so the guest reads one value per parameter.
+//! Parameters come in the kernel's signature order. Each becomes one buffer
+//! of 64-bit words (see [`crate::Word`]): floats as Q32 (`round(v * 2^32)`,
+//! Zinnia's quantizer), integers as themselves, booleans as 0 or 1; arrays
+//! flattened in row-major order, a scalar as one word.
 
 use std::{collections::BTreeMap, path::Path};
 
 use anyhow::{bail, ensure, Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 
-use crate::Q32;
+use crate::{Word, Q32};
 
 #[derive(Debug, Deserialize)]
 pub struct Fixture {
@@ -45,35 +45,6 @@ pub enum Dtype {
     Bool,
 }
 
-/// One encoded kernel argument.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Arg {
-    Float(Q32),
-    Int(i64),
-    Bool(bool),
-    FloatArray(Vec<Q32>),
-    IntArray(Vec<i64>),
-    BoolArray(Vec<bool>),
-}
-
-/// A zkVM's private-input writer (`SP1Stdin`, RISC Zero's
-/// `ExecutorEnvBuilder`, or the native runner).
-pub trait ArgWriter {
-    fn write<T: Serialize>(&mut self, value: &T);
-}
-
-impl Arg {
-    pub fn write_to(&self, writer: &mut impl ArgWriter) {
-        match self {
-            Arg::Float(v) => writer.write(v),
-            Arg::Int(v) => writer.write(v),
-            Arg::Bool(v) => writer.write(v),
-            Arg::FloatArray(v) => writer.write(v),
-            Arg::IntArray(v) => writer.write(v),
-            Arg::BoolArray(v) => writer.write(v),
-        }
-    }
-}
 
 impl Fixture {
     pub fn load(path: &Path) -> Result<Fixture> {
@@ -82,10 +53,10 @@ impl Fixture {
         serde_json::from_str(&text).with_context(|| format!("parsing fixture {}", path.display()))
     }
 
-    /// The encoded arguments of input `name` (`A` or `B`), in signature
+    /// The words of each argument of input `name` (`A` or `B`), in signature
     /// order, leaving out the parameters in `unused` (see
     /// [`crate::unused_params`]).
-    pub fn args(&self, name: &str, unused: &[&str]) -> Result<Vec<Arg>> {
+    pub fn args(&self, name: &str, unused: &[&str]) -> Result<Vec<Vec<i64>>> {
         let values = self
             .inputs
             .get(name)
@@ -116,26 +87,29 @@ impl Fixture {
 }
 
 impl Parameter {
-    fn encode(&self, value: &Value) -> Result<Arg> {
-        Ok(match self.kind {
-            Kind::Scalar => match self.dtype {
-                Dtype::Float => Arg::Float(float(value)?),
-                Dtype::Int => Arg::Int(int(value)?),
-                Dtype::Bool => Arg::Bool(boolean(value)?),
-            },
+    /// The argument's words: one for a scalar, the row-major elements of an
+    /// array.
+    fn encode(&self, value: &Value) -> Result<Vec<i64>> {
+        let mut leaves = Vec::new();
+        match self.kind {
+            Kind::Scalar => leaves.push(value),
             Kind::Array => {
-                let mut leaves = Vec::new();
                 let shape = flatten(value, &mut leaves)?;
                 if let Some(expected) = &self.shape {
                     ensure!(&shape == expected, "shape {shape:?}, expected {expected:?}");
                 }
-                match self.dtype {
-                    Dtype::Float => Arg::FloatArray(leaves.iter().copied().map(float).collect::<Result<_>>()?),
-                    Dtype::Int => Arg::IntArray(leaves.iter().copied().map(int).collect::<Result<_>>()?),
-                    Dtype::Bool => Arg::BoolArray(leaves.iter().copied().map(boolean).collect::<Result<_>>()?),
-                }
             }
-        })
+        }
+        leaves
+            .into_iter()
+            .map(|leaf| {
+                Ok(match self.dtype {
+                    Dtype::Float => float(leaf)?.to_word(),
+                    Dtype::Int => int(leaf)?,
+                    Dtype::Bool => boolean(leaf)?.to_word(),
+                })
+            })
+            .collect()
     }
 }
 
