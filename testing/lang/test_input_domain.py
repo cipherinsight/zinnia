@@ -2,7 +2,8 @@
 
 A circuit input is a field element of the prover's choice. Each element is
 now constrained when it is read: integers to the signed 64-bit window, floats
-to the Q32 window (codes of doubles in [-2^31, 2^31)), booleans to {0, 1}. So
+to the Q32 window (codes in the same signed 64-bit window, i.e. values in
+[-2^31, 2^31)), booleans to {0, 1}. So
 a proof means "some valid NumPy input gives these outputs". The malicious
 witnesses below put a raw field element (the witness format's `Hex` node) in
 an input cell; before the check they were accepted (the kernels only add and
@@ -73,7 +74,7 @@ MALICIOUS = {
     "integer 2^63": set_array_element(1, field_hex(2**63)),
     "integer -2^63 - 1": set_array_element(0, field_hex(-(2**63) - 1)),
     "integer 2^100": set_array_element(1, field_hex(2**100)),
-    "float code 2^63 - 1": set_scalar(1, field_hex(2**63 - 1)),
+    "float code 2^63": set_scalar(1, field_hex(2**63)),
     "float code -2^63 - 1": set_scalar(1, field_hex(-(2**63) - 1)),
     "boolean 2": set_scalar(2, field_hex(2)),
     "boolean -1": set_scalar(2, field_hex(-1)),
@@ -113,10 +114,10 @@ def test_out_of_domain_inputs_are_rejected_by_halo2_base():
 def test_every_input_element_gets_one_check():
     program = compile_kernel(SOURCE)
     kinds = [s["ir_instance"]["__class__"] for s in program.get_ir_stmts()]
-    # two integers + one float: a lower and an upper comparison each;
-    # three booleans: one AssertBit each.
-    assert kinds.count("GreaterThanOrEqualIIR") + kinds.count("GreaterThanOrEqualFIR") == 3
-    assert kinds.count("LessThanOrEqualIIR") + kinds.count("LessThanOrEqualFIR") == 3
+    # two integers + one float (its Q32 code): a lower and an upper
+    # comparison each; three booleans: one AssertBit each.
+    assert kinds.count("GreaterThanOrEqualIIR") == 3
+    assert kinds.count("LessThanOrEqualIIR") == 3
     assert kinds.count("AssertBitIR") == 3
 
 

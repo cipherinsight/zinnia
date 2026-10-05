@@ -7,12 +7,11 @@
 //! each input element is constrained once, when it is read:
 //!
 //! * `Integer`: `i64::MIN <= x <= i64::MAX`, the signed 64-bit window;
-//! * `Float` (Q32 fixed point, code `round(v * 2^32)`): `-2^31 <= v <=
-//!   2^31 - 2^-22`. The lower bound is the window's bottom code `-2^63`; the
-//!   upper bound is the largest double below `2^31`, whose code `2^63 - 2^10`
-//!   is the largest code any float64 in the window quantizes to (doubles in
-//!   `[2^30, 2^31)` are `2^-22` apart). `2^31` itself (code `2^63`) is not a
-//!   constant the backends can hold;
+//! * `Float` (Q32 fixed point, code `round(v * 2^32)`): the code in the same
+//!   window, `-2^63 <= code <= 2^63 - 1` (`-2^31 <= v < 2^31`). The code is
+//!   compared with the integer bounds: every backend compares Q32 floats as
+//!   their integer codes, and the top code `2^63 - 1` has no float constant
+//!   (`(2^63 - 1) / 2^32` rounds to `2^31`, whose code leaves the window);
 //! * `Boolean`: `x * (x - 1) == 0` (`AssertBit`).
 //!
 //! Soundness of the comparisons: each is an exact signed comparison on every
@@ -39,11 +38,6 @@ use crate::types::{StmtId, Value, ZinniaType};
 
 use super::IRGenerator;
 
-/// The largest double below `2^31`: the largest Q32 float input.
-const FLOAT_INPUT_MAX: f64 = 2147483648.0 - 1.0 / 4194304.0;
-/// `-2^31`: the smallest Q32 float input (code `-2^63`).
-const FLOAT_INPUT_MIN: f64 = -2147483648.0;
-
 impl IRGenerator {
     /// Constrain a freshly read input element to its dtype's domain.
     pub(crate) fn check_input_domain(&mut self, value: &Value, dtype: &ZinniaType) {
@@ -51,20 +45,13 @@ impl IRGenerator {
             ZinniaType::Boolean => {
                 self.builder.ir_assert_bit(value);
             }
-            ZinniaType::Integer => {
+            // A float's Q32 code is checked like an integer (module docs).
+            ZinniaType::Integer | ZinniaType::Float => {
                 let lo = self.builder.ir_constant_int(i64::MIN);
                 let hi = self.builder.ir_constant_int(i64::MAX);
                 let above = self.builder.ir_greater_than_or_equal_i(value, &lo);
                 self.builder.ir_assert(&above);
                 let below = self.builder.ir_less_than_or_equal_i(value, &hi);
-                self.builder.ir_assert(&below);
-            }
-            ZinniaType::Float => {
-                let lo = self.builder.ir_constant_float(FLOAT_INPUT_MIN);
-                let hi = self.builder.ir_constant_float(FLOAT_INPUT_MAX);
-                let above = self.builder.ir_greater_than_or_equal_f(value, &lo);
-                self.builder.ir_assert(&above);
-                let below = self.builder.ir_less_than_or_equal_f(value, &hi);
                 self.builder.ir_assert(&below);
             }
             _ => {}
@@ -83,8 +70,6 @@ fn is_domain_comparison(graph: &IRGraph, cmp: StmtId, read: StmtId) -> bool {
     match (&stmt.ir, &graph.stmts[rhs as usize].ir) {
         (IR::GteI, IR::ConstantInt { value }) => *value == i64::MIN,
         (IR::LteI, IR::ConstantInt { value }) => *value == i64::MAX,
-        (IR::GteF, IR::ConstantFloat { value }) => *value == FLOAT_INPUT_MIN,
-        (IR::LteF, IR::ConstantFloat { value }) => *value == FLOAT_INPUT_MAX,
         _ => false,
     }
 }
@@ -132,19 +117,4 @@ pub fn drop_checks_of_unread_inputs(mut graph: IRGraph) -> IRGraph {
         graph.remove_stmt_bunch(&dropped);
     }
     graph
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn float_bounds_are_the_extreme_q32_codes_of_doubles() {
-        let code = |v: f64| crate::prove::field::quantize(v, 32);
-        assert_eq!(code(FLOAT_INPUT_MIN), -(1i128 << 63));
-        assert_eq!(code(FLOAT_INPUT_MAX), (1i128 << 63) - (1 << 10));
-        // The next double up is 2^31, whose code leaves the window.
-        let next = f64::from_bits(FLOAT_INPUT_MAX.to_bits() + 1);
-        assert_eq!(code(next), 1i128 << 63);
-    }
 }
