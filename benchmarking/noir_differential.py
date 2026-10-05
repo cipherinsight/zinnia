@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Differential test: Zinnia's Noir backend against the mock backend.
 
-For every performance-set case (`ds1000_case<NNNN>/kernel.py` with an
-`INPUT_BUILDERS` fixture in `run_halo2_baselines.py`):
+For every `perf` case of `datasets/case_sets/ds1000_perf.json` and both inputs
+of its `fixture.json` (A and B):
 
-  1. compile the kernel and build its inputs (as `run_zinnia_noir.py` does);
+  1. compile the kernel (`harness.kernels.compile_kernel`) and take the input's
+     arguments from the fixture (`harness.fixtures`);
   2. mock: `prove(backend="mock")`; its public values, ordered by statement
      id (the order in which the IR exposes them);
   3. Noir: emit the circuit and run `nargo execute` (`execute_noir_circuit`),
@@ -19,13 +20,14 @@ For every performance-set case (`ds1000_case<NNNN>/kernel.py` with an
      tanh, arccos, arctan2): those kernels get the tolerance `--approx-rtol` /
      `--approx-atol` (real units) on every output.
 
-Each case runs in a child process with a timeout; `--wrap` prefixes every
-child command, e.g. with the memory cap (a case that exceeds it is then
-recorded as a crash instead of killing the sweep):
+A case's status is the worse of its two inputs. Each case runs in a child
+process with a timeout; `--wrap` prefixes every child command, e.g. with the
+memory cap (a case that exceeds it is then recorded as a crash instead of
+killing the sweep):
 
     MEMRUN_MAX=8G .venv/bin/python benchmarking/noir_differential.py \\
         --wrap ../eval-redo/tools/memrun.sh [--cases 0303,0353] [--prove] \\
-        [--out noir_differential.json]
+        [--jobs 2] [--out noir_differential.json]
 
 Exit status 0 iff no case mismatches and no case fails on the Noir side
 while the mock succeeds.
@@ -34,17 +36,20 @@ while the mock succeeds.
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import os
 import re
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 THIS_DIR = Path(__file__).resolve().parent
 ROOT = THIS_DIR.parent
+DATASET = THIS_DIR / "datasets" / "ds1000"
+CASE_SET = THIS_DIR / "datasets" / "case_sets" / "ds1000_perf.json"
+INPUTS = ("A", "B")
 os.environ.setdefault("ZINNIA_SKIP_RELEASE_BUILD", "1")
 
 BN254_P = 21888242871839275222246405745257275088548364400416034343698204186575808495617
@@ -57,6 +62,11 @@ APPROX_OPS = {
     "ArcCosFIR", "ArcTan2FIR",
 }
 
+# Statuses from best to worst; a case reports the worst of its inputs.
+STATUS_ORDER = ("match", "match_approx", "both_reject", "compile_error", "mock_error",
+                "mismatch", "noir_error", "mock_unsatisfied_noir_accepts")
+FAILING = {"mismatch", "noir_error", "mock_unsatisfied_noir_accepts", "crash", "timeout"}
+
 
 def signed(v: int) -> int:
     """Signed reading of a field element (as the mock's fp_to_i64)."""
@@ -64,28 +74,25 @@ def signed(v: int) -> int:
     return v - BN254_P if v > BN254_P // 2 else v
 
 
+def case_name(spec: str) -> str:
+    return spec if spec.startswith("ds1000_case") else f"ds1000_case{spec}"
+
+
+def perf_cases() -> list[str]:
+    """Every case whose status in the performance case set is `perf`."""
+    entries = json.loads(CASE_SET.read_text())["cases"]
+    return sorted(e["case"] for e in entries if e["status"] == "perf")
+
+
 def load_case(case: str):
-    sys.path.insert(0, str(THIS_DIR))
+    """(compiled program, fixture) of one DS-1000 case folder."""
     sys.path.insert(0, str(ROOT))
-    from run_halo2_baselines import INPUT_BUILDERS
-    from run_zinnia_noir import _coerce_arg
-    from zinnia.api.zk_circuit import ZKCircuit
+    from benchmarking.harness.fixtures import load_fixture
+    from benchmarking.harness.kernels import compile_kernel
 
-    fixture = INPUT_BUILDERS[case]()
-    path = THIS_DIR / f"ds1000_case{case}" / "kernel.py"
-    spec = importlib.util.spec_from_file_location(f"noir_diff_{case}", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    compiled = ZKCircuit.from_method(mod.kernel).compile()
-
-    def lookup(name: str):
-        for key in (name, name.lower(), name.upper(), f"{name}_val", f"{name.lower()}_val"):
-            if key in fixture:
-                return fixture[key]
-        raise KeyError(f"no fixture value for kernel parameter {name!r}")
-
-    args = [_coerce_arg(lookup(pi.name), pi.export().get("dt")) for pi in compiled.program_inputs]
-    return compiled, args
+    directory = DATASET / case_name(case)
+    fixture = load_fixture(directory / "fixture.json")
+    return compile_kernel(directory / "kernel.py", fixture.function), fixture
 
 
 def mock_publics(compiled, args) -> tuple[bool, list[tuple[str, int]]]:
@@ -150,22 +157,12 @@ def compare(mock: list[tuple[str, int]], noir: list[int], approx: bool,
     return out
 
 
-def run_child(case: str, prove: bool, rtol: float, atol: float) -> dict:
-    rec: dict = {"case": case}
-    t0 = time.time()
-    try:
-        compiled, args = load_case(case)
-    except BaseException as e:  # noqa: BLE001
-        rec.update(status="compile_error", error=f"{type(e).__name__}: {e}"[:2000])
-        return rec
-    ops = {s["ir_instance"]["__class__"] for s in compiled.get_ir_stmts()}
-    approx = sorted(ops & APPROX_OPS)
-    rec["approx_ops"] = approx
+def run_input(compiled, args, approx: bool, prove: bool, rtol: float, atol: float) -> dict:
+    rec: dict = {}
     try:
         satisfied, mock = mock_publics(compiled, args)
-    except BaseException as e:  # noqa: BLE001
-        rec.update(status="mock_error", error=f"{type(e).__name__}: {e}"[:2000])
-        return rec
+    except BaseException as e:  # noqa: BLE001 - PyO3 panics derive from BaseException
+        return {"status": "mock_error", "error": f"{type(e).__name__}: {e}"[:2000]}
     rec["mock_satisfied"] = satisfied
     try:
         noir = noir_prove(compiled, args, len(mock)) if prove else noir_execute(compiled, args)
@@ -176,15 +173,26 @@ def run_child(case: str, prove: bool, rtol: float, atol: float) -> dict:
     if not satisfied:
         rec.update(status="mock_unsatisfied_noir_accepts")
         return rec
-    rec.update(compare(mock, noir, bool(approx), rtol, atol))
-    rec["seconds"] = round(time.time() - t0, 2)
+    rec.update(compare(mock, noir, approx, rtol, atol))
     return rec
 
 
-def all_cases() -> list[str]:
-    sys.path.insert(0, str(THIS_DIR))
-    from run_halo2_baselines import INPUT_BUILDERS
-    return sorted(INPUT_BUILDERS)
+def run_child(case: str, prove: bool, rtol: float, atol: float) -> dict:
+    rec: dict = {"case": case_name(case)}
+    t0 = time.time()
+    try:
+        compiled, fixture = load_case(case)
+    except BaseException as e:  # noqa: BLE001
+        rec.update(status="compile_error", error=f"{type(e).__name__}: {e}"[:2000])
+        return rec
+    ops = {s["ir_instance"]["__class__"] for s in compiled.get_ir_stmts()}
+    approx = sorted(ops & APPROX_OPS)
+    rec["approx_ops"] = approx
+    rec["inputs"] = {name: run_input(compiled, fixture.arguments(name), bool(approx), prove,
+                                     rtol, atol) for name in INPUTS}
+    rec["status"] = max((r["status"] for r in rec["inputs"].values()), key=STATUS_ORDER.index)
+    rec["seconds"] = round(time.time() - t0, 2)
+    return rec
 
 
 def main() -> int:
@@ -194,6 +202,7 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=900, help="per-case seconds")
     ap.add_argument("--approx-rtol", type=float, default=1e-6)
     ap.add_argument("--approx-atol", type=float, default=1e-6)
+    ap.add_argument("--jobs", type=int, default=1)
     ap.add_argument("--out", default=str(THIS_DIR / "noir_differential.json"))
     ap.add_argument("--wrap", default="", help="command prefix for each child (e.g. a memory cap)")
     ap.add_argument("--child", help=argparse.SUPPRESS)
@@ -203,32 +212,40 @@ def main() -> int:
         print(json.dumps(run_child(a.child, a.prove, a.approx_rtol, a.approx_atol)))
         return 0
 
-    cases = all_cases() if a.cases == "all" else a.cases.split(",")
-    results = []
-    for case in cases:
+    cases = perf_cases() if a.cases == "all" else [case_name(c) for c in a.cases.split(",")]
+
+    def run(case: str) -> dict:
         cmd = a.wrap.split() + [sys.executable, __file__, "--child", case,
-               "--approx-rtol", str(a.approx_rtol), "--approx-atol", str(a.approx_atol)]
+                                "--approx-rtol", str(a.approx_rtol),
+                                "--approx-atol", str(a.approx_atol)]
         if a.prove:
             cmd.append("--prove")
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=a.timeout)
             lines = [l for l in proc.stdout.splitlines() if l.startswith("{")]
-            rec = json.loads(lines[-1]) if lines else {
+            return json.loads(lines[-1]) if lines else {
                 "case": case, "status": "crash", "error": proc.stderr[-2000:]}
         except subprocess.TimeoutExpired:
-            rec = {"case": case, "status": "timeout"}
-        results.append(rec)
-        print(f"{case}: {rec['status']}" + (f" ({rec.get('reason') or rec.get('error', '')[:200]})"
-                                            if rec["status"] not in ("match", "match_approx") else ""),
-              flush=True)
-        Path(a.out).write_text(json.dumps(results, indent=1))
+            return {"case": case, "status": "timeout"}
+
+    results = []
+    with ThreadPoolExecutor(max_workers=max(1, a.jobs)) as pool:
+        for rec in pool.map(run, cases):
+            results.append(rec)
+            detail = ""
+            if rec["status"] not in ("match", "match_approx"):
+                bad = [r for r in rec.get("inputs", {}).values()
+                       if r["status"] not in ("match", "match_approx")]
+                first = bad[0] if bad else rec
+                detail = f" ({first.get('reason') or first.get('error', '')[:200]})"
+            print(f"{rec['case']}: {rec['status']}{detail}", flush=True)
+            Path(a.out).write_text(json.dumps(results, indent=1))
 
     counts: dict[str, int] = {}
     for r in results:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
     print("summary:", json.dumps(counts, sort_keys=True))
-    failing = {"mismatch", "noir_error", "mock_unsatisfied_noir_accepts", "crash", "timeout"}
-    return 1 if any(r["status"] in failing for r in results) else 0
+    return 1 if any(r["status"] in FAILING for r in results) else 0
 
 
 if __name__ == "__main__":
