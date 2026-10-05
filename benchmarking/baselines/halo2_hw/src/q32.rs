@@ -1,0 +1,854 @@
+//! Q32 fixed-point arithmetic on top of halo2-base's `GateChip` and `RangeChip`.
+//!
+//! This is the helper layer a halo2-base developer writes once and reuses for
+//! every kernel. It holds no case-specific logic.
+//!
+//! # Representation
+//!
+//! * A float `v` is the field element of the integer `round(v * 2^32)`; negative
+//!   integers are `p - |x|`. This is exactly Zinnia's quantizer
+//!   (`src/prove/field.rs::quantize`).
+//! * An integer is its own field element (negatives as `p - |x|`), a boolean is
+//!   a cell constrained to `{0, 1}`.
+//! * [`I64`] marks a cell that is *proven* to lie in the signed 64-bit window
+//!   `[-2^63, 2^63)`. Orderings need it, so a value is range-checked once when
+//!   it first enters a comparison and the proof is reused afterwards. Every
+//!   rescaled product and quotient comes out of its gadget already as an `I64`.
+//!
+//! # Rounding (same as Zinnia's halo2-base backend)
+//!
+//! * product: `floor(a * b / 2^32)`;
+//! * fused dot product: one `floor(sum_i a_i * b_i / 2^32)`;
+//! * float division: `floor(a * 2^32 / b)` with remainder in `[0, |b|)`;
+//! * float to int: truncation toward zero (Python `int`, NumPy `astype(int)`).
+//!
+//! # Soundness
+//!
+//! Each gadget states the facts its constraints establish next to it. The
+//! common argument: every witnessed decomposition `x = q * d + r` is checked
+//! with `q` and `r` range-checked so tightly that `|q * d + r| < p / 2`; the
+//! integer identity then follows from the field identity and the
+//! decomposition is unique, so the prover cannot choose `q`.
+
+use halo2_base::gates::{GateChip, GateInstructions, RangeChip, RangeInstructions};
+use halo2_base::halo2_proofs::arithmetic::Field;
+use halo2_base::halo2_proofs::halo2curves::ff::PrimeField;
+use halo2_base::halo2_proofs::halo2curves::bn256::Fr;
+use halo2_base::utils::ScalarField;
+use halo2_base::QuantumCell::{Constant, Existing, Witness};
+use halo2_base::{AssignedValue, Context, QuantumCell};
+
+use crate::Builder;
+
+/// A circuit cell.
+pub type Cell = AssignedValue<Fr>;
+/// A halo2-base gate thread.
+pub type Ctx = Context<Fr>;
+
+/// Number of fractional bits.
+pub const FRAC_BITS: u32 = 32;
+/// `2^FRAC_BITS` as an integer.
+pub const SCALE: i128 = 1 << FRAC_BITS;
+
+/// `round(v * 2^32)`, Zinnia's quantizer (`field::quantize`).
+pub fn quantize(v: f64) -> i128 {
+    (v * SCALE as f64).round() as i128
+}
+
+/// The field element of a signed integer.
+pub fn fe(v: i128) -> Fr {
+    if v >= 0 {
+        Fr::from_u128(v as u128)
+    } else {
+        -Fr::from_u128(v.unsigned_abs())
+    }
+}
+
+/// The signed integer a field element encodes, for witness computation.
+///
+/// Values outside `(-2^127, 2^127)` only occur for witnesses that the
+/// constraints reject anyway; they decode to 0 so hint code never panics.
+pub fn signed(x: &Fr) -> i128 {
+    let small = |f: Fr| -> Option<u128> {
+        let bytes = f.to_bytes_le();
+        if bytes[16..].iter().all(|b| *b == 0) && bytes[15] < 0x80 {
+            Some(u128::from_le_bytes(bytes[..16].try_into().unwrap()))
+        } else {
+            None
+        }
+    };
+    match (small(*x), small(-*x)) {
+        (Some(v), _) => v as i128,
+        (None, Some(v)) => -(v as i128),
+        (None, None) => 0,
+    }
+}
+
+/// Decodes a Q32 field element to a float.
+pub fn dequantize(x: &Fr) -> f64 {
+    signed(x) as f64 / SCALE as f64
+}
+
+/// A cell proven to lie in `[-2^63, 2^63)`, together with its offset
+/// `cell + 2^63`, which lies in `[0, 2^64)`.
+#[derive(Clone, Copy, Debug)]
+pub struct I64 {
+    pub cell: Cell,
+    offset: Cell,
+}
+
+impl I64 {
+    pub fn value(&self) -> i128 {
+        signed(self.cell.value())
+    }
+}
+
+impl From<I64> for QuantumCell<Fr> {
+    fn from(x: I64) -> Self {
+        Existing(x.cell)
+    }
+}
+
+const OFFSET: u128 = 1 << 63;
+
+/// The Q32 chip: halo2-base's gate and range chips plus the fixed-point gadgets.
+#[derive(Clone, Debug)]
+pub struct Q32 {
+    pub gate: GateChip<Fr>,
+    pub range: RangeChip<Fr>,
+}
+
+impl Q32 {
+    pub fn new(builder: &Builder) -> Self {
+        let range = builder.range_chip();
+        Q32 { gate: range.gate().clone(), range }
+    }
+
+    // ---------------------------------------------------------------- loading
+
+    /// Private float inputs.
+    pub fn load_floats(&self, ctx: &mut Ctx, values: &[f64]) -> Vec<Cell> {
+        values.iter().map(|v| ctx.load_witness(fe(quantize(*v)))).collect()
+    }
+
+    pub fn load_float(&self, ctx: &mut Ctx, value: f64) -> Cell {
+        ctx.load_witness(fe(quantize(value)))
+    }
+
+    /// Private integer inputs.
+    pub fn load_ints(&self, ctx: &mut Ctx, values: &[i64]) -> Vec<Cell> {
+        values.iter().map(|v| ctx.load_witness(fe(*v as i128))).collect()
+    }
+
+    pub fn load_int(&self, ctx: &mut Ctx, value: i64) -> Cell {
+        ctx.load_witness(fe(value as i128))
+    }
+
+    /// Private boolean inputs, each constrained to `{0, 1}`.
+    pub fn load_bools(&self, ctx: &mut Ctx, values: &[bool]) -> Vec<Cell> {
+        values
+            .iter()
+            .map(|v| {
+                let cell = ctx.load_witness(Fr::from(*v as u64));
+                self.gate.assert_bit(ctx, cell);
+                cell
+            })
+            .collect()
+    }
+
+    /// A float constant (fixed by the circuit, not chosen by the prover).
+    pub fn float_const(&self, ctx: &mut Ctx, value: f64) -> Cell {
+        ctx.load_constant(fe(quantize(value)))
+    }
+
+    /// An integer constant.
+    pub fn int_const(&self, ctx: &mut Ctx, value: i64) -> Cell {
+        ctx.load_constant(fe(value as i128))
+    }
+
+    // ------------------------------------------------------------- the window
+
+    /// Proves `x` lies in `[-2^63, 2^63)`: one 64-bit range check of `x + 2^63`.
+    pub fn bound(&self, ctx: &mut Ctx, x: Cell) -> I64 {
+        let offset = self.gate.add(ctx, x, Constant(Fr::from_u128(OFFSET)));
+        self.range.range_check(ctx, offset, 64);
+        I64 { cell: x, offset }
+    }
+
+    /// [`Q32::bound`] for each cell.
+    pub fn bound_all(&self, ctx: &mut Ctx, xs: &[Cell]) -> Vec<I64> {
+        xs.iter().map(|x| self.bound(ctx, *x)).collect()
+    }
+
+    /// A constant inside the window; costs no range check.
+    pub fn bounded_const(&self, ctx: &mut Ctx, value: i128) -> I64 {
+        assert!((-(OFFSET as i128)..OFFSET as i128).contains(&value));
+        let cell = ctx.load_constant(fe(value));
+        let offset = ctx.load_constant(fe(value + OFFSET as i128));
+        I64 { cell, offset }
+    }
+
+    // ------------------------------------------------------------ comparisons
+
+    /// `a < b` as a bit. Both offsets are below `2^64`, so halo2-base's
+    /// 64-bit `is_less_than` precondition holds.
+    pub fn lt(&self, ctx: &mut Ctx, a: I64, b: I64) -> Cell {
+        self.range.is_less_than(ctx, a.offset, b.offset, 64)
+    }
+
+    pub fn gt(&self, ctx: &mut Ctx, a: I64, b: I64) -> Cell {
+        self.lt(ctx, b, a)
+    }
+
+    pub fn le(&self, ctx: &mut Ctx, a: I64, b: I64) -> Cell {
+        let gt = self.lt(ctx, b, a);
+        self.gate.not(ctx, gt)
+    }
+
+    pub fn ge(&self, ctx: &mut Ctx, a: I64, b: I64) -> Cell {
+        let lt = self.lt(ctx, a, b);
+        self.gate.not(ctx, lt)
+    }
+
+    /// `a < c` for a constant `c` (raw encoding: pass `quantize(v)` for floats).
+    pub fn lt_const(&self, ctx: &mut Ctx, a: I64, c: i128) -> Cell {
+        assert!((-(OFFSET as i128)..OFFSET as i128).contains(&c));
+        let c_offset = Constant(fe(c + OFFSET as i128));
+        self.range.is_less_than(ctx, a.offset, c_offset, 64)
+    }
+
+    /// `a > c` for a constant `c` (raw encoding).
+    pub fn gt_const(&self, ctx: &mut Ctx, a: I64, c: i128) -> Cell {
+        assert!((-(OFFSET as i128)..OFFSET as i128).contains(&c));
+        let c_offset = Constant(fe(c + OFFSET as i128));
+        self.range.is_less_than(ctx, c_offset, a.offset, 64)
+    }
+
+    /// `a < 0`.
+    pub fn is_neg(&self, ctx: &mut Ctx, a: I64) -> Cell {
+        self.lt_const(ctx, a, 0)
+    }
+
+    /// Exact equality (`==` on floats and integers alike).
+    pub fn eq(&self, ctx: &mut Ctx, a: impl Into<QuantumCell<Fr>>, b: impl Into<QuantumCell<Fr>>) -> Cell {
+        self.gate.is_equal(ctx, a, b)
+    }
+
+    /// `if c { a } else { b }`; the result keeps the window proof of both.
+    pub fn select_i64(&self, ctx: &mut Ctx, a: I64, b: I64, c: Cell) -> I64 {
+        let cell = self.gate.select(ctx, a.cell, b.cell, c);
+        let offset = self.gate.select(ctx, a.offset, b.offset, c);
+        I64 { cell, offset }
+    }
+
+    /// `max(a, b)`, NumPy's `np.maximum` without NaN.
+    pub fn max(&self, ctx: &mut Ctx, a: I64, b: I64) -> I64 {
+        let a_lt_b = self.lt(ctx, a, b);
+        self.select_i64(ctx, b, a, a_lt_b)
+    }
+
+    /// `min(a, b)`.
+    pub fn min(&self, ctx: &mut Ctx, a: I64, b: I64) -> I64 {
+        let b_lt_a = self.lt(ctx, b, a);
+        self.select_i64(ctx, b, a, b_lt_a)
+    }
+
+    /// `|a|` (for floats and integers; `|-2^63|` leaves the window and is
+    /// returned unbounded).
+    pub fn abs(&self, ctx: &mut Ctx, a: I64) -> Cell {
+        let neg = self.is_neg(ctx, a);
+        let minus_a = self.gate.neg(ctx, a.cell);
+        self.gate.select(ctx, minus_a, a.cell, neg)
+    }
+
+    // -------------------------------------------------------------- arithmetic
+
+    pub fn add(&self, ctx: &mut Ctx, a: impl Into<QuantumCell<Fr>>, b: impl Into<QuantumCell<Fr>>) -> Cell {
+        self.gate.add(ctx, a, b)
+    }
+
+    pub fn sub(&self, ctx: &mut Ctx, a: impl Into<QuantumCell<Fr>>, b: impl Into<QuantumCell<Fr>>) -> Cell {
+        self.gate.sub(ctx, a, b)
+    }
+
+    pub fn neg(&self, ctx: &mut Ctx, a: impl Into<QuantumCell<Fr>>) -> Cell {
+        self.gate.neg(ctx, a)
+    }
+
+    /// Sum of cells (exact for both floats and integers).
+    pub fn sum(&self, ctx: &mut Ctx, xs: impl IntoIterator<Item = Cell>) -> Cell {
+        self.gate.sum(ctx, xs.into_iter().map(Existing))
+    }
+
+    /// Float product `floor(a * b / 2^32)`.
+    pub fn mul(&self, ctx: &mut Ctx, a: impl Into<QuantumCell<Fr>>, b: impl Into<QuantumCell<Fr>>) -> I64 {
+        let raw = self.gate.mul(ctx, a, b);
+        self.rescale(ctx, raw)
+    }
+
+    /// Fused float dot product `floor(sum_i a_i * b_i / 2^32)`: one rescale
+    /// for the whole sum, as `np.dot`/`@` on reals rounds once.
+    pub fn dot(&self, ctx: &mut Ctx, a: &[Cell], b: &[Cell]) -> I64 {
+        assert_eq!(a.len(), b.len());
+        let raw = self.gate.inner_product(ctx, a.iter().map(|x| Existing(*x)), b.iter().map(|x| Existing(*x)));
+        self.rescale(ctx, raw)
+    }
+
+    /// `floor(raw / 2^32)` for a raw product `raw` whose integer value lies in
+    /// `[-2^95, 2^95)`.
+    ///
+    /// Constraints: `raw = q * 2^32 + r`, `r` in `[0, 2^32)`, `q` in the 64-bit
+    /// window. Then `q * 2^32 + r` lies in `[-2^95, 2^95)`, far inside
+    /// `(-p/2, p/2)`, so the field identity is an integer identity and `(q, r)`
+    /// is the unique floor decomposition. An out-of-range `raw` has no
+    /// satisfying witness (the proof fails rather than wrapping).
+    pub fn rescale(&self, ctx: &mut Ctx, raw: Cell) -> I64 {
+        let v = signed(raw.value());
+        self.rescale_with(ctx, raw, fe(v.div_euclid(SCALE)), fe(v.rem_euclid(SCALE)))
+    }
+
+    fn rescale_with(&self, ctx: &mut Ctx, raw: Cell, q: Fr, r: Fr) -> I64 {
+        ctx.assign_region([Witness(r), Constant(fe(SCALE)), Witness(q), Existing(raw)], [0]);
+        let r_cell = ctx.get(-4);
+        let q_cell = ctx.get(-2);
+        self.range.range_check(ctx, r_cell, FRAC_BITS as usize);
+        self.bound(ctx, q_cell)
+    }
+
+    /// Float times integer: exact, no rescale.
+    pub fn mul_int(&self, ctx: &mut Ctx, float: impl Into<QuantumCell<Fr>>, int: impl Into<QuantumCell<Fr>>) -> Cell {
+        self.gate.mul(ctx, float, int)
+    }
+
+    /// Integer to float (`float(n)`, `astype(float)`): multiply by the constant `2^32`.
+    pub fn int_to_float(&self, ctx: &mut Ctx, n: impl Into<QuantumCell<Fr>>) -> Cell {
+        self.gate.mul(ctx, n, Constant(fe(SCALE)))
+    }
+
+    /// Float division `floor(a * 2^32 / b)` with remainder in `[0, |b|)`.
+    ///
+    /// Constraints: `a * 2^32 = q * b + r`, `0 <= r < 2^64`,
+    /// `0 <= |b| - r - 1 < 2^64` (so `r < |b|`, `b != 0`), `q` in the window.
+    /// With `|b| < 2^63`, `|q * b + r| < 2^127`, so the identity holds over the
+    /// integers and fixes the Euclidean `(q, r)`.
+    pub fn div(&self, ctx: &mut Ctx, a: impl Into<QuantumCell<Fr>>, b: I64) -> I64 {
+        let abs_b = self.abs(ctx, b);
+        self.div_by_magnitude(ctx, a, b.cell, abs_b)
+    }
+
+    /// [`Q32::div`] for a divisor that must be positive: the remainder check
+    /// `0 <= r < b` itself rules out `b <= 0` (no witness), so no sign test.
+    pub fn div_pos(&self, ctx: &mut Ctx, a: impl Into<QuantumCell<Fr>>, b: I64) -> I64 {
+        self.div_by_magnitude(ctx, a, b.cell, b.cell)
+    }
+
+    fn div_by_magnitude(&self, ctx: &mut Ctx, a: impl Into<QuantumCell<Fr>>, b: Cell, abs_b: Cell) -> I64 {
+        let a = a.into();
+        let num = signed(a.value()) * SCALE;
+        let bv = signed(b.value());
+        let (q, r) = if bv == 0 { (0, 0) } else { (num.div_euclid(bv), num.rem_euclid(bv)) };
+        self.div_with(ctx, a, b, abs_b, fe(q), fe(r))
+    }
+
+    fn div_with(&self, ctx: &mut Ctx, a: QuantumCell<Fr>, b: Cell, abs_b: Cell, q: Fr, r: Fr) -> I64 {
+        let scaled = self.gate.mul(ctx, a, Constant(fe(SCALE)));
+        let q_cell = ctx.load_witness(q);
+        let r_cell = ctx.load_witness(r);
+        let recomposed = self.gate.mul_add(ctx, q_cell, b, r_cell);
+        ctx.constrain_equal(&recomposed, &scaled);
+        self.range.range_check(ctx, r_cell, 64);
+        let gap = self.gate.sub(ctx, abs_b, r_cell);
+        let gap = self.gate.sub(ctx, gap, Constant(Fr::ONE));
+        self.range.range_check(ctx, gap, 64);
+        self.bound(ctx, q_cell)
+    }
+
+    /// Float division by a nonzero float constant `d`.
+    pub fn div_const(&self, ctx: &mut Ctx, a: impl Into<QuantumCell<Fr>>, d: f64) -> I64 {
+        let dq = quantize(d);
+        assert!(dq != 0, "division by a zero constant");
+        // floor(a * 2^32 / dq) == floor(-(a * 2^32) / -dq), so divide by |dq|
+        // after moving the sign to the numerator.
+        let a = a.into();
+        let num = if dq < 0 { self.gate.neg(ctx, a) } else { self.gate.add(ctx, a, Constant(Fr::ZERO)) };
+        let scaled = self.gate.mul(ctx, num, Constant(fe(SCALE)));
+        self.floor_div_const(ctx, scaled, dq.unsigned_abs() as u64).0
+    }
+
+    /// Integer floor division and remainder by a positive constant `d`
+    /// (Python `//`, `%`): `a = q * d + r`, `0 <= r < d`.
+    ///
+    /// `r` is checked against the constant `d` (`check_less_than_safe`) and `q`
+    /// is in the window; `|q * d + r| < 2^127`, so `(q, r)` is unique. The
+    /// integer value of `a` must lie in the window times `d`.
+    pub fn floor_div_const(&self, ctx: &mut Ctx, a: impl Into<QuantumCell<Fr>>, d: u64) -> (I64, Cell) {
+        assert!(d > 0, "division by a non-positive constant");
+        let a = a.into();
+        let v = signed(a.value());
+        self.floor_div_const_with(ctx, a, d, fe(v.div_euclid(d as i128)), fe(v.rem_euclid(d as i128)))
+    }
+
+    fn floor_div_const_with(&self, ctx: &mut Ctx, a: QuantumCell<Fr>, d: u64, q: Fr, r: Fr) -> (I64, Cell) {
+        ctx.assign_region([Witness(r), Constant(Fr::from(d)), Witness(q), a], [0]);
+        let r_cell = ctx.get(-4);
+        let q_cell = ctx.get(-2);
+        if d.is_power_of_two() {
+            self.range.range_check(ctx, r_cell, d.trailing_zeros() as usize);
+        } else {
+            self.range.check_less_than_safe(ctx, r_cell, d);
+        }
+        (self.bound(ctx, q_cell), r_cell)
+    }
+
+    /// Integer floor division and remainder by a private divisor that must be
+    /// positive (Python `//`, `%`): `a = q * b + r`, `0 <= r < b`; `b <= 0` has
+    /// no witness. Same uniqueness argument as [`Q32::div`].
+    pub fn floor_div_pos(&self, ctx: &mut Ctx, a: impl Into<QuantumCell<Fr>>, b: I64) -> (I64, Cell) {
+        let a = a.into();
+        let (av, bv) = (signed(a.value()), b.value());
+        let (q, r) = if bv == 0 { (0, 0) } else { (av.div_euclid(bv), av.rem_euclid(bv)) };
+        self.floor_div_pos_with(ctx, a, b.cell, fe(q), fe(r))
+    }
+
+    fn floor_div_pos_with(&self, ctx: &mut Ctx, a: QuantumCell<Fr>, b: Cell, q: Fr, r: Fr) -> (I64, Cell) {
+        let q_cell = ctx.load_witness(q);
+        let r_cell = ctx.load_witness(r);
+        let recomposed = self.gate.mul_add(ctx, q_cell, b, r_cell);
+        let a_cell = self.gate.add(ctx, a, Constant(Fr::ZERO));
+        ctx.constrain_equal(&recomposed, &a_cell);
+        self.range.range_check(ctx, r_cell, 64);
+        let gap = self.gate.sub(ctx, b, r_cell);
+        let gap = self.gate.sub(ctx, gap, Constant(Fr::ONE));
+        self.range.range_check(ctx, gap, 64);
+        (self.bound(ctx, q_cell), r_cell)
+    }
+
+    /// Float to integer, truncating toward zero (`int(x)`, `astype(int)`).
+    ///
+    /// Constraints: `x = n * 2^32 + r` where `r = s ? -m : m`, `m` in
+    /// `[0, 2^32)`, `s` the proven sign bit of `x`, and `n` in the window.
+    /// The remainder carrying `x`'s sign excludes the floor alternative, and
+    /// the bound on `n` excludes non-integer field solutions.
+    pub fn float_to_int(&self, ctx: &mut Ctx, x: I64) -> I64 {
+        let v = x.value();
+        let n = v / SCALE; // Rust `/` truncates toward zero
+        self.float_to_int_with(ctx, x, fe(n), fe((v - n * SCALE).abs()))
+    }
+
+    fn float_to_int_with(&self, ctx: &mut Ctx, x: I64, n: Fr, m: Fr) -> I64 {
+        let neg = self.is_neg(ctx, x);
+        let n_cell = ctx.load_witness(n);
+        let m_cell = ctx.load_witness(m);
+        self.range.range_check(ctx, m_cell, FRAC_BITS as usize);
+        let minus_m = self.gate.neg(ctx, m_cell);
+        let r = self.gate.select(ctx, minus_m, m_cell, neg);
+        let recomposed = self.gate.mul_add(ctx, n_cell, Constant(fe(SCALE)), r);
+        ctx.constrain_equal(&recomposed, &x.cell);
+        self.bound(ctx, n_cell)
+    }
+
+    /// `floor(x)` as a float (`np.floor`): `x = f * 2^32 + r`, `r` in `[0, 2^32)`.
+    pub fn floor(&self, ctx: &mut Ctx, x: Cell) -> Cell {
+        let (n, _) = self.floor_div_const(ctx, x, SCALE as u64);
+        self.int_to_float(ctx, n.cell)
+    }
+
+    /// `x ** n` for a constant integer exponent `n >= 0`, by repeated squaring.
+    pub fn pow_const(&self, ctx: &mut Ctx, x: Cell, n: u32) -> Cell {
+        let mut result: Option<Cell> = None;
+        let mut base = x;
+        let mut e = n;
+        while e > 0 {
+            if e & 1 == 1 {
+                result = Some(match result {
+                    None => base,
+                    Some(acc) => self.mul(ctx, acc, base).cell,
+                });
+            }
+            e >>= 1;
+            if e > 0 {
+                base = self.mul(ctx, base, base).cell;
+            }
+        }
+        result.unwrap_or_else(|| self.float_const(ctx, 1.0))
+    }
+
+    /// `sqrt(x)` for `x >= 0`: the exact floor square root of `x * 2^32`.
+    ///
+    /// Constraints: `y` in `[0, 2^63)`, `x * 2^32 - y^2` in `[0, 2^64)` and
+    /// `(y + 1)^2 - x * 2^32 - 1` in `[0, 2^64)`, i.e.
+    /// `y^2 <= x * 2^32 < (y + 1)^2`. All terms are below `2^130`, so these are
+    /// integer facts, and `y` is unique. A negative `x` has no witness (NumPy
+    /// would return NaN, which has no Q32 encoding).
+    pub fn sqrt(&self, ctx: &mut Ctx, x: Cell) -> I64 {
+        let target = signed(x.value()).max(0) as u128 * SCALE as u128;
+        self.sqrt_with(ctx, x, fe(isqrt(target) as i128))
+    }
+
+    fn sqrt_with(&self, ctx: &mut Ctx, x: Cell, y: Fr) -> I64 {
+        let y_cell = ctx.load_witness(y);
+        self.range.range_check(ctx, y_cell, 63);
+        let scaled = self.gate.mul(ctx, x, Constant(fe(SCALE)));
+        let y_sq = self.gate.mul(ctx, y_cell, y_cell);
+        let below = self.gate.sub(ctx, scaled, y_sq);
+        self.range.range_check(ctx, below, 64);
+        // (y + 1)^2 - x * 2^32 - 1 = y^2 + 2y - x * 2^32
+        let two_y_plus_sq = self.gate.mul_add(ctx, y_cell, Constant(Fr::from(2)), y_sq);
+        let above = self.gate.sub(ctx, two_y_plus_sq, scaled);
+        self.range.range_check(ctx, above, 64);
+        I64 { cell: y_cell, offset: self.gate.add(ctx, y_cell, Constant(Fr::from_u128(OFFSET))) }
+    }
+
+    /// Evaluates a polynomial with constant float coefficients (highest degree
+    /// first) by Horner's rule, rescaling after each multiplication.
+    pub fn polynomial(&self, ctx: &mut Ctx, x: Cell, coefs_high_first: &[f64]) -> Cell {
+        let mut acc = self.float_const(ctx, coefs_high_first[0]);
+        for c in &coefs_high_first[1..] {
+            let prod = self.mul(ctx, x, acc);
+            acc = self.gate.add(ctx, prod.cell, Constant(fe(quantize(*c))));
+        }
+        acc
+    }
+
+    /// `sin(x)`: reduce `|x| = q * pi + r` with `r` in `[0, pi)`, evaluate the
+    /// degree-14 minimax polynomial for `sin` on `[0, pi]` (the same
+    /// coefficients Zinnia and halo2-graph use) at `r`, and negate when exactly
+    /// one of `x < 0` and `q odd` holds.
+    pub fn sin(&self, ctx: &mut Ctx, x: I64) -> Cell {
+        let neg = self.is_neg(ctx, x);
+        let minus_x = self.gate.neg(ctx, x.cell);
+        let abs_x = self.gate.select(ctx, minus_x, x.cell, neg);
+        let pi = quantize(std::f64::consts::PI) as u64;
+        let (q, r) = self.floor_div_const(ctx, abs_x, pi);
+        let odd = self.is_odd(ctx, q);
+        let y = self.polynomial(ctx, r, &SIN_COEFS);
+        let flip = self.gate.xor(ctx, neg, odd);
+        let minus_y = self.gate.neg(ctx, y);
+        self.gate.select(ctx, minus_y, y, flip)
+    }
+
+    /// The parity bit of a non-negative `q` below `2^33`: `q = 2h + odd` with
+    /// `odd` a bit and `h` in `[0, 2^32)`, which determines `odd`.
+    pub fn is_odd(&self, ctx: &mut Ctx, q: I64) -> Cell {
+        let v = q.value();
+        self.is_odd_with(ctx, q, fe(v >> 1), fe(v & 1))
+    }
+
+    fn is_odd_with(&self, ctx: &mut Ctx, q: I64, h: Fr, odd: Fr) -> Cell {
+        let odd = ctx.load_witness(odd);
+        self.gate.assert_bit(ctx, odd);
+        let h = ctx.load_witness(h);
+        self.range.range_check(ctx, h, 32);
+        let recomposed = self.gate.mul_add(ctx, h, Constant(Fr::from(2)), odd);
+        ctx.constrain_equal(&recomposed, &q.cell);
+        odd
+    }
+
+    /// `cos(x) = sin(x + pi/2)`.
+    pub fn cos(&self, ctx: &mut Ctx, x: Cell) -> Cell {
+        let shifted = self.gate.add(ctx, x, Constant(fe(quantize(std::f64::consts::FRAC_PI_2))));
+        let shifted = self.bound(ctx, shifted);
+        self.sin(ctx, shifted)
+    }
+
+    // ---------------------------------------------------------------- indexing
+
+    /// `arr[idx]` for a private index, NumPy semantics for `-len <= idx < len`
+    /// (negative indices count from the end); any other index has no witness,
+    /// as NumPy raises `IndexError`.
+    pub fn index(&self, ctx: &mut Ctx, arr: &[Cell], idx: I64) -> Cell {
+        let pos = self.wrap_index(ctx, idx, arr.len());
+        self.gate.select_from_idx(ctx, arr.iter().map(|c| Existing(*c)), pos)
+    }
+
+    /// Maps a NumPy index in `[-len, len)` to its position in `[0, len)`,
+    /// proving it lies in that range.
+    pub fn wrap_index(&self, ctx: &mut Ctx, idx: I64, len: usize) -> Cell {
+        let neg = self.is_neg(ctx, idx);
+        let pos = self.gate.mul_add(ctx, neg, Constant(Fr::from(len as u64)), idx.cell);
+        self.range.check_less_than_safe(ctx, pos, len as u64);
+        pos
+    }
+
+    /// `arr[idx]` for an index the circuit already proved to lie in `[0, len)`.
+    pub fn index_unchecked(&self, ctx: &mut Ctx, arr: &[Cell], pos: Cell) -> Cell {
+        self.gate.select_from_idx(ctx, arr.iter().map(|c| Existing(*c)), pos)
+    }
+}
+
+/// Degree-14 minimax polynomial for `sin` on `[0, pi]` (lolremez), highest
+/// degree first. Identical to Zinnia's `kernel::SIN_COEFS` and halo2-graph's
+/// `generate_sin_poly`.
+pub const SIN_COEFS: [f64; 15] = [
+    -1.1008071636607462e-11,
+    2.4208013888629323e-10,
+    -3.8584805817996712e-10,
+    -2.3786993104309845e-08,
+    -2.9795813710683115e-09,
+    2.7608543130047009e-06,
+    -6.4467066994122565e-09,
+    -0.00019840680551418068,
+    -3.839555844512214e-09,
+    0.0083333350601673614,
+    -5.0943769725466814e-10,
+    -0.16666666657583049,
+    -8.5029878414113731e-12,
+    1.0000000000003146,
+    -1.9323057584419828e-15,
+];
+
+/// Integer square root (floor).
+fn isqrt(n: u128) -> u128 {
+    if n < 2 {
+        return n;
+    }
+    let mut x = (n as f64).sqrt() as u128;
+    while x * x > n {
+        x -= 1;
+    }
+    while (x + 1) * (x + 1) <= n {
+        x += 1;
+    }
+    x
+}
+
+#[cfg(test)]
+mod tests {
+    //! Each witnessing gadget is checked twice with halo2's `MockProver`: the
+    //! honest hint is accepted, and every alternative hint a malicious prover
+    //! could load instead (a neighbouring quotient, a non-integer field
+    //! solution, a flipped sign or parity) is rejected.
+    use super::*;
+    use halo2_base::gates::circuit::{builder::BaseCircuitBuilder, CircuitBuilderStage};
+    use halo2_base::halo2_proofs::dev::MockProver;
+
+    const K: u32 = 12;
+
+    /// Whether the circuit built by `f` is satisfied.
+    fn accepts(f: impl FnOnce(&Q32, &mut Ctx)) -> bool {
+        let mut builder = BaseCircuitBuilder::<Fr>::from_stage(CircuitBuilderStage::Mock);
+        builder.set_k(K as usize);
+        builder.set_lookup_bits(8);
+        builder.set_instance_columns(1);
+        let q = Q32::new(&builder);
+        f(&q, builder.main(0));
+        builder.calculate_params(Some(20));
+        let ok = MockProver::run(K, &builder, vec![vec![]]).unwrap().verify().is_ok();
+        builder.clear();
+        ok
+    }
+
+    /// The field solution `(n - r) / d` a prover gets by picking remainder `r`.
+    fn field_quotient(n: i128, r: i128, d: i128) -> Fr {
+        (fe(n) - fe(r)) * fe(d).invert().unwrap()
+    }
+
+    #[test]
+    fn quantize_matches_zinnia() {
+        assert_eq!(quantize(1.0), 1 << 32);
+        assert_eq!(quantize(-0.5), -(1 << 31));
+        assert_eq!(quantize(0.1), 429_496_730); // round(429496729.6)
+    }
+
+    #[test]
+    fn signed_round_trips() {
+        for v in [0i128, 1, -1, 1 << 100, -(1 << 100), i64::MIN as i128, i64::MAX as i128] {
+            assert_eq!(signed(&fe(v)), v);
+        }
+    }
+
+    #[test]
+    fn isqrt_is_floor() {
+        for n in [0u128, 1, 2, 3, 4, 15, 16, 17, (1 << 64) - 1, 1 << 64, (1 << 95) + 12345] {
+            let r = isqrt(n);
+            assert!(r * r <= n && (r + 1) * (r + 1) > n, "{n}");
+        }
+    }
+
+    #[test]
+    fn comparisons_are_signed() {
+        assert!(accepts(|q, ctx| {
+            let vals = [-5i128 << 32, -1, 0, 3, 7 << 32];
+            let cells: Vec<I64> = vals
+                .iter()
+                .map(|v| {
+                    let cell = ctx.load_witness(fe(*v));
+                    q.bound(ctx, cell)
+                })
+                .collect();
+            for (i, a) in cells.iter().enumerate() {
+                for (j, b) in cells.iter().enumerate() {
+                    let lt = q.lt(ctx, *a, *b);
+                    assert_eq!(*lt.value() == Fr::ONE, vals[i] < vals[j]);
+                }
+            }
+        }));
+        // A value outside the window cannot be bounded.
+        assert!(!accepts(|q, ctx| {
+            let big = ctx.load_witness(fe(1 << 63));
+            q.bound(ctx, big);
+        }));
+    }
+
+    #[test]
+    fn rescale_pins_the_floor() {
+        let raw = (-5i128 << 32) - 7; // floor(raw / 2^32) = -6, remainder 2^32 - 7
+        let (q, r) = (raw.div_euclid(SCALE), raw.rem_euclid(SCALE));
+        let run = |qh: Fr, rh: Fr| {
+            accepts(move |c, ctx| {
+                let raw = ctx.load_witness(fe(raw));
+                c.rescale_with(ctx, raw, qh, rh);
+            })
+        };
+        assert!(run(fe(q), fe(r)));
+        assert!(!run(fe(q + 1), fe(r - SCALE)));
+        assert!(!run(fe(q - 1), fe(r + SCALE)));
+        assert!(!run(field_quotient(raw, r + 1, SCALE), fe(r + 1)));
+    }
+
+    #[test]
+    fn div_pins_the_quotient() {
+        let (a, b) = (1i128 << 32, -3i128 << 32); // 1.0 / -3.0
+        let num = a * SCALE;
+        let (q, r) = (num.div_euclid(b), num.rem_euclid(b));
+        let run = |qh: Fr, rh: Fr| {
+            accepts(move |c, ctx| {
+                let a = ctx.load_witness(fe(a));
+                let b = ctx.load_witness(fe(b));
+                let b = c.bound(ctx, b);
+                let abs_b = c.abs(ctx, b);
+                c.div_with(ctx, Existing(a), b.cell, abs_b, qh, rh);
+            })
+        };
+        assert!(run(fe(q), fe(r)));
+        // Neighbouring quotients keep q*b + r and move r out of [0, |b|).
+        assert!(!run(fe(q + 1), fe(r - b)));
+        assert!(!run(fe(q - 1), fe(r + b)));
+        assert!(!run(field_quotient(num, r + 1, b), fe(r + 1)));
+        // Division by zero has no witness.
+        assert!(!accepts(|c, ctx| {
+            let a = ctx.load_witness(fe(a));
+            let z = ctx.load_witness(Fr::ZERO);
+            let z = c.bound(ctx, z);
+            c.div(ctx, a, z);
+        }));
+    }
+
+    #[test]
+    fn floor_div_const_pins_the_quotient() {
+        let (a, d) = (-23i128, 5u64);
+        let (q, r) = (a.div_euclid(5), a.rem_euclid(5));
+        let run = |qh: Fr, rh: Fr| {
+            accepts(move |c, ctx| {
+                let a = ctx.load_witness(fe(a));
+                c.floor_div_const_with(ctx, Existing(a), d, qh, rh);
+            })
+        };
+        assert!(run(fe(q), fe(r)));
+        assert!(!run(fe(q + 1), fe(r - 5)));
+        assert!(!run(fe(q - 1), fe(r + 5)));
+        assert!(!run(field_quotient(a, r + 1, 5), fe(r + 1)));
+    }
+
+    #[test]
+    fn floor_div_pos_pins_the_quotient_and_rejects_bad_divisors() {
+        let (a, b) = (23i128, 4i128);
+        let run = |bv: i128, qh: Fr, rh: Fr| {
+            accepts(move |c, ctx| {
+                let a = ctx.load_witness(fe(a));
+                let b = ctx.load_witness(fe(bv));
+                c.floor_div_pos_with(ctx, Existing(a), b, qh, rh);
+            })
+        };
+        assert!(run(b, fe(5), fe(3)));
+        assert!(!run(b, fe(6), fe(-1)));
+        assert!(!run(b, fe(4), fe(7)));
+        assert!(!run(b, field_quotient(a, 4, b), fe(4)));
+        assert!(!run(0, fe(0), fe(23))); // b = 0
+        assert!(!run(-4, fe(-5), fe(3))); // b < 0
+    }
+
+    #[test]
+    fn float_to_int_truncates() {
+        let x = -(5i128 << 31); // -2.5
+        let run = |nh: Fr, mh: Fr| {
+            accepts(move |c, ctx| {
+                let x = ctx.load_witness(fe(x));
+                let x = c.bound(ctx, x);
+                c.float_to_int_with(ctx, x, nh, mh);
+            })
+        };
+        assert!(run(fe(-2), fe(1 << 31)));
+        assert!(!run(fe(-3), fe(-(1 << 31)))); // the floor alternative
+        assert!(!run(field_quotient(x, -((1 << 31) + 1), SCALE), fe((1 << 31) + 1)));
+    }
+
+    #[test]
+    fn sqrt_is_the_exact_floor() {
+        let x = 2i128 << 32;
+        let y = isqrt((x * SCALE) as u128) as i128;
+        let run = |yh: Fr| {
+            accepts(move |c, ctx| {
+                let x = ctx.load_witness(fe(x));
+                c.sqrt_with(ctx, x, yh);
+            })
+        };
+        assert!(run(fe(y)));
+        assert!(!run(fe(y + 1)));
+        assert!(!run(fe(y - 1)));
+        assert!(!run(fe(-y)));
+        // A negative input has no witness.
+        assert!(!accepts(|c, ctx| {
+            let x = ctx.load_witness(fe(-(1 << 32)));
+            c.sqrt(ctx, x);
+        }));
+    }
+
+    #[test]
+    fn parity_is_pinned() {
+        let run = |h: Fr, odd: Fr| {
+            accepts(move |c, ctx| {
+                let q = ctx.load_witness(fe(7));
+                let q = c.bound(ctx, q);
+                c.is_odd_with(ctx, q, h, odd);
+            })
+        };
+        assert!(run(fe(3), fe(1)));
+        assert!(!run(fe(7) * fe(2).invert().unwrap(), fe(0)));
+        assert!(!run(fe(4), fe(-1)));
+    }
+
+    #[test]
+    fn sin_and_cos_match_f64() {
+        for v in [0.3, -0.3, 2.0, -2.0, 4.0, -7.5, 10.0, 100.0] {
+            assert!(accepts(|c, ctx| {
+                let x = ctx.load_witness(fe(quantize(v)));
+                let xb = c.bound(ctx, x);
+                let s = dequantize(c.sin(ctx, xb).value());
+                let k = dequantize(c.cos(ctx, x).value());
+                assert!((s - v.sin()).abs() < 1e-4, "sin({v}) = {s}");
+                assert!((k - v.cos()).abs() < 1e-4, "cos({v}) = {k}");
+            }));
+        }
+    }
+
+    #[test]
+    fn index_follows_numpy() {
+        let arr = [10i128, 11, 12, 13, 14];
+        let run = |idx: i128| {
+            accepts(move |c, ctx| {
+                let cells = c.load_ints(ctx, &arr.map(|v| v as i64));
+                let i = ctx.load_witness(fe(idx));
+                let i = c.bound(ctx, i);
+                let v = c.index(ctx, &cells, i);
+                let want = arr[idx.rem_euclid(5) as usize];
+                if (-5..5).contains(&idx) {
+                    assert_eq!(*v.value(), fe(want));
+                }
+            })
+        };
+        assert!(run(0) && run(4) && run(-1) && run(-5));
+        assert!(!run(5));
+        assert!(!run(-6));
+    }
+}

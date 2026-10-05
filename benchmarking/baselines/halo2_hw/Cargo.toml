@@ -1,0 +1,41 @@
+[package]
+name = "halo2_hw"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Handwritten halo2-base baselines for the DS-1000 performance set"
+
+# A standalone workspace: this crate is not part of the zinnia_core build.
+[workspace]
+
+# The proving stack is pinned to exactly what Zinnia's halo2-base backend
+# links (see the repository's Cargo.toml and Cargo.lock): halo2-base
+# community-edition at 004e12c with the `halo2-pse` feature, PSE halo2_proofs
+# v0.3.0 with the same features, halo2curves 0.6.1. `Cargo.lock` in this
+# directory was seeded from the repository's lock file so every shared
+# package resolves to the same revision; `python -m hw_check.lock_match`
+# (run from benchmarking/baselines) verifies that.
+[dependencies]
+halo2-base = { git = "https://github.com/axiom-crypto/halo2-lib.git", branch = "community-edition", default-features = false, features = ["halo2-pse"] }
+halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", tag = "v0.3.0", features = ["circuit-params", "derive_serde"] }
+halo2curves = { version = "0.6.1", features = ["derive_serde"] }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Same codegen settings as Zinnia's release profile (repository Cargo.toml).
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+debug = false
+debug-assertions = false
+incremental = false
+
+# Fast iteration profile for writing and checking baselines. Never used for
+# measurements: the harness builds `--release`.
+[profile.dev-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
