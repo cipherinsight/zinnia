@@ -1,37 +1,21 @@
-// DS-1000 case 302 — np.reshape(A, (nrow, -1)) on Float[20] with runtime nrow.
-// kernel.py: B = np.reshape(A, (nrow, -1))
-// Sample: A = [1..20] (Q-scaled), nrow = 4 → shape (4, 5). Layout-only.
-// Quantisation ×2^32 (Q).
+//! DS-1000 case 0302: a vector reshaped into `nrow = 5` rows,
+//! `np.reshape(A, (nrow, -1))`.
+//!
+//!     def kernel(A: Float[Array, "20"]):
+//!         nrow = 5
+//!         B = np.reshape(A, (nrow, -1))
+//!         return B
+// output: [q32]
+use crate::q32::Q32;
 
+const LEN: u32 = 20;
+/// `nrow`; `LEN` is a multiple of it, as NumPy requires.
+const NROW: u32 = 5;
+
+/// A reshape keeps the row-major order, so the `(NROW, LEN / NROW)` result
+/// holds the elements of `A` as they are.
 #[executable]
-pub fn main() {
-    const Q: i128 = 4_294_967_296;
-    let mut a: Array<i128> = ArrayTrait::new();
-    let mut i: i128 = 0;
-    while i < 20 {
-        a.append((i + 1) * Q);
-        i += 1;
-    };
-    let nrow: i128 = 4;
-    let claim_nrow: i128 = 4;
-    let claim_ncol: i128 = 5;
-
-    assert!(nrow != 0);
-    let ncol: i128 = 20 / nrow;
-    let rem: i128 = 20 % nrow;
-    assert!(rem == 0);
-    assert!(nrow == claim_nrow);
-    assert!(ncol == claim_ncol);
-
-    let mut k: usize = 0;
-    while k < 20 {
-        let kk: i128 = k.into();
-        assert!(*a.at(k) == (kk + 1) * Q);
-        k += 1;
-    };
-
-    let claim_total: i128 = 20;
-    let claim_rank: i128 = 2;
-    assert!(claim_total == 20);
-    assert!(claim_rank == 2);
+fn main(A: Array<Q32>) -> Array<Q32> {
+    assert!(A.len() == LEN, "A has the wrong length");
+    A
 }

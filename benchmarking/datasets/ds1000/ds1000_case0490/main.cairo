@@ -1,73 +1,45 @@
-// DS-1000 case 490 — Cairo baseline.
-// In-place threshold replacement per-slab on a 5×4×4 float tensor.
-// Inputs Q-scaled (×2^32). Thresholds are ints (no scale).
+//! DS-1000 case 0490: per-row thresholding of `arr` with the bounds `n1`, `n2`.
+//!
+//!     def kernel(arr: Float[Array, "5 50"], n1: Integer[Array, "5"], n2: Integer[Array, "5"]):
+//!         for a, t1, t2 in zip(arr, n1, n2):
+//!             temp = a.copy()
+//!             a[np.where(temp < t1)] = 0
+//!             a[np.where(temp >= t2)] = 30
+//!             a[np.logical_and(temp >= t1, temp < t2)] += 5
+//!         return arr
+// output: [q32]
+use crate::q32::{Q32, Q32Trait, ZERO};
+
+const ROWS: u32 = 5;
+const COLS: u32 = 50;
 
 #[executable]
-pub fn main() {
-    const Q: u128 = 4_294_967_296;
-    const N: u32 = 5;
-    const M: u32 = 4;
-    const K: u32 = 4;
+fn main(arr: Array<Q32>, n1: Array<i64>, n2: Array<i64>) -> Array<Q32> {
+    assert!(
+        arr.len() == ROWS * COLS && n1.len() == ROWS && n2.len() == ROWS,
+        "inputs have the wrong length",
+    );
+    let mut result = array![];
+    for r in 0..ROWS {
+        let t1 = Q32Trait::from_int(*n1.at(r));
+        let t2 = Q32Trait::from_int(*n2.at(r));
+        for v in arr.span().slice(r * COLS, COLS) {
+            result.append(threshold(*v, t1, t2));
+        }
+    }
+    result
+}
 
-    // Build arr[i][j][k] = ((i*16 + j*4 + k) % 30) * Q.
-    let mut arr: Array<u128> = ArrayTrait::new();
-    for i in 0_u32..N {
-        for j in 0_u32..M {
-            for k in 0_u32..K {
-                let raw: u128 = ((i * 16 + j * 4 + k) % 30).into();
-                arr.append(raw * Q);
-            };
-        };
-    };
-    let n1: Array<u128> = array![5, 10, 15, 0, 8];
-    let n2: Array<u128> = array![20, 25, 22, 30, 18];
-
-    let expected_int: Array<u128> = array![
-        0, 0, 0, 0, 0, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-        21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 30, 30, 30, 30, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 21, 22,
-        23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 5, 6, 7, 8,
-        0, 0, 0, 0, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 30, 30,
-    ];
-    let mut claimed: Array<u128> = ArrayTrait::new();
-    for k in 0_u32..80 {
-        claimed.append(*expected_int.at(k) * Q);
-    };
-
-    // We rebuild arr as new buffer per slab (no mutate in place).
-    let mut out: Array<u128> = ArrayTrait::new();
-    for i in 0_u32..N {
-        let t1_q: u128 = *n1.at(i) * Q;
-        let t2_q: u128 = *n2.at(i) * Q;
-        // snapshot temp values for this slab.
-        let mut temp: Array<u128> = ArrayTrait::new();
-        for j in 0_u32..M {
-            for k in 0_u32..K {
-                let idx: u32 = i * M * K + j * K + k;
-                temp.append(*arr.at(idx));
-            };
-        };
-        // produce 16 output cells for this slab.
-        for j in 0_u32..M {
-            for k in 0_u32..K {
-                let local_idx: u32 = j * K + k;
-                let v = *temp.at(local_idx);
-                let mut next: u128 = v;
-                if v < t1_q {
-                    next = 0;
-                } else if v >= t2_q {
-                    next = 30 * Q;
-                } else {
-                    // v in [t1_q, t2_q): add 5
-                    next = v + 5 * Q;
-                }
-                out.append(next);
-            };
-        };
-    };
-
-    let total: u32 = N * M * K;
-    for k in 0_u32..total {
-        assert!(*out.at(k) == *claimed.at(k));
-    };
+/// The three masked updates of one entry. Every condition tests the original
+/// value (`temp`), and a later update overwrites an earlier one: `temp >= t2`
+/// wins over `temp < t1` where both hold (`t2 <= v < t1`), and `+= 5` touches
+/// exactly the remaining entries.
+fn threshold(v: Q32, t1: Q32, t2: Q32) -> Q32 {
+    if v >= t2 {
+        Q32Trait::from_int(30)
+    } else if v < t1 {
+        ZERO
+    } else {
+        v + Q32Trait::from_int(5)
+    }
 }

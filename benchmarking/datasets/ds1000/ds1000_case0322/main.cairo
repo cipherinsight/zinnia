@@ -1,43 +1,32 @@
-// DS-1000 case 322 — Cairo baseline.
-// Kernel: `np.argwhere(a == np.min(a))` on Integer[2, 2].
-// Sample input has a unique minimum so the result is one (row, col) pair.
+//! DS-1000 case 0322: the (row, column) pairs where `a` attains its minimum,
+//! in row-major order.
+//!
+//!     def kernel(a: Integer[Array, "2 2"]):
+//!         result = np.argwhere(a == np.min(a))
+//!         return result
+//!
+//! The output has shape `(count, 2)`; its length implies the shape.
+// output: [i64]
+const ROWS: u32 = 2;
+const COLS: u32 = 2;
 
 #[executable]
-pub fn main() {
-    let mut data: Array<i128> = ArrayTrait::new();
-    data.append(5);
-    data.append(9);
-    data.append(1);
-    data.append(7);
-
-    let claimed_row: u128 = 1;
-    let claimed_col: u128 = 0;
-
-    let mut min_val: i128 = *data.at(0);
-    for i in 0_u32..2 {
-        for j in 0_u32..2 {
-            let v = *data.at(i * 2 + j);
-            if v < min_val {
-                min_val = v;
+fn main(a: Array<i64>) -> Array<i64> {
+    assert!(a.len() == ROWS * COLS, "a has the wrong length");
+    let mut lowest = *a.at(0);
+    for v in a.span() {
+        if *v < lowest {
+            lowest = *v;
+        }
+    }
+    let mut positions = array![];
+    for i in 0..ROWS {
+        for j in 0..COLS {
+            if *a.at(i * COLS + j) == lowest {
+                positions.append(i.into());
+                positions.append(j.into());
             }
-        };
-    };
-
-    let mut out_row: u128 = 0;
-    let mut out_col: u128 = 0;
-    let mut found: bool = false;
-    for i in 0_u32..2 {
-        for j in 0_u32..2 {
-            let v = *data.at(i * 2 + j);
-            if !found && v == min_val {
-                out_row = i.into();
-                out_col = j.into();
-                found = true;
-            }
-        };
-    };
-    assert!(found);
-
-    assert!(out_row == claimed_row);
-    assert!(out_col == claimed_col);
+        }
+    }
+    positions
 }

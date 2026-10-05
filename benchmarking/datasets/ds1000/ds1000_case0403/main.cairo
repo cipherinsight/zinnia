@@ -1,41 +1,27 @@
-// DS-1000 case 403 — Cairo baseline.
-// Kernel: result = np.ravel_multi_index(index, dims=dims, order='C').
-// 'C' (row-major): linear = ((((i0*d1 + i1)*d2 + i2)*d3 + i3)*d4 + i4).
-// Sample: dims=[8,9,8,8,8], index=[2,3,4,5,6] → 11054.
+//! DS-1000 case 0403: the row-major (C-order) linear index of `index` in an
+//! array of shape `dims`.
+//!
+//!     def kernel(a: Float[Array, "8 9 8 8 8"], index: Integer[Array, "5"]):
+//!         dims = np.array([8, 9, 8, 8, 8])
+//!         result = np.ravel_multi_index(index, dims=dims, order='C')
+//!         return result
+// unused parameters: a
+// output: i64
+
+const DIMS: [i64; 5] = [8, 9, 8, 8, 8];
 
 #[executable]
-pub fn main() {
-    const Q: u128 = 4_294_967_296;
-
-    let mut dims: Array<u128> = ArrayTrait::new();
-    dims.append(8);
-    dims.append(9);
-    dims.append(8);
-    dims.append(8);
-    dims.append(8);
-
-    let total: u32 = 8 * 9 * 8 * 8 * 8;
-    let mut a: Array<u128> = ArrayTrait::new();
-    for k in 0_u32..total {
-        let kv: u128 = k.into();
-        a.append((kv * Q) / 1000);
-    };
-
-    let mut index: Array<u128> = ArrayTrait::new();
-    index.append(2);
-    index.append(3);
-    index.append(4);
-    index.append(5);
-    index.append(6);
-    let claimed: u128 = 11054;
-
-    let mut result: u128 = 0;
-    for k in 0_u32..5 {
-        let ik: u128 = *index.at(k.try_into().unwrap());
-        let dk: u128 = *dims.at(k.try_into().unwrap());
-        result = result * dk + ik;
-    };
-
-    assert!(result == claimed);
-    assert!(a.len() == total);
+fn main(index: Array<i64>) -> i64 {
+    assert!(index.len() == 5, "index has the wrong length");
+    let dims = DIMS.span();
+    // C order: the last index varies fastest (Horner's rule from the first
+    // axis).
+    let mut flat = 0;
+    for axis in 0..5_u32 {
+        let i = *index.at(axis);
+        let dim = *dims.at(axis);
+        assert!(0 <= i && i < dim, "invalid entry in coordinates array");
+        flat = flat * dim + i;
+    }
+    flat
 }

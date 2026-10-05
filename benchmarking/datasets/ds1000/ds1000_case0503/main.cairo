@@ -1,52 +1,23 @@
-// DS-1000 case 503 — Cairo baseline.
-// kernel.py:
-//     result = np.take_along_axis(a, b[..., np.newaxis], axis=-1)[..., 0]
-//   a: Float[13,13,5], b: Integer[13,13]; output: Float[13,13].
-//
-// Quantisation ×2^32 to match Zinnia's `precision_bits = 32`. Pure gather, so
-// Q-scaled equality is exact.
-//
-// Sample inputs:
-//   a[i][j][k] = (i*65 + j*5 + k + 1) / 100
-//   b[i][j]    = (i + j) % 5
+//! DS-1000 case 0503: pick one element of every lane along the last axis,
+//! `np.take_along_axis(a, b[..., np.newaxis], axis=-1)[..., 0]`, i.e.
+//! `result[i][j] = a[i][j][b[i][j]]`.
+//!
+//!     def kernel(a: Float[Array, "13 13 5"], b: Integer[Array, "13 13"]):
+//!         result = np.take_along_axis(a, b[..., np.newaxis], axis=-1)[..., 0]
+//!         return result
+// output: [q32]
+use crate::np::np_index;
+use crate::q32::Q32;
+
+const DIM: u32 = 13;
+const DEPTH: u32 = 5;
 
 #[executable]
-pub fn main() {
-    const Q: u128 = 4_294_967_296;
-
-    let mut a: Array<u128> = ArrayTrait::new();
-    for i in 0_u128..13 {
-        for j in 0_u128..13 {
-            for k in 0_u128..5 {
-                let num: u128 = i * 65 + j * 5 + k + 1;
-                a.append((num * Q) / 100);
-            };
-        };
-    };
-
-    let mut b: Array<u128> = ArrayTrait::new();
-    for i in 0_u128..13 {
-        for j in 0_u128..13 {
-            b.append((i + j) % 5);
-        };
-    };
-
-    let mut expected: Array<u128> = ArrayTrait::new();
-    for i in 0_u128..13 {
-        for j in 0_u128..13 {
-            let bij: u128 = (i + j) % 5;
-            let num: u128 = i * 65 + j * 5 + bij + 1;
-            expected.append((num * Q) / 100);
-        };
-    };
-
-    for i in 0_u128..13 {
-        for j in 0_u128..13 {
-            let bij: u128 = *b.at((i * 13 + j).try_into().unwrap());
-            let a_idx: u32 = (i * 65 + j * 5 + bij).try_into().unwrap();
-            let v: u128 = *a.at(a_idx);
-            let e: u128 = *expected.at((i * 13 + j).try_into().unwrap());
-            assert!(v == e);
-        };
-    };
+fn main(a: Array<Q32>, b: Array<i64>) -> Array<Q32> {
+    assert!(a.len() == DIM * DIM * DEPTH && b.len() == DIM * DIM, "inputs have the wrong shape");
+    let mut picked = array![];
+    for lane in 0..DIM * DIM {
+        picked.append(*a.at(lane * DEPTH + np_index(*b.at(lane), DEPTH)));
+    }
+    picked
 }

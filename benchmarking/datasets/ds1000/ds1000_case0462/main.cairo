@@ -1,32 +1,24 @@
-// DS-1000 case 462 — keep a[i] iff (i == 0 or a[i] != a[i-1]) AND a[i] != 0.
+//! DS-1000 case 0462: drop the zeros and the repeats of the previous entry
+//! (keep the first entry of each run of equal values, unless it is zero).
+//!
+//!     def kernel(a: Integer[Array, "20"]):
+//!         selection = np.ones(len(a), dtype = bool)
+//!         selection[1:] = a[1:] != a[:-1]
+//!         selection &= a != 0
+//!         result = a[selection]
+//!         return result
+// output: [i64]
+const N: u32 = 20;
 
 #[executable]
-pub fn main() {
-    let a: Array<i128> = array![0, 0, 1, 1, 2, 3, 3, 0, 4, 4, 5, 0, 6, 7, 7, 8, 0, 9, 9, 0];
-    let claimed: Array<i128> = array![1, 2, 3, 4, 5, 6, 7, 8, 9];
-
-    let mut selection: Array<u128> = ArrayTrait::new();
-    selection.append(1);
-    for i in 1_u32..20 {
-        let s: u128 = if *a.at(i) != *a.at(i - 1) { 1 } else { 0 };
-        selection.append(s);
-    };
-
-    let mut selection2: Array<u128> = ArrayTrait::new();
-    for i in 0_u32..20 {
-        let nz: u128 = if *a.at(i) != 0 { 1 } else { 0 };
-        selection2.append(*selection.at(i) & nz);
-    };
-
-    let mut out: Array<i128> = ArrayTrait::new();
-    for i in 0_u32..20 {
-        if *selection2.at(i) == 1 {
-            out.append(*a.at(i));
+fn main(a: Array<i64>) -> Array<i64> {
+    assert!(a.len() == N, "a has the wrong length");
+    let mut kept = array![];
+    for i in 0..N {
+        let v = *a.at(i);
+        if v != 0 && (i == 0 || v != *a.at(i - 1)) {
+            kept.append(v);
         }
-    };
-
-    assert!(out.len() == claimed.len());
-    for k in 0_u32..out.len() {
-        assert!(*out.at(k) == *claimed.at(k));
-    };
+    }
+    kept
 }

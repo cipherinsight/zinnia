@@ -2,8 +2,9 @@
 
 `revision/phase0/coverage.md` §1 defines the set as the circuits recorded
 `compile_ok` in two sweep records under `benchmarking/`. This module reads
-those records, loads the kernels the way `benchmarking/validate_contracts.py`
-does, and hands back `ZKCircuit` objects.
+those records, loads the kernels the way the benchmark harness does
+(`benchmarking/harness/kernels.py`, which replaced
+`benchmarking/validate_contracts.py`), and hands back `ZKCircuit` objects.
 
 It also holds the child-process isolation every phase 0 harness uses
 (:func:`run_in_child`) and the coverage harness's own worker
@@ -69,35 +70,18 @@ class Circuit:
         return f"{self.program}::{self.function}"
 
 
-@lru_cache(maxsize=1)
-def _validator() -> ModuleType:
-    """`benchmarking/validate_contracts.py`, imported by path.
-
-    It is a script, not a package member, so it cannot be imported by name;
-    `load_module` and `function_roles` live there and are the kernel-loading
-    convention `acceptance.md` §1 names.
-
-    Importing it *executes* it, so it is loaded on first use rather than at
-    import: merely importing this module — which the pytest hook does
-    transitively — must not run a benchmarking script.
-    """
-    path = BENCHMARKING / "validate_contracts.py"
-    spec = importlib.util.spec_from_file_location("zinnia_validate_contracts", path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"could not load module spec for {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def load_module(path: Path) -> ModuleType:
-    """One kernel file, imported the way `validate_contracts` imports it."""
-    return _validator().load_module(path)
+    """One kernel file, imported the way the benchmark harness imports it."""
+    from benchmarking.harness.kernels import load_kernel_module
+
+    return load_kernel_module(path)
 
 
 def function_roles(path: Path) -> dict[str, str]:
     """Which functions of a kernel file are circuits and which are chips."""
-    return _validator().function_roles(path)
+    from benchmarking.harness.kernels import function_roles as harness_function_roles
+
+    return harness_function_roles(path)
 
 
 def _family_of(program: str, record: str) -> str:
