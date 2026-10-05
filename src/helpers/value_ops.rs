@@ -934,8 +934,10 @@ pub fn apply_scalar_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Va
         // connectives (and stay boolean, e.g. for mask indexing); on
         // integers they are bitwise. (Array operands used to be mapped
         // to the logical connectives wholesale, so `a & 4` on an integer
-        // array computed `a != 0 and 4 != 0`.)
-        let both_boolean = matches!(lhs, Value::Boolean(_)) && matches!(rhs, Value::Boolean(_));
+        // array computed `a != 0 and 4 != 0`.) On operands known to be 0
+        // or 1 the two agree, so the logical form is used there too (a
+        // `dtype=bool` array's cells may be stored as 0/1 integers).
+        let both_boolean = is_zero_or_one(b, lhs) && is_zero_or_one(b, rhs);
         return match op {
             "bit_and" if both_boolean => b.ir_logical_and(lhs, rhs),
             "bit_or" if both_boolean => b.ir_logical_or(lhs, rhs),
@@ -1006,6 +1008,16 @@ pub fn apply_scalar_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Va
             "mat_mul" => crate::ops::static_ndarray_ops::matmul(b, lhs, rhs),
             _ => panic!("Unknown binary operator: {}", op),
         }
+    }
+}
+
+/// `v` is a boolean, or an integer the facts and range analysis place in
+/// {0, 1}.
+fn is_zero_or_one(b: &mut IRBuilder, v: &Value) -> bool {
+    match v {
+        Value::Boolean(_) => true,
+        Value::Integer(_) => b.ask_bounds(v).is_some_and(|(min, max)| min >= 0 && max <= 1),
+        _ => false,
     }
 }
 

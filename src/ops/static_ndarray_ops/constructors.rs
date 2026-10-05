@@ -299,17 +299,22 @@ pub fn np_fill(
         return out;
     }
 
-    let use_float = req_dtype == ZinniaType::Float;
-    let (fill, dtype) = if use_float {
-        (
+    let (fill, dtype) = match req_dtype {
+        ZinniaType::Float => (
             b.ir_constant_float(fill_value as f64),
             crate::types::NumberType::Float,
-        )
-    } else {
-        (
+        ),
+        // `dtype=bool` cells are booleans (stored in an Integer-dtype
+        // array, like comparison results), so `&`/`|` on them stay logical
+        // and the array is usable as a mask.
+        ZinniaType::Boolean => (
+            b.ir_constant_bool(fill_value != 0),
+            crate::types::NumberType::Integer,
+        ),
+        _ => (
             b.ir_constant_int(fill_value),
             crate::types::NumberType::Integer,
-        )
+        ),
     };
     let values = vec![fill; total];
     // P1 segarr-foundation: numeric constructors emit Value::StaticArray.

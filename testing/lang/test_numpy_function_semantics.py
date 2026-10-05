@@ -208,3 +208,23 @@ def test_einsum_single_operand_matches_numpy(spec):
     assert_matches_numpy(
         f"def kernel(a: Integer[Array, \"3 3\"]):\n    return np.einsum('{spec}', a)\n",
         np.arange(9).reshape(3, 3) - 4)
+
+
+def test_bool_array_and_keeps_logical_form():
+    # Case 0462: `selection` is a dtype=bool array whose cells may be stored
+    # as 0/1 integers after a slice assignment; `&=` must stay the logical
+    # and (no bitwise IR, which halo2-base and Noir do not implement).
+    source = (
+        'def kernel(a: Integer[Array, "8"]):\n'
+        '    selection = np.ones(len(a), dtype=bool)\n'
+        '    selection[1:] = a[1:] != a[:-1]\n'
+        '    selection &= a != 0\n'
+        '    return a[selection]\n')
+    a = np.array([0, 0, 1, 1, 2, 0, 3, 3])
+    program = compile_kernel(source)
+    classes = [s["ir_instance"]["__class__"] for s in program.get_ir_stmts()]
+    assert "BitAndIIR" not in classes
+    expected = numpy_kernel(source)(a.copy())
+    satisfied, outputs = run_mock(program, a)
+    assert satisfied and outputs[0] == len(expected)
+    assert outputs[2:2 + len(expected)] == list(expected)
