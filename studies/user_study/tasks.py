@@ -75,6 +75,24 @@ TASKS = [
                     set_at(result, i, 255)
             return result
         """),
+        # Gate H7: an early return under a private condition, and a local
+        # helper with its own returns (the checker rewrites only the
+        # variant's returns and keeps them as returns).
+        "early_return": body("""
+            y = 2 * x + 5
+            if np.all(y >= 0) and np.all(y <= 255):
+                return y
+            return np.clip(y, 0, 255)
+        """),
+        "helper_returns": body("""
+            def clamp(v):
+                if v < 0:
+                    return 0
+                if v > 255:
+                    return 255
+                return v
+            return np.array([clamp(2 * v + 5) for v in x])
+        """),
     }),
     Task("background", "Subtract channel background", ({"T": 3, "C": 2}, {"T": 1, "C": 1}, {"T": 16, "C": 4}), {
         "function": "return x - np.min(x, axis=0)",
