@@ -721,6 +721,32 @@ fn dynamic_read_selects_the_addressed_slot() {
     assert!(!synthesize(&*op, &[int(-1)], &[]).accepted);
 }
 
+/// Reads after many runtime-address writes cost one address comparison per
+/// pending write; past the budget synthesis stops with an error naming the
+/// construct (a 20,000 x 20,000 scatter exhausted 16 GB before).
+#[test]
+fn overlay_beyond_its_budget_is_a_synthesis_error() {
+    let mut builder = BaseCircuitBuilder::<Fp>::from_stage(CircuitBuilderStage::Keygen);
+    builder.set_k(K as usize);
+    builder.set_lookup_bits(LOOKUP_BITS as usize);
+    let provenance = ProvenanceTable::new();
+    let params = ProvingParams { k: K, precision_bits: PRECISION_BITS, lookup_bits: LOOKUP_BITS };
+    let mut synth = Halo2BaseSynthesizer::new(&mut builder, None, params, &provenance);
+    synth.memory.overlay_budget = Some(10);
+    synth.allocate_memory(1, 8, 0).unwrap();
+    let addresses: Vec<Halo2BaseCell> = (0..4).map(|i| synth.cell(int(i))).collect();
+    for addr in &addresses {
+        let value = synth.constant_int(1).unwrap();
+        synth.write_memory(1, addr, &value).unwrap();
+    }
+    let zero = synth.constant_int(0).unwrap();
+    let one = synth.constant_int(1).unwrap();
+    assert!(synth.read_memory(1, &zero).is_ok(), "4 tests are within the budget");
+    assert!(synth.read_memory(1, &one).is_ok(), "8 tests are within the budget");
+    let error = synth.read_memory(1, &zero).map(|_| ()).unwrap_err().to_string();
+    assert!(error.contains("runtime-address writes"), "{error}");
+}
+
 // ── Dynamic-array metadata (C15, previously a constraint-shape replica) ─
 
 /// The trait-default `assert_dynamic_ndarray_meta`: every runtime axis is

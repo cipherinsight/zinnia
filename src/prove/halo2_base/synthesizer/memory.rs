@@ -21,6 +21,17 @@ use crate::prove::error::ProvingError;
 use crate::prove::kernel;
 use crate::prove::traits::Synthesizer;
 
+/// The most `[write addr == read addr]` tests the dynamic-write overlay may
+/// emit in one circuit. Each costs about 16 cells (equality and selection),
+/// so the budget is about 2^24 cells, a circuit that needs more memory to
+/// prove than the benchmark harness allows a step (8 GB). A program over it
+/// (for example a scatter of 20,000 values to runtime addresses read back
+/// 20,000 times: 4·10^8 tests, which exhausted 16 GB during synthesis) is
+/// rejected with an error naming the construct. The overlay is quadratic by
+/// construction; such programs need a memory-consistency argument, which
+/// this backend does not have.
+const OVERLAY_TEST_BUDGET: usize = 1 << 20;
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum OverlayReadKey {
     Cell(u64),
@@ -85,6 +96,11 @@ pub(super) struct MemoryState {
     /// `[write addr == read addr]` bits for overlay writes; the read side is
     /// keyed by cell id for dynamic addresses and by value for constants.
     overlay_hits: HashMap<(u64, OverlayReadKey), Halo2BaseCell>,
+    /// Overlay equality tests emitted so far (see `OVERLAY_TEST_BUDGET`).
+    overlay_tests: usize,
+    /// A lower budget for tests.
+    #[cfg(test)]
+    pub(super) overlay_budget: Option<usize>,
 }
 
 impl Halo2BaseSynthesizer<'_> {
@@ -416,6 +432,20 @@ impl Halo2BaseSynthesizer<'_> {
         base: Halo2BaseCell,
     ) -> Result<Halo2BaseCell, ProvingError> {
         let overlay = self.segment(segment_id)?.overlay.clone();
+        self.memory.overlay_tests += overlay.len();
+        #[cfg(test)]
+        let budget = self.memory.overlay_budget.unwrap_or(OVERLAY_TEST_BUDGET);
+        #[cfg(not(test))]
+        let budget = OVERLAY_TEST_BUDGET;
+        if self.memory.overlay_tests > budget {
+            return Err(ProvingError::synthesis(format!(
+                "dynamic-address memory writes: reads after {} runtime-address writes to one array need more \
+                 than {} address comparisons in total; the halo2-base backend has no memory-consistency \
+                 argument for scatters of this size",
+                overlay.len(),
+                budget
+            )));
+        }
         let mut out = base;
         for (write_addr, write_value) in overlay {
             out = match self.overlay_hit(&write_addr, read_addr)? {
