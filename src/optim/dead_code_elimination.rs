@@ -38,3 +38,45 @@ impl IRPass for DeadCodeElimination {
         ir_graph
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::circuit_input::{CircuitInputs, ResolvedWitness};
+    use crate::ir::IRStatement;
+    use crate::ir_defs::IR;
+    use crate::prove::mock::MockProverBackend;
+    use crate::prove::traits::ProverBackend;
+    use crate::prove::types::ProvingParams;
+
+    /// `idx = 9 - 4` (a runtime value), then `AssertU128LtBit(idx, hi=4)`
+    /// whose returned bit nobody uses.
+    fn unused_bit_assert() -> IRGraph {
+        let stmts: Vec<(IR, Vec<StmtId>)> = vec![
+            (IR::ConstantInt { value: 9 }, vec![]),
+            (IR::ConstantInt { value: 4 }, vec![]),
+            (IR::SubI, vec![0, 1]),
+            (IR::AssertU128LtBit { hi: 4, bit: 0, bits: 2 }, vec![2]),
+        ];
+        IRGraph::new(
+            stmts
+                .into_iter()
+                .enumerate()
+                .map(|(i, (ir, args))| {
+                    IRStatement::new(i as StmtId, crate::types::ValueId::next(), ir, args, vec![], None)
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn bit_assert_with_unused_bit_keeps_its_range_check() {
+        let out = DeadCodeElimination.exec(unused_bit_assert());
+        assert!(out.stmts.iter().any(|s| matches!(s.ir, IR::AssertU128LtBit { .. })));
+        // idx = 5 is out of [0, 4): the check must still reject it.
+        let params = ProvingParams::default();
+        let witness = ResolvedWitness::new(CircuitInputs::new(), params.precision_bits);
+        let artifact = MockProverBackend.prove(&out, &witness, &params).unwrap();
+        assert_ne!(artifact.proof_bytes, "mock_satisfied");
+    }
+}
