@@ -1,21 +1,19 @@
+# npbench program polybench/nussinov/nussinov_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: in-place-mutation, loop-bounded
-# Expected outcome: compile/prove candidate
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 import numpy as np
 
 @zk_chip
-def match(b1: Float, b2: Float):
+def match(b1, b2):
     if b1 + b2 == 3:
         return 1
     else:
         return 0
 
 @zk_circuit
-def kernel(N: Integer, seq: Float[Array, 'N<=1024']):
+def kernel(N: Integer, seq: Integer[Array, '40']):
     table = np.zeros((N, N), np.int32)
     for i in range(N - 1, -1, -1):
         for j in range(i + 1, N):

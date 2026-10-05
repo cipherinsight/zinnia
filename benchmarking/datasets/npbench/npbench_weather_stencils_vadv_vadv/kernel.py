@@ -1,17 +1,14 @@
+# npbench program weather_stencils/vadv/vadv_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: denominator-obligation, in-place-mutation, loop-bounded
-# Expected outcome: compile/prove candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 import numpy as np
 BET_M = 0.5
 BET_P = 0.5
 
 @zk_circuit
-def vadv(utens_stage: Float[Array, 'N<=1024 M<=1024 K<=1024'], u_stage: Float[Array, 'N<=1024 M<=1024 K<=1024'], wcon: Float[Array, 'N<=1024 M<=1024 K<=1024'], u_pos: Float[Array, 'N<=1024 M<=1024 K<=1024'], utens: Float[Array, 'N<=1024 M<=1024 K<=1024'], dtr_stage: Float):
+def vadv(utens_stage: Float[Array, '60 60 40'], u_stage: Float[Array, '60 60 40'], wcon: Float[Array, '61 60 40'], u_pos: Float[Array, '60 60 40'], utens: Float[Array, '60 60 40'], dtr_stage: Float):
     I, J, K = (utens_stage.shape[0], utens_stage.shape[1], utens_stage.shape[2])
     ccol = np.ndarray((I, J, K), dtype=utens_stage.dtype)
     dcol = np.ndarray((I, J, K), dtype=utens_stage.dtype)

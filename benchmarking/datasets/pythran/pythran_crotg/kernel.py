@@ -1,11 +1,8 @@
+# pythran program crotg.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: complex, denominator-obligation, domain-obligation
-# Expected outcome: diagnostic/fail-closed candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].
-# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.
 import math
 
 @zk_circuit

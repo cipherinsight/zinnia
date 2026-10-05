@@ -1,14 +1,11 @@
+# pythran program gauss.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: denominator-obligation, in-place-mutation, loop-bounded
-# Expected outcome: compile/prove candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 
 @zk_chip
-def pivot(n: Integer, i: Integer, a: Float[Array, 'N<=1024'], b: Float[Array, 'N<=1024']):
+def pivot(n, i, a, b):
     i0 = i
     amp0 = abs(a[i - 1][i - 1])
     for j in range(i + 1, n + 1):
@@ -28,7 +25,7 @@ def pivot(n: Integer, i: Integer, a: Float[Array, 'N<=1024'], b: Float[Array, 'N
 
 @zk_circuit
 @requires(lambda n, a, b: 0 <= n <= 1024)
-def gauss(n: Integer, a: Float[Array, 'N<=1024 M<=1024'], b: Float[Array, 'N<=1024']):
+def gauss(n: Integer, a: Float[Array, '4 4'], b: Float[Array, '4']):
     for i in range(1, n + 1):
         if i < n:
             pivot(n, i, a, b)

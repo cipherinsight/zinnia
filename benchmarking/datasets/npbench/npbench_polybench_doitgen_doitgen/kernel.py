@@ -1,12 +1,10 @@
+# npbench program polybench/doitgen/doitgen_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: in-place-mutation, matmul-dot
-# Expected outcome: compile/prove candidate
-# Precondition: Declare shared matrix/vector dimensions explicitly; when not expressible as @requires, encode with matching symbolic annotation names and keep as review obligation.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 import numpy as np
 
 @zk_circuit
-def kernel(NR: Integer, NQ: Integer, NP: Integer, A: Float[Array, 'NR<=1024 NQ<=1024 NP<=1024'], C4: Float[Array, 'NP<=1024 NP<=1024']):
+def kernel(NR: Integer, NQ: Integer, NP: Integer, A: Float[Array, '60 60 128'], C4: Float[Array, '128 128']):
     A[:] = np.reshape(np.reshape(A, (NR, NQ, 1, NP)) @ C4, (NR, NQ, NP))

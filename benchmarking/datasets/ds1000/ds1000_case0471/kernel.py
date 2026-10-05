@@ -1,11 +1,12 @@
 from zinnia import *
 import numpy as np
 
-# DS-1000 NumPy acceptance-study kernel.
-# The body below is generated from the original DS-1000 reference solution.
-# Type annotations/preconditions are intentionally not inferred here.
+# DS-1000 problem 471 (NumPy problem 180; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
 
 @zk_circuit
-def kernel(Z: Float[Array, "N<=64 M<=64 K<=64"]):
+def kernel(Z: Float[Array, "6 2 9 3 7 4"]):
     result = Z[..., -1:]
     return result

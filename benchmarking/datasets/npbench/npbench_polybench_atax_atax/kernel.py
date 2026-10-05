@@ -1,11 +1,10 @@
+# npbench program polybench/atax/atax_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: matmul-dot
-# Expected outcome: compile/prove candidate
-# Precondition: Declare shared matrix/vector dimensions explicitly; when not expressible as @requires, encode with matching symbolic annotation names and keep as review obligation.
 import numpy as np
 
 @zk_circuit
-def kernel(A: Float[Array, 'N<=1024 M<=1024'], x: Float[Array, 'M<=1024']):
+def kernel(A: Float[Array, '4000 5000'], x: Float[Array, '5000']):
     return A @ x @ A

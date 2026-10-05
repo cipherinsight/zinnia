@@ -1,18 +1,15 @@
+# npbench program polybench/adi/adi_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: denominator-obligation, in-place-mutation, loop-bounded
-# Expected outcome: compile/prove candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 import numpy as np
 
 @zk_circuit
 @requires(lambda TSTEPS, N, u: 0 <= N <= 1024)
 @requires(lambda TSTEPS, N, u: N != 0)
-@requires(lambda TSTEPS, N, u: TSTEPS != 0.0)
-def kernel(TSTEPS: Float, N: Integer, u: Float[Array, 'N<=1024 M<=1024']):
+@requires(lambda TSTEPS, N, u: TSTEPS != 0)
+def kernel(TSTEPS: Integer, N: Integer, u: Float[Array, '100 100']):
     v = np.empty(u.shape, dtype=u.dtype)
     p = np.empty(u.shape, dtype=u.dtype)
     q = np.empty(u.shape, dtype=u.dtype)

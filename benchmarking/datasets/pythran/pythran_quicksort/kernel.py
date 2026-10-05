@@ -1,14 +1,11 @@
+# pythran program quicksort.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: data-dependent-loop, in-place-mutation
-# Expected outcome: diagnostic/fail-closed candidate
-# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
-# Diagnostic: while loops require a public/padded maximum iteration count.
 
 @zk_chip
-def partition(list: Float[Array, 'N<=1024'], start: Float, end: Float):
+def partition(list, start, end):
     pivot = list[end]
     bottom = start - 1
     top = end
@@ -34,12 +31,12 @@ def partition(list: Float[Array, 'N<=1024'], start: Float, end: Float):
     return top
 
 @zk_chip
-def do_quicksort(list: Float, start: Float, end: Float):
+def do_quicksort(list, start, end):
     if start < end:
         split = partition(list, start, end)
         do_quicksort(list, start, split - 1)
         do_quicksort(list, split + 1, end)
 
 @zk_circuit
-def quicksort(l: Integer[Array, 'N<=1024'], s: Integer, e: Integer):
+def quicksort(l: Integer[Array, '10'], s: Integer, e: Integer):
     do_quicksort(l, s, e)

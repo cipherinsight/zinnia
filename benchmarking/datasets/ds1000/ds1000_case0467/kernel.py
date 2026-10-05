@@ -1,13 +1,16 @@
 from zinnia import *
 import numpy as np
 
-# DS-1000 NumPy acceptance-study kernel.
-# The body below is generated from the original DS-1000 reference solution.
-# Type annotations/preconditions are intentionally not inferred here.
+# DS-1000 problem 467 (NumPy problem 176; Origin).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+# Performance-set variant: size is a compile-time constant (test case 1 value).
 
 @zk_chip
 def window(arr, shape=(3, 3)):
     ans = []
+    # Find row and column window sizes
     r_win = np.floor(shape[0] / 2).astype(int)
     c_win = np.floor(shape[1] / 2).astype(int)
     x, y = arr.shape
@@ -21,6 +24,7 @@ def window(arr, shape=(3, 3)):
     return ans
 
 @zk_circuit
-def kernel(a: Integer[Array, "4 4"], size: Integer[Array, "2"]):
+def kernel(a: Integer[Array, "4 4"]):
+    size = (3, 3)
     result = window(a, size)
     return result

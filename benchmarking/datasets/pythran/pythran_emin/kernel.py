@@ -1,12 +1,11 @@
-from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: shape-dtype-only
-# Expected outcome: compile/prove candidate
-# Precondition: Shape/rank/dtype annotations only.
+# pythran program emin.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
 
-@zk_circuit
-def Eandg(rOH: Float, thetaHOH: Float):
+from zinnia import *
+
+@zk_chip
+def Eandg(rOH, thetaHOH):
     """"
     Arguments: (internal coordinates of the water molecule)
 
@@ -37,3 +36,17 @@ def Eandg(rOH: Float, thetaHOH: Float):
     grOH = 2 * kOH * (rOH - rOHe)
     grthetaHOH = 2 * kHOH * (thetaHOH - thetaHOHe)
     return (E, grOH, grthetaHOH)
+
+@zk_circuit
+def run():
+    c = 0.005
+    n_steps = 1000000
+    rOH = 10.0
+    thetaHOH = 180.0
+    for i in range(n_steps):
+        E, grOH, gthetaHOH = Eandg(rOH, thetaHOH)
+        if abs(grOH) > 0.001 / c or abs(gthetaHOH) > 0.01 / c:
+            rOH = rOH - c * grOH
+            thetaHOH = thetaHOH - c * gthetaHOH
+    converged = abs(grOH) > 0.001 / c or abs(gthetaHOH) > 0.01 / c
+    return (converged, E, rOH, thetaHOH)

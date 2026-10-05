@@ -1,14 +1,12 @@
+# pythran program allpairs_distances_loops.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: in-place-mutation, loop-bounded
-# Expected outcome: compile/prove candidate
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 import numpy as np
 
 @zk_chip
-def dists(X: Float[Array, 'N<=1024 M<=1024'], Y: Float[Array, 'N<=1024 M<=1024']):
+def dists(X, Y):
     result = np.zeros((X.shape[0], Y.shape[0]), X.dtype)
     for i in range(X.shape[0]):
         for j in range(Y.shape[0]):

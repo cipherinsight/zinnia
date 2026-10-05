@@ -1,15 +1,12 @@
+# npbench program scattering_self_energies/scattering_self_energies_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: in-place-mutation, loop-bounded, matmul-dot
-# Expected outcome: compile/prove candidate
-# Precondition: Declare shared matrix/vector dimensions explicitly; when not expressible as @requires, encode with matching symbolic annotation names and keep as review obligation.
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 import numpy as np
 
 @zk_circuit
-def scattering_self_energies(neigh_idx: Float[Array, 'N<=1024 M<=1024'], dH: Float[Array, 'N<=1024 M<=1024 K<=1024'], G: Float[Array, 'N<=1024 M<=1024 K<=1024'], D: Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256 R<=256 C<=256'], Sigma: Float[Array, 'N<=1024 M<=1024 K<=1024']):
+def scattering_self_energies(neigh_idx: Integer[Array, '6 2'], dH: Complex[Array, '6 2 2 3 3'], G: Complex[Array, '2 4 6 3 3'], D: Complex[Array, '2 2 6 2 2 2'], Sigma: Complex[Array, '2 4 6 3 3']):
     for k in range(G.shape[0]):
         for E in range(G.shape[1]):
             for q in range(D.shape[0]):

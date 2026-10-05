@@ -1,14 +1,12 @@
+# pythran program fft.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: complex, denominator-obligation
-# Expected outcome: diagnostic/fail-closed candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.
 import math, numpy as np
 
 @zk_circuit
-def fft(x: Complex[Array, 'N<=1024']):
+def fft(x: Complex[Array, '1024']):
     N = x.shape[0]
     if N == 1:
         return np.array(x)

@@ -1,18 +1,13 @@
+# npbench program stockham_fft/stockham_fft_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: complex, denominator-obligation, in-place-mutation, loop-bounded, matmul-dot
-# Expected outcome: diagnostic/fail-closed candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Declare shared matrix/vector dimensions explicitly; when not expressible as @requires, encode with matching symbolic annotation names and keep as review obligation.
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
-# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.
 import numpy as np
 
 @zk_circuit
 @requires(lambda N, R, K, x, y: R != 0)
-def stockham_fft(N: Integer, R: Integer, K: Integer, x: Complex[Array, 'N<=1024'], y: Complex[Array, 'N<=1024']):
+def stockham_fft(N: Integer, R: Integer, K: Integer, x: Complex[Array, '32768'], y: Complex[Array, '32768']):
     i_coord, j_coord = np.mgrid[0:R, 0:R]
     dft_mat = np.empty((R, R), dtype=np.complex128)
     dft_mat = np.exp(-2j * np.pi * i_coord * j_coord / R)

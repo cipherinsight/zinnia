@@ -1,18 +1,16 @@
+# pythran program allpairs.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: in-place-mutation, loop-bounded
-# Expected outcome: compile/prove candidate
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 import numpy as np
 
 @zk_circuit
-def sqr_dists(X: Float[Array, 'N<=1024 M<=1024'], Y: Float[Array, 'N<=1024 M<=1024']):
+def sqr_dists(X: Float[Array, '300 300'], Y: Float[Array, '300 300']):
     return np.array([[np.sum((x - y) ** 2) for x in X] for y in Y])
 
 @zk_circuit
-def sqr_dists_loops(X: Float[Array, 'N<=1024 M<=1024'], Y: Float[Array, 'N<=1024 M<=1024']):
+def sqr_dists_loops(X: Float[Array, '8 8'], Y: Float[Array, '8 8']):
     m, n = (X.shape[0], Y.shape[0])
     D = np.zeros((m, n))
     for i in range(m):

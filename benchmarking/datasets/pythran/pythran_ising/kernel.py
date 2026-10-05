@@ -1,14 +1,12 @@
+# pythran program ising.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: in-place-mutation, loop-bounded
-# Expected outcome: compile/prove candidate
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 import numpy as np
 
 @zk_circuit
-def ising_step(field: Integer[Array, 'N<=1024 M<=1024'], beta: Float=0.4):
+def ising_step(field: Integer[Array, '2 2'], beta: Float=0.4):
     N, M = field.shape
     for n_offset in range(2):
         for m_offset in range(2):
@@ -18,7 +16,7 @@ def ising_step(field: Integer[Array, 'N<=1024 M<=1024'], beta: Float=0.4):
     return field
 
 @zk_chip
-def clamp(v: Float, n: Integer):
+def clamp(v, n):
     if v < 0:
         return v + n
     elif v < n:
@@ -27,7 +25,7 @@ def clamp(v: Float, n: Integer):
         return v - n
 
 @zk_chip
-def _ising_update(field: Integer[Array, 'N<=1024 M<=1024'], n: Integer, m: Integer, beta: Float):
+def _ising_update(field, n, m, beta):
     total = 0
     N, M = field.shape
     for i in range(n - 1, n + 2):

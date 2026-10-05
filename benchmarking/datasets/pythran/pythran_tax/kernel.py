@@ -1,13 +1,12 @@
+# pythran program tax.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: denominator-obligation
-# Expected outcome: compile/prove candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
 import numpy as np
 
 @zk_circuit
-def tax(d: Float[Array, 'N<=1024']):
+def tax(d: Float[Array, '10']):
     tax_seg1 = d[d > 256303] * 0.45 - 16164.53
     tax_seg2 = d[(d > 54057) & (d <= 256303)] * 0.42 - 8475.44
     seg3 = d[(d > 13769) & (d <= 54057)] - 13769

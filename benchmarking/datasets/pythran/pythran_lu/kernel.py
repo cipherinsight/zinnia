@@ -1,15 +1,12 @@
+# pythran program lu.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: denominator-obligation, in-place-mutation, loop-bounded
-# Expected outcome: compile/prove candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 import numpy as np
 
 @zk_circuit
-def factorMatrix0(M: Float[Array, 'N<=1024 M<=1024']):
+def factorMatrix0(M: Float[Array, '5 5']):
     n = M.shape[0]
     m = M.shape[1]
     for line in range(0, n - 1):
@@ -23,7 +20,7 @@ def factorMatrix0(M: Float[Array, 'N<=1024 M<=1024']):
                 M[j, k] -= v * M[line, k]
 
 @zk_circuit
-def factorMatrix1(M: Float[Array, 'N<=1024 M<=1024']):
+def factorMatrix1(M: Float[Array, '5 5']):
     n = M.shape[0]
     m = M.shape[1]
     for line in range(0, n - 1):

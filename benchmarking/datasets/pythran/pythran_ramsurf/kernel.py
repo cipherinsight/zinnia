@@ -1,19 +1,12 @@
+# pythran program ramsurf.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: complex, data-dependent-loop, denominator-obligation, domain-obligation, in-place-mutation, loop-bounded
-# Expected outcome: diagnostic/fail-closed candidate
-# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
-# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.
-# Diagnostic: while loops require a public/padded maximum iteration count.
 import cmath
 
 @zk_chip
-def guerre(a: Complex[Array, 'N<=1024'], n: Integer, z: Float, err: Float, nter: Float):
+def guerre(a, n, z, err, nter):
     az = [complex(0, 0) for i in range(50)]
     azz = [complex(0, 0) for i in range(50)]
     ci = complex(0.0, 1.0)
@@ -57,7 +50,7 @@ def guerre(a: Complex[Array, 'N<=1024'], n: Integer, z: Float, err: Float, nter:
     return z
 
 @zk_chip
-def fndrt(a: Complex[Array, 'N<=1024'], n: Integer):
+def fndrt(a, n):
     z = [complex(0, 0) for k in range(n)]
     if n == 1:
         z[0] = -a[0] / a[1]
@@ -79,7 +72,7 @@ def fndrt(a: Complex[Array, 'N<=1024'], n: Integer):
     return z
 
 @zk_chip
-def pivot(n: Integer, i: Integer, a: Complex[Array, 'N<=1024'], b: Complex[Array, 'N<=1024']):
+def pivot(n, i, a, b):
     i0 = i
     amp0 = abs(a[i - 1][i - 1])
     for j in range(i + 1, n + 1):
@@ -98,7 +91,7 @@ def pivot(n: Integer, i: Integer, a: Complex[Array, 'N<=1024'], b: Complex[Array
         a[j - 1][i0 - 1] = temp
 
 @zk_chip
-def gauss(n: Integer, a: Complex[Array, 'N<=1024'], b: Complex[Array, 'N<=1024']):
+def gauss(n, a, b):
     for i in range(1, n + 1):
         if i < n:
             pivot(n, i, a, b)
@@ -115,8 +108,8 @@ def gauss(n: Integer, a: Complex[Array, 'N<=1024'], b: Complex[Array, 'N<=1024']
         for j in range(i, n):
             b[i - 1] = b[i - 1] - a[j][i - 1] * b[j]
 
-@zk_chip
-def deriv(n: Integer, sig: Float, alp: Float, dg: Complex[Array, 'N<=1024'], dh1: Complex[Array, 'N<=1024'], dh3: Complex[Array, 'N<=1024'], bin: Float[Array, 'N<=1024 M<=1024'], nu: Float):
+@zk_circuit
+def deriv(n: Integer, sig: Float, alp: Float, dg: Complex[Array, '8'], dh1: Complex[Array, '8'], dh3: Complex[Array, '8'], bin: Float[Array, '8 8'], nu: Float):
     dh2 = [complex(0, 0) for n in dh1]
     ci = complex(0.0, 1.0)
     dh1[0] = complex(0.5, 0) * ci * complex(sig, 0)
@@ -139,8 +132,8 @@ def deriv(n: Integer, sig: Float, alp: Float, dg: Complex[Array, 'N<=1024'], dh1
         for j in range(1, i):
             dg[i] = dg[i] + bin[j - 1][i - 1] * (dh1[j - 1] + dh2[j - 1] + dh3[j - 1]) * dg[i - j]
 
-@zk_circuit
-def epade(np: Float, ns: Float, ip: Float, k0: Float, dr: Float, pd1: Complex[Array, 'N<=1024'], pd2: Complex[Array, 'N<=1024']):
+@zk_chip
+def epade(np, ns, ip, k0, dr, pd1, pd2):
     m = 40
     dg = range(m)
     dh1 = range(m)
@@ -205,10 +198,8 @@ def epade(np: Float, ns: Float, ip: Float, k0: Float, dr: Float, pd1: Complex[Ar
     for j in range(0, np):
         pd2[j] = -1.0 / dh2[j]
 
-@zk_circuit
-@requires(lambda nz, np, iz, dz, k0, rhob, alpw, alpb, ksq, ksqw, ksqb, f1, f2, f3, r1, r2, r3, s1, s2, s3, pd1, pd2, izsrf: 0 <= nz <= 1024)
-@requires(lambda nz, np, iz, dz, k0, rhob, alpw, alpb, ksq, ksqw, ksqb, f1, f2, f3, r1, r2, r3, s1, s2, s3, pd1, pd2, izsrf: dz != 0.0)
-def matrc(nz: Integer, np: Float, iz: Float, dz: Float, k0: Float, rhob: Complex[Array, 'N<=1024'], alpw: Complex[Array, 'N<=1024'], alpb: Complex[Array, 'N<=1024'], ksq: Complex[Array, 'N<=1024'], ksqw: Complex[Array, 'N<=1024'], ksqb: Complex[Array, 'N<=1024'], f1: Complex[Array, 'N<=1024'], f2: Complex[Array, 'N<=1024'], f3: Complex[Array, 'N<=1024'], r1: Complex[Array, 'N<=1024'], r2: Complex[Array, 'N<=1024'], r3: Complex[Array, 'N<=1024'], s1: Complex[Array, 'N<=1024'], s2: Complex[Array, 'N<=1024'], s3: Complex[Array, 'N<=1024'], pd1: Complex[Array, 'N<=1024'], pd2: Complex[Array, 'N<=1024'], izsrf: Float):
+@zk_chip
+def matrc(nz, np, iz, dz, k0, rhob, alpw, alpb, ksq, ksqw, ksqb, f1, f2, f3, r1, r2, r3, s1, s2, s3, pd1, pd2, izsrf):
     a1 = k0 * k0 / 6.0
     a2 = 2.0 * k0 * k0 / 3.0
     a3 = k0 * k0 / 6.0

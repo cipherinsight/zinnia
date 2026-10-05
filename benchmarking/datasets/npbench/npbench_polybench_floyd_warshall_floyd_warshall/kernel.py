@@ -1,13 +1,11 @@
+# npbench program polybench/floyd_warshall/floyd_warshall_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: in-place-mutation, loop-bounded
-# Expected outcome: compile/prove candidate
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 import numpy as np
 
 @zk_circuit
-def kernel(path: Float[Array, 'N<=1024 M<=1024']):
+def kernel(path: Integer[Array, '200 200']):
     for k in range(path.shape[0]):
         path[:] = np.minimum(path[:], np.add.outer(path[:, k], path[k, :]))
