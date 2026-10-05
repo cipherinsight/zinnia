@@ -317,3 +317,46 @@ def test_mixed_runtime_index_read_selects_one_axis_at_a_time():
 
 def test_mixed_runtime_index_read_halo2_base_matches_mock():
     assert_backends_agree(GATHER_3D, CUBE, -1, 2)
+
+
+# ── np.percentile at a runtime q ─────────────────────────────────────────
+
+PERCENTILE = 'def kernel(a: Float[Array, "20"], p: Integer):\n    return np.percentile(a, p)\n'
+SAMPLE20 = np.round(np.random.default_rng(1).normal(size=20) * 3, 3)
+
+
+def test_runtime_percentile_matches_numpy_for_every_q():
+    program = compile_kernel(PERCENTILE)
+    for p in range(101):
+        satisfied, outputs = run_mock(program, SAMPLE20, p)
+        assert satisfied
+        assert abs(outputs[0] - np.percentile(SAMPLE20, p)) < 1e-6, p
+
+
+@pytest.mark.parametrize("p", [-1, 101])
+def test_runtime_percentile_outside_0_100_has_no_proof(p):
+    assert not run_mock(compile_kernel(PERCENTILE), SAMPLE20, p)[0]
+
+
+@pytest.mark.parametrize("q", [0, 37, 62.5, 100])
+def test_constant_percentile_matches_numpy(q):
+    assert_matches_numpy(f'def kernel(a: Float[Array, "20"]):\n    return np.percentile(a, {q})\n',
+                         SAMPLE20)
+
+
+def test_integer_array_percentile_matches_numpy():
+    source = 'def kernel(a: Integer[Array, "7"], p: Integer):\n    return np.percentile(a, p)\n'
+    a = np.array([5, -2, 9, 9, 0, 3, 1])
+    for p in (0, 33, 50, 99, 100):
+        assert_matches_numpy(source, a, p)
+
+
+def test_runtime_percentile_interpolates_once():
+    # One product and one division, not one interpolation per possible q.
+    classes = ir_classes(compile_kernel(PERCENTILE))
+    assert classes.count("DivFIR") == 1 and "MulFIR" not in classes
+    assert classes.count("EqualIIR") == 19
+
+
+def test_runtime_percentile_halo2_base_matches_mock():
+    assert_backends_agree(PERCENTILE, SAMPLE20, 37)

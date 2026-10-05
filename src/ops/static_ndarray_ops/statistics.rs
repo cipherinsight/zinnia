@@ -333,3 +333,94 @@ mod tests {
         assert_eq!(edges[2].float_val(), Some(4.0));
     }
 }
+
+/// `np.percentile(a, q)` of a 1-D static array with NumPy's default
+/// ("linear") method: on the sorted values `s` of the `n` elements, with
+/// `r = q / 100 * (n - 1)` and `lo = floor(r)`, the result is
+/// `s[lo] + (s[lo + 1] - s[lo]) * (r - lo)` (just `s[lo]` when `r` is
+/// integral). `q` is a compile-time number or a runtime integer; NumPy
+/// rejects `q` outside `[0, 100]`, so such a `q` is a compile error or has
+/// no proof.
+///
+/// A runtime `q` is lowered arithmetically instead of by enumerating the
+/// 101 possible values: `r * 100 = q * (n - 1)` is an integer, so
+/// `lo = (q * (n - 1)) // 100` (a pinned floor division by the constant
+/// 100) and `frac = q * (n - 1) - 100 * lo` in `[0, 100)`; `s[lo]` and
+/// `s[lo + 1]` are read with one shared set of `lo == i` tests (`lo` lies
+/// in `[0, n - 1]` because `q` was checked to `[0, 100]`), and the result
+/// is `s[lo] + (s[lo + 1] - s[lo]) * frac / 100`: an exact product with
+/// the integer `frac` and one division by the constant 100, a single
+/// rounding.
+pub fn np_percentile(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
+    if let Some(key) = kwargs.keys().find(|k| k.as_str() != "q") {
+        panic!("np.percentile: keyword argument `{key}` is not supported");
+    }
+    assert!(args.len() >= 2 || kwargs.contains_key("q"), "np.percentile: requires a and q");
+    let arr = &args[0];
+    let q = kwargs.get("q").or_else(|| args.get(1)).expect("np.percentile: requires q");
+    let n = match arr {
+        Value::StaticArray { shape, dtype, .. } if shape.len() == 1 && *dtype != NumberType::Complex => {
+            shape[0]
+        }
+        _ => panic!("np.percentile: supports a 1-D real static array"),
+    };
+    if n == 0 {
+        panic!("np.percentile: empty arrays are not supported");
+    }
+    let sorted = crate::helpers::static_array::sorting::try_apply_sort(b, arr, None, false)
+        .expect("np.percentile: sorting a static array");
+    let cells: Vec<Value> = payload_cells(b, &sorted)
+        .iter()
+        .map(|c| crate::helpers::value_ops::ensure_float(b, c))
+        .collect();
+    if let Some(q) = q.float_val().or_else(|| q.int_val().map(|v| v as f64)) {
+        return percentile_at_constant(b, &cells, q);
+    }
+    if !matches!(q, Value::Integer(_)) {
+        panic!("np.percentile: a runtime q must be an integer");
+    }
+    percentile_at_runtime(b, &cells, q)
+}
+
+fn percentile_at_constant(b: &mut IRBuilder, sorted: &[Value], q: f64) -> Value {
+    if !(0.0..=100.0).contains(&q) {
+        panic!("np.percentile: q must be in [0, 100], got {q}");
+    }
+    let r = q / 100.0 * (sorted.len() - 1) as f64;
+    let lo = r.floor() as usize;
+    let weight = r - lo as f64;
+    if weight == 0.0 {
+        return sorted[lo].clone();
+    }
+    let diff = b.ir_sub_f(&sorted[lo + 1], &sorted[lo]);
+    let w = b.ir_constant_float(weight);
+    let step = b.ir_mul_f(&diff, &w);
+    b.ir_add_f(&sorted[lo], &step)
+}
+
+fn percentile_at_runtime(b: &mut IRBuilder, sorted: &[Value], q: &Value) -> Value {
+    let n = sorted.len();
+    crate::optim::resolver::discharge_index_in_range(b, q, 0, 101, "np.percentile");
+    let n_minus_1 = b.ir_constant_int(n as i64 - 1);
+    let hundred = b.ir_constant_int(100);
+    let scaled = b.ir_mul_i(q, &n_minus_1);
+    let lo = b.ir_floor_div_i(&scaled, &hundred);
+    let lo_times_100 = b.ir_mul_i(&lo, &hundred);
+    let frac = b.ir_sub_i(&scaled, &lo_times_100);
+
+    // s[lo] and s[lo + 1] (s[n - 1] again for lo = n - 1, where frac = 0).
+    let mut low = sorted[0].clone();
+    let mut high = sorted[1.min(n - 1)].clone();
+    for i in 1..n {
+        let i_v = b.ir_constant_int(i as i64);
+        let at_i = b.ir_equal_i(&lo, &i_v);
+        low = b.ir_select_f(&at_i, &sorted[i], &low);
+        high = b.ir_select_f(&at_i, &sorted[(i + 1).min(n - 1)], &high);
+    }
+    let diff = b.ir_sub_f(&high, &low);
+    let frac_f = b.ir_float_cast(&frac);
+    let scaled_diff = b.ir_mul_f(&diff, &frac_f);
+    let hundred_f = b.ir_constant_float(100.0);
+    let step = b.ir_div_f(&scaled_diff, &hundred_f);
+    b.ir_add_f(&low, &step)
+}

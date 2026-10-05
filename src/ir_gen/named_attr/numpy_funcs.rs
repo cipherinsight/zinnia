@@ -208,53 +208,7 @@ fn np_percentile_ds1000(
     args: &[Value],
     kwargs: &HashMap<String, Value>,
 ) -> Value {
-    ensure_no_kwargs("np.percentile", kwargs, &["q"]);
-    assert!(args.len() >= 2, "np.percentile: requires a and q");
-    let arr = &args[0];
-    let q = kwargs.get("q").or_else(|| args.get(1)).unwrap();
-    let (_, shape) = static_array_meta(arr, "np.percentile");
-    if shape.len() != 1 {
-        panic!("np.percentile: DS1000 slice supports 1-D StaticArray input only");
-    }
-    let n = shape[0];
-    if n == 0 {
-        panic!("np.percentile: empty arrays are not supported");
-    }
-    let sorted = crate::helpers::static_array::sorting::try_apply_sort(b, arr, None, false)
-        .unwrap_or_else(|| panic!("np.percentile: sorting failed for StaticArray input"));
-    let cells = static_cells(b, &sorted, "np.percentile");
-    let percentile_at = |b: &mut crate::builder::IRBuilder, p: i64| -> Value {
-        if !(0..=100).contains(&p) {
-            panic!("np.percentile: q must be in [0, 100]");
-        }
-        let rank = (p as f64 / 100.0) * ((n - 1) as f64);
-        let lo = rank.floor() as usize;
-        let hi = rank.ceil() as usize;
-        let weight = rank - lo as f64;
-        let lo_v = as_float_value(b, &cells[lo]);
-        if lo == hi {
-            lo_v
-        } else {
-            let hi_v = as_float_value(b, &cells[hi]);
-            let one_minus = b.ir_constant_float(1.0 - weight);
-            let weight_v = b.ir_constant_float(weight);
-            let left = b.ir_mul_f(&lo_v, &one_minus);
-            let right = b.ir_mul_f(&hi_v, &weight_v);
-            b.ir_add_f(&left, &right)
-        }
-    };
-    if let Some(p) = q.int_val() {
-        return percentile_at(b, p);
-    }
-    crate::optim::resolver::discharge_index_in_range(b, q, 0, 101, "np.percentile");
-    let mut result = percentile_at(b, 0);
-    for p in 1..=100 {
-        let p_val = b.ir_constant_int(p);
-        let cond = b.ir_equal_i(q, &p_val);
-        let candidate = percentile_at(b, p);
-        result = b.ir_select_f(&cond, &candidate, &result);
-    }
-    result
+    crate::ops::static_ndarray_ops::np_percentile(b, args, kwargs)
 }
 
 fn np_correlate_ds1000(
