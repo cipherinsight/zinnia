@@ -6,7 +6,8 @@
 //!
 //! * `a * b` is `floor(a * b / 2^32)` (Zinnia `fp_mul_rescale`), computed in
 //!   `i128` and rescaled with an arithmetic shift, which rounds toward
-//!   negative infinity.
+//!   negative infinity (on 32-bit targets from 32-bit halves instead; see
+//!   [`mul_rescaled`]).
 //! * `a / b` is `floor(a * 2^32 / b)` with Euclidean rounding (Zinnia
 //!   `fp_div_prescale`).
 //! * [`dot`] accumulates the raw products and rescales once (Zinnia
@@ -42,6 +43,8 @@ pub struct Q32(i64);
 impl Q32 {
     pub const ZERO: Q32 = Q32(0);
     pub const ONE: Q32 = Q32(SCALE);
+    /// `0.5`.
+    pub const HALF: Q32 = Q32(SCALE / 2);
     /// `round(pi * 2^32)`.
     pub const PI: Q32 = Q32(13_493_037_705);
     /// `round(pi / 2 * 2^32)`.
@@ -149,6 +152,28 @@ impl Q32 {
             -angle
         } else {
             angle
+        }
+    }
+
+    /// `np.arctan2(self, x)`: the angle of the point `(x, self)` in
+    /// `[-pi, pi]`, from [`Q32::atan`] of the smaller over the larger
+    /// magnitude (the ratio stays in `[0, 1]`, so it cannot overflow).
+    /// `arctan2(0, 0)` is 0, as in NumPy.
+    pub fn atan2(self, x: Q32) -> Q32 {
+        let (ay, ax) = (self.abs(), x.abs());
+        if ay == Self::ZERO && ax == Self::ZERO {
+            return Self::ZERO;
+        }
+        let first_quadrant = if ay <= ax {
+            (ay / ax).atan()
+        } else {
+            Self::FRAC_PI_2 - (ax / ay).atan()
+        };
+        let upper_half = if x.is_negative() { Self::PI - first_quadrant } else { first_quadrant };
+        if self.is_negative() {
+            -upper_half
+        } else {
+            upper_half
         }
     }
 
@@ -344,8 +369,47 @@ impl Neg for Q32 {
 impl Mul for Q32 {
     type Output = Q32;
     fn mul(self, rhs: Q32) -> Q32 {
-        Q32(((self.0 as i128 * rhs.0 as i128) >> FRAC_BITS) as i64)
+        Q32(mul_rescaled(self.0, rhs.0))
     }
+}
+
+/// `floor(a * b / 2^32)`, wrapped to 64 bits.
+///
+/// On 64-bit targets (SP1, the native runner) this is one `i128` product and
+/// a shift. On 32-bit targets (RISC Zero) it is [`mul_halves`]: the RISC Zero
+/// toolchain (rustc 1.97, riscv32im) miscompiles a chain of such `i128`
+/// products. In pythran d2q9, `1.5 * m * m` came out as
+/// `m * (lo32(m) - 1) / 2^32`; the 64-bit arithmetic of `mul_halves` avoids
+/// the miscompiled pattern. The two forms agree on every input
+/// (test `mul_halves_is_the_i128_product`).
+#[inline]
+fn mul_rescaled(a: i64, b: i64) -> i64 {
+    #[cfg(target_pointer_width = "32")]
+    {
+        mul_halves(a, b)
+    }
+    #[cfg(not(target_pointer_width = "32"))]
+    {
+        ((a as i128 * b as i128) >> FRAC_BITS) as i64
+    }
+}
+
+/// `floor(a * b / 2^32)` from the 32-bit halves `a = a_hi * 2^32 + a_lo`
+/// (`a_lo` in `[0, 2^32)`): `a_hi*b_hi*2^32 + a_hi*b_lo + a_lo*b_hi +
+/// floor(a_lo*b_lo / 2^32)`, where only the last term has a fraction to
+/// drop. The cross products fit an `i64`; the sum wraps like the `as i64` of
+/// the `i128` form.
+#[cfg_attr(not(target_pointer_width = "32"), allow(dead_code))]
+#[inline]
+fn mul_halves(a: i64, b: i64) -> i64 {
+    const LOW: i64 = 0xffff_ffff;
+    let (a_hi, a_lo) = (a >> FRAC_BITS, a & LOW);
+    let (b_hi, b_lo) = (b >> FRAC_BITS, b & LOW);
+    let low = ((a_lo as u64 * b_lo as u64) >> FRAC_BITS) as i64;
+    (a_hi.wrapping_mul(b_hi) << FRAC_BITS)
+        .wrapping_add(a_hi * b_lo)
+        .wrapping_add(a_lo * b_hi)
+        .wrapping_add(low)
 }
 
 /// Multiplication by an integer is exact.
@@ -645,6 +709,31 @@ mod tests {
     }
 
     #[test]
+    fn mul_halves_is_the_i128_product() {
+        let i128_form = |a: i64, b: i64| ((a as i128 * b as i128) >> FRAC_BITS) as i64;
+        let edges = [
+            0, 1, -1, 2, -2, i64::MAX, i64::MIN, i64::MIN + 1, 1 << 31, -(1 << 31), 3 << 31,
+            -(3 << 31), 1 << 32, -(1 << 32), (1 << 32) - 1, -(1 << 32) + 1, 0x7fff_ffff, -0x8000_0000,
+        ];
+        for &a in &edges {
+            for &b in &edges {
+                assert_eq!(mul_halves(a, b), i128_form(a, b), "{a} * {b}");
+            }
+        }
+        let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = || {
+            state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            // Mix magnitudes: full 64-bit values and values within Q32's range.
+            let v = state as i64;
+            if state >> 63 == 0 { v >> (state % 40) } else { v }
+        };
+        for _ in 0..1_000_000 {
+            let (a, b) = (next(), next());
+            assert_eq!(mul_halves(a, b), i128_form(a, b), "{a} * {b}");
+        }
+    }
+
+    #[test]
     fn exp_log_tanh_atan_match_libm() {
         // exp: relative error, over the whole Q32 range of its result.
         for i in -2000..=2140 {
@@ -661,6 +750,10 @@ mod tests {
             let q = Q32::from_f64(i as f64 / 100.0);
             assert!(close(q.tanh(), q.to_f64().tanh(), 2e-9), "tanh {q:?}");
             assert!(close(q.atan(), q.to_f64().atan(), 1e-8), "atan {q:?}");
+            for x in [-2.5, -1.0, -0.3, 0.0, 0.3, 1.0, 2.5] {
+                let qx = Q32::from_f64(x);
+                assert!(close(q.atan2(qx), q.to_f64().atan2(qx.to_f64()), 1e-8), "atan2 {q:?} {x}");
+            }
         }
         let two = Q32::from_int(2);
         assert!(close(two.powf(Q32::from_f64(0.5)), 2f64.sqrt(), 1e-8));
