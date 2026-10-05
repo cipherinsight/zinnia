@@ -6,6 +6,11 @@ use crate::types::{CompositeData, Value, ValueId, ZinniaType};
 /// `IRBuilder` to read from the segment. Use [`flatten_composite_with_builder`]
 /// when a StaticArray may appear, or convert it to a list first via
 /// `helpers::static_array::base::to_value_list`.
+///
+/// A `Value::DynamicNDArray` (an array with a runtime shape) is rejected:
+/// the static-shape operations that flatten their operands here would
+/// otherwise treat it as one scalar leaf and compute a different function
+/// (e.g. `np.cumsum(x[x > 0])` returned its input).
 pub fn flatten_composite(val: &Value) -> Vec<Value> {
     match val {
         Value::List(data) | Value::Tuple(data) => {
@@ -15,8 +20,18 @@ pub fn flatten_composite(val: &Value) -> Vec<Value> {
             }
             flat
         }
+        Value::DynamicNDArray(_) => reject_runtime_shaped_operand(),
         other => vec![other.clone()],
     }
+}
+
+/// Compile error for a static-shape operation given an array whose shape
+/// is only known at runtime.
+pub fn reject_runtime_shaped_operand() -> ! {
+    panic!(
+        "this operation is not supported on an array with a runtime shape (the result of a \
+         boolean mask, nonzero/argwhere/unique, or a slice with runtime bounds)"
+    )
 }
 
 /// Variant of [`flatten_composite`] that accepts `Value::StaticArray` by
@@ -39,6 +54,7 @@ pub fn flatten_composite_with_builder(
             }
             flat
         }
+        Value::DynamicNDArray(_) => reject_runtime_shaped_operand(),
         other => vec![other.clone()],
     }
 }
@@ -70,6 +86,9 @@ pub fn get_composite_shape(val: &Value) -> Vec<usize> {
         }
         Value::NDArray(nd) => nd.shape.clone(),
         Value::StaticArray { shape, .. } => shape.clone(),
+        // A runtime-shaped array has no static shape; reporting `[]`
+        // made static-shape operations treat it as a scalar.
+        Value::DynamicNDArray(_) => reject_runtime_shaped_operand(),
         _ => vec![],
     }
 }

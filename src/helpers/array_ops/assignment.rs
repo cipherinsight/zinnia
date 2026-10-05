@@ -4,7 +4,7 @@ use crate::builder::IRBuilder;
 use crate::types::{DynamicNDArrayData, NumberType, SliceIndex, Value, ValueId};
 
 use super::bounded_axis::{select_stride_mode, stride_value, StrideMode};
-use super::indexing::{compute_flat_addr, discharge_dynamic_indices_in_bounds};
+use super::indexing::{compute_flat_addr, wrap_and_check_dynamic_indices};
 
 /// Single element assignment: dyn[i] = x or dyn[i, j] = x.
 /// In-place write via `ir_write_memory` — O(1).
@@ -27,8 +27,8 @@ pub fn dyn_setitem(
         return dyn_fancy_setitem(b, data, indices, value);
     }
 
+    let indices = &wrap_and_check_dynamic_indices(b, data, indices, "dyn_setitem");
     let addr = compute_flat_addr(b, data, indices);
-    discharge_dynamic_indices_in_bounds(b, data, indices, "dyn_setitem");
     if data.envelope.total_bound > 0 {
         crate::optim::resolver::discharge_index_in_range(
             b,

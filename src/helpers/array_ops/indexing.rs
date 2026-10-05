@@ -189,8 +189,8 @@ fn dyn_getitem_element(
     data: &DynamicNDArrayData,
     indices: &[SliceIndex],
 ) -> Value {
-    let addr = compute_flat_addr(b, data, indices);
-    discharge_dynamic_indices_in_bounds(b, data, indices, "dyn_getitem");
+    let indices = wrap_and_check_dynamic_indices(b, data, indices, "dyn_getitem");
+    let addr = compute_flat_addr(b, data, &indices);
     if data.envelope.total_bound > 0 {
         crate::optim::resolver::discharge_index_in_range(
             b,
@@ -209,7 +209,11 @@ fn dyn_getitem_row(b: &mut IRBuilder, data: &DynamicNDArrayData, indices: &[Slic
         return dyn_getitem_element(b, data, indices);
     }
 
-    let idx_val = match &indices[0] {
+    // The row index must be in range for the RUNTIME row count (it used
+    // to be unchecked, so an out-of-range row read padding or another
+    // row's cells).
+    let wrapped = wrap_and_check_dynamic_indices(b, data, &indices[..1], "dyn_getitem_row");
+    let idx_val = match &wrapped[0] {
         SliceIndex::Single(v) => v,
         _ => unreachable!(),
     };
@@ -219,6 +223,11 @@ fn dyn_getitem_row(b: &mut IRBuilder, data: &DynamicNDArrayData, indices: &[Slic
     let out_strides = row_major_strides(&out_shape);
 
     let mode = select_stride_mode(data);
+    if rank > 2 && matches!(mode, StrideMode::SymbolicRuntime(_)) {
+        panic!(
+            "indexing one row of a compact runtime-shaped array of rank {rank} is not supported"
+        );
+    }
     let base = match &mode {
         StrideMode::LiteralLogical(strides) => {
             let row_stride = strides[0];
@@ -259,6 +268,12 @@ fn dyn_getitem_row(b: &mut IRBuilder, data: &DynamicNDArrayData, indices: &[Slic
     }
 
     let segment_id = crate::helpers::segment::alloc_and_write_values(b, &out_elements, data.dtype);
+    let mut row_length = b.ir_constant_int(1);
+    for dim in &data.meta.runtime_shape[1..] {
+        let dim = scalar_i64_value(b, dim);
+        row_length = b.ir_mul_i(&row_length, &dim);
+    }
+    let row_runtime_length = crate::ops::dyn_ndarray::value_to_scalar_i64(&row_length);
     let out_dims: Vec<crate::types::Dim> = data.envelope.dims[1..].to_vec();
     let envelope =
         crate::types::Envelope::new_with_bound(out_dims, out_total.min(data.envelope.total_bound));
@@ -271,12 +286,11 @@ fn dyn_getitem_row(b: &mut IRBuilder, data: &DynamicNDArrayData, indices: &[Slic
             logical_shape: out_shape.clone(),
             logical_offset: 0,
             logical_strides: out_strides.clone(),
-            runtime_length: ScalarValue::new(Some(out_total as i64), None),
+            // The row has the runtime shape of the remaining axes (the
+            // copied envelope row is padded past it).
+            runtime_length: row_runtime_length,
             runtime_rank: ScalarValue::new(Some(out_shape.len() as i64), None),
-            runtime_shape: out_shape
-                .iter()
-                .map(|&s| ScalarValue::new(Some(s as i64), None))
-                .collect(),
+            runtime_shape: data.meta.runtime_shape[1..].to_vec(),
             runtime_strides: out_strides
                 .iter()
                 .map(|&s| ScalarValue::new(Some(s as i64), None))
@@ -1627,34 +1641,55 @@ pub(crate) fn scalar_i64_value(b: &mut IRBuilder, sv: &ScalarValue<i64>) -> Valu
     }
 }
 
-/// Enforce each dynamic-array axis bound against the runtime shape. If facts
-/// prove `0 <= idx < runtime_shape[axis]`, this emits no IR; otherwise the
-/// same predicate is lowered to witness-time assertions. This keeps getitem /
-/// setitem from rejecting runtime-shaped arrays just because the bound is not
-/// statically known.
-pub(crate) fn discharge_dynamic_indices_in_bounds(
+/// Wrap each `Single` index against the RUNTIME size of its axis and
+/// require it in range: NumPy reads `x[-1]` of a runtime-shaped array as
+/// its last runtime element, so a negative index becomes
+/// `i + runtime_shape[ax]` (it used to be wrapped with the envelope size,
+/// pointing into the padding), and `0 <= wrapped < runtime_shape[ax]` is
+/// discharged (no IR when the facts prove it, an in-circuit check
+/// otherwise). Returns the wrapped indices for address computation.
+pub(crate) fn wrap_and_check_dynamic_indices(
     b: &mut IRBuilder,
     data: &DynamicNDArrayData,
     indices: &[SliceIndex],
     op_name: &'static str,
-) {
-    for (axis, idx) in indices.iter().enumerate() {
-        let SliceIndex::Single(raw_idx) = idx else {
-            continue;
-        };
-        let idx_val = if let Some(i) = raw_idx.int_val() {
-            let normalized = if i < 0 {
-                data.meta.logical_shape[axis] as i64 + i
-            } else {
-                i
+) -> Vec<SliceIndex> {
+    indices
+        .iter()
+        .enumerate()
+        .map(|(axis, idx)| {
+            let SliceIndex::Single(raw) = idx else {
+                return idx.clone();
             };
-            b.ir_constant_int(normalized)
-        } else {
-            raw_idx.clone()
+            let hi = scalar_i64_value(b, &data.meta.runtime_shape[axis]);
+            let wrapped = wrap_negative_index(b, raw, &hi);
+            crate::optim::resolver::discharge_index_below_value(b, &wrapped, 0, &hi, op_name);
+            SliceIndex::Single(wrapped)
+        })
+        .collect()
+}
+
+/// `idx + len` for a negative `idx`, else `idx` (one NumPy wrap).
+fn wrap_negative_index(b: &mut IRBuilder, idx: &Value, len: &Value) -> Value {
+    if let Some(i) = idx.int_val() {
+        if i >= 0 {
+            return idx.clone();
+        }
+        return match len.int_val() {
+            Some(n) => b.ir_constant_int(n + i),
+            None => {
+                let offset = b.ir_constant_int(i);
+                b.ir_add_i(len, &offset)
+            }
         };
-        let hi = scalar_i64_value(b, &data.meta.runtime_shape[axis]);
-        crate::optim::resolver::discharge_index_below_value(b, &idx_val, 0, &hi, op_name);
     }
+    if b.ask_bounds(idx).map(|(min, _)| min >= 0).unwrap_or(false) {
+        return idx.clone();
+    }
+    let zero = b.ir_constant_int(0);
+    let is_negative = b.ir_less_than_i(idx, &zero);
+    let shifted = b.ir_add_i(idx, len);
+    b.ir_select_i(&is_negative, &shifted, idx)
 }
 
 // ── Tests (multi-dim Case B Tier 1) ─────────────────────────────────────

@@ -1418,9 +1418,10 @@ fn slice_axis(
         && (!is_present(step) || st_static.is_some());
 
     let out = if !all_static {
-        materialise_dynamic_axis_slice(
+        let padded = materialise_dynamic_axis_slice(
             b, dtype, shape, segment_id, strides, offset, axis, start, stop, step,
-        )
+        );
+        return runtime_shaped_slice(b, padded);
     } else {
         let len_i = shape[axis] as i64;
         let st = st_static.unwrap_or(1);
@@ -1518,6 +1519,34 @@ fn slice_axis(
         crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
     }
     out
+}
+
+/// Hand out a dynamic-bounds slice as a `DynamicNDArray`.
+///
+/// The slice is materialised into a buffer of the static envelope shape
+/// whose content sits in the `[0, extent)` prefix of each axis, with the
+/// runtime extents recorded in provenance. As a plain `StaticArray` that
+/// buffer was consumed as if the envelope were the array: `a[0:r, :]`
+/// fed `.mean()`, `.min()`, `len()`, element-wise ops and further indexing
+/// with its zero padding as data. As a `DynamicNDArray` every consumer
+/// sees the runtime shape. A slice without an extents record (a non-unit
+/// step, or a complex dtype) has no runtime-shaped representation and is
+/// rejected rather than compiled with its padding.
+fn runtime_shaped_slice(b: &mut IRBuilder, padded: Value) -> Value {
+    if let Value::StaticArray {
+        segment_id,
+        dtype,
+        ..
+    } = &padded
+    {
+        if *dtype != NumberType::Complex && b.provenance.runtime_extents_of(*segment_id).is_some() {
+            return crate::helpers::promote::promote_static_to_dynamic_with_extents(b, &padded);
+        }
+    }
+    panic!(
+        "a slice with runtime bounds is supported only with step 1 on a real-valued array \
+         (its result has a runtime shape)"
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2342,7 +2371,7 @@ fn multidim_subscript_static_array(
                     coords.clone(),
                 ));
             }
-            return materialise_dynamic_multi_axis_slice(
+            let padded = materialise_dynamic_multi_axis_slice(
                 b,
                 dtype,
                 &shape,
@@ -2354,6 +2383,7 @@ fn multidim_subscript_static_array(
                 &dynamic_range_axes,
                 &out_shape,
             );
+            return runtime_shaped_slice(b, padded);
         }
 
         // Preserve the existing recursive single-axis materialisation path
@@ -2409,7 +2439,10 @@ fn multidim_subscript_static_array(
         {
             return sliced;
         }
-        return static_array_subscript(b, &sliced, &remaining);
+        return match &sliced {
+            Value::DynamicNDArray(d) => crate::helpers::array_ops::dyn_subscript(b, d, &remaining),
+            _ => static_array_subscript(b, &sliced, &remaining),
+        };
     }
 
     let total: usize = out_shape.iter().product();

@@ -140,7 +140,13 @@ fn diff_once(b: &mut IRBuilder, x: &Value) -> Value {
                 value_id: ValueId::next(),
             })
         }
-        _ => x.clone(),
+        Value::StaticArray { .. } => {
+            let list = crate::helpers::static_array::base::to_value_list(b, x);
+            diff_once(b, &list)
+        }
+        // It used to return the input unchanged, e.g. for `x[x > 0]`.
+        Value::DynamicNDArray(_) => crate::helpers::composite::reject_runtime_shaped_operand(),
+        _ => panic!("np.diff requires an array of at least one dimension"),
     }
 }
 
