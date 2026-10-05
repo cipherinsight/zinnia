@@ -19,10 +19,8 @@ pub fn main(input: &mut impl Input) -> Output {
     let a: Vec<Q32> = input.read_vec(DEPTH * SLAB);
     let b: Vec<i64> = input.read_vec(DEPTH * SLAB);
     let sums: Vec<Q32> = a.chunks_exact(SLAB).map(|slab| slab.iter().sum()).collect();
-    let mut index: Vec<usize> = (0..DEPTH).collect();
-    index.sort_by_key(|&i| sums[i]);
     let mut result = Vec::with_capacity(DEPTH * SLAB);
-    for i in index {
+    for i in np::argsort(&sums) {
         result.extend_from_slice(&b[i * SLAB..(i + 1) * SLAB]);
     }
     result

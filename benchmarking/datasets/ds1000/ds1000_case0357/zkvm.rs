@@ -18,24 +18,14 @@ const PLANE: usize = 3 * 3;
 pub type Output = Vec<i64>;
 
 pub fn main(input: &mut impl Input) -> Output {
-    let a: Vec<Q32> = input.read_vec(DEPTH * PLANE);
-    let b: Vec<i64> = input.read_vec(DEPTH * PLANE);
-    let orders = argsort_axis0(&a);
+    let a: [[Q32; PLANE]; DEPTH] = input.read_matrix();
+    let b: [[i64; PLANE]; DEPTH] = input.read_matrix();
+    let orders = np::argsort_axis0(&a);
     let mut c = Vec::with_capacity(DEPTH * PLANE);
     for i in (0..DEPTH).rev() {
         for (pos, order) in orders.iter().enumerate() {
-            c.push(b[order[i] * PLANE + pos]);
+            c.push(b[order[i]][pos]);
         }
     }
     c
-}
-
-/// `np.argsort(a, axis=0)`: for every position of the last two axes, the
-/// first-axis indices that sort `a` there (stable, ties in index order).
-fn argsort_axis0(a: &[Q32]) -> [[usize; DEPTH]; PLANE] {
-    core::array::from_fn(|pos| {
-        let mut order: [usize; DEPTH] = core::array::from_fn(|i| i);
-        order.sort_by_key(|&i| a[i * PLANE + pos]);
-        order
-    })
 }

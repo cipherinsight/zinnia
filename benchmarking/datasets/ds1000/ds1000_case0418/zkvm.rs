@@ -21,9 +21,5 @@ pub fn main(input: &mut impl Input) -> Output {
     // Binning the reversed rows: `rchunks_exact` takes the bins from the end
     // of a row and drops a partial bin at its start. A bin's values come in
     // forward order, which does not change their (exact) sum.
-    data.chunks_exact(COLS).flat_map(|row| row.rchunks_exact(BIN_SIZE).map(mean)).collect()
-}
-
-fn mean(bin: &[Q32]) -> Q32 {
-    bin.iter().sum::<Q32>() / bin.len() as i64
+    data.chunks_exact(COLS).flat_map(|row| row.rchunks_exact(BIN_SIZE).map(np::mean)).collect()
 }

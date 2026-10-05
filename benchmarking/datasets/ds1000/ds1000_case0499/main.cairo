@@ -17,6 +17,7 @@
 //!         result = to_shape(a, shape)
 //!         return result
 // output: [q32]
+use crate::np::append_repeated;
 use crate::q32::{Q32, ZERO};
 
 const ROWS: u32 = 42;
@@ -35,18 +36,12 @@ fn main(a: Array<Q32>) -> Array<Q32> {
     assert!(a.len() == ROWS * COLS, "a has the wrong length");
     let a = a.span();
     let mut result = array![];
-    append_zeros(ref result, TOP * OUT_COLS);
+    append_repeated(ref result, ZERO, TOP * OUT_COLS);
     for r in 0..ROWS {
-        append_zeros(ref result, LEFT);
+        append_repeated(ref result, ZERO, LEFT);
         result.append_span(a.slice(r * COLS, COLS));
-        append_zeros(ref result, OUT_COLS - LEFT - COLS);
+        append_repeated(ref result, ZERO, OUT_COLS - LEFT - COLS);
     }
-    append_zeros(ref result, (OUT_ROWS - TOP - ROWS) * OUT_COLS);
+    append_repeated(ref result, ZERO, (OUT_ROWS - TOP - ROWS) * OUT_COLS);
     result
-}
-
-fn append_zeros(ref out: Array<Q32>, count: u32) {
-    for _ in 0..count {
-        out.append(ZERO);
-    }
 }

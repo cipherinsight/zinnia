@@ -19,7 +19,5 @@ pub type Output = Vec<i64>;
 /// order among ties is an implementation detail.
 pub fn main(input: &mut impl Input) -> Output {
     let a: Vec<Q32> = input.read_vec(LEN);
-    let mut order: Vec<usize> = (0..LEN).collect();
-    order.sort_by_key(|&i| a[i]);
-    order.iter().rev().take(N).map(|&i| i as i64).collect()
+    np::argsort(&a).iter().rev().take(N).map(|&i| i as i64).collect()
 }

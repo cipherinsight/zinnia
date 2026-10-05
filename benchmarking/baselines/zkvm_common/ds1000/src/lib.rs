@@ -13,6 +13,9 @@
 //! The SP1 and RISC Zero guest binaries call `main` and commit the result;
 //! the hosts decode the committed bytes back into `Output` and flatten them
 //! into [`Public`] values. The same `main` runs natively for the output check.
+//!
+//! A case imports [`prelude`]; NumPy behaviours that several cases share
+//! live in [`np`].
 #![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;
@@ -27,6 +30,7 @@ pub use q32::Q32;
 pub mod fixture;
 #[cfg(feature = "std")]
 pub mod host;
+pub mod np;
 
 /// Declares the case modules and the dispatch functions over them. The list
 /// itself is generated into `cases.rs` by `zkvm_common/sync_cases.py`.
@@ -81,18 +85,10 @@ pub use cases::*;
 
 /// What every case module imports.
 pub mod prelude {
-    pub use crate::{np_index, Input, Shaped};
+    pub use crate::np::{self, np_index};
+    pub use crate::{Input, Shaped};
     pub use alloc::{vec, vec::Vec};
     pub use q32::{dot, int::floor_div, int::floor_mod, Q32};
-}
-
-/// A Python/NumPy index into an axis of length `len`: negative indices count
-/// from the end; anything outside `[-len, len)` panics like NumPy's
-/// `IndexError`.
-pub fn np_index(i: i64, len: usize) -> usize {
-    let n = len as i64;
-    assert!(-n <= i && i < n, "index out of range");
-    (if i < 0 { i + n } else { i }) as usize
 }
 
 /// The private input stream of a guest: the kernel parameters in signature

@@ -12,12 +12,12 @@ reads every input privately and makes every output public.
 | `datasets/ds1000/<case>/zkvm.rs` | the case's Rust program, shared by SP1 and RISC Zero |
 | `datasets/ds1000/<case>/main.cairo` | the case's Cairo program |
 | `baselines/zkvm_common/q32/` | Q32 arithmetic (`no_std`, no floating point) |
-| `baselines/zkvm_common/ds1000/` | crate `ds1000-zkvm`: includes every `zkvm.rs` as a module; input reader trait, public-value decoding, fixture loading, the shared host CLI/report, and the native runner `ds1000-native` |
+| `baselines/zkvm_common/ds1000/` | crate `ds1000-zkvm`: includes every `zkvm.rs` as a module; NumPy behaviours shared by several cases (`src/np.rs`), input reader trait, public-value decoding, fixture loading, the shared host CLI/report, and the native runner `ds1000-native` |
 | `baselines/zkvm_common/check_outputs.py` | output check against NumPy |
 | `baselines/zkvm_common/sync_cases.py` | regenerates the per-case glue (case list, guest binaries, Cairo targets) |
 | `baselines/sp1/` | SP1 6.8.1: `guest/` (one binary per case), `host/` (`sp1-baseline`) |
 | `baselines/risc0/` | RISC Zero 3.0.3: `methods/guest/` (one binary per case), `host/` (`risc0-baseline`) |
-| `baselines/cairo/` | Scarb 2.20.1 package `ds1000_cairo` (one executable per case), `src/q32.cairo`, driver `cairo_baseline.py` |
+| `baselines/cairo/` | Scarb 2.20.1 package `ds1000_cairo` (one executable per case), `src/q32.cairo`, shared NumPy behaviours `src/np.cairo`, driver `cairo_baseline.py` |
 
 One build per system covers every case: one guest package with a binary per
 case (one target directory), one host binary that loads the case's guest at
@@ -108,6 +108,12 @@ A case has the same parameters, shapes, constants and algorithm as
   the circuit. Run `sync_cases.py` after adding such a line.
 
 ### Style
+
+NumPy behaviours that several cases need (`np_index`, `argmax`, `mean`,
+`isclose`, `argsort`, `np.insert`'s position, the bounding-box crop, ...) live
+once in `ds1000/src/np.rs` (Rust: `np::argmax(&a)` through the prelude) and
+`cairo/src/np.cairo` (`use crate::np::argmax;`); use them instead of a local
+copy, and move a helper there once a second case needs it.
 
 Write what a competent developer would write for this zkVM: direct indexing
 and branches (cheap in a zkVM), the standard library (`sort_unstable`,

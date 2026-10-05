@@ -7,6 +7,8 @@
 //!         return result
 // output: [i64]
 
+use crate::np::twos_complement;
+
 const N: u32 = 20;
 /// `1 << (m - 1)`, the mask of the first output column.
 const TOP_BIT: u64 = 0x4000;
@@ -29,16 +31,4 @@ fn main(a: Array<i64>) -> Array<i64> {
         }
     }
     bits
-}
-
-/// NumPy's `&` acts on the int64 two's-complement representation. Cairo has
-/// no bitwise operators on signed integers, so the program applies `&` to
-/// that representation as a `u64`: `v` itself, or `v + 2^64` if `v < 0`.
-fn twos_complement(v: i64) -> u64 {
-    let wide: i128 = v.into();
-    if wide < 0 {
-        (wide + 0x10000000000000000).try_into().unwrap()
-    } else {
-        wide.try_into().unwrap()
-    }
 }

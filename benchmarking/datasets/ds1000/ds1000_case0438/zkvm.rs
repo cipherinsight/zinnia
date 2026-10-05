@@ -22,7 +22,7 @@ pub fn main(input: &mut impl Input) -> Output {
 /// `dy = y - mean(y)`. NumPy's result is nan when a series is constant; that
 /// division by zero panics here.
 fn pearson(x: &[Q32; N], y: &[Q32; N]) -> Q32 {
-    let (mean_x, mean_y) = (mean(x), mean(y));
+    let (mean_x, mean_y) = (np::mean(x), np::mean(y));
     let (mut sxy, mut sxx, mut syy) = (Q32::ZERO, Q32::ZERO, Q32::ZERO);
     for (&xi, &yi) in x.iter().zip(y) {
         let (dx, dy) = (xi - mean_x, yi - mean_y);
@@ -31,8 +31,4 @@ fn pearson(x: &[Q32; N], y: &[Q32; N]) -> Q32 {
         syy += dy * dy;
     }
     sxy / (sxx * syy).sqrt()
-}
-
-fn mean(values: &[Q32]) -> Q32 {
-    values.iter().sum::<Q32>() / values.len() as i64
 }
