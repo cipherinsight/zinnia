@@ -21,6 +21,9 @@ def test_batched_matmul(left,right,expression):
     for sign in (1,-1):
         proof=program.prove(x*sign,y,expected*sign,backend='mock')
         assert proof.proof_bytes_hex=='mock_satisfied'
+        wrong=expected*sign
+        wrong.flat[-1]+=1
+        assert program.prove(x*sign,y,wrong,backend='mock').proof_bytes_hex!='mock_satisfied'
 
 @pytest.mark.parametrize('expression',[
  'np.clip(x[:,1:-1,1:-1,:],0,255)',
@@ -28,13 +31,21 @@ def test_batched_matmul(left,right,expression):
  'np.minimum(x[:,1:-1,1:-1,:], 255)',
 ])
 def test_empty_interior_shape(expression):
-    source=f'''def kernel(x: Integer[Array, "2 1 2 3"]):
+    def compiled(shape):
+        source=f'''def kernel(x: Integer[Array, "2 1 2 3"]):
     y = {expression}
-    assert y.shape == (2,0,0,3)
+    assert y.shape == {shape}
     return x
 '''
-    p=ZKCircuit.from_source('kernel',source).compile()
-    assert p.prove(np.ones((2,1,2,3),dtype=np.int64),backend='mock').proof_bytes_hex=='mock_satisfied'
+        return ZKCircuit.from_source('kernel',source).compile()
+    x=np.ones((2,1,2,3),dtype=np.int64)
+    assert compiled((2,0,0,3)).prove(x,backend='mock').proof_bytes_hex=='mock_satisfied'
+    # Wrong-output control: a different claimed shape must not be provable.
+    try:
+        wrong=compiled((2,1,0,3)).prove(x,backend='mock').proof_bytes_hex
+    except Exception:
+        wrong=None
+    assert wrong!='mock_satisfied'
 
 def test_invalid_batch_dimensions_rejected():
     with pytest.raises(Exception):
@@ -47,14 +58,24 @@ def test_invalid_batch_dimensions_rejected():
  ('x[:, :, :0] @ y[:0, :]', (2,3,2)),
 ])
 def test_empty_matmul_intermediates(expression,shape):
-    source=f"""def kernel(x: Integer[Array, "2 3 4"], y: Integer[Array, "4 2"]):
+    def compiled(check):
+        source=f"""def kernel(x: Integer[Array, "2 3 4"], y: Integer[Array, "4 2"]):
     a = {expression}
     assert a.shape == {shape}
-    assert np.all(a == 0)
+    assert {check}
     return x
 """
-    p=ZKCircuit.from_source('kernel',source).compile()
-    assert p.prove(np.ones((2,3,4),dtype=np.int64),np.ones((4,2),dtype=np.int64),backend='mock').proof_bytes_hex=='mock_satisfied'
+        return ZKCircuit.from_source('kernel',source).compile()
+    args=(np.ones((2,3,4),dtype=np.int64),np.ones((4,2),dtype=np.int64))
+    assert compiled('np.all(a == 0)').prove(*args,backend='mock').proof_bytes_hex=='mock_satisfied'
+    # Wrong-output control: the product is all zeros, so claiming a non-zero
+    # entry (where there is one) must fail.
+    if np.prod(shape):
+        try:
+            wrong=compiled('np.any(a != 0)').prove(*args,backend='mock').proof_bytes_hex
+        except Exception:
+            wrong=None  # rejected at compile time (the claim is constant-false)
+        assert wrong!='mock_satisfied'
 
 @pytest.mark.parametrize('count',[0,1,3])
 def test_counted_loop_inside_private_branch_preserves_counter(count):
@@ -72,6 +93,7 @@ def test_counted_loop_inside_private_branch_preserves_counter(count):
     for enabled in (-1,1):
         expected=np.array([count,count*7] if enabled>0 else [9,0])
         assert p.prove(np.array([enabled,7]),expected,backend='mock').proof_bytes_hex=='mock_satisfied'
+        assert p.prove(np.array([enabled,7]),expected+1,backend='mock').proof_bytes_hex!='mock_satisfied'
 
 @pytest.mark.parametrize('body',[
  'i = 0\nwhile i < 3:\n    i += 1\n    if i == 2: break',
@@ -106,3 +128,4 @@ def test_masked_while_with_individual_dimension_binding(binding):
         x=np.array([sign,5])
         expected=np.array([3*int(x.sum()) if sign>0 else 0])
         assert p.prove(x,expected,backend='mock').proof_bytes_hex=='mock_satisfied'
+        assert p.prove(x,expected+1,backend='mock').proof_bytes_hex!='mock_satisfied'
