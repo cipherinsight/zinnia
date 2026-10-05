@@ -6,3 +6,4 @@ pub mod ds1000_case0334;
 pub mod ds1000_case0412;
 pub mod ds1000_case0428;
 pub mod ds1000_case0485;
+pub mod empty_program;

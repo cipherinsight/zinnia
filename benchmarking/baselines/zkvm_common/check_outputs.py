@@ -34,6 +34,7 @@ import numpy as np
 BENCH = Path(__file__).resolve().parents[2]
 DATASET = BENCH / "datasets" / "ds1000"
 BASELINES = BENCH / "baselines"
+CALIBRATION = BASELINES / "zkvm_common" / "calibration"
 CASE_SET = BENCH / "datasets" / "case_sets" / "ds1000_perf.json"
 TARGET = BASELINES / "target" / "release"
 
@@ -177,7 +178,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--systems", default="native")
     parser.add_argument("--cases", default="", help="comma-separated case folders (default: every case with a program)")
-    parser.add_argument("--fixtures-dir", type=Path, help="read <dir>/<case>/fixture.json instead of the case folder's")
+    parser.add_argument("--fixtures-dir", type=Path,
+                        help="read <dir>/<case>/fixture.json, where it exists, instead of the case folder's")
     parser.add_argument("--input", default="B")
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--report", type=Path)
@@ -187,17 +189,20 @@ def main() -> int:
     unknown = set(systems) - set(SYSTEMS)
     if unknown:
         parser.error(f"unknown systems: {sorted(unknown)}")
+    case_dirs = {d.name: d for root in (DATASET, CALIBRATION) for d in sorted(root.iterdir()) if d.is_dir()}
     if args.cases:
         cases = args.cases.split(",")
     else:
-        cases = sorted(d.name for d in DATASET.iterdir()
-                       if any((d / PROGRAM_FILE[s]).exists() for s in systems))
+        cases = [name for name, d in case_dirs.items() if any((d / PROGRAM_FILE[s]).exists() for s in systems)]
     tol = tolerances()
 
     results: list[Result] = []
     for case in cases:
-        case_dir = DATASET / case
-        fixture_path = (args.fixtures_dir / case / "fixture.json") if args.fixtures_dir else case_dir / "fixture.json"
+        case_dir = case_dirs[case]
+        own_fixture = case_dir / "fixture.json"
+        fixture_path = own_fixture
+        if args.fixtures_dir and (args.fixtures_dir / case / "fixture.json").exists():
+            fixture_path = args.fixtures_dir / case / "fixture.json"
         if not fixture_path.exists():
             results += [Result(case, s, False, "no fixture") for s in systems]
             continue

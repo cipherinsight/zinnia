@@ -7,4 +7,5 @@ cases! {
     ds1000_case0412 => "../../../../datasets/ds1000/ds1000_case0412/zkvm.rs",
     ds1000_case0428 => "../../../../datasets/ds1000/ds1000_case0428/zkvm.rs",
     ds1000_case0485 => "../../../../datasets/ds1000/ds1000_case0485/zkvm.rs",
+    empty_program => "../../calibration/empty_program/zkvm.rs",
 }
