@@ -107,11 +107,14 @@ PYTHRAN_Q32_INPUTS: dict[tuple[str, str], tuple[str, str | None, str]] = {
         "output on the singular np.arange(1., 26.).reshape(5, 5): pivots of rounding residue (1e-15), 0 in Q32"),
     ("pythran_hyantes_core", "run"): (
         "run(0.,0.,90.,90., 1., 100., 16, 16, [ [i/10. + 0.007, i/10. + 0.007, i/20.] for i in range(16) ])",
-        None,
-        "every town is moved by 0.007 rad in both coordinates. In the scaled upstream line the towns at (0, 0) "
-        "and (1, 1) sit exactly on grid points, where acos(1 - eps) turns the ~1e-9 error of Q32 trigonometry "
-        "into 0.28 km; now they are 51 and 63 km from the nearest grid point (still within range_ = 100 km), "
-        "where acos amplifies that error by at most about 1 / sin(0.008) = 125"),
+        "run(0.,0.,90.,90., 1., 100., 16, 16, [ [i/10. - 0.006, i/10. + 0.009, i/20. + 0.01] for i in range(16) ])",
+        "in A every town is moved by 0.007 rad in both coordinates. In the scaled upstream line the towns at "
+        "(0, 0) and (1, 1) sit exactly on grid points, where acos(1 - eps) turns the ~1e-9 error of Q32 "
+        "trigonometry into 0.28 km; now they are 51 and 63 km from the nearest grid point (still within "
+        "range_ = 100 km), where acos amplifies that error by at most about 1 / sin(0.008) = 125. B is given "
+        "too, built the same way (towns moved by -0.006 and +0.009 rad, weights by +0.01): its nearest towns "
+        "are 49 and 69 km from a grid point, so B exercises the distance sum. A seeded perturbation of A moved "
+        "every town by about 0.15 rad, left none within range_ and gave an all-zero output"),
     ("pythran_calculate_u", "timeloop"): (
         "A=[list(range(10)) for i in range(5)] ; B=[list(range(10)) for i in range(5)] ; "
         "C=[list(range(10)) for i in range(5)] ; timeloop(1.,1.45,.1,.1,.2, A,B,C )",
