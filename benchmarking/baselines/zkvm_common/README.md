@@ -81,7 +81,7 @@ gives the figure per run. Use one heavy job at a time.
 | RISC Zero | `succinct` | segments compressed to one STARK by recursion | 1.4 GB small, 9.4 GB for 0385 | composite + 6-10 s (small), + 22 s (0385) |
 | RISC Zero | `groth16` | succinct receipt wrapped in Groth16 (Docker image `risczero/risc0-groth16-prover:v2025-04-03.1`) | not measured | the Docker step runs outside this process and outside `memrun.sh`'s cgroup, so `peak_rss_mib` does not include it; not yet run |
 | RISC Zero | `verify` | `Receipt::verify` | < 0.1 GB | 10-20 ms |
-| Cairo (Scarb 2.20.1) | `stwo` | `scarb execute --target bootloader` + `scarb prove` (Stwo) | 13.7 GB (3.6k steps) to 14.7 GB (0385, 1.01M steps) | 10-19 s from the empty program to 1M steps (fixed cost dominates); JSON proof 11-16 MB |
+| Cairo (Scarb 2.20.1) | `stwo` | `scarb execute --target bootloader` + `scarb prove --proof-format binary` (Stwo; the same proof again as JSON, untimed, for `scarb verify`) | 13.7 GB (3.6k steps) to 14.7 GB (0385, 1.01M steps) | 10-19 s from the empty program to 1M steps (fixed cost dominates); binary proof 0.95 MB for the empty program (JSON 11-16 MB) |
 | Cairo | `verify` | `scarb verify` | < 0.1 GB | 30-55 ms wall clock including process start-up |
 
 Why Groth16 for SP1's SNARK mode (rather than PLONK): gnark's Groth16 prover

@@ -10,11 +10,16 @@ Modes:
            has no per-program key generation.
   execute  `scarb execute` on the bootloader target: public output and the
            execution resources (steps, builtins).
-  prove    execute (timed on its own), then `scarb prove` (timed); the proof
-           JSON is moved to the work directory.
-  verify   `scarb verify --proof-file` on that proof. With --tamper, one output
-           value in the proof's public claim is changed first, and the run
-           succeeds only if verification rejects it.
+  prove    execute (timed on its own), then `scarb prove --proof-format
+           binary` (timed): the proof whose size is reported (Stwo's binary
+           format, bzip2-compressed). `scarb verify` reads only the JSON
+           format, so the proof is then written again as JSON (`scarb prove`,
+           untimed; reported as `timings_s.prove_json_copy`). Stwo proving is
+           deterministic: both runs give the same proof (checked on
+           empty_program: repeated proofs are byte-identical in each format).
+  verify   `scarb verify --proof-file` on the JSON proof. With --tamper, one
+           output value in the proof's public claim is changed first, and the
+           run succeeds only if verification rejects it.
 
 The program's arguments are private: Scarb writes them into memory through a
 hint, outside the public memory. Its return value is written to the output
@@ -261,6 +266,13 @@ def execute(report: dict, case: str, case_dir: Path, args_path: Path, schema) ->
     return execution_dir
 
 
+def report_proof(report: dict, binary_proof_path: Path, proof_path: Path) -> None:
+    report["proof_path"] = str(binary_proof_path)
+    report["proof_size_bytes"] = binary_proof_path.stat().st_size
+    report["json_proof_path"] = str(proof_path)
+    report["json_proof_size_bytes"] = proof_path.stat().st_size
+
+
 def run(args: argparse.Namespace, report: dict) -> None:
     case_dir = args.case_dir.resolve()
     case = case_dir.name
@@ -268,6 +280,7 @@ def run(args: argparse.Namespace, report: dict) -> None:
     work = (args.work_dir or PACKAGE_DIR / "work" / case).resolve()
     work.mkdir(parents=True, exist_ok=True)
     proof_path = work / f"proof-stwo-{args.input}.json"
+    binary_proof_path = work / f"proof-stwo-{args.input}.bin"
 
     if args.mode == "setup":
         scarb(report, "build", "build")
@@ -283,18 +296,20 @@ def run(args: argparse.Namespace, report: dict) -> None:
         if args.mode == "execute":
             shutil.rmtree(execution_dir, ignore_errors=True)
             return
-        scarb(report, "prove", "prove", "--execution-id", execution_dir.name.removeprefix("execution"))
-        shutil.move(execution_dir / "proof" / "proof.json", proof_path)
+        execution_id = execution_dir.name.removeprefix("execution")
+        saved = execution_dir / "proof" / "proof.json"  # Scarb's name, whatever the format
+        scarb(report, "prove", "prove", "--execution-id", execution_id, "--proof-format", "binary")
+        shutil.move(saved, binary_proof_path)
+        scarb(report, "prove_json_copy", "prove", "--execution-id", execution_id, "--proof-format", "json")
+        shutil.move(saved, proof_path)
         shutil.rmtree(execution_dir, ignore_errors=True)
-        report["proof_path"] = str(proof_path)
-        report["proof_size_bytes"] = proof_path.stat().st_size
+        report_proof(report, binary_proof_path, proof_path)
         decode_output(report, schema, program_output(proof_output(json.loads(proof_path.read_text()))))
         return
 
     # verify
     proof = json.loads(proof_path.read_text())
-    report["proof_path"] = str(proof_path)
-    report["proof_size_bytes"] = proof_path.stat().st_size
+    report_proof(report, binary_proof_path, proof_path)
     decode_output(report, schema, program_output(proof_output(proof)))
     target = proof_path
     if args.tamper:
