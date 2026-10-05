@@ -213,6 +213,27 @@ fn assert_u128_lt_rejects_index_above_u32() {
     assert_rejected(execute(&graph, &witness(&[("idx", -1)])));
 }
 
+/// `0 <= idx < 8` is one 3-bit range check (a power-of-two bound needs no
+/// check of `7 - idx`): 7 is accepted, 8 and -1 are rejected.
+#[test]
+fn power_of_two_bound_is_one_range_check() {
+    if !toolchain_present(false) {
+        return;
+    }
+    let mut g = Graph::default();
+    let idx = g.read_int("idx");
+    let hi = g.int(8);
+    g.push(IR::AssertU128Lt, &[idx, hi]);
+    g.expose(idx);
+    let graph = g.finish();
+    let honest = witness(&[("idx", 7)]);
+    let emitted = emit_circuit(&graph, &honest, &ProvingParams::default()).unwrap();
+    assert_eq!(emitted.main_nr.matches("assert_max_bit_size").count(), 1, "{}", emitted.main_nr);
+    assert_eq!(execute(&graph, &honest).unwrap(), vec![7]);
+    assert_rejected(execute(&graph, &witness(&[("idx", 8)])));
+    assert_rejected(execute(&graph, &witness(&[("idx", -1)])));
+}
+
 /// M5: a dynamic-address write outside the segment used to update no slot
 /// and succeed; the mock rejects it.
 #[test]

@@ -1182,7 +1182,9 @@ impl<'a> NoirEmitter<'a> {
     /// Emit `0 <= cell < hi` for a compile-time bound `hi`: two range checks
     /// of `bits = bit_length(hi - 1)` bits on `cell` and on `hi - 1 - cell`.
     /// A negative cell or one above `hi - 1` turns one of them into a field
-    /// element of about 254 bits, which fails. `hi <= 0` admits nothing.
+    /// element of about 254 bits, which fails. For `hi = 2^bits` the first
+    /// check alone is exact, so the second is left out. `hi <= 0` admits
+    /// nothing.
     fn assert_index_in_range(&mut self, cell: &str, hi: i128) {
         if hi <= 0 {
             let _ = writeln!(self.body, "    assert(1 == 0);");
@@ -1196,6 +1198,9 @@ impl<'a> NoirEmitter<'a> {
         let t = self.fresh();
         let _ = writeln!(self.body, "    let {}: Field = {};", t, self.as_field(cell));
         let _ = writeln!(self.body, "    {}.assert_max_bit_size::<{}>();", t, bits);
+        if hi == 1i128 << bits {
+            return;
+        }
         let u = self.fresh();
         let _ = writeln!(self.body, "    let {}: Field = {} - {};", u, hi - 1, t);
         let _ = writeln!(self.body, "    {}.assert_max_bit_size::<{}>();", u, bits);
