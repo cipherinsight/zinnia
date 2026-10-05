@@ -2196,6 +2196,25 @@ fn legacy_runtime_memory_addresses_follow_program_order() {
     assert!(mock_prove(&ir, &inputs, &params, vec![Fp::from(9u64), Fp::zero()]).is_err());
 }
 
+/// Reading a never-written slot at a runtime address returned a free cell
+/// labelled `mem_init`; a prover could make it any value.
+#[test]
+fn legacy_runtime_read_of_unwritten_slot_is_the_init_value() {
+    let ir = make_graph(vec![
+        (IR::AllocateMemory { segment_id: 1, size: 4, init_value: 3 }, vec![]),
+        read_int("i"),
+        (IR::ReadMemory { segment_id: 1 }, vec![1]),
+        (IR::ExposePublicI, vec![2]),
+    ]);
+    let params = ProvingParams { k: 9, ..Default::default() };
+    let inputs = int_inputs(&[("i", 2)], &params);
+    mock_prove(&ir, &inputs, &params, vec![Fp::from(3u64)]).unwrap();
+    let forged = crate::prove::halo2::synthesizer::tamper::with_tamper(&[("mem_init", Fp::one())], || {
+        mock_prove(&ir, &inputs, &params, vec![Fp::from(4u64)])
+    });
+    assert!(forged.is_err(), "an unwritten slot read a prover-chosen value");
+}
+
 /// Constant-address memory still works, and an unwritten slot reads the
 /// init value as a constant rather than a free cell.
 #[test]
