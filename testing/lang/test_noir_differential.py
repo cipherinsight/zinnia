@@ -5,9 +5,9 @@ input fixture); this test runs the same comparison on a sample that covers
 the lowering families: Euclidean `//` and `%` (constant and pinned
 divisors), signed and interval-driven comparisons, non-negativity asserts,
 one- and two-root dynamic gathers, boolean logic, float division, sqrt,
-sin, arcsin and integer powers. Each output must equal the mock's
-position by position (within the documented tolerance for kernels using
-approximated functions).
+sin, cos, arcsin and integer powers. Each output must equal the mock's
+position by position (within the documented tolerance only for integer
+powers, which the mock evaluates in f64).
 """
 
 import shutil
@@ -22,7 +22,7 @@ sys.path.insert(0, str(BENCH))
 import noir_differential  # noqa: E402
 
 CASES = [
-    "0303", "0311", "0318", "0325", "0326", "0329", "0334", "0353",
+    "0303", "0311", "0318", "0323", "0324", "0325", "0326", "0329", "0334", "0353",
     "0391", "0414", "0428", "0441", "0452", "0503", "0507",
 ]
 

@@ -101,9 +101,9 @@ pub fn run(graph: &IRGraph) -> BoundMap {
             }),
             // `DivI` is field division (a * b^-1): no integer bound.
             IR::DivI => None,
-            // a // b with a in [0, A] and a bounded (so non-negative, and
-            // non-zero at run time) divisor lies in [0, A]. A divisor that
-            // may be negative gives a negative quotient: no bound.
+            // a // b with a in [0, A] and a bounded (so non-negative) divisor
+            // lies in [0, A] (a zero divisor gives 0). A divisor that may be
+            // negative gives a negative quotient: no bound.
             IR::FloorDivI => match (
                 arg_bounds.get(0).copied().flatten(),
                 arg_bounds.get(1).copied().flatten(),
@@ -114,8 +114,9 @@ pub fn run(graph: &IRGraph) -> BoundMap {
             // The producer promises non-negative operands, and the Noir
             // lowering (`q_floor_div_bounded`) enforces it: q <= a.
             IR::FloorDivIPinned { .. } => arg_bounds.get(0).copied().flatten(),
-            // a % b lies in [0, b - 1] for a bounded (non-negative, non-zero)
-            // divisor b; an unbounded divisor may be negative.
+            // a % b lies in [0, b - 1] for a bounded (non-negative) divisor b
+            // (0 for b == 0); a negative divisor gives a non-positive
+            // remainder, so an unbounded divisor gives no bound.
             IR::ModI => match arg_bounds.get(1).copied().flatten() {
                 Some(b) if b > 0 => Some(b - 1),
                 _ => None,

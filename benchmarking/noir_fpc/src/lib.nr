@@ -19,10 +19,13 @@
 // argument in its doc comment, and the tests at the bottom of this file feed
 // the constraint functions malicious hint values (`#[test(should_fail)]`).
 //
-// Semantics. The arithmetic helpers reproduce the reference semantics of
-// Zinnia's mock backend (`src/prove/kernel.rs`): Euclidean integer division,
-// truncating float->int casts, flooring Q32 rescales. Transcendental
-// functions are polynomial approximations; the mock evaluates them in f64.
+// Semantics. The helpers reproduce the reference semantics of Zinnia's mock
+// backend, `src/prove/kernel.rs`: `//` and `%` round toward negative infinity
+// (Python), fixed-point `/` is Euclidean, float -> int truncates, Q32 products
+// are floored, and a zero divisor gives 0. sqrt, sin, cos, tan and arcsin run
+// the kernel's own fixed-point algorithms, so they agree with the mock bit for
+// bit; exp, log, pow, sinh, cosh, tanh, arccos and arctan2 are polynomial
+// approximations of functions the mock evaluates in f64 (a few Q32 units).
 //
 // Range checks. `x.assert_max_bit_size::<N>()` constrains 0 <= x < 2^N. A
 // truncating cast `x as uN` on a Field is NOT a range check: it silently keeps
@@ -37,12 +40,10 @@ pub global HALF_Q: u128 = 2147483648;
 // 2^126: offset that maps the signed range [-2^126, 2^126) onto [0, 2^127).
 global SIGNED_OFFSET: Field = 85070591730234615865843651857942052864;
 
-// Constants for the trigonometric helpers. The range reduction runs in Q64 so
-// that the representation error of pi stays negligible for large arguments.
-global PI_Q: Field = 13493037705; // round(pi * 2^32)
-global HALF_PI_Q: Field = 6746518852; // round(pi / 2 * 2^32)
-global PI_Q64: Field = 57952155664616982739; // round(pi * 2^64), 66 bits
-global HALF_PI_Q64: Field = 28976077832308491370; // round(pi / 2 * 2^64)
+// pi, pi/2, pi/4 in Q32 (kernel::pi_q, half_pi_q, quarter_pi_q).
+global PI_Q: Field = 13493037705;
+global TWO_PI_Q: Field = 26986075410;
+global HALF_PI_Q: Field = 6746518852;
 
 // ---------------------------------------------------------------------------
 // Range checks
@@ -206,16 +207,19 @@ pub fn qneg(a: Field) -> Field {
 }
 
 // ---------------------------------------------------------------------------
-// Integer division (Euclidean: n == q*d + r with 0 <= r < |d|)
+// Integer division
 // ---------------------------------------------------------------------------
 //
-// Euclidean division is the IR's FloorDivI/ModI semantics (`div_euclid`,
-// `rem_euclid` in src/prove/kernel.rs). It equals Python's floor division
-// whenever d > 0; for d < 0 Python's remainder takes the sign of d instead.
+// The conventions of kernel::div_rem_or_zero: `n == q*d + r` with |r| < |d|,
+//   floor  (Python `//`, `%`; FloorDivI, ModI): r is 0 or has the sign of d;
+//   Euclid (fixed-point `/`, DivF):              0 <= r < |d|;
+//   trunc  (Python `int()`, IntCast):            r is 0 or has the sign of n;
+// and a zero divisor gives (0, 0).
 
-// Hint: Euclidean (q, r) of the signed readings of n and d; (0, 0) when d == 0
-// (the constraints then fail).
-unconstrained fn hint_euclid_divmod(n: Field, d: Field) -> (Field, Field) {
+// Hint: (q, r) of the signed readings of n and d with the remainder made
+// non-negative (`remainder_negative == false`) or non-positive; (0, 0) when
+// d == 0 (the constraints then fail).
+unconstrained fn hint_divmod(n: Field, d: Field, remainder_negative: bool) -> (Field, Field) {
     let (n_neg, n_mag) = hint_sign_magnitude(n);
     let (d_neg, d_mag) = hint_sign_magnitude(d);
     let nm = n_mag as u128;
@@ -223,79 +227,117 @@ unconstrained fn hint_euclid_divmod(n: Field, d: Field) -> (Field, Field) {
     if dm == 0 {
         (0, 0)
     } else {
+        // Truncated division first: r has the sign of n.
         let qm = nm / dm;
         let rm = nm % dm;
-        // n < 0 with a non-zero remainder rounds the magnitude up so that the
-        // remainder becomes |d| - rm >= 0.
-        let round_up = n_neg & (rm != 0);
-        let q_mag: Field = if round_up { (qm + 1) as Field } else { qm as Field };
-        let r: Field = if round_up { (dm - rm) as Field } else { rm as Field };
-        let q: Field = if n_neg != d_neg { -q_mag } else { q_mag };
-        (q, r)
+        let q_t: Field = if n_neg != d_neg { -(qm as Field) } else { qm as Field };
+        let r_t: Field = if n_neg { -(rm as Field) } else { rm as Field };
+        let d_sign: Field = if d_neg { -1 } else { 1 };
+        if (rm == 0) | (n_neg == remainder_negative) {
+            (q_t, r_t)
+        } else if remainder_negative {
+            // r_t > 0 must become negative: r = r_t - |d|, q = q_t + sign(d).
+            (q_t + d_sign, r_t - (dm as Field))
+        } else {
+            // r_t < 0 must become non-negative: r = r_t + |d|, q = q_t - sign(d).
+            (q_t - d_sign, r_t + (dm as Field))
+        }
     }
 }
 
-/// Constraints for `euclid_divmod`. Uniqueness: |q| <= 2^126, |d| < 2^126 and
-/// 0 <= r < |d| bound the integer q*d + r by 2^252 + 2^126 < (p - 1) / 2, so
-/// `q*d + r == n (mod p)` forces q*d + r to equal the signed reading of n as
-/// an integer, and integer Euclidean division has exactly one (q, r). A zero
-/// divisor fails `r < |d|`.
-fn constrain_euclid_divmod(n: Field, d: Field, q: Field, r: Field) {
-    let (_d_neg, d_mag) = to_signed(d);
+/// Constraints shared by the signed divisions, for a divisor of magnitude
+/// `d_mag` and a remainder whose sign the caller fixes (`remainder_negative`).
+/// Uniqueness: |q| <= 2^126, |d| < 2^126 and |r| < |d| bound the integer
+/// q*d + r by 2^252 + 2^126 < (p - 1) / 2, so `q*d + r == n (mod p)` forces
+/// q*d + r to equal the signed reading of n, and integer division with a
+/// remainder of fixed sign and |r| < |d| has exactly one (q, r). A zero
+/// divisor fails `|r| < |d|`.
+fn constrain_divmod(n: Field, d: Field, q: Field, r: Field, d_mag: u128, remainder_negative: bool) {
     assert_signed_range(q);
-    r.assert_max_bit_size::<126>();
-    assert((r as u128) < d_mag, "euclid_divmod: remainder >= |divisor| (or divisor is zero)");
-    assert(q * d + r == n, "euclid_divmod: reconstruction failed");
+    let r_mag = if remainder_negative { -r } else { r };
+    r_mag.assert_max_bit_size::<126>();
+    assert((r_mag as u128) < d_mag, "divmod: |remainder| >= |divisor| (or divisor is zero)");
+    assert(q * d + r == n, "divmod: reconstruction failed");
 }
 
-/// Euclidean (q, r) with n == q*d + r and 0 <= r < |d|, for any signs.
-pub fn euclid_divmod(n: Field, d: Field) -> (Field, Field) {
-    // Safety: constrain_euclid_divmod pins (q, r) uniquely.
-    let (q, r) = unsafe { hint_euclid_divmod(n, d) };
-    constrain_euclid_divmod(n, d, q, r);
+/// Python `(n // d, n % d)` for d != 0: the remainder takes d's sign.
+fn floor_divmod_nonzero(n: Field, d: Field) -> (Field, Field) {
+    let (d_negative, d_mag) = to_signed(d);
+    // Safety: constrain_divmod pins (q, r) uniquely.
+    let (q, r) = unsafe { hint_divmod(n, d, d_negative) };
+    constrain_divmod(n, d, q, r, d_mag, d_negative);
     (q, r)
 }
 
-/// Constraints for `euclid_divmod_small`. `r` and `d - 1 - r` are BITS-bit
+/// Euclidean `(q, r)`, 0 <= r < |d|, for d != 0.
+fn euclid_divmod_nonzero(n: Field, d: Field) -> (Field, Field) {
+    let (_d_negative, d_mag) = to_signed(d);
+    // Safety: constrain_divmod pins (q, r) uniquely.
+    let (q, r) = unsafe { hint_divmod(n, d, false) };
+    constrain_divmod(n, d, q, r, d_mag, false);
+    (q, r)
+}
+
+/// (n, d), or (0, 1) when d == 0: dividing the substitute gives the zero
+/// divisor's (0, 0) without a special case in the division constraints.
+fn zero_divisor_to_unit(n: Field, d: Field) -> (Field, Field) {
+    let d_is_zero = d == 0;
+    (if d_is_zero { 0 } else { n }, if d_is_zero { 1 } else { d })
+}
+
+/// Python `(n // d, n % d)` for any signs; a zero divisor gives (0, 0).
+pub fn floor_divmod(n: Field, d: Field) -> (Field, Field) {
+    let (n1, d1) = zero_divisor_to_unit(n, d);
+    floor_divmod_nonzero(n1, d1)
+}
+
+/// Euclidean `(q, r)` with 0 <= r < |d| for any signs; a zero divisor gives
+/// (0, 0).
+pub fn euclid_divmod(n: Field, d: Field) -> (Field, Field) {
+    let (n1, d1) = zero_divisor_to_unit(n, d);
+    euclid_divmod_nonzero(n1, d1)
+}
+
+/// Constraints for `divmod_by_positive`. `r` and `d - 1 - r` are BITS-bit
 /// values, which gives 0 <= r <= d - 1 (so d >= 1 and d < 2^(BITS+1)); with
 /// |q| <= 2^126 and BITS <= 120 the integer q*d + r stays below p/2 in
-/// magnitude, so the argument of `constrain_euclid_divmod` applies.
-fn constrain_euclid_divmod_small<let BITS: u32>(n: Field, d: Field, q: Field, r: Field) {
-    assert(BITS <= 120, "euclid_divmod_small: BITS must be <= 120");
+/// magnitude, so the argument of `constrain_divmod` applies.
+fn constrain_divmod_by_positive<let BITS: u32>(n: Field, d: Field, q: Field, r: Field) {
+    assert(BITS <= 120, "divmod_by_positive: BITS must be <= 120");
     r.assert_max_bit_size::<BITS>();
     (d - 1 - r).assert_max_bit_size::<BITS>();
     assert_signed_range(q);
-    assert(q * d + r == n, "euclid_divmod_small: reconstruction failed");
+    assert(q * d + r == n, "divmod_by_positive: reconstruction failed");
 }
 
-/// Euclidean division by a positive divisor d with d <= 2^BITS (typically a
-/// compile-time constant). Same result as `euclid_divmod`, but the remainder
-/// check is two BITS-bit range checks instead of a sign projection of d. The
-/// constraints themselves enforce 1 <= d, so a wrong BITS can only make the
+/// `(n // d, n % d)` for a divisor 1 <= d <= 2^BITS (typically a constant),
+/// where floor and Euclidean division agree: 0 <= r < d. The remainder check
+/// is two BITS-bit range checks instead of a sign projection of d, and the
+/// constraints themselves enforce d >= 1, so a wrong BITS can only make the
 /// proof fail, never accept a wrong quotient.
-pub fn euclid_divmod_small<let BITS: u32>(n: Field, d: Field) -> (Field, Field) {
-    // Safety: constrain_euclid_divmod_small pins (q, r) uniquely.
-    let (q, r) = unsafe { hint_euclid_divmod(n, d) };
-    constrain_euclid_divmod_small::<BITS>(n, d, q, r);
+pub fn divmod_by_positive<let BITS: u32>(n: Field, d: Field) -> (Field, Field) {
+    // Safety: constrain_divmod_by_positive pins (q, r) uniquely.
+    let (q, r) = unsafe { hint_divmod(n, d, false) };
+    constrain_divmod_by_positive::<BITS>(n, d, q, r);
     (q, r)
 }
 
-/// Integer `n // d` (Euclidean), any signs.
+/// Integer `n // d` (Python), any signs; 0 for d == 0.
 pub fn q_floor_div(n: Field, d: Field) -> Field {
-    let (q, _r) = euclid_divmod(n, d);
+    let (q, _r) = floor_divmod(n, d);
     q
 }
 
-/// Integer `n % d` (Euclidean, in [0, |d|)), any signs.
+/// Integer `n % d` (Python: the sign of d), any signs; 0 for d == 0.
 pub fn q_mod(n: Field, d: Field) -> Field {
-    let (_q, r) = euclid_divmod(n, d);
+    let (_q, r) = floor_divmod(n, d);
     r
 }
 
 /// Constraints for `q_floor_div_bounded`: q, r and d - r - 1 are BITS-bit
 /// values, i.e. q >= 0 and 0 <= r < d. With BITS <= 120 the integer q*d + r is
 /// below 2^242 < p, so the reconstruction holds over the integers and the
-/// Euclidean (q, r) is unique.
+/// quotient is unique.
 fn constrain_floor_div_bounded<let BITS: u32>(n: Field, d: Field, q: Field, r: Field) {
     assert(BITS <= 120, "q_floor_div_bounded: BITS must be <= 120");
     assert(q * d + r == n, "q_floor_div_bounded: reconstruction failed");
@@ -308,7 +350,7 @@ fn constrain_floor_div_bounded<let BITS: u32>(n: Field, d: Field, q: Field, r: F
 /// (0 <= n, 1 <= d). If that premise is false the proof fails.
 pub fn q_floor_div_bounded<let BITS: u32>(n: Field, d: Field) -> Field {
     // Safety: constrain_floor_div_bounded pins (q, r) uniquely.
-    let (q, r) = unsafe { hint_euclid_divmod(n, d) };
+    let (q, r) = unsafe { hint_divmod(n, d, false) };
     constrain_floor_div_bounded::<BITS>(n, d, q, r);
     q
 }
@@ -342,6 +384,31 @@ pub fn q_div_q(v: Field) -> Field {
     }
 }
 
+// Hint: d^-1, or 0 for d == 0.
+unconstrained fn hint_inverse_or_zero(d: Field) -> Field {
+    if d == 0 {
+        0
+    } else {
+        1 / d
+    }
+}
+
+/// Constraints for `field_div_or_zero`: for d != 0, d * inv == 1 pins
+/// inv = d^-1; for d == 0, inv is forced to 0.
+fn constrain_inverse_or_zero(d: Field, inv: Field) {
+    let d_is_zero = d == 0;
+    assert(d * inv == if d_is_zero { 0 } else { 1 }, "field_div_or_zero: bad inverse");
+    assert(!d_is_zero | (inv == 0), "field_div_or_zero: inverse of zero must be 0");
+}
+
+/// Field division a * d^-1, and 0 for d == 0 (the IR's `DivI`, as the mock).
+pub fn field_div_or_zero(a: Field, d: Field) -> Field {
+    // Safety: constrain_inverse_or_zero pins inv uniquely.
+    let inv = unsafe { hint_inverse_or_zero(d) };
+    constrain_inverse_or_zero(d, inv);
+    a * inv
+}
+
 // ---------------------------------------------------------------------------
 // Fixed-point multiplication and division
 // ---------------------------------------------------------------------------
@@ -358,7 +425,7 @@ fn constrain_floor_div_q(v: Field, q: Field, r: Field) {
 /// floor(v / Q) for a raw (Q^2-scaled) product or sum of products.
 pub fn qscale_down_raw(v: Field) -> Field {
     // Safety: constrain_floor_div_q pins (q, r) uniquely.
-    let (q, r) = unsafe { hint_euclid_divmod(v, Q) };
+    let (q, r) = unsafe { hint_divmod(v, Q, false) };
     constrain_floor_div_q(v, q, r);
     q
 }
@@ -368,10 +435,9 @@ pub fn qmul(a: Field, b: Field) -> Field {
     qscale_down_raw(a * b)
 }
 
-/// Q32 quotient: floor(a * Q / b) (Euclidean, as the mock's `div_euclid`), any
-/// signs. Fails when b == 0.
+/// Q32 quotient a / b: the Euclidean quotient of a * Q by b (floor for b > 0,
+/// ceiling for b < 0), as kernel::fp_div_prescale; 0 for b == 0.
 pub fn qdiv(a: Field, b: Field) -> Field {
-    assert(b != 0, "qdiv: divide by zero");
     let (q, _r) = euclid_divmod(a * Q, b);
     q
 }
@@ -401,54 +467,50 @@ pub global TOL_DEFAULT: u128 = 4294967;
 // Square root
 // ---------------------------------------------------------------------------
 
-// Hint: round(sqrt(xq)) for 0 <= xq < 2^128.
-unconstrained fn hint_isqrt_round(xq: Field) -> Field {
-    let target = xq as u128;
-    let mut s: u128 = 0;
-    if target != 0 {
+// Hint: floor(sqrt(n)) for 0 <= n < 2^128.
+unconstrained fn hint_isqrt_floor(n: Field) -> Field {
+    let target = n as u128;
+    let mut g: u128 = target;
+    if target > 1 {
         // Newton iteration from above converges to floor(sqrt(target)).
-        let mut g: u128 = target;
         for _ in 0..130 {
             let next = (g + target / g) / 2;
             if next < g {
                 g = next;
             }
         }
-        s = g;
-        // Round half up: sqrt(target) >= s + 1/2  <=>  target > s^2 + s.
-        if target - s * s > s {
-            s = s + 1;
-        }
     }
-    s as Field
+    g as Field
 }
 
-/// Constraints for `qsqrt` with xq = x * Q: y < 2^64 and
-///   y^2 - y + 1 - [y == 0] <= xq <= y^2 + y,
-/// both checked as 129-bit range checks on the differences (every term is
-/// below 2^129, so a negative difference cannot pass). The integer intervals
-/// [y^2 - y + 1, y^2 + y] for y >= 1, and {0} for y == 0, partition the
-/// non-negative integers, so y = round(sqrt(xq)) is unique.
-fn constrain_isqrt_round(xq: Field, y: Field) {
-    y.assert_max_bit_size::<64>();
-    let y_is_zero: Field = if y == 0 { 1 } else { 0 };
-    (xq - y * y + y - 1 + y_is_zero).assert_max_bit_size::<129>();
-    (y * y + y - xq).assert_max_bit_size::<129>();
+/// Constraints for `isqrt_floor` (n < 2^(2 Y_BITS), D_BITS = Y_BITS + 1):
+/// y < 2^Y_BITS and both d = n - y^2 and 2y - d are D_BITS-bit values. As
+/// every term is below 2^(2 Y_BITS + 1), a negative difference cannot pass,
+/// so y^2 <= n <= y^2 + 2y < (y + 1)^2: y is the unique floor root.
+fn constrain_isqrt_floor<let Y_BITS: u32, let D_BITS: u32>(n: Field, y: Field) {
+    y.assert_max_bit_size::<Y_BITS>();
+    let d = n - y * y;
+    d.assert_max_bit_size::<D_BITS>();
+    (2 * y - d).assert_max_bit_size::<D_BITS>();
 }
 
-/// Q32 square root rounded to nearest: round(sqrt(x * Q)), i.e. the Q32 value
-/// nearest to sqrt(x). Fails for x < 0 and for x >= 2^96 (|x| >= 2^64 in
-/// real units).
+/// floor(sqrt(n)) for 0 <= n < 2^(2 Y_BITS).
+fn isqrt_floor<let Y_BITS: u32, let D_BITS: u32>(n: Field) -> Field {
+    // Safety: constrain_isqrt_floor pins y uniquely.
+    let y = unsafe { hint_isqrt_floor(n) };
+    constrain_isqrt_floor::<Y_BITS, D_BITS>(n, y);
+    y
+}
+
+/// Q32 square root rounded down: floor(sqrt(x * Q)), the largest Q32 value
+/// whose square does not exceed x (kernel::fp_sqrt). A negative input gives
+/// 0 (the kernel's convention). Fails for x >= 2^32 in real units (raw
+/// x >= 2^64), outside the kernel's fixed-point window.
 pub fn qsqrt(x: Field) -> Field {
     let (negative, mag) = to_signed(x);
-    assert(!negative, "qsqrt: negative input");
-    let mag_f = mag as Field;
-    mag_f.assert_max_bit_size::<96>();
-    let xq = mag_f * Q;
-    // Safety: constrain_isqrt_round pins y uniquely.
-    let y = unsafe { hint_isqrt_round(xq) };
-    constrain_isqrt_round(xq, y);
-    y
+    let m = if negative { 0 } else { mag as Field };
+    m.assert_max_bit_size::<64>();
+    isqrt_floor::<48, 49>(m * Q)
 }
 
 // ---------------------------------------------------------------------------
@@ -467,60 +529,68 @@ fn horner_q<let N: u32>(x: Field, coefs: [Field; N]) -> Field {
 // sin / cos / tan
 // ---------------------------------------------------------------------------
 
-// sin(x) for x in [0, pi/2] (Q32) via the nested Taylor form
-//   sin x = x (1 - x^2/(2*3) (1 - x^2/(4*5) (... (1 - x^2/(14*15)))))
-// (terms through x^15; truncation error < 7e-12 on [0, pi/2]). Each level is
-// one flooring division of x^2 * t by c * Q, so each level adds at most one
-// Q32 ulp and the error is damped by x^2/c < 0.42 per level.
-fn sin_first_quadrant(x: Field) -> Field {
-    let x2 = qmul(x, x);
-    let divisors: [Field; 7] = [210, 156, 110, 72, 42, 20, 6];
-    let mut t: Field = Q;
-    for i in 0..7 {
-        // x2 < 2^34 and t <= Q, so x2 * t < 2^67; c * Q < 2^40.
-        let (u, _r) = euclid_divmod_small::<40>(x2 * t, divisors[i] * Q);
-        t = Q - u;
-    }
-    qmul(x, t)
-}
+// kernel::sin_taylor_q(32): sin(s)/s as a polynomial in u = s^2, leading first.
+global SIN_TAYLOR_Q: [Field; 7] = [
+    1,
+    -(108 as Field),
+    11836,
+    -(852176 as Field),
+    35791394,
+    -(715827883 as Field),
+    4294967296,
+];
 
-// sin(a) for a non-negative angle a in Q64 (a < 2^128), as a Q32 value:
-// a = k*pi + r with 0 <= r < pi (exact checked division by the Q64 constant
-// pi), sin a = (-1)^k sin r, and sin r = sin(pi - r) folds r into [0, pi/2]
-// before it is rounded to Q32.
-fn sin_nonneg_q64(a: Field) -> Field {
-    let (k, r) = euclid_divmod_small::<66>(a, PI_Q64);
-    let (_half, k_odd) = euclid_divmod_small::<1>(k, 2);
-    // r < 2^66 (checked above), so checked_u128 never fails here.
-    let r_past_half_pi = checked_u128(r) > 28976077832308491370; // HALF_PI_Q64
-    let folded = if r_past_half_pi { PI_Q64 - r } else { r };
-    let (x, _rem) = euclid_divmod_small::<32>(folded + 2147483648, Q); // round to Q32
-    let s = sin_first_quadrant(x);
-    if k_odd == 1 {
-        -s
-    } else {
-        s
-    }
-}
+// kernel::cos_taylor_q(32): cos(s) as a polynomial in u = s^2, leading first.
+global COS_TAYLOR_Q: [Field; 8] = [
+    0,
+    9,
+    -(1184 as Field),
+    106522,
+    -(5965232 as Field),
+    178956971,
+    -(2147483648 as Field),
+    4294967296,
+];
 
-/// Q32 sine for any argument with |x| < 2^64 (real units); sin(-x) = -sin x.
-/// Error: a few Q32 ulps (the Taylor levels and the final rounding).
+/// Q32 sine by kernel::fp_sin's algorithm (bit for bit the mock's value):
+/// r = |x| mod 2*pi_q (an exact checked division); fold r >= pi_q onto
+/// r - pi_q (sign flip); mirror r > pi_q/2 onto pi_q - r; above pi_q/4 use
+/// cos(pi_q/2 - r); evaluate the Taylor polynomial in u = s^2 with flooring
+/// products. Error against libm: about 1e-9 on [-20, 20]. Fails for raw
+/// |x| >= 2^64, outside the kernel's fixed-point window.
 pub fn qsin(x: Field) -> Field {
     let (negative, mag) = to_signed(x);
-    let s = sin_nonneg_q64((mag as Field) * Q);
-    if negative {
-        -s
+    let m = mag as Field;
+    m.assert_max_bit_size::<64>();
+    let (_k, r) = divmod_by_positive::<35>(m, TWO_PI_Q);
+    // r < 2 pi_q < 2^35, so the conversion never fails; the reduction then
+    // runs on u64 values (13493037705 = pi_q, 6746518852 = pi_q / 2,
+    // 3373259426 = pi_q / 4).
+    let r0 = checked_u64(r);
+    let folded = r0 >= 13493037705;
+    let r1 = if folded { r0 - 13493037705 } else { r0 };
+    let r2 = if r1 > 6746518852 { 13493037705 - r1 } else { r1 };
+    let cofunction = r2 > 3373259426;
+    let s = (if cofunction { 6746518852 - r2 } else { r2 }) as Field;
+    let u = qmul(s, s);
+    let p = if cofunction {
+        horner_q(u, COS_TAYLOR_Q)
     } else {
-        s
+        qmul(s, horner_q(u, SIN_TAYLOR_Q))
+    };
+    if negative != folded {
+        -p
+    } else {
+        p
     }
 }
 
-/// Q32 cosine: cos x = sin(|x| + pi/2), with the shift done in Q64.
+/// Q32 cosine: cos x = sin(x + pi_q / 2) (kernel::fp_cos).
 pub fn qcos(x: Field) -> Field {
-    let (_negative, mag) = to_signed(x);
-    sin_nonneg_q64((mag as Field) * Q + HALF_PI_Q64)
+    qsin(x + HALF_PI_Q)
 }
 
+/// Q32 tangent: qsin(x) / qcos(x) (kernel::fp_tan).
 pub fn qtan(x: Field) -> Field {
     qdiv(qsin(x), qcos(x))
 }
@@ -580,7 +650,7 @@ fn floor_div_pow2(v: Field, m: Field) -> Field {
 /// or flooring division for negative powers). Fails when |floor(y)| >= 128.
 pub fn qexp(x: Field) -> Field {
     let y = qmul(x, INV_LN2_Q);
-    let (i, f) = euclid_divmod_small::<32>(y, Q);
+    let (i, f) = divmod_by_positive::<32>(y, Q);
     let two_to_f = horner_q(f, EXP2_COEFS_Q); // in [Q, 2Q]
     let (i_negative, i_mag) = to_signed(i);
     let e = i_mag as Field;
@@ -655,7 +725,7 @@ pub fn qlog(x: Field) -> Field {
     let s = qdiv(m - Q, m + Q);
     let series = horner_q(qmul(s, s), ATANH_SERIES_Q);
     let ln_m = 2 * qmul(s, series);
-    let (k_ln2, _r) = euclid_divmod_small::<32>(k * LN2_Q64 + 2147483648, Q);
+    let (k_ln2, _r) = divmod_by_positive::<32>(k * LN2_Q64 + 2147483648, Q);
     k_ln2 + ln_m
 }
 
@@ -684,46 +754,66 @@ pub fn qpow_int_q32(base: Field, exp: u64) -> Field {
 }
 
 // ---------------------------------------------------------------------------
-// arctan2, arcsin, arccos
+// arcsin, arccos, arctan, arctan2
 // ---------------------------------------------------------------------------
 
-// atan on [-1, 1], degree 15, quantized to Q32, leading coefficient first
-// (ATAN_COEFS in src/prove/kernel.rs lists the same values constant-term
-// first; the odd-power coefficients are kept, the ~1e-13 even ones are 0).
-global ATAN_COEFS_Q: [Field; 16] = [
-    -(17009175 as Field),
-    0,
-    92381544,
-    0,
-    -(237862581 as Field),
-    0,
-    412388002,
-    0,
-    -(596658626 as Field),
-    0,
-    856548815,
-    0,
-    -(1431492759 as Field),
-    0,
-    4294964071,
-    0,
+// kernel::atan_odd_coefs_q(32): atan(t)/t as a polynomial in u = t^2 on
+// [-1, 1] (fit error 1.8e-9), leading first.
+global ATAN_ODD_Q: [Field; 10] = [
+    -(7489138 as Field),
+    45873335,
+    -(131930687 as Field),
+    246804093,
+    -(359577404 as Field),
+    469877966,
+    -(612529925 as Field),
+    858917466,
+    -(1431653573 as Field),
+    4294967285,
 ];
 
+/// atan(t) for |t| <= 1 (Q32): t * P(t^2), flooring products.
 pub fn qarctan(t: Field) -> Field {
-    horner_q(t, ATAN_COEFS_Q)
+    qmul(t, horner_q(qmul(t, t), ATAN_ODD_Q))
 }
 
+/// Q32 arcsin by kernel::fp_arcsin's algorithm (bit for bit the mock's
+/// value): arcsin x = 2 atan(x / (1 + sqrt(1 - x^2))), with the exact integer
+/// root floor(sqrt(2^64 - x_q^2)) and a flooring division by the positive
+/// 2^32 + root. Outside [-1, 1] the result is 0 (the kernel's convention).
+/// Error against libm: about 6e-9.
+pub fn qarcsin(x: Field) -> Field {
+    let (_negative, mag) = to_signed(x);
+    let in_domain = mag <= Q_U128;
+    let v = if in_domain { x } else { 0 };
+    let v_mag = if in_domain { mag as Field } else { 0 };
+    // 2^64 - v^2 <= 2^64, so the root is at most 2^32.
+    let root = isqrt_floor::<33, 34>(Q * Q - v_mag * v_mag);
+    let (t, _r) = divmod_by_positive::<33>(v * Q, Q + root);
+    let half = qarctan(t);
+    half + half
+}
+
+/// Q32 arccos = pi/2 - arcsin x on [-1, 1]; 0 outside (where the mock's f64
+/// acos gives nan, which it encodes as 0).
+pub fn qarccos(x: Field) -> Field {
+    let (_negative, mag) = to_signed(x);
+    if mag <= Q_U128 {
+        HALF_PI_Q - qarcsin(x)
+    } else {
+        0
+    }
+}
+
+/// Q32 atan2(y, x): the polynomial on min(|x|,|y|) / max(|x|,|y|) in [0, 1],
+/// then the octant and quadrant adjustments. atan2(0, 0) = 0.
 pub fn qarctan2(y: Field, x: Field) -> Field {
     let (sy, my) = to_signed(y);
     let (sx, mx) = to_signed(x);
-    let abs_y: Field = my as Field;
-    let abs_x: Field = mx as Field;
     let swap: bool = my > mx;
-    let num: Field = if swap { abs_x } else { abs_y };
-    let den: Field = if swap { abs_y } else { abs_x };
-    // One ulp keeps the divisor non-zero at the origin (atan2(0, 0) = 0).
-    let t: Field = qdiv(num, den + 1);
-    let poly: Field = qarctan(t);
+    let num: Field = if swap { mx as Field } else { my as Field };
+    let den: Field = if swap { my as Field } else { mx as Field };
+    let poly: Field = qarctan(qdiv(num, den));
     let a0: Field = if swap { HALF_PI_Q - poly } else { poly };
     let a1: Field = if sx { PI_Q - a0 } else { a0 };
     if sy {
@@ -733,25 +823,13 @@ pub fn qarctan2(y: Field, x: Field) -> Field {
     }
 }
 
-pub fn qarcsin(x: Field) -> Field {
-    // arcsin(x) = arctan2(x, sqrt(1 - x*x))
-    let s: Field = qsqrt(Q - qmul(x, x));
-    qarctan2(x, s)
-}
-
-pub fn qarccos(x: Field) -> Field {
-    // arccos(x) = arctan2(sqrt(1 - x*x), x)
-    let s: Field = qsqrt(Q - qmul(x, x));
-    qarctan2(s, x)
-}
-
 // ---------------------------------------------------------------------------
 // Hyperbolic functions
 // ---------------------------------------------------------------------------
 
 // floor(v / 2), as the mock's fp_div_prescale(v, 2.0).
 fn half_floor(v: Field) -> Field {
-    let (q, _r) = euclid_divmod_small::<1>(v, 2);
+    let (q, _r) = divmod_by_positive::<1>(v, 2);
     q
 }
 
@@ -790,9 +868,10 @@ fn test_qdiv_signs() {
     assert(qdiv(-q_from_int(10), -q_from_int(4)) == q_from_int(2) + Q / 2);
 }
 
-#[test(should_fail_with = "qdiv: divide by zero")]
-fn test_qdiv_zero_fails() {
-    let _ = qdiv(Q, 0);
+#[test]
+fn test_qdiv_zero_is_zero() {
+    // kernel::fp_div_prescale: a zero divisor gives 0.
+    assert(qdiv(Q, 0) == 0);
 }
 
 #[test]
@@ -836,34 +915,53 @@ fn test_qlt() {
 
 #[test]
 fn test_q_floor_div_signs() {
+    // Python floor division: -7 // 2 == -4, 7 // -2 == -4, -7 // -2 == 3.
     assert(q_floor_div(7, 3) == 2);
     assert(q_floor_div(-7, 3) == -3);
     assert(q_floor_div(6, 3) == 2);
     assert(q_floor_div(-6, 3) == -2);
-    // d < 0: Euclidean convention (as the mock), not Python's.
-    assert(q_floor_div(7, -3) == -2);
-    assert(q_floor_div(-7, -3) == 3);
+    assert(q_floor_div(7, -2) == -4);
+    assert(q_floor_div(-7, -2) == 3);
+    assert(q_floor_div(6, -3) == -2);
+    assert(q_floor_div(5, 0) == 0);
 }
 
 #[test]
 fn test_q_mod_signs() {
+    // Python: the remainder takes the divisor's sign.
     assert(q_mod(7, 3) == 1);
     assert(q_mod(-7, 3) == 2);
     assert(q_mod(6, 3) == 0);
-    assert(q_mod(7, -3) == 1);
-    assert(q_mod(-7, -3) == 2);
-}
-
-#[test(should_fail)]
-fn test_q_floor_div_by_zero_fails() {
-    let _ = q_floor_div(7, 0);
+    assert(q_mod(7, -2) == -1);
+    assert(q_mod(-7, -2) == -1);
+    assert(q_mod(5, 0) == 0);
 }
 
 #[test]
-fn test_euclid_divmod_small() {
-    let (q, r) = euclid_divmod_small::<3>(-7, 3);
+fn test_euclid_divmod_signs() {
+    // Euclidean: 0 <= r < |d| (fixed-point `/`).
+    let (q1, r1) = euclid_divmod(-7, 2);
+    assert((q1 == -4) & (r1 == 1));
+    let (q2, r2) = euclid_divmod(7, -2);
+    assert((q2 == -3) & (r2 == 1));
+    let (q3, r3) = euclid_divmod(-7, -2);
+    assert((q3 == 4) & (r3 == 1));
+    let (q4, r4) = euclid_divmod(5, 0);
+    assert((q4 == 0) & (r4 == 0));
+}
+
+#[test]
+fn test_field_div_or_zero() {
+    assert(field_div_or_zero(21, 3) == 7);
+    assert(field_div_or_zero(21, 0) == 0);
+}
+
+
+#[test]
+fn test_divmod_by_positive() {
+    let (q, r) = divmod_by_positive::<2>(-7, 3);
     assert((q == -3) & (r == 2));
-    let (q2, r2) = euclid_divmod_small::<1>(5, 2);
+    let (q2, r2) = divmod_by_positive::<1>(5, 2);
     assert((q2 == 2) & (r2 == 1));
 }
 
@@ -882,31 +980,47 @@ fn test_q_div_q_signs() {
 }
 
 #[test]
-fn test_qsqrt_rounds_to_nearest() {
+fn test_qsqrt_is_the_floor_root() {
+    // kernel::fp_sqrt: floor(sqrt(x * 2^32)); a negative input gives 0.
     assert(qsqrt(0) == 0);
     assert(qsqrt(q_from_int(4)) == q_from_int(2));
-    // sqrt(2) * 2^32 = 6074000999.95 -> 6074001000.
-    assert(qsqrt(q_from_int(2)) == 6074001000);
-    // Smallest positive input: sqrt(2^-32) = 2^-16 -> 65536.
+    // sqrt(2) * 2^32 = 6074000999.95 -> 6074000999.
+    assert(qsqrt(q_from_int(2)) == 6074000999);
+    assert(qsqrt(10737418240) == 6790939565); // sqrt(2.5)
     assert(qsqrt(1) == 65536);
+    assert(qsqrt(4) == 131072); // Q32(1e-9) = 4
+    assert(qsqrt(-Q) == 0);
 }
 
-#[test(should_fail_with = "qsqrt: negative input")]
-fn test_qsqrt_negative_fails() {
-    let _ = qsqrt(-Q);
+#[test(should_fail)]
+fn test_qsqrt_rejects_values_outside_the_window() {
+    let _ = qsqrt(18446744073709551616); // raw 2^64
 }
 
 #[test]
-fn test_qsin_range_reduction() {
-    // Reference values: round(sin(v) * 2^32), round(cos(v) * 2^32).
-    q_eq_with_tol(qsin(q_from_int(277)), 2207631717, 4);
-    q_eq_with_tol(qsin(q_from_int(324)), -1735446903, 4);
-    q_eq_with_tol(qsin(-q_from_int(277)), -2207631717, 4);
-    q_eq_with_tol(qsin(Q), 3614090360, 4); // sin(1)
-    q_eq_with_tol(qcos(Q), 2320580734, 4); // cos(1)
-    q_eq_with_tol(qcos(-Q), 2320580734, 4); // cos(-1)
-    assert(qsin(0) == 0);
-    q_eq_with_tol(qcos(0), Q, 4);
+fn test_qsin_qcos_match_the_kernel() {
+    // (x, fp_sin(x), fp_cos(x)) from kernel::fp_sin / fp_cos, bit for bit.
+    let cases: [(Field, Field, Field); 9] = [
+        (4294967296, 3614090360, 2320580733), // 1
+        (1189705940992, 2207631680, 3684169708), // 277
+        (1391569403904, -1735446857, -3928736219), // 324
+        (-1189705940992, -2207631680, 3684169707), // -277
+        (2147483648, 2059117009, 3769188403), // 0.5
+        (12884901888, 606105819, -4251985396), // 3
+        (4294967296000, 3551420499, 2415399866), // 1000
+        (0, 0, 4294967296), // 0
+        (-7516192768, -4226187461, -765560979), // -1.75
+    ];
+    for i in 0..9 {
+        let (x, want_sin, want_cos) = cases[i];
+        assert(qsin(x) == want_sin);
+        assert(qcos(x) == want_cos);
+    }
+}
+
+#[test(should_fail)]
+fn test_qsin_rejects_values_outside_the_window() {
+    let _ = qsin(18446744073709551616); // raw 2^64
 }
 
 #[test]
@@ -945,23 +1059,10 @@ fn test_qpow_int_large_exponent_fails() {
     let _ = qpow_int_q32(Q, 4294967296);
 }
 
-#[test]
-fn test_qarctan2_quadrant() {
-    // round(atan(1) * 2^32), round(asin(0.5) * 2^32); the polynomial's own
-    // error is about 4.3e-8 (~185 ulps).
-    q_eq_with_tol(qarctan2(Q, Q), 3373259426, 400); // pi/4
-    q_eq_with_tol(qarctan2(Q, -Q), 3 * 3373259426, 400); // 3pi/4
-    q_eq_with_tol(qarctan2(-Q, -Q), -3 * 3373259426, 400); // -3pi/4
-    q_eq_with_tol(qarcsin(Q / 2), 2248839617, 400); // pi/6
-    q_eq_with_tol(qarctan(Q / 2), 1991351318, 400); // atan(0.5)
-    assert(qarctan2(0, 0) == 0);
-}
 
-// atan family against libm over the domain: (input, round(f(input) * 2^32))
-// with the input the Q32 encoding of -1, -0.75, ..., 1. The degree-15 atan
-// polynomial has a maximum error of about 4.3e-8 (185 ulps).
 #[test]
 fn test_qarctan_against_libm() {
+    // (t, round(atan(t) * 2^32)); the polynomial's error is 1.8e-9 (8 ulps).
     let cases: [(Field, Field); 11] = [
         (-4294967296, -3373259426),
         (-3221225472, -2763816217),
@@ -977,34 +1078,39 @@ fn test_qarctan_against_libm() {
     ];
     for i in 0..11 {
         let (t, want) = cases[i];
-        q_eq_with_tol(qarctan(t), want, 200);
+        q_eq_with_tol(qarctan(t), want, 16);
     }
 }
 
 #[test]
-fn test_qarcsin_qarccos_against_libm() {
-    // (x, asin x, acos x) for x = -1, -0.9, -0.5, -0.1, 0, 0.1, 0.5, 0.9, 1.
-    let cases: [(Field, Field, Field); 9] = [
-        (-4294967296, -6746518852, 13493037705),
-        (-3865470566, -4809373446, 11555892298),
-        (-2147483648, -2248839617, 8995358470),
-        (-429496730, -430215798, 7176734650),
-        (0, 0, 6746518852),
-        (429496730, 430215798, 6316303054),
-        (2147483648, 2248839617, 4497679235),
-        (3865470566, 4809373446, 1937145406),
-        (4294967296, 6746518852, 0),
+fn test_qarcsin_matches_the_kernel() {
+    // (x, kernel::fp_arcsin(x)) bit for bit; outside [-1, 1] the result is 0.
+    let cases: [(Field, Field); 11] = [
+        (-4294967296, -6746518836),
+        (-3865470566, -4809373442),
+        (-2147483648, -2248839616),
+        (-429496730, -430215800),
+        (0, 0),
+        (429496730, 430215796),
+        (2147483648, 2248839612),
+        (2576980378, 2763816210),
+        (3865470566, 4809373438),
+        (4294967296, 6746518836),
+        (6442450944, 0),
     ];
-    for i in 0..9 {
-        let (x, want_asin, want_acos) = cases[i];
-        q_eq_with_tol(qarcsin(x), want_asin, 400);
-        q_eq_with_tol(qarccos(x), want_acos, 400);
+    for i in 0..11 {
+        let (x, want) = cases[i];
+        assert(qarcsin(x) == want);
     }
+    // arccos = pi/2 - arcsin on [-1, 1] (libm values within 32 ulps).
+    q_eq_with_tol(qarccos(2147483648), 4497679235, 32); // acos(0.5)
+    q_eq_with_tol(qarccos(-3865470566), 11555892298, 32); // acos(-0.9)
+    assert(qarccos(6442450944) == 0); // acos(1.5): outside the domain
 }
 
 #[test]
 fn test_qarctan2_against_libm_all_quadrants() {
-    // (y, x, atan2(y, x)) for (+-1, +-2), (+-2, +-1) and the axes.
+    // (y, x, round(atan2(y, x) * 2^32)) for (+-1, +-2), (+-2, +-1), the axes.
     let cases: [(Field, Field, Field); 12] = [
         (4294967296, 8589934592, 1991351318),
         (8589934592, 4294967296, 4755167535),
@@ -1021,8 +1127,9 @@ fn test_qarctan2_against_libm_all_quadrants() {
     ];
     for i in 0..12 {
         let (y, x, want) = cases[i];
-        q_eq_with_tol(qarctan2(y, x), want, 400);
+        q_eq_with_tol(qarctan2(y, x), want, 32);
     }
+    assert(qarctan2(0, 0) == 0);
 }
 
 #[test]
@@ -1051,38 +1158,46 @@ fn test_checked_u32_rejects_negative() {
 // group (no bound on the quotient).
 
 #[test(should_fail)]
-fn test_euclid_rejects_field_inverse_quotient() {
+fn test_divmod_rejects_field_inverse_quotient() {
     // 7 = q*3 + 0 with q = 7 * 3^-1 mod p: a huge field element.
     let q: Field = 7 / 3;
-    constrain_euclid_divmod(7, 3, q, 0);
+    constrain_divmod(7, 3, q, 0, 3, false);
 }
 
 #[test(should_fail)]
-fn test_euclid_rejects_other_remainder() {
+fn test_divmod_rejects_other_remainder() {
     // 7 % 3 claimed as 2 needs q = 5 * 3^-1 mod p.
     let q: Field = 5 / 3;
-    constrain_euclid_divmod(7, 3, q, 2);
+    constrain_divmod(7, 3, q, 2, 3, false);
 }
 
 #[test(should_fail)]
-fn test_euclid_rejects_remainder_too_large() {
-    constrain_euclid_divmod(7, 3, 1, 4);
+fn test_divmod_rejects_remainder_too_large() {
+    constrain_divmod(7, 3, 1, 4, 3, false);
 }
 
 #[test(should_fail)]
-fn test_euclid_rejects_negative_remainder() {
-    constrain_euclid_divmod(7, 3, 3, -2);
+fn test_divmod_rejects_remainder_of_the_wrong_sign() {
+    // Euclid needs r >= 0: 7 = 3*3 - 2 is rejected ...
+    constrain_divmod(7, 3, 3, -2, 3, false);
+}
+
+#[test(should_fail)]
+fn test_floor_divmod_rejects_euclidean_answer() {
+    // ... and Python floor with d < 0 needs r <= 0: 7 = -2*-3 + 1 is rejected.
+    constrain_divmod(7, -2, -3, 1, 2, true);
 }
 
 #[test]
-fn test_euclid_accepts_honest() {
-    constrain_euclid_divmod(-7, 3, -3, 2);
+fn test_divmod_accepts_honest() {
+    constrain_divmod(-7, 3, -3, 2, 3, false);
+    constrain_divmod(7, -2, -4, -1, 2, true);
 }
 
 #[test(should_fail)]
-fn test_euclid_small_rejects_field_inverse_quotient() {
+fn test_divmod_by_positive_rejects_field_inverse_quotient() {
     let q: Field = 7 / 3;
-    constrain_euclid_divmod_small::<2>(7, 3, q, 0);
+    constrain_divmod_by_positive::<2>(7, 3, q, 0);
 }
 
 #[test(should_fail)]
@@ -1122,18 +1237,29 @@ fn test_sign_magnitude_rejects_wrong_sign() {
 }
 
 #[test(should_fail)]
-fn test_isqrt_rejects_floor_when_round_differs() {
-    // xq = 2Q^2: round(sqrt) = 6074001000, floor = 6074000999.
-    constrain_isqrt_round(2 * Q * Q, 6074000999);
+fn test_isqrt_rejects_rounded_up_root() {
+    // n = 2^65: floor(sqrt) = 6074000999, the rounded root 6074001000 is rejected.
+    constrain_isqrt_floor::<48, 49>(2 * Q * Q, 6074001000);
 }
 
 #[test(should_fail)]
 fn test_isqrt_rejects_negative_root() {
-    constrain_isqrt_round(4 * Q * Q, -2 * Q);
+    constrain_isqrt_floor::<48, 49>(4 * Q * Q, -2 * Q);
 }
 
 #[test]
 fn test_isqrt_accepts_honest() {
-    constrain_isqrt_round(2 * Q * Q, 6074001000);
-    constrain_isqrt_round(0, 0);
+    constrain_isqrt_floor::<48, 49>(2 * Q * Q, 6074000999);
+    constrain_isqrt_floor::<48, 49>(0, 0);
+}
+
+#[test(should_fail)]
+fn test_field_div_rejects_nonzero_inverse_of_zero() {
+    // For d == 0 the hint must be 0; any other value is rejected.
+    constrain_inverse_or_zero(0, 5);
+}
+
+#[test(should_fail)]
+fn test_field_div_rejects_wrong_inverse() {
+    constrain_inverse_or_zero(3, 2);
 }

@@ -328,8 +328,9 @@ fn logic_ops_use_truthiness() {
 }
 
 /// M6: the bound of `a // b` was copied from the dividend, so with a
-/// negative divisor `(7 // y) < 2` compared a truncated u8 copy of -3 and
-/// returned 0. The mock (Euclidean `//`) gives 1.
+/// negative divisor `(7 // y) < 2` compared a truncated u8 copy of the
+/// quotient and gave 0. Python and the mock: 7 // -2 = -4, (-4 < 2) = 1,
+/// 7 % -2 = -1; a zero divisor gives 0 (the mock's convention).
 #[test]
 fn floor_div_by_negative_divisor_compares_correctly() {
     if !toolchain_present(false) {
@@ -346,15 +347,15 @@ fn floor_div_by_negative_divisor_compares_correctly() {
     let r = g.push(IR::ModI, &[seven, y]);
     g.expose(r);
     let graph = g.finish();
-    assert_eq!(execute(&graph, &witness(&[("y", -2)])).unwrap(), vec![-3, 1, 1]);
+    assert_eq!(execute(&graph, &witness(&[("y", -2)])).unwrap(), vec![-4, 1, -1]);
     assert_eq!(execute(&graph, &witness(&[("y", 2)])).unwrap(), vec![3, 0, 1]);
-    assert_rejected(execute(&graph, &witness(&[("y", 0)])));
+    assert_eq!(execute(&graph, &witness(&[("y", 0)])).unwrap(), vec![0, 1, 0]);
 }
 
-/// Euclidean division and remainder by a positive constant (the
-/// `euclid_divmod_small` path), including a negative dividend.
+/// Floor division and remainder by a positive constant (the
+/// `divmod_by_positive` path), including a negative dividend.
 #[test]
-fn constant_divisor_division_matches_euclid() {
+fn constant_divisor_division_matches_python() {
     if !toolchain_present(false) {
         return;
     }
@@ -429,12 +430,13 @@ fn float_witness(ints: &[(&str, i64)], floats: &[(&str, f64)]) -> ResolvedWitnes
     w
 }
 
-/// Every IR op the emitter lowers, on signed and fractional operands,
-/// compared position by position with the mock backend: exact for exact
-/// ops, within 1e-6 (relative + absolute) for ops the mock evaluates in f64
-/// (pow, sin, cos, tan, sinh, cosh, tanh, sqrt, exp, log, arcsin, arccos,
-/// arctan2). Ops whose mock semantics departs from NumPy are listed (and
-/// excluded) at the end.
+/// Every IR op the emitter lowers, on signed, fractional and zero operands,
+/// compared position by position with the mock backend: exact for every op
+/// the mock computes in fixed point (including sqrt, sin, cos, tan and
+/// arcsin, which run the kernel's algorithms), within 1e-6 (relative +
+/// absolute) for the ops the mock evaluates in f64 (pow, sinh, cosh, tanh,
+/// exp, log, arccos, arctan2). Ops whose mock semantics departs from NumPy
+/// are listed (and excluded) at the end.
 #[test]
 fn every_lowered_op_matches_the_mock() {
     if !toolchain_present(false) {
@@ -464,6 +466,7 @@ fn every_lowered_op_matches_the_mock() {
     let x = g.read_int("x");
     let y = g.read_int("y");
     let z = g.read_int("z");
+    let zero_i = g.read_int("zi");
     let zero = g.int(0);
     let neg3 = g.int(-3);
     let c21 = g.int(21);
@@ -479,6 +482,9 @@ fn every_lowered_op_matches_the_mock() {
         (IR::FloorDivI, vec![x, neg3]),
         (IR::ModI, vec![x, neg3]),
         (IR::FloorDivI, vec![c13, y]),
+        (IR::FloorDivI, vec![x, zero_i]),
+        (IR::ModI, vec![x, zero_i]),
+        (IR::DivI, vec![c21, zero_i]),
         (IR::FloorDivIPinned { divisor_bits: 4 }, vec![c13, y]),
         (IR::AbsI, vec![x]),
         (IR::SignI, vec![x]),
@@ -515,6 +521,8 @@ fn every_lowered_op_matches_the_mock() {
     let h = read_f(&mut g, "h");
     let s = read_f(&mut g, "s");
     let neg_s = g.push(IR::ConstantFloat { value: -0.6 }, &[]);
+    let zero_f = read_f(&mut g, "zf");
+    let big = g.push(IR::ConstantFloat { value: 277.0 }, &[]);
     let three = g.int(3);
     let one = g.int(1);
     for (ir, args, is_approx) in [
@@ -530,18 +538,28 @@ fn every_lowered_op_matches_the_mock() {
         (IR::SelectF, vec![lt, f, h], false),
         (IR::SelectBitF, vec![one, f, h], false),
         (IR::SelectManyF { len: 1, lane: 0 }, vec![z, f, h], false),
+        (IR::FloorDivF, vec![f, s], false),
+        (IR::FloorDivF, vec![h, neg_s], false),
+        (IR::ModF, vec![f, s], false),
+        (IR::ModF, vec![h, neg_s], false),
+        (IR::DivF, vec![f, zero_f], false),
+        (IR::FloorDivF, vec![f, zero_f], false),
+        (IR::ModF, vec![f, zero_f], false),
+        (IR::SinF, vec![h], false),
+        (IR::SinF, vec![big], false),
+        (IR::CosF, vec![f], false),
+        (IR::TanF, vec![s], false),
+        (IR::SqrtF, vec![h], false),
+        (IR::SqrtF, vec![f], false),
+        (IR::ArcSinF, vec![s], false),
+        (IR::ArcSinF, vec![f], false),
         (IR::PowF, vec![h, s], true),
         (IR::PowFI, vec![h, three], true),
-        (IR::SinF, vec![h], true),
-        (IR::CosF, vec![f], true),
-        (IR::TanF, vec![s], true),
         (IR::SinHF, vec![f], true),
         (IR::CosHF, vec![s], true),
         (IR::TanHF, vec![f], true),
-        (IR::SqrtF, vec![h], true),
         (IR::ExpF, vec![f], true),
         (IR::LogF, vec![h], true),
-        (IR::ArcSinF, vec![s], true),
         (IR::ArcCosF, vec![s], true),
         (IR::ArcTan2F, vec![f, h], true),
     ] {
@@ -556,7 +574,10 @@ fn every_lowered_op_matches_the_mock() {
     expose_i(&mut g, &mut approx, i);
 
     let graph = g.finish();
-    let w = float_witness(&[("x", -7), ("y", 3), ("z", 5)], &[("f", -1.75), ("h", 2.5), ("s", 0.6)]);
+    let w = float_witness(
+        &[("x", -7), ("y", 3), ("z", 5), ("zi", 0)],
+        &[("f", -1.75), ("h", 2.5), ("s", 0.6), ("zf", 0.0)],
+    );
     let (satisfied, mock) = mock_outputs(&graph, &w);
     assert!(satisfied);
     let noir = execute(&graph, &w).expect("noir execute");

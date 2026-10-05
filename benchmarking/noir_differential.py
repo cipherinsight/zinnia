@@ -12,10 +12,11 @@ For every performance-set case (`ds1000_case<NNNN>/kernel.py` with an
      the case is instead proved with `bb` and verified, and the compared
      values are the public inputs bb proved (`ProofArtifact.public_values`);
   4. compare position by position. Integer outputs (`public_i_*`) must be
-     equal. Float outputs (`public_f_*`, Q32 integers) must be equal too,
-     unless the kernel uses an approximated function (sin, cos, sqrt, pow, exp,
-     log, ...): the mock evaluates those in f64, the circuits with fixed-point
-     polynomials, so those kernels get the tolerance `--approx-rtol` /
+     equal. Float outputs (`public_f_*`, Q32 integers) must be equal too
+     (sqrt, sin, cos, tan and arcsin included: the mock and noir_fpc run the
+     same fixed-point algorithms of `src/prove/kernel.rs`), unless the kernel
+     uses a function the mock evaluates in f64 (pow, exp, log, sinh, cosh,
+     tanh, arccos, arctan2): those kernels get the tolerance `--approx-rtol` /
      `--approx-atol` (real units) on every output.
 
 Each case runs in a child process with a timeout; `--wrap` prefixes every
@@ -52,9 +53,8 @@ PARAMS = {"k": 0, "precision_bits": 32, "lookup_bits": 8}
 
 # IR ops whose mock semantics is f64 math rather than exact fixed point.
 APPROX_OPS = {
-    "SinFIR", "CosFIR", "TanFIR", "SinHFIR", "CosHFIR", "TanHFIR", "SqrtFIR",
-    "ExpFIR", "LogFIR", "PowFIR", "PowFIIR", "ArcSinFIR", "ArcCosFIR",
-    "ArcTan2FIR",
+    "SinHFIR", "CosHFIR", "TanHFIR", "ExpFIR", "LogFIR", "PowFIR", "PowFIIR",
+    "ArcCosFIR", "ArcTan2FIR",
 }
 
 

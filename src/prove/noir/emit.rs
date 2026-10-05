@@ -921,22 +921,23 @@ impl<'a> NoirEmitter<'a> {
         v
     }
 
-    /// Euclidean `(a // b, a % b)` as two cells, shared between `floor_div_i`
-    /// and `mod_i` on the same operands. A positive compile-time divisor
-    /// below 2^120 uses `euclid_divmod_small` (two small range checks on the
-    /// remainder); any other divisor the general `euclid_divmod` (one sign
-    /// projection of b). Both pin the unique quotient and remainder.
-    fn euclid_divmod_cells(&mut self, a: &str, b: &str) -> (String, String) {
+    /// Python `(a // b, a % b)` as two cells, shared between the integer and
+    /// float floor division and remainder on the same operands. A positive
+    /// compile-time divisor below 2^120 uses `divmod_by_positive` (two small
+    /// range checks on the remainder); any other divisor the general
+    /// `floor_divmod` (one sign projection of b; a zero divisor gives
+    /// (0, 0), as the mock). Both pin the unique quotient and remainder.
+    fn floor_divmod_cells(&mut self, a: &str, b: &str) -> (String, String) {
         let (af, bf) = (self.as_field(a), self.as_field(b));
         let call = match self.s_int_of(b) {
             Some(d) if d > 0 && d < (1i128 << 120) => {
                 let bits = (128 - ((d - 1) as u128).leading_zeros()).max(1);
-                self.use_lib("euclid_divmod_small");
-                format!("euclid_divmod_small::<{}>({}, {})", bits, af, bf)
+                self.use_lib("divmod_by_positive");
+                format!("divmod_by_positive::<{}>({}, {})", bits, af, bf)
             }
             _ => {
-                self.use_lib("euclid_divmod");
-                format!("euclid_divmod({}, {})", af, bf)
+                self.use_lib("floor_divmod");
+                format!("floor_divmod({}, {})", af, bf)
             }
         };
         if let Some(pair) = self.divmod_cache.get(&call) {
@@ -946,6 +947,19 @@ impl<'a> NoirEmitter<'a> {
         let _ = writeln!(self.body, "    let ({}, {}) = {};", q, r, call);
         self.divmod_cache.insert(call, (q.clone(), r.clone()));
         (q, r)
+    }
+
+    /// Operands for a native u32 `/` or `%`. A divisor that may be zero is
+    /// replaced by 1 and the dividend by 0, so a zero divisor gives 0 (the
+    /// mock's convention) instead of failing the proof.
+    fn u32_division_operands(&mut self, a: &str, b: &str) -> (String, String) {
+        if matches!(self.s_int_of(b), Some(d) if d > 0) {
+            return (a.to_string(), b.to_string());
+        }
+        let zero = self.bind_flag(&format!("if {} == 0 {{ 1 }} else {{ 0 }}", self.as_field(b)));
+        let n = self.bind_u32_with_bound(&format!("if {} == 1 {{ 0 }} else {{ {} }}", zero, a), self.bound_of(a).unwrap_or(u32::MAX as u64));
+        let d = self.bind_u32_with_bound(&format!("if {} == 1 {{ 1 }} else {{ {} }}", zero, b), self.bound_of(b).unwrap_or(u32::MAX as u64).max(1));
+        (n, d)
     }
 
     /// Emit `0 <= cell < 2^bits` as a standalone range check on the Field
@@ -1685,21 +1699,21 @@ impl Synthesizer for NoirEmitter<'_> {
     }
 
     fn div_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        // `DivI` is field division a * b^-1, as in the mock's `div_i` (it
-        // equals integer division when b divides a). Noir's Field `/`
-        // constrains b * b^-1 == 1, so b == 0 fails the proof (the mock
-        // returns 0 there).
+        // `DivI` is field division a * b^-1 (it equals integer division when b
+        // divides a), and 0 for b == 0, as the mock's `div_i`.
+        self.use_lib("field_div_or_zero");
         let (af, bf) = (self.as_field(a), self.as_field(b));
-        Ok(self.bind(&format!("{} / {}", af, bf)))
+        Ok(self.bind(&format!("field_div_or_zero({}, {})", af, bf)))
     }
     fn floor_div_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        // u32 cells are non-negative, where Noir's checked u32 division is
-        // the Euclidean quotient (a zero divisor fails).
+        // u32 cells are non-negative, where Noir's u32 division is the floor
+        // quotient.
         if self.is_u32(a) && self.is_u32(b) {
             let bound = self.bound_of(a).unwrap_or(u32::MAX as u64);
-            return Ok(self.bind_u32_with_bound(&format!("{} / {}", a, b), bound));
+            let (n, d) = self.u32_division_operands(a, b);
+            return Ok(self.bind_u32_with_bound(&format!("{} / {}", n, d), bound));
         }
-        let (q, _r) = self.euclid_divmod_cells(a, b);
+        let (q, _r) = self.floor_divmod_cells(a, b);
         Ok(q)
     }
 
@@ -1723,15 +1737,16 @@ impl Synthesizer for NoirEmitter<'_> {
         Ok(self.bind(&format!("q_floor_div_bounded::<{}>({}, {})", bits, af, bf)))
     }
     fn mod_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        // Euclidean remainder in [0, |b|) (the mock's `rem_euclid`).
+        // Python remainder (the divisor's sign; 0 for a zero divisor).
         if self.is_u32(a) && self.is_u32(b) {
             let bound = self
                 .bound_of(b)
                 .unwrap_or(u32::MAX as u64)
                 .saturating_sub(1);
-            return Ok(self.bind_u32_with_bound(&format!("{} % {}", a, b), bound));
+            let (n, d) = self.u32_division_operands(a, b);
+            return Ok(self.bind_u32_with_bound(&format!("{} % {}", n, d), bound));
         }
-        let (_q, r) = self.euclid_divmod_cells(a, b);
+        let (_q, r) = self.floor_divmod_cells(a, b);
         Ok(r)
     }
     fn pow_i(&mut self, _a: &CellRef, _b: &CellRef) -> Result<CellRef, ProvingError> {
@@ -1803,11 +1818,17 @@ impl Synthesizer for NoirEmitter<'_> {
         let v = self.bind(&format!("qdiv({}, {})", self.as_field(a), self.as_field(b)));
         Ok(v)
     }
-    fn floor_div_f(&mut self, _a: &CellRef, _b: &CellRef) -> Result<CellRef, ProvingError> {
-        noop_unsupported!(self, "floor_div_f")
+    fn floor_div_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        // floor(a / b) as a float: the Python floor quotient of the raw Q32
+        // integers, re-scaled (kernel::fp_float_floor_div).
+        let (q, _r) = self.floor_divmod_cells(a, b);
+        Ok(self.bind(&format!("{} * {}", self.as_field(&q), Q_U64)))
     }
-    fn mod_f(&mut self, _a: &CellRef, _b: &CellRef) -> Result<CellRef, ProvingError> {
-        noop_unsupported!(self, "mod_f")
+    fn mod_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        // a % b with the divisor's sign: the floor remainder of the raw Q32
+        // integers is already Q-scaled (kernel::fp_float_mod).
+        let (_q, r) = self.floor_divmod_cells(a, b);
+        Ok(r)
     }
     fn pow_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qpow");
@@ -2052,17 +2073,10 @@ impl Synthesizer for NoirEmitter<'_> {
         Ok(v)
     }
     fn sqrt_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
+        // (No literal propagation: the circuit's floor root of a constant
+        // need not equal the f64 sqrt the literal store would record.)
         self.use_lib("qsqrt");
-        let v = self.bind(&format!("qsqrt({})", self.as_field(a)));
-        // Literal propagation: sqrt(literal) is a compile-time constant.
-        // Structural read only (`s_float_of`); carry literal_vals so
-        // downstream fast paths fire.
-        if let Some(f) = self.s_float_of(a) {
-            if f >= 0.0 {
-                self.fold_literal(&v, ConcreteValue::Float(f.sqrt()));
-            }
-        }
-        Ok(v)
+        Ok(self.bind(&format!("qsqrt({})", self.as_field(a))))
     }
     fn exp_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qexp");
