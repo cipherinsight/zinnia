@@ -4,8 +4,10 @@
 //! of 64-bit words (see [`crate::Element`]): floats as Q32 (`round(v * 2^32)`,
 //! Zinnia's quantizer), integers as themselves, booleans as 0 or 1, complex
 //! numbers as their Q32 real and imaginary parts (the fixture writes them as
-//! `[re, im]` pairs); arrays in row-major order. For a shape-generic program
-//! an array's buffer starts with its dimensions (see [`crate::Args`]).
+//! `[re, im]` pairs); arrays in row-major order. A tuple parameter
+//! (`"kind": "tuple"` with `"items"`) travels as its items, one buffer each.
+//! For a shape-generic program an array's buffer starts with its dimensions
+//! (see [`crate::Args`]).
 
 use std::{collections::BTreeMap, path::Path};
 
@@ -26,10 +28,21 @@ pub struct Fixture {
 #[derive(Debug, Deserialize)]
 pub struct Parameter {
     pub name: String,
+    #[serde(flatten)]
+    pub value: ValueType,
+}
+
+/// The type of a parameter or of one item of a tuple parameter.
+#[derive(Debug, Deserialize)]
+pub struct ValueType {
     pub kind: Kind,
-    pub dtype: Dtype,
+    #[serde(default)]
+    pub dtype: Option<Dtype>,
     #[serde(default)]
     pub shape: Option<Vec<usize>>,
+    /// The items of a tuple.
+    #[serde(default)]
+    pub items: Vec<ValueType>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -37,6 +50,8 @@ pub struct Parameter {
 pub enum Kind {
     Scalar,
     Array,
+    /// A Python tuple: its items travel as consecutive parameters.
+    Tuple,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -99,42 +114,51 @@ impl Fixture {
                 "unused parameter {skipped:?} is not a kernel parameter"
             );
         }
-        self.parameters
-            .iter()
-            .filter(|param| !unused.contains(&param.name.as_str()))
-            .map(|param| {
-                let value = values
-                    .get(&param.name)
-                    .with_context(|| format!("input {name:?} lacks parameter {:?}", param.name))?;
-                param.encode(value).with_context(|| format!("parameter {:?}", param.name))
-            })
-            .collect()
+        let mut encoded = Vec::new();
+        for param in self.parameters.iter().filter(|p| !unused.contains(&p.name.as_str())) {
+            let value = values
+                .get(&param.name)
+                .with_context(|| format!("input {name:?} lacks parameter {:?}", param.name))?;
+            param.value.encode(value, &mut encoded).with_context(|| format!("parameter {:?}", param.name))?;
+        }
+        Ok(encoded)
     }
 }
 
-impl Parameter {
-    fn encode(&self, value: &Value) -> Result<Encoded> {
+impl ValueType {
+    /// Appends the encoding of `value`: one buffer, or one per item of a
+    /// tuple.
+    fn encode(&self, value: &Value, out: &mut Vec<Encoded>) -> Result<()> {
+        if self.kind == Kind::Tuple {
+            let items = value.as_array().context("a tuple value is a list of its items")?;
+            ensure!(items.len() == self.items.len(), "tuple of {} items, expected {}", items.len(), self.items.len());
+            for (item, item_type) in items.iter().zip(&self.items) {
+                item_type.encode(item, out)?;
+            }
+            return Ok(());
+        }
+        let dtype = self.dtype.context("a scalar or array parameter needs a dtype")?;
         let mut leaves = Vec::new();
         let mut shape = flatten(value, &mut leaves)?;
-        if self.dtype == Dtype::Complex {
+        if dtype == Dtype::Complex {
             ensure!(shape.pop() == Some(2), "a complex value is a [re, im] pair");
         }
-        match self.kind {
-            Kind::Scalar => ensure!(shape.is_empty(), "scalar parameter given as an array"),
-            Kind::Array => {
-                ensure!(!shape.is_empty(), "array parameter given as a scalar");
-                if let Some(expected) = &self.shape {
-                    ensure!(&shape == expected, "shape {shape:?}, expected {expected:?}");
-                }
+        if self.kind == Kind::Scalar {
+            ensure!(shape.is_empty(), "scalar parameter given as an array");
+        } else {
+            ensure!(!shape.is_empty(), "array parameter given as a scalar");
+            if let Some(expected) = &self.shape {
+                ensure!(&shape == expected, "shape {shape:?}, expected {expected:?}");
             }
         }
-        let words = match self.dtype {
+        let words = match dtype {
             Dtype::Float => encode_each(leaves.chunks(1), |v| float(v[0]))?,
             Dtype::Int => encode_each(leaves.chunks(1), |v| int(v[0]))?,
             Dtype::Bool => encode_each(leaves.chunks(1), |v| boolean(v[0]))?,
             Dtype::Complex => encode_each(leaves.chunks(2), |v| Ok(C32::new(float(v[0])?, float(v[1])?)))?,
         };
-        Ok(Encoded { shape, words })
+        out.push(Encoded { shape, words });
+        Ok(())
     }
 }
 

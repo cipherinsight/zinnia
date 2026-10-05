@@ -32,7 +32,7 @@ pub struct CommonArgs {
     /// the program has several).
     #[arg(long)]
     pub function: Option<String>,
-    /// The fixture file (default: `<case-dir>/fixture_<function>.json` if
+    /// The fixture file (default: `<case-dir>/fixture.<function>.json` if
     /// it exists, else `<case-dir>/fixture.json`).
     #[arg(long)]
     pub fixture: Option<PathBuf>,
@@ -80,7 +80,7 @@ impl CommonArgs {
         if let Some(path) = &self.fixture {
             return path.clone();
         }
-        let per_function = self.function.as_ref().map(|f| self.case_dir.join(format!("fixture_{f}.json")));
+        let per_function = self.function.as_ref().map(|f| self.case_dir.join(format!("fixture.{f}.json")));
         per_function.filter(|p| p.exists()).unwrap_or_else(|| self.case_dir.join("fixture.json"))
     }
 

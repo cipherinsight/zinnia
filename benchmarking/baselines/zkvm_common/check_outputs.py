@@ -120,7 +120,8 @@ def discover_cases() -> dict[str, Case]:
 
 
 def fixture_path(case: Case, fixtures_dir: Path | None, dataset_dir: Path | None) -> Path:
-    names = ([f"fixture_{case.function}.json"] if case.function else []) + ["fixture.json"]
+    names = ([f"fixture.{case.function}.json", f"fixture_{case.function}.json"] if case.function else [])
+    names.append("fixture.json")
     folders = [d / case.folder.name for d in (fixtures_dir, dataset_dir) if d] + [case.folder]
     for folder in folders:
         for name in names:
@@ -142,6 +143,8 @@ def _requires(*_args, **_kwargs):
 
 
 def to_numpy(value, param: dict):
+    if param["kind"] == "tuple":
+        return tuple(to_numpy(v, item) for v, item in zip(value, param["items"]))
     dtype = param["dtype"]
     if dtype == "complex":
         pairs = np.asarray(value, dtype=np.float64)

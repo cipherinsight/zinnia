@@ -50,8 +50,9 @@ target/release/kernels-native        --case-dir D ... --mode execute
 ```
 
 For an NPBench/Pythran program with several entry functions, add
-`--function F`. Its fixture defaults to `D/fixture_F.json` if that exists,
-else `D/fixture.json`.
+`--function F`. Its fixture defaults to `D/fixture.F.json` if that exists,
+else `D/fixture.json`. A tuple parameter travels as its items, one parameter
+buffer each, in order.
 
 The JSON has `ok`, `publics` (decoded output values in kernel output order:
 floats from Q32, integers, booleans), `proof_path`, `proof_size_bytes`,
