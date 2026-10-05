@@ -126,21 +126,15 @@ def flatten(result) -> Expected:
 # Comparison
 # --------------------------------------------------------------------------
 
-def tolerances() -> dict[str, tuple[float, float]]:
-    """Per-case (rtol, atol) from the case set, when it gives one."""
-    if not CASE_SET.exists():
+def tolerances(case_set: Path) -> dict[str, tuple[float, float]]:
+    """Per-case (rtol, atol): the case set's `float_tolerance`, when it gives one."""
+    if not case_set.exists():
         return {}
-    data = json.loads(CASE_SET.read_text())
-    entries = data.get("cases", data) if isinstance(data, dict) else data
     out = {}
-    if isinstance(entries, dict):
-        entries = [dict(v, case=k) for k, v in entries.items()]
-    for entry in entries:
-        tol = entry.get("tolerance")
-        if isinstance(tol, dict):
-            out[entry["case"]] = (float(tol.get("rtol", DEFAULT_RTOL)), float(tol.get("atol", DEFAULT_ATOL)))
-        elif isinstance(tol, (int, float)):
-            out[entry["case"]] = (DEFAULT_RTOL, float(tol))
+    for entry in json.loads(case_set.read_text())["cases"]:
+        tol = entry.get("float_tolerance")
+        if tol:
+            out[entry["case"]] = (float(tol["rtol"]), float(tol["atol"]))
     return out
 
 
@@ -183,6 +177,8 @@ def main() -> int:
     parser.add_argument("--input", default="B")
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--case-set", type=Path, default=CASE_SET,
+                        help="case set giving each case's float_tolerance (default: datasets/case_sets/ds1000_perf.json)")
     args = parser.parse_args()
 
     systems = [s for s in args.systems.split(",") if s]
@@ -194,7 +190,7 @@ def main() -> int:
         cases = args.cases.split(",")
     else:
         cases = [name for name, d in case_dirs.items() if any((d / PROGRAM_FILE[s]).exists() for s in systems)]
-    tol = tolerances()
+    tol = tolerances(args.case_set)
 
     results: list[Result] = []
     for case in cases:
