@@ -39,7 +39,7 @@ def main() -> None:
         cases = sorted(
             c
             for c in INPUT_BUILDERS
-            if (THIS_DIR / f"ds1000_case{c}" / "target.rs").exists()
+            if (THIS_DIR / "datasets" / "ds1000" / f"ds1000_case{c}" / "target.rs").exists()
         )
 
     out = Path(args.out)

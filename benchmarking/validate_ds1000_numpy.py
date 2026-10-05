@@ -48,7 +48,7 @@ def classify_error(error_type: str | None, error_message: str | None) -> str:
 
 def validate(output: Path, timeout_seconds: float, jobs: int) -> dict[str, Any]:
     tasks: list[dict[str, Any]] = []
-    for path in sorted(ROOT.glob("ds1000_case*/kernel.py")):
+    for path in sorted(ROOT.glob("datasets/ds1000/ds1000_case*/kernel.py")):
         for fn_name, role in function_roles(path).items():
             tasks.append(
                 {
