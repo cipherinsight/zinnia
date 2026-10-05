@@ -24,7 +24,7 @@ global HALF_PI_Q: Field = 6746518852; // round(pi / 2 * 2^32)
 global HALF_PI_U64: u64 = 6746518852;
 // round(c * 2^32) of the degree-14 minimax polynomial for sin on [0, pi]
 // (highest degree first); the same coefficients as Zinnia and halo2-graph.
-global SIN_COEFS_Q: [Field; 15] =
+pub global SIN_COEFS_Q: [Field; 15] =
     [0, 1, -2, -102, -13, 11858, -28, -852151, -16, 35791402, -2, -715827882, 0, 4294967296, 0];
 
 // ------------------------------------------------------------------ window
@@ -262,8 +262,9 @@ fn check_parity(q: Field, h: Field) -> bool {
 
 // sin(x): |x| = q * pi + r with r in [0, pi), r reflected into [0, pi/2]
 // (sin(r) = sin(pi - r)), the minimax polynomial there, negated when exactly
-// one of (x < 0) and (q odd) holds. The reflection keeps the Q32-quantized
-// coefficients' error below 1e-7; evaluated up to pi it reaches 1.4e-4.
+// one of (x < 0) and (q odd) holds. With the reflection the error of the
+// Q32-quantized polynomial stays below 2.4e-7 (1e-7 from the coefficients, up
+// to 14 floors of 2^-32 each); evaluated up to pi it reaches 1.4e-4.
 pub fn sin(x: Field) -> Field {
     let neg = is_neg(x);
     let ax = if neg { -x } else { x };

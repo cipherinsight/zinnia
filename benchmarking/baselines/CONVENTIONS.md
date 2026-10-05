@@ -63,8 +63,8 @@ Terms:
   - `sin`/`cos` reduce the argument by pi, reflect it into `[0, pi/2]` and
     evaluate the degree-14 minimax polynomial Zinnia evaluates
     (`q32::SIN_COEFS`); `cos(x) = sin(x + pi/2)`. With Q32 coefficients the
-    polynomial is accurate to 1e-7 on `[0, pi/2]` but only 1.4e-4 near pi, so the
-    reflection is what lets the result meet the case set's 1e-6 tolerance.
+    polynomial is accurate to 2.4e-7 on `[0, pi/2]` but only 1.4e-4 near pi, so
+    the reflection is what lets the result meet the case set's 1e-6 tolerance.
 - Comparisons are on the window (64-bit), the width Zinnia uses.
 - `==` in the kernel is exact equality, also on floats. `np.isclose` uses NumPy's
   formula `|a - b| <= atol + rtol * |b|` with the kernel's (or NumPy's default)
@@ -106,6 +106,13 @@ gadgets. Concretely:
   so the field identity is an integer identity and `(q, r)` is unique; a square
   root is bracketed `y^2 <= x * 2^32 < (y + 1)^2`; a parity bit is pinned by
   `q = 2h + bit` with `h` range-checked.
+- Private inputs are whatever field elements the prover loads. A construction
+  may rely on an input lying in its declared range (an int64, a Q32 value) only
+  where the circuit checks it, as the window bound does before a comparison.
+  Field identities that hold for every field element need no range (equality,
+  a product of differences being zero); identities that hold only for small
+  integers do (a sum of squares being zero means all-zero only below 2^64:
+  in BN254's scalar field -1 is a square).
 - Constants are circuit constants: halo2-base `Constant(..)` or
   `ctx.load_constant`, Noir literals. Never `load_witness` for a constant.
 - Noir range checks are `x.assert_max_bit_size::<N>()` on the original `Field`. A

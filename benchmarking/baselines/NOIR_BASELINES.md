@@ -76,6 +76,10 @@ native integer or as `bool`; floats become `round(v * 2^32)`.
 
 Noir gotchas that matter here:
 
+- Barretenberg builds a range table for each bit width a circuit range-checks:
+  the first check of any width adds about 2,780 gates, each further width a few
+  hundred more. Keep to 32- and 64-bit checks, and prefer one-hot selections
+  over indices built from loop constants, which need none.
 - `Field` has no ordering; integer types do (after a range check, see above).
 - `i64` exists but `i64 as Field` is rejected; keep signed values in `Field` and
   order them through `window`.

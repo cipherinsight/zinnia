@@ -561,8 +561,9 @@ impl Q32 {
     /// into `[0, pi/2]` (`sin(r) = sin(pi - r)`), evaluate the degree-14 minimax
     /// polynomial for `sin` on `[0, pi]` (the coefficients Zinnia and
     /// halo2-graph use) there, and negate when exactly one of `x < 0` and
-    /// `q odd` holds. The reflection keeps the Q32-quantized coefficients'
-    /// error below 1e-7; evaluated up to pi it reaches 1.4e-4.
+    /// `q odd` holds. With the reflection the error of the Q32-quantized
+    /// polynomial stays below 2.4e-7 (1e-7 from the coefficients, up to
+    /// 14 floors of 2^-32 each); evaluated up to pi it reaches 1.4e-4.
     pub fn sin(&self, ctx: &mut Ctx, x: I64) -> Cell {
         let neg = self.is_neg(ctx, x);
         let minus_x = self.gate.neg(ctx, x.cell);
