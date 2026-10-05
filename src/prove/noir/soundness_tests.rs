@@ -525,7 +525,15 @@ fn every_lowered_op_matches_the_mock() {
     let big = g.push(IR::ConstantFloat { value: 277.0 }, &[]);
     let three = g.int(3);
     let one = g.int(1);
+    // Integral floats (exact products): float(x) = -7.0 and the constant -3.0.
+    let float_x = g.push(IR::FloatCast, &[x]);
+    let neg_three_f = g.push(IR::ConstantFloat { value: -3.0 }, &[]);
     for (ir, args, is_approx) in [
+        (IR::MulF, vec![float_x, f], false),
+        (IR::MulF, vec![s, float_x], false),
+        (IR::MulF, vec![neg_three_f, s], false),
+        (IR::ProductSumF { len: 3 }, vec![float_x, f, s, h, f, neg_three_f], false),
+        (IR::ProductSumF { len: 2 }, vec![float_x, f, neg_three_f, s], false),
         (IR::AddF, vec![f, s], false),
         (IR::SubF, vec![f, h], false),
         (IR::MulF, vec![f, s], false),

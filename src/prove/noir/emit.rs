@@ -555,6 +555,11 @@ pub struct NoirEmitter<'a> {
     /// derived only from such constants). Read by `s_int_of`/`s_float_of`/
     /// `s_bool_of`.
     literal_vals: HashMap<String, ConcreteValue>,
+    /// Float cells that are exactly `n * 2^32` for an integer `n`, with the
+    /// Field expression of `n`: `FloatCast` results and integral float
+    /// constants. A Q32 product with such a cell is exact (see
+    /// [`NoirEmitter::exact_product`]).
+    integral_float: HashMap<String, String>,
     /// IR-level forward-dataflow `fits-u32` bounds, keyed by stmt_id.
     /// Populated by [`super::bound_analysis::run`] before emit. The
     /// interpreter's per-stmt hook (`on_stmt_begin`) advances
@@ -912,6 +917,18 @@ impl<'a> NoirEmitter<'a> {
         v
     }
 
+    /// The Q32 product `floor(a * b / 2^32)` as an exact Field expression
+    /// when one factor is an integral float `n * 2^32` (`integral_float`):
+    /// `floor(n * 2^32 * x / 2^32) = n * x`, the mock's value bit for bit,
+    /// with no rescale and so no range check. `None` otherwise.
+    fn exact_product(&self, a: &str, b: &str) -> Option<String> {
+        if let Some(n) = self.integral_float.get(a) {
+            return Some(format!("{} * {}", n, self.as_field(b)));
+        }
+        let n = self.integral_float.get(b)?;
+        Some(format!("{} * {}", self.as_field(a), n))
+    }
+
     /// Python `(a // b, a % b)` as two cells, shared between the integer and
     /// float floor division and remainder on the same operands. A positive
     /// compile-time divisor below 2^120 uses `divmod_by_positive` (two small
@@ -1253,6 +1270,7 @@ impl<'a> NoirEmitter<'a> {
             cell_bound: HashMap::new(),
             u32_cells: HashSet::new(),
             literal_vals: HashMap::new(),
+            integral_float: HashMap::new(),
             stmt_bounds,
             current_stmt_bound: None,
             u32_amortizable,
@@ -1572,6 +1590,11 @@ impl Synthesizer for NoirEmitter<'_> {
     fn constant_float(&mut self, value: f64) -> Result<Self::CellRef, ProvingError> {
         let expr = quantize_to_field_string(value);
         let v = self.bind_val(&expr, ConcreteValue::Float(value));
+        // An integral constant inside the int64 window is exactly n * 2^32.
+        if value.fract() == 0.0 && value.abs() < (1u64 << 31) as f64 {
+            self.integral_float
+                .insert(v.clone(), signed_to_field_decimal(value as i128));
+        }
         Ok(v)
     }
 
@@ -1699,22 +1722,36 @@ impl Synthesizer for NoirEmitter<'_> {
         Ok(v)
     }
     fn mul_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some(exact) = self.exact_product(a, b) {
+            return Ok(self.bind(&exact));
+        }
         self.use_lib("qmul");
         let v = self.bind(&format!("qmul({}, {})", self.as_field(a), self.as_field(b)));
         Ok(v)
     }
     fn product_sum_f(&mut self, pairs: &[(CellRef, CellRef)]) -> Result<CellRef, ProvingError> {
-        self.use_lib("qscale_down_raw");
-        let mut acc = format!(
-            "({} * {})",
-            self.as_field(&pairs[0].0),
-            self.as_field(&pairs[0].1)
-        );
-        for (a, b) in &pairs[1..] {
-            acc = format!("({} + ({} * {}))", acc, self.as_field(a), self.as_field(b));
+        // floor((E * 2^32 + R) / 2^32) = E + floor(R / 2^32) for an integer
+        // E: the exact products leave the rescale, which then covers only
+        // the other pairs (none at all when every pair is exact).
+        let mut exact: Vec<String> = Vec::new();
+        let mut raw: Vec<String> = Vec::new();
+        for (a, b) in pairs {
+            match self.exact_product(a, b) {
+                Some(term) => exact.push(format!("({term})")),
+                None => raw.push(format!("({} * {})", self.as_field(a), self.as_field(b))),
+            }
         }
-        let v = self.bind(&format!("qscale_down_raw({})", acc));
-        Ok(v)
+        if !raw.is_empty() {
+            self.use_lib("qscale_down_raw");
+            let rescaled = self.bind(&format!("qscale_down_raw({})", raw.join(" + ")));
+            exact.push(rescaled);
+        }
+        if let [single] = exact.as_slice() {
+            if is_identifier(single) {
+                return Ok(single.clone());
+            }
+        }
+        Ok(self.bind_sum(&exact))
     }
     fn div_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qdiv");
@@ -2108,6 +2145,7 @@ impl Synthesizer for NoirEmitter<'_> {
     fn float_cast(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         // Integer-to-float in Q32 means *= 2^32.
         let v = self.bind(&format!("{} * {}", self.as_field(a), Q_U64));
+        self.integral_float.insert(v.clone(), self.as_field(a));
         // float(literal int) is a compile-time constant; `literal_vals`
         // stores the real value (the Q-scaling lives in the Noir text).
         let lit = self
@@ -2728,6 +2766,28 @@ mod tests {
         assert!(!em.body.contains("to_signed"), "{}", em.body);
         em.lte_i(&x, &y).unwrap();
         assert!(em.body.contains("qlt(y, x)"), "{}", em.body);
+    }
+
+    // A product with a float made from an integer (`FloatCast`, or an
+    // integral constant) is exact: no rescale.
+    #[test]
+    fn products_with_integral_floats_skip_the_rescale() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        let n = em.float_cast(&"n".to_string()).unwrap();
+        let two = em.constant_float(2.0).unwrap();
+        let half = em.constant_float(0.5).unwrap();
+        let (x, y) = ("x".to_string(), "y".to_string());
+        em.mul_f(&n, &x).unwrap();
+        em.mul_f(&x, &two).unwrap();
+        assert!(!em.body.contains("qmul"), "{}", em.body);
+        assert!(em.body.contains("n * x") && em.body.contains("x * 2"), "{}", em.body);
+        // A non-integral constant still rescales; in a product sum only the
+        // inexact pairs do.
+        em.mul_f(&x, &half).unwrap();
+        assert!(em.body.contains("qmul(x, "), "{}", em.body);
+        em.product_sum_f(&[(n.clone(), x.clone()), (x.clone(), y.clone())]).unwrap();
+        assert!(em.body.contains("qscale_down_raw((x * y))"), "{}", em.body);
     }
 
     #[test]
