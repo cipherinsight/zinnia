@@ -59,15 +59,7 @@ class ZKCompiledProgram:
 
         witness = build_circuit_inputs(self.program_inputs, args)
 
-        ext_dict = {}
-        if externals:
-            ext_dict = externals
-        else:
-            for name, ef in self.external_funcs.items():
-                if hasattr(ef, 'callable'):
-                    ext_dict[name] = ef.callable
-                elif callable(ef):
-                    ext_dict[name] = ef
+        ext_dict = self._external_callables(externals)
 
         params_json = json.dumps(params) if params else None
 
@@ -105,15 +97,7 @@ class ZKCompiledProgram:
 
         witness = build_circuit_inputs(self.program_inputs, args)
 
-        ext_dict = {}
-        if externals:
-            ext_dict = externals
-        else:
-            for name, ef in self.external_funcs.items():
-                if hasattr(ef, 'callable'):
-                    ext_dict[name] = ef.callable
-                elif callable(ef):
-                    ext_dict[name] = ef
+        ext_dict = self._external_callables(externals)
 
         params_json = json.dumps(params) if params else None
         return emit_structural_circuit(
@@ -123,6 +107,55 @@ class ZKCompiledProgram:
             backend,
             params_json,
         )
+
+    def setup(self, params=None):
+        """Generate halo2-base proving and verifying keys, once, without a witness.
+
+        ``params`` is ``{"k", "lookup_bits", "precision_bits"}``; it defaults
+        to the backend's own ``estimate_params``. The returned handle exposes
+        ``k``, ``lookup_bits``, ``precision_bits``, ``ir_hash``,
+        ``keygen_seconds`` (IPA parameters plus keygen) and ``vk_bytes()``.
+        Use it with :meth:`prove_with_keys` and :meth:`verify_with_keys`;
+        unlike :meth:`prove`, neither repeats parameter generation or keygen.
+        """
+        from zinnia._zinnia_core import halo2_base_keygen
+
+        return halo2_base_keygen(self._compiled_ir, json.dumps(params) if params else None)
+
+    def prove_with_keys(self, keys, *args, externals=None) -> Dict:
+        """Prove with keys from :meth:`setup`.
+
+        Returns ``{"proof": hex, "public_values": [hex field elements],
+        "preprocess_seconds", "witness_seconds", "prove_seconds", "k"}``:
+        input parsing and external calls, circuit synthesis, and
+        ``create_proof`` plus transcript, timed separately.
+        """
+        from zinnia.exec.input_parser import build_circuit_inputs
+        from zinnia._zinnia_core import halo2_base_prove
+
+        witness = build_circuit_inputs(self.program_inputs, args)
+        out = halo2_base_prove(
+            self._compiled_ir, keys, json.dumps(witness), self._external_callables(externals)
+        )
+        return json.loads(out)
+
+    def verify_with_keys(self, keys, proof: Dict) -> bool:
+        """Verify a :meth:`prove_with_keys` result against the keys' verifying key."""
+        from zinnia._zinnia_core import halo2_base_verify
+
+        result = json.loads(halo2_base_verify(keys, proof["proof"], proof["public_values"]))
+        return result["valid"]
+
+    def _external_callables(self, externals=None) -> Dict:
+        if externals:
+            return externals
+        ext_dict = {}
+        for name, ef in self.external_funcs.items():
+            if hasattr(ef, 'callable'):
+                ext_dict[name] = ef.callable
+            elif callable(ef):
+                ext_dict[name] = ef
+        return ext_dict
 
     def verify(self, proof_result) -> bool:
         """Verify a proof artifact (backend auto-detected from the artifact)."""

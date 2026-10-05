@@ -6,6 +6,7 @@
 //! keeping the semantic oracle in the shared IR interpreter/kernel.
 
 pub mod artifact_format;
+pub mod python;
 pub mod synthesizer;
 
 use std::sync::Arc;
@@ -22,7 +23,7 @@ use halo2_base::{
             bn256::{Fr as Fp, G1Affine as EqAffine},
             ff::PrimeField,
         },
-        plonk::{create_proof, keygen_pk, keygen_vk, verify_proof, Circuit},
+        plonk::{create_proof, keygen_pk, keygen_vk, verify_proof, Circuit, ProvingKey, VerifyingKey},
         poly::{
             commitment::ParamsProver,
             ipa::{
@@ -37,6 +38,7 @@ use halo2_base::{
         },
     },
 };
+use halo2_base::gates::circuit::BaseCircuitParams;
 use rand::rngs::OsRng;
 
 use crate::circuit_input::ResolvedWitness;
@@ -218,16 +220,14 @@ impl ProverBackend for Halo2BaseProverBackend {
 
         let (mut keygen_circuit, _keygen_public) =
             build_circuit(ir, Some(witness), params, CircuitBuilderStage::Keygen, None)?;
-        let vk = keygen_vk(&*ipa_params, &keygen_circuit).map_err(|e| {
-            ProvingError::ProvingFailed {
+        let vk = without_panic("keygen_vk", params.k, || keygen_vk(&*ipa_params, &keygen_circuit))?
+            .map_err(|e| ProvingError::ProvingFailed {
                 detail: format!("halo2-base keygen_vk failed: {:?}", e),
-            }
-        })?;
-        let pk = keygen_pk(&*ipa_params, vk, &keygen_circuit).map_err(|e| {
-            ProvingError::ProvingFailed {
+            })?;
+        let pk = without_panic("keygen_pk", params.k, || keygen_pk(&*ipa_params, vk, &keygen_circuit))?
+            .map_err(|e| ProvingError::ProvingFailed {
                 detail: format!("halo2-base keygen_pk failed: {:?}", e),
-            }
-        })?;
+            })?;
         let base_params = keygen_circuit.params();
         let break_points = keygen_circuit.break_points();
         keygen_circuit.clear();
@@ -391,6 +391,134 @@ impl ProverBackend for Halo2BaseProverBackend {
             ))),
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Separate key generation, proving and verification
+//
+// `prove` above regenerates the IPA parameters and runs keygen with the
+// prover's witness on every call, and `verify` re-runs keygen from the IR
+// shipped in the artifact. That couples one-time setup with every proof and
+// every verification. The three functions below split the steps the way a
+// deployment (and the handwritten halo2 baseline) does: keys once, without a
+// witness; then proofs; then verification against a key the verifier holds.
+// ---------------------------------------------------------------------------
+
+/// Keys for one compiled circuit and one parameter choice, generated
+/// without a witness (exactly the synthesis a verifier would run).
+pub struct Halo2BaseKeys {
+    pub params: ProvingParams,
+    pub ipa_params: ParamsIPA<EqAffine>,
+    pub pk: ProvingKey<EqAffine>,
+    /// Column layout and thread break points of the keygen synthesis; the
+    /// prover's synthesis is pinned to them so it matches the keys.
+    pub base_params: BaseCircuitParams,
+    pub break_points: MultiPhaseThreadBreakPoints,
+    /// `prove::ir_hash::compute_ir_hash` of the circuit the keys were made
+    /// for (the hash `CompiledIR` caches).
+    pub ir_hash: String,
+}
+
+impl Halo2BaseKeys {
+    pub fn vk(&self) -> &VerifyingKey<EqAffine> {
+        self.pk.get_vk()
+    }
+
+    /// The verifying key in halo2's raw-bytes encoding (for size reports
+    /// and out-of-process verifiers).
+    pub fn vk_bytes(&self) -> Vec<u8> {
+        self.vk().to_bytes(halo2_base::halo2_proofs::SerdeFormat::RawBytes)
+    }
+}
+
+/// A proof made with [`prove_with_keys`], with its two timed phases.
+pub struct TimedProof {
+    pub proof: Vec<u8>,
+    pub public_values: Vec<Fp>,
+    /// Witness synthesis: the IR walk filling the pinned circuit builder.
+    pub witness_seconds: f64,
+    /// `create_proof` plus transcript finalisation.
+    pub prove_seconds: f64,
+}
+
+/// Generate IPA parameters and proving/verifying keys for `ir` at `params`
+/// without a witness. The circuit shape is witness-independent (tested by
+/// `structural_fingerprint`), so these keys serve every input.
+pub fn keygen(ir: &IRGraph, params: &ProvingParams) -> Result<Halo2BaseKeys, ProvingError> {
+    let ir_hash = crate::prove::ir_hash::compute_ir_hash(&ir.export_stmts())
+        .map_err(|e| ProvingError::other(format!("ir_hash compute failed: {}", e)))?;
+    let ipa_params = ParamsIPA::<EqAffine>::new(params.k);
+    let (mut circuit, _) = build_circuit(ir, None, params, CircuitBuilderStage::Keygen, None)?;
+    let vk = without_panic("keygen_vk", params.k, || keygen_vk(&ipa_params, &circuit))?.map_err(|e| {
+        ProvingError::ProvingFailed { detail: format!("halo2-base keygen_vk failed: {:?}", e) }
+    })?;
+    let pk = without_panic("keygen_pk", params.k, || keygen_pk(&ipa_params, vk, &circuit))?.map_err(|e| {
+        ProvingError::ProvingFailed { detail: format!("halo2-base keygen_pk failed: {:?}", e) }
+    })?;
+    let base_params = circuit.params();
+    let break_points = circuit.break_points();
+    circuit.clear();
+    Ok(Halo2BaseKeys { params: params.clone(), ipa_params, pk, base_params, break_points, ir_hash })
+}
+
+/// Prove `ir` on `witness` with keys from [`keygen`] (no parameter
+/// generation, no keygen).
+pub fn prove_with_keys(
+    ir: &IRGraph,
+    witness: &ResolvedWitness,
+    keys: &Halo2BaseKeys,
+) -> Result<TimedProof, ProvingError> {
+    let t_witness = Instant::now();
+    let pinning = (keys.base_params.clone(), keys.break_points.clone());
+    let (circuit, public_values) =
+        build_circuit(ir, Some(witness), &keys.params, CircuitBuilderStage::Prover, Some(pinning))?;
+    let witness_seconds = t_witness.elapsed().as_secs_f64();
+
+    let t_prove = Instant::now();
+    let instance_refs: Vec<&[Fp]> = vec![public_values.as_slice()];
+    let mut transcript: Blake2bWrite<Vec<u8>, EqAffine, Challenge255<_>> =
+        TranscriptWriterBuffer::<Vec<u8>, EqAffine, _>::init(Vec::new());
+    create_proof::<IPACommitmentScheme<EqAffine>, ProverIPA<EqAffine>, _, _, _, _>(
+        &keys.ipa_params,
+        &keys.pk,
+        &[circuit],
+        &[&instance_refs],
+        OsRng,
+        &mut transcript,
+    )
+    .map_err(|e| ProvingError::ProvingFailed {
+        detail: format!("halo2-base create_proof failed: {:?}", e),
+    })?;
+    let proof = transcript.finalize();
+    let prove_seconds = t_prove.elapsed().as_secs_f64();
+    Ok(TimedProof { proof, public_values, witness_seconds, prove_seconds })
+}
+
+/// Verify `proof` for `public_values` against the verifying key in `keys`
+/// (no keygen, no IR).
+pub fn verify_with_keys(keys: &Halo2BaseKeys, proof: &[u8], public_values: &[Fp]) -> VerifyResult {
+    let mut transcript = Blake2bRead::<_, EqAffine, Challenge255<_>>::init(proof);
+    let strategy = SingleStrategy::new(&keys.ipa_params);
+    match verify_proof::<IPACommitmentScheme<EqAffine>, VerifierIPA<EqAffine>, _, _, SingleStrategy<EqAffine>>(
+        &keys.ipa_params,
+        keys.vk(),
+        strategy,
+        &[&[public_values]],
+        &mut transcript,
+    ) {
+        Ok(_) => VerifyResult::ok(),
+        Err(e) => VerifyResult::invalid(format!("halo2-base verify_proof failed: {:?}", e)),
+    }
+}
+
+/// Hex encoding of a field element, as in `ProofArtifact::public_values`.
+pub fn fp_to_hex(v: &Fp) -> String {
+    encode_fp(v)
+}
+
+/// Inverse of [`fp_to_hex`].
+pub fn fp_from_hex(s: &str) -> Result<Fp, String> {
+    decode_fp(s)
 }
 
 /// Keygen-stage structural fingerprint for the witness-independence
@@ -566,6 +694,20 @@ fn try_build_public_layout_only(
     // Success: commit the buffered instance cells exactly once.
     builder.assigned_instances[0].extend(pending_instances);
     Ok(Some(public_values))
+}
+
+/// Run a halo2 step that lays out the circuit, turning a halo2-base panic
+/// (for example `NotEnoughRowsAvailable` when `k` is too small for the
+/// fixed cells) into an error instead of unwinding into Python.
+fn without_panic<T>(step: &str, k: u32, f: impl FnOnce() -> T) -> Result<T, ProvingError> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(|payload| {
+        let reason = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_else(|| "panic".to_string());
+        ProvingError::ProvingFailed { detail: format!("halo2-base {} failed at k={}: {}", step, k, reason) }
+    })
 }
 
 fn encode_fp(v: &Fp) -> String {
