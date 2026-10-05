@@ -1682,12 +1682,22 @@ impl IRGenerator {
                 visited_args_orig,
                 visited_kwargs_orig,
             ),
-            ("np", "copyto" | "putmask") => {
-                let target = &visited_args_orig[0];
+            ("np", "copyto") => {
+                let [target, source] = visited_args_orig else {
+                    panic!("np.copyto(dst, src, where=...) takes two positional arguments");
+                };
                 let truth = self.builder.ir_constant_bool(true);
-                let (source, mask) = if member=="putmask" { (&visited_args_orig[2], &visited_args_orig[1]) }
-                    else { (&visited_args_orig[1], visited_kwargs_orig.get("where").unwrap_or(&truth)) };
-                super::array_compat::write_output(&mut self.builder,source,target,Some(mask));
+                let mask = visited_kwargs_orig.get("where").unwrap_or(&truth);
+                let written = super::array_compat::write_output(&mut self.builder, source, target, Some(mask));
+                self.note_array_write(&written);
+                Value::None
+            }
+            ("np", "putmask") => {
+                let [target, mask, values] = visited_args_orig else {
+                    panic!("np.putmask(a, mask, values) takes three positional arguments");
+                };
+                let written = super::array_compat::putmask(&mut self.builder, target, mask, values);
+                self.note_array_write(&written);
                 Value::None
             }
             ("np", "select") => {

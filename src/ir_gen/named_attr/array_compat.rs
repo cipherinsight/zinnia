@@ -117,6 +117,55 @@ pub(super) fn write_output(b: &mut IRBuilder, result: &Value, target: &Value, ma
     target.clone()
 }
 
+/// `np.putmask(a, mask, values)`: for every flat position `i` where
+/// `mask.flat[i]` holds, set `a.flat[i] = values.flat[i % len(values)]`.
+/// NumPy repeats `values` in flat order; it does not broadcast it. `mask`
+/// must have as many elements as `a`.
+pub(super) fn putmask(b: &mut IRBuilder, target: &Value, mask: &Value, values: &Value) -> Value {
+    let Value::StaticArray { shape, dtype, .. } = target else {
+        panic!("np.putmask: the first argument must be a statically shaped ndarray");
+    };
+    let old = crate::helpers::composite::flatten_composite_with_builder(b, target);
+    let mask_cells = crate::helpers::composite::flatten_composite_with_builder(b, mask);
+    if mask_cells.len() != old.len() {
+        panic!(
+            "np.putmask: mask and data must be the same size ({} vs {})",
+            mask_cells.len(),
+            old.len()
+        );
+    }
+    let value_cells = crate::helpers::composite::flatten_composite_with_builder(b, values);
+    if value_cells.is_empty() {
+        // NumPy leaves `a` unchanged when `values` is empty.
+        return target.clone();
+    }
+    let cells: Vec<Value> = old
+        .iter()
+        .zip(&mask_cells)
+        .enumerate()
+        .map(|(i, (old_cell, mask_cell))| {
+            let new_cell = &value_cells[i % value_cells.len()];
+            let new_cell = match dtype {
+                crate::types::NumberType::Float => crate::helpers::value_ops::ensure_float(b, new_cell),
+                _ if matches!(new_cell, Value::Float(_)) => panic!(
+                    "np.putmask: putting float values into an integer array (a truncating \
+                     cast) is not supported"
+                ),
+                _ => new_cell.clone(),
+            };
+            let take = crate::helpers::value_ops::to_scalar_bool(b, mask_cell);
+            crate::helpers::value_ops::select_value(b, &take, &new_cell, old_cell)
+        })
+        .collect();
+    let result = crate::helpers::static_array::base::build_static_array_from_flat(
+        b,
+        cells,
+        shape.clone(),
+        *dtype,
+    );
+    write_output(b, &result, target, None)
+}
+
 /// Reduce bounded dimensions without discarding keepdims or tuple-axis
 /// semantics. Retained dimensions keep their existing runtime metadata.
 fn bounded_reduction(b: &mut IRBuilder, op: &str, input: &Value, axis: Option<&Value>, keepdims: bool) -> Value {
