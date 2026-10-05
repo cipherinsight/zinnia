@@ -6,7 +6,7 @@ from zinnia import *
 from numpy import zeros, power, tanh
 
 @zk_circuit
-def slowparts(d: Integer, re: Integer, preDz: Float[Array, '20 11 5'], preWz: Float[Array, '10 11 5'], SRW: Float[Array, '10 20'], RSW: Float[Array, '10 20'], yxV: Float[Array, '11 5 10'], xyU: Float[Array, '11 5 10'], resid: Integer):
+def slowparts(d: Integer, re: Integer, preDz: Float[Array, '16 9 5'], preWz: Float[Array, '8 9 5'], SRW: Float[Array, '8 16'], RSW: Float[Array, '8 16'], yxV: Float[Array, '9 5 8'], xyU: Float[Array, '9 5 8'], resid: Integer):
     """ computes the linear algebra intensive part of the gradients of the grae
     """
     fprime = lambda x: 1 - power(tanh(x), 2)

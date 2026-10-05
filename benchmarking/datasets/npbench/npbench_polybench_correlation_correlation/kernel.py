@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def kernel(M: Integer, float_n: Float, data: Float[Array, '600 500']):
+def kernel(M: Integer, float_n: Float, data: Float[Array, '16 14']):
     mean = np.mean(data, axis=0)
     stddev = np.std(data, axis=0)
     stddev[stddev <= 0.1] = 1.0

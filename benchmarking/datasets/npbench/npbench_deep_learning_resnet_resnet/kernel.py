@@ -29,7 +29,7 @@ def batchnorm2d(x, eps=1e-05):
     return (x - mean) / np.sqrt(std + eps)
 
 @zk_circuit
-def resnet_basicblock(input: Float[Array, '8 14 14 32'], conv1: Float[Array, '1 1 32 8'], conv2: Float[Array, '3 3 8 8'], conv3: Float[Array, '1 1 8 32']):
+def resnet_basicblock(input: Float[Array, '4 7 7 16'], conv1: Float[Array, '1 1 16 4'], conv2: Float[Array, '3 3 4 4'], conv3: Float[Array, '1 1 4 16']):
     padded = np.zeros((input.shape[0], input.shape[1] + 2, input.shape[2] + 2, conv1.shape[3]))
     padded[:, 1:-1, 1:-1, :] = conv2d(input, conv1)
     x = batchnorm2d(padded)

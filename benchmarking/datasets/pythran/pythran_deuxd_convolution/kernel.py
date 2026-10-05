@@ -16,7 +16,7 @@ def reflect(pos, offset, bound):
     return min(2 * (bound - 1) - idx, max(idx, -idx))
 
 @zk_circuit
-def conv(x: Float[Array, '300 300'], weights: Float[Array, '5 5']):
+def conv(x: Float[Array, '16 16'], weights: Float[Array, '5 5']):
     sx = x.shape
     sw = weights.shape
     result = np.zeros_like(x)

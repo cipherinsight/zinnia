@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def kernel(A: Float[Array, '100 100']):
+def kernel(A: Float[Array, '15 15']):
     A[0, 0] = np.sqrt(A[0, 0])
     for i in range(1, A.shape[0]):
         for j in range(i):

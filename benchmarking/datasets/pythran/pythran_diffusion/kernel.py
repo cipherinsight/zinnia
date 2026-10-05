@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def diffuseNumpy(u: Float[Array, '128 128'], tempU: Float[Array, '128 128'], iterNum: Integer):
+def diffuseNumpy(u: Float[Array, '16 16'], tempU: Float[Array, '16 16'], iterNum: Integer):
     """
     Apply Numpy matrix for the Forward-Euler Approximation
     """

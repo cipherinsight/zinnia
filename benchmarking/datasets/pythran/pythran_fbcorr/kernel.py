@@ -5,7 +5,7 @@
 from zinnia import *
 
 @zk_circuit
-def fbcorr(imgs: Float[Array, '8 8 8 8'], filters: Float[Array, '8 8 8 8'], output: Float[Array, '8 8 8 8']):
+def fbcorr(imgs: Float[Array, '4 8 8 3'], filters: Float[Array, '6 5 5 3'], output: Float[Array, '4 6 4 4']):
     n_imgs, n_rows, n_cols, n_channels = imgs.shape
     n_filters, height, width, n_ch2 = filters.shape
     'omp parallel for'

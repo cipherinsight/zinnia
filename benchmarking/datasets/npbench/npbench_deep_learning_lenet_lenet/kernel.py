@@ -31,7 +31,7 @@ def maxpool2d(x):
     return output
 
 @zk_circuit
-def lenet5(input: Float[Array, '4 28 28 1'], conv1: Float[Array, '5 5 1 6'], conv1bias: Float[Array, '6'], conv2: Float[Array, '5 5 6 16'], conv2bias: Float[Array, '16'], fc1w: Float[Array, '256 120'], fc1b: Float[Array, '120'], fc2w: Float[Array, '120 84'], fc2b: Float[Array, '84'], fc3w: Float[Array, '84 10'], fc3b: Float[Array, '10'], N: Integer, C_before_fc1: Integer):
+def lenet5(input: Float[Array, '2 16 16 1'], conv1: Float[Array, '5 5 1 6'], conv1bias: Float[Array, '6'], conv2: Float[Array, '5 5 6 16'], conv2bias: Float[Array, '16'], fc1w: Float[Array, '16 120'], fc1b: Float[Array, '120'], fc2w: Float[Array, '120 84'], fc2b: Float[Array, '84'], fc3w: Float[Array, '84 10'], fc3b: Float[Array, '10'], N: Integer, C_before_fc1: Integer):
     x = relu(conv2d(input, conv1) + conv1bias)
     x = maxpool2d(x)
     x = relu(conv2d(x, conv2) + conv2bias)
