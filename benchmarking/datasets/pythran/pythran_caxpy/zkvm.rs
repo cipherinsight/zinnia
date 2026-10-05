@@ -39,6 +39,7 @@ pub mod CAXPY {
         let incx: i64 = args.scalar();
         let mut cy: Array1<C32> = args.array1();
         let incy: i64 = args.scalar();
+        assert!((0..=1024).contains(&n), "requires 0 <= N <= 1024");
         if n <= 0 || ca == C32::ZERO {
             return None;
         }
