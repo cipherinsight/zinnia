@@ -1,78 +1,38 @@
-// DS-1000 case 412 — Halo2 baseline (compact-output version).
-// Kernel: `x[x >= 0]` on Float[10].
-//
-// Output contract mirrors Zinnia's dynamic-array encoding: kept values
-// compacted to the front in source order, zero-padded, preceded by the
-// kept count exposed twice (runtime length + shape dim). Compaction is
-// paid in-circuit via prefix counts + a triangular indicator gather.
-use clap::Parser;
-use halo2_base::utils::{ScalarField, BigPrimeField};
-use halo2_graph::gadget::fixed_point::FixedPointChip;
-use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use halo2_base::gates::{GateChip, GateInstructions, RangeInstructions};
-use serde::{Serialize, Deserialize};
-use halo2_base::AssignedValue;
-#[allow(unused_imports)] use halo2_graph::scaffold::cmd::Cli;
-use halo2_graph::scaffold::run;
+//! DS-1000 case 0412, halo2-base baseline.
+//! Kernel: `x[x >= 0]` on `Float[10]` (data-dependent length).
+//! Output: the count of kept values, then the kept values in order, zero-padded
+//! to 10. Kept value `i` goes to slot `p_i` (the number of kept values before
+//! it): slot `j` is `sum_i keep_i * [p_i == j] * x_i` over `i >= j`.
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CircuitInput { pub x: Vec<f64> }
+use crate::prelude::*;
 
-fn filter_nonneg_compact<F: ScalarField>(
-    b: &mut BaseCircuitBuilder<F>, input: CircuitInput, make_public: &mut Vec<AssignedValue<F>>,
-) where F: BigPrimeField {
-    const P: u32 = 32;
-    const N: usize = 10;
-    let gate = GateChip::<F>::default();
-    let rc = b.range_chip();
-    let fpc = FixedPointChip::<F, P>::default(b);
-    let ctx = b.main(0);
-    assert_eq!(input.x.len(), N);
+pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
+    let x = inputs.floats("x", &[10])?;
+    let q = Q32::new(builder);
+    let ctx = builder.main(0);
 
-    let zero_fp = ctx.load_witness(fpc.quantization(0.0));
-    let cells: Vec<AssignedValue<F>> = input.x.iter()
-        .map(|v| ctx.load_witness(fpc.quantization(*v))).collect();
-
-    // keep[i] = !(x < 0); prefix[i] = #kept before i.
-    let zero = ctx.load_constant(F::ZERO);
-    let mut keeps = Vec::with_capacity(N);
-    let mut count = zero;
-    for x in &cells {
-        let lt = rc.is_less_than(ctx, *x, zero_fp, 128);
-        let keep = gate.not(ctx, lt);
-        keeps.push(keep);
-        count = gate.add(ctx, count, keep);
+    let x = q.load_floats(ctx, &x);
+    let mut keep = Vec::with_capacity(10);
+    let mut before = Vec::with_capacity(10); // p_i
+    let mut count = q.int_const(ctx, 0);
+    for xi in &x {
+        let xi = q.bound(ctx, *xi);
+        let neg = q.is_neg(ctx, xi);
+        let k = q.gate.not(ctx, neg);
+        before.push(count);
+        count = q.add(ctx, count, k);
+        keep.push(k);
     }
-
-    // Runtime length + shape dim (Zinnia's dyn-array metadata).
-    make_public.push(count);
-    make_public.push(count);
-
-    // Compact gather via one-hot shift network (cheaper than per-slot
-    // prefix-equality tests): R is the one-hot of the next free output
-    // slot. For each element: deposit into the hot slot when kept, then
-    // shift R right by one iff kept. Triangular: after i elements at
-    // most slots 0..=i can be hot.
-    let mut outs = vec![zero; N];
-    let one = ctx.load_constant(F::ONE);
-    let mut hot = vec![zero; N];
-    hot[0] = one;
-    for i in 0..N {
-        let lim = (i + 1).min(N);
-        for j in 0..lim {
-            let here = gate.and(ctx, hot[j], keeps[i]);
-            outs[j] = gate.select(ctx, cells[i], outs[j], here);
+    let mut slots = Vec::with_capacity(10);
+    for j in 0..10 {
+        let mut slot = q.int_const(ctx, 0);
+        for i in j..10 {
+            let at_j = q.eq(ctx, before[i], Constant(fe(j as i128)));
+            let take = q.gate.and(ctx, keep[i], at_j);
+            slot = q.gate.mul_add(ctx, take, x[i], slot);
         }
-        // Shift the one-hot right by one iff kept.
-        let prev: Vec<_> = hot.clone();
-        let lim2 = (i + 2).min(N);
-        for j in (0..lim2).rev() {
-            let shifted = if j == 0 { zero } else { prev[j - 1] };
-            hot[j] = gate.select(ctx, shifted, prev[j], keeps[i]);
-        }
+        slots.push(slot);
     }
-    for o in outs {
-        make_public.push(o);
-    }
+    out.dynamic(count, &slots, Kind::Float, 1);
+    Ok(())
 }
-fn main() { env_logger::init(); let args = Cli::parse(); run(filter_nonneg_compact, args); }

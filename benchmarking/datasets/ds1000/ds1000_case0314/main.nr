@@ -1,24 +1,37 @@
-// DS-1000 case 0314 -- Noir baseline.
-// Replace first argmax with a.min(), then return unravel of second argmax.
+// DS-1000 case 0314, Noir baseline.
+// Kernel: on Float[8, 6], idx = unravel(a.argmax()), a[idx] = a.min(), then
+// unravel(a.argmax()) again (C order).
+// @outputs: int[2]
 
-use noir_fpc::{qgt, qlt};
-
-global COLS: u32 = 6;
+use noir_hw::window;
 
 fn main(a: [Field; 48]) -> pub [Field; 2] {
-    let mut buf: [Field; 48] = a;
-    let mut amax: u32 = 0;
-    let mut vmax: Field = buf[0];
-    let mut vmin: Field = buf[0];
-    for k in 1..48 {
-        if qgt(buf[k], vmax) { vmax = buf[k]; amax = k; }
-        if qlt(buf[k], vmin) { vmin = buf[k]; }
+    let mut w: [u64; 48] = [0; 48];
+    for k in 0..48 {
+        w[k] = window(a[k]);
     }
-    buf[amax] = vmin;
-    let mut amax2: u32 = 0;
-    let mut vmax2: Field = buf[0];
+    let mut best = w[0];
+    let mut low = w[0];
+    let mut best_idx: u32 = 0;
     for k in 1..48 {
-        if qgt(buf[k], vmax2) { vmax2 = buf[k]; amax2 = k; }
+        if w[k] > best {
+            best = w[k];
+            best_idx = k;
+        }
+        if w[k] < low {
+            low = w[k];
+        }
     }
-    [(amax2 / COLS) as Field, (amax2 % COLS) as Field]
+    // Comparisons only need the order-preserving windows, so the write
+    // a[idx] = a.min() is done on them.
+    w[best_idx] = low;
+    let mut best2 = w[0];
+    let mut best2_idx: u32 = 0;
+    for k in 1..48 {
+        if w[k] > best2 {
+            best2 = w[k];
+            best2_idx = k;
+        }
+    }
+    [(best2_idx / 6) as Field, (best2_idx % 6) as Field]
 }

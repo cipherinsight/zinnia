@@ -1,67 +1,22 @@
-// DS-1000 case 334 — Halo2 baseline (apples-to-apples with Zinnia).
-//
-// Kernel: result = np.mean([a, b, c], axis=0)
-//
-// Mirrors Zinnia's IR exactly (355 stmts):
-//  150 ReadFloatIR        (50 each for a, b, c)
-//  100 AddFIR             (2 adds per cell: (a+b)+c)
-//   50 DivFIR             (divide sum by 3 to get mean)
-//    1 ConstantFloatIR    (the constant 3.0)
-//    ... (plus 3 AllocateMemoryIR / 1 ConstantBoolIR for input metadata)
-//   50 ExposePublicFIR    (expose 50 means)
-//
-// No claim assertion — Zinnia just exposes 50 floats.
+//! DS-1000 case 0334, halo2-base baseline.
+//! Kernel: `np.mean([a, b, c], axis=0)` on three `Float[50]`.
+//! The Q32 mean `floor((a + b + c) * 2^32 / (3 * 2^32))` equals
+//! `floor((a + b + c) / 3)`, a division by the constant 3.
 
-use clap::Parser;
-use halo2_base::utils::{ScalarField, BigPrimeField};
-use halo2_graph::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};
-use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use serde::{Serialize, Deserialize};
-use halo2_base::AssignedValue;
-#[allow(unused_imports)]
-use halo2_graph::scaffold::cmd::Cli;
-use halo2_graph::scaffold::run;
+use crate::prelude::*;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CircuitInput {
-    pub a: Vec<f64>,
-    pub b: Vec<f64>,
-    pub c: Vec<f64>,
-}
-
-fn mean_circuit<F: ScalarField>(
-    builder: &mut BaseCircuitBuilder<F>,
-    input: CircuitInput,
-    make_public: &mut Vec<AssignedValue<F>>,
-) where F: BigPrimeField {
-    const PRECISION: u32 = 32;
-    let fixed_point_chip = FixedPointChip::<F, PRECISION>::default(builder);
+pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
+    let (a, b, c) = (inputs.floats("a", &[50])?, inputs.floats("b", &[50])?, inputs.floats("c", &[50])?);
+    let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    assert_eq!(input.a.len(), 50);
-    assert_eq!(input.b.len(), 50);
-    assert_eq!(input.c.len(), 50);
-
-    // ConstantFloatIR for 3.0 (shared across all cells).
-    let three = ctx.load_witness(fixed_point_chip.quantization(3.0));
-
-    for k in 0..50usize {
-        let a_k = ctx.load_witness(fixed_point_chip.quantization(input.a[k]));
-        let b_k = ctx.load_witness(fixed_point_chip.quantization(input.b[k]));
-        let c_k = ctx.load_witness(fixed_point_chip.quantization(input.c[k]));
-
-        // (a + b) + c, then / 3.
-        let ab = fixed_point_chip.qadd(ctx, a_k, b_k);
-        let sum = fixed_point_chip.qadd(ctx, ab, c_k);
-        let mean = fixed_point_chip.qdiv(ctx, sum, three);
-
-        // ExposePublicFIR.
-        make_public.push(mean);
-    }
-}
-
-fn main() {
-    env_logger::init();
-    let args = Cli::parse();
-    run(mean_circuit, args);
+    let (a, b, c) = (q.load_floats(ctx, &a), q.load_floats(ctx, &b), q.load_floats(ctx, &c));
+    let mean: Vec<Cell> = (0..50)
+        .map(|i| {
+            let s = q.sum(ctx, [a[i], b[i], c[i]]);
+            q.floor_div_const(ctx, s, 3).0.cell
+        })
+        .collect();
+    out.floats(&mean);
+    Ok(())
 }
