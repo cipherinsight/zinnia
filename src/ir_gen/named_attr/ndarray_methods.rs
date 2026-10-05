@@ -130,37 +130,10 @@ impl IRGenerator {
         //
         // Unified ops: each entry point handles static/dynamic internally.
         let v = match member {
-            "squeeze" => {
-                let val=self.ctx.get(var).unwrap();
-                crate::helpers::static_array::shape::try_apply_squeeze(&mut self.builder,&val,visited_kwargs_orig.get("axis").or_else(||visited_args_orig.first())).expect("squeeze requires array")
-            }
             "clip" => {
                 let mut args = vec![self.ctx.get(var).unwrap()];
                 args.extend(visited_args_orig.iter().cloned());
                 super::array_compat::clip(&mut self.builder, &args, visited_kwargs_orig)
-            }
-            "sum" | "any" | "all" | "prod" | "min" | "max" => {
-                let method = member;
-                let val = self.ctx.get(var).unwrap_or(Value::None);
-                // P4b: native StaticArray dispatch before the legacy boundary.
-                let axis_arg_orig = visited_kwargs_orig
-                    .get("axis")
-                    .or_else(|| visited_args_orig.first());
-                let keepdims = super::kwarg_static_truthy(visited_kwargs_orig, "keepdims", false);
-                if let Some(out) = crate::helpers::static_array::reductions::try_apply_reduce(
-                    &mut self.builder,
-                    method,
-                    &val,
-                    axis_arg_orig,
-                    keepdims,
-                ) {
-                    return Some(out);
-                }
-                // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val =
-                    crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
-                let axis_arg = _visited_kwargs.get("axis").or_else(|| visited_args.first());
-                crate::helpers::array_ops::reduce(&mut self.builder, method, &val, axis_arg)
             }
             "transpose" => {
                 let val = self.ctx.get(var).unwrap_or(Value::None);

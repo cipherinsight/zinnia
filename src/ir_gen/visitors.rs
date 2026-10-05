@@ -200,17 +200,11 @@ impl IRGenerator {
                         if load.name == var_name && one.value == 1
                 )
             }
-            ASTNode::ASTAugAssignStatement(assign) => {
-                assign.targets.len() == 1
-                    && Self::assigned_name(&assign.targets[0]) == Some(var_name)
-                    && assign.op_type == "sub"
-                    && matches!(&*assign.value, ASTNode::ASTConstantInteger(one) if one.value == 1)
-            }
             _ => false,
         }
     }
 
-    fn stmt_writes_name_before_decrement(stmt: &ASTNode, var_name: &str) -> bool {
+    fn stmt_writes_name(stmt: &ASTNode, var_name: &str) -> bool {
         let mut names = BTreeSet::new();
         Self::collect_assigned_names_from_stmt(stmt, &mut names);
         names.contains(var_name)
@@ -668,15 +662,6 @@ impl IRGenerator {
             self.maybe_record_induction_alias(target, &n.value);
             self.do_recursive_assign(target, val.clone(), true);
         }
-    }
-
-    pub(crate) fn visit_aug_assign(&mut self, n: &ASTAugAssignStatement) {
-        if self.ctx.check_return_guaranteed() || self.ctx.check_loop_terminated_guaranteed() {
-            return;
-        }
-        // AugAssign on subscript — delegate to builder
-        let _val = self.visit(&n.value);
-        // TODO: full aug assign implementation
     }
 
     pub(crate) fn visit_cond(&mut self, n: &ASTCondStatement) {

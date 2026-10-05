@@ -357,9 +357,10 @@ impl IRGenerator {
                 self.visit_assign(n);
                 Value::None
             }
-            ASTNode::ASTAugAssignStatement(n) => {
-                self.visit_aug_assign(n);
-                Value::None
+            // The Python transformer lowers every augmented assignment to a
+            // plain assignment (`a op= b` becomes `a = a op b`).
+            ASTNode::ASTAugAssignStatement(_) => {
+                panic!("internal: augmented assignments must be lowered by the transformer")
             }
             ASTNode::ASTCondStatement(n) => {
                 self.visit_cond(n);

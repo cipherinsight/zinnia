@@ -894,39 +894,6 @@ impl IRGenerator {
             ("np", "identity" | "eye") => {
                 crate::ops::static_ndarray_ops::np_identity(&mut self.builder, visited_args)
             }
-            // numpy reduction aliases — forward to the existing reduce/argmax_argmin path used by x.sum() / x.argmin().
-            // `amax`/`amin` are the historical numpy spellings (still in
-            // the public API); they share semantics with `max`/`min`.
-            ("np", method @ (
-                "sum" | "prod"
-                | "min" | "amin"
-                | "max" | "amax"
-                | "any" | "all"
-            )) => {
-                let method = match method {
-                    "amin" => "min",
-                    "amax" => "max",
-                    m => m,
-                };
-                // P4b: native StaticArray dispatch before the legacy boundary.
-                let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);
-                let axis_arg_orig = visited_kwargs_orig
-                    .get("axis")
-                    .or_else(|| visited_args_orig.get(1));
-                let keepdims = super::kwarg_static_truthy(visited_kwargs_orig, "keepdims", false);
-                if let Some(out) = crate::helpers::static_array::reductions::try_apply_reduce(
-                    &mut self.builder,
-                    method,
-                    &val_orig,
-                    axis_arg_orig,
-                    keepdims,
-                ) {
-                    return Some(out);
-                }
-                let val = visited_args.first().cloned().unwrap_or(Value::None);
-                let axis_arg = _visited_kwargs.get("axis").or_else(|| visited_args.get(1));
-                crate::helpers::array_ops::reduce(&mut self.builder, method, &val, axis_arg)
-            }
             ("np", method @ ("argmax" | "argmin")) => {
                 // P4b: native StaticArray dispatch before the legacy boundary.
                 let val_orig = visited_args_orig.first().cloned().unwrap_or(Value::None);

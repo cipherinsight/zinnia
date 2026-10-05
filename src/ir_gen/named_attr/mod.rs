@@ -353,32 +353,25 @@ impl IRGenerator {
                 array_compat::clip(&mut self.builder, &args, &visited_kwargs_orig)
             }
             "copy" => array_compat::copy_array(&mut self.builder, &target_orig),
-            method @ ("sum" | "any" | "all" | "prod" | "min" | "max" | "mean") => {
-                // P4b: native StaticArray dispatch before the legacy boundary.
+            // `sum`/`prod`/`min`/`max`/`any`/`all` returned early through
+            // `array_compat::reduction` above.
+            "mean" => {
                 let axis_arg_orig = visited_kwargs_orig
                     .get("axis")
                     .or_else(|| visited_args_orig.first());
                 let keepdims = kwarg_static_truthy(&visited_kwargs_orig, "keepdims", false);
                 if let Some(out) = crate::helpers::static_array::reductions::try_apply_reduce(
                     &mut self.builder,
-                    method,
+                    "mean",
                     &target_orig,
                     axis_arg_orig,
                     keepdims,
                 ) {
                     return out;
                 }
-                if method == "mean" {
-                    let mut all_args = vec![target.clone()];
-                    all_args.extend(visited_args.iter().cloned());
-                    return crate::ops::static_ndarray_ops::np_mean(
-                        &mut self.builder,
-                        &all_args,
-                        &visited_kwargs,
-                    );
-                }
-                let axis_arg = visited_kwargs.get("axis").or_else(|| visited_args.first());
-                crate::helpers::array_ops::reduce(&mut self.builder, method, &target, axis_arg)
+                let mut all_args = vec![target.clone()];
+                all_args.extend(visited_args.iter().cloned());
+                crate::ops::static_ndarray_ops::np_mean(&mut self.builder, &all_args, &visited_kwargs)
             }
             method @ ("argmax" | "argmin") => {
                 // P4b: native StaticArray dispatch before the legacy boundary.
