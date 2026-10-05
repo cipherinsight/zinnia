@@ -177,3 +177,24 @@ fn int(value: &Value) -> Result<i64> {
 fn boolean(value: &Value) -> Result<bool> {
     value.as_bool().with_context(|| format!("expected a boolean, got {value}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Fixture floats must be parsed correctly rounded (as Python and Rust's
+    /// `str::parse` do); otherwise some Q32 encodings come out one step off
+    /// from Zinnia's and the Cairo driver's.
+    #[test]
+    fn floats_are_parsed_exactly() {
+        let mut state: u64 = 0x2545_f491_4f6c_dd1d;
+        for _ in 0..20_000 {
+            state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let v = (state >> 11) as f64 / (1u64 << 53) as f64 * 2e6 - 1e6;
+            let text = format!("{v:.17e}");
+            let exact: f64 = text.parse().unwrap();
+            let parsed = serde_json::from_str::<Value>(&text).unwrap().as_f64().unwrap();
+            assert_eq!(parsed.to_bits(), exact.to_bits(), "{text}");
+        }
+    }
+}
