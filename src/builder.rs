@@ -2615,7 +2615,15 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
         IR::AddI => int_binary_ir(ir_id, args, |a, b| a.checked_add(b)),
         IR::SubI => int_binary_ir(ir_id, args, |a, b| a.checked_sub(b)),
         IR::MulI => int_binary_ir(ir_id, args, |a, b| a.checked_mul(b)),
-        IR::DivI => int_binary_ir(ir_id, args, |a, b| if b != 0 { Some(a / b) } else { None }),
+        // `DivI` is exact division (a field inverse in the backends): fold
+        // only when the division is exact, where both readings agree.
+        IR::DivI => int_binary_ir(ir_id, args, |a, b| {
+            if b != 0 && a % b == 0 {
+                Some(a / b)
+            } else {
+                None
+            }
+        }),
         IR::FloorDivI | IR::FloorDivIPinned { .. } => int_binary_ir(ir_id, args, |a, b| {
             if b != 0 {
                 Some(a.div_euclid(b))
@@ -2623,7 +2631,11 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
                 None
             }
         }),
-        IR::ModI => int_binary_ir(ir_id, args, |a, b| if b != 0 { Some(a % b) } else { None }),
+        // Same convention as `FloorDivI` above and as every backend
+        // (`kernel::fp_floor_div`): the Euclidean remainder, in [0, |b|).
+        // Rust's `%` truncates (-7 % 3 = -1), so a folded constant used to
+        // differ from the circuit's value for the same operands.
+        IR::ModI => int_binary_ir(ir_id, args, |a, b| if b != 0 { Some(a.rem_euclid(b)) } else { None }),
         IR::PowI => int_binary_ir(ir_id, args, |a, b| {
             if b >= 0 {
                 Some(a.pow(b as u32))
@@ -2682,7 +2694,16 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
         }
         IR::DivF => float_binary_ir(ir_id, args, |a, b| a / b),
         IR::FloorDivF => float_binary_ir(ir_id, args, |a, b| (a / b).floor()),
-        IR::ModF => float_binary_ir(ir_id, args, |a, b| a % b),
+        // Python/NumPy float remainder: the result has the divisor's sign
+        // (`kernel::fp_float_mod`); Rust's `%` keeps the dividend's sign.
+        IR::ModF => float_binary_ir(ir_id, args, |a, b| {
+            let r = a % b;
+            if r != 0.0 && (r < 0.0) != (b < 0.0) {
+                r + b
+            } else {
+                r
+            }
+        }),
         IR::PowF => float_binary_ir(ir_id, args, |a, b| a.powf(b)),
         IR::PowFI => {
             // Float base ^ Integer exponent. Constant-fold from

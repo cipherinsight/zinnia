@@ -215,9 +215,10 @@ impl IROp for IR {
                 Z3Term::Int(Int::mul(&[&a, &b]))
             }
             IR::DivI | IR::FloorDivI | IR::FloorDivIPinned { .. } => {
-                // Z3's `Int::div` is integer division (truncating toward
-                // zero in SMT-LIB semantics). The Python ref uses `/`
-                // for both DivI and FloorDivI; we mirror that.
+                // SMT-LIB integer `div`/`mod` are Euclidean (the remainder
+                // is in [0, |b|)), the same convention the backends use for
+                // `FloorDivI`/`ModI` (`kernel::fp_floor_div`). `DivI` is
+                // exact division; on exact operands the two agree.
                 let a = args[0].as_int();
                 let b = args[1].as_int();
                 Z3Term::Int(a.div(&b))

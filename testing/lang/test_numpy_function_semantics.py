@@ -112,3 +112,26 @@ def test_unique_inverse_one_hot_matches_numpy():
     expected = np.zeros((5, 3))
     expected[np.arange(5), inverse] = 1
     np.testing.assert_array_equal(envelope[:, :3], expected)
+
+
+# ── constant folding agrees with the circuit ─────────────────────────────
+
+@pytest.mark.parametrize("expr, args", [
+    ("a % b", (-7, 3)),
+    ("a % b", (7, 3)),
+    ("a // b", (-7, 3)),
+])
+def test_folded_integer_remainder_matches_runtime(expr, args):
+    # The builder folded `%` with Rust's truncating remainder (-7 % 3 = -1)
+    # while every backend computes 2, as Python does.
+    a, b = args
+    folded = compile_kernel(f"def kernel():\n    a = {a}\n    b = {b}\n    return {expr}\n")
+    runtime = compile_kernel(f"def kernel(a: Integer, b: Integer):\n    return {expr}\n")
+    expected = eval(expr, {"a": a, "b": b})
+    assert [e["Int"] for e in folded.get_elided_publics()] == [expected]
+    assert run_mock(runtime, a, b) == (True, [expected])
+
+
+def test_folded_float_remainder_has_divisor_sign():
+    folded = compile_kernel("def kernel():\n    return 7.5 % -2.0\n")
+    assert [e["Float"] for e in folded.get_elided_publics()] == [7.5 % -2.0]
