@@ -8,7 +8,9 @@
 //! on the integers, floor square root), so NumPy's clip to [-1, 1] never acts.
 //! No proof when a variance is 0 (NumPy returns nan) or when B * C >= 2^62,
 //! where sqrt(B * C) leaves the Q32 window (inputs within +-11585 always fit).
-//! B and C are range-checked to 64 bits so that B * C cannot wrap the field.
+//! The inputs get window proofs, so A, B and C are exact integers (field
+//! elements could otherwise make them any small integers, r = 3 included), and
+//! B is range-checked to 64 bits so that B * C (C < 2^132) cannot wrap the field.
 
 use crate::prelude::*;
 
@@ -19,6 +21,9 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
 
     let x = q.load_ints(ctx, &post);
     let y = q.load_ints(ctx, &distance);
+    for v in x.iter().chain(&y) {
+        q.bound(ctx, *v);
+    }
     let dot = |ctx: &mut Ctx, a: &[Cell], b: &[Cell]| {
         q.gate.inner_product(ctx, a.iter().map(|c| Existing(*c)), b.iter().map(|c| Existing(*c)))
     };
@@ -33,7 +38,6 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
     let b = centred(ctx, sxx, sx, sx);
     let c = centred(ctx, syy, sy, sy);
     q.range.range_check(ctx, b, 64);
-    q.range.range_check(ctx, c, 64);
 
     let bc = q.gate.mul(ctx, b, c);
     let bc = q.int_to_float(ctx, bc);
