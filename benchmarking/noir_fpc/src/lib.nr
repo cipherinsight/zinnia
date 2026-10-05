@@ -533,7 +533,6 @@ pub fn qtan(x: Field) -> Field {
 // The polynomial coefficient layouts mirror EXP2_COEFS / LOG2_COEFS in
 // src/prove/kernel.rs.
 
-global LN2_Q: Field = 2977044472; // round(ln 2 * 2^32)
 global INV_LN2_Q: Field = 6196328019; // round(2^32 / ln 2)
 
 // exp2 on [0, 1), degree 12, quantized to Q32.
@@ -597,40 +596,29 @@ pub fn qexp(x: Field) -> Field {
     }
 }
 
-// log2 on [2, 4), degree 14, quantized to Q32.
-global LOG2_COEFS_Q: [Field; 15] = [
-    -(143 as Field),
-    6424,
-    -(134647 as Field),
-    1741789,
-    -(15555660 as Field),
-    101635445,
-    -(502162301 as Field),
-    1912293918,
-    -(5667543301 as Field),
-    13107436182,
-    -(23581357307 as Field),
-    32769990622,
-    -(35069831204 as Field),
-    30661759115,
-    -(13717002621 as Field),
+// round(ln 2 * 2^64): k ln 2 is formed in Q64 and rounded once to Q32.
+global LN2_Q64: Field = 12786308645202655660;
+
+// round(2^32 / (2j + 1)) for j = 11 down to 0: the series
+// atanh(s) / s = sum_j s^(2j) / (2j + 1), leading coefficient first.
+global ATANH_SERIES_Q: [Field; 12] = [
+    186737709, 204522252, 226050910, 252645135, 286331153, 330382100, 390451572, 477218588,
+    613566757, 858993459, 1431655765, 4294967296,
 ];
 
-// Hint: (k, m) with m = floor(x / 2^k) in [2Q, 4Q) (k may be negative, then
+// Hint: (k, m) with m = floor(x / 2^k) in [Q, 2Q) (k may be negative, then
 // m = x * 2^-k exactly), for 1 <= x < 2^126.
 unconstrained fn hint_log2_decompose(x: Field) -> (Field, Field) {
-    let two_q: u128 = 2 * Q_U128;
-    let four_q: u128 = 4 * Q_U128;
     let xx = x as u128;
     // k = up - down.
     let mut up: u32 = 0;
     let mut down: u32 = 0;
     let mut m: u128 = xx;
     for _ in 0..128 {
-        if m < two_q {
+        if m < Q_U128 {
             m = m * 2;
             down = down + 1;
-        } else if m >= four_q {
+        } else if m >= 2 * Q_U128 {
             m = m / 2;
             up = up + 1;
         }
@@ -638,18 +626,21 @@ unconstrained fn hint_log2_decompose(x: Field) -> (Field, Field) {
     ((up as Field) - (down as Field), m as Field)
 }
 
-/// Q32 natural log of x > 0 (fails for x <= 0). x = m * 2^k exactly up to the
-/// floor: m = floor(x / 2^k) in [2Q, 4Q) for k >= 0, m = x * 2^-k for k < 0;
-/// this pins k (halving m leaves [2Q, 4Q)) and m uniquely. Accuracy is
-/// limited by the Q32-quantized degree-14 coefficients (about 1e-2 near
-/// m = 4); see `test_horner_eval_log2_in_domain` in src/prove/kernel.rs.
+/// Q32 natural log of x > 0 (fails for x <= 0).
+///
+/// x = (m / Q) * 2^k with m in [Q, 2Q): m = floor(x / 2^k) for k >= 0 and
+/// m = x * 2^-k exactly for k < 0. These constraints pin k (halving m leaves
+/// [Q, 2Q)) and m uniquely. Then ln x = k ln 2 + 2 atanh(s) with
+/// s = (m - Q) / (m + Q) in [0, 1/3); the series through s^23 has truncation
+/// error below 1e-12, and each Horner level adds at most one Q32 ulp, damped
+/// by s^2 < 1/9. Error: a few ulps.
 pub fn qlog(x: Field) -> Field {
     let (negative, mag) = to_signed(x);
     assert(!negative & (mag != 0), "qlog: non-positive input");
     let x_f = mag as Field;
     // Safety: the checks below pin (k, m) uniquely.
     let (k, m) = unsafe { hint_log2_decompose(x_f) };
-    (m - 2 * Q).assert_max_bit_size::<33>(); // 2Q <= m < 4Q
+    (m - Q).assert_max_bit_size::<32>(); // Q <= m < 2Q
     let (k_negative, k_mag) = to_signed(k);
     let e = k_mag as Field;
     e.assert_max_bit_size::<7>();
@@ -661,9 +652,11 @@ pub fn qlog(x: Field) -> Field {
     let rem = lhs - m_scaled;
     rem.assert_max_bit_size::<126>();
     (bound - 1 - rem).assert_max_bit_size::<126>();
-    let log2_m = horner_q(m, LOG2_COEFS_Q);
-    let k_q = k * Q;
-    qmul(k_q + log2_m, LN2_Q)
+    let s = qdiv(m - Q, m + Q);
+    let series = horner_q(qmul(s, s), ATANH_SERIES_Q);
+    let ln_m = 2 * qmul(s, series);
+    let (k_ln2, _r) = euclid_divmod_small::<32>(k * LN2_Q64 + 2147483648, Q);
+    k_ln2 + ln_m
 }
 
 /// a^b = exp(b * log a) for a > 0.
@@ -911,7 +904,14 @@ fn test_qexp_qlog() {
     q_eq_with_tol(qexp(Q), 11674931555, 64);
     q_eq_with_tol(qexp(-Q), 1580030169, 64);
     q_eq_with_tol(qexp(0), Q, 8);
-    q_eq_with_tol(qlog(11674931555), Q, 1000 * TOL_DEFAULT);
+    // round(ln(X / 2^32) * 2^32) for the Q32 inputs X of e, 0.5, 3, 0.001
+    // and 12345.678.
+    q_eq_with_tol(qlog(11674931555), Q, 8);
+    q_eq_with_tol(qlog(Q / 2), -2977044472, 8);
+    q_eq_with_tol(qlog(q_from_int(3)), 4718503851, 8);
+    q_eq_with_tol(qlog(4294967), -29668583308, 8);
+    q_eq_with_tol(qlog(53024283256947), 40463150269, 8);
+    assert(qlog(Q) == 0);
 }
 
 #[test]
@@ -923,8 +923,8 @@ fn test_qsinh_qcosh() {
 
 #[test]
 fn test_qpow_small() {
-    // 2.0 ^ 3.0 = 8 through log/exp (coarse: qlog's polynomial).
-    q_eq_with_tol(qpow(q_from_int(2), q_from_int(3)), q_from_int(8), 200000000);
+    // 2.0 ^ 3.0 = 8 through log/exp.
+    q_eq_with_tol(qpow(q_from_int(2), q_from_int(3)), q_from_int(8), 512);
     assert(qpow_int_q32(q_from_int(2), 3) == q_from_int(8));
     assert(qpow_int_q32(-q_from_int(2), 2) == q_from_int(4));
 }

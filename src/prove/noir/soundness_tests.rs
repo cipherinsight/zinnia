@@ -394,3 +394,184 @@ fn verify_rejects_tampered_public_value() {
     tampered.public_values[0] = format!("0x{:064x}", 43);
     assert!(!backend.verify(&tampered).unwrap().valid);
 }
+
+// ── Every lowered op against the mock backend ────────────────────────────
+
+/// The mock backend's public outputs of `graph`, in statement order, as
+/// signed integers (Q32 for floats), plus whether its asserts held.
+fn mock_outputs(graph: &IRGraph, w: &ResolvedWitness) -> (bool, Vec<i128>) {
+    use crate::prove::interpreter::interpret_ir;
+    use crate::prove::mock::synthesizer::MockSynthesizer;
+    let mut synth = MockSynthesizer::new(w.clone(), ProvingParams::default());
+    interpret_ir(graph, &mut synth).expect("mock run");
+    let mut outs: Vec<(u32, i128)> = synth
+        .public_outputs
+        .iter()
+        .map(|(label, value)| {
+            let id = label.rsplit('_').next().unwrap().parse::<u32>().unwrap();
+            (id, value.parse::<i128>().unwrap())
+        })
+        .collect();
+    outs.sort();
+    (synth.satisfied, outs.into_iter().map(|(_, v)| v).collect())
+}
+
+fn float_witness(ints: &[(&str, i64)], floats: &[(&str, f64)]) -> ResolvedWitness {
+    let mut w = witness(ints);
+    for (name, value) in floats {
+        w.input.params.push(InputParam {
+            name: name.to_string(),
+            is_public: false,
+            dtype: serde_json::Value::Null,
+            value: InputNode::Float(*value),
+        });
+    }
+    w
+}
+
+/// Every IR op the emitter lowers, on signed and fractional operands,
+/// compared position by position with the mock backend: exact for exact
+/// ops, within 1e-6 (relative + absolute) for ops the mock evaluates in f64
+/// (pow, sin, cos, tan, sinh, cosh, tanh, sqrt, exp, log, arcsin, arccos,
+/// arctan2). Ops whose mock semantics departs from NumPy are listed (and
+/// excluded) at the end.
+#[test]
+fn every_lowered_op_matches_the_mock() {
+    if !toolchain_present(false) {
+        return;
+    }
+    let mut g = Graph::default();
+    let mut approx: Vec<bool> = Vec::new();
+    let expose_i = |g: &mut Graph, approx: &mut Vec<bool>, c: u32| {
+        g.push(IR::ExposePublicI, &[c]);
+        approx.push(false);
+    };
+    let expose_f = |g: &mut Graph, approx: &mut Vec<bool>, c: u32, is_approx: bool| {
+        g.push(IR::ExposePublicF, &[c]);
+        approx.push(is_approx);
+    };
+    let read_f = |g: &mut Graph, name: &str| {
+        g.push(
+            IR::ReadFloat {
+                path: InputPath::new(name, vec![]),
+                is_public: false,
+            },
+            &[],
+        )
+    };
+
+    // Integers: x = -7, y = 3, z = 5 (a non-0/1 truth value).
+    let x = g.read_int("x");
+    let y = g.read_int("y");
+    let z = g.read_int("z");
+    let zero = g.int(0);
+    let neg3 = g.int(-3);
+    let c21 = g.int(21);
+    let c13 = g.int(13);
+    let c10 = g.int(10);
+    for (ir, args) in [
+        (IR::AddI, vec![x, y]),
+        (IR::SubI, vec![x, y]),
+        (IR::MulI, vec![x, y]),
+        (IR::DivI, vec![c21, y]),
+        (IR::FloorDivI, vec![x, y]),
+        (IR::ModI, vec![x, y]),
+        (IR::FloorDivI, vec![x, neg3]),
+        (IR::ModI, vec![x, neg3]),
+        (IR::FloorDivI, vec![c13, y]),
+        (IR::FloorDivIPinned { divisor_bits: 4 }, vec![c13, y]),
+        (IR::AbsI, vec![x]),
+        (IR::SignI, vec![x]),
+        (IR::EqI, vec![x, x]),
+        (IR::NeI, vec![x, y]),
+        (IR::LtI, vec![x, y]),
+        (IR::LteI, vec![y, x]),
+        (IR::GtI, vec![x, y]),
+        (IR::GteI, vec![y, y]),
+        (IR::LtIBounded, vec![y, z]),
+        (IR::GtIBounded, vec![y, z]),
+        (IR::IndexInBox { rank: 1 }, vec![y, zero, z]),
+        (IR::IndexInBox { rank: 1 }, vec![z, zero, y]),
+        (IR::LogicalAnd, vec![z, zero]),
+        (IR::LogicalOr, vec![z, zero]),
+        (IR::LogicalNot, vec![z]),
+        (IR::SelectI, vec![z, x, y]),
+        (IR::SelectManyI { len: 1, lane: 0 }, vec![zero, x, y]),
+        (IR::BoolCast, vec![x]),
+        (IR::AssertU128LtBit { hi: 8, bit: 1, bits: 3 }, vec![y]),
+    ] {
+        let r = g.push(ir, &args);
+        expose_i(&mut g, &mut approx, r);
+    }
+    let eq = g.push(IR::EqI, &[x, x]);
+    g.push(IR::Assert, &[eq]);
+    let lt = g.push(IR::LtI, &[x, y]);
+    g.push(IR::AssertBit, &[lt]);
+    g.push(IR::AssertNonNegI, &[y]);
+    g.push(IR::AssertU128Lt, &[y, c10]);
+
+    // Floats: f = -1.75, h = 2.5, s = 0.6.
+    let f = read_f(&mut g, "f");
+    let h = read_f(&mut g, "h");
+    let s = read_f(&mut g, "s");
+    let neg_s = g.push(IR::ConstantFloat { value: -0.6 }, &[]);
+    let three = g.int(3);
+    let one = g.int(1);
+    for (ir, args, is_approx) in [
+        (IR::AddF, vec![f, s], false),
+        (IR::SubF, vec![f, h], false),
+        (IR::MulF, vec![f, s], false),
+        (IR::DivF, vec![f, s], false),
+        (IR::DivF, vec![f, neg_s], false),
+        (IR::SumF { len: 3 }, vec![f, h, s], false),
+        (IR::ProductSumF { len: 2 }, vec![f, s, h, f], false),
+        (IR::AbsF, vec![f], false),
+        (IR::FloatCast, vec![x], false),
+        (IR::SelectF, vec![lt, f, h], false),
+        (IR::SelectBitF, vec![one, f, h], false),
+        (IR::SelectManyF { len: 1, lane: 0 }, vec![z, f, h], false),
+        (IR::PowF, vec![h, s], true),
+        (IR::PowFI, vec![h, three], true),
+        (IR::SinF, vec![h], true),
+        (IR::CosF, vec![f], true),
+        (IR::TanF, vec![s], true),
+        (IR::SinHF, vec![f], true),
+        (IR::CosHF, vec![s], true),
+        (IR::TanHF, vec![f], true),
+        (IR::SqrtF, vec![h], true),
+        (IR::ExpF, vec![f], true),
+        (IR::LogF, vec![h], true),
+        (IR::ArcSinF, vec![s], true),
+        (IR::ArcCosF, vec![s], true),
+        (IR::ArcTan2F, vec![f, h], true),
+    ] {
+        let r = g.push(ir, &args);
+        expose_f(&mut g, &mut approx, r, is_approx);
+    }
+    for ir in [IR::EqF, IR::NeF, IR::LtF, IR::LteF, IR::GtF, IR::GteF] {
+        let r = g.push(ir, &[f, s]);
+        expose_i(&mut g, &mut approx, r);
+    }
+    let i = g.push(IR::IntCast, &[f]);
+    expose_i(&mut g, &mut approx, i);
+
+    let graph = g.finish();
+    let w = float_witness(&[("x", -7), ("y", 3), ("z", 5)], &[("f", -1.75), ("h", 2.5), ("s", 0.6)]);
+    let (satisfied, mock) = mock_outputs(&graph, &w);
+    assert!(satisfied);
+    let noir = execute(&graph, &w).expect("noir execute");
+    assert_eq!(noir.len(), mock.len());
+    let q = (1u64 << 32) as f64;
+    for (pos, ((m, n), is_approx)) in mock.iter().zip(&noir).zip(&approx).enumerate() {
+        if *is_approx {
+            let tol = 1e-6 * q + 1e-6 * (*m as f64).abs();
+            assert!(((m - n) as f64).abs() <= tol, "output {}: mock {} noir {}", pos, m, n);
+        } else {
+            assert_eq!(m, n, "output {}", pos);
+        }
+    }
+
+    // Not compared: SignF (the mock returns the integer +-1 rather than
+    // +-1.0; Noir returns +-1.0 as NumPy) and PowFI with a negative base
+    // (the mock evaluates exp(n * log(base)), NaN for base < 0).
+}
