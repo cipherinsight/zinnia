@@ -88,13 +88,13 @@ fn fannkuch(n: usize) -> usize {
 pub mod fannkuch2 {
     use super::*;
 
-    /// Always `None`: `fannkuch2` discards `fannkuch(n)` and returns nothing.
-    pub type Output = Option<i64>;
+    /// None: `fannkuch2` discards `fannkuch(n)`, returns `None` and writes
+    /// no argument.
+    pub type Output = ();
 
     pub fn main(args: &mut Args<impl Input>) -> Output {
         let n: i64 = args.scalar();
         assert!((0..=1024).contains(&n), "requires 0 <= n <= 1024");
         fannkuch(n as usize);
-        None
     }
 }
