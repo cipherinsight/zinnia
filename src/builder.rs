@@ -102,6 +102,10 @@ macro_rules! ir_ternary {
 
 pub use crate::provenance::SliceView;
 
+/// Largest compile-time exponent a float power is expanded into products for
+/// (`IRBuilder::ir_pow_f_int`); 64 needs at most 12 products.
+const MAX_UNROLLED_POWER: i64 = 64;
+
 /// IR builder that accumulates IR statements and provides typed convenience
 /// methods. Mirrors Python `IRBuilderImpl` from `builder_impl.py`.
 pub struct IRBuilder {
@@ -1870,9 +1874,56 @@ impl IRBuilder {
     ir_binary!(
         ir_floor_div_f => IR::FloorDivF,  contract = "floor_div_f",
         ir_mod_f       => IR::ModF,       contract = "mod_f",
-        ir_pow_f       => IR::PowF,       contract = "pow_f",
-        ir_pow_f_int   => IR::PowFI,      contract = "pow_f",
+        ir_pow_f_runtime     => IR::PowF,  contract = "pow_f",
+        ir_pow_f_int_runtime => IR::PowFI, contract = "pow_f",
     );
+
+    /// Float power. An integral compile-time exponent in
+    /// `0..=MAX_UNROLLED_POWER` (`x ** 2.0`) is the integer power, see
+    /// [`Self::ir_pow_f_int`].
+    pub fn ir_pow_f(&mut self, base: &Value, exp: &Value) -> Value {
+        match exp.float_val() {
+            Some(e) if e.fract() == 0.0 && (0.0..=MAX_UNROLLED_POWER as f64).contains(&e) => {
+                self.square_and_multiply_f(base, e as u32)
+            }
+            _ => self.ir_pow_f_runtime(base, exp),
+        }
+    }
+
+    /// Float base raised to an Integer exponent. A compile-time exponent
+    /// `0 <= e <= MAX_UNROLLED_POWER` is expanded into square-and-multiply
+    /// float products (`x ** 6` is three `MulF`, `x ** 0` is `1.0`); the
+    /// backends' `PowFI` lowering computes every power up to its largest
+    /// supported exponent and selects one, which only a runtime exponent
+    /// needs. Each product rounds like any other `MulF`, so the result can
+    /// differ from the one-factor-at-a-time `PowFI` product in the last Q32
+    /// bits; both are within one rounding per product of the real power.
+    /// The `pow_f` contract's requirement (`base != 0 or exp >= 0`) holds
+    /// for every non-negative exponent, so nothing is lost by not firing it.
+    pub fn ir_pow_f_int(&mut self, base: &Value, exp: &Value) -> Value {
+        match exp.int_val() {
+            Some(e) if (0..=MAX_UNROLLED_POWER).contains(&e) => {
+                self.square_and_multiply_f(base, e as u32)
+            }
+            _ => self.ir_pow_f_int_runtime(base, exp),
+        }
+    }
+
+    /// `base ** e` by square-and-multiply over the bits of `e`, most
+    /// significant first.
+    fn square_and_multiply_f(&mut self, base: &Value, e: u32) -> Value {
+        if e == 0 {
+            return self.ir_constant_float(1.0);
+        }
+        let mut acc = base.clone();
+        for bit in (0..u32::BITS - 1 - e.leading_zeros()).rev() {
+            acc = self.ir_mul_f(&acc, &acc);
+            if (e >> bit) & 1 == 1 {
+                acc = self.ir_mul_f(&acc, base);
+            }
+        }
+        acc
+    }
     /// Float `sign`. Fires the `sign_f` op contract so the output value
     /// carries the `-1.0 <= Output <= 1.0` fact for downstream
     /// resolvers.

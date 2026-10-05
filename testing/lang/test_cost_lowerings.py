@@ -147,3 +147,31 @@ def test_batcher_network_size():
     # adjacent-swap network has 1,770.
     program = compile_kernel('def kernel(a: Float[Array, "60"]):\n    return np.sort(a)\n')
     assert ir_classes(program).count("LessThanFIR") == 505
+
+
+# ── powers with a compile-time exponent ──────────────────────────────────
+
+@pytest.mark.parametrize("body", ["a ** 6", "a ** 0", "a ** 1", "a ** 2.0", "np.power(a, 3)",
+                                  "3*a**2 - 2*a**3", "a ** 13"])
+def test_constant_power_matches_numpy(body):
+    assert_matches_numpy(f'def kernel(a: Float[Array, "4"]):\n    return {body}\n',
+                         np.array([0.5, -1.25, 1.1, -0.9]), atol=1e-6)
+
+
+def test_constant_power_is_square_and_multiply():
+    # PowFI computes every power up to its maximum exponent and selects one;
+    # a compile-time exponent needs ceil(log2 e) squarings and a product per
+    # set bit: a ** 6 is three MulF.
+    program = compile_kernel('def kernel(a: Float):\n    return a ** 6\n')
+    classes = ir_classes(program)
+    assert "PowFIIR" not in classes and classes.count("MulFIR") == 3
+
+
+def test_runtime_power_keeps_powfi():
+    program = compile_kernel('def kernel(a: Float, n: Integer):\n    return a ** n\n')
+    assert "PowFIIR" in ir_classes(program)
+
+
+def test_constant_power_halo2_base_matches_mock():
+    assert_backends_agree('def kernel(a: Float[Array, "3"]):\n    return a ** 6\n',
+                          np.array([0.5, -1.25, 1.1]))
