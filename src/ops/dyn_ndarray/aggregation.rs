@@ -77,6 +77,30 @@ pub fn dyn_mean(b: &mut IRBuilder, data: &DynamicNDArrayData, axis: Option<&Valu
     }
 }
 
+/// Whether `agg` has no identity element: NumPy raises `ValueError` for
+/// it on an empty array (or an empty reduced axis).
+fn needs_non_empty(agg: DynAggKind) -> bool {
+    matches!(agg, DynAggKind::Max | DynAggKind::Min | DynAggKind::Argmax | DynAggKind::Argmin)
+}
+
+/// Require `extent > 0` for a reduction without an identity: NumPy raises
+/// on `max`/`min`/`argmax`/`argmin` of an empty array, so an empty input
+/// must have no proof. `extent` is a runtime length or axis size, never
+/// negative, so the check is `extent != 0`. No IR when `extent` is a
+/// positive constant or the facts bound it below by 1.
+fn require_non_empty(b: &mut IRBuilder, extent: &crate::types::ScalarValue<i64>) {
+    if extent.static_val.is_some_and(|n| n > 0) {
+        return;
+    }
+    let extent_v = scalar_to_value_i(b, extent);
+    if b.ask_bounds(&extent_v).is_some_and(|(min, _)| min >= 1) {
+        return;
+    }
+    let zero = b.ir_constant_int(0);
+    let non_empty = b.ir_not_equal_i(&extent_v, &zero);
+    b.ir_assert(&non_empty);
+}
+
 /// Full reduction (axis=None): reduce all elements to a scalar.
 ///
 /// **Bounded-aware iteration (multi-dim Case B Tier 2).** Two paths:
@@ -107,16 +131,16 @@ pub fn dyn_mean(b: &mut IRBuilder, data: &DynamicNDArrayData, axis: Option<&Valu
 ///   the accumulator untouched for inactive slots, which is sound because
 ///   the only update path requires `is_active`.
 ///
-/// **Strict mode** (`ZINNIA_BOUNDED_AXIS_STRICT=1`): for
-/// max/min/argmax/argmin on a bounded array, emit
-/// `ir_assert(runtime_length > 0)` before the loop — the first-active
-/// pattern's `buffer[0]` initial value is only meaningful when the active
-/// region is non-empty.
-///
-/// **Empty active region (lenient mode).** When `prod(runtime_shape) == 0`
-/// for max/min/argmax/argmin, `acc = buffer[0]` is the segment-init value
-/// (typically `0`); `argmax/argmin` return `0`. Documented; not asserted.
+/// **Empty input.** max/min/argmax/argmin have no identity and NumPy raises
+/// on an empty array, so `runtime_length != 0` is required first
+/// (`require_non_empty`) for every lowering below; the first-active
+/// pattern's `buffer[0]` initial value is then always an element. (It used
+/// to be checked only under `ZINNIA_BOUNDED_AXIS_STRICT=1`, and an empty
+/// array proved max = 0.)
 pub fn dyn_aggregate_all(b: &mut IRBuilder, data: &DynamicNDArrayData, agg: DynAggKind) -> Value {
+    if needs_non_empty(agg) {
+        require_non_empty(b, &data.meta.runtime_length);
+    }
     // Compaction-scan fast path: min/max over a sorted compaction
     // (flatnonzero/nonzero outputs) is a first/last-set-bit scan over the
     // (keep, source) pairs — O(N) selects, NO reads of the compacted
@@ -355,24 +379,11 @@ fn lower_dyn_prod_one(b: &mut IRBuilder, inputs: &DynAggAllInputs) -> Value {
 ///   argmax(arr) = runtime_length - 1
 ///   argmin(arr) = 0
 ///
-/// Strict-mode invariant for max/argmax: the `len - 1` read could wrap to
-/// a negative address when `runtime_length == 0`, so emit an `ir_assert`
-/// when `ZINNIA_BOUNDED_AXIS_STRICT=1`. For min/argmin the empty-array
-/// case yields the segment-init value at index 0, which matches the
-/// existing first-active pattern's empty-case semantics — no extra
-/// assertion needed.
+/// `dyn_aggregate_all` has already required `runtime_length != 0`, so the
+/// `len - 1` read is in range.
 fn lower_boundary_read_on_sorted(b: &mut IRBuilder, inputs: &DynAggAllInputs) -> Value {
     let DynAggAllInputs { data, agg } = inputs;
     let agg = *agg;
-
-    if matches!(agg, DynAggKind::Max | DynAggKind::Argmax)
-        && crate::helpers::array_ops::bounded_axis_strict()
-    {
-        let runtime_length_v = scalar_to_value_i(b, &data.meta.runtime_length);
-        let zero = b.ir_constant_int(0);
-        let gt = b.ir_greater_than_i(&runtime_length_v, &zero);
-        b.ir_assert(&gt);
-    }
 
     let runtime_length_v = scalar_to_value_i(b, &data.meta.runtime_length);
     let len_arr_vid = runtime_length_v.value_id();
@@ -451,19 +462,6 @@ fn lower_dyn_aggregate_all_generic(b: &mut IRBuilder, inputs: &DynAggAllInputs) 
         .enumerate()
         .any(|(i, s)| s.static_val != Some(data.meta.logical_shape[i] as i64));
     let compact_buffer = data.envelope.total_bound < dyn_num_elements(&data.meta.logical_shape);
-
-    if any_bounded
-        && matches!(
-            agg,
-            DynAggKind::Max | DynAggKind::Min | DynAggKind::Argmax | DynAggKind::Argmin
-        )
-        && crate::helpers::array_ops::bounded_axis_strict()
-    {
-        let runtime_length_v = scalar_to_value_i(b, &data.meta.runtime_length);
-        let zero = b.ir_constant_int(0);
-        let gt = b.ir_greater_than_i(&runtime_length_v, &zero);
-        b.ir_assert(&gt);
-    }
 
     let strides = dyn_row_major_strides(&data.meta.logical_shape);
 
@@ -907,6 +905,9 @@ pub fn dyn_aggregate_axis(
         )
     {
         panic!("Complex DynamicNDArray does not support ordered reductions");
+    }
+    if needs_non_empty(agg) {
+        require_non_empty(b, &data.meta.runtime_shape[ax]);
     }
 
     // Fast path: `argwhere(A).min(axis=0)` / `.max(axis=0)`. The argwhere

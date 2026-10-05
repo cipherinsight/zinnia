@@ -158,3 +158,25 @@ def test_merged_compact_and_padded_arms_are_rejected():
     with pytest.raises(Exception, match="runtime `if`"):
         compile_kernel(source)
 
+
+# ── reductions without an identity on an empty runtime-shaped array ──────
+# NumPy raises ValueError; the circuit proved 0.
+
+@pytest.mark.parametrize("expr", ["y.max()", "y.min()", "y.argmax()", "y.argmin()", "np.max(y)"])
+def test_reduction_of_empty_filter_has_no_proof(expr):
+    source = f'def kernel(x: Integer[Array, "6"], t: Integer):\n    y = x[x > t]\n    return {expr}\n'
+    x = np.array([1, 5, 2, 7, 3, 0])
+    with pytest.raises(ValueError):
+        numpy_kernel(source)(x.copy(), 100)
+    program = compile_kernel(source)
+    assert not run_mock(program, x, 100)[0]
+    satisfied, outputs = run_mock(program, x, 3)
+    assert satisfied and outputs == [numpy_kernel(source)(x.copy(), 3)]
+
+
+def test_axis_reduction_over_empty_runtime_axis_has_no_proof():
+    source = ('def kernel(x: Float[Array, "4 3"], n: Integer):\n'
+              '    return x[:n, :].max(axis=0)\n')
+    x = np.arange(12.0).reshape(4, 3)
+    assert_matches_numpy(source, x, 2)
+    assert not run_mock(compile_kernel(source), x, 0)[0]
