@@ -7,7 +7,7 @@ import numpy
 
 @zk_circuit
 @requires(lambda var, dh2: dh2 != 0.0)
-def laplacian(var: Float[Array, '8'], dh2: Float):
+def laplacian(var: Float[Array, '16'], dh2: Float):
     """ (1D array, dx^2) -> laplacian(1D array)
     periodic_laplacian_1D_4th_order
     Implementing the 4th order 1D laplacian with periodic condition

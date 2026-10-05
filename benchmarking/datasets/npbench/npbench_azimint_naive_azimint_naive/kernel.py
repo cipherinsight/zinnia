@@ -7,7 +7,7 @@ import numpy as np
 
 @zk_circuit
 @requires(lambda data, radius, npt: npt != 0)
-def azimint_naive(data: Float[Array, '400000'], radius: Float[Array, '400000'], npt: Integer):
+def azimint_naive(data: Float[Array, '16'], radius: Float[Array, '16'], npt: Integer):
     rmax = radius.max()
     res = np.zeros(npt, dtype=np.float64)
     for i in range(npt):

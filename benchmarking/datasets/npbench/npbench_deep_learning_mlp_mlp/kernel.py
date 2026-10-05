@@ -17,7 +17,7 @@ def softmax(x):
     return tmp_out / tmp_sum
 
 @zk_circuit
-def mlp(input: Float[Array, '8 3'], w1: Float[Array, '3 30000'], b1: Float[Array, '30000'], w2: Float[Array, '30000 2000'], b2: Float[Array, '2000'], w3: Float[Array, '2000 2000'], b3: Float[Array, '2000']):
+def mlp(input: Float[Array, '2 2'], w1: Float[Array, '2 16'], b1: Float[Array, '16'], w2: Float[Array, '16 2'], b2: Float[Array, '2'], w3: Float[Array, '2 2'], b3: Float[Array, '2']):
     x = relu(input @ w1 + b1)
     x = relu(x @ w2 + b2)
     x = softmax(x @ w3 + b3)

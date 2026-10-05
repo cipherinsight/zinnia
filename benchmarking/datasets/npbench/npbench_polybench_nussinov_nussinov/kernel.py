@@ -13,7 +13,7 @@ def match(b1, b2):
         return 0
 
 @zk_circuit
-def kernel(N: Integer, seq: Integer[Array, '40']):
+def kernel(N: Integer, seq: Integer[Array, '14']):
     table = np.zeros((N, N), np.int32)
     for i in range(N - 1, -1, -1):
         for j in range(i + 1, N):

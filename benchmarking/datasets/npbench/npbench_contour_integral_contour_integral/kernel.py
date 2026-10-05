@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def contour_integral(NR: Integer, NM: Integer, slab_per_bc: Integer, Ham: Complex[Array, '3 50 50'], int_pts: Complex[Array, '32'], Y: Complex[Array, '50 150']):
+def contour_integral(NR: Integer, NM: Integer, slab_per_bc: Integer, Ham: Complex[Array, '3 5 5'], int_pts: Complex[Array, '4'], Y: Complex[Array, '5 15']):
     P0 = np.zeros((NR, NM), dtype=np.complex128)
     P1 = np.zeros((NR, NM), dtype=np.complex128)
     for z in int_pts:

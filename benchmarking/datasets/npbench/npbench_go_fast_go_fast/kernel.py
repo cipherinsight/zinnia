@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def go_fast(a: Float[Array, '2000 2000']):
+def go_fast(a: Float[Array, '16 16']):
     trace = 0.0
     for i in range(a.shape[0]):
         trace += np.tanh(a[i, i])

@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def train_eq(E: Complex[Array, '1 100'], TrSyms: Integer, os: Integer, mu: Float, wx: Complex[Array, '1 10'], errfctprs: Tuple[Complex, Complex[Array, '4']], adapt: Boolean):
+def train_eq(E: Complex[Array, '1 16'], TrSyms: Integer, os: Integer, mu: Float, wx: Complex[Array, '1 10'], errfctprs: Tuple[Complex, Complex[Array, '4']], adapt: Boolean):
     Ntaps = wx.shape[1]
     pols = wx.shape[0]
     R, symbs = errfctprs
@@ -24,7 +24,7 @@ def train_eq(E: Complex[Array, '1 100'], TrSyms: Integer, os: Integer, mu: Float
     return (err, wx, mu)
 
 @zk_circuit
-def train_eq2(E: Complex[Array, '1 100'], TrSyms: Integer, os: Integer, mu: Float, wx: Complex[Array, '1 10'], errfctprs: Tuple[Complex, Complex[Array, '4']], adapt: Boolean):
+def train_eq2(E: Complex[Array, '1 16'], TrSyms: Integer, os: Integer, mu: Float, wx: Complex[Array, '1 10'], errfctprs: Tuple[Complex, Complex[Array, '4']], adapt: Boolean):
     Ntaps = wx.shape[1]
     pols = wx.shape[0]
     R, symbs = errfctprs

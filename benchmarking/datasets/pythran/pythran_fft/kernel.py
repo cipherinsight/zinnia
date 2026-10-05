@@ -6,7 +6,7 @@ from zinnia import *
 import math, numpy as np
 
 @zk_circuit
-def fft(x: Complex[Array, '1024']):
+def fft(x: Complex[Array, '16']):
     N = x.shape[0]
     if N == 1:
         return np.array(x)

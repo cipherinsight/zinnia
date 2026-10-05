@@ -8,7 +8,7 @@ import math
 @zk_circuit
 @requires(lambda xmin, xmax, numSteps, rand, randsize: numSteps != 0)
 @requires(lambda xmin, xmax, numSteps, rand, randsize: randsize != 0)
-def montecarlo_integration(xmin: Float, xmax: Float, numSteps: Integer, rand: Float[Array, '100'], randsize: Integer):
+def montecarlo_integration(xmin: Float, xmax: Float, numSteps: Integer, rand: Float[Array, '16'], randsize: Integer):
 
     def f(x):
         return math.sin(x)

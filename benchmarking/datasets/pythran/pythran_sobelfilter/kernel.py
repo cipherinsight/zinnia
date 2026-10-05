@@ -5,7 +5,7 @@
 from zinnia import *
 
 @zk_circuit
-def sobelFilter(original_image: Integer[Array, '10000'], cols: Integer, rows: Integer):
+def sobelFilter(original_image: Integer[Array, '16'], cols: Integer, rows: Integer):
     edge_image = list(range(len(original_image)))
     for i in range(rows):
         edge_image[i * cols] = 255

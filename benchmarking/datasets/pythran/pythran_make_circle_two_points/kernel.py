@@ -69,7 +69,7 @@ def make_circle_two_points(points, p, q):
         return left if left[2] <= right[2] else right
 
 @zk_circuit
-def _make_circle_one_point(points: Float[Array, '8 2'], p: Tuple[Float, Float]):
+def _make_circle_one_point(points: Float[Array, '3 2'], p: Tuple[Float, Float]):
     c = (p[0], p[1], 0.0)
     for i, q in enumerate(points):
         if not is_in_circle(c, q):

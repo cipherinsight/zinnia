@@ -6,5 +6,5 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def kernel(A: Float[Array, '4000 5000'], x: Float[Array, '5000']):
+def kernel(A: Float[Array, '13 16'], x: Float[Array, '16']):
     return A @ x @ A

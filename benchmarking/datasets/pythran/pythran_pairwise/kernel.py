@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def pairwise(X: Float[Array, '200 100']):
+def pairwise(X: Float[Array, '16 8']):
     M, N = X.shape
     D = np.empty((M, M))
     for i in range(M):

@@ -6,5 +6,5 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def kernel(NR: Integer, NQ: Integer, NP: Integer, A: Float[Array, '60 60 128'], C4: Float[Array, '128 128']):
+def kernel(NR: Integer, NQ: Integer, NP: Integer, A: Float[Array, '8 8 16'], C4: Float[Array, '16 16']):
     A[:] = np.reshape(np.reshape(A, (NR, NQ, 1, NP)) @ C4, (NR, NQ, NP))

@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def rosen(x: Float[Array, '1000']):
+def rosen(x: Float[Array, '16']):
     t0 = 100 * (x[1:] - x[:-1] ** 2) ** 2
     t1 = (1 - x[:-1]) ** 2
     return np.sum(t0 + t1)

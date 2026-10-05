@@ -5,7 +5,7 @@
 from zinnia import *
 
 @zk_circuit
-def permutations(iterable: Integer[Array, '5']):
+def permutations(iterable: Integer[Array, '4']):
     """permutations(range(3), 2) --> (0,1) (0,2) (1,0) (1,2) (2,0) (2,1)"""
     out = []
     pool = tuple(iterable)
