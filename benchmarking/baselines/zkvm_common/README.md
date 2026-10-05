@@ -57,6 +57,36 @@ flips one bit of the last public output byte; the run succeeds only if
 verification rejects the proof. Keys and proofs live in `--work-dir`
 (default `<system>/work/<case>/`, git-ignored).
 
+## Proof modes and resources
+
+Measured on this machine (Ryzen 7 9800X3D, CPU only) on the calibration
+program `empty_program` and case 0300; `peak_rss_mib` in every JSON report
+gives the figure per run. Use one heavy job at a time.
+
+| System | Mode | What it is | Peak memory | Notes |
+|---|---|---|---|---|
+| SP1 6.8.1 | `setup` | `CpuProver::new()` + `setup(elf)` | 7.1 GB | prover start-up alone is 18-21 s (`client_init`), reported apart |
+| SP1 | `core` | one STARK per execution shard | 9.7 GB | ~16 s for 4.8k-6.7k cycles (mostly fixed cost); proof 2.8 MB |
+| SP1 | `compressed` | shards recursively compressed to one STARK | 17.1 GB | 60 s for 0300; proof 1.3 MB; needs a cap above 16 GB |
+| SP1 | `groth16` | compressed proof wrapped in Groth16 over BN254 (gnark linked in-process, `native-gnark`) | > 17.8 GB before the gnark step (measured); not yet run to completion | first use downloads 6.2 GB of circuit artifacts to `~/.sp1/circuits/groth16/v6.1.0`; run alone with a cap of at least 32 GB |
+| SP1 | `verify` | `LightProver` | < 0.1 GB | 40-70 ms |
+| RISC Zero 3.0.3 | `composite` | one STARK per segment (2^15-2^16 cycles here) | 0.3-0.6 GB | 2.6 s (empty), 5.9 s (0300); receipt ~220 KB |
+| RISC Zero | `succinct` | segments compressed to one STARK by recursion | 1.4 GB | composite + 9-10 s |
+| RISC Zero | `groth16` | succinct receipt wrapped in Groth16 (Docker image `risczero/risc0-groth16-prover:v2025-04-03.1`) | not measured | the Docker step runs outside this process and outside `memrun.sh`'s cgroup, so `peak_rss_mib` does not include it; not yet run |
+| RISC Zero | `verify` | `Receipt::verify` | < 0.1 GB | 10-20 ms |
+| Cairo (Scarb 2.20.1) | `stwo` | `scarb execute --target bootloader` + `scarb prove` (Stwo) | 13.7-13.9 GB | 14-19 s even for the empty program (fixed cost); JSON proof ~11 MB |
+| Cairo | `verify` | `scarb verify` | < 0.1 GB | 30-55 ms wall clock including process start-up |
+
+Why Groth16 for SP1's SNARK mode (rather than PLONK): gnark's Groth16 prover
+does less work than its PLONK prover on the same circuit, so it is expected to
+be the faster wrap (not measured here), and its proof is the smaller one
+(SP1 documents about 260 bytes against about 870), so it is the stronger
+baseline. It is also the only SNARK wrapper RISC Zero offers, so both zkVMs end
+in the same kind of proof. Its cost is a larger one-time download (6.2 GB
+against 2.3 GB for PLONK). The submitted paper measured SP1's PLONK wrap; the
+mode is one enum value away (`SP1ProofMode::Plonk`) if that series is wanted
+too.
+
 ## Writing a case
 
 A case has the same parameters, shapes, constants and algorithm as
