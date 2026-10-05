@@ -2,4 +2,5 @@
 //! Each case is `datasets/ds1000/<case>/main.cairo`, linked in as
 //! `src/cases/<case>.cairo`, with one executable target per case.
 pub mod cases;
+pub mod np;
 pub mod q32;

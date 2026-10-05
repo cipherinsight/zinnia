@@ -4,7 +4,8 @@
 //!         result = np.percentile(a, p)
 //!         return result
 // output: q32
-use crate::q32::{Q32, Q32Trait, sort};
+use crate::np::sort;
+use crate::q32::{Q32, Q32Trait};
 
 const N: u32 = 20;
 

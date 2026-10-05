@@ -70,9 +70,18 @@ pub use cases::*;
 
 /// What every case module imports.
 pub mod prelude {
-    pub use crate::{Input, Shaped};
+    pub use crate::{np_index, Input, Shaped};
     pub use alloc::{vec, vec::Vec};
     pub use q32::{dot, int::floor_div, int::floor_mod, Q32};
+}
+
+/// A Python/NumPy index into an axis of length `len`: negative indices count
+/// from the end; anything outside `[-len, len)` panics like NumPy's
+/// `IndexError`.
+pub fn np_index(i: i64, len: usize) -> usize {
+    let n = len as i64;
+    assert!(-n <= i && i < n, "index out of range");
+    (if i < 0 { i + n } else { i }) as usize
 }
 
 /// The private input stream of a guest: the kernel parameters in signature

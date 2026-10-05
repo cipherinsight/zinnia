@@ -230,49 +230,9 @@ impl Q32PartialOrd of PartialOrd<Q32> {
     }
 }
 
-/// Stable merge sort (Cairo arrays are append-only, so sorting builds new
-/// arrays).
-pub fn sort<T, +Copy<T>, +Drop<T>, +PartialOrd<T>>(values: Span<T>) -> Array<T> {
-    if values.len() <= 1 {
-        let mut out = array![];
-        for v in values {
-            out.append(*v);
-        }
-        return out;
-    }
-    let mid = values.len() / 2;
-    let left = sort(values.slice(0, mid));
-    let right = sort(values.slice(mid, values.len() - mid));
-    merge(left.span(), right.span())
-}
-
-fn merge<T, +Copy<T>, +Drop<T>, +PartialOrd<T>>(left: Span<T>, right: Span<T>) -> Array<T> {
-    let mut out = array![];
-    let mut i = 0;
-    let mut j = 0;
-    while i < left.len() && j < right.len() {
-        if *right.at(j) < *left.at(i) {
-            out.append(*right.at(j));
-            j += 1;
-        } else {
-            out.append(*left.at(i));
-            i += 1;
-        }
-    }
-    while i < left.len() {
-        out.append(*left.at(i));
-        i += 1;
-    }
-    while j < right.len() {
-        out.append(*right.at(j));
-        j += 1;
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{ONE, Q32, Q32Trait, sort};
+    use super::{ONE, Q32, Q32Trait};
 
     #[test]
     fn rescaling_floors() {
@@ -282,11 +242,5 @@ mod tests {
         assert!(-half * eps == Q32 { bits: -1 });
         assert!(-ONE / Q32Trait::from_int(3) == Q32 { bits: -1431655766 });
         assert!(Q32Trait::from_int(-7).div_int(2) == Q32 { bits: -15032385536 });
-    }
-
-    #[test]
-    fn sorts() {
-        let sorted = sort(array![3_i64, -1, 2, -1, 0].span());
-        assert!(sorted == array![-1, -1, 0, 2, 3]);
     }
 }
