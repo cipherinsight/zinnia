@@ -157,3 +157,31 @@ def test_unenforceable_precondition_is_a_compile_error():
 
     with pytest.raises(ZinniaException, match="cannot be enforced"):
         ZKCircuit.from_method(kernel).compile()
+
+
+@zk_circuit
+@requires(lambda n: n >= 0)
+@requires(lambda n: n <= 5)
+def write_then_sum_1d(n: int, expected: int):
+    a = np.zeros(n, dtype=int)
+    a[1] = 5
+    assert a.sum() == expected
+
+
+@zk_circuit
+@requires(lambda n: n >= 0)
+@requires(lambda n: n <= 5)
+def write_then_sum_2d(n: int, expected: int):
+    a = np.zeros((3, n), dtype=int)
+    a[1, 0] = 5
+    assert a.sum() == expected
+
+
+@pytest.mark.parametrize("fn", [write_then_sum_1d, write_then_sum_2d])
+@pytest.mark.parametrize("n", [3, 5])
+def test_content_facts_do_not_survive_a_write(fn, n):
+    # The "all zeros" fact of `np.zeros` stayed attached to the array after
+    # the in-place write (same identity), so `a.sum()` folded to 0: the
+    # false claim 0 was accepted and the true sum 5 rejected.
+    assert prove(fn, n, 5)[0]
+    assert not prove(fn, n, 0)[0]

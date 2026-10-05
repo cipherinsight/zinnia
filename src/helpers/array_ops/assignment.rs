@@ -49,7 +49,18 @@ pub fn dyn_setitem(
     let write_val = cast_to_dtype(b, value, data.dtype);
     crate::helpers::segment::write_typed(b, data.segment_id, &addr, &write_val, data.dtype);
 
-    Value::DynamicNDArray(data.clone())
+    after_write(data)
+}
+
+/// The array after an in-place write: same storage, new identity. Facts
+/// about the contents are keyed by the array's `ValueId`; keeping the old
+/// id kept them in force after the write (`np.zeros(n)` then `a[1] = 5`
+/// still summed to the constant 0).
+fn after_write(data: &DynamicNDArrayData) -> Value {
+    Value::DynamicNDArray(DynamicNDArrayData {
+        value_id: ValueId::next(),
+        ..data.clone()
+    })
 }
 
 fn read_index_array_elements(b: &mut IRBuilder, src: &Value) -> Vec<Value> {
@@ -729,7 +740,7 @@ pub fn dyn_setitem_slice(
         }
     }
 
-    Value::DynamicNDArray(data.clone())
+    after_write(data)
 }
 
 fn cast_to_dtype(b: &mut IRBuilder, v: &Value, dtype: NumberType) -> Value {
