@@ -9,31 +9,6 @@
 //! ```
 use crate::prelude::*;
 
-/// `np.arctan2(y, x)`: the angle of `(x, y)` in `[-pi, pi]`, from `atan` of
-/// the smaller over the larger magnitude (no overflow, and the argument stays
-/// in `[0, 1]`). `arctan2(0, 0)` is 0.
-fn atan2(y: Q32, x: Q32) -> Q32 {
-    if x == Q32::ZERO && y == Q32::ZERO {
-        return Q32::ZERO;
-    }
-    let (ay, ax) = (y.abs(), x.abs());
-    let first_quadrant = if ay <= ax {
-        (ay / ax).atan()
-    } else {
-        Q32::FRAC_PI_2 - (ax / ay).atan()
-    };
-    let angle = if x.is_negative() {
-        Q32::PI - first_quadrant
-    } else {
-        first_quadrant
-    };
-    if y.is_negative() {
-        -angle
-    } else {
-        angle
-    }
-}
-
 pub mod arc_distance {
     use super::*;
 
@@ -51,7 +26,7 @@ pub mod arc_distance {
             .map_collect(|&t1, &p1, &t2, &p2| {
                 let (dt, dp) = (((t2 - t1) / 2).sin(), ((p2 - p1) / 2).sin());
                 let temp = dt * dt + t1.cos() * t2.cos() * (dp * dp);
-                atan2(temp.sqrt(), (Q32::ONE - temp).sqrt()) * 2
+                temp.sqrt().atan2((Q32::ONE - temp).sqrt()) * 2
             })
     }
 }

@@ -24,30 +24,6 @@
 //! ```
 use crate::prelude::*;
 
-/// `atan2(y, x)`, the argument of `x + iy` in `[-pi, pi]`, from `Q32::atan`
-/// of a ratio of magnitude at most 1.
-fn atan2(y: Q32, x: Q32) -> Q32 {
-    if x == Q32::ZERO && y == Q32::ZERO {
-        return Q32::ZERO;
-    }
-    let (ax, ay) = (x.abs(), y.abs());
-    let first_quadrant = if ay <= ax {
-        (ay / ax).atan()
-    } else {
-        Q32::FRAC_PI_2 - (ax / ay).atan()
-    };
-    let upper_half = if x.is_negative() {
-        Q32::PI - first_quadrant
-    } else {
-        first_quadrant
-    };
-    if y.is_negative() {
-        -upper_half
-    } else {
-        upper_half
-    }
-}
-
 /// `np.power(z, p)` for a complex `z` and a real exponent `p`, as NumPy's
 /// `npy_cpow` computes it: 1 for `p == 0`; 0 for `z == 0` and `p > 0`; for
 /// an integer `p` with `|p| < 100`, binary powering by complex products,
@@ -75,7 +51,7 @@ fn power(z: C32, p: Q32) -> C32 {
         }
         return if n < 0 { C32::ONE / result } else { result };
     }
-    let log = C32::new(z.abs().ln(), atan2(z.im, z.re));
+    let log = C32::new(z.abs().ln(), z.im.atan2(z.re));
     (log * p).exp()
 }
 

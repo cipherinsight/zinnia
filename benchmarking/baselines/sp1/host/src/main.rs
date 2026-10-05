@@ -154,7 +154,7 @@ fn execute(report: &mut Report, elf: Elf, args: &CommonArgs) -> Result<()> {
     let client = report.time("client_init", LightProver::new);
     let (public_values, execution) =
         report.time("execute", || client.execute(elf, stdin).run()).context("execution")?;
-    record_cycles(report, &execution);
+    record_execution(report, &execution)?;
     args.report_committed(report, &committed_words(&public_values)?)?;
     Ok(())
 }
@@ -170,7 +170,7 @@ fn prove(report: &mut Report, elf: Elf, cli: &Cli, work: &WorkFiles) -> Result<(
 
     let (_, execution) =
         report.time("execute", || client.execute(elf, stdin(args)?).run().map_err(anyhow::Error::from))?;
-    record_cycles(report, &execution);
+    record_execution(report, &execution)?;
 
     let stdin = stdin(args)?;
     let proof = report
@@ -211,16 +211,22 @@ fn verify(report: &mut Report, cli: &Cli, work: &WorkFiles) -> Result<()> {
     }
 }
 
-fn record_cycles(report: &mut Report, execution: &sp1_sdk::ExecutionReport) {
+/// Records the execution's size, and fails if the guest did not exit
+/// normally: SP1's executor returns a guest panic as an execution with a
+/// nonzero exit code (and whatever was committed before it), not as an
+/// error.
+fn record_execution(report: &mut Report, execution: &sp1_sdk::ExecutionReport) -> Result<()> {
+    if execution.exit_code != 0 {
+        bail!("guest panicked (exit code {})", execution.exit_code);
+    }
     report.set("cycles", execution.total_instruction_count());
     report.set("syscalls", execution.total_syscall_count());
     if let Some(gas) = execution.gas() {
         report.set("gas", gas);
     }
+    Ok(())
 }
 
-/// Decodes the committed output: the bincode encoding `sp1_zkvm::io::commit`
-/// writes, with no bytes left over.
 /// The words the guest committed as its public values.
 fn committed_words(public_values: &SP1PublicValues) -> Result<Vec<i64>> {
     words_from_le_bytes(public_values.as_slice()).context("the public values are not a whole number of words")

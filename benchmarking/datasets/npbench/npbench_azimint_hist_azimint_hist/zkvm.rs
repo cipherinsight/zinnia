@@ -12,30 +12,6 @@
 //! division panics there.
 use crate::prelude::*;
 
-/// `np.linspace(start, stop, num)`: `start + k * step` with
-/// `step = (stop - start) / (num - 1)`, and the last point exactly `stop`.
-fn linspace(start: Q32, stop: Q32, num: i64) -> Array1<Q32> {
-    let len = usize::try_from(num).expect("Number of samples must be non-negative");
-    let (div, delta) = (num - 1, stop - start);
-    let mut y: Array1<Q32> = if div <= 0 {
-        Array1::from_elem(len, start)
-    } else {
-        let step = delta / div;
-        if step == Q32::ZERO {
-            // NumPy's path for a step that rounds to zero: `k / div * delta`.
-            (0..num)
-                .map(|k| Q32::from_int(k) / div * delta + start)
-                .collect()
-        } else {
-            (0..num).map(|k| step * k + start).collect()
-        }
-    };
-    if len > 1 {
-        y[len - 1] = stop;
-    }
-    y
-}
-
 pub mod azimint_hist {
     use super::*;
 
@@ -61,7 +37,7 @@ pub mod azimint_hist {
             let half = Q32::ONE / 2;
             (first, last) = (first - half, last + half);
         }
-        let edges = linspace(first, last, npt + 1).to_vec();
+        let edges = np::linspace(first, last, npt + 1).to_vec();
         let bins = npt as usize;
         // A value falls in the last bin whose left edge it reaches (so the
         // last bin also holds the right edge): the number of interior edges

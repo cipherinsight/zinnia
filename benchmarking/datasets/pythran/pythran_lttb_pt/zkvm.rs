@@ -35,9 +35,6 @@
 //! ```
 use crate::prelude::*;
 
-/// `0.5`, exact in Q32.
-const HALF: Q32 = Q32::from_bits(1 << 31);
-
 /// The row ranges of `np.array_split` of `len` rows into `sections` parts:
 /// the first `len % sections` parts have one row more.
 fn array_split(len: usize, sections: usize) -> Vec<core::ops::Range<usize>> {
@@ -96,7 +93,7 @@ pub mod downsample {
             let areas: Vec<Q32> = bin
                 .clone()
                 .map(|r| {
-                    HALF * ((a0 - c0) * (data[(r, 1)] - a1) - (a0 - data[(r, 0)]) * (c1 - a1)).abs()
+                    Q32::HALF * ((a0 - c0) * (data[(r, 1)] - a1) - (a0 - data[(r, 0)]) * (c1 - a1)).abs()
                 })
                 .collect();
             let chosen = bin.start + np::argmax(&areas);

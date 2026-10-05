@@ -103,7 +103,7 @@ pub mod resnet_basicblock {
         let mut padded = Array4::<Q32>::zeros((n, h + 2, w + 2, conv1.len_of(Axis(3))));
         // `assign` broadcasts like NumPy's slice assignment.
         padded
-            .slice_mut(s![.., 1..-1, 1..-1, ..])
+            .slice_mut(s![.., 1..h + 1, 1..w + 1, ..])
             .assign(&conv2d(&input, &conv1));
         let x = relu(batchnorm2d(padded));
         let x = relu(batchnorm2d(conv2d(&x, &conv2)));

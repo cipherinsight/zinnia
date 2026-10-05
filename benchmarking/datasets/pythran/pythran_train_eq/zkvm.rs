@@ -23,40 +23,8 @@
 //! def train_eq2(...):
 //!     (the same body)
 //! ```
-use core::ops::Range;
 
 use crate::prelude::*;
-
-/// The indices that the slice `start:stop` selects on an axis of length
-/// `len` (Python slicing: negative bounds count from the end, bounds are
-/// clipped to the axis, and `stop <= start` selects nothing).
-fn py_slice(start: i64, stop: i64, len: usize) -> Range<usize> {
-    let n = len as i64;
-    let clip = |i: i64| (if i < 0 { (i + n).max(0) } else { i.min(n) }) as usize;
-    let (start, stop) = (clip(start), clip(stop));
-    start..stop.max(start)
-}
-
-/// `np.float32(x)`: `x` rounded to the nearest float32, i.e. to 24
-/// significant bits, ties to even. Every nonzero Q32 value lies in float32's
-/// normal range, so only the significand is rounded.
-fn round_to_f32(x: Q32) -> Q32 {
-    let magnitude = x.to_bits().unsigned_abs();
-    let width = u64::BITS - magnitude.leading_zeros();
-    if width <= 24 {
-        return x;
-    }
-    let shift = width - 24;
-    let (kept, dropped) = (magnitude >> shift, magnitude & ((1 << shift) - 1));
-    let half = 1 << (shift - 1);
-    let kept = if dropped > half || (dropped == half && kept & 1 == 1) {
-        kept + 1
-    } else {
-        kept
-    };
-    let rounded = (kept << shift) as i64;
-    Q32::from_bits(if x.is_negative() { -rounded } else { rounded })
-}
 
 /// Both entry functions: reads the parameters and runs the training loop.
 fn train(args: &mut Args<impl Input>) -> (Array1<C32>, Array2<C32>, Q32) {
@@ -77,7 +45,7 @@ fn train(args: &mut Args<impl Input>) -> (Array1<C32>, Array2<C32>, Q32) {
     );
     for i in 0..err.len() {
         let start = i as i64 * os;
-        let window = e.slice(s![.., py_slice(start, start + ntaps, e.ncols())]);
+        let window = e.slice(s![.., np::slice_range(start, start + ntaps, e.ncols())]);
         // `wx += ... * X` needs X to broadcast to wx's shape.
         let x = window
             .broadcast(wx.dim())
@@ -95,7 +63,9 @@ fn train(args: &mut Args<impl Input>) -> (Array1<C32>, Array2<C32>, Q32) {
             let same_signs = err_i.re * prev.re > Q32::ZERO && err_i.im * prev.im > Q32::ZERO;
             if !same_signs {
                 let power = err_i.re * err_i.re + err_i.im * err_i.im;
-                mu = round_to_f32(mu / (Q32::ONE + mu * power));
+                // `np.float32(...)` is the identity: Q32 is the one float type,
+                // as in Zinnia.
+                mu = mu / (Q32::ONE + mu * power);
             }
         }
     }

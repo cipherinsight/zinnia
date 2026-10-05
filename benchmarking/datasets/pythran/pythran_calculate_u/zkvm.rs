@@ -26,9 +26,6 @@
 //! boundary is 0.0).
 use crate::prelude::*;
 
-/// `0.5`, exact in Q32.
-const HALF: Q32 = Q32::from_bits(1 << 31);
-
 /// One `calculate_u` step: the new interior from `u` and `um`, with a zero
 /// boundary. `cx`, `cy` are `(dt / dx) ** 2` and `(dt / dy) ** 2`. The
 /// integer inputs enter as exact Q32 values (`2 * u - um` and the integer
@@ -43,7 +40,7 @@ fn calculate_u(
     let (rows, cols) = u.dim();
     let mut up = Array2::<Q32>::zeros((rows, cols));
     // `0.5 * (k1 + k2) * (u1 - u2)`: the integer sum of `k`, halved exactly.
-    let flux = |k1: i64, k2: i64, du: Q32| HALF * Q32::from_int(k1 + k2) * du;
+    let flux = |k1: i64, k2: i64, du: Q32| Q32::HALF * Q32::from_int(k1 + k2) * du;
     for i in 1..rows.saturating_sub(1) {
         for j in 1..cols.saturating_sub(1) {
             let (kc, uc) = (k[(i, j)], u[(i, j)]);

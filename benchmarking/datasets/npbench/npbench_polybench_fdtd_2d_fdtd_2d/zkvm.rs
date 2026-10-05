@@ -11,7 +11,6 @@
 //! ```
 use crate::prelude::*;
 
-const HALF: Q32 = Q32::from_bits(1 << 31); // 0.5
 const C_HZ: Q32 = Q32::from_bits(3_006_477_107); // 0.7
 
 pub mod kernel {
@@ -35,12 +34,12 @@ pub mod kernel {
             ey.row_mut(0).fill(fict[t]);
             for i in 1..rows {
                 for j in 0..cols {
-                    ey[(i, j)] -= HALF * (hz[(i, j)] - hz[(i - 1, j)]);
+                    ey[(i, j)] -= Q32::HALF * (hz[(i, j)] - hz[(i - 1, j)]);
                 }
             }
             for i in 0..rows {
                 for j in 1..cols {
-                    ex[(i, j)] -= HALF * (hz[(i, j)] - hz[(i, j - 1)]);
+                    ex[(i, j)] -= Q32::HALF * (hz[(i, j)] - hz[(i, j - 1)]);
                 }
             }
             for i in 0..rows.saturating_sub(1) {

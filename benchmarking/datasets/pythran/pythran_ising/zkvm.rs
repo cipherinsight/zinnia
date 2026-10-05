@@ -38,8 +38,6 @@
 //! (NumPy rounds it to single precision first, e.g. 0.4 to 0.4000000059604645).
 use crate::prelude::*;
 
-const HALF: Q32 = Q32::from_bits(1 << 31); // 0.5
-
 /// The neighbour of `n` at offset `d` in {-1, 0, 1} on a periodic axis of
 /// length `len` (`clamp(n + d, len)`).
 fn clamp(n: usize, d: isize, len: usize) -> usize {
@@ -65,7 +63,7 @@ fn ising_update(field: &mut Array2<i64>, n: usize, m: usize, beta: Q32) {
         }
     }
     let de = 2 * field[(n, m)] * total;
-    if de <= 0 || (beta * -de).exp() > HALF {
+    if de <= 0 || (beta * -de).exp() > Q32::HALF {
         field[(n, m)] *= -1;
     }
 }

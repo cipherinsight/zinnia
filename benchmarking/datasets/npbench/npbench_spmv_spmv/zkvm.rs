@@ -10,19 +10,8 @@
 //!         y[i] = vals @ x[cols]
 //!     return y
 //! ```
-use core::ops::Range;
 
 use crate::prelude::*;
-
-/// The positions `a[start:stop]` selects on an axis of length `len`:
-/// negative bounds count from the end, then both are clipped to `[0, len]`
-/// (an empty range if `stop <= start`).
-fn slice_range(start: i64, stop: i64, len: usize) -> Range<usize> {
-    let n = len as i64;
-    let clip = |bound: i64| (if bound < 0 { bound + n } else { bound }).clamp(0, n) as usize;
-    let (start, stop) = (clip(start), clip(stop));
-    start..stop.max(start)
-}
 
 pub mod spmv {
     use super::*;
@@ -38,8 +27,8 @@ pub mod spmv {
         (0..a_row.len() - 1)
             .map(|i| {
                 let (start, stop) = (a_row[i], a_row[i + 1]);
-                let cols = a_col.slice(s![slice_range(start, stop, a_col.len())]);
-                let vals = a_val.slice(s![slice_range(start, stop, a_val.len())]);
+                let cols = a_col.slice(s![np::slice_range(start, stop, a_col.len())]);
+                let vals = a_val.slice(s![np::slice_range(start, stop, a_val.len())]);
                 assert_eq!(vals.len(), cols.len(), "shapes not aligned");
                 // `vals @ x[cols]`: one fused dot product of the gathered entries.
                 let gather = |(&v, &c): (&Q32, &i64)| (v, x[np_index(c, x.len())]);

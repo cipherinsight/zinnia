@@ -25,43 +25,11 @@
 //!     deply = np.float32((c11 * c10 - 2 * c01 * c20) / (4 * c20 * c02 - c11 ** 2))
 //!     return (deplx, deply, correl_crop)
 //! ```
-use core::ops::Range;
 
 use crate::prelude::*;
 
 /// `round(1e-6 * 2^32)`, the value that replaces negative correlations.
 const FLOOR_VALUE: Q32 = Q32::from_bits(4_295);
-
-/// The indices that the slice `start:stop` selects on an axis of length
-/// `len` (Python slicing: negative bounds count from the end, bounds are
-/// clipped to the axis, and `stop <= start` selects nothing).
-fn py_slice(start: i64, stop: i64, len: usize) -> Range<usize> {
-    let n = len as i64;
-    let clip = |i: i64| (if i < 0 { (i + n).max(0) } else { i.min(n) }) as usize;
-    let (start, stop) = (clip(start), clip(stop));
-    start..stop.max(start)
-}
-
-/// `np.float32(x)`: `x` rounded to the nearest float32, i.e. to 24
-/// significant bits, ties to even. Every nonzero Q32 value lies in float32's
-/// normal range, so only the significand is rounded.
-fn round_to_f32(x: Q32) -> Q32 {
-    let magnitude = x.to_bits().unsigned_abs();
-    let width = u64::BITS - magnitude.leading_zeros();
-    if width <= 24 {
-        return x;
-    }
-    let shift = width - 24;
-    let (kept, dropped) = (magnitude >> shift, magnitude & ((1 << shift) - 1));
-    let half = 1 << (shift - 1);
-    let kept = if dropped > half || (dropped == half && kept & 1 == 1) {
-        kept + 1
-    } else {
-        kept
-    };
-    let rounded = (kept << shift) as i64;
-    Q32::from_bits(if x.is_negative() { -rounded } else { rounded })
-}
 
 pub mod compute_subpix_2d_gaussian2 {
     use super::*;
@@ -75,8 +43,8 @@ pub mod compute_subpix_2d_gaussian2 {
         let (rows, cols) = correl.dim();
         let mut correl_crop = correl
             .slice(s![
-                py_slice(iy - 1, iy + 2, rows),
-                py_slice(ix - 1, ix + 2, cols)
+                np::slice_range(iy - 1, iy + 2, rows),
+                np::slice_range(ix - 1, ix + 2, cols)
             ])
             .to_owned();
         correl_crop.mapv_inplace(|v| if v < Q32::ZERO { FLOOR_VALUE } else { v });
@@ -97,8 +65,10 @@ pub mod compute_subpix_2d_gaussian2 {
         }
         let (c10, c01, c11, c20, c02) = (c10 / 6, c01 / 6, c11 / 4, c20 / 6, c02 / 6);
         let denominator = c20 * 4 * c02 - c11.powi(2);
-        let deplx = round_to_f32((c11 * c01 - c10 * 2 * c02) / denominator);
-        let deply = round_to_f32((c11 * c10 - c01 * 2 * c20) / denominator);
+        // `np.float32(...)` is the identity: Q32 is the one float type, as in
+        // Zinnia.
+        let deplx = (c11 * c01 - c10 * 2 * c02) / denominator;
+        let deply = (c11 * c10 - c01 * 2 * c20) / denominator;
         (deplx, deply, correl_crop)
     }
 }

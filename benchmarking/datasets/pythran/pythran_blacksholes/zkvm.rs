@@ -36,7 +36,6 @@ const A2: Q32 = Q32::from_bits(-1_531_429_783); // -0.356563782
 const A3: Q32 = Q32::from_bits(7_651_389_478); // 1.781477937
 const A4: Q32 = Q32::from_bits(-7_822_234_863); // -1.821255978
 const A5: Q32 = Q32::from_bits(5_713_485_167); // 1.330274429
-const HALF: Q32 = Q32::from_bits(1 << 31); // 0.5
 const K_COEF: Q32 = Q32::from_bits(994_894_385); // 0.2316419
 
 /// `RSQRT2PI * exp(-0.5 * d * d) * (K * (A1 + K * (... + K * A5)))` with
@@ -44,7 +43,7 @@ const K_COEF: Q32 = Q32::from_bits(994_894_385); // 0.2316419
 fn cnd(d: Q32) -> Q32 {
     let k = Q32::ONE / (Q32::ONE + K_COEF * d.abs());
     let poly = k * (A1 + k * (A2 + k * (A3 + k * (A4 + k * A5))));
-    RSQRT2PI * (-HALF * d * d).exp() * poly
+    RSQRT2PI * (-Q32::HALF * d * d).exp() * poly
 }
 
 #[allow(non_snake_case)]
@@ -70,7 +69,7 @@ pub mod BlackScholes {
             let vol_sqrt_t = volatility * Q32::from_int(years).sqrt();
             // `stock / strike` divides two integers: a float division.
             let mut d1 = (Q32::from_int(stock) / Q32::from_int(strike)).ln();
-            d1 += (riskfree + HALF * volatility * volatility) * years;
+            d1 += (riskfree + Q32::HALF * volatility * volatility) * years;
             d1 /= vol_sqrt_t;
             let d2 = d1 - vol_sqrt_t;
             let (cndd1, cndd2) = (cnd(d1), cnd(d2));

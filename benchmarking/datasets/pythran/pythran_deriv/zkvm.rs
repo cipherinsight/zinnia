@@ -30,9 +30,6 @@
 //! ```
 use crate::prelude::*;
 
-/// `0.5`, exact in Q32.
-const HALF: Q32 = Q32::from_bits(1 << 31);
-
 pub mod deriv {
     use super::*;
 
@@ -51,11 +48,11 @@ pub mod deriv {
         let n = n as usize;
 
         let mut dh2 = Array1::<C32>::zeros(dh1.len());
-        dh1[0] = C32::from_real(HALF) * C32::I * C32::from_real(sig);
+        dh1[0] = C32::from_real(Q32::HALF) * C32::I * C32::from_real(sig);
         dh2[0] = alp;
         dh3[0] = C32::from_real(nu * -2);
         // `exp1`, `exp2`, `exp3`: complex numbers whose real part steps down by 1.
-        let (mut exp1, mut exp2, mut exp3) = (C32::from_real(-HALF), -C32::ONE, -C32::ONE);
+        let (mut exp1, mut exp2, mut exp3) = (C32::from_real(-Q32::HALF), -C32::ONE, -C32::ONE);
         for i in 1..n {
             dh1[i] = dh1[i - 1] * exp1;
             exp1 = exp1 - C32::ONE;
