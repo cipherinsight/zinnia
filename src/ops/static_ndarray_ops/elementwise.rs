@@ -2,7 +2,7 @@
 //! (`elementwise_binary`, `elementwise_minmax`), the unary numeric ops
 //! (`np_floor`, `np_ceil`, `np_round`, `np_trunc`, `np_reciprocal`,
 //! `np_square`), `np_diff`, `np_outer`, `np_allclose`, `np_where`,
-//! `np_clip`, plus the Python-builtin helpers `range`/`len`/`enumerate`
+//! plus the Python-builtin helpers `range`/`len`/`enumerate`
 //! that share the same composite-Value plumbing.
 
 use std::collections::HashMap;
@@ -668,21 +668,4 @@ pub fn np_where(b: &mut IRBuilder, args: &[Value]) -> Value {
         }
         None => where_rec(b, &cond_b, &x_b, &y_b),
     }
-}
-
-/// `np.clip(arr, lo, hi)` — element-wise clamp. Implemented as
-/// `where(arr < lo, lo, where(arr > hi, hi, arr))`. lo / hi may be scalars
-/// or broadcast-compatible arrays.
-pub fn np_clip(b: &mut IRBuilder, args: &[Value]) -> Value {
-    if args.len() < 3 {
-        panic!("clip: requires three arguments (arr, a_min, a_max)");
-    }
-    let arr = &args[0];
-    let lo = &args[1];
-    let hi = &args[2];
-    // arr.clip(lo, hi) ≡ minimum(maximum(arr, lo), hi)
-    let lower = crate::helpers::value_ops::apply_binary_op(b, "lt", arr, lo);
-    let after_lower = np_where(b, &[lower, lo.clone(), arr.clone()]);
-    let upper = crate::helpers::value_ops::apply_binary_op(b, "gt", &after_lower, hi);
-    np_where(b, &[upper, hi.clone(), after_lower])
 }
