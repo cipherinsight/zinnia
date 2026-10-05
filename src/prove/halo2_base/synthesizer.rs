@@ -37,6 +37,9 @@ pub struct Halo2BaseSynthesizer<'a> {
     public_values: Vec<Fp>,
     /// Memory segments and the caches of dynamic reads (see `memory.rs`).
     memory: MemoryState,
+    /// Q values that are float casts `n·2^P` of an integer cell `n`, by the
+    /// Q cell's id (see `fixed_point::Factor`).
+    float_casts: HashMap<u64, Halo2BaseCell>,
     dyn_meta_bounds: HashMap<u32, (u32, Vec<u32>)>,
     next_id: u64,
     bit_cells: HashSet<halo2_base::ContextCell>,
@@ -104,6 +107,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             params,
             public_values: Vec::new(),
             memory: MemoryState::default(),
+            float_casts: HashMap::new(),
             dyn_meta_bounds: HashMap::new(),
             next_id: 0,
             bit_cells: HashSet::new(),
@@ -569,31 +573,15 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn sub_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.sub_i(a, b) }
 
     fn mul_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let (q, _) = kernel::fp_mul_rescale(a.value, b.value, self.params.precision_bits);
-        let raw = self.mul_i(a, b)?;
-        self.rescale(&raw, q)
+        self.fixed_mul(a, b)
     }
 
     fn product_sum_f(&mut self, pairs: &[(Self::CellRef, Self::CellRef)]) -> Result<Self::CellRef, ProvingError> {
-        let mut raw = self.constant_int(0)?;
-        for (a, b) in pairs {
-            raw = self.gate_cell(raw.value + a.value * b.value, |gate, ctx| {
-                gate.mul_add(ctx, a.assigned, b.assigned, raw.assigned)
-            });
-        }
-        let values: Vec<(Fp, Fp)> = pairs.iter().map(|(a, b)| (a.value, b.value)).collect();
-        let (q, _) = kernel::fp_product_sum_rescale(&values, self.params.precision_bits);
-        self.rescale(&raw, q)
+        self.fixed_product_sum(pairs)
     }
 
-    /// Fixed-point `a / b`: `(a * 2^P) / b` rounded by `Rounding::Euclid`,
-    /// as `kernel::fp_div_prescale`; 0 for a zero divisor.
     fn div_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let scale = kernel::scale_fp(self.params.precision_bits);
-        let scaled = self.gate_cell(a.value * scale, |gate, ctx| {
-            gate.mul(ctx, a.assigned, QuantumCell::Constant(scale))
-        });
-        Ok(self.div_rem(&scaled, b, Rounding::Euclid)?.0)
+        self.fixed_div(a, b)
     }
 
     /// Float `a // b = floor(a / b)` as a Q value. The ratio of two Q values
@@ -610,27 +598,10 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         Ok(self.div_rem(a, b, Rounding::Floor)?.1)
     }
     fn pow_f(&mut self, base: &Self::CellRef, exp: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        self.pow_f_int(base, exp)
+        self.fixed_pow(base, exp)
     }
     fn pow_f_int(&mut self, base: &Self::CellRef, exp: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let max_exp = 8usize;
-        self.assert_less(exp, Operand::Constant(max_exp as i128 + 1))?;
-
-        let mut powers = Vec::with_capacity(max_exp + 1);
-        let mut acc = self.constant_float(1.0)?;
-        powers.push(acc);
-        for _ in 1..=max_exp {
-            acc = self.mul_f(&acc, base)?;
-            powers.push(acc);
-        }
-
-        let mut out = self.constant_float(0.0)?;
-        for (i, power) in powers.iter().enumerate() {
-            let idx = self.constant_int(i as i64)?;
-            let hit = self.eq_i(exp, &idx)?;
-            out = self.select_bit(&hit, power, &out)?;
-        }
-        Ok(out)
+        self.fixed_pow_int(base, exp)
     }
     fn abs_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.abs_i(a) }
     fn sign_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.sign_i(a) }
@@ -856,12 +827,20 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     /// lowering lacked: any remainder magnitude below `2^P` was accepted
     /// with a matching non-integer quotient).
     fn int_cast(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if let Some(n) = self.float_casts.get(&a.id) {
+            return Ok(*n); // trunc(n·2^P / 2^P) = n
+        }
         let scale = 1i128 << self.params.precision_bits;
         Ok(self.div_rem_nonzero(a, Divisor::Constant(scale), Rounding::Trunc)?.0)
     }
+    /// Integer to Q value: `a · 2^P` (one gate). The result is remembered as
+    /// a float cast of `a`, so products and quotients with it stay exact
+    /// (see `fixed_point::Factor`).
     fn float_cast(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         let scale = self.constant_int(crate::prove::field::quantization_scale(self.params.precision_bits) as i64)?;
-        self.mul_i(a, &scale)
+        let out = self.mul_i(a, &scale)?;
+        self.float_casts.insert(out.id, *a);
+        Ok(out)
     }
     fn bool_cast(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { Ok(self.truthy_bit(a)) }
 

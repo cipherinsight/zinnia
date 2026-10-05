@@ -230,6 +230,13 @@ impl Halo2BaseSynthesizer<'_> {
         Ok(())
     }
 
+    /// [`Self::one_hot_sum`] over cell values.
+    pub(super) fn one_hot_combination(&mut self, choices: &[(Halo2BaseCell, Halo2BaseCell)]) -> Halo2BaseCell {
+        let choices: Vec<(Halo2BaseCell, SlotValue)> =
+            choices.iter().map(|(ind, value)| (*ind, SlotValue::Cell(*value))).collect();
+        self.one_hot_sum(&choices)
+    }
+
     /// `Σ indicator · value` for indicators of which the caller has asserted
     /// that exactly one is 1 (a one-hot membership): the selected value.
     /// Choices holding the constant 0 contribute nothing and are dropped.

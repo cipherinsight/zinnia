@@ -167,6 +167,22 @@ impl Halo2BaseSynthesizer<'_> {
         }
     }
 
+    /// Advice plus lookup cells of a `bits`-bit range check, following
+    /// halo2-base's `range_check` layout: `n` lookup-width limbs recombined
+    /// by an inner product (`3n - 2` cells, none for one limb), plus a
+    /// shifted copy of a partial top limb (a bit check for a 1-bit one).
+    pub(super) fn range_check_cost(&mut self, bits: usize) -> usize {
+        let lookup = self.range_chip().lookup_bits();
+        let limbs = bits.div_ceil(lookup).max(1);
+        let recombine = if limbs == 1 { 0 } else { 3 * limbs - 2 };
+        let partial = match bits % lookup {
+            0 => 0,
+            1 => 4,
+            _ => 5,
+        };
+        recombine + limbs + partial
+    }
+
     /// Constrain `0 <= x < 2^bits` (and record it).
     pub(super) fn range_check(&mut self, x: &Halo2BaseCell, bits: usize) {
         let range = self.range_chip();

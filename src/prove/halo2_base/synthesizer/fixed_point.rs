@@ -27,6 +27,16 @@ pub(super) enum Divisor {
 }
 
 
+/// What the circuit knows about a Q-encoded value used as a factor.
+#[derive(Clone, Copy)]
+pub(super) enum Factor {
+    /// `n · 2^P` for the integer cell `n` (a float cast).
+    Integer(Halo2BaseCell),
+    /// The constant `m · 2^s`, with `s <= P` and `m` odd (or `m = 0`).
+    Constant { m: i128, s: u32 },
+    Unknown,
+}
+
 impl Halo2BaseSynthesizer<'_> {
     /// `(s, s ? -x : x)` for a hinted sign bit `s = [x < 0]`. The sign is
     /// NOT pinned here: the caller must constrain the magnitude into a
@@ -199,29 +209,230 @@ impl Halo2BaseSynthesizer<'_> {
     }
 
 
-    /// `floor(raw / 2^P)` for the raw product of Q values (`mul_f`,
-    /// `product_sum_f`); `q_value` is the quotient the kernel computed.
+    /// `floor(raw / 2^shift)`, for `shift <= 64`.
     ///
-    /// Soundness: `rem = raw - q*2^P` (gate) is range-checked to
-    /// `[0, 2^P)` and `q` to the signed 64-bit window, so `q*2^P + rem` lies
-    /// in `[-2^95, 2^95)`: it equals `raw` over the integers and `q` is the
+    /// Soundness: the hint `q` and `rem = raw - q·2^shift` (one gate), with
+    /// `rem` range-checked to `[0, 2^shift)` and `q` to the signed 64-bit
+    /// window, so `q·2^shift + rem` lies in `[-2^(63+shift), 2^(63+shift))`,
+    /// far below `p / 2`: it equals `raw` over the integers and `q` is the
     /// unique floor. Without the window check every remainder in
-    /// `[0, 2^P)` would be accepted, each with its own (huge) `q`.
-    pub(super) fn rescale(&mut self, raw: &Halo2BaseCell, q_value: Fp) -> Result<Halo2BaseCell, ProvingError> {
-        let precision_bits = self.params.precision_bits;
-        let scale = kernel::scale_fp(precision_bits);
-        let q = self.hint(q_value);
+    /// `[0, 2^shift)` would be accepted, each with its own (huge) `q`.
+    pub(super) fn rescale_by(&mut self, raw: &Halo2BaseCell, shift: u32) -> Result<Halo2BaseCell, ProvingError> {
+        let q_value = kernel::fp_to_i128(raw.value).map_or(0, |v| v >> shift);
+        let scale = kernel::i128_to_fp(1i128 << shift);
+        let q = self.hint(kernel::i128_to_fp(q_value));
         let rem = self.gate_cell(raw.value - q.value * scale, |gate, ctx| {
             gate.sub_mul(ctx, raw.assigned, q.assigned, QuantumCell::Constant(scale))
         });
-        self.range_check(&rem, precision_bits as usize);
+        self.range_check(&rem, shift as usize);
         self.ensure_signed64(&q)?;
         Ok(q)
     }
 
+    /// What the circuit knows about a Q-encoded value used as a factor.
+    pub(super) fn factor_of(&self, x: &Halo2BaseCell) -> Factor {
+        let precision_bits = self.params.precision_bits;
+        if let Some(n) = self.float_casts.get(&x.id) {
+            return Factor::Integer(*n);
+        }
+        if self.is_const_cell(x) {
+            if let Some(v) = kernel::fp_to_i128(x.value).filter(|v| v.unsigned_abs() < 1u128 << 63) {
+                let s = if v == 0 { precision_bits } else { v.trailing_zeros().min(precision_bits) };
+                return Factor::Constant { m: v >> s, s };
+            }
+        }
+        Factor::Unknown
+    }
 
-    /// `floor(sqrt(x * 2^P))`, the Q-encoded square root, for a cell `x`
-    /// the caller has proven to lie in `[0, 2^64)`.
+    /// `x · m` for a constant `m` (one gate, the constant inline).
+    fn mul_by_constant(&mut self, x: &Halo2BaseCell, m: i128) -> Result<Halo2BaseCell, ProvingError> {
+        let factor = kernel::i128_to_fp(m);
+        let out = self.gate_cell(x.value * factor, |gate, ctx| gate.mul(ctx, x.assigned, QuantumCell::Constant(factor)));
+        if let Some(range) = self.proven_range(x).zip(Interval::point(m)).and_then(|(r, c)| r.mul(&c)) {
+            self.prove_range(&out, range);
+        }
+        Ok(out)
+    }
+
+    /// Fixed-point `a * b = floor(a·b / 2^P)` (the kernel's `fp_mul_rescale`).
+    ///
+    /// The floor only needs a constraint where the product is not already a
+    /// multiple of `2^P`: a factor that is a float cast `n·2^P` of an integer
+    /// cell makes the result the exact integer product `a·n`, and a constant
+    /// factor `m·2^s` makes it `floor(a·m / 2^(P-s))`, a rescale by fewer bits
+    /// (none for an integer-valued constant). Both are identities of the
+    /// integers the cells encode, so the value is the kernel's.
+    pub(super) fn fixed_mul(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        let precision_bits = self.params.precision_bits;
+        match (self.factor_of(a), self.factor_of(b)) {
+            (Factor::Integer(n), _) => self.mul_i(&n, b),
+            (_, Factor::Integer(n)) => self.mul_i(a, &n),
+            (Factor::Constant { m, s }, _) => self.scaled_product(b, m, s),
+            (_, Factor::Constant { m, s }) => self.scaled_product(a, m, s),
+            _ => {
+                let raw = self.mul_i(a, b)?;
+                self.rescale_by(&raw, precision_bits)
+            }
+        }
+    }
+
+    /// `floor(x·m·2^s / 2^P)` for the constant factor `m·2^s`: the exact
+    /// `x·m` when `s = P`, else `floor(x·m / 2^(P-s))` when that remainder
+    /// check is cheaper than the full one of `floor(x·(m·2^s) / 2^P)` (an
+    /// unaligned width pays for a partial top limb).
+    fn scaled_product(&mut self, x: &Halo2BaseCell, m: i128, s: u32) -> Result<Halo2BaseCell, ProvingError> {
+        let precision_bits = self.params.precision_bits;
+        let shift = precision_bits - s;
+        if shift == 0 {
+            return self.mul_by_constant(x, m);
+        }
+        if self.range_check_cost(shift as usize) < self.range_check_cost(precision_bits as usize) {
+            let raw = self.mul_by_constant(x, m)?;
+            return self.rescale_by(&raw, shift);
+        }
+        let raw = self.mul_by_constant(x, m << s)?;
+        self.rescale_by(&raw, precision_bits)
+    }
+
+    /// Fused `floor(Σ a_i·b_i / 2^P)` (the kernel's
+    /// `fp_product_sum_rescale`). Products with a float-cast factor `n·2^P`
+    /// are multiples of `2^P`, so they leave the floor as the exact `a·n`:
+    /// `floor((Σ_exact a·n·2^P + R) / 2^P) = Σ_exact a·n + floor(R / 2^P)`.
+    pub(super) fn fixed_product_sum(
+        &mut self,
+        pairs: &[(Halo2BaseCell, Halo2BaseCell)],
+    ) -> Result<Halo2BaseCell, ProvingError> {
+        let mut exact: Option<Halo2BaseCell> = None;
+        let mut raw: Option<Halo2BaseCell> = None;
+        for (a, b) in pairs {
+            let integer = match (self.factor_of(a), self.factor_of(b)) {
+                (Factor::Integer(n), _) => Some((n, *b)),
+                (_, Factor::Integer(n)) => Some((n, *a)),
+                _ => None,
+            };
+            match integer {
+                Some((n, x)) => {
+                    let term = self.mul_i(&n, &x)?;
+                    exact = Some(match exact {
+                        Some(sum) => self.add_i(&sum, &term)?,
+                        None => term,
+                    });
+                }
+                None => {
+                    let acc = match raw {
+                        Some(acc) => acc,
+                        None => self.constant_int(0)?,
+                    };
+                    raw = Some(self.gate_cell(acc.value + a.value * b.value, |gate, ctx| {
+                        gate.mul_add(ctx, a.assigned, b.assigned, acc.assigned)
+                    }));
+                }
+            }
+        }
+        let rescaled = match raw {
+            Some(raw) => Some(self.rescale_by(&raw, self.params.precision_bits)?),
+            None => None,
+        };
+        match (exact, rescaled) {
+            (Some(e), Some(r)) => self.add_i(&e, &r),
+            (Some(e), None) => Ok(e),
+            (None, Some(r)) => Ok(r),
+            (None, None) => self.constant_float(0.0),
+        }
+    }
+
+    /// Fixed-point `a / b`: `(a·2^P) / b` rounded by `Rounding::Euclid`
+    /// (the kernel's `fp_div_prescale`); 0 for a zero divisor.
+    ///
+    /// With `S = 2^s > 0`, `(A·S) / (B·S)` and `A / B` have the same
+    /// Euclidean quotient. So a constant divisor `m·2^s` divides
+    /// `a·2^(P-s)` by `m` (a remainder bound of `|m|`, not `|m|·2^s`), and a
+    /// float-cast divisor `n·2^P` divides `a` by the integer `n` (with the
+    /// same zero mapping: `n = 0` exactly when the divisor is 0).
+    pub(super) fn fixed_div(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        let precision_bits = self.params.precision_bits;
+        match self.factor_of(b) {
+            Factor::Integer(n) => Ok(self.div_rem(a, &n, Rounding::Euclid)?.0),
+            Factor::Constant { m, .. } if m == 0 => self.constant_float(0.0),
+            Factor::Constant { m, s } => {
+                let numerator = self.scaled_by_power_of_two(a, precision_bits - s)?;
+                Ok(self.div_rem_nonzero(&numerator, Divisor::Constant(m), Rounding::Euclid)?.0)
+            }
+            Factor::Unknown => {
+                let numerator = self.scaled_by_power_of_two(a, precision_bits)?;
+                Ok(self.div_rem(&numerator, b, Rounding::Euclid)?.0)
+            }
+        }
+    }
+
+    /// `x · 2^bits` (one gate; `x` itself for 0 bits).
+    fn scaled_by_power_of_two(&mut self, x: &Halo2BaseCell, bits: u32) -> Result<Halo2BaseCell, ProvingError> {
+        if bits == 0 {
+            return Ok(*x);
+        }
+        self.mul_by_constant(x, 1i128 << bits)
+    }
+
+    /// Float base, integer exponent, as the mock: `power = 1` multiplied by
+    /// the base `|e|` times with the fixed-point product, then `1 / power`
+    /// for a negative exponent. A constant exponent unrolls exactly that
+    /// chain (the first product, `1 · base`, is the base itself). A runtime
+    /// exponent is asserted into `[0, 8]` (larger ones have no witness), all
+    /// nine powers are computed, and the result is the inner product of the
+    /// indicators `[e == i]` with them: the bound leaves exactly one
+    /// indicator equal to 1.
+    pub(super) fn fixed_pow_int(&mut self, base: &Halo2BaseCell, exp: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        if self.is_const_cell(exp) {
+            let e = kernel::fp_to_i64(exp.value);
+            let power = self.power_chain(base, e.unsigned_abs())?;
+            if e >= 0 {
+                return Ok(power);
+            }
+            let one = self.constant_float(1.0)?;
+            return self.fixed_div(&one, &power);
+        }
+        const MAX_EXP: u64 = 8;
+        self.assert_less(exp, Operand::Constant(MAX_EXP as i128 + 1))?;
+        let mut choices = Vec::with_capacity(MAX_EXP as usize + 1);
+        let mut power = self.constant_float(1.0)?;
+        for i in 0..=MAX_EXP {
+            if i > 0 {
+                power = if i == 1 { *base } else { self.fixed_mul(&power, base)? };
+            }
+            let index = self.constant_int(i as i64)?;
+            choices.push((self.eq_i(exp, &index)?, power));
+        }
+        Ok(self.one_hot_combination(&choices))
+    }
+
+    /// `base^e` by `e - 1` fixed-point products, left to right (`1.0` for
+    /// `e = 0`), the mock's rounding.
+    fn power_chain(&mut self, base: &Halo2BaseCell, e: u64) -> Result<Halo2BaseCell, ProvingError> {
+        if e == 0 {
+            return self.constant_float(1.0);
+        }
+        let mut power = *base;
+        for _ in 1..e {
+            power = self.fixed_mul(&power, base)?;
+        }
+        Ok(power)
+    }
+
+    /// Float base and float exponent: supported for a constant exponent
+    /// with an integer value (then the integer-exponent lowering); any other
+    /// exponent is rejected with an error naming the operation.
+    pub(super) fn fixed_pow(&mut self, base: &Halo2BaseCell, exp: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        match self.factor_of(exp) {
+            Factor::Constant { m, s } if s == self.params.precision_bits => {
+                let e = self.constant_int(m as i64)?;
+                self.fixed_pow_int(base, &e)
+            }
+            _ => Err(ProvingError::synthesis(
+                "halo2-base backend does not support `**` with a runtime or fractional float exponent",
+            )),
+        }
+    }
+
     pub(super) fn sqrt_nonneg(&mut self, x: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
         let precision_bits = self.params.precision_bits;
         let scale = kernel::scale_fp(precision_bits);

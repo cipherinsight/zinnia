@@ -227,6 +227,100 @@ fn fixed_point_multiplication_is_pinned() {
     assert_sound("product_sum", &*dot, &inputs, &[expected], &[]);
 }
 
+/// The mock's power: 1.0 multiplied by the base |e| times, `1 / power`
+/// for a negative exponent.
+fn mock_power(base: Fp, e: i64) -> Fp {
+    let mut power = q(1.0);
+    for _ in 0..e.unsigned_abs() {
+        power = kernel::fp_mul_rescale(power, base, PRECISION_BITS).0;
+    }
+    if e < 0 { kernel::fp_div_prescale(q(1.0), power, PRECISION_BITS) } else { power }
+}
+
+/// `x * float(n)` is the exact `x·n`; a constant `m·2^s` factor rescales by
+/// `P - s` bits only; both equal the kernel's `fp_mul_rescale` and every
+/// remaining hint is pinned.
+#[test]
+fn products_with_integer_valued_factors_are_exact_and_pinned() {
+    let by_cast: Box<Op> = Box::new(|s, c| {
+        let n = s.float_cast(&c[1])?;
+        Ok(vec![s.mul_f(&c[0], &n)?, s.mul_f(&n, &c[0])?])
+    });
+    for (x, n) in [(1.5, 3i64), (-0.1, 7), (123.456, -2), (0.0, 5)] {
+        let expected = kernel::fp_mul_rescale(q(x), q(n as f64), PRECISION_BITS).0;
+        let outcome = synthesize(&*by_cast, &[q(x), int(n)], &[]);
+        assert!(outcome.accepted && outcome.outputs == vec![expected, expected], "{x} * float({n})");
+        assert_eq!(outcome.hints, 0, "an exact product needs no hint");
+    }
+    for c in [0.5, 3.0, -0.75, 2f64.powi(-32), 0.1, 0.0] {
+        let by_constant = with_constant_rhs(|s, a, b| s.mul_f(a, b), q(c));
+        for x in [1.5, -2.25, 1e6, -3e-9] {
+            let expected = kernel::fp_mul_rescale(q(x), q(c), PRECISION_BITS).0;
+            assert_sound(&format!("{x} * const {c}"), &*by_constant, &[q(x)], &[expected], &[]);
+        }
+    }
+    let generic = binary(|s, a, b| s.mul_f(a, b));
+    let half = with_constant_rhs(|s, a, b| s.mul_f(a, b), q(0.5));
+    assert!(cells_of(&*half, &[q(3.0)]).1 < cells_of(&*generic, &[q(3.0), q(0.5)]).1);
+    let dot: Box<Op> = Box::new(|s, c| {
+        let n = s.float_cast(&c[2])?;
+        Ok(vec![s.product_sum_f(&[(c[0], n), (c[1], c[3])])?])
+    });
+    let inputs = [q(0.75), q(-1.25), int(-3), q(0.3)];
+    let pairs = vec![(inputs[0], q(-3.0)), (inputs[1], inputs[3])];
+    let expected = kernel::fp_product_sum_rescale(&pairs, PRECISION_BITS).0;
+    assert_sound("0.75*float(-3) + -1.25*0.3", &*dot, &inputs, &[expected], &[]);
+}
+
+/// `a / m·2^s` divides `a·2^(P-s)` by `m`; `a / float(n)` divides `a` by `n`;
+/// both equal the kernel's `fp_div_prescale` (0 for a zero divisor).
+#[test]
+fn divisions_by_integer_valued_divisors_are_pinned() {
+    for c in [30.0, -0.75, 0.5, 1.0, -1.0, 3.0e-3] {
+        let by_constant = with_constant_rhs(|s, a, b| s.div_f(a, b), q(c));
+        for a in [5.5, -5.5, 0.0, 1e6] {
+            let expected = kernel::fp_div_prescale(q(a), q(c), PRECISION_BITS);
+            let divisor = kernel::fp_to_i128(q(c)).unwrap().unsigned_abs();
+            assert_sound(&format!("{a} / const {c}"), &*by_constant, &[q(a)], &[expected], &[divisor, 30, 3]);
+        }
+    }
+    let by_cast: Box<Op> = Box::new(|s, c| {
+        let n = s.float_cast(&c[1])?;
+        Ok(vec![s.div_f(&c[0], &n)?])
+    });
+    for (a, n) in [(7.5, 2i64), (-7.5, 2), (7.5, -2), (1.0, 3), (4.0, 0)] {
+        let expected = kernel::fp_div_prescale(q(a), q(n as f64), PRECISION_BITS);
+        assert_sound(&format!("{a} / float({n})"), &*by_cast, &[q(a), int(n)], &[expected], &[n.unsigned_abs().max(1) as u128]);
+    }
+}
+
+#[test]
+fn powers_follow_the_mock_and_are_pinned() {
+    for e in [0i64, 1, 2, 6, -2] {
+        let by_constant = with_constant_rhs(|s, a, b| s.pow_f_int(a, b), int(e));
+        for base in [1.5, -0.7, 2.0] {
+            assert_sound(&format!("{base} ** {e}"), &*by_constant, &[q(base)], &[mock_power(q(base), e)], &[]);
+        }
+    }
+    let dynamic = binary(|s, a, b| s.pow_f_int(a, b));
+    for e in [0i64, 1, 5, 8] {
+        assert_sound(&format!("1.25 ** {e} (runtime)"), &*dynamic, &[q(1.25), int(e)], &[mock_power(q(1.25), e)], &[]);
+    }
+    assert!(!synthesize(&*dynamic, &[q(1.25), int(9)], &[]).accepted, "an exponent above 8 has no witness");
+    assert!(!synthesize(&*dynamic, &[q(1.25), int(-1)], &[]).accepted);
+    let float_exponent = with_constant_rhs(|s, a, b| s.pow_f(a, b), q(3.0));
+    assert_sound("1.5 ** 3.0", &*float_exponent, &[q(1.5)], &[mock_power(q(1.5), 3)], &[]);
+    let fractional = with_constant_rhs(|s, a, b| s.pow_f(a, b), q(0.5));
+    let mut builder = BaseCircuitBuilder::<Fp>::from_stage(CircuitBuilderStage::Keygen);
+    builder.set_k(K as usize);
+    builder.set_lookup_bits(LOOKUP_BITS as usize);
+    let provenance = ProvenanceTable::new();
+    let params = ProvingParams { k: K, precision_bits: PRECISION_BITS, lookup_bits: LOOKUP_BITS };
+    let mut synth = Halo2BaseSynthesizer::new(&mut builder, None, params, &provenance);
+    let x = synth.cell(q(2.0));
+    assert!(fractional(&mut synth, &[x]).is_err(), "a fractional exponent must be rejected, not proved");
+}
+
 // ── Transcendentals (B2) ────────────────────────────────────────────────
 
 #[test]
