@@ -1,154 +1,238 @@
-# DS-1000 baseline conventions
+# Handwritten circuit baselines: the rules
 
-This file documents the apples-to-apples rules every per-case baseline
-(`target.rs`, `sp1.prog.rs`/`sp1.driver.rs`, `risc0.prog.rs`/`risc0.driver.rs`,
-`main.cairo`, `main.nr` + `Prover.toml`) must satisfy. The primary
-benchmarking goal is efficiency comparison across frameworks, so each
-baseline must do the same logical work in the same shape.
+This file is the rulebook for the handwritten circuit baselines of the DS-1000
+performance set: the halo2-base circuits (`datasets/ds1000/<case>/target.rs`,
+built by `baselines/halo2_hw`) and the Noir circuits (`datasets/ds1000/<case>/main.nr`,
+run by `baselines/hw_check/noir_driver.py`). The zkVM and Cairo baselines have their
+own documentation in `baselines/{sp1,risc0,cairo}`; they share the statement rules of
+section 1.
 
-## 1. Algorithm and control flow
+Terms:
 
-All 5 baselines for a case are **high-level reimplementations of the
-kernel.py**: same algorithm, same control flow, same loop bounds, same
-intermediate variables, same operation order. The handwritten halo2
-baseline mirrors what a Rust developer would write to express the
-kernel in halo2-graph idioms — **not** a one-to-one transliteration of
-Zinnia's IR (Zinnia's IR is an artifact of lowering, not the spec).
+- **kernel**: `datasets/ds1000/<case>/kernel.py`, the program Zinnia compiles.
+- **NumPy reference**: the kernel body run as plain NumPy (`hw_check.reference`).
+- **Q32**: fixed point with 32 fractional bits; a float `v` is the integer
+  `round(v * 2^32)` (Zinnia's quantizer, `src/prove/field.rs::quantize`).
+- **window**: the signed 64-bit range `[-2^63, 2^63)`. Zinnia's integers and Q32
+  values live in it, and Zinnia's halo2-base comparisons are 64-bit comparisons on it.
+- **hint**: a value the prover computes outside the circuit (a quotient, a square
+  root, a sorted order) and loads as a witness.
+- **pinned**: a hint is pinned when the constraints leave exactly one value it can
+  take, so a dishonest prover gains nothing by choosing another.
 
-Idiomatic gadget usage is encouraged:
+## 1. The statement
 
-- **`fpc.qcos` / `qsin` / `qpow` / `qsqrt` / `qabs` / `qexp` / `qlog`
-  / `inner_product`** — use these for the corresponding NumPy ops
-  (`np.cos`, `np.sin`, `np.linalg.norm`, etc.). They match Zinnia's
-  semantic of the operation; the fact that Zinnia lowers them to
-  polynomial chains is an implementation detail of the lowering, not
-  a requirement on the handwritten baseline.
-- `.powi` / `.pow` / `**` for compile-time exponents in SP1/Risc0 are
-  still **disallowed** — expand to an explicit multiplication chain so
-  the cost is comparable to halo2's `qmul` chain.
-- `f64::cos` / `.sin` / `.sqrt` / `.exp` / `.ln` ARE allowed in
-  SP1/Risc0 (the user explicitly authorized native transcendentals
-  there: "do not use taylor series; they have builtin operators").
-- Cairo lacks native transcendentals — use a 4-term polynomial
-  approximation (see `ds1000_case0323/main.cairo` for the cos Taylor
-  template).
+1. **Same function as the kernel.** A baseline computes what `kernel.py` computes
+   under NumPy semantics, for every input of the declared shapes and dtypes whose
+   NumPy result is finite and fits Q32. It is written from `kernel.py`, never from a
+   Zinnia IR dump or Zinnia's emitted code.
+2. **Where NumPy raises, there is no proof.** An out-of-range index (`IndexError`),
+   a division by zero, the square root of a negative number, an overflow of the
+   window: the circuit has no satisfying witness. The baseline does not reject any
+   other input (no assertion keyed to a fixture value, no narrower bin sizes or
+   index ranges than NumPy accepts).
+3. **Inputs private, outputs public.** Every kernel parameter is a private input.
+   The return value is public, flattened row-major, tuple elements in order.
+   Outputs that are compile-time constants of the circuit (a shape fixed by the
+   signature, a constant array) are not public cells, exactly as Zinnia leaves
+   them out of its instance; the baseline still declares them so the output check
+   sees the whole value. An output of data-dependent length (`x[x >= 0]`,
+   `np.argwhere`, `nonzero`) is exposed as one public length followed by the
+   values padded with zeros to the maximum length.
+4. **Shape parameters are constants.** In the performance set, DS-1000 shape
+   parameters (`ncol`, `bin_size`, `patch_size`, `size`, `power`, ...) are
+   compile-time constants of the kernel (author's decision, 2026-10-06); a baseline
+   uses the kernel's constant, and a kernel that still takes one at runtime keeps it
+   runtime.
+5. **Input-independent structure.** The circuit's gates and layout never depend on
+   input values. The checker generates keys with input A and proves with input B.
 
-## 2. Halo2 lowering style
+## 2. Numbers
 
-Treat halo2-graph as the substrate (FixedPointChip + GateChip +
-RangeChip). Write the kernel like a Rust developer using that library
-— Rust `for` loops, idiomatic gadget calls, helper closures where they
-clarify the algorithm. The structure should mirror `kernel.py`, not
-Zinnia's emitted IR.
+- Floats are Q32 as above; integers are themselves; booleans are `{0, 1}`.
+  Negative values are `p - |x|` in the field.
+- Rounding is Zinnia's:
+  - a product is `floor(a * b / 2^32)`;
+  - a sum of products that NumPy computes as one reduction (`np.dot`, `@`,
+    `tensordot`, `correlate`, `einsum`, `(x*y).sum()`) may be rescaled once,
+    `floor(sum(a_i * b_i) / 2^32)`; this is closer to the real result, and it is
+    what Zinnia's fused product-sum does;
+  - a float quotient is `floor(a * 2^32 / b)` with remainder in `[0, |b|)`;
+  - `int(x)` and `astype(int)` truncate toward zero; `//` and `%` follow Python
+    (floor, remainder with the sign of the divisor);
+  - `sin`/`cos` reduce the argument by pi and evaluate the degree-14 minimax
+    polynomial Zinnia evaluates (`q32::SIN_COEFS`); `cos(x) = sin(x + pi/2)`.
+- Comparisons are on the window (64-bit), the width Zinnia uses.
+- `==` in the kernel is exact equality, also on floats. `np.isclose` uses NumPy's
+  formula `|a - b| <= atol + rtol * |b|` with the kernel's (or NumPy's default)
+  `rtol` and `atol`.
 
-Common gadget mappings:
+## 3. Idiomatic and cheapest sound
 
-| NumPy op                  | halo2-graph call                                                       |
-|---------------------------|------------------------------------------------------------------------|
-| `np.add` / `+` (float)    | `fpc.qadd(ctx, a, b)`                                                  |
-| `np.sub` / `-` (float)    | `fpc.qsub(ctx, a, b)`                                                  |
-| `np.mul` / `*` (float)    | `fpc.qmul(ctx, a, b)`                                                  |
-| `np.div` / `/` (float)    | `fpc.qdiv(ctx, a, b)`                                                  |
-| integer arithmetic        | `gate.add` / `gate.sub` / `gate.mul`                                   |
-| `np.cos` / `np.sin`       | `fpc.qcos(ctx, x)` / `fpc.qsin(ctx, x)`                                |
-| `np.exp` / `np.log`       | `fpc.qexp(ctx, x)` / `fpc.qlog(ctx, x)`                                |
-| `np.sqrt`                 | `fpc.qsqrt(ctx, x)`                                                    |
-| `np.power(a, b)`          | `fpc.qpow(ctx, a, b)`                                                  |
-| `np.abs`                  | `fpc.qabs(ctx, x)`                                                     |
-| inner product / dot       | `fpc.inner_product(ctx, a_vec, b_vec)` (also `np.tensordot`, `np.dot`) |
-| `<` (int/float)           | `range_chip.is_less_than(ctx, lhs, rhs, 128)`                          |
-| `==` (int)                | `gate.is_equal(ctx, lhs, rhs)`                                         |
-| `==` (float)              | `qsub` + two `range_chip.is_less_than(±ε)` + `gate.and`                |
-| `select(cond, t, f)`      | `gate.select(ctx, t, f, cond)`                                         |
-| `not` / `or` / `and`      | `1 - x` / `a + b - a·b` / `gate.mul`                                   |
-| assert                    | `gate.assert_is_const(ctx, &cond, &F::ONE)`                            |
-| public output             | `make_public.push(value)`                                              |
+A baseline is what a competent developer writes with the library's standard
+gadgets. Concretely:
 
-## 3. Number representation per framework
+- Use the cheapest construction that is sound (section 4) and computes the
+  kernel's function. If Zinnia uses a cheaper sound construction for an operation,
+  the baseline may use it too; if the baseline knows a cheaper one, it uses it.
+- Do the kernel's work and no more: no dead computation (work whose result never
+  reaches an output), no re-check of an output against a private claimed value, no
+  constant outputs exposed as public cells, loop-invariant tests hoisted out of
+  loops, each value range-checked once (halo2: keep the `I64` returned by
+  `q32.bound`; Noir: keep the `u64` returned by `noir_hw::window`).
+- Do the kernel's work and no less (section 1.2): negative-index wrap, bounds,
+  the full output (all matches, not the first), the NumPy tie-breaking rule
+  (`argmax` returns the first maximum, `argsort` is the stable sort NumPy's
+  default `quicksort` gives for the fixture's distinct values; see the case notes
+  where ties matter).
+- Gathers by a private index use the library's indexing: halo2-base
+  `select_from_idx` behind `q.index`, Noir native array indexing after
+  `noir_hw::index_pos`. For short axes a one-hot over the valid index values
+  `-len..len` is cheaper and needs no range check (`q.index` switches to it up to
+  4 elements, measured by the `index_cost` test; in Noir use `noir_hw::pick` for
+  rows of up to 8). Never scan the whole input per output when one index selects
+  it.
+- Constant divisors use the constant-divisor gadget (one remainder check against
+  the constant), not the variable-divisor one.
+- Integers that are squared or multiplied stay integers (no Q32 rescale).
 
-| Framework | Native rep                | Notes                                                                                      |
-|-----------|---------------------------|--------------------------------------------------------------------------------------------|
-| Halo2     | FixedPointChip<F, 32>     | **2^32 fixed-point** to match Zinnia's `precision_bits = 32` default (`src/prove/halo2/artifact_format.rs:166`, `src/prove/types.rs:22`). Use `quantization(f64)` for every input. |
-| SP1       | native `f64`              | zkVMs natively support `f64` — this is the realistic comparison point.                     |
-| Risc0     | native `f64`              | Same as SP1.                                                                               |
-| Cairo     | u128/i128 integer quantisation | **×2^32 = 4_294_967_296** to match Zinnia's `precision_bits = 32` default (see `src/prove/halo2/artifact_format.rs:166`, `src/prove/types.rs:22`). Use `i128` when the kernel uses signed values. |
-| Noir      | Field (with u64/u128 view)| Same quantisation as Cairo (×2^32). Order comparisons require an integer cast.             |
+## 4. Soundness
 
-The Cairo scale is fixed at 2^32 to match Zinnia's quantizer
-(`prove/field.rs::quantize`, which computes `(value * 2^precision_bits) as i128`),
-so the integer literals encode the same numeric value the halo2 backend
-sees. Inside Cairo, this means:
+- Every hint is pinned, and the code says what pins it next to the hint: a
+  decomposition `x = q * d + r` checks `r` against `d` and puts `q` in the window,
+  so the field identity is an integer identity and `(q, r)` is unique; a square
+  root is bracketed `y^2 <= x * 2^32 < (y + 1)^2`; a parity bit is pinned by
+  `q = 2h + bit` with `h` range-checked.
+- Constants are circuit constants: halo2-base `Constant(..)` or
+  `ctx.load_constant`, Noir literals. Never `load_witness` for a constant.
+- Noir range checks are `x.assert_max_bit_size::<N>()` on the original `Field`. A
+  cast `x as u64` truncates and proves nothing, so a cast only follows such a
+  check. Every `unsafe { hint(..) }` is followed by the checks that pin it, with a
+  `// Safety:` comment naming them.
+- The shared gadgets carry malicious-hint tests: `cargo test --lib` in
+  `baselines/halo2_hw` (MockProver rejects neighbouring and non-integer quotients,
+  flipped signs and parities) and `nargo test` in `baselines/noir_hw`
+  (`should_fail` tests).
 
-- A `f64` literal `v` becomes `(v * 2^32) as i128` — pre-compute as
-  `int_part * Q + frac_part`, e.g. `0.11 ≈ (11 * Q) / 100` since
-  Rust truncates.
-- Multiplication of two Q-scaled values needs an explicit `/ Q`
-  rescale to stay in Q-scale (mirrors `FixedPointChip::qmul`).
-- Square root of a Q-scaled value `q_x` returns `q_y = sqrt(q_x * Q)`
-  (mirrors the legacy fixed-point sqrt witness).
-- Integer u128/i128 values fit Q-scale floats safely: a single Q-scaled
-  product peaks at 2^64 (still well under 2^128).
+## 5. Gadgets
 
-## 4. Assertion shape
+halo2-base (`q32::Q32`, built on `GateChip`/`RangeChip` of halo2-base 0.4.1):
 
-Every baseline reads inputs **and** a claimed result, recomputes, and
-asserts equality. Equality is realised per framework:
+| NumPy | gadget |
+|---|---|
+| float input / constant | `q.load_floats(ctx, &v)` / `q.float_const(ctx, v)` or `Constant(fe(quantize(v)))` |
+| int input / constant | `q.load_ints` / `q.int_const`, `Constant(fe(v))` |
+| `+`, `-` (float or int) | `q.add`, `q.sub` (exact) |
+| float `*` | `q.mul` (rescaled, returns `I64`) |
+| float dot / tensordot / correlate | `q.dot` (one rescale) |
+| int `*`, float `*` int | `q.gate.mul`, `q.mul_int` (exact) |
+| float `/` | `q.div` (any sign), `q.div_pos` (positive divisor), `q.div_const` |
+| int `//`, `%` | `q.floor_div_const`, `q.floor_div_pos` |
+| `astype(float)` | `q.int_to_float` |
+| `int(x)`, `astype(int)` | `q.float_to_int` |
+| `np.floor` | `q.floor` |
+| `x ** n` (constant n) | `q.pow_const` |
+| `np.sqrt` | `q.sqrt` (exact floor square root) |
+| `np.sin`, `np.cos` | `q.sin`, `q.cos` |
+| `<`, `<=`, `>`, `>=` | `q.bound` once per value, then `q.lt`/`le`/`gt`/`ge`, `q.lt_const` |
+| `max`, `min`, `abs` | `q.max`, `q.min`, `q.abs` |
+| `==`, `!=` | `q.eq`, `q.gate.not` |
+| `where`, `if` on data | `q.gate.select`, `q.select_i64` |
+| `a[i]` (private `i`) | `q.index` (NumPy wrap and bounds; one-hot or range-checked form by length), `q.index_i64` if `i` already has a window proof |
+| `k // d`, `k % d` for a small known-non-negative `k` (an index built from loop constants) | `q.divmod_small` (halo2-base `div_mod`) |
+| `&`, `|`, `~` on bools | `q.gate.and`, `q.gate.or`, `q.gate.not` |
 
-- Halo2 (float result): EqualFIR pattern (`qsub` + two `is_less_than` ± ε
-  + `and` + `assert_is_const`). ε defaults to **0.001**; cases that
-  accumulate Taylor or qmul rounding (e.g. 0323) loosen it.
-- Halo2 (integer result): `gate.is_equal` + `assert_is_const`.
-- Cairo / Noir (integer values): exact `==`. If a tolerance is needed
-  (e.g. shared Taylor with quantisation rescaling), express it as two
-  range checks (`x + tol ≥ y` and `x ≤ y + tol`) since there's no `abs`.
-- SP1 / Risc0 (f64): `(computed - claimed).abs() < ε` with ε matching
-  the halo2 baseline's ε.
+Noir (`noir_hw`, on top of the Noir standard library):
 
-## 5. Sample inputs
+| NumPy | Noir |
+|---|---|
+| `+`, `-`, int `*` | `Field` arithmetic |
+| float `*` | `noir_hw::mul` |
+| float dot | `noir_hw::dot`, or accumulate products and `noir_hw::rescale` once |
+| float `/` | `noir_hw::div` |
+| int `//`, `%` | `noir_hw::divmod_pos` |
+| `astype(float)`, `int(x)`, `np.floor` | `from_int`, `to_int`, `floor` |
+| `np.sqrt`, `np.sin`, `np.cos` | `sqrt`, `sin`, `cos` |
+| comparisons | `let w = window(x)` once per value, then `u64` comparisons; `lt`, `gt`, ... for one-off tests |
+| `max`, `min`, `abs` | `max`, `min`, `abs` (or `window` and select) |
+| `a[i]` (private `i`) | `a[index_pos(i, len)]` (native indexing); `pick(row, i)` for rows of up to 8 |
+| `u32` index arithmetic (`k // 6` on an index built from loop constants) | native `u32` operators |
 
-Sample inputs are deterministic and chosen so the assertion is
-**meaningful but not trivially passing**:
+Noir specifics (toolchain, ZK target, driver) are in `NOIR_BASELINES.md`.
 
-- argmax / argmin: place the extremum at a non-trivial cell (not the
-  first or last element).
-- mean: choose inputs so the per-index sum is exactly divisible by the
-  count, so the multiplication-form check (`sum == n * mean`) is exact.
-- gather (e.g. `diag`): use distinct, deterministic values so the
-  indexing is observably correct.
-- transcendentals: pick a degree / value with a recognisable result
-  (cos(60°)=0.5, sin(90°)=1, etc.).
+## 6. Files
 
-Inputs are baked into Cairo as literals, shipped to Noir via
-`Prover.toml`, and written from the driver Rust files for SP1 / Risc0.
-The halo2 baseline expects them via the `CircuitInput` struct (JSON).
+`target.rs` (one per case) is a module of the `halo2_hw` crate:
 
-## 6. Files per case
+```rust
+//! DS-1000 case NNNN, halo2-base baseline.
+//! Kernel: <one line>.
+//! <only the non-obvious construction choices>
 
-| File                    | Framework | Notes                                                          |
-|-------------------------|-----------|----------------------------------------------------------------|
-| `kernel.py`             | Zinnia    | Pre-existing — the canonical kernel.                            |
-| `record.json`           | DS-1000   | Pre-existing — original test cases and metadata.                |
-| `target.rs`             | Halo2     | Self-contained example for `halo2-graph`'s `cargo run --example`.|
-| `sp1.prog.rs`           | SP1       | Guest program.                                                  |
-| `sp1.driver.rs`         | SP1       | Host driver (proves + verifies).                                |
-| `risc0.prog.rs`         | Risc0     | Guest program.                                                  |
-| `risc0.driver.rs`       | Risc0     | Host driver.                                                    |
-| `main.cairo`            | Cairo     | Hardcoded inputs as literals.                                   |
-| `main.nr`               | Noir      | Function taking inputs + claimed result.                        |
-| `Prover.toml`           | Noir      | Noir prover input.                                              |
-| `SKIPPED.md` (optional) | n/a       | Per-case notes on simplifications or skipped frameworks.        |
+use crate::prelude::*;
 
-## 7. Zinnia-incompatible cases
+pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
+    let a = inputs.floats("a", &[8, 6])?; // name and shape from the kernel signature
+    let q = Q32::new(builder);
+    let ctx = builder.main(0);
+    ...
+    out.floats(&result); // or out.int / out.bools / out.const_ints / out.dynamic
+    Ok(())
+}
+```
 
-When the Zinnia compiler rejects a kernel (dynamic shapes, `np.gcd`,
-`np.pad` with runtime width, `np.bincount` with runtime values, etc.),
-the case has **no** `target.rs` / halo2 baseline — the compiler can't
-emit it, and a handwritten halo2 baseline would no longer be
-apples-to-apples. The remaining zkVM baselines (`sp1.*`, `risc0.*`,
-`main.cairo`) are still written and executed; these frameworks are
-general-purpose and can express the kernel directly.
+`main.nr` (one per case) is the `src/main.nr` of a Nargo package the driver stages
+with the dependencies `noir_hw` and `noir_fpc`. Its parameters carry the kernel's
+parameter names (arrays flattened row-major or nested, `Field` or native integer
+types); its header names the case and kernel and carries the output layout the
+driver decodes:
 
-The 28 cases in this bucket (as of 2026-05-26): 0295–0299, 0327–0328,
-0331–0332, 0354, 0362, 0366, 0405–0408, 0411, 0420, 0425–0427, 0440,
-0471, 0489, 0495–0499. Compile-failure reasons are recorded in
-`/tmp/zinnia_compile_status.txt`.
+```noir
+// DS-1000 case NNNN, Noir baseline.
+// Kernel: <one line>.
+// @outputs: float[6]
+```
+
+`@outputs` segments (separated by `;`): `float[N]`, `int[N]`, `bool[N]`;
+`const int[N] = [...]` / `const float[N] = [...]` for circuit constants (not
+public); `dynamic <kind>[IxU]` for a public length of up to `I` items of `U`
+cells each, then `I * U` padded cells; `dynamic2 <kind>[RxC]` for a 2-D output
+of data-dependent shape: public `(rows, cols)`, then `R * C` cells holding the
+`rows * cols` values compact and row-major, zero-padded (halo2: `out.dynamic2`).
+
+`Prover.toml` (one per case) is generated from `fixture.json` input B by
+`python -m hw_check.prover_toml <case dir>`; do not edit it by hand.
+
+## 7. Checking and running
+
+From `benchmarking/baselines`:
+
+```bash
+# build (release = the measured profile; dev-fast for iteration)
+(cd halo2_hw && cargo build --release)              # all cases
+(cd halo2_hw && HALO2_HW_CASES=0309,0310 cargo build --profile dev-fast)
+python -m hw_check.lock_match                        # same dependency revisions as Zinnia
+python -m hw_check.check 0309 0310                   # or --all
+```
+
+`hw_check.check` runs, per case and system: halo2 `mock` with A and B, `setup`
+with A, `prove` with B, `verify`, and `verify` with public value 0 tampered;
+Noir `setup`, `prove` with A and B, `verify`, tampered `verify`. Every proved
+output must equal the NumPy reference position by position (integers and booleans
+exactly, floats within `1e-6 + 1e-6 * |x|` unless the case set gives a tolerance),
+and the tampered public must be rejected. A baseline that fails is wrong.
+
+The program contract (`halo2_hw <mode> --case <dir> --input A|B --workdir <dir>`,
+and `python -m hw_check.noir_driver <mode> ...`) prints one JSON object with `ok`,
+`publics` (decoded, kernel order), `proof_path` and per-step `timings_s`
+(halo2: `params_s`, `synthesize_s`, `keygen_vk_s`, `keygen_pk_s`, `witness_s`,
+`prove_s`, `verify_s`, loads and writes separately; Noir: `compile_s`,
+`write_vk_s`, `execute_s`, `prove_s`, `verify_s`). halo2's `prove_s` covers
+`create_proof` and `transcript.finalize()`, the window of Zinnia's
+`prove_seconds`. `halo2_hw` sizes the circuit by Zinnia's rule
+(`params.rs`); `--k` and `--lookup-bits` override it.
+
+## 8. Cases without a baseline
+
+Listed in `NOIR_BASELINES.md` (Noir) and in the bench-circuits report
+(`eval-redo/fix/bench-circuits.md`) with the reason for each.

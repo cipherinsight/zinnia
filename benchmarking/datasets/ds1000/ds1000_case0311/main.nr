@@ -1,21 +1,19 @@
-// DS-1000 case 0311 -- Noir baseline.
-// np.unravel_index(a.argmax(), a.shape, order='F') on Float[8,6].
-// F-order: i = flat % rows, j = flat // rows.
+// DS-1000 case 0311, Noir baseline.
+// Kernel: `np.unravel_index(a.argmax(), a.shape, order='F')` on Float[8, 6]:
+// with k the C-order flat argmax, the Fortran-order coordinates are (k % 8, k // 8).
+// @outputs: int[2]
 
-use noir_fpc::qgt;
-
-global ROWS: u32 = 8;
+use noir_hw::window;
 
 fn main(a: [Field; 48]) -> pub [Field; 2] {
-    let mut best_val: Field = a[0];
+    let mut best = window(a[0]);
     let mut best_idx: u32 = 0;
     for k in 1..48 {
-        if qgt(a[k], best_val) {
-            best_val = a[k];
+        let w = window(a[k]);
+        if w > best {
+            best = w;
             best_idx = k;
         }
     }
-    let i = best_idx % ROWS;
-    let j = best_idx / ROWS;
-    [i as Field, j as Field]
+    [(best_idx % 8) as Field, (best_idx / 8) as Field]
 }

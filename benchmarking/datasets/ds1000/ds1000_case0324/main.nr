@@ -1,11 +1,10 @@
-// DS-1000 case 0324 -- Noir baseline. cos(deg2rad(degree)).
-// degree is float-typed in the kernel (60.0 in fixture). Receive as Q-scaled.
+// DS-1000 case 0324, Noir baseline.
+// Kernel: `np.cos(np.deg2rad(degree))` for an Integer degree. deg2rad of an
+// integer is the integer times the Q32 constant pi/180 (exact, no rescale).
+// @outputs: float[1]
 
-use noir_fpc::{qmul, qcos};
+global DEG_TO_RAD_Q: Field = 74961321; // round(pi / 180 * 2^32)
 
 fn main(degree: Field) -> pub Field {
-    // pi/180 * Q = 74961321.
-    let pi_over_180: Field = 74961321;
-    let rad = qmul(degree, pi_over_180);
-    qcos(rad)
+    noir_hw::cos(degree * DEG_TO_RAD_Q)
 }
