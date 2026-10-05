@@ -1,5 +1,6 @@
 import ast
 
+from zinnia.compile.import_scope import OutOfScopeImportError, check_import_statement
 from zinnia.debug.exception import InvalidCircuitStatementException, \
     InvalidProgramException, InvalidAssignStatementException, InvalidAnnotationException, UnsupportedOperatorException, \
     UnsupportedConstantLiteralException, \
@@ -763,10 +764,13 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
             elif isinstance(stmt, ast.Expr):
                 parsed_stmt = {"__class__": "ASTExprStatement", "expr": self.visit_expr(stmt.value)}
             elif isinstance(stmt, ast.Import) or isinstance(stmt, ast.ImportFrom):
-                # In-circuit imports are runtime no-ops once the module-level
-                # Python function has loaded. Keep them so generated benchmark
-                # snippets like `import copy; copy.deepcopy(x)` can lower to
-                # their supported call semantics.
+                # An allowed import is a no-op once the module has loaded
+                # (function_lowering already resolved circuit-level aliases);
+                # any other module is out of scope (import_scope).
+                try:
+                    check_import_statement(stmt)
+                except OutOfScopeImportError as error:
+                    raise UnsupportedLangFeatureException(dbg_info, str(error)) from None
                 parsed_stmt = {"__class__": "ASTPassStatement"}
             elif isinstance(stmt, ast.Raise):
                 parsed_stmt = self.visit_Raise(stmt)

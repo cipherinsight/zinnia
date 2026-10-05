@@ -351,13 +351,21 @@ def test_numpy_import_does_not_override_shadowing(body):
 
 
 @pytest.mark.parametrize('source',[
-    'import random\ndef kernel(x):\n    return x',
-    'def kernel(x):\n    import random\n    return x',
     'from numpy import *\ndef kernel(x):\n    return x',
     'def kernel(x):\n    if len(x)>0:\n        import numpy as num\n    return num.asarray(x)',
 ])
 def test_unsupported_imports_are_explicit(source):
     with pytest.raises(FunctionLoweringError,match='import'):
+        lower_function_source(source,'kernel')
+
+@pytest.mark.parametrize('source',[
+    'import random\ndef kernel(x):\n    return x',
+    'def kernel(x):\n    import random\n    return x',
+    'def kernel(x):\n    if len(x)>0:\n        import random\n    return x',
+])
+def test_out_of_scope_imports_are_rejected(source):
+    from zinnia.compile.import_scope import OutOfScopeImportError
+    with pytest.raises(OutOfScopeImportError,match='out of scope: imports random'):
         lower_function_source(source,'kernel')
 
 @pytest.mark.parametrize('prefix,body',[
