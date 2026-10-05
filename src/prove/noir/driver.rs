@@ -1,11 +1,20 @@
-//! Subprocess driver that runs `nargo execute` then `bb prove --scheme
-//! ultra_honk`. VK generation is split off into its own `bb write_vk`
-//! call so the timed window around `bb prove` matches what
-//! `benchmarking/run_noir_baselines.py` measures.
+//! Subprocess driver for the Noir toolchain: `nargo execute` (compile and
+//! solve the witness), `bb write_vk`, `bb prove` (the timed window, matching
+//! `benchmarking/run_noir_baselines.py`) and `bb verify`.
+//!
+//! Every `bb` call uses the same verifier target, `VERIFIER_TARGET`
+//! (UltraHonk without zero knowledge, as the handwritten-baseline runner).
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 use std::time::Instant;
+
+/// `bb --verifier_target` for every call (write_vk, prove, verify).
+pub const VERIFIER_TARGET: &str = "noir-recursive-no-zk";
+
+/// Package name written into the staged `Nargo.toml`; nargo names its
+/// bytecode and witness files after it.
+pub const PACKAGE_NAME: &str = "zinnia_circuit";
 
 #[derive(Debug)]
 pub enum NoirError {
@@ -19,20 +28,28 @@ pub struct DriverPaths {
     pub bb: PathBuf,
 }
 
+/// Toolchain lookup: the `ZINNIA_NARGO_BIN` / `ZINNIA_BB_BIN` overrides, then
+/// the pinned installs (`~/.nargo/bin/nargo`, `~/.bb/bb`, the versions the
+/// evaluation uses), then `PATH`. Preferring the pinned installs over `PATH`
+/// keeps a stray binary on `PATH` from silently changing the toolchain.
 impl Default for DriverPaths {
     fn default() -> Self {
-        let nargo = std::env::var("ZINNIA_NARGO_BIN")
-            .map(PathBuf::from)
-            .ok()
-            .or_else(|| which::which_in_path("nargo"))
-            .unwrap_or_else(|| home_dir().join(".nargo/bin/nargo"));
-        let bb = std::env::var("ZINNIA_BB_BIN")
-            .map(PathBuf::from)
-            .ok()
-            .or_else(|| which::which_in_path("bb"))
-            .unwrap_or_else(|| home_dir().join(".bb/bb"));
-        Self { nargo, bb }
+        Self {
+            nargo: locate("ZINNIA_NARGO_BIN", ".nargo/bin/nargo", "nargo"),
+            bb: locate("ZINNIA_BB_BIN", ".bb/bb", "bb"),
+        }
     }
+}
+
+fn locate(env: &str, home_rel: &str, name: &str) -> PathBuf {
+    if let Ok(explicit) = std::env::var(env) {
+        return PathBuf::from(explicit);
+    }
+    let pinned = home_dir().join(home_rel);
+    if pinned.is_file() {
+        return pinned;
+    }
+    which::which_in_path(name).unwrap_or(pinned)
 }
 
 fn home_dir() -> PathBuf {
@@ -46,143 +63,133 @@ pub struct DriverOutput {
     pub prove_seconds: f64,
     pub proof_bytes: Vec<u8>,
     pub vk_bytes: Vec<u8>,
+    /// bb's public-inputs file: 32-byte big-endian field elements, the
+    /// `pub` inputs of `main` first, then its return values.
     pub public_inputs_bytes: Vec<u8>,
     pub verify_ok: bool,
     /// Combined stdout+stderr tail from `bb verify` when it rejected the
-    /// proof (`verify_ok == false`). `None` on the success path or when no
-    /// `public_inputs` file was emitted (verify skipped). Surfaced by
-    /// `prove()` in the `ProvingFailed` error so a bb-rejected proof carries
-    /// the verifier's own diagnostics.
+    /// proof (`verify_ok == false`).
     pub verify_detail: Option<String>,
 }
 
-pub fn run_pipeline(pkg_dir: &Path, paths: &DriverPaths) -> Result<DriverOutput, NoirError> {
-    if !paths.nargo.exists() {
-        return Err(NoirError::ToolchainMissing(format!(
-            "nargo not found at {} (override with ZINNIA_NARGO_BIN)",
-            paths.nargo.display()
-        )));
-    }
-    if !paths.bb.exists() {
-        return Err(NoirError::ToolchainMissing(format!(
-            "bb not found at {} (override with ZINNIA_BB_BIN)",
-            paths.bb.display()
-        )));
-    }
-
-    // 1. nargo execute (witness generation, also produces ACIR bytecode).
-    let out = Command::new(&paths.nargo)
-        .arg("execute")
-        .current_dir(pkg_dir)
-        .output()
-        .map_err(|e| NoirError::Io(format!("spawn nargo: {}", e)))?;
-    if !out.status.success() {
-        return Err(NoirError::SubprocessFailed {
-            step: "nargo execute".into(),
-            detail: tail_combined(&out.stdout, &out.stderr, 1200),
-        });
-    }
-
-    // The bytecode lives at target/zinnia_circuit.json and the witness
-    // at target/zinnia_circuit.gz (package name = "zinnia_circuit").
-    let target = pkg_dir.join("target");
-    let bytecode = target.join("zinnia_circuit.json");
-    let witness = target.join("zinnia_circuit.gz");
-    if !bytecode.exists() || !witness.exists() {
-        return Err(NoirError::SubprocessFailed {
-            step: "nargo execute".into(),
-            detail: format!(
-                "expected {} and {} after nargo execute",
-                bytecode.display(),
-                witness.display()
-            ),
-        });
-    }
-
-    // 2. bb write_vk (excluded from the prove_seconds window).
-    let out = Command::new(&paths.bb)
-        .arg("write_vk")
-        .arg("-b")
-        .arg(&bytecode)
-        .arg("-o")
-        .arg(&target)
-        .arg("--scheme")
-        .arg("ultra_honk")
-        .arg("--verifier_target")
-        .arg("noir-recursive-no-zk")
-        .output()
-        .map_err(|e| NoirError::Io(format!("spawn bb write_vk: {}", e)))?;
-    if !out.status.success() {
-        return Err(NoirError::SubprocessFailed {
-            step: "bb write_vk".into(),
-            detail: tail_combined(&out.stdout, &out.stderr, 1200),
-        });
-    }
-    let vk_path = target.join("vk");
-
-    // 3. bb prove (timed window — matches run_noir_baselines.py
-    // methodology, which measures wall-clock around `bb prove` after
-    // the VK was already generated).
-    let t = Instant::now();
-    let out = Command::new(&paths.bb)
-        .arg("prove")
-        .arg("-b")
-        .arg(&bytecode)
-        .arg("-w")
-        .arg(&witness)
-        .arg("-k")
-        .arg(&vk_path)
-        .arg("-o")
-        .arg(&target)
-        .arg("--scheme")
-        .arg("ultra_honk")
-        .arg("--verifier_target")
-        .arg("noir-recursive-no-zk")
-        .output()
-        .map_err(|e| NoirError::Io(format!("spawn bb prove: {}", e)))?;
-    let prove_seconds = t.elapsed().as_secs_f64();
-    if !out.status.success() {
-        return Err(NoirError::SubprocessFailed {
-            step: "bb prove".into(),
-            detail: tail_combined(&out.stdout, &out.stderr, 1200),
-        });
-    }
-    let proof_path = target.join("proof");
-
-    // 4. bb verify.
-    let pi_path = target.join("public_inputs");
-    let (verify_ok, verify_detail) = if pi_path.exists() {
-        let out = Command::new(&paths.bb)
-            .arg("verify")
-            .arg("-k")
-            .arg(&vk_path)
-            .arg("-p")
-            .arg(&proof_path)
-            .arg("-i")
-            .arg(&pi_path)
-            .arg("--scheme")
-            .arg("ultra_honk")
-            .arg("--verifier_target")
-            .arg("noir-recursive-no-zk")
-            .output()
-            .map_err(|e| NoirError::Io(format!("spawn bb verify: {}", e)))?;
-        if out.status.success() {
-            (true, None)
-        } else {
-            // Capture the verifier's own diagnostics so prove() can ship
-            // them in the ProvingFailed error rather than silently emitting
-            // a bb-rejected proof as a valid artifact.
-            (false, Some(tail_combined(&out.stdout, &out.stderr, 1200)))
-        }
+fn require(path: &Path, what: &str, env: &str) -> Result<(), NoirError> {
+    if path.exists() {
+        Ok(())
     } else {
-        // No public_inputs file emitted (kernel without exposes) — treat
-        // the bb prove return code as sufficient.
-        (true, None)
-    };
+        Err(NoirError::ToolchainMissing(format!(
+            "{} not found at {} (override with {})",
+            what,
+            path.display(),
+            env
+        )))
+    }
+}
 
-    let proof_bytes = std::fs::read(&proof_path).unwrap_or_default();
-    let vk_bytes = std::fs::read(&vk_path).unwrap_or_default();
-    let public_inputs_bytes = std::fs::read(&pi_path).unwrap_or_default();
+/// Run a toolchain command; a non-zero exit becomes `SubprocessFailed`.
+fn run(step: &str, cmd: &mut Command) -> Result<Output, NoirError> {
+    let out = cmd
+        .output()
+        .map_err(|e| NoirError::Io(format!("spawn {}: {}", step, e)))?;
+    if out.status.success() {
+        Ok(out)
+    } else {
+        Err(NoirError::SubprocessFailed {
+            step: step.to_string(),
+            detail: tail_combined(&out.stdout, &out.stderr, 1200),
+        })
+    }
+}
+
+fn read_file(path: &Path) -> Result<Vec<u8>, NoirError> {
+    std::fs::read(path).map_err(|e| NoirError::Io(format!("read {}: {}", path.display(), e)))
+}
+
+/// `nargo execute --overwrite-return` in a staged package: compiles the
+/// circuit, solves the witness (failing if any constraint is violated) and
+/// returns the values `main` returned, as `0x`-prefixed field elements.
+pub fn execute(pkg_dir: &Path, paths: &DriverPaths) -> Result<Vec<String>, NoirError> {
+    require(&paths.nargo, "nargo", "ZINNIA_NARGO_BIN")?;
+    run(
+        "nargo execute",
+        Command::new(&paths.nargo)
+            .arg("execute")
+            .arg("--overwrite-return")
+            .current_dir(pkg_dir),
+    )?;
+    let prover_toml = std::fs::read_to_string(pkg_dir.join("Prover.toml"))
+        .map_err(|e| NoirError::Io(format!("read Prover.toml: {}", e)))?;
+    Ok(parse_return_entry(&prover_toml))
+}
+
+/// The `return = ...` entry nargo writes into Prover.toml: a single quoted
+/// value or a list of them. A circuit without a return value has none.
+fn parse_return_entry(prover_toml: &str) -> Vec<String> {
+    let Some(line) = prover_toml
+        .lines()
+        .find(|l| l.trim_start().starts_with("return ="))
+    else {
+        return Vec::new();
+    };
+    line.split_once('=')
+        .map(|(_, rhs)| rhs)
+        .unwrap_or("")
+        .split(|c| c == '[' || c == ']' || c == ',')
+        .map(|tok| tok.trim().trim_matches('"').to_string())
+        .filter(|tok| !tok.is_empty())
+        .collect()
+}
+
+/// Full pipeline: execute, write the verification key, prove (timed), and
+/// verify the proof against the public inputs bb wrote.
+pub fn run_pipeline(pkg_dir: &Path, paths: &DriverPaths) -> Result<DriverOutput, NoirError> {
+    require(&paths.bb, "bb", "ZINNIA_BB_BIN")?;
+    execute(pkg_dir, paths)?;
+
+    let target = pkg_dir.join("target");
+    let bytecode = target.join(format!("{}.json", PACKAGE_NAME));
+    let witness = target.join(format!("{}.gz", PACKAGE_NAME));
+
+    // bb write_vk (excluded from the prove_seconds window).
+    run(
+        "bb write_vk",
+        Command::new(&paths.bb)
+            .arg("write_vk")
+            .arg("-b")
+            .arg(&bytecode)
+            .arg("-o")
+            .arg(&target)
+            .args(["--scheme", "ultra_honk", "--verifier_target", VERIFIER_TARGET]),
+    )?;
+
+    // bb prove: the timed window (run_noir_baselines.py measures the same
+    // call after the VK exists).
+    let t = Instant::now();
+    run(
+        "bb prove",
+        Command::new(&paths.bb)
+            .arg("prove")
+            .arg("-b")
+            .arg(&bytecode)
+            .arg("-w")
+            .arg(&witness)
+            .arg("-k")
+            .arg(target.join("vk"))
+            .arg("-o")
+            .arg(&target)
+            .args(["--scheme", "ultra_honk", "--verifier_target", VERIFIER_TARGET]),
+    )?;
+    let prove_seconds = t.elapsed().as_secs_f64();
+
+    // bb always writes the public-inputs file (empty when there are none),
+    // so a missing file is an error, not a reason to skip verification.
+    let proof_bytes = read_file(&target.join("proof"))?;
+    let vk_bytes = read_file(&target.join("vk"))?;
+    let public_inputs_bytes = read_file(&target.join("public_inputs"))?;
+    let (verify_ok, verify_detail) =
+        match verify_proof(paths, &vk_bytes, &proof_bytes, &public_inputs_bytes)? {
+            Ok(()) => (true, None),
+            Err(detail) => (false, Some(detail)),
+        };
 
     Ok(DriverOutput {
         prove_seconds,
@@ -194,13 +201,68 @@ pub fn run_pipeline(pkg_dir: &Path, paths: &DriverPaths) -> Result<DriverOutput,
     })
 }
 
+/// `bb verify` of `proof` against `vk` and `public_inputs` (raw file
+/// contents). The outer error is a toolchain/IO failure; the inner `Err`
+/// carries the verifier's diagnostics when it rejects the proof.
+pub fn verify_proof(
+    paths: &DriverPaths,
+    vk: &[u8],
+    proof: &[u8],
+    public_inputs: &[u8],
+) -> Result<Result<(), String>, NoirError> {
+    require(&paths.bb, "bb", "ZINNIA_BB_BIN")?;
+    let dir = scratch_dir("zinnia-noir-verify")?;
+    let write = |name: &str, bytes: &[u8]| -> Result<PathBuf, NoirError> {
+        let path = dir.join(name);
+        std::fs::write(&path, bytes)
+            .map_err(|e| NoirError::Io(format!("write {}: {}", path.display(), e)))?;
+        Ok(path)
+    };
+    let vk_path = write("vk", vk)?;
+    let proof_path = write("proof", proof)?;
+    let pi_path = write("public_inputs", public_inputs)?;
+    let out = Command::new(&paths.bb)
+        .arg("verify")
+        .arg("-k")
+        .arg(&vk_path)
+        .arg("-p")
+        .arg(&proof_path)
+        .arg("-i")
+        .arg(&pi_path)
+        .args(["--scheme", "ultra_honk", "--verifier_target", VERIFIER_TARGET])
+        .output()
+        .map_err(|e| NoirError::Io(format!("spawn bb verify: {}", e)));
+    let _ = std::fs::remove_dir_all(&dir);
+    let out = out?;
+    if out.status.success() {
+        Ok(Ok(()))
+    } else {
+        Ok(Err(tail_combined(&out.stdout, &out.stderr, 1200)))
+    }
+}
+
+/// A fresh directory under the system temp dir (PID + nanos, no uuid dep).
+pub fn scratch_dir(prefix: &str) -> Result<PathBuf, NoirError> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let dir = std::env::temp_dir().join(format!("{}-{}-{}", prefix, std::process::id(), nanos));
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| NoirError::Io(format!("mkdir {}: {}", dir.display(), e)))?;
+    Ok(dir)
+}
+
 fn tail_combined(stdout: &[u8], stderr: &[u8], max: usize) -> String {
     let mut combined = String::new();
     combined.push_str(&String::from_utf8_lossy(stdout));
     combined.push('\n');
     combined.push_str(&String::from_utf8_lossy(stderr));
     if combined.len() > max {
-        let start = combined.len() - max;
+        let mut start = combined.len() - max;
+        while !combined.is_char_boundary(start) {
+            start += 1;
+        }
         format!("...{}", &combined[start..])
     } else {
         combined
@@ -219,5 +281,18 @@ mod which {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_return_entry;
+
+    #[test]
+    fn return_entry_list_and_scalar() {
+        let toml = "return = [\"0x01\", \"0x02\"]\nx = \"0x05\"\n";
+        assert_eq!(parse_return_entry(toml), vec!["0x01", "0x02"]);
+        assert_eq!(parse_return_entry("return = \"0x07\"\n"), vec!["0x07"]);
+        assert!(parse_return_entry("x = \"1\"\n").is_empty());
     }
 }

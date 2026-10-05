@@ -594,6 +594,46 @@ fn emit_structural_circuit(
     }
 }
 
+/// Emit the Noir circuit for this witness and `nargo execute` it without
+/// proving. Returns a JSON list of the values `main` returns (the exposed
+/// outputs in IR order) as `0x`-prefixed field elements; an unsatisfied
+/// constraint is an error. Used by `benchmarking/noir_differential.py` to
+/// compare the Noir semantics with the mock backend's.
+#[cfg(feature = "noir-backend")]
+#[pyfunction]
+#[pyo3(signature = (compiled_ir, inputs_json, external_callables, params_json=None))]
+fn execute_noir_circuit(
+    py: Python<'_>,
+    compiled_ir: &CompiledIR,
+    inputs_json: &str,
+    external_callables: &Bound<'_, pyo3::types::PyDict>,
+    params_json: Option<&str>,
+) -> PyResult<String> {
+    let ir_graph = &compiled_ir.graph;
+    let witness_input: circuit_input::CircuitInputs =
+        serde_json::from_str(inputs_json).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Witness JSON parse error: {}", e))
+        })?;
+    let backend = prove::noir::NoirProverBackend;
+    let params: prove::types::ProvingParams = match params_json {
+        Some(pj) => serde_json::from_str(pj).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Params JSON parse error: {}", e))
+        })?,
+        None => prove::types::ProvingParams::default(),
+    };
+    let py_callback =
+        prove::preprocess::py_callback::PyExternalCallback::new(py, external_callables);
+    let resolved_witness =
+        prove::preprocess::run_preprocess(ir_graph, &witness_input, &params, &py_callback)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+    let returned = backend
+        .execute(ir_graph, &resolved_witness, &params)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+    serde_json::to_string(&returned).map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e))
+    })
+}
+
 /// Verify a ZK proof.
 /// Returns a JSON-serialized VerifyResult.
 #[pyfunction]
@@ -796,6 +836,8 @@ fn _zinnia_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compile_circuit, m)?)?;
     m.add_function(wrap_pyfunction!(prove_circuit, m)?)?;
     m.add_function(wrap_pyfunction!(emit_structural_circuit, m)?)?;
+    #[cfg(feature = "noir-backend")]
+    m.add_function(wrap_pyfunction!(execute_noir_circuit, m)?)?;
     m.add_function(wrap_pyfunction!(get_elided_publics, m)?)?;
     m.add_function(wrap_pyfunction!(verify_proof_artifact, m)?)?;
     m.add_function(wrap_pyfunction!(export_ir_json, m)?)?;

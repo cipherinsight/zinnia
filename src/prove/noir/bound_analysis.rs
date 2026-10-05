@@ -105,17 +105,27 @@ pub fn run(graph: &IRGraph) -> BoundMap {
                     .flatten()
                     .and_then(|b| a.checked_mul(b))
             }),
-            IR::DivI | IR::FloorDivI | IR::FloorDivIPinned { .. } => {
-                arg_bounds.get(0).copied().flatten()
-            }
-            IR::ModI => {
-                // result < |b|. If b is bounded, result <= b - 1; if not,
-                // fall back to a's bound.
-                match arg_bounds.get(1).copied().flatten() {
-                    Some(b) if b > 0 => Some(b - 1),
-                    _ => arg_bounds.get(0).copied().flatten(),
-                }
-            }
+            // `DivI` is field division (a * b^-1): no integer bound.
+            IR::DivI => None,
+            // a // b with a in [0, A] and a bounded (so non-negative, and
+            // non-zero at run time) divisor lies in [0, A]. A divisor that
+            // may be negative gives a negative quotient: no bound.
+            IR::FloorDivI => match (
+                arg_bounds.get(0).copied().flatten(),
+                arg_bounds.get(1).copied().flatten(),
+            ) {
+                (Some(a), Some(_)) => Some(a),
+                _ => None,
+            },
+            // The producer promises non-negative operands, and the Noir
+            // lowering (`q_floor_div_bounded`) enforces it: q <= a.
+            IR::FloorDivIPinned { .. } => arg_bounds.get(0).copied().flatten(),
+            // a % b lies in [0, b - 1] for a bounded (non-negative, non-zero)
+            // divisor b; an unbounded divisor may be negative.
+            IR::ModI => match arg_bounds.get(1).copied().flatten() {
+                Some(b) if b > 0 => Some(b - 1),
+                _ => None,
+            },
             IR::PowI | IR::AbsI | IR::SignI | IR::InvI => None,
 
             // ── Integer bitwise — narrow bound to min(operand bounds) ─
@@ -239,14 +249,16 @@ pub fn run(graph: &IRGraph) -> BoundMap {
 
         // Provenance fallback / tightening: the ProvenanceTable carries
         // structural intervals the local dataflow can't see — segment
-        // hulls on ReadMemory outputs, the SelectI min/max recognizer,
-        // AssertU128Lt / AssertNonNegI hooks (the assert constraint is
-        // itself part of the emitted circuit, so the bound holds for any
-        // accepted witness). Intervals are deposited at IR-build time
-        // from structure, never from witness evaluation, so consuming
-        // them here cannot specialize the circuit; a wrong bound could
-        // only over-constrain (Noir u32 ops are overflow-checked), never
-        // accept a bad witness.
+        // hulls on ReadMemory outputs, the SelectI min/max recognizer, and
+        // the intervals AssertU128Lt / AssertNonNegI establish. The Noir
+        // lowering of those asserts consults no bound (see
+        // `assert_u128_lt`), so the facts hold for every accepted witness.
+        // Intervals are deposited at IR-build time from structure, never
+        // from witness values, so they cannot specialize the circuit. The
+        // emitter uses a bound only to choose a cheaper form whose own
+        // range checks enforce it (`checked_u32`, checked u32 arithmetic),
+        // so a wrong bound fails the proof rather than accepting a wrong
+        // value.
         let prov_bound = graph
             .provenance
             .interval_of(stmt.value_id)
@@ -339,6 +351,38 @@ mod tests {
         let bounds = run(&graph);
         // Operands themselves exceed U32_MAX so they are also dropped.
         assert_eq!(bounds.get(&2).copied(), None);
+    }
+
+    #[test]
+    fn division_by_a_possibly_negative_divisor_is_unbounded() {
+        // 7 // y with y unbounded can be negative (y = -2 gives -4 in Python,
+        // -3 under the Euclidean IR semantics): the dividend's bound must not
+        // be copied to the quotient. Field division (DivI) has no bound.
+        let graph = graph_of(vec![
+            stmt(0, IR::ConstantInt { value: 7 }, vec![]),
+            stmt(
+                1,
+                IR::ReadInteger {
+                    path: crate::circuit_input::InputPath::new("y", vec![]),
+                    is_public: false,
+                },
+                vec![],
+            ),
+            stmt(2, IR::FloorDivI, vec![0, 1]),
+            stmt(3, IR::DivI, vec![0, 1]),
+            stmt(4, IR::ModI, vec![0, 1]),
+            stmt(5, IR::ConstantInt { value: 4 }, vec![]),
+            stmt(6, IR::FloorDivI, vec![0, 5]),
+            stmt(7, IR::DivI, vec![0, 5]),
+            stmt(8, IR::ModI, vec![0, 5]),
+        ]);
+        let bounds = run(&graph);
+        assert_eq!(bounds.get(&2), None);
+        assert_eq!(bounds.get(&3), None);
+        assert_eq!(bounds.get(&4), None);
+        assert_eq!(bounds.get(&6).copied(), Some(7));
+        assert_eq!(bounds.get(&7), None);
+        assert_eq!(bounds.get(&8).copied(), Some(3));
     }
 
     #[test]

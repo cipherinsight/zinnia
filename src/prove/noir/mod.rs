@@ -8,6 +8,14 @@
 //! call (after `bb write_vk` runs separately), matching the
 //! apples-to-apples timing convention used by the halo2 backend.
 //!
+//! ## Public values and verification
+//!
+//! The artifact's `public_values` are the public inputs `bb` proved, read
+//! back from its public-inputs file (`pub` inputs first, then the returned
+//! outputs), and [`NoirProverBackend::verify`] runs `bb verify` against
+//! them. [`NoirProverBackend::execute`] runs the circuit without proving,
+//! for the differential test against the mock backend.
+//!
 //! ## Vendoring the fp library
 //!
 //! The Q32 fixed-point library at `benchmarking/noir_fpc` is the single
@@ -19,6 +27,8 @@
 pub mod bound_analysis;
 pub mod driver;
 pub mod emit;
+#[cfg(test)]
+mod soundness_tests;
 
 use crate::circuit_input::ResolvedWitness;
 use crate::ir::IRGraph;
@@ -27,7 +37,7 @@ use crate::prove::traits::ProverBackend;
 use crate::prove::types::{ProofArtifact, ProvingParams, VerifyResult};
 
 use self::driver::{run_pipeline, DriverOutput, DriverPaths};
-use self::emit::{emit_circuit, EmitOutput};
+use self::emit::emit_circuit;
 
 const NOIR_FPC_NARGO_TOML: &str = include_str!("../../../benchmarking/noir_fpc/Nargo.toml");
 const NOIR_FPC_LIB_NR: &str = include_str!("../../../benchmarking/noir_fpc/src/lib.nr");
@@ -36,6 +46,28 @@ pub const NOIR_BACKEND_NAME: &str = "noir-ultrahonk";
 pub const NOIR_BACKEND_FORMAT: &str = "noir-ultrahonk-v1";
 
 pub struct NoirProverBackend;
+
+impl NoirProverBackend {
+    /// Emit and stage the circuit, then `nargo execute` it without proving:
+    /// the values `main` returns (the exposed outputs, IR order) as
+    /// `0x`-prefixed field elements. Fails if any constraint is violated.
+    /// Used to compare the Noir semantics with the mock backend's.
+    pub fn execute(
+        &self,
+        ir: &IRGraph,
+        witness: &ResolvedWitness,
+        params: &ProvingParams,
+    ) -> Result<Vec<String>, ProvingError> {
+        let emitted = emit_circuit(ir, witness, params)?;
+        let dir = stage_package(&emitted.main_nr, &emitted.prover_toml)?;
+        let result = driver::execute(&dir, &DriverPaths::default());
+        cleanup_staging_dir(&dir, result.is_ok());
+        let returned = result.map_err(noir_error)?;
+        // The emitter may append one synthetic return to an otherwise empty
+        // circuit; only the exposed outputs are reported.
+        Ok(returned.into_iter().take(emitted.return_count).collect())
+    }
+}
 
 impl ProverBackend for NoirProverBackend {
     fn name(&self) -> &'static str {
@@ -55,73 +87,62 @@ impl ProverBackend for NoirProverBackend {
         witness: &ResolvedWitness,
         params: &ProvingParams,
     ) -> Result<ProofArtifact, ProvingError> {
-        let EmitOutput {
-            main_nr,
-            prover_toml,
-            public_values_decimal,
-            expose_count,
-        } = emit_circuit(ir, witness, params)?;
-
-        // expose_count is the number of `pub` slots in main.nr — useful for
-        // verify-side public_inputs reconstruction; today it is shipped
-        // implicitly through public_values.len(), so we don't carry it on
-        // the artifact.
-        let _ = expose_count;
-
-        let dir = stage_package(&main_nr, &prover_toml)?;
-        let paths = DriverPaths::default();
-
-        let out = run_pipeline(&dir, &paths).map_err(|e| match e {
-            driver::NoirError::ToolchainMissing(detail) => {
-                ProvingError::other(format!("Noir toolchain missing: {}", detail))
-            }
-            driver::NoirError::SubprocessFailed { step, detail } => ProvingError::ProvingFailed {
-                detail: format!("Noir pipeline `{}` failed: {}", step, detail),
-            },
-            driver::NoirError::Io(detail) => {
-                ProvingError::other(format!("Noir IO error: {}", detail))
-            }
-        })?;
-
-        // Successful run: remove staging dir unless `ZINNIA_NOIR_KEEP_TEMP=1`
-        // (debugging hatch — leaks the directory so a developer can diff the
-        // emitted main.nr against a handwritten baseline). Failed runs
-        // intentionally leak too (see driver).
-        if std::env::var("ZINNIA_NOIR_KEEP_TEMP").as_deref() != Ok("1") {
-            let _ = std::fs::remove_dir_all(&dir);
-        } else {
-            eprintln!("zinnia-noir: kept staging dir at {}", dir.display());
-        }
-
-        assemble_artifact(out, public_values_decimal)
+        let emitted = emit_circuit(ir, witness, params)?;
+        let dir = stage_package(&emitted.main_nr, &emitted.prover_toml)?;
+        let result = run_pipeline(&dir, &DriverPaths::default());
+        cleanup_staging_dir(&dir, result.is_ok());
+        assemble_artifact(result.map_err(noir_error)?)
     }
 
+    /// Runs `bb verify` on the artifact's proof, verification key and public
+    /// values. The public values are part of the statement: changing any of
+    /// them makes verification fail.
     fn verify(&self, artifact: &ProofArtifact) -> Result<VerifyResult, ProvingError> {
-        if artifact.proof_bytes.is_empty() {
+        let vk = hex_decode(&artifact.vk_bytes)?;
+        let proof = hex_decode(&artifact.proof_bytes)?;
+        if proof.is_empty() {
             return Ok(VerifyResult::invalid("empty proof_bytes"));
         }
-        // Cross-process verify lives in the Python runner via `bb verify`.
-        // From inside Rust we treat a non-empty proof_bytes payload as
-        // tentatively valid: `prove()` only assembles an artifact after the
-        // in-process `bb verify` in the driver accepted it (a rejected proof
-        // surfaces as `ProvingError::ProvingFailed`, never as an artifact),
-        // so any artifact reaching this method has already passed bb verify.
-        Ok(VerifyResult::ok())
+        let public_inputs = encode_public_inputs(&artifact.public_values)?;
+        match driver::verify_proof(&DriverPaths::default(), &vk, &proof, &public_inputs)
+            .map_err(noir_error)?
+        {
+            Ok(()) => Ok(VerifyResult::ok()),
+            Err(detail) => Ok(VerifyResult::invalid(format!("bb verify rejected the proof: {}", detail))),
+        }
+    }
+}
+
+fn noir_error(e: driver::NoirError) -> ProvingError {
+    match e {
+        driver::NoirError::ToolchainMissing(detail) => {
+            ProvingError::other(format!("Noir toolchain missing: {}", detail))
+        }
+        driver::NoirError::SubprocessFailed { step, detail } => ProvingError::ProvingFailed {
+            detail: format!("Noir pipeline `{}` failed: {}", step, detail),
+        },
+        driver::NoirError::Io(detail) => ProvingError::other(format!("Noir IO error: {}", detail)),
+    }
+}
+
+/// Remove a staging directory after a successful run, unless
+/// `ZINNIA_NOIR_KEEP_TEMP=1` (debugging hatch: keeps the emitted package).
+/// Failed runs keep it so the failure can be reproduced.
+fn cleanup_staging_dir(dir: &std::path::Path, succeeded: bool) {
+    if succeeded && std::env::var("ZINNIA_NOIR_KEEP_TEMP").as_deref() != Ok("1") {
+        let _ = std::fs::remove_dir_all(dir);
+    } else {
+        eprintln!("zinnia-noir: kept staging dir at {}", dir.display());
     }
 }
 
 /// Turn a successful [`DriverOutput`] into a [`ProofArtifact`], gating on the
-/// driver's in-process `bb verify` result.
-///
-/// If `bb verify` rejected the proof (`verify_ok == false`), this returns
-/// [`ProvingError::ProvingFailed`] carrying the verifier's captured stderr
-/// instead of shipping a bb-rejected proof as a valid artifact. Factored out
-/// of `prove()` so the verify-gate can be unit-tested without spawning the
-/// nargo/bb subprocess pipeline.
-fn assemble_artifact(
-    out: DriverOutput,
-    public_values_decimal: Vec<String>,
-) -> Result<ProofArtifact, ProvingError> {
+/// driver's in-process `bb verify` result. The artifact's `public_values`
+/// are the public inputs bb proved (decoded from its public-inputs file:
+/// `pub` inputs of `main` first, then the returned outputs), as
+/// `0x`-prefixed 32-byte field elements, not values recomputed by the
+/// emitter.
+fn assemble_artifact(out: DriverOutput) -> Result<ProofArtifact, ProvingError> {
     if !out.verify_ok {
         let detail = out
             .verify_detail
@@ -134,51 +155,68 @@ fn assemble_artifact(
     Ok(ProofArtifact {
         backend: NOIR_BACKEND_NAME.to_string(),
         format: NOIR_BACKEND_FORMAT.to_string(),
-        // The Noir backend does not yet ship a self-contained VK
-        // payload — verify-in-Rust would require linking against bb
-        // as a library. We carry the verifier-side stdout so the
-        // Python runner can sanity-check it; the actual cross-process
-        // verify lives in the Python runner via `bb verify`.
         vk_bytes: hex_encode(&out.vk_bytes),
         ir_hash: String::new(),
         proof_bytes: hex_encode(&out.proof_bytes),
-        public_values: public_values_decimal,
+        public_values: decode_public_inputs(&out.public_inputs_bytes)?,
         k: 0,
         prove_seconds: out.prove_seconds,
     })
 }
 
+/// bb's public-inputs file -> one `0x`-prefixed hex string per 32-byte
+/// big-endian field element.
+fn decode_public_inputs(bytes: &[u8]) -> Result<Vec<String>, ProvingError> {
+    if bytes.len() % 32 != 0 {
+        return Err(ProvingError::other(format!(
+            "bb public-inputs file has {} bytes, not a multiple of 32",
+            bytes.len()
+        )));
+    }
+    Ok(bytes
+        .chunks(32)
+        .map(|chunk| format!("0x{}", hex_encode(chunk)))
+        .collect())
+}
+
+/// Inverse of [`decode_public_inputs`].
+fn encode_public_inputs(values: &[String]) -> Result<Vec<u8>, ProvingError> {
+    let mut out = Vec::with_capacity(values.len() * 32);
+    for v in values {
+        let digits = v.strip_prefix("0x").unwrap_or(v);
+        let bytes = hex_decode(digits)?;
+        if bytes.len() != 32 {
+            return Err(ProvingError::other(format!(
+                "public value {} is not a 32-byte field element",
+                v
+            )));
+        }
+        out.extend_from_slice(&bytes);
+    }
+    Ok(out)
+}
+
 /// Materialize a temporary Noir package directory containing the emitted
 /// `main.nr` + `Prover.toml`, alongside a vendored copy of `noir_fpc`.
 fn stage_package(main_nr: &str, prover_toml: &str) -> Result<std::path::PathBuf, ProvingError> {
-    use std::io::Write;
-
-    let parent = std::env::temp_dir();
-    // Per-prove dir name: PID + nanos. Avoids collisions in concurrent
-    // test runs without pulling in a uuid dep.
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let dir = parent.join(format!("zinnia-noir-{}-{}", std::process::id(), nanos));
-    let src_dir = dir.join("src");
+    let dir = driver::scratch_dir("zinnia-noir").map_err(noir_error)?;
     let lib_dir = dir.join("noir_fpc").join("src");
-    std::fs::create_dir_all(&src_dir).map_err(|e| ProvingError::other(format!("mkdir: {}", e)))?;
-    std::fs::create_dir_all(&lib_dir).map_err(|e| ProvingError::other(format!("mkdir: {}", e)))?;
-
+    let src_dir = dir.join("src");
+    for d in [&src_dir, &lib_dir] {
+        std::fs::create_dir_all(d).map_err(|e| ProvingError::other(format!("mkdir: {}", e)))?;
+    }
     let write = |path: std::path::PathBuf, content: &str| -> Result<(), ProvingError> {
-        let mut f = std::fs::File::create(&path)
-            .map_err(|e| ProvingError::other(format!("create {}: {}", path.display(), e)))?;
-        f.write_all(content.as_bytes())
-            .map_err(|e| ProvingError::other(format!("write {}: {}", path.display(), e)))?;
-        Ok(())
+        std::fs::write(&path, content)
+            .map_err(|e| ProvingError::other(format!("write {}: {}", path.display(), e)))
     };
-
     write(
         dir.join("Nargo.toml"),
         // The package name has to be a valid Noir identifier — no dashes.
-        "[package]\nname = \"zinnia_circuit\"\ntype = \"bin\"\nauthors = [\"\"]\n\n\
-         [dependencies]\nnoir_fpc = { path = \"./noir_fpc\" }\n",
+        &format!(
+            "[package]\nname = \"{}\"\ntype = \"bin\"\nauthors = [\"\"]\n\n\
+             [dependencies]\nnoir_fpc = {{ path = \"./noir_fpc\" }}\n",
+            driver::PACKAGE_NAME
+        ),
     )?;
     write(src_dir.join("main.nr"), main_nr)?;
     write(dir.join("Prover.toml"), prover_toml)?;
@@ -191,16 +229,35 @@ fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
+fn hex_decode(s: &str) -> Result<Vec<u8>, ProvingError> {
+    if s.len() % 2 != 0 {
+        return Err(ProvingError::other("hex string has odd length"));
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| {
+            u8::from_str_radix(&s[i..i + 2], 16)
+                .map_err(|_| ProvingError::other(format!("invalid hex at offset {}", i)))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn field_bytes(v: u8) -> Vec<u8> {
+        let mut b = vec![0u8; 32];
+        b[31] = v;
+        b
+    }
 
     fn driver_output(verify_ok: bool, verify_detail: Option<String>) -> DriverOutput {
         DriverOutput {
             prove_seconds: 1.5,
             proof_bytes: vec![0xde, 0xad, 0xbe, 0xef],
             vk_bytes: vec![0x01, 0x02],
-            public_inputs_bytes: vec![0x03],
+            public_inputs_bytes: [field_bytes(7), field_bytes(42)].concat(),
             verify_ok,
             verify_detail,
         }
@@ -208,50 +265,40 @@ mod tests {
 
     #[test]
     fn assemble_artifact_propagates_verify_failure() {
-        // A driver run where bb verify rejected the proof must NOT produce a
-        // ProofArtifact — it must surface as ProvingFailed carrying the bb
-        // verifier's captured diagnostics. This is the regression guard for
-        // C13: previously prove() ignored verify_ok and shipped the artifact.
+        // A run where bb verify rejected the proof must surface as
+        // ProvingFailed carrying the verifier's diagnostics, not an artifact.
         let out = driver_output(false, Some("bb: proof verification failed\n".to_string()));
-        let err = assemble_artifact(out, vec!["7".to_string()])
-            .expect_err("verify_ok == false must be an Err, not an artifact");
+        let err = assemble_artifact(out).expect_err("verify_ok == false must be an Err");
         match err {
             ProvingError::ProvingFailed { detail } => {
-                assert!(
-                    detail.contains("bb verify") && detail.contains("rejected"),
-                    "error should name the bb verify rejection, got: {detail}"
-                );
-                assert!(
-                    detail.contains("proof verification failed"),
-                    "error should carry the captured bb stderr, got: {detail}"
-                );
+                assert!(detail.contains("bb verify") && detail.contains("rejected"), "{detail}");
+                assert!(detail.contains("proof verification failed"), "{detail}");
             }
             other => panic!("expected ProvingFailed, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn assemble_artifact_failure_without_detail_still_errs() {
-        // Defensive: verify_ok == false with no captured stderr is still an
-        // Err (never a silent success), with a placeholder diagnostic.
         let out = driver_output(false, None);
-        let err = assemble_artifact(out, vec![])
-            .expect_err("verify_ok == false must be an Err even without detail");
-        assert!(matches!(err, ProvingError::ProvingFailed { .. }));
+        assert!(matches!(assemble_artifact(out), Err(ProvingError::ProvingFailed { .. })));
     }
 
     #[test]
-    fn assemble_artifact_success_builds_artifact() {
-        // Success path: verify_ok == true yields a populated artifact with
-        // hex-encoded payloads and the driver's prove_seconds preserved.
-        let out = driver_output(true, None);
-        let artifact = assemble_artifact(out, vec!["42".to_string()])
-            .expect("verify_ok == true must produce an artifact");
+    fn assemble_artifact_takes_public_values_from_bb() {
+        // The public values are bb's public inputs, not emitter-side values.
+        let artifact = assemble_artifact(driver_output(true, None)).expect("artifact");
         assert_eq!(artifact.backend, NOIR_BACKEND_NAME);
-        assert_eq!(artifact.format, NOIR_BACKEND_FORMAT);
         assert_eq!(artifact.proof_bytes, "deadbeef");
         assert_eq!(artifact.vk_bytes, "0102");
-        assert_eq!(artifact.public_values, vec!["42".to_string()]);
+        assert_eq!(artifact.public_values.len(), 2);
+        assert!(artifact.public_values[0].ends_with("07"));
+        assert!(artifact.public_values[1].ends_with("2a"));
         assert_eq!(artifact.prove_seconds, 1.5);
+    }
+
+    #[test]
+    fn public_inputs_round_trip_and_reject_ragged_files() {
+        let bytes = [field_bytes(1), field_bytes(255)].concat();
+        let values = decode_public_inputs(&bytes).unwrap();
+        assert_eq!(encode_public_inputs(&values).unwrap(), bytes);
+        assert!(decode_public_inputs(&[0u8; 33]).is_err());
+        assert!(encode_public_inputs(&["0x01".to_string()]).is_err());
     }
 }
