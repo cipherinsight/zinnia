@@ -148,6 +148,23 @@ fn check_divmod(n: Field, d: Field, q: Field, r: Field) {
     (q + OFFSET).assert_max_bit_size::<64>();
 }
 
+// Floor division by the constant 2^K (0 < K < 64): n = q * 2^K + r with r a
+// K-bit value and q in the window, which pins (q, r) as in `divmod_pos` with
+// one K-bit check in place of the two 64-bit remainder checks.
+pub fn floor_div_pow2<let K: u32>(n: Field) -> Field {
+    let d = (1 as u64 << (K as u64)) as Field;
+    // Safety: q and r are pinned by `check_div_pow2`.
+    let (q, r) = unsafe { divmod_hint(n, d) };
+    check_div_pow2::<K>(n, q, r);
+    q
+}
+
+fn check_div_pow2<let K: u32>(n: Field, q: Field, r: Field) {
+    assert(q * (1 as u64 << (K as u64)) as Field + r == n, "floor_div_pow2: recomposition");
+    r.assert_max_bit_size::<K>();
+    (q + OFFSET).assert_max_bit_size::<64>();
+}
+
 // floor(p / 2^32) for a raw product or sum of products p in [-2^95, 2^95):
 // p = q * 2^32 + r, r in [0, 2^32), q in the window.
 pub fn rescale(p: Field) -> Field {
@@ -444,6 +461,23 @@ fn test_divmod_zero_divisor() {
 #[test(should_fail)]
 fn test_divmod_negative_divisor() {
     check_divmod(23, -4, -5, 3);
+}
+
+#[test]
+fn test_floor_div_pow2() {
+    assert(floor_div_pow2::<2>(-7) == -2);
+    assert(floor_div_pow2::<2>(7) == 1);
+    check_div_pow2::<2>(-7, -2, 1);
+}
+
+#[test(should_fail)]
+fn test_div_pow2_next_quotient() {
+    check_div_pow2::<2>(-7, -1, -3);
+}
+
+#[test(should_fail)]
+fn test_div_pow2_field_quotient() {
+    check_div_pow2::<2>(-7, (-7 - 2) / 4, 2);
 }
 
 #[test]
