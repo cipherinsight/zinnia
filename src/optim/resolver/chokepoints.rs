@@ -86,11 +86,9 @@ pub enum SiteKind {
     /// `num` argument of `np.linspace`.
     LinspaceNum,
     /// Dynamic-array index bound check: address used with `ReadMemory` /
-    /// `WriteMemory` must lie in `[0, segment_size)`. Today's wiring is
-    /// informational — the memory-trace permutation argument enforces
-    /// soundness at prove time — but the chokepoint surfaces SMT engagement
-    /// on production-natural patterns where indices are runtime values
-    /// whose bounds are nonetheless provable. Item #4 of the
+    /// `WriteMemory` must lie in `[0, segment_size)`. This telemetry site
+    /// (`probe_in_range`) is informational only; the enforcing check is
+    /// `discharge_index_in_range`. Item #4 of the
     /// `smt-invocation-load-bearing` card.
     DynamicIndexBound,
     /// Anything not yet enumerated. The string is a short site label;

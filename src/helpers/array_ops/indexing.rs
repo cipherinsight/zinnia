@@ -2019,20 +2019,17 @@ mod tests_case_b {
     }
 
     #[test]
-    fn strict_mode_constructor_emits_total_bound_invariant() {
-        // Save+restore env var to keep the test thread-safe(ish). The
-        // strict-mode check is read once per constructor call, so setting
-        // immediately before is sufficient.
-        let _guard = ScopedEnvVar::set("ZINNIA_BOUNDED_AXIS_STRICT", "1");
+    fn compact_constructor_checks_total_bound_without_facts() {
+        // With no facts about the runtime shape, the compact constructor
+        // must check `0 <= runtime_length <= total_bound` in-circuit, in
+        // every mode (it used to do so only under
+        // `ZINNIA_BOUNDED_AXIS_STRICT=1`).
         let mut b = IRBuilder::new();
         let (_arr, irs) = emitted_during(&mut b, |b| make_compact_2d_dyn(b, 100, 100, 10));
-        // The compact constructor in strict mode emits an Assert on the
-        // <=-comparison `runtime_length <= total_bound`. There should be
-        // exactly one Assert in the trace.
-        let assert_count = irs.iter().filter(|ir| matches!(ir, IR::Assert)).count();
+        let bound_checks = irs.iter().filter(|ir| matches!(ir, IR::AssertU128Lt)).count();
         assert!(
-            assert_count >= 1,
-            "strict-mode compact constructor should emit at least one Assert; irs = {irs:?}"
+            bound_checks >= 1,
+            "compact constructor should range-check its runtime length; irs = {irs:?}"
         );
     }
 

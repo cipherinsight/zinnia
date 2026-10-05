@@ -141,6 +141,25 @@ pub fn dyn_from_values_with_active(
     dyn_from_values_with_active_values(b, values, active_len, dtype)
 }
 
+/// Require `0 <= extent <= max` for a runtime extent (a length or one
+/// axis size) of a bounded constructor.
+///
+/// The envelope `max` was derived from facts about the extent, and later
+/// code relies on `0 <= extent <= max` (reads stop at the runtime length,
+/// the output contract exposes it). NumPy rejects a negative size, and an
+/// extent past the envelope would expose padding slots as data. The
+/// requirement goes through the resolver: no IR when the facts that sized
+/// the envelope prove it, an in-circuit range check otherwise.
+pub(crate) fn require_extent_within(b: &mut IRBuilder, extent: &Value, max: usize) {
+    crate::optim::resolver::discharge_index_in_range(
+        b,
+        extent,
+        0,
+        max as i64 + 1,
+        "bounded_constructor_extent",
+    );
+}
+
 pub fn dyn_from_values_with_active_values(
     b: &mut IRBuilder,
     values: Vec<Value>,
@@ -148,6 +167,7 @@ pub fn dyn_from_values_with_active_values(
     dtype: NumberType,
 ) -> Value {
     let max_length = values.len();
+    require_extent_within(b, &active_len, max_length);
     let segment_id = crate::helpers::segment::alloc_and_write_values(b, &values, dtype);
 
     // Static envelope: 1-D with the proven max_length.
@@ -238,6 +258,11 @@ pub fn dyn_from_values_with_active_nd_values(
         max_shape.len(),
     );
 
+    for (dim, &max) in runtime_shape.iter().zip(&max_shape) {
+        let dim = super::scalar_i64_to_value(dim, NumberType::Integer);
+        require_extent_within(b, &dim, max);
+    }
+
     let segment_id = crate::helpers::segment::alloc_and_write_values(b, &values, dtype);
     let logical_strides = dyn_row_major_strides(&max_shape);
     let envelope = crate::types::Envelope::from_static_shape(&mut b.dim_table, &max_shape);
@@ -279,15 +304,10 @@ pub fn dyn_from_values_with_active_nd_values(
 /// arithmetic. `runtime_length = prod(runtime_shape)` is the final SSA
 /// product.
 ///
-/// **Strict mode** (`ZINNIA_BOUNDED_AXIS_STRICT=1`): emits an
-/// `assert prod(runtime_shape) <= total_bound` via
-/// `lower_precondition_to_ir` so the witness side flags users whose
-/// `@requires` facts are wrong. Default (lenient): trusts the user.
-///
-/// **Soundness invariant:** in lenient mode the user's `@requires` facts
-/// establish `prod(runtime_shape) <= total_bound`. Reads beyond
-/// `total_bound` are clamped by the segment-init value (typically 0);
-/// strict mode upgrades that to a witness-time assertion.
+/// **Soundness.** Every runtime axis size must lie in `[0, max_shape[k]]`
+/// and `prod(runtime_shape)` in `[0, total_bound]`; both are required via
+/// [`require_extent_within`] (free when the facts that produced
+/// `total_bound` prove them, an in-circuit range check otherwise).
 pub fn dyn_from_values_with_active_compact(
     b: &mut IRBuilder,
     fill_value: ScalarValue<i64>,
@@ -358,12 +378,11 @@ pub fn dyn_from_values_with_active_compact(
         acc
     };
 
-    // Strict mode: assert prod(runtime_shape) <= total_bound at witness time.
-    if crate::helpers::array_ops::bounded_axis_strict() {
-        let bound_val = b.ir_constant_int(total_bound as i64);
-        let le = b.ir_less_than_or_equal_i(&runtime_length, &bound_val);
-        b.ir_assert(&le);
+    for (dim, &max) in runtime_shape.iter().zip(&max_shape) {
+        let dim = super::scalar_i64_to_value(dim, NumberType::Integer);
+        require_extent_within(b, &dim, max);
     }
+    require_extent_within(b, &runtime_length, total_bound);
 
     let runtime_length_sv = value_to_scalar_i64(&runtime_length);
     let logical_strides = dyn_row_major_strides(&max_shape);

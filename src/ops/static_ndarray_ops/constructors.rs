@@ -807,7 +807,7 @@ fn np_arange_int(b: &mut IRBuilder, args: &[Value]) -> Value {
             let stop_val = &args[0];
             match resolve_int_or_bounded(b, stop_val, SiteKind::RangeStop, None) {
                 BoundedInt::Static(stop) => arange_static(b, 0, stop, 1),
-                BoundedInt::Bounded { max, .. } => {
+                BoundedInt::Bounded { min, max } => {
                     let n_max = max.max(0) as usize;
                     let values: Vec<crate::types::ScalarValue<i64>> = (0..n_max)
                         .map(|i| {
@@ -815,24 +815,15 @@ fn np_arange_int(b: &mut IRBuilder, args: &[Value]) -> Value {
                             value_to_scalar_i64(&v)
                         })
                         .collect();
+                    let length = ArangeLength::of_span(b, stop_val, min);
                     let result = dyn_from_values_with_active(
                         b,
                         values,
-                        stop_val.clone(),
+                        length.value.clone(),
                         crate::types::NumberType::Integer,
                     );
-                    // Fact: runtime_length == stop - 0 (instantiates to
-                    // `runtime_length == stop` after Z3 simplification).
-                    let runtime_length_vid = match &result {
-                        Value::DynamicNDArray(d) => d.meta.runtime_length.value_id,
-                        _ => unreachable!(),
-                    };
-                    let start_vid = b.ir_constant_int(0).value_id().unwrap();
-                    let stop_vid = stop_val.value_id().unwrap();
-                    let mut formals = std::collections::HashMap::new();
-                    formals.insert("start".to_string(), start_vid);
-                    formals.insert("stop".to_string(), stop_vid);
-                    b.fire_contract("dyn_arange", runtime_length_vid, &formals);
+                    let start = b.ir_constant_int(0);
+                    length.fire_length_contract(b, &result, &start, stop_val);
                     // 1-arg form: step is implicit 1 ⇒ always ascending ⇒
                     // is_sorted(out) holds. Fire on the array's value_id
                     // (not the length-bearing scalar).
@@ -854,7 +845,7 @@ fn np_arange_int(b: &mut IRBuilder, args: &[Value]) -> Value {
             let start: i64 = require_provable_static_int(b, start_val, SiteKind::RangeStart);
             match resolve_int_or_bounded(b, stop_val, SiteKind::RangeStop, None) {
                 BoundedInt::Static(stop) => arange_static(b, start, stop, 1),
-                BoundedInt::Bounded { max, .. } => {
+                BoundedInt::Bounded { min, max } => {
                     let n_max = (max - start).max(0) as usize;
                     let values: Vec<crate::types::ScalarValue<i64>> = (0..n_max)
                         .map(|i| {
@@ -863,24 +854,15 @@ fn np_arange_int(b: &mut IRBuilder, args: &[Value]) -> Value {
                         })
                         .collect();
                     let start_constant = b.ir_constant_int(start);
-                    let runtime_length = b.ir_sub_i(stop_val, &start_constant);
-                    let start_vid = start_constant.value_id().unwrap();
-                    let stop_vid = stop_val.value_id().unwrap();
+                    let span = b.ir_sub_i(stop_val, &start_constant);
+                    let length = ArangeLength::of_span(b, &span, min - start);
                     let result = dyn_from_values_with_active(
                         b,
                         values,
-                        runtime_length,
+                        length.value.clone(),
                         crate::types::NumberType::Integer,
                     );
-                    // Fact: runtime_length == stop - start.
-                    let runtime_length_vid = match &result {
-                        Value::DynamicNDArray(d) => d.meta.runtime_length.value_id,
-                        _ => unreachable!(),
-                    };
-                    let mut formals = std::collections::HashMap::new();
-                    formals.insert("start".to_string(), start_vid);
-                    formals.insert("stop".to_string(), stop_vid);
-                    b.fire_contract("dyn_arange", runtime_length_vid, &formals);
+                    length.fire_length_contract(b, &result, &start_constant, stop_val);
                     // 2-arg form: step is implicit 1 ⇒ always ascending.
                     if let Some(vid) = result.value_id() {
                         b.fire_contract("arange_is_sorted", vid, &std::collections::HashMap::new());
@@ -904,7 +886,7 @@ fn np_arange_int(b: &mut IRBuilder, args: &[Value]) -> Value {
             let stop_val = &args[1];
             match resolve_int_or_bounded(b, stop_val, SiteKind::RangeStop, None) {
                 BoundedInt::Static(stop) => arange_static(b, start, stop, step),
-                BoundedInt::Bounded { max, .. } => {
+                BoundedInt::Bounded { min, max } => {
                     if step == 0 {
                         return Value::None;
                     }
@@ -922,13 +904,18 @@ fn np_arange_int(b: &mut IRBuilder, args: &[Value]) -> Value {
                             value_to_scalar_i64(&v)
                         })
                         .collect();
+                    // NumPy: len = max(ceil((stop - start) / step), 0)
+                    //            = max((stop - start + step - 1) // step, 0)
+                    // for step > 0. `//` is floor division (the old code
+                    // used `ir_div_i`, a field inverse, which is not a
+                    // division when `step` does not divide the span).
                     let start_const = b.ir_constant_int(start);
                     let step_const = b.ir_constant_int(step);
                     let span = b.ir_sub_i(stop_val, &start_const);
-                    let one = b.ir_constant_int(1);
-                    let step_minus_one = b.ir_sub_i(&step_const, &one);
-                    let span_plus = b.ir_add_i(&span, &step_minus_one);
-                    let runtime_length = b.ir_div_i(&span_plus, &step_const);
+                    let rounding = b.ir_constant_int(step - 1);
+                    let span_rounded_up = b.ir_add_i(&span, &rounding);
+                    let steps = b.ir_floor_div_i(&span_rounded_up, &step_const);
+                    let runtime_length = ArangeLength::of_span(b, &steps, min - start).value;
                     let result = dyn_from_values_with_active(
                         b,
                         values,
@@ -951,6 +938,51 @@ fn np_arange_int(b: &mut IRBuilder, args: &[Value]) -> Value {
             }
         }
         _ => Value::None,
+    }
+}
+
+/// Runtime length of a bounded `np.arange`: `max(span, 0)`, because NumPy
+/// returns an empty array when `stop <= start` (the old code used the raw
+/// span, a negative length, while the `dyn_arange` contract claimed it was
+/// non-negative).
+struct ArangeLength {
+    value: Value,
+    /// The facts prove `span >= 0`, so `value` is the span itself.
+    is_span: bool,
+}
+
+impl ArangeLength {
+    /// `span_min` is a proven lower bound of `span` (from the bounded
+    /// admission of `stop`).
+    fn of_span(b: &mut IRBuilder, span: &Value, span_min: i64) -> Self {
+        if span_min >= 0 {
+            return ArangeLength {
+                value: span.clone(),
+                is_span: true,
+            };
+        }
+        let zero = b.ir_constant_int(0);
+        let negative = b.ir_less_than_i(span, &zero);
+        ArangeLength {
+            value: b.ir_select_i(&negative, &zero, span),
+            is_span: false,
+        }
+    }
+
+    /// Fire the `dyn_arange` contract (`length == stop - start`,
+    /// `length >= 0`) when it holds, i.e. when no clamping was needed.
+    fn fire_length_contract(&self, b: &mut IRBuilder, result: &Value, start: &Value, stop: &Value) {
+        if !self.is_span {
+            return;
+        }
+        if let (Value::DynamicNDArray(d), Some(start_vid), Some(stop_vid)) =
+            (result, start.value_id(), stop.value_id())
+        {
+            let mut formals = std::collections::HashMap::new();
+            formals.insert("start".to_string(), start_vid);
+            formals.insert("stop".to_string(), stop_vid);
+            b.fire_contract("dyn_arange", d.meta.runtime_length.value_id, &formals);
+        }
     }
 }
 
