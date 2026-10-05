@@ -1,0 +1,374 @@
+//! Q32.32 fixed-point numbers for the SP1 and RISC Zero baselines.
+//!
+//! A real value `v` is stored as the integer `round(v * 2^32)` in an `i64`,
+//! exactly like Zinnia's quantizer (`src/prove/field.rs::quantize`). The
+//! arithmetic follows Zinnia's fixed-point semantics (`src/prove/kernel.rs`):
+//!
+//! * `a * b` is `floor(a * b / 2^32)` (Zinnia `fp_mul_rescale`), computed in
+//!   `i128` and rescaled with an arithmetic shift, which rounds toward
+//!   negative infinity.
+//! * `a / b` is `floor(a * 2^32 / b)` with Euclidean rounding (Zinnia
+//!   `fp_div_prescale`).
+//! * [`dot`] accumulates the raw products and rescales once (Zinnia
+//!   `fp_product_sum_rescale`, halo2-graph `inner_product`).
+//! * [`Q32::sqrt`] is `floor(sqrt(a * 2^32))`, the integer square root.
+//! * [`Q32::sin`] and [`Q32::cos`] use Zinnia's halo2-base definition: reduce
+//!   `|x|` modulo pi, evaluate the degree-14 Remez polynomial on `[0, pi)`
+//!   with Horner's rule, and fix the sign.
+//! * [`Q32::asin`] is `atan2(x, sqrt(1 - x^2))` with the degree-15 atan
+//!   polynomial on `[-1, 1]` (Zinnia `ATAN_COEFS`).
+//!
+//! The crate is `no_std` and never touches floating point unless the `std`
+//! feature is enabled; that feature only adds the host-side encoding and
+//! decoding of `f64` values.
+#![no_std]
+
+#[cfg(feature = "std")]
+extern crate std;
+
+use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+
+use serde::{Deserialize, Serialize};
+
+/// Number of fractional bits (Zinnia `precision_bits`).
+pub const FRAC_BITS: u32 = 32;
+const SCALE: i64 = 1 << FRAC_BITS;
+
+/// A Q32.32 fixed-point number (see the crate documentation).
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct Q32(i64);
+
+impl Q32 {
+    pub const ZERO: Q32 = Q32(0);
+    pub const ONE: Q32 = Q32(SCALE);
+    /// `round(pi * 2^32)`.
+    pub const PI: Q32 = Q32(13_493_037_705);
+    /// `round(pi / 2 * 2^32)`.
+    pub const FRAC_PI_2: Q32 = Q32(6_746_518_852);
+    /// `round(pi / 180 * 2^32)`, the factor of `np.deg2rad`.
+    pub const DEG_TO_RAD: Q32 = Q32(74_961_321);
+    /// `round(180 / pi * 2^32)`, the factor of `np.degrees`.
+    pub const RAD_TO_DEG: Q32 = Q32(246_083_499_208);
+
+    /// The value whose fixed-point encoding is `bits`.
+    pub const fn from_bits(bits: i64) -> Q32 {
+        Q32(bits)
+    }
+
+    /// The fixed-point encoding of `self`.
+    pub const fn to_bits(self) -> i64 {
+        self.0
+    }
+
+    /// The exact fixed-point value of an integer (Zinnia `float_cast`).
+    pub const fn from_int(n: i64) -> Q32 {
+        Q32(n << FRAC_BITS)
+    }
+
+    /// Python `int(x)` / NumPy `astype(int)`: truncate toward zero.
+    pub const fn trunc_to_int(self) -> i64 {
+        self.0 / SCALE
+    }
+
+    /// `np.floor`.
+    pub const fn floor(self) -> Q32 {
+        Q32(self.0 & !(SCALE - 1))
+    }
+
+    pub const fn abs(self) -> Q32 {
+        Q32(self.0.abs())
+    }
+
+    pub const fn is_negative(self) -> bool {
+        self.0 < 0
+    }
+
+    /// `np.sqrt` for a non-negative argument: `floor(sqrt(x * 2^32))`.
+    pub fn sqrt(self) -> Q32 {
+        assert!(self.0 >= 0, "sqrt of a negative number");
+        let root = ((self.0 as u128) << FRAC_BITS).isqrt();
+        Q32(root as i64)
+    }
+
+    /// `np.sin` (Zinnia halo2-base `sin_f`).
+    pub fn sin(self) -> Q32 {
+        let magnitude = self.0.abs();
+        let half_turns = magnitude / Self::PI.0;
+        let reduced = Q32(magnitude % Self::PI.0);
+        let value = horner(reduced, SIN_COEFS_HIGH_FIRST.iter().copied());
+        if self.is_negative() != (half_turns % 2 == 1) {
+            -value
+        } else {
+            value
+        }
+    }
+
+    /// `np.cos(x) = sin(x + pi/2)` (Zinnia halo2-base `cos_f`).
+    pub fn cos(self) -> Q32 {
+        (self + Self::FRAC_PI_2).sin()
+    }
+
+    /// `np.arcsin` for `x` in `[-1, 1]`: `atan2(x, sqrt(1 - x^2))`.
+    pub fn asin(self) -> Q32 {
+        assert!(-Self::ONE <= self && self <= Self::ONE, "arcsin argument outside [-1, 1]");
+        let cosine = (Self::ONE - self * self).sqrt();
+        atan2(self, cosine)
+    }
+}
+
+/// `np.arctan2(y, x)`: reduce to a ratio in `[0, 1]`, evaluate the atan
+/// polynomial, and move the angle to the right octant and quadrant.
+pub fn atan2(y: Q32, x: Q32) -> Q32 {
+    let (ay, ax) = (y.abs(), x.abs());
+    if ay == Q32::ZERO && ax == Q32::ZERO {
+        return Q32::ZERO;
+    }
+    let steep = ay > ax;
+    let ratio = if steep { ax / ay } else { ay / ax };
+    let base = horner(ratio, ATAN_COEFS_LOW_FIRST.iter().rev().copied());
+    let first_quadrant = if steep { Q32::FRAC_PI_2 - base } else { base };
+    let upper_half = if x.is_negative() { Q32::PI - first_quadrant } else { first_quadrant };
+    if y.is_negative() {
+        -upper_half
+    } else {
+        upper_half
+    }
+}
+
+/// Horner evaluation with the coefficients given from the highest degree
+/// down; every step rescales the product (Zinnia `horner_eval`).
+fn horner(x: Q32, mut coefs_high_first: impl Iterator<Item = Q32>) -> Q32 {
+    let first = coefs_high_first.next().unwrap_or(Q32::ZERO);
+    coefs_high_first.fold(first, |acc, c| acc * x + c)
+}
+
+/// `round(c * 2^32)` of Zinnia's `SIN_COEFS` (sin on `[0, pi)`, degree 14),
+/// highest degree first.
+const SIN_COEFS_HIGH_FIRST: [Q32; 15] = [
+    Q32(0),
+    Q32(1),
+    Q32(-2),
+    Q32(-102),
+    Q32(-13),
+    Q32(11_858),
+    Q32(-28),
+    Q32(-852_151),
+    Q32(-16),
+    Q32(35_791_402),
+    Q32(-2),
+    Q32(-715_827_882),
+    Q32(0),
+    Q32(4_294_967_296),
+    Q32(0),
+];
+
+/// `round(c * 2^32)` of Zinnia's `ATAN_COEFS` (atan on `[-1, 1]`, degree
+/// 15), constant term first.
+const ATAN_COEFS_LOW_FIRST: [Q32; 16] = [
+    Q32(0),
+    Q32(4_294_964_071),
+    Q32(0),
+    Q32(-1_431_492_759),
+    Q32(0),
+    Q32(856_548_815),
+    Q32(0),
+    Q32(-596_658_626),
+    Q32(0),
+    Q32(412_388_002),
+    Q32(0),
+    Q32(-237_862_581),
+    Q32(0),
+    Q32(92_381_544),
+    Q32(0),
+    Q32(-17_009_175),
+];
+
+/// Fused inner product `floor(sum(a_i * b_i) / 2^32)`: the raw products are
+/// accumulated in `i128` and rescaled once.
+pub fn dot(pairs: impl IntoIterator<Item = (Q32, Q32)>) -> Q32 {
+    let raw: i128 = pairs.into_iter().map(|(a, b)| a.0 as i128 * b.0 as i128).sum();
+    Q32((raw >> FRAC_BITS) as i64)
+}
+
+impl Add for Q32 {
+    type Output = Q32;
+    fn add(self, rhs: Q32) -> Q32 {
+        Q32(self.0 + rhs.0)
+    }
+}
+
+impl Sub for Q32 {
+    type Output = Q32;
+    fn sub(self, rhs: Q32) -> Q32 {
+        Q32(self.0 - rhs.0)
+    }
+}
+
+impl Neg for Q32 {
+    type Output = Q32;
+    fn neg(self) -> Q32 {
+        Q32(-self.0)
+    }
+}
+
+/// `floor(a * b / 2^32)`.
+impl Mul for Q32 {
+    type Output = Q32;
+    fn mul(self, rhs: Q32) -> Q32 {
+        Q32(((self.0 as i128 * rhs.0 as i128) >> FRAC_BITS) as i64)
+    }
+}
+
+/// Multiplication by an integer is exact.
+impl Mul<i64> for Q32 {
+    type Output = Q32;
+    fn mul(self, rhs: i64) -> Q32 {
+        Q32(self.0 * rhs)
+    }
+}
+
+/// `floor(a * 2^32 / b)` with Euclidean rounding; panics if `b == 0`.
+impl Div for Q32 {
+    type Output = Q32;
+    fn div(self, rhs: Q32) -> Q32 {
+        Q32(((self.0 as i128) << FRAC_BITS).div_euclid(rhs.0 as i128) as i64)
+    }
+}
+
+/// Division by an integer `n`, equal to `self / Q32::from_int(n)`.
+impl Div<i64> for Q32 {
+    type Output = Q32;
+    fn div(self, rhs: i64) -> Q32 {
+        Q32(self.0.div_euclid(rhs))
+    }
+}
+
+impl AddAssign for Q32 {
+    fn add_assign(&mut self, rhs: Q32) {
+        *self = *self + rhs;
+    }
+}
+
+impl SubAssign for Q32 {
+    fn sub_assign(&mut self, rhs: Q32) {
+        *self = *self - rhs;
+    }
+}
+
+impl MulAssign for Q32 {
+    fn mul_assign(&mut self, rhs: Q32) {
+        *self = *self * rhs;
+    }
+}
+
+impl MulAssign<i64> for Q32 {
+    fn mul_assign(&mut self, rhs: i64) {
+        *self = *self * rhs;
+    }
+}
+
+impl DivAssign for Q32 {
+    fn div_assign(&mut self, rhs: Q32) {
+        *self = *self / rhs;
+    }
+}
+
+impl DivAssign<i64> for Q32 {
+    fn div_assign(&mut self, rhs: i64) {
+        *self = *self / rhs;
+    }
+}
+
+impl core::iter::Sum for Q32 {
+    fn sum<I: Iterator<Item = Q32>>(iter: I) -> Q32 {
+        iter.fold(Q32::ZERO, Add::add)
+    }
+}
+
+impl<'a> core::iter::Sum<&'a Q32> for Q32 {
+    fn sum<I: Iterator<Item = &'a Q32>>(iter: I) -> Q32 {
+        iter.copied().sum()
+    }
+}
+
+/// Python integer division and remainder (round toward negative infinity),
+/// which NumPy uses for `//` and `%` on integers.
+pub mod int {
+    pub const fn floor_div(a: i64, b: i64) -> i64 {
+        let q = a / b;
+        if (a % b != 0) && ((a < 0) != (b < 0)) {
+            q - 1
+        } else {
+            q
+        }
+    }
+
+    pub const fn floor_mod(a: i64, b: i64) -> i64 {
+        a - b * floor_div(a, b)
+    }
+}
+
+/// Host-side conversion between `f64` and the fixed-point encoding.
+#[cfg(feature = "std")]
+impl Q32 {
+    /// `round(v * 2^32)`, rounding half away from zero (Zinnia `quantize`).
+    pub fn from_f64(v: f64) -> Q32 {
+        Q32((v * SCALE as f64).round() as i64)
+    }
+
+    pub fn to_f64(self) -> f64 {
+        self.0 as f64 / SCALE as f64
+    }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use super::*;
+
+    fn close(a: Q32, b: f64, tol: f64) -> bool {
+        (a.to_f64() - b).abs() <= tol
+    }
+
+    #[test]
+    fn rescaling_rounds_toward_negative_infinity() {
+        let half = Q32::from_f64(0.5);
+        let eps = Q32::from_bits(1);
+        assert_eq!(half * eps, Q32::ZERO);
+        assert_eq!(-half * eps, Q32::from_bits(-1));
+        assert_eq!(Q32::ONE / Q32::from_int(3), Q32::from_bits(1_431_655_765));
+        assert_eq!(-Q32::ONE / Q32::from_int(3), Q32::from_bits(-1_431_655_766));
+        assert_eq!(Q32::from_int(-7) / 2, Q32::from_f64(-3.5));
+    }
+
+    #[test]
+    fn transcendentals_match_libm() {
+        // Zinnia's sin quantizes the Remez coefficients to Q32, which costs
+        // accuracy in the high-degree terms: the error reaches 1.4e-4 near pi.
+        for i in -40..=40 {
+            let x = i as f64 * 0.37;
+            assert!(close(Q32::from_f64(x).sin(), x.sin(), 2e-4), "sin {x}");
+            assert!(close(Q32::from_f64(x).cos(), x.cos(), 2e-4), "cos {x}");
+        }
+        for i in -20..=20 {
+            let x = i as f64 / 20.0;
+            assert!(close(Q32::from_f64(x).asin(), x.asin(), 1e-6), "asin {x}");
+        }
+        for v in [0.0, 1e-9, 0.25, 2.0, 10.5, 12345.678] {
+            // Exact up to the final floor: compare with the root of the encoded input.
+            let q = Q32::from_f64(v);
+            assert!(close(q.sqrt(), q.to_f64().sqrt(), 1.0 / SCALE as f64), "sqrt {v}");
+        }
+    }
+
+    #[test]
+    fn python_integer_division() {
+        assert_eq!(int::floor_div(-7, 2), -4);
+        assert_eq!(int::floor_mod(-7, 2), 1);
+        assert_eq!(int::floor_div(7, -2), -4);
+        assert_eq!(int::floor_mod(7, -2), -1);
+        assert_eq!(int::floor_div(6, 3), 2);
+    }
+}
