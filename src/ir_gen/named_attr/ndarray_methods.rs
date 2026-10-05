@@ -116,14 +116,15 @@ impl IRGenerator {
         }
 
         // ── DynamicNDArray method dispatch ────────────────────────
-        if matches!(self.ctx.get(var), Some(Value::DynamicNDArray(_))) {
-            let val = self.ctx.get(var).unwrap();
-            return Some(self.dispatch_dyn_ndarray_method(
-                val,
+        if let Some(Value::DynamicNDArray(data)) = self.ctx.get(var) {
+            let result = self.dispatch_dyn_ndarray_method(
+                Value::DynamicNDArray(data.clone()),
                 member,
                 visited_args,
                 _visited_kwargs,
-            ));
+            );
+            self.note_metadata_bounds(&data, member, &result);
+            return Some(result);
         }
 
         // ── Method calls on expr attributes ────────────────────────

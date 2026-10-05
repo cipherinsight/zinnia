@@ -35,8 +35,7 @@ class ZinniaCompiler:
         """
         fixed_source = ZinniaCompiler.fix_source_indentation(source)
         fixed_source, generated_helpers = lower_function_source(fixed_source, name)
-        from .counted_loops import normalize_counted_loops
-        python_ast = normalize_counted_loops(ast.parse(fixed_source))
+        python_ast = ast.parse(fixed_source)
         transformer = ZinniaCircuitASTTransformer(fixed_source, name)
         ast_dict = transformer.visit(python_ast.body[0])
 
@@ -186,8 +185,7 @@ class ZinniaCompiler:
     def chip_ast_parse(source: str, name: str):
         """Parse chip source code. Returns (ast_dict, return_dt_full)."""
         fixed_source = ZinniaCompiler.fix_source_indentation(source)
-        from .counted_loops import normalize_counted_loops
-        python_ast = normalize_counted_loops(ast.parse(fixed_source))
+        python_ast = ast.parse(fixed_source)
         transformer = ZinniaChipASTTransformer(fixed_source, name)
         ast_dict = transformer.visit(python_ast.body[0])
         return ast_dict, transformer.return_dt_full
@@ -196,8 +194,7 @@ class ZinniaCompiler:
     def external_func_ast_parse(source: str, name: str):
         """Parse external function source code. Returns full type dict."""
         fixed_source = ZinniaCompiler.fix_source_indentation(source)
-        from .counted_loops import normalize_counted_loops
-        python_ast = normalize_counted_loops(ast.parse(fixed_source))
+        python_ast = ast.parse(fixed_source)
         return ZinniaExternalFuncASTTransformer(fixed_source, name).visit(python_ast.body[0])
 
     @staticmethod
@@ -205,8 +202,7 @@ class ZinniaCompiler:
         """Parse circuit source code. Returns AST dict."""
         fixed_source = ZinniaCompiler.fix_source_indentation(source)
         fixed_source, _ = lower_function_source(fixed_source, name)
-        from .counted_loops import normalize_counted_loops
-        python_ast = normalize_counted_loops(ast.parse(fixed_source))
+        python_ast = ast.parse(fixed_source)
         return ZinniaCircuitASTTransformer(fixed_source, name).visit(python_ast.body[0])
 
     @staticmethod

@@ -289,23 +289,31 @@ pub fn np_allclose(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, V
 
 // ── Builtin helpers (single-use) ─────────────────────────────────────
 
+/// `range(...)` as a value (outside a `for` loop or comprehension, which
+/// handle runtime bounds themselves; see `ir_gen::iteration`). Its length is
+/// part of the value's type here, so every argument must be a compile-time
+/// integer: a runtime bound is rejected, never read as zero.
 pub fn builtin_range(b: &mut IRBuilder, args: &[Value]) -> Value {
-    let (start, stop, step) = match args.len() {
-        1 => (0i64, args[0].int_val().unwrap_or(0), 1i64),
-        2 => (
-            args[0].int_val().unwrap_or(0),
-            args[1].int_val().unwrap_or(0),
-            1i64,
-        ),
-        3 => (
-            args[0].int_val().unwrap_or(0),
-            args[1].int_val().unwrap_or(0),
-            args[2].int_val().unwrap_or(1),
-        ),
-        _ => return Value::None,
+    if args.is_empty() || args.len() > 3 {
+        panic!("range expected 1 to 3 arguments, got {}", args.len());
+    }
+    let constant = |v: &Value| -> i64 {
+        v.int_val().unwrap_or_else(|| {
+            panic!(
+                "range() with a runtime argument is only supported as the iterable of a \
+                 `for` loop or comprehension (got a {} that is not a compile-time constant)",
+                v.zinnia_type()
+            )
+        })
+    };
+    let (start, stop, step) = match args {
+        [stop] => (0, constant(stop), 1),
+        [start, stop] => (constant(start), constant(stop), 1),
+        [start, stop, step] => (constant(start), constant(stop), constant(step)),
+        _ => unreachable!(),
     };
     if step == 0 {
-        return Value::None;
+        panic!("range() arg 3 must not be zero");
     }
     let mut values = Vec::new();
     let mut i = start;
@@ -321,18 +329,23 @@ pub fn builtin_range(b: &mut IRBuilder, args: &[Value]) -> Value {
     })
 }
 
+/// `len(x)`. For a bounded-dynamic array the result is its runtime length
+/// along axis 0; for lists and tuples it is a constant.
 pub fn builtin_len(b: &mut IRBuilder, args: &[Value]) -> Value {
-    if let Some(val) = args.first() {
-        match val {
-            Value::List(data) | Value::Tuple(data) => b.ir_constant_int(data.values.len() as i64),
-            Value::DynamicNDArray(data) => {
-                assert!(!data.envelope.dims.is_empty(), "len() of an unsized array");
-                Value::Integer(data.meta.runtime_shape[0].clone())
-            }
-            _ => b.ir_constant_int(0),
+    let [val] = args else {
+        panic!("len() takes exactly one argument ({} given)", args.len());
+    };
+    match val {
+        Value::List(data) | Value::Tuple(data) => b.ir_constant_int(data.values.len() as i64),
+        Value::DynamicNDArray(data) => {
+            assert!(!data.envelope.dims.is_empty(), "len() of an unsized array");
+            Value::Integer(data.meta.runtime_shape[0].clone())
         }
-    } else {
-        b.ir_constant_int(0)
+        Value::StaticArray { shape, .. } => {
+            let first = shape.first().unwrap_or_else(|| panic!("TypeError: len() of unsized object"));
+            b.ir_constant_int(*first as i64)
+        }
+        other => panic!("TypeError: object of type '{}' has no len()", other.zinnia_type()),
     }
 }
 

@@ -80,12 +80,13 @@ def test_counted_loop_inside_private_branch_preserves_counter(count):
  'i = 0\nwhile i < 2.5:\n    i += 1',
 ])
 def test_noncanonical_loops_keep_python_semantics(body):
-    from zinnia.compile.counted_loops import normalize_counted_loops
-    import ast
-    source='def f():\n'+'\n'.join('    '+line for line in body.splitlines())+'\n    return i\n'
-    env={};exec(source,env);expected=env['f']()
-    changed={};exec(compile(normalize_counted_loops(ast.parse(source)),'<normalized>','exec'),changed)
-    assert changed['f']()==expected
+    # Counted `while` loops are unrolled by the IR generator itself; the
+    # compiled counter must match CPython, and a wrong counter is rejected.
+    source='def kernel(x: Integer[Array, "1"]):\n'+'\n'.join('    '+line for line in body.splitlines())+'\n    return np.array([i])\n'
+    env={'np':np};exec(source.replace(': Integer[Array, "1"]',''),env);expected=int(env['kernel'](None)[0])
+    p=ZKCircuit.from_source('kernel',checked_source(source,(1,))).compile()
+    assert p.prove(np.array([0]),np.array([expected]),backend='mock').proof_bytes_hex=='mock_satisfied'
+    assert p.prove(np.array([0]),np.array([expected+1]),backend='mock').proof_bytes_hex!='mock_satisfied'
 
 @pytest.mark.parametrize('binding',['n = x.shape[0]', 'n = len(x)', 'n = 2'])
 def test_masked_while_with_individual_dimension_binding(binding):

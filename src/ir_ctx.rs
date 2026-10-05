@@ -316,6 +316,21 @@ impl IRContext {
         panic!("loop_break called outside of loop");
     }
 
+    /// Skip the rest of the current iteration of the nearest loop when
+    /// `condition` holds, exactly like a `continue` under that condition:
+    /// the skip ends at the next [`Self::loop_reiter`], and it does not count
+    /// as a `break` for a `for ... else` block.
+    pub fn loop_skip_iteration_if(&mut self, condition: Value, builder: &mut IRBuilder) {
+        let n = self.scopes.len();
+        for i in (0..n).rev() {
+            if matches!(&self.scopes[i], Scope::Loop(_)) {
+                self.scopes[i].loop_continue(condition, builder);
+                return;
+            }
+        }
+        panic!("loop_skip_iteration_if called outside of loop");
+    }
+
     pub fn loop_continue(&mut self, builder: &mut IRBuilder) {
         let cond = self.get_condition_value(builder);
         let n = self.scopes.len();

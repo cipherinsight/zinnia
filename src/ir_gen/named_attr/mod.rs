@@ -291,13 +291,16 @@ impl IRGenerator {
             .collect();
 
         // DynamicNDArray dispatch — route to dedicated handler
-        if matches!(target, Value::DynamicNDArray(_)) {
-            return self.dispatch_dyn_ndarray_method(
+        if let Value::DynamicNDArray(data) = &target {
+            let data = data.clone();
+            let result = self.dispatch_dyn_ndarray_method(
                 target,
                 n.member.as_str(),
                 &visited_args,
                 &visited_kwargs,
             );
+            self.note_metadata_bounds(&data, n.member.as_str(), &result);
+            return result;
         }
 
         // Complex .real / .imag / .conjugate accessors on any expression.

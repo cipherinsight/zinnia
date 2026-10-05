@@ -37,7 +37,12 @@ impl IRGenerator {
             "range" => {
                 crate::ops::static_ndarray_ops::builtin_range(&mut self.builder, visited_args)
             }
-            "len" => crate::ops::static_ndarray_ops::builtin_len(&mut self.builder, visited_args),
+            "len" => {
+                if let Some(Value::DynamicNDArray(data)) = visited_args_orig.first() {
+                    self.note_len_bounds(data);
+                }
+                crate::ops::static_ndarray_ops::builtin_len(&mut self.builder, visited_args)
+            }
             "int" => {
                 if visited_args.is_empty() {
                     self.builder.ir_constant_int(0)

@@ -210,16 +210,20 @@ impl IRGenerator {
         names.contains(var_name)
     }
 
-    fn body_has_first_write_unit_decrement(block: &[ASTNode], var_name: &str) -> bool {
+    /// Whether the only write to `var_name` in `block` is one top-level
+    /// `var_name = var_name - 1`. Then every executed iteration lowers it by
+    /// exactly one (inactive iterations leave it unchanged), which is what
+    /// makes the structural `while var > 0` cap a bound on the trip count.
+    fn body_has_only_unit_decrement(block: &[ASTNode], var_name: &str) -> bool {
+        let mut decrements = 0;
         for stmt in block {
             if Self::is_unit_decrement_assignment(var_name, stmt) {
-                return true;
-            }
-            if Self::stmt_writes_name_before_decrement(stmt, var_name) {
+                decrements += 1;
+            } else if Self::stmt_writes_name(stmt, var_name) {
                 return false;
             }
         }
-        false
+        decrements == 1
     }
 
     fn structural_while_unroll_cap(&self, n: &ASTWhileStatement) -> Option<u32> {
@@ -229,7 +233,7 @@ impl IRGenerator {
         if origin != &frame.var_name || frame.max_bound == 0 {
             return None;
         }
-        if !Self::body_has_first_write_unit_decrement(&n.block, var_name) {
+        if !Self::body_has_only_unit_decrement(&n.block, var_name) {
             return None;
         }
         frame
@@ -252,7 +256,7 @@ impl IRGenerator {
         if current_bound == 0 {
             return None;
         }
-        if !Self::body_has_first_write_unit_decrement(&n.block, var_name) {
+        if !Self::body_has_only_unit_decrement(&n.block, var_name) {
             return None;
         }
         Some(LoopIndexBoundContext {
@@ -285,7 +289,7 @@ impl IRGenerator {
         }
     }
 
-    fn collect_assigned_names_from_stmt(stmt: &ASTNode, names: &mut BTreeSet<String>) {
+    pub(crate) fn collect_assigned_names_from_stmt(stmt: &ASTNode, names: &mut BTreeSet<String>) {
         match stmt {
             ASTNode::ASTAssignStatement(assign) => {
                 for target in &assign.targets {
@@ -910,84 +914,39 @@ impl IRGenerator {
         if self.ctx.check_return_guaranteed() || self.ctx.check_loop_terminated_guaranteed() {
             return;
         }
+        let items = self.iteration_items(&n.iter_expr);
+        self.unroll_loop(&n.target, &items, &n.block, &n.orelse);
+    }
 
-        let iter_val = self.visit(&n.iter_expr);
-
-        // P2 segarr-read-paths: iterate StaticArray natively. Each iteration
-        // returns either a leaf (1-D source) or a (D-1)-rank StaticArray
-        // view (≥2-D source). Avoids the legacy `to_value_list` shim.
-        let elements: Vec<Value> = match &iter_val {
-            Value::StaticArray { shape, .. } => {
-                let n_iter = shape[0];
-                (0..n_iter)
-                    .map(|i| {
-                        crate::helpers::static_array::read::iter_element(
-                            &mut self.builder,
-                            &iter_val,
-                            i,
-                        )
-                    })
-                    .collect()
-            }
-            Value::List(data) | Value::Tuple(data) => data.values.clone(),
-            Value::DynamicNDArray(data) => {
-                // Materialize the public capacity. The loop below predicates
-                // every iteration on the logical runtime length, so padding
-                // never becomes an element visible to the program.
-                if data.envelope.dims.len() != 1 {
-                    panic!(
-                        "iteration over rank-{} DynamicNDArray is not supported (only rank-1 for now)",
-                        data.envelope.dims.len()
-                    );
-                }
-                let dim = data.envelope.dims[0];
-                let n_iter = dim.max;
-                // Contiguous, offset-0 layout is the only case the
-                // current bounded-dynamic producers emit. A view with
-                // non-trivial strides or a non-zero offset would need
-                // address arithmetic per cell; we'd add it when a
-                // caller actually needs it.
-                if data.meta.logical_offset != 0
-                    || data.meta.logical_strides.first().copied() != Some(1)
-                {
-                    panic!(
-                        "iteration over a strided / offset DynamicNDArray view is not supported (offset={}, stride={:?})",
-                        data.meta.logical_offset, data.meta.logical_strides
-                    );
-                }
-                let dtype = data.dtype;
-                (0..n_iter)
-                    .map(|k| {
-                        let addr = self.builder.ir_constant_int(k as i64);
-                        crate::helpers::segment::read_typed(
-                            &mut self.builder,
-                            data.segment_id,
-                            &addr,
-                            dtype,
-                        )
-                    })
-                    .collect()
-            }
-            _ => {
-                panic!("'{}' object is not iterable", iter_val.zinnia_type());
-            }
-        };
+    /// Unroll a `for` loop over `items` (see [`super::iteration`]). The
+    /// target is bound to each item's value unconditionally, so indices
+    /// built from it stay compile-time constants inside the body; an
+    /// inactive item skips its body like a `continue`. After the loop a
+    /// simple-name target holds its value at the end of the last item that
+    /// actually ran, as in Python.
+    pub(crate) fn unroll_loop(
+        &mut self,
+        target: &ASTNode,
+        items: &[super::iteration::LoopItem],
+        block: &[ASTNode],
+        orelse: &[ASTNode],
+    ) {
+        let elements: Vec<Value> = items.iter().map(|item| item.value.clone()).collect();
         // Loop targets are bound unconditionally during symbolic unrolling so
         // indices remain static. Preserve their old values when an enclosing
         // branch does not execute; branch joins expect pre-merged bindings.
         let entry_condition = self.ctx.get_condition_value(&mut self.builder);
         let mut target_names = BTreeSet::new();
-        Self::collect_assigned_names_from_target(&n.target, &mut target_names);
+        Self::collect_assigned_names_from_target(target, &mut target_names);
         let previous_targets: Vec<_> = target_names.into_iter()
             .filter_map(|name| self.ctx.get(&name).map(|value| (name, value)))
             .collect();
-        let for_frame = Self::for_frame_from_elements(&n.target, &elements);
+        let for_frame = Self::for_frame_from_elements(target, &elements);
 
-        // Unroll the loop: for each element, bind the target variable and run the block
         if elements.is_empty() {
             let mut names = BTreeSet::new();
-            Self::collect_assigned_names_from_target(&n.target, &mut names);
-            for stmt in &n.block {
+            Self::collect_assigned_names_from_target(target, &mut names);
+            for stmt in block {
                 Self::collect_assigned_names_from_stmt(stmt, &mut names);
             }
             for name in names {
@@ -1006,27 +965,36 @@ impl IRGenerator {
             self.clear_induction_origins_from(&frame.var_name);
             self.for_loop_frames.push(frame);
         }
-        for (position, elem) in elements.iter().enumerate() {
+        let target_name = Self::simple_name_target(target);
+        let guarded = items.iter().any(|item| item.active.is_some());
+        // The target's value at the end of the last item that ran.
+        let mut exit_target: Option<Value> =
+            target_name.and_then(|name| self.ctx.get(name));
+        for item in items {
             self.ctx.loop_reiter(&mut self.builder);
-            if let Value::DynamicNDArray(data) = &iter_val {
-                let index = self.builder.ir_constant_int(position as i64);
-                let length = Value::Integer(data.meta.runtime_length.clone());
-                let inactive = self.builder.ir_greater_than_or_equal_i(&index, &length);
-                self.ctx.loop_break(Some(inactive), &mut self.builder);
+            // An inactive item skips its body like a `continue`, so a later
+            // `else` block still sees the loop as exhausted, not broken.
+            if let Some(active) = &item.active {
+                let inactive = self.builder.ir_logical_not(active);
+                self.ctx.loop_skip_iteration_if(inactive, &mut self.builder);
             }
             if pushed_frame {
                 if let Some(frame) = self.for_loop_frames.last_mut() {
-                    frame.current_bound = elem
+                    frame.current_bound = item
+                        .value
                         .int_val()
                         .and_then(|n| (n >= 0).then(|| (n as u32).saturating_add(1)));
                 }
             }
 
-            // Bind the loop variable
-            self.do_recursive_assign(&n.target, elem.clone(), false);
+            self.do_recursive_assign(target, item.value.clone(), false);
 
+            self.builder.facts.enter(
+                crate::optim::predicates::ScopeKind::Conditional,
+                super::iteration::conjunction(item.active_facts.clone()),
+            );
             let mut terminated = false;
-            for stmt in &n.block {
+            for stmt in block {
                 self.visit(stmt);
                 if self.ctx.check_return_guaranteed() || self.ctx.check_loop_terminated_guaranteed()
                 {
@@ -1034,13 +1002,28 @@ impl IRGenerator {
                     break;
                 }
             }
+            let _item_facts = self.builder.facts.leave();
+            if guarded {
+                if let Some(end) = target_name.and_then(|name| self.ctx.get(name)) {
+                    exit_target = Some(match (&item.active, exit_target.take()) {
+                        (Some(active), Some(previous)) => crate::helpers::value_ops::select_value(
+                            &mut self.builder, active, &end, &previous),
+                        _ => end,
+                    });
+                }
+            }
             if terminated {
                 break;
             }
         }
 
-        // Handle orelse block
-        for stmt in &n.orelse {
+        // The `else` block runs when the loop was not broken. A `continue`
+        // (or an inactive item) in the last iteration does not affect it, so
+        // reset the per-iteration skip condition first.
+        if !orelse.is_empty() {
+            self.ctx.loop_reiter(&mut self.builder);
+        }
+        for stmt in orelse {
             self.visit(stmt);
         }
 
@@ -1056,6 +1039,9 @@ impl IRGenerator {
             }
         }
         let _loop_facts = self.builder.facts.leave();
+        if let (true, Some(name), Some(exit)) = (guarded, target_name, exit_target) {
+            self.ctx.set(name, exit);
+        }
         if entry_condition.bool_val() != Some(true) {
             for (name, previous) in previous_targets {
                 if let Some(current) = self.ctx.get(&name) {
@@ -1075,6 +1061,21 @@ impl IRGenerator {
             return;
         }
 
+        if !n.orelse.is_empty() && Self::block_has_loop_break(&n.block) {
+            panic!(
+                "`while ... else` with `break` in the loop body is not supported: \
+                 the `else` block must run only when the loop ends without `break`"
+            );
+        }
+        if let Some((counter, items)) = self.counted_while_items(n) {
+            let target = ASTNode::ASTNameAssignTarget(ASTNameAssignTarget {
+                name: counter,
+                star: false,
+                dbg: None,
+            });
+            self.unroll_loop(&target, &items, &n.block, &n.orelse);
+            return;
+        }
         let structural_cap = self.structural_while_unroll_cap(n);
         let loop_limit = structural_cap.unwrap_or(self.config.loop_limit);
         let mut loop_quota = loop_limit + 1;
@@ -1110,14 +1111,6 @@ impl IRGenerator {
             let test = self.visit_while_guard_expr(&n.test_expr, loop_index_bound_context.as_ref());
             let test_bool = crate::helpers::value_ops::to_scalar_bool(&mut self.builder, &test);
             loop_quota -= 1;
-
-            if loop_quota == 0 {
-                // Loop limit reached
-                if pushed_reuse_context {
-                    self.loop_read_reuse_contexts.pop();
-                }
-                break;
-            }
 
             // P4 round 1: route the guard resolution through the active
             // Resolver (instead of only the value's static_val cache). Static
@@ -1173,6 +1166,22 @@ impl IRGenerator {
                 }
             };
 
+            // Bound-based exit: the guard can no longer hold for any input
+            // the compiler admits (e.g. `i < n` once `i` reaches the proven
+            // maximum of `n`).
+            let test_static = match test_static {
+                None if self.provably_false(&test_bool) => Some(false),
+                other => other,
+            };
+
+            if test_static != Some(false) && loop_quota == 0 {
+                if pushed_reuse_context {
+                    self.loop_read_reuse_contexts.pop();
+                }
+                self.finish_unroll_limit(&test_bool, structural_cap.is_some(), loop_limit);
+                break;
+            }
+
             if test_static == Some(false) {
                 if loop_quota == loop_limit {
                     self.mark_unreachable_loop_body_bindings(
@@ -1191,6 +1200,16 @@ impl IRGenerator {
                 self.ctx.loop_break(Some(not_test), &mut self.builder);
             }
 
+            // The body runs only while the guard holds; its comparisons are
+            // path facts there (they discharge e.g. `x[i]` under `i < len(x)`).
+            let guard_facts = if test_static.is_none() {
+                super::iteration::conjunction(self.condition_facts(&test_bool))
+            } else {
+                None
+            };
+            self.builder
+                .facts
+                .enter(crate::optim::predicates::ScopeKind::Conditional, guard_facts);
             let mut terminated = false;
             let pushed_loop_index_context = if let Some(ctx) = loop_index_bound_context.clone() {
                 self.loop_index_bound_contexts.push(ctx);
@@ -1217,6 +1236,7 @@ impl IRGenerator {
                     break;
                 }
             }
+            let _guard_facts = self.builder.facts.leave();
             if pushed_loop_index_context {
                 self.loop_index_bound_contexts.pop();
             }
@@ -1233,6 +1253,51 @@ impl IRGenerator {
         if returned_guaranteed_outside {
             self.ctx.set_return_guarantee();
         }
+        // Without a `break`, Python runs the `else` block whenever the loop
+        // ends, which (after the termination check above) it always does.
+        for stmt in &n.orelse {
+            self.visit(stmt);
+        }
+    }
+
+    /// The unroll of a `while` loop used up its iteration quota and the guard
+    /// is not known to be false. If no path can still be iterating, the loop
+    /// has ended. A structural cap is a bound by construction: the guard
+    /// requires `j > 0`, `j` starts at most at the enclosing for-loop's
+    /// current item, and the body's only write to `j` lowers it by one per
+    /// executed iteration (`body_has_only_unit_decrement`), so after `cap`
+    /// iterations no path can still be iterating. Otherwise the trip count
+    /// has no provable maximum and the program is rejected: truncating the
+    /// loop would prove a different result.
+    fn finish_unroll_limit(&mut self, guard: &Value, structural_cap: bool, limit: u32) {
+        if structural_cap {
+            return;
+        }
+        let condition = self.ctx.get_condition_value(&mut self.builder);
+        let still_running = self.builder.ir_logical_and(&condition, guard);
+        if still_running.bool_val() == Some(false) || self.provably_false(&still_running) {
+            return;
+        }
+        panic!(
+            "{}: the `while` condition was not proven false within loop_limit={} unrolled \
+             iterations. Bound the values the condition depends on (a bounded array \
+             annotation or a `requires` precondition), or raise ZinniaConfig loop_limit if a \
+             larger bound exists",
+            super::iteration::UNBOUNDED_LOOP_ERROR,
+            limit
+        );
+    }
+
+    /// Whether `block` contains a `break` that exits the loop owning
+    /// `block` (breaks inside nested loops belong to those loops).
+    fn block_has_loop_break(block: &[ASTNode]) -> bool {
+        block.iter().any(|stmt| match stmt {
+            ASTNode::ASTBreakStatement(_) => true,
+            ASTNode::ASTCondStatement(cond) => {
+                Self::block_has_loop_break(&cond.t_block) || Self::block_has_loop_break(&cond.f_block)
+            }
+            _ => false,
+        })
     }
 
     pub(crate) fn visit_break(&mut self) {
@@ -1915,6 +1980,12 @@ impl IRGenerator {
         }
     }
 
+    /// Expand comprehension generators `idx..` for every item, collecting
+    /// the element values and, for each, the runtime condition under which
+    /// Python produces it (`active`: the conjunction of the enclosing items'
+    /// activity and filters). Filters, nested iterables and the element are
+    /// evaluated under that condition, as Python evaluates them only for
+    /// produced candidates.
     fn expand_generators(
         &mut self,
         generators: &[ASTGenerator],
@@ -1925,44 +1996,29 @@ impl IRGenerator {
         active: &Value,
     ) {
         if idx >= generators.len() {
-            result.push(self.visit(elt));
+            let value = self.with_guard(active, |gen| gen.visit(elt));
+            result.push(value);
             guards.push(active.clone());
             return;
         }
 
         let gen = &generators[idx];
-        let iter_val = self.visit(&gen.iter_expr);
+        let items = self.with_guard(active, |this| this.iteration_items(&gen.iter_expr));
 
-        // P2 segarr-read-paths: iterate StaticArray natively (per-iteration
-        // leaf or (D-1)-rank view).
-        let elements: Vec<Value> = match &iter_val {
-            Value::StaticArray { shape, .. } => {
-                let n_iter = shape[0];
-                (0..n_iter)
-                    .map(|i| {
-                        crate::helpers::static_array::read::iter_element(
-                            &mut self.builder,
-                            &iter_val,
-                            i,
-                        )
-                    })
-                    .collect()
-            }
-            Value::List(data) | Value::Tuple(data) => data.values.clone(),
-            _ => return,
-        };
+        for item in &items {
+            self.do_recursive_assign(&gen.target, item.value.clone(), false);
 
-        for elem in &elements {
-            self.do_recursive_assign(&gen.target, elem.clone(), false);
-
-            let mut guard = active.clone();
+            let mut guard = match &item.active {
+                Some(item_active) => self.builder.ir_logical_and(active, item_active),
+                None => active.clone(),
+            };
             for if_expr in &gen.ifs {
-                let cond = self.visit(if_expr);
-                let cond = crate::helpers::value_ops::to_scalar_bool(&mut self.builder, &cond);
-                guard = self.builder.ir_logical_and(&guard, &cond);
                 if guard.bool_val() == Some(false) {
                     break;
                 }
+                let cond = self.with_guard(&guard, |this| this.visit(if_expr));
+                let cond = crate::helpers::value_ops::to_scalar_bool(&mut self.builder, &cond);
+                guard = self.builder.ir_logical_and(&guard, &cond);
             }
 
             if guard.bool_val() != Some(false) {
@@ -1980,8 +2036,11 @@ impl IRGenerator {
         if let Some(take_true) = cond_bool.bool_val() {
             return self.visit(if take_true { &n.t_expr } else { &n.f_expr });
         }
-        let true_val = self.visit(&n.t_expr);
-        let false_val = self.visit(&n.f_expr);
+        // Each arm runs only on its side of the condition: writes, chip calls
+        // and assertions inside an arm are predicated on it.
+        let true_val = self.with_guard(&cond_bool, |this| this.visit(&n.t_expr));
+        let not_cond = self.builder.ir_logical_not(&cond_bool);
+        let false_val = self.with_guard(&not_cond, |this| this.visit(&n.f_expr));
         crate::helpers::value_ops::select_value(
             &mut self.builder,
             &cond_bool,
