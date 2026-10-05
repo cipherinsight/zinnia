@@ -673,34 +673,19 @@ impl Cmp {
 }
 
 /// Unsigned Noir integer types the emitter converts Field cells into.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UintWidth {
     U8,
-    U16,
     U32,
     U64,
-    U128,
 }
 
 impl UintWidth {
-    /// Narrowest width whose range contains `max`.
-    fn covering(max: u128) -> Self {
-        match 128 - max.leading_zeros() {
-            0..=8 => UintWidth::U8,
-            9..=16 => UintWidth::U16,
-            17..=32 => UintWidth::U32,
-            33..=64 => UintWidth::U64,
-            _ => UintWidth::U128,
-        }
-    }
-
     fn ty(self) -> &'static str {
         match self {
             UintWidth::U8 => "u8",
-            UintWidth::U16 => "u16",
             UintWidth::U32 => "u32",
             UintWidth::U64 => "u64",
-            UintWidth::U128 => "u128",
         }
     }
 
@@ -708,10 +693,8 @@ impl UintWidth {
     fn checked_fn(self) -> &'static str {
         match self {
             UintWidth::U8 => "checked_u8",
-            UintWidth::U16 => "checked_u16",
             UintWidth::U32 => "checked_u32",
             UintWidth::U64 => "checked_u64",
-            UintWidth::U128 => "checked_u128",
         }
     }
 }
@@ -852,33 +835,16 @@ impl<'a> NoirEmitter<'a> {
         }
     }
 
-    /// Unsigned comparison for operands whose (enforced) intervals are
-    /// non-negative: both sides are converted to the narrowest unsigned type
-    /// covering the hulls and compared natively (~20 gates for u8 against
-    /// ~30 for the signed projections). The conversions are range-checked,
-    /// so an operand outside the chosen width fails the proof instead of
-    /// being truncated: the interval only selects the width, and a wrong
-    /// interval can cost completeness but never soundness.
-    fn unsigned_cmp(&mut self, a: &str, b: &str, cmp: Cmp) -> Option<String> {
-        let (al, ah) = self.ival(a)?;
-        let (bl, bh) = self.ival(b)?;
-        if al < 0 || bl < 0 {
-            return None;
-        }
-        let width = UintWidth::covering(ah.max(bh).max(1) as u128);
-        let ca = self.to_uint(a, width);
-        let cb = self.to_uint(b, width);
-        Some(self.bind_flag(&format!("if {} {} {} {{ 1 }} else {{ 0 }}", ca, cmp.op(), cb)))
-    }
-
-    /// Signed integer comparison `a cmp b`: the unsigned fast path when the
-    /// intervals allow it, a native u32 compare for u32 cells, else the
-    /// library's gap-pinned `qlt` (`signed_cmp`).
-    fn compare_i(&mut self, a: &str, b: &str, cmp: Cmp) -> String {
+    /// `a cmp b` as a 0/1 cell, the mock's signed comparison (the sign of
+    /// `a - b`), for every IR comparison (`LtI`..`GteI`, `LtF`..`GteF`,
+    /// `LtIBounded`, `GtIBounded`, the axes of `IndexInBox`). In order:
+    /// a value non-negative by construction against 0 is a zero test; two
+    /// u32 cells (genuine u32 values, see `u32_cells`) compare natively;
+    /// operands with non-negative intervals compare as unsigned integers
+    /// (`unsigned_compare`); anything else goes through the library's
+    /// gap-pinned `qlt_bits` (`gap_compare`).
+    fn compare(&mut self, a: &str, b: &str, cmp: Cmp) -> String {
         if let Some(v) = self.compare_nonneg_with_zero(a, b, cmp) {
-            return v;
-        }
-        if let Some(v) = self.unsigned_cmp(a, b, cmp) {
             return v;
         }
         if self.is_u32(a) && self.is_u32(b) {
@@ -887,50 +853,83 @@ impl<'a> NoirEmitter<'a> {
                 1,
             );
         }
-        self.signed_cmp(a, b, cmp)
+        if let Some(v) = self.unsigned_compare(a, b, cmp) {
+            return v;
+        }
+        self.gap_compare(a, b, cmp)
     }
 
-    /// Signed comparison `a cmp b` through the library's `qlt`, which pins
-    /// its answer with one 64-bit range check of the gap between the
-    /// operands: it is the mock's `lt_i` (the sign of `a - b`) for every pair
-    /// with |a - b| < 2^64, which includes any two values of the signed
-    /// 64-bit window, and fails the proof for any other pair. `a <= b` is
-    /// `!(b < a)`, `a > b` is `b < a` and `a >= b` is `!(a < b)`, so a
-    /// comparison and its negation share one `qlt`.
-    fn signed_cmp(&mut self, a: &str, b: &str, cmp: Cmp) -> String {
-        let (af, bf) = (self.as_field(a), self.as_field(b));
-        let (lhs, rhs, negate) = match cmp {
-            Cmp::Lt => (af, bf, false),
-            Cmp::Le => (bf, af, true),
-            Cmp::Gt => (bf, af, false),
-            Cmp::Ge => (af, bf, true),
+    /// `a cmp b` for operands whose intervals are non-negative and below
+    /// 2^8 or 2^32: both are converted to u8 / u32 by range-checked
+    /// conversions and compared natively. A conversion is shared by every
+    /// comparison of the same cell (and free for a constant), which makes
+    /// this cheaper than `gap_compare` when one operand meets many others
+    /// (e.g. `i < pos` for every i). The interval only picks the width; an
+    /// operand outside it fails the proof.
+    fn unsigned_compare(&mut self, a: &str, b: &str, cmp: Cmp) -> Option<String> {
+        let (al, ah) = self.ival(a)?;
+        let (bl, bh) = self.ival(b)?;
+        if al < 0 || bl < 0 {
+            return None;
+        }
+        let width = match ah.max(bh) {
+            0..=0xff => UintWidth::U8,
+            0x100..=0xffff_ffff => UintWidth::U32,
+            _ => return None,
         };
-        self.use_lib("qlt");
-        let less = self.bind_typed(&format!("qlt({lhs}, {rhs})"), "bool");
+        let ca = self.to_uint(a, width);
+        let cb = self.to_uint(b, width);
+        Some(self.bind_flag(&format!("if {} {} {} {{ 1 }} else {{ 0 }}", ca, cmp.op(), cb)))
+    }
+
+    /// `a cmp b` through `qlt_bits::<W>`, which pins its answer with one
+    /// W-bit range check of the gap between the operands: it is the mock's
+    /// comparison for every pair with a - b in [-2^W, 2^W), and fails the
+    /// proof for any other pair (`comparison_width` picks W). `a <= b` is
+    /// `!(b < a)`, `a > b` is `b < a` and `a >= b` is `!(a < b)`, so a
+    /// comparison and its negation share one call.
+    fn gap_compare(&mut self, a: &str, b: &str, cmp: Cmp) -> String {
+        let (lhs, rhs, negate) = match cmp {
+            Cmp::Lt => (a, b, false),
+            Cmp::Le => (b, a, true),
+            Cmp::Gt => (b, a, false),
+            Cmp::Ge => (a, b, true),
+        };
+        let width = self.comparison_width(lhs, rhs);
+        let (lf, rf) = (self.as_field(lhs), self.as_field(rhs));
+        self.use_lib("qlt_bits");
+        let less = self.bind_typed(&format!("qlt_bits::<{width}>({lf}, {rf})"), "bool");
         let flag = if negate { format!("(!{less}) as Field") } else { format!("{less} as Field") };
         self.bind_flag(&flag)
     }
 
-    /// `a cmp b` for `LtIBounded`/`GtIBounded`, whose operands the IR
-    /// promises are non-negative. The promise is not trusted: the operands
-    /// go through range-checked conversions (u32 when their bound allows,
-    /// else u64), so a negative operand fails the proof.
-    fn bounded_cmp(&mut self, a: &str, b: &str, cmp: Cmp) -> String {
-        let a = self.maybe_promote_to_u32(a);
-        let b = self.maybe_promote_to_u32(b);
-        if self.is_u32(&a) && self.is_u32(&b) {
-            return self.bind_u32_with_bound(
-                &format!("if {} {} {} {{ 1 }} else {{ 0 }}", a, cmp.op(), b),
-                1,
-            );
+    /// The gap width W for comparing `a` with `b`: 64 (any two values of the
+    /// signed 64-bit window), or less when the operands' intervals bound
+    /// a - b inside [-2^W, 2^W). The intervals only choose the width: they
+    /// come from constants, enforced asserts and lowerings (see `ival`), and
+    /// a pair outside them fails the proof rather than getting a wrong
+    /// answer. W is rounded up to 8 or 28 bits, whose lookup tables bb
+    /// shares with the 64-bit checks (a 14-bit limb table and an 8-bit
+    /// one), so a narrow comparison never adds a table of its own.
+    fn comparison_width(&self, a: &str, b: &str) -> u32 {
+        const WINDOW_WIDTH: u32 = 64;
+        let (Some((al, ah)), Some((bl, bh))) = (self.ival(a), self.ival(b)) else {
+            return WINDOW_WIDTH;
+        };
+        let lo = al as i128 - bh as i128;
+        let hi = ah as i128 - bl as i128;
+        // 2^W must be at least max(-lo, hi + 1).
+        let need = (-lo).max(hi + 1).max(1) as u128;
+        let bits = 128 - (need - 1).leading_zeros();
+        match bits {
+            0..=8 => 8,
+            9..=28 => 28,
+            _ => WINDOW_WIDTH,
         }
-        let ua = self.to_uint(&a, UintWidth::U64);
-        let ub = self.to_uint(&b, UintWidth::U64);
-        self.bind_flag(&format!("if {} {} {} {{ 1 }} else {{ 0 }}", ua, cmp.op(), ub))
     }
 
     /// Expression of unsigned type `width` holding the value of `cell`.
-    /// A u32 cell widens for free (or narrows through a range check); a
+    /// A u32 cell widens for free (a u8 target takes a range check); a
     /// Field cell goes through the library's range-checked `checked_uN`, so
     /// a value outside [0, 2^N) fails the proof. The emitter never writes a
     /// bare `Field as uN`: that cast truncates to the low N bits and is not
@@ -939,10 +938,8 @@ impl<'a> NoirEmitter<'a> {
         if self.is_u32(cell) {
             match width {
                 UintWidth::U32 => return cell.to_string(),
-                UintWidth::U64 | UintWidth::U128 => {
-                    return format!("({} as {})", cell, width.ty())
-                }
-                UintWidth::U8 | UintWidth::U16 => {}
+                UintWidth::U64 => return format!("({} as u64)", cell),
+                UintWidth::U8 => {}
             }
         }
         let f = width.checked_fn();
@@ -2269,55 +2266,50 @@ impl Synthesizer for NoirEmitter<'_> {
     fn lt_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         // min/max select recognition happens at IR level (the provenance
         // table's SelectI deposit); only the lt-zero peephole stays here.
-        let out = self.compare_i(a, b, Cmp::Lt);
+        let out = self.compare(a, b, Cmp::Lt);
         if self.s_int_of(b) == Some(0) {
             self.lt_zero_of.insert(out.clone(), a.clone());
         }
         Ok(out)
     }
 
+    // The IR promises non-negative operands for the bounded comparisons;
+    // the lowering does not rely on it (the mock compares them signed).
     fn lt_i_bounded(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        Ok(self.bounded_cmp(a, b, Cmp::Lt))
+        Ok(self.compare(a, b, Cmp::Lt))
     }
 
     fn gt_i_bounded(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        Ok(self.bounded_cmp(a, b, Cmp::Gt))
+        Ok(self.compare(a, b, Cmp::Gt))
     }
 
     fn index_in_box(
         &mut self,
         triples: &[(CellRef, CellRef, CellRef)],
     ) -> Result<CellRef, ProvingError> {
-        // One combined boolean `(idx_0 >= lo_0) & (idx_0 < hi_0) & ...` over
-        // unsigned views of the operands (the IR promises they are
-        // non-negative; the range-checked conversions enforce it).
+        // The product of the per-axis flags `lo_k <= idx_k` and
+        // `idx_k < hi_k` (the mock's default lowering: two comparisons and a
+        // logical and per axis).
         if triples.is_empty() {
             return self.constant_int(1);
         }
         let mut parts: Vec<String> = Vec::with_capacity(triples.len() * 2);
         for (idx, lo, hi) in triples {
-            // Promote per axis (CSE-d, so the same idx across axes shares
-            // one conversion).
-            let idx_p = self.maybe_promote_to_u32(idx);
-            let lo_p = self.maybe_promote_to_u32(lo);
-            let hi_p = self.maybe_promote_to_u32(hi);
-            let i = self.to_uint(&idx_p, UintWidth::U64);
-            let l = self.to_uint(&lo_p, UintWidth::U64);
-            let h = self.to_uint(&hi_p, UintWidth::U64);
-            parts.push(format!("({} >= {})", i, l));
-            parts.push(format!("({} < {})", i, h));
+            let above = self.compare(idx, lo, Cmp::Ge);
+            let below = self.compare(idx, hi, Cmp::Lt);
+            parts.push(self.as_field(&above));
+            parts.push(self.as_field(&below));
         }
-        let combined = parts.join(" & ");
-        Ok(self.bind_flag(&format!("if {} {{ 1 }} else {{ 0 }}", combined)))
+        Ok(self.bind_flag(&parts.join(" * ")))
     }
     fn lte_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        Ok(self.compare_i(a, b, Cmp::Le))
+        Ok(self.compare(a, b, Cmp::Le))
     }
     fn gt_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        Ok(self.compare_i(a, b, Cmp::Gt))
+        Ok(self.compare(a, b, Cmp::Gt))
     }
     fn gte_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        Ok(self.compare_i(a, b, Cmp::Ge))
+        Ok(self.compare(a, b, Cmp::Ge))
     }
 
     fn eq_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
@@ -2331,16 +2323,16 @@ impl Synthesizer for NoirEmitter<'_> {
     // Float comparisons are signed comparisons of the Q32 integers (the
     // mock's `lt_f` is its `lt_i`).
     fn lt_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        Ok(self.signed_cmp(a, b, Cmp::Lt))
+        Ok(self.compare(a, b, Cmp::Lt))
     }
     fn lte_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        Ok(self.signed_cmp(a, b, Cmp::Le))
+        Ok(self.compare(a, b, Cmp::Le))
     }
     fn gt_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        Ok(self.signed_cmp(a, b, Cmp::Gt))
+        Ok(self.compare(a, b, Cmp::Gt))
     }
     fn gte_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
-        Ok(self.signed_cmp(a, b, Cmp::Ge))
+        Ok(self.compare(a, b, Cmp::Ge))
     }
 
     fn sin_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
@@ -3118,10 +3110,12 @@ mod tests {
         NoirEmitter::new(Vec::new(), HashMap::new(), 20, prov)
     }
 
-    // B4: a Field cell never reaches an unsigned type through a truncating
-    // `as uN` cast; the interval only picks the width of a checked conversion.
+    // Comparisons size their gap check by the operands' intervals: the
+    // interval only picks the width of `qlt_bits` (a pair outside it fails
+    // the proof), never a truncating cast.
+    // Non-negative intervals compare through shared checked conversions.
     #[test]
-    fn unsigned_cmp_converts_through_range_checks() {
+    fn non_negative_intervals_compare_unsigned() {
         let prov = crate::provenance::ProvenanceTable::default();
         let mut em = bare_emitter(&prov);
         em.interval_of.insert("x".to_string(), (0, 200));
@@ -3131,8 +3125,27 @@ mod tests {
         assert!(!em.body.contains("x as u8"), "{}", em.body);
     }
 
-    // Signed comparisons go through the gap-pinned `qlt` (one 64-bit range
-    // check), and a comparison and its negation share one `qlt` call.
+    #[test]
+    fn comparison_width_follows_the_intervals() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        for (name, iv) in [("x", (-1, 200)), ("y", (-50, 200)), ("z", (0, 1 << 20)), ("w", (0, 1 << 40))] {
+            em.interval_of.insert(name.to_string(), iv);
+        }
+        let s = |n: &str| n.to_string();
+        em.lt_i(&s("x"), &s("y")).unwrap();
+        em.lt_i(&s("x"), &s("z")).unwrap();
+        em.lt_i(&s("x"), &s("w")).unwrap();
+        em.lt_f(&s("x"), &s("u")).unwrap();
+        assert!(em.body.contains("qlt_bits::<8>(x, y)"), "{}", em.body);
+        assert!(em.body.contains("qlt_bits::<28>(x, z)"), "{}", em.body);
+        assert!(em.body.contains("qlt_bits::<64>(x, w)"), "{}", em.body);
+        assert!(em.body.contains("qlt_bits::<64>(x, u)"), "{}", em.body);
+        assert!(!em.body.contains(" as u"), "{}", em.body);
+    }
+
+    // Signed comparisons go through the gap-pinned `qlt_bits` (one range
+    // check), and a comparison and its negation share one call.
     #[test]
     fn signed_comparisons_share_one_gap_pinned_qlt() {
         let prov = crate::provenance::ProvenanceTable::default();
@@ -3141,10 +3154,10 @@ mod tests {
         em.lt_i(&x, &y).unwrap();
         em.gte_i(&x, &y).unwrap();
         em.gt_i(&y, &x).unwrap();
-        assert_eq!(em.body.matches("qlt(x, y)").count(), 1, "{}", em.body);
+        assert_eq!(em.body.matches("qlt_bits::<64>(x, y)").count(), 1, "{}", em.body);
         assert!(!em.body.contains("to_signed"), "{}", em.body);
         em.lte_i(&x, &y).unwrap();
-        assert!(em.body.contains("qlt(y, x)"), "{}", em.body);
+        assert!(em.body.contains("qlt_bits::<64>(y, x)"), "{}", em.body);
     }
 
     // A product with a float made from an integer (`FloatCast`, or an
