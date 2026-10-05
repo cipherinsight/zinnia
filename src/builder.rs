@@ -111,6 +111,10 @@ pub struct IRBuilder {
     /// onto the exported `IRGraph` so output auditors can verify the
     /// elided values against ground truth.
     pub elided_publics: Vec<crate::ir::ElidedPublic>,
+    /// For each `ExposePublic` emitted so far, the number of elided
+    /// constants recorded before it; locates the elided constants among
+    /// the output slots at export (see `IRGraph::elided_publics`).
+    elided_before_exposure: Vec<usize>,
     /// Conditional-write predicate. While `Some(p)`, every
     /// `ir_write_memory` / `ir_dynamic_ndarray_set_item` stores
     /// `select(p, new, old)` instead of `new`, so segment mutations
@@ -230,6 +234,7 @@ impl IRBuilder {
         Self {
             stmts: Vec::new(),
             elided_publics: Vec::new(),
+            elided_before_exposure: Vec::new(),
             write_predicate: None,
             predicate_exempt_segments: HashMap::new(),
             next_segment_id: 0,
@@ -1351,7 +1356,7 @@ impl IRBuilder {
     }
 
     pub fn export_ir_graph(self) -> IRGraph {
-        let elided = self.elided_publics;
+        let elided = self.elided_output_slots();
         let provenance = self.provenance;
         let mut graph = IRGraph::new(self.stmts);
         graph.elided_publics = elided;
@@ -2106,9 +2111,38 @@ impl IRBuilder {
     ir_unary!(
         ir_assert          => IR::Assert,
         ir_assert_bit      => IR::AssertBit,
-        ir_expose_public_i => IR::ExposePublicI,
-        ir_expose_public_f => IR::ExposePublicF,
     );
+
+    pub fn ir_expose_public_i(&mut self, a: &Value) -> Value {
+        self.elided_before_exposure.push(self.elided_publics.len());
+        self.create_ir(&IR::ExposePublicI, &[a.clone()])
+    }
+
+    pub fn ir_expose_public_f(&mut self, a: &Value) -> Value {
+        self.elided_before_exposure.push(self.elided_publics.len());
+        self.create_ir(&IR::ExposePublicF, &[a.clone()])
+    }
+
+    /// Place the elided constants among the output slots: exposure `k`
+    /// occupies slot `k + (constants elided before it)`; the constants
+    /// fill the remaining slots in order.
+    fn elided_output_slots(&self) -> Vec<crate::ir::ElidedOutputSlot> {
+        let total = self.elided_before_exposure.len() + self.elided_publics.len();
+        let exposed: std::collections::HashSet<usize> = self
+            .elided_before_exposure
+            .iter()
+            .enumerate()
+            .map(|(k, before)| k + before)
+            .collect();
+        (0..total)
+            .filter(|slot| !exposed.contains(slot))
+            .zip(&self.elided_publics)
+            .map(|(slot, value)| crate::ir::ElidedOutputSlot {
+                slot,
+                value: value.clone(),
+            })
+            .collect()
+    }
 
     /// Two-operand assert: `0 <= idx < hi`. Backends pick the cheapest
     /// sound implementation; on Noir this lowers to a single

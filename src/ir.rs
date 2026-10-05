@@ -118,14 +118,28 @@ pub enum ElidedPublic {
     Float(f64),
 }
 
+/// An [`ElidedPublic`] with its position among the circuit's output
+/// slots. The outputs in return order are the exposed publics (in
+/// statement order) interleaved with the elided constants; `slot` is the
+/// constant's index in that combined sequence, so an output check can
+/// compare every output by position. Serialises as
+/// `{"slot": 3, "Int": 5}`.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ElidedOutputSlot {
+    pub slot: usize,
+    #[serde(flatten)]
+    pub value: ElidedPublic,
+}
+
 /// A graph of IR statements with adjacency information.
 /// Mirrors Python `IRGraph` from `zinnia/compile/ir/ir_graph.py`.
 pub struct IRGraph {
     pub stmts: Vec<IRStatement>,
     /// Constant output cells elided from the public instance, in return
-    /// order. Populated by IRGen at export; NOT round-tripped through
-    /// `export_stmts`/`import_stmts` (a deserialized graph reports none).
-    pub elided_publics: Vec<ElidedPublic>,
+    /// order, each with its output slot. Populated by IRGen at export; NOT
+    /// round-tripped through `export_stmts`/`import_stmts` (a deserialized
+    /// graph reports none).
+    pub elided_publics: Vec<ElidedOutputSlot>,
     /// Structural-provenance table (see `src/provenance.rs`). Populated
     /// by IRGen at export, carried through the optimization pipeline
     /// (passes remap/drop records; `apply_pass` enforces liveness), and
