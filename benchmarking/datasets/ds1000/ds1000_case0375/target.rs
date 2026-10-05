@@ -1,95 +1,69 @@
-// DS-1000 case 375 — Halo2 baseline.
-// Kernel: xs = sort(grades); ys = arange(1, N+1)/N;
-//         t = (ys > threshold).argmax();
-//         low = xs[0]; high = xs[t]; return grades.
-// low/high are computed but the returned value is `grades` unchanged.
+//! DS-1000 case 0375, halo2-base baseline.
+//! Kernel: on `grades: Float[50]` and `threshold: Float`, with `xs = sort(grades)`
+//! and `ys = arange(1, 51) / 50`: `t = (ys > threshold).argmax()`, return
+//! `[xs[0], xs[t]]`.
+//! `ys` is constant, so `t` depends on `threshold` alone. The Q32 constants are
+//! `Y_k = round(k / 50 * 2^32) = floor((k * 2^32 + 25) / 50)` (`k = 1..50`), and
+//! for the Q32 threshold `T`, `Y_k <= T` iff `k * 2^32 <= 50 T + 24`, i.e.
+//! `k <= u = floor((50 T + 24) / 2^32)`. So `clamp(u, 0, 50)` values of `ys` are
+//! `<= threshold`, and `argmax` (the first `True`, `0` when there is none) is
+//! `t = u` if `0 <= u < 50`, else `0`.
+//! `xs[0]` is `q.min_of`. `xs[t]` is an order statistic at a private position:
+//! a hint pinned by counting (see `kth_smallest`): 50 comparisons and 50
+//! equality tests, where a sort would need a permutation argument on top of 49
+//! comparisons.
 
-use clap::Parser;
-use halo2_base::utils::{ScalarField, BigPrimeField};
-use halo2_graph::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};
-use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use halo2_base::gates::{GateChip, GateInstructions, RangeInstructions};
-use serde::{Serialize, Deserialize};
-use halo2_base::{AssignedValue, QuantumCell::Constant};
-#[allow(unused_imports)]
-use halo2_graph::scaffold::cmd::Cli;
-use halo2_graph::scaffold::run;
+use crate::prelude::*;
+use crate::q32::signed;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CircuitInput {
-    pub grades: Vec<f64>,   // 50 floats
-    pub threshold: f64,
-}
-
-fn ecdf_bounds<F: ScalarField>(
-    builder: &mut BaseCircuitBuilder<F>,
-    input: CircuitInput,
-    make_public: &mut Vec<AssignedValue<F>>,
-) where F: BigPrimeField {
-    const P: u32 = 32;
-    const N: usize = 50;
-    let gate = GateChip::<F>::default();
-    let rc = builder.range_chip();
-    let fpc = FixedPointChip::<F, P>::default(builder);
+pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
+    let (grades, threshold) = (inputs.floats("grades", &[50])?, inputs.float("threshold")?);
+    let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    assert_eq!(input.grades.len(), N);
+    let grades = q.load_floats(ctx, &grades);
+    let threshold = q.load_float(ctx, threshold);
 
-    let grades: Vec<AssignedValue<F>> = input.grades.iter()
-        .map(|v| ctx.load_witness(fpc.quantization(*v)))
-        .collect();
-    let threshold = ctx.load_witness(fpc.quantization(input.threshold));
+    let low = q.min_of(ctx, &grades);
 
-    // Sort grades → xs (selection sort network).
-    let mut xs = grades.clone();
-    for i in 0..N {
-        for j in (i + 1)..N {
-            let lt = rc.is_less_than(ctx, xs[j], xs[i], 128);
-            let new_i = gate.select(ctx, xs[j], xs[i], lt);
-            let new_j = gate.select(ctx, xs[i], xs[j], lt);
-            xs[i] = new_i;
-            xs[j] = new_j;
-        }
-    }
+    let raw = q.gate.mul_add(ctx, threshold, Constant(fe(50)), Constant(fe(24)));
+    let u = q.rescale(ctx, raw);
+    let negative = q.is_neg(ctx, u);
+    let below_len = q.lt_const(ctx, u, 50);
+    let in_range = q.gate.mul_not(ctx, negative, below_len);
+    let t = q.gate.mul(ctx, in_range, u.cell);
 
-    // ys[k] = (k+1)/N.
-    let n_fp = ctx.load_witness(fpc.quantization(N as f64));
-    let ys: Vec<AssignedValue<F>> = (0..N).map(|k| {
-        let num = ctx.load_witness(fpc.quantization((k + 1) as f64));
-        fpc.qdiv(ctx, num, n_fp)
-    }).collect();
-
-    // t = (ys > threshold).argmax() — first index k with ys[k] > threshold.
-    let mut found = Constant(F::ZERO);
-    let mut t = ctx.load_constant(F::ZERO);
-    for k in 0..N {
-        let hit = rc.is_less_than(ctx, threshold, ys[k], 128);
-        let not_found = gate.not(ctx, found);
-        let commit = gate.and(ctx, hit, not_found);
-        let k_const = Constant(F::from(k as u64));
-        t = gate.select(ctx, k_const, t, commit);
-        let found_av = gate.or(ctx, found, hit);
-        found = halo2_base::QuantumCell::Existing(found_av);
-    }
-
-    // low = xs[0]; high = xs[t] (gather).
-    let low = xs[0];
-    let mut high = xs[0];
-    for k in 1..N {
-        let is_k = gate.is_equal(ctx, t, Constant(F::from(k as u64)));
-        high = gate.select(ctx, xs[k], high, is_k);
-    }
-    // low/high computed but discarded by the kernel.
-    let _ = (low, high);
-
-    // Expose grades unchanged.
-    for k in 0..N {
-        make_public.push(grades[k]);
-    }
+    let grades = q.bound_all(ctx, &grades);
+    let high = kth_smallest(&q, ctx, &grades, t);
+    out.floats(&[low, high.cell]);
+    Ok(())
 }
 
-fn main() {
-    env_logger::init();
-    let args = Cli::parse();
-    run(ecdf_bounds, args);
+/// The value at position `k` (0-based) of `xs` sorted ascending, for a `k` the
+/// circuit already knows to lie in `[0, xs.len())`.
+///
+/// Hint `v` (in the window), pinned by `#{x < v} <= k < #{x <= v}`: if `v < v'`
+/// both satisfied it, `#{x <= v} <= #{x < v'} <= k < #{x <= v}`, so at most one
+/// `v` does, and the sorted value at position `k` does. That `v` is one of the
+/// `xs` (`#{x == v} > 0`). The two inequalities are 8-bit range checks of
+/// `k - #{x < v}` and `#{x <= v} - k - 1`, whose integer values lie in
+/// `(-128, 128)`; a negative one is a field element above `p - 128` and fails.
+fn kth_smallest(q: &Q32, ctx: &mut Ctx, xs: &[I64], k: Cell) -> I64 {
+    assert!(xs.len() < 128);
+    let mut sorted: Vec<i128> = xs.iter().map(|x| x.value()).collect();
+    sorted.sort();
+    let pos = signed(k.value()).clamp(0, xs.len() as i128 - 1) as usize;
+    let v = ctx.load_witness(fe(sorted[pos]));
+    let v = q.bound(ctx, v);
+
+    let below: Vec<Cell> = xs.iter().map(|x| q.lt(ctx, *x, v)).collect();
+    let equal: Vec<Cell> = xs.iter().map(|x| q.eq(ctx, x.cell, v.cell)).collect();
+    let n_below = q.sum(ctx, below);
+    let n_equal = q.sum(ctx, equal);
+    let slack_low = q.sub(ctx, k, n_below); // k - #{x < v}
+    q.range.range_check(ctx, slack_low, 8);
+    let slack_high = q.sub(ctx, n_equal, slack_low); // #{x <= v} - k
+    let slack_high = q.sub(ctx, slack_high, Constant(Fr::ONE));
+    q.range.range_check(ctx, slack_high, 8);
+    v
 }
