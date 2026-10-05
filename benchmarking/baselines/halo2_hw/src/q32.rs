@@ -531,14 +531,26 @@ impl Q32 {
     /// integer facts, and `y` is unique. A negative `x` has no witness (NumPy
     /// would return NaN, which has no Q32 encoding).
     pub fn sqrt(&self, ctx: &mut Ctx, x: Cell) -> I64 {
-        let target = signed(x.value()).max(0) as u128 * SCALE as u128;
-        self.sqrt_with(ctx, x, fe(isqrt(target) as i128))
+        let scaled = self.gate.mul(ctx, x, Constant(fe(SCALE)));
+        self.isqrt(ctx, scaled)
     }
 
+    /// `floor(sqrt(n))` of a raw non-negative integer `n` below `2^126`, with
+    /// the constraints of [`Q32::sqrt`]; a negative `n` has no witness.
+    pub fn isqrt(&self, ctx: &mut Ctx, n: Cell) -> I64 {
+        let target = signed(n.value()).max(0) as u128;
+        self.isqrt_with(ctx, n, fe(isqrt(target) as i128))
+    }
+
+    #[cfg(test)]
     fn sqrt_with(&self, ctx: &mut Ctx, x: Cell, y: Fr) -> I64 {
+        let scaled = self.gate.mul(ctx, x, Constant(fe(SCALE)));
+        self.isqrt_with(ctx, scaled, y)
+    }
+
+    fn isqrt_with(&self, ctx: &mut Ctx, scaled: Cell, y: Fr) -> I64 {
         let y_cell = ctx.load_witness(y);
         self.range.range_check(ctx, y_cell, 63);
-        let scaled = self.gate.mul(ctx, x, Constant(fe(SCALE)));
         let y_sq = self.gate.mul(ctx, y_cell, y_cell);
         let below = self.gate.sub(ctx, scaled, y_sq);
         self.range.range_check(ctx, below, 64);
@@ -610,6 +622,16 @@ impl Q32 {
     }
 
     // ------------------------------------------------------------- selection
+
+    /// `xs[keep]`: the number of kept values and the kept values in order at
+    /// the front of `xs.len()` slots, zero-padded ([`Q32::compact`] with the
+    /// payload `keep_i * x_i`). `keep` must hold bits.
+    pub fn select_kept(&self, ctx: &mut Ctx, xs: &[Cell], keep: &[Cell]) -> (Cell, Vec<Cell>) {
+        let weights: Vec<Vec<Option<Cell>>> =
+            xs.iter().zip(keep).map(|(x, k)| vec![Some(self.gate.mul(ctx, *k, *x))]).collect();
+        let count = self.sum(ctx, keep.iter().copied());
+        (count, self.compact(ctx, keep, &weights))
+    }
 
     /// Boolean-mask selection: the payloads of the kept items, in item order, at
     /// the front of `keep.len()` slots of `unit` cells each, zeros after them.

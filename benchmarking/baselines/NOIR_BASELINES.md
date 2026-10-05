@@ -25,7 +25,7 @@ python -m hw_check.noir_driver verify --case ../datasets/ds1000/ds1000_case0309 
 ```
 
 - `setup` stages a Nargo package under `W/pkg` (`src/main.nr` copied from the
-  case, a `Nargo.toml` depending on `baselines/noir_hw` and `noir_fpc`), runs
+  case, a `Nargo.toml` depending on `baselines/noir_hw`), runs
   `nargo compile`, `bb write_vk` and `bb gates`. Nothing in it depends on the
   input.
 - `prove` writes `Prover.toml` for the requested input from `fixture.json`

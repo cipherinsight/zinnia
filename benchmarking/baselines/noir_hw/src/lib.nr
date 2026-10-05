@@ -238,14 +238,23 @@ unconstrained fn isqrt_hint(t: Field) -> Field {
 // y^2 <= x * 2^32 and x * 2^32 < (y + 1)^2 (all terms below 2^130, so these
 // are integer facts). A negative x has no witness.
 pub fn sqrt(x: Field) -> Field {
-    // Safety: y is pinned by `check_sqrt`.
-    let y = unsafe { isqrt_hint(x * SCALE) };
-    check_sqrt(x, y);
+    isqrt(x * SCALE)
+}
+
+// floor(sqrt(n)) of a raw non-negative integer n below 2^126, with the
+// constraints of `sqrt`; a negative n has no witness.
+pub fn isqrt(n: Field) -> Field {
+    // Safety: y is pinned by `check_isqrt`.
+    let y = unsafe { isqrt_hint(n) };
+    check_isqrt(n, y);
     y
 }
 
 fn check_sqrt(x: Field, y: Field) {
-    let t = x * SCALE;
+    check_isqrt(x * SCALE, y);
+}
+
+fn check_isqrt(t: Field, y: Field) {
     y.assert_max_bit_size::<63>();
     (t - y * y).assert_max_bit_size::<64>();
     (y * y + 2 * y - t).assert_max_bit_size::<64>();
@@ -329,6 +338,26 @@ pub fn compact<let N: u32>(keep: [Field; N], w: [Field; N]) -> [Field; N] {
         }
     }
     slots
+}
+
+// x[keep] as a dynamic output: the number of kept values, then the kept
+// values in order, zero-padded to N (`compact` with payload keep[i] x[i]).
+pub fn select_kept<let N: u32>(x: [Field; N], keep: [bool; N]) -> [Field; N + 1] {
+    let mut k: [Field; N] = [0; N];
+    let mut w: [Field; N] = [0; N];
+    let mut count: Field = 0;
+    for i in 0..N {
+        k[i] = keep[i] as Field;
+        w[i] = k[i] * x[i];
+        count += k[i];
+    }
+    let kept = compact(k, w);
+    let mut out: [Field; N + 1] = [0; N + 1];
+    out[0] = count;
+    for j in 0..N {
+        out[j + 1] = kept[j];
+    }
+    out
 }
 
 // `compact` for payloads of U cells: w[i][u] is keep[i] * payload_i[u].

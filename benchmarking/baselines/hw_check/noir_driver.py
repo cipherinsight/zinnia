@@ -7,7 +7,7 @@ Contract (shared by every baseline program, see the benchmark brief):
         [--target noir-recursive]
 
 * `setup`: stages a Nargo package in the work directory (`src/main.nr` plus a
-  `Nargo.toml` that depends on `baselines/noir_hw` and `noir_fpc`), compiles it
+  `Nargo.toml` that depends on `baselines/noir_hw`), compiles it
   (`nargo compile`), writes the verification key (`bb write_vk`) and records
   the gate count (`bb gates`). Nothing here depends on the input.
 * `prove`: writes `Prover.toml` for the input (`hw_check.prover_toml`), solves
@@ -48,7 +48,6 @@ from .prover_toml import BN254_P, SCALE, render_prover_toml
 
 NARGO = os.environ.get("NARGO", str(Path.home() / ".nargo/bin/nargo"))
 BB = os.environ.get("BB", str(Path.home() / ".bb/bb"))
-NOIR_FPC = (Path(__file__).resolve().parents[2] / "noir_fpc").resolve()
 NOIR_HW = (Path(__file__).resolve().parents[1] / "noir_hw").resolve()
 DEFAULT_TARGET = "noir-recursive"
 SCHEME = ["--scheme", "ultra_honk"]
@@ -164,7 +163,6 @@ def stage_package(case_dir: Path, workdir: Path) -> Path:
         'authors = [""]\n\n'
         "[dependencies]\n"
         f'noir_hw = {{ path = "{NOIR_HW}" }}\n'
-        f'noir_fpc = {{ path = "{NOIR_FPC}" }}\n'
     )
     return pkg
 

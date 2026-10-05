@@ -192,10 +192,10 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
 ```
 
 `main.nr` (one per case) is the `src/main.nr` of a Nargo package the driver stages
-with the dependencies `noir_hw` and `noir_fpc`. Its parameters carry the kernel's
-parameter names (arrays flattened row-major or nested, `Field` or native integer
-types); its header names the case and kernel and carries the output layout the
-driver decodes:
+with the dependency `noir_hw` (the baselines do not use Zinnia's `noir_fpc`). Its
+parameters carry the kernel's parameter names (arrays flattened row-major or
+nested, `Field` or native integer types); its header names the case and kernel
+and carries the output layout the driver decodes:
 
 ```noir
 // DS-1000 case NNNN, Noir baseline.
