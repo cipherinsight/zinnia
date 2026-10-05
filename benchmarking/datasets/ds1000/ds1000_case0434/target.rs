@@ -1,65 +1,63 @@
-// DS-1000 case 434 — Halo2 baseline.
-// Kernel: `a[zero_rows, :] = 0; a[:, zero_cols] = 0` on Integer[4, 4] with
-// zero_rows, zero_cols: Integer[2] (runtime). Mirrors Zinnia IR (103 stmts):
-// 16× ReadInt (a) + 4× ReadInt (zero_rows ∪ zero_cols) + per-cell zkram
-// + 16× ExposePublicII. We compute directly without zkram by select-chaining
-// row/col membership.
-use clap::Parser;
-use halo2_base::utils::{ScalarField, BigPrimeField};
-use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use halo2_base::gates::{GateChip, GateInstructions};
-use serde::{Serialize, Deserialize};
-use halo2_base::AssignedValue;
-#[allow(unused_imports)] use halo2_graph::scaffold::cmd::Cli;
-use halo2_graph::scaffold::run;
+//! DS-1000 case 0434, halo2-base baseline.
+//! Kernel: `a[zero_rows, :] = 0; a[:, zero_cols] = 0` on `a: Integer[4, 4]` with
+//! `Integer[2]` index arrays.
+//! NumPy index rules for each of the two indices: it hits row i when it is i
+//! or i - 4, tested once as (idx - i)(idx - i + 4) == 0, and exactly one row
+//! must be hit (an index outside [-4, 4) raises, so it has no proof); the same
+//! for columns. Row i is kept when neither index hits it,
+//! keep_i = (1 - hit0_i)(1 - hit1_i); each row and column test is made once,
+//! and cell (i, j) keeps a[i, j] times keep_i times keep_j.
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CircuitInput {
-    pub a: Vec<String>,           // 16 ints
-    pub zero_rows: Vec<String>,   // 2 ints
-    pub zero_cols: Vec<String>,   // 2 ints
-}
+use crate::prelude::*;
 
-fn array_indexed_zero<F: ScalarField>(
-    b: &mut BaseCircuitBuilder<F>, input: CircuitInput, make_public: &mut Vec<AssignedValue<F>>,
-) where F: BigPrimeField {
-    let gate = GateChip::<F>::default();
-    let ctx = b.main(0);
-    let load = |ctx: &mut halo2_base::Context<F>, s: &str| -> AssignedValue<F> {
-        let abs = ctx.load_witness(F::from_u128(s.trim_start_matches('-').parse::<u128>().unwrap()));
-        if s.starts_with('-') { gate.neg(ctx, abs) } else { abs }
-    };
-    assert_eq!(input.a.len(), 16);
-    assert_eq!(input.zero_rows.len(), 2);
-    assert_eq!(input.zero_cols.len(), 2);
-    let cells: Vec<AssignedValue<F>> = input.a.iter().map(|s| load(ctx, s)).collect();
-    let zrs: Vec<AssignedValue<F>> = input.zero_rows.iter().map(|s| load(ctx, s)).collect();
-    let zcs: Vec<AssignedValue<F>> = input.zero_cols.iter().map(|s| load(ctx, s)).collect();
-    let zero = ctx.load_constant(F::ZERO);
-    for i in 0..4usize {
-        let i_cell = ctx.load_constant(F::from(i as u64));
-        let i_neg = ctx.load_constant(-F::from((4 - i) as u64));
-        let i_in_zr_0p = gate.is_equal(ctx, i_cell, zrs[0]);
-        let i_in_zr_0n = gate.is_equal(ctx, i_neg, zrs[0]);
-        let i_in_zr_0 = gate.or(ctx, i_in_zr_0p, i_in_zr_0n);
-        let i_in_zr_1p = gate.is_equal(ctx, i_cell, zrs[1]);
-        let i_in_zr_1n = gate.is_equal(ctx, i_neg, zrs[1]);
-        let i_in_zr_1 = gate.or(ctx, i_in_zr_1p, i_in_zr_1n);
-        let row_zero = gate.or(ctx, i_in_zr_0, i_in_zr_1);
-        for j in 0..4usize {
-            let j_cell = ctx.load_constant(F::from(j as u64));
-            let j_neg = ctx.load_constant(-F::from((4 - j) as u64));
-            let j_in_zc_0p = gate.is_equal(ctx, j_cell, zcs[0]);
-            let j_in_zc_0n = gate.is_equal(ctx, j_neg, zcs[0]);
-            let j_in_zc_0 = gate.or(ctx, j_in_zc_0p, j_in_zc_0n);
-            let j_in_zc_1p = gate.is_equal(ctx, j_cell, zcs[1]);
-            let j_in_zc_1n = gate.is_equal(ctx, j_neg, zcs[1]);
-            let j_in_zc_1 = gate.or(ctx, j_in_zc_1p, j_in_zc_1n);
-            let col_zero = gate.or(ctx, j_in_zc_0, j_in_zc_1);
-            let any_zero = gate.or(ctx, row_zero, col_zero);
-            let out = gate.select(ctx, zero, cells[i * 4 + j], any_zero);
-            make_public.push(out);
+pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
+    let a = inputs.ints("a", &[4, 4])?;
+    let (zero_rows, zero_cols) = (inputs.ints("zero_rows", &[2])?, inputs.ints("zero_cols", &[2])?);
+    let q = Q32::new(builder);
+    let ctx = builder.main(0);
+
+    let a = q.load_ints(ctx, &a);
+    let zero_rows = q.load_ints(ctx, &zero_rows);
+    let zero_cols = q.load_ints(ctx, &zero_cols);
+    let keep_row = kept(&q, ctx, &zero_rows, 4);
+    let keep_col = kept(&q, ctx, &zero_cols, 4);
+    let mut result = Vec::with_capacity(16);
+    for i in 0..4 {
+        for j in 0..4 {
+            let v = q.gate.mul(ctx, a[i * 4 + j], keep_row[i]);
+            result.push(q.gate.mul(ctx, v, keep_col[j]));
         }
     }
+    out.ints(&result);
+    Ok(())
 }
-fn main() { env_logger::init(); let args = Cli::parse(); run(array_indexed_zero, args); }
+
+/// For each position `p` of an axis of length `len`, 1 if no index in `idxs`
+/// hits it. Each index must hit exactly one position (NumPy's wrap and bounds).
+fn kept(q: &Q32, ctx: &mut Ctx, idxs: &[Cell], len: usize) -> Vec<Cell> {
+    let hits: Vec<Vec<Cell>> = idxs
+        .iter()
+        .map(|idx| {
+            let idx_sq = q.gate.mul(ctx, *idx, *idx);
+            let hits: Vec<Cell> = (0..len).map(|p| wraps_to(q, ctx, *idx, idx_sq, p, len)).collect();
+            let total = q.sum(ctx, hits.iter().copied());
+            q.gate.assert_is_const(ctx, &total, &Fr::ONE);
+            hits
+        })
+        .collect();
+    (0..len)
+        .map(|p| {
+            let not_first = q.gate.not(ctx, hits[0][p]);
+            hits[1..].iter().fold(not_first, |keep, h| q.gate.mul_not(ctx, h[p], keep))
+        })
+        .collect()
+}
+
+/// [idx == pos] + [idx == pos - len] (idx is a NumPy index of position `pos` on
+/// an axis of length `len`) as one zero test: (idx - pos)(idx - pos + len) = 0,
+/// i.e. idx^2 + (len - 2 pos) idx == pos (len - pos). `idx_sq` is idx^2.
+fn wraps_to(q: &Q32, ctx: &mut Ctx, idx: Cell, idx_sq: Cell, pos: usize, len: usize) -> Cell {
+    let (pos, len) = (pos as i128, len as i128);
+    let t = q.gate.mul_add(ctx, idx, Constant(fe(len - 2 * pos)), idx_sq);
+    q.eq(ctx, t, Constant(fe(pos * (len - pos))))
+}

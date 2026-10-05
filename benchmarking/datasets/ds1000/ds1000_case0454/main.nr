@@ -1,30 +1,25 @@
-// DS-1000 case 0454 -- Noir baseline. X / np.abs(X).max(axis=1).reshape(-1,1)
-// on Integer[5,4] (Linf row normalization, result Float[5,4]).
+// DS-1000 case 0454, Noir baseline.
+// Kernel: `X / np.abs(X).max(axis=1).reshape(-1, 1)` on Integer[5, 4].
+// The row norm max|x| is max_of over the 8 values x and -x of the row. `/` is
+// NumPy's true division, so each output is the Q32 quotient
+// floor(x * 2^32 / linf) of two integers (positive-divisor floor division).
+// A zero row (linf = 0, NumPy gives nan) has no proof.
+// @outputs: float[20]
 
-use noir_fpc::{qabs, qgt, qdiv, Q};
+use noir_hw::{divmod_pos, max_of, SCALE};
 
-global ROWS: u32 = 5;
-global COLS: u32 = 4;
-
-fn main(x: [Field; 20]) -> pub [Field; 20] {
-    let mut x_fp: [Field; 20] = [0; 20];
-    let mut abs_fp: [Field; 20] = [0; 20];
-    for k in 0..20 {
-        x_fp[k] = x[k] * Q;
-        abs_fp[k] = qabs(x_fp[k]);
-    }
-    let mut out: [Field; 20] = [0; 20];
-    for i in 0..ROWS {
-        let base = i * COLS;
-        let mut row_max = abs_fp[base];
-        for j in 1..COLS {
-            if qgt(abs_fp[base + j], row_max) {
-                row_max = abs_fp[base + j];
-            }
+fn main(X: [Field; 20]) -> pub [Field; 20] {
+    let mut result: [Field; 20] = [0; 20];
+    for i in 0..5 {
+        let mut signed: [Field; 8] = [0; 8];
+        for j in 0..4 {
+            signed[2 * j] = X[i * 4 + j];
+            signed[2 * j + 1] = -X[i * 4 + j];
         }
-        for j in 0..COLS {
-            out[base + j] = qdiv(x_fp[base + j], row_max);
+        let linf = max_of(signed);
+        for j in 0..4 {
+            result[i * 4 + j] = divmod_pos(X[i * 4 + j] * SCALE, linf).0;
         }
     }
-    out
+    result
 }
