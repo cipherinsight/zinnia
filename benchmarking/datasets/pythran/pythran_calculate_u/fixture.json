@@ -15,7 +15,7 @@
  "inputs": {
   "A": {
    "t": 1.0,
-   "t_stop": 2.0,
+   "t_stop": 1.45,
    "dt": 0.1,
    "dx": 0.1,
    "dy": 0.2,
@@ -25,7 +25,7 @@
   },
   "B": {
    "t": 0.9475490367573527,
-   "t_stop": 1.9758629669873755,
+   "t_stop": 1.4325006510658471,
    "dt": 0.09523507496520145,
    "dx": 0.10812416420049344,
    "dy": 0.21803986370758657,
@@ -34,5 +34,5 @@
    "k": [[9, 8, 2, 7, 4, 1, 8, 1, 3, 1], [0, 0, 6, 7, 1, 9, 5, 0, 2, 7], [8, 0, 4, 4, 1, 6, 4, 5, 0, 7], [9, 1, 2, 9, 2, 6, 6, 4, 4, 7], [1, 3, 7, 1, 9, 3, 7, 5, 7, 8]]
   }
  },
- "notes": "A is the arguments of the example call `A=[list(range(10)) for i in range(5)] ; B=[list(range(10)) for i in range(5)] ; C=[list(range(10)) for i in range(5)] ; timeloop(1.,2.,.1,.1,.2, A,B,C )`. B is a seeded perturbation of A (numpy RandomState(2968478)): noise 10 % of the largest magnitude; integer arrays redrawn in their range. The NumPy outputs reach magnitude 2^31 or more: outside the Q32 range."
+ "notes": "A is the arguments of the example call `A=[list(range(10)) for i in range(5)] ; B=[list(range(10)) for i in range(5)] ; C=[list(range(10)) for i in range(5)] ; timeloop(1.,1.45,.1,.1,.2, A,B,C )`. Changed for Q32: t_stop 2.0 -> 1.45: the trip count 10 -> 5 (the sizing rule allows any trip count up to 16). The explicit scheme is unstable for these coefficients and grows about 30x per step: 10 steps reach 2.3e13, beyond Q32's 2^31, 5 steps reach 1.1e6. 1.45 rather than 1.5 because the loop runs while t <= t_stop with t accumulating 0.1: at 1.5 the last comparison is 1.5000000000000004 <= 1.5 in float64 and depends on whether Q32 rounds or truncates 0.1; at 1.45 the margin is 0.05. B is a seeded perturbation of A (numpy RandomState(2968478)): noise 10 % of the largest magnitude; integer arrays redrawn in their range."
 }

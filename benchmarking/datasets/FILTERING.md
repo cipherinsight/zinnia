@@ -256,11 +256,47 @@ functions), with the schema of the performance set's fixtures
 
 Check: for A and B the kernel body runs as plain NumPy (division by zero,
 overflow and invalid operations raise) and every output, and every argument
-after the call, is finite. Zinnia is not run. The notes flag values Q32 cannot
-hold: `lu.factorMatrix1`'s A (upstream calls it on the result of
-`factorMatrix0` on a singular matrix) has nonzero entries below 2^-32, and
-`calculate_u.timeloop`'s NumPy outputs exceed 2^31. Running the generator
-twice gives byte-identical fixtures.
+after the call, is finite. Zinnia is not run. The notes would flag values Q32
+cannot hold (inputs or outputs of magnitude 2^31 or more, nonzero inputs below
+2^-32); no fixture has any. Running the generator twice gives byte-identical
+fixtures.
+
+Inputs changed for Q32 (`PYTHRAN_Q32_INPUTS` and `NPBENCH_Q32_INPUTS` in
+`tools/acceptance_fixtures.py`). Where the example input puts a program where
+no Q32 implementation can follow NumPy, the input is changed, and the reason
+is in the fixture notes and in the entry's `sizing` (`q32_change`, with the
+example it replaces):
+
+* `log_likelihood`: the data are drawn (seeded) within 2 sigma of the mean;
+  `np.arange(16.)` reaches 13.5 sigma, where the density is about 1e-40, 0 in
+  Q32, and its log is undefined.
+* `lu.factorMatrix0` and `lu.factorMatrix1`: A and B are seeded strictly
+  diagonally dominant 5x5 matrices, one per function and input. Upstream's
+  `np.arange(1., 26.).reshape(5, 5)` is singular (an exact zero pivot in Q32),
+  and upstream calls `factorMatrix1` on `factorMatrix0`'s output.
+* `hyantes_core.run`: the towns are moved by 0.007 rad, so none sits exactly on
+  a grid point (acos at exactly 1 turns Q32's ~1e-9 trigonometry error into
+  0.28 km); the two that did are now 51 and 63 km away, still within range.
+* `calculate_u.timeloop`: t_stop 2.0 -> 1.45, so 5 time steps instead of 10;
+  the explicit scheme grows about 30x per step and 10 steps reach 2.3e13,
+  beyond 2^31. (1.45 keeps the loop test `t <= t_stop` 0.05 away from equality,
+  whatever the rounding of 0.1.)
+* NPBench `vadv`: `wcon` is NPBench's draw times 0.1, which makes the
+  tridiagonal system strictly diagonally dominant; NPBench's own draw makes the
+  Thomas sweep divide by values down to 3.7e-5.
+
+Output tolerance: every entry of `case_sets/acceptance.json` has
+`float_tolerance`. A float output passes when |actual - expected| <= atol +
+rtol * |expected| against NumPy on the same input; integer and boolean outputs
+are compared exactly. The default is atol = rtol = 1e-6. Two entries have a
+larger atol, because their NumPy program itself is not reproducible in Q32,
+each with the measured effect (recomputed by the tool, which stops if it
+exceeds atol):
+
+* `nbody`: atol 2e-3. The 16-step integration is chaotic: rounding only the
+  inputs to Q32 moves NumPy's own output by 9.9e-4.
+* `resnet`: atol 2e-6. `conv2d` writes into a float32 buffer, which Q32 cannot
+  imitate; the float32 rounding alone moves the output by 1.7e-6.
 
 Result (2026-10-06, entry functions): NPBench 54 in scope, 0 out; Pythran 110
 in scope, 12 out (`imports`: `descent` (itertools), `extrema` (functools),
