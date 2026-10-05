@@ -12,7 +12,7 @@ reduces the result to the four artifacts §3.1 names.
 | dynamic envelopes | `AllocateDynamicNDArrayMetaIR` (`max_length`, `max_shape`) |
 | return exposure | `ExposePublicI/F` statement counts and the elided publics |
 | enforced checks | the `Assert*` / `StructuralPredicate` / `ScalarPrecondition` statements |
-| `allowed_meta` | the oracle of `benchmarking/audit_bindings.py`, for a DS-1000 case with an input fixture |
+| `allowed_meta` | the oracle of the retired `benchmarking/audit_bindings.py` (kept below), for a DS-1000 case with an input fixture |
 
 Two facts about the baseline shape this reduction, and `consistency/`
 relies on both:
@@ -112,7 +112,7 @@ ENFORCED_CHECK_CLASSES = (
     "ScalarPreconditionIR",
 )
 
-#: `ds1000_case0303` -> `0303`, the key `audit_bindings.INPUT_BUILDERS` uses.
+#: `ds1000_case0303` -> `0303`, the key `INPUT_BUILDERS` uses.
 _DS1000_CASE = re.compile(r"^ds1000_case(\d+)$")
 
 
@@ -390,26 +390,100 @@ def ds1000_case(program: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _load_audit_module() -> Any:
-    """Import `benchmarking/audit_bindings.py` by path, as `corpus.py` does."""
+#: The June 2026 hand-written DS-1000 inputs (`INPUT_BUILDERS`) live in the
+#: archived runner that defined them; the oracle below keeps using them so its
+#: answers do not change now that `audit_bindings.py` is retired.
+INPUT_BUILDERS_MODULE = (REPO_ROOT / "benchmarking" / "archive" / "2026-06-agent-sweeps"
+                         / "runners" / "run_halo2_baselines.py")
+
+#: The oracle's ground truth for kernels whose body is not plain NumPy, carried
+#: over unchanged from `audit_bindings.GROUND_TRUTH_OVERRIDES`: 0344 calls
+#: `list(Integer)`, which Zinnia defines as a one-element list.
+def _ground_truth_0344(mystr: Any) -> Any:
+    import numpy as np
+
+    return np.array([int(mystr)], dtype=int)
+
+
+_GROUND_TRUTH_OVERRIDES = {"0344": _ground_truth_0344}
+
+
+def _input_builders() -> dict[str, Any]:
+    """`INPUT_BUILDERS` of the archived runner, imported by path."""
     import importlib.util
 
-    path = REPO_ROOT / "benchmarking" / "audit_bindings.py"
-    spec = importlib.util.spec_from_file_location("zinnia_audit_bindings", path)
+    spec = importlib.util.spec_from_file_location("zinnia_june_input_builders",
+                                                  INPUT_BUILDERS_MODULE)
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"could not load module spec for {path}")
+        raise RuntimeError(f"could not load module spec for {INPUT_BUILDERS_MODULE}")
     module = importlib.util.module_from_spec(spec)
+    # Registered before executing: the module defines dataclasses, which look
+    # their module up in `sys.modules`.
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
-    return module
+    return module.INPUT_BUILDERS
+
+
+def _coerce_builder_value(value: Any, dt_spec: Any) -> Any:
+    """An `INPUT_BUILDERS` value as the kernel argument `audit_bindings` passed
+    (its `_coerce_arg`, unchanged): the builders spell integers as strings and
+    arrays as flat lists; the resolved annotation gives the shape and dtype."""
+    import numpy as np
+
+    target_shape, target_dtype = None, None
+    if isinstance(dt_spec, dict) and "NDArray" in dt_spec:
+        target_shape = tuple(dt_spec["NDArray"].get("shape", []))
+        target_dtype = dt_spec["NDArray"].get("dtype", None)
+    elif isinstance(dt_spec, dict) and "Scalar" in dt_spec:
+        target_dtype = dt_spec["Scalar"].get("dtype", None)
+    if isinstance(value, list):
+        if not value:
+            arr = np.array([], dtype=np.float64)
+        elif isinstance(value[0], (str, bool, int)):
+            arr = np.array([int(v) for v in value], dtype=np.int64)
+        elif isinstance(value[0], float):
+            arr = np.array(value, dtype=np.float64)
+        else:
+            arr = np.asarray(value)
+        if target_shape:
+            arr = arr.reshape(target_shape)
+        if target_dtype == "Float":
+            arr = arr.astype(np.float64)
+        elif target_dtype in ("Integer", "Boolean"):
+            arr = arr.astype(np.int64)
+        return arr
+    if isinstance(value, str):
+        return float(value) if target_dtype == "Float" else int(value)
+    return float(value) if target_dtype == "Float" else value
+
+
+def _shape_metadata(result: Any) -> set[int]:
+    """Integers that may appear as shape metadata of `result`: 0, and every
+    part's size, rank, per-axis extents and product of extents."""
+    import numpy as np
+
+    if isinstance(result, tuple):
+        parts = result
+    elif isinstance(result, list) and any(isinstance(p, np.ndarray) for p in result):
+        parts = tuple(result)
+    else:
+        parts = (result,)
+    meta = {0}
+    for part in parts:
+        array = np.asarray(part)
+        meta.update({int(array.size), int(array.ndim), *(int(d) for d in array.shape)})
+        if array.ndim >= 1:
+            meta.add(int(np.prod(array.shape)))
+    return meta
 
 
 def _fixture_argument(fixture: dict[str, Any], name: str) -> Any:
     """The fixture entry for parameter `name`, with `audit_one`'s fallbacks.
 
     The DS-1000 input builders were written for the halo2 baselines and do
-    not always spell a parameter the way the kernel does; `audit_one` accepts
+    not always spell a parameter the way the kernel does; `audit_one` accepted
     four spellings and this must accept the same four, or the oracle would be
-    unavailable for cases the audit covers.
+    unavailable for cases the audit covered.
     """
     for key in (name, name.lower(), name.upper(), f"{name}_val", f"{name.lower()}_val"):
         if key in fixture:
@@ -424,33 +498,33 @@ def allowed_meta_for(program: str, function: str, program_inputs: list) -> tuple
 
     The oracle runs the kernel body as plain NumPy on the DS-1000 input
     fixture and collects the integers that may legitimately appear as shape
-    metadata of the return value (`audit_bindings.flatten_expected`): the
-    size, the rank and every per-axis extent. It needs an input fixture, so
-    it exists only for a DS-1000 case with an `INPUT_BUILDERS` entry and only
-    for the `kernel` entry point.
+    metadata of the return value: the size, the rank and every per-axis
+    extent. It needs an input fixture, so it exists only for a DS-1000 case
+    with an `INPUT_BUILDERS` entry and only for the `kernel` entry point.
     """
+    from benchmarking.harness.reference import run_kernel_as_numpy
+    from testing.phase0.corpus import DATASET_DIRS
+
     case = ds1000_case(program)
     if case is None:
         return None, f"no NumPy ground-truth fixture: {program} is not a DS-1000 case"
     if function != "kernel":
         return None, f"the oracle builds inputs for `kernel`, not `{function}`"
-    audit = _load_audit_module()
-    if case not in audit.INPUT_BUILDERS:
-        return None, (
-            f"benchmarking/run_halo2_baselines.py has no input builder for case {case}"
-        )
-    fixture = audit.INPUT_BUILDERS[case]()
+    builders = _input_builders()
+    if case not in builders:
+        return None, f"the June 2026 input builders have no entry for case {case}"
+    fixture = builders[case]()
     try:
         args = [
-            audit._coerce_arg(_fixture_argument(fixture, pi.name), pi.export().get("dt"))
+            _coerce_builder_value(_fixture_argument(fixture, pi.name), pi.export().get("dt"))
             for pi in program_inputs
         ]
     except KeyError as exc:
         return None, f"the input fixture for case {case} has no entry for {exc}"
-    override = audit.GROUND_TRUTH_OVERRIDES.get(case)
-    expected = override(*args) if override else audit.numpy_ground_truth(case, args)
-    _, _, meta = audit.flatten_expected(expected)
-    return sorted(int(value) for value in meta), None
+    override = _GROUND_TRUTH_OVERRIDES.get(case)
+    kernel_path = DATASET_DIRS["ds1000"] / program / "kernel.py"
+    expected = override(*args) if override else run_kernel_as_numpy(kernel_path, "kernel", args)
+    return sorted(int(value) for value in _shape_metadata(expected)), None
 
 
 # ---------------------------------------------------------------------------
