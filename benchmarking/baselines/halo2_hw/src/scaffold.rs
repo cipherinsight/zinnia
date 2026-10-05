@@ -184,6 +184,12 @@ impl Timings {
         self.0.insert(name.to_string(), json!(start.elapsed().as_secs_f64()));
         out
     }
+    pub fn record(&mut self, name: &str, seconds: f64) {
+        self.0.insert(name.to_string(), json!(seconds));
+    }
+    pub fn record_list(&mut self, name: &str, seconds: &[f64]) {
+        self.0.insert(name.to_string(), json!(seconds));
+    }
     pub fn into_json(self) -> Value {
         Value::Object(self.0)
     }
@@ -247,8 +253,20 @@ fn load_params(art: &Artifacts) -> Result<ParamsIPA<G1Affine>, Error> {
     ParamsIPA::<G1Affine>::read(&mut art.open(PARAMS_FILE)?).map_err(io_err("read params"))
 }
 
-/// `prove`: synthesize with `inputs` against the pinned layout and prove.
-pub fn prove(case: &str, circuit: CircuitFn, inputs: &Inputs, workdir: &Path, t: &mut Timings) -> Result<Value, Error> {
+/// `prove`: synthesize with `inputs` against the pinned layout and prove,
+/// `repeats` times in this process (`prove_s` is the first proof's time,
+/// `prove_samples_s` all of them; the last proof is kept). The global rayon
+/// pool that `create_proof` runs on is started before the first timed proof,
+/// so thread creation is not inside the window (Zinnia proves in a process
+/// whose pool is already running).
+pub fn prove(
+    case: &str,
+    circuit: CircuitFn,
+    inputs: &Inputs,
+    workdir: &Path,
+    repeats: usize,
+    t: &mut Timings,
+) -> Result<Value, Error> {
     let art = Artifacts::new(workdir)?;
     let pinning = load_pinning(&art)?;
     if pinning.case != case {
@@ -267,7 +285,11 @@ pub fn prove(case: &str, circuit: CircuitFn, inputs: &Inputs, workdir: &Path, t:
     }
 
     let circuits = [builder];
-    let proof = t.time("prove_s", || -> Result<Vec<u8>, Error> {
+    t.time("thread_pool_s", || rayon::broadcast(|_| ()));
+    let mut samples = Vec::with_capacity(repeats.max(1));
+    let mut proof = Vec::new();
+    for _ in 0..repeats.max(1) {
+        let start = Instant::now();
         let mut transcript = Blake2bWrite::<Vec<u8>, G1Affine, Challenge255<_>>::init(Vec::new());
         create_proof::<IPACommitmentScheme<G1Affine>, ProverIPA<G1Affine>, _, _, _, _>(
             &ipa,
@@ -278,8 +300,11 @@ pub fn prove(case: &str, circuit: CircuitFn, inputs: &Inputs, workdir: &Path, t:
             &mut transcript,
         )
         .map_err(|e| Error::new(format!("create_proof: {e:?}")))?;
-        Ok(transcript.finalize())
-    })?;
+        proof = transcript.finalize();
+        samples.push(start.elapsed().as_secs_f64());
+    }
+    t.record("prove_s", samples[0]);
+    t.record_list("prove_samples_s", &samples);
     let [mut builder] = circuits;
     builder.clear();
 

@@ -3,11 +3,12 @@
 //! ```text
 //! halo2_hw <mode> --case <case dir or name> --input <A|B> --workdir <dir>
 //!          [--fixture <path>] [--out <json>] [--k <k>] [--lookup-bits <bits>]
-//!          [--instance <json>] [--tamper-index <i>]
+//!          [--instance <json>] [--tamper-index <i>] [--repeats <n>]
 //! halo2_hw list
 //! ```
 //!
-//! Modes: `setup` (size, keys; normally input A), `prove` (normally input B),
+//! Modes: `setup` (size, keys; normally input A), `prove` (normally input B;
+//! `--repeats n` proves n times in-process and reports every sample),
 //! `verify`, `mock` (MockProver, no keys), `stats` (cell counts and the chosen
 //! size). Each run prints one JSON object (and writes it to `--out` if given):
 //! `{"ok", "case", "mode", "input", "publics", "proof_path", "timings_s", ...}`.
@@ -101,7 +102,8 @@ fn run(args: &Args, report: &mut serde_json::Map<String, Value>) -> Result<bool,
             report.insert("input".into(), json!(args.require("input")?));
             let inputs = load_inputs(&mut t)?;
             let workdir = PathBuf::from(args.require("workdir")?);
-            (scaffold::prove(&case, circuit, &inputs, &workdir, &mut t)?, true)
+            let repeats = args.number::<usize>("repeats")?.unwrap_or(1);
+            (scaffold::prove(&case, circuit, &inputs, &workdir, repeats, &mut t)?, true)
         }
         "verify" => {
             let workdir = PathBuf::from(args.require("workdir")?);

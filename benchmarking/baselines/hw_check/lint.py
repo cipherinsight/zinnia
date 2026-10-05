@@ -2,16 +2,16 @@
 
 Errors (each a rule of CONVENTIONS.md):
 - `target.rs` not on the shared prelude, or still on halo2-graph;
-- `target.rs` calling `load_witness` (constants are circuit constants and
-  hints live in the q32 gadgets, where they are pinned and tested);
 - `main.nr` without exactly one `// @outputs:` line;
 - `main.nr` using the tolerance helpers (`q_eq_with_tol`, `q_close`): a kernel
   `==` is exact;
 - `main.nr` with an `unsafe` block not preceded by a `// Safety:` comment.
 
-Warnings (to review by hand): every `as uN`/`as iN` cast in `main.nr` whose
-line does not show the range check that makes it exact. A cast of a loop
-counter or of a value produced by `window`/`index_pos` is fine.
+Warnings (to review by hand): every `load_witness` in `target.rs` (a hint must
+be pinned, with the argument next to it and a test that wrong hints are
+rejected; constants are never witnesses), and every `as uN`/`as iN` cast in
+`main.nr` whose line does not show the range check that makes it exact. A cast
+of a loop counter or of a value produced by `window`/`index_pos` is fine.
 
 Usage: python -m hw_check.lint [CASES...]   (default: every case)
 """
@@ -25,16 +25,16 @@ DATASET = Path(__file__).resolve().parents[2] / "datasets" / "ds1000"
 CAST = re.compile(r"\bas\s+[ui](8|16|32|64|128)\b")
 
 
-def lint_target(path: Path) -> list[str]:
-    src = path.read_text()
+def lint_target(path: Path) -> tuple[list[str], list[str]]:
+    lines = path.read_text().splitlines()
+    src = "\n".join(lines)
     errors = []
     if "use crate::prelude::*;" not in src:
         errors.append("does not use the shared prelude")
     if "halo2_graph" in src:
         errors.append("still uses halo2-graph")
-    if "load_witness" in src:
-        errors.append("calls load_witness directly")
-    return errors
+    warnings = [f"line {i + 1}: hint `{l.strip()}`" for i, l in enumerate(lines) if "load_witness" in l]
+    return errors, warnings
 
 
 def lint_noir(path: Path) -> tuple[list[str], list[str]]:
@@ -60,7 +60,8 @@ def main() -> int:
     for d in dirs:
         report = []
         if (d / "target.rs").exists():
-            report += [f"ERROR target.rs: {e}" for e in lint_target(d / "target.rs")]
+            errors, warnings = lint_target(d / "target.rs")
+            report += [f"ERROR target.rs: {e}" for e in errors] + [f"warn  target.rs: {w}" for w in warnings]
         if (d / "main.nr").exists():
             errors, warnings = lint_noir(d / "main.nr")
             report += [f"ERROR main.nr: {e}" for e in errors] + [f"warn  main.nr: {w}" for w in warnings]
