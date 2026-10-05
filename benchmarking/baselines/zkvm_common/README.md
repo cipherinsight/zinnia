@@ -65,7 +65,7 @@ gives the figure per run. Use one heavy job at a time.
 
 | System | Mode | What it is | Peak memory | Notes |
 |---|---|---|---|---|
-| SP1 6.8.1 | `setup` | `CpuProver::new()` + `setup(elf)` | 7.1 GB | prover start-up alone is 18-21 s (`client_init`), reported apart |
+| SP1 6.8.1 | `setup` | `CpuProver::new()` + `setup(elf)` | 7.1 GB | prover start-up alone is 16-21 s (`client_init`), reported apart |
 | SP1 | `core` | one STARK per execution shard | 9.6-9.7 GB for small programs; more than 16 GB for 0385 (1.7M cycles; OOM-killed at a 16 GB cap) | ~16 s for 2k-7k cycles (mostly fixed cost); proof 2.8 MB |
 | SP1 | `compressed` | shards recursively compressed to one STARK | 17.1 GB | 60 s for 0300; proof 1.3 MB; needs a cap above 16 GB |
 | SP1 | `groth16` | compressed proof wrapped in Groth16 over BN254 (gnark linked in-process, `native-gnark`) | > 17.8 GB before the gnark step (measured); not yet run to completion | first use downloads 6.2 GB of circuit artifacts to `~/.sp1/circuits/groth16/v6.1.0`; run alone with a cap of at least 32 GB |
