@@ -94,7 +94,7 @@ def numpy_ground_truth(case: str, args: list):
     import numpy as np
     import zinnia as _zinnia
 
-    kernel_path = THIS_DIR / f"ds1000_case{case}" / "kernel.py"
+    kernel_path = THIS_DIR / "datasets" / "ds1000" / f"ds1000_case{case}" / "kernel.py"
     src = kernel_path.read_text()
     ns = {name: getattr(_zinnia, name) for name in dir(_zinnia) if not name.startswith("_")}
     ns["np"] = np
@@ -203,7 +203,7 @@ def audit_one(case: str) -> dict:
     try:
         from zinnia.api.zk_circuit import ZKCircuit
 
-        kernel_path = THIS_DIR / f"ds1000_case{case}" / "kernel.py"
+        kernel_path = THIS_DIR / "datasets" / "ds1000" / f"ds1000_case{case}" / "kernel.py"
         spec = importlib.util.spec_from_file_location(f"audit_case{case}", kernel_path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
