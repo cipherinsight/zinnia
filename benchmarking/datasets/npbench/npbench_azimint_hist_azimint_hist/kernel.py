@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def azimint_hist(data: Float[Array, '400000'], radius: Float[Array, '400000'], npt: Integer):
+def azimint_hist(data: Float[Array, '16'], radius: Float[Array, '16'], npt: Integer):
     histu = np.histogram(radius, npt)[0]
     histw = np.histogram(radius, npt, weights=data)[0]
     return histw / histu

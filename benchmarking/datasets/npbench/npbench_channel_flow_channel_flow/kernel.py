@@ -30,7 +30,7 @@ def pressure_poisson_periodic(nit, p, dx, dy, b):
 @requires(lambda nit, u, v, dt, dx, dy, p, rho, nu, F: dx != 0.0)
 @requires(lambda nit, u, v, dt, dx, dy, p, rho, nu, F: dy != 0.0)
 @requires(lambda nit, u, v, dt, dx, dy, p, rho, nu, F: rho != 0.0)
-def channel_flow(nit: Integer, u: Float[Array, '61 61'], v: Float[Array, '61 61'], dt: Float, dx: Float, dy: Float, p: Float[Array, '61 61'], rho: Float, nu: Float, F: Float):
+def channel_flow(nit: Integer, u: Float[Array, '16 16'], v: Float[Array, '16 16'], dt: Float, dx: Float, dy: Float, p: Float[Array, '16 16'], rho: Float, nu: Float, F: Float):
     udiff = 1
     stepcount = 0
     while udiff > 0.001:

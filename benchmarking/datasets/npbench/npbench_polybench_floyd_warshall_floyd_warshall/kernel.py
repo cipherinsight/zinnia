@@ -6,6 +6,6 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def kernel(path: Integer[Array, '200 200']):
+def kernel(path: Integer[Array, '16 16']):
     for k in range(path.shape[0]):
         path[:] = np.minimum(path[:], np.add.outer(path[:, k], path[k, :]))

@@ -1,0 +1,23 @@
+{
+ "case": "pythran_sobelfilter",
+ "function": "sobelFilter",
+ "parameters": [
+  {"name": "original_image", "kind": "array", "dtype": "int", "shape": [16]},
+  {"name": "cols", "kind": "scalar", "dtype": "int"},
+  {"name": "rows", "kind": "scalar", "dtype": "int"}
+ ],
+ "constants": {},
+ "inputs": {
+  "A": {
+   "original_image": [0, 1, 2, 3, 1, 2, 3, 4, 2, 3, 4, 5, 3, 4, 5, 6],
+   "cols": 4,
+   "rows": 4
+  },
+  "B": {
+   "original_image": [2, 3, 0, 6, 5, 5, 0, 0, 5, 4, 0, 3, 0, 6, 3, 0],
+   "cols": 4,
+   "rows": 4
+  }
+ },
+ "notes": "A is the arguments of the example call `cols = 4; rows = 4 ;image_list=[x%10+y%20 for x in range(cols) for y in range(rows)]; sobelFilter(image_list, cols, rows)`. B is a seeded perturbation of A (numpy RandomState(3270169)): noise 10 % of the largest magnitude; integer arrays redrawn in their range."
+}

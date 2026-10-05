@@ -35,7 +35,7 @@ def InCode(H, x):
 
 @zk_circuit
 @requires(lambda H, Bits, Nodes, Lq, Lc, max_iter: 0 <= max_iter <= 1024)
-def Decoding_logBP(H: Integer[Array, '8 8'], Bits: Integer[Array, '8 8'], Nodes: Integer[Array, '8 8'], Lq: Float[Array, '8 8'], Lc: Float[Array, '8'], max_iter: Integer=1):
+def Decoding_logBP(H: Integer[Array, '4 8'], Bits: Integer[Array, '4 4'], Nodes: Integer[Array, '8 2'], Lq: Float[Array, '4 8'], Lc: Float[Array, '8'], max_iter: Integer=1):
     """ Decoding function using Belief Propagation algorithm (logarithmic version)
     IMPORTANT: if H is large (n>1000), H should be scipy.sparse.csr_matrix object to speed up calculations
     (highly recommanded. )

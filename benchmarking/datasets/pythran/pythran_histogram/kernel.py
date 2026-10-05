@@ -5,7 +5,7 @@
 from zinnia import *
 
 @zk_circuit
-def histogram(data: Float[Array, '10000'], bin_width: Integer):
+def histogram(data: Float[Array, '16'], bin_width: Integer):
     lower_bound, upper_bound = (min(data), max(data))
     out_data = [0] * (1 + bin_width)
     for i in data:

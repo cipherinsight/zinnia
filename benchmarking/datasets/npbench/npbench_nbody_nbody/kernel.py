@@ -55,7 +55,7 @@ def getEnergy(pos, vel, mass, G):
 @zk_circuit
 @requires(lambda mass, pos, vel, N, Nt, dt, G, softening: 0 <= N <= 1024)
 @requires(lambda mass, pos, vel, N, Nt, dt, G, softening: dt != 0.0)
-def nbody(mass: Float[Array, '25 1'], pos: Float[Array, '25 3'], vel: Float[Array, '25 3'], N: Integer, Nt: Integer, dt: Float, G: Float, softening: Float):
+def nbody(mass: Float[Array, '13 1'], pos: Float[Array, '13 3'], vel: Float[Array, '13 3'], N: Integer, Nt: Integer, dt: Float, G: Float, softening: Float):
     vel -= np.mean(mass * vel, axis=0) / np.mean(mass)
     acc = getAcc(pos, mass, G, softening)
     KE = np.ndarray(Nt + 1, dtype=np.float64)

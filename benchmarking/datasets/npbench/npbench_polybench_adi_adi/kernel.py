@@ -9,7 +9,7 @@ import numpy as np
 @requires(lambda TSTEPS, N, u: 0 <= N <= 1024)
 @requires(lambda TSTEPS, N, u: N != 0)
 @requires(lambda TSTEPS, N, u: TSTEPS != 0)
-def kernel(TSTEPS: Integer, N: Integer, u: Float[Array, '100 100']):
+def kernel(TSTEPS: Integer, N: Integer, u: Float[Array, '15 15']):
     v = np.empty(u.shape, dtype=u.dtype)
     p = np.empty(u.shape, dtype=u.dtype)
     q = np.empty(u.shape, dtype=u.dtype)

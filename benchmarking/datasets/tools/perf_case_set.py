@@ -54,8 +54,13 @@ RULES = {
                     "and on every DS-1000 test input.",
     "degenerate": "No output depends on a private input: every output is fixed by the parameter types and the "
                   "constants, so there is nothing to prove.",
-    "duplicate": "The kernel computes the same function as a case with a lower id (identical after renaming local "
-                 "variables, with the same types and constants); the lower id is kept.",
+    "duplicate": "The kernel computes the same function as a case with a lower id; the lower id is kept. Three "
+                 "tests: the kernels are identical after renaming local variables (same types and constants); or, "
+                 "fed the same input values, the outputs are a fixed reordering or reshaping of the other case's "
+                 "(numeric test on both cases' fixtures); or both only copy input cells to outputs (no arithmetic "
+                 "or comparison) and copy the same number of cells the same number of times with the same constant "
+                 "outputs, so they are the same circuit up to which cells are read (input cells no output reads are "
+                 "ignored: no system needs to load them).",
     "zinnia_rejects": "Zinnia at the commit in `zinnia_probe` refuses the kernel: compilation fails, or it compiles "
                       "but Zinnia refuses to build a witness for either fixture input, or neither the halo2-base nor "
                       "the Noir backend synthesizes the circuit (error recorded). Provisional: compiler fixes on other "
@@ -292,6 +297,22 @@ def build_entries(write_fixtures: bool, reuse: dict[str, Any] | None) -> list[di
     kernels = {pid: perf.expected_kernel(manifest[pid]) for pid in in_scope}
     duplicates = perf.find_duplicates({pid: k.source for pid, k in kernels.items()
                                        if pid not in perf.DEGENERATE})
+    built: dict[int, fixtures.Fixture] = {}
+    candidates: dict[int, perf.Candidate] = {}
+    for pid, case_dir in in_scope.items():
+        if pid in perf.DEGENERATE or pid in duplicates or pid not in fixtures.DRAWS:
+            continue
+        built[pid] = fixtures.build_fixture(case_dir, manifest[pid])
+        candidates[pid] = perf.Candidate(
+            case_dir / "kernel.py", built[pid].data["parameters"],
+            [zinnia_probe.fixture_args(built[pid].data, name) for name in fixtures.INPUT_NAMES],
+            pid in perf.DATA_MOVEMENT_ONLY)
+    functional = perf.functional_duplicates(candidates)
+    for pid, dup in list(duplicates.items()):      # point every duplicate at its class's lowest id
+        if dup.of in functional:
+            root = functional[dup.of]
+            duplicates[pid] = perf.Duplicate(root.of, f"{dup.reason}; {dup.of:04d} itself duplicates "
+                                                      f"{root.of:04d}: {root.reason}")
     entries = []
     for case_dir in perf.case_dirs():
         pid = perf.problem_id(case_dir)
@@ -336,6 +357,11 @@ def build_entries(write_fixtures: bool, reuse: dict[str, Any] | None) -> list[di
                          decision_source="tools/ds1000_perf.py find_duplicates" +
                          (" (SEMANTIC_DUPLICATES, hand review)" if pid in perf.SEMANTIC_DUPLICATES else
                           " (equal kernels after renaming)"))
+        elif pid in functional:
+            dup = functional[pid]
+            entry.update(status="duplicate", reason=dup.reason, duplicate_of=f"ds1000_case{dup.of:04d}",
+                         decision_source="tools/ds1000_perf.py functional_duplicates (numeric test on the "
+                                         "fixture inputs)")
         elif not probe["compiled"]:
             entry.update(status="zinnia_rejects", reason=probe["compile_error"],
                          decision_source="Zinnia compile probe (see zinnia_probe at the top of this file)")
@@ -345,7 +371,7 @@ def build_entries(write_fixtures: bool, reuse: dict[str, Any] | None) -> list[di
         entry["float_tolerance"] = None
         entry["fixture"] = None
         if entry["status"] in ("perf", "zinnia_rejects") and pid in fixtures.DRAWS:
-            fixture = fixtures.build_fixture(case_dir, record)
+            fixture = built[pid]
             entry["float_tolerance"] = tolerance_for(pid, fixture.outputs["B"])
             entry["output_kind"] = "float" if entry["float_tolerance"] else "exact"
             fixture_hash = hashlib.sha256(json.dumps(fixture.data, sort_keys=True).encode()).hexdigest()

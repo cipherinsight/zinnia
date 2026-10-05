@@ -6,11 +6,11 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def sqr_dists(X: Float[Array, '300 300'], Y: Float[Array, '300 300']):
+def sqr_dists(X: Float[Array, '16 16'], Y: Float[Array, '16 16']):
     return np.array([[np.sum((x - y) ** 2) for x in X] for y in Y])
 
 @zk_circuit
-def sqr_dists_loops(X: Float[Array, '8 8'], Y: Float[Array, '8 8']):
+def sqr_dists_loops(X: Float[Array, '16 16'], Y: Float[Array, '16 16']):
     m, n = (X.shape[0], Y.shape[0])
     D = np.zeros((m, n))
     for i in range(m):

@@ -6,7 +6,7 @@ from zinnia import *
 import numpy as np
 
 @zk_circuit
-def arc_distance(theta_1: Float[Array, '100000'], phi_1: Float[Array, '100000'], theta_2: Float[Array, '100000'], phi_2: Float[Array, '100000']):
+def arc_distance(theta_1: Float[Array, '16'], phi_1: Float[Array, '16'], theta_2: Float[Array, '16'], phi_2: Float[Array, '16']):
     """
     Calculates the pairwise arc distance between all points in vector a and b.
     """
