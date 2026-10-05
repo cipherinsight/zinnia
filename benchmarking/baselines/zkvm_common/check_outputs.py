@@ -51,6 +51,7 @@ DATASETS = BENCH / "datasets"
 BASELINES = BENCH / "baselines"
 CALIBRATION = BASELINES / "zkvm_common" / "calibration"
 CASE_SET = DATASETS / "case_sets" / "ds1000_perf.json"
+ACCEPTANCE_SET = DATASETS / "case_sets" / "acceptance.json"
 TARGET = BASELINES / "target" / "release"
 
 # Used when the case set does not give a tolerance for a case.
@@ -211,15 +212,22 @@ def flatten(result) -> Expected:
 # Comparison
 # --------------------------------------------------------------------------
 
-def tolerances(case_set: Path) -> dict[str, tuple[float, float]]:
-    """Per-case (rtol, atol): the case set's `float_tolerance`, when it gives one."""
-    if not case_set.exists():
-        return {}
+def tolerances(case_set: Path, acceptance_set: Path) -> dict[str, tuple[float, float]]:
+    """Per-case (rtol, atol), where the case sets give a `float_tolerance`: the
+    performance set for fixed-shape cases, the acceptance set's NPBench and
+    Pythran entries for shape-generic ones (`<program>/<function>`)."""
     out = {}
-    for entry in json.loads(case_set.read_text())["cases"]:
+    entries = []
+    if case_set.exists():
+        entries += [(entry["case"], entry) for entry in json.loads(case_set.read_text())["cases"]]
+    if acceptance_set.exists():
+        entries += [(f"{entry['program']}/{entry['function']}", entry)
+                    for entry in json.loads(acceptance_set.read_text())["entries"]
+                    if entry["dataset"] in ("npbench", "pythran")]
+    for case, entry in entries:
         tol = entry.get("float_tolerance")
         if tol:
-            out[entry["case"]] = (float(tol["rtol"]), float(tol["atol"]))
+            out[case] = (float(tol["rtol"]), float(tol["atol"]))
     return out
 
 
@@ -269,6 +277,9 @@ def main() -> int:
     parser.add_argument("--report", type=Path)
     parser.add_argument("--case-set", type=Path, default=CASE_SET,
                         help="case set giving each case's float_tolerance (default: datasets/case_sets/ds1000_perf.json)")
+    parser.add_argument("--acceptance-set", type=Path, default=ACCEPTANCE_SET,
+                        help="case set giving each entry function's float_tolerance "
+                             "(default: datasets/case_sets/acceptance.json)")
     args = parser.parse_args()
 
     systems = [s for s in args.systems.split(",") if s]
@@ -283,7 +294,7 @@ def main() -> int:
         cases = [all_cases[c] for c in args.cases.split(",")]
     else:
         cases = [c for c in all_cases.values() if any(c.has_program(s) for s in systems)]
-    tol = tolerances(args.case_set)
+    tol = tolerances(args.case_set, args.acceptance_set)
 
     results: list[Result] = []
     for case in cases:
