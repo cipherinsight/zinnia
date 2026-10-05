@@ -1,9 +1,15 @@
 """Output check for the SP1, RISC Zero and Cairo baselines.
 
-For every case, run the kernel body as plain NumPy on one fixture input (the
+For every case, run the kernel as plain NumPy on one fixture input (the
 reference), run the baseline program on the same input, and compare the public
 values position by position: exactly for integers and booleans, within the
-case's tolerance for floats.
+case's tolerance for floats (complex values as real, imaginary pairs).
+
+Cases:
+  fixed-shape   datasets/ds1000/<case> (zkvm.rs and main.cairo) and
+                zkvm_common/calibration/<name>
+  shape-generic datasets/{npbench,pythran}/<program>, one case per entry
+                function (`pub mod <function>` in zkvm.rs); Rust systems only
 
 Systems:
   native   the Q32 Rust program compiled for the host (no zkVM)
@@ -11,10 +17,14 @@ Systems:
   risc0    the RISC Zero guest in RISC Zero's executor (host `--mode execute`)
   cairo    the Cairo program under `scarb execute` (driver `--mode execute`)
 
+An entry function that returns None has as outputs the array arguments it
+writes, in parameter order; its program declares them on a line
+`// outputs: mutated A, B` inside the entry function's module.
+
 Usage:
   .venv/bin/python benchmarking/baselines/zkvm_common/check_outputs.py \
-      [--systems native,sp1,risc0,cairo] [--cases ds1000_case0300,...] \
-      [--fixtures-dir DIR] [--input B] [--report out.json]
+      [--systems native,sp1,risc0,cairo] [--cases ds1000_case0300,pythran_lu/factorMatrix0,...] \
+      [--fixtures-dir DIR] [--dataset-dir DIR] [--input B] [--report out.json]
 
 Build the programs first (see `zkvm_common/README.md`).
 """
@@ -24,6 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -32,28 +43,39 @@ from pathlib import Path
 import numpy as np
 
 BENCH = Path(__file__).resolve().parents[2]
-DATASET = BENCH / "datasets" / "ds1000"
+DATASETS = BENCH / "datasets"
 BASELINES = BENCH / "baselines"
 CALIBRATION = BASELINES / "zkvm_common" / "calibration"
-CASE_SET = BENCH / "datasets" / "case_sets" / "ds1000_perf.json"
+CASE_SET = DATASETS / "case_sets" / "ds1000_perf.json"
 TARGET = BASELINES / "target" / "release"
 
 # Used when the case set does not give a tolerance for a case.
 DEFAULT_RTOL = 1e-6
 DEFAULT_ATOL = 1e-6
 
-SYSTEMS = {
-    "native": lambda d, f, i: [str(TARGET / "ds1000-native"), "--case-dir", str(d), "--fixture", str(f), "--input", i, "--mode", "execute"],
-    "sp1": lambda d, f, i: [str(BASELINES / "sp1" / "target" / "release" / "sp1-baseline"), "--case-dir", str(d),
-                            "--fixture", str(f), "--input", i, "--mode", "execute"],
-    "risc0": lambda d, f, i: [str(BASELINES / "risc0" / "target" / "release" / "risc0-baseline"), "--case-dir", str(d),
-                              "--fixture", str(f), "--input", i, "--mode", "execute"],
-    "cairo": lambda d, f, i: [sys.executable, str(BASELINES / "cairo" / "cairo_baseline.py"), "--case-dir", str(d),
-                              "--fixture", str(f), "--input", i, "--mode", "execute"],
+HOSTS = {
+    "native": [str(TARGET / "kernels-native")],
+    "sp1": [str(BASELINES / "sp1" / "target" / "release" / "sp1-baseline")],
+    "risc0": [str(BASELINES / "risc0" / "target" / "release" / "risc0-baseline")],
+    "cairo": [sys.executable, str(BASELINES / "cairo" / "cairo_baseline.py")],
 }
+RUST_SYSTEMS = {"native", "sp1", "risc0"}
 
-# Which per-case file each system needs.
-PROGRAM_FILE = {"native": "zkvm.rs", "sp1": "zkvm.rs", "risc0": "zkvm.rs", "cairo": "main.cairo"}
+ENTRY = re.compile(r"^pub mod (\w+)\s*\{", re.M)
+MUTATED = re.compile(r"^\s*//\s*outputs:\s*mutated\s+(.+?)\s*$", re.M)
+
+
+@dataclass
+class Case:
+    name: str                 # fixed: folder name; shape-generic: "<program>/<function>"
+    folder: Path
+    function: str | None      # entry function of a shape-generic program
+    mutated: list[str] = field(default_factory=list)
+
+    def has_program(self, system: str) -> bool:
+        if self.function is not None:
+            return system in RUST_SYSTEMS
+        return (self.folder / ("main.cairo" if system == "cairo" else "zkvm.rs")).exists()
 
 
 @dataclass
@@ -73,6 +95,41 @@ class Result:
 
 
 # --------------------------------------------------------------------------
+# Cases
+# --------------------------------------------------------------------------
+
+def discover_cases() -> dict[str, Case]:
+    cases: dict[str, Case] = {}
+    for root in (DATASETS / "ds1000", CALIBRATION):
+        for d in sorted(root.iterdir()):
+            if (d / "zkvm.rs").exists() or (d / "main.cairo").exists():
+                cases[d.name] = Case(d.name, d, None)
+    for root in (DATASETS / "npbench", DATASETS / "pythran"):
+        for d in sorted(root.iterdir()):
+            if not (d / "zkvm.rs").exists():
+                continue
+            text = (d / "zkvm.rs").read_text()
+            entries = list(ENTRY.finditer(text))
+            for i, entry in enumerate(entries):
+                body = text[entry.end(): entries[i + 1].start() if i + 1 < len(entries) else len(text)]
+                match = MUTATED.search(body)
+                mutated = [n.strip() for n in match.group(1).split(",")] if match else []
+                name = f"{d.name}/{entry.group(1)}"
+                cases[name] = Case(name, d, entry.group(1), mutated)
+    return cases
+
+
+def fixture_path(case: Case, fixtures_dir: Path | None, dataset_dir: Path | None) -> Path:
+    names = ([f"fixture_{case.function}.json"] if case.function else []) + ["fixture.json"]
+    folders = [d / case.folder.name for d in (fixtures_dir, dataset_dir) if d] + [case.folder]
+    for folder in folders:
+        for name in names:
+            if (folder / name).exists():
+                return folder / name
+    return case.folder / "fixture.json"
+
+
+# --------------------------------------------------------------------------
 # NumPy reference
 # --------------------------------------------------------------------------
 
@@ -80,28 +137,43 @@ def _identity(fn=None, **_kwargs):
     return fn if fn is not None else (lambda f: f)
 
 
-def numpy_reference(case_dir: Path, fixture: dict, input_name: str) -> Expected:
-    """Run the kernel body as plain NumPy and flatten its return value."""
+def _requires(*_args, **_kwargs):
+    return lambda f: f
+
+
+def to_numpy(value, param: dict):
+    dtype = param["dtype"]
+    if dtype == "complex":
+        pairs = np.asarray(value, dtype=np.float64)
+        value = pairs[..., 0] + 1j * pairs[..., 1]
+        return np.asarray(value) if param["kind"] == "array" else complex(value)
+    if param["kind"] == "array":
+        return np.array(value, dtype={"float": np.float64, "int": np.int64, "bool": np.bool_}[dtype])
+    return value
+
+
+def numpy_reference(case: Case, kernel_dir: Path, fixture: dict, input_name: str) -> Expected:
+    """Run the kernel as plain NumPy and flatten its outputs."""
     import zinnia
 
     namespace = {name: getattr(zinnia, name) for name in dir(zinnia) if not name.startswith("_")}
-    namespace.update(np=np, zk_circuit=_identity, zk_chip=_identity, zk_external=_identity)
-    source = (case_dir / "kernel.py").read_text().replace("from zinnia import *", "")
-    exec(compile(source, str(case_dir / "kernel.py"), "exec"), namespace)
+    namespace.update(np=np, zk_circuit=_identity, zk_chip=_identity, zk_external=_identity, requires=_requires)
+    source = (kernel_dir / "kernel.py").read_text().replace("from zinnia import *", "")
+    exec(compile(source, str(kernel_dir / "kernel.py"), "exec"), namespace)
 
     values = fixture["inputs"][input_name]
-    args = []
-    for param in fixture["parameters"]:
-        value = values[param["name"]]
-        if param["kind"] == "array":
-            dtype = {"float": np.float64, "int": np.int64, "bool": np.bool_}[param["dtype"]]
-            args.append(np.array(value, dtype=dtype))
-        else:
-            args.append(value)
-    return flatten(namespace["kernel"](*args))
+    args = {p["name"]: to_numpy(values[p["name"]], p) for p in fixture["parameters"]}
+    result = namespace[case.function or fixture.get("function", "kernel")](*args.values())
+    if case.mutated:
+        if result is not None:
+            raise ValueError("an entry function with mutated outputs returned a value")
+        result = tuple(args[name] for name in case.mutated)
+    return flatten(result)
 
 
 def flatten(result) -> Expected:
+    if result is None:
+        return Expected([], [])
     if isinstance(result, tuple):
         parts = result
     elif isinstance(result, list) and any(isinstance(p, np.ndarray) for p in result):
@@ -112,8 +184,10 @@ def flatten(result) -> Expected:
     for part in parts:
         arr = np.asarray(part)
         for v in arr.ravel():
-            kind = arr.dtype.kind
-            if kind in "fc":
+            if arr.dtype.kind == "c":
+                values += [float(v.real), float(v.imag)]
+                is_float += [True, True]
+            elif arr.dtype.kind == "f":
                 values.append(float(v))
                 is_float.append(True)
             else:
@@ -156,27 +230,29 @@ def compare(case: str, system: str, publics: list, expected: Expected, rtol: flo
     return Result(case, system, not mismatches, detail, max_err, mismatches[:5])
 
 
-def run_system(system: str, case_dir: Path, fixture_path: Path, input_name: str, timeout: int) -> list:
-    cmd = SYSTEMS[system](case_dir, fixture_path, input_name)
+def run_system(system: str, case: Case, fixture_path: Path, input_name: str, timeout: int) -> list:
+    cmd = HOSTS[system] + ["--case-dir", str(case.folder), "--fixture", str(fixture_path),
+                           "--input", input_name, "--mode", "execute"]
+    if case.function:
+        cmd += ["--function", case.function]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    if proc.returncode != 0:
-        tail = (proc.stderr or proc.stdout).strip().splitlines()[-3:]
-        raise RuntimeError(f"exit {proc.returncode}: {' | '.join(tail)}")
-    report = json.loads(proc.stdout.strip().splitlines()[-1])
-    if not report.get("ok"):
-        raise RuntimeError(f"not ok: {report.get('error')}")
+    lines = proc.stdout.strip().splitlines()
+    report = json.loads(lines[-1]) if lines else {}
+    if proc.returncode != 0 or not report.get("ok"):
+        detail = report.get("error") or " | ".join((proc.stderr or proc.stdout).strip().splitlines()[-3:])
+        raise RuntimeError(f"exit {proc.returncode}: {detail}")
     return report["publics"]
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--systems", default="native")
-    parser.add_argument("--cases", default="", help="comma-separated case folders (default: every case with a program)")
+    parser.add_argument("--cases", default="", help="comma-separated cases (default: every case with a program)")
     parser.add_argument("--fixtures-dir", type=Path,
-                        help="read <dir>/<case>/fixture.json, where it exists, instead of the case folder's")
+                        help="read <dir>/<folder>/fixture[_<function>].json, where it exists, first")
     parser.add_argument("--dataset-dir", type=Path,
-                        help="take kernel.py and fixture.json from <dir>/<case>/ (the programs still come from "
-                             "this tree's case folders)")
+                        help="take kernel.py and fixtures from <dir>/<folder>/ where they exist (the programs "
+                             "still come from this tree)")
     parser.add_argument("--input", default="B")
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--report", type=Path)
@@ -185,47 +261,43 @@ def main() -> int:
     args = parser.parse_args()
 
     systems = [s for s in args.systems.split(",") if s]
-    unknown = set(systems) - set(SYSTEMS)
+    unknown = set(systems) - set(HOSTS)
     if unknown:
         parser.error(f"unknown systems: {sorted(unknown)}")
-    case_dirs = {d.name: d for root in (DATASET, CALIBRATION) for d in sorted(root.iterdir()) if d.is_dir()}
+    all_cases = discover_cases()
     if args.cases:
-        cases = args.cases.split(",")
+        missing = [c for c in args.cases.split(",") if c not in all_cases]
+        if missing:
+            parser.error(f"unknown cases: {missing}")
+        cases = [all_cases[c] for c in args.cases.split(",")]
     else:
-        cases = [name for name, d in case_dirs.items() if any((d / PROGRAM_FILE[s]).exists() for s in systems)]
+        cases = [c for c in all_cases.values() if any(c.has_program(s) for s in systems)]
     tol = tolerances(args.case_set)
 
     results: list[Result] = []
     for case in cases:
-        case_dir = case_dirs[case]
-        # The kernel (and its fixture) can come from another dataset tree, e.g.
-        # a newer one that this branch has not merged yet.
-        reference_dir = case_dir
-        if args.dataset_dir and (args.dataset_dir / case / "kernel.py").exists():
-            reference_dir = args.dataset_dir / case
-        fixture_path = reference_dir / "fixture.json"
-        if args.fixtures_dir and (args.fixtures_dir / case / "fixture.json").exists():
-            fixture_path = args.fixtures_dir / case / "fixture.json"
-        if not fixture_path.exists():
-            results += [Result(case, s, False, "no fixture") for s in systems]
+        kernel_dir = case.folder
+        if args.dataset_dir and (args.dataset_dir / case.folder.name / "kernel.py").exists():
+            kernel_dir = args.dataset_dir / case.folder.name
+        path = fixture_path(case, args.fixtures_dir, args.dataset_dir)
+        case_systems = [s for s in systems if case.has_program(s)]
+        if not path.exists():
+            results += [Result(case.name, s, False, "no fixture") for s in case_systems]
             continue
-        fixture = json.loads(fixture_path.read_text())
+        fixture = json.loads(path.read_text())
         try:
-            expected = numpy_reference(reference_dir, fixture, args.input)
+            expected = numpy_reference(case, kernel_dir, fixture, args.input)
         except Exception as exc:  # the reference itself failed: report, do not hide
-            results += [Result(case, s, False, f"NumPy reference failed: {exc!r}") for s in systems]
+            results += [Result(case.name, s, False, f"NumPy reference failed: {exc!r}") for s in case_systems]
             continue
-        rtol, atol = tol.get(case, (DEFAULT_RTOL, DEFAULT_ATOL))
-        for system in systems:
-            if not (case_dir / PROGRAM_FILE[system]).exists():
-                results.append(Result(case, system, False, f"no {PROGRAM_FILE[system]}"))
-                continue
+        rtol, atol = tol.get(case.name, (DEFAULT_RTOL, DEFAULT_ATOL))
+        for system in case_systems:
             try:
-                publics = run_system(system, case_dir, fixture_path, args.input, args.timeout)
+                publics = run_system(system, case, path, args.input, args.timeout)
             except Exception as exc:
-                results.append(Result(case, system, False, f"run failed: {exc}"))
+                results.append(Result(case.name, system, False, f"run failed: {exc}"))
                 continue
-            results.append(compare(case, system, publics, expected, rtol, atol))
+            results.append(compare(case.name, system, publics, expected, rtol, atol))
 
     width = max((len(r.case) for r in results), default=4)
     for r in results:

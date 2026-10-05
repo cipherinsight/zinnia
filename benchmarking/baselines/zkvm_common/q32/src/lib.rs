@@ -134,7 +134,135 @@ impl Q32 {
         let half = t * horner(t * t, &ATAN_OVER_X);
         half + half
     }
+
+    /// `np.arctan`: `atan(t) = t * P(t^2)` on `[-1, 1]` (the polynomial of
+    /// [`Q32::asin`]), and `pi/2 - atan(1/|x|)` outside, with the sign of `x`.
+    pub fn atan(self) -> Q32 {
+        let magnitude = self.abs();
+        let angle = if magnitude <= Self::ONE {
+            magnitude * horner(magnitude * magnitude, &ATAN_OVER_X)
+        } else {
+            let t = Self::ONE / magnitude;
+            Self::FRAC_PI_2 - t * horner(t * t, &ATAN_OVER_X)
+        };
+        if self.is_negative() {
+            -angle
+        } else {
+            angle
+        }
+    }
+
+    /// `np.exp`: write `x = k * ln 2 + r` with `|r| <= ln(2)/2`, evaluate the
+    /// Taylor polynomial of `exp(r)` (degree 13, truncation error below 1e-13
+    /// relative), and scale by `2^k`. Zinnia's halo2-base backend has no
+    /// `exp`; this is the textbook fixed-point algorithm. Panics when the
+    /// result does not fit Q32 (`x` above about 21.4, where NumPy still has
+    /// a finite float).
+    pub fn exp(self) -> Q32 {
+        let k = (self * Self::LOG2_E).round_to_int();
+        let r = self - Self::LN_2 * k;
+        let value = horner(r, &EXP_TAYLOR);
+        match k {
+            k if k >= 0 => {
+                let scaled = (value.0 as i128) << k;
+                Q32(i64::try_from(scaled).expect("exp overflows Q32"))
+            }
+            k if k > -64 => Q32(value.0 >> -k),
+            _ => Q32::ZERO,
+        }
+    }
+
+    /// `np.log` of a positive value: write `x = m * 2^k` with `m` in
+    /// `[1, 2)`, and `ln m = 2 * atanh(s) = 2s(1 + s^2/3 + s^4/5 + ...)` with
+    /// `s = (m - 1)/(m + 1)` in `[0, 1/3)` (11 terms, truncation below 1e-12).
+    /// Zinnia's halo2-base backend has no `log`; this is the textbook
+    /// fixed-point algorithm.
+    pub fn ln(self) -> Q32 {
+        assert!(self.0 > 0, "log of a non-positive number");
+        let k = 63 - self.0.leading_zeros() as i64 - FRAC_BITS as i64;
+        let m = Q32(if k >= 0 { self.0 >> k } else { self.0 << -k });
+        let s = (m - Self::ONE) / (m + Self::ONE);
+        let series = s * horner(s * s, &LN_ODD_SERIES);
+        series + series + Self::LN_2 * k
+    }
+
+    /// `np.tanh`: `(1 - e) / (1 + e)` with `e = exp(-2|x|)` in `(0, 1]` (no
+    /// overflow), with the sign of `x`.
+    pub fn tanh(self) -> Q32 {
+        let e = (self.abs() * -2).exp();
+        let value = (Self::ONE - e) / (Self::ONE + e);
+        if self.is_negative() {
+            -value
+        } else {
+            value
+        }
+    }
+
+    /// `x ** n` for a non-negative integer `n` by repeated multiplication,
+    /// rescaling after each product (Zinnia `pow_f` with an integer
+    /// exponent).
+    pub fn powi(self, n: u32) -> Q32 {
+        (0..n).fold(Self::ONE, |acc, _| acc * self)
+    }
+
+    /// `x ** y` for `x > 0`: `exp(y * ln x)`.
+    pub fn powf(self, y: Q32) -> Q32 {
+        (y * self.ln()).exp()
+    }
+
+    /// The nearest integer, halves away from zero (`round` in Python 2 /
+    /// C; used for argument reduction).
+    fn round_to_int(self) -> i64 {
+        let half = SCALE / 2;
+        if self.0 >= 0 {
+            (self.0 + half) >> FRAC_BITS
+        } else {
+            -((-self.0 + half) >> FRAC_BITS)
+        }
+    }
 }
+
+impl Q32 {
+    /// `round(ln 2 * 2^32)`.
+    pub const LN_2: Q32 = Q32(2_977_044_472);
+    /// `round(log2(e) * 2^32)`.
+    pub const LOG2_E: Q32 = Q32(6_196_328_019);
+}
+
+/// `round(c * 2^32)` of `1/k!` for k = 13 down to 0: Taylor coefficients of
+/// `exp(r)`.
+const EXP_TAYLOR: [Q32; 14] = [
+    Q32(1),
+    Q32(9),
+    Q32(108),
+    Q32(1_184),
+    Q32(11_836),
+    Q32(106_522),
+    Q32(852_176),
+    Q32(5_965_232),
+    Q32(35_791_394),
+    Q32(178_956_971),
+    Q32(715_827_883),
+    Q32(2_147_483_648),
+    Q32(4_294_967_296),
+    Q32(4_294_967_296),
+];
+
+/// `round(c * 2^32)` of `1/(2k+1)` for k = 10 down to 0: the series of
+/// `atanh(s)/s` in `u = s^2`.
+const LN_ODD_SERIES: [Q32; 11] = [
+    Q32(204_522_252),
+    Q32(226_050_910),
+    Q32(252_645_135),
+    Q32(286_331_153),
+    Q32(330_382_100),
+    Q32(390_451_572),
+    Q32(477_218_588),
+    Q32(613_566_757),
+    Q32(858_993_459),
+    Q32(1_431_655_765),
+    Q32(4_294_967_296),
+];
 
 /// Horner evaluation with the coefficients given from the highest degree
 /// down; every step rescales the product (Zinnia `horner_eval`).
@@ -292,6 +420,181 @@ impl<'a> core::iter::Sum<&'a Q32> for Q32 {
     }
 }
 
+/// A complex number with Q32 parts (NumPy `complex128` in fixed point).
+/// Products accumulate their raw terms and rescale once per part, like
+/// [`dot`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct C32 {
+    pub re: Q32,
+    pub im: Q32,
+}
+
+impl C32 {
+    pub const ZERO: C32 = C32 { re: Q32::ZERO, im: Q32::ZERO };
+    pub const ONE: C32 = C32 { re: Q32::ONE, im: Q32::ZERO };
+    /// The imaginary unit `1j`.
+    pub const I: C32 = C32 { re: Q32::ZERO, im: Q32::ONE };
+
+    pub const fn new(re: Q32, im: Q32) -> C32 {
+        C32 { re, im }
+    }
+
+    pub const fn from_real(re: Q32) -> C32 {
+        C32 { re, im: Q32::ZERO }
+    }
+
+    /// `np.conj`.
+    pub fn conj(self) -> C32 {
+        C32 { re: self.re, im: -self.im }
+    }
+
+    /// `|z|^2 = re^2 + im^2`, rescaled once.
+    pub fn norm_sqr(self) -> Q32 {
+        dot([(self.re, self.re), (self.im, self.im)])
+    }
+
+    /// `np.abs`: `floor(sqrt((re^2 + im^2) * 2^32))` from the exact sum of
+    /// squares.
+    pub fn abs(self) -> Q32 {
+        let raw = (self.re.0 as i128).pow(2) + (self.im.0 as i128).pow(2);
+        Q32(i64::try_from((raw as u128).isqrt()).expect("abs overflows Q32"))
+    }
+
+    /// `np.exp` of a complex number: `e^re * (cos im + i sin im)`.
+    pub fn exp(self) -> C32 {
+        let magnitude = self.re.exp();
+        C32 { re: magnitude * self.im.cos(), im: magnitude * self.im.sin() }
+    }
+}
+
+impl Add for C32 {
+    type Output = C32;
+    fn add(self, rhs: C32) -> C32 {
+        C32 { re: self.re + rhs.re, im: self.im + rhs.im }
+    }
+}
+
+impl Sub for C32 {
+    type Output = C32;
+    fn sub(self, rhs: C32) -> C32 {
+        C32 { re: self.re - rhs.re, im: self.im - rhs.im }
+    }
+}
+
+impl Neg for C32 {
+    type Output = C32;
+    fn neg(self) -> C32 {
+        C32 { re: -self.re, im: -self.im }
+    }
+}
+
+/// `(a + bi)(c + di) = (ac - bd) + (ad + bc)i`, each part rescaled once.
+impl Mul for C32 {
+    type Output = C32;
+    fn mul(self, rhs: C32) -> C32 {
+        C32 {
+            re: dot([(self.re, rhs.re), (-self.im, rhs.im)]),
+            im: dot([(self.re, rhs.im), (self.im, rhs.re)]),
+        }
+    }
+}
+
+/// Scaling by a real number.
+impl Mul<Q32> for C32 {
+    type Output = C32;
+    fn mul(self, rhs: Q32) -> C32 {
+        C32 { re: self.re * rhs, im: self.im * rhs }
+    }
+}
+
+/// `a / b = a * conj(b) / |b|^2`; panics if `b == 0`.
+impl Div for C32 {
+    type Output = C32;
+    fn div(self, rhs: C32) -> C32 {
+        let numerator = self * rhs.conj();
+        let denominator = rhs.norm_sqr();
+        C32 { re: numerator.re / denominator, im: numerator.im / denominator }
+    }
+}
+
+/// Division by a real number.
+impl Div<Q32> for C32 {
+    type Output = C32;
+    fn div(self, rhs: Q32) -> C32 {
+        C32 { re: self.re / rhs, im: self.im / rhs }
+    }
+}
+
+impl AddAssign for C32 {
+    fn add_assign(&mut self, rhs: C32) {
+        *self = *self + rhs;
+    }
+}
+
+impl SubAssign for C32 {
+    fn sub_assign(&mut self, rhs: C32) {
+        *self = *self - rhs;
+    }
+}
+
+impl MulAssign for C32 {
+    fn mul_assign(&mut self, rhs: C32) {
+        *self = *self * rhs;
+    }
+}
+
+impl core::iter::Sum for C32 {
+    fn sum<I: Iterator<Item = C32>>(iter: I) -> C32 {
+        iter.fold(C32::ZERO, Add::add)
+    }
+}
+
+impl From<Q32> for C32 {
+    fn from(re: Q32) -> C32 {
+        C32::from_real(re)
+    }
+}
+
+/// `ndarray` support: `Array::zeros`/`ones` (num-traits `Zero`/`One`) and
+/// array-by-scalar arithmetic (`ScalarOperand`).
+#[cfg(feature = "ndarray")]
+mod ndarray_support {
+    use super::{C32, Q32};
+
+    impl num_traits::Zero for Q32 {
+        fn zero() -> Q32 {
+            Q32::ZERO
+        }
+        fn is_zero(&self) -> bool {
+            *self == Q32::ZERO
+        }
+    }
+
+    impl num_traits::One for Q32 {
+        fn one() -> Q32 {
+            Q32::ONE
+        }
+    }
+
+    impl num_traits::Zero for C32 {
+        fn zero() -> C32 {
+            C32::ZERO
+        }
+        fn is_zero(&self) -> bool {
+            *self == C32::ZERO
+        }
+    }
+
+    impl num_traits::One for C32 {
+        fn one() -> C32 {
+            C32::ONE
+        }
+    }
+
+    impl ndarray::ScalarOperand for Q32 {}
+    impl ndarray::ScalarOperand for C32 {}
+}
+
 /// Python integer division and remainder (round toward negative infinity),
 /// which NumPy uses for `//` and `%` on integers.
 pub mod int {
@@ -339,6 +642,43 @@ mod tests {
         assert_eq!(Q32::ONE / Q32::from_int(3), Q32::from_bits(1_431_655_765));
         assert_eq!(-Q32::ONE / Q32::from_int(3), Q32::from_bits(-1_431_655_766));
         assert_eq!(Q32::from_int(-7) / 2, Q32::from_f64(-3.5));
+    }
+
+    #[test]
+    fn exp_log_tanh_atan_match_libm() {
+        // exp: relative error, over the whole Q32 range of its result.
+        for i in -2000..=2140 {
+            let q = Q32::from_f64(i as f64 / 100.0);
+            let want = q.to_f64().exp();
+            let got = q.exp().to_f64();
+            assert!((got - want).abs() <= 2e-9 * want.max(1.0), "exp {q:?}: {got} vs {want}");
+        }
+        for v in [1e-9, 1e-3, 0.37, 1.0, 1.5, 2.0, 7.25, 1234.5, 2.1e9] {
+            let q = Q32::from_f64(v);
+            assert!(close(q.ln(), q.to_f64().ln(), 2e-9), "ln {v}");
+        }
+        for i in -3000..=3000 {
+            let q = Q32::from_f64(i as f64 / 100.0);
+            assert!(close(q.tanh(), q.to_f64().tanh(), 2e-9), "tanh {q:?}");
+            assert!(close(q.atan(), q.to_f64().atan(), 1e-8), "atan {q:?}");
+        }
+        let two = Q32::from_int(2);
+        assert!(close(two.powf(Q32::from_f64(0.5)), 2f64.sqrt(), 1e-8));
+        assert_eq!(two.powi(10), Q32::from_int(1024));
+    }
+
+    #[test]
+    fn complex_arithmetic() {
+        let a = C32::new(Q32::from_f64(1.5), Q32::from_f64(-2.0));
+        let b = C32::new(Q32::from_f64(0.25), Q32::from_f64(3.0));
+        let product = a * b;
+        assert_eq!((product.re.to_f64(), product.im.to_f64()), (6.375, 4.0));
+        let quotient = product / b;
+        assert!(close(quotient.re, 1.5, 1e-9) && close(quotient.im, -2.0, 1e-9));
+        assert_eq!(a.conj(), C32::new(a.re, -a.im));
+        assert!(close(C32::new(Q32::from_int(3), Q32::from_int(4)).abs(), 5.0, 1e-12));
+        let e = C32::new(Q32::ZERO, Q32::PI).exp();
+        assert!(close(e.re, -1.0, 1e-8) && close(e.im, 0.0, 1e-8));
     }
 
     #[test]

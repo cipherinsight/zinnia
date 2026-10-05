@@ -1,5 +1,5 @@
 //! NumPy behaviours that several cases need: indexing, reductions over Q32
-//! values, `isclose`, `argsort` and the bounding-box crop. Each function
+//! values, `isclose`, `argsort`, matrix products and the bounding-box crop. Each function
 //! follows NumPy's semantics and panics where NumPy raises.
 //!
 //! Cases reach this module through the prelude, as `np::argmax(&a)` etc.;
@@ -8,7 +8,8 @@
 use core::ops::RangeInclusive;
 
 use alloc::{vec, vec::Vec};
-use q32::Q32;
+use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
+use q32::{dot, Q32};
 
 use crate::Shaped;
 
@@ -130,6 +131,34 @@ pub fn argsort_axis0<T: Ord + Copy, const R: usize, const C: usize>(
         order.sort_by_key(|&i| a[i][j]);
         order
     })
+}
+
+// ---------------------------------------------------------------------------
+// Matrix products (ndarray). Each output element is one fused dot product:
+// raw products accumulated in i128 and rescaled once, as Zinnia's
+// `product_sum` and NumPy's single rounding of a dot product.
+// ---------------------------------------------------------------------------
+
+/// `a @ b` for 1-D `a` and `b` (NumPy `dot`/`inner` of vectors).
+pub fn inner(a: ArrayView1<Q32>, b: ArrayView1<Q32>) -> Q32 {
+    assert_eq!(a.len(), b.len(), "shapes not aligned");
+    dot(a.iter().copied().zip(b.iter().copied()))
+}
+
+/// `a @ b` for 2-D `a` and `b`.
+pub fn matmul(a: ArrayView2<Q32>, b: ArrayView2<Q32>) -> Array2<Q32> {
+    assert_eq!(a.ncols(), b.nrows(), "shapes not aligned");
+    Array2::from_shape_fn((a.nrows(), b.ncols()), |(i, j)| inner(a.row(i), b.column(j)))
+}
+
+/// `a @ x` for 2-D `a` and 1-D `x`.
+pub fn matvec(a: ArrayView2<Q32>, x: ArrayView1<Q32>) -> Array1<Q32> {
+    a.rows().into_iter().map(|row| inner(row, x)).collect()
+}
+
+/// `x @ a` for 1-D `x` and 2-D `a`.
+pub fn vecmat(x: ArrayView1<Q32>, a: ArrayView2<Q32>) -> Array1<Q32> {
+    a.columns().into_iter().map(|column| inner(x, column)).collect()
 }
 
 // ---------------------------------------------------------------------------

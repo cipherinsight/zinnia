@@ -1,6 +1,6 @@
 //! SP1 host for the DS-1000 baselines (SP1 6.8.1, CPU prover).
 //!
-//! Modes (see `ds1000_zkvm::host` for the program contract):
+//! Modes (see `zkvm_kernels::host` for the program contract):
 //! * `setup`: compute the proving and verifying keys of the case's guest and
 //!   store them in the work directory;
 //! * `execute`: run the guest in SP1's executor; public values and cycles;
@@ -20,9 +20,9 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, ValueEnum};
-use ds1000_zkvm::{
+use zkvm_kernels::{
     host::{run_host, tamper_byte, CommonArgs, Mode, Report},
-    words_as_le_bytes, words_from_le_bytes, Public,
+    words_as_le_bytes, words_from_le_bytes,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use sp1_sdk::{
@@ -96,13 +96,13 @@ fn main() -> ExitCode {
     run_host("sp1", &cli.common, |report| {
         report.set("sdk_version", SDK_VERSION);
         let case = cli.common.case()?;
-        let elf = load_elf(&case)?;
+        let elf = load_elf(case)?;
         let work = WorkFiles::new(&cli.common)?;
         match cli.common.mode {
             Mode::Setup => setup(report, elf, &work),
-            Mode::Execute => execute(report, &case, elf, &cli.common),
-            Mode::Prove => prove(report, &case, elf, &cli, &work),
-            Mode::Verify => verify(report, &case, &cli, &work),
+            Mode::Execute => execute(report, elf, &cli.common),
+            Mode::Prove => prove(report, elf, &cli, &work),
+            Mode::Verify => verify(report, &cli, &work),
         }
     })
 }
@@ -116,9 +116,10 @@ fn assert_cpu_prover() {
 }
 
 fn load_elf(case: &str) -> Result<Elf> {
+    let binary = zkvm_kernels::binary_name(case);
     let (_, path) = GUEST_ELFS
         .iter()
-        .find(|(name, _)| *name == case)
+        .find(|(name, _)| *name == binary)
         .with_context(|| format!("no SP1 guest for {case}"))?;
     let bytes = std::fs::read(path).with_context(|| format!("reading guest ELF {path}"))?;
     Ok(Elf::from(bytes))
@@ -143,17 +144,17 @@ fn setup(report: &mut Report, elf: Elf, work: &WorkFiles) -> Result<()> {
     Ok(())
 }
 
-fn execute(report: &mut Report, case: &str, elf: Elf, args: &CommonArgs) -> Result<()> {
+fn execute(report: &mut Report, elf: Elf, args: &CommonArgs) -> Result<()> {
     let stdin = stdin(args)?;
     let client = report.time("client_init", LightProver::new);
     let (public_values, execution) =
         report.time("execute", || client.execute(elf, stdin).run()).context("execution")?;
     record_cycles(report, &execution);
-    report.set_publics(&decode_publics(case, &public_values)?);
+    args.report_committed(report, &committed_words(&public_values)?)?;
     Ok(())
 }
 
-fn prove(report: &mut Report, case: &str, elf: Elf, cli: &Cli, work: &WorkFiles) -> Result<()> {
+fn prove(report: &mut Report, elf: Elf, cli: &Cli, work: &WorkFiles) -> Result<()> {
     let args = &cli.common;
     report.set("proof_mode", cli.proof_mode.name());
     let client = report.time("client_init", CpuProver::new);
@@ -175,11 +176,11 @@ fn prove(report: &mut Report, case: &str, elf: Elf, cli: &Cli, work: &WorkFiles)
     proof.save(&path).context("saving proof")?;
     report.set("proof_path", &path);
     report.set("proof_size_bytes", std::fs::metadata(&path)?.len());
-    report.set_publics(&decode_publics(case, &proof.public_values)?);
+    args.report_committed(report, &committed_words(&proof.public_values)?)?;
     Ok(())
 }
 
-fn verify(report: &mut Report, case: &str, cli: &Cli, work: &WorkFiles) -> Result<()> {
+fn verify(report: &mut Report, cli: &Cli, work: &WorkFiles) -> Result<()> {
     let args = &cli.common;
     report.set("proof_mode", cli.proof_mode.name());
     let path = work.proof(cli.proof_mode, &args.input);
@@ -188,7 +189,7 @@ fn verify(report: &mut Report, case: &str, cli: &Cli, work: &WorkFiles) -> Resul
     let vk: SP1VerifyingKey = load(&work.verifying_key)?;
     report.set("proof_path", &path);
     report.set("proof_size_bytes", std::fs::metadata(&path)?.len());
-    report.set_publics(&decode_publics(case, &proof.public_values)?);
+    args.report_committed(report, &committed_words(&proof.public_values)?)?;
 
     if args.tamper {
         let mut bytes = proof.public_values.to_vec();
@@ -215,12 +216,9 @@ fn record_cycles(report: &mut Report, execution: &sp1_sdk::ExecutionReport) {
 
 /// Decodes the committed output: the bincode encoding `sp1_zkvm::io::commit`
 /// writes, with no bytes left over.
-fn decode_publics(case: &str, public_values: &SP1PublicValues) -> Result<Vec<Public>> {
-    let words = words_from_le_bytes(public_values.as_slice())
-        .context("the public values are not a whole number of words")?;
-    let decoded = ds1000_zkvm::decode_publics(case, &words)
-        .with_context(|| format!("unknown case {case}"))?;
-    Ok(decoded?)
+/// The words the guest committed as its public values.
+fn committed_words(public_values: &SP1PublicValues) -> Result<Vec<i64>> {
+    words_from_le_bytes(public_values.as_slice()).context("the public values are not a whole number of words")
 }
 
 fn save<T: Serialize + ?Sized>(path: &Path, value: &T) -> Result<()> {

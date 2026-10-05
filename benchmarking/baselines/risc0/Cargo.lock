@@ -1062,18 +1062,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ds1000-zkvm"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytemuck",
- "clap",
- "q32",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "dyn-clone"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2622,6 +2610,10 @@ dependencies = [
 [[package]]
 name = "q32"
 version = "0.1.0"
+dependencies = [
+ "ndarray",
+ "num-traits",
+]
 
 [[package]]
 name = "quinn"
@@ -2959,7 +2951,6 @@ dependencies = [
  "anyhow",
  "bincode",
  "clap",
- "ds1000-zkvm",
  "risc0-binfmt",
  "risc0-circuit-keccak",
  "risc0-circuit-keccak-sys",
@@ -2968,12 +2959,13 @@ dependencies = [
  "risc0-circuit-rv32im",
  "risc0-circuit-rv32im-sys",
  "risc0-core",
- "risc0-ds1000-methods",
  "risc0-groth16",
+ "risc0-kernels-methods",
  "risc0-sys",
  "risc0-zkos-v1compat",
  "risc0-zkp",
  "risc0-zkvm",
+ "zkvm-kernels",
 ]
 
 [[package]]
@@ -3170,13 +3162,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "risc0-ds1000-methods"
-version = "0.1.0"
-dependencies = [
- "risc0-build",
-]
-
-[[package]]
 name = "risc0-groth16"
 version = "3.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3201,6 +3186,13 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tracing",
+]
+
+[[package]]
+name = "risc0-kernels-methods"
+version = "0.1.0"
+dependencies = [
+ "risc0-build",
 ]
 
 [[package]]
@@ -4662,6 +4654,19 @@ dependencies = [
  "memchr",
  "thiserror 2.0.21",
  "zopfli",
+]
+
+[[package]]
+name = "zkvm-kernels"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "clap",
+ "ndarray",
+ "q32",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

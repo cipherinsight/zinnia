@@ -1,7 +1,7 @@
 //! RISC Zero host for the DS-1000 baselines (risc0-zkvm 3.0.3, CPU prover in
 //! this process).
 //!
-//! Modes (see `ds1000_zkvm::host` for the program contract):
+//! Modes (see `zkvm_kernels::host` for the program contract):
 //! * `setup`: load the guest program and report its image ID. RISC Zero has
 //!   no per-program key generation; the verifier needs only the image ID;
 //! * `execute`: run the guest in the executor; journal and cycle counts;
@@ -20,11 +20,11 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, ValueEnum};
-use ds1000_zkvm::{
+use zkvm_kernels::{
     host::{run_host, tamper_byte, CommonArgs, Mode, Report},
-    words_from_le_bytes, Public,
+    words_from_le_bytes,
 };
-use risc0_ds1000_methods::GUESTS;
+use risc0_kernels_methods::GUESTS;
 use risc0_zkvm::{
     get_prover_server, Digest, ExecutorEnv, ExecutorImpl, ProverOpts, Receipt, Session,
     VerifierContext,
@@ -72,21 +72,22 @@ fn main() -> ExitCode {
         report.set("zkvm_version", ZKVM_VERSION);
         let case = cli.common.case()?;
         let work = cli.common.work_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap())?;
-        let guest = report.time("load_program", || load_guest(&case))?;
+        let guest = report.time("load_program", || load_guest(case))?;
         report.set("image_id", guest.image_id.to_string());
         match cli.common.mode {
             Mode::Setup => Ok(()),
-            Mode::Execute => execute(report, &case, &guest, &cli.common).map(|_| ()),
-            Mode::Prove => prove(report, &case, &guest, &cli, &work),
-            Mode::Verify => verify(report, &case, &guest, &cli, &work),
+            Mode::Execute => execute(report, &guest, &cli.common).map(|_| ()),
+            Mode::Prove => prove(report, &guest, &cli, &work),
+            Mode::Verify => verify(report, &guest, &cli, &work),
         }
     })
 }
 
 fn load_guest(case: &str) -> Result<Guest> {
+    let binary = zkvm_kernels::binary_name(case);
     let (_, path, id) = GUESTS
         .iter()
-        .find(|(name, _, _)| *name == case)
+        .find(|(name, _, _)| *name == binary)
         .with_context(|| format!("no RISC Zero guest for {case}"))?;
     let program = std::fs::read(path).with_context(|| format!("reading guest program {path}"))?;
     Ok(Guest { program, image_id: Digest::from(*id) })
@@ -107,7 +108,7 @@ fn executor_env(args: &CommonArgs) -> Result<ExecutorEnv<'static>> {
 }
 
 /// Runs the guest in the executor and records the cycle counts.
-fn execute(report: &mut Report, case: &str, guest: &Guest, args: &CommonArgs) -> Result<Session> {
+fn execute(report: &mut Report, guest: &Guest, args: &CommonArgs) -> Result<Session> {
     let env = executor_env(args)?;
     let session = report.time("execute", || ExecutorImpl::from_elf(env, &guest.program)?.run())?;
     report.set("user_cycles", session.user_cycles);
@@ -115,14 +116,14 @@ fn execute(report: &mut Report, case: &str, guest: &Guest, args: &CommonArgs) ->
     report.set("paging_cycles", session.paging_cycles);
     report.set("segments", session.segments.len());
     let journal = session.journal.as_ref().context("the guest committed no journal")?;
-    report.set_publics(&decode_publics(case, &journal.bytes)?);
+    args.report_committed(report, &committed_words(&journal.bytes)?)?;
     Ok(session)
 }
 
-fn prove(report: &mut Report, case: &str, guest: &Guest, cli: &Cli, work: &Path) -> Result<()> {
+fn prove(report: &mut Report, guest: &Guest, cli: &Cli, work: &Path) -> Result<()> {
     let args = &cli.common;
     report.set("proof_mode", cli.proof_mode.name());
-    let session = execute(report, case, guest, args)?;
+    let session = execute(report, guest, args)?;
 
     let prover = get_prover_server(&ProverOpts::composite())?;
     let mut receipt = report
@@ -139,11 +140,11 @@ fn prove(report: &mut Report, case: &str, guest: &Guest, cli: &Cli, work: &Path)
     std::fs::write(&path, bincode::serialize(&receipt)?).context("saving receipt")?;
     report.set("proof_path", &path);
     report.set("proof_size_bytes", std::fs::metadata(&path)?.len());
-    report.set_publics(&decode_publics(case, &receipt.journal.bytes)?);
+    args.report_committed(report, &committed_words(&receipt.journal.bytes)?)?;
     Ok(())
 }
 
-fn verify(report: &mut Report, case: &str, guest: &Guest, cli: &Cli, work: &Path) -> Result<()> {
+fn verify(report: &mut Report, guest: &Guest, cli: &Cli, work: &Path) -> Result<()> {
     let args = &cli.common;
     report.set("proof_mode", cli.proof_mode.name());
     let path = proof_path(work, cli.proof_mode, &args.input);
@@ -151,7 +152,7 @@ fn verify(report: &mut Report, case: &str, guest: &Guest, cli: &Cli, work: &Path
     let mut receipt: Receipt = bincode::deserialize(&bytes)?;
     report.set("proof_path", &path);
     report.set("proof_size_bytes", bytes.len());
-    report.set_publics(&decode_publics(case, &receipt.journal.bytes)?);
+    args.report_committed(report, &committed_words(&receipt.journal.bytes)?)?;
 
     if args.tamper {
         tamper_byte(&mut receipt.journal.bytes)?;
@@ -165,10 +166,7 @@ fn verify(report: &mut Report, case: &str, guest: &Guest, cli: &Cli, work: &Path
     }
 }
 
-/// Decodes the journal: the output's words, little-endian.
-fn decode_publics(case: &str, journal: &[u8]) -> Result<Vec<Public>> {
-    let words = words_from_le_bytes(journal).context("the journal is not a whole number of words")?;
-    let decoded = ds1000_zkvm::decode_publics(case, &words)
-        .with_context(|| format!("unknown case {case}"))?;
-    Ok(decoded?)
+/// The words the guest committed to the journal.
+fn committed_words(journal: &[u8]) -> Result<Vec<i64>> {
+    words_from_le_bytes(journal).context("the journal is not a whole number of words")
 }

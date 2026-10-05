@@ -1,7 +1,8 @@
 # SP1, RISC Zero and Cairo baselines
 
-Handwritten baselines for the DS-1000 performance set on two RISC-V zkVMs (SP1,
-RISC Zero) and on Cairo. Every program computes what the case's `kernel.py`
+Handwritten baselines on two RISC-V zkVMs (SP1, RISC Zero) and on Cairo, for
+the DS-1000 performance set (all three) and the NPBench/Pythran acceptance
+programs (SP1 and RISC Zero). Every program computes what its `kernel.py`
 computes, in Q32 fixed-point integers like Zinnia (author decision 2026-10-06),
 reads every input privately and makes every output public.
 
@@ -9,10 +10,11 @@ reads every input privately and makes every output public.
 
 | Path | What |
 |---|---|
-| `datasets/ds1000/<case>/zkvm.rs` | the case's Rust program, shared by SP1 and RISC Zero |
+| `datasets/ds1000/<case>/zkvm.rs` | the case's Rust program, shared by SP1 and RISC Zero (fixed shapes) |
+| `datasets/{npbench,pythran}/<program>/zkvm.rs` | the program's Rust entry functions, shape-generic (one case per entry function, `<program>/<function>`) |
 | `datasets/ds1000/<case>/main.cairo` | the case's Cairo program |
 | `baselines/zkvm_common/q32/` | Q32 arithmetic (`no_std`, no floating point) |
-| `baselines/zkvm_common/ds1000/` | crate `ds1000-zkvm`: includes every `zkvm.rs` as a module; NumPy behaviours shared by several cases (`src/np.rs`), input reader trait, public-value decoding, fixture loading, the shared host CLI/report, and the native runner `ds1000-native` |
+| `baselines/zkvm_common/kernels/` | crate `zkvm-kernels`: includes every `zkvm.rs` as a module; inputs (`src/io.rs`: `Input`, `Args`, `Element`), outputs (`src/publics.rs`), NumPy behaviours shared by several cases (`src/np.rs`), fixture loading, the shared host CLI/report, and the native runner `kernels-native` |
 | `baselines/zkvm_common/check_outputs.py` | output check against NumPy |
 | `baselines/zkvm_common/sync_cases.py` | regenerates the per-case glue (case list, guest binaries, Cairo targets) |
 | `baselines/sp1/` | SP1 6.8.1: `guest/` (one binary per case), `host/` (`sp1-baseline`) |
@@ -28,7 +30,7 @@ run time, one Scarb package with an executable target per case.
 ```sh
 cd benchmarking/baselines
 python3 zkvm_common/sync_cases.py                       # after adding/removing a case
-(cd zkvm_common/ds1000 && CARGO_TARGET_DIR=../../target cargo build --release --features std)   # native runner
+(cd zkvm_common/kernels && CARGO_TARGET_DIR=../../target cargo build --release --features std)   # native runner
 (cd sp1 && PATH=$HOME/.sp1/bin:$PATH cargo build --release)        # builds every SP1 guest too
 (cd risc0 && cargo build --release)                                # builds every RISC Zero guest too
 (cd cairo && ~/.local/share/scarb/scarb-v2.20.1-x86_64-unknown-linux-gnu/bin/scarb build)
@@ -44,8 +46,12 @@ All three systems take the same arguments and print one JSON object:
 sp1/target/release/sp1-baseline     --case-dir D [--fixture F] [--input A|B] --mode setup|execute|prove|verify [--proof-mode core|compressed|groth16] [--work-dir W] [--out R] [--tamper]
 risc0/target/release/risc0-baseline --case-dir D ... [--proof-mode composite|succinct|groth16]
 python3 cairo/cairo_baseline.py     --case-dir D ... [--proof-mode stwo]
-target/release/ds1000-native        --case-dir D ... --mode execute
+target/release/kernels-native        --case-dir D ... --mode execute
 ```
+
+For an NPBench/Pythran program with several entry functions, add
+`--function F`. Its fixture defaults to `D/fixture_F.json` if that exists,
+else `D/fixture.json`.
 
 The JSON has `ok`, `publics` (decoded output values in kernel output order:
 floats from Q32, integers, booleans), `proof_path`, `proof_size_bytes`,
@@ -90,7 +96,9 @@ too.
 ## Writing a case
 
 A case has the same parameters, shapes, constants and algorithm as
-`kernel.py`, with NumPy semantics (the output check compares with NumPy).
+`kernel.py`, with NumPy semantics (the output check compares with NumPy). The
+rules below hold for both kinds of program; "Shape-generic programs" adds what
+is specific to NPBench/Pythran.
 
 ### Numbers
 
@@ -105,7 +113,12 @@ A case has the same parameters, shapes, constants and algorithm as
 * `np.sqrt` is `.sqrt()` (`floor(sqrt(x * 2^32))`); `np.sin`, `np.cos`,
   `np.arcsin` are `.sin()`, `.cos()`, `.asin()` (Zinnia's own definitions; see
   the `q32` crate docs); `np.deg2rad`/`np.degrees` multiply by `DEG_TO_RAD` /
-  `RAD_TO_DEG`.
+  `RAD_TO_DEG`. `np.exp`, `np.log`, `np.tanh`, `np.arctan` are `.exp()`,
+  `.ln()`, `.tanh()`, `.atan()` (textbook fixed-point algorithms, about 1e-9;
+  Zinnia's halo2-base backend has none of them); `x ** n` for an integer `n`
+  is `.powi(n)`, `x ** y` for a float `y` is `.powf(y)`.
+* Complex numbers are `C32 { re, im }` (both Q32): `+ - * /`, `.conj()`,
+  `.abs()`, `.norm_sqr()`, `.exp()`, `C32::I`; products rescale once per part.
 * Integers are `i64`, booleans `bool`. Integer `//` and `%` follow Python
   (`floor_div`, `floor_mod`); plain `/` and `%` only where both operands are
   known non-negative. `int(x)` / `astype(int)` is `trunc_to_int`;
@@ -137,14 +150,46 @@ A case has the same parameters, shapes, constants and algorithm as
   Cairo driver leave it out of the private input, as Zinnia removes it from
   the circuit. Run `sync_cases.py` after adding such a line.
 
+### Shape-generic programs (NPBench, Pythran)
+
+* One top-level `pub mod <function> {` per in-scope entry function of the
+  program (the function's name as in `kernel.py`; add
+  `#[allow(non_snake_case)]` when needed). It defines `pub type Output` and
+  `pub fn main(args: &mut Args<impl Input>) -> Output`. Helpers shared by the
+  entry functions are private items of the file.
+* Read the parameters in signature order: `args.scalar::<T>()`,
+  `args.array1::<T>()` ... `args.array4::<T>()` (`Array1`...`Array4` of
+  ndarray 0.16), with `T` = `Q32` (float), `i64` (int), `bool`, `C32`
+  (complex). Arrays carry their shapes, so the program works for any shape
+  the fixture gives; take extents from the arrays (`a.dim()`, `a.nrows()`),
+  never from `kernel.py`'s annotation. The guest commits the input shapes,
+  so the proof binds them.
+* `Output` is the returned value: `Q32`, `i64`, `bool`, `C32`, an ndarray
+  (committed with its shape), a `Vec` (1-D output whose length depends on the
+  data), a tuple, or `Option<T>` where the function can return `None`.
+* An entry function that returns `None` has as outputs the array arguments
+  its body writes (subscript, slice or augmented assignment, `out=`), in
+  parameter order: `Output` is that array or a tuple of them, and the module
+  carries a line `// outputs: mutated A, B` naming them (the output check
+  reads it).
+* Preconditions (`@requires`) are asserted.
+* Use ndarray for storage, indexing (`a[(i, j)]`) and slicing (`s![..]`);
+  write the arithmetic as loops or `Zip`/`mapv` as reads naturally. Matrix
+  products: `np::matmul`, `np::matvec`, `np::vecmat`, `np::inner` (fused dot
+  products). Follow NumPy's evaluation order (`alpha * A @ B` is
+  `(alpha * A) @ B`).
+
 ### How the Rust guests move data
 
 Every parameter travels as one buffer of 64-bit little-endian words (a Q32
-by its encoding, an integer as itself, a boolean as 0/1; a scalar is one
-word), read with the zkVM's raw-slice call (SP1 `io::read_vec`, RISC Zero
+by its encoding, an integer as itself, a boolean as 0/1, a complex number as
+two Q32 words; a shape-generic program's arrays start with their dimensions),
+read with the zkVM's raw-slice call (SP1 `io::read_vec`, RISC Zero
 `env::read_slice` of a length word and then the words). The output is
-encoded into one word buffer (`Publics::encode`: a scalar is one word, a
-vector its length then its items, a tuple its items in order) and committed
+encoded into one word buffer (`Publics::encode`: a scalar is its words, a
+vector its length then its items, an ndarray its dimensions then its
+elements, a tuple its items in order; a shape-generic guest commits the
+input shapes first) and committed
 with one raw call (SP1 `io::commit_slice`, RISC Zero `env::commit_slice`).
 This is the bulk-data path both zkVMs document; their serde codecs
 (`io::read`/`env::read`, `commit`) cost hundreds of cycles per element
@@ -177,6 +222,10 @@ reduction).
     --systems native,sp1,risc0,cairo [--cases a,b] [--fixtures-dir DIR]
 ```
 
-For each case it runs the kernel body as plain NumPy on fixture input `B` and
-compares the public values position by position: integers and booleans
-exactly, floats within the case-set tolerance (default `atol = rtol = 1e-6`).
+For each case it runs the kernel as plain NumPy on fixture input `B` (or
+`--input A`) and compares the public values position by position: integers
+and booleans exactly, floats within the case-set tolerance (default
+`atol = rtol = 1e-6`), complex values as (real, imaginary) pairs. For a
+shape-generic entry function that returns `None`, NumPy's outputs are the
+arguments named on its `// outputs: mutated` line, after the call. Cases are
+named as in the hosts: `ds1000_case0300`, `pythran_lu/factorMatrix0`.

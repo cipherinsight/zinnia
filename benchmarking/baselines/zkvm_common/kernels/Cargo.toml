@@ -1,12 +1,14 @@
 [package]
-name = "ds1000-zkvm"
+name = "zkvm-kernels"
 version = "0.1.0"
 edition = "2021"
-description = "DS-1000 kernels in Q32 integer Rust, shared by the SP1 and RISC Zero guests and run natively for the output check"
+description = "Benchmark kernels in Q32 integer Rust, shared by the SP1 and RISC Zero guests and run natively for the output check"
 publish = false
 
 [dependencies]
-q32 = { path = "../q32" }
+q32 = { path = "../q32", features = ["ndarray"] }
+# Arrays of the shape-generic (NPBench, Pythran) programs.
+ndarray = { version = "0.16.1", default-features = false }
 # Byte views of the word buffers the zkVMs read and commit.
 bytemuck = { version = "1", features = ["extern_crate_alloc"] }
 # Host side only (fixture loading, native runs, JSON output).
@@ -21,5 +23,5 @@ serde_json = { version = "1", features = ["float_roundtrip"], optional = true }
 std = ["q32/std", "dep:serde", "dep:anyhow", "dep:clap", "dep:serde_json"]
 
 [[bin]]
-name = "ds1000-native"
+name = "kernels-native"
 required-features = ["std"]

@@ -14,20 +14,26 @@ use std::{
     time::Instant,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use clap::{Args, ValueEnum};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 
-use crate::{fixture::Fixture, Input, Public};
+use crate::{fixture::Fixture, Decoded, Input, Public};
 
 /// The arguments every host takes.
 #[derive(Args, Debug)]
 pub struct CommonArgs {
-    /// The case folder, `benchmarking/datasets/ds1000/<case>`.
+    /// The case folder: `benchmarking/datasets/ds1000/<case>` or
+    /// `benchmarking/datasets/{npbench,pythran}/<program>`.
     #[arg(long)]
     pub case_dir: PathBuf,
-    /// The fixture file (default: `<case-dir>/fixture.json`).
+    /// The entry function of an NPBench/Pythran program (needed only when
+    /// the program has several).
+    #[arg(long)]
+    pub function: Option<String>,
+    /// The fixture file (default: `<case-dir>/fixture_<function>.json` if
+    /// it exists, else `<case-dir>/fixture.json`).
     #[arg(long)]
     pub fixture: Option<PathBuf>,
     /// The fixture input: `A` (setup) or `B` (timed proofs, output check).
@@ -61,28 +67,56 @@ pub enum Mode {
 }
 
 impl CommonArgs {
-    /// The case name, i.e. the case folder's name.
-    pub fn case(&self) -> Result<String> {
-        let name = self.case_dir.file_name().and_then(|n| n.to_str());
-        Ok(name.context("case folder has no name")?.to_string())
+    /// The case: the case folder's program and, for a program with several
+    /// entry functions, `--function` (see [`crate::resolve_case`]).
+    pub fn case(&self) -> Result<&'static str> {
+        let program = self.case_dir.file_name().and_then(|n| n.to_str());
+        let program = program.context("case folder has no name")?;
+        crate::resolve_case(program, self.function.as_deref())
+            .map_err(|err| anyhow!("{program} ({:?}): {err}", self.function))
     }
 
     pub fn fixture_path(&self) -> PathBuf {
-        self.fixture.clone().unwrap_or_else(|| self.case_dir.join("fixture.json"))
+        if let Some(path) = &self.fixture {
+            return path.clone();
+        }
+        let per_function = self.function.as_ref().map(|f| self.case_dir.join(format!("fixture_{f}.json")));
+        per_function.filter(|p| p.exists()).unwrap_or_else(|| self.case_dir.join("fixture.json"))
     }
 
     /// The encoded kernel arguments of the chosen fixture input, without the
-    /// parameters the case never reads.
+    /// parameters the case never reads; arrays carry their shapes for a
+    /// shape-generic program.
     pub fn kernel_args(&self) -> Result<Vec<Vec<i64>>> {
-        let unused = crate::unused_params(&self.case()?);
-        Fixture::load(&self.fixture_path())?.args(&self.input, unused)
+        let case = self.case()?;
+        Fixture::load(&self.fixture_path())?.args(&self.input, crate::unused_params(case), crate::is_shaped(case))
+    }
+
+    /// Decodes the words the case committed, checks that a shape-generic
+    /// program committed the fixture's input shapes, and records the result.
+    pub fn report_committed(&self, report: &mut Report, words: &[i64]) -> Result<()> {
+        let case = self.case()?;
+        let decoded: Decoded = crate::decode_publics(case, words)
+            .with_context(|| format!("unknown case {case}"))?
+            .context("decoding the committed words")?;
+        if crate::is_shaped(case) {
+            let expected = Fixture::load(&self.fixture_path())?.input_shapes(&self.input, crate::unused_params(case))?;
+            ensure!(
+                decoded.input_shapes == expected,
+                "committed input shapes {:?}, fixture shapes {expected:?}",
+                decoded.input_shapes
+            );
+            report.set("input_shapes", &decoded.input_shapes);
+        }
+        report.set_publics(&decoded.publics);
+        Ok(())
     }
 
     /// The work directory, created if missing.
     pub fn work_dir(&self, default_root: &Path) -> Result<PathBuf> {
         let dir = match &self.work_dir {
             Some(dir) => dir.clone(),
-            None => default_root.join("work").join(self.case()?),
+            None => default_root.join("work").join(crate::binary_name(self.case()?)),
         };
         std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
         Ok(dir)
@@ -208,16 +242,12 @@ impl Input for NativeInput {
     }
 }
 
-/// Runs `case` natively on `args` and decodes its committed words the way
-/// the hosts do; `None` if the case is unknown.
-pub fn run_native(case: &str, args: Vec<Vec<i64>>) -> Option<Result<Vec<Public>>> {
+/// Runs `case` natively on `args` and returns the words it commits.
+pub fn run_native(case: &str, args: Vec<Vec<i64>>) -> Result<Vec<i64>> {
     let mut input = NativeInput::new(args);
-    let words = crate::run(case, &mut input)?;
-    if !input.is_exhausted() {
-        return Some(Err(anyhow::anyhow!("the guest did not read every argument")));
-    }
-    let publics = crate::decode_publics(case, &words)?;
-    Some(publics.map_err(|err| anyhow::anyhow!("decoding the committed words: {err}")))
+    let words = crate::run(case, &mut input).with_context(|| format!("{case} has no program"))?;
+    ensure!(input.is_exhausted(), "the guest did not read every argument");
+    Ok(words)
 }
 
 /// Output values as JSON (floats decoded from Q32, integers, booleans),

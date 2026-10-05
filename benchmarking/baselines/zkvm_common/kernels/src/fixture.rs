@@ -1,9 +1,11 @@
-//! Loading kernel inputs from `datasets/ds1000/<case>/fixture.json`.
+//! Loading kernel inputs from a case's `fixture.json`.
 //!
 //! Parameters come in the kernel's signature order. Each becomes one buffer
-//! of 64-bit words (see [`crate::Word`]): floats as Q32 (`round(v * 2^32)`,
-//! Zinnia's quantizer), integers as themselves, booleans as 0 or 1; arrays
-//! flattened in row-major order, a scalar as one word.
+//! of 64-bit words (see [`crate::Element`]): floats as Q32 (`round(v * 2^32)`,
+//! Zinnia's quantizer), integers as themselves, booleans as 0 or 1, complex
+//! numbers as their Q32 real and imaginary parts (the fixture writes them as
+//! `[re, im]` pairs); arrays in row-major order. For a shape-generic program
+//! an array's buffer starts with its dimensions (see [`crate::Args`]).
 
 use std::{collections::BTreeMap, path::Path};
 
@@ -11,7 +13,7 @@ use anyhow::{bail, ensure, Context, Result};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::{Word, Q32};
+use crate::{Element, C32, Q32};
 
 #[derive(Debug, Deserialize)]
 pub struct Fixture {
@@ -43,8 +45,14 @@ pub enum Dtype {
     Float,
     Int,
     Bool,
+    Complex,
 }
 
+/// One encoded argument: its shape (empty for a scalar) and its words.
+struct Encoded {
+    shape: Vec<usize>,
+    words: Vec<i64>,
+}
 
 impl Fixture {
     pub fn load(path: &Path) -> Result<Fixture> {
@@ -53,10 +61,28 @@ impl Fixture {
         serde_json::from_str(&text).with_context(|| format!("parsing fixture {}", path.display()))
     }
 
-    /// The words of each argument of input `name` (`A` or `B`), in signature
-    /// order, leaving out the parameters in `unused` (see
-    /// [`crate::unused_params`]).
-    pub fn args(&self, name: &str, unused: &[&str]) -> Result<Vec<Vec<i64>>> {
+    /// The buffer of each argument of input `name` (`A` or `B`), in
+    /// signature order, leaving out the parameters in `unused` (see
+    /// [`crate::unused_params`]). With `with_shapes`, an array's buffer
+    /// starts with its dimensions.
+    pub fn args(&self, name: &str, unused: &[&str], with_shapes: bool) -> Result<Vec<Vec<i64>>> {
+        Ok(self
+            .encode(name, unused)?
+            .into_iter()
+            .map(|arg| match (with_shapes, arg.shape.is_empty()) {
+                (true, false) => arg.shape.iter().map(|&d| d as i64).chain(arg.words).collect(),
+                _ => arg.words,
+            })
+            .collect())
+    }
+
+    /// The dimensions of every array argument of input `name`, in order: what
+    /// a shape-generic guest commits as its input shapes.
+    pub fn input_shapes(&self, name: &str, unused: &[&str]) -> Result<Vec<i64>> {
+        Ok(self.encode(name, unused)?.into_iter().flat_map(|arg| arg.shape).map(|d| d as i64).collect())
+    }
+
+    fn encode(&self, name: &str, unused: &[&str]) -> Result<Vec<Encoded>> {
         let values = self
             .inputs
             .get(name)
@@ -87,30 +113,41 @@ impl Fixture {
 }
 
 impl Parameter {
-    /// The argument's words: one for a scalar, the row-major elements of an
-    /// array.
-    fn encode(&self, value: &Value) -> Result<Vec<i64>> {
+    fn encode(&self, value: &Value) -> Result<Encoded> {
         let mut leaves = Vec::new();
+        let mut shape = flatten(value, &mut leaves)?;
+        if self.dtype == Dtype::Complex {
+            ensure!(shape.pop() == Some(2), "a complex value is a [re, im] pair");
+        }
         match self.kind {
-            Kind::Scalar => leaves.push(value),
+            Kind::Scalar => ensure!(shape.is_empty(), "scalar parameter given as an array"),
             Kind::Array => {
-                let shape = flatten(value, &mut leaves)?;
+                ensure!(!shape.is_empty(), "array parameter given as a scalar");
                 if let Some(expected) = &self.shape {
                     ensure!(&shape == expected, "shape {shape:?}, expected {expected:?}");
                 }
             }
         }
-        leaves
-            .into_iter()
-            .map(|leaf| {
-                Ok(match self.dtype {
-                    Dtype::Float => float(leaf)?.to_word(),
-                    Dtype::Int => int(leaf)?,
-                    Dtype::Bool => boolean(leaf)?.to_word(),
-                })
-            })
-            .collect()
+        let words = match self.dtype {
+            Dtype::Float => encode_each(leaves.chunks(1), |v| float(v[0]))?,
+            Dtype::Int => encode_each(leaves.chunks(1), |v| int(v[0]))?,
+            Dtype::Bool => encode_each(leaves.chunks(1), |v| boolean(v[0]))?,
+            Dtype::Complex => encode_each(leaves.chunks(2), |v| Ok(C32::new(float(v[0])?, float(v[1])?)))?,
+        };
+        Ok(Encoded { shape, words })
     }
+}
+
+/// The words of the values parsed from each group of leaves.
+fn encode_each<'a, T: Element>(
+    groups: impl Iterator<Item = &'a [&'a Value]>,
+    parse: impl Fn(&[&Value]) -> Result<T>,
+) -> Result<Vec<i64>> {
+    let mut words = Vec::new();
+    for group in groups {
+        parse(group)?.push_words(&mut words);
+    }
+    Ok(words)
 }
 
 /// Collects the leaves of a nested list in row-major order and returns its

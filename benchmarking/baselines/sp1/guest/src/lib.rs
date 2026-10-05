@@ -3,42 +3,53 @@
 //!
 //! Each kernel parameter arrives as one raw buffer of little-endian 64-bit
 //! words (`sp1_zkvm::io::read_vec`, one copy), and the output is committed as
-//! one raw buffer (`commit_slice`); see `ds1000_zkvm` for the layout.
+//! one raw buffer (`commit_slice`); see `zkvm_kernels` for the layout.
 #![no_std]
 
 extern crate alloc;
 
-pub use ds1000_zkvm;
 pub use sp1_zkvm;
+pub use zkvm_kernels;
 
 use alloc::vec::Vec;
 
 /// Reads the kernel parameters from SP1's private input stream.
 pub struct Sp1Input;
 
-impl ds1000_zkvm::Input for Sp1Input {
+impl zkvm_kernels::Input for Sp1Input {
     fn read_words(&mut self) -> Vec<i64> {
         let bytes = sp1_zkvm::io::read_vec();
-        ds1000_zkvm::words_from_le_bytes(&bytes).expect("a parameter is a whole number of words")
+        zkvm_kernels::words_from_le_bytes(&bytes).expect("a parameter is a whole number of words")
     }
 }
 
-/// Commits `output` as the public values.
-pub fn commit<T: ds1000_zkvm::Publics>(output: &T) {
-    let words = output.encode_to_vec();
-    sp1_zkvm::io::commit_slice(ds1000_zkvm::words_as_le_bytes(&words));
+/// Commits the case's words as the public values.
+pub fn commit(words: &[i64]) {
+    sp1_zkvm::io::commit_slice(zkvm_kernels::words_as_le_bytes(words));
 }
 
 /// The guest for one case: read the private inputs, run the kernel, and
-/// commit its output as the public values.
+/// commit its output (with the input shapes, for a shape-generic program).
 #[macro_export]
 macro_rules! guest {
-    ($case:ident) => {
+    (fixed $($case:ident)::+) => {
         $crate::sp1_zkvm::entrypoint!(main);
 
         fn main() {
-            let output = $crate::ds1000_zkvm::$case::main(&mut $crate::Sp1Input);
-            $crate::commit(&output);
+            let words = $crate::zkvm_kernels::run_fixed(&mut $crate::Sp1Input, |input| {
+                $crate::zkvm_kernels::$($case)::+::main(input)
+            });
+            $crate::commit(&words);
+        }
+    };
+    (shaped $($case:ident)::+) => {
+        $crate::sp1_zkvm::entrypoint!(main);
+
+        fn main() {
+            let words = $crate::zkvm_kernels::run_shaped(&mut $crate::Sp1Input, |args| {
+                $crate::zkvm_kernels::$($case)::+::main(args)
+            });
+            $crate::commit(&words);
         }
     };
 }
