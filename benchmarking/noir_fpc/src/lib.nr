@@ -815,6 +815,17 @@ fn test_to_signed_rejects_large_magnitude() {
 }
 
 #[test]
+fn test_qsign() {
+    // np.sign on floats returns -1.0 / 0.0 / 1.0 (Q32), on integers -1/0/1.
+    assert(qsign(-q_from_int(5)) == -Q);
+    assert(qsign(0) == 0);
+    assert(qsign(3) == Q);
+    assert(qsign_i(-7) == -1);
+    assert(qsign_i(0) == 0);
+    assert(qsign_i(7) == 1);
+}
+
+#[test]
 fn test_qlt() {
     assert(qlt(-q_from_int(3), -q_from_int(2)));
     assert(qlt(-q_from_int(2), q_from_int(0)));
