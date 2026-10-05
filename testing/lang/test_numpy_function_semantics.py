@@ -120,10 +120,13 @@ def test_unique_inverse_one_hot_matches_numpy():
     ("a % b", (-7, 3)),
     ("a % b", (7, 3)),
     ("a // b", (-7, 3)),
+    ("a // b", (7, -2)),
+    ("a % b", (7, -2)),
 ])
 def test_folded_integer_remainder_matches_runtime(expr, args):
     # The builder folded `%` with Rust's truncating remainder (-7 % 3 = -1)
-    # while every backend computes 2, as Python does.
+    # and `//` with `div_euclid` (7 // -2 = -3); circuits and the mock
+    # compute Python's values (2 and -4).
     a, b = args
     folded = compile_kernel(f"def kernel():\n    a = {a}\n    b = {b}\n    return {expr}\n")
     runtime = compile_kernel(f"def kernel(a: Integer, b: Integer):\n    return {expr}\n")
@@ -228,3 +231,23 @@ def test_bool_array_and_keeps_logical_form():
     satisfied, outputs = run_mock(program, a)
     assert satisfied and outputs[0] == len(expected)
     assert outputs[2:2 + len(expected)] == list(expected)
+
+
+# ── the mock computes powers the way the circuit does ────────────────────
+
+BN254_P = 0x30644E72E131A029B85045B68181585D2833E84879B9709143E1F593F0000001
+
+
+@pytest.mark.parametrize("source, args", [
+    ('def kernel(a: Integer):\n    return a ** 101\n', (-1,)),  # mock gave 1
+    ('def kernel(a: Integer, n: Integer):\n    return a ** n\n', (3, 5)),
+    ('def kernel(x: Float, n: Integer):\n    return x ** n\n', (1.1, 3)),
+    ('def kernel(x: Float):\n    return x ** 7\n', (1.37,)),
+])
+def test_mock_power_matches_halo2_base(source, args):
+    program = compile_kernel(source)
+    mock = program.prove(*args, backend="mock")
+    circuit = program.prove(*args, backend="halo2-base")
+    mock_values = [int(e.split("=")[1]) % BN254_P for e in mock.public_values]
+    circuit_values = [int.from_bytes(bytes.fromhex(h), "little") for h in circuit.public_values]
+    assert mock_values == circuit_values

@@ -2624,18 +2624,15 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
                 None
             }
         }),
+        // Same definition as the mock and the circuits
+        // (`kernel::div_rem_or_zero`, Python floor semantics: `-7 // 2 ==
+        // -4`, `7 % -2 == -1`). A zero divisor is left unfolded. Folding
+        // used `div_euclid` and Rust's truncating `%`, so a constant
+        // operand gave a different value from a runtime one.
         IR::FloorDivI | IR::FloorDivIPinned { .. } => int_binary_ir(ir_id, args, |a, b| {
-            if b != 0 {
-                Some(a.div_euclid(b))
-            } else {
-                None
-            }
+            python_floor_div_rem(a, b).map(|(q, _)| q)
         }),
-        // Same convention as `FloorDivI` above and as every backend
-        // (`kernel::fp_floor_div`): the Euclidean remainder, in [0, |b|).
-        // Rust's `%` truncates (-7 % 3 = -1), so a folded constant used to
-        // differ from the circuit's value for the same operands.
-        IR::ModI => int_binary_ir(ir_id, args, |a, b| if b != 0 { Some(a.rem_euclid(b)) } else { None }),
+        IR::ModI => int_binary_ir(ir_id, args, |a, b| python_floor_div_rem(a, b).map(|(_, r)| r)),
         IR::PowI => int_binary_ir(ir_id, args, |a, b| {
             if b >= 0 {
                 Some(a.pow(b as u32))
@@ -3158,6 +3155,20 @@ fn unknown_value_for_ir(ir: &IR, ir_id: StmtId) -> Value {
 // ---------------------------------------------------------------------------
 // Helper functions
 // ---------------------------------------------------------------------------
+
+/// Python `divmod` for a non-zero divisor (the kernel's `Rounding::Floor`),
+/// `None` for a zero divisor or a quotient outside i64.
+fn python_floor_div_rem(a: i64, b: i64) -> Option<(i64, i64)> {
+    if b == 0 {
+        return None;
+    }
+    let (q, r) = crate::prove::kernel::div_rem_or_zero(
+        a as i128,
+        b as i128,
+        crate::prove::kernel::Rounding::Floor,
+    );
+    Some((i64::try_from(q).ok()?, i64::try_from(r).ok()?))
+}
 
 fn int_binary_ir(ir_id: StmtId, args: &[Value], op: impl Fn(i64, i64) -> Option<i64>) -> Value {
     let la = args[0].int_val();

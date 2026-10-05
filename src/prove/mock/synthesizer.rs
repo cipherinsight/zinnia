@@ -123,11 +123,9 @@ impl Synthesizer for MockSynthesizer {
             let pos = self.pow_i(base, &MockCell(kernel::i64_to_fp(-e)))?;
             return self.inv_i(&pos);
         }
-        let mut result = base.fp();
-        for _ in 1..e.min(64) {
-            result = result * base.fp();
-        }
-        Ok(MockCell(result))
+        // The exact power, as the circuits compute it (the old loop stopped
+        // at 63 factors, so `(-1) ** 101` gave 1).
+        Ok(MockCell(base.fp().pow_vartime([e as u64])))
     }
 
     fn abs_i(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {
@@ -230,6 +228,38 @@ impl Synthesizer for MockSynthesizer {
         let log_a = self.log_f(a)?;
         let (b_log_a, _) = kernel::fp_mul_rescale(b.fp(), log_a.fp(), self.prec());
         self.exp_f(&MockCell(b_log_a))
+    }
+
+    /// Float base, integer exponent: repeated fixed-point multiplication,
+    /// rescaling after each product as the circuits do (the trait default
+    /// went through `exp(n * log a)` in f64, which differs in the low bits;
+    /// cases 0329/0330). A negative exponent divides 1 by the power.
+    fn pow_f_int(&mut self, base: &MockCell, exp: &MockCell) -> Result<MockCell, ProvingError> {
+        let e = kernel::fp_to_i64(exp.fp());
+        let one = kernel::quantize_to_fp(1.0, self.prec());
+        let mut power = one;
+        // The circuit multiplies one factor at a time (and accepts only
+        // small exponents); a huge witness exponent must not hang the mock,
+        // so beyond 64 factors square-and-multiply is used instead.
+        if e.unsigned_abs() <= 64 {
+            for _ in 0..e.unsigned_abs() {
+                power = kernel::fp_mul_rescale(power, base.fp(), self.prec()).0;
+            }
+        } else {
+            let mut square = base.fp();
+            let mut rest = e.unsigned_abs();
+            while rest > 0 {
+                if rest & 1 == 1 {
+                    power = kernel::fp_mul_rescale(power, square, self.prec()).0;
+                }
+                square = kernel::fp_mul_rescale(square, square, self.prec()).0;
+                rest >>= 1;
+            }
+        }
+        if e < 0 {
+            return self.div_f(&MockCell(one), &MockCell(power));
+        }
+        Ok(MockCell(power))
     }
 
     fn abs_f(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {

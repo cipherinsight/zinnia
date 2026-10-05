@@ -149,13 +149,10 @@ impl IntInterval {
         Self { min: lo, max: hi }
     }
 
-    /// Floor division (`//`, the IR's `FloorDivI`).
-    ///
-    /// The backends compute `FloorDivI`/`ModI` with Euclidean semantics
-    /// (remainder in `[0, |b|)`), which differs from Python's floor
-    /// division by one when the divisor is negative and the division is
-    /// inexact. The interval covers both: for a divisor that may be
-    /// negative the upper end is widened by one.
+    /// Floor division (`//`, the IR's `FloorDivI`, Python semantics like
+    /// `kernel::fp_floor_div`). For a divisor that may be negative the
+    /// upper end is widened by one, so the interval also covers the
+    /// Euclidean quotient older backends computed.
     pub fn floor_div(a: Self, b: Self) -> Self {
         if b.contains(0) {
             return Self::unbounded();
@@ -205,9 +202,8 @@ impl IntInterval {
             };
             Self { min: 0, max: cap }
         } else {
-            // b.max < 0. Python's remainder lies in (b, 0], the backends'
-            // Euclidean remainder in [0, |b|); cover both (see
-            // `floor_div`).
+            // b.max < 0. Python's remainder lies in (b, 0]; the interval
+            // also covers the Euclidean [0, |b|) (see `floor_div`).
             let lower = b.min.saturating_add(1);
             Self {
                 min: lower,

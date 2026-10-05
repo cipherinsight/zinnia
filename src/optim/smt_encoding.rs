@@ -188,6 +188,15 @@ pub trait IROp {
 /// One implementer: the `IR` enum itself. The match must cover every
 /// variant (compile-time exhaustiveness). Fallback arms call
 /// `fresh_unconstrained()` with a comment naming the reason.
+/// For `a` and `b`: (whether the floor result differs from the
+/// Euclidean one, i.e. `b < 0` and `a mod b != 0`; the Euclidean `a mod b`).
+fn floor_adjustment(a: &Int, b: &Int) -> (Bool, Int) {
+    let zero = Int::from_i64(0);
+    let r = a.modulo(b);
+    let shift = Bool::and(&[&b.lt(&zero), &r.eq(&zero).not()]);
+    (shift, r)
+}
+
 impl IROp for IR {
     fn smt_encode(&self, ctx: &mut SmtEncodingCtx, args: &[Z3Term]) -> Z3Term {
         match self {
@@ -214,19 +223,30 @@ impl IROp for IR {
                 let b = args[1].as_int();
                 Z3Term::Int(Int::mul(&[&a, &b]))
             }
-            IR::DivI | IR::FloorDivI | IR::FloorDivIPinned { .. } => {
-                // SMT-LIB integer `div`/`mod` are Euclidean (the remainder
-                // is in [0, |b|)), the same convention the backends use for
-                // `FloorDivI`/`ModI` (`kernel::fp_floor_div`). `DivI` is
-                // exact division; on exact operands the two agree.
+            // SMT-LIB integer `div`/`mod` are Euclidean (`0 <= mod <
+            // |b|`). `FloorDivI`/`ModI` follow Python (the kernel's
+            // `Rounding::Floor`): for a negative divisor and a non-zero
+            // Euclidean remainder, the floor quotient is one less and the
+            // remainder `mod + b`. `DivI` is exact division, where all
+            // conventions agree.
+            IR::DivI => {
                 let a = args[0].as_int();
                 let b = args[1].as_int();
                 Z3Term::Int(a.div(&b))
             }
+            IR::FloorDivI | IR::FloorDivIPinned { .. } => {
+                let a = args[0].as_int();
+                let b = args[1].as_int();
+                let (shift, _) = floor_adjustment(&a, &b);
+                let one = Int::from_i64(1);
+                let q = a.div(&b);
+                Z3Term::Int(shift.ite(&Int::sub(&[&q, &one]), &q))
+            }
             IR::ModI => {
                 let a = args[0].as_int();
                 let b = args[1].as_int();
-                Z3Term::Int(a.modulo(&b))
+                let (shift, r) = floor_adjustment(&a, &b);
+                Z3Term::Int(shift.ite(&Int::add(&[&r, &b]), &r))
             }
             IR::PowI => {
                 // `Int::power` returns Real in z3 0.20. Forcing the result
@@ -544,6 +564,22 @@ mod tests {
     }
 
     /// Sanity: SelectI on a true cond evaluates to the then-branch.
+    #[test]
+    fn smt_encode_floor_div_mod_follow_python() {
+        // (a, b) -> Python (a // b, a % b)
+        for (a, b, q, r) in [(-7, 2, -4, 1), (7, -2, -4, -1), (7, 2, 3, 1), (-8, -2, 4, 0)] {
+            let mut ctx = SmtEncodingCtx::new();
+            let args = [Z3Term::Int(Int::from_i64(a)), Z3Term::Int(Int::from_i64(b))];
+            let quotient = IR::FloorDivI.smt_encode(&mut ctx, &args).as_int();
+            let remainder = IR::ModI.smt_encode(&mut ctx, &args).as_int();
+            for (term, expected, what) in [(quotient, q, "//"), (remainder, r, "%")] {
+                let solver = Solver::new();
+                solver.assert(term.eq(&Int::from_i64(expected)).not());
+                assert_eq!(solver.check(), SatResult::Unsat, "{a} {what} {b} != {expected}");
+            }
+        }
+    }
+
     #[test]
     fn smt_encode_select_i_constant_cond() {
         let mut ctx = SmtEncodingCtx::new();
