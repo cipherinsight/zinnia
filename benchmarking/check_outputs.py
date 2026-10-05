@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Position-aware output check: Zinnia's circuit outputs vs NumPy.
 
-For every DS-1000 performance-set case with an input fixture
-(`run_halo2_baselines.INPUT_BUILDERS`):
+For every case of the DS-1000 performance set (`datasets/case_sets/
+ds1000_perf.json`, status `perf`), on both fixture inputs A and B
+(`datasets/ds1000/<case>/fixture.json`, loaded by `harness/fixtures.py`):
 
-1. NumPy reference: run the kernel body as plain NumPy on the fixture (the
-   `@zk_circuit` decorator replaced by an identity). No per-case overrides: a
-   kernel NumPy rejects is reported as `numpy_error`.
+1. NumPy reference: run the kernel body as plain NumPy on the fixture input
+   (`harness/reference.py`: the `@zk_circuit` decorator replaced by an
+   identity). No per-case overrides: a kernel NumPy rejects is reported as
+   `numpy_error`.
 2. Circuit outputs: compile the kernel, prove it on the mock backend, and
    rebuild the full output sequence in return order: the exposed publics in
    statement (= exposure) order, with every constant the compiler elided from
@@ -19,8 +21,9 @@ For every DS-1000 performance-set case with an input fixture
    row-major positions in either the compact layout (flat prefix) or a padded
    layout (prefix rectangle of an envelope shape). Padding slots are not data
    and are not compared. The layout that matched is reported per part.
-   Integers compare exactly; floats within FLOAT_ATOL + FLOAT_RTOL * |x|
-   (the circuit computes in Q32 fixed point).
+   Integers compare exactly; floats within atol + rtol * |x| with the
+   case set's `float_tolerance` for the case (1e-6 + 1e-6 |x| when it gives
+   none, the harness default).
 4. Tampered-output control, per case: the same comparison is run on a copy of
    the circuit outputs with one runtime value changed, and on a copy with two
    different runtime values swapped. Both must be rejected; otherwise the
@@ -30,8 +33,8 @@ This replaces the multiset comparison of `audit_bindings.py` (audit finding
 M9), which could not see wrong positions.
 
 Usage:
-    python check_outputs.py [--cases all | 0301,0415] [--output check_outputs.json]
-                            [--timeout 600] [--memory 8G]
+    python benchmarking/check_outputs.py [--cases perf | 0301,0415]
+        [--inputs A,B] [--output check_outputs.json] [--timeout 600] [--memory 8G]
 
 Each case runs in its own process under the memory cap (`eval-redo/tools/
 memrun.sh` when present). Exit status 0 iff every case passes. Status
@@ -44,7 +47,6 @@ order unspecified); `pass_empty_output` means the result has no elements
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import itertools
 import json
 import os
@@ -56,45 +58,53 @@ from pathlib import Path
 
 THIS_DIR = Path(__file__).resolve().parent
 ROOT = THIS_DIR.parent
+DATASET = THIS_DIR / "datasets" / "ds1000"
+CASE_SET = THIS_DIR / "datasets" / "case_sets" / "ds1000_perf.json"
 MEMRUN = Path("/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh")
 
 Q32 = 1 << 32
-FLOAT_ATOL = 1e-3
-FLOAT_RTOL = 1e-4
+DEFAULT_TOLERANCE = (1e-6, 1e-6)  # (atol, rtol), the harness default
+
+
+def case_name(spec: str) -> str:
+    return spec if spec.startswith("ds1000_case") else f"ds1000_case{spec}"
+
+
+def perf_cases() -> dict[str, dict]:
+    """The perf cases of the case set, by name."""
+    entries = json.loads(CASE_SET.read_text())["cases"]
+    return {e["case"]: e for e in entries if e["status"] == "perf"}
+
+
+def case_tolerance(entry: dict | None) -> tuple[float, float]:
+    tol = (entry or {}).get("float_tolerance") or {}
+    return tol.get("atol", DEFAULT_TOLERANCE[0]), tol.get("rtol", DEFAULT_TOLERANCE[1])
 
 
 # ── NumPy reference ──────────────────────────────────────────────────────
 
-def _identity_decorator(method=None, **_kwargs):
-    if method is None:
-        return lambda m: m
-    return method
-
-
-def numpy_reference(case: str, args: list, stable_sort: bool = False):
+def numpy_reference(kernel_path: Path, function: str, args: list, stable_sort: bool = False):
     """Run the kernel body as plain NumPy; returns its return value.
 
     With `stable_sort`, `np.argsort`/`np.sort` default to `kind="stable"`.
     NumPy's default sort kind leaves the order of equal elements
     unspecified, so a circuit that orders ties stably computes a valid
     result that may differ from the default run."""
-    import numpy as np
-    import zinnia
+    import types
 
-    kernel_path = THIS_DIR / f"ds1000_case{case}" / "kernel.py"
-    namespace = {name: getattr(zinnia, name) for name in dir(zinnia) if not name.startswith("_")}
-    numpy = np
+    import numpy as np
+    from benchmarking.harness.reference import kernel_namespace
+
+    namespace = kernel_namespace()
     if stable_sort:
-        import types
-        numpy = types.SimpleNamespace(**{k: getattr(np, k) for k in dir(np) if not k.startswith("__")})
-        numpy.argsort = lambda a, axis=-1, kind=None, **kw: np.argsort(a, axis=axis, kind=kind or "stable", **kw)
-        numpy.sort = lambda a, axis=-1, kind=None, **kw: np.sort(a, axis=axis, kind=kind or "stable", **kw)
-    namespace.update(np=numpy, zk_circuit=_identity_decorator, zk_chip=_identity_decorator,
-                     zk_external=_identity_decorator)
+        shim = types.SimpleNamespace(**{k: getattr(np, k) for k in dir(np) if not k.startswith("__")})
+        shim.argsort = lambda a, axis=-1, kind=None, **kw: np.argsort(a, axis=axis, kind=kind or "stable", **kw)
+        shim.sort = lambda a, axis=-1, kind=None, **kw: np.sort(a, axis=axis, kind=kind or "stable", **kw)
+        namespace["np"] = shim
     source = kernel_path.read_text().replace("from zinnia import *", "").replace(
         "import numpy as np", "")
     exec(compile(source, str(kernel_path), "exec"), namespace)
-    return namespace["kernel"](*[np.array(a, copy=True) if isinstance(a, np.ndarray) else a
+    return namespace[function](*[np.array(a, copy=True) if isinstance(a, np.ndarray) else a
                                  for a in args])
 
 
@@ -141,10 +151,14 @@ def circuit_outputs(proof, elided: list) -> list[tuple[float, str]]:
 
 # ── Position-aware comparison ────────────────────────────────────────────
 
+TOLERANCE = list(DEFAULT_TOLERANCE)  # set per case by `check_case`
+
+
 def close(actual: float, expected: float, is_float: bool) -> bool:
     if not is_float:
         return actual == expected
-    return abs(actual - expected) <= FLOAT_ATOL + FLOAT_RTOL * abs(expected)
+    atol, rtol = TOLERANCE
+    return abs(actual - expected) <= atol + rtol * abs(expected)
 
 
 def padded_positions(shape: tuple, envelope: tuple) -> list[int]:
@@ -260,7 +274,8 @@ def tampered_copies(outputs: list, element_slots: list[int]):
         a, b = outputs[i][0], outputs[j][0]
         # Values the float tolerance cannot tell apart would make a swap
         # undetectable by construction, not by a weak check.
-        if abs(a - b) > 2 * (FLOAT_ATOL + FLOAT_RTOL * max(abs(a), abs(b))):
+        atol, rtol = TOLERANCE
+        if abs(a - b) > 2 * (atol + rtol * max(abs(a), abs(b))):
             swapped = list(outputs)
             swapped[i], swapped[j] = swapped[j], swapped[i]
             copies.append(("values_swapped", swapped))
@@ -270,34 +285,13 @@ def tampered_copies(outputs: list, element_slots: list[int]):
 
 # ── One case ─────────────────────────────────────────────────────────────
 
-def check_case(case: str) -> dict:
+def check_input(program, kernel_path: Path, function: str, args: list) -> dict:
+    """The comparison and the controls for one fixture input."""
     import numpy as np
-    from run_halo2_baselines import INPUT_BUILDERS
-    from run_zinnia_noir import _coerce_arg
-    from zinnia.api.zk_circuit import ZKCircuit
 
-    rec: dict = {"case": case, "status": "fail"}
-    kernel_path = THIS_DIR / f"ds1000_case{case}" / "kernel.py"
-    spec = importlib.util.spec_from_file_location(f"check_case{case}", kernel_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    rec: dict = {"status": "fail"}
     try:
-        program = ZKCircuit.from_method(module.kernel).compile()
-    except Exception as e:  # noqa: BLE001
-        rec.update(status="compile_error", error=f"{type(e).__name__}: {str(e)[:300]}")
-        return rec
-
-    fixture = INPUT_BUILDERS[case]()
-
-    def lookup(name: str):
-        for key in (name, name.lower(), name.upper(), f"{name}_val", f"{name.lower()}_val"):
-            if key in fixture:
-                return fixture[key]
-        raise KeyError(f"no fixture value for kernel parameter {name!r}")
-
-    args = [_coerce_arg(lookup(p.name), p.export().get("dt")) for p in program.program_inputs]
-    try:
-        parts = result_parts(numpy_reference(case, args))
+        parts = result_parts(numpy_reference(kernel_path, function, args))
     except Exception as e:  # noqa: BLE001
         rec.update(status="numpy_error", error=f"{type(e).__name__}: {e}")
         return rec
@@ -315,7 +309,7 @@ def check_case(case: str) -> dict:
     status = "pass"
     layouts = match(parts, outputs, float_parts)
     if layouts is None:
-        stable_parts = result_parts(numpy_reference(case, args, stable_sort=True))
+        stable_parts = result_parts(numpy_reference(kernel_path, function, args, stable_sort=True))
         layouts = match(stable_parts, outputs, float_parts)
         if layouts is None:
             rec.update(status="mismatch",
@@ -344,10 +338,53 @@ def check_case(case: str) -> dict:
     return rec
 
 
+STATUS_RANK = ["pass", "pass_stable_ties", "pass_empty_output", "weak_control",
+               "numpy_error", "unsatisfied", "mismatch", "fail"]
+
+
+def check_case(case: str, inputs: list[str]) -> dict:
+    from benchmarking.harness.fixtures import load_fixture
+    from benchmarking.harness.kernels import compile_kernel
+
+    case = case_name(case)
+    rec: dict = {"case": case, "status": "fail"}
+    directory = DATASET / case
+    entry = perf_cases().get(case)
+    TOLERANCE[:] = case_tolerance(entry)
+    rec["tolerance"] = list(TOLERANCE)
+    fixture = load_fixture(directory / "fixture.json")
+    try:
+        program = compile_kernel(directory / "kernel.py", fixture.function)
+    except BaseException as e:  # noqa: BLE001 - PyO3 panics derive from BaseException
+        if isinstance(e, (KeyboardInterrupt, SystemExit)):
+            raise
+        rec.update(status="compile_error", error=f"{type(e).__name__}: {str(e)[:300]}")
+        return rec
+
+    per_input = {}
+    for name in inputs:
+        try:
+            per_input[name] = check_input(program, directory / "kernel.py", fixture.function,
+                                          fixture.arguments(name))
+        except BaseException as e:  # noqa: BLE001
+            if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                raise
+            per_input[name] = {"status": "fail", "error": f"{type(e).__name__}: {str(e)[:300]}"}
+    rec["inputs"] = per_input
+    # The case's status is its worst input's.
+    rec["status"] = max((r["status"] for r in per_input.values()),
+                        key=lambda st: STATUS_RANK.index(st) if st in STATUS_RANK else len(STATUS_RANK))
+    errors = [r.get("error") for r in per_input.values() if r.get("error")]
+    if errors:
+        rec["error"] = errors[0]
+    rec["layouts"] = next((r["layouts"] for r in per_input.values() if "layouts" in r), [])
+    return rec
+
+
 # ── Driver ───────────────────────────────────────────────────────────────
 
-def run_isolated(case: str, timeout: float, memory: str) -> dict:
-    cmd = [sys.executable, str(Path(__file__).resolve()), "--one", case]
+def run_isolated(case: str, inputs: list[str], timeout: float, memory: str) -> dict:
+    cmd = [sys.executable, str(Path(__file__).resolve()), "--one", case, "--inputs", ",".join(inputs)]
     if MEMRUN.exists():
         cmd = [str(MEMRUN)] + cmd
     env = dict(os.environ, MEMRUN_MAX=memory, ZINNIA_SKIP_RELEASE_BUILD="1")
@@ -366,25 +403,26 @@ def run_isolated(case: str, timeout: float, memory: str) -> dict:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--cases", default="all", help="comma-separated case ids, or 'all'")
+    ap.add_argument("--cases", default="perf", help="comma-separated case ids, or 'perf'")
+    ap.add_argument("--inputs", default="A,B", help="fixture inputs to check")
     ap.add_argument("--output", default=str(THIS_DIR / "check_outputs.json"))
     ap.add_argument("--timeout", type=float, default=600.0)
     ap.add_argument("--memory", default="8G", help="per-case memory cap (memrun.sh)")
     ap.add_argument("--one", help=argparse.SUPPRESS)
     args = ap.parse_args()
 
-    sys.path.insert(0, str(THIS_DIR))
     sys.path.insert(0, str(ROOT))
     os.environ.setdefault("ZINNIA_SKIP_RELEASE_BUILD", "1")
+    inputs = [s.strip() for s in args.inputs.split(",")]
     if args.one:
-        print("RESULT " + json.dumps(check_case(args.one)), flush=True)
+        print("RESULT " + json.dumps(check_case(args.one, inputs)), flush=True)
         return
 
-    from run_halo2_baselines import INPUT_BUILDERS
-    cases = sorted(INPUT_BUILDERS) if args.cases == "all" else [c.strip() for c in args.cases.split(",")]
+    cases = (sorted(perf_cases()) if args.cases == "perf"
+             else [case_name(c.strip()) for c in args.cases.split(",")])
     results = []
     for i, case in enumerate(cases, 1):
-        rec = run_isolated(case, args.timeout, args.memory)
+        rec = run_isolated(case, inputs, args.timeout, args.memory)
         results.append(rec)
         detail = rec.get("error") or ",".join(rec.get("layouts", [])) or ""
         print(f"[{i:3}/{len(cases)}] {case}: {rec['status']:13} {detail[:110]}", flush=True)
