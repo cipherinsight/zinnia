@@ -158,6 +158,19 @@ fn floor_div_and_mod_by_constant_are_pinned() {
 }
 
 #[test]
+fn pinned_width_floor_division_is_pinned() {
+    for bits in [5u32, 12] {
+        let op: Box<Op> = Box::new(move |s, c| Ok(vec![s.floor_div_i_pinned(&c[0], &c[1], bits)?]));
+        for (a, b) in [(24i64, 4i64), (23, 5), (0, 3), (7, 0)] {
+            let (expected, _) = kernel::fp_floor_div(int(a), int(b));
+            assert_sound(&format!("{a} // {b} [{bits} bits]"), &*op, &[int(a), int(b)], &[expected], &[b.max(1) as u128]);
+        }
+        // A quotient that does not fit the certified width has no witness.
+        assert!(!synthesize(&*op, &[int(1 << 20), int(1)], &[]).accepted);
+    }
+}
+
+#[test]
 fn fixed_point_division_is_pinned() {
     let div = binary(|s, a, b| s.div_f(a, b));
     for (a, b) in [(1.0, 3.0), (-1.5, 2.5), (10.0, -4.0), (7.25, 0.0), (0.0, -2.0), (1e6, 1e-3)] {

@@ -1101,6 +1101,48 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         Ok(self.div_rem(a, b, Rounding::Floor)?.0)
     }
 
+    /// `a // b` for operands the producer bounds by `2^divisor_bits` and
+    /// keeps non-negative (`IR::FloorDivIPinned`, the `-1` dimension of a
+    /// runtime reshape). The quotient, the remainder and `b - 1 - r` are
+    /// range-checked to that width instead of 64 bits. The checks are what
+    /// enforce the bound: if the producer were wrong the circuit would be
+    /// unsatisfiable, not unsound. Soundness as in `div_rem_nonzero`:
+    /// `r, b' - 1 - r ∈ [0, 2^w)` give `1 <= b' <= 2^(w+1)` and `r < b'`, and
+    /// `b'·q + r < 2^(2w+1) + 2^w` stays far below p. A zero divisor maps to
+    /// the division `0 / 1`, as in `div_rem`.
+    fn floor_div_i_pinned(
+        &mut self,
+        a: &Self::CellRef,
+        b: &Self::CellRef,
+        divisor_bits: u32,
+    ) -> Result<Self::CellRef, ProvingError> {
+        let bits = self.lookup_aligned(divisor_bits as usize);
+        if bits >= 64 {
+            return self.floor_div_i(a, b);
+        }
+        let b_is_zero = self.is_zero_bit(b);
+        let b_nonzero = self.add_i(b, &b_is_zero)?;
+        let a_masked = self.gate_cell((Fp::one() - b_is_zero.value) * a.value, |gate, ctx| {
+            gate.mul_not(ctx, b_is_zero.assigned, a.assigned)
+        });
+        let q_value = match (kernel::fp_to_i128(a_masked.value), kernel::fp_to_i128(b_nonzero.value)) {
+            (Some(av), Some(bv)) => kernel::div_rem_or_zero(av, bv, Rounding::Floor).0,
+            _ => 0,
+        };
+        let q = self.hint(kernel::i128_to_fp(q_value));
+        let r = self.gate_cell(a_masked.value - b_nonzero.value * q.value, |gate, ctx| {
+            gate.sub_mul(ctx, a_masked.assigned, b_nonzero.assigned, q.assigned)
+        });
+        self.range_check(&q, bits);
+        self.range_check(&r, bits);
+        let gap = self.gate_cell(b_nonzero.value - Fp::one() - r.value, |gate, ctx| {
+            let b_minus_r = gate.sub(ctx, b_nonzero.assigned, r.assigned);
+            gate.dec(ctx, b_minus_r)
+        });
+        self.range_check(&gap, bits);
+        Ok(q)
+    }
+
     /// Python remainder `a % b` (sign of the divisor).
     fn mod_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         Ok(self.div_rem(a, b, Rounding::Floor)?.1)
