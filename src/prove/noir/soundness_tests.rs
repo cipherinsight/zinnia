@@ -472,6 +472,7 @@ fn every_lowered_op_matches_the_mock() {
     let c21 = g.int(21);
     let c13 = g.int(13);
     let c10 = g.int(10);
+    let neg3_dyn = g.read_int("w");
     for (ir, args) in [
         (IR::AddI, vec![x, y]),
         (IR::SubI, vec![x, y]),
@@ -505,6 +506,44 @@ fn every_lowered_op_matches_the_mock() {
         (IR::SelectManyI { len: 1, lane: 0 }, vec![zero, x, y]),
         (IR::BoolCast, vec![x]),
         (IR::AssertU128LtBit { hi: 8, bit: 1, bits: 3 }, vec![y]),
+        // Bitwise (two's complement, x = -7 = ...11111001): constant masks
+        // of both signs, dynamic operands, and `~`.
+        (IR::BitAndI, vec![x, c13]),
+        (IR::BitAndI, vec![c13, x]),
+        (IR::BitAndI, vec![x, neg3]),
+        (IR::BitAndI, vec![x, y]),
+        (IR::BitAndI, vec![x, neg3_dyn]),
+        (IR::BitOrI, vec![x, c10]),
+        (IR::BitOrI, vec![x, y]),
+        (IR::BitXorI, vec![x, c21]),
+        (IR::BitXorI, vec![y, z]),
+        (IR::BitXorI, vec![x, neg3_dyn]),
+        (IR::BitNotI, vec![x]),
+    ] {
+        let r = g.push(ir, &args);
+        expose_i(&mut g, &mut approx, r);
+    }
+    // Bit tests: (x & 2^k) compared with 0 (a scaled bit), and a multi-bit
+    // mask compared with 0 on both sides.
+    for k in 0..4 {
+        let mask = g.int(1 << k);
+        let bit = g.push(IR::BitAndI, &[x, mask]);
+        for (ir, args) in [
+            (IR::GtI, vec![bit, zero]),
+            (IR::NeI, vec![bit, zero]),
+            (IR::EqI, vec![zero, bit]),
+            (IR::LteI, vec![bit, zero]),
+        ] {
+            let r = g.push(ir, &args);
+            expose_i(&mut g, &mut approx, r);
+        }
+    }
+    let low3 = g.push(IR::BitAndI, &[y, c13]);
+    for (ir, args) in [
+        (IR::GtI, vec![low3, zero]),
+        (IR::LtI, vec![zero, low3]),
+        (IR::GteI, vec![low3, zero]),
+        (IR::LtI, vec![low3, zero]),
     ] {
         let r = g.push(ir, &args);
         expose_i(&mut g, &mut approx, r);
@@ -583,7 +622,7 @@ fn every_lowered_op_matches_the_mock() {
 
     let graph = g.finish();
     let w = float_witness(
-        &[("x", -7), ("y", 3), ("z", 5), ("zi", 0)],
+        &[("x", -7), ("y", 3), ("z", 5), ("zi", 0), ("w", -3)],
         &[("f", -1.75), ("h", 2.5), ("s", 0.6), ("zf", 0.0)],
     );
     let (satisfied, mock) = mock_outputs(&graph, &w);

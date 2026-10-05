@@ -560,6 +560,14 @@ pub struct NoirEmitter<'a> {
     /// constants. A Q32 product with such a cell is exact (see
     /// [`NoirEmitter::exact_product`]).
     integral_float: HashMap<String, String>,
+    /// Cells that are non-negative by construction (bit compositions of
+    /// `low_bits`), so comparing them with 0 is a zero test.
+    nonneg_by_construction: HashSet<String>,
+    /// Cells equal to `2^k * bit` for a Noir `bool` expression `bit` (an AND
+    /// with a one-bit mask): their zero test is the bit itself.
+    scaled_bit: HashMap<String, String>,
+    /// `low_bits::<NB>(x)` decompositions already emitted: x -> (NB, name).
+    low_bits_of: HashMap<String, (u32, String)>,
     /// IR-level forward-dataflow `fits-u32` bounds, keyed by stmt_id.
     /// Populated by [`super::bound_analysis::run`] before emit. The
     /// interpreter's per-stmt hook (`on_stmt_begin`) advances
@@ -601,6 +609,17 @@ enum Cmp {
 }
 
 impl Cmp {
+    /// The comparison with its operands swapped: `a cmp b` is
+    /// `b cmp.mirrored() a`.
+    fn mirrored(self) -> Self {
+        match self {
+            Cmp::Lt => Cmp::Gt,
+            Cmp::Le => Cmp::Ge,
+            Cmp::Gt => Cmp::Lt,
+            Cmp::Ge => Cmp::Le,
+        }
+    }
+
     fn op(self) -> &'static str {
         match self {
             Cmp::Lt => "<",
@@ -814,6 +833,9 @@ impl<'a> NoirEmitter<'a> {
     /// intervals allow it, a native u32 compare for u32 cells, else the
     /// library's gap-pinned `qlt` (`signed_cmp`).
     fn compare_i(&mut self, a: &str, b: &str, cmp: Cmp) -> String {
+        if let Some(v) = self.compare_nonneg_with_zero(a, b, cmp) {
+            return v;
+        }
         if let Some(v) = self.unsigned_cmp(a, b, cmp) {
             return v;
         }
@@ -915,6 +937,141 @@ impl<'a> NoirEmitter<'a> {
         let v = self.bind(expr);
         self.set_bound(&v, 1);
         v
+    }
+
+    /// `a cmp b` when one side is the literal 0 and the other is
+    /// non-negative by construction (`nonneg_by_construction`): `x < 0` is
+    /// 0, `x >= 0` is 1, `x > 0` is `x != 0` and `x <= 0` is `x == 0`. Only
+    /// facts a lowering guarantees qualify, never an interval.
+    fn compare_nonneg_with_zero(&mut self, a: &str, b: &str, cmp: Cmp) -> Option<String> {
+        let (x, cmp) = if self.s_int_of(b) == Some(0) {
+            (a, cmp)
+        } else if self.s_int_of(a) == Some(0) {
+            (b, cmp.mirrored())
+        } else {
+            return None;
+        };
+        if !self.nonneg_by_construction.contains(x) {
+            return None;
+        }
+        let x = x.to_string();
+        Some(match cmp {
+            Cmp::Lt => self.literal_int(0),
+            Cmp::Ge => self.literal_int(1),
+            Cmp::Gt => self.nonzero_flag(&x, true),
+            Cmp::Le => self.nonzero_flag(&x, false),
+        })
+    }
+
+    /// `a != b` (`nonzero`) or `a == b` when one side is the literal 0 and
+    /// the other a scaled bit: the bit or its negation.
+    fn scaled_bit_zero_test(&mut self, a: &str, b: &str, nonzero: bool) -> Option<String> {
+        let x = if self.s_int_of(b) == Some(0) {
+            a
+        } else if self.s_int_of(a) == Some(0) {
+            b
+        } else {
+            return None;
+        };
+        if !self.scaled_bit.contains_key(x) {
+            return None;
+        }
+        let x = x.to_string();
+        Some(self.nonzero_flag(&x, nonzero))
+    }
+
+    /// `x != 0` (`nonzero`) or `x == 0` as a 0/1 cell; for a scaled bit
+    /// `2^k * bit` it is the bit (or its negation).
+    fn nonzero_flag(&mut self, x: &str, nonzero: bool) -> String {
+        if let Some(bit) = self.scaled_bit.get(x).cloned() {
+            let expr = if nonzero { format!("{bit} as Field") } else { format!("(!{bit}) as Field") };
+            return self.bind_flag(&expr);
+        }
+        let (t, f) = if nonzero { (0, 1) } else { (1, 0) };
+        let xf = self.as_field(x);
+        self.bind_flag(&format!("if {xf} == 0 {{ {t} }} else {{ {f} }}"))
+    }
+
+    /// The `8 * nb` low bits of the two's complement of `x` (library
+    /// `low_bits`, which also proves x lies in the signed 64-bit window),
+    /// emitted once per cell and widened when a later mask needs more.
+    fn low_bits(&mut self, x: &str, nb: u32) -> String {
+        if let Some((have, name)) = self.low_bits_of.get(x) {
+            if *have >= nb {
+                return name.clone();
+            }
+        }
+        self.use_lib("low_bits");
+        let name = self.fresh();
+        let xf = self.as_field(x);
+        let _ = writeln!(self.body, "    let {}: [bool; {}] = low_bits::<{}>({});", name, nb * 8, nb, xf);
+        self.low_bits_of.insert(x.to_string(), (nb, name.clone()));
+        name
+    }
+
+    /// `x & mask` for a constant mask, as the mock's i64 `&`. A non-negative
+    /// mask below 2^56 selects bits of x's two's complement: the result is
+    /// the sum of the selected bits times their weights (non-negative by
+    /// construction; a one-bit mask gives a scaled bit). A negative mask
+    /// uses `x & m = x - (x & !m)` with `!m = -m - 1 >= 0`. Wider masks go
+    /// through the library's `bitand`.
+    fn and_with_mask(&mut self, x: &str, mask: i64) -> String {
+        if mask == 0 {
+            return self.literal_int(0);
+        }
+        if mask == -1 {
+            return x.to_string();
+        }
+        if mask < 0 {
+            let complement = self.and_with_mask(x, !mask);
+            let xf = self.as_field(x);
+            return self.bind(&format!("{} - {}", xf, self.as_field(&complement)));
+        }
+        let width = 64 - mask.leading_zeros();
+        if width > 56 {
+            self.use_lib("bitand");
+            return self.bind(&format!("bitand({}, {})", self.as_field(x), mask));
+        }
+        let bits = self.low_bits(x, width.div_ceil(8));
+        let terms: Vec<String> = (0..width)
+            .filter(|i| mask >> i & 1 == 1)
+            .map(|i| format!("({bits}[{i}] as Field) * {}", 1u64 << i))
+            .collect();
+        let out = self.bind_sum(&terms);
+        self.nonneg_by_construction.insert(out.clone());
+        if mask.count_ones() == 1 {
+            let k = mask.trailing_zeros();
+            self.scaled_bit.insert(out.clone(), format!("{bits}[{k}]"));
+        }
+        out
+    }
+
+    /// The constant operand of a binary op and the other operand, if exactly
+    /// one operand is a compile-time integer within i64.
+    fn constant_and_other(&self, a: &str, b: &str) -> Option<(i64, String)> {
+        match (self.s_int_of(a), self.s_int_of(b)) {
+            (None, Some(m)) => i64::try_from(m).ok().map(|m| (m, a.to_string())),
+            (Some(m), None) => i64::try_from(m).ok().map(|m| (m, b.to_string())),
+            _ => None,
+        }
+    }
+
+    /// Both operands as compile-time i64 constants.
+    fn constant_pair(&self, a: &str, b: &str) -> Option<(i64, i64)> {
+        let x = i64::try_from(self.s_int_of(a)?).ok()?;
+        let y = i64::try_from(self.s_int_of(b)?).ok()?;
+        Some((x, y))
+    }
+
+    /// `a | b` (`times == 1`) or `a ^ b` (`times == 2`) from the two's
+    /// complement identity `a + b - times * (a & b)`.
+    fn or_xor_from_and(&mut self, a: &str, b: &str, and: &str, times: u32) -> String {
+        let (af, bf, nf) = (self.as_field(a), self.as_field(b), self.as_field(and));
+        if times == 1 {
+            self.bind(&format!("{af} + {bf} - {nf}"))
+        } else {
+            self.bind(&format!("{af} + {bf} - 2 * {nf}"))
+        }
     }
 
     /// The Q32 product `floor(a * b / 2^32)` as an exact Field expression
@@ -1271,6 +1428,9 @@ impl<'a> NoirEmitter<'a> {
             u32_cells: HashSet::new(),
             literal_vals: HashMap::new(),
             integral_float: HashMap::new(),
+            nonneg_by_construction: HashSet::new(),
+            scaled_bit: HashMap::new(),
+            low_bits_of: HashMap::new(),
             stmt_bounds,
             current_stmt_bound: None,
             u32_amortizable,
@@ -1457,6 +1617,20 @@ impl<'a> NoirEmitter<'a> {
         }
     }
 
+    /// A cell holding the integer constant `value`, registered in
+    /// `literal_vals`. Small non-negative constants are bound as u32 so any
+    /// chain of integer ops they take part in (counters, axis dims, loop
+    /// indices) stays native; negative or large constants stay Field.
+    fn literal_int(&mut self, value: i64) -> String {
+        if value >= 0 && (value as u64) < (1u64 << 32) {
+            let v = self.bind_u32_with_bound(&value.to_string(), value as u64);
+            self.fold_literal(&v, ConcreteValue::Int(value as i128));
+            return v;
+        }
+        let expr = signed_to_field_decimal(value as i128);
+        self.bind_val(&expr, ConcreteValue::Int(value as i128))
+    }
+
     /// Register a compile-time constant for a cell derived only from other
     /// constants (e.g. `abs_f` of a literal, `float_cast` of a literal int).
     fn fold_literal(&mut self, v: &str, val: ConcreteValue) {
@@ -1571,20 +1745,7 @@ impl Synthesizer for NoirEmitter<'_> {
     }
 
     fn constant_int(&mut self, value: i64) -> Result<Self::CellRef, ProvingError> {
-        let expr = signed_to_field_decimal(value as i128);
-        // Bind small non-negative constants as u32 so any chain of
-        // integer ops they participate in (counters, axis dims, loop
-        // indices, sentinel-tagged accumulators) stays in u32-land and
-        // dodges the `Field as u32` RANGE blackbox on downstream
-        // compares. Negative or large constants stay on Field.
-        if value >= 0 && (value as u64) < (1u64 << 32) {
-            let v = self.bind_u32_with_bound(&value.to_string(), value as u64);
-            self.fold_literal(&v, ConcreteValue::Int(value as i128));
-            return Ok(v);
-        }
-        // `bind_val` registers the structural literal in `literal_vals`.
-        let v = self.bind_val(&expr, ConcreteValue::Int(value as i128));
-        Ok(v)
+        Ok(self.literal_int(value))
     }
 
     fn constant_float(&mut self, value: f64) -> Result<Self::CellRef, ProvingError> {
@@ -1692,14 +1853,34 @@ impl Synthesizer for NoirEmitter<'_> {
         noop_unsupported!(self, "inv_i")
     }
 
-    fn bit_and_i(&mut self, _a: &CellRef, _b: &CellRef) -> Result<CellRef, ProvingError> {
-        noop_unsupported!(self, "bit_and_i")
+    // Bitwise operators follow the mock's i64 two's complement operators.
+    // A constant mask reads bits of the other operand (`and_with_mask`);
+    // `|` and `^` reduce to `&` by `a | b = a + b - (a & b)` and
+    // `a ^ b = a + b - 2 (a & b)`; two dynamic operands use the library's
+    // `bitand` (native u64 AND on the window-checked operands).
+    fn bit_and_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some((x, y)) = self.constant_pair(a, b) {
+            return Ok(self.literal_int(x & y));
+        }
+        if let Some((mask, x)) = self.constant_and_other(a, b) {
+            return Ok(self.and_with_mask(&x, mask));
+        }
+        self.use_lib("bitand");
+        Ok(self.bind(&format!("bitand({}, {})", self.as_field(a), self.as_field(b))))
     }
-    fn bit_or_i(&mut self, _a: &CellRef, _b: &CellRef) -> Result<CellRef, ProvingError> {
-        noop_unsupported!(self, "bit_or_i")
+    fn bit_or_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some((x, y)) = self.constant_pair(a, b) {
+            return Ok(self.literal_int(x | y));
+        }
+        let and = self.bit_and_i(a, b)?;
+        Ok(self.or_xor_from_and(a, b, &and, 1))
     }
-    fn bit_xor_i(&mut self, _a: &CellRef, _b: &CellRef) -> Result<CellRef, ProvingError> {
-        noop_unsupported!(self, "bit_xor_i")
+    fn bit_xor_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some((x, y)) = self.constant_pair(a, b) {
+            return Ok(self.literal_int(x ^ y));
+        }
+        let and = self.bit_and_i(a, b)?;
+        Ok(self.or_xor_from_and(a, b, &and, 2))
     }
     fn shl_i(&mut self, _a: &CellRef, _b: &CellRef) -> Result<CellRef, ProvingError> {
         noop_unsupported!(self, "shl_i")
@@ -1707,8 +1888,12 @@ impl Synthesizer for NoirEmitter<'_> {
     fn shr_i(&mut self, _a: &CellRef, _b: &CellRef) -> Result<CellRef, ProvingError> {
         noop_unsupported!(self, "shr_i")
     }
-    fn bit_not_i(&mut self, _a: &CellRef) -> Result<CellRef, ProvingError> {
-        noop_unsupported!(self, "bit_not_i")
+    fn bit_not_i(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
+        // Two's complement: !a = -a - 1.
+        if let Some(x) = self.s_int_of(a).and_then(|x| i64::try_from(x).ok()) {
+            return Ok(self.literal_int(!x));
+        }
+        Ok(self.bind(&format!("0 - {} - 1", self.as_field(a))))
     }
 
     fn add_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
@@ -1806,6 +1991,9 @@ impl Synthesizer for NoirEmitter<'_> {
     }
 
     fn eq_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some(v) = self.scaled_bit_zero_test(a, b, false) {
+            return Ok(v);
+        }
         // Normalized-index dual equality: for norm = select(lt(x,0), x+N, x),
         // eq(norm, j) == (x == j) | (x == j - N) — two Field equalities
         // instead of the signed-comparison machinery that the normalization
@@ -1883,6 +2071,9 @@ impl Synthesizer for NoirEmitter<'_> {
         Ok(v)
     }
     fn ne_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some(v) = self.scaled_bit_zero_test(a, b, true) {
+            return Ok(v);
+        }
         if self.is_u32(a) && self.is_u32(b) {
             let v = self.bind_u32_with_bound(&format!("if {} == {} {{ 0 }} else {{ 1 }}", a, b), 1);
             return Ok(v);
@@ -2788,6 +2979,31 @@ mod tests {
         assert!(em.body.contains("qmul(x, "), "{}", em.body);
         em.product_sum_f(&[(n.clone(), x.clone()), (x.clone(), y.clone())]).unwrap();
         assert!(em.body.contains("qscale_down_raw((x * y))"), "{}", em.body);
+    }
+
+    // Bitwise ops with constant masks read the low bits of the operand once;
+    // a one-bit test against 0 is the bit itself (no zero test).
+    #[test]
+    fn constant_masks_share_one_bit_decomposition() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        let x = "x".to_string();
+        let mut masked = Vec::new();
+        for k in (0..11).rev() {
+            let mask = em.constant_int(1 << k).unwrap();
+            masked.push(em.bit_and_i(&x, &mask).unwrap());
+        }
+        assert_eq!(em.body.matches("low_bits::<2>(x)").count(), 1, "{}", em.body);
+        let zero = em.constant_int(0).unwrap();
+        em.gt_i(&masked[0], &zero).unwrap();
+        assert!(em.body.contains("[10] as Field;"), "{}", em.body);
+        assert!(!em.body.contains("qlt") && !em.body.contains("== 0"), "{}", em.body);
+        // A negative mask goes through the complement; two dynamic operands
+        // through the library's `bitand`.
+        let neg = em.constant_int(-8).unwrap();
+        em.bit_and_i(&x, &neg).unwrap();
+        em.bit_or_i(&x, &"y".to_string()).unwrap();
+        assert!(em.body.contains("bitand(x, y)"), "{}", em.body);
     }
 
     #[test]

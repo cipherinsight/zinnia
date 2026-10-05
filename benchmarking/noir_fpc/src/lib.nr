@@ -206,6 +206,58 @@ pub fn qsub(a: Field, b: Field) -> Field {
 }
 
 // ---------------------------------------------------------------------------
+// Bitwise operations (two's complement, as the mock's i64 operators)
+// ---------------------------------------------------------------------------
+//
+// For integers in two's complement, a | b = a + b - (a & b),
+// a ^ b = a + b - 2 (a & b) and a & m = a - (a & ~m) with ~m = -m - 1, so
+// every operator reduces to an AND; an AND with a non-negative mask m only
+// reads the low bits of a that are set in m.
+
+/// The 8 * NB low bits of the two's complement of x (least significant
+/// first), for x in the signed 64-bit window; the proof fails otherwise.
+/// x + 2^63 is split into 8 bytes, which proves it is a 64-bit value (8-bit
+/// lookups only), and its NB low bytes into bits. x + 2^63 and x agree
+/// modulo 2^(8 NB) for NB <= 7, and every step is a unique decomposition, so
+/// no hint is involved.
+pub fn low_bits<let NB: u32>(x: Field) -> [bool; NB * 8] {
+    assert(NB <= 7, "low_bits: at most 56 bits");
+    let bytes: [u8; 8] = (x + WINDOW_OFFSET).to_le_bytes();
+    let mut low: Field = 0;
+    let mut scale: Field = 1;
+    for i in 0..NB {
+        low += (bytes[i] as Field) * scale;
+        scale *= 256;
+    }
+    low.to_le_bits()
+}
+
+/// a & b for two values of the signed 64-bit window (the mock's i64 `&`);
+/// the proof fails outside it. w = x + 2^63 is the two's complement of x
+/// with bit 63 flipped, so the native u64 AND of the two w's has the low 63
+/// bits of a & b, and the sign bit of a & b is set iff both bits 63 of the
+/// w's are clear (both values negative).
+pub fn bitand(a: Field, b: Field) -> Field {
+    let wa = checked_u64(a + WINDOW_OFFSET);
+    let wb = checked_u64(b + WINDOW_OFFSET);
+    let a_nonneg = wa >= 9223372036854775808;
+    let b_nonneg = wb >= 9223372036854775808;
+    let low63 = ((wa & wb) as Field) - ((a_nonneg & b_nonneg) as Field) * WINDOW_OFFSET;
+    let negative = !a_nonneg & !b_nonneg;
+    low63 - (negative as Field) * WINDOW_OFFSET
+}
+
+/// a | b (two's complement): a + b - (a & b).
+pub fn bitor(a: Field, b: Field) -> Field {
+    a + b - bitand(a, b)
+}
+
+/// a ^ b (two's complement): a + b - 2 (a & b).
+pub fn bitxor(a: Field, b: Field) -> Field {
+    a + b - 2 * bitand(a, b)
+}
+
+// ---------------------------------------------------------------------------
 // Integer division
 // ---------------------------------------------------------------------------
 //
@@ -1135,6 +1187,41 @@ fn test_qarctan2_against_libm_all_quadrants() {
         assert_close(qarctan2(y, x), want, 32);
     }
     assert(qarctan2(0, 0) == 0);
+}
+
+#[test]
+fn test_bitwise_matches_twos_complement() {
+    // (a, b, a & b, a | b, a ^ b), as Python / i64.
+    let cases: [(Field, Field, Field, Field, Field); 7] = [
+        (12, 10, 8, 14, 6),
+        (-12, 10, 0, -2, -2),
+        (-12, -10, -12, -10, 2),
+        (0, -1, 0, -1, -1),
+        (-9223372036854775808, -1, -9223372036854775808, -1, 9223372036854775807),
+        (9223372036854775807, -9223372036854775808, 0, -1, -1),
+        (5, 5, 5, 5, 0),
+    ];
+    for i in 0..7 {
+        let (a, b, and, or, xor) = cases[i];
+        assert(bitand(a, b) == and);
+        assert(bitor(a, b) == or);
+        assert(bitxor(a, b) == xor);
+    }
+    // Low bits of the two's complement: -3 = ...11111101.
+    let bits = low_bits::<1>(-3);
+    assert(!bits[1] & bits[0] & bits[2] & bits[7]);
+    let bits2 = low_bits::<2>(1029); // 0b100_0000_0101
+    assert(bits2[0] & !bits2[1] & bits2[2] & bits2[10] & !bits2[11]);
+}
+
+#[test(should_fail)]
+fn test_low_bits_rejects_values_outside_the_window() {
+    let _ = low_bits::<1>(9223372036854775808);
+}
+
+#[test(should_fail)]
+fn test_bitand_rejects_values_outside_the_window() {
+    let _ = bitand(-9223372036854775809, 1);
 }
 
 #[test]
