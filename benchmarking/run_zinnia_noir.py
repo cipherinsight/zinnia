@@ -157,7 +157,7 @@ def run_case(case: str, repeats: int, precision_bits: int) -> CaseResult:
     input_dict = INPUT_BUILDERS[case]()
     try:
         from zinnia.api.zk_circuit import ZKCircuit  # type: ignore
-        kernel_path = THIS_DIR / f"ds1000_case{case}" / "kernel.py"
+        kernel_path = THIS_DIR / "datasets" / "ds1000" / f"ds1000_case{case}" / "kernel.py"
         spec = importlib.util.spec_from_file_location(f"case{case}_{id(case)}", kernel_path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -294,7 +294,7 @@ def run_case(case: str, repeats: int, precision_bits: int) -> CaseResult:
 def _load_working_cases() -> list[str]:
     """Working = the cases in hw_halo2_results.json (cleaned of the 28
     halo2-incompatible kernels by upstream construction)."""
-    p = THIS_DIR / "hw_halo2_results.json"
+    p = THIS_DIR / "archive" / "2026-06-agent-sweeps" / "hw_halo2_results.json"
     if not p.exists():
         return []
     data = json.loads(p.read_text())

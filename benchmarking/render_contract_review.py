@@ -19,9 +19,9 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_CONTRACT_DIR = ROOT / "contracts"
+DEFAULT_CONTRACT_DIR = ROOT / "datasets" / "contracts"
 DEFAULT_HTML = ROOT / "contracts_review.html"
-DEFAULT_VALIDATION = ROOT / "compile_validation.json"
+DEFAULT_VALIDATION = ROOT / "archive" / "2026-06-agent-sweeps" / "compile_validation.json"
 
 
 DIMENSION_NAMES = {

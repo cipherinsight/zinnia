@@ -121,7 +121,7 @@ class CaseResult:
 def run_case(case: str, repeats: int, precision_bits: int, lookup_bits: int,
              backend: str,
              k_min: int, k_max: int) -> CaseResult:
-    if not (THIS_DIR / f"ds1000_case{case}" / "target.rs").exists():
+    if not (THIS_DIR / "datasets" / "ds1000" / f"ds1000_case{case}" / "target.rs").exists():
         return CaseResult(case=case, no_target=True)
     if case not in INPUT_BUILDERS:
         return CaseResult(case=case, no_builder=True)
@@ -129,7 +129,7 @@ def run_case(case: str, repeats: int, precision_bits: int, lookup_bits: int,
     input_dict = INPUT_BUILDERS[case]()
     try:
         from zinnia.api.zk_circuit import ZKCircuit  # type: ignore
-        kernel_path = THIS_DIR / f"ds1000_case{case}" / "kernel.py"
+        kernel_path = THIS_DIR / "datasets" / "ds1000" / f"ds1000_case{case}" / "kernel.py"
         spec = importlib.util.spec_from_file_location(f"case{case}_{id(case)}", kernel_path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -287,7 +287,7 @@ def main():
     else:
         cases = sorted(
             c for c in INPUT_BUILDERS
-            if (THIS_DIR / f"ds1000_case{c}" / "target.rs").exists()
+            if (THIS_DIR / "datasets" / "ds1000" / f"ds1000_case{c}" / "target.rs").exists()
         )
 
     out_path = Path(args.out)

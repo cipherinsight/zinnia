@@ -21,7 +21,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-BENCH_DIR = Path(__file__).resolve().parents[2] / "benchmarking"
+# The runtime-shape DS-1000 kernels (every DS-1000 input a runtime parameter).
+# The performance-set kernels in datasets/ds1000/ bind shape parameters such as
+# 0391's low/high and 0415's bin_size as compile-time constants, so they no
+# longer exercise the runtime-shape lowering this test is about.
+BENCH_DIR = Path(__file__).resolve().parents[2] / "benchmarking" / "datasets" / "ds1000_numpy" / "generated"
 
 # Matches the benchmark runners' proving params (precision matters: the
 # emitted fixed-point helpers encode precision_bits in the source text).
@@ -31,7 +35,7 @@ NOIR_PARAMS = {"k": 0, "precision_bits": 32, "lookup_bits": 8}
 def _compile_case(case: str):
     from zinnia.api.zk_circuit import ZKCircuit
 
-    kernel_path = BENCH_DIR / f"ds1000_case{case}" / "kernel.py"
+    kernel_path = BENCH_DIR / f"case{case}" / "kernel.py"
     spec = importlib.util.spec_from_file_location(f"wit_indep_case{case}", kernel_path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -66,8 +70,8 @@ CASES = {
          np.asarray([0, 4, 19])),
     ),
     "0345": (
-        (_floats_2d(8, 6, 0.0), 3, 2),
-        (_floats_2d(8, 6, 7.0), 6, 5),
+        (_floats_2d(8, 6, 0.0), 3, 2.0),
+        (_floats_2d(8, 6, 7.0), 6, 5.0),
     ),
 }
 

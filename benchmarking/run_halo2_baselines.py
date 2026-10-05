@@ -942,7 +942,7 @@ class CaseResult:
 
 
 def install_target(case: str) -> None:
-    src = THIS_DIR / f"ds1000_case{case}/target.rs"
+    src = THIS_DIR / "datasets" / "ds1000" / f"ds1000_case{case}/target.rs"
     if not src.exists():
         raise FileNotFoundError(src)
     dst = HALO2_FOLDER / "examples" / f"case{case}.rs"
@@ -1155,7 +1155,7 @@ def main():
         cases = sorted(
             c for c in INPUT_BUILDERS
             if c not in ABANDONED_BASELINE_CASES
-            if (THIS_DIR / f"ds1000_case{c}/target.rs").exists()
+            if (THIS_DIR / "datasets" / "ds1000" / f"ds1000_case{c}/target.rs").exists()
         )
 
     out_path = Path(args.out)

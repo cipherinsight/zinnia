@@ -31,9 +31,25 @@ BENCHMARKING = REPO_ROOT / "benchmarking"
 #: The two sweep records of `coverage.md` §1, family name -> record path.
 RECORDS: dict[str, Path] = {
     "ds1000": BENCHMARKING
+    / "archive"
+    / "2026-06-agent-sweeps"
     / "ds1000_numpy_compile_validation_2026-05-22_after_op_contract.json",
-    "npbench": BENCHMARKING / "compile_validation.json",
+    "npbench": BENCHMARKING / "archive" / "2026-06-agent-sweeps" / "compile_validation.json",
 }
+
+#: Where each program family's folders live since the datasets moved under
+#: `benchmarking/datasets/`; the records keep their original relative paths.
+DATASET_DIRS: dict[str, Path] = {
+    "ds1000": BENCHMARKING / "datasets" / "ds1000",
+    "npbench": BENCHMARKING / "datasets" / "npbench",
+    "pythran": BENCHMARKING / "datasets" / "pythran",
+}
+
+
+def dataset_path(record_path: str) -> Path:
+    """Resolve a record's `kernel_path` (e.g. `npbench_x/kernel.py`) to its folder."""
+    family = record_path.split("_", 1)[0]
+    return DATASET_DIRS[family] / record_path
 
 #: The status a record row must carry to be in the parity set.
 ACCEPTED_STATUS = "compile_ok"
@@ -108,7 +124,7 @@ def parity_set() -> list[Circuit]:
                     family=_family_of(row["program"], record),
                     program=row["program"],
                     function=row["function"],
-                    kernel_path=BENCHMARKING / row["kernel_path"],
+                    kernel_path=dataset_path(row["kernel_path"]),
                 )
             )
     return circuits
