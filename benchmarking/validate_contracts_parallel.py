@@ -11,7 +11,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from validate_contracts import DEFAULT_OUTPUT, function_roles
+from validate_contracts import DEFAULT_OUTPUT, function_roles, kernel_paths
 
 
 ROOT = Path(__file__).resolve().parent
@@ -36,7 +36,7 @@ def _start_job(
 
 def validate_parallel(output: Path, timeout_seconds: float, jobs: int) -> dict[str, Any]:
     tasks: list[dict[str, Any]] = []
-    for path in sorted(ROOT.glob("*/kernel.py")):
+    for path in kernel_paths():
         for fn_name, role in function_roles(path).items():
             tasks.append(
                 {

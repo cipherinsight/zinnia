@@ -48,12 +48,22 @@ def function_roles(path: Path) -> dict[str, str]:
     return roles
 
 
+def kernel_paths() -> list[Path]:
+    """Every kernel of the three dataset families, in a stable order."""
+    families = ("ds1000", "npbench", "pythran")
+    return sorted(
+        path
+        for family in families
+        for path in (ROOT / "datasets" / family).glob("*/kernel.py")
+    )
+
+
 def validate(output: Path) -> dict[str, Any]:
     sys.path.insert(0, str(REPO_ROOT))
     from zinnia import ZKCircuit
 
     results: list[dict[str, Any]] = []
-    for path in sorted(ROOT.glob("*/kernel.py")):
+    for path in kernel_paths():
         try:
             module = load_module(path)
             module_error = None
@@ -172,7 +182,7 @@ def compile_one(path: Path, fn_name: str, timeout_seconds: float) -> dict[str, A
 
 def validate_isolated(output: Path, timeout_seconds: float) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
-    for path in sorted(ROOT.glob("*/kernel.py")):
+    for path in kernel_paths():
         roles = function_roles(path)
         for fn_name, role in roles.items():
             rec = {

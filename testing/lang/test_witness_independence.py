@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-BENCH_DIR = Path(__file__).resolve().parents[2] / "benchmarking"
+BENCH_DIR = Path(__file__).resolve().parents[2] / "benchmarking" / "datasets" / "ds1000"
 
 # Matches the benchmark runners' proving params (precision matters: the
 # emitted fixed-point helpers encode precision_bits in the source text).

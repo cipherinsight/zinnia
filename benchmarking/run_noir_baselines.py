@@ -786,7 +786,7 @@ def resolve_tools(nargo_arg: str | None, bb_arg: str | None) -> tuple[Path, Path
 
 
 def stage_case(case: str, workdir: Path) -> Path:
-    src = THIS_DIR / f"ds1000_case{case}"
+    src = THIS_DIR / "datasets" / "ds1000" / f"ds1000_case{case}"
     if not (src / "main.nr").exists():
         raise FileNotFoundError(src / "main.nr")
     pkg_dir = workdir / f"case{case}"
@@ -977,7 +977,7 @@ def main():
         cases = sorted(
             c for c in WRITERS
             if c not in ABANDONED_BASELINE_CASES
-            if (THIS_DIR / f"ds1000_case{c}" / "main.nr").exists()
+            if (THIS_DIR / "datasets" / "ds1000" / f"ds1000_case{c}" / "main.nr").exists()
         )
 
     out_path = Path(args.out)
