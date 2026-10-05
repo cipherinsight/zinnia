@@ -1,0 +1,27 @@
+[package]
+name = "zkvm-kernels"
+version = "0.1.0"
+edition = "2021"
+description = "Benchmark kernels in Q32 integer Rust, shared by the SP1 and RISC Zero guests and run natively for the output check"
+publish = false
+
+[dependencies]
+q32 = { path = "../q32", features = ["ndarray"] }
+# Arrays of the shape-generic (NPBench, Pythran) programs.
+ndarray = { version = "0.16.1", default-features = false }
+# Byte views of the word buffers the zkVMs read and commit.
+bytemuck = { version = "1", features = ["extern_crate_alloc"] }
+# Host side only (fixture loading, native runs, JSON output).
+anyhow = { version = "1", optional = true }
+clap = { version = "4", features = ["derive"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+# float_roundtrip: parse fixture floats exactly (correctly rounded, like
+# Python), so the Q32 encoding matches Zinnia's and the Cairo driver's.
+serde_json = { version = "1", features = ["float_roundtrip"], optional = true }
+
+[features]
+std = ["q32/std", "dep:serde", "dep:anyhow", "dep:clap", "dep:serde_json"]
+
+[[bin]]
+name = "kernels-native"
+required-features = ["std"]

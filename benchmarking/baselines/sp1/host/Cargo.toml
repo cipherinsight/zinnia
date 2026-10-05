@@ -1,0 +1,20 @@
+[package]
+name = "sp1-baseline"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1"
+bincode = "1"
+clap = { version = "4", features = ["derive"] }
+zkvm-kernels = { path = "../../zkvm_common/kernels", features = ["std"] }
+serde = "1"
+# `native-gnark` links gnark into this process (Go, built by the crate's
+# build script) instead of running it in Docker, so the memory cap and the
+# timers cover the SNARK wrap too.
+sp1-sdk = { version = "=6.8.1", features = ["blocking", "native-gnark"] }
+
+[build-dependencies]
+cargo_metadata = "0.18"
+sp1-build = "=6.8.1"

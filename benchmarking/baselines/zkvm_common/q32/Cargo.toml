@@ -1,0 +1,16 @@
+[package]
+name = "q32"
+version = "0.1.0"
+edition = "2021"
+description = "Q32.32 fixed-point arithmetic for the SP1 and RISC Zero baselines (same encoding and rounding as Zinnia)"
+publish = false
+
+[dependencies]
+ndarray = { version = "0.16.1", default-features = false, optional = true }
+num-traits = { version = "0.2", default-features = false, optional = true }
+
+[features]
+# Host-side f64 encoding/decoding; guests never enable it.
+std = []
+# Q32 and C32 as ndarray elements (zeros/ones, array-by-scalar arithmetic).
+ndarray = ["dep:ndarray", "dep:num-traits"]

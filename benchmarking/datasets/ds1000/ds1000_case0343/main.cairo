@@ -1,31 +1,24 @@
-// DS-1000 case 343 — Cairo baseline.
-// Kernel: iterate `X.T.flat` and append — column-major flatten of Integer[5, 6].
+//! DS-1000 case 0343: the elements of `X` in column-major order (`X.T.flat`).
+//!
+//!     def kernel(X: Integer[Array, "5 6"]):
+//!         result = []
+//!         for value in X.T.flat:
+//!             result.append(value)
+//!         return result
+// output: [i64]
 
+const ROWS: u32 = 5;
+const COLS: u32 = 6;
+
+/// Row `j` of `X.T` is column `j` of `X`.
 #[executable]
-pub fn main() {
-    let mut x: Array<i128> = ArrayTrait::new();
-    for i in 0_u32..5 {
-        for j in 0_u32..6 {
-            let v: i128 = ((i + 1) * 10 + (j + 1)).into();
-            x.append(v);
-        };
-    };
-    // Expected output: column-major order.
-    let mut claimed: Array<i128> = ArrayTrait::new();
-    for j in 0_u32..6 {
-        for i in 0_u32..5 {
-            claimed.append(*x.at(i * 6 + j));
-        };
-    };
-
-    let mut result: Array<i128> = ArrayTrait::new();
-    for j in 0_u32..6 {
-        for i in 0_u32..5 {
-            result.append(*x.at(i * 6 + j));
-        };
-    };
-
-    for k in 0_u32..30 {
-        assert!(*result.at(k) == *claimed.at(k));
-    };
+fn main(X: Array<i64>) -> Array<i64> {
+    assert!(X.len() == ROWS * COLS, "X has the wrong length");
+    let mut result = array![];
+    for j in 0..COLS {
+        for i in 0..ROWS {
+            result.append(*X.at(i * COLS + j));
+        }
+    }
+    result
 }

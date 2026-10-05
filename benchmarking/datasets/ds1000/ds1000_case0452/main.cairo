@@ -1,62 +1,32 @@
-// DS-1000 case 452 — `X / np.abs(X).sum(axis=1).reshape(-1, 1)` on Integer[5,4].
-// Quantisation ×2^32 (Q). For each row: l1_q = sum(|x_q|);
-// result_q = (x_q * Q) / l1_q (rescale to stay in Q-scale).
+//! DS-1000 case 0452: every row of an integer matrix divided by its L1 norm.
+//!
+//!     def kernel(X: Integer[Array, "5 4"]):
+//!         l1 = np.abs(X).sum(axis = 1)
+//!         result = X / l1.reshape(-1, 1)
+//!         return result
+// output: [q32]
+use crate::np::abs;
+use crate::q32::{Q32, Q32Trait};
 
-fn abs_i128(v: i128) -> i128 {
-    if v < 0 { -v } else { v }
-}
+const ROWS: u32 = 5;
+const COLS: u32 = 4;
 
+/// The norm is an integer and `/` is NumPy's true division, so each entry is
+/// `float(x) / float(l1)`. NumPy gives nan for a row of zeros; that division by
+/// zero fails here.
 #[executable]
-pub fn main() {
-    const Q: i128 = 4_294_967_296;
-    let x: Array<i128> = array![
-         1,  2,  3,  4,
-        -1, -2, -3,  4,
-         5,  2, -2,  1,
-        -3, -3, -2, -2,
-         4, -3,  2,  1,
-    ];
-
-    // Pre-compute claimed: result_q[i][j] = (x[i][j] * Q) / l1[i]
-    // where l1[i] = sum of |x[i][j]|. For row 0: 10. Row 1: 10. Row 2: 10.
-    // Row 3: 10. Row 4: 10. So all rows divide by 10.
-    let claimed: Array<i128> = array![
-        Q / 10,  (2 * Q) / 10,  (3 * Q) / 10,  (4 * Q) / 10,
-        -Q / 10, (-2 * Q) / 10, (-3 * Q) / 10, (4 * Q) / 10,
-        (5 * Q) / 10, (2 * Q) / 10, (-2 * Q) / 10, Q / 10,
-        (-3 * Q) / 10, (-3 * Q) / 10, (-2 * Q) / 10, (-2 * Q) / 10,
-        (4 * Q) / 10, (-3 * Q) / 10, (2 * Q) / 10, Q / 10,
-    ];
-
-    let mut x_fp: Array<i128> = ArrayTrait::new();
-    let mut abs_fp: Array<i128> = ArrayTrait::new();
-    for k in 0_u32..20 {
-        let v: i128 = *x.at(k) * Q;
-        x_fp.append(v);
-        abs_fp.append(abs_i128(v));
-    };
-
-    let mut result: Array<i128> = ArrayTrait::new();
-    for i in 0_u32..5 {
-        let base: u32 = i * 4;
-        let mut l1: i128 = 0;
-        for j in 0_u32..4 {
-            l1 = l1 + *abs_fp.at(base + j);
-        };
-        assert!(l1 != 0);
-        for j in 0_u32..4 {
-            let r: i128 = (*x_fp.at(base + j) * Q) / l1;
-            result.append(r);
-        };
-    };
-
-    // Tolerance ±1 in Q-scale to accommodate truncation between (Q/10) literals
-    // and the divided values. Equivalent to ~2.3e-10 absolute error.
-    let tol: i128 = 1;
-    for k in 0_u32..20 {
-        let r: i128 = *result.at(k);
-        let c: i128 = *claimed.at(k);
-        let diff: i128 = if r >= c { r - c } else { c - r };
-        assert!(diff <= tol);
-    };
+fn main(X: Array<i64>) -> Array<Q32> {
+    assert!(X.len() == ROWS * COLS, "X has the wrong length");
+    let mut out = array![];
+    for r in 0..ROWS {
+        let row = X.span().slice(r * COLS, COLS);
+        let mut l1: i64 = 0;
+        for v in row {
+            l1 += abs(*v);
+        }
+        for v in row {
+            out.append(Q32Trait::from_int(*v).div_int(l1));
+        }
+    }
+    out
 }

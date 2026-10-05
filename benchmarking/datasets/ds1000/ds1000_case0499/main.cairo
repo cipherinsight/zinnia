@@ -1,42 +1,47 @@
-// DS-1000 case 0499 — 2D zero pad (to_shape) on Float[42,10] → (45, 12).
-// Driver: a[i][j] = (i+1)*0.1 + (j+1)*0.01. Quantisation ×2^32 to match Zinnia.
+//! DS-1000 case 0499: a matrix centred in zeros of `shape = (93, 13)`; an odd
+//! padding puts the extra row or column at the bottom or right.
+//!
+//!     @zk_chip
+//!     def to_shape(a, shape):
+//!         y_, x_ = shape
+//!         y, x = a.shape
+//!         y_pad = (y_-y)
+//!         x_pad = (x_-x)
+//!         return np.pad(a,((y_pad//2, y_pad//2 + y_pad%2),
+//!                             (x_pad//2, x_pad//2 + x_pad%2)),
+//!                         mode = 'constant')
+//!
+//!     @zk_circuit
+//!     def kernel(a: Float[Array, "42 10"]):
+//!         shape = (93, 13)
+//!         result = to_shape(a, shape)
+//!         return result
+// output: [q32]
+use crate::np::append_repeated;
+use crate::q32::{Q32, ZERO};
 
+const ROWS: u32 = 42;
+const COLS: u32 = 10;
+const OUT_ROWS: u32 = 93;
+const OUT_COLS: u32 = 13;
+/// `y_pad // 2`: zero rows above `a`.
+const TOP: u32 = (OUT_ROWS - ROWS) / 2;
+/// `x_pad // 2`: zero columns left of `a`.
+const LEFT: u32 = (OUT_COLS - COLS) / 2;
+
+/// `TOP` zero rows; each row of `a` between `LEFT` zeros and the zeros up to
+/// the full width; zero rows up to the full height.
 #[executable]
-pub fn main() {
-    const Q: u128 = 4_294_967_296;
-    let r: u32 = 42;
-    let c: u32 = 10;
-    let new_rows: u32 = 45;
-    let new_cols: u32 = 12;
-    let mut a: Array<u128> = ArrayTrait::new();
-    let mut i: u32 = 0;
-    while i < r {
-        let mut j: u32 = 0;
-        while j < c {
-            let num: u128 = ((i + 1) * 10 + (j + 1)).into();
-            a.append((num * Q) / 100);
-            j += 1;
-        };
-        i += 1;
-    };
-    let mut out: Array<u128> = ArrayTrait::new();
-    let mut ii: u32 = 0;
-    while ii < new_rows {
-        let mut jj: u32 = 0;
-        while jj < new_cols {
-            if ii < r && jj < c {
-                let idx: u32 = ii * c + jj;
-                out.append(*a.at(idx.try_into().unwrap()));
-            } else {
-                out.append(0);
-            };
-            jj += 1;
-        };
-        ii += 1;
-    };
-    assert!(*out.at(0) == (11_u128 * Q) / 100);
-    let last_orig: u32 = 41 * new_cols + 9;
-    assert!(*out.at(last_orig.try_into().unwrap()) == (((41 + 1) * 10 + (9 + 1)) * Q) / 100);
-    let pad: u32 = 44 * new_cols + 11;
-    assert!(*out.at(pad.try_into().unwrap()) == 0);
+fn main(a: Array<Q32>) -> Array<Q32> {
+    assert!(a.len() == ROWS * COLS, "a has the wrong length");
+    let a = a.span();
+    let mut result = array![];
+    append_repeated(ref result, ZERO, TOP * OUT_COLS);
+    for r in 0..ROWS {
+        append_repeated(ref result, ZERO, LEFT);
+        result.append_span(a.slice(r * COLS, COLS));
+        append_repeated(ref result, ZERO, OUT_COLS - LEFT - COLS);
+    }
+    append_repeated(ref result, ZERO, (OUT_ROWS - TOP - ROWS) * OUT_COLS);
+    result
 }

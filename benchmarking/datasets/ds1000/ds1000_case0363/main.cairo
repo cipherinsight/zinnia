@@ -1,44 +1,24 @@
-// DS-1000 case 363 — np.insert(a, pos, element) on Float[100] -> Float[101].
+//! DS-1000 case 0363: insert an integer into a float array,
+//! `np.insert(a, pos, element)`.
+//!
+//!     def kernel(a: Float[Array, "100"], pos: Integer, element: Integer):
+//!         a = np.insert(a, pos, element)
+//!         return a
+// output: [q32]
+use crate::np::insert_position;
+use crate::q32::{Q32, Q32Trait};
+
+const N: u32 = 100;
 
 #[executable]
-pub fn main() {
-    const Q: u128 = 4_294_967_296;
-
-    // a[i] = i * 0.1
-    let mut a_arr: Array<u128> = ArrayTrait::new();
-    for i in 0_u32..100 {
-        let i_u: u128 = i.into();
-        a_arr.append((i_u * Q) / 10);
-    };
-    let pos: u32 = 7;
-    let element: u128 = 999;
-    // element lifted to fp: element * Q
-    let elem_q: u128 = element * Q;
-
-    // Expected
-    let mut claimed: Array<u128> = ArrayTrait::new();
-    for i in 0_u32..101 {
-        if i < pos {
-            claimed.append(*a_arr.at(i));
-        } else if i == pos {
-            claimed.append(elem_q);
-        } else {
-            claimed.append(*a_arr.at(i - 1));
-        }
-    };
-
-    let mut result: Array<u128> = ArrayTrait::new();
-    for i in 0_u32..101 {
-        if i < pos {
-            result.append(*a_arr.at(i));
-        } else if i == pos {
-            result.append(elem_q);
-        } else {
-            result.append(*a_arr.at(i - 1));
-        }
-    };
-
-    for k in 0_u32..101 {
-        assert!(*result.at(k) == *claimed.at(k));
-    };
+fn main(a: Array<Q32>, pos: i64, element: i64) -> Array<Q32> {
+    assert!(a.len() == N, "a has the wrong length");
+    let at = insert_position(pos, N);
+    let a = a.span();
+    let mut result = array![];
+    result.append_span(a.slice(0, at));
+    // `np.insert` casts the value to the array's dtype.
+    result.append(Q32Trait::from_int(element));
+    result.append_span(a.slice(at, N - at));
+    result
 }

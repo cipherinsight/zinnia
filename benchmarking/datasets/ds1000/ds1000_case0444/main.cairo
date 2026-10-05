@@ -1,33 +1,23 @@
-// DS-1000 case 444 — A[(A > B[0] & A < B[1]) | (A > B[1] & A < B[2])].
-// A = 0..20, B = [3, 10, 17]. Expected: (3,10) ∪ (10,17).
-
+//! DS-1000 case 0444: the entries of `A` strictly inside `(B[0], B[1])` or
+//! `(B[1], B[2])`, in order.
+//!
+//!     def kernel(A: Integer[Array, "20"], B: Integer[Array, "3"]):
+//!         C = A[np.logical_and(A > B[0], A < B[1]) | np.logical_and(A > B[1], A < B[2])]
+//!         return C
+// output: [i64]
 #[executable]
-pub fn main() {
-    let a: Array<i128> = array![0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19];
-    let b: Array<i128> = array![3, 10, 17];
-    let claimed: Array<i128> = array![4,5,6,7,8,9,11,12,13,14,15,16];
-
-    let b0: i128 = *b.at(0);
-    let b1: i128 = *b.at(1);
-    let b2: i128 = *b.at(2);
-
-    let mut out: Array<i128> = ArrayTrait::new();
-    for i in 0_u32..20 {
-        let v: i128 = *a.at(i);
-        let lo1: u128 = if v > b0 { 1 } else { 0 };
-        let hi1: u128 = if v < b1 { 1 } else { 0 };
-        let lo2: u128 = if v > b1 { 1 } else { 0 };
-        let hi2: u128 = if v < b2 { 1 } else { 0 };
-        let band1: u128 = lo1 & hi1;
-        let band2: u128 = lo2 & hi2;
-        let mask: u128 = band1 | band2;
-        if mask == 1 {
-            out.append(v);
+fn main(A: Array<i64>, B: Array<i64>) -> Array<i64> {
+    assert!(A.len() == 20 && B.len() == 3, "inputs have the wrong length");
+    let (b0, b1, b2) = (*B.at(0), *B.at(1), *B.at(2));
+    let mut kept = array![];
+    for v in A {
+        if strictly_between(v, b0, b1) || strictly_between(v, b1, b2) {
+            kept.append(v);
         }
-    };
+    }
+    kept
+}
 
-    assert!(out.len() == claimed.len());
-    for k in 0_u32..out.len() {
-        assert!(*out.at(k) == *claimed.at(k));
-    };
+fn strictly_between(v: i64, low: i64, high: i64) -> bool {
+    low < v && v < high
 }

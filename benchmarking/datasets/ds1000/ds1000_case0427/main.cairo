@@ -1,28 +1,38 @@
-// DS-1000 case 427 — XOR-reduce then bit decomposition.
-// kernel.py: res starts at 0; res ^= a[i] for each i; output is m bits of res MSB-first.
-// a = [1..21], m = 5. XOR(1..20) = 20 = 0b10100. Expected bits: [1,0,1,0,0].
+//! DS-1000 case 0427: the low `m = 11` bits of the XOR of all entries of `a`,
+//! most significant first.
+//!
+//!     def kernel(a: Integer[Array, "20"]):
+//!         m = 11
+//!         res = np.array([0])
+//!         for i in a:
+//!             res = res ^ i
+//!         result = (((res[:,None] & (1 << np.arange(m))[::-1])) > 0).astype(int)
+//!         return result
+// output: [i64]
 
-fn pow2_u64(k: u32) -> u64 {
-    let mut r: u64 = 1;
-    let mut i: u32 = 0;
-    while i < k { r = r * 2; i += 1; };
-    r
-}
+use crate::np::twos_complement;
 
+const N: u32 = 20;
+/// `1 << (m - 1)`, the mask of the first output column.
+const TOP_BIT: u64 = 0x400;
+
+/// Returns shape `(1, m)`, flattened row-major.
 #[executable]
-pub fn main() {
-    let m: u32 = 5;
-    let mut a: Array<u64> = ArrayTrait::new();
-    let mut i: u64 = 1;
-    while i <= 20 { a.append(i); i += 1; };
+fn main(a: Array<i64>) -> Array<i64> {
+    assert!(a.len() == N, "a has the wrong length");
     let mut res: u64 = 0;
-    for k in 0_usize..20 { res = res ^ *a.at(k); };
-    let mut j: u32 = 0;
-    while j < m {
-        let shift: u32 = m - 1 - j;
-        let mask: u64 = pow2_u64(shift);
-        let _bit: u64 = if (res & mask) > 0 { 1 } else { 0 };
-        j += 1;
-    };
-    assert!(res == 20);
+    for v in a {
+        res = res ^ twos_complement(v);
+    }
+    let mut bits = array![];
+    let mut mask = TOP_BIT;
+    while mask != 0 {
+        bits.append(if res & mask > 0 {
+            1
+        } else {
+            0
+        });
+        mask /= 2;
+    }
+    bits
 }

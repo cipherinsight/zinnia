@@ -1,34 +1,41 @@
-// DS-1000 case 329 — Cairo baseline. Elementwise a ** 3 on Float[8, 6].
-//
-// Quantisation ×2^32 to match Zinnia. a[i][j] = 1.0 + 0.1*(i+j) in float
-// → q = ((10 + (i+j)) * Q) / 10 in Q-scale. Pow=3 unrolls into two
-// fixed-point multiplications, each rescaling by /Q to stay in Q-scale,
-// mirroring FixedPointChip::qmul.
+//! DS-1000 case 0329: element-wise sixth power, `a ** power` with `power = 6`.
+//!
+//!     def kernel(a: Float[Array, "8 6"]):
+//!         power = 6
+//!         a = a ** power
+//!         return a
+// output: [q32]
+use crate::q32::{ONE, Q32};
+
+const ROWS: u32 = 8;
+const COLS: u32 = 6;
+const POWER: u32 = 6;
 
 #[executable]
-pub fn main() {
-    const Q: u128 = 4_294_967_296;
-    let mut a: Array<u128> = ArrayTrait::new();
-    for i in 0_u128..8 {
-        for j in 0_u128..6 {
-            a.append(((10 + (i + j)) * Q) / 10);
-        };
-    };
-    // Expected: ((1 + (i+j)/10)³) in Q-scale, i.e. (10 + (i+j))³ * Q / 1000.
-    let mut expected: Array<u128> = ArrayTrait::new();
-    for i in 0_u128..8 {
-        for j in 0_u128..6 {
-            let base: u128 = 10 + (i + j);
-            expected.append((base * base * base * Q) / 1000);
-        };
-    };
+fn main(a: Array<Q32>) -> Array<Q32> {
+    assert!(a.len() == ROWS * COLS, "a has the wrong length");
+    let mut result = array![];
+    for v in a {
+        result.append(pow(v, POWER));
+    }
+    result
+}
 
-    for i in 0_u32..8 {
-        for j in 0_u32..6 {
-            let base = *a.at((i * 6 + j).try_into().unwrap());
-            let t1 = (base * base) / Q;  // q(a²)
-            let t2 = (t1 * base) / Q;    // q(a³)
-            assert!(t2 == *expected.at((i * 6 + j).try_into().unwrap()));
+/// `x ** exp` for a non-negative integer exponent by square-and-multiply
+/// (for 6: `x^2`, `x^4`, `x^2 * x^4`); every product rescales.
+fn pow(x: Q32, exp: u32) -> Q32 {
+    let mut base = x;
+    let mut exp = exp;
+    let mut result = ONE;
+    loop {
+        if exp % 2 == 1 {
+            result = result * base;
         }
-    };
+        exp /= 2;
+        if exp == 0 {
+            break;
+        }
+        base = base * base;
+    }
+    result
 }

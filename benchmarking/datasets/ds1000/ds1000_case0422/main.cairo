@@ -1,46 +1,38 @@
-// DS-1000 case 422 — Cairo baseline.
-// Kernel: c = hstack((b[1:], b));  result = np.correlate(a, c, mode='valid')
-// len(a)=50, len(b)=50, len(c)=99 → len(result)=50.
-// Formula: out[k] = sum_{n=0..49} a[n] * c[n + 49 - k].
-// Sample: a[i] = i+1; b = δ_{10}. Expected = [11..50, 1..10].
-// Quantisation ×2^32 to match Zinnia. (b is a one-hot, so only one product
-// per k contributes; the sum is an integer, exactly representable in Q-scale.)
+//! DS-1000 case 0422: circular cross-correlation via
+//! `np.correlate(a, np.hstack((b[1:], b)), mode='valid')`.
+//!
+//!     def kernel(a: Float[Array, "50"], b: Float[Array, "50"]):
+//!         result = np.correlate(a, np.hstack((b[1:], b)), mode='valid')
+//!         return result
+// output: [q32]
+use crate::q32::{Q32, from_raw_product, raw_product};
+
+const N: u32 = 50;
 
 #[executable]
-pub fn main() {
-    const Q: u128 = 4_294_967_296;
+fn main(a: Array<Q32>, b: Array<Q32>) -> Array<Q32> {
+    assert!(a.len() == N && b.len() == N, "inputs have the wrong length");
+    let mut v = array![];
+    v.append_span(b.span().slice(1, N - 1));
+    v.append_span(b.span());
+    correlate_valid_longer_v(a.span(), v.span())
+}
 
-    let mut a: Array<u128> = ArrayTrait::new();
-    for i in 1_u128..51 { a.append(i * Q); };
-
-    let mut b: Array<u128> = ArrayTrait::new();
-    for i in 0_u32..50 {
-        if i == 10 { b.append(Q); } else { b.append(0); };
-    };
-
-    // c = hstack((b[1:], b)).
-    let mut c: Array<u128> = ArrayTrait::new();
-    for i in 1_u32..50 {
-        c.append(*b.at(i.try_into().unwrap()));
-    };
-    for i in 0_u32..50 {
-        c.append(*b.at(i.try_into().unwrap()));
-    };
-
-    // Expected: [11..50, 1..10].
-    let mut expected: Array<u128> = ArrayTrait::new();
-    for k in 11_u128..51 { expected.append(k * Q); };
-    for k in 1_u128..11  { expected.append(k * Q); };
-
-    for k in 0_u32..50 {
-        let mut s: u128 = 0;
-        for n in 0_u32..50 {
-            let cidx: u32 = n + 49 - k;
-            let an: u128 = *a.at(n.try_into().unwrap());
-            let cn: u128 = *c.at(cidx.try_into().unwrap());
-            // qmul = (an * cn) / Q.
-            s = s + (an * cn) / Q;
-        };
-        assert!(s == *expected.at(k.try_into().unwrap()));
-    };
+/// `np.correlate(a, v, mode='valid')` for real `v` longer than `a`. NumPy then
+/// slides `a` along `v` and reverses the result:
+/// `c[k] = sum_n a[n] * v[n + len(v) - len(a) - k]`, i.e. the windows of `v`
+/// from the last to the first, each a dot product accumulated unscaled and
+/// rescaled once.
+fn correlate_valid_longer_v(a: Span<Q32>, v: Span<Q32>) -> Array<Q32> {
+    let lags = v.len() - a.len() + 1;
+    let mut out = array![];
+    for k in 0..lags {
+        let window = v.slice(lags - 1 - k, a.len());
+        let mut acc: i128 = 0;
+        for n in 0..a.len() {
+            acc += raw_product(*a.at(n), *window.at(n));
+        }
+        out.append(from_raw_product(acc));
+    }
+    out
 }

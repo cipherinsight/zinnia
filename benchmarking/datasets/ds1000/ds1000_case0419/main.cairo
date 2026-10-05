@@ -1,62 +1,40 @@
-// DS-1000 case 419 — Cairo baseline.
-// Kernel: new_data = data[:, ::-1];
-//         bin_data_mean = new_data[:, :(6//bin_size)*bin_size]
-//                                .reshape(8, -1, bin_size).mean(axis=-1)[:,::-1]
-// Same as 0418 but the result bin axis is reversed back.
-// Quantisation ×2^32.
+//! DS-1000 case 0419: means of bins of `bin_size` values taken from the end
+//! of each row, listed left to right.
+//!
+//!     def kernel(data: Float[Array, "8 6"]):
+//!         bin_size = 2
+//!         new_data = data[:, ::-1]
+//!         bin_data_mean = new_data[:,:(data.shape[1] // bin_size) * bin_size].reshape(data.shape[0], -1, bin_size).mean(axis=-1)[:,::-1]
+//!         return bin_data_mean
+//!
+//! With 6 columns and `bin_size = 2` no partial bin is dropped, so the result
+//! equals plain left-to-right binning (case 0416); the program follows the
+//! kernel, which aligns the bins to the end of the row.
+// output: [q32]
+use crate::np::mean;
+use crate::q32::Q32;
+
+const ROWS: u32 = 8;
+const COLS: u32 = 6;
+const BIN_SIZE: u32 = 2;
+/// A partial bin at the start of a row (the end of the reversed row) is
+/// dropped.
+const BINS: u32 = COLS / BIN_SIZE;
 
 #[executable]
-pub fn main() {
-    const Q: u128 = 4_294_967_296;
-    let bin_size: u32 = 2;
-    let trimmed: u32 = (6 / bin_size) * bin_size;
-    let n_bins: u32 = trimmed / bin_size;
-
-    let mut data: Array<u128> = ArrayTrait::new();
-    for i in 0_u32..8 {
-        for j in 0_u32..6 {
-            let v: u128 = ((i + 1) * 10 + (j + 1)).into();
-            data.append(v * Q);
-        };
-    };
-
-    let mut new_data: Array<u128> = ArrayTrait::new();
-    for i in 0_u32..8 {
-        for j in 0_u32..6 {
-            let src: u32 = i * 6 + (5 - j);
-            new_data.append(*data.at(src.try_into().unwrap()));
-        };
-    };
-
-    // tmp = per-row binned means.
-    let bs_q: u128 = (bin_size).into();
-    let mut tmp: Array<u128> = ArrayTrait::new();
-    for i in 0_u32..8 {
-        for b in 0_u32..n_bins {
-            let mut s: u128 = 0;
-            for k in 0_u32..bin_size {
-                let idx: u32 = i * 6 + b * bin_size + k;
-                s = s + *new_data.at(idx.try_into().unwrap());
-            };
-            tmp.append(s / bs_q);
-        };
-    };
-
-    // Expected after final reverse: same as 0416 (base+1.5, base+3.5, base+5.5).
-    let mut expected: Array<u128> = ArrayTrait::new();
-    for i in 0_u32..8 {
-        let base: u128 = ((i + 1) * 10).into();
-        expected.append(base * Q + 1 * Q + Q / 2);
-        expected.append(base * Q + 3 * Q + Q / 2);
-        expected.append(base * Q + 5 * Q + Q / 2);
-    };
-
-    // Reverse bin axis of tmp and compare.
-    for i in 0_u32..8 {
-        for b in 0_u32..n_bins {
-            let src: u32 = i * n_bins + (n_bins - 1 - b);
-            let eidx: u32 = i * n_bins + b;
-            assert!(*tmp.at(src.try_into().unwrap()) == *expected.at(eidx.try_into().unwrap()));
-        };
-    };
+fn main(data: Array<Q32>) -> Array<Q32> {
+    assert!(data.len() == ROWS * COLS, "data has the wrong length");
+    // Bin `b` of a reversed row is `row[COLS - (b + 1) * BIN_SIZE .. COLS - b * BIN_SIZE]`
+    // backwards; the final `[:, ::-1]` lists the bins from `b = BINS - 1` down
+    // to 0. The order within a bin does not change its (exact) sum.
+    let mut means = array![];
+    for r in 0..ROWS {
+        let mut b = BINS;
+        while b > 0 {
+            b -= 1;
+            let start = r * COLS + COLS - (b + 1) * BIN_SIZE;
+            means.append(mean(data.span().slice(start, BIN_SIZE)));
+        }
+    }
+    means
 }

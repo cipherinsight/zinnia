@@ -1,28 +1,34 @@
-// DS-1000 case 425 — bit decomposition matrix.
-// kernel.py: ((a[:,None] & (1 << np.arange(m))[::-1]) > 0).astype(int)
-// a = [0..20), m = 5 → 20×5 bit matrix (MSB-first).
+//! DS-1000 case 0425: the low `m = 11` bits of every entry of `a`, most
+//! significant first.
+//!
+//!     def kernel(a: Integer[Array, "20"]):
+//!         m = 11
+//!         result = (((a[:,None] & (1 << np.arange(m))[::-1])) > 0).astype(int)
+//!         return result
+// output: [i64]
 
+use crate::np::twos_complement;
+
+const N: u32 = 20;
+/// `1 << (m - 1)`, the mask of the first output column.
+const TOP_BIT: u64 = 0x400;
+
+/// Returns shape `(20, m)`, flattened row-major.
 #[executable]
-pub fn main() {
-    let m: u32 = 5;
-    let mut a: Array<u64> = ArrayTrait::new();
-    let mut i: u64 = 0;
-    while i < 20 { a.append(i); i += 1; };
-    for i in 0_usize..20 {
-        let v: u64 = *a.at(i);
-        for j in 0_u32..m {
-            let shift: u32 = m - 1 - j;
-            let mask: u64 = 1_u64 * pow2_u64(shift);
-            let bit: u64 = if (v & mask) > 0 { 1 } else { 0 };
-            // No claim comparison; this mirrors the kernel's compute path.
-            let _ = bit;
-        };
-    };
-}
-
-fn pow2_u64(k: u32) -> u64 {
-    let mut r: u64 = 1;
-    let mut i: u32 = 0;
-    while i < k { r = r * 2; i += 1; };
-    r
+fn main(a: Array<i64>) -> Array<i64> {
+    assert!(a.len() == N, "a has the wrong length");
+    let mut bits = array![];
+    for v in a {
+        let word = twos_complement(v);
+        let mut mask = TOP_BIT;
+        while mask != 0 {
+            bits.append(if word & mask > 0 {
+                1
+            } else {
+                0
+            });
+            mask /= 2;
+        }
+    }
+    bits
 }

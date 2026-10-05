@@ -1,10 +1,14 @@
-// DS-1000 case 401 — `np.array([[], [], []])`. 3×0 empty array. Trivial.
+//! DS-1000 case 0401: an empty array of three empty rows,
+//! `np.array([[], [], []])` (float64, shape `(3, 0)`). The shape is committed
+//! with the (absent) values because their count does not imply it.
+//!
+//!     def kernel():
+//!         result = np.array([[], [], []])
+//!         return result
+// output: ([dim], [q32])
+use crate::q32::Q32;
 
 #[executable]
-pub fn main() {
-    // Three empty rows; nothing to assert.
-    let mut _rows: Array<Array<u128>> = ArrayTrait::new();
-    _rows.append(ArrayTrait::new());
-    _rows.append(ArrayTrait::new());
-    _rows.append(ArrayTrait::new());
+fn main() -> (Array<i64>, Array<Q32>) {
+    (array![3, 0], array![])
 }

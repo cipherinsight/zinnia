@@ -1,0 +1,1 @@
+../../../zkvm_common/calibration/empty_program/main.cairo

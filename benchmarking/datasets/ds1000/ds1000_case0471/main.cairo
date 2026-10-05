@@ -1,38 +1,25 @@
-// DS-1000 case 0471 — Z[..., -1:] (last-element slice on final axis).
-// Concrete dims N=2, M=3, K=4. Z[i][j][k] = i*100 + j*10 + k.
-// Quantisation ×2^32 to match Zinnia's `precision_bits = 32` default.
+//! DS-1000 case 0471: the last entry of the last axis, kept as an axis,
+//! `Z[..., -1:]`.
+//!
+//!     def kernel(Z: Float[Array, "6 2 9 3 7 4"]):
+//!         result = Z[..., -1:]
+//!         return result
+// output: [q32]
+use crate::q32::Q32;
 
+/// Elements of `Z` along all axes but the last.
+const OUTER: u32 = 6 * 2 * 9 * 3 * 7;
+/// Length of the last axis.
+const LAST: u32 = 4;
+
+/// The last axis is contiguous, so the result is the last element of every
+/// run of `LAST`.
 #[executable]
-pub fn main() {
-    const Q: i128 = 4_294_967_296;
-    let n: u32 = 2;
-    let m: u32 = 3;
-    let k: u32 = 4;
-    let mut z: Array<i128> = ArrayTrait::new();
-    let mut i: u32 = 0;
-    while i < n {
-        let mut j: u32 = 0;
-        while j < m {
-            let mut kk: u32 = 0;
-            while kk < k {
-                z.append((i * 100 + j * 10 + kk).into() * Q);
-                kk += 1;
-            };
-            j += 1;
-        };
-        i += 1;
-    };
-    let mut out: Array<i128> = ArrayTrait::new();
-    let mut ii: u32 = 0;
-    while ii < n {
-        let mut jj: u32 = 0;
-        while jj < m {
-            let idx: u32 = ii * (m * k) + jj * k + (k - 1);
-            out.append(*z.at(idx.try_into().unwrap()));
-            jj += 1;
-        };
-        ii += 1;
-    };
-    let expect_unq: Array<i128> = array![3, 13, 23, 103, 113, 123];
-    for kk in 0_usize..6 { assert!(*out.at(kk) == *expect_unq.at(kk) * Q); };
+fn main(Z: Array<Q32>) -> Array<Q32> {
+    assert!(Z.len() == OUTER * LAST, "Z has the wrong length");
+    let mut result = array![];
+    for k in 0..OUTER {
+        result.append(*Z.at(k * LAST + LAST - 1));
+    }
+    result
 }

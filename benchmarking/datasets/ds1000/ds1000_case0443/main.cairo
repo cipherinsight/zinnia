@@ -1,27 +1,20 @@
-// DS-1000 case 443 — `C = A[np.in1d(A, B)]` on Integer[20] × Integer[3].
-// A = 0..20, B = [3, 7, 13]. Expected: [3, 7, 13].
+//! DS-1000 case 0443: the entries of `A` that occur in `B`, in order.
+//!
+//!     def kernel(A: Integer[Array, "20"], B: Integer[Array, "3"]):
+//!         C = A[np.in1d(A,B)]
+//!         return C
+// output: [i64]
+use crate::np::contains;
 
 #[executable]
-pub fn main() {
-    let a: Array<i128> = array![0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19];
-    let b: Array<i128> = array![3, 7, 13];
-    let claimed: Array<i128> = array![3, 7, 13];
-
-    let mut out: Array<i128> = ArrayTrait::new();
-    for i in 0_u32..20 {
-        let v: i128 = *a.at(i);
-        let mut in_b: u128 = 0;
-        for j in 0_u32..3 {
-            let eq: u128 = if v == *b.at(j) { 1 } else { 0 };
-            in_b = in_b | eq;
-        };
-        if in_b == 1 {
-            out.append(v);
+fn main(A: Array<i64>, B: Array<i64>) -> Array<i64> {
+    assert!(A.len() == 20 && B.len() == 3, "inputs have the wrong length");
+    let b = B.span();
+    let mut kept = array![];
+    for v in A {
+        if contains(b, v) {
+            kept.append(v);
         }
-    };
-
-    assert!(out.len() == claimed.len());
-    for k in 0_u32..out.len() {
-        assert!(*out.at(k) == *claimed.at(k));
-    };
+    }
+    kept
 }

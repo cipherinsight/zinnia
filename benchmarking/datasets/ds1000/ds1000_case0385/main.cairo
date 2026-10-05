@@ -1,72 +1,37 @@
-// DS-1000 case 385 — patchify a[100, 200] into (5000, 2, 2) with c_block-major order.
-// reshape(50, 2, 100, 2).swapaxes(1,2).transpose(1,0,2,3).reshape(-1, 2, 2).
-// Output[k][p][q] = a[r_block*2 + p][c_block*2 + q] where k = c_block*50 + r_block.
+//! DS-1000 case 0385: split `a` into 2x2 blocks, listed column of blocks by
+//! column of blocks.
+//!
+//!     def kernel(a: Float[Array, "100 200"]):
+//!         result = a.reshape(a.shape[0]//2, 2, a.shape[1]//2, 2).swapaxes(1, 2).transpose(1, 0, 2, 3).reshape(-1, 2, 2)
+//!         return result
+// output: [q32]
+use crate::q32::Q32;
 
+const ROWS: u32 = 100;
+const COLS: u32 = 200;
+
+/// The reshape and `swapaxes` index block `(i, j)` (rows `2i, 2i+1`, columns
+/// `2j, 2j+1`) as `[i][j]`; the transpose makes that `[j][i]`, so the blocks
+/// come out with `j` outer and `i` inner.
 #[executable]
-pub fn main() {
-    const Q: u128 = 4_294_967_296;
-    const H: u32 = 100;
-    const W: u32 = 200;
+fn main(a: Array<Q32>) -> Array<Q32> {
+    assert!(a.len() == ROWS * COLS, "a has the wrong length");
+    let a = a.span();
+    let mut result = array![];
+    for j in 0..COLS / 2 {
+        for i in 0..ROWS / 2 {
+            append_block(ref result, a, i, j);
+        }
+    }
+    result
+}
 
-    // a[i][j] = i*0.001 + j*0.0001. Q-scaled:
-    //   i_q = i*Q/1000; j_q = j*Q/10000; a_q = i_q + j_q.
-    let mut a: Array<u128> = ArrayTrait::new();
-    let mut i: u32 = 0;
-    while i != H {
-        let mut j: u32 = 0;
-        let i_u128: u128 = i.into();
-        while j != W {
-            let j_u128: u128 = j.into();
-            let i_q: u128 = (i_u128 * Q) / 1000;
-            let j_q: u128 = (j_u128 * Q) / 10000;
-            a.append(i_q + j_q);
-            j = j + 1;
-        };
-        i = i + 1;
-    };
-
-    // Build expected the same way.
-    let mut expected: Array<u128> = ArrayTrait::new();
-    let mut cb: u32 = 0;
-    while cb != 100 {
-        let mut rb: u32 = 0;
-        while rb != 50 {
-            let mut p: u32 = 0;
-            while p != 2 {
-                let mut q: u32 = 0;
-                while q != 2 {
-                    let row: u32 = rb * 2 + p;
-                    let col: u32 = cb * 2 + q;
-                    expected.append(*a.at(row * W + col));
-                    q = q + 1;
-                };
-                p = p + 1;
-            };
-            rb = rb + 1;
-        };
-        cb = cb + 1;
-    };
-
-    // Recompute and verify.
-    let mut k: u32 = 0;
-    let mut cb2: u32 = 0;
-    while cb2 != 100 {
-        let mut rb2: u32 = 0;
-        while rb2 != 50 {
-            let mut p2: u32 = 0;
-            while p2 != 2 {
-                let mut q2: u32 = 0;
-                while q2 != 2 {
-                    let row: u32 = rb2 * 2 + p2;
-                    let col: u32 = cb2 * 2 + q2;
-                    assert!(*a.at(row * W + col) == *expected.at(k));
-                    k = k + 1;
-                    q2 = q2 + 1;
-                };
-                p2 = p2 + 1;
-            };
-            rb2 = rb2 + 1;
-        };
-        cb2 = cb2 + 1;
-    };
+/// Appends the 2x2 block at rows `2i, 2i+1` and columns `2j, 2j+1`, row-major.
+fn append_block(ref out: Array<Q32>, a: Span<Q32>, i: u32, j: u32) {
+    let top = 2 * i * COLS + 2 * j;
+    let bottom = top + COLS;
+    out.append(*a.at(top));
+    out.append(*a.at(top + 1));
+    out.append(*a.at(bottom));
+    out.append(*a.at(bottom + 1));
 }
