@@ -295,50 +295,21 @@ impl IRGenerator {
                     Value::None
                 }
             }
-            "list" => {
-                // list(iterable) — convert to list, or empty list
-                if visited_args.is_empty() {
-                    Value::List(CompositeData {
-                        elements_type: vec![],
-                        values: vec![],
-                        value_id: ValueId::next(),
-                    })
+            "list" | "tuple" => {
+                let values = match visited_args.first() {
+                    None => Vec::new(),
+                    Some(_) => self.iterated_values(&ctx.args_orig[0], member),
+                };
+                let data = CompositeData {
+                    elements_type: values.iter().map(|v| v.zinnia_type()).collect(),
+                    values,
+                    // `list(a)` is a new (shallow) list, not `a` itself.
+                    value_id: ValueId::next(),
+                };
+                if member == "list" {
+                    Value::List(data)
                 } else {
-                    match &visited_args[0] {
-                        // `list(a)` is a new (shallow) list, not `a` itself.
-                        Value::List(data) => Value::List(CompositeData {
-                            value_id: ValueId::next(),
-                            ..data.clone()
-                        }),
-                        Value::Tuple(data) => Value::List(CompositeData {
-                            elements_type: data.elements_type.clone(),
-                            values: data.values.clone(),
-
-                            value_id: ValueId::next(),
-                        }),
-                        _ => visited_args[0].clone(),
-                    }
-                }
-            }
-            "tuple" => {
-                // tuple(iterable) — convert to tuple, or empty tuple
-                if visited_args.is_empty() {
-                    Value::Tuple(CompositeData {
-                        elements_type: vec![],
-                        values: vec![],
-                        value_id: ValueId::next(),
-                    })
-                } else {
-                    match &visited_args[0] {
-                        Value::Tuple(_) => visited_args[0].clone(),
-                        Value::List(data) => Value::Tuple(CompositeData {
-                            elements_type: data.elements_type.clone(),
-                            values: data.values.clone(),
-
-                            value_id: ValueId::next(),
-                        }),
-                        _ => visited_args[0].clone(),
-                    }
+                    Value::Tuple(data)
                 }
             }
             _ => return None,

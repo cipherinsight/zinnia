@@ -72,6 +72,9 @@ impl IRGenerator {
     /// Items of an already-evaluated iterable value.
     pub(crate) fn value_items(&mut self, iterable: &Value) -> Vec<LoopItem> {
         match iterable {
+            Value::StaticArray { shape, .. } if shape.is_empty() => {
+                panic!("TypeError: iteration over a 0-d array")
+            }
             Value::StaticArray { shape, .. } => (0..shape[0])
                 .map(|i| {
                     LoopItem::always(crate::helpers::static_array::read::iter_element(
@@ -85,7 +88,26 @@ impl IRGenerator {
                 data.values.iter().cloned().map(LoopItem::always).collect()
             }
             Value::DynamicNDArray(data) => self.dynamic_array_items(data),
-            _ => panic!("'{}' object is not iterable", iterable.zinnia_type()),
+            other => panic!("TypeError: '{}' object is not iterable", python_type_name(other)),
+        }
+    }
+
+    /// What `list(iterable)` / `tuple(iterable)` collects (`builtin` names
+    /// which): the values a `for` loop over `iterable` visits, so a 2-D
+    /// array gives its rows. A scalar raises Python's TypeError; a
+    /// runtime-shaped array has no compile-time length and is rejected.
+    pub(crate) fn iterated_values(&mut self, iterable: &Value, builtin: &str) -> Vec<Value> {
+        match iterable {
+            Value::StaticArray { .. } | Value::List(_) | Value::Tuple(_) => {
+                self.value_items(iterable).into_iter().map(|item| item.value).collect()
+            }
+            Value::DynamicNDArray(_) => panic!(
+                "{}() of an array with a runtime shape is not supported: its length is not a \
+                 compile-time number",
+                builtin
+            ),
+            Value::String(_) => panic!("{}() of a string is not supported", builtin),
+            other => panic!("TypeError: '{}' object is not iterable", python_type_name(other)),
         }
     }
 
@@ -334,17 +356,41 @@ impl IRGenerator {
 
     /// An upper bound on `len(range(start, stop, step))` over all values the
     /// compiler can prove `start` and `stop` take, or `None` if either end
-    /// has no provable bound in the needed direction.
+    /// has no provable bound in the needed direction. Only one side of each
+    /// end matters: for a positive step the count is at most
+    /// `max(stop) - min(start)` (a stop below the start gives zero
+    /// iterations, which the items' activity conditions express), so
+    /// `@requires(n <= 8)` alone bounds `range(n)`.
     fn range_count_bound(&mut self, start: &Value, stop: &Value, step: i64) -> Option<i64> {
-        let (start_lo, start_hi) = self.int_bounds(start)?;
-        let (stop_lo, stop_hi) = self.int_bounds(stop)?;
         let span = if step > 0 {
-            stop_hi.checked_sub(start_lo)?
+            self.int_bound(stop, Side::Upper)?.checked_sub(self.int_bound(start, Side::Lower)?)?
         } else {
-            start_hi.checked_sub(stop_lo)?
+            self.int_bound(start, Side::Upper)?.checked_sub(self.int_bound(stop, Side::Lower)?)?
         };
         let magnitude = step.checked_abs()?;
         Some(if span <= 0 { 0 } else { (span + magnitude - 1) / magnitude })
+    }
+
+    /// A proven lower or upper bound of an integer value: from
+    /// [`Self::int_bounds`] when both halves are known, else from the facts
+    /// that bound only this side (`@requires(n <= 8)` gives the fact
+    /// `n <= 8` and no lower bound).
+    fn int_bound(&mut self, v: &Value, side: Side) -> Option<i64> {
+        if let Some((lo, hi)) = self.int_bounds(v) {
+            return Some(match side {
+                Side::Lower => lo,
+                Side::Upper => hi,
+            });
+        }
+        let vid = v.value_id()?;
+        let entries = self.builder.facts.per_value.get(&vid)?;
+        entries
+            .iter()
+            .filter_map(|term| one_sided_fact_bound(term, vid, side))
+            .reduce(|a, b| match side {
+                Side::Lower => a.max(b),
+                Side::Upper => a.min(b),
+            })
     }
 
     /// Proven `(min, max)` of an integer value: exact for constants,
@@ -593,3 +639,70 @@ fn is_method_call_on(node: &serde_json::Value, names: &[String]) -> bool {
         _ => false,
     }
 }
+
+/// Which side of a value's range a bound limits.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Lower,
+    Upper,
+}
+
+/// The bound on `vid` that a fact `vid <op> n` (or `n <op> vid`) states for
+/// `side`, if it states one. The shapes are those of
+/// `optim::resolver::derive_bounds_from_facts`, which needs both sides.
+fn one_sided_fact_bound(term: &ContractTerm, vid: crate::types::ValueId, side: Side) -> Option<i64> {
+    let ContractTerm::Cmp { op, lhs, rhs } = term else { return None };
+    let is_vid = |t: &ContractTerm| matches!(t, ContractTerm::Var(ContractVar::Value(v)) if *v == vid);
+    let (op, n) = if is_vid(lhs) {
+        (*op, literal_int(rhs)?)
+    } else if is_vid(rhs) {
+        let swapped = match op {
+            CmpOp::Lt => CmpOp::Gt,
+            CmpOp::Le => CmpOp::Ge,
+            CmpOp::Gt => CmpOp::Lt,
+            CmpOp::Ge => CmpOp::Le,
+            other => *other,
+        };
+        (swapped, literal_int(lhs)?)
+    } else {
+        return None;
+    };
+    match (side, op) {
+        (Side::Lower, CmpOp::Ge | CmpOp::Eq) | (Side::Upper, CmpOp::Le | CmpOp::Eq) => Some(n),
+        (Side::Lower, CmpOp::Gt) => n.checked_add(1),
+        (Side::Upper, CmpOp::Lt) => n.checked_sub(1),
+        _ => None,
+    }
+}
+
+/// The value of an integer literal term, including literal arithmetic such
+/// as `0 - 3` (how a precondition spells `-3`).
+fn literal_int(term: &ContractTerm) -> Option<i64> {
+    use crate::optim::predicates::formula::ArithOp;
+    match term {
+        ContractTerm::LitInt(n) => Some(*n),
+        ContractTerm::Arith { op, lhs, rhs } => {
+            let (a, b) = (literal_int(lhs)?, literal_int(rhs)?);
+            match op {
+                ArithOp::Add => a.checked_add(b),
+                ArithOp::Sub => a.checked_sub(b),
+                ArithOp::Mul => a.checked_mul(b),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Python's name for the type of a scalar value, for error messages.
+fn python_type_name(value: &Value) -> String {
+    match value {
+        Value::Integer(_) => "int".to_string(),
+        Value::Float(_) => "float".to_string(),
+        Value::Boolean(_) => "bool".to_string(),
+        Value::Complex { .. } => "complex".to_string(),
+        Value::None => "NoneType".to_string(),
+        other => other.zinnia_type().to_string(),
+    }
+}
+
