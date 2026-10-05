@@ -102,16 +102,45 @@ def test_compiler_layout_decodes_constants_metadata_and_dynamic_lengths():
     i = lambda index: {"public": index, "kind": "i"}  # noqa: E731
     f = lambda index: {"public": index, "kind": "f"}  # noqa: E731
     layout = [
-        {"shape": [2], "cells": [f(0), {"constant": 7}]},
-        {"dynamic": {"length": i(1), "dims": [i(6), i(2)], "cells": [f(3), f(4), f(5)]}},
+        {"output": {"return": [0]}, "shape": [2], "cells": [f(0), {"constant": 7}]},
+        {"output": {"return": [1]}, "dynamic": {"length": i(1), "rank": {"constant": 2},
+                                                "dims": [i(6), i(2)], "cells": [f(3), f(4), f(5)]}},
     ]
     assert decode_with_layout(fields, layout) == ([0.25, 7, 1.5, -3.0], [[2], [2, 1]])
     with pytest.raises(ValueError, match="exactly once"):
         decode_with_layout(fields + [5], layout)
-    with pytest.raises(ValueError, match="outside"):
+    with pytest.raises(ValueError, match="does not fit"):
         decode_with_layout([q(0.25), 4, 1, q(1.5), q(-3.0), q(9.0), 4], layout)
     with pytest.raises(ValueError, match="multiply"):
         decode_with_layout([q(0.25), 2, 1, q(1.5), q(-3.0), q(9.0), 1], layout)
+
+
+def test_compiler_layout_reads_strided_buffers_ranks_complex_parts_and_public_inputs():
+    from benchmarking.harness.outputs import decode_with_layout
+
+    i = lambda index: {"public": index, "kind": "i"}  # noqa: E731
+    c = lambda value: {"constant": value}  # noqa: E731
+    # A 2 x 2 result in a 3 x 3 buffer (strides 3, 1), read through its dims.
+    strided = {"output": {"argument": "a"},
+               "dynamic": {"length": i(1), "rank": c(2), "dims": [i(2), i(3)],
+                           "strides": [3, 1], "offset": 0,
+                           "cells": [i(4 + k) for k in range(9)]}}
+    buffer = [10, 11, 99, 12, 13, 99, 99, 99, 99]
+    # public 0 is an input (a runtime shape entry of a dynamic input)
+    fields = [7, 4, 2, 2] + buffer
+    values, shapes = decode_with_layout(fields, [strided], [{"public": 0, "input": "x"}])
+    assert (values, shapes) == ([10, 11, 12, 13], [[2, 2]])
+    with pytest.raises(ValueError, match="exactly once"):
+        decode_with_layout(fields, [strided])
+    # The runtime rank selects the leading dims; an empty rank-1 result reads nothing.
+    ranked = {"output": {"return": []},
+              "dynamic": {"length": i(0), "rank": i(1), "dims": [i(2), i(3)],
+                          "strides": [6, 1], "offset": 0, "cells": [c(0)] * 4}}
+    assert decode_with_layout([0, 1, 0, 0], [ranked]) == ([], [[0]])
+    # A complex part has two cells per element.
+    complex_part = {"output": {"return": []}, "complex": True, "shape": [2],
+                    "cells": [i(0), c(0.0), i(1), c(2.5)]}
+    assert decode_with_layout([3, -1], [complex_part]) == ([3, 0.0, -1, 2.5], [[2]])
 
 
 def test_reported_shapes_must_match_the_reference():
@@ -121,3 +150,19 @@ def test_reported_shapes_must_match_the_reference():
     assert check_outputs(expected, same, TIGHT, expected_shapes=[[2, 3]]).matched
     reshaped = DecodedPublics(LOGICAL, values, shapes=[[3, 2]])
     assert check_outputs(expected, reshaped, TIGHT, expected_shapes=[[2, 3]]).status == "mismatch"
+
+
+def test_in_place_reference_takes_the_listed_arguments_and_rejects_unlisted_writes():
+    from benchmarking.harness.outputs import UnlistedOutput, reference_outputs
+
+    before = [np.array([1, 2]), np.array([3.0]), 4]
+    after = {"a": np.array([9, 2]), "b": np.array([3.0]), "n": 4}
+    layout = [{"output": {"argument": "a"}, "shape": [2], "cells": []}]
+    leaves, shapes = reference_outputs(None, after, before, layout)
+    assert [leaf.value for leaf in leaves] == [9, 2] and shapes == [[2]]
+    # A returned value is the output, whatever the arguments did.
+    leaves, _ = reference_outputs(np.array([5]), after, before, layout)
+    assert [leaf.value for leaf in leaves] == [5]
+    # NumPy changed `b` but the compiled program does not output it.
+    with pytest.raises(UnlistedOutput, match="'b'"):
+        reference_outputs(None, dict(after, b=np.array([0.0])), before, layout)

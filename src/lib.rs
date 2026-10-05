@@ -33,6 +33,10 @@ use optim::{
 #[pyclass]
 pub struct CompiledIR {
     graph: IRGraph,
+    /// The output layout (`ir_gen::outputs`) rendered against the optimized
+    /// graph's public vector, and the public inputs; `None` for a graph
+    /// imported from JSON (the layout is not part of the IR).
+    public_layout: Option<PublicLayout>,
     /// Lazily-computed cache of the exported IR statements (`Vec<Value>`)
     /// and its BLAKE2b ir-hash. Both are needed on every prove call (the
     /// artifact carries them so verifiers can re-keygen against the same
@@ -63,6 +67,38 @@ impl CompiledIR {
         }
         Ok(result)
     }
+}
+
+/// What every value of a compiled circuit's public vector is.
+struct PublicLayout {
+    /// One entry per output part (see `ir_gen::outputs::OutputLayout::to_json`).
+    outputs: serde_json::Value,
+    /// `{"public": i, "input": path, "kind"}` for each input read as public.
+    inputs: serde_json::Value,
+}
+
+/// Place the output layout recorded during IR generation on the optimized
+/// graph's public vector. The optimizer keeps every `ExposePublic`
+/// statement and their order; this checks that it did (same number of
+/// exposures, same kinds) instead of assuming it.
+fn resolve_public_layout(
+    graph: &IRGraph,
+    layout: &ir_gen::outputs::OutputLayout,
+) -> Result<PublicLayout, String> {
+    let (public_index, kinds, inputs) = ir_gen::outputs::public_vector_positions(&graph.stmts);
+    if kinds != layout.exposure_kinds {
+        return Err(format!(
+            "internal error: the optimized circuit's public outputs differ from those recorded \
+             during IR generation ({} vs {} exposures, or their kinds differ), so the output \
+             layout would not describe the public vector",
+            kinds.len(),
+            layout.exposure_kinds.len()
+        ));
+    }
+    Ok(PublicLayout {
+        outputs: layout.to_json(&public_index),
+        inputs: serde_json::Value::Array(inputs),
+    })
 }
 
 fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32) -> Option<IRGraph> {
@@ -337,7 +373,7 @@ fn compile_circuit_impl(
         smt_max_formula_size,
         smt_log_telemetry,
     };
-    let base_graph = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    let (base_graph, output_layout) = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         IRGenerator::generate_from_json_with_chips(ir_config.clone(), ast_json, &chips, &externals)
     })) {
         Ok(result) => result.map_err(pyo3::exceptions::PyValueError::new_err)?,
@@ -440,8 +476,12 @@ fn compile_circuit_impl(
         }
     }
 
+    let public_layout = resolve_public_layout(&optimized_graph, &output_layout)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+
     Ok(CompiledIR {
         graph: optimized_graph,
+        public_layout: Some(public_layout),
         artifact_cache: std::sync::OnceLock::new(),
     })
 }
@@ -654,13 +694,34 @@ fn verify_proof_artifact(proof_artifact_json: &str) -> PyResult<String> {
 }
 
 /// Constant output cells the compiler elided from the public instance
-/// (constant-elision in `expose_circuit_return_value`). JSON list of
-/// `{"Int": v}` / `{"Float": v}` in return order. Consumed by
-/// `benchmarking/audit_bindings.py` to verify output completeness:
-/// every expected output element must be an exposed public OR appear here.
+/// (constant elision in `ir_gen::outputs`). JSON list of `{"slot": k,
+/// "Int": v}` / `{"slot": k, "Float": v}` in output order. Superseded by
+/// [`get_output_layout`], which also places the elided constants.
 #[pyfunction]
 fn get_elided_publics(compiled_ir: &CompiledIR) -> PyResult<String> {
     serde_json::to_string(&compiled_ir.graph.elided_publics).map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e))
+    })
+}
+
+/// The output layout of a compiled circuit as JSON: one entry per output
+/// part, saying for every cell which public value (or which constant) it
+/// is; see `ir_gen::outputs::OutputLayout::to_json`. `null` for a program
+/// imported from JSON.
+#[pyfunction]
+fn get_output_layout(compiled_ir: &CompiledIR) -> PyResult<String> {
+    let layout = compiled_ir.public_layout.as_ref().map(|l| &l.outputs);
+    serde_json::to_string(&layout).map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e))
+    })
+}
+
+/// The inputs read as public values, as JSON `[{"public": i, "input":
+/// path, "kind": "i" | "f"}]`; `null` for a program imported from JSON.
+#[pyfunction]
+fn get_public_inputs(compiled_ir: &CompiledIR) -> PyResult<String> {
+    let inputs = compiled_ir.public_layout.as_ref().map(|l| &l.inputs);
+    serde_json::to_string(&inputs).map_err(|e| {
         pyo3::exceptions::PyValueError::new_err(format!("JSON serialize error: {}", e))
     })
 }
@@ -682,6 +743,7 @@ fn import_ir_json(ir_json: &str) -> PyResult<CompiledIR> {
     let graph = IRGraph::import_stmts(&data).map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(CompiledIR {
         graph,
+        public_layout: None,
         artifact_cache: std::sync::OnceLock::new(),
     })
 }
@@ -839,6 +901,8 @@ fn _zinnia_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "noir-backend")]
     m.add_function(wrap_pyfunction!(execute_noir_circuit, m)?)?;
     m.add_function(wrap_pyfunction!(get_elided_publics, m)?)?;
+    m.add_function(wrap_pyfunction!(get_output_layout, m)?)?;
+    m.add_function(wrap_pyfunction!(get_public_inputs, m)?)?;
     m.add_function(wrap_pyfunction!(verify_proof_artifact, m)?)?;
     #[cfg(feature = "halo2-base-backend")]
     prove::halo2_base::python::register(m)?;

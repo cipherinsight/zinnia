@@ -68,8 +68,8 @@ def check_program(request: dict) -> dict:
     from benchmarking.harness.adapters.zinnia_common import describe_compiled, zinnia_publics
     from benchmarking.harness.fixtures import PROVE_INPUT, SETUP_INPUT, load_fixture
     from benchmarking.harness.kernels import compile_kernel
-    from benchmarking.harness.outputs import check_outputs, reference_leaves
-    from benchmarking.harness.reference import run_kernel_as_numpy
+    from benchmarking.harness.outputs import UnlistedOutput, check_outputs, reference_outputs
+    from benchmarking.harness.reference import run_kernel_with_arguments
 
     kernel, function = Path(request["kernel"]), request["function"]
     started = time.perf_counter()
@@ -95,12 +95,18 @@ def check_program(request: dict) -> dict:
     if not satisfied:
         return {**result, "stage": "mock", "mock_error": "constraints unsatisfied on the "
                                                          "honest input"}
+    info = describe_compiled(compiled)
     try:
-        expected, shapes = reference_leaves(run_kernel_as_numpy(kernel, function, args))
+        returned, arguments_after = run_kernel_with_arguments(kernel, function, args)
+        expected, shapes = reference_outputs(returned, arguments_after, args,
+                                             info["output_layout"])
+    except UnlistedOutput as exc:
+        return {**result, "stage": "checked", "input": input_name,
+                "output_check": {"status": "mismatch", "detail": str(exc)}}
     except Exception as exc:  # noqa: BLE001
         return {**result, "unchecked": f"no reference: {type(exc).__name__}: {exc}"[:500]}
     try:
-        publics = zinnia_publics(values, describe_compiled(compiled))
+        publics = zinnia_publics(values, info)
     except StepFailure as failure:
         return {**result, "stage": "mock", "mock_error": failure.detail}
     check = check_outputs(expected, publics, Tolerance(**request["tolerance"]),

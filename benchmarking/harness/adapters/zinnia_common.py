@@ -53,12 +53,6 @@ def elided_values(compiled: Any) -> list[int | float]:
     return values
 
 
-def output_layout(compiled: Any) -> list[dict] | None:
-    """The compiler's output layout (`outputs.decode_with_layout`), once it exports one."""
-    getter = getattr(compiled, "get_output_layout", None)
-    return getter() if callable(getter) else None
-
-
 def describe_compiled(compiled: Any) -> dict:
     statements = ir_statements(compiled)
     return {
@@ -66,20 +60,43 @@ def describe_compiled(compiled: Any) -> dict:
         "ir_statements": len(statements),
         "expose_kinds": "".join(expose_kinds(statements)),
         "elided": elided_values(compiled),
-        "output_layout": output_layout(compiled),
+        "output_layout": compiled.get_output_layout(),
+        "public_inputs": compiled.get_public_inputs(),
         "program_inputs": [pi.export() for pi in compiled.program_inputs],
     }
 
 
-def zinnia_publics(fields: list[int], info: dict) -> DecodedPublics:
+def with_public_input_gaps(exposed: list[int], public_inputs: list[dict]) -> list[int | None]:
+    """The public vector from the exposed outputs alone (what the mock reports).
+
+    Public inputs come first in the full vector's statement order but the mock
+    does not report them; their positions are left empty (`None`) so the
+    layout's public indices still apply. The output layout never reads them.
+    """
+    vector: list[int | None] = [None] * (len(exposed) + len(public_inputs))
+    input_positions = {entry["public"] for entry in public_inputs}
+    values = iter(exposed)
+    for index in range(len(vector)):
+        if index not in input_positions:
+            vector[index] = next(values)
+    return vector
+
+
+def zinnia_publics(fields: list[int | None], info: dict) -> DecodedPublics:
     """A Zinnia proof's public vector as the output check takes it.
 
     With the compiler's output layout the values are decoded into the kernel's
-    output; without it they stay in exposure order (see `outputs`).
+    output; without it (an older payload) they stay in exposure order (see
+    `outputs`). A vector holding only the exposed outputs (the mock's) is
+    accepted too.
     """
     try:
-        if info.get("output_layout") is not None:
-            values, shapes = decode_with_layout(fields, info["output_layout"])
+        layout = info.get("output_layout")
+        if layout is not None:
+            public_inputs = info.get("public_inputs") or []
+            if public_inputs and len(fields) == len(info["expose_kinds"]):
+                fields = with_public_input_gaps(fields, public_inputs)
+            values, shapes = decode_with_layout(fields, layout, public_inputs)
             return DecodedPublics(LOGICAL, values, shapes=shapes)
         return DecodedPublics(ZINNIA_EXPOSURE, decode_exposed(fields, list(info["expose_kinds"])),
                               info["elided"])

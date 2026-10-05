@@ -900,7 +900,16 @@ impl IRGenerator {
             }
             _ => false,
         };
-        if same_segment || !self.ctx.has_nontrivial_condition() {
+        if same_segment {
+            self.ctx.set(var_name, updated);
+            return;
+        }
+        // The caller's array of an in-place kernel stays in its memory.
+        if let Some(written) = self.write_back_to_argument(current, &updated) {
+            self.ctx.set(var_name, written);
+            return;
+        }
+        if !self.ctx.has_nontrivial_condition() {
             self.ctx.set(var_name, updated);
             return;
         }

@@ -19,6 +19,7 @@ mod iteration;
 mod list_methods;
 mod list_sharing;
 mod named_attr;
+pub mod outputs;
 mod visitors;
 
 #[cfg(test)]
@@ -152,6 +153,13 @@ pub struct IRGenerator {
     pub(crate) loop_read_reuse_contexts: Vec<LoopReadReuseContext>,
     /// Copies made where NumPy would return a view (see `detached_copies`).
     pub(crate) detached_copies: detached_copies::DetachedCopies,
+    /// Where every public output value comes from (see `outputs`).
+    pub(crate) output_layout: outputs::OutputLayout,
+    /// The array arguments of an in-place kernel (one that returns no
+    /// value), as bound at entry; empty otherwise.
+    pub(crate) in_place_arguments: Vec<outputs::ArgumentArray>,
+    /// Index of the first IR statement of the entry function's body.
+    pub(crate) in_place_body_start: usize,
 }
 
 /// One entry in [`IRGenerator::chip_call_stack`]. See round-2 doc on
@@ -263,12 +271,22 @@ impl IRGenerator {
             loop_index_bound_contexts: Vec::new(),
             loop_read_reuse_contexts: Vec::new(),
             detached_copies: detached_copies::DetachedCopies::default(),
+            output_layout: outputs::OutputLayout::default(),
+            in_place_arguments: Vec::new(),
+            in_place_body_start: 0,
         }
     }
 
-    /// Main entry point: generate an IRGraph from an AST circuit.
-    pub fn generate(mut self, ast: &ASTCircuit) -> IRGraph {
+    /// Generate an IRGraph from an AST circuit.
+    pub fn generate(self, ast: &ASTCircuit) -> IRGraph {
+        self.generate_program(ast).0
+    }
+
+    /// Main entry point: generate the IRGraph of an AST circuit and the
+    /// layout of its outputs.
+    pub fn generate_program(mut self, ast: &ASTCircuit) -> (IRGraph, outputs::OutputLayout) {
         self.visit_circuit(ast);
+        let layout = std::mem::take(&mut self.output_layout);
         let smt_enable = self.config.smt_enable;
         let timeout_ms = self.config.smt_query_timeout_ms;
         let max_formula_size = self.config.smt_max_formula_size;
@@ -297,7 +315,7 @@ impl IRGenerator {
         if let Some(t) = astgen_telemetry {
             graph.set_astgen_telemetry(t);
         }
-        graph
+        (graph, layout)
     }
 
     /// Generate from a JSON string (the bridge entry point).
@@ -313,13 +331,14 @@ impl IRGenerator {
         }
     }
 
-    /// Generate from JSON with chips and externals.
+    /// Generate from JSON with chips and externals; also returns the output
+    /// layout.
     pub fn generate_from_json_with_chips(
         config: IRGenConfig,
         ast_json: &str,
         chips: &HashMap<String, serde_json::Value>,
         externals: &HashMap<String, serde_json::Value>,
-    ) -> Result<IRGraph, String> {
+    ) -> Result<(IRGraph, outputs::OutputLayout), String> {
         let node: ASTNode =
             serde_json::from_str(ast_json).map_err(|e| format!("AST parse error: {}", e))?;
         match node {
@@ -348,7 +367,7 @@ impl IRGenerator {
                         },
                     );
                 }
-                Ok(gen.generate(&circuit))
+                Ok(gen.generate_program(&circuit))
             }
             _ => Err("Expected ASTCircuit at top level".to_string()),
         }
@@ -643,6 +662,7 @@ impl IRGenerator {
             }
         }
 
+        self.begin_in_place_kernel(n);
         for stmt in &n.block {
             self.visit(stmt);
         }
@@ -654,20 +674,17 @@ impl IRGenerator {
                 "Circuit return inference does not allow mixing bare returns with value returns"
             );
         }
-        if returns.is_empty() {
-            if circuit_return_dt.is_some() {
-                panic!("Circuit control ends without a return statement");
-            }
-            let _ = self.ctx.circuit_leave();
-            return;
-        }
         let returns: Vec<(Value, Value)> = returns
             .into_iter()
             .filter(|(val, _)| !matches!(val, Value::None))
             .collect();
         if returns.is_empty() {
-            if circuit_return_dt.is_some() {
+            if circuit_return_dt.as_ref().is_some_and(|dt| *dt != ZinniaType::None) {
                 panic!("Circuit control ends without a value-returning statement");
+            }
+            // An in-place kernel: its outputs are the array arguments it wrote.
+            for (source, value) in self.in_place_outputs() {
+                self.expose_part(source, &value);
             }
             let _ = self.ctx.circuit_leave();
             return;
@@ -697,177 +714,8 @@ impl IRGenerator {
                 );
             }
         }
-        self.expose_circuit_return_value(&result);
+        self.expose_return_value(&result);
         let _ = self.ctx.circuit_leave();
-    }
-
-    fn expose_circuit_return_value(&mut self, value: &Value) {
-        match value {
-            // Constant-elision: a return cell whose value is a compile-time
-            // constant carries no information the verifier can't derive
-            // from the kernel source — same rationale as the dynamic-shape
-            // metadata elision below. Kernels returning constant tensors
-            // (e.g. np.zeros((20,10,10,2)) in case 0451: 4000 cells) would
-            // otherwise pin k via the instance column for nothing.
-            // Elided constants are still recorded (IRGraph::elided_publics)
-            // so output auditors can check the claim against ground truth.
-            Value::Integer(sv) if sv.static_val.is_some() => {
-                self.builder
-                    .elided_publics
-                    .push(crate::ir::ElidedPublic::Int(sv.static_val.unwrap()));
-            }
-            Value::Boolean(sv) if sv.static_val.is_some() => {
-                self.builder.elided_publics.push(crate::ir::ElidedPublic::Int(
-                    if sv.static_val.unwrap() { 1 } else { 0 },
-                ));
-            }
-            Value::Float(sv) if sv.static_val.is_some() => {
-                self.builder
-                    .elided_publics
-                    .push(crate::ir::ElidedPublic::Float(sv.static_val.unwrap()));
-            }
-            Value::Integer(_) | Value::Boolean(_) => {
-                self.builder.ir_expose_public_i(value);
-            }
-            Value::Float(_) => {
-                self.builder.ir_expose_public_f(value);
-            }
-            // A StaticArray carrying runtime-extents provenance (a
-            // dynamic-bounds slice) binds as a dyn array so the contract
-            // pins the RUNTIME shape, not the envelope rectangle.
-            Value::StaticArray {
-                segment_id, shape, ..
-            } if self
-                .builder
-                .provenance
-                .runtime_extents_of(*segment_id)
-                .is_some() =>
-            {
-                // Bind with the dyn-array contract layout (length, dims,
-                // payload) so the contract pins the RUNTIME shape — but
-                // take the payload from the in-SSA cell values rather
-                // than promoting to a segment-backed dyn array. Promotion
-                // would re-read every envelope cell from memory, keeping
-                // the slice envelope's writes alive; the SSA path lets
-                // unread_memory_elimination delete them (and pad-slot
-                // constants elide like any constant return cell).
-                let ext_vids = self
-                    .builder
-                    .provenance
-                    .runtime_extents_of(*segment_id)
-                    .cloned()
-                    .unwrap();
-                let mut ext_vals: Vec<Value> = Vec::with_capacity(ext_vids.len());
-                for vid in &ext_vids {
-                    match self.builder.value_of_vid(*vid) {
-                        Some(v) => ext_vals.push(v),
-                        None => break,
-                    }
-                }
-                if ext_vals.len() == shape.len() {
-                    let shape = shape.clone();
-                    let total: usize = shape.iter().product();
-                    let mut len_v: Option<Value> = None;
-                    for ev in &ext_vals {
-                        len_v = Some(match len_v.take() {
-                            None => ev.clone(),
-                            Some(prev) => self.builder.ir_mul_i(&prev, ev),
-                        });
-                    }
-                    let len_v = len_v.unwrap_or_else(|| self.builder.ir_constant_int(0));
-                    // Same elision rules as expose_dynamic_ndarray_return:
-                    // skip metadata cells that are compile-time constants
-                    // equal to what the signature already implies.
-                    if len_v.int_val() != Some(total as i64) {
-                        self.builder.ir_expose_public_i(&len_v);
-                    }
-                    for ev in &ext_vals {
-                        if ev.int_val().is_none() {
-                            self.builder.ir_expose_public_i(ev);
-                        }
-                    }
-                    let flat = crate::helpers::composite::flatten_composite_with_builder(
-                        &mut self.builder,
-                        value,
-                    );
-                    for leaf in flat {
-                        self.expose_circuit_return_value(&leaf);
-                    }
-                } else {
-                    let promoted =
-                        crate::helpers::promote::promote_static_to_dynamic_with_extents(
-                            &mut self.builder,
-                            value,
-                        );
-                    self.expose_circuit_return_value(&promoted);
-                }
-            }
-            Value::List(_) | Value::Tuple(_) | Value::StaticArray { .. } => {
-                let flat = crate::helpers::composite::flatten_composite_with_builder(
-                    &mut self.builder,
-                    value,
-                );
-                for leaf in flat {
-                    self.expose_circuit_return_value(&leaf);
-                }
-            }
-            Value::DynamicNDArray(data) => {
-                self.expose_dynamic_ndarray_return(data);
-            }
-            Value::Complex { real, imag } => {
-                self.builder.ir_expose_public_f(&Value::Float(real.clone()));
-                self.builder.ir_expose_public_f(&Value::Float(imag.clone()));
-            }
-            Value::None => {}
-            _ => {
-                panic!(
-                    "Circuit return inference currently does not support public output type {}",
-                    value.zinnia_type()
-                );
-            }
-        }
-    }
-
-    fn expose_dynamic_ndarray_return(&mut self, data: &crate::types::DynamicNDArrayData) {
-        // Metadata-elision: each shape metadata cell that's a
-        // compile-time constant adds ~2 ACIR gates and carries no
-        // information the verifier can't derive from the kernel
-        // signature. Skip those individually; dynamic fields stay
-        // exposed so consumers of variable-shape outputs still see
-        // the runtime extent. Closes the 0301/0302 (+8 each) and
-        // 0303 (+24) residuals.
-        if data.meta.runtime_length.static_val.is_none()
-            || data.meta.runtime_length.static_val.map(|l| l as usize) != Some(data.max_length())
-        {
-            self.builder
-                .ir_expose_public_i(&Value::Integer(data.meta.runtime_length.clone()));
-        }
-        if data.meta.runtime_rank.static_val.is_none() {
-            self.builder
-                .ir_expose_public_i(&Value::Integer(data.meta.runtime_rank.clone()));
-        }
-        for axis in 0..data.max_rank() {
-            let dim = data
-                .meta
-                .runtime_shape
-                .get(axis)
-                .cloned()
-                .unwrap_or_else(|| crate::types::ScalarValue::constant(0));
-            if dim.static_val.is_none() {
-                self.builder.ir_expose_public_i(&Value::Integer(dim));
-            }
-        }
-
-        for i in 0..data.max_length() {
-            let addr = self.builder.ir_constant_int(i as i64);
-            let cell = crate::helpers::segment::read_typed(
-                &mut self.builder,
-                data.segment_id,
-                &addr,
-                data.dtype,
-            );
-            self.expose_circuit_return_value(&cell);
-        }
     }
 
     fn scalar_precondition_terms(&self, n: &ASTCircuit) -> Vec<ContractTerm> {
