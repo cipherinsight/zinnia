@@ -29,17 +29,11 @@ use crate::ir_defs::IR;
 /// bound" — the emitter should default to `Field`.
 pub type BoundMap = HashMap<u32, u64>;
 
-/// Count of operations that *natively* lower to a u32/u128 RANGE check
-/// in the Noir emit (`AssertU128Lt`, `LtIBounded`, `GtIBounded`,
-/// `IndexInBox`). The Noir emitter uses this as a "is the u32 lookup
-/// table going to be paid for anyway?" proxy: a high count means
-/// eagerly promoting bool/add chains is free, a low count means the
-/// table overhead would dominate.
-///
-/// The threshold lives in `NoirEmitter::new`. Below it, kernels stay
-/// on the Field path (cf. 0503/0504/0505 with 1 intrinsic op each,
-/// where promoting cost +3500 each; 0355/0356/0357 with a handful,
-/// +707 each).
+/// Count of operations whose Noir lowering needs a u32/u128 range check
+/// (`AssertU128Lt`, `AssertU128LtBit`, `LtIBounded`, `GtIBounded`,
+/// `IndexInBox`). The emitter uses it as a proxy for "bb's range table is
+/// paid for anyway": above the threshold in `NoirEmitter::new`, it promotes
+/// bounded cells to u32 eagerly.
 pub fn count_u32_intrinsic_ops(graph: &IRGraph) -> usize {
     graph
         .stmts

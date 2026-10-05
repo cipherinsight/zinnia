@@ -1105,6 +1105,25 @@ impl<'a> NoirEmitter<'a> {
         out
     }
 
+    /// True when `s1*v + s2*w + offset` lies in [0, len) for every v in
+    /// `vs` and w in `ws` (extremes of an affine form over a box).
+    fn all_combinations_in_range(
+        s1: i64,
+        vs: &[i64],
+        s2: i64,
+        ws: &[i64],
+        offset: i64,
+        len: usize,
+    ) -> bool {
+        let extremes = |s: i64, xs: &[i64]| {
+            let (lo, hi) = (xs[0] * s, xs[xs.len() - 1] * s);
+            (lo.min(hi), lo.max(hi))
+        };
+        let (a_lo, a_hi) = extremes(s1, vs);
+        let (b_lo, b_hi) = extremes(s2, ws);
+        a_lo + b_lo + offset >= 0 && a_hi + b_hi + offset < len as i64
+    }
+
     /// Stage-1 plane for factored two-root gathers: sum over feasible v of
     /// ind(root, v) * mem[v*scale + resid]. Cached by (segment, version,
     /// root, scale, resid).
@@ -1192,22 +1211,15 @@ impl<'a> NoirEmitter<'a> {
         intrinsic_count: usize,
         provenance: &'a crate::provenance::ProvenanceTable,
     ) -> NoirEmitter<'a> {
-        // u32 amortization heuristic: instantiating bb's u32/u128 RANGE
-        // lookup tables pulls in a fixed cost (~2700-3500 gates in the
-        // tested bb 5.0 nightly). Each `(field as u32)` elimination
-        // saves ~10-15 gates. We turn aggressive Field→u32 promotion
-        // on only when the IR contains *enough* operations that
-        // intrinsically lower to a u32/u128 RANGE check
-        // (`AssertU128Lt`, `LtIBounded`, `GtIBounded`, `IndexInBox`)
-        // for the table cost to be already sunk.
-        //
-        // Threshold derivation: 0508 (high intrinsic op count) saved
-        // ~880 gates; 0507/0509/0510 with moderate counts saved
-        // 1200-1400. 0355 (a handful of intrinsic ops) lost ~707 to
-        // table overhead. 0503/0504/0505 (1 intrinsic op each, mostly
-        // a single AssertU128Lt sitting in a memory-trace seal) lost
-        // ~3500. The 20 threshold admits the moderate-count winners
-        // while excluding the single-intrinsic regressors.
+        // u32 promotion (`maybe_promote_to_u32`) range-checks a Field cell
+        // into u32 so later integer ops run natively. The first range check
+        // of 14+ bits pulls bb's range table into the circuit (~2.7k gates),
+        // so promotion only pays off when the kernel already has enough ops
+        // that need such checks; `count_u32_intrinsic_ops` counts them. The
+        // threshold affects cost only, never soundness (every promotion is
+        // range-checked). Measured 2026-10-06 on the performance set:
+        // promoting unconditionally costs 1.9% more gates (geomean) than
+        // this threshold.
         let u32_amortizable = intrinsic_count >= 20;
         Self {
             prov: provenance,
@@ -2444,10 +2456,13 @@ impl Synthesizer for NoirEmitter<'_> {
                     v_all.dedup();
                     self.assert_one_hot(&r1.clone(), &v_all);
                     self.assert_one_hot(&r2.clone(), &w_vals);
-                    // Each root is in its set, but not every combination is
-                    // a valid slot: check the full address too (an invalid
-                    // combination would otherwise gather 0).
-                    self.assert_index_in_range(addr, len as i128);
+                    // Each root is now in its set, but a combination of two
+                    // members need not be a valid slot (it would gather 0).
+                    // When some combination falls outside the segment, check
+                    // the full address too.
+                    if !Self::all_combinations_in_range(s1, &v_all, s2, &w_vals, aff.offset, len) {
+                        self.assert_index_in_range(addr, len as i128);
+                    }
                     let mut parts: Vec<String> = Vec::with_capacity(w_vals.len());
                     for &w in &w_vals {
                         let plane = self.gather_plane(
