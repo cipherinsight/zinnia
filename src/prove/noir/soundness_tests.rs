@@ -235,6 +235,36 @@ fn power_of_two_bound_is_one_range_check() {
     assert_rejected(execute(&graph, &witness(&[("idx", -1)])));
 }
 
+/// NumPy's index wrap-around `y = x + 8 if x < 0 else x` with `y < 8`
+/// asserted: the comparison `x < 0` uses an 8-bit gap check (every accepted
+/// x lies in [-8, 7]); in-range indices of both signs are accepted, and
+/// out-of-range ones (including one far outside 8 bits) are rejected.
+#[test]
+fn wrapped_index_comparison_is_narrow_and_sound() {
+    if !toolchain_present(false) {
+        return;
+    }
+    let mut g = Graph::default();
+    let x = g.read_int("x");
+    let zero = g.int(0);
+    let n = g.int(8);
+    let negative = g.push(IR::LtI, &[x, zero]);
+    let shifted = g.push(IR::AddI, &[x, n]);
+    let wrapped = g.push(IR::SelectI, &[negative, shifted, x]);
+    g.push(IR::AssertU128Lt, &[wrapped, n]);
+    g.expose(wrapped);
+    let graph = g.finish();
+    let honest = witness(&[("x", -3)]);
+    let emitted = emit_circuit(&graph, &honest, &ProvingParams::default()).unwrap();
+    assert!(emitted.main_nr.contains("qlt_bits::<8>("), "{}", emitted.main_nr);
+    assert_eq!(execute(&graph, &honest).unwrap(), vec![5]);
+    assert_eq!(execute(&graph, &witness(&[("x", 7)])).unwrap(), vec![7]);
+    assert_eq!(execute(&graph, &witness(&[("x", -8)])).unwrap(), vec![0]);
+    assert_rejected(execute(&graph, &witness(&[("x", 8)])));
+    assert_rejected(execute(&graph, &witness(&[("x", -9)])));
+    assert_rejected(execute(&graph, &witness(&[("x", 1 << 40)])));
+}
+
 /// M5: a dynamic-address write outside the segment used to update no slot
 /// and succeed; the mock rejects it.
 #[test]

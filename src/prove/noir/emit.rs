@@ -82,6 +82,7 @@ pub fn emit_circuit(
     let bounds = super::bound_analysis::run(ir);
     let mut emitter = NoirEmitter::new(input_params.clone(), bounds, &ir.provenance);
     emitter.dynamic_reads_per_epoch = count_dynamic_reads_per_epoch(ir);
+    emitter.wrapped_index_ranges = wrapped_index_ranges(ir);
     interpret_ir(ir, &mut emitter)?;
 
     let main_nr = render_main_nr(&input_params, &emitter);
@@ -98,6 +99,54 @@ pub fn emit_circuit(
         public_input_count,
         return_count,
     })
+}
+
+/// Ranges that NumPy's index wrap-around proves for raw indices. A runtime
+/// index x into an axis of length N is lowered to `y = x + N if x < 0 else
+/// x` (`LtI(x, 0)`, `AddI(x, N)`, `SelectI`) followed by `AssertU128Lt(y,
+/// hi)` with constants N and hi <= N. Every witness the assert accepts has
+/// x in [-N, hi - 1], so for those witnesses the comparison `x < 0` can use
+/// a range check sized by that range (`comparison_width`): it fails only on
+/// an x the assert rejects anyway, and is never wrong where it passes.
+/// Returns that range per raw index value.
+fn wrapped_index_ranges(ir: &IRGraph) -> HashMap<crate::types::ValueId, (i64, i64)> {
+    use crate::ir_defs::IR;
+    let by_id: HashMap<u32, &crate::ir::IRStatement> =
+        ir.stmts.iter().map(|s| (s.stmt_id, s)).collect();
+    let constant = |id: u32| match by_id.get(&id).map(|s| &s.ir) {
+        Some(IR::ConstantInt { value }) => Some(*value),
+        _ => None,
+    };
+    let mut ranges = HashMap::new();
+    for stmt in &ir.stmts {
+        let (IR::AssertU128Lt, [sel, hi]) = (&stmt.ir, stmt.arguments.as_slice()) else {
+            continue;
+        };
+        let (Some(hi), Some(select)) = (constant(*hi), by_id.get(sel)) else {
+            continue;
+        };
+        let (IR::SelectI, [cond, wrapped, raw]) = (&select.ir, select.arguments.as_slice()) else {
+            continue;
+        };
+        let (Some(cond), Some(wrapped)) = (by_id.get(cond), by_id.get(wrapped)) else {
+            continue;
+        };
+        let is_negative_test = matches!(cond.ir, IR::LtI)
+            && cond.arguments.first() == Some(raw)
+            && cond.arguments.get(1).and_then(|z| constant(*z)) == Some(0);
+        let shift = match (&wrapped.ir, wrapped.arguments.as_slice()) {
+            (IR::AddI, [a, b]) if a == raw => constant(*b),
+            (IR::AddI, [a, b]) if b == raw => constant(*a),
+            _ => None,
+        };
+        if let (true, Some(n)) = (is_negative_test, shift) {
+            if hi >= 1 && n >= hi {
+                let raw_vid = select.arg_values[2];
+                ranges.insert(raw_vid, (-n, hi - 1));
+            }
+        }
+    }
+    ranges
 }
 
 /// For every memory segment and write epoch (the writes to the segment seen
@@ -521,6 +570,10 @@ pub struct NoirEmitter<'a> {
     plane_cache: HashMap<(u32, u64, String, i64, i64), String>,
     /// Bumped on every write to a segment; invalidates plane_cache.
     write_version: HashMap<u32, u64>,
+    /// Ranges of raw indices that every accepted witness satisfies, from
+    /// NumPy's wrap-around lowering (see `wrapped_index_ranges`). Used only
+    /// to size comparisons.
+    wrapped_index_ranges: HashMap<crate::types::ValueId, (i64, i64)>,
     /// Dynamic reads per (segment, write epoch), from the IR (see
     /// `count_dynamic_reads_per_epoch`).
     dynamic_reads_per_epoch: HashMap<(u32, u64), usize>,
@@ -861,14 +914,21 @@ impl<'a> NoirEmitter<'a> {
     /// The gap width W for comparing `a` with `b`: 64 (any two values of the
     /// signed 64-bit window), or less when the operands' intervals bound
     /// a - b inside [-2^W, 2^W). The intervals only choose the width: they
-    /// come from constants, enforced asserts and lowerings (see `ival`), and
-    /// a pair outside them fails the proof rather than getting a wrong
+    /// come from constants, enforced asserts and lowerings (see `ival`) or
+    /// from the bounds check of a wrapped index (`wrapped_index_ranges`),
+    /// and a pair outside them fails the proof rather than getting a wrong
     /// answer. W is rounded up to 8 or 28 bits, whose lookup tables bb
     /// shares with the 64-bit checks (a 14-bit limb table and an 8-bit
     /// one), so a narrow comparison never adds a table of its own.
     fn comparison_width(&self, a: &str, b: &str) -> u32 {
         const WINDOW_WIDTH: u32 = 64;
-        let (Some((al, ah)), Some((bl, bh))) = (self.ival(a), self.ival(b)) else {
+        let range = |cell: &str| {
+            self.ival(cell).or_else(|| {
+                let vid = self.vid_of_var.get(cell)?;
+                self.wrapped_index_ranges.get(vid).copied()
+            })
+        };
+        let (Some((al, ah)), Some((bl, bh))) = (range(a), range(b)) else {
             return WINDOW_WIDTH;
         };
         let lo = al as i128 - bh as i128;
@@ -1427,6 +1487,7 @@ impl<'a> NoirEmitter<'a> {
             membership_done: std::collections::HashSet::new(),
             plane_cache: HashMap::new(),
             write_version: HashMap::new(),
+            wrapped_index_ranges: HashMap::new(),
             dynamic_reads_per_epoch: HashMap::new(),
             segment_arrays: HashMap::new(),
             interval_of: HashMap::new(),
