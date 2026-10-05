@@ -28,10 +28,7 @@ pub struct Halo2BaseSynthesizer<'a> {
     witness: Option<ResolvedWitness>,
     params: ProvingParams,
     public_values: Vec<Fp>,
-    memories: HashMap<u32, Vec<Fp>>,
-    memory_cells: HashMap<u32, Vec<Option<Halo2BaseCell>>>,
-    memory_init: HashMap<u32, Fp>,
-    dynamic_writes: HashMap<u32, Vec<(Halo2BaseCell, Halo2BaseCell)>>,
+    segments: HashMap<u32, Segment>,
     dyn_meta_bounds: HashMap<u32, (u32, Vec<u32>)>,
     next_id: u64,
     bit_cells: HashSet<halo2_base::ContextCell>,
@@ -49,10 +46,8 @@ pub struct Halo2BaseSynthesizer<'a> {
     // (root id, enumerated value set) one-hot memberships already asserted.
     membership_asserted: HashSet<(u64, Vec<i64>)>,
     // Stage-1 gathered planes for factored two-root reads, keyed by
-    // (segment, write version, root id, root scale, residual offset).
+    // (segment, slots version, root id, root scale, residual offset).
     plane_cache: HashMap<(u32, u64, u64, i64, i64), Halo2BaseCell>,
-    // Bumped on every write to a segment; invalidates plane_cache entries.
-    write_version: HashMap<u32, u64>,
     // Cells already constrained to the signed-64 window (x + 2^63 < 2^64)
     // resp. the unsigned-64 window (x < 2^64). Comparisons skip their input
     // range checks for cells whose window is already enforced; selects
@@ -105,6 +100,34 @@ enum OverlayReadKey {
     Const(i64),
 }
 
+/// One allocated memory segment.
+///
+/// Program-order rule (M3): writes at constant addresses made before the
+/// segment's first dynamic-address write go straight into `slots` (pure
+/// wiring, no constraints). From the first dynamic-address write on, every
+/// write, constant or dynamic, is appended to `overlay`, and every read
+/// applies the overlay entries in that order on top of the slot value. The
+/// last write whose address equals the read address therefore wins, which
+/// is the program-order semantics of the mock backend.
+struct Segment {
+    init: Fp,
+    /// Constant-address writes before the first dynamic write; `None` means
+    /// never written (the slot holds `init`).
+    slots: Vec<Option<Halo2BaseCell>>,
+    /// `(address, value)` of every write since the first dynamic write.
+    overlay: Vec<(Halo2BaseCell, Halo2BaseCell)>,
+    /// Bumped whenever `slots` changes; keys the gathered-plane cache.
+    slots_version: u64,
+}
+
+/// Whether an overlay write affects a read: decided at synthesis time when
+/// both addresses are constants, otherwise by an equality bit.
+enum OverlayHit {
+    Always,
+    Never,
+    When(Halo2BaseCell),
+}
+
 /// The divisor of a constrained division, classified by what the circuit
 /// already knows about it (see `div_rem`).
 #[derive(Clone, Copy)]
@@ -141,10 +164,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             witness,
             params,
             public_values: Vec::new(),
-            memories: HashMap::new(),
-            memory_cells: HashMap::new(),
-            memory_init: HashMap::new(),
-            dynamic_writes: HashMap::new(),
+            segments: HashMap::new(),
             dyn_meta_bounds: HashMap::new(),
             next_id: 0,
             bit_cells: HashSet::new(),
@@ -156,7 +176,6 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             indicator_cache: HashMap::new(),
             membership_asserted: HashSet::new(),
             plane_cache: HashMap::new(),
-            write_version: HashMap::new(),
             signed64_cells: HashSet::new(),
             unsigned64_cells: HashSet::new(),
             sign_abs_cache: HashMap::new(),
@@ -403,49 +422,88 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         len: usize,
         init: Fp,
     ) -> Result<Halo2BaseCell, ProvingError> {
-        let version = self.write_version.get(&segment_id).copied().unwrap_or(0);
+        let version = self.segment(segment_id)?.slots_version;
         let key = (segment_id, version, root.id, scale, t);
         if let Some(plane) = self.plane_cache.get(&key) {
             return Ok(*plane);
         }
-        let mut out = self.cell(init);
+        let mut out = self.const_cell(init);
         for idx in 0..len as i64 {
             let num = idx - t;
             if num % scale != 0 {
                 continue;
             }
             let ind = self.root_indicator(root, num / scale)?;
-            let slot = self
-                .memory_cells
-                .get(&segment_id)
-                .and_then(|cells| cells.get(idx as usize))
-                .copied()
-                .flatten()
-                .unwrap_or_else(|| self.const_cell(init));
+            let slot = self.slot_cell(segment_id, idx as usize)?;
             out = self.select_bit(&ind, &slot, &out)?;
         }
         self.plane_cache.insert(key, out);
         Ok(out)
     }
 
-    /// eq(write addr, read addr) bit for dynamic-write overlays, cached so
-    /// repeated reads against the same pending write reuse the constraint.
+    /// Whether an overlay write at `write_addr` is seen by a read at
+    /// `read_addr`. Two constant addresses are compared at synthesis time;
+    /// otherwise an eq bit is emitted, cached so repeated reads against the
+    /// same pending write reuse the constraint.
     fn overlay_hit(
         &mut self,
         write_addr: &Halo2BaseCell,
         read_addr: &Halo2BaseCell,
-    ) -> Result<Halo2BaseCell, ProvingError> {
+    ) -> Result<OverlayHit, ProvingError> {
+        if self.is_const_cell(write_addr) && self.is_const_cell(read_addr) {
+            return Ok(if write_addr.value == read_addr.value {
+                OverlayHit::Always
+            } else {
+                OverlayHit::Never
+            });
+        }
         let key = if self.is_const_cell(read_addr) {
             OverlayReadKey::Const(kernel::fp_to_i64(read_addr.value))
         } else {
             OverlayReadKey::Cell(read_addr.id)
         };
         if let Some(hit) = self.overlay_eq_cache.get(&(write_addr.id, key)) {
-            return Ok(*hit);
+            return Ok(OverlayHit::When(*hit));
         }
         let hit = self.eq_i(&write_addr.clone(), &read_addr.clone())?;
         self.overlay_eq_cache.insert((write_addr.id, key), hit);
-        Ok(hit)
+        Ok(OverlayHit::When(hit))
+    }
+
+    /// Apply the segment's overlay writes, in program order, to `base`
+    /// (the value the read address holds before the first dynamic write).
+    fn apply_overlay(
+        &mut self,
+        segment_id: u32,
+        read_addr: &Halo2BaseCell,
+        base: Halo2BaseCell,
+    ) -> Result<Halo2BaseCell, ProvingError> {
+        let overlay = self.segment(segment_id)?.overlay.clone();
+        let mut out = base;
+        for (write_addr, write_value) in overlay {
+            out = match self.overlay_hit(&write_addr, read_addr)? {
+                OverlayHit::Always => write_value,
+                OverlayHit::Never => out,
+                OverlayHit::When(hit) => self.select_bit(&hit, &write_value, &out)?,
+            };
+        }
+        Ok(out)
+    }
+
+    fn segment(&self, segment_id: u32) -> Result<&Segment, ProvingError> {
+        self.segments
+            .get(&segment_id)
+            .ok_or_else(|| ProvingError::synthesis("segment not allocated"))
+    }
+
+    /// The cell a slot holds before the first dynamic write: its last
+    /// constant-address write, or the segment's init value as a constant
+    /// (a witness cell here would be a free variable). Addresses past the
+    /// end read the init value, as in the mock backend.
+    fn slot_cell(&mut self, segment_id: u32, idx: usize) -> Result<Halo2BaseCell, ProvingError> {
+        let segment = self.segment(segment_id)?;
+        let (written, init) = (segment.slots.get(idx).copied().flatten(), segment.init);
+        Ok(written.unwrap_or_else(|| self.const_cell(init)))
     }
 
     fn gate_cell(
@@ -811,6 +869,121 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             });
         }
         Ok(acc)
+    }
+
+    /// The slot value at a dynamic address, before overlay writes: a mux
+    /// over the slots reachable from the address's affine view.
+    ///
+    /// Two dynamic roots (windowed gathers, addr = r1*s1 + r2*s2 + c):
+    /// factored two-stage gather. Stage-1 planes Σ_v eq(r1,v)*mem[v*s1+t]
+    /// are cached and shared across reads; each read then muxes the
+    /// s1/s2 digit choices of r2. Both roots are pinned one-hot and the
+    /// full address is range-checked (an out-of-bounds (v,w) pair would
+    /// otherwise silently select the init value).
+    ///
+    /// One root (strided gathers, addr = root*s + c): mux only the slot
+    /// indices reachable from the root; eq(root, v) indicators are shared
+    /// across reads. The one-hot membership over the in-bounds choice set
+    /// subsumes the range check.
+    fn gather_slots(&mut self, segment_id: u32, addr: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        let len = self.segment(segment_id)?.slots.len();
+        let init = self.segment(segment_id)?.init;
+        let lin = self.affine_lin_of(addr);
+        let mut out: Option<Halo2BaseCell> = None;
+
+        if lin.terms.len() == 2 {
+            let (mut t1, mut t2) = (lin.terms[0], lin.terms[1]);
+            if t1.1.abs() < t2.1.abs() {
+                std::mem::swap(&mut t1, &mut t2);
+            }
+            let ((root1, s1), (root2, s2)) = (t1, t2);
+            if s1 > 0 && s2 > 0 && s1 % s2 == 0 && s1 / s2 >= 2 {
+                // Digit-canonical choices for the minor root: residuals that
+                // stay inside one major stride. Matches Zinnia's clamped
+                // in-bounds index lowering; a kernel violating it fails the
+                // one-hot assert at verify time rather than proving silently.
+                let w_choices: Vec<i64> = (0..s1 / s2)
+                    .filter(|w| {
+                        let t = w * s2 + lin.offset;
+                        (0..len as i64).any(|idx| (idx - t) % s1 == 0)
+                    })
+                    .collect();
+                let v_union: Vec<i64> = {
+                    let mut vs: Vec<i64> = Vec::new();
+                    for w in &w_choices {
+                        let t = w * s2 + lin.offset;
+                        for idx in 0..len as i64 {
+                            let num = idx - t;
+                            if num % s1 == 0 && !vs.contains(&(num / s1)) {
+                                vs.push(num / s1);
+                            }
+                        }
+                    }
+                    vs.sort_unstable();
+                    vs
+                };
+                if !w_choices.is_empty() && !v_union.is_empty() {
+                    let range = self.range_chip();
+                    range.check_less_than_safe(self.ctx(), addr.assigned, len as u64);
+                    let mut acc = self.const_cell(init);
+                    for w in &w_choices {
+                        let t = w * s2 + lin.offset;
+                        let plane = self.gathered_plane(segment_id, &root1, s1, t, len, init)?;
+                        let ind = self.root_indicator(&root2, *w)?;
+                        acc = self.select_bit(&ind, &plane, &acc)?;
+                    }
+                    self.assert_one_hot(&root2, &w_choices)?;
+                    self.assert_one_hot(&root1, &v_union)?;
+                    out = Some(acc);
+                }
+            }
+        }
+
+        if out.is_none() {
+            let (root, scale, offset) = match lin.terms.len() {
+                1 => (lin.terms[0].0, lin.terms[0].1, lin.offset),
+                _ => (*addr, 1, 0),
+            };
+            // Constraint-derived root interval shrinks the choice set: a
+            // unit-stride gather (addr = base + col, col in [0,W)) muxes W
+            // slots instead of the whole segment. The membership assert
+            // below stays sound — the interval is enforced by the root's
+            // defining gates, so the true value is always inside it.
+            let root_iv = self.interval_of(&root);
+            let mut choices: Vec<(i64, usize)> = Vec::new(); // (root value v, slot idx)
+            for idx in 0..len as i64 {
+                let num = idx - offset;
+                if scale != 0 && num % scale == 0 {
+                    let v = num / scale;
+                    if let Some((lo, hi)) = root_iv {
+                        if v < lo || v > hi {
+                            continue;
+                        }
+                    }
+                    choices.push((v, idx as usize));
+                }
+            }
+            if choices.is_empty() {
+                return Err(ProvingError::synthesis(
+                    "dynamic memory read can never be in bounds",
+                ));
+            }
+            let mut acc = self.const_cell(init);
+            for (v, idx) in &choices {
+                let ind = self.root_indicator(&root, *v)?;
+                let slot = self.slot_cell(segment_id, *idx)?;
+                acc = self.select_bit(&ind, &slot, &acc)?;
+            }
+            // Soundness: the gates that built `addr` already enforce
+            // addr == root * scale + offset; pinning root one-hot onto the
+            // in-bounds choices implies addr in bounds, replacing the
+            // per-read range check.
+            let vs: Vec<i64> = choices.iter().map(|(v, _)| *v).collect();
+            self.assert_one_hot(&root, &vs)?;
+            out = Some(acc);
+        }
+
+        Ok(out.expect("dynamic read lowering produced a value"))
     }
 
     /// `[x < c]` as a marked bit, for an `x` the caller has proven to lie
@@ -1393,204 +1566,52 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn allocate_memory(&mut self, segment_id: u32, size: u32, init: i64) -> Result<(), ProvingError> {
-        let init_fp = kernel::i64_to_fp(init);
-        self.memories.insert(segment_id, vec![init_fp; size as usize]);
-        self.memory_cells.insert(segment_id, vec![None; size as usize]);
-        self.memory_init.insert(segment_id, init_fp);
-        *self.write_version.entry(segment_id).or_insert(0) += 1;
+        let slots_version = self.segments.get(&segment_id).map_or(0, |s| s.slots_version + 1);
+        self.segments.insert(
+            segment_id,
+            Segment {
+                init: kernel::i64_to_fp(init),
+                slots: vec![None; size as usize],
+                overlay: Vec::new(),
+                slots_version,
+            },
+        );
         Ok(())
     }
+    /// See [`Segment`] for the program-order rule. A constant address must
+    /// be in bounds at synthesis time; a dynamic one is range-checked.
     fn write_memory(&mut self, segment_id: u32, addr: &Self::CellRef, value: &Self::CellRef) -> Result<(), ProvingError> {
-        *self.write_version.entry(segment_id).or_insert(0) += 1;
-        if self.is_const_cell(addr) {
-            let a = kernel::fp_to_i64(addr.value) as usize;
-            let mem = self.memories.get_mut(&segment_id).ok_or_else(|| ProvingError::synthesis("segment not allocated"))?;
-            if a >= mem.len() {
+        let len = self.segment(segment_id)?.slots.len();
+        let const_addr = self.is_const_cell(addr).then(|| kernel::fp_to_i64(addr.value));
+        match const_addr {
+            Some(a) if a < 0 || a as usize >= len => {
                 return Err(ProvingError::synthesis("memory write out of bounds"));
             }
-            mem[a] = value.value;
-            if let Some(cells) = self.memory_cells.get_mut(&segment_id) {
-                cells[a] = Some(*value);
+            Some(_) => {}
+            None => {
+                let range = self.range_chip();
+                range.check_less_than_safe(self.ctx(), addr.assigned, len as u64);
             }
-            return Ok(());
         }
-
-        let len = self
-            .memories
-            .get(&segment_id)
-            .ok_or_else(|| ProvingError::synthesis("segment not allocated"))?
-            .len();
-        let range = self.range_chip();
-        range.check_less_than_safe(self.ctx(), addr.assigned, len as u64);
-
-        self.dynamic_writes
-            .entry(segment_id)
-            .or_default()
-            .push((*addr, *value));
-        let a = kernel::fp_to_i64(addr.value) as usize;
-        if let Some(mem) = self.memories.get_mut(&segment_id) {
-            if a < mem.len() {
-                mem[a] = value.value;
+        let segment = self.segments.get_mut(&segment_id).expect("checked above");
+        match const_addr {
+            Some(a) if segment.overlay.is_empty() => {
+                segment.slots[a as usize] = Some(*value);
+                segment.slots_version += 1;
             }
+            _ => segment.overlay.push((*addr, *value)),
         }
         Ok(())
     }
     fn read_memory(&mut self, segment_id: u32, addr: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        let dynamic_writes = self
-            .dynamic_writes
-            .get(&segment_id)
-            .cloned()
-            .unwrap_or_default();
-
-        if self.is_const_cell(addr) {
-            let a = kernel::fp_to_i64(addr.value) as usize;
-            let init = self.memory_init.get(&segment_id).copied().unwrap_or(Fp::zero());
-            let base = self
-                .memory_cells
-                .get(&segment_id)
-                .and_then(|cells| cells.get(a))
-                .copied()
-                .flatten()
-                // Never-const-written slot: its pre-overlay content is the
-                // init value by construction; a constant cell keeps it
-                // constrained (a witness cell here would be a free variable).
-                .unwrap_or_else(|| self.const_cell(init));
-            let mut out = base;
-            for (write_addr, write_value) in dynamic_writes {
-                let hit = self.overlay_hit(&write_addr, addr)?;
-                out = self.select_bit(&hit, &write_value, &out)?;
-            }
-            return Ok(out);
-        }
-
-        let len = self
-            .memories
-            .get(&segment_id)
-            .ok_or_else(|| ProvingError::synthesis("segment not allocated"))?
-            .len();
-        let init = self.memory_init.get(&segment_id).copied().unwrap_or(Fp::zero());
-
-        // Affine view of the address (identity view when no lineage is
-        // known). Two lowering strategies:
-        //
-        // Two dynamic roots (windowed gathers, addr = r1*s1 + r2*s2 + c):
-        // factored two-stage gather. Stage-1 planes Σ_v eq(r1,v)*mem[v*s1+t]
-        // are cached and shared across reads; each read then muxes the
-        // s1/s2 digit choices of r2. Both roots are pinned one-hot and the
-        // full address is range-checked (an out-of-bounds (v,w) pair would
-        // otherwise silently select the init value).
-        //
-        // One root (strided gathers, addr = root*s + c): mux only the slot
-        // indices reachable from the root; eq(root, v) indicators are shared
-        // across reads. The one-hot membership over the in-bounds choice set
-        // subsumes the range check.
-        let lin = self.affine_lin_of(addr);
-        let mut out: Option<Halo2BaseCell> = None;
-
-        if lin.terms.len() == 2 {
-            let (mut t1, mut t2) = (lin.terms[0], lin.terms[1]);
-            if t1.1.abs() < t2.1.abs() {
-                std::mem::swap(&mut t1, &mut t2);
-            }
-            let ((root1, s1), (root2, s2)) = (t1, t2);
-            if s1 > 0 && s2 > 0 && s1 % s2 == 0 && s1 / s2 >= 2 {
-                // Digit-canonical choices for the minor root: residuals that
-                // stay inside one major stride. Matches Zinnia's clamped
-                // in-bounds index lowering; a kernel violating it fails the
-                // one-hot assert at verify time rather than proving silently.
-                let w_choices: Vec<i64> = (0..s1 / s2)
-                    .filter(|w| {
-                        let t = w * s2 + lin.offset;
-                        (0..len as i64).any(|idx| (idx - t) % s1 == 0)
-                    })
-                    .collect();
-                let v_union: Vec<i64> = {
-                    let mut vs: Vec<i64> = Vec::new();
-                    for w in &w_choices {
-                        let t = w * s2 + lin.offset;
-                        for idx in 0..len as i64 {
-                            let num = idx - t;
-                            if num % s1 == 0 && !vs.contains(&(num / s1)) {
-                                vs.push(num / s1);
-                            }
-                        }
-                    }
-                    vs.sort_unstable();
-                    vs
-                };
-                if !w_choices.is_empty() && !v_union.is_empty() {
-                    let range = self.range_chip();
-                    range.check_less_than_safe(self.ctx(), addr.assigned, len as u64);
-                    let mut acc = self.cell(init);
-                    for w in &w_choices {
-                        let t = w * s2 + lin.offset;
-                        let plane = self.gathered_plane(segment_id, &root1, s1, t, len, init)?;
-                        let ind = self.root_indicator(&root2, *w)?;
-                        acc = self.select_bit(&ind, &plane, &acc)?;
-                    }
-                    self.assert_one_hot(&root2, &w_choices)?;
-                    self.assert_one_hot(&root1, &v_union)?;
-                    out = Some(acc);
-                }
-            }
-        }
-
-        if out.is_none() {
-            let (root, scale, offset) = match lin.terms.len() {
-                1 => (lin.terms[0].0, lin.terms[0].1, lin.offset),
-                _ => (*addr, 1, 0),
-            };
-            // Constraint-derived root interval shrinks the choice set: a
-            // unit-stride gather (addr = base + col, col in [0,W)) muxes W
-            // slots instead of the whole segment. The membership assert
-            // below stays sound — the interval is enforced by the root's
-            // defining gates, so the true value is always inside it.
-            let root_iv = self.interval_of(&root);
-            let mut choices: Vec<(i64, usize)> = Vec::new(); // (root value v, slot idx)
-            for idx in 0..len as i64 {
-                let num = idx - offset;
-                if scale != 0 && num % scale == 0 {
-                    let v = num / scale;
-                    if let Some((lo, hi)) = root_iv {
-                        if v < lo || v > hi {
-                            continue;
-                        }
-                    }
-                    choices.push((v, idx as usize));
-                }
-            }
-            if choices.is_empty() {
-                return Err(ProvingError::synthesis(
-                    "dynamic memory read can never be in bounds",
-                ));
-            }
-            let mut acc = self.cell(init);
-            for (v, idx) in &choices {
-                let ind = self.root_indicator(&root, *v)?;
-                let slot = self
-                    .memory_cells
-                    .get(&segment_id)
-                    .and_then(|cells| cells.get(*idx))
-                    .copied()
-                    .flatten()
-                    .unwrap_or_else(|| self.const_cell(init));
-                acc = self.select_bit(&ind, &slot, &acc)?;
-            }
-            // Soundness: the gates that built `addr` already enforce
-            // addr == root * scale + offset; pinning root one-hot onto the
-            // in-bounds choices implies addr in bounds, replacing the
-            // per-read range check.
-            let vs: Vec<i64> = choices.iter().map(|(v, _)| *v).collect();
-            self.assert_one_hot(&root, &vs)?;
-            out = Some(acc);
-        }
-
-        let mut out = out.expect("dynamic read lowering produced a value");
-        for (write_addr, write_value) in dynamic_writes {
-            let hit = self.overlay_hit(&write_addr, addr)?;
-            out = self.select_bit(&hit, &write_value, &out)?;
-        }
-        Ok(out)
+        let base = if self.is_const_cell(addr) {
+            let a = kernel::fp_to_i64(addr.value);
+            let idx = usize::try_from(a).unwrap_or(usize::MAX);
+            self.slot_cell(segment_id, idx)?
+        } else {
+            self.gather_slots(segment_id, addr)?
+        };
+        self.apply_overlay(segment_id, addr, base)
     }
     fn memory_trace_emit(&mut self, _: u32, _: bool, _: &[Self::CellRef]) -> Result<(), ProvingError> { Ok(()) }
     fn memory_trace_seal(&mut self) -> Result<(), ProvingError> { Ok(()) }

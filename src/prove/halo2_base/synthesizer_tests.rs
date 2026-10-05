@@ -323,6 +323,57 @@ fn signed_comparison_rejects_inputs_outside_the_64_bit_window() {
     assert!(!synthesize(&*lt, &[huge, int(1)], &[]).accepted);
 }
 
+// ── Memory (M3) ─────────────────────────────────────────────────────────
+
+/// `x[i] = 7; x[0] = 9; return (x[0], x[i])` on a 4-slot segment with i = 0.
+/// The constant write comes later in program order, so both reads see 9.
+#[test]
+fn constant_write_after_dynamic_write_wins() {
+    let op: Box<Op> = Box::new(|s, c| {
+        s.allocate_memory(1, 4, 0)?;
+        let seven = s.constant_int(7)?;
+        let nine = s.constant_int(9)?;
+        let zero = s.constant_int(0)?;
+        s.write_memory(1, &c[0], &seven)?;
+        s.write_memory(1, &zero, &nine)?;
+        let at_zero = s.read_memory(1, &zero)?;
+        let at_i = s.read_memory(1, &c[0])?;
+        Ok(vec![at_zero, at_i])
+    });
+    assert_sound("x[i]=7; x[0]=9", &*op, &[int(0)], &[int(9), int(9)], &[]);
+    // With i = 2 the constant write does not alias: x[0] = 9, x[i] = 7.
+    assert_sound("x[i]=7; x[0]=9 (i=2)", &*op, &[int(2)], &[int(9), int(7)], &[]);
+}
+
+/// The later dynamic write still overrides an earlier constant one.
+#[test]
+fn dynamic_write_after_constant_write_wins() {
+    let op: Box<Op> = Box::new(|s, c| {
+        s.allocate_memory(1, 4, 0)?;
+        let one = s.constant_int(1)?;
+        let five = s.constant_int(5)?;
+        let six = s.constant_int(6)?;
+        s.write_memory(1, &one, &five)?;
+        s.write_memory(1, &c[0], &six)?;
+        Ok(vec![s.read_memory(1, &one)?])
+    });
+    assert_sound("x[1]=5; x[i]=6 (i=1)", &*op, &[int(1)], &[int(6)], &[]);
+    assert_sound("x[1]=5; x[i]=6 (i=3)", &*op, &[int(3)], &[int(5)], &[]);
+}
+
+#[test]
+fn dynamic_write_out_of_bounds_is_rejected() {
+    let op: Box<Op> = Box::new(|s, c| {
+        s.allocate_memory(1, 4, 0)?;
+        let seven = s.constant_int(7)?;
+        s.write_memory(1, &c[0], &seven)?;
+        Ok(vec![])
+    });
+    assert!(synthesize(&*op, &[int(3)], &[]).accepted);
+    assert!(!synthesize(&*op, &[int(4)], &[]).accepted);
+    assert!(!synthesize(&*op, &[int(-1)], &[]).accepted);
+}
+
 // ── Dynamic-array metadata (C15, previously a constraint-shape replica) ─
 
 /// The trait-default `assert_dynamic_ndarray_meta`: every runtime axis is
