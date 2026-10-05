@@ -439,6 +439,15 @@ fn compile_circuit_impl(
     }
 
     let optimized_graph = run_pass_pipeline(base_graph, &passes, mux_threshold, trace_phases);
+    // Inputs nothing reads need no domain check (`ir_gen::input_domain`);
+    // dropping it lets dead-code elimination remove the read again.
+    let optimized_graph = ir_gen::input_domain::drop_checks_of_unread_inputs(optimized_graph);
+    let optimized_graph = run_pass_pipeline(
+        optimized_graph,
+        &["DeadCodeElimination"],
+        mux_threshold,
+        trace_phases,
+    );
 
     // P5: end-of-compilation telemetry dump (when enabled). We surface
     // both the AST→IR phase and the optim-phase summaries since each

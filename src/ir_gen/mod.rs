@@ -15,6 +15,7 @@ use crate::types::{NumberType, ShapeDim, Value, ZinniaType};
 mod chip_external;
 mod detached_copies;
 mod helpers;
+pub mod input_domain;
 mod iteration;
 mod list_methods;
 mod list_sharing;
@@ -504,7 +505,7 @@ impl IRGenerator {
                 .unwrap_or_else(|| self.parse_dt_descriptor(&inp.annotation.dt));
             let kind = inp.annotation.kind.as_deref().unwrap_or("Private");
             let is_public = kind == "Public";
-            let val = self.read_input_value(&dt, &inp.name, vec![], is_public);
+            let val = self.read_input_value(&dt, &inp.name, vec![], is_public, inp.annotation.boolean);
             self.ctx.set(&inp.name, val);
         }
 

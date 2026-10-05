@@ -1,6 +1,6 @@
 import ast
 
-from zinnia.compile.transformer.base import ZinniaBaseASTTransformer
+from zinnia.compile.transformer.base import ZinniaBaseASTTransformer, declares_boolean_elements
 from zinnia.compile.transformer._precondition import extract_preconditions
 from zinnia.debug.dbg_info import DebugInfo
 from zinnia.debug.exception import InvalidProgramException, InvalidCircuitInputException
@@ -91,6 +91,7 @@ class ZinniaCircuitASTTransformer(ZinniaBaseASTTransformer):
                     "__class__": "ASTAnnotation",
                     "kind": annotation["kind"],
                     "dt": annotation["dt"],
+                    "boolean": declares_boolean_elements(arg.annotation),
                 }
             })
         return results

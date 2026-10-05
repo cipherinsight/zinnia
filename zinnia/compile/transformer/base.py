@@ -110,6 +110,31 @@ def _shape_expr_to_string(expr) -> str:
     return f"{_shape_expr_to_string(expr[1])}{kind}{_shape_expr_to_string(expr[2])}"
 
 
+_BOOLEAN_NAMES = {"Boolean", "bool", "Bool", "boolean"}
+_ARRAY_HEADS = {"NDArray", "DynamicNDArray", "SymbolicNDArray"}
+
+
+def declares_boolean_elements(node) -> bool:
+    """Whether a parameter annotation declares Boolean elements: a Boolean
+    scalar (`Boolean`, `bool`, ...), a Boolean-dtype tensor (`Bool[Array, "3"]`)
+    or an array of booleans (`NDArray[bool, 3]`). Booleans collapse to Integer
+    in the type descriptor; this flag keeps the {0, 1} domain for the input
+    check."""
+    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) \
+            and node.value.id in ("Public", "Private"):
+        node = node.slice
+    if isinstance(node, ast.Name):
+        return node.id in _BOOLEAN_NAMES
+    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+        head = node.value.id
+        if head in _BOOLEAN_NAMES:
+            return True
+        if head in _ARRAY_HEADS:
+            items = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+            return bool(items) and isinstance(items[0], ast.Name) and items[0].id in _BOOLEAN_NAMES
+    return False
+
+
 def make_type_dict(dbg, typename, args=None):
     """Create a type descriptor dict matching Rust's ZinniaType serde format.
 
