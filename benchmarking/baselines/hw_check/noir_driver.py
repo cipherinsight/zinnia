@@ -26,6 +26,8 @@ The decoding of the public values follows the `// @outputs:` line every
     const float[N] = [...]
     dynamic <kind>[IxU]              one public length L (items), then I*U public
                                      values of which the first L*U are the output
+    dynamic2 <kind>[RxC]             public (rows, cols), then R*C public values of
+                                     which the first rows*cols (row-major) are the output
 
 Every run prints one JSON object (also written to `--out`):
 `{"ok", "case", "mode", "input", "publics", "proof_path", "timings_s", ...}`;
@@ -60,6 +62,7 @@ class DriverError(Exception):
 _SEGMENT = re.compile(
     r"^(?:(?P<const>const)\s+(?P<ckind>float|int|bool)\[(?P<cn>\d+)\]\s*=\s*(?P<values>\[.*\])"
     r"|(?P<dyn>dynamic)\s+(?P<dkind>float|int|bool)\[(?P<items>\d+)x(?P<unit>\d+)\]"
+    r"|(?P<dyn2>dynamic2)\s+(?P<d2kind>float|int|bool)\[(?P<rows>\d+)x(?P<cols>\d+)\]"
     r"|(?P<kind>float|int|bool)\[(?P<n>\d+)\])$"
 )
 
@@ -80,6 +83,8 @@ def parse_outputs(main_nr: str) -> list[dict]:
             if len(values) != int(m["cn"]):
                 raise DriverError(f"const segment lists {len(values)} values, declares {m['cn']}")
             segments.append({"segment": "constants", "kind": m["ckind"], "values": values})
+        elif m["dyn2"]:
+            segments.append({"segment": "dynamic2", "kind": m["d2kind"], "rows": int(m["rows"]), "cols": int(m["cols"])})
         elif m["dyn"]:
             segments.append({"segment": "dynamic", "kind": m["dkind"], "items": int(m["items"]), "unit": int(m["unit"])})
         else:
@@ -116,6 +121,12 @@ def decode_publics(segments: list[dict], fields: list[int]) -> list:
             out += [_decode(seg["kind"], x) for x in take(seg["count"])]
         elif seg["segment"] == "constants":
             out += list(seg["values"])
+        elif seg["segment"] == "dynamic2":
+            rows, cols = (_signed(x) for x in take(2))
+            if not (0 <= rows <= seg["rows"] and 0 <= cols <= seg["cols"]):
+                raise DriverError(f"dynamic shape ({rows}, {cols}) outside ({seg['rows']}, {seg['cols']})")
+            values = take(seg["rows"] * seg["cols"])
+            out += [_decode(seg["kind"], x) for x in values[: rows * cols]]
         else:
             length = _signed(take(1)[0])
             if not 0 <= length <= seg["items"]:

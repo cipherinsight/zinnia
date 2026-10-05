@@ -48,6 +48,10 @@ pub enum Segment {
     /// One public length cell (number of items), then `items * unit` public
     /// cells of which the first `length * unit` are the value.
     Dynamic { items: usize, unit: usize, kind: Kind },
+    /// A 2-D output of data-dependent shape: two public cells `(rows, cols)`,
+    /// then `max_rows * max_cols` public cells of which the first
+    /// `rows * cols` are the value, row-major and compact.
+    Dynamic2 { max_rows: usize, max_cols: usize, kind: Kind },
 }
 
 /// The decodable layout of the public instance.
@@ -80,6 +84,15 @@ impl Layout {
                     }
                     let values = take(items * unit)?;
                     out.extend(values[..len as usize * unit].iter().map(|x| kind.decode(x)));
+                }
+                Segment::Dynamic2 { max_rows, max_cols, kind } => {
+                    let dims = take(2)?;
+                    let (rows, cols) = (signed(&dims[0]), signed(&dims[1]));
+                    if !(0..=*max_rows as i128).contains(&rows) || !(0..=*max_cols as i128).contains(&cols) {
+                        return Err(format!("dynamic shape ({rows}, {cols}) outside ({max_rows}, {max_cols})"));
+                    }
+                    let values = take(max_rows * max_cols)?;
+                    out.extend(values[..(rows * cols) as usize].iter().map(|x| kind.decode(x)));
                 }
             }
         }
@@ -140,6 +153,15 @@ impl Outputs {
         assert!(unit > 0 && cells.len() % unit == 0);
         self.layout.segments.push(Segment::Dynamic { items: cells.len() / unit, unit, kind });
         self.cells.push(len);
+        self.cells.extend_from_slice(cells);
+    }
+
+    /// A 2-D output of data-dependent shape `(rows, cols)` stored compact,
+    /// row-major, at the front of `cells` (`max_rows * max_cols` cells).
+    pub fn dynamic2(&mut self, rows: Cell, cols: Cell, cells: &[Cell], kind: Kind, max_rows: usize, max_cols: usize) {
+        assert_eq!(cells.len(), max_rows * max_cols);
+        self.layout.segments.push(Segment::Dynamic2 { max_rows, max_cols, kind });
+        self.cells.extend_from_slice(&[rows, cols]);
         self.cells.extend_from_slice(cells);
     }
 

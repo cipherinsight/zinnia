@@ -196,7 +196,9 @@ driver decodes:
 `@outputs` segments (separated by `;`): `float[N]`, `int[N]`, `bool[N]`;
 `const int[N] = [...]` / `const float[N] = [...]` for circuit constants (not
 public); `dynamic <kind>[IxU]` for a public length of up to `I` items of `U`
-cells each, then `I * U` padded cells.
+cells each, then `I * U` padded cells; `dynamic2 <kind>[RxC]` for a 2-D output
+of data-dependent shape: public `(rows, cols)`, then `R * C` cells holding the
+`rows * cols` values compact and row-major, zero-padded (halo2: `out.dynamic2`).
 
 `Prover.toml` (one per case) is generated from `fixture.json` input B by
 `python -m hw_check.prover_toml <case dir>`; do not edit it by hand.
