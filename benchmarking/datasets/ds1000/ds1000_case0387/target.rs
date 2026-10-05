@@ -1,55 +1,25 @@
-// DS-1000 case 387 — Halo2 baseline.
-// Kernel: a.reshape(50, 2, 100, 2).swapaxes(1, 2).reshape(-1, 2, 2) on Float[100, 200].
-// Output is (5000, 2, 2). No transpose: blocks iterated row-major
-// (r_block outer, c_block inner).
+//! DS-1000 case 0387, halo2-base baseline.
+//! Kernel: `a.reshape(50, 2, 100, 2).swapaxes(1, 2).reshape(-1, 2, 2)` on `Float[100, 200]`: the 2x2 blocks of `a` as patches;
+//! block (i, j) is output patch i * 100 + j. The outputs are input cells, so the circuit only exposes them.
 
-use clap::Parser;
-use halo2_base::utils::{ScalarField, BigPrimeField};
-use halo2_graph::gadget::fixed_point::FixedPointChip;
-use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use serde::{Serialize, Deserialize};
-use halo2_base::AssignedValue;
-#[allow(unused_imports)]
-use halo2_graph::scaffold::cmd::Cli;
-use halo2_graph::scaffold::run;
+use crate::prelude::*;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CircuitInput {
-    pub a: Vec<f64>,  // 100*200 = 20000 floats, row-major
-}
-
-fn patch_rowmajor<F: ScalarField>(
-    builder: &mut BaseCircuitBuilder<F>,
-    input: CircuitInput,
-    make_public: &mut Vec<AssignedValue<F>>,
-) where F: BigPrimeField {
-    const P: u32 = 32;
-    const H: usize = 100;
-    const W: usize = 200;
-    let fpc = FixedPointChip::<F, P>::default(builder);
+pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
+    let a = inputs.floats("a", &[100, 200])?;
+    let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    assert_eq!(input.a.len(), H * W);
-
-    let cells: Vec<AssignedValue<F>> = input.a.iter()
-        .map(|v| ctx.load_witness(fpc.quantization(*v)))
-        .collect();
-
-    for r_block in 0..(H / 2) {
-        for c_block in 0..(W / 2) {
-            for p in 0..2 {
-                for q in 0..2 {
-                    let row = r_block * 2 + p;
-                    let col = c_block * 2 + q;
-                    make_public.push(cells[row * W + col]);
+    let a = q.load_floats(ctx, &a);
+    let mut patches = Vec::with_capacity(20000);
+    for i in 0..50 {
+        for j in 0..100 {
+            for r in 0..2 {
+                for s in 0..2 {
+                    patches.push(a[(2 * i + r) * 200 + 2 * j + s]);
                 }
             }
         }
     }
-}
-
-fn main() {
-    env_logger::init();
-    let args = Cli::parse();
-    run(patch_rowmajor, args);
+    out.floats(&patches);
+    Ok(())
 }

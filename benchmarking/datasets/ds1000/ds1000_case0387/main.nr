@@ -1,24 +1,20 @@
-// DS-1000 case 0387 -- Noir baseline. a.reshape(50,2,100,2).swapaxes(1,2)
-// .reshape(-1,2,2) on Float[100,200]. Output = (5000,2,2) = 20000 cells.
-// Q32 fixed-point but pure reshape so values are unmodified.
-
-global H: u32 = 100;
-global W: u32 = 200;
+// DS-1000 case 0387, Noir baseline.
+// Kernel: `a.reshape(50, 2, 100, 2).swapaxes(1, 2).reshape(-1, 2, 2)` on Float[100, 200]: the 2x2 blocks of a as patches;
+// block (i, j) is output patch i * 100 + j.
+// @outputs: float[20000]
 
 fn main(a: [Field; 20000]) -> pub [Field; 20000] {
-    let mut out: [Field; 20000] = [0; 20000];
-    let mut p: u32 = 0;
-    for r_block in 0..(H / 2) {
-        for c_block in 0..(W / 2) {
-            for pi in 0..2 {
-                for qi in 0..2 {
-                    let row = r_block * 2 + pi;
-                    let col = c_block * 2 + qi;
-                    out[p] = a[row * W + col];
-                    p = p + 1;
+    let mut patches = [0; 20000];
+    let mut p = 0;
+    for i in 0..50 {
+        for j in 0..100 {
+            for r in 0..2 {
+                for s in 0..2 {
+                    patches[p] = a[(2 * i + r) * 200 + 2 * j + s];
+                    p += 1;
                 }
             }
         }
     }
-    out
+    patches
 }

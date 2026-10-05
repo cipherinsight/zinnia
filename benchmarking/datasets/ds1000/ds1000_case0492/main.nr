@@ -1,24 +1,20 @@
-// DS-1000 case 0492 -- Noir baseline (faithful np.isclose, equal_nan=True).
-// Same as 0491; with real-valued Q32 inputs there are no NaN witnesses, so
-// equal_nan reduces to the same predicate. Uses numpy.isclose's full
-// tolerance formula `|a - b| <= atol + rtol * |b|`.
+// DS-1000 case 0492 (0491 with `equal_nan=True`, which only matters for NaN; Q32 has none), Noir baseline.
+// Kernel: `(~np.isclose(s1, s2, equal_nan=True)).sum()` on two Float[6, 1]. isclose is NumPy's
+// |a - b| <= atol + rtol * |b| with the defaults rtol = 1e-5, atol = 1e-8.
+// @outputs: int[1]
 
-use noir_fpc::{qabs, qadd, qle, qmul, qsub};
+use noir_hw::{abs, gt, mul};
 
-global N: u32 = 6;
-
-global ATOL_Q: Field = 43;
-global RTOL_Q: Field = 42950;
+global RTOL_Q: Field = 42950; // round(1e-5 * 2^32)
+global ATOL_Q: Field = 43; // round(1e-8 * 2^32)
 
 fn main(s1: [Field; 6], s2: [Field; 6]) -> pub Field {
     let mut count: Field = 0;
-    for k in 0..N {
-        let d = qsub(s1[k], s2[k]);
-        let abs_d = qabs(d);
-        let abs_s2 = qabs(s2[k]);
-        let thr = qadd(ATOL_Q, qmul(RTOL_Q, abs_s2));
-        let close = qle(abs_d, thr);
-        count = count + (if close { 0 } else { 1 });
+    for i in 0..6 {
+        let tol = mul(abs(s2[i]), RTOL_Q) + ATOL_Q;
+        if gt(abs(s1[i] - s2[i]), tol) {
+            count += 1;
+        }
     }
     count
 }
