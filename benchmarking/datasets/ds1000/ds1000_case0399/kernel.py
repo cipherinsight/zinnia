@@ -1,12 +1,13 @@
 from zinnia import *
 import numpy as np
 
-# DS-1000 NumPy acceptance-study kernel.
-# The body below is generated from the original DS-1000 reference solution.
-# Type annotations/preconditions are intentionally not inferred here.
+# DS-1000 problem 399 (NumPy problem 108; Difficult-Rewrite perturbation of problem 398).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 2, each dtype wide enough for every DS-1000 test input.
 
 @zk_circuit
-def kernel(A: Float[Array, "8"], a: Float, b: Float, c: Float):
+def kernel(A: Float[Array, "30"], a: Integer, b: Integer, c: Integer):
     B = np.empty(len(A))
     for k in range(0, len(B)):
         if k == 0:
