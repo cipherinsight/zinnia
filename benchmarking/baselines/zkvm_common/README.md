@@ -66,15 +66,15 @@ gives the figure per run. Use one heavy job at a time.
 | System | Mode | What it is | Peak memory | Notes |
 |---|---|---|---|---|
 | SP1 6.8.1 | `setup` | `CpuProver::new()` + `setup(elf)` | 7.1 GB | prover start-up alone is 18-21 s (`client_init`), reported apart |
-| SP1 | `core` | one STARK per execution shard | 9.7 GB | ~16 s for 4.8k-6.7k cycles (mostly fixed cost); proof 2.8 MB |
+| SP1 | `core` | one STARK per execution shard | 9.6-9.7 GB for small programs; more than 16 GB for 0385 (1.7M cycles; OOM-killed at a 16 GB cap) | ~16 s for 2k-7k cycles (mostly fixed cost); proof 2.8 MB |
 | SP1 | `compressed` | shards recursively compressed to one STARK | 17.1 GB | 60 s for 0300; proof 1.3 MB; needs a cap above 16 GB |
 | SP1 | `groth16` | compressed proof wrapped in Groth16 over BN254 (gnark linked in-process, `native-gnark`) | > 17.8 GB before the gnark step (measured); not yet run to completion | first use downloads 6.2 GB of circuit artifacts to `~/.sp1/circuits/groth16/v6.1.0`; run alone with a cap of at least 32 GB |
 | SP1 | `verify` | `LightProver` | < 0.1 GB | 40-70 ms |
-| RISC Zero 3.0.3 | `composite` | one STARK per segment (2^15-2^16 cycles here) | 0.3-0.6 GB | 2.6 s (empty), 5.9 s (0300); receipt ~220 KB |
-| RISC Zero | `succinct` | segments compressed to one STARK by recursion | 1.4 GB | composite + 9-10 s |
+| RISC Zero 3.0.3 | `composite` | one STARK per segment | 0.3-0.6 GB for one 2^15-2^16-cycle segment; 9.4 GB for 0385 (two 2^20 segments) | 2.2-2.6 s small, 137 s for 0385; receipt ~210 KB small, 880 KB for 0385 |
+| RISC Zero | `succinct` | segments compressed to one STARK by recursion | 1.4 GB small, 9.4 GB for 0385 | composite + 6-10 s (small), + 22 s (0385) |
 | RISC Zero | `groth16` | succinct receipt wrapped in Groth16 (Docker image `risczero/risc0-groth16-prover:v2025-04-03.1`) | not measured | the Docker step runs outside this process and outside `memrun.sh`'s cgroup, so `peak_rss_mib` does not include it; not yet run |
 | RISC Zero | `verify` | `Receipt::verify` | < 0.1 GB | 10-20 ms |
-| Cairo (Scarb 2.20.1) | `stwo` | `scarb execute --target bootloader` + `scarb prove` (Stwo) | 13.7-13.9 GB | 14-19 s even for the empty program (fixed cost); JSON proof ~11 MB |
+| Cairo (Scarb 2.20.1) | `stwo` | `scarb execute --target bootloader` + `scarb prove` (Stwo) | 13.7 GB (3.6k steps) to 14.7 GB (0385, 1.01M steps) | 10-19 s from the empty program to 1M steps (fixed cost dominates); JSON proof 11-16 MB |
 | Cairo | `verify` | `scarb verify` | < 0.1 GB | 30-55 ms wall clock including process start-up |
 
 Why Groth16 for SP1's SNARK mode (rather than PLONK): gnark's Groth16 prover
