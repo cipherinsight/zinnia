@@ -94,6 +94,27 @@ impl Interval {
     }
 }
 
+/// A cell known to equal `bit ? if_one : if_zero` for a bit cell `bit`
+/// (a select between constants, a bit times a constant, a masked bit).
+/// Comparisons and equality tests against a constant then reduce to the
+/// bit, its negation, or a constant.
+#[derive(Clone, Copy)]
+pub(super) struct TwoValued {
+    pub bit: Halo2BaseCell,
+    pub if_zero: i128,
+    pub if_one: i128,
+}
+
+impl TwoValued {
+    fn map(&self, f: impl Fn(i128) -> Option<i128>) -> Option<TwoValued> {
+        Some(TwoValued { bit: self.bit, if_zero: f(self.if_zero)?, if_one: f(self.if_one)? })
+    }
+
+    fn hull(&self) -> Option<Interval> {
+        Interval::new(self.if_zero.min(self.if_one), self.if_zero.max(self.if_one))
+    }
+}
+
 /// The number of bits `n` with `2^n > v`, for `v >= 0`.
 fn bits_above(v: i128) -> usize {
     (128 - v.max(0).leading_zeros()) as usize
@@ -158,6 +179,70 @@ impl Halo2BaseSynthesizer<'_> {
                 self.prove_range(out, range);
             }
         }
+    }
+
+    /// `x` as `bit ? if_one : if_zero`, if the constraints make it so.
+    pub(super) fn two_valued_of(&self, x: &Halo2BaseCell) -> Option<TwoValued> {
+        if self.bit_cell_ids.contains(&x.id) {
+            return Some(TwoValued { bit: *x, if_zero: 0, if_one: 1 });
+        }
+        self.two_valued.get(&x.id).copied()
+    }
+
+    /// Record that the gates force `x = tv.bit ? tv.if_one : tv.if_zero`
+    /// (and with it the range of the two values).
+    pub(super) fn set_two_valued(&mut self, x: &Halo2BaseCell, tv: TwoValued) {
+        if tv.if_zero == tv.if_one {
+            return;
+        }
+        if let Some(range) = tv.hull() {
+            self.prove_range(x, range);
+            self.two_valued.insert(x.id, tv);
+        }
+    }
+
+    /// Two-valued facts through `out = f(x, c)` for a constant operand `c`
+    /// (sums, differences and products with a constant).
+    pub(super) fn propagate_two_valued(
+        &mut self,
+        out: &Halo2BaseCell,
+        x: &Halo2BaseCell,
+        c: &Halo2BaseCell,
+        f: impl Fn(i128, i128) -> Option<i128>,
+    ) {
+        let constant = self.is_const_cell(c).then(|| kernel::fp_to_i128(c.value)).flatten();
+        if let (Some(tv), Some(c)) = (self.two_valued_of(x), constant) {
+            if let Some(mapped) = tv.map(|v| f(v, c)) {
+                self.set_two_valued(out, mapped);
+            }
+        }
+    }
+
+    /// `x < c` (or `c < x` with `constant_on_left`) for a two-valued `x`
+    /// and a constant `c`: the constant result, the bit, or its negation.
+    fn decide_two_valued(&mut self, tv: TwoValued, c: i128, constant_on_left: bool) -> Result<Halo2BaseCell, ProvingError> {
+        let holds = |v: i128| if constant_on_left { c < v } else { v < c };
+        match (holds(tv.if_zero), holds(tv.if_one)) {
+            (z, o) if z == o => self.constant_bool(z),
+            (false, true) => Ok(tv.bit),
+            _ => self.logical_not(&tv.bit),
+        }
+    }
+
+    /// `[x == c]` for a two-valued `x` and a constant `c`, if decidable that
+    /// way (always, as the two values differ).
+    pub(super) fn equals_constant(&mut self, x: &Halo2BaseCell, c: &Halo2BaseCell) -> Result<Option<Halo2BaseCell>, ProvingError> {
+        let constant = self.is_const_cell(c).then(|| kernel::fp_to_i128(c.value)).flatten();
+        let (Some(tv), Some(c)) = (self.two_valued_of(x), constant) else {
+            return Ok(None);
+        };
+        Ok(Some(if c == tv.if_one {
+            tv.bit
+        } else if c == tv.if_zero {
+            self.logical_not(&tv.bit)?
+        } else {
+            self.constant_bool(false)?
+        }))
     }
 
     fn operand_range(&self, x: &Operand) -> Option<Interval> {
@@ -241,6 +326,19 @@ impl Halo2BaseSynthesizer<'_> {
         if let Some(domain) = domain {
             self.ensure_operand_within(&a, domain)?;
             self.ensure_operand_within(&b, domain)?;
+        }
+        match (a, b) {
+            (Operand::Cell(x), Operand::Constant(c)) => {
+                if let Some(tv) = self.two_valued_of(&x) {
+                    return self.decide_two_valued(tv, c, false);
+                }
+            }
+            (Operand::Constant(c), Operand::Cell(x)) => {
+                if let Some(tv) = self.two_valued_of(&x) {
+                    return self.decide_two_valued(tv, c, true);
+                }
+            }
+            _ => {}
         }
         let (ra, rb) = match (self.operand_range(&a), self.operand_range(&b)) {
             (Some(ra), Some(rb)) => (ra, rb),

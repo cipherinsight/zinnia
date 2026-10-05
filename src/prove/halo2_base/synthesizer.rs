@@ -10,13 +10,14 @@ use halo2_base::{
     AssignedValue, QuantumCell,
 };
 
+mod bitwise;
 mod fixed_point;
 mod memory;
 mod ranges;
 
 use self::fixed_point::Divisor;
 use self::memory::MemoryState;
-use self::ranges::{Interval, Operand};
+use self::ranges::{Interval, Operand, TwoValued};
 use crate::circuit_input::{InputPath, ResolvedWitness};
 use crate::prove::error::ProvingError;
 use crate::prove::kernel::{self, Rounding};
@@ -40,6 +41,10 @@ pub struct Halo2BaseSynthesizer<'a> {
     /// Q values that are float casts `n·2^P` of an integer cell `n`, by the
     /// Q cell's id (see `fixed_point::Factor`).
     float_casts: HashMap<u64, Halo2BaseCell>,
+    /// Cells known to be one of two constants by a bit (see `ranges.rs`).
+    two_valued: HashMap<u64, TwoValued>,
+    /// Low two's-complement bits per cell id (see `bitwise.rs`).
+    bit_cache: HashMap<u64, Vec<Halo2BaseCell>>,
     dyn_meta_bounds: HashMap<u32, (u32, Vec<u32>)>,
     next_id: u64,
     bit_cells: HashSet<halo2_base::ContextCell>,
@@ -108,6 +113,8 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             public_values: Vec::new(),
             memory: MemoryState::default(),
             float_casts: HashMap::new(),
+            two_valued: HashMap::new(),
+            bit_cache: HashMap::new(),
             dyn_meta_bounds: HashMap::new(),
             next_id: 0,
             bit_cells: HashSet::new(),
@@ -209,9 +216,17 @@ impl<'a> Halo2BaseSynthesizer<'a> {
     /// tamper tests (`synthesizer_tests.rs`) replace hints with other values
     /// and check that the circuit then rejects the witness.
     fn hint(&mut self, value: Fp) -> Halo2BaseCell {
+        let value = self.hint_value(value);
+        self.cell(value)
+    }
+
+    /// The value a hint cell receives: `value`, except under the tamper
+    /// tests, which replace it. For hints laid out by a gadget directly
+    /// (`bitwise::hinted_bits`) rather than loaded by [`Self::hint`].
+    fn hint_value(&mut self, value: Fp) -> Fp {
         #[cfg(test)]
         let value = self.tamper.apply(value);
-        self.cell(value)
+        value
     }
 
     /// A boolean hint, constrained to {0, 1} and marked as a bit.
@@ -423,18 +438,24 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn add_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         let out = self.gate_cell(a.value + b.value, |gate, ctx| gate.add(ctx, a.assigned, b.assigned));
         self.propagate_range(&out, a, b, Interval::add);
+        self.propagate_two_valued(&out, a, b, |x, c| x.checked_add(c));
+        self.propagate_two_valued(&out, b, a, |x, c| x.checked_add(c));
         Ok(out)
     }
 
     fn sub_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         let out = self.gate_cell(a.value - b.value, |gate, ctx| gate.sub(ctx, a.assigned, b.assigned));
         self.propagate_range(&out, a, b, Interval::sub);
+        self.propagate_two_valued(&out, a, b, |x, c| x.checked_sub(c));
+        self.propagate_two_valued(&out, b, a, |x, c| c.checked_sub(x));
         Ok(out)
     }
 
     fn mul_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         let out = self.gate_cell(a.value * b.value, |gate, ctx| gate.mul(ctx, a.assigned, b.assigned));
         self.propagate_range(&out, a, b, Interval::mul);
+        self.propagate_two_valued(&out, a, b, |x, c| x.checked_mul(c));
+        self.propagate_two_valued(&out, b, a, |x, c| x.checked_mul(c));
         Ok(out)
     }
 
@@ -562,12 +583,12 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         self.div_i(&one, a)
     }
 
-    fn bit_and_i(&mut self, _: &Self::CellRef, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("bit_and_i") }
-    fn bit_or_i(&mut self, _: &Self::CellRef, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("bit_or_i") }
-    fn bit_xor_i(&mut self, _: &Self::CellRef, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("bit_xor_i") }
+    fn bit_and_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.bit_and(a, b) }
+    fn bit_or_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.bit_or(a, b) }
+    fn bit_xor_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.bit_xor(a, b) }
     fn shl_i(&mut self, _: &Self::CellRef, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("shl_i") }
     fn shr_i(&mut self, _: &Self::CellRef, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("shr_i") }
-    fn bit_not_i(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("bit_not_i") }
+    fn bit_not_i(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.bit_not(a) }
 
     fn add_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.add_i(a, b) }
     fn sub_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.sub_i(a, b) }
@@ -607,6 +628,12 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn sign_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.sign_i(a) }
 
     fn eq_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if let Some(bit) = self.equals_constant(a, b)? {
+            return Ok(bit);
+        }
+        if let Some(bit) = self.equals_constant(b, a)? {
+            return Ok(bit);
+        }
         let value = if a.value == b.value { Fp::one() } else { Fp::zero() };
         let out = self.gate_cell(value, |gate, ctx| gate.is_equal(ctx, a.assigned, b.assigned));
         self.mark_bit(&out);
@@ -801,6 +828,10 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         // The select gate pins out to one of the branches (cond is a bit), so
         // the hull of the branches' proven ranges holds for the output.
         self.propagate_range(&out, if_true, if_false, |t, f| Some(t.hull(f)));
+        let constant = |s: &Self, x: &Halo2BaseCell| s.is_const_cell(x).then(|| kernel::fp_to_i128(x.value)).flatten();
+        if let (Some(t), Some(f)) = (constant(self, if_true), constant(self, if_false)) {
+            self.set_two_valued(&out, TwoValued { bit: *cond, if_zero: f, if_one: t });
+        }
         Ok(out)
     }
     fn select_many_lane(&mut self, cond: &Self::CellRef, true_values: &[Self::CellRef], false_values: &[Self::CellRef], lane: usize) -> Result<Self::CellRef, ProvingError> {

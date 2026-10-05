@@ -529,6 +529,87 @@ fn signed_comparison_rejects_inputs_outside_the_64_bit_window() {
     assert!(!synthesize(&*lt, &[huge, int(1)], &[]).accepted);
 }
 
+// ── Bitwise operations (two's complement, as NumPy int64) ──────────────
+
+const BIT_PAIRS: [(i64, i64); 7] =
+    [(12, 10), (-12, 10), (12, -10), (-1, i64::MIN), (i64::MAX, -7), (0, 5), (i64::MIN, i64::MIN)];
+
+#[test]
+fn bitwise_operations_follow_twos_complement_and_are_pinned() {
+    let ops: Vec<(&str, Box<Op>, fn(i64, i64) -> i64)> = vec![
+        ("&", binary(|s, a, b| s.bit_and_i(a, b)), |a, b| a & b),
+        ("|", binary(|s, a, b| s.bit_or_i(a, b)), |a, b| a | b),
+        ("^", binary(|s, a, b| s.bit_xor_i(a, b)), |a, b| a ^ b),
+    ];
+    for (name, op, f) in &ops {
+        for (a, b) in BIT_PAIRS {
+            assert_sound(&format!("{a} {name} {b}"), &**op, &[int(a), int(b)], &[int(f(a, b))], &[]);
+        }
+    }
+    let not = unary(|s, a| s.bit_not_i(a));
+    for x in [0i64, 5, -6, i64::MAX, i64::MIN] {
+        assert_sound(&format!("~{x}"), &*not, &[int(x)], &[int(!x)], &[]);
+    }
+    // An operand outside the int64 window has no witness.
+    let and = binary(|s, a, b| s.bit_and_i(a, b));
+    assert!(!synthesize(&*and, &[kernel::i128_to_fp(1i128 << 64), int(3)], &[]).accepted);
+}
+
+#[test]
+fn bitwise_operations_with_constants_are_pinned() {
+    for c in [1024i64, 5, 0, -1, -16, 255] {
+        let and = with_constant_rhs(|s, a, b| s.bit_and_i(a, b), int(c));
+        let or = with_constant_rhs(|s, a, b| s.bit_or_i(a, b), int(c));
+        let xor = with_constant_rhs(|s, a, b| s.bit_xor_i(a, b), int(c));
+        for x in [1234i64, -1234, 0, i64::MIN, i64::MAX] {
+            assert_sound(&format!("{x} & {c}"), &*and, &[int(x)], &[int(x & c)], &[]);
+            assert_sound(&format!("{x} | {c}"), &*or, &[int(x)], &[int(x | c)], &[]);
+            assert_sound(&format!("{x} ^ {c}"), &*xor, &[int(x)], &[int(x ^ c)], &[]);
+        }
+    }
+    // Narrow operands decompose only their own width.
+    let narrow: Box<Op> = Box::new(|s, c| {
+        let bound = s.constant_int(16)?;
+        s.assert_u128_lt(&c[0], &bound)?;
+        s.assert_u128_lt(&c[1], &bound)?;
+        Ok(vec![s.bit_xor_i(&c[0], &c[1])?])
+    });
+    assert_sound("9 ^ 12 (< 16)", &*narrow, &[int(9), int(12)], &[int(9 ^ 12)], &[]);
+    let wide = binary(|s, a, b| s.bit_xor_i(a, b));
+    assert!(cells_of(&*narrow, &[int(9), int(12)]).0 * 4 < cells_of(&*wide, &[int(9), int(12)]).0);
+}
+
+/// `(x & 2^j) > 0` is the bit itself: a value known to be `bit ? v1 : v0`
+/// compared with a constant reduces to the bit, its negation or a constant.
+#[test]
+fn comparisons_of_two_valued_cells_reduce_to_their_bit() {
+    let masked: Box<Op> = Box::new(|s, c| {
+        let mask = s.constant_int(4)?;
+        let zero = s.constant_int(0)?;
+        let bit = s.bit_and_i(&c[0], &mask)?;
+        Ok(vec![s.gt_i(&bit, &zero)?, s.lt_i(&bit, &zero)?, s.eq_i(&bit, &mask)?, s.eq_i(&bit, &zero)?])
+    });
+    for x in [4i64, 3, -4, -5] {
+        let set = (x & 4) != 0;
+        let expected = [int(set as i64), int(0), int(set as i64), int(!set as i64)];
+        assert_sound(&format!("({x} & 4) cmp"), &*masked, &[int(x)], &expected, &[]);
+    }
+    let selected: Box<Op> = Box::new(|s, c| {
+        let (three, seven, five) = (s.constant_int(3)?, s.constant_int(7)?, s.constant_int(5)?);
+        let cond = s.lt_i(&c[0], &c[1])?;
+        let picked = s.select(&cond, &seven, &three)?;
+        let shifted = s.add_i(&picked, &five)?;
+        Ok(vec![s.lt_i(&picked, &five)?, s.gt_i(&shifted, &five)?, s.eq_i(&shifted, &five)?])
+    });
+    for (a, b) in [(1i64, 2i64), (2, 1)] {
+        let picked = if a < b { 7 } else { 3 };
+        let expected = [int((picked < 5) as i64), int((picked + 5 > 5) as i64), int(0)];
+        let outcome = synthesize(&*selected, &[int(a), int(b)], &[]);
+        assert!(outcome.accepted && outcome.outputs == expected, "select({a} < {b}, 7, 3)");
+        assert_eq!(outcome.hints, 1, "only the condition's comparison loads a hint");
+    }
+}
+
 // ── Memory (M3) ─────────────────────────────────────────────────────────
 
 /// `x[i] = 7; x[0] = 9; return (x[0], x[i])` on a 4-slot segment with i = 0.

@@ -5,7 +5,7 @@
 use halo2_base::gates::GateInstructions;
 use halo2_base::QuantumCell;
 
-use super::ranges::{Interval, Operand};
+use super::ranges::{Interval, Operand, TwoValued};
 use super::{Fp, Halo2BaseCell, Halo2BaseSynthesizer};
 use crate::prove::error::ProvingError;
 use crate::prove::kernel::{self, Rounding};
@@ -250,6 +250,11 @@ impl Halo2BaseSynthesizer<'_> {
         let out = self.gate_cell(x.value * factor, |gate, ctx| gate.mul(ctx, x.assigned, QuantumCell::Constant(factor)));
         if let Some(range) = self.proven_range(x).zip(Interval::point(m)).and_then(|(r, c)| r.mul(&c)) {
             self.prove_range(&out, range);
+        }
+        if let Some(tv) = self.two_valued_of(x) {
+            if let (Some(z), Some(o)) = (tv.if_zero.checked_mul(m), tv.if_one.checked_mul(m)) {
+                self.set_two_valued(&out, TwoValued { bit: tv.bit, if_zero: z, if_one: o });
+            }
         }
         Ok(out)
     }
