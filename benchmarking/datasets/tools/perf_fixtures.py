@@ -751,7 +751,7 @@ def build_fixture(case_dir: Path, record: dict[str, Any]) -> Fixture:
         "case": case_dir.name,
         "function": "kernel",
         "parameters": parameters,
-        "constants": {name: generator._plain(np.asarray(v).tolist()) for name, v in kernel.constants.items()},
+        "constants": {name: generator.plain_value(np.asarray(v).tolist()) for name, v in kernel.constants.items()},
         "inputs": {name: {n: to_json_value(inputs[name][n], ptype.dtype) for n, ptype in kernel.params}
                    for name in INPUT_NAMES},
         "notes": " ".join([

@@ -1,6 +1,10 @@
+# npbench program polybench/gesummv/gesummv_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
 import numpy as np
 
 @zk_circuit
-def kernel(alpha: Float, beta: Float, A: Float[Array, 'N<=1024 N<=1024'], B: Float[Array, 'N<=1024 N<=1024'], x: Float[Array, 'N<=1024']):
+def kernel(alpha: Float, beta: Float, A: Float[Array, '2000 2000'], B: Float[Array, '2000 2000'], x: Float[Array, '2000']):
     return alpha * A @ x + beta * B @ x

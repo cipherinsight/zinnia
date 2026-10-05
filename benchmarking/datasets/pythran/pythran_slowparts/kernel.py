@@ -1,14 +1,12 @@
+# pythran program slowparts.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: in-place-mutation, loop-bounded
-# Expected outcome: compile/prove candidate
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 from numpy import zeros, power, tanh
 
 @zk_circuit
-def slowparts(d: Integer, re: Integer, preDz: Float[Array, 'N<=1024 M<=1024 K<=1024'], preWz: Float[Array, 'N<=1024 M<=1024 K<=1024'], SRW: Float[Array, 'N<=1024 M<=1024'], RSW: Float[Array, 'N<=1024 M<=1024'], yxV: Float[Array, 'N<=1024 M<=1024 K<=1024'], xyU: Float[Array, 'N<=1024 M<=1024 K<=1024'], resid: Integer):
+def slowparts(d: Integer, re: Integer, preDz: Float[Array, '20 11 5'], preWz: Float[Array, '10 11 5'], SRW: Float[Array, '10 20'], RSW: Float[Array, '10 20'], yxV: Float[Array, '11 5 10'], xyU: Float[Array, '11 5 10'], resid: Integer):
     """ computes the linear algebra intensive part of the gradients of the grae
     """
     fprime = lambda x: 1 - power(tanh(x), 2)

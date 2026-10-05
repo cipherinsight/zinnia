@@ -1,31 +1,27 @@
+# pythran program growcut.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: denominator-obligation, domain-obligation, in-place-mutation, loop-bounded
-# Expected outcome: compile/prove candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 import math
 import numpy as np
 
 @zk_chip
-def window_floor(idx: Float, radius: Float):
+def window_floor(idx, radius):
     if radius > idx:
         return 0
     else:
         return idx - radius
 
 @zk_chip
-def window_ceil(idx: Float, ceil: Float, radius: Float):
+def window_ceil(idx, ceil, radius):
     if idx + radius > ceil:
         return ceil
     else:
         return idx + radius
 
 @zk_chip
-def python_kernel(image: Float[Array, 'N<=1024 M<=1024 K<=1024'], state: Float[Array, 'N<=1024 M<=1024 K<=1024'], state_next: Float[Array, 'N<=1024 M<=1024 K<=1024'], window_radius: Float):
+def python_kernel(image, state, state_next, window_radius):
     changes = 0
     sqrt_3 = math.sqrt(3.0)
     height = image.shape[0]

@@ -1,13 +1,11 @@
+# pythran program fbcorr_numpy.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: in-place-mutation, loop-bounded
-# Expected outcome: compile/prove candidate
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 
 @zk_circuit
-def fbcorr(imgs: Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256'], filters: Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256'], output: Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256']):
+def fbcorr(imgs: Float[Array, '8 8 8 8'], filters: Float[Array, '8 8 8 8'], output: Float[Array, '8 8 8 8']):
     n_imgs, n_rows, n_cols, n_channels = imgs.shape
     n_filters, height, width, n_ch2 = filters.shape
     'omp parallel for'

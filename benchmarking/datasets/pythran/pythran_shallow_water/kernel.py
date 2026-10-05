@@ -1,21 +1,18 @@
+# pythran program shallow_water.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: denominator-obligation, in-place-mutation, loop-bounded
-# Expected outcome: compile/prove candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 import numpy as np
 
-@zk_circuit
-def model(height: Float[Array, 'N<=1024'], width: Float[Array, 'N<=1024'], dtype: Float):
+@zk_chip
+def model(height, width, dtype):
     m = np.ones((height, width), dtype=dtype)
     m[height // 4, width // 4] = 6.0
     return m
 
 @zk_chip
-def step(H: Float[Array, 'N<=1024 M<=1024'], U: Float[Array, 'N<=1024 M<=1024'], V: Float[Array, 'N<=1024 M<=1024'], dt: Float=0.02, dx: Float=1.0, dy: Float=1.0):
+def step(H, U, V, dt=0.02, dx=1.0, dy=1.0):
     g = 9.80665
     H[:, 0] = H[:, 1]
     U[:, 0] = U[:, 1]
@@ -40,10 +37,16 @@ def step(H: Float[Array, 'N<=1024 M<=1024'], U: Float[Array, 'N<=1024 M<=1024'],
     V[1:-1, 1:-1] -= dt // dx * (Ux[1:, :] * Vx[1:, :] // Hx[1:, :] - Ux[:-1, :] * Vx[:-1, :] // Hx[:-1, :]) + dt // dy * (Vy[:, 1:] ** 2 // Hy[:, 1:] + g // 2 * Hy[:, 1:] ** 2 - (Vy[:, :-1] ** 2 // Hy[:, :-1] + g // 2 * Hy[:, :-1] ** 2))
     return (H, U, V)
 
-@zk_circuit
-def simulate(H: Float[Array, 'N<=1024'], timesteps: Float):
+@zk_chip
+def simulate(H, timesteps):
     U = np.zeros_like(H)
     V = np.zeros_like(H)
     for i in range(timesteps):
         H, U, V = step(H, U, V)
     return H
+
+@zk_circuit
+def run(H: Integer, W: Integer, I: Integer):
+    m = model(H, W, dtype=np.float64)
+    m = simulate(m, I)
+    return m

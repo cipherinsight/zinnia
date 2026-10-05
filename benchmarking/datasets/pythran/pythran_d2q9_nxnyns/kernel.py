@@ -1,15 +1,12 @@
+# pythran program d2q9_nxnyns.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: denominator-obligation, in-place-mutation, loop-bounded
-# Expected outcome: compile/prove candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 import numpy as np
 
 @zk_chip
-def m2f_loc(m: Float[Array, 'N<=1024'], f: Float[Array, 'N<=1024']):
+def m2f_loc(m, f):
     c0 = 1.0 / 6
     c1 = 1.0 / 9
     c2 = 1.0 / 18
@@ -26,7 +23,7 @@ def m2f_loc(m: Float[Array, 'N<=1024'], f: Float[Array, 'N<=1024']):
     f[8] = c1 * m[0] + c0 * m[1] - c0 * m[2] + c2 * m[3] + c3 * m[4] + c4 * m[5] - c4 * m[6] - 0.25 * m[8]
 
 @zk_chip
-def f2m_loc(f: Float[Array, 'N<=1024'], m: Float[Array, 'N<=1024']):
+def f2m_loc(f, m):
     m[0] = f[0] + f[1] + f[2] + f[3] + f[4] + f[5] + f[6] + f[7] + f[8]
     m[1] = f[1] - f[3] + f[5] - f[6] - f[7] + f[8]
     m[2] = f[2] - f[4] + f[5] + f[6] - f[7] - f[8]
@@ -38,7 +35,7 @@ def f2m_loc(f: Float[Array, 'N<=1024'], m: Float[Array, 'N<=1024']):
     m[8] = f[5] - f[6] + f[7] - f[8]
 
 @zk_chip
-def getf(f: Float[Array, 'N<=1024 M<=1024 K<=1024'], floc: Float[Array, 'N<=1024'], i: Integer, j: Integer):
+def getf(f, floc, i, j):
     floc[0] = f[i, j, 0]
     floc[1] = f[i - 1, j, 1]
     floc[2] = f[i, j - 1, 2]
@@ -50,7 +47,7 @@ def getf(f: Float[Array, 'N<=1024 M<=1024 K<=1024'], floc: Float[Array, 'N<=1024
     floc[8] = f[i - 1, j + 1, 8]
 
 @zk_chip
-def setf(f: Float[Array, 'N<=1024 M<=1024 K<=1024'], floc: Float[Array, 'N<=1024'], i: Integer, j: Integer):
+def setf(f, floc, i, j):
     f[j, i, 0] = floc[0]
     f[j, i, 1] = floc[1]
     f[j, i, 2] = floc[2]
@@ -62,7 +59,7 @@ def setf(f: Float[Array, 'N<=1024 M<=1024 K<=1024'], floc: Float[Array, 'N<=1024
     f[j, i, 8] = floc[8]
 
 @zk_chip
-def relaxation_loc(m: Float[Array, 'N<=1024']):
+def relaxation_loc(m):
     m[3] += 1.1312217194570136 * (-2 * m[0] + 3.0 * m[1] * m[1] + 3.0 * m[2] * m[2] - m[3])
     m[4] += 1.1312217194570136 * (m[0] + 1.5 * m[1] * m[1] + 1.5 * m[2] * m[2] - m[4])
     m[5] += 1.1312217194570136 * (-m[1] - m[5])
@@ -71,7 +68,7 @@ def relaxation_loc(m: Float[Array, 'N<=1024']):
     m[8] += 1.8573551263001487 * (m[1] * m[2] - m[8])
 
 @zk_chip
-def periodic_bc(f: Float[Array, 'N<=1024 M<=1024 K<=1024']):
+def periodic_bc(f):
     nx, ny, ns = f.shape
     for j in range(ny):
         for k in range(ns):
@@ -83,7 +80,7 @@ def periodic_bc(f: Float[Array, 'N<=1024 M<=1024 K<=1024']):
             f[i, ny - 1, k] = f[i, 1, k]
 
 @zk_circuit
-def one_time_step(f1: Float[Array, 'N<=1024 M<=1024 K<=1024'], f2: Float[Array, 'N<=1024 M<=1024 K<=1024']):
+def one_time_step(f1: Float[Array, '50 50 9'], f2: Float[Array, '50 50 9']):
     nx, ny, ns = f1.shape
     floc = np.zeros(ns)
     mloc = np.zeros(ns)

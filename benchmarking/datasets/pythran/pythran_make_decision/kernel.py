@@ -1,15 +1,12 @@
+# pythran program make_decision.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: complex, in-place-mutation, loop-bounded
-# Expected outcome: diagnostic/fail-closed candidate
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
-# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.
 import numpy as np
 
 @zk_circuit
-def md(E: Complex[Array, 'N<=1024'], symbols: Complex[Array, 'N<=1024']):
+def md(E: Complex[Array, '160'], symbols: Complex[Array, '80']):
     L = E.shape[0]
     M = symbols.shape[0]
     syms_out = np.zeros(L, dtype=E.dtype)

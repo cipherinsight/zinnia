@@ -1,20 +1,13 @@
+# pythran program ldpc_decoder.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: data-dependent-loop, denominator-obligation, domain-obligation, in-place-mutation, loop-bounded, matmul-dot
-# Expected outcome: diagnostic/fail-closed candidate
-# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].
-# Precondition: Declare shared matrix/vector dimensions explicitly; when not expressible as @requires, encode with matching symbolic annotation names and keep as review obligation.
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
-# Diagnostic: while loops require a public/padded maximum iteration count.
 import numpy as np
 from math import log, tanh
 
 @zk_chip
-def phi0(x: Float):
+def phi0(x):
     x = abs(x)
     if x < 9.08e-05:
         return 10
@@ -22,19 +15,19 @@ def phi0(x: Float):
         return -log(tanh(x / 2))
 
 @zk_chip
-def G(Lq: Float[Array, 'N<=1024']):
+def G(Lq):
     X = sum((phi0(e) for e in Lq))
     s = np.prod(np.sign(Lq))
     return s * phi0(X)
 
 @zk_chip
-def BinaryProduct(X: Integer[Array, 'N<=1024 M<=1024'], Y: Integer[Array, 'N<=1024']):
+def BinaryProduct(X, Y):
     """ Binary Matrices or Matrix-vector product in Z/2Z. Works with scipy.sparse.csr_matrix matrices X,Y too."""
     A = X.dot(Y)
     return A % 2
 
 @zk_chip
-def InCode(H: Integer[Array, 'N<=1024 M<=1024'], x: Integer[Array, 'N<=1024']):
+def InCode(H, x):
     """ Computes Binary Product of H and x. If product is null, x is in the code.
         Returns appartenance boolean. 
     """
@@ -42,7 +35,7 @@ def InCode(H: Integer[Array, 'N<=1024 M<=1024'], x: Integer[Array, 'N<=1024']):
 
 @zk_circuit
 @requires(lambda H, Bits, Nodes, Lq, Lc, max_iter: 0 <= max_iter <= 1024)
-def Decoding_logBP(H: Integer[Array, 'N<=1024 M<=1024'], Bits: Integer[Array, 'N<=1024 M<=1024'], Nodes: Integer[Array, 'N<=1024 M<=1024'], Lq: Float[Array, 'N<=1024 M<=1024'], Lc: Float[Array, 'N<=1024'], max_iter: Integer=1):
+def Decoding_logBP(H: Integer[Array, '8 8'], Bits: Integer[Array, '8 8'], Nodes: Integer[Array, '8 8'], Lq: Float[Array, '8 8'], Lc: Float[Array, '8'], max_iter: Integer=1):
     """ Decoding function using Belief Propagation algorithm (logarithmic version)
     IMPORTANT: if H is large (n>1000), H should be scipy.sparse.csr_matrix object to speed up calculations
     (highly recommanded. )

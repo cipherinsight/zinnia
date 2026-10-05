@@ -1,6 +1,10 @@
+# npbench program polybench/bicg/bicg_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
 import numpy as np
 
 @zk_circuit
-def kernel(A: Float[Array, 'N<=1024 M<=1024'], p: Float[Array, 'M<=1024'], r: Float[Array, 'N<=1024']):
+def kernel(A: Float[Array, '5000 4000'], p: Float[Array, '4000'], r: Float[Array, '5000']):
     return (r @ A, A @ p)

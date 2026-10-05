@@ -1,18 +1,14 @@
+# pythran program train_equalizer.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: complex, denominator-obligation, in-place-mutation, loop-bounded
-# Expected outcome: diagnostic/fail-closed candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
-# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.
 import numpy as np
 
 @zk_circuit
 @requires(lambda E, TrSyms, Niter, os, mu, wx, modes, adaptive, symbols, method: 0 <= Niter <= 1024)
 @requires(lambda E, TrSyms, Niter, os, mu, wx, modes, adaptive, symbols, method: method != 0)
-def train_equaliser(E: Complex[Array, 'N<=1024 M<=1024'], TrSyms: Integer, Niter: Integer, os: Integer, mu: Float, wx: Complex[Array, 'N<=1024 M<=1024 K<=1024'], modes: Integer[Array, 'N<=1024'], adaptive: Bool, symbols: Complex[Array, 'N<=1024 M<=1024'], method: str):
+def train_equaliser(E, TrSyms, Niter, os, mu, wx, modes, adaptive, symbols, method):
     if method == 'cma':
         errorfct = cma_error
     else:
@@ -36,19 +32,19 @@ def train_equaliser(E: Complex[Array, 'N<=1024 M<=1024'], TrSyms: Integer, Niter
     return (err, wx, mu)
 
 @zk_chip
-def cma_error(Xest: Float, s1: Complex[Array, 'N<=1024'], i: Integer):
+def cma_error(Xest, s1, i):
     d = s1[0].real - abs(Xest) ** 2
     return d * Xest
 
 @zk_chip
-def adapt_step(mu: Float, err_p: Float, err: Float):
+def adapt_step(mu, err_p, err):
     if err.real * err_p.real > 0 and err.imag * err_p.imag > 0:
         return mu
     else:
         return mu / (1 + mu * (err.real * err.real + err.imag * err.imag))
 
 @zk_chip
-def apply_filter(E: Complex[Array, 'N<=1024 M<=1024'], wx: Complex[Array, 'N<=1024 M<=1024']):
+def apply_filter(E, wx):
     pols = E.shape[0]
     Ntaps = wx.shape[1]
     Xest = E.dtype.type(0)

@@ -1,14 +1,11 @@
+# pythran program babylonian.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: data-dependent-loop, denominator-obligation
-# Expected outcome: diagnostic/fail-closed candidate
-# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Diagnostic: while loops require a public/padded maximum iteration count.
 
 @zk_circuit
-def is_square(a_positive_int: Float):
+def is_square(a_positive_int: Integer):
     """ Check if it is a perfect square. """
     x = a_positive_int // 2
     seen = {x}

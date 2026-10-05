@@ -1,13 +1,11 @@
+# pythran program sobelfilter.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: in-place-mutation, loop-bounded
-# Expected outcome: compile/prove candidate
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 
 @zk_circuit
-def sobelFilter(original_image: Integer[Array, 'N<=1024'], cols: Integer, rows: Integer):
+def sobelFilter(original_image: Integer[Array, '10000'], cols: Integer, rows: Integer):
     edge_image = list(range(len(original_image)))
     for i in range(rows):
         edge_image[i * cols] = 255
