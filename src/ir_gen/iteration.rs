@@ -16,7 +16,7 @@
 //! loop. When no bound can be established at all, the program is rejected.
 
 use crate::ast::*;
-use crate::optim::predicates::formula::{BoolOp, CmpOp, ContractTerm, ContractVar};
+use crate::optim::predicates::formula::{CmpOp, ContractTerm, ContractVar};
 use crate::types::{DynamicNDArrayData, Value};
 
 use super::IRGenerator;
@@ -29,15 +29,11 @@ pub(crate) struct LoopItem {
     /// `None` when the item exists on every execution; otherwise the runtime
     /// condition under which Python produces this item.
     pub active: Option<Value>,
-    /// Facts that hold whenever the item is active, used as path conditions
-    /// so that bounds checks implied by the activity (e.g. `x[k]` with
-    /// `k < len(x)`) can be discharged at compile time.
-    pub active_facts: Vec<ContractTerm>,
 }
 
 impl LoopItem {
     fn always(value: Value) -> Self {
-        LoopItem { value, active: None, active_facts: Vec::new() }
+        LoopItem { value, active: None }
     }
 }
 
@@ -45,21 +41,6 @@ impl LoopItem {
 /// provable maximum. Shared by `range` and `while` so the message is uniform.
 pub(crate) const UNBOUNDED_LOOP_ERROR: &str =
     "loop bound depends on a private value with no provable maximum";
-
-fn value_term(v: &Value) -> Option<ContractTerm> {
-    if let Some(n) = v.int_val() {
-        return Some(ContractTerm::LitInt(n));
-    }
-    v.value_id().map(|vid| ContractTerm::Var(ContractVar::Value(vid)))
-}
-
-fn cmp_term(op: CmpOp, lhs: &Value, rhs: &Value) -> Option<ContractTerm> {
-    Some(ContractTerm::Cmp {
-        op,
-        lhs: Box::new(value_term(lhs)?),
-        rhs: Box::new(value_term(rhs)?),
-    })
-}
 
 /// `true` for the AST of a call to the builtin `range`.
 fn range_call(node: &ASTNode) -> Option<&ASTNamedAttribute> {
@@ -128,7 +109,6 @@ impl IRGenerator {
         }
         let dim = data.envelope.dims[0];
         let length = Value::Integer(data.meta.runtime_length.clone());
-        let axis_length = data.meta.runtime_shape.first().cloned().map(Value::Integer);
         (0..dim.max)
             .map(|k| {
                 let address = self.builder.ir_constant_int(k as i64);
@@ -138,18 +118,8 @@ impl IRGenerator {
                     &address,
                     data.dtype,
                 );
-                if k < dim.min {
-                    return LoopItem::always(value);
-                }
-                let active = self.builder.ir_less_than_i(&address, &length);
-                let mut active_facts: Vec<ContractTerm> =
-                    cmp_term(CmpOp::Lt, &address, &length).into_iter().collect();
-                if let Some(axis_length) = &axis_length {
-                    if axis_length.value_id() != length.value_id() {
-                        active_facts.extend(cmp_term(CmpOp::Lt, &address, axis_length));
-                    }
-                }
-                LoopItem { value, active: Some(active), active_facts }
+                let active = (k >= dim.min).then(|| self.builder.ir_less_than_i(&address, &length));
+                LoopItem { value, active }
             })
             .collect()
     }
@@ -182,11 +152,7 @@ impl IRGenerator {
         });
         // Items are start, start+step, ...; item k is active iff it lies
         // before `stop` in the direction of `step`.
-        let (active_op, active_cmp) = if step > 0 {
-            (IRBuilderCmp::Lt, CmpOp::Lt)
-        } else {
-            (IRBuilderCmp::Gt, CmpOp::Gt)
-        };
+        let active_op = if step > 0 { IRBuilderCmp::Lt } else { IRBuilderCmp::Gt };
         let item_value = |gen: &mut Self, k: i64| -> Value {
             let offset = gen.builder.ir_constant_int(k * step);
             if k == 0 {
@@ -218,8 +184,7 @@ impl IRGenerator {
                     return LoopItem::always(value);
                 }
                 let active = active_op.apply(&mut self.builder, &value, &stop);
-                let active_facts = cmp_term(active_cmp, &value, &stop).into_iter().collect();
-                LoopItem { value, active: Some(active), active_facts }
+                LoopItem { value, active: Some(active) }
             })
             .collect()
     }
@@ -490,56 +455,18 @@ impl IRGenerator {
         }
     }
 
-    /// Facts that hold whenever `condition` is true, derived from the
-    /// comparisons it is built from (conjunctions are split). Used as path
-    /// conditions for code that runs only when `condition` holds.
-    pub(crate) fn condition_facts(&self, condition: &Value) -> Vec<ContractTerm> {
-        use crate::ir_defs::IR;
-        let mut facts = Vec::new();
-        let Some(stmt) = condition.stmt_id().and_then(|id| self.builder.stmts.get(id as usize))
-        else {
-            return facts;
-        };
-        let operand = |i: usize| -> Option<Value> {
-            self.builder.value_of_vid(*stmt.arg_values.get(i)?)
-        };
-        let op = match stmt.ir {
-            IR::LtI | IR::LtIBounded => Some(CmpOp::Lt),
-            IR::LteI => Some(CmpOp::Le),
-            IR::GtI | IR::GtIBounded => Some(CmpOp::Gt),
-            IR::GteI => Some(CmpOp::Ge),
-            IR::EqI => Some(CmpOp::Eq),
-            IR::NeI => Some(CmpOp::Ne),
-            _ => None,
-        };
-        if let Some(op) = op {
-            if let (Some(a), Some(b)) = (operand(0), operand(1)) {
-                facts.extend(cmp_term(op, &a, &b));
-            }
-        } else if matches!(stmt.ir, IR::LogicalAnd | IR::BoolCast) {
-            for i in 0..stmt.arg_values.len() {
-                if let Some(v) = operand(i) {
-                    facts.extend(self.condition_facts(&v));
-                }
-            }
-        }
-        facts
-    }
-
     /// Run `f` as code that executes only when `guard` holds (a comprehension
     /// filter, one arm of a conditional expression): inside, the execution
     /// condition, the write predicate, chip entry conditions, and assertions
-    /// all include `guard`, and the comparisons in `guard` are available as
-    /// path facts. Bindings made inside do not escape.
+    /// all include `guard`. Bindings and facts made inside do not escape.
     pub(crate) fn with_guard<T>(&mut self, guard: &Value, f: impl FnOnce(&mut Self) -> T) -> T {
         if guard.bool_val() == Some(true) {
             return f(self);
         }
         self.ctx.if_enter(guard.clone(), &mut self.builder);
-        let facts = self.condition_facts(guard);
         self.builder.facts.enter(
             crate::optim::predicates::ScopeKind::Conditional,
-            conjunction(facts),
+            Self::bool_value_fact(guard, true),
         );
         let condition = self.ctx.get_condition_value(&mut self.builder);
         let previous = self.builder.swap_write_predicate(Some(condition));
@@ -548,15 +475,6 @@ impl IRGenerator {
         let _guard_facts = self.builder.facts.leave();
         self.ctx.if_leave();
         result
-    }
-}
-
-/// The conjunction of `facts`, or `None` when there are none.
-pub(crate) fn conjunction(mut facts: Vec<ContractTerm>) -> Option<ContractTerm> {
-    match facts.len() {
-        0 => None,
-        1 => facts.pop(),
-        _ => Some(ContractTerm::BoolComb { op: BoolOp::And, operands: facts }),
     }
 }
 

@@ -341,7 +341,7 @@ impl IRGenerator {
         }
     }
 
-    fn bool_value_fact(val: &Value, expected: bool) -> Option<ContractTerm> {
+    pub(crate) fn bool_value_fact(val: &Value, expected: bool) -> Option<ContractTerm> {
         val.value_id().map(|vid| ContractTerm::Cmp {
             op: CmpOp::Eq,
             lhs: Box::new(ContractTerm::Var(ContractVar::Value(vid))),
@@ -989,16 +989,6 @@ impl IRGenerator {
 
             self.do_recursive_assign(target, item.value.clone(), false);
 
-            // An active item's facts (e.g. `k < len(x)`) are path conditions
-            // for its body. Items without them run in the loop's fact scope,
-            // as before, so facts from one iteration stay visible in the next.
-            let item_scope = super::iteration::conjunction(item.active_facts.clone());
-            let pushed_item_scope = item_scope.is_some();
-            if pushed_item_scope {
-                self.builder
-                    .facts
-                    .enter(crate::optim::predicates::ScopeKind::Conditional, item_scope);
-            }
             let mut terminated = false;
             for stmt in block {
                 self.visit(stmt);
@@ -1007,9 +997,6 @@ impl IRGenerator {
                     terminated = true;
                     break;
                 }
-            }
-            if pushed_item_scope {
-                let _item_facts = self.builder.facts.leave();
             }
             if guarded {
                 if let Some(end) = target_name.and_then(|name| self.ctx.get(name)) {
@@ -1208,19 +1195,6 @@ impl IRGenerator {
                 self.ctx.loop_break(Some(not_test), &mut self.builder);
             }
 
-            // The body runs only while the guard holds; its comparisons are
-            // path facts there (they discharge e.g. `x[i]` under `i < len(x)`).
-            let guard_facts = if test_static.is_none() {
-                super::iteration::conjunction(self.condition_facts(&test_bool))
-            } else {
-                None
-            };
-            let pushed_guard_scope = guard_facts.is_some();
-            if pushed_guard_scope {
-                self.builder
-                    .facts
-                    .enter(crate::optim::predicates::ScopeKind::Conditional, guard_facts);
-            }
             let mut terminated = false;
             let pushed_loop_index_context = if let Some(ctx) = loop_index_bound_context.clone() {
                 self.loop_index_bound_contexts.push(ctx);
@@ -1246,9 +1220,6 @@ impl IRGenerator {
                     terminated = true;
                     break;
                 }
-            }
-            if pushed_guard_scope {
-                let _guard_facts = self.builder.facts.leave();
             }
             if pushed_loop_index_context {
                 self.loop_index_bound_contexts.pop();
