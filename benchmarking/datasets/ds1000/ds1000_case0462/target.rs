@@ -8,7 +8,6 @@
 //! element `i` (one select per pair, no equality tests).
 
 use crate::prelude::*;
-use halo2_base::QuantumCell;
 
 const N: usize = 20;
 
@@ -29,36 +28,8 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
             q.gate.mul_not(ctx, repeat, nonzero)
         });
     }
-    let (count, slots) = compact(&q, ctx, &a, &keep);
+    let (count, slots) = q.select_kept(ctx, &a, &keep);
     out.dynamic(count, &slots, Kind::Int, 1);
     Ok(())
 }
 
-/// `xs[keep]` at the front of `xs.len()` slots, zero-padded, and its length.
-/// `at[j]` is the one-hot of the number of kept values before element `i`
-/// (`at = e_0` for `i = 0`; it moves up one place after a kept element), and
-/// element `i` adds `keep_i * x_i` to the slot `at` points at.
-fn compact(q: &Q32, ctx: &mut Ctx, xs: &[Cell], keep: &[Cell]) -> (Cell, Vec<Cell>) {
-    let n = xs.len();
-    let mut terms: Vec<(Vec<QuantumCell<Fr>>, Vec<QuantumCell<Fr>>)> = vec![(vec![], vec![]); n];
-    let mut at: Vec<QuantumCell<Fr>> = vec![Constant(Fr::ONE)];
-    for i in 0..n {
-        let y = q.gate.mul(ctx, keep[i], xs[i]);
-        for (j, hit) in at.iter().enumerate() {
-            terms[j].0.push(*hit);
-            terms[j].1.push(Existing(y));
-        }
-        if i + 1 < n {
-            let k = keep[i];
-            let mut next = Vec::with_capacity(at.len() + 1);
-            next.push(Existing(q.gate.mul_not(ctx, k, at[0])));
-            for j in 1..at.len() {
-                next.push(Existing(q.gate.select(ctx, at[j - 1], at[j], k)));
-            }
-            next.push(Existing(q.gate.mul(ctx, k, *at.last().expect("non-empty"))));
-            at = next;
-        }
-    }
-    let slots = terms.into_iter().map(|(hits, ys)| q.gate.inner_product(ctx, hits, ys)).collect();
-    (q.sum(ctx, keep.iter().copied()), slots)
-}
