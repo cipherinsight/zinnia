@@ -9,6 +9,11 @@
 //!   `timings_s.prove` includes that second execution;
 //! * `verify`: verify the stored proof against the stored verifying key.
 //!
+//! Every mode first creates the prover client, timed as
+//! `timings_s.client_init` (16-21 s for the CPU prover, which loads its
+//! recursion artefacts). It is one-time setup, like Zinnia's key generation:
+//! reported with setup, never part of `timings_s.prove`.
+//!
 //! Proof modes: `core` (one STARK per execution shard), `compressed`
 //! (recursively compressed to one STARK), `groth16` (the compressed proof
 //! wrapped in a Groth16 SNARK over BN254, proved with gnark linked in-process).
