@@ -1,72 +1,56 @@
-// DS-1000 case 403 — Halo2 baseline. `np.ravel_multi_index(index, dims, order='C')`.
-// C ordering: linear = ((((i0*d1 + i1)*d2 + i2)*d3 + i3)*d4 + i4).
-// Sample: dims=[8,9,8,8,8], index=[2,3,4,5,6] → 11054.
-// As in case 0402, `a` is witnessed but unused.
+//! DS-1000 case 0403, halo2-base baseline.
+//! Kernel: `np.ravel_multi_index(index, dims=(8, 9, 8, 8, 8), order='C')` on a
+//! private `Integer[5]` `index`; the `Float[8, 9, 8, 8, 8]` parameter `a` is
+//! never read by the kernel and is not loaded. NumPy raises unless
+//! `0 <= index[k] < dims[k]`, so each index is proven to lie there
+//! (`assert_below`); the flat index is the inner product with the constant
+//! C strides (4608, 512, 64, 8, 1), taken last index first so that the leading
+//! stride 1 costs no cell; the inner product also assigns the indices.
 
-use clap::Parser;
-use halo2_base::utils::{ScalarField, BigPrimeField};
-use halo2_graph::gadget::fixed_point::FixedPointChip;
-use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use halo2_base::gates::{GateChip, GateInstructions, RangeInstructions};
-use serde::{Serialize, Deserialize};
-use halo2_base::AssignedValue;
-#[allow(unused_imports)] use halo2_graph::scaffold::cmd::Cli;
-use halo2_graph::scaffold::run;
+use crate::prelude::*;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CircuitInput {
-    pub dims: Vec<String>,
-    pub a: Vec<f64>,         // 36864 unused
-    pub index: Vec<String>,
-    pub claimed: String,
+const DIMS: [u64; 5] = [8, 9, 8, 8, 8];
+
+pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
+    let index = inputs.ints("index", &[5])?;
+    let q = Q32::new(builder);
+    let ctx = builder.main(0);
+
+    // Last index first: stride k (from the end) is the product of the dims after it.
+    let strides = DIMS.iter().rev().scan(1u64, |s, d| {
+        let stride = *s;
+        *s *= d;
+        Some(stride)
+    });
+    let (flat, reversed) = q.gate.inner_product_left(
+        ctx,
+        index.iter().rev().map(|v| Witness(fe(*v as i128))),
+        strides.map(|s| Constant(Fr::from(s))),
+    );
+    for (x, d) in reversed.iter().zip(DIMS.iter().rev()) {
+        assert_below(&q, ctx, *x, *d);
+    }
+    out.int(flat);
+    Ok(())
 }
 
-fn ravel_multi_index_c<F: ScalarField>(
-    b: &mut BaseCircuitBuilder<F>, input: CircuitInput, make_public: &mut Vec<AssignedValue<F>>,
-) where F: BigPrimeField {
-    const P: u32 = 32;
-    const TOTAL: usize = 8 * 9 * 8 * 8 * 8;
-    let gate = GateChip::<F>::default();
-    let rc = b.range_chip();
-    let fpc = FixedPointChip::<F, P>::default(b);
-    let ctx = b.main(0);
-
-    assert_eq!(input.dims.len(), 5);
-    assert_eq!(input.index.len(), 5);
-    assert_eq!(input.a.len(), TOTAL);
-
-    // `a` is unused by the kernel; Zinnia v7 DCE-eliminates the dead
-    // ReadFloatIR ops, so HW skips the loads too.
-
-    let dims: Vec<AssignedValue<F>> = input.dims.iter()
-        .map(|s| ctx.load_witness(F::from_u128(s.parse::<u128>().unwrap()))).collect();
-    let index: Vec<AssignedValue<F>> = input.index.iter()
-        .map(|s| ctx.load_witness(F::from_u128(s.parse::<u128>().unwrap()))).collect();
-    let claimed = ctx.load_witness(F::from_u128(input.claimed.parse::<u128>().unwrap()));
-
-    // Bounds-check semantic (mirrors Zinnia's per-index discharge):
-    // index[k] must lie in [0, dims[k]). Without this a malicious prover
-    // could supply out-of-range index values that satisfy the Horner
-    // chain below but yield a nonsense linear-index public output.
-    // Honest 64-bit integer domain (same convention as Zinnia): every
-    // witness integer that feeds a comparison is range-checked to 64 bits
-    // once, and the comparison itself runs at 64-bit width.
-    for k in 0..5 {
-        rc.range_check(ctx, index[k], 64);
-        rc.range_check(ctx, dims[k], 64);
-        rc.check_less_than(ctx, index[k], dims[k], 64);
+/// Proves `0 <= x < d` for a constant `d` within the lookup table `[0, 2^L)`:
+/// `x` and `x + 2^L - d` are both looked up. The first lookup makes `x` an
+/// integer in `[0, 2^L)`, so the sum does not wrap and the second gives
+/// `x < d`. One addition (4 cells) and two lookups, against the 7-cell
+/// comparison of halo2-base's `check_less_than_safe`, which remains the
+/// fallback for a table smaller than `d` (only in the sizing dry runs at
+/// `L < 4`, which `params.rs` never picks for a circuit with lookups).
+fn assert_below(q: &Q32, ctx: &mut Ctx, x: Cell, d: u64) {
+    let bits = q.range.lookup_bits();
+    let table = 1u64 << bits;
+    if d > table {
+        q.range.check_less_than_safe(ctx, x, d);
+        return;
     }
-
-    // C order Horner: acc = ((((i0*d1 + i1)*d2 + i2)*d3 + i3)*d4 + i4).
-    let mut acc = index[0];
-    for k in 1..5 {
-        let scaled = gate.mul(ctx, acc, dims[k]);
-        acc = gate.add(ctx, scaled, index[k]);
+    q.range.range_check(ctx, x, bits);
+    if d < table {
+        let shifted = q.gate.add(ctx, x, Constant(Fr::from(table - d)));
+        q.range.range_check(ctx, shifted, bits);
     }
-
-    let ok = gate.is_equal(ctx, acc, claimed);
-    gate.assert_is_const(ctx, &ok, &F::ONE);
-    make_public.push(acc);
 }
-
-fn main() { env_logger::init(); let args = Cli::parse(); run(ravel_multi_index_c, args); }
