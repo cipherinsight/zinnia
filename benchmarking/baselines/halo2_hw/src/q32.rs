@@ -256,12 +256,13 @@ impl Q32 {
         self.select_i64(ctx, b, a, b_lt_a)
     }
 
-    /// `max(xs)` of a few values by a hint `m`, pinned by `m - x` in
-    /// `[0, 2^64)` for every `x` and `prod_x (m - x) = 0`. For window values
-    /// `m - x` lies in `(-2^64, 2^64)` and a negative difference is a field
-    /// element above `p - 2^64`, so the range checks give `m >= x`; the product
-    /// puts `m` among the `xs`. Cheaper than a compare-and-select chain for a
-    /// handful of values (one range check per value, no comparison).
+    /// `max(xs)` of a few values by a hint `m`, pinned by `m` in the window,
+    /// `m - x` in `[0, 2^64)` for every `x` and `prod_x (m - x) = 0`. The
+    /// `xs` need no window proof of their own: the gap checks make every `x`
+    /// an integer in `(m - 2^64, m]`, so `m >= x` as integers, and the product
+    /// puts `m` among the `xs`; `m` is then their integer maximum and lies in
+    /// the window. Cheaper than a compare-and-select chain for a handful of
+    /// values (one range check per value plus one, no comparison).
     pub fn max_of(&self, ctx: &mut Ctx, xs: &[Cell]) -> Cell {
         let hint = xs.iter().map(|x| signed(x.value())).max().expect("non-empty");
         self.max_of_with(ctx, xs, fe(hint))
@@ -271,7 +272,8 @@ impl Q32 {
         self.extremum_with(ctx, xs, m, true)
     }
 
-    /// `min(xs)` of a few values: [`Q32::max_of`] with the gaps `x - m`.
+    /// `min(xs)` of a few values: [`Q32::max_of`] with the gaps `x - m`
+    /// (every `x` an integer in `[m, m + 2^64)`).
     pub fn min_of(&self, ctx: &mut Ctx, xs: &[Cell]) -> Cell {
         let hint = xs.iter().map(|x| signed(x.value())).min().expect("non-empty");
         self.extremum_with(ctx, xs, fe(hint), false)
@@ -279,6 +281,7 @@ impl Q32 {
 
     fn extremum_with(&self, ctx: &mut Ctx, xs: &[Cell], m: Fr, is_max: bool) -> Cell {
         let m = ctx.load_witness(m);
+        self.bound(ctx, m);
         let mut prod: Option<Cell> = None;
         for x in xs {
             let gap = if is_max { self.gate.sub(ctx, m, *x) } else { self.gate.sub(ctx, *x, m) };
@@ -988,6 +991,11 @@ mod tests {
                 c.extremum_with(ctx, &xs, m, false);
             })
         };
+        // A maximum outside the window has no proof, even when every gap fits.
+        assert!(!accepts(|c, ctx| {
+            let xs = [ctx.load_witness(fe(1 << 63)), ctx.load_witness(fe(3))];
+            c.max_of_with(ctx, &xs, fe(1 << 63));
+        }));
         assert!(run_min(fe(-3 << 32)));
         assert!(!run_min(fe(2 << 32)));
         assert!(!run_min(fe((-3 << 32) - 1)));

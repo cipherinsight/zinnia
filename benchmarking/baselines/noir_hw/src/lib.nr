@@ -78,10 +78,11 @@ unconstrained fn max_hint<let N: u32>(xs: [Field; N]) -> Field {
     m
 }
 
-// max(xs) of a few values by a hint m, pinned by m - x in [0, 2^64) for every
-// x and prod (m - x) = 0. For window values m - x lies in (-2^64, 2^64) and a
-// negative difference is a Field element above p - 2^64, so the range checks
-// give m >= x; the product puts m among the xs.
+// max(xs) of a few values by a hint m, pinned by m in the window, m - x in
+// [0, 2^64) for every x and prod (m - x) = 0. The xs need no window check of
+// their own: the gap checks make every x an integer in (m - 2^64, m], so
+// m >= x as integers, and the product puts m among the xs; m is then their
+// integer maximum and lies in the window.
 pub fn max_of<let N: u32>(xs: [Field; N]) -> Field {
     // Safety: m is pinned by `check_max`.
     let m = unsafe { max_hint(xs) };
@@ -90,6 +91,7 @@ pub fn max_of<let N: u32>(xs: [Field; N]) -> Field {
 }
 
 fn check_max<let N: u32>(xs: [Field; N], m: Field) {
+    let _ = window(m);
     let mut prod: Field = 1;
     for i in 0..N {
         let gap = m - xs[i];
@@ -524,6 +526,11 @@ fn test_max_of() {
 #[test(should_fail)]
 fn test_max_smaller_member() {
     check_max([-3, 5, 2], 2);
+}
+
+#[test(should_fail)]
+fn test_max_outside_window() {
+    check_max([9223372036854775808, 3], 9223372036854775808);
 }
 
 #[test(should_fail)]
