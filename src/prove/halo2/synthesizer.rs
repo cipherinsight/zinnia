@@ -18,7 +18,8 @@ use halo2_proofs::{
 use crate::circuit_input::{InputPath, ResolvedWitness};
 use crate::prove::error::ProvingError;
 use crate::prove::halo2::config::ZinniaConfig;
-use crate::prove::kernel::{self, Field, ATAN_COEFS, EXP2_COEFS, LOG2_COEFS, SIN_COEFS};
+use crate::prove::field::PrimeField;
+use crate::prove::kernel::{self, ATAN_COEFS, EXP2_COEFS, LOG2_COEFS, SIN_COEFS};
 use crate::prove::traits::Synthesizer;
 use crate::prove::types::ProvingParams;
 
@@ -104,9 +105,13 @@ pub struct Halo2Synthesizer {
     /// reconstruct the instance column without re-walking the IR.
     public_values: Vec<Fp>,
     instance_row: usize,
-    memories: HashMap<u32, Vec<Fp>>,
-    memory_cells: HashMap<u32, Vec<Option<Halo2CellRef>>>,
-    memory_init: HashMap<u32, Fp>,
+    /// Allocated memory segments: init value and the cell each slot holds
+    /// (`None` until written; see the memory section).
+    segments: HashMap<u32, (Fp, Vec<Option<Halo2CellRef>>)>,
+    /// Cells bound to the fixed column by `constant_cell`, with their value.
+    const_cells: HashMap<(usize, usize), Fp>,
+    /// One fixed-bound cell per distinct constant value.
+    const_cache: HashMap<[u8; 32], Halo2CellRef>,
     dyn_meta_bounds: HashMap<u32, (u32, Vec<u32>)>,
     /// Row currently being filled by single-column "free advice" ops
     /// (witness reads, external results). These ops activate no
@@ -167,9 +172,9 @@ impl Halo2Synthesizer {
             public_cells: Vec::new(),
             public_values: Vec::new(),
             instance_row: 0,
-            memories: HashMap::new(),
-            memory_cells: HashMap::new(),
-            memory_init: HashMap::new(),
+            segments: HashMap::new(),
+            const_cells: HashMap::new(),
+            const_cache: HashMap::new(),
             dyn_meta_bounds: HashMap::new(),
             free_pack_row: 0,
             free_pack_col: 5,
@@ -212,6 +217,8 @@ impl Halo2Synthesizer {
     /// `Halo2CellRef` can be wired into subsequent gates via copy
     /// constraints exactly like a `rec_advice` result.
     fn alloc_free_advice(&mut self, value: Fp, ann: &str) -> Halo2CellRef {
+        #[cfg(test)]
+        let value = tamper::apply(ann, value);
         if self.free_pack_col >= 5 {
             self.free_pack_row = self.offset;
             self.offset += 1;
@@ -404,6 +411,8 @@ impl Halo2Synthesizer {
     // ── Low-level recording helpers ───────────────────────────────────
 
     fn rec_advice(&mut self, col: usize, value: Fp, ann: &str) -> Halo2CellRef {
+        #[cfg(test)]
+        let value = tamper::apply(ann, value);
         let row = self.offset;
         self.ops.push(GateOp::AssignAdvice {
             col_idx: col,
@@ -450,6 +459,69 @@ impl Halo2Synthesizer {
         });
         self.offset += 1;
         cell
+    }
+
+    /// A circuit constant, bound to the fixed column (one `fixed_const` row
+    /// per distinct value). Constants used to be free advice cells, so a
+    /// prover could give every literal of the program any value it liked.
+    fn constant_cell(&mut self, value: Fp, ann: &str) -> Halo2CellRef {
+        let key: [u8; 32] = value.to_repr();
+        if let Some(cell) = self.const_cache.get(&key) {
+            return cell.clone();
+        }
+        let cell = self.fixed_constant_cell(value, ann);
+        self.const_cells.insert((cell.col_idx, cell.row), value);
+        self.const_cache.insert(key, cell.clone());
+        cell
+    }
+
+    /// The constant value of `cell` if it is bound to the fixed column.
+    fn constant_value(&self, cell: &Halo2CellRef) -> Option<Fp> {
+        self.const_cells.get(&(cell.col_idx, cell.row)).copied()
+    }
+
+    fn segment_len(&self, segment_id: u32) -> Result<usize, ProvingError> {
+        self.segments
+            .get(&segment_id)
+            .map(|(_, slots)| slots.len())
+            .ok_or_else(|| ProvingError::synthesis("Segment not allocated"))
+    }
+
+    /// The cell slot `idx` holds: its last write, or the init value as a
+    /// fixed constant.
+    fn slot_cell(&mut self, segment_id: u32, idx: usize) -> Result<Halo2CellRef, ProvingError> {
+        let (init, slots) = self
+            .segments
+            .get(&segment_id)
+            .ok_or_else(|| ProvingError::synthesis("Segment not allocated"))?;
+        match slots.get(idx).cloned().flatten() {
+            Some(cell) => Ok(cell),
+            None => {
+                let init = *init;
+                Ok(self.constant_cell(init, "mem_init"))
+            }
+        }
+    }
+
+    /// One-hot indicators `[addr == i]` over the segment's slots, with
+    /// `Σ_i [addr == i] = 1` asserted, which also proves `0 <= addr < len`.
+    fn address_indicators(&mut self, addr: &Halo2CellRef, len: usize) -> Result<Vec<Halo2CellRef>, ProvingError> {
+        if len == 0 {
+            return Err(ProvingError::synthesis("memory access into an empty segment"));
+        }
+        let mut hits = Vec::with_capacity(len);
+        let mut sum: Option<Halo2CellRef> = None;
+        for i in 0..len {
+            let idx = self.constant_int(i as i64)?;
+            let hit = self.eq_gadget(addr, &idx);
+            sum = Some(match sum {
+                None => hit.clone(),
+                Some(acc) => self.add_i(&acc, &hit)?,
+            });
+            hits.push(hit);
+        }
+        self.assert_true(&sum.expect("len > 0"))?;
+        Ok(hits)
     }
 
     // ── Constrained building blocks ───────────────────────────────────
@@ -1112,6 +1184,15 @@ impl Halo2Synthesizer {
         bits.try_into().expect("64 bits collected")
     }
 
+    /// Constrain `val` to the signed 64-bit window `[-2^63, 2^63)` (its
+    /// two's-complement bit decomposition). Used to pin quotients: a
+    /// quotient outside a window far below p is how a prover would pair an
+    /// arbitrary in-range remainder with a non-integer field quotient. The
+    /// 56-bit magnitude window of `signed_decompose` is too narrow here.
+    fn constrain_signed64(&mut self, val: &Halo2CellRef) {
+        self.bit_decompose_64(val);
+    }
+
     /// Recompose 64 bit cells back into a signed two's-complement integer cell.
     /// The bits are NOT re-constrained to {0,1} — caller is responsible if they
     /// were freshly constructed (e.g., XOR per-bit: caller already constrained).
@@ -1312,6 +1393,56 @@ impl Halo2Synthesizer {
             )));
         }
         self.range_check_chunks(abs, n_bits, ann)
+    }
+
+    /// Euclidean division `a = b*q + r`: `0 <= r < |b|` and `|q|` in the
+    /// signed-magnitude window. Without the window on `q`, every remainder
+    /// in `[0, |b|)` was accepted with the field element `(a - r) / b` as
+    /// the quotient. A zero divisor is a synthesis error (with a witness).
+    fn euclid_div_rem(
+        &mut self,
+        a: &Halo2CellRef,
+        b: &Halo2CellRef,
+        ann: &str,
+    ) -> Result<(Halo2CellRef, Halo2CellRef), ProvingError> {
+        let sa = kernel::fp_to_i64(a.value);
+        let sb = kernel::fp_to_i64(b.value);
+        if sb == 0 && self.witness.is_some() {
+            return Err(ProvingError::synthesis("Division by zero"));
+        }
+        let (q, r) = kernel::div_rem_or_zero(sa as i128, sb as i128, kernel::Rounding::Euclid);
+        let row = self.offset;
+        self.rec_sel("div_mod");
+        let _ = self.rec_advice(0, a.value, &format!("{}_a", ann));
+        self.rec_copy(a, 0, row);
+        let _ = self.rec_advice(1, b.value, &format!("{}_b", ann));
+        self.rec_copy(b, 1, row);
+        let qc = self.rec_advice(2, kernel::i128_to_fp(q), &format!("{}_q", ann));
+        let rc = self.rec_advice(3, kernel::i128_to_fp(r), &format!("{}_r", ann));
+        self.offset += 1;
+        self.constrain_div_mod_remainder(&rc, b, ann)?;
+        self.constrain_signed64(&qc);
+        Ok((qc, rc))
+    }
+
+    /// Python floor division: the Euclidean division of the operands with
+    /// the divisor's sign normalised away, remainder given the divisor's
+    /// sign back. Both coincide with floor division for a positive divisor.
+    fn floor_div_rem(
+        &mut self,
+        a: &Halo2CellRef,
+        b: &Halo2CellRef,
+    ) -> Result<(Halo2CellRef, Halo2CellRef), ProvingError> {
+        let zero = self.constant_int(0)?;
+        let negative = self.lt_i(b, &zero)?;
+        let neg_a = self.sub_i(&zero, a)?;
+        let neg_b = self.sub_i(&zero, b)?;
+        let numerator = self.select(&negative, &neg_a, a)?;
+        let denominator = self.select(&negative, &neg_b, b)?;
+        let (q, r) = self.euclid_div_rem(&numerator, &denominator, "fdiv")?;
+        let neg_r = self.sub_i(&zero, &r)?;
+        let r = self.select(&negative, &neg_r, &r)?;
+        Ok((q, r))
     }
 
     /// Bind the remainder of a `div_mod` row to the Euclidean window
@@ -1757,22 +1888,17 @@ impl Synthesizer for Halo2Synthesizer {
     type CellRef = Halo2CellRef;
 
     fn constant_int(&mut self, value: i64) -> Result<Halo2CellRef, ProvingError> {
-        let fp = if value >= 0 {
-            Fp::from(value as u64)
-        } else {
-            -Fp::from((-value) as u64)
-        };
-        Ok(self.alloc_free_advice(fp, "const_int"))
+        Ok(self.constant_cell(kernel::i64_to_fp(value), "const_int"))
     }
 
     fn constant_float(&mut self, value: f64) -> Result<Halo2CellRef, ProvingError> {
         let fp = self.quantize_fp(value);
-        Ok(self.alloc_free_advice(fp, "const_float"))
+        Ok(self.constant_cell(fp, "const_float"))
     }
 
     fn constant_bool(&mut self, value: bool) -> Result<Halo2CellRef, ProvingError> {
         let fp = if value { Fp::one() } else { Fp::zero() };
-        Ok(self.alloc_free_advice(fp, "const_bool"))
+        Ok(self.constant_cell(fp, "const_bool"))
     }
 
     // ── Integer arithmetic (all constrained via gates) ────────────────
@@ -1796,64 +1922,18 @@ impl Synthesizer for Halo2Synthesizer {
         self.offset += 1;
         Ok(self.bin_gate("mul", a, &b_inv_cell, a.value * b_inv, "div_i"))
     }
+    /// Python floor division `a // b` (remainder has the divisor's sign),
+    /// as `kernel::fp_floor_div`.
     fn floor_div_i(
         &mut self,
         a: &Halo2CellRef,
         b: &Halo2CellRef,
     ) -> Result<Halo2CellRef, ProvingError> {
-        let sa = kernel::fp_to_i64(a.value);
-        let sb = kernel::fp_to_i64(b.value);
-        if sb == 0 {
-            return Err(ProvingError::synthesis("Division by zero"));
-        }
-        let q = sa.div_euclid(sb);
-        let r = sa.rem_euclid(sb);
-        let q_fp = if q >= 0 {
-            Fp::from(q as u64)
-        } else {
-            -Fp::from((-q) as u64)
-        };
-        let r_fp = Fp::from(r as u64);
-        let row = self.offset;
-        self.rec_sel("div_mod");
-        let _ = self.rec_advice(0, a.value, "fdiv_a");
-        self.rec_copy(a, 0, row);
-        let _ = self.rec_advice(1, b.value, "fdiv_b");
-        self.rec_copy(b, 1, row);
-        let qc = self.rec_advice(2, q_fp, "fdiv_q");
-        let rc = self.rec_advice(3, r_fp, "fdiv_r");
-        self.offset += 1;
-        // Bind 0 <= r < |b| so (q, r) are uniquely determined (closes C10
-        // div_mod malleability for floor_div_i / mod_i).
-        self.constrain_div_mod_remainder(&rc, b, "fdiv")?;
-        Ok(qc)
+        Ok(self.floor_div_rem(a, b)?.0)
     }
+    /// Python remainder `a % b` (sign of the divisor).
     fn mod_i(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        let sa = kernel::fp_to_i64(a.value);
-        let sb = kernel::fp_to_i64(b.value);
-        if sb == 0 {
-            return Err(ProvingError::synthesis("Modulo by zero"));
-        }
-        let q = sa.div_euclid(sb);
-        let r = sa.rem_euclid(sb);
-        let q_fp = if q >= 0 {
-            Fp::from(q as u64)
-        } else {
-            -Fp::from((-q) as u64)
-        };
-        let r_fp = Fp::from(r as u64);
-        let row = self.offset;
-        self.rec_sel("div_mod");
-        let _ = self.rec_advice(0, a.value, "mod_a");
-        self.rec_copy(a, 0, row);
-        let _ = self.rec_advice(1, b.value, "mod_b");
-        self.rec_copy(b, 1, row);
-        let _ = self.rec_advice(2, q_fp, "mod_q");
-        let rc = self.rec_advice(3, r_fp, "mod_r");
-        self.offset += 1;
-        // Bind 0 <= r < |b| so (q, r) are uniquely determined.
-        self.constrain_div_mod_remainder(&rc, b, "mod")?;
-        Ok(rc)
+        Ok(self.floor_div_rem(a, b)?.1)
     }
     fn pow_i(
         &mut self,
@@ -2087,6 +2167,9 @@ impl Synthesizer for Halo2Synthesizer {
         // the soundness gap where any (result, rem) satisfying the div_mod
         // equation would otherwise be accepted.
         self.product_sum_f_range_check_chunks(&rem_cell, precision_bits, "mulf_rem_rc")?;
+        // Quotient window: without it every remainder in [0, scale) passes
+        // with its own (non-integer) quotient.
+        self.constrain_signed64(&result_cell);
         Ok(result_cell)
     }
     fn product_sum_f(
@@ -2113,6 +2196,7 @@ impl Synthesizer for Halo2Synthesizer {
         let rem_cell = self.rec_advice(3, rem_val, "product_sum_f_rem");
         self.offset += 1;
         self.product_sum_f_range_check_chunks(&rem_cell, precision_bits, "product_sum_f_rem_rc")?;
+        self.constrain_signed64(&result_cell);
         Ok(result_cell)
     }
     fn div_f(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
@@ -2146,43 +2230,23 @@ impl Synthesizer for Halo2Synthesizer {
         let rem_cell = self.rec_advice(3, rem_val, "divf_rem");
         self.offset += 1;
         self.constrain_div_mod_remainder(&rem_cell, b, "divf")?;
+        self.constrain_signed64(&result_cell);
         Ok(result_cell)
     }
+    /// Float `a // b`: the integer floor division of the raw Q values (the
+    /// scale cancels), re-encoded as a Q value.
     fn floor_div_f(
         &mut self,
         a: &Halo2CellRef,
         b: &Halo2CellRef,
     ) -> Result<Halo2CellRef, ProvingError> {
-        // Q scaling cancels in the integer quotient. Normalize the divisor
-        // sign because integer division uses a nonnegative remainder window.
-        let zero = self.constant_int(0)?;
-        let negative = self.lt_i(b, &zero)?;
-        let neg_a = self.sub_i(&zero, a)?;
-        let neg_b = self.sub_i(&zero, b)?;
-        let numerator = self.select(&negative, &neg_a, a)?;
-        let denominator = self.select(&negative, &neg_b, b)?;
-        let quotient = self.floor_div_i(&numerator, &denominator)?;
+        let quotient = self.floor_div_i(a, b)?;
         self.float_cast(&quotient)
     }
+    /// Float `a % b` (sign of the divisor): the integer remainder of the raw
+    /// Q values, already a Q value.
     fn mod_f(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        // Previous implementation composed `a - div_f(a, b) * b`. `div_f`
-        // returns the real (not floored) quotient, so this collapsed to
-        // `a - (a/b)*b ≈ 0` regardless of input — every mod_f call returned 0.
-        //
-        // Fix mirrors `sin_f`'s range-reduction: i64 floor division on the
-        // Q-encoded operands is exactly floor division on the underlying
-        // floats (the scale factor cancels in both the quotient's int-floor
-        // and the remainder), so `mod_i(a, b)` on Q-rep cells directly yields
-        // the Q-rep of `a mod b` with the same floor-mod semantics as numpy.
-        let zero = self.constant_int(0)?;
-        let negative = self.lt_i(b, &zero)?;
-        let neg_a = self.sub_i(&zero, a)?;
-        let neg_b = self.sub_i(&zero, b)?;
-        let numerator = self.select(&negative, &neg_a, a)?;
-        let denominator = self.select(&negative, &neg_b, b)?;
-        let remainder = self.mod_i(&numerator, &denominator)?;
-        let neg_remainder = self.sub_i(&zero, &remainder)?;
-        self.select(&negative, &neg_remainder, &remainder)
+        self.mod_i(a, b)
     }
     fn pow_f(&mut self, a: &Halo2CellRef, b: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
         let log_a = self.log_f(a)?;
@@ -2400,35 +2464,26 @@ impl Synthesizer for Halo2Synthesizer {
         self.mul_f(&log2_x, &ln2)
     }
 
+    /// `floor(sqrt(a * 2^P))`, as `kernel::fp_sqrt`. The root `y` is a
+    /// witness pinned exactly: with `X = a * 2^P` and `d = X - y^2`, the
+    /// magnitude-window checks on `y`, `d` and `2y - d` give
+    /// `y^2 <= X < (y + 1)^2` over the integers, which has one solution
+    /// `y >= 0`. (The earlier check `|y^2 - a| < 0.001` accepted the negative
+    /// root and about 2^22 values near `a = 1`.) A negative input has no
+    /// witness on this backend; the mock and halo2-base return 0.
     fn sqrt_f(&mut self, a: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
-        // Witness-and-verify: prover computes y = sqrt(x) in native f64
-        // and supplies it as a free advice cell; the circuit only checks
-        // the easy direction y² ≈ x within ±ε. ~5 rows total, vs the
-        // 70-row log_f → mul_f → exp_f composition we used previously.
-        // Matches halo2_builder's SqrtFIR lowering exactly.
         let precision_bits = self.params.precision_bits;
-        let a_f64 = kernel::dequantize_from_fp(a.value, precision_bits);
-        // For a ≤ 0 the polynomial path used to fall back silently; here
-        // we mirror that by witnessing 0 and letting the y² ≈ x check
-        // fail at proof time (so the prover can't pass off a bogus sqrt
-        // of a negative value).
-        let y_f64 = if a_f64.is_finite() && a_f64 >= 0.0 {
-            a_f64.sqrt()
-        } else {
-            0.0
-        };
-        let y_cell = self.witness_cell(kernel::quantize_to_fp(y_f64, precision_bits), "sqrt_y");
-
-        // y² ≈ x within ±0.001.
-        let y_sq = self.mul_f(&y_cell, &y_cell)?;
-        let diff = self.sub_f(&y_sq, a)?;
-        let eps_pos = self.constant_float(0.001)?;
-        let eps_neg = self.constant_float(-0.001)?;
-        let lt_pos = self.lt_f(&diff, &eps_pos)?;
-        let gt_neg = self.lt_f(&eps_neg, &diff)?;
-        self.assert_true(&lt_pos)?;
-        self.assert_true(&gt_neg)?;
-        Ok(y_cell)
+        let y = self.witness_cell(kernel::fp_sqrt(a.value, precision_bits), "sqrt_y");
+        let scale = self.constant_int(1i64 << precision_bits)?;
+        let big_x = self.mul_i(a, &scale)?;
+        let y_squared = self.mul_i(&y, &y)?;
+        let d = self.sub_i(&big_x, &y_squared)?;
+        let two_y = self.add_i(&y, &y)?;
+        let slack = self.sub_i(&two_y, &d)?;
+        self.range_check_signed_magnitude(&y, "sqrt_y_rc")?;
+        self.range_check_signed_magnitude(&d, "sqrt_d_rc")?;
+        self.range_check_signed_magnitude(&slack, "sqrt_slack_rc")?;
+        Ok(y)
     }
 
     fn sinh_f(&mut self, a: &Halo2CellRef) -> Result<Halo2CellRef, ProvingError> {
@@ -2869,14 +2924,19 @@ impl Synthesizer for Halo2Synthesizer {
         } else {
             -Fp::from((-r) as u64)
         };
+        // The divisor is the fixed constant `scale` (it used to be a free
+        // advice cell, so the prover chose the divisor).
+        let scale_cell = self.constant_cell(scale, "icast_scale_const");
         let row = self.offset;
         self.rec_sel("div_mod");
         let _ = self.rec_advice(0, a.value, "icast_a");
         self.rec_copy(a, 0, row);
         let _ = self.rec_advice(1, scale, "icast_scale");
+        self.rec_copy(&scale_cell, 1, row);
         let qc = self.rec_advice(2, q_fp, "icast_q");
         let r_cell = self.rec_advice(3, r_fp, "icast_r");
         self.offset += 1;
+        self.constrain_signed64(&qc);
 
         // |r| < scale: range-check the remainder magnitude to precision_bits.
         let r_mag_val = if r >= 0 {
@@ -3063,7 +3123,17 @@ impl Synthesizer for Halo2Synthesizer {
         Ok(out)
     }
 
-    // ── Memory (constrained via equality constraints on writes/reads) ──
+    // ── Memory ─────────────────────────────────────────────────────────
+    //
+    // Slots are cells. A constant address rebinds or returns one slot
+    // (copy constraints only). A runtime address goes through one-hot
+    // indicators over all slots (`address_indicators`): a write selects
+    // the new value into the hit slot, a read selects the hit slot's
+    // value. Writes update the slots in program order, so a read sees the
+    // latest write. This backend used to resolve runtime addresses from
+    // the witness value (witness-dependent wiring) and returned a free cell
+    // for an unwritten slot. The cost is linear in the segment length per
+    // runtime access; the halo2-base backend has the cheaper gathers.
 
     fn allocate_memory(
         &mut self,
@@ -3071,16 +3141,8 @@ impl Synthesizer for Halo2Synthesizer {
         size: u32,
         init: i64,
     ) -> Result<(), ProvingError> {
-        let init_fp = if init >= 0 {
-            Fp::from(init as u64)
-        } else {
-            -Fp::from((-init) as u64)
-        };
-        self.memories
-            .insert(segment_id, vec![init_fp; size as usize]);
-        self.memory_cells
-            .insert(segment_id, vec![None; size as usize]);
-        self.memory_init.insert(segment_id, init_fp);
+        self.segments
+            .insert(segment_id, (kernel::i64_to_fp(init), vec![None; size as usize]));
         Ok(())
     }
     fn write_memory(
@@ -3089,50 +3151,57 @@ impl Synthesizer for Halo2Synthesizer {
         addr: &Halo2CellRef,
         value: &Halo2CellRef,
     ) -> Result<(), ProvingError> {
-        let a = kernel::fp_to_i64(addr.value) as usize;
-        let mem = self
-            .memories
-            .get_mut(&segment_id)
-            .ok_or_else(|| ProvingError::synthesis("Segment not allocated"))?;
-        if a >= mem.len() {
-            return Err(ProvingError::synthesis(format!(
-                "Memory write out of bounds: segment {} addr {} len {}",
-                segment_id,
-                a,
-                mem.len()
-            )));
-        }
-        mem[a] = value.value;
-        if let Some(cells) = self.memory_cells.get_mut(&segment_id) {
-            cells[a] = Some(value.clone());
+        let len = self.segment_len(segment_id)?;
+        let updates: Vec<(usize, Halo2CellRef)> = match self.constant_value(addr) {
+            Some(a) => {
+                let a = usize::try_from(kernel::fp_to_i64(a))
+                    .ok()
+                    .filter(|a| *a < len)
+                    .ok_or_else(|| {
+                        ProvingError::synthesis(format!(
+                            "Memory write out of bounds: segment {} len {}",
+                            segment_id, len
+                        ))
+                    })?;
+                vec![(a, value.clone())]
+            }
+            None => {
+                let hits = self.address_indicators(addr, len)?;
+                let mut updates = Vec::with_capacity(len);
+                for (i, hit) in hits.iter().enumerate() {
+                    let old = self.slot_cell(segment_id, i)?;
+                    updates.push((i, self.select_bit(hit, value, &old)?));
+                }
+                updates
+            }
+        };
+        if let Some((_, slots)) = self.segments.get_mut(&segment_id) {
+            for (i, cell) in updates {
+                slots[i] = Some(cell);
+            }
         }
         Ok(())
     }
+    /// A constant address past the end reads the init value, as in the
+    /// mock backend; a runtime address must be in bounds.
     fn read_memory(
         &mut self,
         segment_id: u32,
         addr: &Halo2CellRef,
     ) -> Result<Halo2CellRef, ProvingError> {
-        let a = kernel::fp_to_i64(addr.value) as usize;
-        if let Some(Some(cell)) = self
-            .memory_cells
-            .get(&segment_id)
-            .and_then(|cells| cells.get(a))
-        {
-            return Ok(cell.clone());
+        let len = self.segment_len(segment_id)?;
+        if let Some(a) = self.constant_value(addr) {
+            let idx = usize::try_from(kernel::fp_to_i64(a)).unwrap_or(usize::MAX);
+            return self.slot_cell(segment_id, idx);
         }
-
-        let init = self
-            .memory_init
-            .get(&segment_id)
-            .copied()
-            .unwrap_or(Fp::zero());
-        let mem = self
-            .memories
-            .get(&segment_id)
-            .ok_or_else(|| ProvingError::synthesis("Segment not allocated"))?;
-        let val = if a < mem.len() { mem[a] } else { init };
-        Ok(self.alloc_free_advice(val, "mem_init"))
+        let hits = self.address_indicators(addr, len)?;
+        let init = self.segments[&segment_id].0;
+        let mut acc = self.constant_cell(init, "mem_init");
+        for (i, hit) in hits.iter().enumerate() {
+            let slot = self.slot_cell(segment_id, i)?;
+            acc = self.select_bit(hit, &slot, &acc)?;
+        }
+        Ok(acc)
     }
     fn memory_trace_emit(
         &mut self,
@@ -3254,5 +3323,34 @@ impl Synthesizer for Halo2Synthesizer {
         b: &Halo2CellRef,
     ) -> Result<Halo2CellRef, ProvingError> {
         self.eq_i(a, b)
+    }
+}
+
+/// Test-only advice perturbation for the legacy tamper tests: while a
+/// `with_tamper` scope is active on this thread, every advice cell recorded
+/// with a listed annotation gets the listed delta added to its value.
+#[cfg(test)]
+pub(crate) mod tamper {
+    use super::Fp;
+    use std::cell::RefCell;
+
+    thread_local! {
+        static TARGETS: RefCell<Vec<(String, Fp)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub(crate) fn apply(annotation: &str, value: Fp) -> Fp {
+        TARGETS.with(|t| {
+            t.borrow()
+                .iter()
+                .filter(|(a, _)| a == annotation)
+                .fold(value, |v, (_, delta)| v + delta)
+        })
+    }
+
+    pub(crate) fn with_tamper<R>(targets: &[(&str, Fp)], f: impl FnOnce() -> R) -> R {
+        TARGETS.with(|t| *t.borrow_mut() = targets.iter().map(|(a, d)| (a.to_string(), *d)).collect());
+        let out = f();
+        TARGETS.with(|t| t.borrow_mut().clear());
+        out
     }
 }

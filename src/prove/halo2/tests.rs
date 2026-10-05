@@ -2085,3 +2085,155 @@ fn hex_encode_for_test(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
+
+// ── Free constants, unwindowed quotients, witness-resolved memory (M8) ──
+
+fn int_inputs(names_values: &[(&str, i64)], params: &ProvingParams) -> ResolvedWitness {
+    let witness = CircuitInputs {
+        params: names_values
+            .iter()
+            .map(|(name, value)| InputParam {
+                name: name.to_string(),
+                is_public: false,
+                dtype: serde_json::json!("Integer"),
+                value: InputNode::Int(*value),
+            })
+            .collect(),
+    };
+    ResolvedWitness::new(witness, params.precision_bits)
+}
+
+fn read_int(name: &str) -> (IR, Vec<u32>) {
+    (IR::ReadInteger { path: InputPath::new(name, vec![]), is_public: false }, vec![])
+}
+
+/// `assert x == 5` with x = 6: the honest witness fails, and a prover that
+/// sets the literal's cell to 6 must fail too. Constants used to be free
+/// advice cells, so that forged witness verified.
+#[test]
+fn legacy_constants_are_bound_to_the_fixed_column() {
+    let ir = make_graph(vec![
+        read_int("x"),
+        (IR::ConstantInt { value: 5 }, vec![]),
+        (IR::EqI, vec![0, 1]),
+        (IR::Assert, vec![2]),
+    ]);
+    let params = ProvingParams { k: 8, ..Default::default() };
+    let honest = int_inputs(&[("x", 5)], &params);
+    mock_prove(&ir, &honest, &params, vec![]).unwrap();
+    let wrong = int_inputs(&[("x", 6)], &params);
+    assert!(mock_prove(&ir, &wrong, &params, vec![]).is_err());
+    let forged = crate::prove::halo2::synthesizer::tamper::with_tamper(&[("const_int", Fp::one())], || {
+        mock_prove(&ir, &wrong, &params, vec![])
+    });
+    assert!(forged.is_err(), "a literal set to another value was accepted");
+}
+
+/// `7 // 2` with the remainder moved down by one and the quotient set to
+/// the field element `(7 - 0) / 2`: the remainder bound alone accepted it.
+#[test]
+fn legacy_floor_division_pins_the_quotient() {
+    let ir = make_graph(vec![
+        read_int("a"),
+        read_int("b"),
+        (IR::FloorDivI, vec![0, 1]),
+        (IR::ExposePublicI, vec![2]),
+    ]);
+    let params = ProvingParams { k: 10, ..Default::default() };
+    let inputs = int_inputs(&[("a", 7), ("b", 2)], &params);
+    mock_prove(&ir, &inputs, &params, vec![Fp::from(3u64)]).unwrap();
+    let half = Fp::from(2u64).invert().unwrap();
+    let forged_q = Fp::from(3u64) + half;
+    let forged = crate::prove::halo2::synthesizer::tamper::with_tamper(
+        &[("fdiv_q", half), ("fdiv_r", -Fp::one())],
+        || mock_prove(&ir, &inputs, &params, vec![forged_q]),
+    );
+    assert!(forged.is_err(), "a non-integer quotient was accepted");
+}
+
+/// Python semantics: `7 // -2 == -4`, `7 % -2 == -1`, as `kernel::fp_floor_div`.
+#[test]
+fn legacy_floor_division_follows_python() {
+    for (ir_op, expected) in [(IR::FloorDivI, -4i64), (IR::ModI, -1)] {
+        let ir = make_graph(vec![
+            read_int("a"),
+            read_int("b"),
+            (ir_op, vec![0, 1]),
+            (IR::ExposePublicI, vec![2]),
+        ]);
+        let params = ProvingParams { k: 10, ..Default::default() };
+        let inputs = int_inputs(&[("a", 7), ("b", -2)], &params);
+        mock_prove(&ir, &inputs, &params, vec![kernel::i64_to_fp(expected)]).unwrap();
+    }
+}
+
+/// `x[i] = 7; x[0] = 9; return (x[0], x[i])` with i = 0 and i = 2: reads
+/// see the latest write in program order, through constrained one-hot
+/// selects (the backend used to wire the witness-chosen slot directly).
+#[test]
+fn legacy_runtime_memory_addresses_follow_program_order() {
+    let ir = make_graph(vec![
+        (IR::AllocateMemory { segment_id: 1, size: 4, init_value: 0 }, vec![]),
+        read_int("i"),
+        (IR::ConstantInt { value: 7 }, vec![]),
+        (IR::WriteMemory { segment_id: 1 }, vec![1, 2]),
+        (IR::ConstantInt { value: 0 }, vec![]),
+        (IR::ConstantInt { value: 9 }, vec![]),
+        (IR::WriteMemory { segment_id: 1 }, vec![4, 5]),
+        (IR::ReadMemory { segment_id: 1 }, vec![4]),
+        (IR::ExposePublicI, vec![7]),
+        (IR::ReadMemory { segment_id: 1 }, vec![1]),
+        (IR::ExposePublicI, vec![9]),
+    ]);
+    let params = ProvingParams { k: 9, ..Default::default() };
+    for (i, expected) in [(0i64, [9u64, 9]), (2, [9, 7])] {
+        let inputs = int_inputs(&[("i", i)], &params);
+        let publics = expected.iter().map(|v| Fp::from(*v)).collect();
+        mock_prove(&ir, &inputs, &params, publics).unwrap();
+    }
+    // A runtime address outside the segment has no witness.
+    let inputs = int_inputs(&[("i", 4)], &params);
+    assert!(mock_prove(&ir, &inputs, &params, vec![Fp::from(9u64), Fp::zero()]).is_err());
+}
+
+/// Constant-address memory still works, and an unwritten slot reads the
+/// init value as a constant rather than a free cell.
+#[test]
+fn legacy_constant_address_memory_reads_written_and_init_values() {
+    let ir = make_graph(vec![
+        (IR::AllocateMemory { segment_id: 1, size: 4, init_value: 3 }, vec![]),
+        (IR::ConstantInt { value: 1 }, vec![]),
+        (IR::ConstantInt { value: 9 }, vec![]),
+        (IR::WriteMemory { segment_id: 1 }, vec![1, 2]),
+        (IR::ReadMemory { segment_id: 1 }, vec![1]),
+        (IR::ExposePublicI, vec![4]),
+        (IR::ConstantInt { value: 2 }, vec![]),
+        (IR::ReadMemory { segment_id: 1 }, vec![6]),
+        (IR::ExposePublicI, vec![7]),
+    ]);
+    let params = ProvingParams { k: 8, ..Default::default() };
+    let expected = vec![Fp::from(9u64), Fp::from(3u64)];
+    mock_prove(&ir, &empty_resolved(&params), &params, expected).unwrap();
+    let forged = crate::prove::halo2::synthesizer::tamper::with_tamper(&[("mem_init", Fp::one())], || {
+        mock_prove(&ir, &empty_resolved(&params), &params, vec![Fp::from(9u64), Fp::from(4u64)])
+    });
+    assert!(forged.is_err(), "an unwritten slot read a prover-chosen value");
+}
+
+/// `sqrt(4.0)` is 2.0; the negative root, which `|y^2 - a| < 0.001`
+/// accepted, is rejected.
+#[test]
+fn legacy_sqrt_is_exact() {
+    let ir = make_graph(vec![
+        (IR::ConstantFloat { value: 4.0 }, vec![]),
+        (IR::SqrtF, vec![0]),
+        (IR::ExposePublicF, vec![1]),
+    ]);
+    let params = ProvingParams { k: 10, ..Default::default() };
+    let two = kernel::quantize_to_fp(2.0, params.precision_bits);
+    mock_prove(&ir, &empty_resolved(&params), &params, vec![two]).unwrap();
+    let forged = crate::prove::halo2::synthesizer::tamper::with_tamper(&[("sqrt_y", -two - two)], || {
+        mock_prove(&ir, &empty_resolved(&params), &params, vec![-two])
+    });
+    assert!(forged.is_err(), "the negative root was accepted");
+}
