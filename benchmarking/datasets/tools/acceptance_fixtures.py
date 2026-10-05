@@ -9,6 +9,11 @@ element) and their value is the list of element values; complex values are
   perturbation of A.
 * Pythran: A is the (scaled) example call's arguments; B is a seeded
   perturbation of A.
+* Inputs changed for Q32 (PYTHRAN_Q32_INPUTS, NPBENCH_Q32_INPUTS): where the
+  example input puts a program where no Q32 implementation can follow NumPy
+  (an exact zero pivot, exp underflowing to 0 before a log, acos at exactly 1,
+  a near-zero divisor, outputs beyond 2^31), A (and for lu also B) is changed
+  and the reason goes into the fixture notes and the entry's `sizing`.
 * DS-1000: A and B come from the performance set's draw for the problem when
   there is one (the shape parameters the performance kernel binds as constants
   take their DS-1000 value); otherwise A is DS-1000's own last test input and B
@@ -32,6 +37,13 @@ place and return None), is finite. Whether Zinnia compiles the entry is the
 acceptance measurement itself and is not checked here. The notes flag values
 Q32 cannot hold: inputs or outputs of magnitude 2^31 or more, and nonzero
 inputs below the Q32 resolution 2^-32 (they become 0).
+
+Output tolerance: every acceptance entry has `float_tolerance`; a float output
+passes when |actual - expected| <= atol + rtol * |expected| against NumPy on the
+same input. The default is atol = rtol = 1e-6 (as for the performance set's
+computed outputs). FLOAT_TOLERANCE_OVERRIDES raises atol where the NumPy
+program itself is not reproducible in Q32, with the measurement that justifies
+it (recomputed when the fixtures are written; the tool stops if it exceeds atol).
 """
 
 from __future__ import annotations
@@ -62,6 +74,114 @@ class FixtureError(Exception):
 # ---------------------------------------------------------------------------
 # Parameter descriptions from annotations
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Inputs changed for Q32, and output tolerances
+# ---------------------------------------------------------------------------
+
+# (program, function) -> (example line for A, example line for B or None (B is
+# then the seeded perturbation of A), why).
+PYTHRAN_Q32_INPUTS: dict[tuple[str, str], tuple[str, str | None, str]] = {
+    ("pythran_log_likelihood", "log_likelihood"): (
+        "import numpy as np ; N = 16 ; rs = np.random.RandomState(16) ; b = 0.1 ; c = 1.1 ; "
+        "a = b + c * rs.uniform(-2., 2., N) ; log_likelihood(a, b, c)",
+        None,
+        "the data are drawn (seeded) within 2 sigma of the mean instead of np.arange(16.), which reaches about "
+        "13.5 sigma, where exp(-(x-mean)^2 / 2 sigma^2) is about 1e-40, 0 in Q32, and log(0) is undefined"),
+    ("pythran_lu", "factorMatrix0"): (
+        "import numpy as np ; rs = np.random.RandomState(50) ; x = rs.uniform(-1., 1., (5, 5)) ; "
+        "x += np.diag(np.abs(x).sum(axis=1) + 1.) ; factorMatrix0(x)",
+        "import numpy as np ; rs = np.random.RandomState(51) ; x = rs.uniform(-1., 1., (5, 5)) ; "
+        "x += np.diag(np.abs(x).sum(axis=1) + 1.) ; factorMatrix0(x)",
+        "A and B are seeded strictly diagonally dominant 5x5 matrices (each diagonal entry exceeds the rest of "
+        "its row by at least 1, so every pivot stays away from 0) instead of upstream's np.arange(1., 26.)"
+        ".reshape(5, 5), which is singular (rank 2) and gives an exact zero pivot in Q32"),
+    ("pythran_lu", "factorMatrix1"): (
+        "import numpy as np ; rs = np.random.RandomState(52) ; x = rs.uniform(-1., 1., (5, 5)) ; "
+        "x += np.diag(np.abs(x).sum(axis=1) + 1.) ; factorMatrix1(x)",
+        "import numpy as np ; rs = np.random.RandomState(53) ; x = rs.uniform(-1., 1., (5, 5)) ; "
+        "x += np.diag(np.abs(x).sum(axis=1) + 1.) ; factorMatrix1(x)",
+        "A and B are seeded strictly diagonally dominant 5x5 matrices of their own (each diagonal entry exceeds "
+        "the rest of its row by at least 1) instead of upstream's input, which is factorMatrix0's in-place "
+        "output on the singular np.arange(1., 26.).reshape(5, 5): pivots of rounding residue (1e-15), 0 in Q32"),
+    ("pythran_hyantes_core", "run"): (
+        "run(0.,0.,90.,90., 1., 100., 16, 16, [ [i/10. + 0.007, i/10. + 0.007, i/20.] for i in range(16) ])",
+        None,
+        "every town is moved by 0.007 rad in both coordinates. In the scaled upstream line the towns at (0, 0) "
+        "and (1, 1) sit exactly on grid points, where acos(1 - eps) turns the ~1e-9 error of Q32 trigonometry "
+        "into 0.28 km; now they are 51 and 63 km from the nearest grid point (still within range_ = 100 km), "
+        "where acos amplifies that error by at most about 1 / sin(0.008) = 125"),
+    ("pythran_calculate_u", "timeloop"): (
+        "A=[list(range(10)) for i in range(5)] ; B=[list(range(10)) for i in range(5)] ; "
+        "C=[list(range(10)) for i in range(5)] ; timeloop(1.,1.45,.1,.1,.2, A,B,C )",
+        None,
+        "t_stop 2.0 -> 1.45: the trip count 10 -> 5 (the sizing rule allows any trip count up to 16). The "
+        "explicit scheme is unstable for these coefficients and grows about 30x per step: 10 steps reach "
+        "2.3e13, beyond Q32's 2^31, 5 steps reach 1.1e6. 1.45 rather than 1.5 because the loop runs while "
+        "t <= t_stop with t accumulating 0.1: at 1.5 the last comparison is 1.5000000000000004 <= 1.5 in "
+        "float64 and depends on whether Q32 rounds or truncates 0.1; at 1.45 the margin is 0.05"),
+}
+
+# NPBench short_name -> ({initialize() output: factor applied at preset T}, why).
+NPBENCH_Q32_INPUTS: dict[str, tuple[dict[str, float], str]] = {
+    "vadv": ({"wcon": 0.1},
+             "wcon is NPBench's draw times 0.1. With wcon uniform in [0, 1) and dtr_stage = 0.15, the Thomas "
+             "sweep divides by bcol - ccol[k-1] * acol, which reaches 3.7e-5 on A (1.1e-4 on B) and amplifies "
+             "Q32 rounding to 1.1e-3. With |wcon| < 0.15 the tridiagonal system is strictly diagonally dominant "
+             "(|bcol| > |acol| + |ccol|) whatever the signs, and every divisor stays above 0.1; the "
+             "computation is unchanged"),
+}
+
+FLOAT_TOLERANCE_DEFAULT = {"atol": 1e-6, "rtol": 1e-6}
+
+# (program, function) -> tolerance, why, and how to measure the effect it covers:
+# "q32_inputs": NumPy on the inputs rounded to Q32 against NumPy on the inputs;
+# "float64_buffers": NumPy with `dtype=np.float32` buffers made float64 against as written.
+FLOAT_TOLERANCE_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
+    ("npbench_nbody_nbody", "nbody"): {
+        "atol": 2e-3, "rtol": 1e-6, "measure": "q32_inputs",
+        "reason": "the 16-step n-body integration is chaotic: rounding only the inputs to Q32 moves NumPy's own "
+                  "float64 output by up to 1e-3, so no Q32 implementation can be closer; atol is twice that"},
+    ("npbench_deep_learning_resnet_resnet", "resnet_basicblock"): {
+        "atol": 2e-6, "rtol": 1e-6, "measure": "float64_buffers",
+        "reason": "conv2d writes its result into a float32 buffer (np.empty(..., dtype=np.float32)), which Q32 "
+                  "cannot imitate: the float32 rounding alone moves the output by up to 1.7e-6"},
+}
+
+
+def q32_round(value: Any) -> Any:
+    """The nearest Q32 value of every float (Zinnia rounds v * 2^32 to the nearest integer)."""
+    if isinstance(value, tuple):
+        return tuple(q32_round(v) for v in value)
+    array = np.asarray(value)
+    if array.dtype.kind == "c":
+        return q32_round(array.real) + 1j * q32_round(array.imag)
+    if array.dtype.kind != "f":
+        return value
+    rounded = np.round(array * 2.0 ** 32) / 2.0 ** 32
+    return rounded if array.ndim else float(rounded)
+
+
+def _produced(function: Any, args: list[Any]) -> np.ndarray:
+    copies = [copy.deepcopy(arg) for arg in args]
+    with np.errstate(divide="raise", over="raise", invalid="raise", under="ignore"):
+        output = function(*copies)
+    return np.asarray(numbers(output) + numbers(copies))
+
+
+def measured_difference(kernel: Path, function: str, how: str, inputs: list[list[Any]]) -> float:
+    """The largest output difference the effect `how` causes, over the given inputs."""
+    as_written = numpy_reference.load_kernel(kernel, function)
+    if how == "q32_inputs":
+        pairs = [(as_written, args, as_written, [q32_round(a) for a in args]) for args in inputs]
+    elif how == "float64_buffers":
+        widened = numpy_reference.load_kernel(
+            kernel, function, lambda source: source.replace("dtype=np.float32", "dtype=np.float64"))
+        pairs = [(as_written, args, widened, args) for args in inputs]
+    else:
+        raise ValueError(how)
+    return max(float(np.max(np.abs(_produced(f, x) - _produced(g, y)))) for f, x, g, y in pairs)
 
 
 def describe(annotation: str) -> dict[str, Any]:
