@@ -14,6 +14,7 @@ const WEIGHT: Q32 = Q32::from_bits(1_431_641_449);
 
 /// `dst[1:-1] = 0.33333 * (src[:-2] + src[1:-1] + src[2:])`.
 fn smooth(dst: &mut Array1<Q32>, src: &Array1<Q32>) {
+    assert_eq!(dst.len(), src.len(), "operands could not be broadcast together");
     for i in 1..src.len().saturating_sub(1) {
         dst[i] = WEIGHT * (src[i - 1] + src[i] + src[i + 1]);
     }
@@ -29,7 +30,6 @@ pub mod kernel {
         let tsteps: i64 = args.scalar();
         let mut a: Array1<Q32> = args.array1();
         let mut b: Array1<Q32> = args.array1();
-        assert_eq!(a.len(), b.len(), "operands could not be broadcast together");
         for _ in 1..tsteps {
             smooth(&mut b, &a);
             smooth(&mut a, &b);
