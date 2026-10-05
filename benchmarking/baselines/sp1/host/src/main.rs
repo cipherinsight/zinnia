@@ -141,12 +141,19 @@ fn stdin(args: &CommonArgs) -> Result<SP1Stdin> {
 
 fn setup(report: &mut Report, elf: Elf, work: &WorkFiles) -> Result<()> {
     let client = report.time("client_init", CpuProver::new);
+    make_keys(report, &client, elf, work)?;
+    Ok(())
+}
+
+/// Computes the proving and verifying keys and stores them in the work
+/// directory (timed as `setup`).
+fn make_keys(report: &mut Report, client: &CpuProver, elf: Elf, work: &WorkFiles) -> Result<SP1ProvingKey> {
     let pk = report.time("setup", || client.setup(elf)).context("setup")?;
     save(&work.proving_key, &pk)?;
     save(&work.verifying_key, pk.verifying_key())?;
     report.set("vk_hash", pk.verifying_key().bytes32());
     report.set("vk_path", &work.verifying_key);
-    Ok(())
+    Ok(pk)
 }
 
 fn execute(report: &mut Report, elf: Elf, args: &CommonArgs) -> Result<()> {
@@ -154,7 +161,7 @@ fn execute(report: &mut Report, elf: Elf, args: &CommonArgs) -> Result<()> {
     let client = report.time("client_init", LightProver::new);
     let (public_values, execution) =
         report.time("execute", || client.execute(elf, stdin).run()).context("execution")?;
-    record_cycles(report, &execution);
+    record_execution(report, &execution)?;
     args.report_committed(report, &committed_words(&public_values)?)?;
     Ok(())
 }
@@ -163,14 +170,16 @@ fn prove(report: &mut Report, elf: Elf, cli: &Cli, work: &WorkFiles) -> Result<(
     let args = &cli.common;
     report.set("proof_mode", cli.proof_mode.name());
     let client = report.time("client_init", CpuProver::new);
+    // Without a stored key (no `setup` run yet) the keys are made here and
+    // stored, so `verify` works after `prove` alone.
     let pk: SP1ProvingKey = match load(&work.proving_key) {
         Ok(pk) => pk,
-        Err(_) => report.time("setup", || client.setup(elf.clone())).context("setup")?,
+        Err(_) => make_keys(report, &client, elf.clone(), work)?,
     };
 
     let (_, execution) =
         report.time("execute", || client.execute(elf, stdin(args)?).run().map_err(anyhow::Error::from))?;
-    record_cycles(report, &execution);
+    record_execution(report, &execution)?;
 
     let stdin = stdin(args)?;
     let proof = report
@@ -211,16 +220,22 @@ fn verify(report: &mut Report, cli: &Cli, work: &WorkFiles) -> Result<()> {
     }
 }
 
-fn record_cycles(report: &mut Report, execution: &sp1_sdk::ExecutionReport) {
+/// Records the execution's size, and fails if the guest did not exit
+/// normally: SP1's executor returns a guest panic as an execution with a
+/// nonzero exit code (and whatever was committed before it), not as an
+/// error.
+fn record_execution(report: &mut Report, execution: &sp1_sdk::ExecutionReport) -> Result<()> {
+    if execution.exit_code != 0 {
+        bail!("guest panicked (exit code {})", execution.exit_code);
+    }
     report.set("cycles", execution.total_instruction_count());
     report.set("syscalls", execution.total_syscall_count());
     if let Some(gas) = execution.gas() {
         report.set("gas", gas);
     }
+    Ok(())
 }
 
-/// Decodes the committed output: the bincode encoding `sp1_zkvm::io::commit`
-/// writes, with no bytes left over.
 /// The words the guest committed as its public values.
 fn committed_words(public_values: &SP1PublicValues) -> Result<Vec<i64>> {
     words_from_le_bytes(public_values.as_slice()).context("the public values are not a whole number of words")

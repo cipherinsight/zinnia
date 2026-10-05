@@ -167,6 +167,16 @@ impl<T: Publics + Clone, D: Dimension> Publics for Array<T, D> {
     }
 }
 
+/// No outputs: an entry function that returns `None` and writes none of its
+/// arguments.
+impl Publics for () {
+    fn encode(&self, _out: &mut Vec<i64>) {}
+    fn decode(_words: &mut Iter<'_, i64>) -> Result<Self, DecodeError> {
+        Ok(())
+    }
+    fn flatten_into(&self, _out: &mut Vec<Public>) {}
+}
+
 /// A value the kernel may not return (Python `None`): a 0 word, or a 1 word
 /// and the value. `None` contributes no public values.
 impl<T: Publics> Publics for Option<T> {

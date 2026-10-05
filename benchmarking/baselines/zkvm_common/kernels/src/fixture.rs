@@ -6,7 +6,7 @@
 //! numbers as their Q32 real and imaginary parts (the fixture writes them as
 //! `[re, im]` pairs); arrays in row-major order. A tuple parameter
 //! (`"kind": "tuple"` with `"items"`) travels as its items, one buffer each.
-//! For a shape-generic program an array's buffer starts with its dimensions
+//! For a shape-generic program an array's buffer ends with its dimensions
 //! (see [`crate::Args`]).
 
 use std::{collections::BTreeMap, path::Path};
@@ -79,13 +79,17 @@ impl Fixture {
     /// The buffer of each argument of input `name` (`A` or `B`), in
     /// signature order, leaving out the parameters in `unused` (see
     /// [`crate::unused_params`]). With `with_shapes`, an array's buffer
-    /// starts with its dimensions.
+    /// ends with its dimensions.
     pub fn args(&self, name: &str, unused: &[&str], with_shapes: bool) -> Result<Vec<Vec<i64>>> {
         Ok(self
             .encode(name, unused)?
             .into_iter()
             .map(|arg| match (with_shapes, arg.shape.is_empty()) {
-                (true, false) => arg.shape.iter().map(|&d| d as i64).chain(arg.words).collect(),
+                (true, false) => {
+                    let mut words = arg.words;
+                    words.extend(arg.shape.iter().map(|&d| d as i64));
+                    words
+                }
                 _ => arg.words,
             })
             .collect())
