@@ -20,6 +20,16 @@ Usage:
         [--halo2-bin PATH] [--baseline-from costs.json] [--compare before.json]
         [--memory-max 8G] [--timeout 900]
 
+`--profile 0450` prints, for one case, the advice and lookup cells per IR operation
+type (at lookup width 8), which shows where a circuit's cells come from.
+
+`--check` proves every selected case instead of measuring it: key generation on
+input A with `estimate_params` (retried at the next `k` if halo2-base cannot lay
+the circuit out), a proof on input B, verification, rejection of a proof whose
+first public value is changed, and the outputs compared with the NumPy reference
+position by position (the harness's decoder and tolerance) and with the mock
+backend's public values.
+
 `--baseline-from` reuses the halo2_hw numbers of an earlier run (they only change
 when the baselines change). `--compare` prints a before/after table against an
 earlier output of this script. Every Zinnia compile runs in its own child process
@@ -106,8 +116,90 @@ def zinnia_one(case: str) -> dict:
     return stats
 
 
-def zinnia_child(case: str, memory_max: str | None, timeout: float) -> dict:
-    cmd = [sys.executable, "-m", "benchmarking.harness.costs_halo2", "--zinnia-one", case]
+def zinnia_profile(case: str, lookup_bits: int = 8) -> list[tuple[str, int, int, int]]:
+    """`(IR operation, statements, advice cells, lookup cells)`, most advice first."""
+    from benchmarking.harness.kernels import compile_kernel
+    from zinnia._zinnia_core import halo2_base_cell_profile
+
+    compiled = compile_kernel(paths.DS1000_PERF / case / "kernel.py", "kernel")
+    op_of = {stmt["stmt_id"]: str(stmt["ir_instance"]["__class__"]).removesuffix("IR")
+             for stmt in compiled.get_ir_stmts()}
+    totals: dict[str, list[int]] = collections.defaultdict(lambda: [0, 0, 0])
+    for stmt_id, advice, lookup in json.loads(halo2_base_cell_profile(compiled._compiled_ir, lookup_bits)):
+        entry = totals[op_of.get(stmt_id, "?")]
+        entry[0] += 1
+        entry[1] += advice
+        entry[2] += lookup
+    return sorted(((op, *v) for op, v in totals.items()), key=lambda row: -row[2])
+
+
+def mock_publics_in_order(labelled: list[str]) -> list[int]:
+    """The mock's raw public values (`public_<kind>_<statement id>=<raw>`, listed
+    in hash order) in statement order, which is the order halo2-base exposes."""
+    def key(entry: str) -> int:
+        return int(entry.split("=", 1)[0].rsplit("_", 1)[1])
+    return [int(entry.rsplit("=", 1)[1]) for entry in sorted(labelled, key=key)]
+
+
+def zinnia_check(case: str) -> dict:
+    """Prove input B with keys from input A, verify, tamper, compare (child process)."""
+    from benchmarking.harness.adapters.zinnia_common import describe_compiled, zinnia_publics
+    from benchmarking.harness.case_sets import parse_tolerance
+    from benchmarking.harness.fixtures import PROVE_INPUT, load_fixture
+    from benchmarking.harness.kernels import compile_kernel
+    from benchmarking.harness.outputs import (check_outputs, field_from_le_hex, field_to_le_hex,
+                                              field_to_signed, reference_leaves)
+    from benchmarking.harness.reference import run_kernel_as_numpy
+
+    entries = case_entries()
+    kernel = paths.DS1000_PERF / case / "kernel.py"
+    fixture = load_fixture(fixture_path(case, entries))
+    compiled = compile_kernel(kernel, "kernel")
+    args = fixture.arguments(PROVE_INPUT)
+    started = time.perf_counter()
+    keys = compiled.setup()
+    setup_s = time.perf_counter() - started
+    proof = compiled.prove_with_keys(keys, *args)
+    verified = compiled.verify_with_keys(keys, proof)
+    tampered = dict(proof)
+    if proof["public_values"]:
+        first = field_from_le_hex(proof["public_values"][0])
+        tampered["public_values"] = [field_to_le_hex(first + 1), *proof["public_values"][1:]]
+        tamper_rejected = not compiled.verify_with_keys(keys, tampered)
+    else:
+        tamper_rejected = None
+    fields = [field_from_le_hex(v) for v in proof["public_values"]]
+    mock = compiled.prove(*args, backend="mock")
+    mock_raw = mock_publics_in_order(mock.public_values)
+    halo2_raw = [field_to_signed(v) for v in fields]
+    reference = run_kernel_as_numpy(kernel, "kernel", fixture.arguments(PROVE_INPUT))
+    leaves, _ = reference_leaves(reference)
+    tolerance = parse_tolerance(entries[case].get("float_tolerance"), "case set")
+    numpy = check_outputs(leaves, zinnia_publics(fields, describe_compiled(compiled)), tolerance)
+    return {
+        "k": keys.k, "lookup_bits": keys.lookup_bits, "setup_s": round(setup_s, 3),
+        "prove_s": round(proof["prove_seconds"], 3), "verified": verified,
+        "tamper_rejected": tamper_rejected, "publics": len(fields),
+        "mock_equal": halo2_raw == mock_raw,
+        "numpy": numpy.status, "numpy_detail": numpy.detail,
+    }
+
+
+def known_mismatches() -> set[str]:
+    """Perf cases where the case set records that Zinnia computes another function."""
+    raw = json.loads(paths.PERF_CASE_SET.read_text())
+    return set(raw.get("zinnia_output_mismatches", {}).get("cases", []))
+
+
+def check_passed(case: str, record: dict, known: set[str]) -> bool:
+    numpy_ok = record.get("numpy") in ("match", "unchecked") or (
+        record.get("numpy") == "mismatch" and case in known)
+    return (record.get("verified") is True and record.get("tamper_rejected") is not False
+            and record.get("mock_equal") is True and numpy_ok)
+
+
+def zinnia_child(case: str, memory_max: str | None, timeout: float, mode: str = "--zinnia-one") -> dict:
+    cmd = [sys.executable, "-m", "benchmarking.harness.costs_halo2", mode, case]
     env = dict(os.environ)
     if memory_max and MEMRUN.exists():
         cmd = [str(MEMRUN), *cmd]
@@ -225,6 +317,27 @@ def comparison(before: dict[str, dict], after: dict[str, dict]) -> str:
     return "\n".join(lines)
 
 
+def run_checks(cases: list[str], entries: dict[str, dict], args: argparse.Namespace,
+               memory_max: str | None) -> int:
+    results = {}
+    known = known_mismatches()
+    for case in cases:
+        record = zinnia_child(case, memory_max, args.timeout, mode="--zinnia-check")
+        record["status"] = entries.get(case, {}).get("status", "unknown")
+        results[case] = record
+        verdict = "ok" if check_passed(case, record, known) else "FAIL"
+        print(f"{case}  {verdict}  " + json.dumps({k: v for k, v in record.items() if k != "status"}),
+              flush=True)
+        if args.out:
+            args.out.write_text(json.dumps(results, indent=1))
+    failed = sorted(c for c, r in results.items() if not check_passed(c, r, known))
+    numpy_checked = sum(r.get("numpy") == "match" for r in results.values())
+    print(f"\n{len(results) - len(failed)} of {len(results)} pass; {numpy_checked} compared with NumPy "
+          f"position by position; known compiler mismatches (case set): "
+          f"{sorted(c for c in results if c in known)}; failed: {failed}")
+    return 1 if failed else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--cases", help="comma-separated case numbers (default: every case with a target.rs)")
@@ -234,8 +347,24 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--compare", type=Path, help="earlier output to print a before/after table against")
     ap.add_argument("--memory-max", default="8G", help="per-case memory cap ('none' to disable)")
     ap.add_argument("--timeout", type=float, default=900.0)
+    ap.add_argument("--profile", help="print the cells per IR operation type of one case")
+    ap.add_argument("--check", action="store_true", help="prove, verify and output-check instead")
     ap.add_argument("--zinnia-one", help=argparse.SUPPRESS)
+    ap.add_argument("--zinnia-check", help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
+
+    if args.zinnia_check:
+        print(json.dumps(zinnia_check(args.zinnia_check)), flush=True)
+        return 0
+
+    if args.profile:
+        rows = zinnia_profile(case_id(args.profile))
+        print(f"{'operation':24} {'stmts':>6} {'advice':>9} {'lookup':>8}")
+        for op, count, advice, lookup in rows:
+            print(f"{op:24} {count:6d} {advice:9d} {lookup:8d}")
+        print(f"{'total':24} {sum(r[1] for r in rows):6d} {sum(r[2] for r in rows):9d} "
+              f"{sum(r[3] for r in rows):8d}")
+        return 0
 
     if args.zinnia_one:
         print(json.dumps(zinnia_one(args.zinnia_one)), flush=True)
@@ -243,6 +372,9 @@ def main(argv: list[str] | None = None) -> int:
 
     entries = case_entries()
     cases = [case_id(c) for c in args.cases.split(",")] if args.cases else baseline_cases(entries)
+    if args.check:
+        return run_checks(cases, entries, args, memory_max=None if args.memory_max.lower() == "none"
+                          else args.memory_max)
     reused = json.loads(args.baseline_from.read_text())["cases"] if args.baseline_from else {}
     memory_max = None if args.memory_max.lower() == "none" else args.memory_max
 

@@ -298,16 +298,63 @@ fn field_division_is_total_and_pinned() {
     assert_sound("1/0", &*inverse, &[int(0)], &[int(0)], &[]);
 }
 
+/// Advice and lookup cells of `op` synthesized on free inputs.
+fn cells_of(op: &Op, inputs: &[Fp]) -> (usize, usize) {
+    let mut builder = BaseCircuitBuilder::<Fp>::from_stage(CircuitBuilderStage::Keygen);
+    builder.set_k(K as usize);
+    builder.set_lookup_bits(LOOKUP_BITS as usize);
+    builder.set_instance_columns(1);
+    let provenance = ProvenanceTable::new();
+    let params = ProvingParams { k: K, precision_bits: PRECISION_BITS, lookup_bits: LOOKUP_BITS };
+    {
+        let mut synth = Halo2BaseSynthesizer::new(&mut builder, None, params, &provenance);
+        let cells: Vec<Halo2BaseCell> = inputs.iter().map(|v| synth.cell(*v)).collect();
+        op(&mut synth, &cells).expect("synthesis failed");
+    }
+    let stats = builder.statistics();
+    (stats.gate.total_advice_per_phase[0], stats.total_lookup_advice_per_phase[0])
+}
+
+fn bit(b: bool) -> Fp {
+    if b { Fp::one() } else { Fp::zero() }
+}
+
+type Relation = fn(i64, i64) -> bool;
+
+/// Each comparison's result bit is a hint pinned by one range check of
+/// `(a - b) + s·2^n`; flipping it (or making it a non-bit) is rejected.
 #[test]
-fn comparisons_and_casts_have_no_free_hints() {
+fn comparisons_are_pinned() {
+    let signed: Vec<(&str, Box<Op>, Relation)> = vec![
+        ("lt", binary(|s, a, b| s.lt_i(a, b)), |a, b| a < b),
+        ("lte", binary(|s, a, b| s.lte_i(a, b)), |a, b| a <= b),
+        ("gt", binary(|s, a, b| s.gt_i(a, b)), |a, b| a > b),
+        ("gte", binary(|s, a, b| s.gte_i(a, b)), |a, b| a >= b),
+    ];
+    let pairs = [(3i64, 5i64), (5, 3), (4, 4), (0, 7), (-3, 2), (2, -3), (-1, -1), (i64::MIN, i64::MAX), (i64::MAX, i64::MIN)];
+    for (name, op, relation) in &signed {
+        for (a, b) in pairs {
+            assert_sound(&format!("{name}({a}, {b})"), &**op, &[int(a), int(b)], &[bit(relation(a, b))], &[]);
+        }
+    }
+    let unsigned = binary(|s, a, b| s.lt_i_bounded(a, b));
+    for (a, b) in [(3i64, 5i64), (5, 3), (4, 4), (0, i64::MAX), (i64::MAX, 0)] {
+        assert_sound(&format!("lt_bounded({a}, {b})"), &*unsigned, &[int(a), int(b)], &[bit(a < b)], &[]);
+    }
+    // An unsigned comparison has no witness for a negative operand.
+    assert!(!synthesize(&*unsigned, &[int(-1), int(3)], &[]).accepted);
+    // A constant operand is folded into the checked difference.
+    let below_seven = with_constant_rhs(|s, a, b| s.lt_i(a, b), int(7));
+    for x in [6i64, 7, -100, i64::MAX] {
+        assert_sound(&format!("{x} < 7"), &*below_seven, &[int(x)], &[bit(x < 7)], &[]);
+    }
+}
+
+#[test]
+fn equality_and_logic_have_no_free_hints() {
     let ops: Vec<(&str, Box<Op>)> = vec![
-        ("lt", binary(|s, a, b| s.lt_i(a, b))),
-        ("lte", binary(|s, a, b| s.lte_i(a, b))),
-        ("gt", binary(|s, a, b| s.gt_i(a, b))),
-        ("gte", binary(|s, a, b| s.gte_i(a, b))),
         ("eq", binary(|s, a, b| s.eq_i(a, b))),
         ("ne", binary(|s, a, b| s.ne_i(a, b))),
-        ("lt_bounded", binary(|s, a, b| s.lt_i_bounded(a, b))),
         ("and", binary(|s, a, b| s.logical_and(a, b))),
         ("or", binary(|s, a, b| s.logical_or(a, b))),
     ];
@@ -327,6 +374,58 @@ fn comparisons_and_casts_have_no_free_hints() {
         assert!(outcome.accepted, "{name} rejected");
         assert_eq!(outcome.hints, 0, "{name} loads a prover hint");
     }
+}
+
+/// `x < 101` asserted, then `7 < x`: the assertion proves `x` in [0, 100],
+/// so the comparison checks one lookup-width limb instead of the 64-bit
+/// window, and a comparison the range decides costs nothing.
+#[test]
+fn proven_ranges_narrow_comparisons() {
+    let narrow: Box<Op> = Box::new(|s, c| {
+        let bound = s.constant_int(101)?;
+        s.assert_u128_lt(&c[0], &bound)?;
+        let seven = s.constant_int(7)?;
+        Ok(vec![s.lt_i(&seven, &c[0])?])
+    });
+    for x in [0i64, 7, 8, 100] {
+        assert_sound(&format!("7 < {x} (x < 101)"), &*narrow, &[int(x)], &[bit(7 < x)], &[]);
+    }
+    assert!(!synthesize(&*narrow, &[int(101)], &[]).accepted);
+    assert!(!synthesize(&*narrow, &[int(-1)], &[]).accepted);
+    let wide = binary(|s, a, b| s.lt_i(a, b));
+    let (narrow_advice, narrow_lookup) = cells_of(&*narrow, &[int(5)]);
+    let (wide_advice, wide_lookup) = cells_of(&*wide, &[int(5), int(7)]);
+    assert!(narrow_advice * 3 < wide_advice && narrow_lookup * 5 < wide_lookup,
+        "narrow ({narrow_advice}, {narrow_lookup}) vs 64-bit ({wide_advice}, {wide_lookup})");
+    let decided: Box<Op> = Box::new(|s, c| {
+        let bound = s.constant_int(101)?;
+        s.assert_u128_lt(&c[0], &bound)?;
+        let far = s.constant_int(1000)?;
+        Ok(vec![s.lt_i(&c[0], &far)?])
+    });
+    let outcome = synthesize(&*decided, &[int(50)], &[]);
+    assert!(outcome.accepted && outcome.outputs == vec![Fp::one()] && outcome.hints == 0);
+}
+
+#[test]
+fn unsigned_bound_assertion_is_exact() {
+    for bound in [8i64, 101, 1 << 20] {
+        let assert_below: Box<Op> = Box::new(move |s, c| {
+            let hi = s.constant_int(bound)?;
+            s.assert_u128_lt(&c[0], &hi)?;
+            Ok(vec![])
+        });
+        for x in [0, bound - 1] {
+            assert!(synthesize(&*assert_below, &[int(x)], &[]).accepted, "{x} < {bound} rejected");
+        }
+        for x in [bound, bound + 1, -1, 1 << 40] {
+            assert!(!synthesize(&*assert_below, &[int(x)], &[]).accepted, "{x} < {bound} accepted");
+        }
+    }
+    let dynamic = binary(|s, a, b| s.assert_u128_lt(a, b).map(|_| s.constant_int(0).unwrap()));
+    assert!(synthesize(&*dynamic, &[int(4), int(5)], &[]).accepted);
+    assert!(!synthesize(&*dynamic, &[int(5), int(5)], &[]).accepted);
+    assert!(!synthesize(&*dynamic, &[int(-1), int(5)], &[]).accepted);
 }
 
 #[test]
@@ -383,6 +482,28 @@ fn dynamic_write_out_of_bounds_is_rejected() {
         Ok(vec![])
     });
     assert!(synthesize(&*op, &[int(3)], &[]).accepted);
+    assert!(!synthesize(&*op, &[int(4)], &[]).accepted);
+    assert!(!synthesize(&*op, &[int(-1)], &[]).accepted);
+}
+
+/// A dynamic read is the inner product of the address's indicators with
+/// the slots; the membership assertion makes exactly one indicator 1, so
+/// the read is the addressed slot and an out-of-bounds address has no
+/// witness.
+#[test]
+fn dynamic_read_selects_the_addressed_slot() {
+    let op: Box<Op> = Box::new(|s, c| {
+        s.allocate_memory(1, 4, 0)?;
+        for (i, v) in [10i64, 11, 12].iter().enumerate() {
+            let addr = s.constant_int(i as i64)?;
+            let value = s.constant_int(*v)?;
+            s.write_memory(1, &addr, &value)?;
+        }
+        Ok(vec![s.read_memory(1, &c[0])?])
+    });
+    for (i, expected) in [(0i64, 10i64), (1, 11), (2, 12), (3, 0)] {
+        assert_sound(&format!("x[{i}]"), &*op, &[int(i)], &[int(expected)], &[]);
+    }
     assert!(!synthesize(&*op, &[int(4)], &[]).accepted);
     assert!(!synthesize(&*op, &[int(-1)], &[]).accepted);
 }

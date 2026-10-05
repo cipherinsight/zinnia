@@ -523,6 +523,29 @@ pub fn cell_stats(ir: &IRGraph, lookup_bits: u32, precision_bits: u32) -> Result
     Ok(cells)
 }
 
+/// Advice and lookup cells per IR statement, `(statement id, advice,
+/// lookup)`, for a witness-free synthesis at `lookup_bits` (a measurement
+/// aid: it shows which statements a circuit's cells come from).
+pub fn cell_profile(
+    ir: &IRGraph,
+    lookup_bits: u32,
+    precision_bits: u32,
+) -> Result<Vec<(u32, usize, usize)>, ProvingError> {
+    let mut builder = BaseCircuitBuilder::from_stage(CircuitBuilderStage::Keygen);
+    builder.set_k(ESTIMATE_K_MAX as usize);
+    builder.set_lookup_bits(lookup_bits as usize);
+    builder.set_instance_columns(1);
+    let params = ProvingParams { k: ESTIMATE_K_MAX, lookup_bits, precision_bits };
+    let profile = {
+        let mut synth = Halo2BaseSynthesizer::new(&mut builder, None, params, &ir.provenance);
+        synth.enable_profile();
+        interpret_ir(ir, &mut synth)?;
+        synth.take_profile().map(|p| p.per_stmt).unwrap_or_default()
+    };
+    builder.clear();
+    Ok(profile)
+}
+
 /// Hex encoding of a field element, as in `ProofArtifact::public_values`.
 pub fn fp_to_hex(v: &Fp) -> String {
     encode_fp(v)

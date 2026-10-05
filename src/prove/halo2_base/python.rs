@@ -13,7 +13,7 @@ use std::time::Instant;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-use super::{cell_stats, fp_from_hex, fp_to_hex, keygen, prove_with_keys, verify_with_keys, Halo2BaseKeys, Halo2BaseProverBackend};
+use super::{cell_profile, cell_stats, fp_from_hex, fp_to_hex, keygen, prove_with_keys, verify_with_keys, Halo2BaseKeys, Halo2BaseProverBackend};
 use crate::prove::traits::ProverBackend;
 use crate::prove::types::ProvingParams;
 use crate::CompiledIR;
@@ -85,6 +85,17 @@ fn halo2_base_cell_stats(compiled_ir: &CompiledIR, params_json: Option<&str>) ->
         "instances": cells.instances,
     })
     .to_string())
+}
+
+/// Advice and lookup cells per IR statement at `lookup_bits` (default 8):
+/// JSON list of `[statement id, advice, lookup]`. A measurement aid.
+#[pyfunction]
+#[pyo3(signature = (compiled_ir, lookup_bits=8))]
+fn halo2_base_cell_profile(compiled_ir: &CompiledIR, lookup_bits: u32) -> PyResult<String> {
+    let precision_bits = ProvingParams::default().precision_bits;
+    let profile = cell_profile(&compiled_ir.graph, lookup_bits, precision_bits)
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    serde_json::to_string(&profile).map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
 fn params_or_estimate(compiled_ir: &CompiledIR, params_json: Option<&str>) -> PyResult<ProvingParams> {
@@ -168,6 +179,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyHalo2BaseKeys>()?;
     m.add_function(wrap_pyfunction!(halo2_base_keygen, m)?)?;
     m.add_function(wrap_pyfunction!(halo2_base_cell_stats, m)?)?;
+    m.add_function(wrap_pyfunction!(halo2_base_cell_profile, m)?)?;
     m.add_function(wrap_pyfunction!(halo2_base_prove, m)?)?;
     m.add_function(wrap_pyfunction!(halo2_base_verify, m)?)?;
     Ok(())
