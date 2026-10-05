@@ -287,3 +287,33 @@ def test_insert_uses_no_comparison_per_slot():
 
 def test_insert_halo2_base_matches_mock():
     assert_backends_agree(INSERT_1D, np.array([0.5, -1.0, 2.25, 3.0, -0.75]), 3, 7)
+
+
+# ── runtime-index reads from known cells, one axis at a time ─────────────
+
+GATHER_3D = 'def kernel(a: Float[Array, "3 4 5"], i: Integer, j: Integer):\n    return a[i, :, j]\n'
+CUBE = np.arange(60.0).reshape(3, 4, 5) / 4
+
+
+@pytest.mark.parametrize("i, j", [(0, 0), (2, 4), (-1, -5), (1, -2)])
+def test_mixed_runtime_index_read_matches_numpy(i, j):
+    assert_matches_numpy(GATHER_3D, CUBE, i, j)
+
+
+@pytest.mark.parametrize("i, j", [(3, 0), (0, 5), (-4, 0)])
+def test_mixed_runtime_index_read_out_of_range_is_rejected(i, j):
+    satisfied, _ = run_mock(compile_kernel(GATHER_3D), CUBE, i, j)
+    assert not satisfied
+
+
+def test_mixed_runtime_index_read_selects_one_axis_at_a_time():
+    # Each output a[i, r, j] selects along j within row (r, c) planes shared by
+    # nothing else, then along i: (5 - 1) + (3 - 1) selects, no conjunction of
+    # the two axes' tests per candidate.
+    classes = ir_classes(compile_kernel(GATHER_3D))
+    assert "LogicalAndIR" not in classes
+    assert classes.count("SelectFIR") == 4 * (3 * 4 + 2)
+
+
+def test_mixed_runtime_index_read_halo2_base_matches_mock():
+    assert_backends_agree(GATHER_3D, CUBE, -1, 2)

@@ -146,95 +146,97 @@ fn select_typed(
     }
 }
 
-use super::base::{checked_axis_index, index_equals_coord};
+use super::base::checked_axis_index;
 
-fn and_all(b: &mut IRBuilder, parts: Vec<Value>) -> Value {
-    let mut it = parts.into_iter();
-    let Some(mut acc) = it.next() else {
-        return b.ir_constant_bool(true);
-    };
-    for part in it {
-        acc = b.ir_logical_and(&acc, &part);
-    }
-    acc
+/// One runtime index axis of a [`PayloadGather`]: the index, already
+/// wrapped and bounds-checked on its axis (`checked_axis_index`), the
+/// axis's stride in the segment and its length.
+struct GatherAxis {
+    index: Value,
+    stride: usize,
+    len: usize,
 }
 
-fn enumerate_dynamic_single_choices(
-    axes: &[(usize, Value)],
-    shape: &[usize],
-    mut f: impl FnMut(&[usize]),
-) {
-    fn rec(
-        pos: usize,
-        axes: &[(usize, Value)],
-        shape: &[usize],
-        coords: &mut Vec<usize>,
-        f: &mut impl FnMut(&[usize]),
-    ) {
-        if pos == axes.len() {
-            f(coords);
-            return;
-        }
-        let ax = axes[pos].0;
-        for coord in 0..shape[ax] {
-            coords.push(coord);
-            rec(pos + 1, axes, shape, coords, f);
-            coords.pop();
-        }
-    }
-    let mut coords = Vec::with_capacity(axes.len());
-    rec(0, axes, shape, &mut coords, &mut f);
-}
-
-/// Read one leaf whose dynamic `Single` axes (already wrapped and
-/// bounds-checked by `checked_axis_index`) select among a small number of
-/// cached payload cells, as a select chain over the candidates.
-fn try_read_dynamic_single_from_payload(
-    b: &mut IRBuilder,
+/// Runtime-index reads of a static array whose cells are known values
+/// (`IRBuilder::static_array_payload`), as select chains instead of a
+/// memory read.
+///
+/// `cells[base + sum_k i_k * stride_k]` is selected one index axis at a
+/// time, outermost axis last: for the inner axes the selection is a
+/// "plane" `cells[base' + ...]`, cached per (base', inner indices), so reads
+/// that differ only in their outer indices share their inner selections
+/// (a 2-D gather costs one chain per distinct row and column index instead
+/// of one chain over the product of the two axes per read). Each chain
+/// starts from coordinate 0 and selects coordinate `p` under `index == p`.
+///
+/// Soundness: every index is wrapped and bounds-checked on its axis before
+/// it reaches the gather, so exactly one coordinate test holds per axis and
+/// the chain yields the indexed cell; the equality tests are shared by
+/// every chain over the same index.
+struct PayloadGather {
+    cells: Vec<Value>,
     dtype: NumberType,
-    shape: &[usize],
-    segment_id: u32,
-    strides: &[usize],
-    static_src_base: i64,
-    dynamic_single_axes: &[(usize, Value)],
-) -> Option<Value> {
-    if dtype == NumberType::Complex || dynamic_single_axes.is_empty() {
-        return None;
-    }
-    let choice_count: usize = dynamic_single_axes
-        .iter()
-        .map(|(ax, _)| shape[*ax])
-        .product();
-    if choice_count == 0 || choice_count > SMALL_DYNAMIC_SINGLE_READ_SELECT_LIMIT {
-        return None;
-    }
-    if b.static_array_product_provenance.contains_key(&segment_id) {
-        super::base::force_static_array_product_provenance(b, segment_id);
-    }
-    let cached = b.static_array_payload.get(&segment_id)?.clone();
+    hits: std::collections::HashMap<(crate::types::StmtId, usize), Value>,
+    planes: std::collections::HashMap<(i64, Vec<crate::types::StmtId>), Value>,
+}
 
-    let mut candidates: Vec<(Value, Value)> = Vec::with_capacity(choice_count);
-    enumerate_dynamic_single_choices(dynamic_single_axes, shape, |choice_coords| {
-        let mut abs = static_src_base;
-        let mut conds = Vec::with_capacity(dynamic_single_axes.len());
-        for (choice_pos, (ax, idx)) in dynamic_single_axes.iter().enumerate() {
-            let coord = choice_coords[choice_pos];
-            abs += coord as i64 * strides[*ax] as i64;
-            conds.push(index_equals_coord(b, idx, coord, shape[*ax]));
+impl PayloadGather {
+    /// The gather over `segment_id`'s known cells, or `None` when the
+    /// cells are not known (a runtime write invalidated them) or the
+    /// dtype is Complex.
+    fn of_segment(b: &mut IRBuilder, segment_id: u32, dtype: NumberType) -> Option<Self> {
+        if dtype == NumberType::Complex {
+            return None;
         }
-        if abs >= 0 {
-            let abs = abs as usize;
-            if abs < cached.len() {
-                candidates.push((and_all(b, conds), cached[abs].clone()));
-            }
+        if b.static_array_product_provenance.contains_key(&segment_id) {
+            super::base::force_static_array_product_provenance(b, segment_id);
         }
-    });
-    let (_, first) = candidates.first()?.clone();
-    let mut acc = first;
-    for (cond, value) in candidates.iter().skip(1) {
-        acc = select_typed(b, dtype, cond, value, &acc);
+        let cells = b.static_array_payload.get(&segment_id)?.clone();
+        Some(Self {
+            cells,
+            dtype,
+            hits: std::collections::HashMap::new(),
+            planes: std::collections::HashMap::new(),
+        })
     }
-    Some(acc)
+
+    /// Whether a read over `axes` stays within the select budget.
+    fn affordable(axes: &[GatherAxis]) -> bool {
+        let choices: usize = axes.iter().map(|a| a.len).product();
+        !axes.is_empty() && choices > 0 && choices <= SMALL_DYNAMIC_SINGLE_READ_SELECT_LIMIT
+    }
+
+    fn hit(&mut self, b: &mut IRBuilder, index: &Value, coord: usize) -> Option<Value> {
+        let key = (index.stmt_id()?, coord);
+        if let Some(hit) = self.hits.get(&key) {
+            return Some(hit.clone());
+        }
+        let coord_v = b.ir_constant_int(coord as i64);
+        let hit = b.ir_equal_i(index, &coord_v);
+        self.hits.insert(key, hit.clone());
+        Some(hit)
+    }
+
+    /// `cells[base + sum_k axes[k].index * axes[k].stride]`, or `None` when
+    /// a candidate lies outside the known cells or an index has no
+    /// statement (the caller then falls back to a memory read).
+    fn read(&mut self, b: &mut IRBuilder, base: i64, axes: &[GatherAxis]) -> Option<Value> {
+        let Some((outer, inner)) = axes.split_first() else {
+            return self.cells.get(usize::try_from(base).ok()?).cloned();
+        };
+        let key = (base, axes.iter().map(|a| a.index.stmt_id()).collect::<Option<Vec<_>>>()?);
+        if let Some(plane) = self.planes.get(&key) {
+            return Some(plane.clone());
+        }
+        let mut acc = self.read(b, base, inner)?;
+        for coord in 1..outer.len {
+            let candidate = self.read(b, base + (coord * outer.stride) as i64, inner)?;
+            let hit = self.hit(b, &outer.index, coord)?;
+            acc = select_typed(b, self.dtype, &hit, &candidate, &acc);
+        }
+        self.planes.insert(key, acc.clone());
+        Some(acc)
+    }
 }
 
 enum FancyAxisPlan {
@@ -2369,7 +2371,7 @@ fn multidim_subscript_static_array(
                 // Wrap and bounds-check the index on its own axis, once,
                 // so the flat address (`dynamic_parts`, consumed by the
                 // memory-read fallback and Complex path) and the
-                // per-candidate `index_equals_coord` match agree for a
+                // coordinate tests of the payload gather agree for a
                 // negative `i` (C12c), and every leaf address below lies
                 // inside the array without a per-leaf check.
                 let vn = checked_axis_index(b, v, ax, shape[ax], "static_array_read");
@@ -2502,6 +2504,15 @@ fn multidim_subscript_static_array(
         return super::base::build_static_array_from_flat(b, empty, out_shape, dtype);
     }
 
+    let gather_axes: Vec<GatherAxis> = dynamic_single_axes
+        .iter()
+        .map(|(ax, index)| GatherAxis { index: index.clone(), stride: strides[*ax], len: shape[*ax] })
+        .collect();
+    let mut gather = if PayloadGather::affordable(&gather_axes) {
+        PayloadGather::of_segment(b, segment_id, dtype)
+    } else {
+        None
+    };
     let mut leaves: Vec<Value> = Vec::with_capacity(total);
     for flat_out in 0..total {
         let out_coords = decode_coords(flat_out, &out_shape, &out_strides);
@@ -2520,6 +2531,8 @@ fn multidim_subscript_static_array(
                 // read_leaf_at_flat takes a base+rel; pass abs as 0+abs.
                 leaves.push(read_leaf_at_flat(b, segment_id, 0, flat_idx, dtype));
             }
+        } else if let Some(v) = gather.as_mut().and_then(|g| g.read(b, src_flat, &gather_axes)) {
+            leaves.push(v);
         } else {
             let static_part = b.ir_constant_int(src_flat);
             let mut acc = static_part;
@@ -2530,19 +2543,7 @@ fn multidim_subscript_static_array(
                 let im = imag_seg.expect("Complex StaticArray missing imag_segment_id");
                 leaves.push(read_complex_leaf_dynamic(b, segment_id, im, &acc));
             } else {
-                if let Some(v) = try_read_dynamic_single_from_payload(
-                    b,
-                    dtype,
-                    &shape,
-                    segment_id,
-                    &strides,
-                    src_flat,
-                    &dynamic_single_axes,
-                ) {
-                    leaves.push(v);
-                } else {
-                    leaves.push(read_leaf_at_checked_address(b, segment_id, &acc, dtype));
-                }
+                leaves.push(read_leaf_at_checked_address(b, segment_id, &acc, dtype));
             }
         }
     }
