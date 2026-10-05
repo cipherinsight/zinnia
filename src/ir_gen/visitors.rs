@@ -723,16 +723,11 @@ impl IRGenerator {
                 crate::optim::predicates::ScopeKind::Conditional,
                 path_predicate,
             );
-            // Segment writes inside this arm only take effect when the
-            // arm's path condition holds (statically-true predicates are
-            // free; see IRBuilder::write_predicate).
-            let prev_wp = self
-                .builder
-                .swap_write_predicate(self.ctx.get_branching_condition_value());
+            // Each statement in the arm sets the write predicate to its own
+            // full execution condition, which includes this arm's condition.
             for stmt in &n.t_block {
                 self.visit(stmt);
             }
-            self.builder.swap_write_predicate(prev_wp);
             scope_true_ret_guaranteed = self.ctx.check_return_guaranteed();
             scope_true_term_guaranteed = self.ctx.check_loop_terminated_guaranteed();
             let scope_true = self.ctx.if_leave();
@@ -752,13 +747,9 @@ impl IRGenerator {
                 crate::optim::predicates::ScopeKind::Conditional,
                 path_predicate,
             );
-            let prev_wp = self
-                .builder
-                .swap_write_predicate(self.ctx.get_branching_condition_value());
             for stmt in &n.f_block {
                 self.visit(stmt);
             }
-            self.builder.swap_write_predicate(prev_wp);
             scope_false_ret_guaranteed = self.ctx.check_return_guaranteed();
             scope_false_term_guaranteed = self.ctx.check_loop_terminated_guaranteed();
             let scope_false = self.ctx.if_leave();

@@ -126,27 +126,33 @@ impl IRContext {
 
     // ── Scope enter/leave ─────────────────────────────────────────────
 
-    pub fn chip_enter(&mut self, return_dtype: ZinniaType, assertion_condition: Option<Value>) {
+    /// Enter a chip body. `entry_condition` is the caller's execution
+    /// condition at the call site ([`Self::get_condition_value`] evaluated
+    /// before entering); pass `None` when it is statically true. The chip's
+    /// own conditions are combined with it, never substituted for it, so a
+    /// chip called inside a private `if`, after a private `break`, or after
+    /// an early `return` cannot write, assert, or return on paths where the
+    /// call does not happen.
+    pub fn chip_enter(&mut self, return_dtype: ZinniaType, entry_condition: Option<Value>) {
         self.scopes.push(Scope::Chip(ChipScopeData {
             var_table: HashMap::new(),
             return_guaranteed: false,
             return_dtype,
             returns_with_conditions: Vec::new(),
             calculated_returning_condition: None,
-            assertion_condition,
+            entry_condition,
             has_none_return: false,
             has_value_return: false,
         }));
     }
 
-    pub fn circuit_enter(&mut self, return_dtype: ZinniaType, assertion_condition: Option<Value>) {
+    pub fn circuit_enter(&mut self, return_dtype: ZinniaType) {
         self.scopes.push(Scope::Circuit(CircuitScopeData {
             var_table: HashMap::new(),
             return_guaranteed: false,
             return_dtype,
             returns_with_conditions: Vec::new(),
             calculated_returning_condition: None,
-            assertion_condition,
             has_none_return: false,
             has_value_return: false,
         }));
@@ -262,66 +268,26 @@ impl IRContext {
 
     // ── Condition values ──────────────────────────────────────────────
 
-    /// The innermost calculated branching condition (already ANDed with
-    /// enclosing branch conditions at `if_enter`), or `None` outside any
-    /// conditional scope. Used to scope the builder's conditional-write
-    /// predicate around `if`-arm visitation.
-    pub fn get_branching_condition_value(&self) -> Option<Value> {
-        self.find_condition(|s| s.get_branching_condition())
-    }
-
-    /// Get the combined execution condition (looping AND branching AND returning).
-    /// If no conditions are active, returns a constant `true`.
+    /// The condition under which the statement being generated executes:
+    /// the enclosing loop's looping condition (not broken, not continued),
+    /// the enclosing branch conditions, the "not yet returned" condition,
+    /// and, inside a chip, the caller's condition at the call site. Returns
+    /// a constant `true` when no condition is active.
     pub fn get_condition_value(&self, builder: &mut IRBuilder) -> Value {
-        let cond_loop = self.find_condition(|s| s.get_looping_condition());
-        let cond_branch = self.find_condition(|s| s.get_branching_condition());
-        let cond_return = self.find_condition(|s| s.get_returning_condition());
-
-        let mut conditions: Vec<Value> = Vec::new();
-        if let Some(c) = cond_loop {
-            conditions.push(c);
-        }
-        if let Some(c) = cond_branch {
-            conditions.push(c);
-        }
-        if let Some(c) = cond_return {
-            conditions.push(c);
-        }
-
-        match conditions.len() {
-            0 => builder.ir_constant_bool(true),
-            1 => conditions.into_iter().next().unwrap(),
-            2 => builder.ir_logical_and(&conditions[0], &conditions[1]),
-            3 => {
-                let inner = builder.ir_logical_and(&conditions[1], &conditions[2]);
-                builder.ir_logical_and(&conditions[0], &inner)
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    /// Get condition value including assertion condition.
-    pub fn get_condition_value_for_assertion(&self, builder: &mut IRBuilder) -> Value {
-        let assertion = self.find_condition(|s| s.get_assertion_condition());
-        let base = self.get_condition_value(builder);
-        match assertion {
-            None => base,
-            Some(a) => builder.ir_logical_and(&a, &base),
-        }
-    }
-
-    pub fn get_break_condition_value(&self, builder: &mut IRBuilder) -> Value {
-        match self.find_condition(|s| s.get_breaking_condition()) {
-            Some(c) => c,
-            None => builder.ir_constant_bool(true),
-        }
-    }
-
-    pub fn get_return_condition_value(&self, builder: &mut IRBuilder) -> Value {
-        match self.find_condition(|s| s.get_returning_condition()) {
-            Some(c) => c,
-            None => builder.ir_constant_bool(true),
-        }
+        let conditions: Vec<Value> = [
+            self.find_condition(|s| s.get_looping_condition()),
+            self.find_condition(|s| s.get_branching_condition()),
+            self.find_condition(|s| s.get_returning_condition()),
+            self.find_condition(|s| s.get_entry_condition()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let mut iter = conditions.into_iter();
+        let Some(first) = iter.next() else {
+            return builder.ir_constant_bool(true);
+        };
+        iter.fold(first, |acc, c| builder.ir_logical_and(&acc, &c))
     }
 
     // ── Loop control ──────────────────────────────────────────────────
@@ -663,6 +629,35 @@ mod tests {
         let cond = ctx.get_condition_value(&mut builder);
         assert_eq!(cond.bool_val(), Some(true));
 
+        ctx.chip_leave();
+    }
+
+    #[test]
+    fn test_chip_entry_condition_is_combined_not_replaced() {
+        // Regression (audit X1): a chip called under a private condition must
+        // keep that condition for every statement in its body, combined with
+        // the chip's own branch conditions.
+        let mut ctx = IRContext::new();
+        let mut builder = IRBuilder::new();
+        let caller_cond = builder.ir_read_integer(
+            crate::circuit_input::InputPath::new("c", vec![]),
+            false,
+        );
+        ctx.chip_enter(ZinniaType::None, Some(caller_cond.clone()));
+        let at_entry = ctx.get_condition_value(&mut builder);
+        assert_eq!(at_entry.stmt_id(), caller_cond.stmt_id());
+
+        let local = builder.ir_read_integer(
+            crate::circuit_input::InputPath::new("d", vec![]),
+            false,
+        );
+        ctx.if_enter(local.clone(), &mut builder);
+        let in_branch = ctx.get_condition_value(&mut builder);
+        assert_ne!(in_branch.stmt_id(), local.stmt_id());
+        assert_ne!(in_branch.stmt_id(), caller_cond.stmt_id());
+        let stmt = &builder.stmts[in_branch.stmt_id().unwrap() as usize];
+        assert!(matches!(stmt.ir, crate::ir_defs::IR::LogicalAnd));
+        ctx.if_leave();
         ctx.chip_leave();
     }
 

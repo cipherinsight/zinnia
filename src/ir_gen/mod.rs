@@ -24,6 +24,24 @@ mod visitors;
 #[cfg(test)]
 mod tests;
 
+/// Whether `node` is a statement (as opposed to an expression or target).
+fn is_statement(node: &ASTNode) -> bool {
+    matches!(
+        node,
+        ASTNode::ASTAssignStatement(_)
+            | ASTNode::ASTAugAssignStatement(_)
+            | ASTNode::ASTCondStatement(_)
+            | ASTNode::ASTForInStatement(_)
+            | ASTNode::ASTWhileStatement(_)
+            | ASTNode::ASTBreakStatement(_)
+            | ASTNode::ASTContinueStatement(_)
+            | ASTNode::ASTReturnStatement(_)
+            | ASTNode::ASTAssertStatement(_)
+            | ASTNode::ASTPassStatement(_)
+            | ASTNode::ASTExprStatement(_)
+    )
+}
+
 /// Check if an assignment target node has the `star` flag set.
 pub(super) fn is_starred_target(node: &ASTNode) -> bool {
     match node {
@@ -338,18 +356,20 @@ impl IRGenerator {
 
     // ── Visitor dispatch ──────────────────────────────────────────────
 
+    /// Visit a node. A statement runs with the builder's write predicate set
+    /// to its complete execution condition (see
+    /// [`IRContext::get_condition_value`]): every memory write it makes,
+    /// including writes made while evaluating its expressions or inside chips
+    /// it calls, keeps the old cell on paths where the statement does not
+    /// execute. Expressions inherit the predicate of their statement.
     fn visit(&mut self, node: &ASTNode) -> Value {
-        // Side effects must obey the complete live path, including earlier
-        // conditional continue/break/return statements in the same block.
-        let mutating_statement = matches!(node, ASTNode::ASTAssignStatement(_)
-            | ASTNode::ASTAugAssignStatement(_) | ASTNode::ASTExprStatement(_)
-            | ASTNode::ASTReturnStatement(_));
-        let previous = if mutating_statement {
-            let condition = self.ctx.get_condition_value(&mut self.builder);
-            Some(self.builder.swap_write_predicate(Some(condition)))
-        } else { None };
+        if !is_statement(node) {
+            return self.visit_inner(node);
+        }
+        let condition = self.ctx.get_condition_value(&mut self.builder);
+        let previous = self.builder.swap_write_predicate(Some(condition));
         let result = self.visit_inner(node);
-        if let Some(previous) = previous { self.builder.swap_write_predicate(previous); }
+        self.builder.swap_write_predicate(previous);
         result
     }
 
@@ -455,7 +475,7 @@ impl IRGenerator {
         let circuit_return_dt = n.return_dt.as_ref().map(|dt| self.parse_dt_descriptor(dt));
 
         self.ctx
-            .circuit_enter(circuit_return_dt.clone().unwrap_or(ZinniaType::None), None);
+            .circuit_enter(circuit_return_dt.clone().unwrap_or(ZinniaType::None));
 
         // Process inputs
         for (_i, inp) in n.inputs.iter().enumerate() {
