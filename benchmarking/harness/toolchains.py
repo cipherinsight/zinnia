@@ -22,7 +22,8 @@ HOME = Path.home()
 
 NOIR_SYSTEMS = ("zinnia_noir", "noir_hw")
 HALO2_SYSTEMS = ("zinnia_halo2", "halo2_hw")
-SP1_SYSTEMS = ("sp1", "sp1_plonk")
+SP1_SYSTEMS = ("sp1", "sp1_groth16")
+RISC0_SYSTEMS = ("risc0", "risc0_groth16")
 
 
 @dataclass(frozen=True)
@@ -46,10 +47,10 @@ TOOLS: tuple[Tool, ...] = (
          SP1_SYSTEMS),
     Tool("rustc (succinct)", ("rustup", "run", "succinct", "rustc", "--version"), None,
          SP1_SYSTEMS),
-    Tool("r0vm", (str(HOME / ".cargo/bin/r0vm"), "--version"), "risc0-r0vm 3.0.3", ("risc0",)),
+    Tool("r0vm", (str(HOME / ".cargo/bin/r0vm"), "--version"), "risc0-r0vm 3.0.3", RISC0_SYSTEMS),
     Tool("cargo-risczero", (str(HOME / ".cargo/bin/cargo-risczero"), "risczero", "--version"),
-         "cargo-risczero 3.0.3", ("risc0",)),
-    Tool("rustc (risc0)", ("rustup", "run", "risc0", "rustc", "--version"), None, ("risc0",)),
+         "cargo-risczero 3.0.3", RISC0_SYSTEMS),
+    Tool("rustc (risc0)", ("rustup", "run", "risc0", "rustc", "--version"), None, RISC0_SYSTEMS),
     Tool("scarb",
          (str(HOME / ".local/share/scarb/scarb-v2.20.1-x86_64-unknown-linux-gnu/bin/scarb"),
           "--version"),
@@ -72,16 +73,21 @@ class LockedCrate:
 
 LOCKED_CRATES: tuple[LockedCrate, ...] = (
     LockedCrate("sp1-sdk", "6.8.1", "sp1", SP1_SYSTEMS),
-    LockedCrate("risc0-zkvm", "3.0.3", "risc0", ("risc0",)),
+    LockedCrate("risc0-zkvm", "3.0.3", "risc0", RISC0_SYSTEMS),
 )
 
 
+def tool_executable(name: str) -> Path:
+    """The pinned executable of the tool called `name` in `TOOLS`."""
+    return Path(next(tool for tool in TOOLS if tool.name == name).command[0])
+
+
 def nargo_path() -> Path:
-    return Path(TOOLS[0].command[0])
+    return tool_executable("nargo")
 
 
 def bb_path() -> Path:
-    return Path(TOOLS[1].command[0])
+    return tool_executable("bb")
 
 
 @dataclass

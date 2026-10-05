@@ -155,7 +155,8 @@ class SystemRun:
     adapter: Adapter
     case: PerfCase
     record: dict
-    proof_paths: list[Path] = field(default_factory=list)
+    #: (proof directory, proof file) of every timed sample, in order.
+    proofs: list[tuple[Path, Path]] = field(default_factory=list)
 
     @property
     def failed(self) -> bool:
@@ -282,33 +283,37 @@ class CaseProtocol:
         if tag in ("warmup", "sample-1"):
             sample["publics"] = publics
         if tag != "warmup":
-            run.proof_paths.append(Path(result["proof_path"]))
+            run.proofs.append((proof_dir, Path(result["proof_path"])))
         if check.status == "mismatch":
             run.fail("wrong_output", tag, check.detail)
 
     def _verify_all(self, run: SystemRun) -> None:
-        for sample, proof_path in zip(run.record["samples"], run.proof_paths):
+        for sample, (proof_dir, proof_path) in zip(run.record["samples"], run.proofs):
             if run.failed:
                 return
-            response = self.runner.run(run.adapter.name, "verify", run.case, "B",
-                                       f"verify-{sample['tag']}", proof_path=proof_path)
+            tag = f"verify-{sample['tag']}"
+            response = self.runner.run(run.adapter.name, "verify", run.case, "B", tag,
+                                       proof_dir=proof_dir, proof_path=proof_path)
             sample["verify"] = response
             if not response["ok"]:
-                run.fail_from(response, f"verify-{sample['tag']}")
+                run.fail_from(response, tag)
             elif not response["result"]["verified"]:
-                run.fail("verify_failed", f"verify-{sample['tag']}",
+                run.fail("verify_failed", tag,
                          json.dumps(response["result"].get("details"))[:2000])
 
     def _tamper(self, run: SystemRun) -> None:
-        if run.failed or not run.proof_paths:
+        """Verify a copy of the first sample with one public value changed."""
+        if run.failed or not run.proofs:
             return
-        original = run.proof_paths[0]
-        copy_dir = original.parent.parent / "tamper"
+        proof_dir, proof_path = run.proofs[0]
+        copy_dir = proof_dir.parent / "tamper"
         if copy_dir.exists():
             shutil.rmtree(copy_dir)
-        shutil.copytree(original.parent, copy_dir)
+        shutil.copytree(proof_dir, copy_dir, symlinks=True)
         response = self.runner.run(run.adapter.name, "verify", run.case, "B", "tamper",
-                                   proof_path=copy_dir / original.name, tamper=True)
+                                   proof_dir=copy_dir,
+                                   proof_path=copy_dir / proof_path.relative_to(proof_dir),
+                                   tamper=True)
         run.record["tamper"] = {"response": response}
         if not response["ok"]:
             run.record["tamper"]["status"] = "error"

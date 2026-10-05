@@ -21,7 +21,7 @@ import sys
 import time
 from pathlib import Path
 
-from benchmarking.harness import gitstate, paths
+from benchmarking.harness import gitstate, paths, toolchains
 
 FEATURES = "halo2-base-backend,noir-backend"
 PROFILE = "release"
@@ -126,3 +126,48 @@ def installed_build_problems() -> tuple[dict | None, list[str]]:
     if has_debug_sections(so):
         problems.append("installed .so carries debug sections")
     return record, problems
+
+
+# ---------------------------------------------------------------------------
+# Baseline programs
+# ---------------------------------------------------------------------------
+
+#: How each baseline program directory is built (its README's command), release
+#: profile. `halo2_hw` builds the cases `HALO2_HW_CASES` names, or every case
+#: with a `target.rs`; the variable is recorded.
+BASELINE_BUILDS: dict[str, list[str]] = {
+    "halo2_hw": ["cargo", "build", "--release"],
+    "sp1": ["cargo", "build", "--release"],
+    "risc0": ["cargo", "build", "--release"],
+    "cairo": [str(toolchains.tool_executable("scarb")), "build"],
+}
+BASELINE_RECORD = paths.REPO_ROOT / "target" / "zinnia-harness-baselines.json"
+
+
+def build_baselines(names: list[str], jobs: int = DEFAULT_BUILD_JOBS) -> dict:
+    """Build baseline programs one at a time; record command, toolchain and outputs."""
+    record = json.loads(BASELINE_RECORD.read_text()) if BASELINE_RECORD.exists() else {}
+    for name in names:
+        directory = paths.BASELINES / name
+        env = dict(os.environ, CARGO_BUILD_JOBS=str(jobs))
+        env["PATH"] = f"{Path.home() / '.sp1' / 'bin'}:{env.get('PATH', '')}"
+        command = ["nice", "-n", "10", *BASELINE_BUILDS[name]]
+        print(f"building {name}: {' '.join(command)} (in {directory})", flush=True)
+        started = time.time()
+        proc = subprocess.run(command, cwd=directory, env=env)
+        if proc.returncode != 0:
+            raise RuntimeError(f"building {name} failed (exit {proc.returncode})")
+        binaries = sorted((directory / "target" / "release").glob("*")) \
+            if (directory / "target" / "release").is_dir() else []
+        record[name] = {
+            "built_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "build_seconds": round(time.time() - started, 1),
+            "command": command,
+            "HALO2_HW_CASES": os.environ.get("HALO2_HW_CASES"),
+            "rustc": _command_version("rustc", "--version"),
+            "executables_sha256": {paths.relative_to_repo(b): sha256_file(b) for b in binaries
+                                   if b.is_file() and os.access(b, os.X_OK)},
+        }
+    BASELINE_RECORD.write_text(json.dumps(record, indent=2))
+    print(f"baseline build record: {BASELINE_RECORD}")
+    return record

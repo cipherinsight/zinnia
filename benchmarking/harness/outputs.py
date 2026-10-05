@@ -68,9 +68,12 @@ def float_to_q32(value: float) -> int:
     """Zinnia's quantizer (`src/prove/field.rs`): `(v * 2^32).round() as i128`.
 
     Rust's `f64::round` rounds halves away from zero, unlike Python's `round`.
+    Doubles of magnitude 2^52 or more are integers already (adding 1/2 to them
+    would round), so they are taken as they are.
     """
     scaled = value * Q32_SCALE
-    magnitude = math.floor(abs(scaled) + 0.5)
+    magnitude = abs(scaled)
+    magnitude = int(magnitude) if magnitude >= 2.0**52 else math.floor(magnitude + 0.5)
     return int(magnitude if scaled >= 0 else -magnitude)
 
 

@@ -60,16 +60,23 @@ class NoirPackage:
         self.name = name
 
     @staticmethod
-    def create(directory: Path, name: str, main_nr: str) -> "NoirPackage":
+    def create(directory: Path, name: str, main_nr: str,
+               libraries: dict[str, Path] | None = None) -> "NoirPackage":
+        """A fresh package with `libraries` (name -> source folder) copied in.
+
+        The default library is `noir_fpc`, the only one Zinnia's emitted code uses.
+        """
+        libraries = {"noir_fpc": paths.NOIR_FPC} if libraries is None else libraries
         if directory.exists():
             shutil.rmtree(directory)
         (directory / "src").mkdir(parents=True)
         (directory / "src" / "main.nr").write_text(main_nr)
+        dependencies = "".join(f'{lib} = {{ path = "./{lib}" }}\n' for lib in libraries)
         (directory / "Nargo.toml").write_text(
             f'[package]\nname = "{name}"\ntype = "bin"\nauthors = [""]\n\n'
-            '[dependencies]\nnoir_fpc = { path = "./noir_fpc" }\n')
-        shutil.copytree(paths.NOIR_FPC, directory / "noir_fpc",
-                        ignore=shutil.ignore_patterns("target"))
+            f"[dependencies]\n{dependencies}")
+        for lib, source in libraries.items():
+            shutil.copytree(source, directory / lib, ignore=shutil.ignore_patterns("target"))
         return NoirPackage(directory, name)
 
     @property

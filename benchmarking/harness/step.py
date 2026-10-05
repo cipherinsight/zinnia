@@ -21,13 +21,18 @@ from pathlib import Path
 from benchmarking.harness.adapters import get_adapter
 from benchmarking.harness.adapters.base import StepContext, StepFailure
 from benchmarking.harness.case_sets import PerfCase
+from benchmarking.harness.isolation import oom_kills_in_own_cgroup
+
+
+def _optional_path(request: dict, key: str) -> Path | None:
+    return Path(request[key]) if request.get(key) else None
 
 
 def _context(request: dict) -> StepContext:
-    optional_path = lambda key: Path(request[key]) if request.get(key) else None  # noqa: E731
     return StepContext(case=PerfCase.from_json(request["case"]), input_name=request["input"],
-                       work_dir=Path(request["work_dir"]), proof_dir=optional_path("proof_dir"),
-                       proof_path=optional_path("proof_path"),
+                       work_dir=Path(request["work_dir"]),
+                       proof_dir=_optional_path(request, "proof_dir"),
+                       proof_path=_optional_path(request, "proof_path"),
                        tamper=bool(request.get("tamper")), options=request.get("options", {}))
 
 
@@ -60,19 +65,29 @@ def run_step(request: dict) -> dict:
     raise ValueError(f"unknown step {step!r}")
 
 
+def _failure(failure_class: str, detail: str) -> dict:
+    """A failed step's response; an OOM kill in the step's scope overrides the class.
+
+    A program that loses a child to the memory cap often reports only that the
+    child failed; the scope's OOM counter says why.
+    """
+    oom_kills = oom_kills_in_own_cgroup()
+    if oom_kills and failure_class != "out_of_memory":
+        detail = f"{oom_kills} process(es) OOM-killed at the memory cap; reported: {detail}"
+        failure_class = "out_of_memory"
+    return {"ok": False, "result": None, "failure": {"class": failure_class, "detail": detail}}
+
+
 def main(argv: list[str]) -> int:
     request_path, response_path = Path(argv[0]), Path(argv[1])
     request = json.loads(request_path.read_text())
     try:
         response = {"ok": True, "result": run_step(request), "failure": None}
     except StepFailure as failure:
-        response = {"ok": False, "result": None,
-                    "failure": {"class": failure.failure_class, "detail": failure.detail}}
+        response = _failure(failure.failure_class, failure.detail)
     except Exception as exc:  # noqa: BLE001 - recorded as a harness error, never dropped
-        response = {"ok": False, "result": None,
-                    "failure": {"class": "harness_error",
-                                "detail": f"{type(exc).__name__}: {exc}\n"
-                                          + traceback.format_exc(limit=8)}}
+        response = _failure("harness_error", f"{type(exc).__name__}: {exc}\n"
+                                             + traceback.format_exc(limit=8))
     response_path.write_text(json.dumps(response))
     return 0
 

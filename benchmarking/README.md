@@ -8,7 +8,8 @@
     `datasets/FILTERING.md`).
   - `case_sets/*.json`: which cases each study uses, with reasons and tolerances.
 - `baselines/`: the baseline programs and their rules (`CONVENTIONS.md`,
-  `NOIR_BASELINES.md`); each system directory provides the `bench` entry point below.
+  `NOIR_BASELINES.md`, `zkvm_common/README.md`): `halo2_hw/`, `noir_hw/` + `hw_check/`,
+  `sp1/`, `risc0/`, `cairo/`.
 - `noir_fpc/`: the Q32 fixed-point Noir library shared by the handwritten Noir baselines
   and Zinnia's Noir backend (embedded by `src/prove/noir/mod.rs`, so it stays here).
 - `harness/`: the single benchmark harness (this file describes it).
@@ -20,13 +21,14 @@
 ```sh
 .venv/bin/python -m benchmarking.harness check-env          # versions and paths; non-zero on a mismatch
 .venv/bin/python -m benchmarking.harness build              # release extension + build record
+.venv/bin/python -m benchmarking.harness build --skip-zinnia --baselines halo2_hw,sp1,risc0,cairo
 .venv/bin/python -m benchmarking.harness run --label main   # one epoch, default systems and case set
 .venv/bin/python -m benchmarking.harness analyze benchmarking/results/<epoch>
 .venv/bin/python -m benchmarking.harness accept --epoch benchmarking/results/<epoch>
 ```
 
-`run` options: `--systems zinnia_halo2,halo2_hw,zinnia_noir,noir_hw,sp1,sp1_plonk,risc0,cairo`
-(default: all but `sp1_plonk`), `--case-set FILE` (default `datasets/case_sets/ds1000_perf.json`),
+`run` options: `--systems` from `zinnia_halo2, halo2_hw, zinnia_noir, noir_hw, sp1, sp1_groth16,
+risc0, risc0_groth16, cairo` (default: all but the two Groth16 variants), `--case-set FILE` (default `datasets/case_sets/ds1000_perf.json`),
 `--cases 0309,0336`, `--fixtures-dir DIR` (trial fixtures outside the dataset), `--repeats N`
 (default 5), `--timeout S` (per step, default 1800), `--memory-max 16G|none`, `--threads N`,
 `--seed N`, `--halo2-k K --halo2-lookup-bits L` (fixed halo2 parameters on both halo2 sides,
@@ -58,7 +60,9 @@ For each case, in a seeded random order, and each requested system:
    incremented must be rejected.
 
 Every step runs under the same memory cap (a transient systemd scope with `MemoryMax`, no swap,
-as `eval-redo/tools/memrun.sh`) and the same timeout. Children see no GPU
+as `eval-redo/tools/memrun.sh`, plus `OOMPolicy=continue` so an OOM-killed tool is reported as
+`out_of_memory` by its step) and the same timeout. Work files count against the cap when the
+results directory is on tmpfs; keep epochs on disk. Children see no GPU
 (`CUDA_VISIBLE_DEVICES=""`, `SP1_PROVER=cpu`, `RISC0_DEV_MODE` unset). KDE's file indexer is
 suspended during an epoch (`balooctl6`/`balooctl`) and resumed after. A raw record's status is
 `ok` only if every step succeeded, every output matched and the tampered proof was rejected (or
@@ -75,7 +79,10 @@ the proof had no public value). Otherwise its status is the first failure class:
 |---|---|---|---|
 | `zinnia_halo2` | `create_proof` + transcript finalize, timed in the backend | the whole `prove()` call, **including** IPA parameter generation and keygen (the API couples them) | `verify_proof_artifact`, **including** re-keygen from the shipped IR |
 | `zinnia_noir`, `noir_hw` | `bb prove` process wall clock (includes bb start-up; the epoch manifest records the start-up floor on a one-line circuit) | `nargo execute` + `bb prove` | `bb verify` process |
-| contract programs | `timings_s.prove` | `timings_s.witness` + `timings_s.prove` | `timings_s.verify` |
+| `halo2_hw` | `prove_s` (create_proof) | `witness_s` + `prove_s` | `verify_s` |
+| `sp1`, `sp1_groth16` | `prove` (the SDK executes inside the prove call) | `prove` | `verify` |
+| `risc0` (`_groth16`) | `prove` (+ `compress_succinct` + `wrap_groth16`) | `execute` + prove core | `verify` |
+| `cairo` | `scarb prove` process | `scarb execute` + `scarb prove` processes | `scarb verify` process |
 
 Every raw record carries its system's window descriptions.
 
@@ -100,30 +107,26 @@ and must be byte-identical for inputs A and B.
 
 ## The per-system program contract
 
-Each baseline system directory (`baselines/halo2_hw`, `baselines/sp1`, `baselines/risc0`,
-`baselines/cairo`) provides an executable `bench`:
+Each baseline program takes the case folder, the fixture, the input name and a mode, writes one
+JSON object (`ok`, `publics` = the kernel's return value flattened row-major and decoded,
+`proof_path`, `timings_s` per step, `verified` in verify mode, optionally `output_shape`) and
+exits non-zero on any failure. The harness calls (`harness/adapters/contract.py`):
 
 ```
-bench --case-dir DIR --fixture PATH --input A|B --mode setup|prove|verify
-      --work-dir DIR --out PATH [--proof PATH] [--tamper] [system flags]
+halo2_hw/target/release/halo2_hw <mode> --case DIR --fixture F --input A|B --workdir W --out J
+                                 [--k K --lookup-bits L] [--tamper-index 0]
+sp1/target/release/sp1-baseline  --case-dir DIR --mode <mode> --work-dir W --fixture F --input A|B
+                                 --out J --proof-mode core|groth16 [--tamper]
+risc0/target/release/risc0-baseline  ... --proof-mode composite|groth16 [--tamper]
+python cairo/cairo_baseline.py   ... --proof-mode stwo [--tamper]
 ```
 
-- `setup` (input A) builds and writes keys to `--work-dir`; `prove` (input B) writes one proof
-  to exactly `--proof` with those keys (the proof's size is reported as the proof size); `verify` checks `--proof` (with `--tamper`, after changing one
-  public value of it; the harness passes a copy).
-- It writes one JSON object to `--out` and exits non-zero on any failure (still writing the JSON):
-  `{"ok": bool, "error": str, "error_class": str, "publics": [...], "proof_path": str,
-  "verified": bool, "timings_s": {"setup", "witness", "prove", "verify"}, "details": {...}}`.
-  `publics` is the kernel's return value flattened row-major (tuple parts in order), decoded to
-  numbers; a data-dependent length is decoded too (only the true elements).
-- System flags: `sp1_plonk` passes `--variant plonk`; `halo2_hw` accepts `--k K --lookup-bits L`
-  in setup and reports the chosen `k`/`lookup_bits` in `details`.
-
-The handwritten Noir baselines are driven by the harness itself. Their `Prover.toml` writer and
-public-output decoder are taken from `baselines/noir_hw/prover_toml.py`
-(`write_prover_toml(case_dir, fixture_path, input_name) -> str`,
-`decode_publics(case_dir, fields) -> list`) when that module exists; otherwise the harness
-writes `Prover.toml` from the fixture and decodes outputs by the reference's types.
+Setup gets its own work directory; every prove runs in a fresh copy of it (`cp --reflink=auto`)
+inside the sample's proof directory, because the programs overwrite their proof in place; that
+copy is what the sample's verification and the tamper check read. The clocks are sums of the
+program's step timings as in the table above. The handwritten Noir baselines are driven by the
+harness itself (same commands as Zinnia's), with `hw_check.prover_toml` writing `Prover.toml`
+and `hw_check.noir_driver` decoding the outputs from each `main.nr`'s `// @outputs:` line.
 
 ## Results
 

@@ -3,6 +3,10 @@
 The memory cap is the one `eval-redo/tools/memrun.sh` applies: a transient
 systemd user scope with `MemoryMax` and no swap, the child marked as the
 preferred OOM victim (`choom -n 1000`), so a runaway step is killed alone.
+One addition: `OOMPolicy=continue`. With systemd's default (`stop`), an OOM kill
+of a tool the step started (nargo, bb, a prover) makes systemd stop the whole
+scope with SIGTERM before the step can report; with `continue` only the killed
+process dies, and the step records `out_of_memory` for it.
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ def memory_capped(command: list[str], memory_max: str | None) -> list[str]:
     if memory_max is None:
         return list(command)
     return ["systemd-run", "--user", "--scope", "--quiet",
-            "-p", f"MemoryMax={memory_max}", "-p", "MemorySwapMax=0",
+            "-p", f"MemoryMax={memory_max}", "-p", "MemorySwapMax=0", "-p", "OOMPolicy=continue",
             "--", "choom", "-n", "1000", "--", *command]
 
 
@@ -65,3 +69,21 @@ def _kill_session(proc: subprocess.Popen) -> None:
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
+
+
+def oom_kills_in_own_cgroup() -> int:
+    """How many processes the kernel OOM-killed in this process's cgroup (0 if unknown).
+
+    A step runs alone in its memory-capped scope, so a non-zero count means a
+    process of this step (a prover, nargo, bb) hit the cap.
+    """
+    try:
+        entry = Path("/proc/self/cgroup").read_text().strip().splitlines()[0]
+        events = Path("/sys/fs/cgroup" + entry.split(":", 2)[2]) / "memory.events"
+        for line in events.read_text().splitlines():
+            name, _, value = line.partition(" ")
+            if name == "oom_kill":
+                return int(value)
+    except (OSError, IndexError, ValueError):
+        pass
+    return 0

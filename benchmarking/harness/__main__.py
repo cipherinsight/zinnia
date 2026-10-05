@@ -1,7 +1,8 @@
 """Single entry point of the benchmark harness.
 
     python -m benchmarking.harness check-env [--systems S,..] [--out FILE]
-    python -m benchmarking.harness build [--jobs N]
+    python -m benchmarking.harness build [--jobs N] [--baselines halo2_hw,sp1,risc0,cairo]
+                                         [--skip-zinnia]
     python -m benchmarking.harness run --label L [--systems S,..] [--case-set FILE]
                                        [--cases ID,..] [--fixtures-dir DIR] [--repeats N]
                                        [--timeout S] [--memory-max 16G|none] [--threads N]
@@ -53,8 +54,15 @@ def cmd_check_env(args: argparse.Namespace) -> int:
 
 
 def cmd_build(args: argparse.Namespace) -> int:
-    from benchmarking.harness.build import build_release
-    build_release(jobs=args.jobs)
+    from benchmarking.harness.build import BASELINE_BUILDS, build_baselines, build_release
+    baselines = _list(args.baselines)
+    unknown = [b for b in baselines if b not in BASELINE_BUILDS]
+    if unknown:
+        raise SystemExit(f"unknown baselines {unknown}; known: {', '.join(BASELINE_BUILDS)}")
+    if not args.skip_zinnia:
+        build_release(jobs=args.jobs)
+    if baselines:
+        build_baselines(baselines, jobs=args.jobs)
     return 0
 
 
@@ -122,6 +130,8 @@ def parser() -> argparse.ArgumentParser:
 
     build = sub.add_parser("build", help="release build of the extension + build record")
     build.add_argument("--jobs", type=int, default=5)
+    build.add_argument("--baselines", help="also build these programs: halo2_hw,sp1,risc0,cairo")
+    build.add_argument("--skip-zinnia", action="store_true", help="only build --baselines")
     build.set_defaults(func=cmd_build)
 
     run = sub.add_parser("run", help="run one epoch")

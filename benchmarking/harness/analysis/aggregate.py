@@ -24,7 +24,7 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from benchmarking.harness.adapters import BASELINE_SYSTEMS, ZINNIA_SYSTEMS
+from benchmarking.harness.adapters import BASELINE_SYSTEMS, SAME_PROOF_SYSTEM, ZINNIA_SYSTEMS
 from benchmarking.harness.analysis import stats
 from benchmarking.harness.protocol import OK, REFERENCE_SYSTEM
 
@@ -73,6 +73,16 @@ def clock_values(record: dict, clock: str) -> list[float]:
     return values
 
 
+def setup_facts(record: dict) -> dict:
+    """Circuit size facts from setup: halo2 `k`/`lookup_bits`, Noir circuit size."""
+    details = ((record.get("setup") or {}).get("result") or {}).get("details") or {}
+    params = details.get("params") or details
+    gates = details.get("gates")
+    facts = {"k": params.get("k"), "lookup_bits": params.get("lookup_bits"),
+             "circuit_size": gates.get("circuit_size") if isinstance(gates, dict) else gates}
+    return {key: value for key, value in facts.items() if value is not None}
+
+
 def per_case_rows(data: EpochData) -> list[dict]:
     rows = []
     for system in data.systems:
@@ -87,6 +97,7 @@ def per_case_rows(data: EpochData) -> list[dict]:
                                 f"{clock}_q1": q1, f"{clock}_q3": q3})
             sizes = [s["prove"]["proof_bytes"] for s in record["samples"] if s.get("prove")]
             row["proof_bytes"] = sizes[0] if sizes else None
+            row.update(setup_facts(record))
             rows.append(row)
     return rows
 
@@ -136,9 +147,11 @@ def compare(data: EpochData, zinnia: str, baseline: str, cases: list[str],
 
 
 def comparison_pairs(data: EpochData) -> list[tuple[str, str]]:
+    """Every (Zinnia system, baseline) pair; same-proof-system pairs first."""
     zinnia = [s for s in data.systems if s in ZINNIA_SYSTEMS]
     baselines = [s for s in data.systems if s not in ZINNIA_SYSTEMS]
-    return [(z, b) for z in zinnia for b in baselines]
+    pairs = [(z, b) for z in zinnia for b in baselines]
+    return sorted(pairs, key=lambda pair: SAME_PROOF_SYSTEM.get(pair[0]) != pair[1])
 
 
 def exclusions(data: EpochData) -> list[dict]:

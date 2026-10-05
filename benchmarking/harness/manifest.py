@@ -10,12 +10,13 @@ hashes are in the raw records.
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import asdict
 from pathlib import Path
 
 from benchmarking.harness import build, environment, gitstate, paths, toolchains
-from benchmarking.harness.adapters.contract import CONTRACT_SYSTEMS, ENTRY_POINT_NAME
+from benchmarking.harness.adapters.contract import PROGRAMS
 from benchmarking.harness.isolation import memory_capped
 from benchmarking.harness.protocol import RunConfig
 
@@ -25,16 +26,17 @@ def _sha256_or_none(path: Path) -> str | None:
 
 
 def baseline_programs() -> dict:
-    """Entry points and lock files of the contract programs, by system."""
+    """Program binaries and lock files of the contract programs, by system."""
     out = {}
-    for name, system in CONTRACT_SYSTEMS.items():
-        base = paths.BASELINES / system.baseline_dir
+    for name, program in PROGRAMS.items():
+        entry = Path(program.argv()[-1])
+        base = program.directory
         out[name] = {
-            "entry_point": paths.relative_to_repo(base / ENTRY_POINT_NAME),
-            "entry_point_sha256": _sha256_or_none(base / ENTRY_POINT_NAME),
-            "cargo_lock_sha256": {paths.relative_to_repo(lock): build.sha256_file(lock)
-                                  for lock in sorted(base.glob("**/Cargo.lock"))}
-            if base.is_dir() else {},
+            "program": paths.relative_to_repo(entry),
+            "program_sha256": _sha256_or_none(entry),
+            "lock_sha256": {paths.relative_to_repo(lock): build.sha256_file(lock)
+                            for pattern in ("Cargo.lock", "Scarb.lock")
+                            for lock in sorted(base.glob(pattern))} if base.is_dir() else {},
         }
     return out
 
@@ -50,6 +52,8 @@ def start_manifest(epoch_name: str, config: RunConfig, build_record: dict | None
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "repository": gitstate.describe(paths.REPO_ROOT),
         "build": build_record,
+        "baseline_builds": (json.loads(build.BASELINE_RECORD.read_text())
+                            if build.BASELINE_RECORD.exists() else None),
         "extension_sha256": _sha256_or_none(extension) if extension else None,
         "toolchains": toolchains.as_json(probes),
         "python": toolchains.python_packages(),

@@ -29,7 +29,7 @@ import numpy as np
 def kernel(a: Float[Array, "4"]):
     return a * 2.0
 '''
-PROGRAM_FILES = ("target.rs", "sp1.prog.rs", "risc0.prog.rs", "main.cairo")
+PROGRAM_FILES = ("target.rs", "zkvm.rs", "main.cairo")
 
 
 def make_case(root: Path) -> PerfCase:
@@ -47,12 +47,15 @@ def make_case(root: Path) -> PerfCase:
                     reason=None)
 
 
-def install_fake(baselines: Path, directory: str, behavior: str) -> None:
-    target = baselines / directory
-    target.mkdir(parents=True)
-    shutil.copy(FAKE_PROGRAM, target / "bench")
-    (target / "bench").chmod(0o755)
-    (target / "behavior.txt").write_text(behavior)
+def install_fake(baselines: Path, system: str, behavior: str) -> None:
+    """The fake program at the path the harness runs for `system`."""
+    from benchmarking.harness.adapters.contract import PROGRAMS
+
+    entry = baselines / PROGRAMS[system].command[-1]
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(FAKE_PROGRAM, entry)
+    entry.chmod(0o755)
+    (entry.parent / "behavior.txt").write_text(behavior)
 
 
 @pytest.fixture
@@ -83,6 +86,9 @@ def test_failure_classes(tmp_path, fake_baselines):
 
     assert {name: r["status"] for name, r in records.items()} == {
         "halo2_hw": "ok", "sp1": "wrong_output", "risc0": "tamper_accepted", "cairo": "crashed"}
+    # Every sample was proved and verified in its own copy of the setup directory.
+    proof_dirs = {Path(s["prove"]["proof_path"]).parent for s in records["halo2_hw"]["samples"]}
+    assert len(proof_dirs) == 2
 
     honest = records["halo2_hw"]
     assert [s["tag"] for s in honest["samples"]] == ["sample-1", "sample-2"]
@@ -121,5 +127,19 @@ def test_memory_cap_wraps_in_a_systemd_scope():
     command = memory_capped(["python", "-c", "pass"], "8G")
     assert command[:3] == ["systemd-run", "--user", "--scope"]
     assert "MemoryMax=8G" in command and "MemorySwapMax=0" in command
+    assert "OOMPolicy=continue" in command
     assert command[-3:] == ["python", "-c", "pass"]
     assert memory_capped(["true"], None) == ["true"]
+
+
+@pytest.mark.skipif(shutil.which("systemd-run") is None, reason="needs systemd-run")
+def test_a_tool_killed_at_the_memory_cap_is_out_of_memory(tmp_path, fake_baselines):
+    """The fake program allocates past a 300M cap in a grandchild during prove."""
+    install_fake(fake_baselines, "halo2_hw", "allocate_on_prove")
+    case = make_case(tmp_path)
+    config = RunConfig(systems=["halo2_hw"], repeats=1, step_timeout_s=60.0, memory_max="300M")
+    protocol = CaseProtocol(StepRunner(Epoch(tmp_path / "epoch"), config), config,
+                            random.Random(1))
+    record = protocol.run(case, [get_adapter("halo2_hw")])[0].record
+    assert record["status"] == "out_of_memory"
+    assert record["failure"]["step"] == "warmup"

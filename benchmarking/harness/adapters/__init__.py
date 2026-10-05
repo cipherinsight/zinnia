@@ -10,7 +10,8 @@ from __future__ import annotations
 from benchmarking.harness.adapters.base import Adapter
 
 ZINNIA_SYSTEMS = ("zinnia_halo2", "zinnia_noir")
-BASELINE_SYSTEMS = ("halo2_hw", "noir_hw", "sp1", "sp1_plonk", "risc0", "cairo")
+BASELINE_SYSTEMS = ("halo2_hw", "noir_hw", "sp1", "sp1_groth16", "risc0", "risc0_groth16",
+                    "cairo")
 ALL_SYSTEMS = ZINNIA_SYSTEMS + BASELINE_SYSTEMS
 
 #: The baseline each Zinnia backend is compared with on the same proof system.
@@ -27,7 +28,7 @@ def get_adapter(name: str) -> Adapter:
     if name == "noir_hw":
         from benchmarking.harness.adapters.noir_hw import NoirHandwrittenAdapter
         return NoirHandwrittenAdapter()
-    from benchmarking.harness.adapters.contract import CONTRACT_SYSTEMS, ContractProgramAdapter
-    if name in CONTRACT_SYSTEMS:
-        return ContractProgramAdapter(CONTRACT_SYSTEMS[name])
+    from benchmarking.harness.adapters.contract import PROGRAMS, ContractProgramAdapter
+    if name in PROGRAMS:
+        return ContractProgramAdapter(PROGRAMS[name])
     raise ValueError(f"unknown system {name!r}; known: {', '.join(ALL_SYSTEMS)}")
