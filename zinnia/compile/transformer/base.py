@@ -482,8 +482,11 @@ class ZinniaBaseASTTransformer(ast.NodeTransformer):
             expr = self.visit_expr(node.value)
             lhs = {"__class__": "ASTLoad", "name": identifier_name}
             bin_op = {"__class__": "ASTBinaryOperator", "operator": op_type, "lhs": lhs, "rhs": expr}
+            # `augmented` tells the IR generator that Python updates a
+            # mutable target (array, list) in place rather than rebinding it.
             return {"__class__": "ASTAssignStatement",
-                    "targets": [self.visit_assign_target(node.target)], "value": bin_op}
+                    "targets": [self.visit_assign_target(node.target)], "value": bin_op,
+                    "augmented": True}
         elif isinstance(node.target, ast.Subscript):
             # Desugar `a[i] op= v` to `a[i] = a[i] op v` so the augmented
             # form routes through the same well-tested code path as the

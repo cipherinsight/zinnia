@@ -75,6 +75,22 @@ impl IRContext {
         None
     }
 
+    /// The name of a binding other than `name`'s own (in any scope, including
+    /// callers' scopes outside the current chip) whose value satisfies
+    /// `holds`. Used to find a second way to reach a Python list.
+    pub fn find_other_binding(&self, name: &str, holds: impl Fn(&Value) -> bool) -> Option<String> {
+        let own = (0..self.scopes.len())
+            .rev()
+            .find(|&i| self.scopes[i].exists_local(name) || self.scopes[i].is_boundary())
+            .filter(|&i| self.scopes[i].exists_local(name));
+        self.scopes.iter().enumerate().find_map(|(i, scope)| {
+            scope.var_table().iter().find_map(|(other, store)| {
+                let is_own = own == Some(i) && other == name;
+                (!is_own && holds(&store.value)).then(|| other.clone())
+            })
+        })
+    }
+
     /// Mark a name that is syntactically introduced only inside a loop body
     /// that was proven not to execute. This is intentionally narrow: it is
     /// not a general definite-assignment analysis, just a better diagnostic

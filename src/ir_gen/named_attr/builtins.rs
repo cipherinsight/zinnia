@@ -300,7 +300,11 @@ impl IRGenerator {
                     })
                 } else {
                     match &visited_args[0] {
-                        Value::List(_) => visited_args[0].clone(),
+                        // `list(a)` is a new (shallow) list, not `a` itself.
+                        Value::List(data) => Value::List(CompositeData {
+                            value_id: ValueId::next(),
+                            ..data.clone()
+                        }),
                         Value::Tuple(data) => Value::List(CompositeData {
                             elements_type: data.elements_type.clone(),
                             values: data.values.clone(),

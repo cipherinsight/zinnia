@@ -13,6 +13,17 @@ mod list_methods;
 mod ndarray_methods;
 mod numpy_funcs;
 
+/// Write `result` into the existing array `target` (element-wise, through
+/// views; shapes must match and a float result cannot go into an integer
+/// array). Returns `target`.
+pub(super) fn write_into(
+    b: &mut crate::builder::IRBuilder,
+    result: &Value,
+    target: &Value,
+) -> Value {
+    array_compat::write_output(b, result, target, None)
+}
+
 pub(super) fn kwarg_static_truthy(
     kwargs: &HashMap<String, Value>,
     name: &str,

@@ -13,8 +13,11 @@ use crate::optim::resolver::{LayeredResolver, Resolver, StaticOnlyResolver};
 use crate::types::{NumberType, ShapeDim, Value, ZinniaType};
 
 mod chip_external;
+mod detached_copies;
 mod helpers;
+mod iteration;
 mod list_methods;
+mod list_sharing;
 mod named_attr;
 mod visitors;
 
@@ -129,6 +132,8 @@ pub struct IRGenerator {
     pub(crate) induction_origins: HashMap<String, String>,
     pub(crate) loop_index_bound_contexts: Vec<LoopIndexBoundContext>,
     pub(crate) loop_read_reuse_contexts: Vec<LoopReadReuseContext>,
+    /// Copies made where NumPy would return a view (see `detached_copies`).
+    pub(crate) detached_copies: detached_copies::DetachedCopies,
 }
 
 /// One entry in [`IRGenerator::chip_call_stack`]. See round-2 doc on
@@ -239,6 +244,7 @@ impl IRGenerator {
             induction_origins: HashMap::new(),
             loop_index_bound_contexts: Vec::new(),
             loop_read_reuse_contexts: Vec::new(),
+            detached_copies: detached_copies::DetachedCopies::default(),
         }
     }
 

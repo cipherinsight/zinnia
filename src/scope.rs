@@ -148,6 +148,18 @@ impl Scope {
         }
     }
 
+    /// This scope's variable table.
+    pub fn var_table(&self) -> &HashMap<String, ValueStore> {
+        match self {
+            Scope::Master(d) => &d.var_table,
+            Scope::Chip(d) => &d.var_table,
+            Scope::Circuit(d) => &d.var_table,
+            Scope::Conditional(d) => &d.var_table,
+            Scope::Loop(d) => &d.var_table,
+            Scope::Generator(d) => &d.var_table,
+        }
+    }
+
     /// Get a variable from this scope's local table only.
     pub fn get_local(&self, name: &str) -> Option<&ValueStore> {
         match self {

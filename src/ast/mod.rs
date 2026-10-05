@@ -177,6 +177,11 @@ pub struct ASTChipInput {
 pub struct ASTAssignStatement {
     pub targets: Vec<ASTNode>,
     pub value: Box<ASTNode>,
+    /// Set for `name op= value`, which the transformer lowers to
+    /// `name = name op value`: Python updates a mutable object (an array or
+    /// a list) in place, so other references to it see the update.
+    #[serde(default)]
+    pub augmented: bool,
     #[serde(default)]
     pub dbg: Option<DebugInfo>,
 }
