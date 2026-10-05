@@ -511,29 +511,31 @@ pub fn np_nonzero(b: &mut IRBuilder, args: &[Value]) -> Value {
 }
 
 /// `np.unique(arr, return_inverse=...)` returning a bounded-dynamic
-/// output.
+/// output: the distinct values of `arr` (flattened) in **ascending
+/// order**, as NumPy returns them.
 ///
-/// **Semantics deviation from numpy.** numpy returns the unique values
-/// in *sorted* order; this implementation returns them in
-/// **first-occurrence** order. The function's set semantics
-/// (deduplication, `return_inverse` consistency) are preserved, but
-/// downstream code that depends on sorting will see a different
-/// ordering. For ZK we'd need a sorting network / permutation argument
-/// to match numpy exactly; the DS-1000 cases in scope use the result
-/// either as an iteration target (order doesn't matter) or as a
-/// one-hot column basis (column order doesn't matter as long as
-/// `inverse` is consistent), so first-occurrence is enough.
+/// **Construction (O(n^2) comparisons, no sorting network needed).**
+/// With `n` input cells `x[0..n)`:
 ///
-/// **Bounded-dynamic output.** Worst case every input cell is unique,
-/// so the output envelope is `[Dim::dynamic(0, n)]` with
-/// `total_bound = n`. The segment is sized `n` and unique values are
-/// written in compaction order; non-kept positions hold defaults but
-/// sit past `runtime_length`.
+/// - `is_first[i] = AND_{j<i} (x[j] != x[i])` picks one representative
+///   (the first occurrence) of every distinct value;
+/// - `rank[i] = sum_j is_first[j] * (x[j] < x[i])` is the number of
+///   distinct values strictly below `x[i]`, i.e. the position of `x[i]`
+///   in the sorted unique array;
+/// - `unique[k]` is the representative whose rank is `k`; exactly one
+///   representative has rank `k` for every `k < count`, where
+///   `count = sum_i is_first[i]` is the runtime length;
+/// - `inverse[i] = rank[i]`, so `unique[inverse] == x` as in NumPy.
+///
+/// Every output cell is a function of the inputs computed by in-circuit
+/// comparisons and selects, so the result is fully constrained.
+///
+/// **Bounded-dynamic output.** Worst case every input cell is unique, so
+/// the output envelope is `[Dim::dynamic(0, n)]` with `total_bound = n`.
+/// Slots `k >= count` hold 0 and sit past `runtime_length`.
 ///
 /// **`return_inverse`.** Returns a `Tuple(unique_dyn, inverse_static)`
-/// where `inverse_static` is a `Value::StaticArray` of shape `(n,)`
-/// containing, for each input cell `i`, the position in `unique_dyn`
-/// where `arr[i]` was first written.
+/// where `inverse_static` is a `Value::StaticArray` of shape `(n,)`.
 ///
 /// Unsupported kwargs (`axis`, `return_index`, `return_counts`) panic
 /// with a clear message rather than silently producing the wrong
@@ -562,10 +564,9 @@ pub fn np_unique(
         panic!("np.unique: kwarg `axis` is not yet supported (input is implicitly flattened)");
     }
 
-    // Resolve input. Accept any rank-N StaticArray (flatten first) or
-    // tuple/list of scalars. DynamicNDArray inputs are out of scope for
-    // this first cut — they'd need a runtime-length-aware compaction
-    // pass and the in-scope DS-1000 cases all pass StaticArrays.
+    // Resolve input. Accept any rank-N StaticArray (flattened) or a
+    // tuple/list of scalars; DynamicNDArray inputs are rejected by
+    // `static_numeric_input`.
     let input = args
         .first()
         .unwrap_or_else(|| panic!("np.unique: requires an input array"));
@@ -574,88 +575,24 @@ pub fn np_unique(
     if n == 0 {
         panic!("np.unique: empty input is not supported");
     }
-
-    // Detect dtype from the first cell. Mixed dtypes can't occur here
-    // because `static_numeric_input` already rejected non-numeric
-    // composites, and a StaticArray has a single declared dtype.
+    // A StaticArray has one declared dtype and `static_numeric_input`
+    // rejected non-numeric composites, so the first cell decides.
     let dtype = match &cells[0] {
         Value::Float(_) => NumberType::Float,
         Value::Integer(_) | Value::Boolean(_) => NumberType::Integer,
         _ => panic!("np.unique: input cells must be Integer / Float / Boolean"),
     };
-    let eq = |b: &mut IRBuilder, lhs: &Value, rhs: &Value| match dtype {
-        NumberType::Float => b.ir_equal_f(lhs, rhs),
-        NumberType::Integer => b.ir_equal_i(lhs, rhs),
-        NumberType::Complex => unreachable!("np.unique: Complex inputs not accepted"),
-    };
+    let cells: Vec<Value> = cells.iter().map(|c| cast_to_dtype(b, c, dtype)).collect();
 
-    // Output segment pre-filled with defaults (any value works; the
-    // post-runtime_length positions are never read).
-    let default_val = match dtype {
-        NumberType::Float => b.ir_constant_float(0.0),
-        NumberType::Integer => b.ir_constant_int(0),
-        NumberType::Complex => unreachable!(),
-    };
-    let default_sv = value_to_scalar_i64(&default_val);
-    let segment_id = crate::helpers::segment::alloc_and_write(b, &vec![default_sv; n], dtype);
-
-    // O(N²) per-cell compaction:
-    //   is_first[i] = AND_{j<i} (arr[j] != arr[i])
-    //   inverse[i]   = write_ptr_before        when is_first[i]
-    //                = inverse[first matching j<i]  otherwise
-    //                = sum_{j<=i}( is_first[j] AND eq(arr[j], arr[i]) ) * inverse[j]
-    //                  + is_first[i] * write_ptr_before
-    // Both branches are folded into one expression to avoid an
-    // explicit lookup table.
-    let mut write_ptr = b.ir_constant_int(0);
-    let one = b.ir_constant_int(1);
-    let zero = b.ir_constant_int(0);
-    let mut is_first_cells: Vec<Value> = Vec::with_capacity(n);
-    let mut inverse_cells: Vec<Value> = Vec::with_capacity(n);
-
-    for i in 0..n {
-        let mut is_first = b.ir_constant_bool(true);
-        for j in 0..i {
-            let e = eq(b, &cells[j], &cells[i]);
-            // arr[j] != arr[i]  ⇔  NOT (arr[j] == arr[i]).
-            let ne = b.ir_logical_not(&e);
-            is_first = b.ir_logical_and(&is_first, &ne);
-        }
-
-        // inverse[i]:
-        //   when is_first → write_ptr (current count of unique so far)
-        //   otherwise     → inverse[first j<i with arr[j] == arr[i]]
-        let mut inv_if_dup = zero.clone();
-        for j in 0..i {
-            let e = eq(b, &cells[j], &cells[i]);
-            // Only the first occurrence j survives because is_first[j]
-            // is true there.
-            let pick = b.ir_logical_and(&is_first_cells[j], &e);
-            let pick_i = b.ir_int_cast(&pick);
-            let term = b.ir_mul_i(&pick_i, &inverse_cells[j]);
-            inv_if_dup = b.ir_add_i(&inv_if_dup, &term);
-        }
-        let inv_i = b.ir_select_i(&is_first, &write_ptr, &inv_if_dup);
-        inverse_cells.push(inv_i);
-
-        // Conditionally write arr[i] at write_ptr; default if not new.
-        let cast = cast_to_dtype(b, &cells[i], dtype);
-        let to_write = if matches!(dtype, NumberType::Float) {
-            b.ir_select_f(&is_first, &cast, &default_val)
-        } else {
-            b.ir_select_i(&is_first, &cast, &default_val)
-        };
-        b.ir_write_memory(segment_id, &write_ptr, &to_write);
-
-        let inc = b.ir_select_i(&is_first, &one, &zero);
-        write_ptr = b.ir_add_i(&write_ptr, &inc);
-        is_first_cells.push(is_first);
-    }
+    let ranking = rank_distinct_values(b, &cells, dtype);
+    let sorted_unique: Vec<Value> = (0..n)
+        .map(|k| select_representative_with_rank(b, &cells, &ranking, k, dtype))
+        .collect();
+    let segment_id = crate::helpers::segment::alloc_and_write_values(b, &sorted_unique, dtype);
 
     let envelope =
         crate::types::Envelope::new_with_bound(vec![Dim::new_dynamic(&mut b.dim_table, 0, n)], n);
-    let runtime_length = value_to_scalar_i64(&write_ptr);
-
+    let runtime_length = value_to_scalar_i64(&ranking.count);
     let unique_dyn = Value::DynamicNDArray(DynamicNDArrayData {
         envelope,
         dtype,
@@ -679,7 +616,7 @@ pub fn np_unique(
 
     let inverse_arr = crate::helpers::static_array::base::build_static_array_from_flat(
         b,
-        inverse_cells,
+        ranking.rank,
         vec![n],
         NumberType::Integer,
     );
@@ -696,6 +633,98 @@ pub fn np_unique(
         },
     ];
     Value::Tuple(CompositeData::new(types, vec![unique_dyn, inverse_arr]))
+}
+
+/// Per-cell ranking of the distinct values of `cells` (see `np_unique`).
+struct DistinctRanking {
+    /// `is_first[i]`: `cells[i]` is the first occurrence of its value.
+    is_first: Vec<Value>,
+    /// `rank[i]`: number of distinct values strictly below `cells[i]`.
+    rank: Vec<Value>,
+    /// Number of distinct values.
+    count: Value,
+}
+
+fn rank_distinct_values(b: &mut IRBuilder, cells: &[Value], dtype: NumberType) -> DistinctRanking {
+    let n = cells.len();
+    let (eq, lt): (fn(&mut IRBuilder, &Value, &Value) -> Value, fn(&mut IRBuilder, &Value, &Value) -> Value) =
+        match dtype {
+            NumberType::Float => (IRBuilder::ir_equal_f, IRBuilder::ir_less_than_f),
+            NumberType::Integer => (IRBuilder::ir_equal_i, IRBuilder::ir_less_than_i),
+            NumberType::Complex => unreachable!("np.unique: Complex inputs not accepted"),
+        };
+    // One comparison per unordered pair: `x[j] > x[i]` is derived as
+    // `!(x[j] < x[i]) && !(x[j] == x[i])`.
+    let mut equal = vec![vec![None; n]; n];
+    let mut less = vec![vec![None; n]; n];
+    for i in 0..n {
+        for j in 0..i {
+            let e = eq(b, &cells[j], &cells[i]);
+            let l = lt(b, &cells[j], &cells[i]);
+            let not_e = b.ir_logical_not(&e);
+            let not_l = b.ir_logical_not(&l);
+            let g = b.ir_logical_and(&not_e, &not_l);
+            equal[i][j] = Some(e.clone());
+            equal[j][i] = Some(e);
+            less[j][i] = Some(l); // x[j] < x[i]
+            less[i][j] = Some(g); // x[i] < x[j]
+        }
+    }
+    let mut is_first: Vec<Value> = Vec::with_capacity(n);
+    for i in 0..n {
+        let mut first = b.ir_constant_bool(true);
+        for j in 0..i {
+            let e = equal[i][j].as_ref().expect("pair compared above");
+            let ne = b.ir_logical_not(e);
+            first = b.ir_logical_and(&first, &ne);
+        }
+        is_first.push(first);
+    }
+    let mut rank: Vec<Value> = Vec::with_capacity(n);
+    for i in 0..n {
+        let mut r = b.ir_constant_int(0);
+        for j in (0..n).filter(|&j| j != i) {
+            let below = less[j][i].as_ref().expect("pair compared above");
+            let counted = b.ir_logical_and(&is_first[j], below);
+            let counted = b.ir_int_cast(&counted);
+            r = b.ir_add_i(&r, &counted);
+        }
+        rank.push(r);
+    }
+    let mut count = b.ir_constant_int(0);
+    for first in &is_first {
+        let one_if_first = b.ir_int_cast(first);
+        count = b.ir_add_i(&count, &one_if_first);
+    }
+    DistinctRanking {
+        is_first,
+        rank,
+        count,
+    }
+}
+
+/// The representative cell whose rank is `k`, or 0 when `k >= count`.
+fn select_representative_with_rank(
+    b: &mut IRBuilder,
+    cells: &[Value],
+    ranking: &DistinctRanking,
+    k: usize,
+    dtype: NumberType,
+) -> Value {
+    let k_v = b.ir_constant_int(k as i64);
+    let mut acc = match dtype {
+        NumberType::Float => b.ir_constant_float(0.0),
+        _ => b.ir_constant_int(0),
+    };
+    for (i, cell) in cells.iter().enumerate() {
+        let rank_is_k = b.ir_equal_i(&ranking.rank[i], &k_v);
+        let picked = b.ir_logical_and(&ranking.is_first[i], &rank_is_k);
+        acc = match dtype {
+            NumberType::Float => b.ir_select_f(&picked, cell, &acc),
+            _ => b.ir_select_i(&picked, cell, &acc),
+        };
+    }
+    acc
 }
 
 /// Cast a numeric Value to the requested NumberType, preserving an

@@ -6,7 +6,7 @@
 
 use crate::builder::IRBuilder;
 use crate::helpers::shape_arith::{decode_coords, encode_coords, row_major_strides};
-use crate::helpers::value_ops::apply_scalar_binary_op;
+use crate::helpers::value_ops::{apply_scalar_binary_op, binary_op_result_dtype};
 use crate::types::{
     broadcast_envelopes, DynArrayMeta, DynamicNDArrayData, NumberType, ScalarValue, Value, ValueId,
 };
@@ -33,17 +33,8 @@ pub fn dyn_binary_op(
     // dynamic dims, the static type system gave us nothing — refuse.
     check_broadcast_bound(&lhs.envelope, &rhs.envelope, &out_envelope);
 
-    // 2. Output dtype: complex wins for arithmetic; comparisons produce integer.
-    let is_cmp = matches!(op, "eq" | "ne" | "lt" | "lte" | "gt" | "gte");
-    let out_dtype = if is_cmp {
-        NumberType::Integer
-    } else if lhs.dtype == NumberType::Complex || rhs.dtype == NumberType::Complex {
-        NumberType::Complex
-    } else if lhs.dtype == NumberType::Float || rhs.dtype == NumberType::Float {
-        NumberType::Float
-    } else {
-        NumberType::Integer
-    };
+    // 2. Output dtype (shared NumPy promotion rule).
+    let out_dtype = binary_op_result_dtype(op, lhs.dtype, rhs.dtype);
 
     // 3. Pre-read source segments. Force contiguity so the row-major
     // indexing below sees cells in logical order even if the source is
@@ -149,18 +140,12 @@ pub fn dyn_scalar_binary_op(
     arr: &DynamicNDArrayData,
     scalar_is_lhs: bool,
 ) -> Value {
-    let is_cmp = matches!(op, "eq" | "ne" | "lt" | "lte" | "gt" | "gte");
-    let scalar_is_float = matches!(scalar, Value::Float(_));
-    let scalar_is_complex = matches!(scalar, Value::Complex { .. });
-    let out_dtype = if is_cmp {
-        NumberType::Integer
-    } else if scalar_is_complex || arr.dtype == NumberType::Complex {
-        NumberType::Complex
-    } else if scalar_is_float || arr.dtype == NumberType::Float {
-        NumberType::Float
-    } else {
-        NumberType::Integer
+    let scalar_dtype = match scalar {
+        Value::Float(_) => NumberType::Float,
+        Value::Complex { .. } => NumberType::Complex,
+        _ => NumberType::Integer,
     };
+    let out_dtype = binary_op_result_dtype(op, scalar_dtype, arr.dtype);
 
     let arr_owned = super::force_contiguous(b, arr);
     let arr = &arr_owned;

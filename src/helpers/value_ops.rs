@@ -5,7 +5,38 @@
 //! `&mut IRBuilder` as an explicit parameter instead of `&mut self`.
 
 use crate::builder::IRBuilder;
-use crate::types::{CompositeData, Value, ValueId};
+use crate::types::{CompositeData, NumberType, Value, ValueId};
+
+/// `true` for element-wise operators whose result is a boolean
+/// (comparisons and the logical connectives); booleans are stored as
+/// Integer cells.
+pub fn op_yields_boolean(op: &str) -> bool {
+    matches!(op, "eq" | "ne" | "lt" | "lte" | "gt" | "gte" | "and" | "or")
+}
+
+/// Result dtype of the element-wise binary operator `op` on operands of
+/// dtypes `lhs` and `rhs`, following NumPy's promotion restricted to
+/// Zinnia's number types:
+///
+/// - comparisons and logical connectives yield booleans (Integer cells);
+/// - true division `/` (`"div"`) always yields Float, as `np.true_divide`
+///   does for integer operands (`np.array([1]) / 2` is `[0.5]`);
+/// - otherwise Complex dominates Float, and Float dominates Integer.
+///
+/// This is the single dtype rule shared by the scalar, static-array and
+/// dynamic-array element-wise paths.
+pub fn binary_op_result_dtype(op: &str, lhs: NumberType, rhs: NumberType) -> NumberType {
+    if op_yields_boolean(op) {
+        return NumberType::Integer;
+    }
+    if lhs == NumberType::Complex || rhs == NumberType::Complex {
+        return NumberType::Complex;
+    }
+    if op == "div" || lhs == NumberType::Float || rhs == NumberType::Float {
+        return NumberType::Float;
+    }
+    NumberType::Integer
+}
 
 /// Elementwise numeric binary op for INTERNAL array math on composites.
 ///
@@ -922,7 +953,10 @@ pub fn apply_scalar_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Va
         };
     }
 
-    let use_float = matches!(lhs, Value::Float(_)) || matches!(rhs, Value::Float(_));
+    // True division always computes in Float, even on integer operands
+    // (Python and NumPy `/`); see `binary_op_result_dtype`.
+    let use_float =
+        op == "div" || matches!(lhs, Value::Float(_)) || matches!(rhs, Value::Float(_));
     if use_float {
         // Float base ^ Integer exponent: stay in PowFI so backends can lower
         // to integer-exponent square-and-multiply instead of qexp(b*qlog(a)).
@@ -962,18 +996,7 @@ pub fn apply_scalar_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Va
             "add" => b.ir_add_i(lhs, rhs),
             "sub" => b.ir_sub_i(lhs, rhs),
             "mul" => b.ir_mul_i(lhs, rhs),
-            // Python's `int / int` returns a float at the Python language
-            // level; user-facing kernels writing `np.floor(n/2).astype(int)`
-            // expect integer floor division at the IR level. Routing to
-            // `ir_div_i` (field-inverse division) leaves a vacuous DivI op
-            // whose runtime value is a junk field element — downstream slice
-            // bound discharges then fail (see 0467 mock_fail). Match the
-            // numpy/ZK convention: integer-typed `/` is integer floor div.
-            // The five IR-gen sites in reshape / arange / repeat / indexing
-            // were independently patched the same direction earlier in this
-            // session; this is the language-level entrypoint of the same
-            // pattern.
-            "div" | "floor_div" => b.ir_floor_div_i(lhs, rhs),
+            "floor_div" => b.ir_floor_div_i(lhs, rhs),
             "mod" => b.ir_mod_i(lhs, rhs),
             "pow" => b.ir_pow_i(lhs, rhs),
             "eq" => b.ir_equal_i(lhs, rhs),

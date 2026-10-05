@@ -282,22 +282,45 @@ fn np_correlate_ds1000(
     }
     let a = static_cells(b, &args[0], "np.correlate");
     let v = static_cells(b, &args[1], "np.correlate");
-    let (long, short) = if a.len() >= v.len() {
-        (&a, &v)
-    } else {
-        (&v, &a)
-    };
+    // NumPy: `c[k] = sum_n a[n + k] * v[n]` when `len(a) >= len(v)`; when
+    // `v` is longer it computes `correlate(v, a)` and returns it reversed.
+    let swapped = v.len() > a.len();
+    let (long, short) = if swapped { (&v, &a) } else { (&a, &v) };
     let out_len = long.len() - short.len() + 1;
+    let integer_inputs = lhs_dtype == NumberType::Integer && rhs_dtype == NumberType::Integer;
     let mut out = Vec::with_capacity(out_len);
     for start in 0..out_len {
-        out.push(product_sum(b, &long[start..start + short.len()], short));
+        let window = &long[start..start + short.len()];
+        out.push(if integer_inputs {
+            integer_product_sum(b, window, short)
+        } else {
+            product_sum(b, window, short)
+        });
     }
+    if swapped {
+        out.reverse();
+    }
+    let out_dtype = if integer_inputs {
+        NumberType::Integer
+    } else {
+        NumberType::Float
+    };
     crate::helpers::static_array::base::build_static_array_from_flat(
         b,
         out,
         vec![out_len],
-        NumberType::Float,
+        out_dtype,
     )
+}
+
+/// Exact integer dot product `sum_i lhs[i] * rhs[i]`.
+fn integer_product_sum(b: &mut crate::builder::IRBuilder, lhs: &[Value], rhs: &[Value]) -> Value {
+    let mut acc = b.ir_constant_int(0);
+    for (l, r) in lhs.iter().zip(rhs) {
+        let term = b.ir_mul_i(l, r);
+        acc = b.ir_add_i(&acc, &term);
+    }
+    acc
 }
 
 fn np_corrcoef_ds1000(b: &mut crate::builder::IRBuilder, args: &[Value]) -> Value {
