@@ -1,22 +1,17 @@
+# pythran program sumarray3d.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: denominator-obligation, domain-obligation, in-place-mutation, loop-bounded
-# Expected outcome: compile/prove candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 import numpy as np
 
 @zk_circuit
-def summation(pos: Float[Array, 'N<=1024 M<=1024'], weights: Float[Array, 'N<=1024'], points: Float[Array, 'N<=1024 M<=1024']):
+def summation(pos: Float[Array, '30 3'], weights: Float[Array, '30'], points: Float[Array, '30 3']):
     n_points = len(points)
     n_weights = len(weights)
     sum_array3d = np.zeros((n_points, 3))
 
-    @zk_chip
-    def compute(i: Integer):
+    def compute(i):
         pxi = points[i, 0]
         pyi = points[i, 1]
         pzi = points[i, 2]

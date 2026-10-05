@@ -1,20 +1,16 @@
+# pythran program convnet.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: denominator-obligation, in-place-mutation, loop-bounded, matmul-dot
-# Expected outcome: compile/prove candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Declare shared matrix/vector dimensions explicitly; when not expressible as @requires, encode with matching symbolic annotation names and keep as review obligation.
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 import numpy as np
 
 @zk_chip
-def sigmoid(z: Float[Array, 'N<=1024']):
+def sigmoid(z):
     return 1 / (1 + np.exp(-z))
 
 @zk_circuit
-def convnet(conv_matrix: Float[Array, 'N<=1024 M<=1024'], qcnn_filter: Float[Array, 'N<=1024 M<=1024'], length: Integer, batch_size: Integer, state_size: Integer):
+def convnet(conv_matrix: Float[Array, '4 4'], qcnn_filter: Float[Array, '4 4'], length: Integer, batch_size: Integer, state_size: Integer):
     state_size_2 = state_size * 2
     state_size_3 = state_size * 3
     state_size_4 = state_size * 4

@@ -216,7 +216,7 @@ class _ModuleReads(ast.NodeVisitor):
     Statements are visited in execution order and every assignment visits its
     right-hand side before its targets, so `a = a ** power` reads `a`. Names a
     comprehension binds are local to it. Function and lambda bodies are not
-    visited here; `_function_globals` handles them.
+    visited here; `function_globals` handles them.
     """
 
     def __init__(self) -> None:
@@ -301,7 +301,7 @@ class _ModuleReads(ast.NodeVisitor):
         self._comprehension(node, [node.key, node.value])
 
 
-def _function_globals(source: str) -> list[str]:
+def function_globals(source: str) -> list[str]:
     """Implicit globals read inside functions and lambdas of `source`."""
     found: list[str] = []
 
@@ -328,7 +328,7 @@ def free_names(source: str) -> list[str]:
     for stmt in ast.parse(source).body:
         visitor.visit(stmt)
     names = list(visitor.free)
-    for name in _function_globals(source):
+    for name in function_globals(source):
         if name not in visitor.bound and name not in names:
             names.append(name)
     return names

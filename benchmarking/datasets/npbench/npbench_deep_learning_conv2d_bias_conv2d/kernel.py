@@ -1,14 +1,12 @@
+# npbench program deep_learning/conv2d_bias/conv2d_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: in-place-mutation, loop-bounded
-# Expected outcome: compile/prove candidate
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 import numpy as np
 
 @zk_chip
-def conv2d(input: Float[Array, 'N<=1024 H<=1024 W<=1024 C<=256'], weights: Float[Array, 'K<=256 K<=256 C<=256 F<=256']):
+def conv2d(input, weights):
     K = weights.shape[0]
     N = input.shape[0]
     H_out = input.shape[1] - K + 1
@@ -21,5 +19,5 @@ def conv2d(input: Float[Array, 'N<=1024 H<=1024 W<=1024 C<=256'], weights: Float
     return output
 
 @zk_circuit
-def conv2d_bias(input: Float[Array, 'N<=1024 H<=1024 W<=1024 C<=256'], weights: Float[Array, 'K<=256 K<=256 C<=256 F<=256'], bias: Float[Array, 'F<=256']):
+def conv2d_bias(input: Float[Array, '8 32 32 3'], weights: Float[Array, '2 2 3 16'], bias: Float[Array, '16']):
     return conv2d(input, weights) + bias

@@ -1,19 +1,14 @@
+# pythran program calculate_u.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: data-dependent-loop, denominator-obligation, in-place-mutation, loop-bounded
-# Expected outcome: diagnostic/fail-closed candidate
-# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
-# Diagnostic: while loops require a public/padded maximum iteration count.
 
 @zk_circuit
 @requires(lambda t, t_stop, dt, dx, dy, u, um, k: dt != 0.0)
 @requires(lambda t, t_stop, dt, dx, dy, u, um, k: dx != 0.0)
 @requires(lambda t, t_stop, dt, dx, dy, u, um, k: dy != 0.0)
-def timeloop(t: Float, t_stop: Float, dt: Float, dx: Float, dy: Float, u: Float[Array, 'N<=1024 M<=1024'], um: Float[Array, 'N<=1024 M<=1024'], k: Float[Array, 'N<=1024 M<=1024']):
+def timeloop(t: Float, t_stop: Float, dt: Float, dx: Float, dy: Float, u: Integer[Array, '5 10'], um: Integer[Array, '5 10'], k: Integer[Array, '5 10']):
     while t <= t_stop:
         t += dt
         new_u = calculate_u(dt, dx, dy, u, um, k)
@@ -22,7 +17,7 @@ def timeloop(t: Float, t_stop: Float, dt: Float, dx: Float, dy: Float, u: Float[
     return u
 
 @zk_chip
-def calculate_u(dt: Float, dx: Float, dy: Float, u: Float[Array, 'N<=1024'], um: Float[Array, 'N<=1024'], k: Float[Array, 'N<=1024']):
+def calculate_u(dt, dx, dy, u, um, k):
     up = [[0.0] * len(u[0]) for i in range(len(u))]
     'omp parallel for'
     for i in range(1, len(u) - 1):

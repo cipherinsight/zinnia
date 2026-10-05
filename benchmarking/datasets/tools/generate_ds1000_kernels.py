@@ -218,7 +218,7 @@ def _body(record: dict[str, Any], context: records.ExecContext) -> tuple[list[st
     helper_lines: list[str] = []
     helper_line_numbers: set[int] = set()
     for fn in helpers:
-        for name in records._function_globals(ast.unparse(fn)):
+        for name in records.function_globals(ast.unparse(fn)):
             if name not in records.BUILTIN_NAMES:
                 raise GenerationError(f"helper {fn.name} reads the outer name {name}; it cannot move to module level")
         start = fn.lineno - len(fn.decorator_list)
@@ -244,7 +244,7 @@ def _body(record: dict[str, Any], context: records.ExecContext) -> tuple[list[st
     return helper_lines, body, f"{form}; returns {returned}"
 
 
-def _constant_literal(value: Any) -> str:
+def constant_literal(value: Any) -> str:
     if isinstance(value, (bool, np.bool_)):
         return repr(bool(value))
     if isinstance(value, (int, np.integer)):
@@ -252,13 +252,13 @@ def _constant_literal(value: Any) -> str:
     if isinstance(value, np.ndarray):
         return f"np.array({value.tolist()!r})"
     if isinstance(value, tuple):
-        return repr(tuple(_plain(v) for v in value))
+        return repr(tuple(plain_value(v) for v in value))
     if isinstance(value, list):
-        return repr([_plain(v) for v in value])
+        return repr([plain_value(v) for v in value])
     raise GenerationError(f"cannot write a constant of type {type(value).__name__}")
 
 
-def _plain(value: Any) -> Any:
+def plain_value(value: Any) -> Any:
     if isinstance(value, np.integer):
         return int(value)
     if isinstance(value, np.floating):
@@ -314,7 +314,7 @@ def generate(record: dict[str, Any], constants: Sequence[str] = ()) -> Generated
                       f"(test case {shape_case.case_id} value).")
     header.append("")
     signature = ", ".join(f"{name}: {ptype.annotation()}" for name, ptype in params)
-    constant_lines = [f"{name} = {_constant_literal(value)}" for name, value in constant_values.items()]
+    constant_lines = [f"{name} = {constant_literal(value)}" for name, value in constant_values.items()]
     lines = header + helper_lines + ["@zk_circuit", f"def kernel({signature}):"]
     lines += ["    " + line if line.strip() else "" for line in constant_lines + body]
     return GeneratedKernel(pid, "\n".join(lines) + "\n", params, constant_values, shape_case.case_id, form, notes)

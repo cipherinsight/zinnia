@@ -1,8 +1,12 @@
+# npbench program nbody/nbody_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
 import numpy as np
 
 @zk_chip
-def getAcc(pos: Float[Array, 'N<=1024 C<=3'], mass: Float[Array, 'N<=1024'], G: Float, softening: Float):
+def getAcc(pos, mass, G, softening):
     """
     Calculate the acceleration on each particle due to Newton's Law 
     pos  is an N x 3 matrix of positions
@@ -26,7 +30,7 @@ def getAcc(pos: Float[Array, 'N<=1024 C<=3'], mass: Float[Array, 'N<=1024'], G: 
     return a
 
 @zk_chip
-def getEnergy(pos: Float[Array, 'N<=1024 C<=3'], vel: Float[Array, 'N<=1024 C<=3'], mass: Float[Array, 'N<=1024'], G: Float):
+def getEnergy(pos, vel, mass, G):
     """
     Get kinetic energy (KE) and potential energy (PE) of simulation
     pos is N x 3 matrix of positions
@@ -51,7 +55,7 @@ def getEnergy(pos: Float[Array, 'N<=1024 C<=3'], vel: Float[Array, 'N<=1024 C<=3
 @zk_circuit
 @requires(lambda mass, pos, vel, N, Nt, dt, G, softening: 0 <= N <= 1024)
 @requires(lambda mass, pos, vel, N, Nt, dt, G, softening: dt != 0.0)
-def nbody(mass: Float[Array, 'N<=1024'], pos: Float[Array, 'N<=1024 C<=3'], vel: Float[Array, 'N<=1024 C<=3'], N: Integer, Nt: Integer, dt: Float, G: Float, softening: Float):
+def nbody(mass: Float[Array, '25 1'], pos: Float[Array, '25 3'], vel: Float[Array, '25 3'], N: Integer, Nt: Integer, dt: Float, G: Float, softening: Float):
     vel -= np.mean(mass * vel, axis=0) / np.mean(mass)
     acc = getAcc(pos, mass, G, softening)
     KE = np.ndarray(Nt + 1, dtype=np.float64)

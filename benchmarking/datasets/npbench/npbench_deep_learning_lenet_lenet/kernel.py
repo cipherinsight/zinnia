@@ -1,12 +1,16 @@
+# npbench program deep_learning/lenet/lenet_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
 import numpy as np
 
 @zk_chip
-def relu(x: Float[Array, 'N<=1024']):
+def relu(x):
     return np.maximum(x, 0)
 
 @zk_chip
-def conv2d(input: Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256'], weights: Float[Array, 'N<=1024 M<=1024 K<=1024']):
+def conv2d(input, weights):
     K = weights.shape[0]
     N = input.shape[0]
     H_out = input.shape[1] - K + 1
@@ -19,7 +23,7 @@ def conv2d(input: Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256'], weights: Float
     return output
 
 @zk_chip
-def maxpool2d(x: Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256']):
+def maxpool2d(x):
     output = np.empty([x.shape[0], x.shape[1] // 2, x.shape[2] // 2, x.shape[3]], dtype=x.dtype)
     for i in range(x.shape[1] // 2):
         for j in range(x.shape[2] // 2):
@@ -27,7 +31,7 @@ def maxpool2d(x: Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256']):
     return output
 
 @zk_circuit
-def lenet5(input: Float[Array, 'N<=1024 H<=1024 W<=1024 C<=256'], conv1: Float[Array, 'K<=256 K<=256 C<=256 F1<=256'], conv1bias: Float[Array, 'F1<=256'], conv2: Float[Array, 'K2<=256 K2<=256 F1<=256 F2<=256'], conv2bias: Float[Array, 'F2<=256'], fc1w: Float[Array, 'C0<=1024 C1<=1024'], fc1b: Float[Array, 'C1<=1024'], fc2w: Float[Array, 'C1<=1024 C2<=1024'], fc2b: Float[Array, 'C2<=1024'], fc3w: Float[Array, 'C2<=1024 C3<=1024'], fc3b: Float[Array, 'C3<=1024'], N: Integer, C_before_fc1: Integer):
+def lenet5(input: Float[Array, '4 28 28 1'], conv1: Float[Array, '5 5 1 6'], conv1bias: Float[Array, '6'], conv2: Float[Array, '5 5 6 16'], conv2bias: Float[Array, '16'], fc1w: Float[Array, '256 120'], fc1b: Float[Array, '120'], fc2w: Float[Array, '120 84'], fc2b: Float[Array, '84'], fc3w: Float[Array, '84 10'], fc3b: Float[Array, '10'], N: Integer, C_before_fc1: Integer):
     x = relu(conv2d(input, conv1) + conv1bias)
     x = maxpool2d(x)
     x = relu(conv2d(x, conv2) + conv2bias)
