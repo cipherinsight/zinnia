@@ -142,13 +142,14 @@ halo2-base (`q32::Q32`, built on `GateChip`/`RangeChip` of halo2-base 0.4.1):
 | `int(x)`, `astype(int)` | `q.float_to_int` |
 | `np.floor` | `q.floor` |
 | `x ** n` (constant n) | `q.pow_const` |
-| `np.sqrt` | `q.sqrt` (exact floor square root) |
+| `np.sqrt` | `q.sqrt` (exact floor square root); `q.isqrt` for a raw integer |
 | `np.sin`, `np.cos` | `q.sin`, `q.cos` |
 | `<`, `<=`, `>`, `>=` | `q.bound` once per value, then `q.lt`/`le`/`gt`/`ge`, `q.lt_const` |
 | `max`, `min`, `abs` | `q.max`, `q.min`, `q.abs`; `q.max_of` / `q.min_of` (hint pinned by range checks and a product) for the extremum of a few values |
 | `==`, `!=` | `q.eq`, `q.gate.not` |
 | `where`, `if` on data | `q.gate.select`, `q.select_i64` |
 | `a[i]` (private `i`) | `q.index` (NumPy wrap and bounds; one-hot or range-checked form by length), `q.index_i64` if `i` already has a window proof |
+| `x[mask]`, `nonzero`, `argwhere` | `q.select_kept` (values) or `q.compact` (other payloads): a running one-hot of the next free slot, then `out.dynamic` |
 | `k // d`, `k % d` for a small known-non-negative `k` (an index built from loop constants) | `q.divmod_small` (halo2-base `div_mod`) |
 | `&`, `|`, `~` on bools | `q.gate.and`, `q.gate.or`, `q.gate.not` |
 
@@ -162,7 +163,10 @@ Noir (`noir_hw`, on top of the Noir standard library):
 | float `/` | `noir_hw::div` |
 | int `//`, `%` | `noir_hw::divmod_pos` |
 | `astype(float)`, `int(x)`, `np.floor` | `from_int`, `to_int`, `floor` |
-| `np.sqrt`, `np.sin`, `np.cos` | `sqrt`, `sin`, `cos` |
+| `np.sqrt`, `np.sin`, `np.cos` | `sqrt` (`isqrt` for a raw integer), `sin`, `cos` |
+| `//` by a constant `2^k` | `floor_div_pow2` |
+| `max`/`min` of a few values | `max_of` |
+| `x[mask]`, `nonzero`, `argwhere` | `select_kept`, `compact`, `compact_rows` |
 | comparisons | `let w = window(x)` once per value, then `u64` comparisons; `lt`, `gt`, ... for one-off tests |
 | `max`, `min`, `abs` | `max`, `min`, `abs` (or `window` and select); `max_of` for the maximum of a few values |
 | `a[i]` (private `i`) | `a[index_pos(i, len)]` (native indexing); `pick(row, i)` for rows of up to 8 |

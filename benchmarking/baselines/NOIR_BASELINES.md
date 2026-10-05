@@ -64,8 +64,14 @@ native integer or as `bool`; floats become `round(v * 2^32)`.
     bounds), or `pick(row, i)` for rows of up to 8 values (a one-hot over the
     valid index values, cheaper there: 2,400 vs 7,001 gates for 169 length-2
     gathers);
-  - compaction and scatter: native dynamic writes (`out[count] = x; count += 1`
-    inside an `if`), no shift networks.
+  - masked selections (`x[mask]`, `nonzero`, `argwhere`): `select_kept`, or
+    `compact` / `compact_rows` for other payloads (a running one-hot of the next
+    free slot: 807 gates for 0442 against 7,346 with conditional native writes);
+  - constant divisors that are powers of two: `floor_div_pow2`; integer roots:
+    `isqrt`; the maximum or minimum of a few values: `max_of`;
+  - unconstrained computation checked by constraints when that is cheaper than
+    computing in-circuit (sorting: compute the order unconstrained, then check
+    the keys read through it strictly increase, as in 0381).
 - Range checks are `x.assert_max_bit_size::<N>()` on the original `Field`; an
   `as u64`/`as u32` cast truncates and proves nothing, so it only follows such a
   check (as in `window` and `index_pos`). Every `unsafe` hint is followed by the
