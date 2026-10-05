@@ -1,12 +1,15 @@
 from zinnia import *
 import numpy as np
 
-# DS-1000 NumPy acceptance-study kernel.
-# The body below is generated from the original DS-1000 reference solution.
-# Type annotations/preconditions are intentionally not inferred here.
+# DS-1000 problem 498 (NumPy problem 207; Surface perturbation of problem 495).
+# Generated from the DS-1000 reference solution by
+# benchmarking/datasets/tools/generate_ds1000_kernels.py: shapes from DS-1000
+# test case 1, each dtype wide enough for every DS-1000 test input.
+# Performance-set variant: shape is a compile-time constant (test case 1 value).
 
 @zk_circuit
-def kernel(arr: Float[Array, "N<=64 M<=64 K<=64"], shape: Integer[Array, "2"]):
+def kernel(arr: Float[Array, "41 13"]):
+    shape = (93, 13)
     result = np.pad(arr, ((0, shape[0]-arr.shape[0]), (0, shape[1]-arr.shape[1])), 'constant')
 
     return result
