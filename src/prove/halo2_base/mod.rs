@@ -97,34 +97,12 @@ impl ProverBackend for Halo2BaseProverBackend {
         use std::collections::HashMap;
 
         let defaults = ProvingParams::default();
-        // (advice cells, lookup cells, fixed cells, instance count) per lookup_bits
-        let mut dry_cache: HashMap<u32, (usize, usize, usize, usize)> = HashMap::new();
-        let mut dry_run = |lb: u32| -> Result<(usize, usize, usize, usize), ProvingError> {
+        let mut dry_cache: HashMap<u32, CellStats> = HashMap::new();
+        let mut dry_run = |lb: u32| -> Result<CellStats, ProvingError> {
             if let Some(v) = dry_cache.get(&lb) {
                 return Ok(*v);
             }
-            let mut builder = BaseCircuitBuilder::from_stage(CircuitBuilderStage::Keygen);
-            builder.set_k(ESTIMATE_K_MAX as usize);
-            builder.set_lookup_bits(lb as usize);
-            builder.set_instance_columns(1);
-            let dry_params = ProvingParams {
-                k: ESTIMATE_K_MAX,
-                lookup_bits: lb,
-                ..defaults.clone()
-            };
-            let instances = {
-                let mut synth =
-                Halo2BaseSynthesizer::new(&mut builder, None, dry_params, &ir.provenance);
-                interpret_ir(ir, &mut synth)?;
-                synth.public_values().len()
-            };
-            let stats = builder.statistics();
-            let entry = (
-                stats.gate.total_advice_per_phase.iter().sum::<usize>(),
-                stats.total_lookup_advice_per_phase.iter().sum::<usize>(),
-                stats.gate.total_fixed,
-                instances,
-            );
+            let entry = cell_stats(ir, lb, defaults.precision_bits)?;
             dry_cache.insert(lb, entry);
             Ok(entry)
         };
@@ -132,7 +110,7 @@ impl ProverBackend for Halo2BaseProverBackend {
         let mut best: Option<(u128, u32, u32)> = None; // (cost, k, lookup_bits)
         for k in ESTIMATE_K_MIN..=ESTIMATE_K_MAX {
             let lookup_bits = defaults.lookup_bits.min(k.saturating_sub(1)).max(1);
-            let (advice, lookup, fixed, instances) = dry_run(lookup_bits)?;
+            let CellStats { advice, lookup, fixed, instances } = dry_run(lookup_bits)?;
             let lookup_used = lookup > 0;
 
             let usable = (1usize << k).saturating_sub(UNUSABLE_ROWS);
@@ -509,6 +487,40 @@ pub fn verify_with_keys(keys: &Halo2BaseKeys, proof: &[u8], public_values: &[Fp]
         Ok(_) => VerifyResult::ok(),
         Err(e) => VerifyResult::invalid(format!("halo2-base verify_proof failed: {:?}", e)),
     }
+}
+
+/// Cell counts of one synthesized circuit (witness-independent).
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+pub struct CellStats {
+    pub advice: usize,
+    pub lookup: usize,
+    pub fixed: usize,
+    pub instances: usize,
+}
+
+/// The cell counts of `ir` synthesized without a witness at `lookup_bits`.
+/// Counts depend on the lookup width (range checks decompose into limbs of
+/// that width) but not on `k`.
+pub fn cell_stats(ir: &IRGraph, lookup_bits: u32, precision_bits: u32) -> Result<CellStats, ProvingError> {
+    let mut builder = BaseCircuitBuilder::from_stage(CircuitBuilderStage::Keygen);
+    builder.set_k(ESTIMATE_K_MAX as usize);
+    builder.set_lookup_bits(lookup_bits as usize);
+    builder.set_instance_columns(1);
+    let params = ProvingParams { k: ESTIMATE_K_MAX, lookup_bits, precision_bits };
+    let instances = {
+        let mut synth = Halo2BaseSynthesizer::new(&mut builder, None, params, &ir.provenance);
+        interpret_ir(ir, &mut synth)?;
+        synth.public_values().len()
+    };
+    let stats = builder.statistics();
+    let cells = CellStats {
+        advice: stats.gate.total_advice_per_phase.iter().sum(),
+        lookup: stats.total_lookup_advice_per_phase.iter().sum(),
+        fixed: stats.gate.total_fixed,
+        instances,
+    };
+    builder.clear();
+    Ok(cells)
 }
 
 /// Hex encoding of a field element, as in `ProofArtifact::public_values`.

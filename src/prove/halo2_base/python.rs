@@ -13,7 +13,7 @@ use std::time::Instant;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-use super::{fp_from_hex, fp_to_hex, keygen, prove_with_keys, verify_with_keys, Halo2BaseKeys, Halo2BaseProverBackend};
+use super::{cell_stats, fp_from_hex, fp_to_hex, keygen, prove_with_keys, verify_with_keys, Halo2BaseKeys, Halo2BaseProverBackend};
 use crate::prove::traits::ProverBackend;
 use crate::prove::types::ProvingParams;
 use crate::CompiledIR;
@@ -59,16 +59,42 @@ impl PyHalo2BaseKeys {
 #[pyfunction]
 #[pyo3(signature = (compiled_ir, params_json=None))]
 fn halo2_base_keygen(compiled_ir: &CompiledIR, params_json: Option<&str>) -> PyResult<PyHalo2BaseKeys> {
-    let params: ProvingParams = match params_json {
-        Some(pj) => serde_json::from_str(pj)
-            .map_err(|e| PyValueError::new_err(format!("Params JSON parse error: {}", e)))?,
-        None => Halo2BaseProverBackend
-            .estimate_params(&compiled_ir.graph)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?,
-    };
+    let params = params_or_estimate(compiled_ir, params_json)?;
     let started = Instant::now();
     let keys = keygen(&compiled_ir.graph, &params).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
     Ok(PyHalo2BaseKeys { inner: Arc::new(keys), keygen_seconds: started.elapsed().as_secs_f64() })
+}
+
+/// The parameters `estimate_params` chooses (or `params_json`) and the
+/// circuit's cell counts at that lookup width, without key generation.
+/// Returns JSON `{"k", "lookup_bits", "precision_bits", "advice", "lookup",
+/// "fixed", "instances"}`.
+#[pyfunction]
+#[pyo3(signature = (compiled_ir, params_json=None))]
+fn halo2_base_cell_stats(compiled_ir: &CompiledIR, params_json: Option<&str>) -> PyResult<String> {
+    let params = params_or_estimate(compiled_ir, params_json)?;
+    let cells = cell_stats(&compiled_ir.graph, params.lookup_bits, params.precision_bits)
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    Ok(serde_json::json!({
+        "k": params.k,
+        "lookup_bits": params.lookup_bits,
+        "precision_bits": params.precision_bits,
+        "advice": cells.advice,
+        "lookup": cells.lookup,
+        "fixed": cells.fixed,
+        "instances": cells.instances,
+    })
+    .to_string())
+}
+
+fn params_or_estimate(compiled_ir: &CompiledIR, params_json: Option<&str>) -> PyResult<ProvingParams> {
+    match params_json {
+        Some(pj) => serde_json::from_str(pj)
+            .map_err(|e| PyValueError::new_err(format!("Params JSON parse error: {}", e))),
+        None => Halo2BaseProverBackend
+            .estimate_params(&compiled_ir.graph)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string())),
+    }
 }
 
 /// Prove with existing keys. Returns JSON with `proof` (hex),
@@ -141,6 +167,7 @@ fn unhex(s: &str) -> Result<Vec<u8>, String> {
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyHalo2BaseKeys>()?;
     m.add_function(wrap_pyfunction!(halo2_base_keygen, m)?)?;
+    m.add_function(wrap_pyfunction!(halo2_base_cell_stats, m)?)?;
     m.add_function(wrap_pyfunction!(halo2_base_prove, m)?)?;
     m.add_function(wrap_pyfunction!(halo2_base_verify, m)?)?;
     Ok(())
