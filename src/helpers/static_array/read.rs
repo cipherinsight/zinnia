@@ -59,41 +59,11 @@ fn read_leaf_at_flat(
     scalar_i64_to_value(&value_to_scalar_i64(&raw), dtype)
 }
 
-/// Read a single leaf at a runtime address. Always emits one
-/// `ir_read_memory` op.
-///
-/// Runs Group 5a's `discharge_index_in_range` against the dynamic
-/// address: a literal out of `[0, total_size)` panics at compile time,
-/// a Disproved discharge panics, and Unknown emits a witness assertion
-/// under lenient mode (panics under `ZINNIA_OP_REQUIRES_STRICT=1`). The
-/// memory-trace permutation argument remains the prover-side backstop.
-fn read_leaf_at_dynamic(
-    b: &mut IRBuilder,
-    segment_id: u32,
-    addr: &Value,
-    dtype: NumberType,
-    total_size: usize,
-) -> Value {
-    // Load-bearing index-in-range discharge (Group 5a). Replaces the
-    // informational `probe_in_range` with Phase E enforcement at the
-    // static-array dynamic-read chokepoint.
-    crate::optim::resolver::discharge_index_in_range(
-        b,
-        addr,
-        0,
-        total_size as i64,
-        "static_array_read",
-    );
-    if dtype != NumberType::Complex {
-        super::base::materialize_static_array_segment(b, segment_id, dtype);
-    }
-    let raw = b.ir_read_memory(segment_id, addr);
-    scalar_i64_to_value(&value_to_scalar_i64(&raw), dtype)
-}
-
-/// Read a runtime-addressed leaf when the caller has already proved
-/// `0 <= addr < total_size` in a narrower structural context.
-fn read_leaf_at_dynamic_with_preproved_index_bounds(
+/// Read a single leaf at a runtime address. Emits one `ir_read_memory` op
+/// and no bounds check: the caller must have bounds-checked every index
+/// the address is built from (`checked_axis_index`), or otherwise proved
+/// that the address lies inside the array.
+fn read_leaf_at_checked_address(
     b: &mut IRBuilder,
     segment_id: u32,
     addr: &Value,
@@ -176,7 +146,7 @@ fn select_typed(
     }
 }
 
-use super::base::{index_equals_coord, normalize_dynamic_index};
+use super::base::{checked_axis_index, index_equals_coord};
 
 fn and_all(b: &mut IRBuilder, parts: Vec<Value>) -> Value {
     let mut it = parts.into_iter();
@@ -216,7 +186,9 @@ fn enumerate_dynamic_single_choices(
     rec(0, axes, shape, &mut coords, &mut f);
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Read one leaf whose dynamic `Single` axes (already wrapped and
+/// bounds-checked by `checked_axis_index`) select among a small number of
+/// cached payload cells, as a select chain over the candidates.
 fn try_read_dynamic_single_from_payload(
     b: &mut IRBuilder,
     dtype: NumberType,
@@ -225,8 +197,6 @@ fn try_read_dynamic_single_from_payload(
     strides: &[usize],
     static_src_base: i64,
     dynamic_single_axes: &[(usize, Value)],
-    addr_for_bounds: &Value,
-    addr_bound_hi: usize,
 ) -> Option<Value> {
     if dtype == NumberType::Complex || dynamic_single_axes.is_empty() {
         return None;
@@ -242,13 +212,6 @@ fn try_read_dynamic_single_from_payload(
         super::base::force_static_array_product_provenance(b, segment_id);
     }
     let cached = b.static_array_payload.get(&segment_id)?.clone();
-    crate::optim::resolver::discharge_index_in_range(
-        b,
-        addr_for_bounds,
-        0,
-        addr_bound_hi as i64,
-        "static_array_read",
-    );
 
     let mut candidates: Vec<(Value, Value)> = Vec::with_capacity(choice_count);
     enumerate_dynamic_single_choices(dynamic_single_axes, shape, |choice_coords| {
@@ -499,42 +462,24 @@ fn try_fancy_subscript(
         }
     }
 
-    // Normalize + bound-assert every runtime index once per axis (numpy
-    // contract: -n <= i < n). Doing it here — after the last early-return,
-    // before the per-element loop — keeps the IR off abandoned paths and
-    // lets the AssertU128Lt interval hook bound each index to [0, n), so
-    // the backends' gather lowerings stay axis-sized instead of sweeping
-    // every address the unbounded root could reach.
+    // Wrap and bounds-check every index once per axis (numpy contract:
+    // -n <= i < n). Doing it here — after the last early-return, before
+    // the per-element loop — keeps the IR off abandoned paths and lets the
+    // AssertU128Lt interval hook bound each index to [0, n), so the
+    // backends' gather lowerings stay axis-sized instead of sweeping every
+    // address the unbounded root could reach. After this loop every index
+    // is non-negative and in range, so the reads below need no further
+    // check.
     for (ax, plan) in plans.iter_mut().enumerate() {
         let axis_len = shape[ax];
         match plan {
             FancyAxisPlan::Fancy { values, .. } => {
                 for val in values.iter_mut() {
-                    if val.int_val().is_none() {
-                        let normalized = normalize_dynamic_index(b, val, axis_len);
-                        crate::optim::resolver::discharge_index_in_range(
-                            b,
-                            &normalized,
-                            0,
-                            axis_len as i64,
-                            "fancy_index",
-                        );
-                        *val = normalized;
-                    }
+                    *val = checked_axis_index(b, val, ax, axis_len, "fancy_index");
                 }
             }
             FancyAxisPlan::Single(v) => {
-                if v.int_val().is_none() {
-                    let normalized = normalize_dynamic_index(b, v, axis_len);
-                    crate::optim::resolver::discharge_index_in_range(
-                        b,
-                        &normalized,
-                        0,
-                        axis_len as i64,
-                        "fancy_index",
-                    );
-                    *v = normalized;
-                }
+                *v = checked_axis_index(b, v, ax, axis_len, "fancy_index");
             }
             FancyAxisPlan::Range { .. } => {}
         }
@@ -542,7 +487,6 @@ fn try_fancy_subscript(
 
     let total: usize = out_shape.iter().product();
     let out_strides = row_major_strides(&out_shape);
-    let src_total: usize = shape.iter().product();
     let mut leaves: Vec<Value> = Vec::with_capacity(total);
 
     for flat_out in 0..total {
@@ -554,14 +498,10 @@ fn try_fancy_subscript(
             match plan {
                 FancyAxisPlan::Single(v) => {
                     if let Some(i) = v.int_val() {
-                        let i = if i < 0 {
-                            shape[src_axis] as i64 + i
-                        } else {
-                            i
-                        };
+                        // Already wrapped + bounds-checked above.
                         static_addr += i * strides[src_axis] as i64;
                     } else {
-                        // Already normalized + bound-asserted above.
+                        // Already wrapped + bounds-checked above.
                         let stride_val = b.ir_constant_int(strides[src_axis] as i64);
                         dynamic_parts.push(b.ir_mul_i(v, &stride_val));
                     }
@@ -588,14 +528,10 @@ fn try_fancy_subscript(
                     }
                     let idx_val = values[idx_flat].clone();
                     if let Some(i) = idx_val.int_val() {
-                        let i = if i < 0 {
-                            shape[src_axis] as i64 + i
-                        } else {
-                            i
-                        };
+                        // Already wrapped + bounds-checked above.
                         static_addr += i * strides[src_axis] as i64;
                     } else {
-                        // Already normalized + bound-asserted above.
+                        // Already wrapped + bounds-checked above.
                         let stride_val = b.ir_constant_int(strides[src_axis] as i64);
                         dynamic_parts.push(b.ir_mul_i(&idx_val, &stride_val));
                     }
@@ -620,13 +556,7 @@ fn try_fancy_subscript(
                 let im = imag_seg.expect("Complex StaticArray missing imag_segment_id");
                 leaves.push(read_complex_leaf_dynamic(b, segment_id, im, &addr));
             } else {
-                leaves.push(read_leaf_at_dynamic(
-                    b,
-                    segment_id,
-                    &addr,
-                    dtype,
-                    offset + src_total,
-                ));
+                leaves.push(read_leaf_at_checked_address(b, segment_id, &addr, dtype));
             }
         }
     }
@@ -745,6 +675,15 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
         return val.clone();
     }
 
+    match tuple_index(b, indices, &shape) {
+        TupleIndex::NotATuple => {}
+        TupleIndex::Mask(mask) => {
+            return super::mask::try_apply_boolean_mask_read(b, val, &mask)
+                .expect("nonzero mask has the array's shape")
+        }
+        TupleIndex::Axes(expanded) => return static_array_subscript(b, val, &expanded),
+    }
+
     // Expand a single Ellipsis (`...`) into the right number of full-range
     // slices, based on the source rank.
     if indices.iter().any(|i| matches!(i, SliceIndex::Ellipsis)) {
@@ -843,62 +782,37 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
     //    leaf read (static or dynamic).
     let all_single = indices.iter().all(|s| matches!(s, SliceIndex::Single(_)));
     if all_single && indices.len() == shape.len() {
-        // All indices present.
+        // Wrap and bounds-check every axis index (compile-time for
+        // literals); afterwards each index is in `[0, shape[ax])`, so the
+        // address below lies inside the array.
         let idx_vals: Vec<Value> = indices
             .iter()
-            .map(|s| match s {
-                SliceIndex::Single(v) => v.clone(),
+            .enumerate()
+            .map(|(ax, s)| match s {
+                SliceIndex::Single(v) => {
+                    checked_axis_index(b, v, ax, shape[ax], "static_array_read")
+                }
                 _ => unreachable!(),
             })
             .collect();
-
-        // If all static, read from cache or build static address.
         let all_static = idx_vals.iter().all(|v| v.int_val().is_some());
         if all_static {
-            // Compute flat (relative) index into payload, plus negative-norm.
-            let mut flat: i64 = 0;
-            for (ax, v) in idx_vals.iter().enumerate() {
-                let i = v.int_val().unwrap();
-                let i = if i < 0 { shape[ax] as i64 + i } else { i };
-                flat += i * strides[ax] as i64;
-            }
+            let flat: usize = idx_vals
+                .iter()
+                .zip(&strides)
+                .map(|(v, stride)| v.int_val().unwrap() as usize * stride)
+                .sum();
             if dtype == NumberType::Complex {
                 return read_complex_leaf(
                     b,
                     segment_id,
                     imag_seg.expect("Complex StaticArray missing imag_segment_id"),
-                    offset + flat as usize,
+                    offset + flat,
                 );
             }
-            return read_leaf_at_flat(b, segment_id, offset, flat as usize, dtype);
+            return read_leaf_at_flat(b, segment_id, offset, flat, dtype);
         }
-        // Numpy-style negative-index wrap on each dynamic axis index. Static
-        // values already get the `if i < 0 { shape[ax] + i }` treatment above;
-        // mirror that semantic at runtime via a cheap `select(idx<0, idx+len, idx)`
-        // (~3 IR ops per axis). The downstream `discharge_index_in_range` on the
-        // computed flat address still rejects original indices outside
-        // `[-len, len)` — the wrap can't bring an out-of-range value back into
-        // `[0, len)`, so soundness is preserved.
-        let zero_v = b.ir_constant_int(0);
-        let wrapped_idx_vals: Vec<Value> = idx_vals
-            .iter()
-            .enumerate()
-            .map(|(ax, v)| {
-                if v.int_val().is_some() {
-                    return v.clone();
-                }
-                // Fact-aware elide: skip the wrap when bounds prove
-                // non-negative (see 1-D path above for the rationale).
-                if b.ask_bounds(v).map(|(min, _)| min >= 0).unwrap_or(false) {
-                    return v.clone();
-                }
-                let len_v = b.ir_constant_int(shape[ax] as i64);
-                let is_neg = b.ir_less_than_i(v, &zero_v);
-                let v_plus_len = b.ir_add_i(v, &len_v);
-                b.ir_select_i(&is_neg, &v_plus_len, v)
-            })
-            .collect();
-        let addr = compute_addr(b, offset, &strides, &wrapped_idx_vals, &shape);
+        let addr = compute_addr(b, offset, &strides, &idx_vals, &shape);
         if dtype == NumberType::Complex {
             return read_complex_leaf_dynamic(
                 b,
@@ -907,54 +821,34 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
                 &addr,
             );
         }
-        let total: usize = shape.iter().product();
-        return read_leaf_at_dynamic(b, segment_id, &addr, dtype, offset + total);
+        return read_leaf_at_checked_address(b, segment_id, &addr, dtype);
     }
 
     // ── Single-index, ndim==1 → leaf or panic
     if indices.len() == 1 && shape.len() == 1 {
         match &indices[0] {
             SliceIndex::Single(v) => {
-                if let Some(i) = v.int_val() {
-                    let i = if i < 0 { shape[0] as i64 + i } else { i };
+                // NumPy allows `arr[-1]`-style negative indices (one wrap,
+                // not modular); `checked_axis_index` wraps with a cheap
+                // `select(i < 0, i + len, i)` (skipped when the facts show
+                // `i >= 0`, e.g. for an `argmax` result) and range-checks
+                // the wrapped value.
+                let i = checked_axis_index(b, v, 0, shape[0], "static_array_read");
+                if let Some(i) = i.int_val() {
+                    let flat = i as usize * strides[0];
                     if dtype == NumberType::Complex {
                         return read_complex_leaf(
                             b,
                             segment_id,
                             imag_seg.expect("Complex StaticArray missing imag_segment_id"),
-                            offset + i as usize * strides[0],
+                            offset + flat,
                         );
                     }
-                    return read_leaf_at_flat(b, segment_id, offset, i as usize, dtype);
+                    return read_leaf_at_flat(b, segment_id, offset, flat, dtype);
                 }
-                // Dynamic 1-D: numpy semantics allow `arr[-1]`-style negative
-                // indices (one wrap, not modular). Cheap implementation:
-                //   is_neg = i < 0
-                //   wrapped = select(is_neg, i + len, i)
-                // Costs ~3 IR ops vs. ~50 for a qmod-based normalization, and
-                // the downstream `discharge_index_in_range` on the wrapped
-                // address already rejects out-of-`[-len, len)` original indices
-                // (the wrap can't put them back into `[0, len)`).
-                //
-                // Fact-aware elide: if `ask_bounds(v)` shows v is already
-                // non-negative (e.g. produced by `arr.argmax()` which fires
-                // the `dyn_argextremum` contract publishing 0<=v<len), skip
-                // the wrap entirely so the bound facts carry through to the
-                // downstream discharge. Otherwise downstream sees only the
-                // opaque `select(is_neg, ...)` result and has to re-prove
-                // non-negativity, which it can't from a select expression.
-                let wrapped = if b.ask_bounds(v).map(|(min, _)| min >= 0).unwrap_or(false) {
-                    v.clone()
-                } else {
-                    let zero_v = b.ir_constant_int(0);
-                    let len_v = b.ir_constant_int(shape[0] as i64);
-                    let is_neg = b.ir_less_than_i(v, &zero_v);
-                    let v_plus_len = b.ir_add_i(v, &len_v);
-                    b.ir_select_i(&is_neg, &v_plus_len, v)
-                };
                 let off_val = b.ir_constant_int(offset as i64);
                 let stride_val = b.ir_constant_int(strides[0] as i64);
-                let scaled = b.ir_mul_i(&wrapped, &stride_val);
+                let scaled = b.ir_mul_i(&i, &stride_val);
                 let addr = b.ir_add_i(&off_val, &scaled);
                 if dtype == NumberType::Complex {
                     return read_complex_leaf_dynamic(
@@ -964,8 +858,7 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
                         &addr,
                     );
                 }
-                let total: usize = shape.iter().product();
-                return read_leaf_at_dynamic(b, segment_id, &addr, dtype, offset + total);
+                return read_leaf_at_checked_address(b, segment_id, &addr, dtype);
             }
             SliceIndex::Range(s, e, st) => {
                 return slice_axis_static_or_dynamic_1d(
@@ -992,8 +885,8 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
             SliceIndex::Single(v) => {
                 let new_shape = shape[1..].to_vec();
                 let new_strides = strides[1..].to_vec();
-                if let Some(i) = v.int_val() {
-                    let i = if i < 0 { shape[0] as i64 + i } else { i };
+                let i = checked_axis_index(b, v, 0, shape[0], "static_array_read");
+                if let Some(i) = i.int_val() {
                     let new_offset = offset + (i as usize) * strides[0];
                     return Value::StaticArray {
                         dtype,
@@ -1009,7 +902,7 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
                 // contiguous segment. We can't represent a dynamic-offset
                 // view in the StaticArray variant.
                 return materialise_axis0_dynamic_row(
-                    b, dtype, &shape, segment_id, imag_seg, &strides, offset, v,
+                    b, dtype, &shape, segment_id, imag_seg, &strides, offset, &i,
                 );
             }
             SliceIndex::Range(s, e, st) => {
@@ -1075,7 +968,7 @@ pub(crate) fn static_array_subscript_with_preproved_index_bounds(
                 let stride_val = b.ir_constant_int(strides[0] as i64);
                 let scaled = b.ir_mul_i(v, &stride_val);
                 let addr = b.ir_add_i(&off_val, &scaled);
-                return read_leaf_at_dynamic_with_preproved_index_bounds(
+                return read_leaf_at_checked_address(
                     b, segment_id, &addr, dtype,
                 );
             }
@@ -1534,9 +1427,10 @@ fn slice_axis(
         && (!is_present(step) || st_static.is_some());
 
     let out = if !all_static {
-        materialise_dynamic_axis_slice(
+        let padded = materialise_dynamic_axis_slice(
             b, dtype, shape, segment_id, strides, offset, axis, start, stop, step,
-        )
+        );
+        return runtime_shaped_slice(b, padded);
     } else {
         let len_i = shape[axis] as i64;
         let st = st_static.unwrap_or(1);
@@ -1634,6 +1528,65 @@ fn slice_axis(
         crate::optim::resolver::relay_forall_eq_const_from_input(b, in_vid, out_vid);
     }
     out
+}
+
+/// How a subscript whose single index is a tuple value is read.
+pub(crate) enum TupleIndex {
+    /// The index is not a single tuple value.
+    NotATuple,
+    /// The tuple came from `np.nonzero(m)` / `np.where(m)` on an array of
+    /// this shape: indexing with it is indexing with the mask `m`.
+    Mask(Value),
+    /// Any other tuple `t`: NumPy reads `a[t]` as `a[t[0], t[1], ...]`, one
+    /// entry per axis (a list, by contrast, is a fancy index on axis 0).
+    Axes(Vec<SliceIndex>),
+}
+
+/// Classify a subscript `a[t]` whose index `t` is a tuple value (e.g. the
+/// result of `np.unravel_index`). Both the read and the write path use it;
+/// it used to be read as a fancy index on axis 0, so `a[(1, 0)]` gave rows
+/// 1 and 0 and `a[np.unravel_index(k, a.shape)] = v` wrote whole rows.
+pub(crate) fn tuple_index(b: &IRBuilder, indices: &[SliceIndex], shape: &[usize]) -> TupleIndex {
+    let [SliceIndex::Single(Value::Tuple(tuple))] = indices else {
+        return TupleIndex::NotATuple;
+    };
+    if let Some(mask) = b.nonzero_index_masks.get(&tuple.value_id) {
+        if matches!(mask, Value::StaticArray { shape: m, .. } if m.as_slice() == shape) {
+            return TupleIndex::Mask(mask.clone());
+        }
+    }
+    if tuple.values.iter().any(|v| matches!(v, Value::DynamicNDArray(_))) {
+        crate::helpers::composite::reject_runtime_shaped_operand();
+    }
+    TupleIndex::Axes(tuple.values.iter().cloned().map(SliceIndex::Single).collect())
+}
+
+/// Hand out a dynamic-bounds slice as a `DynamicNDArray`.
+///
+/// The slice is materialised into a buffer of the static envelope shape
+/// whose content sits in the `[0, extent)` prefix of each axis, with the
+/// runtime extents recorded in provenance. As a plain `StaticArray` that
+/// buffer was consumed as if the envelope were the array: `a[0:r, :]`
+/// fed `.mean()`, `.min()`, `len()`, element-wise ops and further indexing
+/// with its zero padding as data. As a `DynamicNDArray` every consumer
+/// sees the runtime shape. A slice without an extents record (a non-unit
+/// step, or a complex dtype) has no runtime-shaped representation and is
+/// rejected rather than compiled with its padding.
+fn runtime_shaped_slice(b: &mut IRBuilder, padded: Value) -> Value {
+    if let Value::StaticArray {
+        segment_id,
+        dtype,
+        ..
+    } = &padded
+    {
+        if *dtype != NumberType::Complex && b.provenance.runtime_extents_of(*segment_id).is_some() {
+            return crate::helpers::promote::promote_static_to_dynamic_with_extents(b, &padded);
+        }
+    }
+    panic!(
+        "a slice with runtime bounds is supported only with step 1 on a real-valued array \
+         (its result has a runtime shape)"
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2203,6 +2156,7 @@ fn provable_strictly_positive(b: &IRBuilder, v: &Value) -> bool {
 
 /// Materialise a single dynamic-axis-0 row into a fresh segment. For Complex
 /// dtype, two parallel reads/writes per element across the dual segments.
+/// `idx` must already be wrapped and bounds-checked (`checked_axis_index`).
 fn materialise_axis0_dynamic_row(
     b: &mut IRBuilder,
     dtype: NumberType,
@@ -2412,20 +2366,16 @@ fn multidim_subscript_static_array(
     for ax in 0..rank {
         match &axis_kind[ax] {
             AxisSel::Single(v) => {
-                if let Some(i) = v.int_val() {
-                    let i = if i < 0 { shape[ax] as i64 + i } else { i };
+                // Wrap and bounds-check the index on its own axis, once,
+                // so the flat address (`dynamic_parts`, consumed by the
+                // memory-read fallback and Complex path) and the
+                // per-candidate `index_equals_coord` match agree for a
+                // negative `i` (C12c), and every leaf address below lies
+                // inside the array without a per-leaf check.
+                let vn = checked_axis_index(b, v, ax, shape[ax], "static_array_read");
+                if let Some(i) = vn.int_val() {
                     static_base += i * strides[ax] as i64;
                 } else {
-                    // C12c: numpy-wrap the runtime index ONCE here so the flat
-                    // address (`dynamic_parts`, consumed by the memory-read
-                    // fallback and Complex path) and the per-candidate
-                    // `index_equals_coord` match agree for negative `i`.
-                    // Previously the raw index flowed into both: the address
-                    // added `i*stride` (negative) and the unwrapped equals
-                    // matched no candidate, so `arr[i, 2:5]` with `i == -1`
-                    // silently returned the wrong row (caught only by a flat-
-                    // address discharge failing at prove time).
-                    let vn = normalize_dynamic_index(b, v, shape[ax]);
                     let stride_val = b.ir_constant_int(strides[ax] as i64);
                     dynamic_parts.push(b.ir_mul_i(&vn, &stride_val));
                     dynamic_single_axes.push((ax, vn));
@@ -2461,7 +2411,7 @@ fn multidim_subscript_static_array(
                     coords.clone(),
                 ));
             }
-            return materialise_dynamic_multi_axis_slice(
+            let padded = materialise_dynamic_multi_axis_slice(
                 b,
                 dtype,
                 &shape,
@@ -2473,12 +2423,13 @@ fn multidim_subscript_static_array(
                 &dynamic_range_axes,
                 &out_shape,
             );
+            return runtime_shaped_slice(b, padded);
         }
 
         // Preserve the existing recursive single-axis materialisation path
         // when there is only one dynamic range axis or when a dynamic Single
-        // index contributes to the address; those cases rely on the
-        // downstream `read_leaf_at_dynamic` address-range discharge.
+        // index contributes to the address; the recursive subscript below
+        // checks the remaining Single indices on their own axes.
         let (ax, _, start, stop, step) = dynamic_range_axes[0].clone();
         let sliced = slice_axis(
             b,
@@ -2528,7 +2479,10 @@ fn multidim_subscript_static_array(
         {
             return sliced;
         }
-        return static_array_subscript(b, &sliced, &remaining);
+        return match &sliced {
+            Value::DynamicNDArray(d) => crate::helpers::array_ops::dyn_subscript(b, d, &remaining),
+            _ => static_array_subscript(b, &sliced, &remaining),
+        };
     }
 
     let total: usize = out_shape.iter().product();
@@ -2584,19 +2538,10 @@ fn multidim_subscript_static_array(
                     &strides,
                     src_flat,
                     &dynamic_single_axes,
-                    &acc,
-                    offset + shape.iter().product::<usize>(),
                 ) {
                     leaves.push(v);
                 } else {
-                    let src_total: usize = shape.iter().product();
-                    leaves.push(read_leaf_at_dynamic(
-                        b,
-                        segment_id,
-                        &acc,
-                        dtype,
-                        offset + src_total,
-                    ));
+                    leaves.push(read_leaf_at_checked_address(b, segment_id, &acc, dtype));
                 }
             }
         }

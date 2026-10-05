@@ -169,6 +169,13 @@ pub fn einsum(b: &mut IRBuilder, args: &[Value]) -> Value {
         .copied()
         .collect();
     let output_shape: Vec<_> = output_labels.iter().map(|axis| dims[axis]).collect();
+    if let [operand] = operands {
+        if summed.is_empty() {
+            if let Some(view) = relabel_view(operand, &labels[0], &output_labels, &output_shape) {
+                return view;
+            }
+        }
+    }
     let summed_shape: Vec<_> = summed.iter().map(|axis| dims[axis]).collect();
     let strides: Vec<_> = shapes
         .iter()
@@ -228,4 +235,51 @@ pub fn einsum(b: &mut IRBuilder, args: &[Value]) -> Value {
             dtype,
         )
     }
+}
+
+/// A single-operand einsum that sums nothing (a diagonal and/or an axis
+/// permutation, e.g. `'ii->i'`, `'ij->ji'`) is, in NumPy, a writeable VIEW
+/// of its operand: writing through the result writes the operand (case
+/// 0478 writes a saved diagonal back through `np.einsum('ii->i', a)`).
+/// The view has the operand's segment and offset; along each output label
+/// it steps by the sum of the operand strides of the axes with that label.
+/// Returns `None` when the operand is not a segment-backed array (a list
+/// operand is converted to a fresh array, as NumPy does).
+fn relabel_view(
+    operand: &Value,
+    input_labels: &[usize],
+    output_labels: &[usize],
+    output_shape: &[usize],
+) -> Option<Value> {
+    let Value::StaticArray {
+        dtype,
+        segment_id,
+        strides,
+        offset,
+        imag_segment_id,
+        ..
+    } = operand
+    else {
+        return None;
+    };
+    let view_strides = output_labels
+        .iter()
+        .map(|label| {
+            input_labels
+                .iter()
+                .zip(strides)
+                .filter(|(l, _)| *l == label)
+                .map(|(_, stride)| stride)
+                .sum()
+        })
+        .collect();
+    Some(Value::StaticArray {
+        dtype: *dtype,
+        shape: output_shape.to_vec(),
+        segment_id: *segment_id,
+        strides: view_strides,
+        offset: *offset,
+        imag_segment_id: *imag_segment_id,
+        value_id: crate::types::ValueId::next(),
+    })
 }

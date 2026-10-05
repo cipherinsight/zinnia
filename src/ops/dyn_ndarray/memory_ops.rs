@@ -178,6 +178,21 @@ pub fn dyn_filter(b: &mut IRBuilder, data: &DynamicNDArrayData, args: &[Value]) 
             mask_elements.len()
         );
     }
+    // Only slots holding elements of the runtime array may be kept: the
+    // buffer's padding past the runtime shape is not data, but a mask
+    // computed elementwise (`y[y < 5]` with `y` itself filtered) is true
+    // on zero padding. (The filter of a filter used to keep it.)
+    let mask_elements: Vec<Value> = match super::aggregation::active_slots(b, data) {
+        None => mask_elements,
+        Some(active) => mask_elements
+            .iter()
+            .zip(&active)
+            .map(|(m, a)| {
+                let keep = ensure_bool(b, m);
+                b.ir_logical_and(&keep, a)
+            })
+            .collect(),
+    };
 
     // Compact `elements` to the front under `mask_elements` via the shared
     // one-hot shift network (`compact_by_mask`). `elements` already carry

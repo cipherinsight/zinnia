@@ -50,12 +50,16 @@ def test_two_axis_dynamic_slice_fuses_without_fullsize_intermediate_segment():
             seg = inst["ir_data"]["segment_id"]
             per_seg[seg][cls] += 1
 
+    # The fused slice reads the source once per output cell; no 4x4
+    # intermediate is built between the two sliced axes. Full-size
+    # segments are the source and the slice result (a runtime-shaped
+    # array whose 16 cells the output contract reads back).
     fullsize_segments = [
         seg
         for seg, counts in per_seg.items()
         if counts["WriteMemoryIR"] == 16 and counts["ReadMemoryIR"] == 16
     ]
-    assert len(fullsize_segments) == 1
+    assert len(fullsize_segments) == 2
 
 
 def test_two_axis_dynamic_slice_public_layout_is_top_left_packed():

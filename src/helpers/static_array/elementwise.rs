@@ -34,7 +34,7 @@ use crate::types::{NumberType, Value};
 
 use super::super::broadcast::broadcast_shapes;
 use super::super::shape_arith::{decode_coords, row_major_strides};
-use super::super::value_ops::apply_scalar_binary_op;
+use super::super::value_ops::{apply_scalar_binary_op, binary_op_result_dtype};
 use super::base::{build_static_array_from_flat, build_static_array_product_provenance};
 
 // ────────────────────────────────────────────────────────────────────────
@@ -169,17 +169,6 @@ pub fn product_provenance_payload_cells(
     out
 }
 
-/// Determine the result dtype for a binary op given two operand dtypes /
-/// scalar leaves. Mirrors the legacy promotion: any `Float` input produces
-/// `Float`; otherwise `Integer`.
-fn promote_dtype(lhs: NumberType, rhs: NumberType) -> NumberType {
-    if matches!(lhs, NumberType::Float) || matches!(rhs, NumberType::Float) {
-        NumberType::Float
-    } else {
-        NumberType::Integer
-    }
-}
-
 fn dtype_of_static_array(val: &Value) -> NumberType {
     match val {
         Value::StaticArray { dtype, .. } => *dtype,
@@ -206,16 +195,6 @@ fn dtype_of_scalar(val: &Value) -> Option<NumberType> {
 // ────────────────────────────────────────────────────────────────────────
 // Output dtype rules for a given op
 // ────────────────────────────────────────────────────────────────────────
-
-fn is_comparison_op(op: &str) -> bool {
-    matches!(op, "eq" | "ne" | "lt" | "lte" | "gt" | "gte")
-}
-
-/// `true` for ops that return a Boolean array regardless of operand dtype.
-/// Comparisons fall in this bucket.
-fn op_yields_boolean(op: &str) -> bool {
-    is_comparison_op(op) || matches!(op, "and" | "or")
-}
 
 /// `true` for ops we route natively here (binary arithmetic + bitwise +
 /// comparison). `mat_mul` is excluded — it routes through the legacy path
@@ -320,11 +299,7 @@ pub fn try_apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value
                     lhs_shape, rhs_shape
                 ),
             };
-            let out_dtype = if op_yields_boolean(op) {
-                NumberType::Integer
-            } else {
-                promote_dtype(lhs_dtype, rhs_dtype)
-            };
+            let out_dtype = binary_op_result_dtype(op, lhs_dtype, rhs_dtype);
             Some(elementwise_two_arrays(
                 b, op, lhs, rhs, &lhs_shape, &rhs_shape, &out_shape, out_dtype,
             ))
@@ -334,11 +309,7 @@ pub fn try_apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value
             let arr_shape = shape_of_static_array(lhs);
             let arr_dtype = dtype_of_static_array(lhs);
             let scalar_dtype = dtype_of_scalar(rhs).expect("rhs is_number guarantees scalar dtype");
-            let out_dtype = if op_yields_boolean(op) {
-                NumberType::Integer
-            } else {
-                promote_dtype(arr_dtype, scalar_dtype)
-            };
+            let out_dtype = binary_op_result_dtype(op, arr_dtype, scalar_dtype);
             Some(elementwise_array_scalar(
                 b, op, lhs, rhs, true, &arr_shape, out_dtype,
             ))
@@ -348,11 +319,7 @@ pub fn try_apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value
             let arr_shape = shape_of_static_array(rhs);
             let arr_dtype = dtype_of_static_array(rhs);
             let scalar_dtype = dtype_of_scalar(lhs).expect("lhs is_number guarantees scalar dtype");
-            let out_dtype = if op_yields_boolean(op) {
-                NumberType::Integer
-            } else {
-                promote_dtype(arr_dtype, scalar_dtype)
-            };
+            let out_dtype = binary_op_result_dtype(op, arr_dtype, scalar_dtype);
             Some(elementwise_array_scalar(
                 b, op, rhs, lhs, false, &arr_shape, out_dtype,
             ))

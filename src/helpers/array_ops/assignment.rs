@@ -4,7 +4,7 @@ use crate::builder::IRBuilder;
 use crate::types::{DynamicNDArrayData, NumberType, SliceIndex, Value, ValueId};
 
 use super::bounded_axis::{select_stride_mode, stride_value, StrideMode};
-use super::indexing::{compute_flat_addr, discharge_dynamic_indices_in_bounds};
+use super::indexing::{compute_flat_addr, wrap_and_check_dynamic_indices};
 
 /// Single element assignment: dyn[i] = x or dyn[i, j] = x.
 /// In-place write via `ir_write_memory` — O(1).
@@ -14,6 +14,13 @@ pub fn dyn_setitem(
     indices: &[SliceIndex],
     value: &Value,
 ) -> Value {
+    // A tuple index addresses one axis per entry (`a[t] = v` is
+    // `a[t[0], t[1], ...] = v`); only a list is a fancy index.
+    if let [SliceIndex::Single(Value::Tuple(tuple))] = indices {
+        let expanded: Vec<SliceIndex> =
+            tuple.values.iter().cloned().map(SliceIndex::Single).collect();
+        return dyn_setitem(b, data, &expanded, value);
+    }
     // Fancy-index scatter: any axis indexed by an integer array (StaticArray /
     // List / Tuple) means `for k in 0..L: dst[idx_axes[k]] = rhs[k] | rhs`.
     // Without this branch, `compute_flat_addr` would try to multiply an array
@@ -27,8 +34,8 @@ pub fn dyn_setitem(
         return dyn_fancy_setitem(b, data, indices, value);
     }
 
+    let indices = &wrap_and_check_dynamic_indices(b, data, indices, "dyn_setitem");
     let addr = compute_flat_addr(b, data, indices);
-    discharge_dynamic_indices_in_bounds(b, data, indices, "dyn_setitem");
     if data.envelope.total_bound > 0 {
         crate::optim::resolver::discharge_index_in_range(
             b,
@@ -42,7 +49,18 @@ pub fn dyn_setitem(
     let write_val = cast_to_dtype(b, value, data.dtype);
     crate::helpers::segment::write_typed(b, data.segment_id, &addr, &write_val, data.dtype);
 
-    Value::DynamicNDArray(data.clone())
+    after_write(data)
+}
+
+/// The array after an in-place write: same storage, new identity. Facts
+/// about the contents are keyed by the array's `ValueId`; keeping the old
+/// id kept them in force after the write (`np.zeros(n)` then `a[1] = 5`
+/// still summed to the constant 0).
+fn after_write(data: &DynamicNDArrayData) -> Value {
+    Value::DynamicNDArray(DynamicNDArrayData {
+        value_id: ValueId::next(),
+        ..data.clone()
+    })
 }
 
 fn read_index_array_elements(b: &mut IRBuilder, src: &Value) -> Vec<Value> {
@@ -722,7 +740,7 @@ pub fn dyn_setitem_slice(
         }
     }
 
-    Value::DynamicNDArray(data.clone())
+    after_write(data)
 }
 
 fn cast_to_dtype(b: &mut IRBuilder, v: &Value, dtype: NumberType) -> Value {

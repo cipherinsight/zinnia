@@ -681,7 +681,11 @@ fn dyn_reshape_runtime(
                     stride_acc = b.ir_mul_i(&stride_acc, &shape_values[i]);
                 }
             }
-            (rt_strides, ScalarValue::new(Some(old_total as i64), None))
+            // The element count is the source's runtime length (asserted
+            // equal to the product of the new runtime dims above), not the
+            // envelope size: `x[x > 0].reshape(-1)` keeps only the kept
+            // elements active.
+            (rt_strides, value_to_scalar_i64(&length_v))
         }
     };
 
@@ -1044,7 +1048,11 @@ fn dyn_reshape_runtime_infer_unknown(
                     stride_acc = b.ir_mul_i(&stride_acc, &shape_values[i]);
                 }
             }
-            (rt_strides, ScalarValue::new(Some(old_total as i64), None))
+            // The element count is the source's runtime length (asserted
+            // equal to the product of the new runtime dims above), not the
+            // envelope size: `x[x > 0].reshape(-1)` keeps only the kept
+            // elements active.
+            (rt_strides, value_to_scalar_i64(&length_v))
         }
     };
 

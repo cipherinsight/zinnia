@@ -2,7 +2,7 @@
 //! (`elementwise_binary`, `elementwise_minmax`), the unary numeric ops
 //! (`np_floor`, `np_ceil`, `np_round`, `np_trunc`, `np_reciprocal`,
 //! `np_square`), `np_diff`, `np_outer`, `np_allclose`, `np_where`,
-//! `np_clip`, plus the Python-builtin helpers `range`/`len`/`enumerate`
+//! plus the Python-builtin helpers `range`/`len`/`enumerate`
 //! that share the same composite-Value plumbing.
 
 use std::collections::HashMap;
@@ -140,7 +140,13 @@ fn diff_once(b: &mut IRBuilder, x: &Value) -> Value {
                 value_id: ValueId::next(),
             })
         }
-        _ => x.clone(),
+        Value::StaticArray { .. } => {
+            let list = crate::helpers::static_array::base::to_value_list(b, x);
+            diff_once(b, &list)
+        }
+        // It used to return the input unchanged, e.g. for `x[x > 0]`.
+        Value::DynamicNDArray(_) => crate::helpers::composite::reject_runtime_shaped_operand(),
+        _ => panic!("np.diff requires an array of at least one dimension"),
     }
 }
 
@@ -609,16 +615,14 @@ fn where_strategy_set(cond_vid: ValueId) -> crate::optim::OpStrategySet<WhereInp
 /// `0`) is provable from the visible facts. Otherwise, the default
 /// recursive per-element select runs.
 pub fn np_where(b: &mut IRBuilder, args: &[Value]) -> Value {
-    // `np.where(cond)` 1-arg form returns the indices where `cond` is True.
-    // For the common pattern `a[np.where(cond)] = ...`, the visitor treats the
-    // result as a fancy-index source. The cheapest forwarding here: return
-    // `cond` itself; downstream indexing dispatchers already recognize a
-    // Boolean-array index and route through `try_apply_boolean_mask_*`. This
-    // preserves NumPy semantics for the common case without standing up a
-    // dedicated index-array materialiser.
+    // One-argument `np.where(cond)` is NumPy's `np.nonzero(cond)`: a tuple
+    // of index arrays, one per axis. (It used to return `cond` itself,
+    // which only coincides with NumPy when the result is used as an
+    // assignment index; `np.where(cond)[0]` then read `cond[0]`.) The
+    // assignment `a[np.where(cond)] = v` keeps working through the mask
+    // recorded by `np_nonzero` (see `static_array_setitem`).
     if args.len() == 1 {
-        let _ = b;
-        return args[0].clone();
+        return super::np_nonzero(b, args);
     }
     if args.len() < 3 {
         panic!("where: requires three arguments (cond, x, y)");
@@ -664,21 +668,4 @@ pub fn np_where(b: &mut IRBuilder, args: &[Value]) -> Value {
         }
         None => where_rec(b, &cond_b, &x_b, &y_b),
     }
-}
-
-/// `np.clip(arr, lo, hi)` — element-wise clamp. Implemented as
-/// `where(arr < lo, lo, where(arr > hi, hi, arr))`. lo / hi may be scalars
-/// or broadcast-compatible arrays.
-pub fn np_clip(b: &mut IRBuilder, args: &[Value]) -> Value {
-    if args.len() < 3 {
-        panic!("clip: requires three arguments (arr, a_min, a_max)");
-    }
-    let arr = &args[0];
-    let lo = &args[1];
-    let hi = &args[2];
-    // arr.clip(lo, hi) ≡ minimum(maximum(arr, lo), hi)
-    let lower = crate::helpers::value_ops::apply_binary_op(b, "lt", arr, lo);
-    let after_lower = np_where(b, &[lower, lo.clone(), arr.clone()]);
-    let upper = crate::helpers::value_ops::apply_binary_op(b, "gt", &after_lower, hi);
-    np_where(b, &[upper, hi.clone(), after_lower])
 }

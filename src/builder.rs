@@ -111,6 +111,10 @@ pub struct IRBuilder {
     /// onto the exported `IRGraph` so output auditors can verify the
     /// elided values against ground truth.
     pub elided_publics: Vec<crate::ir::ElidedPublic>,
+    /// For each `ExposePublic` emitted so far, the number of elided
+    /// constants recorded before it; locates the elided constants among
+    /// the output slots at export (see `IRGraph::elided_publics`).
+    elided_before_exposure: Vec<usize>,
     /// Conditional-write predicate. While `Some(p)`, every
     /// `ir_write_memory` / `ir_dynamic_ndarray_set_item` stores
     /// `select(p, new, old)` instead of `new`, so segment mutations
@@ -141,6 +145,12 @@ pub struct IRBuilder {
     /// while ops are still being migrated. Once P6 lands and the legacy
     /// path goes away, this cache (and the shim) go with it.
     pub static_array_payload: HashMap<u32, Vec<Value>>,
+    /// Index tuples produced by `np.nonzero` / one-argument `np.where`,
+    /// keyed by the tuple's `ValueId`, mapped to a snapshot of the boolean
+    /// mask they enumerate (taken when the tuple was built, so later writes
+    /// to the source array do not change it). Assigning through such a
+    /// tuple, `a[np.where(m)] = v`, is NumPy's `a[m] = v`.
+    pub nonzero_index_masks: HashMap<crate::types::ValueId, Value>,
     /// Small expression-provenance side table for StaticArray results whose
     /// concrete payload can be reconstructed exactly, but may be consumed by
     /// a fused lowering before materializing every intermediate cell.
@@ -224,12 +234,14 @@ impl IRBuilder {
         Self {
             stmts: Vec::new(),
             elided_publics: Vec::new(),
+            elided_before_exposure: Vec::new(),
             write_predicate: None,
             predicate_exempt_segments: HashMap::new(),
             next_segment_id: 0,
             next_array_id: 0,
             dim_table: crate::types::DimTable::new(),
             static_array_payload: HashMap::new(),
+            nonzero_index_masks: HashMap::new(),
             static_array_product_provenance: HashMap::new(),
             lazy_static_array_segments: HashSet::new(),
             provenance: crate::provenance::ProvenanceTable::new(),
@@ -1344,7 +1356,7 @@ impl IRBuilder {
     }
 
     pub fn export_ir_graph(self) -> IRGraph {
-        let elided = self.elided_publics;
+        let elided = self.elided_output_slots();
         let provenance = self.provenance;
         let mut graph = IRGraph::new(self.stmts);
         graph.elided_publics = elided;
@@ -2099,9 +2111,38 @@ impl IRBuilder {
     ir_unary!(
         ir_assert          => IR::Assert,
         ir_assert_bit      => IR::AssertBit,
-        ir_expose_public_i => IR::ExposePublicI,
-        ir_expose_public_f => IR::ExposePublicF,
     );
+
+    pub fn ir_expose_public_i(&mut self, a: &Value) -> Value {
+        self.elided_before_exposure.push(self.elided_publics.len());
+        self.create_ir(&IR::ExposePublicI, &[a.clone()])
+    }
+
+    pub fn ir_expose_public_f(&mut self, a: &Value) -> Value {
+        self.elided_before_exposure.push(self.elided_publics.len());
+        self.create_ir(&IR::ExposePublicF, &[a.clone()])
+    }
+
+    /// Place the elided constants among the output slots: exposure `k`
+    /// occupies slot `k + (constants elided before it)`; the constants
+    /// fill the remaining slots in order.
+    fn elided_output_slots(&self) -> Vec<crate::ir::ElidedOutputSlot> {
+        let total = self.elided_before_exposure.len() + self.elided_publics.len();
+        let exposed: std::collections::HashSet<usize> = self
+            .elided_before_exposure
+            .iter()
+            .enumerate()
+            .map(|(k, before)| k + before)
+            .collect();
+        (0..total)
+            .filter(|slot| !exposed.contains(slot))
+            .zip(&self.elided_publics)
+            .map(|(slot, value)| crate::ir::ElidedOutputSlot {
+                slot,
+                value: value.clone(),
+            })
+            .collect()
+    }
 
     /// Two-operand assert: `0 <= idx < hi`. Backends pick the cheapest
     /// sound implementation; on Noir this lowers to a single
@@ -2574,15 +2615,24 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
         IR::AddI => int_binary_ir(ir_id, args, |a, b| a.checked_add(b)),
         IR::SubI => int_binary_ir(ir_id, args, |a, b| a.checked_sub(b)),
         IR::MulI => int_binary_ir(ir_id, args, |a, b| a.checked_mul(b)),
-        IR::DivI => int_binary_ir(ir_id, args, |a, b| if b != 0 { Some(a / b) } else { None }),
-        IR::FloorDivI | IR::FloorDivIPinned { .. } => int_binary_ir(ir_id, args, |a, b| {
-            if b != 0 {
-                Some(a.div_euclid(b))
+        // `DivI` is exact division (a field inverse in the backends): fold
+        // only when the division is exact, where both readings agree.
+        IR::DivI => int_binary_ir(ir_id, args, |a, b| {
+            if b != 0 && a % b == 0 {
+                Some(a / b)
             } else {
                 None
             }
         }),
-        IR::ModI => int_binary_ir(ir_id, args, |a, b| if b != 0 { Some(a % b) } else { None }),
+        // Same definition as the mock and the circuits
+        // (`kernel::div_rem_or_zero`, Python floor semantics: `-7 // 2 ==
+        // -4`, `7 % -2 == -1`). A zero divisor is left unfolded. Folding
+        // used `div_euclid` and Rust's truncating `%`, so a constant
+        // operand gave a different value from a runtime one.
+        IR::FloorDivI | IR::FloorDivIPinned { .. } => int_binary_ir(ir_id, args, |a, b| {
+            python_floor_div_rem(a, b).map(|(q, _)| q)
+        }),
+        IR::ModI => int_binary_ir(ir_id, args, |a, b| python_floor_div_rem(a, b).map(|(_, r)| r)),
         IR::PowI => int_binary_ir(ir_id, args, |a, b| {
             if b >= 0 {
                 Some(a.pow(b as u32))
@@ -2641,7 +2691,16 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
         }
         IR::DivF => float_binary_ir(ir_id, args, |a, b| a / b),
         IR::FloorDivF => float_binary_ir(ir_id, args, |a, b| (a / b).floor()),
-        IR::ModF => float_binary_ir(ir_id, args, |a, b| a % b),
+        // Python/NumPy float remainder: the result has the divisor's sign
+        // (`kernel::fp_float_mod`); Rust's `%` keeps the dividend's sign.
+        IR::ModF => float_binary_ir(ir_id, args, |a, b| {
+            let r = a % b;
+            if r != 0.0 && (r < 0.0) != (b < 0.0) {
+                r + b
+            } else {
+                r
+            }
+        }),
         IR::PowF => float_binary_ir(ir_id, args, |a, b| a.powf(b)),
         IR::PowFI => {
             // Float base ^ Integer exponent. Constant-fold from
@@ -3096,6 +3155,20 @@ fn unknown_value_for_ir(ir: &IR, ir_id: StmtId) -> Value {
 // ---------------------------------------------------------------------------
 // Helper functions
 // ---------------------------------------------------------------------------
+
+/// Python `divmod` for a non-zero divisor (the kernel's `Rounding::Floor`),
+/// `None` for a zero divisor or a quotient outside i64.
+fn python_floor_div_rem(a: i64, b: i64) -> Option<(i64, i64)> {
+    if b == 0 {
+        return None;
+    }
+    let (q, r) = crate::prove::kernel::div_rem_or_zero(
+        a as i128,
+        b as i128,
+        crate::prove::kernel::Rounding::Floor,
+    );
+    Some((i64::try_from(q).ok()?, i64::try_from(r).ok()?))
+}
 
 fn int_binary_ir(ir_id: StmtId, args: &[Value], op: impl Fn(i64, i64) -> Option<i64>) -> Value {
     let la = args[0].int_val();

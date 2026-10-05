@@ -251,8 +251,11 @@ pub fn try_advanced_index_static(
     data: &CompositeData,
     idx: &Value,
 ) -> Result<Option<Value>, String> {
+    // Only a list is an advanced index. A tuple `t` indexes one axis per
+    // entry (`a[t]` is `a[t[0], t[1], ...]`); the caller's subscript
+    // handles it (see `static_array::read::tuple_index`).
     match idx {
-        Value::List(_) | Value::Tuple(_) => {}
+        Value::List(_) => {}
         _ => return Ok(None),
     }
     if all_const_bool(idx) {
@@ -412,14 +415,11 @@ pub fn multidim_subscript(
     match &indices[0] {
         SliceIndex::Single(idx_value) => {
             if let Some(idx) = idx_value.int_val() {
-                let i = if idx < 0 {
-                    (data.values.len() as i64 + idx) as usize
-                } else {
-                    idx as usize
-                };
-                if i >= data.values.len() {
-                    return Value::None;
+                let n = data.values.len() as i64;
+                if !(-n <= idx && idx < n) {
+                    panic!("IndexError: index {idx} is out of range for a sequence of length {n}");
                 }
+                let i = if idx < 0 { (n + idx) as usize } else { idx as usize };
                 if indices.len() == 1 {
                     return data.values[i].clone();
                 }
@@ -444,8 +444,17 @@ pub fn multidim_subscript(
                 // Use `select_value`, which recurses through composites.
                 let n = data.values.len();
                 if n == 0 {
-                    return Value::None;
+                    panic!("IndexError: index into an empty sequence");
                 }
+                // Wrap and bounds-check the row index (an out-of-range
+                // index would otherwise select the last row).
+                let idx_value = &crate::helpers::static_array::base::checked_axis_index(
+                    b,
+                    idx_value,
+                    0,
+                    n,
+                    "list_subscript",
+                );
                 let mut per_row_results: Vec<Value> = Vec::with_capacity(n);
                 for elem in &data.values {
                     if let Value::List(inner) | Value::Tuple(inner) = elem {

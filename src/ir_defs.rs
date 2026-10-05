@@ -593,6 +593,9 @@ impl IR {
             | IR::AssertBit
             | IR::AssertNonNegI
             | IR::AssertU128Lt
+            // Returns a bit but also asserts `0 <= idx < hi`; without being
+            // fixed, DCE deleted the range check whenever the bit was unused.
+            | IR::AssertU128LtBit { .. }
             | IR::StructuralPredicate { .. }
             | IR::ScalarPrecondition { .. }
             | IR::Print

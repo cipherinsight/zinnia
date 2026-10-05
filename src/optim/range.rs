@@ -149,7 +149,10 @@ impl IntInterval {
         Self { min: lo, max: hi }
     }
 
-    /// Floor division (`//` in Python; matches the IR's `FloorDivI`).
+    /// Floor division (`//`, the IR's `FloorDivI`, Python semantics like
+    /// `kernel::fp_floor_div`). For a divisor that may be negative the
+    /// upper end is widened by one, so the interval also covers the
+    /// Euclidean quotient older backends computed.
     pub fn floor_div(a: Self, b: Self) -> Self {
         if b.contains(0) {
             return Self::unbounded();
@@ -170,13 +173,17 @@ impl IntInterval {
                 hi = c;
             }
         }
+        if b.min < 0 {
+            hi = hi.saturating_add(1);
+        }
         Self { min: lo, max: hi }
     }
 
     /// Modulo. Conservative cases:
     /// - `b.min > 0` → result in `[0, min(b.max - 1, max(a.max, 0))]` when
     ///   `a >= 0`; in general `[0, b.max - 1]`.
-    /// - `b.max < 0` → result in `[b.min + 1, 0]`.
+    /// - `b.max < 0` → result in `[b.min + 1, -(b.min + 1)]` (Python and
+    ///   Euclidean remainders; see `floor_div`).
     /// - `b` may be zero → unbounded (div-by-zero at runtime).
     pub fn modulo(a: Self, b: Self) -> Self {
         if b.contains(0) {
@@ -195,10 +202,13 @@ impl IntInterval {
             };
             Self { min: 0, max: cap }
         } else {
-            // b.max < 0. Python mod with negative divisor produces a
-            // non-positive result.
+            // b.max < 0. Python's remainder lies in (b, 0]; the interval
+            // also covers the Euclidean [0, |b|) (see `floor_div`).
             let lower = b.min.saturating_add(1);
-            Self { min: lower, max: 0 }
+            Self {
+                min: lower,
+                max: lower.saturating_neg(),
+            }
         }
     }
 
@@ -439,10 +449,11 @@ impl RangeResolver {
             }
 
             // Casts ----------------------------------------------------
-            // bool→int: domain is [0, 1]. int→bool: also [0, 1] when
-            // we ask for the int interval of the bool. Both go to
-            // bool_domain.
-            IR::IntCast => IntInterval::bool_domain(),
+            // `IntCast` is the Float→Integer conversion (bool→int never
+            // reaches the IR: `IRBuilder::ir_int_cast` reuses the boolean
+            // cell). Float operands carry no interval here, so the result
+            // is unbounded. `BoolCast` yields 0 or 1.
+            IR::IntCast => IntInterval::unbounded(),
             IR::BoolCast => IntInterval::bool_domain(),
 
             // Unary integer arms ---------------------------------------
@@ -707,6 +718,45 @@ mod tests {
     fn modulo_positive_divisor_bounds_result() {
         // i in [0, 100], j in [1, 8] → i % j in [0, 7].
         assert_eq!(IntInterval::modulo(iv(0, 100), iv(1, 8)), iv(0, 7));
+    }
+
+    #[test]
+    fn modulo_negative_divisor_covers_euclidean_remainder() {
+        // The backends compute -7 mod -3 = 2 (Euclidean); Python gives -1.
+        let r = IntInterval::modulo(iv(-7, -7), iv(-3, -3));
+        assert!(r.contains(2) && r.contains(-1), "{r:?}");
+    }
+
+    #[test]
+    fn floor_div_negative_divisor_covers_euclidean_quotient() {
+        // 7 div_euclid -2 = -3 (Euclidean); Python 7 // -2 = -4.
+        let r = IntInterval::floor_div(iv(7, 7), iv(-2, -2));
+        assert!(r.contains(-3) && r.contains(-4), "{r:?}");
+    }
+
+    /// `IntCast` is the Float→Integer conversion; its result is not a
+    /// boolean. It used to get `[0, 1]`, so `np.arange(int(x))` with
+    /// `x = 5.0` was sized for one element and summed to 0.
+    #[test]
+    fn int_cast_of_float_is_unbounded() {
+        let stmts = vec![
+            IRStatement::new(
+                0,
+                crate::types::ValueId::next(),
+                IR::ReadFloat {
+                    path: InputPath::new("x", vec![]),
+                    is_public: false,
+                },
+                vec![],
+                vec![],
+                None,
+            ),
+            IRStatement::new(1, crate::types::ValueId::next(), IR::IntCast, vec![0], vec![], None),
+        ];
+        let v = runtime_int(1);
+        let mut r = RangeResolver::new();
+        assert_eq!(r.resolve_max_with_stmts(&v, &stmts), None);
+        assert_eq!(r.resolve_min_with_stmts(&v, &stmts), None);
     }
 
     #[test]

@@ -129,8 +129,12 @@ pub fn dyn_aggregate_all(b: &mut IRBuilder, data: &DynamicNDArrayData, agg: DynA
         && data.meta.logical_shape.len() == 1
         && data.meta.logical_offset == 0
     {
+        // The record describes lane 0 of the compaction's own output. A
+        // re-view of the same segment (e.g. `argwhere(m).reshape(-1)`,
+        // which interleaves every lane) has a different runtime length
+        // and must take the general path.
         if let Some(info) = b.provenance.compaction_of(data.segment_id, 0).cloned() {
-            if info.sorted {
+            if info.sorted && data.meta.runtime_length.value_id == info.count {
                 if let Some(out) = compaction_scan_min_max(b, &info, agg) {
                     return out;
                 }
@@ -741,6 +745,40 @@ fn combine_active(
     }
 }
 
+/// Per-slot activity of a contiguous dynamic array's buffer: `active[i]`
+/// holds iff buffer slot `i` is an element of the runtime array. A compact
+/// buffer (`total_bound < prod(logical_shape)`) keeps its elements in the
+/// flat prefix `[0, runtime_length)`; a padded buffer keeps them in the
+/// prefix rectangle `coord[ax] < runtime_shape[ax]`. Returns `None` when
+/// the runtime shape is the static logical shape (every slot active).
+pub(crate) fn active_slots(b: &mut IRBuilder, data: &DynamicNDArrayData) -> Option<Vec<Value>> {
+    let logical = &data.meta.logical_shape;
+    let all_static = data
+        .meta
+        .runtime_shape
+        .iter()
+        .zip(logical)
+        .all(|(s, &n)| s.static_val == Some(n as i64));
+    if all_static {
+        return None;
+    }
+    let total = dyn_num_elements(logical);
+    let compact = data.envelope.total_bound < total;
+    let strides = dyn_row_major_strides(logical);
+    Some(
+        (0..data.max_length())
+            .map(|i| {
+                if compact {
+                    build_flat_active_check(b, i, &data.meta.runtime_length)
+                } else {
+                    let coords = dyn_decode_coords(i, logical, &strides);
+                    build_active_check(b, &coords, &data.meta.runtime_shape, logical)
+                }
+            })
+            .collect(),
+    )
+}
+
 fn build_flat_active_check(
     b: &mut IRBuilder,
     flat_idx: usize,
@@ -883,13 +921,20 @@ pub fn dyn_aggregate_axis(
         && matches!(agg, DynAggKind::Min | DynAggKind::Max)
         && data.dtype == NumberType::Integer
         && data.meta.logical_shape.len() == 2
+        && data.meta.logical_offset == 0
     {
         let rank = data.meta.logical_shape[1];
         let mut outs: Vec<Value> = Vec::with_capacity(rank);
         for lane in 0..rank {
+            // Each record describes column `lane` of the compaction's own
+            // (count, rank) output; a re-view of the segment with other
+            // rows must take the general path.
             let Some(info) = b.provenance.compaction_of(data.segment_id, lane).cloned() else {
                 break;
             };
+            if data.meta.runtime_shape[0].value_id != info.count {
+                break;
+            }
             let Some(v) = compaction_bucket_min_max(b, &info, agg) else {
                 break;
             };

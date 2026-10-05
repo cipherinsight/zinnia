@@ -213,9 +213,10 @@ fn build_contract_registry() -> HashMap<&'static str, OpContract> {
     // a `runtime_length` that's structurally non-negative — the constructor
     // accepts an `active_len: Value` derived from a chip input whose
     // ZK-circuit type is `int` (signed but bounded by the user's
-    // `@requires`). The contract asserts the postcondition that the
-    // result's runtime length is `>= 0`. This is a genuine semantic
-    // claim — the resolver cannot derive it from SSA aliasing alone.
+    // `@requires`). The contract states that the result's runtime length
+    // is `>= 0`; it holds because the constructor requires
+    // `0 <= active <= max_length` (`require_extent_within`: proved from
+    // the facts or checked in-circuit), as NumPy rejects negative sizes.
     // Additionally, `runtime_length == active` holds by construction: the
     // constructor copies the input `active_len` ScalarValue into the
     // result's `runtime_length`. Surfacing this as a multi-formal equality
@@ -776,14 +777,13 @@ fn build_contract_registry() -> HashMap<&'static str, OpContract> {
 
     // ── dyn_arange (bounded `np.arange` admission) ───────────────────
     //
-    // Soundness: the bounded branch in `np_arange` sets
-    // `runtime_length = stop - start` (1-arg form binds `start` to a
-    // literal 0 at the firing site; the 2-arg form forwards the user's
-    // literal `start`; the 3-arg form is intentionally NOT covered here
-    // — its runtime_length is `ceildiv(stop - start, step)` and would
-    // need a separate template). The equality `Output == stop - start`
-    // mirrors that IR computation exactly; `Output >= 0` is structurally
-    // guaranteed because the constructor truncates negative spans to 0.
+    // Soundness: the bounded branch in `np_arange` computes
+    // `runtime_length = max(stop - start, 0)` and fires this contract only
+    // when the facts prove `stop - start >= 0`, i.e. when the length is
+    // the span itself (1-arg form binds `start` to a literal 0; the 2-arg
+    // form forwards the user's literal `start`; the 3-arg form, whose
+    // length is a rounded-up quotient, fires nothing). Under that
+    // condition both `Output == stop - start` and `Output >= 0` hold.
     m.insert(
         "dyn_arange",
         OpContract::pure(

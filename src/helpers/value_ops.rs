@@ -5,7 +5,38 @@
 //! `&mut IRBuilder` as an explicit parameter instead of `&mut self`.
 
 use crate::builder::IRBuilder;
-use crate::types::{CompositeData, Value, ValueId};
+use crate::types::{CompositeData, NumberType, Value, ValueId};
+
+/// `true` for element-wise operators whose result is a boolean
+/// (comparisons and the logical connectives); booleans are stored as
+/// Integer cells.
+pub fn op_yields_boolean(op: &str) -> bool {
+    matches!(op, "eq" | "ne" | "lt" | "lte" | "gt" | "gte" | "and" | "or")
+}
+
+/// Result dtype of the element-wise binary operator `op` on operands of
+/// dtypes `lhs` and `rhs`, following NumPy's promotion restricted to
+/// Zinnia's number types:
+///
+/// - comparisons and logical connectives yield booleans (Integer cells);
+/// - true division `/` (`"div"`) always yields Float, as `np.true_divide`
+///   does for integer operands (`np.array([1]) / 2` is `[0.5]`);
+/// - otherwise Complex dominates Float, and Float dominates Integer.
+///
+/// This is the single dtype rule shared by the scalar, static-array and
+/// dynamic-array element-wise paths.
+pub fn binary_op_result_dtype(op: &str, lhs: NumberType, rhs: NumberType) -> NumberType {
+    if op_yields_boolean(op) {
+        return NumberType::Integer;
+    }
+    if lhs == NumberType::Complex || rhs == NumberType::Complex {
+        return NumberType::Complex;
+    }
+    if op == "div" || lhs == NumberType::Float || rhs == NumberType::Float {
+        return NumberType::Float;
+    }
+    NumberType::Integer
+}
 
 /// Elementwise numeric binary op for INTERNAL array math on composites.
 ///
@@ -506,19 +537,6 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
         return apply_membership_op(b, op, lhs, rhs);
     }
 
-    let has_array_like_operand = matches!(
-        lhs,
-        Value::List(_) | Value::Tuple(_) | Value::StaticArray { .. }
-    ) || matches!(
-        rhs,
-        Value::List(_) | Value::Tuple(_) | Value::StaticArray { .. }
-    );
-    let op = match op {
-        "bit_and" if has_array_like_operand => "and",
-        "bit_or" if has_array_like_operand => "or",
-        other => other,
-    };
-
     // ── StaticArray native dispatch (P4a) ────────────────────────────
     // For two StaticArrays (or one StaticArray + numeric scalar), apply
     // the elementwise op on the segment-backed payload. Falls back to
@@ -912,7 +930,18 @@ pub fn apply_scalar_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Va
                 op
             );
         }
+        // NumPy: `&`, `|`, `^` on two booleans are the logical
+        // connectives (and stay boolean, e.g. for mask indexing); on
+        // integers they are bitwise. (Array operands used to be mapped
+        // to the logical connectives wholesale, so `a & 4` on an integer
+        // array computed `a != 0 and 4 != 0`.) On operands known to be 0
+        // or 1 the two agree, so the logical form is used there too (a
+        // `dtype=bool` array's cells may be stored as 0/1 integers).
+        let both_boolean = is_zero_or_one(b, lhs) && is_zero_or_one(b, rhs);
         return match op {
+            "bit_and" if both_boolean => b.ir_logical_and(lhs, rhs),
+            "bit_or" if both_boolean => b.ir_logical_or(lhs, rhs),
+            "bit_xor" if both_boolean => b.ir_not_equal_i(lhs, rhs),
             "bit_and" => b.ir_bit_and_i(lhs, rhs),
             "bit_or" => b.ir_bit_or_i(lhs, rhs),
             "bit_xor" => b.ir_bit_xor_i(lhs, rhs),
@@ -922,7 +951,10 @@ pub fn apply_scalar_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Va
         };
     }
 
-    let use_float = matches!(lhs, Value::Float(_)) || matches!(rhs, Value::Float(_));
+    // True division always computes in Float, even on integer operands
+    // (Python and NumPy `/`); see `binary_op_result_dtype`.
+    let use_float =
+        op == "div" || matches!(lhs, Value::Float(_)) || matches!(rhs, Value::Float(_));
     if use_float {
         // Float base ^ Integer exponent: stay in PowFI so backends can lower
         // to integer-exponent square-and-multiply instead of qexp(b*qlog(a)).
@@ -962,18 +994,7 @@ pub fn apply_scalar_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Va
             "add" => b.ir_add_i(lhs, rhs),
             "sub" => b.ir_sub_i(lhs, rhs),
             "mul" => b.ir_mul_i(lhs, rhs),
-            // Python's `int / int` returns a float at the Python language
-            // level; user-facing kernels writing `np.floor(n/2).astype(int)`
-            // expect integer floor division at the IR level. Routing to
-            // `ir_div_i` (field-inverse division) leaves a vacuous DivI op
-            // whose runtime value is a junk field element — downstream slice
-            // bound discharges then fail (see 0467 mock_fail). Match the
-            // numpy/ZK convention: integer-typed `/` is integer floor div.
-            // The five IR-gen sites in reshape / arange / repeat / indexing
-            // were independently patched the same direction earlier in this
-            // session; this is the language-level entrypoint of the same
-            // pattern.
-            "div" | "floor_div" => b.ir_floor_div_i(lhs, rhs),
+            "floor_div" => b.ir_floor_div_i(lhs, rhs),
             "mod" => b.ir_mod_i(lhs, rhs),
             "pow" => b.ir_pow_i(lhs, rhs),
             "eq" => b.ir_equal_i(lhs, rhs),
@@ -987,6 +1008,16 @@ pub fn apply_scalar_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Va
             "mat_mul" => crate::ops::static_ndarray_ops::matmul(b, lhs, rhs),
             _ => panic!("Unknown binary operator: {}", op),
         }
+    }
+}
+
+/// `v` is a boolean, or an integer the facts and range analysis place in
+/// {0, 1}.
+fn is_zero_or_one(b: &mut IRBuilder, v: &Value) -> bool {
+    match v {
+        Value::Boolean(_) => true,
+        Value::Integer(_) => b.ask_bounds(v).is_some_and(|(min, max)| min >= 0 && max <= 1),
+        _ => false,
     }
 }
 
@@ -1068,59 +1099,29 @@ pub fn composite_comparison(
     }
 }
 
-/// For larger arrays: uses DynamicNDArrayGetItem IR (lowered to memory by opt pass).
+/// `data[idx]` for a Python list/tuple and a runtime `idx`.
+///
+/// Python accepts `-n <= idx < n` (negative indices count from the end)
+/// and raises `IndexError` otherwise, so the index is wrapped and
+/// bounds-checked first (`checked_axis_index`); the element is then
+/// picked with a select chain over the `n` positions. Without the check
+/// an out-of-range index would silently return the last element.
 pub fn dynamic_list_subscript(b: &mut IRBuilder, data: &CompositeData, idx: &Value) -> Value {
-    if data.values.is_empty() {
-        return Value::None;
-    }
     let n = data.values.len();
-
-    // Composite or Complex element type: ir_select_i can't accept these
-    // (it expects a single ptr per arg). Dispatch to select_value, which
-    // handles List/Tuple recursion and Complex per-component selection.
-    let needs_composite_select = matches!(
-        data.values.first(),
-        Some(Value::List(_) | Value::Tuple(_) | Value::Complex { .. })
-    );
-    if needs_composite_select {
-        let mut result = data.values.last().unwrap().clone();
-        for i in (0..n - 1).rev() {
-            let const_i = b.ir_constant_int(i as i64);
-            let cmp = b.ir_equal_i(idx, &const_i);
-            result = select_value(b, &cmp, &data.values[i], &result);
-        }
-        return result;
+    let idx = checked_list_index(b, idx, n);
+    let mut result = data.values[n - 1].clone();
+    for i in (0..n - 1).rev() {
+        let const_i = b.ir_constant_int(i as i64);
+        let cmp = b.ir_equal_i(&idx, &const_i);
+        result = select_value(b, &cmp, &data.values[i], &result);
     }
-
-    if n < 100 {
-        // Mux path: SelectI chain
-        let mut result = data.values.last().unwrap().clone();
-        for i in (0..n - 1).rev() {
-            let const_i = b.ir_constant_int(i as i64);
-            let cmp = b.ir_equal_i(idx, &const_i);
-            result = b.ir_select_i(&cmp, &data.values[i], &result);
-        }
-        result
-    } else {
-        // Memory path: allocate segment, write all values, read at dynamic index
-        let seg_id = b.alloc_segment_id();
-        let arr_id = b.alloc_array_id();
-
-        // Allocate memory segment
-        b.ir_allocate_memory(seg_id, n as u32, 0);
-
-        // Write all values to the segment
-        for (i, val) in data.values.iter().enumerate() {
-            let addr = b.ir_constant_int(i as i64);
-            b.ir_write_memory(seg_id, &addr, val);
-        }
-
-        // Read at dynamic index using DynamicNDArrayGetItem
-        b.ir_dynamic_ndarray_get_item(arr_id, seg_id, idx)
-    }
+    result
 }
 
-/// Returns the updated composite.
+/// `data[idx] = value` for a Python list and a runtime `idx`; returns the
+/// updated list. The index is wrapped and bounds-checked as in
+/// [`dynamic_list_subscript`], so an out-of-range index is rejected
+/// instead of leaving the list unchanged.
 pub fn dynamic_list_set_item(
     b: &mut IRBuilder,
     data: &CompositeData,
@@ -1128,84 +1129,28 @@ pub fn dynamic_list_set_item(
     value: &Value,
 ) -> Value {
     let n = data.values.len();
+    let idx = checked_list_index(b, idx, n);
+    let mut new_values = Vec::with_capacity(n);
+    for (i, old) in data.values.iter().enumerate() {
+        let const_i = b.ir_constant_int(i as i64);
+        let cmp = b.ir_equal_i(&idx, &const_i);
+        new_values.push(select_value(b, &cmp, value, old));
+    }
+    Value::List(CompositeData {
+        elements_type: new_values.iter().map(|v| v.zinnia_type()).collect(),
+        values: new_values,
+        value_id: ValueId::next(),
+    })
+}
+
+/// Wrap and bounds-check a runtime index into a sequence of length `n`
+/// (Python semantics; see `checked_axis_index`). An empty sequence has no
+/// valid index at all.
+fn checked_list_index(b: &mut IRBuilder, idx: &Value, n: usize) -> Value {
     if n == 0 {
-        return Value::List(data.clone());
+        panic!("IndexError: index into an empty list or tuple");
     }
-
-    // Composite or Complex elements: dispatch to select_value, which
-    // handles List/Tuple recursion and Complex per-component selection.
-    let needs_composite_select = matches!(
-        value,
-        Value::List(_) | Value::Tuple(_) | Value::Complex { .. }
-    ) || matches!(
-        data.values.first(),
-        Some(Value::List(_) | Value::Tuple(_) | Value::Complex { .. })
-    );
-    if needs_composite_select {
-        let mut new_values = Vec::with_capacity(n);
-        let mut new_types = Vec::with_capacity(n);
-        for i in 0..n {
-            let const_i = b.ir_constant_int(i as i64);
-            let cmp = b.ir_equal_i(idx, &const_i);
-            let selected = select_value(b, &cmp, value, &data.values[i]);
-            new_types.push(selected.zinnia_type());
-            new_values.push(selected);
-        }
-        return Value::List(CompositeData {
-            elements_type: new_types,
-            values: new_values,
-            value_id: ValueId::next(),
-        });
-    }
-
-    if n < 100 {
-        // Mux path: for each position, conditionally replace
-        let mut new_values = Vec::new();
-        let mut new_types = Vec::new();
-        for i in 0..n {
-            let const_i = b.ir_constant_int(i as i64);
-            let cmp = b.ir_equal_i(idx, &const_i);
-            let selected = b.ir_select_i(&cmp, value, &data.values[i]);
-            new_types.push(selected.zinnia_type());
-            new_values.push(selected);
-        }
-        Value::List(CompositeData {
-            elements_type: new_types,
-            values: new_values,
-            value_id: ValueId::next(),
-        })
-    } else {
-        // Memory path: allocate, write all, then overwrite at dynamic index, read all back
-        let seg_id = b.alloc_segment_id();
-        let arr_id = b.alloc_array_id();
-
-        // Allocate memory segment
-        b.ir_allocate_memory(seg_id, n as u32, 0);
-
-        // Write all original values
-        for (i, val) in data.values.iter().enumerate() {
-            let addr = b.ir_constant_int(i as i64);
-            b.ir_write_memory(seg_id, &addr, val);
-        }
-
-        // Write the new value at the dynamic index
-        b.ir_dynamic_ndarray_set_item(arr_id, seg_id, idx, value);
-
-        // Read all values back to reconstruct the list
-        let mut new_values = Vec::new();
-        let mut new_types = Vec::new();
-        for i in 0..n {
-            let addr = b.ir_constant_int(i as i64);
-            let read_val = b.ir_read_memory(seg_id, &addr);
-            new_types.push(read_val.zinnia_type());
-            new_values.push(read_val);
-        }
-        Value::List(CompositeData {
-            elements_type: new_types,
-            values: new_values,
-            value_id: ValueId::next(),
-        })
-    }
+    crate::helpers::static_array::base::checked_axis_index(b, idx, 0, n, "list_subscript")
 }
 
 /// Returns true if `val` is a composite (or scalar) whose every leaf is a

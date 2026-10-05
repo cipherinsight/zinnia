@@ -546,9 +546,9 @@ impl IRGenerator {
         // `lower_precondition_to_ir`) is the prove-time enforcement.
         for scalar_req in &n.scalar_requires {
             // Deserialize ContractTerm from the JSON value and emit the
-            // witness IR. Log + skip on lowering errors (sound omission:
-            // no Assert means no prove-time enforcement; documented in
-            // the card's soundness-gap section).
+            // witness IR. A term that cannot be lowered is a compile error
+            // (below): its fact is deposited first, and an unenforced fact
+            // would let a malicious prover violate it.
             let term: Result<crate::optim::predicates::formula::ContractTerm, _> =
                 serde_json::from_value(scalar_req.term.clone());
             let term = match term {
@@ -608,8 +608,10 @@ impl IRGenerator {
                 Ok(bool_val) => {
                     self.builder.ir_assert(&bool_val);
                 }
+                // The precondition is already a fact the optimizer relies
+                // on; one the circuit cannot enforce must not compile.
                 Err(e) => {
-                    eprintln!("[scalar-precondition] lowering failed: {e}");
+                    panic!("@requires precondition cannot be enforced in the circuit: {e}");
                 }
             }
         }

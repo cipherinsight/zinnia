@@ -13,11 +13,12 @@ use super::chokepoints::SiteKind;
 ///
 /// Item #4 of the `smt-invocation-load-bearing` card. Asks the resolver
 /// whether `idx ∈ [lo, hi)` is provable; records telemetry tagged with
-/// `SiteKind::DynamicIndexBound` regardless of outcome. Does NOT panic
-/// on failure — soundness is enforced at prove time by the memory-trace
-/// permutation argument. The probe exists to surface SMT engagement on
-/// production-natural patterns (binary search, modular indexing, etc.)
-/// where indices are runtime but bounds are nonetheless decidable.
+/// `SiteKind::DynamicIndexBound` regardless of outcome. Emits nothing and
+/// enforces nothing: callers that need the bound must use
+/// [`discharge_index_in_range`]. The probe exists to surface SMT
+/// engagement on production-natural patterns (binary search, modular
+/// indexing, etc.) where indices are runtime but bounds are nonetheless
+/// decidable.
 ///
 /// Returns `true` if both `resolve_max(idx) < hi` and `resolve_min(idx)
 /// >= lo` were proved by some layer (static_val / range / SMT).
@@ -123,11 +124,8 @@ pub fn discharge_slice_bound(
 ///   [`crate::builder::IRBuilder::discharge_requires`] — Phase E policy
 ///   handles Proved (no-op), Disproved (compile panic), and Unknown
 ///   (witness emit by default, panic under `ZINNIA_OP_REQUIRES_STRICT=1`).
-/// * **Non-literal idx with no `value_id` and no literal value**: no-op.
-///   Sound: with no anchor we have nothing to reason about and no SSA
-///   wire to constrain; the runtime memory-trace permutation argument
-///   still enforces address validity in the prover. Callers requiring
-///   tighter compile-time enforcement must thread a `value_id` through.
+/// * **Non-literal idx with no `value_id`**: nothing can be proved about
+///   it, so the bound is always checked in-circuit.
 ///
 /// The action is purely a side effect; there is no return value.
 pub fn discharge_index_in_range(
@@ -153,12 +151,14 @@ pub fn discharge_index_in_range(
         return;
     }
 
-    // Non-literal: require a `value_id` to anchor a discharge term.
-    // No value_id ⇒ no contract handle ⇒ sound no-op (the prover-side
-    // permutation argument still enforces validity at proof time).
-    let idx_vid = match idx.value_id() {
-        Some(v) => v,
-        None => return,
+    // Non-literal without a `value_id`: no fact can be anchored on it, so
+    // nothing is provable; check it in-circuit. (No backend has a memory
+    // permutation argument that would catch an out-of-range address.)
+    let Some(idx_vid) = idx.value_id() else {
+        let lo_v = b.ir_constant_int(lo);
+        let hi_v = b.ir_constant_int(hi);
+        emit_index_bound_assert(b, idx, &lo_v, &hi_v);
+        return;
     };
 
     let term = ContractTerm::BoolComb {
@@ -231,16 +231,23 @@ pub fn discharge_index_below_value(
         return;
     }
 
+    // Without `value_id`s no fact can be anchored, so nothing is provable;
+    // check the bound in-circuit.
     let lhs = match idx.value_id() {
         Some(v) => ContractTerm::Var(ContractVar::Value(v)),
         None => match idx.int_val() {
             Some(n) => ContractTerm::LitInt(n),
-            None => return,
+            None => {
+                let lo_v = b.ir_constant_int(lo);
+                emit_index_bound_assert(b, idx, &lo_v, hi);
+                return;
+            }
         },
     };
-    let hi_vid = match hi.value_id() {
-        Some(v) => v,
-        None => return,
+    let Some(hi_vid) = hi.value_id() else {
+        let lo_v = b.ir_constant_int(lo);
+        emit_index_bound_assert(b, idx, &lo_v, hi);
+        return;
     };
 
     let lo_term = ContractTerm::Cmp {

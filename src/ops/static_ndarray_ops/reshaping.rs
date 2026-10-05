@@ -403,14 +403,29 @@ pub fn ndarray_repeat(
 
                 let len_arr_const = b.ir_constant_int(len_arr as i64);
                 let len_vid = len_arr_const.value_id().unwrap();
+                // NumPy requires `0 <= k`; the envelope requires `k <= k_max`.
+                let runtime_length = b.ir_mul_i(&len_arr_const, repeats_arg);
+                crate::ops::dyn_ndarray::constructors::require_extent_within(
+                    b,
+                    &runtime_length,
+                    len_arr * k_max,
+                );
+                // Slot `i` holds `src[i // k]` (floor division; the old
+                // code used `ir_div_i`, a field inverse, which is not a
+                // division when `k` does not divide `i`). Slots past the
+                // runtime length wrap modulo `len_arr` to stay in range,
+                // and `k == 0` (an empty result) divides by 1 instead.
+                let zero = b.ir_constant_int(0);
+                let one = b.ir_constant_int(1);
+                let k_is_zero = b.ir_equal_i(repeats_arg, &zero);
+                let divisor = b.ir_select_i(&k_is_zero, &one, repeats_arg);
                 for i in 0..(len_arr * k_max) {
                     let i_const = b.ir_constant_int(i as i64);
-                    let arr_idx = b.ir_div_i(&i_const, repeats_arg);
+                    let arr_idx = b.ir_floor_div_i(&i_const, &divisor);
                     let arr_idx_mod = b.ir_mod_i(&arr_idx, &len_arr_const);
                     let src_val = b.ir_read_memory(src_seg, &arr_idx_mod);
                     b.ir_write_memory(out_seg, &i_const, &src_val);
                 }
-                let runtime_length = b.ir_mul_i(&len_arr_const, repeats_arg);
                 let runtime_length_sv = value_to_scalar_i64(&runtime_length);
                 let runtime_length_vid = runtime_length_sv.value_id;
 
