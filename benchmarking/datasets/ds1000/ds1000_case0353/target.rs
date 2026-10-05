@@ -1,122 +1,75 @@
-// DS-1000 case 353 — Halo2 baseline.
-// Kernel:
-//   dims = np.maximum(B.max(0), A.max(0)) + 1
-//   output = A[~np.in1d(np.ravel_multi_index(A.T, dims),
-//                       np.ravel_multi_index(B.T, dims))]
-// A: Integer[2,3], B: Integer[7,3]. Output is dynamic-shape, so we
-// emit a fixed-shape result: for each of the 2 rows in A we expose
-// (keep_mask_bit, row[0], row[1], row[2]). A row is "kept" when its
-// ravel index is NOT present in any row of B.
-//
-// Mirrors kernel.py's algorithm: per-column max across A and B → dims;
-// ravel each row; in1d via O(N*M) equality check.
+//! DS-1000 case 0353, halo2-base baseline.
+//! Kernel: `dims = np.maximum(B.max(0), A.max(0)) + 1;
+//! A[~np.in1d(np.ravel_multi_index(A.T, dims), np.ravel_multi_index(B.T, dims))]`
+//! on `A: Integer[2, 3]`, `B: Integer[7, 3]`: the rows of A that are not rows
+//! of B (data-dependent number of rows).
+//! `ravel_multi_index` raises ValueError (no proof) for a negative coordinate
+//! and when `prod(dims)` exceeds `2^63 - 1`; both are checked (each entry in
+//! `[0, 2^63)`, the product in `[0, 2^63)`). The flat index of a row is then
+//! `(x0 * d1 + x1) * d2 + x2`, an exact integer, injective on the rows.
+//! Output: the number of kept rows, then the kept rows of A, zero-padded to
+//! 2 rows of 3.
 
-use clap::Parser;
-use halo2_base::utils::{ScalarField, BigPrimeField};
-use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use halo2_base::gates::{GateChip, GateInstructions, RangeInstructions};
-use serde::{Serialize, Deserialize};
-use halo2_base::AssignedValue;
-#[allow(unused_imports)] use halo2_graph::scaffold::cmd::Cli;
-use halo2_graph::scaffold::run;
+use crate::prelude::*;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CircuitInput {
-    pub a: Vec<String>,  // 6 signed integers (2x3 row-major)
-    pub b: Vec<String>,  // 21 signed integers (7x3 row-major)
-}
+const RA: usize = 2;
+const RB: usize = 7;
+const C: usize = 3;
 
-fn setdiff_rows<F: ScalarField>(
-    builder: &mut BaseCircuitBuilder<F>, input: CircuitInput, make_public: &mut Vec<AssignedValue<F>>,
-) where F: BigPrimeField {
-    let gate = GateChip::<F>::default();
-    let range_chip = builder.range_chip();
+pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
+    let (a, b) = (inputs.ints("A", &[RA, C])?, inputs.ints("B", &[RB, C])?);
+    let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    assert_eq!(input.a.len(), 6);
-    assert_eq!(input.b.len(), 21);
+    let a = q.load_ints(ctx, &a);
+    let b = q.load_ints(ctx, &b);
+    for x in a.iter().chain(&b) {
+        q.range.range_check(ctx, *x, 63);
+    }
+    let dims: Vec<Cell> = (0..C)
+        .map(|c| {
+            let column: Vec<Cell> = a.iter().chain(&b).skip(c).step_by(C).copied().collect();
+            let max = q.max_of(ctx, &column);
+            q.add(ctx, max, Constant(Fr::ONE))
+        })
+        .collect();
+    let d12 = q.gate.mul(ctx, dims[1], dims[2]);
+    let size = q.gate.mul(ctx, dims[0], d12);
+    q.range.range_check(ctx, size, 63);
 
-    let mut a: Vec<AssignedValue<F>> = Vec::with_capacity(6);
-    for s in &input.a {
-        let abs = ctx.load_witness(F::from_u128(
-            s.trim_start_matches('-').parse::<u128>().unwrap()));
-        a.push(if s.starts_with('-') { gate.neg(ctx, abs) } else { abs });
-    }
-    let mut b: Vec<AssignedValue<F>> = Vec::with_capacity(21);
-    for s in &input.b {
-        let abs = ctx.load_witness(F::from_u128(
-            s.trim_start_matches('-').parse::<u128>().unwrap()));
-        b.push(if s.starts_with('-') { gate.neg(ctx, abs) } else { abs });
-    }
+    let flat = |ctx: &mut Ctx, row: &[Cell]| {
+        let hi = q.gate.mul_add(ctx, row[0], dims[1], row[1]);
+        q.gate.mul_add(ctx, hi, dims[2], row[2])
+    };
+    let flat_a: Vec<Cell> = a.chunks(C).map(|row| flat(ctx, row)).collect();
+    let flat_b: Vec<Cell> = b.chunks(C).map(|row| flat(ctx, row)).collect();
+    let keep: Vec<Cell> = flat_a
+        .iter()
+        .map(|fa| {
+            let mut acc: Option<Cell> = None;
+            for fb in &flat_b {
+                let same = q.eq(ctx, *fa, *fb);
+                acc = Some(match acc {
+                    None => q.gate.not(ctx, same),
+                    Some(acc) => q.gate.mul_not(ctx, same, acc),
+                });
+            }
+            acc.expect("B has rows")
+        })
+        .collect();
 
-    // dims[k] = max(max_i a[i][k], max_i b[i][k]) + 1 for k in 0..3.
-    let one_int = ctx.load_constant(F::ONE);
-    let mut dims: [AssignedValue<F>; 3] = [a[0]; 3];
-    for k in 0..3usize {
-        // running max across A column k and B column k.
-        let mut m = a[0 * 3 + k];
-        for i in 1..2usize {
-            let v = a[i * 3 + k];
-            let lt = range_chip.is_less_than(ctx, m, v, 128);
-            m = gate.select(ctx, v, m, lt);
-        }
-        for i in 0..7usize {
-            let v = b[i * 3 + k];
-            let lt = range_chip.is_less_than(ctx, m, v, 128);
-            m = gate.select(ctx, v, m, lt);
-        }
-        dims[k] = gate.add(ctx, m, one_int);
+    // Kept rows to the front: slot 0 is A[0] if kept, else A[1] if kept;
+    // slot 1 is A[1] if both are kept.
+    let count = q.add(ctx, keep[0], keep[1]);
+    let both = q.gate.mul(ctx, keep[0], keep[1]);
+    let mut slots = Vec::with_capacity(RA * C);
+    for c in 0..C {
+        let second = q.gate.mul(ctx, keep[1], a[C + c]);
+        slots.push(q.gate.select(ctx, a[c], second, keep[0]));
     }
-
-    // ravel_multi_index of A.T with shape dims: for each row r in A,
-    // idx = ((a[r,0] * dims[1]) + a[r,1]) * dims[2] + a[r,2].
-    let mut a_idx: [AssignedValue<F>; 2] = [a[0]; 2];
-    for r in 0..2usize {
-        let t0 = gate.mul(ctx, a[r * 3 + 0], dims[1]);
-        let t1 = gate.add(ctx, t0, a[r * 3 + 1]);
-        let t2 = gate.mul(ctx, t1, dims[2]);
-        a_idx[r] = gate.add(ctx, t2, a[r * 3 + 2]);
+    for c in 0..C {
+        slots.push(q.gate.mul(ctx, both, a[C + c]));
     }
-    let mut b_idx: [AssignedValue<F>; 7] = [b[0]; 7];
-    for r in 0..7usize {
-        let t0 = gate.mul(ctx, b[r * 3 + 0], dims[1]);
-        let t1 = gate.add(ctx, t0, b[r * 3 + 1]);
-        let t2 = gate.mul(ctx, t1, dims[2]);
-        b_idx[r] = gate.add(ctx, t2, b[r * 3 + 2]);
-    }
-
-    // in1d: in_b[r] = OR over s of (a_idx[r] == b_idx[s]). keep[r] = !in_b[r].
-    let zero = ctx.load_constant(F::ZERO);
-    let mut keeps = [zero; 2];
-    for r in 0..2usize {
-        let mut in_b = zero;
-        for s in 0..7usize {
-            let eq = gate.is_equal(ctx, a_idx[r], b_idx[s]);
-            in_b = gate.or(ctx, in_b, eq);
-        }
-        keeps[r] = gate.not(ctx, in_b);
-    }
-
-    // Compact output (mirrors Zinnia's dynamic-array encoding): kept rows
-    // packed to the front in order, zero-padded; metadata = runtime
-    // length (rows * 3) and the row count.
-    let count = gate.add(ctx, keeps[0], keeps[1]);
-    let three = ctx.load_constant(F::from(3u64));
-    let total = gate.mul(ctx, count, three);
-    make_public.push(total);
-    make_public.push(count);
-    let both = gate.and(ctx, keeps[0], keeps[1]);
-    for j in 0..3usize {
-        // Slot row 0: A0 if kept, else A1 if kept, else 0.
-        let fallback = gate.mul(ctx, keeps[1], a[3 + j]);
-        let row0 = gate.select(ctx, a[j], fallback, keeps[0]);
-        make_public.push(row0);
-    }
-    for j in 0..3usize {
-        // Slot row 1: A1 only when both rows kept.
-        let row1 = gate.mul(ctx, both, a[3 + j]);
-        make_public.push(row1);
-    }
+    out.dynamic(count, &slots, Kind::Int, C);
+    Ok(())
 }
-
-fn main() { env_logger::init(); let args = Cli::parse(); run(setdiff_rows, args); }

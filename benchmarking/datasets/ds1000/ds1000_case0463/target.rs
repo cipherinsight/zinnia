@@ -1,97 +1,64 @@
-// DS-1000 case 463 — Halo2 baseline.
-// Kernel:
-//   selection = np.ones((len(a), 1), dtype=bool)
-//   selection[1:] = a[1:] != a[:-1]
-//   selection &= a != 0
-//   result = a[selection].reshape(-1, 1)
-// Integer[20, 1] in; dynamic-length out, exposed as padded buffer (len 20)
-// plus the actual keep-count.
+//! DS-1000 case 0463, halo2-base baseline.
+//! Kernel: the (20, 1) column variant of 0462: `selection[1:] = a[1:] !=
+//! a[:-1]` (first row selected), `selection &= a != 0`,
+//! `a[selection].reshape(-1, 1)` on `Integer[20, 1]` (data-dependent length).
+//! Output: the count of kept rows, then the kept values in order,
+//! zero-padded to 20 rows of one. Only equalities decide the selection (no
+//! range check). Compaction by a running one-hot of the number of kept values
+//! before element `i` (one select per pair, no equality tests).
 
-use clap::Parser;
-use halo2_base::utils::{ScalarField, BigPrimeField};
-use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use halo2_base::gates::{GateChip, GateInstructions};
-use serde::{Serialize, Deserialize};
-use halo2_base::AssignedValue;
-#[allow(unused_imports)] use halo2_graph::scaffold::cmd::Cli;
-use halo2_graph::scaffold::run;
+use crate::prelude::*;
+use halo2_base::QuantumCell;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CircuitInput {
-    pub a: Vec<String>,        // 20 decimal integers (the [20,1] array flattened)
-    pub claimed_len: String,   // actual output length (<= 20)
-    pub claimed: Vec<String>,  // 20 decimal integers (padded with 0)
-}
+const N: usize = 20;
 
-fn dedup_nonzero<F: ScalarField>(
-    builder: &mut BaseCircuitBuilder<F>,
-    input: CircuitInput,
-    make_public: &mut Vec<AssignedValue<F>>,
-) where F: BigPrimeField {
-    let gate = GateChip::<F>::default();
+pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
+    let a = inputs.ints("a", &[N, 1])?;
+    let q = Q32::new(builder);
     let ctx = builder.main(0);
-    const N: usize = 20;
-    assert_eq!(input.a.len(), N);
-    assert_eq!(input.claimed.len(), N);
 
-    let load_int = |ctx: &mut halo2_base::Context<F>, s: &str| -> AssignedValue<F> {
-        let abs = ctx.load_witness(F::from_u128(
-            s.trim_start_matches('-').parse::<u128>().expect("decimal int"),
-        ));
-        if s.starts_with('-') { gate.neg(ctx, abs) } else { abs }
-    };
-
-    let a: Vec<AssignedValue<F>> = input.a.iter().map(|s| load_int(ctx, s)).collect();
-    let claimed_len = load_int(ctx, &input.claimed_len);
-    let claimed: Vec<AssignedValue<F>> = input.claimed.iter().map(|s| load_int(ctx, s)).collect();
-
-    let one = ctx.load_constant(F::ONE);
-    let zero_int = ctx.load_constant(F::ZERO);
-
-    let mut selection: Vec<AssignedValue<F>> = Vec::with_capacity(N);
-    selection.push(one);
-    for i in 1..N {
-        let eq = gate.is_equal(ctx, a[i], a[i - 1]);
-        let ne = gate.not(ctx, eq);
-        selection.push(ne);
-    }
-    let mut keep: Vec<AssignedValue<F>> = Vec::with_capacity(N);
+    let a = q.load_ints(ctx, &a);
+    let mut keep = Vec::with_capacity(N);
     for i in 0..N {
-        let eq_zero = gate.is_equal(ctx, a[i], zero_int);
-        let nz = gate.not(ctx, eq_zero);
-        let k = gate.and(ctx, selection[i], nz);
-        keep.push(k);
+        let zero = q.gate.is_zero(ctx, a[i]);
+        let nonzero = q.gate.not(ctx, zero);
+        keep.push(if i == 0 {
+            nonzero
+        } else {
+            let repeat = q.eq(ctx, a[i], a[i - 1]);
+            q.gate.mul_not(ctx, repeat, nonzero)
+        });
     }
-
-    let mut rank_after: Vec<AssignedValue<F>> = Vec::with_capacity(N);
-    let mut running = zero_int;
-    for i in 0..N {
-        running = gate.add(ctx, running, keep[i]);
-        rank_after.push(running);
-    }
-    let total = rank_after[N - 1];
-
-    let mut out: Vec<AssignedValue<F>> = Vec::with_capacity(N);
-    for k in 0..N {
-        let target = ctx.load_constant(F::from((k + 1) as u64));
-        let mut chosen = zero_int;
-        for i in 0..N {
-            let rank_eq = gate.is_equal(ctx, rank_after[i], target);
-            let pick = gate.and(ctx, keep[i], rank_eq);
-            chosen = gate.select(ctx, a[i], chosen, pick);
-        }
-        out.push(chosen);
-    }
-
-    let len_ok = gate.is_equal(ctx, total, claimed_len);
-    gate.assert_is_const(ctx, &len_ok, &F::ONE);
-    for k in 0..N {
-        let eq = gate.is_equal(ctx, out[k], claimed[k]);
-        gate.assert_is_const(ctx, &eq, &F::ONE);
-    }
-
-    make_public.push(total);
-    for v in &out { make_public.push(*v); }
+    let (count, slots) = compact(&q, ctx, &a, &keep);
+    out.dynamic(count, &slots, Kind::Int, 1);
+    Ok(())
 }
 
-fn main() { env_logger::init(); let args = Cli::parse(); run(dedup_nonzero, args); }
+/// `xs[keep]` at the front of `xs.len()` slots, zero-padded, and its length.
+/// `at[j]` is the one-hot of the number of kept values before element `i`
+/// (`at = e_0` for `i = 0`; it moves up one place after a kept element), and
+/// element `i` adds `keep_i * x_i` to the slot `at` points at.
+fn compact(q: &Q32, ctx: &mut Ctx, xs: &[Cell], keep: &[Cell]) -> (Cell, Vec<Cell>) {
+    let n = xs.len();
+    let mut terms: Vec<(Vec<QuantumCell<Fr>>, Vec<QuantumCell<Fr>>)> = vec![(vec![], vec![]); n];
+    let mut at: Vec<QuantumCell<Fr>> = vec![Constant(Fr::ONE)];
+    for i in 0..n {
+        let y = q.gate.mul(ctx, keep[i], xs[i]);
+        for (j, hit) in at.iter().enumerate() {
+            terms[j].0.push(*hit);
+            terms[j].1.push(Existing(y));
+        }
+        if i + 1 < n {
+            let k = keep[i];
+            let mut next = Vec::with_capacity(at.len() + 1);
+            next.push(Existing(q.gate.mul_not(ctx, k, at[0])));
+            for j in 1..at.len() {
+                next.push(Existing(q.gate.select(ctx, at[j - 1], at[j], k)));
+            }
+            next.push(Existing(q.gate.mul(ctx, k, *at.last().expect("non-empty"))));
+            at = next;
+        }
+    }
+    let slots = terms.into_iter().map(|(hits, ys)| q.gate.inner_product(ctx, hits, ys)).collect();
+    (q.sum(ctx, keep.iter().copied()), slots)
+}
