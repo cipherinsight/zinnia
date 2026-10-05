@@ -70,7 +70,7 @@ pub use cases::*;
 
 /// What every case module imports.
 pub mod prelude {
-    pub use crate::Input;
+    pub use crate::{Input, Shaped};
     pub use alloc::{vec, vec::Vec};
     pub use q32::{dot, int::floor_div, int::floor_mod, Q32};
 }
@@ -104,12 +104,31 @@ pub trait Input {
     }
 }
 
-/// One public output value, as the harness compares it with NumPy.
+/// One public output value, as the harness compares it with NumPy, or one
+/// extent of a data-dependent output shape (see [`Shaped`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Public {
     Int(i64),
     Float(Q32),
     Bool(bool),
+    Dim(i64),
+}
+
+/// An array whose shape depends on the data and is not implied by its length
+/// (e.g. a 2-D crop with a data-dependent number of rows and columns). The
+/// guest commits the shape with the values, so the proof binds it; the host
+/// reports it as `output_shape`, apart from the values compared with NumPy.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Shaped<T> {
+    pub shape: Vec<i64>,
+    pub values: Vec<T>,
+}
+
+impl<T: Publics> Publics for Shaped<T> {
+    fn flatten_into(&self, out: &mut Vec<Public>) {
+        out.extend(self.shape.iter().map(|&d| Public::Dim(d)));
+        self.values.flatten_into(out);
+    }
 }
 
 /// Flattening of a committed output into public values, in row-major order

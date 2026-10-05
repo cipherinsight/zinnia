@@ -96,6 +96,11 @@ A case has the same parameters, shapes, constants and algorithm as
   float, an index is an `i64`, a mask is `bool`). Cairo returns the same
   structure and declares it on a line `// output: <layout>` with `q32`, `i64`,
   `bool`, `[T]` (array) and `(T, U, ...)` (tuple).
+* When the output's shape depends on the data and is not implied by its
+  length (a 2-D crop whose rows and columns both vary), commit the shape with
+  the values: Rust `Shaped { shape, values }`, Cairo a tuple
+  `(Array<i64>, Array<T>)` declared as `([dim], [T])`. The hosts report the
+  shape as `output_shape`; `publics` keeps only the values.
 * Shape parameters that the kernel fixes are constants in the program.
 
 ### Style

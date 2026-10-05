@@ -110,8 +110,20 @@ impl Report {
         self.fields.insert(key.into(), json!(value));
     }
 
+    /// Records the output values and, if the output has a data-dependent
+    /// shape, that shape (`output_shape`).
     pub fn set_publics(&mut self, publics: &[Public]) {
         self.fields.insert("publics".into(), publics_json(publics));
+        let dims: Vec<i64> = publics
+            .iter()
+            .filter_map(|p| match *p {
+                Public::Dim(d) => Some(d),
+                _ => None,
+            })
+            .collect();
+        if !dims.is_empty() {
+            self.fields.insert("output_shape".into(), json!(dims));
+        }
     }
 
     /// Runs `step` and records its wall-clock time under `timings_s.<name>`.
@@ -218,15 +230,17 @@ pub fn run_native(case: &str, args: &[Arg]) -> Option<Vec<Public>> {
     Some(publics)
 }
 
-/// Public values as JSON: floats decoded from Q32, integers, booleans.
+/// Output values as JSON (floats decoded from Q32, integers, booleans),
+/// without the extents of a data-dependent shape.
 pub fn publics_json(publics: &[Public]) -> Value {
     Value::Array(
         publics
             .iter()
-            .map(|p| match *p {
-                Public::Int(v) => json!(v),
-                Public::Float(v) => json!(v.to_f64()),
-                Public::Bool(v) => json!(v),
+            .filter_map(|p| match *p {
+                Public::Int(v) => Some(json!(v)),
+                Public::Float(v) => Some(json!(v.to_f64())),
+                Public::Bool(v) => Some(json!(v)),
+                Public::Dim(_) => None,
             })
             .collect(),
     )

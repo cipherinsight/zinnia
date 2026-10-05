@@ -30,7 +30,10 @@ of `Array<T>`); negative values are encoded modulo the Stark prime.
 
 The output layout of each case is declared in its `main.cairo` by a line
 `// output: <type>` where <type> is `q32`, `i64`, `bool`, `[<type>]` (an
-array: length then elements) or `(<type>, ...)` (a tuple).
+array: length then elements) or `(<type>, ...)` (a tuple). `dim` is an extent
+of a data-dependent output shape: committed like an `i64` but reported as
+`output_shape`, apart from the values compared with NumPy (e.g. `([dim], [q32])`
+for a 2-D crop whose rows and columns depend on the data).
 """
 
 from __future__ import annotations
@@ -137,7 +140,7 @@ def parse_type(text: str):
                 return ("tuple", items), rest[1:]
             else:
                 raise Failure("unbalanced ( in output layout")
-    for scalar in ("q32", "i64", "bool"):
+    for scalar in ("q32", "i64", "bool", "dim"):
         if text.startswith(scalar):
             return scalar, text[len(scalar):]
     raise Failure(f"unknown type in output layout: {text!r}")
@@ -147,15 +150,22 @@ def signed(felt: int) -> int:
     return felt - STARK_PRIME if felt > STARK_PRIME // 2 else felt
 
 
-def decode_output(schema, felts: list[int]) -> list:
+def decode_output(report: dict, schema, felts: list[int]) -> None:
+    """Sets `publics` (and `output_shape` for `dim` entries) from the output felts."""
     publics: list = []
-    pos = decode_into(schema, felts, 0, publics)
+    shape: list = []
+    pos = decode_into(schema, felts, 0, publics, shape)
     if pos != len(felts):
         raise Failure(f"program output has {len(felts) - pos} felts beyond the declared layout")
-    return publics
+    report["publics"] = publics
+    if shape:
+        report["output_shape"] = shape
 
 
-def decode_into(schema, felts: list[int], pos: int, out: list) -> int:
+def decode_into(schema, felts: list[int], pos: int, out: list, shape: list) -> int:
+    if schema == "dim":
+        shape.append(signed(felts[pos]))
+        return pos + 1
     if schema == "q32":
         out.append(signed(felts[pos]) / SCALE)
         return pos + 1
@@ -172,10 +182,10 @@ def decode_into(schema, felts: list[int], pos: int, out: list) -> int:
         length = felts[pos]
         pos += 1
         for _ in range(length):
-            pos = decode_into(inner, felts, pos, out)
+            pos = decode_into(inner, felts, pos, out, shape)
         return pos
     for item in inner:
-        pos = decode_into(item, felts, pos, out)
+        pos = decode_into(item, felts, pos, out, shape)
     return pos
 
 
@@ -225,7 +235,7 @@ def execute(report: dict, case: str, case_dir: Path, args_path: Path, schema) ->
     for m in messages:
         if "program_output" in m:
             felts = [int(line) % STARK_PRIME for line in m["program_output"].split()]
-            report["publics"] = decode_output(schema, program_output(felts))
+            decode_output(report, schema, program_output(felts))
         if m.get("resources"):
             report["resources"] = m["resources"]
         if str(m.get("status", "")).startswith("saving output"):
@@ -261,14 +271,14 @@ def run(args: argparse.Namespace, report: dict) -> None:
         shutil.rmtree(execution_dir, ignore_errors=True)
         report["proof_path"] = str(proof_path)
         report["proof_size_bytes"] = proof_path.stat().st_size
-        report["publics"] = decode_output(schema, program_output(proof_output(json.loads(proof_path.read_text()))))
+        decode_output(report, schema, program_output(proof_output(json.loads(proof_path.read_text()))))
         return
 
     # verify
     proof = json.loads(proof_path.read_text())
     report["proof_path"] = str(proof_path)
     report["proof_size_bytes"] = proof_path.stat().st_size
-    report["publics"] = decode_output(schema, program_output(proof_output(proof)))
+    decode_output(report, schema, program_output(proof_output(proof)))
     target = proof_path
     if args.tamper:
         proof["claim"]["public_data"]["public_memory"]["output"][-1][1][0] ^= 1
