@@ -258,3 +258,32 @@ def test_membership_halo2_base_matches_mock():
     assert_backends_agree(
         'def kernel(A: Integer[Array, "6"], B: Integer[Array, "3"]):\n    return np.in1d(A, B)\n',
         np.array([1, 5, 2, 9, 0, -3]), np.array([5, 0, -3]))
+
+
+# ── np.insert at a runtime position ──────────────────────────────────────
+
+INSERT_1D = 'def kernel(a: Float[Array, "5"], pos: Integer, v: Integer):\n    return np.insert(a, pos, v)\n'
+INSERT_2D = ('def kernel(a: Float[Array, "3 2"], pos: Integer, row: Float[Array, "2"]):\n'
+             '    return np.insert(a, pos, row, axis=0)\n')
+
+
+@pytest.mark.parametrize("pos", [0, 2, 5])
+def test_insert_at_runtime_position_matches_numpy(pos):
+    a = np.array([0.5, -1.0, 2.25, 3.0, -0.75])
+    assert_matches_numpy(INSERT_1D, a, pos, 7)
+    rows = np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+    assert_matches_numpy(INSERT_2D, rows, min(pos, 3), np.array([-1.5, 9.0]))
+
+
+def test_insert_position_out_of_range_is_rejected():
+    satisfied, _ = run_mock(compile_kernel(INSERT_1D), np.zeros(5), 6, 1)
+    assert not satisfied
+
+
+def test_insert_uses_no_comparison_per_slot():
+    # [pos <= i] is the running or of the equality tests [pos == k], k <= i.
+    assert "LessThanIIR" not in ir_classes(compile_kernel(INSERT_1D))
+
+
+def test_insert_halo2_base_matches_mock():
+    assert_backends_agree(INSERT_1D, np.array([0.5, -1.0, 2.25, 3.0, -0.75]), 3, 7)

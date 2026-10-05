@@ -1316,10 +1316,22 @@ pub fn np_insert(
         let n_axis = shape[axis];
         let lane_total = expected_value_cells;
         let mut out_slots: Vec<Option<Value>> = vec![None; out_total];
+        // Output slot `i` takes the source element `i` before the insertion
+        // point, the inserted value at it and the source element `i - 1`
+        // after it. `[obj <= i]` is the running OR of the equality tests
+        // `[obj == k]`, k <= i: `obj` is bounds-checked to `0..=n_axis`
+        // above, so exactly one of those tests holds, and the prefix OR is
+        // set from `k = obj` on. That replaces a comparison per slot with
+        // one gate.
+        let mut reached: Option<Value> = None;
         for i in 0..=n_axis {
             let i_const = b.ir_constant_int(i as i64);
-            let is_lt = b.ir_less_than_i(&i_const, obj);
             let is_eq = b.ir_equal_i(&i_const, obj);
+            let at_or_after = match &reached {
+                Some(prev) => b.ir_logical_or(prev, &is_eq),
+                None => is_eq.clone(),
+            };
+            reached = Some(at_or_after.clone());
             let mut inserted_values = Vec::with_capacity(lane_total);
             let mut pre_values = Vec::with_capacity(lane_total);
             let mut post_values = Vec::with_capacity(lane_total);
@@ -1382,7 +1394,7 @@ pub fn np_insert(
                 post_values.push(post_val);
             }
             let mid_values = select_many_typed(b, &is_eq, &inserted_values, &post_values);
-            let chosen_values = select_many_typed(b, &is_lt, &pre_values, &mid_values);
+            let chosen_values = select_many_typed(b, &at_or_after, &mid_values, &pre_values);
             for (out_idx, value) in out_indices.into_iter().zip(chosen_values) {
                 out_slots[out_idx] = Some(value);
             }
