@@ -161,6 +161,10 @@ pub struct IRGenerator {
     pub(crate) in_place_arguments: Vec<outputs::ArgumentArray>,
     /// Index of the first IR statement of the entry function's body.
     pub(crate) in_place_body_start: usize,
+    /// Nesting depth of expression-level guards (comprehension filters,
+    /// conditional-expression arms; see `iteration::with_guard`), whose
+    /// bindings do not escape.
+    pub(crate) expression_guard_depth: usize,
 }
 
 /// One entry in [`IRGenerator::chip_call_stack`]. See round-2 doc on
@@ -275,6 +279,7 @@ impl IRGenerator {
             output_layout: outputs::OutputLayout::default(),
             in_place_arguments: Vec::new(),
             in_place_body_start: 0,
+            expression_guard_depth: 0,
         }
     }
 

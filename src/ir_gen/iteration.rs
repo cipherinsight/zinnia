@@ -516,7 +516,9 @@ impl IRGenerator {
         );
         let condition = self.ctx.get_condition_value(&mut self.builder);
         let previous = self.builder.swap_write_predicate(Some(condition));
+        self.expression_guard_depth += 1;
         let result = f(self);
+        self.expression_guard_depth -= 1;
         self.builder.swap_write_predicate(previous);
         let _guard_facts = self.builder.facts.leave();
         self.ctx.if_leave();

@@ -2027,6 +2027,15 @@ impl IRGenerator {
         let true_val = self.with_guard(&cond_bool, |this| this.visit(&n.t_expr));
         let not_cond = self.builder.ir_logical_not(&cond_bool);
         let false_val = self.with_guard(&not_cond, |this| this.visit(&n.f_expr));
+        match (&true_val, &false_val) {
+            (Value::None, Value::None) => return Value::None,
+            (Value::None, other) | (other, Value::None) => panic!(
+                "a conditional expression that is None on one side and a {} on the other is \
+                 not supported (its value would depend on a private condition)",
+                other.zinnia_type()
+            ),
+            _ => {}
+        }
         // `a if c else b` is the object `a` or `b` itself in Python.
         self.merge_binding(&cond_bool, &true_val, &false_val)
     }
