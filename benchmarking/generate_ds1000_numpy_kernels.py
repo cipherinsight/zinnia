@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_MANIFEST = ROOT / "ds1000_numpy" / "manifest.json"
+DEFAULT_MANIFEST = ROOT / "datasets" / "ds1000_numpy" / "manifest.json"
 
 SCALAR_NAMES = {
     "p",
@@ -377,7 +377,7 @@ def write_kernels(manifest: Path, root: Path, clean: bool) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
-    parser.add_argument("--root", type=Path, default=ROOT)
+    parser.add_argument("--root", type=Path, default=ROOT / "datasets" / "ds1000")
     parser.add_argument("--clean", action="store_true")
     args = parser.parse_args()
     payload = write_kernels(args.manifest, args.root, args.clean)

@@ -23,8 +23,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_DATASET_URL = "https://raw.githubusercontent.com/xlang-ai/DS-1000/main/data/ds1000.jsonl.gz"
-DEFAULT_CACHE = ROOT / "ds1000_numpy" / "ds1000.jsonl.gz"
-DEFAULT_OUT_DIR = ROOT / "ds1000_numpy"
+DEFAULT_CACHE = ROOT / "datasets" / "ds1000_numpy" / "ds1000.jsonl.gz"
+DEFAULT_OUT_DIR = ROOT / "datasets" / "ds1000_numpy"
 DEFAULT_MANIFEST = DEFAULT_OUT_DIR / "manifest.json"
 DEFAULT_REPORT = DEFAULT_OUT_DIR / "FILTERING.md"
 
