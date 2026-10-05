@@ -32,7 +32,7 @@
 //! dropped after optimization ([`drop_checks_of_unread_inputs`]), so the
 //! read is removed as before.
 
-use crate::ir::IRGraph;
+use crate::ir::{IRGraph, IRStatement};
 use crate::ir_defs::IR;
 use crate::types::{StmtId, Value, ZinniaType};
 
@@ -61,16 +61,37 @@ impl IRGenerator {
 
 /// Whether statement `cmp` is a domain-check comparison of `read` (the read
 /// on the left, the matching window constant on the right).
-fn is_domain_comparison(graph: &IRGraph, cmp: StmtId, read: StmtId) -> bool {
-    let stmt = &graph.stmts[cmp as usize];
+fn is_domain_comparison(stmts: &[IRStatement], cmp: StmtId, read: StmtId) -> bool {
+    let stmt = &stmts[cmp as usize];
     let [lhs, rhs] = stmt.arguments[..] else { return false };
     if lhs != read {
         return false;
     }
-    match (&stmt.ir, &graph.stmts[rhs as usize].ir) {
+    match (&stmt.ir, &stmts[rhs as usize].ir) {
         (IR::GteI, IR::ConstantInt { value }) => *value == i64::MIN,
         (IR::LteI, IR::ConstantInt { value }) => *value == i64::MAX,
         _ => false,
+    }
+}
+
+/// Whether `stmts[index]` is part of an input's domain check: a domain
+/// comparison of an input read, the `Assert` of one, or an `AssertBit` of an
+/// input read. For tests that count the other comparisons and assertions.
+#[cfg(test)]
+pub(crate) fn is_domain_check_stmt(stmts: &[IRStatement], index: usize) -> bool {
+    let is_read = |id: StmtId| {
+        matches!(stmts[id as usize].ir, IR::ReadInteger { .. } | IR::ReadFloat { .. })
+    };
+    let is_comparison = |id: StmtId| {
+        stmts[id as usize].arguments.first().is_some_and(|&read| {
+            is_read(read) && is_domain_comparison(stmts, id, read)
+        })
+    };
+    let stmt = &stmts[index];
+    match (&stmt.ir, stmt.arguments.as_slice()) {
+        (IR::Assert, [cmp]) => is_comparison(*cmp),
+        (IR::AssertBit, [read]) => is_read(*read),
+        _ => is_comparison(index as StmtId),
     }
 }
 
@@ -82,7 +103,7 @@ fn unread_input_checks(graph: &IRGraph, read: StmtId) -> Option<Vec<StmtId>> {
     for &consumer in &graph.out_links[read as usize] {
         match graph.stmts[consumer as usize].ir {
             IR::AssertBit => checks.push(consumer),
-            _ if is_domain_comparison(graph, consumer, read) => {
+            _ if is_domain_comparison(&graph.stmts, consumer, read) => {
                 let asserts = &graph.out_links[consumer as usize];
                 if !asserts.iter().all(|&a| matches!(graph.stmts[a as usize].ir, IR::Assert)) {
                     return None;

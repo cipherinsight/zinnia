@@ -9,6 +9,7 @@ use crate::optim::predicates::formula::ContractFloat;
 use crate::optim::predicates::{CmpOp, ContractTerm, ContractVar};
 use crate::optim::prove::{prove_with_facts, ProveOutcome};
 use crate::types::ValueId;
+use super::input_domain::is_domain_check_stmt as is_input_check;
 
 #[test]
 fn test_generate_simple_constants() {
@@ -477,7 +478,8 @@ fn assert_scalar_fact_discharges_later_sqrt_requires_without_extra_witness() {
         .builder
         .stmts
         .iter()
-        .filter(|stmt| matches!(stmt.ir, IR::Assert))
+        .enumerate()
+        .filter(|(i, stmt)| matches!(stmt.ir, IR::Assert) && !is_input_check(&gen.builder.stmts, *i))
         .count();
     assert_eq!(
         assert_count, 1,
@@ -522,7 +524,8 @@ fn assert_conjunction_fact_discharges_later_sqrt_requires_without_extra_witness(
         .builder
         .stmts
         .iter()
-        .filter(|stmt| matches!(stmt.ir, IR::Assert))
+        .enumerate()
+        .filter(|(i, stmt)| matches!(stmt.ir, IR::Assert) && !is_input_check(&gen.builder.stmts, *i))
         .count();
     assert_eq!(
         assert_count, 1,
@@ -1201,17 +1204,20 @@ fn loop_derived_static_array_read_skips_index_bound_witness_bundle() {
     let assert_count = graph
         .stmts
         .iter()
-        .filter(|stmt| matches!(stmt.ir, IR::Assert))
+        .enumerate()
+        .filter(|(i, stmt)| matches!(stmt.ir, IR::Assert) && !is_input_check(&graph.stmts, *i))
         .count();
     let gte_count = graph
         .stmts
         .iter()
-        .filter(|stmt| matches!(stmt.ir, IR::GteI))
+        .enumerate()
+        .filter(|(i, stmt)| matches!(stmt.ir, IR::GteI) && !is_input_check(&graph.stmts, *i))
         .count();
     let lt_count = graph
         .stmts
         .iter()
-        .filter(|stmt| matches!(stmt.ir, IR::LtI))
+        .enumerate()
+        .filter(|(i, stmt)| matches!(stmt.ir, IR::LtI) && !is_input_check(&graph.stmts, *i))
         .count();
 
     assert_eq!(
@@ -1534,7 +1540,8 @@ fn matching_guard_rhs_static_array_read_uses_guarded_safe_fallback_address() {
     let assert_count = graph
         .stmts
         .iter()
-        .filter(|stmt| matches!(stmt.ir, IR::Assert))
+        .enumerate()
+        .filter(|(i, stmt)| matches!(stmt.ir, IR::Assert) && !is_input_check(&graph.stmts, *i))
         .count();
 
     assert_eq!(
