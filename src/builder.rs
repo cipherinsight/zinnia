@@ -1821,10 +1821,23 @@ impl IRBuilder {
         }))
     }
 
+    /// `sum_i a_i * b_i` over Float pairs, rescaled once: `ProductSumF` for
+    /// two or more pairs (a product, `0.0` for none).
+    pub fn ir_dot_f(&mut self, pairs: &[(Value, Value)]) -> Value {
+        match pairs {
+            [] => self.ir_constant_float(0.0),
+            [(a, b)] => self.ir_mul_f(a, b),
+            _ => self.ir_product_sum_f(pairs),
+        }
+    }
+
     /// ProductSumF operands are adjacent Float pairs:
     /// `[lhs0, rhs0, lhs1, rhs1, ...]`, with `len` equal to the pair count.
-    /// Backend semantics are scalar `MulF` per pair followed by existing
-    /// float-add accumulation, preserving fixed-point rescale checks.
+    /// Every backend computes `floor(sum_i raw(a_i) * raw(b_i) / 2^P)`
+    /// (`kernel::fp_product_sum_rescale`): the exact field sum of the raw
+    /// products, rescaled once, with the rescale's remainder and window
+    /// checks. That is the real sum rounded once, where adding `MulF`
+    /// results rounds every product.
     pub fn ir_product_sum_f(&mut self, pairs: &[(Value, Value)]) -> Value {
         let mut args: Vec<Value> = Vec::with_capacity(pairs.len() * 2);
         for (lhs, rhs) in pairs {

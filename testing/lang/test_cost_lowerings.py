@@ -175,3 +175,28 @@ def test_runtime_power_keeps_powfi():
 def test_constant_power_halo2_base_matches_mock():
     assert_backends_agree('def kernel(a: Float[Array, "3"]):\n    return a ** 6\n',
                           np.array([0.5, -1.25, 1.1]))
+
+
+# ── sums of products rescaled once ───────────────────────────────────────
+
+@pytest.mark.parametrize("body", ["a.std()", "a.var()", "np.var(a, ddof=1)",
+                                  "(a.mean() - 3 * a.std(), a.mean() + 3 * a.std())",
+                                  "np.dot(a, a[::-1])",
+                                  "np.cov(np.vstack((a, a[::-1])))"])
+def test_sum_of_products_matches_numpy(body):
+    a = np.array([0.5, -1.25, 3.0, 2.2, -0.7, 1.9])
+    assert_matches_numpy(f'def kernel(a: Float[Array, "6"]):\n    return {body}\n', a,
+                         atol=1e-6)
+
+
+def test_variance_rescales_once():
+    program = compile_kernel('def kernel(a: Float[Array, "6"]):\n    return a.var()\n')
+    classes = ir_classes(program)
+    assert "MulFIR" not in classes and classes.count("ProductSumFIR") == 1
+
+
+def test_matmul_halo2_base_matches_mock():
+    assert_backends_agree(
+        'def kernel(a: Float[Array, "2 3"], b: Float[Array, "3 2"]):\n    return a @ b\n',
+        np.array([[0.5, -1.0, 2.0], [1.5, 0.25, -3.0]]),
+        np.array([[1.0, 2.0], [-0.5, 0.75], [0.2, -1.1]]))

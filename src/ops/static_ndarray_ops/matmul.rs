@@ -418,32 +418,13 @@ fn matmul_generic(b: &mut IRBuilder, lhs: &Value, rhs: &Value) -> Value {
                         row_vals.push(matmul_dot_complex(b, lhs_row, &col));
                         continue;
                     }
-                    // Compute dot product of lhs row i with rhs column j
-                    let zero = if use_float {
-                        b.ir_constant_float(0.0)
-                    } else {
-                        b.ir_constant_int(0)
-                    };
-                    let mut acc = zero;
-                    for kk in 0..k {
-                        let rhs_row = match &rd.values[kk] {
-                            Value::List(r) | Value::Tuple(r) => &r.values,
+                    let col: Vec<Value> = (0..k)
+                        .map(|kk| match &rd.values[kk] {
+                            Value::List(r) | Value::Tuple(r) => r.values[j].clone(),
                             _ => panic!("matmul: expected 2D array"),
-                        };
-                        let prod = if use_float {
-                            let a = crate::helpers::value_ops::ensure_float(b, &lhs_row[kk]);
-                            let b_val = crate::helpers::value_ops::ensure_float(b, &rhs_row[j]);
-                            b.ir_mul_f(&a, &b_val)
-                        } else {
-                            b.ir_mul_i(&lhs_row[kk], &rhs_row[j])
-                        };
-                        acc = if use_float {
-                            b.ir_add_f(&acc, &prod)
-                        } else {
-                            b.ir_add_i(&acc, &prod)
-                        };
-                    }
-                    row_vals.push(acc);
+                        })
+                        .collect();
+                    row_vals.push(matmul_dot(b, lhs_row, &col, use_float));
                 }
                 let rtypes = row_vals.iter().map(|v| v.zinnia_type()).collect();
                 rows.push(Value::List(CompositeData {
@@ -488,27 +469,26 @@ pub fn matmul_dot_complex(b: &mut IRBuilder, a: &[Value], bv: &[Value]) -> Value
     acc
 }
 
-/// Dot product helper for matmul.
+/// Dot product helper for matmul: an exact integer sum of products, or a
+/// float sum of products rescaled once ([`IRBuilder::ir_dot_f`]).
 pub fn matmul_dot(b: &mut IRBuilder, a: &[Value], bv: &[Value], use_float: bool) -> Value {
-    let zero = if use_float {
-        b.ir_constant_float(0.0)
-    } else {
-        b.ir_constant_int(0)
-    };
-    let mut acc = zero;
+    if use_float {
+        let pairs: Vec<(Value, Value)> = a
+            .iter()
+            .zip(bv)
+            .map(|(x, y)| {
+                (
+                    crate::helpers::value_ops::ensure_float(b, x),
+                    crate::helpers::value_ops::ensure_float(b, y),
+                )
+            })
+            .collect();
+        return b.ir_dot_f(&pairs);
+    }
+    let mut acc = b.ir_constant_int(0);
     for (x, y) in a.iter().zip(bv.iter()) {
-        let prod = if use_float {
-            let xf = crate::helpers::value_ops::ensure_float(b, x);
-            let yf = crate::helpers::value_ops::ensure_float(b, y);
-            b.ir_mul_f(&xf, &yf)
-        } else {
-            b.ir_mul_i(x, y)
-        };
-        acc = if use_float {
-            b.ir_add_f(&acc, &prod)
-        } else {
-            b.ir_add_i(&acc, &prod)
-        };
+        let prod = b.ir_mul_i(x, y);
+        acc = b.ir_add_i(&acc, &prod);
     }
     acc
 }

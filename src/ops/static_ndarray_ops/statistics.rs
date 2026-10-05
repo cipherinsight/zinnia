@@ -257,7 +257,7 @@ pub fn np_cov(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>
     let mut out = Vec::with_capacity(var_count * var_count);
     for i in 0..var_count {
         for j in 0..var_count {
-            let mut acc = b.ir_constant_float(0.0);
+            let mut products = Vec::with_capacity(obs_count);
             for obs in 0..obs_count {
                 let xi = cov_cell_at(&cells, rows, cols, rowvar, i, obs);
                 let xj = cov_cell_at(&cells, rows, cols, rowvar, j, obs);
@@ -271,9 +271,9 @@ pub fn np_cov(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>
                 };
                 let di = b.ir_sub_f(&xi_f, &means[i]);
                 let dj = b.ir_sub_f(&xj_f, &means[j]);
-                let prod = b.ir_mul_f(&di, &dj);
-                acc = b.ir_add_f(&acc, &prod);
+                products.push((di, dj));
             }
+            let acc = b.ir_dot_f(&products);
             out.push(b.ir_div_f(&acc, &denom));
         }
     }

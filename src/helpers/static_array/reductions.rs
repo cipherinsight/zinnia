@@ -491,16 +491,17 @@ fn variance_from_fiber(b: &mut IRBuilder, fiber: &[Value], ddof: i64) -> Value {
     let divisor = checked_var_divisor(reduced_len, ddof);
     let sum = reduce_cells(b, "sum", fiber);
     let mean = mean_from_sum(b, &sum, reduced_len);
-    let mut sq: Vec<Value> = Vec::with_capacity(fiber.len());
-    for cell in fiber {
-        let cf = ensure_float_operand(b, cell);
-        let diff = b.ir_sub_f(&cf, &mean);
-        sq.push(b.ir_mul_f(&diff, &diff));
-    }
-    let sq_sum = reduce_cells(b, "sum", &sq);
-    let sq_sum_f = ensure_float_operand(b, &sq_sum);
+    let squares: Vec<(Value, Value)> = fiber
+        .iter()
+        .map(|cell| {
+            let cf = ensure_float_operand(b, cell);
+            let diff = b.ir_sub_f(&cf, &mean);
+            (diff.clone(), diff)
+        })
+        .collect();
+    let sq_sum = b.ir_dot_f(&squares);
     let denom = b.ir_constant_float(divisor as f64);
-    b.ir_div_f(&sq_sum_f, &denom)
+    b.ir_div_f(&sq_sum, &denom)
 }
 
 fn multi_axis_mean(b: &mut IRBuilder, arr: &Value, axes: &[usize], keepdims: bool) -> Value {
