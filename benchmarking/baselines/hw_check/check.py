@@ -14,8 +14,9 @@ structure depends on the input values fails (H-11).
 
 Outputs are compared position by position against the kernel body run as
 plain NumPy (`hw_check.reference`): integers and booleans exactly, floats
-within `atol + rtol * |reference|` (default 1e-6 each; `--tol CASE=ATOL`
-overrides per case, e.g. for the Q32 sine polynomial).
+within `atol + rtol * |reference|` with the case's `float_tolerance` from
+`datasets/case_sets/ds1000_perf.json` (1e-6 each when the case set gives none;
+`--tol CASE=ATOL` overrides the absolute part).
 
 Usage:
     python -m hw_check.check 0309 0310 ... [--systems halo2,noir]
@@ -42,6 +43,7 @@ from .reference import reference_outputs
 
 BENCH = Path(__file__).resolve().parents[2]
 DATASET = BENCH / "datasets" / "ds1000"
+CASE_SET = BENCH / "datasets" / "case_sets" / "ds1000_perf.json"
 HALO2_BIN = BENCH / "baselines" / "halo2_hw" / "target" / "release" / "halo2_hw"
 MEMRUN = Path("/home/zhantong/Projects/zinnia-project/eval-redo/tools/memrun.sh")
 LOCK = Path(os.environ.get("HW_CHECK_LOCK", Path(tempfile.gettempdir()) / "hw_check_heavy.lock"))
@@ -178,6 +180,17 @@ class CaseCheck:
         }
 
 
+def case_set() -> dict[str, dict]:
+    if not CASE_SET.exists():
+        return {}
+    return {c["case"]: c for c in json.loads(CASE_SET.read_text())["cases"]}
+
+
+def tolerance(entry: dict | None) -> tuple[float, float]:
+    tol = (entry or {}).get("float_tolerance") or {}
+    return tol.get("atol", DEFAULT_ATOL), tol.get("rtol", DEFAULT_RTOL)
+
+
 def case_name(spec: str) -> str:
     return spec if spec.startswith("ds1000_case") else f"ds1000_case{spec}"
 
@@ -186,6 +199,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("cases", nargs="*")
     ap.add_argument("--all", action="store_true", help="every case with a target.rs or main.nr")
+    ap.add_argument("--perf", action="store_true", help="every case whose case-set status is perf")
     ap.add_argument("--systems", default="halo2,noir")
     ap.add_argument("--fixture-root", type=Path, help="<root>/<case>/fixture.json instead of the case folder")
     ap.add_argument("--halo2-bin", type=Path, default=HALO2_BIN)
@@ -194,11 +208,14 @@ def main() -> int:
     ap.add_argument("--out", type=Path)
     a = ap.parse_args()
 
+    statuses = case_set()
     if a.all:
         cases = sorted(d.name for d in DATASET.iterdir() if (d / "target.rs").exists() or (d / "main.nr").exists())
+    elif a.perf:
+        cases = sorted(c for c, e in statuses.items() if e["status"] == "perf")
     else:
         cases = [case_name(c) for c in a.cases]
-    tol = {case_name(k): float(v) for k, v in (t.split("=") for t in a.tol)}
+    atol_override = {case_name(k): float(v) for k, v in (t.split("=") for t in a.tol)}
     systems = a.systems.split(",")
 
     results, failed = {}, 0
@@ -209,15 +226,18 @@ def main() -> int:
             entry["error"] = f"no fixture at {fixture}"
         else:
             try:
-                cc = CaseCheck(case, fixture, a.workroot, a.halo2_bin, tol.get(case, DEFAULT_ATOL), DEFAULT_RTOL)
+                atol, rtol = tolerance(statuses.get(case))
+                cc = CaseCheck(case, fixture, a.workroot, a.halo2_bin, atol_override.get(case, atol), rtol)
                 if "halo2" in systems and (cc.dir / "target.rs").exists():
                     entry["halo2"] = cc.halo2()
                 if "noir" in systems and (cc.dir / "main.nr").exists():
                     entry["noir"] = cc.noir()
             except Exception as e:  # a crashing reference is a finding, not a checker crash
                 entry["error"] = f"{type(e).__name__}: {e}"
+        if statuses.get(case, {}).get("status") not in (None, "perf"):
+            entry["status"] = statuses[case]["status"]
         results[case] = entry
-        line = [case]
+        line = [case] + ([f"[{entry['status']}]"] if "status" in entry else [])
         for s in ("halo2", "noir"):
             if s in entry:
                 size = entry[s].get("cells") if s == "halo2" else entry[s].get("gates")

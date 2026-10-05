@@ -112,7 +112,7 @@ impl From<I64> for QuantumCell<Fr> {
 const OFFSET: u128 = 1 << 63;
 
 /// Longest axis indexed by the one-hot form in [`Q32::index`].
-pub const ONEHOT_MAX_LEN: usize = 4;
+pub const ONEHOT_MAX_LEN: usize = 8;
 
 /// The Q32 chip: halo2-base's gate and range chips plus the fixed-point gadgets.
 #[derive(Clone, Debug)]
@@ -254,6 +254,45 @@ impl Q32 {
     pub fn min(&self, ctx: &mut Ctx, a: I64, b: I64) -> I64 {
         let b_lt_a = self.lt(ctx, b, a);
         self.select_i64(ctx, b, a, b_lt_a)
+    }
+
+    /// `max(xs)` of a few values by a hint `m`, pinned by `m` in the window,
+    /// `m - x` in `[0, 2^64)` for every `x` and `prod_x (m - x) = 0`. The
+    /// `xs` need no window proof of their own: the gap checks make every `x`
+    /// an integer in `(m - 2^64, m]`, so `m >= x` as integers, and the product
+    /// puts `m` among the `xs`; `m` is then their integer maximum and lies in
+    /// the window. Cheaper than a compare-and-select chain for a handful of
+    /// values (one range check per value plus one, no comparison).
+    pub fn max_of(&self, ctx: &mut Ctx, xs: &[Cell]) -> Cell {
+        let hint = xs.iter().map(|x| signed(x.value())).max().expect("non-empty");
+        self.max_of_with(ctx, xs, fe(hint))
+    }
+
+    fn max_of_with(&self, ctx: &mut Ctx, xs: &[Cell], m: Fr) -> Cell {
+        self.extremum_with(ctx, xs, m, true)
+    }
+
+    /// `min(xs)` of a few values: [`Q32::max_of`] with the gaps `x - m`
+    /// (every `x` an integer in `[m, m + 2^64)`).
+    pub fn min_of(&self, ctx: &mut Ctx, xs: &[Cell]) -> Cell {
+        let hint = xs.iter().map(|x| signed(x.value())).min().expect("non-empty");
+        self.extremum_with(ctx, xs, fe(hint), false)
+    }
+
+    fn extremum_with(&self, ctx: &mut Ctx, xs: &[Cell], m: Fr, is_max: bool) -> Cell {
+        let m = ctx.load_witness(m);
+        self.bound(ctx, m);
+        let mut prod: Option<Cell> = None;
+        for x in xs {
+            let gap = if is_max { self.gate.sub(ctx, m, *x) } else { self.gate.sub(ctx, *x, m) };
+            self.range.range_check(ctx, gap, 64);
+            prod = Some(match prod {
+                None => gap,
+                Some(p) => self.gate.mul(ctx, p, gap),
+            });
+        }
+        self.gate.assert_is_const(ctx, &prod.expect("non-empty"), &Fr::ZERO);
+        m
     }
 
     /// `|a|` (for floats and integers; `|-2^63|` leaves the window and is
@@ -492,14 +531,26 @@ impl Q32 {
     /// integer facts, and `y` is unique. A negative `x` has no witness (NumPy
     /// would return NaN, which has no Q32 encoding).
     pub fn sqrt(&self, ctx: &mut Ctx, x: Cell) -> I64 {
-        let target = signed(x.value()).max(0) as u128 * SCALE as u128;
-        self.sqrt_with(ctx, x, fe(isqrt(target) as i128))
+        let scaled = self.gate.mul(ctx, x, Constant(fe(SCALE)));
+        self.isqrt(ctx, scaled)
     }
 
+    /// `floor(sqrt(n))` of a raw non-negative integer `n` below `2^126`, with
+    /// the constraints of [`Q32::sqrt`]; a negative `n` has no witness.
+    pub fn isqrt(&self, ctx: &mut Ctx, n: Cell) -> I64 {
+        let target = signed(n.value()).max(0) as u128;
+        self.isqrt_with(ctx, n, fe(isqrt(target) as i128))
+    }
+
+    #[cfg(test)]
     fn sqrt_with(&self, ctx: &mut Ctx, x: Cell, y: Fr) -> I64 {
+        let scaled = self.gate.mul(ctx, x, Constant(fe(SCALE)));
+        self.isqrt_with(ctx, scaled, y)
+    }
+
+    fn isqrt_with(&self, ctx: &mut Ctx, scaled: Cell, y: Fr) -> I64 {
         let y_cell = ctx.load_witness(y);
         self.range.range_check(ctx, y_cell, 63);
-        let scaled = self.gate.mul(ctx, x, Constant(fe(SCALE)));
         let y_sq = self.gate.mul(ctx, y_cell, y_cell);
         let below = self.gate.sub(ctx, scaled, y_sq);
         self.range.range_check(ctx, below, 64);
@@ -521,10 +572,13 @@ impl Q32 {
         acc
     }
 
-    /// `sin(x)`: reduce `|x| = q * pi + r` with `r` in `[0, pi)`, evaluate the
-    /// degree-14 minimax polynomial for `sin` on `[0, pi]` (the same
-    /// coefficients Zinnia and halo2-graph use) at `r`, and negate when exactly
-    /// one of `x < 0` and `q odd` holds.
+    /// `sin(x)`: reduce `|x| = q * pi + r` with `r` in `[0, pi)`, reflect `r`
+    /// into `[0, pi/2]` (`sin(r) = sin(pi - r)`), evaluate the degree-14 minimax
+    /// polynomial for `sin` on `[0, pi]` (the coefficients Zinnia and
+    /// halo2-graph use) there, and negate when exactly one of `x < 0` and
+    /// `q odd` holds. With the reflection the error of the Q32-quantized
+    /// polynomial stays below 2.4e-7 (1e-7 from the coefficients, up to
+    /// 14 floors of 2^-32 each); evaluated up to pi it reaches 1.4e-4.
     pub fn sin(&self, ctx: &mut Ctx, x: I64) -> Cell {
         let neg = self.is_neg(ctx, x);
         let minus_x = self.gate.neg(ctx, x.cell);
@@ -532,6 +586,11 @@ impl Q32 {
         let pi = quantize(std::f64::consts::PI) as u64;
         let (q, r) = self.floor_div_const(ctx, abs_x, pi);
         let odd = self.is_odd(ctx, q);
+        // r < pi < 2^34 is proven by floor_div_const, as is_less_than requires.
+        let half_pi = Constant(fe(quantize(std::f64::consts::FRAC_PI_2)));
+        let upper = self.range.is_less_than(ctx, half_pi, r, 34);
+        let reflected = self.gate.sub(ctx, Constant(fe(pi as i128)), r);
+        let r = self.gate.select(ctx, reflected, r, upper);
         let y = self.polynomial(ctx, r, &SIN_COEFS);
         let flip = self.gate.xor(ctx, neg, odd);
         let minus_y = self.gate.neg(ctx, y);
@@ -562,6 +621,65 @@ impl Q32 {
         self.sin(ctx, shifted)
     }
 
+    // ------------------------------------------------------------- selection
+
+    /// `xs[keep]`: the number of kept values and the kept values in order at
+    /// the front of `xs.len()` slots, zero-padded ([`Q32::compact`] with the
+    /// payload `keep_i * x_i`). `keep` must hold bits.
+    pub fn select_kept(&self, ctx: &mut Ctx, xs: &[Cell], keep: &[Cell]) -> (Cell, Vec<Cell>) {
+        let weights: Vec<Vec<Option<Cell>>> =
+            xs.iter().zip(keep).map(|(x, k)| vec![Some(self.gate.mul(ctx, *k, *x))]).collect();
+        let count = self.sum(ctx, keep.iter().copied());
+        (count, self.compact(ctx, keep, &weights))
+    }
+
+    /// Boolean-mask selection: the payloads of the kept items, in item order, at
+    /// the front of `keep.len()` slots of `unit` cells each, zeros after them.
+    /// `weights[i][u]` is `keep_i * payload_i[u]`, or `None` where the payload is
+    /// the constant 0.
+    ///
+    /// `hot` is the one-hot vector of the number of items kept before item `i`,
+    /// i.e. of the slot item `i` fills if it is kept. Slot `j` is the sum over `i`
+    /// of `hot_i[j] * weights[i]`, and `hot` moves one slot on after each kept
+    /// item. Item `i` can only reach slots `0..=i`, so the network is triangular.
+    /// Every cell is a gate of `keep` and the weights; there is no hint. The
+    /// `keep` cells must be bits (outputs of a comparison, an equality test or a
+    /// boolean gate).
+    pub fn compact(&self, ctx: &mut Ctx, keep: &[Cell], weights: &[Vec<Option<Cell>>]) -> Vec<Cell> {
+        let unit = weights[0].len();
+        let mut slots: Vec<(Vec<Cell>, Vec<QuantumCell<Fr>>)> = vec![(Vec::new(), Vec::new()); keep.len() * unit];
+        let mut hot = vec![Constant(Fr::ONE)]; // nothing kept before item 0
+        for (i, (k, w)) in keep.iter().zip(weights).enumerate() {
+            for (u, w) in w.iter().enumerate() {
+                if let Some(w) = w {
+                    for (j, h) in hot.iter().enumerate() {
+                        slots[j * unit + u].0.push(*w);
+                        slots[j * unit + u].1.push(*h);
+                    }
+                }
+            }
+            if i + 1 < keep.len() {
+                hot = self.shift(ctx, &hot, *k);
+            }
+        }
+        slots
+            .into_iter()
+            .map(|(w, h)| if w.is_empty() { ctx.load_zero() } else { self.gate.inner_product(ctx, w, h) })
+            .collect()
+    }
+
+    /// `hot` moved one slot on if `keep` is set: `next[j] = keep ? hot[j - 1] : hot[j]`
+    /// for `j` in `0..=hot.len()`, reading `hot` as 0 outside its range.
+    fn shift(&self, ctx: &mut Ctx, hot: &[QuantumCell<Fr>], keep: Cell) -> Vec<QuantumCell<Fr>> {
+        let mut next = Vec::with_capacity(hot.len() + 1);
+        next.push(Existing(self.gate.sub_mul(ctx, hot[0], hot[0], keep)));
+        for j in 1..hot.len() {
+            next.push(Existing(self.gate.select(ctx, hot[j - 1], hot[j], keep)));
+        }
+        next.push(Existing(self.gate.mul(ctx, hot[hot.len() - 1], keep)));
+        next
+    }
+
     // ---------------------------------------------------------------- indexing
 
     /// `arr[idx]` for a private index, NumPy semantics: `-len <= idx < len`
@@ -586,16 +704,19 @@ impl Q32 {
     }
 
     /// `arr[idx]` with NumPy semantics by a one-hot over the `2 * len` valid
-    /// index values `-len..len`: one equality test per value, and the
-    /// assertion that exactly one holds pins `idx` to a valid index (no range
+    /// index values `-len..len`: position `p` is hit when `idx` is `p` or
+    /// `p - len`, i.e. when `(idx - p) * (idx - p + len)` is zero (a field has
+    /// no zero divisors), one zero test per position; the assertion that
+    /// exactly one position is hit pins `idx` to a valid index (no range
     /// check). Cheaper than [`Q32::index`] for short axes.
     pub fn index_onehot(&self, ctx: &mut Ctx, arr: &[Cell], idx: Cell) -> Cell {
         let len = arr.len() as i128;
         let mut hits = Vec::with_capacity(arr.len());
         for p in 0..len {
-            let at = self.gate.is_equal(ctx, idx, Constant(fe(p)));
-            let wrapped = self.gate.is_equal(ctx, idx, Constant(fe(p - len)));
-            hits.push(self.gate.add(ctx, at, wrapped));
+            let at = self.gate.sub(ctx, idx, Constant(fe(p)));
+            let wrapped = self.gate.add(ctx, at, Constant(fe(len)));
+            let both = self.gate.mul(ctx, at, wrapped);
+            hits.push(self.gate.is_zero(ctx, both));
         }
         let total = self.gate.sum(ctx, hits.iter().map(|h| Existing(*h)));
         self.gate.assert_is_const(ctx, &total, &Fr::ONE);
@@ -861,16 +982,45 @@ mod tests {
 
     #[test]
     fn sin_and_cos_match_f64() {
-        for v in [0.3, -0.3, 2.0, -2.0, 4.0, -7.5, 10.0, 100.0] {
+        for v in [0.3, -0.3, 1.5, 2.0, -2.0, 3.1, 4.0, -7.5, 10.0, 100.0, 6.2657] {
             assert!(accepts(|c, ctx| {
                 let x = ctx.load_witness(fe(quantize(v)));
                 let xb = c.bound(ctx, x);
                 let s = dequantize(c.sin(ctx, xb).value());
                 let k = dequantize(c.cos(ctx, x).value());
-                assert!((s - v.sin()).abs() < 1e-4, "sin({v}) = {s}");
-                assert!((k - v.cos()).abs() < 1e-4, "cos({v}) = {k}");
+                assert!((s - v.sin()).abs() < 1e-6, "sin({v}) = {s}");
+                assert!((k - v.cos()).abs() < 1e-6, "cos({v}) = {k}");
             }));
         }
+    }
+
+    #[test]
+    fn max_of_is_pinned() {
+        let vals = [-3i128 << 32, 5 << 32, 2 << 32];
+        let run = |m: Fr| {
+            accepts(move |c, ctx| {
+                let xs: Vec<Cell> = vals.iter().map(|v| ctx.load_witness(fe(*v))).collect();
+                c.max_of_with(ctx, &xs, m);
+            })
+        };
+        assert!(run(fe(5 << 32)));
+        assert!(!run(fe(2 << 32))); // a smaller value of the set
+        assert!(!run(fe((5 << 32) + 1))); // above the max, not in the set
+        assert!(!run(fe(5 << 32) * fe(3).invert().unwrap()));
+        let run_min = |m: Fr| {
+            accepts(move |c, ctx| {
+                let xs: Vec<Cell> = vals.iter().map(|v| ctx.load_witness(fe(*v))).collect();
+                c.extremum_with(ctx, &xs, m, false);
+            })
+        };
+        // A maximum outside the window has no proof, even when every gap fits.
+        assert!(!accepts(|c, ctx| {
+            let xs = [ctx.load_witness(fe(1 << 63)), ctx.load_witness(fe(3))];
+            c.max_of_with(ctx, &xs, fe(1 << 63));
+        }));
+        assert!(run_min(fe(-3 << 32)));
+        assert!(!run_min(fe(2 << 32)));
+        assert!(!run_min(fe((-3 << 32) - 1)));
     }
 
     #[test]

@@ -1,57 +1,49 @@
-// DS-1000 case 438 — Halo2 baseline. `np.corrcoef(post, distance)[0][1]`
-// on Integer[4] × Integer[4]. High-level reimplementation: Pearson r.
-//   r = cov(x, y) / (σ_x · σ_y), with σ_x · σ_y = sqrt(varx · vary).
+//! DS-1000 case 0438, halo2-base baseline.
+//! Kernel: `np.corrcoef(post, distance)[0][1]` on two `Integer[4]`.
+//! Pearson r = Sxy / sqrt(Sxx * Syy) on centred sums (NumPy's population or
+//! sample factors cancel). Scaled by n^2 = 16 the centred sums are the exact
+//! integers A = 4 sum(xy) - sum(x) sum(y), B = 4 sum(x^2) - sum(x)^2 and
+//! C = 4 sum(y^2) - sum(y)^2, so r = A / sqrt(B * C): one Q32 square root of the
+//! integer B * C and one float division. |r| <= 1 holds exactly (Cauchy-Schwarz
+//! on the integers, floor square root), so NumPy's clip to [-1, 1] never acts.
+//! No proof when a variance is 0 (NumPy returns nan) or when B * C >= 2^62,
+//! where sqrt(B * C) leaves the Q32 window (inputs within +-11585 always fit).
+//! The inputs get window proofs, so A, B and C are exact integers (field
+//! elements could otherwise make them any small integers, r = 3 included), and
+//! B is range-checked to 64 bits so that B * C (C < 2^132) cannot wrap the field.
 
-use clap::Parser;
-use halo2_base::utils::{ScalarField, BigPrimeField};
-use halo2_graph::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};
-use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use serde::{Serialize, Deserialize};
-use halo2_base::AssignedValue;
-#[allow(unused_imports)] use halo2_graph::scaffold::cmd::Cli;
-use halo2_graph::scaffold::run;
+use crate::prelude::*;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CircuitInput { pub post: Vec<String>, pub distance: Vec<String> }
+pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
+    let (post, distance) = (inputs.ints("post", &[4])?, inputs.ints("distance", &[4])?);
+    let q = Q32::new(builder);
+    let ctx = builder.main(0);
 
-fn corrcoef<F: ScalarField>(
-    b: &mut BaseCircuitBuilder<F>, input: CircuitInput, make_public: &mut Vec<AssignedValue<F>>,
-) where F: BigPrimeField {
-    const P: u32 = 32;
-    let fpc = FixedPointChip::<F, P>::default(b);
-    let ctx = b.main(0);
-    assert_eq!(input.post.len(), 4);
-    assert_eq!(input.distance.len(), 4);
-    let load_fp = |ctx: &mut halo2_base::Context<F>, s: &str| -> AssignedValue<F> {
-        let v: i64 = s.parse().unwrap();
-        ctx.load_witness(fpc.quantization(v as f64))
-    };
-    let xs: Vec<AssignedValue<F>> = input.post.iter().map(|s| load_fp(ctx, s)).collect();
-    let ys: Vec<AssignedValue<F>> = input.distance.iter().map(|s| load_fp(ctx, s)).collect();
-    let n = ctx.load_witness(fpc.quantization(4.0));
-    let mean_of = |ctx: &mut halo2_base::Context<F>, vs: &[AssignedValue<F>]| {
-        let mut s = vs[0];
-        for k in 1..vs.len() { s = fpc.qadd(ctx, s, vs[k]); }
-        fpc.qdiv(ctx, s, n)
-    };
-    let xbar = mean_of(ctx, &xs);
-    let ybar = mean_of(ctx, &ys);
-    let mut cov = { let dx = fpc.qsub(ctx, xs[0], xbar); let dy = fpc.qsub(ctx, ys[0], ybar); fpc.qmul(ctx, dx, dy) };
-    let mut vx = { let dx = fpc.qsub(ctx, xs[0], xbar); fpc.qmul(ctx, dx, dx) };
-    let mut vy = { let dy = fpc.qsub(ctx, ys[0], ybar); fpc.qmul(ctx, dy, dy) };
-    for k in 1..4 {
-        let dx = fpc.qsub(ctx, xs[k], xbar);
-        let dy = fpc.qsub(ctx, ys[k], ybar);
-        let cov_k = fpc.qmul(ctx, dx, dy);
-        let vx_k = fpc.qmul(ctx, dx, dx);
-        let vy_k = fpc.qmul(ctx, dy, dy);
-        cov = fpc.qadd(ctx, cov, cov_k);
-        vx = fpc.qadd(ctx, vx, vx_k);
-        vy = fpc.qadd(ctx, vy, vy_k);
+    let x = q.load_ints(ctx, &post);
+    let y = q.load_ints(ctx, &distance);
+    for v in x.iter().chain(&y) {
+        q.bound(ctx, *v);
     }
-    let prod_v = fpc.qmul(ctx, vx, vy);
-    let denom = fpc.qsqrt(ctx, prod_v);
-    let r = fpc.qdiv(ctx, cov, denom);
-    make_public.push(r);
+    let dot = |ctx: &mut Ctx, a: &[Cell], b: &[Cell]| {
+        q.gate.inner_product(ctx, a.iter().map(|c| Existing(*c)), b.iter().map(|c| Existing(*c)))
+    };
+    let (sx, sy) = (q.sum(ctx, x.iter().copied()), q.sum(ctx, y.iter().copied()));
+    let (sxy, sxx, syy) = (dot(ctx, &x, &y), dot(ctx, &x, &x), dot(ctx, &y, &y));
+    // n * s - t * u with n = 4
+    let centred = |ctx: &mut Ctx, s: Cell, t: Cell, u: Cell| {
+        let ns = q.gate.mul(ctx, s, Constant(fe(4)));
+        q.gate.sub_mul(ctx, ns, t, u)
+    };
+    let a = centred(ctx, sxy, sx, sy);
+    let b = centred(ctx, sxx, sx, sx);
+    let c = centred(ctx, syy, sy, sy);
+    q.range.range_check(ctx, b, 64);
+
+    let bc = q.gate.mul(ctx, b, c);
+    let bc = q.int_to_float(ctx, bc);
+    let denom = q.sqrt(ctx, bc); // floor(sqrt(B * C) * 2^32); 0 has no division witness
+    let a = q.int_to_float(ctx, a);
+    let r = q.div_pos(ctx, a, denom);
+    out.float(r.cell);
+    Ok(())
 }
-fn main() { env_logger::init(); let args = Cli::parse(); run(corrcoef, args); }

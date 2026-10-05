@@ -1,89 +1,69 @@
-// DS-1000 case 363 — Halo2 baseline.
-// Kernel: np.insert(a, pos, element) on Float[100] with Integer pos & element.
-// Output: Float[101].
-//
-// Mirrors kernel.py's unrolled insertion: for each output index i in 0..101,
-//   out[i] = a[i]          if i < pos
-//          = element        if i == pos
-//          = a[i - 1]       if i > pos
-// We `gate.is_equal`/`is_less_than` against an assigned pos and select.
+//! DS-1000 case 0363, halo2-base baseline.
+//! Kernel: `np.insert(a, pos, element)` on `Float[100]` with `Integer` pos and
+//! element (inserted as `float(element)`).
+//! NumPy accepts `pos` in [-100, 100] (negative counts from the end) and
+//! raises IndexError otherwise (no proof). With `P` the insertion point and
+//! `g_k = [P < k]`, output `k` is `a[k]` (k < P), `element` (k = P) or
+//! `a[k-1]` (k > P), i.e. `a[k] + g_{k+1} (e - a[k]) - g_k (e - a[k-1])`:
+//! two products per output and no comparison. The thermometer `g` is a hint
+//! pinned by `insertion_point` (no range check).
 
-use clap::Parser;
-use halo2_base::utils::{ScalarField, BigPrimeField};
-use halo2_graph::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};
-use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use halo2_base::gates::{GateChip, GateInstructions, RangeInstructions};
-use serde::{Serialize, Deserialize};
-use halo2_base::AssignedValue;
-#[allow(unused_imports)] use halo2_graph::scaffold::cmd::Cli;
-use halo2_graph::scaffold::run;
+use crate::prelude::*;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CircuitInput {
-    pub a: Vec<f64>,        // 100 floats
-    pub pos: String,        // signed decimal integer
-    pub element: String,    // signed decimal integer
-}
+const N: usize = 100;
 
-fn insert_1d<F: ScalarField>(
-    builder: &mut BaseCircuitBuilder<F>, input: CircuitInput, make_public: &mut Vec<AssignedValue<F>>,
-) where F: BigPrimeField {
-    const P: u32 = 32;
-    let gate = GateChip::<F>::default();
-    let range_chip = builder.range_chip();
-    let fpc = FixedPointChip::<F, P>::default(builder);
+pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
+    let (a, pos, element) = (inputs.floats("a", &[N])?, inputs.int("pos")?, inputs.int("element")?);
+    let q = Q32::new(builder);
     let ctx = builder.main(0);
 
-    assert_eq!(input.a.len(), 100);
-    let a: Vec<AssignedValue<F>> = input.a.iter()
-        .map(|v| ctx.load_witness(fpc.quantization(*v))).collect();
-
-    // Load pos (integer) and element (integer cast to fp).
-    let pos_abs = ctx.load_witness(F::from_u128(
-        input.pos.trim_start_matches('-').parse::<u128>().unwrap()));
-    let pos = if input.pos.starts_with('-') { gate.neg(ctx, pos_abs) } else { pos_abs };
-    // Full numpy semantics: negative positions wrap (np.insert with
-    // pos = -1 inserts before the last slot). In-circuit sign test on
-    // the signed-64 window, then all comparisons use the normalized
-    // (nonnegative) position; the final bound check enforces
-    // -N <= pos <= N (numpy IndexError otherwise).
-    let shift_c = ctx.load_constant(F::from(1u64 << 63));
-    let shifted = gate.add(ctx, pos, shift_c);
-    range_chip.range_check(ctx, shifted, 64);
-    let is_neg = range_chip.is_less_than(ctx, shifted, shift_c, 64);
-    let n_c = ctx.load_constant(F::from(100u64));
-    let wrapped = gate.add(ctx, pos, n_c);
-    let pos_n = gate.select(ctx, wrapped, pos, is_neg);
-    let n1_c = ctx.load_constant(F::from(101u64));
-    range_chip.check_less_than(ctx, pos_n, n1_c, 64);
-
-
-    let elem_abs = ctx.load_witness(F::from_u128(
-        input.element.trim_start_matches('-').parse::<u128>().unwrap()));
-    let elem_int = if input.element.starts_with('-') { gate.neg(ctx, elem_abs) } else { elem_abs };
-    let one_fp = ctx.load_witness(fpc.quantization(1.0));
-    let elem_fp = fpc.qmul(ctx, elem_int, one_fp);
-
-    // For each output index i in 0..101.
-    for i in 0..101usize {
-        let i_cell = ctx.load_constant(F::from(i as u64));
-        // pre = (i < pos): means i is before insertion → use a[i].
-        // is_pos = (i == pos): use element.
-        // else: use a[i - 1] (only valid when i >= 1).
-        let is_pre = range_chip.is_less_than(ctx, i_cell, pos_n, 128);
-        let is_pos = gate.is_equal(ctx, i_cell, pos_n);
-
-        // Source choices: pre = a[i] (only when i < 100), post = a[i-1] (only when i >= 1).
-        // If i is 0 we never take "post" (cannot have i > pos with i=0 unless pos<0 — out of domain).
-        // If i is 100 we never take "pre" (would need i<pos with pos>100 — out of domain).
-        let pre_val = if i < 100 { a[i] } else { a[99] };  // dummy when unreachable
-        let post_val = if i >= 1 { a[i - 1] } else { a[0] };  // dummy when unreachable
-
-        // Layered select: chosen = is_pre ? pre_val : (is_pos ? element : post_val).
-        let pos_or_post = gate.select(ctx, elem_fp, post_val, is_pos);
-        let chosen = gate.select(ctx, pre_val, pos_or_post, is_pre);
-        make_public.push(chosen);
+    let a = q.load_floats(ctx, &a);
+    let pos = q.load_int(ctx, pos);
+    let element = q.load_int(ctx, element);
+    let elem = q.int_to_float(ctx, element);
+    let g = insertion_point(&q, ctx, pos, N);
+    // d[k] = e - a[k]; out[k] = a[k] + g_{k+1} d[k] - g_k d[k-1], g_0 = 0.
+    let d: Vec<Cell> = a.iter().map(|x| q.sub(ctx, elem, *x)).collect();
+    let mut result = Vec::with_capacity(N + 1);
+    for k in 0..=N {
+        let up = if k < N { q.gate.mul_add(ctx, g[k], d[k], a[k]) } else { elem };
+        result.push(if k > 0 { q.gate.sub_mul(ctx, up, g[k - 1], d[k - 1]) } else { up });
     }
+    out.floats(&result);
+    Ok(())
 }
 
-fn main() { env_logger::init(); let args = Cli::parse(); run(insert_1d, args); }
+/// The insertion point `P` of `np.insert` on an axis of length `n`
+/// (`P = pos` for `pos` in [0, n], `pos + n` for `pos` in [-n, -1]) as the
+/// thermometer `g[k - 1] = [P < k]`, `k = 1..=n`.
+///
+/// Hint: the bits `g` and a sign bit `s`, pinned by: `g[k] => g[k + 1]`
+/// (monotone, so `g` is the thermometer of its number of zeros `Z`),
+/// `Z = pos + n s`, and `s => g[n - 1]` (`s = 1` only with `Z < n`). For
+/// `pos` in [0, n] only `s = 0` fits (`s = 1` would need `Z = pos + n >= n`),
+/// for `pos` in [-n, -1] only `s = 1` (`s = 0` would need `Z < 0`); any other
+/// `pos` gives `Z` outside [0, n]: no witness.
+fn insertion_point(q: &Q32, ctx: &mut Ctx, pos: Cell, n: usize) -> Vec<Cell> {
+    let v = crate::q32::signed(pos.value());
+    let point = if v < 0 { v + n as i128 } else { v };
+    let g: Vec<bool> = (1..=n as i128).map(|k| point < k).collect();
+    insertion_point_with(q, ctx, pos, &g, v < 0)
+}
+
+fn insertion_point_with(q: &Q32, ctx: &mut Ctx, pos: Cell, g: &[bool], neg: bool) -> Vec<Cell> {
+    let n = g.len();
+    let g = q.load_bools(ctx, g); // hint bits, each constrained to {0, 1}
+    let s = q.load_bools(ctx, &[neg])[0];
+    for k in 0..n - 1 {
+        let both = q.gate.mul(ctx, g[k], g[k + 1]);
+        ctx.constrain_equal(&both, &g[k]);
+    }
+    let s_and_last = q.gate.mul(ctx, s, g[n - 1]);
+    ctx.constrain_equal(&s_and_last, &s);
+    // sum_k g[k] + n s + pos = n, i.e. Z = n - sum_k g[k] = pos + n s.
+    let ones = g.iter().map(|_| Constant(Fr::ONE)).chain([Constant(fe(n as i128))]);
+    let weighted = q.gate.inner_product(ctx, g.iter().chain([&s]).map(|c| Existing(*c)), ones);
+    let total = q.add(ctx, weighted, pos);
+    q.gate.assert_is_const(ctx, &total, &fe(n as i128));
+    g
+}

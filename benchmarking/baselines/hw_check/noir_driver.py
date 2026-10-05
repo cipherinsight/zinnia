@@ -7,7 +7,7 @@ Contract (shared by every baseline program, see the benchmark brief):
         [--target noir-recursive]
 
 * `setup`: stages a Nargo package in the work directory (`src/main.nr` plus a
-  `Nargo.toml` that depends on `baselines/noir_hw` and `noir_fpc`), compiles it
+  `Nargo.toml` that depends on `baselines/noir_hw`), compiles it
   (`nargo compile`), writes the verification key (`bb write_vk`) and records
   the gate count (`bb gates`). Nothing here depends on the input.
 * `prove`: writes `Prover.toml` for the input (`hw_check.prover_toml`), solves
@@ -48,9 +48,9 @@ from .prover_toml import BN254_P, SCALE, render_prover_toml
 
 NARGO = os.environ.get("NARGO", str(Path.home() / ".nargo/bin/nargo"))
 BB = os.environ.get("BB", str(Path.home() / ".bb/bb"))
-NOIR_FPC = (Path(__file__).resolve().parents[2] / "noir_fpc").resolve()
 NOIR_HW = (Path(__file__).resolve().parents[1] / "noir_hw").resolve()
 DEFAULT_TARGET = "noir-recursive"
+SCHEME = ["--scheme", "ultra_honk"]
 
 
 class DriverError(Exception):
@@ -163,7 +163,6 @@ def stage_package(case_dir: Path, workdir: Path) -> Path:
         'authors = [""]\n\n'
         "[dependencies]\n"
         f'noir_hw = {{ path = "{NOIR_HW}" }}\n'
-        f'noir_fpc = {{ path = "{NOIR_FPC}" }}\n'
     )
     return pkg
 
@@ -204,8 +203,8 @@ def setup(case_dir: Path, workdir: Path, target: str, timings: dict) -> dict:
     bytecode = pkg / "target" / f"{name}.json"
     keys = workdir / "keys"
     keys.mkdir()
-    _timed(timings, "write_vk_s", lambda: _run([BB, "write_vk", "-b", str(bytecode), "-o", str(keys), "-t", target], pkg))
-    gates_json = _timed(timings, "gates_s", lambda: _run([BB, "gates", "-b", str(bytecode), "-t", target], pkg))
+    _timed(timings, "write_vk_s", lambda: _run([BB, "write_vk", *SCHEME, "-b", str(bytecode), "-o", str(keys), "-t", target], pkg))
+    gates_json = _timed(timings, "gates_s", lambda: _run([BB, "gates", *SCHEME, "-b", str(bytecode), "-t", target], pkg))
     gates = json.loads(gates_json[gates_json.index("{"):])["functions"][0]
     (workdir / "setup.json").write_text(json.dumps({"case": case_dir.name, "target": target, "gates": gates}))
     return {"gates": gates["circuit_size"], "acir_opcodes": gates["acir_opcodes"], "vk_path": str(keys / "vk")}
@@ -237,7 +236,7 @@ def prove(case_dir: Path, fixture: dict, input_name: str, workdir: Path, timings
     proof_dir.mkdir()
     witness = pkg / "target" / f"{name}.gz"
     _timed(timings, "prove_s", lambda: _run(
-        [BB, "prove", "-b", str(bytecode), "-w", str(witness), "-k", str(workdir / "keys" / "vk"),
+        [BB, "prove", *SCHEME, "-b", str(bytecode), "-w", str(witness), "-k", str(workdir / "keys" / "vk"),
          "-o", str(proof_dir), "-t", target], pkg))
     segments = parse_outputs((pkg / "src" / "main.nr").read_text())
     publics = decode_publics(segments, read_fields(proof_dir / "public_inputs"))
@@ -261,7 +260,7 @@ def verify(case_dir: Path, workdir: Path, tamper: int | None, timings: dict) -> 
         fields[tamper] += 1
         publics_path = proof_dir / "public_inputs.tampered"
         write_fields(publics_path, fields)
-    cmd = [BB, "verify", "-p", str(proof_dir / "proof"), "-k", str(workdir / "keys" / "vk"),
+    cmd = [BB, "verify", *SCHEME, "-p", str(proof_dir / "proof"), "-k", str(workdir / "keys" / "vk"),
            "-i", str(publics_path), "-t", info["target"]]
     proc = _timed(timings, "verify_s", lambda: subprocess.run(cmd, capture_output=True, text=True))
     accepted = proc.returncode == 0

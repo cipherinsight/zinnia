@@ -1,72 +1,79 @@
-// DS-1000 case 450 — Halo2 baseline.
-// Kernel: `a[:, second.reshape(-1,1), third]` with a: Float[7,8,9],
-// second: Integer[2], third: Integer[2]. Result: Float[7, 2, 2] where
-// result[i][p][q] = a[i][second[p]][third[q]].
-//
-// Halo2 idiom: dynamic gather of a[i][j][k] picks (j, k) from runtime arrays.
-// We collapse the (j, k) gather into a 72-way (8×9) match-select per (i,p,q).
+//! DS-1000 case 0450, halo2-base baseline.
+//! Kernel: `a[:, np.array(second).reshape(-1, 1), third]` on `Float[7, 8, 9]`
+//! with `second`, `third` `Integer[2]`: `result[i, j, k] = a[i, second[j],
+//! third[k]]`, shape (7, 2, 2), NumPy index rules (negative indices wrap,
+//! others out of range raise IndexError: no proof).
+//! Each of the four indices gets its one-hot once (`onehot_index`, a hint
+//! pinned without range checks), reused for every `i`: first the `third`
+//! axis is contracted (`t[k][p] = a[i, p, third[k]]`), then the `second`
+//! axis.
 
-use clap::Parser;
-use halo2_base::utils::{ScalarField, BigPrimeField};
-use halo2_graph::gadget::fixed_point::FixedPointChip;
-use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use halo2_base::gates::{GateChip, GateInstructions};
-use serde::{Serialize, Deserialize};
-use halo2_base::AssignedValue;
-#[allow(unused_imports)] use halo2_graph::scaffold::cmd::Cli;
-use halo2_graph::scaffold::run;
+use crate::prelude::*;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CircuitInput {
-    pub a: Vec<f64>,         // 7*8*9 = 504 floats, row-major
-    pub second: Vec<String>, // 2 decimal integers
-    pub third: Vec<String>,  // 2 decimal integers
-}
+const D0: usize = 7;
+const D1: usize = 8;
+const D2: usize = 9;
 
-fn fancy_index<F: ScalarField>(
-    b: &mut BaseCircuitBuilder<F>, input: CircuitInput, make_public: &mut Vec<AssignedValue<F>>,
-) where F: BigPrimeField {
-    const P: u32 = 32;
-    let gate = GateChip::<F>::default();
-    let fpc = FixedPointChip::<F, P>::default(b);
-    let ctx = b.main(0);
-    assert_eq!(input.a.len(), 7 * 8 * 9);
-    assert_eq!(input.second.len(), 2);
-    assert_eq!(input.third.len(), 2);
+pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
+    let a = inputs.floats("a", &[D0, D1, D2])?;
+    let (second, third) = (inputs.ints("second", &[2])?, inputs.ints("third", &[2])?);
+    let q = Q32::new(builder);
+    let ctx = builder.main(0);
 
-    let cells: Vec<AssignedValue<F>> = input.a.iter()
-        .map(|v| ctx.load_witness(fpc.quantization(*v))).collect();
-    let second: Vec<AssignedValue<F>> = input.second.iter().map(|s| {
-        let v: i64 = s.parse().expect("decimal int");
-        ctx.load_witness(F::from(v as u64))
-    }).collect();
-    let third: Vec<AssignedValue<F>> = input.third.iter().map(|s| {
-        let v: i64 = s.parse().expect("decimal int");
-        ctx.load_witness(F::from(v as u64))
-    }).collect();
+    let a = q.load_floats(ctx, &a);
+    let second = q.load_ints(ctx, &second);
+    let third = q.load_ints(ctx, &third);
+    let at_second: Vec<Vec<Cell>> = second.iter().map(|x| onehot_index(&q, ctx, *x, D1)).collect();
+    let at_third: Vec<Vec<Cell>> = third.iter().map(|x| onehot_index(&q, ctx, *x, D2)).collect();
 
-    let zero_fp = ctx.load_witness(fpc.quantization(0.0));
-    // Result is Float[7, 2, 2] = 28 cells, exposed in C-order.
-    for i in 0..7usize {
-        for p in 0..2usize {
-            for q in 0..2usize {
-                let mut chosen = zero_fp;
-                // 8-way match on second[p]; 9-way match on third[q] — flatten to one chain.
-                for j in 0..8usize {
-                    let j_const = ctx.load_constant(F::from(j as u64));
-                    let is_j = gate.is_equal(ctx, second[p], j_const);
-                    for k in 0..9usize {
-                        let k_const = ctx.load_constant(F::from(k as u64));
-                        let is_k = gate.is_equal(ctx, third[q], k_const);
-                        let pick = gate.and(ctx, is_j, is_k);
-                        let v = cells[i * 72 + j * 9 + k];
-                        chosen = gate.select(ctx, v, chosen, pick);
-                    }
-                }
-                make_public.push(chosen);
+    let mut result = Vec::with_capacity(D0 * 4);
+    for i in 0..D0 {
+        // t[k][p] = a[i, p, third[k]]
+        let t: Vec<Vec<Cell>> = at_third
+            .iter()
+            .map(|e| {
+                (0..D1)
+                    .map(|p| {
+                        let row = &a[(i * D1 + p) * D2..(i * D1 + p + 1) * D2];
+                        q.gate.select_by_indicator(ctx, row.iter().map(|c| Existing(*c)), e.iter().copied())
+                    })
+                    .collect()
+            })
+            .collect();
+        for e in &at_second {
+            for tk in &t {
+                result.push(q.gate.select_by_indicator(ctx, tk.iter().map(|c| Existing(*c)), e.iter().copied()));
             }
         }
     }
+    out.floats(&result);
+    Ok(())
 }
 
-fn main() { env_logger::init(); let args = Cli::parse(); run(fancy_index, args); }
+/// One-hot `e[p] = [P == p]` of the position `P` a NumPy index `idx` selects
+/// on an axis of length `n` (`P = idx` for `idx` in [0, n), `idx + n` for
+/// `idx` in [-n, -1]).
+///
+/// Hint: the bits `e` and a sign bit `s`, pinned by `sum_p e[p] = 1` (one-hot)
+/// and `sum_p p e[p] - n s = idx`, i.e. `idx = P - n s` with `P` in [0, n).
+/// `s = 0` gives `idx` in [0, n), `s = 1` gives `idx` in [-n, -1]: the two
+/// ranges are disjoint, so every valid `idx` has exactly one witness and any
+/// other index none (IndexError). No range check.
+fn onehot_index(q: &Q32, ctx: &mut Ctx, idx: Cell, n: usize) -> Vec<Cell> {
+    let v = crate::q32::signed(idx.value());
+    let point = if v < 0 { v + n as i128 } else { v };
+    let e: Vec<bool> = (0..n as i128).map(|p| p == point).collect();
+    onehot_index_with(q, ctx, idx, &e, v < 0)
+}
+
+fn onehot_index_with(q: &Q32, ctx: &mut Ctx, idx: Cell, e: &[bool], neg: bool) -> Vec<Cell> {
+    let n = e.len();
+    let e = q.load_bools(ctx, e); // hint bits, each constrained to {0, 1}
+    let s = q.load_bools(ctx, &[neg])[0];
+    let total = q.sum(ctx, e.iter().copied());
+    q.gate.assert_is_const(ctx, &total, &Fr::ONE);
+    let weights = (1..n).map(|p| Constant(fe(p as i128))).chain([Constant(-fe(n as i128))]);
+    let signed_pos = q.gate.inner_product(ctx, e[1..].iter().chain([&s]).map(|c| Existing(*c)), weights);
+    ctx.constrain_equal(&signed_pos, &idx);
+    e
+}

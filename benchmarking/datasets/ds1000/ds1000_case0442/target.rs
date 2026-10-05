@@ -1,87 +1,43 @@
-// DS-1000 case 442 — Halo2 baseline (compact-output version).
-// Kernel: C = A[~np.in1d(A, B)] on Integer[20] × Integer[3].
-//
-// Output contract mirrors Zinnia's dynamic-array encoding: the kept
-// elements compacted to the front in source order, zero-padded to the
-// static bound, preceded by the kept count exposed twice (runtime length
-// + shape dim). Compaction is paid in-circuit: prefix counts route each
-// kept element to its output slot via a triangular indicator gather
-// (out[k] = sum_{i>=k} (keep_i && prefix_i == k) * A[i]).
+//! DS-1000 case 0442, halo2-base baseline.
+//! Kernel: `A[~np.in1d(A, B)]` on `A: Integer[20]`, `B: Integer[3]` (data-dependent length).
+//! Output: the count of kept values, then the kept values in order, zero-padded
+//! to 20.
+//! Membership: `A_i` is in `B` iff `z(A_i) = 0` for
+//! `z(X) = (X - B0)(X - B1)(X - B2) = X^3 - e1 X^2 + e2 X - e3` (a field has no
+//! zero divisors, and distinct integers are distinct field elements). The
+//! coefficients are computed once; each `A_i` costs a Horner evaluation and
+//! one zero test instead of three equality tests.
+//! Compaction: `q.compact` (a triangular shift network, no equality tests).
 
-use clap::Parser;
-use halo2_base::utils::{ScalarField, BigPrimeField};
-use halo2_graph::gadget::fixed_point::FixedPointChip;
-use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use halo2_base::gates::{GateChip, GateInstructions};
-use serde::{Serialize, Deserialize};
-use halo2_base::AssignedValue;
-#[allow(unused_imports)] use halo2_graph::scaffold::cmd::Cli;
-use halo2_graph::scaffold::run;
+use crate::prelude::*;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CircuitInput { pub a: Vec<i64>, pub b: Vec<i64> }
+pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
+    let (a, b) = (inputs.ints("A", &[20])?, inputs.ints("B", &[3])?);
+    let q = Q32::new(builder);
+    let ctx = builder.main(0);
 
-fn in1d_neg_compact<F: ScalarField>(
-    bld: &mut BaseCircuitBuilder<F>, input: CircuitInput, make_public: &mut Vec<AssignedValue<F>>,
-) where F: BigPrimeField {
-    const P: u32 = 32;
-    const N: usize = 20;
-    let gate = GateChip::<F>::default();
-    // FixedPointChip is constructed only to align with the project's harness; not used.
-    let _fpc = FixedPointChip::<F, P>::default(bld);
-    let ctx = bld.main(0);
-    assert_eq!(input.a.len(), N);
-    assert_eq!(input.b.len(), 3);
-
-    let a_cells: Vec<AssignedValue<F>> = input.a.iter()
-        .map(|v| ctx.load_witness(F::from(*v as u64))).collect();
-    let b_cells: Vec<AssignedValue<F>> = input.b.iter()
-        .map(|v| ctx.load_witness(F::from(*v as u64))).collect();
-
-    // keep[i] = !any_j(A[i] == B[j]); prefix[i] = #kept before i.
-    let zero = ctx.load_constant(F::ZERO);
-    let mut keeps = Vec::with_capacity(N);
-    let mut count = zero;
-    for i in 0..N {
-        let e0 = gate.is_equal(ctx, a_cells[i], b_cells[0]);
-        let e1 = gate.is_equal(ctx, a_cells[i], b_cells[1]);
-        let e2 = gate.is_equal(ctx, a_cells[i], b_cells[2]);
-        let or01 = gate.or(ctx, e0, e1);
-        let any_eq = gate.or(ctx, or01, e2);
-        let keep = gate.not(ctx, any_eq);
-        keeps.push(keep);
-        count = gate.add(ctx, count, keep);
+    let a = q.load_ints(ctx, &a);
+    let b = q.load_ints(ctx, &b);
+    let e1 = q.sum(ctx, b.iter().copied());
+    let b01 = q.gate.mul(ctx, b[0], b[1]);
+    let b0_plus_b1 = q.add(ctx, b[0], b[1]);
+    let e2 = q.gate.mul_add(ctx, b[2], b0_plus_b1, b01);
+    let e3 = q.gate.mul(ctx, b01, b[2]);
+    let minus_e3 = q.neg(ctx, e3);
+    let mut keep = Vec::with_capacity(20);
+    let mut weights = Vec::with_capacity(20);
+    for ai in &a {
+        let z = q.sub(ctx, *ai, e1);
+        let z = q.gate.mul_add(ctx, z, *ai, e2);
+        let z = q.gate.mul_add(ctx, z, *ai, minus_e3);
+        let in_b = q.gate.is_zero(ctx, z);
+        let k = q.gate.not(ctx, in_b);
+        weights.push(vec![Some(q.gate.mul(ctx, k, *ai))]);
+        keep.push(k);
     }
-
-    // Runtime length + shape dim (Zinnia's dyn-array metadata).
-    make_public.push(count);
-    make_public.push(count);
-
-    // Compact gather via one-hot shift network (cheaper than per-slot
-    // prefix-equality tests): R is the one-hot of the next free output
-    // slot. For each element: deposit into the hot slot when kept, then
-    // shift R right by one iff kept. Triangular: after i elements at
-    // most slots 0..=i can be hot.
-    let mut outs = vec![zero; N];
-    let one = ctx.load_constant(F::ONE);
-    let mut hot = vec![zero; N];
-    hot[0] = one;
-    for i in 0..N {
-        let lim = (i + 1).min(N);
-        for j in 0..lim {
-            let here = gate.and(ctx, hot[j], keeps[i]);
-            outs[j] = gate.select(ctx, a_cells[i], outs[j], here);
-        }
-        // Shift the one-hot right by one iff kept.
-        let prev: Vec<_> = hot.clone();
-        let lim2 = (i + 2).min(N);
-        for j in (0..lim2).rev() {
-            let shifted = if j == 0 { zero } else { prev[j - 1] };
-            hot[j] = gate.select(ctx, shifted, prev[j], keeps[i]);
-        }
-    }
-    for o in outs {
-        make_public.push(o);
-    }
+    let count = q.sum(ctx, keep.iter().copied());
+    let kept = q.compact(ctx, &keep, &weights);
+    out.dynamic(count, &kept, Kind::Int, 1);
+    Ok(())
 }
-fn main() { env_logger::init(); let args = Cli::parse(); run(in1d_neg_compact, args); }
+

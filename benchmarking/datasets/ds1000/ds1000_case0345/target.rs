@@ -1,77 +1,61 @@
-// DS-1000 case 345 — Halo2 baseline.
-// Kernel: a[:, col-1] *= multiply_number; result = cumsum(a[:, col-1])
-// On Float[8, 6] with runtime col, multiply_number. Output: 8 floats.
-// Approach: select a[i][col-1] via 6-way select chain per row, scale, cumsum.
-use clap::Parser;
-use halo2_base::utils::{ScalarField, BigPrimeField};
-use halo2_graph::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};
-use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use halo2_base::gates::{GateChip, GateInstructions};
-use serde::{Serialize, Deserialize};
-use halo2_base::AssignedValue;
-#[allow(unused_imports)] use halo2_graph::scaffold::cmd::Cli;
-use halo2_graph::scaffold::run;
+//! DS-1000 case 0345, halo2-base baseline.
+//! Kernel: `a[:, col-1] *= multiply_number; np.cumsum(a[:, col-1])` on
+//! `a: Float[8, 6]`, `col: Integer`, `multiply_number: Float`.
+//! Only the selected column reaches the output: it is gathered once, scaled
+//! (8 rescaled products) and summed (exact prefix sums). The index `col - 1`
+//! follows NumPy (`-6 <= col - 1 < 6`, negative values wrap, any other `col`
+//! has no proof). Its one-hot over the 6 columns is built once and reused for
+//! the 8 rows.
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CircuitInput {
-    pub a: Vec<f64>,
-    pub col: String,
-    pub multiply_number: String,
+use crate::prelude::*;
+
+const ROWS: usize = 8;
+const COLS: usize = 6;
+
+pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
+    let a = inputs.floats("a", &[ROWS, COLS])?;
+    let col = inputs.int("col")?;
+    let multiply_number = inputs.float("multiply_number")?;
+    let q = Q32::new(builder);
+    let ctx = builder.main(0);
+
+    let a = q.load_floats(ctx, &a);
+    let col = q.load_int(ctx, col);
+    let multiply_number = q.load_float(ctx, multiply_number);
+
+    let hit = position_onehot(&q, ctx, col, 1, COLS);
+    let scaled: Vec<Cell> = a
+        .chunks(COLS)
+        .map(|row| {
+            let picked = q.gate.inner_product(ctx, hit.iter().map(|h| Existing(*h)), row.iter().map(|x| Existing(*x)));
+            q.mul(ctx, picked, multiply_number).cell
+        })
+        .collect();
+    let cumsum: Vec<Cell> = q.gate.partial_sums(ctx, scaled.iter().map(|x| Existing(*x))).collect();
+    out.floats(&cumsum);
+    Ok(())
 }
 
-fn col_scale_cumsum<F: ScalarField>(
-    b: &mut BaseCircuitBuilder<F>, input: CircuitInput, make_public: &mut Vec<AssignedValue<F>>,
-) where F: BigPrimeField {
-    const P: u32 = 32;
-    let gate = GateChip::<F>::default();
-    let fpc = FixedPointChip::<F, P>::default(b);
-    let ctx = b.main(0);
-    assert_eq!(input.a.len(), 48);
-    let cells: Vec<AssignedValue<F>> = input.a.iter()
-        .map(|v| ctx.load_witness(fpc.quantization(*v))).collect();
-    let col_abs = ctx.load_witness(F::from_u128(input.col.trim_start_matches('-').parse::<u128>().unwrap()));
-    let col = if input.col.starts_with('-') { gate.neg(ctx, col_abs) } else { col_abs };
-    let one = ctx.load_constant(F::ONE);
-    let col_idx = gate.sub(ctx, col, one);  // col - 1
-    let mn_abs = ctx.load_witness(F::from_u128(input.multiply_number.trim_start_matches('-').parse::<u128>().unwrap()));
-    let mn = if input.multiply_number.starts_with('-') { gate.neg(ctx, mn_abs) } else { mn_abs };
-    // multiply_number lifted to fp.
-    let one_fp = ctx.load_witness(fpc.quantization(1.0));
-    let mn_fp = fpc.qmul(ctx, mn, one_fp);
-    // Full numpy semantics: negative indices wrap (col = 0 selects the
-    // last column). Dual-equality indicators, hoisted across rows:
-    // ind[j] = (idx == j) + (idx == j - 6); membership sum == 1 enforces
-    // -6 <= idx < 6 (numpy IndexError otherwise).
-    let zero_fp = ctx.load_witness(fpc.quantization(0.0));
-    let mut inds = Vec::with_capacity(6);
-    let mut hits = ctx.load_constant(F::ZERO);
-    for j in 0..6usize {
-        let j_cell = ctx.load_constant(F::from(j as u64));
-        let jn_cell = ctx.load_constant(-F::from((6 - j) as u64));
-        let is_j = gate.is_equal(ctx, col_idx, j_cell);
-        let is_jn = gate.is_equal(ctx, col_idx, jn_cell);
-        let ind = gate.add(ctx, is_j, is_jn);
-        hits = gate.add(ctx, hits, ind);
-        inds.push(ind);
-    }
-    let one_c = ctx.load_constant(F::ONE);
-    let hits_ok = gate.is_equal(ctx, hits, one_c);
-    gate.assert_is_const(ctx, &hits_ok, &F::ONE);
-    let mut row_vals: Vec<AssignedValue<F>> = Vec::with_capacity(8);
-    for i in 0..8usize {
-        let mut chosen = zero_fp;
-        for j in 0..6usize {
-            chosen = gate.select(ctx, cells[i * 6 + j], chosen, inds[j]);
-        }
-        let scaled = fpc.qmul(ctx, chosen, mn_fp);
-        row_vals.push(scaled);
-    }
-    // Cumsum of 8 cells.
-    let mut acc = row_vals[0];
-    make_public.push(acc);
-    for k in 1..8usize {
-        acc = fpc.qadd(ctx, acc, row_vals[k]);
-        make_public.push(acc);
-    }
+/// The one-hot of the position a NumPy index `idx - shift` selects on an axis
+/// of `len` elements, by the construction of `q.index_onehot`, returned so
+/// that every gather by the same index shares it: position `p` is hit when
+/// `idx` is `u = p + shift` or `v = p + shift - len` (the wrapped negative
+/// index), i.e. when `(idx - u) * (idx - v)` is zero (no zero divisors in the
+/// field), and the assertion that exactly one position is hit pins `idx` to
+/// one of the `2 * len` valid values: any other index has no witness, as
+/// NumPy raises `IndexError`. The product is `idx * (idx - u - v) + u * v`,
+/// one `mul_add` with a constant.
+fn position_onehot(q: &Q32, ctx: &mut Ctx, idx: Cell, shift: i128, len: usize) -> Vec<Cell> {
+    let n = len as i128;
+    let hit: Vec<Cell> = (0..n)
+        .map(|p| {
+            let (u, v) = (p + shift, p + shift - n);
+            let shifted = q.gate.sub(ctx, idx, Constant(fe(u + v)));
+            let prod = q.gate.mul_add(ctx, idx, shifted, Constant(fe(u * v)));
+            q.gate.is_zero(ctx, prod)
+        })
+        .collect();
+    let total = q.gate.sum(ctx, hit.iter().map(|h| Existing(*h)));
+    q.gate.assert_is_const(ctx, &total, &Fr::ONE);
+    hit
 }
-fn main() { env_logger::init(); let args = Cli::parse(); run(col_scale_cumsum, args); }

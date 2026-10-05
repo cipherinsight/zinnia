@@ -1,33 +1,16 @@
-// DS-1000 case 343 — Halo2 baseline. `X.T.flat` on Integer[5, 6].
-// Emits cells in column-major order: X[0][0], X[1][0], ..., X[5][0], X[0][1], ...
-// IR: 30× ReadInt + 30× ExposePublicII.
-use clap::Parser;
-use halo2_base::utils::{ScalarField, BigPrimeField};
-use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use halo2_base::gates::{GateChip, GateInstructions};
-use serde::{Serialize, Deserialize};
-use halo2_base::AssignedValue;
-#[allow(unused_imports)] use halo2_graph::scaffold::cmd::Cli;
-use halo2_graph::scaffold::run;
+//! DS-1000 case 0343, halo2-base baseline.
+//! Kernel: `[value for value in X.T.flat]` on `Integer[5, 6]`: the 30 elements in
+//! column-major order, `X[i, j]` at position `j * 5 + i`.
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CircuitInput { pub x: Vec<String> }
+use crate::prelude::*;
 
-fn flatten_t<F: ScalarField>(
-    b: &mut BaseCircuitBuilder<F>, input: CircuitInput, make_public: &mut Vec<AssignedValue<F>>,
-) where F: BigPrimeField {
-    let gate = GateChip::<F>::default();
-    let ctx = b.main(0);
-    assert_eq!(input.x.len(), 30);
-    let cells: Vec<AssignedValue<F>> = input.x.iter().map(|s| {
-        let abs = ctx.load_witness(F::from_u128(s.trim_start_matches('-').parse::<u128>().unwrap()));
-        if s.starts_with('-') { gate.neg(ctx, abs) } else { abs }
-    }).collect();
-    // X is 5x6 (5 rows, 6 cols). X.T.flat iterates cols then rows.
-    for j in 0..6usize {
-        for i in 0..5usize {
-            make_public.push(cells[i * 6 + j]);
-        }
-    }
+pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
+    let x = inputs.ints("X", &[5, 6])?;
+    let q = Q32::new(builder);
+    let ctx = builder.main(0);
+
+    let x = q.load_ints(ctx, &x);
+    let transposed: Vec<Cell> = (0..6).flat_map(|j| (0..5).map(move |i| (i, j))).map(|(i, j)| x[i * 6 + j]).collect();
+    out.ints(&transposed);
+    Ok(())
 }
-fn main() { env_logger::init(); let args = Cli::parse(); run(flatten_t, args); }

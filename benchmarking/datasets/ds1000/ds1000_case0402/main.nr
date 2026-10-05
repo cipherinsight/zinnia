@@ -1,25 +1,19 @@
-// DS-1000 case 0402 -- Noir baseline. np.ravel_multi_index(index, dims, order='F').
-// Fortran-order: idx = index[0] + dims[0]*index[1] + dims[0]*dims[1]*index[2] + ...
-// Per numpy 'raise' semantics, every `index[k]` must satisfy
-// `0 <= index[k] < dims[k]`; the per-axis discharge mirrors what the
-// Zinnia-emitted variant inserts in `np_ravel_multi_index`.
+// DS-1000 case 0402, Noir baseline.
+// Kernel: `np.ravel_multi_index(index, dims=(8, 9, 8, 8, 8), order='F')` on a
+// private Integer[5] index; the Float[8, 9, 8, 8, 8] parameter a is never read
+// by the kernel and enters no constraint. NumPy raises unless
+// 0 <= index[k] < dims[k]: a 3-bit range check proves it for a dim of 8, two
+// 4-bit checks (index and 8 - index) for the dim of 9. The flat index uses the
+// constant Fortran strides (1, 8, 72, 576, 4608).
+// @outputs: int[1]
 
-use noir_fpc::{qge, qlt};
-
-global RANK: u32 = 5;
-
-fn main(dims: [Field; 5], a: [Field; 36864], index: [Field; 5], claimed: Field) -> pub Field {
-    let _ = a[0];
-    let _ = claimed;
-    for k in 0..RANK {
-        assert(qge(index[k], 0), "0402: index[k] must be >= 0");
-        assert(qlt(index[k], dims[k]), "0402: index[k] must be < dims[k]");
-    }
-    let mut acc: Field = index[0];
-    let mut stride: Field = dims[0];
-    for k in 1..RANK {
-        acc = acc + stride * index[k];
-        stride = stride * dims[k];
-    }
-    acc
+fn main(a: [Field; 36864], index: [Field; 5]) -> pub Field {
+    let _ = a;
+    index[0].assert_max_bit_size::<3>();
+    index[1].assert_max_bit_size::<4>();
+    (8 - index[1]).assert_max_bit_size::<4>();
+    index[2].assert_max_bit_size::<3>();
+    index[3].assert_max_bit_size::<3>();
+    index[4].assert_max_bit_size::<3>();
+    index[0] + 8 * index[1] + 72 * index[2] + 576 * index[3] + 4608 * index[4]
 }

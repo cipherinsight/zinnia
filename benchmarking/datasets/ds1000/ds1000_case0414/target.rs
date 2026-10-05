@@ -1,41 +1,27 @@
-// DS-1000 case 414 — Halo2 baseline.
-// Kernel: data[:(N//bs)*bs].reshape(-1, bs).mean(axis=1) on Float[8], bs=2 → (4,).
-// High-level: for each bin, accumulate sum via qadd, then qdiv by bin_size.
+//! DS-1000 case 0414, halo2-base baseline.
+//! Kernel: `data[:(8 // 4) * 4].reshape(-1, 4).mean(axis=1)` with the constant
+//! `bin_size = 4` on `Float[8]`: the means of `data[0:4]` and `data[4:8]`.
+//! A Q32 mean of 4 values is `floor(sum / 4)` (the quotient
+//! `floor(sum * 2^32 / (4 * 2^32))`), a division by the constant 4: a 2-bit
+//! remainder check and a window bound on the quotient.
 
-use clap::Parser;
-use halo2_base::utils::{ScalarField, BigPrimeField};
-use halo2_graph::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};
-use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use serde::{Serialize, Deserialize};
-use halo2_base::AssignedValue;
-#[allow(unused_imports)] use halo2_graph::scaffold::cmd::Cli;
-use halo2_graph::scaffold::run;
+use crate::prelude::*;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CircuitInput { pub data: Vec<f64>, pub bin_size: u32 }
+const BIN_SIZE: usize = 4;
 
-fn bin_mean_1d<F: ScalarField>(
-    b: &mut BaseCircuitBuilder<F>, input: CircuitInput, make_public: &mut Vec<AssignedValue<F>>,
-) where F: BigPrimeField {
-    const P: u32 = 32;
-    let fpc = FixedPointChip::<F, P>::default(b);
-    let ctx = b.main(0);
-    assert_eq!(input.data.len(), 8);
-    let bs = input.bin_size as usize;
-    let n_bins = input.data.len() / bs;
+pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
+    let data = inputs.floats("data", &[8])?;
+    let q = Q32::new(builder);
+    let ctx = builder.main(0);
 
-    let cells: Vec<AssignedValue<F>> = input.data.iter()
-        .map(|v| ctx.load_witness(fpc.quantization(*v))).collect();
-    let bs_fp = ctx.load_witness(fpc.quantization(bs as f64));
-
-    for bin in 0..n_bins {
-        let mut sum = cells[bin * bs];
-        for j in 1..bs {
-            sum = fpc.qadd(ctx, sum, cells[bin * bs + j]);
-        }
-        let mean = fpc.qdiv(ctx, sum, bs_fp);
-        make_public.push(mean);
-    }
+    let data = q.load_floats(ctx, &data);
+    let means: Vec<Cell> = data
+        .chunks(BIN_SIZE)
+        .map(|bin| {
+            let total = q.sum(ctx, bin.iter().copied());
+            q.floor_div_const(ctx, total, BIN_SIZE as u64).0.cell
+        })
+        .collect();
+    out.floats(&means);
+    Ok(())
 }
-
-fn main() { env_logger::init(); let args = Cli::parse(); run(bin_mean_1d, args); }

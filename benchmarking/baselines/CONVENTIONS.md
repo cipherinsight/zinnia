@@ -60,8 +60,11 @@ Terms:
   - a float quotient is `floor(a * 2^32 / b)` with remainder in `[0, |b|)`;
   - `int(x)` and `astype(int)` truncate toward zero; `//` and `%` follow Python
     (floor, remainder with the sign of the divisor);
-  - `sin`/`cos` reduce the argument by pi and evaluate the degree-14 minimax
-    polynomial Zinnia evaluates (`q32::SIN_COEFS`); `cos(x) = sin(x + pi/2)`.
+  - `sin`/`cos` reduce the argument by pi, reflect it into `[0, pi/2]` and
+    evaluate the degree-14 minimax polynomial Zinnia evaluates
+    (`q32::SIN_COEFS`); `cos(x) = sin(x + pi/2)`. With Q32 coefficients the
+    polynomial is accurate to 2.4e-7 on `[0, pi/2]` but only 1.4e-4 near pi, so
+    the reflection is what lets the result meet the case set's 1e-6 tolerance.
 - Comparisons are on the window (64-bit), the width Zinnia uses.
 - `==` in the kernel is exact equality, also on floats. `np.isclose` uses NumPy's
   formula `|a - b| <= atol + rtol * |b|` with the kernel's (or NumPy's default)
@@ -89,7 +92,7 @@ gadgets. Concretely:
   `select_from_idx` behind `q.index`, Noir native array indexing after
   `noir_hw::index_pos`. For short axes a one-hot over the valid index values
   `-len..len` is cheaper and needs no range check (`q.index` switches to it up to
-  4 elements, measured by the `index_cost` test; in Noir use `noir_hw::pick` for
+  8 elements, measured by the `index_cost` test; in Noir use `noir_hw::pick` for
   rows of up to 8). Never scan the whole input per output when one index selects
   it.
 - Constant divisors use the constant-divisor gadget (one remainder check against
@@ -103,6 +106,13 @@ gadgets. Concretely:
   so the field identity is an integer identity and `(q, r)` is unique; a square
   root is bracketed `y^2 <= x * 2^32 < (y + 1)^2`; a parity bit is pinned by
   `q = 2h + bit` with `h` range-checked.
+- Private inputs are whatever field elements the prover loads. A construction
+  may rely on an input lying in its declared range (an int64, a Q32 value) only
+  where the circuit checks it, as the window bound does before a comparison.
+  Field identities that hold for every field element need no range (equality,
+  a product of differences being zero); identities that hold only for small
+  integers do (a sum of squares being zero means all-zero only below 2^64:
+  in BN254's scalar field -1 is a square).
 - Constants are circuit constants: halo2-base `Constant(..)` or
   `ctx.load_constant`, Noir literals. Never `load_witness` for a constant.
 - Noir range checks are `x.assert_max_bit_size::<N>()` on the original `Field`. A
@@ -132,13 +142,14 @@ halo2-base (`q32::Q32`, built on `GateChip`/`RangeChip` of halo2-base 0.4.1):
 | `int(x)`, `astype(int)` | `q.float_to_int` |
 | `np.floor` | `q.floor` |
 | `x ** n` (constant n) | `q.pow_const` |
-| `np.sqrt` | `q.sqrt` (exact floor square root) |
+| `np.sqrt` | `q.sqrt` (exact floor square root); `q.isqrt` for a raw integer |
 | `np.sin`, `np.cos` | `q.sin`, `q.cos` |
 | `<`, `<=`, `>`, `>=` | `q.bound` once per value, then `q.lt`/`le`/`gt`/`ge`, `q.lt_const` |
-| `max`, `min`, `abs` | `q.max`, `q.min`, `q.abs` |
+| `max`, `min`, `abs` | `q.max`, `q.min`, `q.abs`; `q.max_of` / `q.min_of` (hint pinned by range checks and a product) for the extremum of a few values |
 | `==`, `!=` | `q.eq`, `q.gate.not` |
 | `where`, `if` on data | `q.gate.select`, `q.select_i64` |
 | `a[i]` (private `i`) | `q.index` (NumPy wrap and bounds; one-hot or range-checked form by length), `q.index_i64` if `i` already has a window proof |
+| `x[mask]`, `nonzero`, `argwhere` | `q.select_kept` (values) or `q.compact` (other payloads): a running one-hot of the next free slot, then `out.dynamic` |
 | `k // d`, `k % d` for a small known-non-negative `k` (an index built from loop constants) | `q.divmod_small` (halo2-base `div_mod`) |
 | `&`, `|`, `~` on bools | `q.gate.and`, `q.gate.or`, `q.gate.not` |
 
@@ -152,9 +163,12 @@ Noir (`noir_hw`, on top of the Noir standard library):
 | float `/` | `noir_hw::div` |
 | int `//`, `%` | `noir_hw::divmod_pos` |
 | `astype(float)`, `int(x)`, `np.floor` | `from_int`, `to_int`, `floor` |
-| `np.sqrt`, `np.sin`, `np.cos` | `sqrt`, `sin`, `cos` |
+| `np.sqrt`, `np.sin`, `np.cos` | `sqrt` (`isqrt` for a raw integer), `sin`, `cos` |
+| `//` by a constant `2^k` | `floor_div_pow2` |
+| `max`/`min` of a few values | `max_of` |
+| `x[mask]`, `nonzero`, `argwhere` | `select_kept`, `compact`, `compact_rows` |
 | comparisons | `let w = window(x)` once per value, then `u64` comparisons; `lt`, `gt`, ... for one-off tests |
-| `max`, `min`, `abs` | `max`, `min`, `abs` (or `window` and select) |
+| `max`, `min`, `abs` | `max`, `min`, `abs` (or `window` and select); `max_of` for the maximum of a few values |
 | `a[i]` (private `i`) | `a[index_pos(i, len)]` (native indexing); `pick(row, i)` for rows of up to 8 |
 | `u32` index arithmetic (`k // 6` on an index built from loop constants) | native `u32` operators |
 
@@ -182,10 +196,10 @@ pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Res
 ```
 
 `main.nr` (one per case) is the `src/main.nr` of a Nargo package the driver stages
-with the dependencies `noir_hw` and `noir_fpc`. Its parameters carry the kernel's
-parameter names (arrays flattened row-major or nested, `Field` or native integer
-types); its header names the case and kernel and carries the output layout the
-driver decodes:
+with the dependency `noir_hw` (the baselines do not use Zinnia's `noir_fpc`). Its
+parameters carry the kernel's parameter names (arrays flattened row-major or
+nested, `Field` or native integer types); its header names the case and kernel
+and carries the output layout the driver decodes:
 
 ```noir
 // DS-1000 case NNNN, Noir baseline.

@@ -1,67 +1,51 @@
-// DS-1000 case 326 — Halo2 baseline.
-// Kernel: `np.degrees(np.arcsin(value))`. Mirrors Zinnia IR (11 stmts):
-// ReadF + 3× ConstantF + ArcSinFIR + GTE + LTE + And + Assert + MulF + ExposeF.
-// Asserts -1 ≤ value ≤ 1 (arcsin domain), then 180/π scale.
+//! DS-1000 case 0326, halo2-base baseline.
+//! Kernel: `np.degrees(np.arcsin(value))` for a `Float` value.
+//! No proof unless -1 <= value <= 1 (NumPy returns NaN outside).
+//! arcsin(v) = 2 atan(t) with t = v / (1 + sqrt(1 - v^2)), |t| <= 1: the
+//! square root is the exact integer root of 2^64 - v_q^2 (no rounded v^2), t
+//! a positive-divisor division, atan(t) = t P(t^2) with P a degree-9
+//! Chebyshev fit of atan(t)/t on [0, 1] (fit error 2.1e-9 rad), and degrees =
+//! atan(t) * 360/pi. Every step is a pinned function of the input, so the
+//! output is unique; measured error against NumPy below 2e-7 degrees on
+//! [-1, 1].
 
-use clap::Parser;
-use halo2_base::utils::{ScalarField, BigPrimeField};
-use halo2_graph::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};
-use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use halo2_base::gates::{GateChip, GateInstructions, RangeInstructions};
-use serde::{Serialize, Deserialize};
-use halo2_base::AssignedValue;
-#[allow(unused_imports)] use halo2_graph::scaffold::cmd::Cli;
-use halo2_graph::scaffold::run;
+use crate::prelude::*;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CircuitInput { pub value: f64 }
+/// P(u) = atan(t)/t, u = t^2, highest degree first.
+const ATAN_U: [f64; 10] = [
+    -0.001804437510348226,
+    0.010962195309438757,
+    -0.0312640164156834,
+    0.0580399231381612,
+    -0.08407845425531969,
+    0.10953436857600397,
+    -0.14264386880640922,
+    0.19998541917604715,
+    -0.33333296696567116,
+    0.9999999990510089,
+];
 
-fn arcsin_degrees<F: ScalarField>(
-    b: &mut BaseCircuitBuilder<F>, input: CircuitInput, make_public: &mut Vec<AssignedValue<F>>,
-) where F: BigPrimeField {
-    const P: u32 = 32;
-    let gate = GateChip::<F>::default();
-    let rc = b.range_chip();
-    let fpc = FixedPointChip::<F, P>::default(b);
-    let ctx = b.main(0);
-    let v_fp = ctx.load_witness(fpc.quantization(input.value));
-    let one_neg = ctx.load_witness(fpc.quantization(-1.0));
-    let one_pos = ctx.load_witness(fpc.quantization(1.0));
-    let one80_over_pi = ctx.load_witness(fpc.quantization(180.0 / std::f64::consts::PI));
-    // Assert -1 ≤ v ≤ 1: implemented as (v >= -1) AND (v <= 1).
-    let v_ge_m1 = {
-        let lt = rc.is_less_than(ctx, v_fp, one_neg, 128);
-        gate.not(ctx, lt)
-    };
-    let v_le_1 = {
-        let lt = rc.is_less_than(ctx, one_pos, v_fp, 128);
-        gate.not(ctx, lt)
-    };
-    let in_range = gate.and(ctx, v_ge_m1, v_le_1);
-    gate.assert_is_const(ctx, &in_range, &F::ONE);
-    // halo2-graph has no qarcsin — use the witness-and-verify pattern
-    // (same idea as its qsqrt): witness y = arcsin(value), then check
-    // sin(y) ≈ value within ±0.001. y is also range-bounded to
-    // [-π/2, π/2] to make arcsin unique.
-    let y_f64 = input.value.asin();
-    let as_val = ctx.load_witness(fpc.quantization(y_f64));
-    let sin_y = fpc.qsin(ctx, as_val);
-    let diff = fpc.qsub(ctx, sin_y, v_fp);
-    let eps_pos = ctx.load_witness(fpc.quantization(0.001));
-    let eps_neg = ctx.load_witness(fpc.quantization(-0.001));
-    let lt_p = rc.is_less_than(ctx, diff, eps_pos, 128);
-    let gt_n = rc.is_less_than(ctx, eps_neg, diff, 128);
-    gate.assert_is_const(ctx, &lt_p, &F::ONE);
-    gate.assert_is_const(ctx, &gt_n, &F::ONE);
-    // Range-check y ∈ [-π/2, π/2].
-    let pi_half_p = ctx.load_witness(fpc.quantization(std::f64::consts::FRAC_PI_2));
-    let pi_half_n = ctx.load_witness(fpc.quantization(-std::f64::consts::FRAC_PI_2));
-    let y_ge_n = { let lt = rc.is_less_than(ctx, as_val, pi_half_n, 128); gate.not(ctx, lt) };
-    let y_le_p = { let lt = rc.is_less_than(ctx, pi_half_p, as_val, 128); gate.not(ctx, lt) };
-    let y_in = gate.and(ctx, y_ge_n, y_le_p);
-    gate.assert_is_const(ctx, &y_in, &F::ONE);
+pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
+    let value = inputs.float("value")?;
+    let q = Q32::new(builder);
+    let ctx = builder.main(0);
 
-    let degrees = fpc.qmul(ctx, as_val, one80_over_pi);
-    make_public.push(degrees);
+    let v = q.load_float(ctx, value);
+    // -1 <= value <= 1: value + 1 lies in [0, 2].
+    let shifted = q.add(ctx, v, Constant(fe(SCALE)));
+    q.range.check_less_than_safe(ctx, shifted, 2 * SCALE as u64 + 1);
+
+    // sqrt(1 - v^2) in Q32: floor(sqrt(2^64 - v_q^2)), exact.
+    let v_sq = q.gate.mul(ctx, v, v);
+    let rest = q.sub(ctx, Constant(fe(SCALE * SCALE)), v_sq);
+    let root = q.isqrt(ctx, rest);
+    let denominator = q.add(ctx, root.cell, Constant(fe(SCALE))); // 1 + sqrt(1 - v^2) >= 1
+    let denominator = q.bound(ctx, denominator);
+    let t = q.div_pos(ctx, v, denominator);
+    let u = q.mul(ctx, t.cell, t.cell);
+    let p = q.polynomial(ctx, u.cell, &ATAN_U);
+    let atan = q.mul(ctx, t.cell, p);
+    let degrees = q.mul(ctx, atan.cell, Constant(fe(quantize(360.0 / std::f64::consts::PI))));
+    out.float(degrees.cell);
+    Ok(())
 }
-fn main() { env_logger::init(); let args = Cli::parse(); run(arcsin_degrees, args); }

@@ -1,44 +1,29 @@
-// DS-1000 case 0419 -- Noir baseline. Field convention (CONVENTIONS.md sec 3).
-// data[:, ::-1] then bin-mean axis=-1 then [::-1] on Float[8,6].
+// DS-1000 case 0419, Noir baseline.
+// Kernel: `data[:, ::-1][:, :(6 // 2) * 2].reshape(8, -1, 2).mean(axis=-1)[:, ::-1]`
+// with the constant bin_size = 2 on Float[8, 6]. Reversing the columns,
+// binning pairs and reversing the bins gives back the pairs in order: row i,
+// bin k is the mean of data[i, 2k + 1] and data[i, 2k] (the same function as
+// case 0416).
+// A Q32 mean of 2 values is floor(sum / 2) (the quotient
+// floor(sum * 2^32 / (2 * 2^32))), a division by the constant 2: a 1-bit
+// remainder check and a window check on the quotient.
+// @outputs: float[24]
 
-use noir_fpc::{qadd, qdiv, Q, q_floor_div_bounded};
+use noir_hw::floor_div_pow2;
 
 global ROWS: u32 = 8;
 global COLS: u32 = 6;
+global BIN_SIZE: u32 = 2;
+global BIN_BITS: u32 = 1; // BIN_SIZE = 2^BIN_BITS
+global BINS: u32 = 3; // COLS / BIN_SIZE
 
-fn main(data: [Field; 48], bin_size: Field) -> pub [Field; 48] {
-    assert(bin_size != 0, "0419: bin_size must be > 0");
-    // Sound floor-div (operands fit in 2^4 > 6): pins n_bins to the true floor
-    // and rejects the field-inverse cheat `n_bins*bin_size == COLS` alone admits.
-    let n_bins = q_floor_div_bounded::<4>(COLS as Field, bin_size);
-    assert(n_bins * bin_size == COLS as Field, "bin_size must divide COLS");
-    let bs_q: Field = bin_size * Q;
-    let mut out: [Field; 48] = [0; 48];
+fn main(data: [Field; 48]) -> pub [Field; 24] {
+    let mut means = [0; 24];
     for i in 0..ROWS {
-        for bin in 0..COLS {
-            if ((bin as u128) < (n_bins as u128)) {
-                let mut sum: Field = 0;
-                for j in 0..COLS {
-                    if ((j as u128) < (bin_size as u128)) {
-                        let col_idx = (COLS - 1) as Field - ((bin as Field) * bin_size + (j as Field));
-                        let src_idx = (i * COLS) as Field + col_idx;
-                        let mut v: Field = 0;
-                        for k in 0..(ROWS * COLS) {
-                            if (k as Field) == src_idx { v = data[k]; }
-                        }
-                        sum = qadd(sum, v);
-                    }
-                }
-                let val = qdiv(sum, bs_q);
-                for out_pos in 0..COLS {
-                    let in_range = (out_pos as u128) < (n_bins as u128);
-                    let target = (out_pos as Field) + (bin as Field) + 1 == n_bins;
-                    if in_range & target {
-                        out[i * COLS + out_pos] = val;
-                    }
-                }
-            }
+        for k in 0..BINS {
+            let at = i * COLS + k * BIN_SIZE;
+            means[i * BINS + k] = floor_div_pow2::<BIN_BITS>(data[at + 1] + data[at]);
         }
     }
-    out
+    means
 }

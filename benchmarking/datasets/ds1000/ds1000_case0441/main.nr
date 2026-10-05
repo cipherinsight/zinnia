@@ -1,13 +1,14 @@
-// DS-1000 case 0441 -- Noir baseline. (number in a) on Integer[4].
+// DS-1000 case 0441, Noir baseline.
+// Kernel: `number in a` on a: Integer[4], number: Integer.
+// `number in a` is `(a == number).any()`: the product of the differences
+// number - a[k] is zero exactly when one of them is (a field has no zero
+// divisors), so one zero test replaces four equality tests and their `or`.
+// @outputs: bool[1]
 
-global N: u32 = 4;
-
-fn main(a: [Field; 4], number: Field) -> pub Field {
-    let mut found: Field = 0;
-    for k in 0..N {
-        let eq: Field = if a[k] == number { 1 } else { 0 };
-        // OR: found = found + eq - found*eq.
-        found = found + eq - found * eq;
+fn main(a: [Field; 4], number: Field) -> pub bool {
+    let mut product: Field = 1;
+    for k in 0..4 {
+        product *= number - a[k];
     }
-    found
+    product == 0
 }

@@ -1,99 +1,35 @@
-// DS-1000 case 462 — Halo2 baseline.
-// Kernel:
-//   selection = np.ones(len(a), dtype=bool)
-//   selection[1:] = a[1:] != a[:-1]
-//   selection &= a != 0
-//   result = a[selection]
-// Integer[20] in, dynamic-length out.
-// Halo2 unrolls to upper bound N=20 (padded buffer + length).
+//! DS-1000 case 0462, halo2-base baseline.
+//! Kernel: `selection[1:] = a[1:] != a[:-1]` (first element selected),
+//! `selection &= a != 0`, `a[selection]` on `Integer[20]`: drop zeros and
+//! repeats of the previous value (data-dependent length).
+//! Output: the count of kept values, then the kept values in order,
+//! zero-padded to 20. Only equalities decide the selection (no range check).
+//! Compaction by a running one-hot of the number of kept values before
+//! element `i` (one select per pair, no equality tests).
 
-use clap::Parser;
-use halo2_base::utils::{ScalarField, BigPrimeField};
-use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use halo2_base::gates::{GateChip, GateInstructions};
-use serde::{Serialize, Deserialize};
-use halo2_base::AssignedValue;
-#[allow(unused_imports)] use halo2_graph::scaffold::cmd::Cli;
-use halo2_graph::scaffold::run;
+use crate::prelude::*;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CircuitInput {
-    pub a: Vec<String>,
-    pub claimed_len: String,
-    pub claimed: Vec<String>,
-}
+const N: usize = 20;
 
-fn dedupe_nonzero<F: ScalarField>(
-    builder: &mut BaseCircuitBuilder<F>,
-    input: CircuitInput,
-    make_public: &mut Vec<AssignedValue<F>>,
-) where F: BigPrimeField {
-    let gate = GateChip::<F>::default();
+pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
+    let a = inputs.ints("a", &[N])?;
+    let q = Q32::new(builder);
     let ctx = builder.main(0);
-    assert_eq!(input.a.len(), 20);
-    assert_eq!(input.claimed.len(), 20);
 
-    let load_int = |ctx: &mut halo2_base::Context<F>, s: &str| -> AssignedValue<F> {
-        let abs = ctx.load_witness(F::from_u128(
-            s.trim_start_matches('-').parse::<u128>().expect("decimal int"),
-        ));
-        if s.starts_with('-') { gate.neg(ctx, abs) } else { abs }
-    };
-
-    let a: Vec<AssignedValue<F>> = input.a.iter().map(|s| load_int(ctx, s)).collect();
-    let claimed_len = load_int(ctx, &input.claimed_len);
-    let claimed: Vec<AssignedValue<F>> = input.claimed.iter().map(|s| load_int(ctx, s)).collect();
-
-    let one = ctx.load_constant(F::ONE);
-    let zero_int = ctx.load_constant(F::ZERO);
-
-    // selection[0] = 1; selection[i] = (a[i] != a[i-1]) for i>=1.
-    let mut selection: Vec<AssignedValue<F>> = Vec::with_capacity(20);
-    selection.push(one);
-    for i in 1..20 {
-        let eq = gate.is_equal(ctx, a[i], a[i - 1]);
-        let ne = gate.not(ctx, eq);
-        selection.push(ne);
+    let a = q.load_ints(ctx, &a);
+    let mut keep = Vec::with_capacity(N);
+    for i in 0..N {
+        let zero = q.gate.is_zero(ctx, a[i]);
+        let nonzero = q.gate.not(ctx, zero);
+        keep.push(if i == 0 {
+            nonzero
+        } else {
+            let repeat = q.eq(ctx, a[i], a[i - 1]);
+            q.gate.mul_not(ctx, repeat, nonzero)
+        });
     }
-    // selection &= (a != 0).
-    let mut keep: Vec<AssignedValue<F>> = Vec::with_capacity(20);
-    for i in 0..20 {
-        let eq_zero = gate.is_equal(ctx, a[i], zero_int);
-        let nz = gate.not(ctx, eq_zero);
-        let k = gate.and(ctx, selection[i], nz);
-        keep.push(k);
-    }
-
-    // Running rank → compaction.
-    let mut rank_after: Vec<AssignedValue<F>> = Vec::with_capacity(20);
-    let mut running = zero_int;
-    for i in 0..20 {
-        running = gate.add(ctx, running, keep[i]);
-        rank_after.push(running);
-    }
-    let total = rank_after[19];
-
-    let mut out: Vec<AssignedValue<F>> = Vec::with_capacity(20);
-    for k in 0..20 {
-        let target = ctx.load_constant(F::from((k + 1) as u64));
-        let mut chosen = zero_int;
-        for i in 0..20 {
-            let rank_eq = gate.is_equal(ctx, rank_after[i], target);
-            let pick = gate.and(ctx, keep[i], rank_eq);
-            chosen = gate.select(ctx, a[i], chosen, pick);
-        }
-        out.push(chosen);
-    }
-
-    let len_ok = gate.is_equal(ctx, total, claimed_len);
-    gate.assert_is_const(ctx, &len_ok, &F::ONE);
-    for k in 0..20 {
-        let eq = gate.is_equal(ctx, out[k], claimed[k]);
-        gate.assert_is_const(ctx, &eq, &F::ONE);
-    }
-
-    make_public.push(total);
-    for v in &out { make_public.push(*v); }
+    let (count, slots) = q.select_kept(ctx, &a, &keep);
+    out.dynamic(count, &slots, Kind::Int, 1);
+    Ok(())
 }
 
-fn main() { env_logger::init(); let args = Cli::parse(); run(dedupe_nonzero, args); }

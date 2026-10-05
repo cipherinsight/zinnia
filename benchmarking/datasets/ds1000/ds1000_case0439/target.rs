@@ -1,42 +1,28 @@
-// DS-1000 case 439 — Halo2 baseline.
-// Kernel: result = X.T[:, :, None] * X.T[:, None] on Float[10, 20] → Float[20, 10, 10].
-// result[k][i][j] = X[i][k] * X[j][k]. Nested loops + qmul.
+//! DS-1000 case 0439, halo2-base baseline.
+//! Kernel: `X.T[:, :, None] * X.T[:, None]` on `Float[10, 20]`: the `Float[20, 10, 10]`
+//! array `r[k, i, j] = X[i, k] * X[j, k]`, each a rescaled product.
+//! The product is symmetric in `(i, j)` (the same rounded value), so each of the
+//! 20 * 55 unordered pairs is computed once and exposed at both positions.
 
-use clap::Parser;
-use halo2_base::utils::{ScalarField, BigPrimeField};
-use halo2_graph::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};
-use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
-use serde::{Serialize, Deserialize};
-use halo2_base::AssignedValue;
-#[allow(unused_imports)] use halo2_graph::scaffold::cmd::Cli;
-use halo2_graph::scaffold::run;
+use crate::prelude::*;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CircuitInput { pub x: Vec<f64> }
+pub fn circuit(builder: &mut Builder, inputs: &Inputs, out: &mut Outputs) -> Result<()> {
+    let x = inputs.floats("X", &[10, 20])?;
+    let q = Q32::new(builder);
+    let ctx = builder.main(0);
 
-fn outer_prod<F: ScalarField>(
-    b: &mut BaseCircuitBuilder<F>, input: CircuitInput, make_public: &mut Vec<AssignedValue<F>>,
-) where F: BigPrimeField {
-    const P: u32 = 32;
-    const ROWS: usize = 10;
-    const COLS: usize = 20;
-    let fpc = FixedPointChip::<F, P>::default(b);
-    let ctx = b.main(0);
-    assert_eq!(input.x.len(), ROWS * COLS);
-
-    let cells: Vec<AssignedValue<F>> = input.x.iter()
-        .map(|v| ctx.load_witness(fpc.quantization(*v))).collect();
-    let x = |i: usize, k: usize| cells[i * COLS + k];
-
-    // result[k][i][j] = X[i][k] * X[j][k]; emit in k, i, j row-major.
-    for k in 0..COLS {
-        for i in 0..ROWS {
-            for j in 0..ROWS {
-                let p = fpc.qmul(ctx, x(i, k), x(j, k));
-                make_public.push(p);
+    let x = q.load_floats(ctx, &x);
+    let mut r: Vec<Option<Cell>> = vec![None; 20 * 10 * 10];
+    for k in 0..20 {
+        for i in 0..10 {
+            for j in i..10 {
+                let p = q.mul(ctx, x[i * 20 + k], x[j * 20 + k]).cell;
+                r[k * 100 + i * 10 + j] = Some(p);
+                r[k * 100 + j * 10 + i] = Some(p);
             }
         }
     }
+    let r: Vec<Cell> = r.into_iter().map(|p| p.expect("every position is filled")).collect();
+    out.floats(&r);
+    Ok(())
 }
-
-fn main() { env_logger::init(); let args = Cli::parse(); run(outer_prod, args); }

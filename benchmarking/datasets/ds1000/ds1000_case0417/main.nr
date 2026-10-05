@@ -1,33 +1,26 @@
-// DS-1000 case 0417 -- Noir baseline. Field convention (CONVENTIONS.md sec 3).
-// bin-mean on data[::-1] from Float[8] with runtime bin_size.
+// DS-1000 case 0417, Noir baseline.
+// Kernel: `data[::-1][:(8 // 4) * 4].reshape(-1, 4).mean(axis=1)` with the
+// constant bin_size = 4 on Float[8]: the means of the reversed data's bins,
+// data[7:3:-1] and data[3::-1].
+// A Q32 mean of 4 values is floor(sum / 4) (the quotient
+// floor(sum * 2^32 / (4 * 2^32))), a division by the constant 4: a 2-bit
+// remainder check and a window check on the quotient.
+// @outputs: float[2]
 
-use noir_fpc::{qadd, qdiv, Q, q_floor_div_bounded};
+use noir_hw::floor_div_pow2;
 
-global N: u32 = 8;
+global BIN_SIZE: u32 = 4;
+global BIN_BITS: u32 = 2; // BIN_SIZE = 2^BIN_BITS
+global BINS: u32 = 2; // 8 / BIN_SIZE
 
-fn main(data: [Field; 8], bin_size: Field) -> pub [Field; 8] {
-    assert(bin_size != 0, "0417: bin_size must be > 0");
-    // Sound floor-div (operands fit in 2^5 > 8): pins n_bins to the true floor
-    // and rejects the field-inverse cheat `n_bins*bin_size == N` alone admits.
-    let n_bins = q_floor_div_bounded::<5>(N as Field, bin_size);
-    assert(n_bins * bin_size == N as Field, "bin_size must divide N");
-    let bs_q: Field = bin_size * Q;
-    let mut out: [Field; 8] = [0; 8];
-    for bin in 0..N {
-        if ((bin as u128) < (n_bins as u128)) {
-            let mut sum: Field = 0;
-            for j in 0..N {
-                if ((j as u128) < (bin_size as u128)) {
-                    let src_idx = (N - 1) as Field - ((bin as Field) * bin_size + (j as Field));
-                    let mut v: Field = 0;
-                    for k in 0..N {
-                        if (k as Field) == src_idx { v = data[k]; }
-                    }
-                    sum = qadd(sum, v);
-                }
-            }
-            out[bin] = qdiv(sum, bs_q);
+fn main(data: [Field; 8]) -> pub [Field; 2] {
+    let mut means = [0; BINS];
+    for b in 0..BINS {
+        let mut total: Field = 0;
+        for k in 0..BIN_SIZE {
+            total += data[7 - (b * BIN_SIZE + k)];
         }
+        means[b] = floor_div_pow2::<BIN_BITS>(total);
     }
-    out
+    means
 }

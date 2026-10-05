@@ -1,20 +1,22 @@
-// DS-1000 case 0439 -- Noir baseline.
-// X.T[:, :, None] * X.T[:, None] on Float[10,20] -> shape (20, 10, 10).
-// X is (10, 20); X.T[r, i] = X[i, r]. Output o[r, i, j] = X[i, r] * X[j, r].
+// DS-1000 case 0439, Noir baseline.
+// Kernel: `X.T[:, :, None] * X.T[:, None]` on Float[10, 20]: the Float[20, 10, 10]
+// array r[k, i, j] = X[i, k] * X[j, k], each a rescaled product.
+// The product is symmetric in (i, j) (the same rounded value), so each of the
+// 20 * 55 unordered pairs is computed once and returned at both positions.
+// @outputs: float[2000]
 
-use noir_fpc::qmul;
+use noir_hw::mul;
 
-global ROWS: u32 = 10;
-global COLS: u32 = 20;
-
-fn main(x: [Field; 200]) -> pub [Field; 2000] {
-    let mut out: [Field; 2000] = [0; 2000];
-    for r in 0..COLS {
-        for i in 0..ROWS {
-            for j in 0..ROWS {
-                out[r * ROWS * ROWS + i * ROWS + j] = qmul(x[i * COLS + r], x[j * COLS + r]);
+fn main(X: [Field; 200]) -> pub [Field; 2000] {
+    let mut r = [0; 2000];
+    for k in 0..20 {
+        for i in 0..10 {
+            for j in i..10 {
+                let p = mul(X[i * 20 + k], X[j * 20 + k]);
+                r[k * 100 + i * 10 + j] = p;
+                r[k * 100 + j * 10 + i] = p;
             }
         }
     }
-    out
+    r
 }
