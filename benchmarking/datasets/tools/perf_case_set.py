@@ -171,7 +171,7 @@ def adaptations(record: dict[str, Any], kernel: generator.GeneratedKernel) -> li
     items += dtype_notes(record, kernel)
     for name, value in kernel.constants.items():
         what = perf.SHAPE_CONSTANTS[pid][name]
-        items.append(f"{name} = {generator._constant_literal(value)} is a compile-time constant (DS-1000 test case "
+        items.append(f"{name} = {generator.constant_literal(value)} is a compile-time constant (DS-1000 test case "
                      f"{kernel.shape_case} value; it sets the {what}). The runtime variant is "
                      f"ds1000_numpy/generated/case{pid:04d}/kernel.py.")
     items += [note + "." for note in kernel.notes]
@@ -309,7 +309,7 @@ def build_entries(write_fixtures: bool, reuse: dict[str, Any] | None) -> list[di
             continue
         kernel = kernels[pid]
         entry["kernel"] = {"params": [{"name": n, "annotation": t.annotation()} for n, t in kernel.params],
-                           "constants": {n: generator._plain(np.asarray(v).tolist()) for n, v in kernel.constants.items()},
+                           "constants": {n: generator.plain_value(np.asarray(v).tolist()) for n, v in kernel.constants.items()},
                            "shape_test_case": kernel.shape_case}
         entry["adaptations"] = adaptations(record, kernel)
         entry["kernel_change"] = kernel_change(previous_kernel(case_dir.name), kernel.source)
