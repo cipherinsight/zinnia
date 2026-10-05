@@ -112,3 +112,49 @@ def test_runtime_shaped_array_operations_match_numpy(expr):
 def test_out_of_range_index_into_runtime_shaped_array_is_rejected(source, args):
     satisfied, _ = run_mock(compile_kernel(source), *args)
     assert not satisfied
+
+
+# ── a runtime `if` assigning runtime-shaped arrays (perf-ops) ────────────
+# The merged value had a flat buffer and strides [1, 1]: `result.sum()` of
+# the crop below proved 27 (NumPy: 135), `result.max()` 10 (22), `result[1]`
+# [3, 3, 9] (NumPy: [14, 15, 16]).
+
+IM = np.arange(30).reshape(5, 6)
+CROP_OR_EMPTY = ('def kernel(im: Integer[Array, "5 6"], a: Integer, b: Integer, c: Integer,'
+                 ' d: Integer, k: Integer):\n'
+                 '    if k == 0:\n        result = np.array([])\n'
+                 '    else:\n        result = im[a:b, c:d]\n'
+                 '    return {}\n')
+
+
+@pytest.mark.parametrize("expr, expected", [
+    ("result.sum()", 135), ("result.max()", 22), ("result.min()", 8), ("result[1, 1]", 15),
+])
+def test_merged_crop_reductions_and_reads_match_numpy(expr, expected):
+    source = CROP_OR_EMPTY.format(expr)
+    assert numpy_kernel(source)(IM.copy(), 1, 4, 2, 5, 1) == expected
+    satisfied, outputs = run_mock(compile_kernel(source), IM, 1, 4, 2, 5, 1)
+    assert satisfied and outputs == [expected]
+
+
+def test_merged_crop_row_read_matches_numpy():
+    satisfied, outputs = run_mock(compile_kernel(CROP_OR_EMPTY.format("result[1]")),
+                                  IM, 1, 4, 2, 5, 1)
+    assert satisfied and outputs[0] == 3 and outputs[2:5] == [14, 15, 16]
+
+
+def test_merged_empty_arm_exposes_no_data():
+    # The empty arm's padding must not carry the other arm's (private) cells.
+    satisfied, outputs = run_mock(compile_kernel(CROP_OR_EMPTY.format("result")),
+                                  IM, 1, 4, 2, 5, 0)
+    assert satisfied and outputs[0] == 0
+    assert all(v == 0 for v in outputs[4:])
+
+
+def test_merged_compact_and_padded_arms_are_rejected():
+    source = ('def kernel(x: Integer[Array, "3 4"], t: Integer, k: Integer):\n'
+              '    if k == 0:\n        y = x[x > t]\n    else:\n        y = x[:t, :t]\n'
+              '    return y.sum()\n')
+    with pytest.raises(Exception, match="runtime `if`"):
+        compile_kernel(source)
+
