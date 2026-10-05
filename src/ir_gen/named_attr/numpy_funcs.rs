@@ -278,57 +278,7 @@ fn integer_product_sum(b: &mut crate::builder::IRBuilder, lhs: &[Value], rhs: &[
 }
 
 fn np_corrcoef_ds1000(b: &mut crate::builder::IRBuilder, args: &[Value]) -> Value {
-    assert!(
-        args.len() >= 2,
-        "np.corrcoef: DS1000 slice requires x and y"
-    );
-    let (_, x_shape) = static_array_meta(&args[0], "np.corrcoef");
-    let (_, y_shape) = static_array_meta(&args[1], "np.corrcoef");
-    if x_shape.len() != 1 || y_shape.len() != 1 || x_shape[0] != y_shape[0] {
-        panic!("np.corrcoef: DS1000 slice supports same-length 1-D StaticArrays");
-    }
-    let n = x_shape[0];
-    if n <= 1 {
-        panic!("np.corrcoef: at least two observations are required");
-    }
-    let x = static_cells(b, &args[0], "np.corrcoef");
-    let y = static_cells(b, &args[1], "np.corrcoef");
-    let mean = |b: &mut crate::builder::IRBuilder, vals: &[Value]| -> Value {
-        let mut acc = b.ir_constant_float(0.0);
-        for v in vals {
-            let vf = as_float_value(b, v);
-            acc = b.ir_add_f(&acc, &vf);
-        }
-        let denom = b.ir_constant_float(vals.len() as f64);
-        b.ir_div_f(&acc, &denom)
-    };
-    let mx = mean(b, &x);
-    let my = mean(b, &y);
-    let mut cov_acc = b.ir_constant_float(0.0);
-    let mut vx_acc = b.ir_constant_float(0.0);
-    let mut vy_acc = b.ir_constant_float(0.0);
-    for i in 0..n {
-        let x_f = as_float_value(b, &x[i]);
-        let y_f = as_float_value(b, &y[i]);
-        let dx = b.ir_sub_f(&x_f, &mx);
-        let dy = b.ir_sub_f(&y_f, &my);
-        let cov_term = b.ir_mul_f(&dx, &dy);
-        cov_acc = b.ir_add_f(&cov_acc, &cov_term);
-        let vx_term = b.ir_mul_f(&dx, &dx);
-        vx_acc = b.ir_add_f(&vx_acc, &vx_term);
-        let vy_term = b.ir_mul_f(&dy, &dy);
-        vy_acc = b.ir_add_f(&vy_acc, &vy_term);
-    }
-    let denom_sq = b.ir_mul_f(&vx_acc, &vy_acc);
-    let denom = b.ir_sqrt_f(&denom_sq);
-    let corr = b.ir_div_f(&cov_acc, &denom);
-    let one = b.ir_constant_float(1.0);
-    crate::helpers::static_array::base::build_static_array_from_flat(
-        b,
-        vec![one.clone(), corr.clone(), corr, one],
-        vec![2, 2],
-        NumberType::Float,
-    )
+    crate::ops::static_ndarray_ops::np_corrcoef(b, args)
 }
 
 fn np_tensordot_ds1000(

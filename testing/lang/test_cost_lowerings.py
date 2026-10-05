@@ -360,3 +360,23 @@ def test_runtime_percentile_interpolates_once():
 
 def test_runtime_percentile_halo2_base_matches_mock():
     assert_backends_agree(PERCENTILE, SAMPLE20, 37)
+
+
+# ── np.corrcoef: sums of products rescaled once ──────────────────────────
+
+CORRCOEF = 'def kernel(x: Integer[Array, "4"], y: Integer[Array, "4"]):\n    return np.corrcoef(x, y)[0][1]\n'
+
+
+@pytest.mark.parametrize("x, y", [([2, 5, 6, 8], [10, 6, 1, 3]), ([1, 2, 3, 4], [4, 3, 2, 1]),
+                                  ([7, -2, 0, 3], [1, 1, 2, 5])])
+def test_corrcoef_matches_numpy(x, y):
+    assert_matches_numpy(CORRCOEF, np.array(x), np.array(y))
+
+
+def test_corrcoef_rescales_each_sum_once():
+    classes = ir_classes(compile_kernel(CORRCOEF))
+    assert classes.count("ProductSumFIR") == 3 and classes.count("MulFIR") == 1
+
+
+def test_corrcoef_halo2_base_matches_mock():
+    assert_backends_agree(CORRCOEF, np.array([2, 5, 6, 8]), np.array([10, 6, 1, 3]))

@@ -424,3 +424,51 @@ fn percentile_at_runtime(b: &mut IRBuilder, sorted: &[Value], q: &Value) -> Valu
     let step = b.ir_div_f(&scaled_diff, &hundred_f);
     b.ir_add_f(&low, &step)
 }
+
+/// `np.corrcoef(x, y)` of two 1-D static arrays of the same length
+/// `n >= 2`: `[[1, r], [r, 1]]` with
+/// `r = sum(dx * dy) / sqrt(sum(dx^2) * sum(dy^2))`, `dx = x - mean(x)`.
+/// Each of the three sums of products is one `ProductSumF` (rescaled
+/// once, `IRBuilder::ir_dot_f`).
+pub fn np_corrcoef(b: &mut IRBuilder, args: &[Value]) -> Value {
+    assert!(args.len() >= 2, "np.corrcoef: requires x and y");
+    let length_of = |v: &Value| match v {
+        Value::StaticArray { shape, .. } if shape.len() == 1 => shape[0],
+        _ => panic!("np.corrcoef: supports two 1-D static arrays"),
+    };
+    let n = length_of(&args[0]);
+    if length_of(&args[1]) != n {
+        panic!("np.corrcoef: x and y must have the same length");
+    }
+    if n <= 1 {
+        panic!("np.corrcoef: at least two observations are required");
+    }
+    let deviations = |b: &mut IRBuilder, arr: &Value| -> Vec<Value> {
+        let cells: Vec<Value> = payload_cells(b, arr)
+            .iter()
+            .map(|c| crate::helpers::value_ops::ensure_float(b, c))
+            .collect();
+        let sum = b.ir_sum_f(&cells);
+        let count = b.ir_constant_float(n as f64);
+        let mean = b.ir_div_f(&sum, &count);
+        cells.iter().map(|c| b.ir_sub_f(c, &mean)).collect()
+    };
+    let dx = deviations(b, &args[0]);
+    let dy = deviations(b, &args[1]);
+    let pairs = |u: &[Value], v: &[Value]| -> Vec<(Value, Value)> {
+        u.iter().cloned().zip(v.iter().cloned()).collect()
+    };
+    let cov = b.ir_dot_f(&pairs(&dx, &dy));
+    let var_x = b.ir_dot_f(&pairs(&dx, &dx));
+    let var_y = b.ir_dot_f(&pairs(&dy, &dy));
+    let denom_sq = b.ir_mul_f(&var_x, &var_y);
+    let denom = b.ir_sqrt_f(&denom_sq);
+    let corr = b.ir_div_f(&cov, &denom);
+    let one = b.ir_constant_float(1.0);
+    crate::helpers::static_array::base::build_static_array_from_flat(
+        b,
+        vec![one.clone(), corr.clone(), corr, one],
+        vec![2, 2],
+        NumberType::Float,
+    )
+}
