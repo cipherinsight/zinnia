@@ -16,7 +16,9 @@ Run it after adding or removing a case: `python3 sync_cases.py`.
 
 from __future__ import annotations
 
+import json
 import os
+import re
 from pathlib import Path
 
 BASELINES = Path(__file__).resolve().parents[1]
@@ -48,10 +50,19 @@ def sync_bins(bin_dir: Path, cases: list[str], body: str) -> None:
         write_if_changed(bin_dir / f"{case}.rs", f"// {HEADER}\n" + body.format(case=case))
 
 
+def unused_params(program: Path) -> list[str]:
+    """Names on the program's `// unused parameters: a, b` line, if any."""
+    match = re.search(r"^//\s*unused parameters:\s*(.+?)\s*$", program.read_text(), re.M)
+    return [name.strip() for name in match.group(1).split(",")] if match else []
+
+
 def sync_rust(cases: dict[str, Path]) -> None:
     crate_src = BASELINES / "zkvm_common" / "ds1000" / "src"
     lines = [f"// {HEADER}", "cases! {"]
-    lines += [f'    {name} => "{os.path.relpath(d / "zkvm.rs", crate_src)}",' for name, d in cases.items()]
+    for name, d in cases.items():
+        unused = unused_params(d / "zkvm.rs")
+        suffix = f", unused [{', '.join(json.dumps(u) for u in unused)}]" if unused else ""
+        lines.append(f'    {name} => "{os.path.relpath(d / "zkvm.rs", crate_src)}"{suffix};')
     lines.append("}")
     write_if_changed(crate_src / "cases.rs", "\n".join(lines) + "\n")
     names = list(cases)

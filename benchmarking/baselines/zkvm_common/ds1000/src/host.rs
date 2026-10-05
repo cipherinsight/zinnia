@@ -74,9 +74,11 @@ impl CommonArgs {
         self.fixture.clone().unwrap_or_else(|| self.case_dir.join("fixture.json"))
     }
 
-    /// The encoded kernel arguments of the chosen fixture input.
+    /// The encoded kernel arguments of the chosen fixture input, without the
+    /// parameters the case never reads.
     pub fn kernel_args(&self) -> Result<Vec<Arg>> {
-        Fixture::load(&self.fixture_path())?.args(&self.input)
+        let unused = crate::unused_params(&self.case()?);
+        Fixture::load(&self.fixture_path())?.args(&self.input, unused)
     }
 
     /// The work directory, created if missing.

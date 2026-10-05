@@ -102,6 +102,10 @@ A case has the same parameters, shapes, constants and algorithm as
   `(Array<i64>, Array<T>)` declared as `([dim], [T])`. The hosts report the
   shape as `output_shape`; `publics` keeps only the values.
 * Shape parameters that the kernel fixes are constants in the program.
+* A parameter the kernel never reads (e.g. 0402's `a`) is declared on a line
+  `// unused parameters: a` in `zkvm.rs` and `main.cairo`; the hosts and the
+  Cairo driver leave it out of the private input, as Zinnia removes it from
+  the circuit. Run `sync_cases.py` after adding such a line.
 
 ### Style
 

@@ -82,8 +82,10 @@ impl Fixture {
         serde_json::from_str(&text).with_context(|| format!("parsing fixture {}", path.display()))
     }
 
-    /// The encoded arguments of input `name` (`A` or `B`), in signature order.
-    pub fn args(&self, name: &str) -> Result<Vec<Arg>> {
+    /// The encoded arguments of input `name` (`A` or `B`), in signature
+    /// order, leaving out the parameters in `unused` (see
+    /// [`crate::unused_params`]).
+    pub fn args(&self, name: &str, unused: &[&str]) -> Result<Vec<Arg>> {
         let values = self
             .inputs
             .get(name)
@@ -94,8 +96,15 @@ impl Fixture {
             values.len(),
             self.parameters.len()
         );
+        for skipped in unused {
+            ensure!(
+                self.parameters.iter().any(|p| p.name == *skipped),
+                "unused parameter {skipped:?} is not a kernel parameter"
+            );
+        }
         self.parameters
             .iter()
+            .filter(|param| !unused.contains(&param.name.as_str()))
             .map(|param| {
                 let value = values
                     .get(&param.name)

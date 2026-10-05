@@ -174,6 +174,9 @@ def main() -> int:
     parser.add_argument("--cases", default="", help="comma-separated case folders (default: every case with a program)")
     parser.add_argument("--fixtures-dir", type=Path,
                         help="read <dir>/<case>/fixture.json, where it exists, instead of the case folder's")
+    parser.add_argument("--dataset-dir", type=Path,
+                        help="take kernel.py and fixture.json from <dir>/<case>/ (the programs still come from "
+                             "this tree's case folders)")
     parser.add_argument("--input", default="B")
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--report", type=Path)
@@ -195,8 +198,12 @@ def main() -> int:
     results: list[Result] = []
     for case in cases:
         case_dir = case_dirs[case]
-        own_fixture = case_dir / "fixture.json"
-        fixture_path = own_fixture
+        # The kernel (and its fixture) can come from another dataset tree, e.g.
+        # a newer one that this branch has not merged yet.
+        reference_dir = case_dir
+        if args.dataset_dir and (args.dataset_dir / case / "kernel.py").exists():
+            reference_dir = args.dataset_dir / case
+        fixture_path = reference_dir / "fixture.json"
         if args.fixtures_dir and (args.fixtures_dir / case / "fixture.json").exists():
             fixture_path = args.fixtures_dir / case / "fixture.json"
         if not fixture_path.exists():
@@ -204,7 +211,7 @@ def main() -> int:
             continue
         fixture = json.loads(fixture_path.read_text())
         try:
-            expected = numpy_reference(case_dir, fixture, args.input)
+            expected = numpy_reference(reference_dir, fixture, args.input)
         except Exception as exc:  # the reference itself failed: report, do not hide
             results += [Result(case, s, False, f"NumPy reference failed: {exc!r}") for s in systems]
             continue

@@ -93,12 +93,28 @@ def flatten(value) -> list:
     return [value]
 
 
-def encode_args(fixture: dict, input_name: str) -> list[int]:
+def unused_params(case_dir: Path) -> list[str]:
+    """Parameters the program declares it never reads (`// unused parameters: a, b`).
+
+    Zinnia removes such inputs from the circuit, so the program does not take
+    them either and they are left out of its arguments.
+    """
+    match = re.search(r"^//\s*unused parameters:\s*(.+?)\s*$", (case_dir / "main.cairo").read_text(), re.M)
+    return [name.strip() for name in match.group(1).split(",")] if match else []
+
+
+def encode_args(fixture: dict, input_name: str, unused: list[str]) -> list[int]:
     values = fixture["inputs"].get(input_name)
     if values is None:
         raise Failure(f"fixture has no input named {input_name!r}")
+    names = [param["name"] for param in fixture["parameters"]]
+    for name in unused:
+        if name not in names:
+            raise Failure(f"unused parameter {name!r} is not a kernel parameter")
     felts: list[int] = []
     for param in fixture["parameters"]:
+        if param["name"] in unused:
+            continue
         value = values[param["name"]]
         if param["kind"] == "array":
             leaves = flatten(value)
@@ -261,7 +277,8 @@ def run(args: argparse.Namespace, report: dict) -> None:
     if args.mode in ("execute", "prove"):
         fixture = json.loads((args.fixture or case_dir / "fixture.json").read_text())
         args_path = work / f"args-{args.input}.json"
-        args_path.write_text(json.dumps([hex(v % STARK_PRIME) for v in encode_args(fixture, args.input)]))
+        felts = encode_args(fixture, args.input, unused_params(case_dir))
+        args_path.write_text(json.dumps([hex(v % STARK_PRIME) for v in felts]))
         execution_dir = execute(report, case, case_dir, args_path, schema)
         if args.mode == "execute":
             shutil.rmtree(execution_dir, ignore_errors=True)

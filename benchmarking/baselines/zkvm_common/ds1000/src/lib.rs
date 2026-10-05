@@ -31,7 +31,7 @@ pub mod host;
 /// Declares the case modules and the dispatch functions over them. The list
 /// itself is generated into `cases.rs` by `zkvm_common/sync_cases.py`.
 macro_rules! cases {
-    ($($name:ident => $path:literal,)*) => {
+    ($($name:ident => $path:literal $(, unused [$($unused:literal),*])?;)*) => {
         $(
             #[path = $path]
             pub mod $name;
@@ -39,6 +39,17 @@ macro_rules! cases {
 
         /// Every case that has a Q32 Rust program.
         pub const CASES: &[&str] = &[$(stringify!($name)),*];
+
+        /// Kernel parameters that `case` never reads, declared in its
+        /// program by a line `// unused parameters: <names>`. Zinnia removes
+        /// such inputs from the circuit, so the guest does not take them
+        /// either: the hosts leave them out of the private input.
+        pub fn unused_params(case: &str) -> &'static [&'static str] {
+            match case {
+                $(stringify!($name) => &[$($($unused),*)?],)*
+                _ => &[],
+            }
+        }
 
         /// Decodes the committed output of `case` and flattens it into
         /// public values; `None` if the case is unknown.
