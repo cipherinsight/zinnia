@@ -78,6 +78,14 @@ pub fn dyn_subscript(
         return cur;
     }
 
+    let rank = data.envelope.rank();
+    if indices.len() > rank {
+        panic!(
+            "too many indices for array: array is {rank}-dimensional, but {} were indexed",
+            indices.len()
+        );
+    }
+
     // Single-index special cases: boolean mask, fancy indexing.
     if indices.len() == 1 {
         if let SliceIndex::Single(idx_val) = &indices[0] {
