@@ -62,9 +62,9 @@ pub const LOG2_COEFS: [f64; 15] = [
 ///
 /// Unlike the other tables this one is stored **constant-term first**
 /// (`ATAN_COEFS[k]` multiplies `x^k`; `ATAN_COEFS[1] ≈ 1`, `[3] ≈ -1/3`).
-/// The even-indexed coefficients are near zero (atan is odd); see
-/// [`atan_odd_coefs`] for the leading-first odd-part table used by the
-/// fixed-point `arcsin`.
+/// The even-indexed coefficients are near zero (atan is odd). Used by the
+/// legacy halo2 backend only; the fixed-point `arcsin` uses the more
+/// accurate [`ATAN_ODD_U_COEFS`].
 pub const ATAN_COEFS: [f64; 16] = [
     3.8945708106325862e-17,
     9.9999924908801763e-01,
@@ -82,6 +82,25 @@ pub const ATAN_COEFS: [f64; 16] = [
     2.1509254247070526e-02,
     -1.3555701190010715e-13,
     -3.9602572342678811e-03,
+];
+
+/// `atan(t) / t` as a polynomial in `u = t^2`, constant term first
+/// (`ATAN_ODD_U_COEFS[k]` multiplies `u^k`), so `atan(t) ≈ t * P(t^2)` on
+/// `[-1, 1]`. A degree-9 Chebyshev least-squares fit in `u` (Chebyshev
+/// nodes in `t`, float64), maximum error 1.8e-9 for `atan`; every
+/// coefficient is below 1 in magnitude, so Horner on `u <= 1` does not
+/// amplify rounding. Used by the fixed-point `arcsin`.
+pub const ATAN_ODD_U_COEFS: [f64; 10] = [
+    0.9999999975460914,
+    -0.33333282295490435,
+    0.19998230639762504,
+    -0.14261573673486158,
+    0.10940198927495892,
+    -0.0837206383142983,
+    0.0574635557348283,
+    -0.03071750667979075,
+    0.010680718187754413,
+    -0.0017437008481290968,
 ];
 
 /// sin(x) on [0, pi), degree 14.
@@ -283,8 +302,8 @@ pub fn fp_to_value(v: Fp, is_float: bool, precision_bits: u32) -> Value {
 /// All values are Fp field elements in fixed-point representation (scaled by 2^precision_bits).
 ///
 /// NOTE: This matches the layout of `LOG2_COEFS`, `EXP2_COEFS` and `SIN_COEFS`
-/// in this module — they are stored leading-first (`ATAN_COEFS` is not; use
-/// [`atan_odd_coefs`]). A previous
+/// in this module — they are stored leading-first (`ATAN_COEFS` and
+/// `ATAN_ODD_U_COEFS` are not). A previous
 /// version of this function iterated in the opposite direction and treated
 /// `coefs[0]` as the constant term, which silently produced wrong values for
 /// the transcendentals (log(2) ≈ -11097 instead of 0.693, etc).
@@ -491,48 +510,64 @@ pub fn fp_sqrt(x: Fp, precision_bits: u32) -> Fp {
     }
 }
 
-/// π in Q-encoding. Sine reduces its argument modulo `2 * pi_q` exactly, so
-/// the folded argument lands in `[0, pi_q)`, the fit interval of [`SIN_COEFS`].
+/// π, π/2 and π/4 in Q-encoding (rounded). Sine reduces its argument
+/// modulo `2 * pi_q` and folds it onto `[0, quarter_pi_q]`.
 pub fn pi_q(precision_bits: u32) -> i128 {
     crate::prove::field::quantize(std::f64::consts::PI, precision_bits)
 }
 
-/// π/2 in Q-encoding; `cos(x)` is computed as `sin(x + half_pi_q)`.
 pub fn half_pi_q(precision_bits: u32) -> i128 {
     crate::prove::field::quantize(std::f64::consts::FRAC_PI_2, precision_bits)
 }
 
-/// [`SIN_COEFS`] in Q-encoding (leading-first, for [`horner_eval`]).
-pub fn sin_coefs_q(precision_bits: u32) -> Vec<Fp> {
-    SIN_COEFS.iter().map(|c| quantize_to_fp(*c, precision_bits)).collect()
+pub fn quarter_pi_q(precision_bits: u32) -> i128 {
+    crate::prove::field::quantize(std::f64::consts::FRAC_PI_4, precision_bits)
 }
 
-/// The odd part of [`ATAN_COEFS`] in Q-encoding, leading-first:
-/// `[c15, c13, ..., c3, c1]`, so that `atan(t) ≈ t * P(t^2)` with `P`
-/// evaluated by [`horner_eval`]. The dropped even coefficients are below
-/// 1e-12 in magnitude, far under one Q32 unit.
-pub fn atan_odd_coefs_q(precision_bits: u32) -> Vec<Fp> {
-    ATAN_COEFS
-        .iter()
-        .enumerate()
+/// Taylor coefficients of `sin(s) / s` in `u = s^2` (`(-1)^k / (2k+1)!`,
+/// k = 6 down to 0), Q-encoded and leading-first. On `|s| <= π/4` the
+/// truncation error is below 3e-14.
+pub fn sin_taylor_q(precision_bits: u32) -> Vec<Fp> {
+    taylor_q(precision_bits, 6, 1)
+}
+
+/// Taylor coefficients of `cos(s)` in `u = s^2` (`(-1)^k / (2k)!`, k = 7
+/// down to 0), Q-encoded and leading-first; truncation error below 2e-15
+/// on `|s| <= π/4`.
+pub fn cos_taylor_q(precision_bits: u32) -> Vec<Fp> {
+    taylor_q(precision_bits, 7, 0)
+}
+
+fn taylor_q(precision_bits: u32, last: u32, offset: u32) -> Vec<Fp> {
+    (0..=last)
         .rev()
-        .filter(|(k, _)| k % 2 == 1)
-        .map(|(_, c)| quantize_to_fp(*c, precision_bits))
+        .map(|k| {
+            let factorial: f64 = (1..=2 * k + offset).map(f64::from).product();
+            let sign = if k % 2 == 0 { 1.0 } else { -1.0 };
+            quantize_to_fp(sign / factorial, precision_bits)
+        })
         .collect()
+}
+
+/// [`ATAN_ODD_U_COEFS`] Q-encoded and leading-first, for [`horner_eval`].
+pub fn atan_odd_coefs_q(precision_bits: u32) -> Vec<Fp> {
+    ATAN_ODD_U_COEFS.iter().rev().map(|c| quantize_to_fp(*c, precision_bits)).collect()
 }
 
 /// `sin` on Q-encoded values, by the circuit's algorithm:
 ///
 /// 1. `m = |x|`; `r = m mod (2 * pi_q)`;
 /// 2. fold `r >= pi_q` onto `r - pi_q` (sin(r) = -sin(r - π));
-/// 3. mirror `r > pi_q / 2` onto `pi_q - r` (sin(r) = sin(π - r)), so the
-///    argument lies in `[0, π/2]`;
-/// 4. evaluate [`SIN_COEFS`] there by [`horner_eval`] (every product
-///    rounded down, as `mul_f` does);
-/// 5. negate when exactly one of "x < 0" and "folded" holds.
+/// 3. mirror `r > half_pi_q` onto `pi_q - r` (sin(r) = sin(π - r));
+/// 4. for `r > quarter_pi_q` use `cos(half_pi_q - r)`, else `sin(r)`, so
+///    the polynomial argument `s` lies in `[0, π/4]`;
+/// 5. evaluate the Taylor polynomials in `u = s^2` by [`horner_eval`]
+///    (every product rounded down, as `mul_f` does); `|u| < 1`, so the
+///    rounding errors are not amplified;
+/// 6. negate when exactly one of "x < 0" and "folded" holds.
 ///
-/// Step 3 bounds the rounding error: Horner's rounding errors grow with
-/// `|argument|^degree`, about 1e-4 on `[0, π)` and 1e-7 on `[0, π/2]`.
+/// Measured maximum error against libm: 1.1e-9 on `[-20, 20]`, 3.6e-8 on
+/// `[-1000, 1000]` (the range reduction loses about one Q unit per period).
 pub fn fp_sin(x: Fp, precision_bits: u32) -> Fp {
     let Some(v) = fp_to_i128(x) else {
         return Fp::zero();
@@ -542,10 +577,20 @@ pub fn fp_sin(x: Fp, precision_bits: u32) -> Fp {
         return Fp::zero();
     }
     let pi = pi_q(precision_bits) as u128;
+    let half_pi = half_pi_q(precision_bits) as u128;
+    let quarter_pi = quarter_pi_q(precision_bits) as u128;
     let r = m % (2 * pi);
     let (r, folded) = if r >= pi { (r - pi, true) } else { (r, false) };
-    let r = if r > pi / 2 { pi - r } else { r };
-    let p = horner_eval(i128_to_fp(r as i128), &sin_coefs_q(precision_bits), precision_bits);
+    let r = if r > half_pi { pi - r } else { r };
+    let (s, cofunction) = if r > quarter_pi { (half_pi - r, true) } else { (r, false) };
+    let s = i128_to_fp(s as i128);
+    let (u, _) = fp_mul_rescale(s, s, precision_bits);
+    let p = if cofunction {
+        horner_eval(u, &cos_taylor_q(precision_bits), precision_bits)
+    } else {
+        let odd = horner_eval(u, &sin_taylor_q(precision_bits), precision_bits);
+        fp_mul_rescale(s, odd, precision_bits).0
+    };
     if (v < 0) != folded {
         -p
     } else {
@@ -559,21 +604,22 @@ pub fn fp_cos(x: Fp, precision_bits: u32) -> Fp {
 }
 
 /// `arcsin` on Q-encoded values, by the circuit's algorithm:
-/// `arcsin(x) = 2 * atan(x / (1 + sqrt(1 - x^2)))`. The atan argument lies in
-/// `[-1, 1]` for every `|x| <= 1`, the fit interval of [`ATAN_COEFS`]. Every
-/// product rounds down, the square root is [`fp_sqrt`] and the division is
-/// [`fp_div_prescale`]. Outside `[-1, 1]` (where NumPy gives nan) the result
-/// is 0.
+/// `arcsin(x) = 2 * atan(x / (1 + sqrt(1 - x^2)))`. The square root is the
+/// exact `floor(sqrt(2^(2P) - x_q^2))` of the raw value, so no rounding of
+/// `x^2` enters it; the atan argument lies in `[-1, 1]`; the quotient is
+/// [`fp_div_prescale`] and the polynomial [`ATAN_ODD_U_COEFS`]. Outside
+/// `[-1, 1]` (where NumPy gives nan) the result is 0.
+///
+/// Measured maximum error against libm on `[-1, 1]`: 5.9e-9 (largest
+/// near `|x| = 1`, where `arcsin` is ill-conditioned).
 pub fn fp_arcsin(x: Fp, precision_bits: u32) -> Fp {
     let one = 1i128 << precision_bits;
     let v = match fp_to_i128(x) {
         Some(v) if v.abs() <= one => v,
         _ => 0,
     };
-    let x_q = i128_to_fp(v);
-    let (x2, _) = fp_mul_rescale(x_q, x_q, precision_bits);
-    let root = fp_sqrt(i128_to_fp(one) - x2, precision_bits);
-    let t = fp_div_prescale(x_q, i128_to_fp(one) + root, precision_bits);
+    let root = isqrt_u128((one * one - v * v) as u128) as i128;
+    let t = fp_div_prescale(i128_to_fp(v), i128_to_fp(one + root), precision_bits);
     let (u, _) = fp_mul_rescale(t, t, precision_bits);
     let p = horner_eval(u, &atan_odd_coefs_q(precision_bits), precision_bits);
     let (half, _) = fp_mul_rescale(t, p, precision_bits);
@@ -983,35 +1029,46 @@ mod tests {
         assert_eq!(fp_sqrt(quantize_to_fp(-4.0, prec), prec), Fp::zero());
     }
 
+    /// Maximum error against libm, measured on a dense grid: the bounds
+    /// stated in the doc comments of `fp_sin` and `fp_arcsin`.
     #[test]
     fn fixed_point_trigonometry_is_accurate() {
         let prec = 32;
-        let close = |got: Fp, want: f64| (dequantize_from_fp(got, prec) - want).abs();
-        let mut worst: f64 = 0.0;
-        for i in 0..=4000 {
-            let x = -20.0 + 40.0 * i as f64 / 4000.0;
+        let error = |got: Fp, want: f64| (dequantize_from_fp(got, prec) - want).abs();
+        let grid = |lo: f64, hi: f64, n: usize| (0..=n).map(move |i| lo + (hi - lo) * i as f64 / n as f64);
+        let mut sin_cos: f64 = 0.0;
+        for x in grid(-20.0, 20.0, 20_000) {
             let xq = quantize_to_fp(x, prec);
             let exact = dequantize_from_fp(xq, prec);
-            worst = worst.max(close(fp_sin(xq, prec), exact.sin()));
-            worst = worst.max(close(fp_cos(xq, prec), exact.cos()));
+            sin_cos = sin_cos.max(error(fp_sin(xq, prec), exact.sin()));
+            sin_cos = sin_cos.max(error(fp_cos(xq, prec), exact.cos()));
         }
-        assert!(worst < 2e-7, "sin/cos error {worst}");
-        let mut worst: f64 = 0.0;
-        for i in 0..=4000 {
-            let x = -1.0 + 2.0 * i as f64 / 4000.0;
+        assert!(sin_cos < 2e-9, "sin/cos error {sin_cos}");
+        let mut far: f64 = 0.0;
+        for x in grid(-1000.0, 1000.0, 20_000) {
             let xq = quantize_to_fp(x, prec);
-            worst = worst.max(close(fp_arcsin(xq, prec), dequantize_from_fp(xq, prec).asin()));
+            far = far.max(error(fp_sin(xq, prec), dequantize_from_fp(xq, prec).sin()));
         }
-        assert!(worst < 2e-7, "arcsin error {worst}");
+        assert!(far < 5e-8, "sin error on [-1000, 1000]: {far}");
+        let mut arcsin: f64 = 0.0;
+        for x in grid(-1.0, 1.0, 20_000) {
+            let xq = quantize_to_fp(x, prec);
+            arcsin = arcsin.max(error(fp_arcsin(xq, prec), dequantize_from_fp(xq, prec).asin()));
+        }
+        assert!(arcsin < 1e-8, "arcsin error {arcsin}");
         assert_eq!(fp_arcsin(quantize_to_fp(1.5, prec), prec), Fp::zero());
     }
 
     #[test]
-    fn atan_odd_coefficients_are_leading_first() {
-        let coefs = atan_odd_coefs_q(32);
-        assert_eq!(coefs.len(), 8);
-        assert_eq!(coefs[7], quantize_to_fp(ATAN_COEFS[1], 32));
-        assert_eq!(coefs[0], quantize_to_fp(ATAN_COEFS[15], 32));
+    fn polynomial_tables_are_leading_first() {
+        let atan = atan_odd_coefs_q(32);
+        assert_eq!(atan.len(), ATAN_ODD_U_COEFS.len());
+        assert_eq!(atan[atan.len() - 1], quantize_to_fp(ATAN_ODD_U_COEFS[0], 32));
+        let sin = sin_taylor_q(32);
+        assert_eq!(sin[sin.len() - 1], quantize_to_fp(1.0, 32));
+        assert_eq!(sin[sin.len() - 2], quantize_to_fp(-1.0 / 6.0, 32));
+        let cos = cos_taylor_q(32);
+        assert_eq!(cos[cos.len() - 2], quantize_to_fp(-0.5, 32));
     }
 
     #[test]

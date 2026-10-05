@@ -827,24 +827,33 @@ impl<'a> Halo2BaseSynthesizer<'a> {
 
     /// `floor(sqrt(x * 2^P))`, the Q-encoded square root, for a cell `x`
     /// the caller has proven to lie in `[0, 2^64)`.
-    ///
-    /// Soundness: with `X = x * 2^P`, the hint `y` and `d = X - y^2` (gate),
-    /// the checks `y ∈ [0, 2^wy)`, `d ∈ [0, 2^wd)` and `2y - d ∈ [0, 2^wd)`
-    /// give `X = y^2 + d` over the integers (both terms are far below p) and
-    /// `0 <= d <= 2y`, i.e. `y^2 <= X < (y + 1)^2`. Exactly one `y >= 0`
-    /// satisfies that, so `y` is a function of `x`. `wy` and `wd` are sized
-    /// for the largest `X < 2^(64 + P)`.
     fn sqrt_nonneg(&mut self, x: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
         let precision_bits = self.params.precision_bits;
         let scale = kernel::scale_fp(precision_bits);
         let big_x = self.gate_cell(x.value * scale, |gate, ctx| {
             gate.mul(ctx, x.assigned, QuantumCell::Constant(scale))
         });
-        let y = self.hint(kernel::fp_sqrt(x.value, precision_bits));
-        let d = self.gate_cell(big_x.value - y.value * y.value, |gate, ctx| {
-            gate.sub_mul(ctx, big_x.assigned, y.assigned, y.assigned)
+        self.isqrt(&big_x, 64 + precision_bits as usize)
+    }
+
+    /// `floor(sqrt(n))` for a cell `n` the caller has proven to lie in
+    /// `[0, 2^n_bits)`.
+    ///
+    /// Soundness: with the hint `y` and `d = n - y^2` (gate), the checks
+    /// `y ∈ [0, 2^wy)`, `d ∈ [0, 2^wd)` and `2y - d ∈ [0, 2^wd)` give
+    /// `n = y^2 + d` over the integers (both terms are far below p) and
+    /// `0 <= d <= 2y`, i.e. `y^2 <= n < (y + 1)^2`. Exactly one `y >= 0`
+    /// satisfies that, so `y` is a function of `n`. `wy` and `wd` are sized
+    /// for the largest admissible `n`.
+    fn isqrt(&mut self, n: &Halo2BaseCell, n_bits: usize) -> Result<Halo2BaseCell, ProvingError> {
+        let y_value = kernel::fp_to_i128(n.value)
+            .filter(|v| *v >= 0)
+            .map_or(0, |v| kernel::isqrt_u128(v as u128) as i128);
+        let y = self.hint(kernel::i128_to_fp(y_value));
+        let d = self.gate_cell(n.value - y.value * y.value, |gate, ctx| {
+            gate.sub_mul(ctx, n.assigned, y.assigned, y.assigned)
         });
-        let root_bits = 32 + precision_bits.div_ceil(2) as usize;
+        let root_bits = n_bits.div_ceil(2);
         let wy = self.lookup_aligned(root_bits + 1);
         let wd = self.lookup_aligned(root_bits + 2);
         self.range_check(&y, wy);
@@ -853,6 +862,12 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         let slack = self.sub_i(&two_y, &d)?;
         self.range_check(&slack, wd);
         Ok(y)
+    }
+
+    /// `c - x` for a constant `c` (one gate).
+    fn constant_minus(&mut self, c: i128, x: &Halo2BaseCell) -> Halo2BaseCell {
+        let c_fp = kernel::i128_to_fp(c);
+        self.gate_cell(c_fp - x.value, |gate, ctx| gate.sub(ctx, QuantumCell::Constant(c_fp), x.assigned))
     }
 
     /// Horner evaluation with leading-first Q coefficients, every product
@@ -1332,38 +1347,50 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     /// `sin` by the algorithm of `kernel::fp_sin`: range reduction modulo
-    /// `2 * pi_q`, fold onto `[0, pi_q)`, mirror onto `[0, pi_q / 2]`, Remez
-    /// polynomial, sign.
+    /// `2 * pi_q`, fold onto `[0, π)`, mirror onto `[0, π/2]`, switch to
+    /// `cos(π/2 - r)` above `π/4`, Taylor polynomials in `u = s^2 < 1`.
     ///
     /// Soundness: `sign_and_abs`, the division by the constant `2 * pi_q`
-    /// and every `mul_f` of the polynomial are functions of their inputs
-    /// (see each). The two comparisons take operands already proven to lie
-    /// in `[0, 2 * pi_q)`, inside the comparison's bit width. The rest are
-    /// gates, so the output is a function of `a`.
+    /// and every `mul_f` are functions of their inputs (see each). The three
+    /// comparisons take operands already proven to lie in `[0, 2 * pi_q)`,
+    /// inside the comparison's bit width. The rest are gates and selects on
+    /// pinned bits, so the output is a function of `a`. Both polynomials
+    /// are evaluated (a circuit does not branch) and the right one selected.
     fn sin_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         let precision_bits = self.params.precision_bits;
         let pi = kernel::pi_q(precision_bits);
+        let half_pi = kernel::half_pi_q(precision_bits);
+        let quarter_pi = kernel::quarter_pi_q(precision_bits);
         let compare_bits = self.lookup_aligned((128 - (2 * pi).leading_zeros()) as usize);
         let (negative, magnitude) = self.sign_and_abs(a)?;
         let (_, r) = self.div_rem_nonzero(&magnitude, Divisor::Constant(2 * pi), Rounding::Euclid)?;
 
+        // r in [0, 2π): fold onto [0, π).
         let below_pi = self.below_constant_bit(&r, pi, compare_bits);
         let folded_bit = self.logical_not(&below_pi)?;
         let pi_fp = kernel::i128_to_fp(pi);
-        let folded = self.gate_cell(r.value - folded_bit.value * pi_fp, |gate, ctx| {
+        let r = self.gate_cell(r.value - folded_bit.value * pi_fp, |gate, ctx| {
             gate.sub_mul(ctx, r.assigned, folded_bit.assigned, QuantumCell::Constant(pi_fp))
         });
-        let in_first_quarter = self.below_constant_bit(&folded, pi / 2 + 1, compare_bits);
-        let mirrored = self.gate_cell(pi_fp - folded.value, |gate, ctx| {
-            gate.sub(ctx, QuantumCell::Constant(pi_fp), folded.assigned)
-        });
-        let argument = self.select_bit(&in_first_quarter, &folded, &mirrored)?;
+        // [0, π): mirror onto [0, π/2].
+        let up_to_half_pi = self.below_constant_bit(&r, half_pi + 1, compare_bits);
+        let mirrored = self.constant_minus(pi, &r);
+        let r = self.select_bit(&up_to_half_pi, &r, &mirrored)?;
+        // [0, π/2]: above π/4 use the co-function on π/2 - r.
+        let up_to_quarter_pi = self.below_constant_bit(&r, quarter_pi + 1, compare_bits);
+        let complement = self.constant_minus(half_pi, &r);
+        let s = self.select_bit(&up_to_quarter_pi, &r, &complement)?;
 
-        let poly = self.poly_eval_horner(&argument, &kernel::sin_coefs_q(precision_bits))?;
+        let u = self.mul_f(&s, &s)?;
+        let sin_odd = self.poly_eval_horner(&u, &kernel::sin_taylor_q(precision_bits))?;
+        let sin_s = self.mul_f(&s, &sin_odd)?;
+        let cos_s = self.poly_eval_horner(&u, &kernel::cos_taylor_q(precision_bits))?;
+        let value = self.select_bit(&up_to_quarter_pi, &sin_s, &cos_s)?;
+
         let flip_value = negative.value + folded_bit.value - Fp::from(2u64) * negative.value * folded_bit.value;
         let flip = self.gate_cell(flip_value, |gate, ctx| gate.xor(ctx, negative.assigned, folded_bit.assigned));
         self.mark_bit(&flip);
-        self.negate_if(&poly, &flip)
+        self.negate_if(&value, &flip)
     }
     fn sinh_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("sinh_f") }
     /// `cos(a) = sin(a + pi/2)`, as `kernel::fp_cos`.
@@ -1394,10 +1421,10 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     ///
     /// Soundness: every step is a function of its inputs. The domain bit
     /// compares the pinned magnitude `|x| <= 2^64` against `1` within 65
-    /// bits. With `x'` = x inside the domain and 0 outside, `x'^2` (a pinned
-    /// `mul_f`) lies in `[0, 1]`, so `1 - x'^2` meets `sqrt_nonneg`'s
-    /// precondition; the divisor `1 + sqrt(..)` is positive, and the
-    /// remainder bound of `div_rem_nonzero` re-proves it.
+    /// bits. With `x'` = x inside the domain and 0 outside, `2^(2P) - x'^2`
+    /// (one gate) lies in `[0, 2^(2P)]`, meeting `isqrt`'s precondition; the
+    /// divisor `2^P + root` is positive, and the remainder bound of
+    /// `div_rem_nonzero` re-proves it.
     fn arcsin_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         let precision_bits = self.params.precision_bits;
         let one = kernel::scale_fp(precision_bits);
@@ -1405,11 +1432,11 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         let in_domain = self.below_constant_bit(&magnitude, (1i128 << precision_bits) + 1, 65);
         let x = self.mul_i(&in_domain, a)?;
 
-        let x_squared = self.mul_f(&x, &x)?;
-        let one_minus_x_squared = self.gate_cell(one - x_squared.value, |gate, ctx| {
-            gate.sub(ctx, QuantumCell::Constant(one), x_squared.assigned)
+        let one_squared = one * one;
+        let radicand = self.gate_cell(one_squared - x.value * x.value, |gate, ctx| {
+            gate.sub_mul(ctx, QuantumCell::Constant(one_squared), x.assigned, x.assigned)
         });
-        let root = self.sqrt_nonneg(&one_minus_x_squared)?;
+        let root = self.isqrt(&radicand, 2 * precision_bits as usize + 1)?;
         let denominator = self.gate_cell(root.value + one, |gate, ctx| {
             gate.add(ctx, root.assigned, QuantumCell::Constant(one))
         });
