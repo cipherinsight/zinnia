@@ -54,7 +54,8 @@ def test_simple_comparison_emits_scalar_atom():
 def test_simple_comparison_witness_chain():
     stmts = _dump_ir(_simple_cmp)
     classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
-    assert "GreaterThanOrEqualIIR" in classes
+    # k >= 0 is lowered as not (k < 0) (PatternMatchOptim's canonical comparisons).
+    assert "LessThanIIR" in classes and "LogicalNotIR" in classes
     assert _assert_count(stmts) >= 1
 
 
@@ -86,7 +87,7 @@ def test_chained_comparison_lowers_to_and():
 def test_chained_comparison_witness_emits_two_comparisons_and_logical_and():
     stmts = _dump_ir(_chained_cmp)
     classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
-    assert classes.count("LessThanOrEqualIIR") >= 2
+    assert classes.count("LessThanIIR") >= 2  # PatternMatchOptim: >=, <=, > are a (negated) <
     assert "LogicalAndIR" in classes
     assert _assert_count(stmts) >= 1
 
@@ -104,8 +105,8 @@ def test_float_chained_comparison_uses_lit_float_terms():
 def test_float_chained_comparison_witness_emits_float_comparisons():
     stmts = _dump_ir(_float_chained_cmp)
     classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
-    assert classes.count("LessThanOrEqualFIR") >= 2
-    assert "LessThanOrEqualIIR" not in classes
+    assert classes.count("LessThanFIR") >= 2  # PatternMatchOptim: >=, <=, > are a (negated) <
+    assert "LessThanIIR" not in classes
     assert "LogicalAndIR" in classes
     assert _assert_count(stmts) >= 1
 
@@ -188,7 +189,7 @@ def test_logical_and_lowering():
 def test_logical_and_witness():
     stmts = _dump_ir(_logical_and)
     classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
-    assert classes.count("GreaterThanIIR") >= 2
+    assert classes.count("LessThanIIR") >= 2  # PatternMatchOptim: >=, <=, > are a (negated) <
     assert "LogicalAndIR" in classes
 
 
@@ -260,7 +261,7 @@ def test_range_membership_witness():
     stmts = _dump_ir(_range_membership)
     classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
     # `0 <= k` → LteI; `k < 10` → LtI.
-    assert "LessThanOrEqualIIR" in classes
+    assert "LessThanIIR" in classes  # PatternMatchOptim: >=, <=, > are a (negated) <
     assert "LessThanIIR" in classes
 
 

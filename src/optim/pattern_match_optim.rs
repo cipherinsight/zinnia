@@ -31,11 +31,15 @@ impl PatternMatchOptim {
             IR::MulF => self.optimize_mul_f(builder, ir, args),
             IR::DivI => self.optimize_div_i(builder, ir, args),
             IR::DivF => self.optimize_div_f(builder, ir, args),
-            IR::LtI | IR::GtI | IR::LtF | IR::GtF => {
+            IR::LtI | IR::LtF | IR::LtIBounded => {
                 self.optimize_same_ptr_cmp(builder, ir, args, false)
             }
-            IR::LteI | IR::GteI | IR::LteF | IR::GteF => {
-                self.optimize_same_ptr_cmp(builder, ir, args, true)
+            IR::GtI | IR::GtF | IR::GtIBounded | IR::LteI | IR::LteF | IR::GteI | IR::GteF => {
+                if is_same_ptr(args) {
+                    let reflexive = matches!(ir, IR::LteI | IR::LteF | IR::GteI | IR::GteF);
+                    return builder.ir_constant_bool(reflexive);
+                }
+                self.canonical_comparison(builder, ir, args)
             }
             IR::EqI | IR::EqF => self.optimize_same_ptr_cmp(builder, ir, args, true),
             IR::NeI | IR::NeF => self.optimize_same_ptr_cmp(builder, ir, args, false),
@@ -276,6 +280,37 @@ impl PatternMatchOptim {
         b.create_ir(ir, args)
     }
 
+    /// Every ordering comparison as a strict less-than, negated where needed:
+    /// `a > b` is `b < a`, `a >= b` is `not (a < b)` and `a <= b` is
+    /// `not (b < a)` (total orders on the signed window and on the
+    /// non-negative bounded operands alike). Mirrored and complementary
+    /// comparisons of the same operands (`x < t` next to `x >= t`) then
+    /// become the same `Lt` statement, which `DuplicateCodeElimination`
+    /// computes once; every backend lowers `>=`/`<=` as a negated `<`
+    /// anyway.
+    fn canonical_comparison(&self, b: &mut IRBuilder, ir: &IR, args: &[Value]) -> Value {
+        let (lhs, rhs) = (&args[0], &args[1]);
+        let less = |b: &mut IRBuilder, strict: &IR, x: &Value, y: &Value| {
+            b.create_ir(strict, &[x.clone(), y.clone()])
+        };
+        match ir {
+            IR::GtI => less(b, &IR::LtI, rhs, lhs),
+            IR::GtF => less(b, &IR::LtF, rhs, lhs),
+            IR::GtIBounded => less(b, &IR::LtIBounded, rhs, lhs),
+            IR::GteI | IR::GteF => {
+                let strict = if matches!(ir, IR::GteI) { IR::LtI } else { IR::LtF };
+                let lt = less(b, &strict, lhs, rhs);
+                b.create_ir(&IR::LogicalNot, &[lt])
+            }
+            IR::LteI | IR::LteF => {
+                let strict = if matches!(ir, IR::LteI) { IR::LtI } else { IR::LtF };
+                let gt = less(b, &strict, rhs, lhs);
+                b.create_ir(&IR::LogicalNot, &[gt])
+            }
+            _ => unreachable!("not an ordering comparison: {:?}", ir),
+        }
+    }
+
     /// Optimize comparisons where both operands are the same pointer.
     /// For `a == a` → true, `a != a` → false, `a < a` → false, `a <= a` → true.
     fn optimize_same_ptr_cmp(
@@ -290,6 +325,10 @@ impl PatternMatchOptim {
         }
         b.create_ir(ir, args)
     }
+}
+
+fn is_same_ptr(args: &[Value]) -> bool {
+    args[0].stmt_id() == args[1].stmt_id() && args[0].stmt_id().is_some()
 }
 
 fn min_required_arity(ir: &IR) -> Option<usize> {
@@ -308,6 +347,8 @@ fn min_required_arity(ir: &IR) -> Option<usize> {
         | IR::DivF
         | IR::LtI
         | IR::GtI
+        | IR::LtIBounded
+        | IR::GtIBounded
         | IR::LtF
         | IR::GtF
         | IR::LteI

@@ -200,3 +200,22 @@ def test_matmul_halo2_base_matches_mock():
         'def kernel(a: Float[Array, "2 3"], b: Float[Array, "3 2"]):\n    return a @ b\n',
         np.array([[0.5, -1.0, 2.0], [1.5, 0.25, -3.0]]),
         np.array([[1.0, 2.0], [-0.5, 0.75], [0.2, -1.1]]))
+
+
+# ── comparisons as one strict less-than ──────────────────────────────────
+
+def test_complementary_comparisons_share_one_less_than():
+    # `x < t`, `x >= t` and `t > x` are one LtF after the rewrite.
+    source = ('def kernel(x: Float[Array, "3"], t: Float):\n'
+              '    return (x < t) + (x >= t) * 2 + (t > x) * 4 + (t <= x) * 8\n')
+    x = np.array([0.5, 1.0, 2.0])
+    assert_matches_numpy(source, x, 1.0)
+    classes = ir_classes(compile_kernel(source))
+    assert classes.count("LessThanFIR") == 3  # one per element
+    assert not {"GreaterThanFIR", "GreaterThanOrEqualFIR", "LessThanOrEqualFIR"} & set(classes)
+
+
+@pytest.mark.parametrize("op", ["<", "<=", ">", ">="])
+def test_comparison_on_equal_and_unequal_values(op):
+    source = f'def kernel(a: Integer[Array, "5"], b: Integer[Array, "5"]):\n    return a {op} b\n'
+    assert_matches_numpy(source, np.array([1, 2, 3, -4, 5]), np.array([1, 3, 2, -4, -5]))
