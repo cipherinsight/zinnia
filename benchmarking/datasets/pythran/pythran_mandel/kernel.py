@@ -1,13 +1,8 @@
+# pythran program mandel.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: data-dependent-loop, denominator-obligation, in-place-mutation, loop-bounded
-# Expected outcome: diagnostic/fail-closed candidate
-# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
-# Diagnostic: while loops require a public/padded maximum iteration count.
 
 @zk_circuit
 @requires(lambda size, x_center, y_center, max_iteration: 0 <= size <= 1024)

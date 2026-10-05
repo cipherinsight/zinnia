@@ -1,23 +1,18 @@
+# pythran program another_quicksort.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: data-dependent-loop, denominator-obligation, in-place-mutation, loop-bounded
-# Expected outcome: diagnostic/fail-closed candidate
-# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
-# Diagnostic: while loops require a public/padded maximum iteration count.
 
 @zk_chip
-def swap(l: Float[Array, 'N<=1024'], idx1: Float, idx2: Float):
+def swap(l, idx1, idx2):
     if idx1 != idx2:
         tmp = l[idx1]
         l[idx1] = l[idx2]
         l[idx2] = tmp
 
 @zk_chip
-def partition(l: Float[Array, 'N<=1024']):
+def partition(l):
     size = len(l)
     pivot_idx = size // 2
     val = l[pivot_idx]
@@ -41,7 +36,7 @@ def partition(l: Float[Array, 'N<=1024']):
     return i
 
 @zk_circuit
-def QuickSort(l: Integer[Array, 'N<=1024']):
+def QuickSort(l: Integer[Array, '10']):
     size = len(l)
     if size > 1:
         idx = partition(l)

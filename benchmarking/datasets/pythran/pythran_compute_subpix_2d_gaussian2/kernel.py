@@ -1,17 +1,12 @@
+# pythran program compute_subpix_2d_gaussian2.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: denominator-obligation, domain-obligation, in-place-mutation, loop-bounded, mask-where
-# Expected outcome: compile/prove candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Add operation-specific domains: sqrt arg >= 0, log arg > 0, acos arg in [-1, 1].
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Record mask shape equality and active-element bounds for where/nonzero-style indexing.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 import numpy as np
 
 @zk_circuit
-def compute_subpix_2d_gaussian2(correl: Float[Array, 'N<=1024 M<=1024'], ix: Float, iy: Float):
+def compute_subpix_2d_gaussian2(correl: Float[Array, '4 4'], ix: Integer, iy: Integer):
     correl_crop = correl[iy - 1:iy + 2, ix - 1:ix + 2]
     tmp = np.where(correl_crop < 0)
     for i0, i1 in zip(tmp[0], tmp[1]):

@@ -1,21 +1,19 @@
+# pythran program lttb_pt.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: in-place-mutation, loop-bounded
-# Expected outcome: compile/prove candidate
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 import numpy as np
 
 @zk_chip
-def _areas_of_triangles(a: Float[Array, 'N<=1024'], bs: Float, c: Float[Array, 'N<=1024']):
+def _areas_of_triangles(a, bs, c):
     bs_minus_a = bs - a
     a_minus_bs = a - bs
     return 0.5 * abs((a[0] - c[0]) * bs_minus_a[:, 1] - a_minus_bs[:, 0] * (c[1] - a[1]))
 
 @zk_circuit
 @requires(lambda data, n_out: 0 <= n_out <= 1024)
-def downsample(data: Float[Array, 'N<=1024'], n_out: Integer):
+def downsample(data: Float[Array, '100 2'], n_out: Integer):
     if n_out > data.shape[0]:
         raise ValueError('n_out must be <= number of rows in data')
     if n_out == data.shape[0]:

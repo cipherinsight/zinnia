@@ -1,15 +1,13 @@
+# pythran program lap.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: denominator-obligation, in-place-mutation
-# Expected outcome: compile/prove candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 import numpy
 
 @zk_circuit
 @requires(lambda var, dh2: dh2 != 0.0)
-def laplacian(var: Float[Array, 'N<=1024'], dh2: Float):
+def laplacian(var: Float[Array, '8'], dh2: Float):
     """ (1D array, dx^2) -> laplacian(1D array)
     periodic_laplacian_1D_4th_order
     Implementing the 4th order 1D laplacian with periodic condition

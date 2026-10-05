@@ -1,13 +1,12 @@
+# npbench program azimint_hist/azimint_hist_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: denominator-obligation
-# Expected outcome: compile/prove candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
 import numpy as np
 
 @zk_circuit
-def azimint_hist(data: Float, radius: Float[Array, 'N<=1024'], npt: Float[Array, 'N<=1024']):
+def azimint_hist(data: Float[Array, '400000'], radius: Float[Array, '400000'], npt: Integer):
     histu = np.histogram(radius, npt)[0]
     histw = np.histogram(radius, npt, weights=data)[0]
     return histw / histu

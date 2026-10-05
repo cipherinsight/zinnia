@@ -1,25 +1,22 @@
+# pythran program deuxd_convolution.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: denominator-obligation, in-place-mutation, loop-bounded
-# Expected outcome: compile/prove candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 import numpy as np
 
 @zk_chip
-def clamp(i: Integer, offset: Float, maxval: Float):
+def clamp(i, offset, maxval):
     j = max(0, i + offset)
     return min(j, maxval)
 
-@zk_circuit
-def reflect(pos: Float, offset: Float, bound: Float):
+@zk_chip
+def reflect(pos, offset, bound):
     idx = pos + offset
     return min(2 * (bound - 1) - idx, max(idx, -idx))
 
 @zk_circuit
-def conv(x: Float[Array, 'N<=1024 M<=1024'], weights: Float[Array, 'N<=1024 M<=1024']):
+def conv(x: Float[Array, '300 300'], weights: Float[Array, '5 5']):
     sx = x.shape
     sw = weights.shape
     result = np.zeros_like(x)

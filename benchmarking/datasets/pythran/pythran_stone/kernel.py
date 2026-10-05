@@ -1,13 +1,8 @@
+# pythran program stone.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: data-dependent-loop, denominator-obligation, in-place-mutation, loop-bounded
-# Expected outcome: diagnostic/fail-closed candidate
-# Precondition: Add an explicit iteration cap or classify as fail-closed until a bound is available.
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
-# Diagnostic: while loops require a public/padded maximum iteration count.
 from math import sin as DSIN, cos as DCOS, atan as DATAN, log as DLOG, exp as DEXP, sqrt as DSQRT
 
 @zk_circuit
@@ -102,7 +97,7 @@ def whetstone(loopstart: Integer):
     return KIP
 
 @zk_chip
-def PA(E: Float[Array, 'N<=1024'], T: Float, T2: Float):
+def PA(E, T, T2):
     J = 0
     while J < 6:
         E[0] = (E[0] + E[1] + E[2] - E[3]) * T
@@ -112,13 +107,13 @@ def PA(E: Float[Array, 'N<=1024'], T: Float, T2: Float):
         J += 1
 
 @zk_chip
-def P0(E1: Float[Array, 'N<=1024'], J: Integer, K: Integer, L: Integer):
+def P0(E1, J, K, L):
     E1[J - 1] = E1[K - 1]
     E1[K - 1] = E1[L - 1]
     E1[L - 1] = E1[J - 1]
 
 @zk_chip
-def P3(X: Float, Y: Float, T: Float, T2: Float):
+def P3(X, Y, T, T2):
     X1 = X
     Y1 = Y
     X1 = T * (X1 + Y1)

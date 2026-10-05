@@ -111,20 +111,77 @@ generator refuses to write into the performance set.
 Source pools: NPBench (`spcl/npbench`, the 54 `*_numpy.py` kernels) and the
 Pythran test cases (`serge-sans-paille/pythran`, `pythran/tests/cases/`; 131
 files, 126 kernel families after keeping the smallest file per family, 115
-after the early exclusions below). Each program folder holds one `kernel.py`.
+after the early exclusions below). Each program folder holds one `kernel.py`;
+`upstream_sources.json` names its upstream file and the upstream commits the
+kernels were checked against on 2026-10-06.
 
-What was kept verbatim: every retained function's name, parameter names,
-defaults and body; the helper functions and module constants the kernel needs;
-the imports it needs. Runners, data generators, unused alternate kernels and
-scaffolding were removed.
+The rules are applied to the code a kernel retains from upstream (the kernel
+without its Zinnia import, decorators and annotations) and to the upstream
+input types of each entry function: an entry function whose every exported
+signature has a string, dict, set or module parameter, or whose upstream
+example is a ragged sequence, fires `non_numeric_data`.
 
-What was added (the 2026-05-19 version of this file wrongly said "no function
-signatures were modified"): the `@zk_circuit` / `@zk_chip` decorators, Zinnia
-type annotations on every parameter of the entry function, and, in 67 kernels,
-`@requires` preconditions. The annotations and preconditions were machine drafts
-(`contracts/*.json`, `"review_status": "draft"`). They are replaced by
-annotations derived mechanically from upstream type information; see
-`case_sets/acceptance.json` for the derivation per program.
+Entry functions: NPBench's `func_name` for the benchmark; for Pythran, every
+exported function (`#pythran export`) that no other exported function calls.
+An exported function that another one calls is a `@zk_chip` helper of its
+caller and is compiled as part of it (listed in `case_sets/acceptance.json` with
+`entry_function: false`).
+
+What is verbatim: the name, parameters, defaults and body of every retained
+function (equal ASTs once docstrings are dropped), the helper functions and
+module constants the kernel needs, and the imports it needs. Runners, data
+generators, unused alternate kernels and scaffolding were removed.
+
+What is added: the `@zk_circuit` / `@zk_chip` decorators, Zinnia type
+annotations on the parameters of entry functions, and, on 47 entry functions,
+`@requires` preconditions. (The 2026-05-19 version of this file said "no
+function signatures were modified"; that was wrong.)
+
+### Signatures (corrected 2026-10-06, audit DB-10)
+
+Until 2026-10-06 the annotations were machine drafts (`contracts/*.json`,
+`"review_status": "draft"`): 43 of the 169 programs had an annotation whose rank
+or dtype contradicted upstream (for example `polybench/mvt` took vectors as
+scalars, `crc16` took a byte array as a float, `lapl2d` took 2-D arrays as
+1-D). `tools/acceptance_case_set.py` now derives every entry-function
+annotation from upstream:
+
+* dtype and rank: NPBench's `initialize()` output for the argument (or its
+  preset parameter); Pythran's exported signature (Pythran lists become
+  arrays; a list of k-tuples becomes an array whose last axis has length k).
+* shape: the upstream example input. NPBench: preset S, its smallest. Pythran:
+  the first `#runas` call of the function that an exported signature accepts,
+  else the first such `#bench` call; with neither (8 functions), every axis
+  has length 8. When a function has several exported signatures, the one that
+  accepts that example is used; without an example, the first all-numeric one.
+* helper functions carry no annotations (`@zk_chip` infers them at the call).
+
+Other kernel changes made on 2026-10-06:
+
+* Zinnia decorators and annotations that the drafts had put on functions
+  nested inside a body (`monte_carlo`, `sumarray3d`) are removed, so those
+  bodies are verbatim again.
+* Exported functions the extraction had left out are copied verbatim from
+  upstream: `emin.run`, `shallow_water.run`, `multitype.check`,
+  `make_circle_two_points._make_circle_one_point`. The drafts had made a
+  helper the entry instead (for example `emin.Eandg`).
+* `@requires` preconditions are kept on entry functions and listed per entry
+  in `case_sets/acceptance.json` with their kind (trip-count bound or non-zero
+  divisor) and whether the upstream example satisfies them. They are machine
+  drafts that nobody reviewed; preconditions on functions that are now
+  helpers are dropped (also listed).
+
+NPBench's preset S is large for a circuit compiler (up to 64 million input
+elements, `deep_learning/mlp`); `--npbench-preset` selects another preset.
+
+Result (2026-10-06, entry functions): NPBench 54 in scope, 0 out; Pythran 111
+in scope, 11 out (`imports`: `descent` (itertools), `extrema` (functools),
+`ramsurf` (cmath); `non_numeric_data`: `build_system` (a module parameter),
+`comp_unrolling` (its only example is a ragged list), `euler_challenge13`
+(`str()`), `rc4`, `roman_decode`, `scrabble` (2 functions), `train_equalizer`
+(string parameters)). Parameters an export does not list keep their default and
+are annotated from it (`check_mask.mask`, `ising_step.beta`, `weights.threshold`);
+`nd_local_maxima.local_maxima`'s `mode=wrap` (a function) stays unannotated.
 
 Early exclusions (unchanged, from the 2026-05-19 pass, under the rules above):
 

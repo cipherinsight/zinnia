@@ -1,18 +1,16 @@
+# pythran program make_circle_two_points.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: denominator-obligation, loop-bounded
-# Expected outcome: compile/prove candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
 import math
 
 @zk_chip
-def _cross_product(x0: Float, y0: Float, x1: Float, y1: Float, x2: Float, y2: Float):
+def _cross_product(x0, y0, x1, y1, x2, y2):
     return (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0)
 
 @zk_chip
-def make_circumcircle(a: Float[Array, 'N<=1024'], b: Float[Array, 'N<=1024'], c: Float[Array, 'N<=1024']):
+def make_circumcircle(a, b, c):
     ox = (min(a[0], b[0], c[0]) + max(a[0], b[0], c[0])) / 2.0
     oy = (min(a[1], b[1], c[1]) + max(a[1], b[1], c[1])) / 2.0
     ax = a[0] - ox
@@ -32,7 +30,7 @@ def make_circumcircle(a: Float[Array, 'N<=1024'], b: Float[Array, 'N<=1024'], c:
     return (x, y, max(ra, rb, rc))
 
 @zk_chip
-def make_diameter(a: Float[Array, 'N<=1024'], b: Float[Array, 'N<=1024']):
+def make_diameter(a, b):
     cx = (a[0] + b[0]) / 2.0
     cy = (a[1] + b[1]) / 2.0
     r0 = math.hypot(cx - a[0], cy - a[1])
@@ -40,11 +38,11 @@ def make_diameter(a: Float[Array, 'N<=1024'], b: Float[Array, 'N<=1024']):
     return (cx, cy, max(r0, r1))
 
 @zk_chip
-def is_in_circle(c: Float[Array, 'N<=1024'], p: Float[Array, 'N<=1024']):
+def is_in_circle(c, p):
     return math.hypot(p[0] - c[0], p[1] - c[1]) <= c[2] * (1 + 1e-14)
 
-@zk_circuit
-def make_circle_two_points(points: Float, p: Float, q: Float):
+@zk_chip
+def make_circle_two_points(points, p, q):
     circ = make_diameter(p, q)
     left = None
     right = None
@@ -69,3 +67,14 @@ def make_circle_two_points(points: Float, p: Float, q: Float):
         return left
     else:
         return left if left[2] <= right[2] else right
+
+@zk_circuit
+def _make_circle_one_point(points: Float[Array, '8 2'], p: Tuple[Float, Float]):
+    c = (p[0], p[1], 0.0)
+    for i, q in enumerate(points):
+        if not is_in_circle(c, q):
+            if c[2] == 0.0:
+                c = make_diameter(p, q)
+            else:
+                c = make_circle_two_points(points[:i + 1], p, q)
+    return c

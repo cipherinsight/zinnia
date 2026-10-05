@@ -1,18 +1,12 @@
+# npbench program contour_integral/contour_integral_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: complex, denominator-obligation, in-place-mutation, linalg, loop-bounded
-# Expected outcome: diagnostic/fail-closed candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Record square/invertible/SPD requirements where the linalg call needs them.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
-# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.
-# Diagnostic: np.linalg kernels may stay fail-closed until support is selected.
 import numpy as np
 
 @zk_circuit
-def contour_integral(NR: Integer, NM: Integer, slab_per_bc: Integer, Ham: Complex[Array, 'S<=1024 NR<=1024 NR<=1024'], int_pts: Complex[Array, 'Z<=1024'], Y: Complex[Array, 'NR<=1024 NM<=1024']):
+def contour_integral(NR: Integer, NM: Integer, slab_per_bc: Integer, Ham: Complex[Array, '3 50 50'], int_pts: Complex[Array, '32'], Y: Complex[Array, '50 150']):
     P0 = np.zeros((NR, NM), dtype=np.complex128)
     P1 = np.zeros((NR, NM), dtype=np.complex128)
     for z in int_pts:

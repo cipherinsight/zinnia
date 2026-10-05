@@ -53,21 +53,22 @@ def fixture_args(fixture: dict[str, Any], input_name: str) -> list[Any]:
     return args
 
 
-def load_kernel(kernel_path: Path):
+def load_kernel(kernel_path: Path, function: str = "kernel"):
     spec = importlib.util.spec_from_file_location(f"probe_{kernel_path.parent.name}", kernel_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)  # type: ignore[union-attr]
-    return module.kernel
+    return getattr(module, function)
 
 
-def worker(kernel_path: Path, fixture_path: Path | None, input_name: str | None) -> dict[str, Any]:
+def worker(kernel_path: Path, fixture_path: Path | None, input_name: str | None,
+           function: str = "kernel") -> dict[str, Any]:
     sys.path.insert(0, str(REPO))
     from zinnia.api.zk_circuit import ZKCircuit
 
     result: dict[str, Any] = {"compiled": False, "compile_error": None, "compile_seconds": None, "mock": None}
     start = time.monotonic()
     try:
-        compiled = ZKCircuit.from_method(load_kernel(kernel_path)).compile()
+        compiled = ZKCircuit.from_method(load_kernel(kernel_path, function)).compile()
         result["compiled"] = True
     except BaseException as exc:  # noqa: BLE001 - pyo3 panics are BaseException
         result["compile_error"] = f"{type(exc).__name__}: {exc}"
@@ -93,9 +94,9 @@ def worker(kernel_path: Path, fixture_path: Path | None, input_name: str | None)
 
 
 def run(kernel_path: Path, fixture_path: Path | None = None, input_name: str | None = None,
-        timeout: float = 300.0) -> dict[str, Any]:
+        timeout: float = 300.0, function: str = "kernel") -> dict[str, Any]:
     """Run the worker in a child process; a timeout or crash becomes an error."""
-    command = [sys.executable, str(THIS), "--worker", str(kernel_path)]
+    command = [sys.executable, str(THIS), "--worker", str(kernel_path), "--function", function]
     if fixture_path is not None:
         command += ["--fixture", str(fixture_path), "--input", str(input_name)]
     wrapper = os.environ.get("MEMRUN")
@@ -109,9 +110,14 @@ def run(kernel_path: Path, fixture_path: Path | None = None, input_name: str | N
                 "mock": None}
     lines = [line for line in proc.stdout.splitlines() if line.startswith("{")]
     if proc.returncode != 0 or not lines:
-        tail = (proc.stderr or proc.stdout).strip().splitlines()[-3:]
-        return {"compiled": False, "compile_error": f"child exited {proc.returncode} after "
-                f"{time.monotonic() - start:.0f} s: {' | '.join(tail)}", "compile_seconds": None, "mock": None}
+        seconds = time.monotonic() - start
+        if proc.returncode == -9 and wrapper:
+            message = (f"killed by signal 9 after {seconds:.0f} s: exceeded the memory cap "
+                       f"(MEMRUN_MAX={os.environ.get('MEMRUN_MAX', '8G')})")
+        else:
+            tail = (proc.stderr or proc.stdout).strip().splitlines()[-3:]
+            message = f"child exited {proc.returncode} after {seconds:.0f} s: {' | '.join(tail)}"
+        return {"compiled": False, "compile_error": message, "compile_seconds": None, "mock": None}
     return json.loads(lines[-1])
 
 
@@ -120,13 +126,14 @@ def main() -> None:
     parser.add_argument("kernel", type=Path)
     parser.add_argument("--fixture", type=Path)
     parser.add_argument("--input", choices=["A", "B"])
+    parser.add_argument("--function", default="kernel", help="name of the @zk_circuit function")
     parser.add_argument("--worker", action="store_true", help="run in this process (used by run())")
     parser.add_argument("--timeout", type=float, default=300.0)
     args = parser.parse_args()
     if args.worker:
-        print(json.dumps(worker(args.kernel.resolve(), args.fixture, args.input)))
+        print(json.dumps(worker(args.kernel.resolve(), args.fixture, args.input, args.function)))
     else:
-        print(json.dumps(run(args.kernel.resolve(), args.fixture, args.input, args.timeout), indent=2))
+        print(json.dumps(run(args.kernel.resolve(), args.fixture, args.input, args.timeout, args.function), indent=2))
 
 
 if __name__ == "__main__":

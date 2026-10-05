@@ -1,16 +1,12 @@
+# pythran program train_eq.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: complex, denominator-obligation, in-place-mutation, loop-bounded
-# Expected outcome: diagnostic/fail-closed candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
-# Diagnostic: Complex kernels require Complex dtype support or a fail-closed classification.
 import numpy as np
 
 @zk_circuit
-def train_eq(E: Complex[Array, 'N<=1024 M<=1024'], TrSyms: Complex[Array, 'N<=1024'], os: Float, mu: Float, wx: Complex[Array, 'N<=1024'], errfctprs: Float, adapt: Float):
+def train_eq(E: Complex[Array, '1 100'], TrSyms: Integer, os: Integer, mu: Float, wx: Complex[Array, '1 10'], errfctprs: Tuple[Complex, Complex[Array, '4']], adapt: Boolean):
     Ntaps = wx.shape[1]
     pols = wx.shape[0]
     R, symbs = errfctprs
@@ -28,7 +24,7 @@ def train_eq(E: Complex[Array, 'N<=1024 M<=1024'], TrSyms: Complex[Array, 'N<=10
     return (err, wx, mu)
 
 @zk_circuit
-def train_eq2(E: Complex[Array, 'N<=1024 M<=1024'], TrSyms: Complex[Array, 'N<=1024'], os: Float, mu: Float, wx: Complex[Array, 'N<=1024'], errfctprs: Float, adapt: Float):
+def train_eq2(E: Complex[Array, '1 100'], TrSyms: Integer, os: Integer, mu: Float, wx: Complex[Array, '1 10'], errfctprs: Tuple[Complex, Complex[Array, '4']], adapt: Boolean):
     Ntaps = wx.shape[1]
     pols = wx.shape[0]
     R, symbs = errfctprs
@@ -45,10 +41,10 @@ def train_eq2(E: Complex[Array, 'N<=1024 M<=1024'], TrSyms: Complex[Array, 'N<=1
                 mu = np.float32(mu / (1 + mu * (err[i].real * err[i].real + err[i].imag * err[i].imag)))
     return (err, wx, mu)
 
-@zk_circuit
-def cma_error(Xest: Float, R: Integer, symbs: Float):
+@zk_chip
+def cma_error(Xest, R, symbs):
     return (R.real - abs(Xest) ** 2) * Xest
 
-@zk_circuit
-def mcma_error(Xest: Float, R: Integer, symbs: Complex[Array, 'N<=1024']):
+@zk_chip
+def mcma_error(Xest, R, symbs):
     return symbs.dtype.type((R.real - Xest.real ** 2) * Xest.real + (R.imag - Xest.imag ** 2) * Xest.imag * 1j)

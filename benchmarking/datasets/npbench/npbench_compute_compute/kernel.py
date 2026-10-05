@@ -1,11 +1,10 @@
+# npbench program compute/compute_numpy.py (spcl/npbench npbench/benchmarks).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: shape-dtype-only
-# Expected outcome: compile/prove candidate
-# Precondition: Shape/rank/dtype annotations only.
 import numpy as np
 
 @zk_circuit
-def compute(array_1: Float[Array, 'N<=1024'], array_2: Float, a: Float, b: Float, c: Integer):
+def compute(array_1: Integer[Array, '2000 2000'], array_2: Integer[Array, '2000 2000'], a: Integer, b: Integer, c: Integer):
     return np.clip(array_1, 2, 10) * a + array_2 * b + c

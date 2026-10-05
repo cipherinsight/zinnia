@@ -1,29 +1,25 @@
+# pythran program nd_local_maxima.py (serge-sans-paille/pythran pythran/tests/cases).
+# Function bodies are the upstream text. Entry-function annotations are derived from upstream
+# types by benchmarking/datasets/tools/acceptance_case_set.py; see datasets/case_sets/acceptance.json.
+
 from zinnia import *
-# Zinnia benchmark contract draft: generated for review.
-# Keep kernel body faithful; refine TODO contracts before final benchmark runs.
-# Categories: denominator-obligation, in-place-mutation, loop-bounded
-# Expected outcome: compile/prove candidate
-# Precondition: Add nonzero or positive denominator facts at exact division/modulo sites when expressible.
-# Precondition: Loop trip counts must be finite and tied to scalar bounds or array dimensions.
-# Precondition: Use writable fixed/bounded array shapes and record an aliasing policy for mutated inputs.
 import numpy as np
 
-@zk_circuit
-@requires(lambda pos, offset, bound: bound != 0.0)
-def wrap(pos: Float, offset: Float, bound: Float):
+@zk_chip
+def wrap(pos, offset, bound):
     return (pos + offset) % bound
 
-@zk_circuit
-def clamp(pos: Float, offset: Float, bound: Float):
+@zk_chip
+def clamp(pos, offset, bound):
     return min(bound - 1, max(0, pos + offset))
 
-@zk_circuit
-def reflect(pos: Float, offset: Float, bound: Float):
+@zk_chip
+def reflect(pos, offset, bound):
     idx = pos + offset
     return min(2 * (bound - 1) - idx, max(idx, -idx))
 
 @zk_circuit
-def local_maxima(data: Float[Array, 'N<=1024 M<=1024 K<=1024 L<=256'], mode: Float=wrap):
+def local_maxima(data: Float[Array, '8 6 4 2'], mode=wrap):
     wsize = data.shape
     result = np.ones(data.shape, bool)
     for pos in np.ndindex(data.shape):
