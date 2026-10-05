@@ -5,10 +5,11 @@
 //! * `a * b` is `floor(a * b / 2^32)` (Zinnia `fp_mul_rescale`);
 //! * `a / b` is `floor(a * 2^32 / b)` with Euclidean rounding (Zinnia
 //!   `fp_div_prescale`);
-//! * `sqrt` is `floor(sqrt(a * 2^32))`;
-//! * `sin`/`cos` are Zinnia's halo2-base definition (reduce modulo pi, degree-14
-//!   Remez polynomial, Horner with a rescale per step);
-//! * `asin` is `atan2(x, sqrt(1 - x^2))` with the degree-15 atan polynomial.
+//! * `sqrt` is `floor(sqrt(a * 2^32))`, the exact integer root;
+//! * `sin`/`cos`/`asin` are Zinnia's fixed-point algorithms (`fp_sin`,
+//!   `fp_cos`, `fp_arcsin`, which the halo2-base circuit constrains): range
+//!   reduction to `[0, pi/4]` with Taylor polynomials in `s^2`, and
+//!   `2 * atan(x / (1 + sqrt(1 - x^2)))`; Horner rescales every product.
 use core::num::traits::Sqrt;
 
 const SCALE: i128 = 0x100000000;
@@ -29,17 +30,22 @@ pub const DEG_TO_RAD: Q32 = Q32 { bits: 74961321 };
 /// `round(180 / pi * 2^32)`, the factor of `np.degrees`.
 pub const RAD_TO_DEG: Q32 = Q32 { bits: 246083499208 };
 
-/// `round(c * 2^32)` of Zinnia's `SIN_COEFS` (sin on `[0, pi)`), highest
-/// degree first.
-const SIN_COEFS: [i64; 15] = [
-    0, 1, -2, -102, -13, 11858, -28, -852151, -16, 35791402, -2, -715827882, 0, 4294967296, 0,
-];
+/// `round(pi / 4 * 2^32)`.
+pub const FRAC_PI_4: Q32 = Q32 { bits: 3373259426 };
 
-/// `round(c * 2^32)` of Zinnia's `ATAN_COEFS` (atan on `[-1, 1]`), highest
-/// degree first.
-const ATAN_COEFS: [i64; 16] = [
-    -17009175, 0, 92381544, 0, -237862581, 0, 412388002, 0, -596658626, 0, 856548815, 0,
-    -1431492759, 0, 4294964071, 0,
+/// `round(c * 2^32)` of `(-1)^k / (2k+1)!` for k = 6 down to 0: Taylor
+/// coefficients of `sin(s) / s` in `u = s^2` (Zinnia `sin_taylor_q`).
+const SIN_OVER_X_TAYLOR: [i64; 7] = [1, -108, 11836, -852176, 35791394, -715827883, 4294967296];
+
+/// `round(c * 2^32)` of `(-1)^k / (2k)!` for k = 7 down to 0: Taylor
+/// coefficients of `cos(s)` in `u = s^2` (Zinnia `cos_taylor_q`).
+const COS_TAYLOR: [i64; 8] = [0, 9, -1184, 106522, -5965232, 178956971, -2147483648, 4294967296];
+
+/// `round(c * 2^32)` of Zinnia's `ATAN_ODD_U_COEFS` (`atan(t) / t` as a
+/// degree-9 polynomial in `u = t^2`), highest degree first.
+const ATAN_OVER_X: [i64; 10] = [
+    -7489138, 45873335, -131930687, 246804093, -359577404, 469877966, -612529925, 858917466,
+    -1431653573, 4294967285,
 ];
 
 /// `floor(a / b)`; Cairo's `/` on signed integers truncates toward zero.
@@ -117,59 +123,54 @@ pub impl Q32Impl of Q32Trait {
         Q32 { bits: root.try_into().unwrap() }
     }
 
-    /// `np.sin` (Zinnia halo2-base `sin_f`).
+    /// `np.sin` (Zinnia `fp_sin`): reduce `|x|` modulo `2*pi`, fold onto
+    /// `[0, pi)` (`sin(r) = -sin(r - pi)`), mirror onto `[0, pi/2]`
+    /// (`sin(r) = sin(pi - r)`), and above `pi/4` use `cos(pi/2 - r)`, so the
+    /// Taylor polynomials run on `s` in `[0, pi/4]`, in `u = s^2`.
     fn sin(self: Q32) -> Q32 {
-        let magnitude = self.abs().bits;
-        let half_turns = magnitude / PI.bits;
-        let reduced = Q32 { bits: magnitude % PI.bits };
-        let value = horner(reduced, SIN_COEFS.span());
-        if (self.bits < 0) != (half_turns % 2 == 1) {
+        let r = self.abs().bits % (2 * PI.bits);
+        let (r, folded) = if r >= PI.bits {
+            (r - PI.bits, true)
+        } else {
+            (r, false)
+        };
+        let r = if r > FRAC_PI_2.bits {
+            PI.bits - r
+        } else {
+            r
+        };
+        let value = if r > FRAC_PI_4.bits {
+            let s = Q32 { bits: FRAC_PI_2.bits - r };
+            horner(s * s, COS_TAYLOR.span())
+        } else {
+            let s = Q32 { bits: r };
+            s * horner(s * s, SIN_OVER_X_TAYLOR.span())
+        };
+        if (self.bits < 0) != folded {
             -value
         } else {
             value
         }
     }
 
-    /// `np.cos(x) = sin(x + pi/2)` (Zinnia halo2-base `cos_f`).
+    /// `np.cos(x) = sin(x + pi/2)` (Zinnia `fp_cos`).
     fn cos(self: Q32) -> Q32 {
         (self + FRAC_PI_2).sin()
     }
 
-    /// `np.arcsin` for `x` in `[-1, 1]`.
+    /// `np.arcsin` for `x` in `[-1, 1]` (Zinnia `fp_arcsin`):
+    /// `2 * atan(x / (1 + sqrt(1 - x^2)))`. The root is the exact integer root
+    /// of `2^64 - x^2` in raw units, and `atan(t) = t * P(t^2)` with `t` in
+    /// `[-1, 1]`.
     fn asin(self: Q32) -> Q32 {
         assert!(-ONE <= self && self <= ONE, "arcsin argument outside [-1, 1]");
-        atan2(self, (ONE - self * self).sqrt())
-    }
-}
-
-/// `np.arctan2(y, x)` via the atan polynomial on a ratio in `[0, 1]`.
-pub fn atan2(y: Q32, x: Q32) -> Q32 {
-    let ay = y.abs();
-    let ax = x.abs();
-    if ay == ZERO && ax == ZERO {
-        return ZERO;
-    }
-    let steep = ay > ax;
-    let ratio = if steep {
-        ax / ay
-    } else {
-        ay / ax
-    };
-    let base = horner(ratio, ATAN_COEFS.span());
-    let first_quadrant = if steep {
-        FRAC_PI_2 - base
-    } else {
-        base
-    };
-    let upper_half = if x.bits < 0 {
-        PI - first_quadrant
-    } else {
-        first_quadrant
-    };
-    if y.bits < 0 {
-        -upper_half
-    } else {
-        upper_half
+        let x: i128 = self.bits.into();
+        let one: i128 = ONE.bits.into();
+        let radicand: u128 = (one * one - x * x).try_into().unwrap();
+        let root: u64 = radicand.sqrt();
+        let t = self / Q32 { bits: ONE.bits + root.try_into().unwrap() };
+        let half = t * horner(t * t, ATAN_OVER_X.span());
+        half + half
     }
 }
 
