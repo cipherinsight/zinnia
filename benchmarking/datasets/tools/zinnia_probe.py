@@ -6,7 +6,8 @@ The child prints one JSON object:
 
     {"compiled": bool, "compile_error": str | null, "compile_seconds": float,
      "mock": null | {"satisfied": bool, "publics": [...], "elided": [...],
-                     "error": str | null, "seconds": float}}
+                     "error": str | null, "seconds": float},
+     "backends": {"halo2-base": "ok (<cell statistics>)" | error, "noir": "ok" | error}  # with --structural}
 
 `MEMRUN` names a wrapper such as `eval-redo/tools/memrun.sh` (it runs its
 arguments under a cgroup memory limit read from `MEMRUN_MAX`). Only the mock
@@ -34,6 +35,8 @@ THIS = Path(__file__).resolve()
 REPO = THIS.parents[3]
 
 NUMPY_DTYPES = {"float": np.float64, "int": np.int64, "bool": np.bool_, "complex": np.complex128}
+# Backends whose circuit synthesis `--structural` checks (emit_structural: no proof is made).
+BACKENDS = ("halo2-base", "noir")
 
 
 def fixture_args(fixture: dict[str, Any], input_name: str) -> list[Any]:
@@ -61,7 +64,7 @@ def load_kernel(kernel_path: Path, function: str = "kernel"):
 
 
 def worker(kernel_path: Path, fixture_path: Path | None, input_name: str | None,
-           function: str = "kernel") -> dict[str, Any]:
+           function: str = "kernel", structural: bool = False) -> dict[str, Any]:
     sys.path.insert(0, str(REPO))
     from zinnia.api.zk_circuit import ZKCircuit
 
@@ -90,13 +93,23 @@ def worker(kernel_path: Path, fixture_path: Path | None, input_name: str | None,
         mock["traceback"] = traceback.format_exc(limit=4)
     mock["seconds"] = round(time.monotonic() - start, 3)
     result["mock"] = mock
+    if structural and mock["error"] is None:
+        result["backends"] = {}
+        for backend in BACKENDS:
+            try:
+                text = compiled.emit_structural(*fixture_args(fixture, input_name), backend=backend)
+                result["backends"][backend] = "ok" + (f" ({text})" if backend == "halo2-base" else "")
+            except BaseException as exc:  # noqa: BLE001
+                result["backends"][backend] = f"{type(exc).__name__}: {exc}"
     return result
 
 
 def run(kernel_path: Path, fixture_path: Path | None = None, input_name: str | None = None,
-        timeout: float = 300.0, function: str = "kernel") -> dict[str, Any]:
+        timeout: float = 300.0, function: str = "kernel", structural: bool = False) -> dict[str, Any]:
     """Run the worker in a child process; a timeout or crash becomes an error."""
     command = [sys.executable, str(THIS), "--worker", str(kernel_path), "--function", function]
+    if structural:
+        command.append("--structural")
     if fixture_path is not None:
         command += ["--fixture", str(fixture_path), "--input", str(input_name)]
     wrapper = os.environ.get("MEMRUN")
@@ -127,13 +140,16 @@ def main() -> None:
     parser.add_argument("--fixture", type=Path)
     parser.add_argument("--input", choices=["A", "B"])
     parser.add_argument("--function", default="kernel", help="name of the @zk_circuit function")
+    parser.add_argument("--structural", action="store_true",
+                        help="with --fixture: also synthesize the circuit for each backend in BACKENDS")
     parser.add_argument("--worker", action="store_true", help="run in this process (used by run())")
     parser.add_argument("--timeout", type=float, default=300.0)
     args = parser.parse_args()
     if args.worker:
-        print(json.dumps(worker(args.kernel.resolve(), args.fixture, args.input, args.function)))
+        print(json.dumps(worker(args.kernel.resolve(), args.fixture, args.input, args.function, args.structural)))
     else:
-        print(json.dumps(run(args.kernel.resolve(), args.fixture, args.input, args.timeout, args.function), indent=2))
+        print(json.dumps(run(args.kernel.resolve(), args.fixture, args.input, args.timeout, args.function,
+                             args.structural), indent=2))
 
 
 if __name__ == "__main__":

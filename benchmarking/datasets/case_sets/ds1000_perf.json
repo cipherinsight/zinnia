@@ -7,7 +7,7 @@
   "out_of_scope": "The DS-1000 program is out of scope in ds1000_numpy/manifest.json: it imports or uses a module other than numpy (incl. submodules) and math (the author's rule), or another rule of datasets/FILTERING.md fires (non-numeric data, NaN/infinity, ...), checked on the solution text and on every DS-1000 test input.",
   "degenerate": "No output depends on a private input: every output is fixed by the parameter types and the constants, so there is nothing to prove.",
   "duplicate": "The kernel computes the same function as a case with a lower id (identical after renaming local variables, with the same types and constants); the lower id is kept.",
-  "zinnia_rejects": "Zinnia at the commit in `zinnia_probe` refuses the kernel: compilation fails, or it compiles but Zinnia refuses to build a witness for either fixture input (error recorded). Provisional: compiler fixes on other branches may change it.",
+  "zinnia_rejects": "Zinnia at the commit in `zinnia_probe` refuses the kernel: compilation fails, or it compiles but Zinnia refuses to build a witness for either fixture input, or neither the halo2-base nor the Noir backend synthesizes the circuit (error recorded). Provisional: compiler fixes on other branches may change it. A case only one backend refuses stays perf and is listed under zinnia_backend_gaps.",
   "perf": "None of the above. These are the cases for the cross-system performance comparison.",
   "kernels": "Every in-scope kernel is the output of tools/generate_ds1000_kernels.py (shapes from the record's last DS-1000 test case; each dtype the narrowest of Boolean < Integer < Float < Complex holding the parameter in every test case; returns the value DS-1000 checks) with the shape parameters listed in tools/ds1000_perf.py bound as compile-time constants. tools/perf_case_set.py --check verifies it.",
   "shape_constants": "Author decision 2026-10-06: in the performance set, DS-1000 shape parameters (values that fix an array shape or a trip count) are compile-time constants with their DS-1000 test-case value. The runtime variants are in the acceptance set (ds1000_numpy/generated/).",
@@ -16,7 +16,7 @@
   "float_tolerance": "The output check compares each float output with NumPy on input B as |actual - expected| <= atol + rtol * |expected|. Outputs that copy an input get atol = 2^-32 (one Q32 step), rtol = 0. Computed outputs get atol = rtol = 1e-6: Q32 resolves 2.3e-10 and these kernels round at most a few thousand times on values below 10^7, so an implementation of the same computation lands well inside, while a precision loss to ~16 fractional bits or a wrong value does not. Integer and boolean outputs are compared exactly (`float_tolerance` is null)."
  },
  "zinnia_probe": {
-  "commit": "65e35e61053c0bbaf858348418ecb0781c346a6d",
+  "commit": "3d3912c55f807cbee2bb59bbbd23ea73f5b925ba",
   "compiler_sources": "unchanged since e58e9a6 (src/, zinnia/ as of the eval-redo snapshot); git diff e58e9a6 -- src zinnia is empty",
   "extension": "zinnia/_zinnia_core*.so built from those sources (release, halo2-base and noir backends)",
   "extension_sha256": "f3f168e55e974c81e40dcc782a2c74e08e831d1de43c54d36ce73610c2044810",
@@ -27,17 +27,20 @@
   "out_of_scope": 8,
   "degenerate": 6,
   "duplicate": 13,
-  "zinnia_rejects": 15,
-  "perf": 120
+  "zinnia_rejects": 16,
+  "perf": 119
  },
  "data_movement_only_perf_cases": 34,
+ "zinnia_backend_gaps": {
+  "meaning": "perf cases whose circuit one Zinnia backend cannot synthesize (emit_structural on input B)",
+  "cases": {}
+ },
  "zinnia_output_mismatches": {
   "meaning": "perf cases where Zinnia's mock prover accepts the honest witness but its public outputs do not match NumPy on a fixture input: Zinnia computes a different function (compiler bug)",
   "cases": [
    "ds1000_case0314",
    "ds1000_case0425",
    "ds1000_case0426",
-   "ds1000_case0427",
    "ds1000_case0452",
    "ds1000_case0454",
    "ds1000_case0478"
@@ -209,6 +212,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[2810] lookup=[152, 0, 0] fixed=40 instances=27)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -288,6 +295,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[19910] lookup=[2679, 0, 0] fixed=211 instances=1)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -332,6 +343,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[20] lookup=[0, 0, 0] fixed=0 instances=20)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -376,6 +391,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[20] lookup=[0, 0, 0] fixed=0 instances=20)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -420,6 +439,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[20] lookup=[0, 0, 0] fixed=0 instances=20)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -464,6 +487,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[20] lookup=[0, 0, 0] fixed=0 instances=20)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -501,6 +528,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[4284] lookup=[807, 0, 0] fixed=58 instances=1)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -538,6 +569,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[4284] lookup=[807, 0, 0] fixed=58 instances=1)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -575,6 +610,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[4302] lookup=[807, 0, 0] fixed=58 instances=2)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -612,6 +651,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[4302] lookup=[807, 0, 0] fixed=58 instances=2)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -680,6 +723,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[11094] lookup=[1653, 0, 0] fixed=58 instances=2)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "public values do not contain NumPy outputs [0.0, 3.0]",
      "B": "ok"
@@ -723,6 +770,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[1000] lookup=[0, 0, 0] fixed=0 instances=1000)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -768,6 +819,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[4788] lookup=[231, 0, 0] fixed=59 instances=48)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -813,6 +868,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[30864] lookup=[255, 0, 0] fixed=393 instances=384)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -850,6 +909,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[3138] lookup=[619, 0, 0] fixed=41 instances=2)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -887,6 +950,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[3138] lookup=[619, 0, 0] fixed=41 instances=2)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -924,6 +991,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[1383] lookup=[96, 0, 0] fixed=23 instances=10)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -963,6 +1034,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[831] lookup=[162, 0, 0] fixed=31 instances=1)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -1002,6 +1077,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[836] lookup=[162, 0, 0] fixed=32 instances=1)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -1038,6 +1117,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[1626] lookup=[311, 0, 0] fixed=30 instances=1)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -1077,6 +1160,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[1090] lookup=[213, 0, 0] fixed=33 instances=1)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -1121,6 +1208,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[10] lookup=[0, 0, 0] fixed=0 instances=10)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -1166,6 +1257,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[3] lookup=[0, 0, 0] fixed=0 instances=3)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -1209,6 +1304,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[17473] lookup=[1632, 0, 0] fixed=15 instances=48)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -1360,6 +1459,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[1251] lookup=[0, 0, 0] fixed=4 instances=50)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -1408,6 +1511,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[9400] lookup=[2100, 0, 0] fixed=12 instances=50)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -1449,6 +1556,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[8] lookup=[0, 0, 0] fixed=0 instances=8)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -1490,6 +1601,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[8] lookup=[0, 0, 0] fixed=0 instances=8)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -1531,6 +1646,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[16] lookup=[0, 0, 0] fixed=0 instances=16)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -1572,6 +1691,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[16] lookup=[0, 0, 0] fixed=0 instances=16)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -1611,6 +1734,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[30] lookup=[0, 0, 0] fixed=0 instances=30)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -1713,6 +1840,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[30] lookup=[0, 0, 0] fixed=0 instances=30)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -1776,6 +1907,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[1870] lookup=[128, 0, 0] fixed=29 instances=8)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -1824,6 +1959,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[1876] lookup=[114, 0, 0] fixed=25 instances=6)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -1872,6 +2011,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[1908] lookup=[107, 0, 0] fixed=25 instances=1)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -1944,6 +2087,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[2871] lookup=[599, 0, 0] fixed=17 instances=8)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -2021,6 +2168,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[4767] lookup=[459, 0, 0] fixed=37 instances=27)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -2097,6 +2248,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[4767] lookup=[459, 0, 0] fixed=37 instances=27)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -2138,6 +2293,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[1497] lookup=[72, 0, 0] fixed=40 instances=27)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -2179,6 +2338,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[6] lookup=[0, 0, 0] fixed=0 instances=6)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -2220,6 +2383,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[12] lookup=[0, 0, 0] fixed=0 instances=12)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -2261,6 +2428,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[24] lookup=[0, 0, 0] fixed=0 instances=24)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -2310,6 +2481,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[40] lookup=[0, 0, 0] fixed=0 instances=40)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -2358,6 +2533,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[8273] lookup=[934, 0, 0] fixed=112 instances=101)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -2407,6 +2586,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[24630] lookup=[934, 0, 0] fixed=112 instances=1010)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -2543,6 +2726,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[1920] lookup=[393, 0, 0] fixed=13 instances=1)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -2581,6 +2768,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[1920] lookup=[393, 0, 0] fixed=13 instances=1)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -2688,6 +2879,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[108283] lookup=[13975, 0, 0] fixed=110 instances=5)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -2732,6 +2927,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[87081] lookup=[11883, 0, 0] fixed=109 instances=2)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -2769,6 +2968,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[407588] lookup=[45350, 0, 0] fixed=110 instances=100)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -2806,6 +3009,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[407588] lookup=[45350, 0, 0] fixed=110 instances=100)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -2846,6 +3053,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[56048] lookup=[6848, 0, 0] fixed=110 instances=7)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -2887,6 +3098,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[20000] lookup=[0, 0, 0] fixed=0 instances=20000)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -2928,6 +3143,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[20000] lookup=[0, 0, 0] fixed=0 instances=20000)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -2972,6 +3191,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[20000] lookup=[0, 0, 0] fixed=0 instances=20000)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -3018,6 +3241,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[72] lookup=[0, 0, 0] fixed=0 instances=72)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -3062,6 +3289,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[20000] lookup=[0, 0, 0] fixed=0 instances=20000)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -3108,6 +3339,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[60] lookup=[0, 0, 0] fixed=0 instances=60)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -3154,6 +3389,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[30] lookup=[0, 0, 0] fixed=0 instances=30)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -3200,6 +3439,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[60] lookup=[0, 0, 0] fixed=0 instances=60)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -3250,6 +3493,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[2019] lookup=[413, 0, 0] fixed=9 instances=30)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -3304,6 +3551,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[2136] lookup=[348, 0, 0] fixed=6 instances=30)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -3407,6 +3658,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[527] lookup=[140, 0, 0] fixed=22 instances=1)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -3460,6 +3715,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[527] lookup=[140, 0, 0] fixed=22 instances=1)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -3662,6 +3921,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[384] lookup=[0, 0, 0] fixed=1 instances=48)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -3743,6 +4006,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[2475] lookup=[240, 0, 0] fixed=23 instances=12)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -3821,6 +4088,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[63] lookup=[0, 0, 0] fixed=4 instances=2)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -3864,6 +4135,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[698] lookup=[168, 0, 0] fixed=16 instances=2)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -3907,6 +4182,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[457] lookup=[0, 0, 0] fixed=4 instances=24)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -3950,6 +4229,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[63] lookup=[0, 0, 0] fixed=4 instances=2)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -3993,6 +4276,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[457] lookup=[0, 0, 0] fixed=4 instances=24)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -4036,6 +4323,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[457] lookup=[0, 0, 0] fixed=4 instances=24)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -4085,6 +4376,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[1209] lookup=[190, 0, 0] fixed=28 instances=1)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -4129,6 +4424,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[11450] lookup=[300, 0, 0] fixed=7 instances=50)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -4169,6 +4468,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[1801] lookup=[420, 0, 0] fixed=13 instances=220)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "public values do not contain NumPy outputs [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]",
      "B": "public values do not contain NumPy outputs [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]"
@@ -4209,6 +4512,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[1481] lookup=[340, 0, 0] fixed=12 instances=300)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "public values do not contain NumPy outputs [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]",
      "B": "public values do not contain NumPy outputs [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]"
@@ -4220,9 +4527,9 @@
   {
    "case": "ds1000_case0427",
    "problem_id": 427,
-   "status": "perf",
-   "reason": "no exclusion rule applies",
-   "decision_source": "rules above",
+   "status": "zinnia_rejects",
+   "reason": "compiles, but no backend synthesizes the circuit: halo2-base: RuntimeError: Circuit synthesis error: halo2-base backend does not yet support bit_xor_i; noir: RuntimeError: Unsupported IR operation in circuit: noir-emit:bit_xor_i",
+   "decision_source": "Zinnia emit_structural for every backend (zinnia_probe)",
    "duplicate_of": null,
    "data_movement_only": false,
    "kernel": {
@@ -4245,17 +4552,12 @@
    "kernel_change": "signature (a: Integer[Array, '20'], m: Integer) -> (a: Integer[Array, '20']); added: m = 11",
    "output_kind": "exact",
    "float_tolerance": null,
-   "fixture": "fixture.json",
+   "fixture": null,
    "zinnia": {
     "compiles": true,
-    "error": null,
-    "mock_vs_numpy": {
-     "A": "public values do not contain NumPy outputs [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]",
-     "B": "public values do not contain NumPy outputs [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]"
-    }
+    "error": null
    },
-   "kernel_sha256": "da4a9a6147ec23783f42d47bf65b0c8b45edff3e16ba0f3a40811bf9b40d7170",
-   "fixture_sha256": "e607343a12ce8a09454bbc723df10f5945c77f8be7c2678960b98f2286c0f5d4"
+   "kernel_sha256": "da4a9a6147ec23783f42d47bf65b0c8b45edff3e16ba0f3a40811bf9b40d7170"
   },
   {
    "case": "ds1000_case0428",
@@ -4289,6 +4591,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[1695] lookup=[284, 0, 0] fixed=22 instances=2)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -4329,6 +4635,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[1695] lookup=[284, 0, 0] fixed=22 instances=2)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -4398,6 +4708,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[1940] lookup=[389, 0, 0] fixed=18 instances=8)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -4443,6 +4757,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[501] lookup=[56, 0, 0] fixed=20 instances=16)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -4490,6 +4808,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[917] lookup=[96, 0, 0] fixed=18 instances=16)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -4528,6 +4850,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[9] lookup=[0, 0, 0] fixed=0 instances=9)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -4565,6 +4891,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[4860] lookup=[940, 0, 0] fixed=13 instances=50)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -4602,6 +4932,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[4860] lookup=[940, 0, 0] fixed=13 instances=50)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -4648,6 +4982,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[891] lookup=[158, 0, 0] fixed=21 instances=1)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -4688,6 +5026,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[23500] lookup=[4400, 0, 0] fixed=5 instances=2000)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -4728,6 +5070,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[11401] lookup=[2350, 0, 0] fixed=14 instances=50)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -4769,6 +5115,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[82] lookup=[0, 0, 0] fixed=2 instances=1)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -4810,6 +5160,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[6950] lookup=[0, 0, 0] fixed=20 instances=22)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -4851,6 +5205,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[6870] lookup=[0, 0, 0] fixed=20 instances=22)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -4892,6 +5250,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[10656] lookup=[904, 0, 0] fixed=30 instances=22)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -4937,6 +5299,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[24] lookup=[0, 0, 0] fixed=0 instances=24)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -5023,6 +5389,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[69129] lookup=[724, 0, 0] fixed=563 instances=28)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -5088,6 +5458,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[2321] lookup=[420, 0, 0] fixed=13 instances=20)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "public values do not contain NumPy outputs [-0.5106382978723404, -0.4444444444444444, -0.375, -0.3111111111111111, -0.3076923076923077, -0.273972602739726]",
      "B": "public values do not contain NumPy outputs [-0.42857142857142855, -0.3380281690140845, -0.30985915492957744, -0.30303030303030304, -0.2857142857142857, -0.21212121212121213]"
@@ -5128,6 +5502,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[2051] lookup=[335, 0, 0] fixed=20 instances=20)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -5168,6 +5546,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[3861] lookup=[785, 0, 0] fixed=13 instances=20)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "public values do not contain NumPy outputs [-0.5, -0.13333333333333333, 0.3333333333333333, 0.3684210526315789, 0.42105263157894735, 0.4666666666666667]",
      "B": "public values do not contain NumPy outputs [-0.88, -0.7083333333333334, -0.44, -0.35294117647058826, -0.23529411764705882, -0.19047619047619047]"
@@ -5235,6 +5617,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[6524] lookup=[0, 0, 0] fixed=20 instances=22)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -5272,6 +5658,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[6542] lookup=[0, 0, 0] fixed=20 instances=21)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -5421,6 +5811,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[2268] lookup=[0, 0, 0] fixed=0 instances=2268)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -5462,6 +5856,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[1512] lookup=[0, 0, 0] fixed=0 instances=1512)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -5514,6 +5912,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[0] lookup=[0, 0, 0] fixed=0 instances=0)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "public values do not contain NumPy outputs [1.0, 1.0, 10.0, 10.0]",
      "B": "public values do not contain NumPy outputs [1.0, 1.0, 7.0, 10.0]"
@@ -5563,6 +5965,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[731] lookup=[0, 0, 0] fixed=9 instances=1)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -5612,6 +6018,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[1821] lookup=[16, 0, 0] fixed=11 instances=11)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -5656,6 +6066,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[2898] lookup=[360, 0, 0] fixed=5 instances=90)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -5741,6 +6155,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[65543] lookup=[11080, 0, 0] fixed=262 instances=250)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -5782,6 +6200,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[2386] lookup=[546, 0, 0] fixed=20 instances=1)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -5844,6 +6266,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[533] lookup=[0, 0, 0] fixed=0 instances=533)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -5891,6 +6317,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[420] lookup=[0, 0, 0] fixed=0 instances=420)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -5942,6 +6372,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[847] lookup=[0, 0, 0] fixed=2 instances=1209)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -6027,6 +6461,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[420] lookup=[0, 0, 0] fixed=0 instances=420)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -6068,6 +6506,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[54] lookup=[0, 0, 0] fixed=0 instances=54)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -6112,6 +6554,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[3042] lookup=[0, 0, 0] fixed=2 instances=169)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -6191,6 +6637,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[11830] lookup=[338, 0, 0] fixed=6 instances=169)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -6235,6 +6685,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[12502] lookup=[338, 0, 0] fixed=6 instances=1)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -6279,6 +6733,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[15882] lookup=[338, 0, 0] fixed=6 instances=1)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -6316,6 +6774,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[7763] lookup=[575, 0, 0] fixed=43 instances=34)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -6353,6 +6815,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[29212] lookup=[1274, 0, 0] fixed=112 instances=103)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -6393,6 +6859,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[28065] lookup=[934, 0, 0] fixed=112 instances=104)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"
@@ -6433,6 +6903,10 @@
    "zinnia": {
     "compiles": true,
     "error": null,
+    "backends": {
+     "halo2-base": "ok (advice=[28465] lookup=[934, 0, 0] fixed=112 instances=104)",
+     "noir": "ok"
+    },
     "mock_vs_numpy": {
      "A": "ok",
      "B": "ok"

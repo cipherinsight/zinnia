@@ -57,8 +57,10 @@ RULES = {
     "duplicate": "The kernel computes the same function as a case with a lower id (identical after renaming local "
                  "variables, with the same types and constants); the lower id is kept.",
     "zinnia_rejects": "Zinnia at the commit in `zinnia_probe` refuses the kernel: compilation fails, or it compiles "
-                      "but Zinnia refuses to build a witness for either fixture input (error recorded). Provisional: "
-                      "compiler fixes on other branches may change it.",
+                      "but Zinnia refuses to build a witness for either fixture input, or neither the halo2-base nor "
+                      "the Noir backend synthesizes the circuit (error recorded). Provisional: compiler fixes on other "
+                      "branches may change it. A case only one backend refuses stays perf and is listed under "
+                      "zinnia_backend_gaps.",
     "perf": "None of the above. These are the cases for the cross-system performance comparison.",
     "kernels": "Every in-scope kernel is the output of tools/generate_ds1000_kernels.py (shapes from the record's "
                "last DS-1000 test case; each dtype the narrowest of Boolean < Integer < Float < Complex holding the "
@@ -348,22 +350,30 @@ def build_entries(write_fixtures: bool, reuse: dict[str, Any] | None) -> list[di
             entry["output_kind"] = "float" if entry["float_tolerance"] else "exact"
             fixture_hash = hashlib.sha256(json.dumps(fixture.data, sort_keys=True).encode()).hexdigest()
             if entry["status"] == "perf" and cached and cached.get("fixture_sha256") == fixture_hash \
-                    and "mock_vs_numpy" in cached["zinnia"]:
+                    and "mock_vs_numpy" in cached["zinnia"] and "backends" in cached["zinnia"]:
                 entry["fixture"] = "fixture.json"
                 entry["fixture_sha256"] = fixture_hash
                 entry["zinnia"]["mock_vs_numpy"] = cached["zinnia"]["mock_vs_numpy"]
+                entry["zinnia"]["backends"] = cached["zinnia"].get("backends", {})
                 if write_fixtures:
                     (case_dir / "fixture.json").write_text(fixtures.format_fixture(fixture.data), encoding="utf-8")
             elif entry["status"] == "perf" and cached and cached["status"] == "zinnia_rejects":
                 entry.update(status="zinnia_rejects", reason=cached["reason"], decision_source=cached["decision_source"])
             elif entry["status"] == "perf":
-                mocks = {name: run_mock(case_dir, fixture, name) for name in fixtures.INPUT_NAMES}
+                runs = {name: run_mock(case_dir, fixture, name) for name in fixtures.INPUT_NAMES}
+                mocks = {name: run[0] for name, run in runs.items()}
+                backends = runs["B"][1]
                 errors = [m.get("error") for m in mocks.values()]
                 if all(errors):
                     entry.update(status="zinnia_rejects", reason=f"compiles, but Zinnia refuses to build a witness "
                                  f"for either fixture input: {errors[0]}",
                                  decision_source="Zinnia mock prove of both fixture inputs (zinnia_probe)")
+                elif backends and not any(v.startswith("ok") for v in backends.values()):
+                    entry.update(status="zinnia_rejects", reason="compiles, but no backend synthesizes the circuit: "
+                                 + "; ".join(f"{b}: {v}" for b, v in backends.items()),
+                                 decision_source="Zinnia emit_structural for every backend (zinnia_probe)")
                 else:
+                    entry["zinnia"]["backends"] = backends
                     if write_fixtures:
                         (case_dir / "fixture.json").write_text(fixtures.format_fixture(fixture.data),
                                                                encoding="utf-8")
@@ -374,16 +384,19 @@ def build_entries(write_fixtures: bool, reuse: dict[str, Any] | None) -> list[di
                         for name in fixtures.INPUT_NAMES}
         elif entry["status"] == "perf":
             raise SystemExit(f"{case_dir.name}: perf case without a fixture draw")
+        if write_fixtures and entry["status"] != "perf":
+            (case_dir / "fixture.json").unlink(missing_ok=True)
         entries.append(entry)
     return entries
 
 
-def run_mock(case_dir: Path, fixture: fixtures.Fixture, name: str) -> dict[str, Any]:
+def run_mock(case_dir: Path, fixture: fixtures.Fixture, name: str) -> tuple[dict[str, Any], dict[str, str]]:
+    """Mock-prove input `name`; for input B also synthesize every backend's circuit."""
     with tempfile.TemporaryDirectory() as scratch:
         path = Path(scratch) / "fixture.json"
         path.write_text(json.dumps(fixture.data), encoding="utf-8")
-        result = zinnia_probe.run(case_dir / "kernel.py", path, name)
-    return result["mock"] or {"error": result["compile_error"]}
+        result = zinnia_probe.run(case_dir / "kernel.py", path, name, structural=name == "B")
+    return result["mock"] or {"error": result["compile_error"]}, result.get("backends", {})
 
 
 def ordered(entry: dict[str, Any]) -> dict[str, Any]:
@@ -405,6 +418,12 @@ def write_case_set(entries: list[dict[str, Any]]) -> None:
         "zinnia_probe": probe_info(),
         "counts": {status: counts[status] for status in STATUS_ORDER},
         "data_movement_only_perf_cases": sum(1 for e in entries if e["status"] == "perf" and e.get("data_movement_only")),
+        "zinnia_backend_gaps": {
+            "meaning": "perf cases whose circuit one Zinnia backend cannot synthesize (emit_structural on input B)",
+            "cases": {e["case"]: {b: v for b, v in e["zinnia"].get("backends", {}).items() if not v.startswith("ok")}
+                      for e in entries if e["status"] == "perf"
+                      and any(not v.startswith("ok") for v in e["zinnia"].get("backends", {}).values())},
+        },
         "zinnia_output_mismatches": {
             "meaning": "perf cases where Zinnia's mock prover accepts the honest witness but its public outputs do "
                        "not match NumPy on a fixture input: Zinnia computes a different function (compiler bug)",
