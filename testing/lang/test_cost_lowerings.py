@@ -413,3 +413,47 @@ def test_mask_compaction_has_no_selects_per_slot():
 def test_mask_compaction_halo2_base_matches_mock():
     assert_backends_agree('def kernel(x: Float[Array, "6"]):\n    return x[x >= 0]\n',
                           np.array([0.5, -1.0, 2.0, 0.0, -3.5, 4.25]))
+
+
+# ── nonzero / argwhere / flatnonzero by the compaction network ───────────
+
+@pytest.mark.parametrize("body, x", [
+    ("np.nonzero(x)[0]", np.array([1, 0, 3, 0, 5, 6, 0, 8, 9])),
+    ("np.flatnonzero(x)", np.array([0, 0, 2, 0, 0, 0, 0, 0, 7])),
+    ("np.argwhere(x)", np.array([0, 0, 0, 0, 0, 0, 0, 0, 0])),
+])
+def test_nonzero_1d_matches_numpy(body, x):
+    source = f'def kernel(x: Integer[Array, "9"]):\n    return {body}\n'
+    expected = np.asarray(numpy_kernel(source)(x.copy())).ravel().tolist()
+    satisfied, outputs = run_mock(compile_kernel(source), x)
+    assert satisfied and outputs[0] == len(expected)
+    payload = outputs[-9:]
+    assert payload[:len(expected)] == expected and all(v == 0 for v in payload[len(expected):])
+
+
+@pytest.mark.parametrize("body, envelope", [
+    ("np.argwhere(a)", 12), ("np.nonzero(a)[1]", 6), ("np.argwhere(a == np.min(a))", 12)])
+def test_argwhere_and_nonzero_2d_match_numpy(body, envelope):
+    # Layout: runtime length, runtime rows, then the zero-padded payload.
+    a = np.array([[0, 4, 0], [5, 0, 6]])
+    source = f'def kernel(a: Integer[Array, "2 3"]):\n    return {body}\n'
+    expected = np.asarray(numpy_kernel(source)(a.copy()))
+    satisfied, outputs = run_mock(compile_kernel(source), a)
+    assert satisfied and outputs[:2] == [expected.size, expected.shape[0]]
+    payload = outputs[2:]
+    assert len(payload) == envelope
+    assert payload[:expected.size] == expected.ravel().tolist()
+    assert all(v == 0 for v in payload[expected.size:])
+
+
+def test_nonzero_has_no_runtime_address_writes():
+    program = compile_kernel('def kernel(x: Integer[Array, "9"]):\n    return np.nonzero(x)[0]\n')
+    stmts = program.get_ir_stmts()
+    constant = {s["stmt_id"] for s in stmts if s["ir_instance"]["__class__"] == "ConstantIntIR"}
+    writes = [s for s in stmts if s["ir_instance"]["__class__"] == "WriteMemoryIR"]
+    assert writes and all(w["arguments"][0] in constant for w in writes)
+
+
+def test_nonzero_halo2_base_matches_mock():
+    assert_backends_agree('def kernel(x: Integer[Array, "6"]):\n    return np.nonzero(x)[0]\n',
+                          np.array([1, 0, 3, 0, 5, 6]))

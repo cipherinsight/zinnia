@@ -289,6 +289,81 @@ pub fn np_bincount(
     )
 }
 
+/// The coordinates of the non-zero cells of a static array, packed to the
+/// front in row-major order: the shared core of `np.argwhere`,
+/// `np.nonzero` and `np.flatnonzero`.
+struct NonzeroCoordinates {
+    /// `rows * rank` cells, row-major: row `j` holds the coordinates of the
+    /// `j`-th non-zero cell, rows past the count hold zeros.
+    packed: Vec<Value>,
+    /// The number of non-zero cells.
+    count: Value,
+    /// Per cell: its non-zero indicator, the running count after it, and
+    /// its coordinate constants (for the compaction provenance record).
+    keeps: Vec<Value>,
+    prefix: Vec<Value>,
+    coordinates: Vec<Vec<Value>>,
+}
+
+/// Packs the coordinates of the non-zero cells with the boolean-mask
+/// compaction network (`compact_by_mask`), one row of `rank` coordinates
+/// per cell. (It used to write each cell's coordinates to the runtime
+/// address "count so far", which every backend lowers as a one-hot write
+/// over all slots per cell.)
+fn nonzero_coordinates(b: &mut IRBuilder, cells: &[Value], shape: &[usize]) -> NonzeroCoordinates {
+    let rank = shape.len();
+    let keeps: Vec<Value> = cells.iter().map(|cell| nonzero_indicator(b, cell)).collect();
+    let coordinates: Vec<Vec<Value>> = (0..cells.len())
+        .map(|flat_idx| {
+            static_row_major_coords(flat_idx, shape)
+                .into_iter()
+                .map(|c| b.ir_constant_int(c as i64))
+                .collect()
+        })
+        .collect();
+    let flat_coordinates: Vec<Value> = coordinates.iter().flatten().cloned().collect();
+    let zero = b.ir_constant_int(0);
+    let compaction = crate::ops::dyn_ndarray::memory_ops::compact_by_mask(
+        b,
+        &flat_coordinates,
+        &keeps,
+        &zero,
+        rank,
+    );
+    let mut count = b.ir_constant_int(0);
+    let mut prefix = Vec::with_capacity(cells.len());
+    for keep in &keeps {
+        count = b.ir_add_i(&count, keep);
+        prefix.push(count.clone());
+    }
+    NonzeroCoordinates { packed: compaction.acc, count, keeps, prefix, coordinates }
+}
+
+impl NonzeroCoordinates {
+    /// Records that lane `axis` of `segment_id` holds the kept coordinates
+    /// along `axis` (`provenance::CompactionInfo`), for the bounding-box
+    /// fast paths of `min`/`max`. Only axis 0's coordinates are
+    /// non-decreasing in row-major order.
+    fn record(&self, b: &mut IRBuilder, segment_id: u32, lane: usize, axis: usize) {
+        let vids = |vs: &mut dyn Iterator<Item = &Value>| -> Option<Vec<crate::types::ValueId>> {
+            vs.map(|v| v.value_id()).collect()
+        };
+        let (Some(keep), Some(source), Some(prefix), Some(count)) = (
+            vids(&mut self.keeps.iter()),
+            vids(&mut self.coordinates.iter().map(|c| &c[axis])),
+            vids(&mut self.prefix.iter()),
+            self.count.value_id(),
+        ) else {
+            return;
+        };
+        b.provenance.set_compaction(
+            segment_id,
+            lane,
+            crate::provenance::CompactionInfo { keep, source, prefix, count, sorted: axis == 0 },
+        );
+    }
+}
+
 pub fn np_argwhere(b: &mut IRBuilder, args: &[Value]) -> Value {
     let input = args
         .first()
@@ -301,68 +376,14 @@ pub fn np_argwhere(b: &mut IRBuilder, args: &[Value]) -> Value {
 
     let row_bound = cells.len();
     let cell_bound = row_bound * rank;
-    let default_elements = vec![ScalarValue::new(Some(0), None); cell_bound];
-    let segment_id =
-        crate::helpers::segment::alloc_and_write(b, &default_elements, NumberType::Integer);
-
-    let mut true_count = b.ir_constant_int(0);
-    let one = b.ir_constant_int(1);
-    let zero = b.ir_constant_int(0);
     let rank_const = b.ir_constant_int(rank as i64);
-
-    // Deposit per-lane compaction provenance so downstream
-    // `min/max(axis=0)` reductions take the bucket-occupancy fast path
-    // (per-axis bounds from keep bits + coordinate constants) instead of
-    // materialising and re-scanning the segment. See `dyn_aggregate_axis`.
-    let mut keep_vids: Vec<crate::types::ValueId> = Vec::with_capacity(cells.len());
-    let mut source_vids: Vec<Vec<crate::types::ValueId>> =
-        vec![Vec::with_capacity(cells.len()); rank];
-    let mut prefix_vids: Vec<crate::types::ValueId> = Vec::with_capacity(cells.len());
-    for (flat_idx, cell) in cells.iter().enumerate() {
-        let keep = nonzero_indicator(b, cell);
-        let row_base = b.ir_mul_i(&true_count, &rank_const);
-        let coords = static_row_major_coords(flat_idx, &shape);
-        for (axis, coord) in coords.iter().enumerate() {
-            let axis_offset = b.ir_constant_int(axis as i64);
-            let out_addr = b.ir_add_i(&row_base, &axis_offset);
-            let coord_val = b.ir_constant_int(*coord as i64);
-            let write_val = b.ir_select_i(&keep, &coord_val, &zero);
-            b.ir_write_memory(segment_id, &out_addr, &write_val);
-            if let Some(vid) = coord_val.value_id() {
-                source_vids[axis].push(vid);
-            }
-        }
-        let inc = b.ir_select_i(&keep, &one, &zero);
-        true_count = b.ir_add_i(&true_count, &inc);
-        if let Some(vid) = keep.value_id() {
-            keep_vids.push(vid);
-        }
-        if let Some(vid) = true_count.value_id() {
-            prefix_vids.push(vid);
-        }
+    let found = nonzero_coordinates(b, &cells, &shape);
+    let segment_id =
+        crate::helpers::segment::alloc_and_write_values(b, &found.packed, NumberType::Integer);
+    for axis in 0..rank {
+        found.record(b, segment_id, axis, axis);
     }
-    if keep_vids.len() == cells.len() && prefix_vids.len() == cells.len() {
-        if let Some(count_vid) = true_count.value_id() {
-            for axis in 0..rank {
-                if source_vids[axis].len() == cells.len() {
-                    b.provenance.set_compaction(
-                        segment_id,
-                        axis,
-                        crate::provenance::CompactionInfo {
-                            keep: keep_vids.clone(),
-                            source: source_vids[axis].clone(),
-                            prefix: prefix_vids.clone(),
-                            count: count_vid,
-                            // Row-major enumeration: only axis 0's
-                            // coordinates are non-decreasing.
-                            sorted: axis == 0,
-                        },
-                    );
-                }
-            }
-        }
-    }
-
+    let true_count = found.count.clone();
     let runtime_rows = value_to_scalar_i64(&true_count);
     let runtime_rank_width = ScalarValue::new(Some(rank as i64), None);
     let runtime_len_val = b.ir_mul_i(&true_count, &rank_const);
@@ -405,76 +426,22 @@ pub fn np_nonzero(b: &mut IRBuilder, args: &[Value]) -> Value {
     }
 
     let row_bound = cells.len();
-    let default_elements = vec![ScalarValue::new(Some(0), None); row_bound];
+    let found = nonzero_coordinates(b, &cells, &shape);
     let mut segment_ids = Vec::with_capacity(rank);
     for axis in 0..rank {
-        let seg =
-            crate::helpers::segment::alloc_and_write(b, &default_elements, NumberType::Integer);
-        // Every cell written to this segment will hold `select(keep,
-        // coord_along_axis, 0)`, where `coord_along_axis ∈ [0, shape[axis])`.
+        let lane: Vec<Value> = found.packed.iter().skip(axis).step_by(rank).cloned().collect();
+        let seg = crate::helpers::segment::alloc_and_write_values(b, &lane, NumberType::Integer);
+        // Every cell of this segment is a coordinate along `axis` or 0.
         // Publish that as a segment-wide bound so downstream readers
         // (e.g. `flatnonzero().min() / .max()` for the bbox-crop family
         // 0507/0509/0510) discharge their slice bounds from facts instead
         // of emitting u128 bound asserts.
-        let axis_len = shape[axis] as i64;
-        b.segment_default_bounds.insert(seg, (0, axis_len - 1));
+        b.segment_default_bounds.insert(seg, (0, shape[axis] as i64 - 1));
+        found.record(b, seg, 0, axis);
         segment_ids.push(seg);
     }
-
-    let mut true_count = b.ir_constant_int(0);
-    let one = b.ir_constant_int(1);
-    let zero = b.ir_constant_int(0);
-
-    let mut keep_cells: Vec<Value> = Vec::with_capacity(cells.len());
-    let mut keep_vids: Vec<crate::types::ValueId> = Vec::with_capacity(cells.len());
-    let mut source_vids: Vec<Vec<crate::types::ValueId>> = vec![Vec::with_capacity(cells.len()); rank];
-    let mut prefix_vids: Vec<crate::types::ValueId> = Vec::with_capacity(cells.len());
-    for (flat_idx, cell) in cells.iter().enumerate() {
-        let keep = nonzero_indicator(b, cell);
-        keep_cells.push(keep.clone());
-        let coords = static_row_major_coords(flat_idx, &shape);
-        for (axis, coord) in coords.iter().enumerate() {
-            let coord_val = b.ir_constant_int(*coord as i64);
-            let write_val = b.ir_select_i(&keep, &coord_val, &zero);
-            b.ir_write_memory(segment_ids[axis], &true_count, &write_val);
-            if let Some(vid) = coord_val.value_id() {
-                source_vids[axis].push(vid);
-            }
-        }
-        let inc = b.ir_select_i(&keep, &one, &zero);
-        true_count = b.ir_add_i(&true_count, &inc);
-        if let Some(vid) = keep.value_id() {
-            keep_vids.push(vid);
-        }
-        if let Some(vid) = true_count.value_id() {
-            prefix_vids.push(vid);
-        }
-    }
-    // Compaction provenance: each per-axis output is the keep-filtered
-    // coordinate stream packed to the front. Only AXIS 0's coordinates
-    // are non-decreasing in row-major source order (later axes cycle),
-    // so only that lane is `sorted` (the first/last-set-bit scan
-    // consumer requires it; unsorted lanes use the bucket-occupancy
-    // consumer instead).
-    if keep_vids.len() == cells.len() && prefix_vids.len() == cells.len() {
-        if let Some(count_vid) = true_count.value_id() {
-            for (axis, seg) in segment_ids.iter().enumerate() {
-                if source_vids[axis].len() == cells.len() {
-                    b.provenance.set_compaction(
-                        *seg,
-                        0,
-                        crate::provenance::CompactionInfo {
-                            keep: keep_vids.clone(),
-                            source: source_vids[axis].clone(),
-                            prefix: prefix_vids.clone(),
-                            count: count_vid,
-                            sorted: axis == 0,
-                        },
-                    );
-                }
-            }
-        }
-    }
+    let true_count = found.count.clone();
+    let keep_cells = found.keeps.clone();
 
     let mut outputs = Vec::with_capacity(rank);
     for segment_id in segment_ids {
