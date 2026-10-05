@@ -92,10 +92,12 @@ def _nnz_witness_demo(x: NDArray[Integer, 4], k: int):
 def test_nnz_witness_emits_indicator_chain_and_assert():
     """A circuit with `@requires(lambda x, k: nnz(x) == k)` must, beyond
     the compile-time IR atom, emit a witness-time circuit that the
-    prover satisfies. For x of length 4: four indicator chains
-    (`NeI` + `IntCast`), four `AddI`s accumulating the count, a final
-    `EqI(count, k)`, and an `IR::Assert`. Without this chain a malicious
-    prover supplying mismatched (x, k) would not be caught.
+    prover satisfies. For x of length 4: four `NeI` indicators (booleans
+    reinterpreted as 0/1 integers, no `IntCast`, which is the float->int
+    conversion and maps 1 to 0), four `AddI`s accumulating the count, a
+    final `EqI(count, k)`, and an `IR::Assert`. Without this chain a
+    malicious prover supplying mismatched (x, k) would not be caught;
+    `test_assumed_facts_enforced.py` proves honest and dishonest witnesses.
     """
     stmts = _dump_ir(_nnz_witness_demo)
     classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
@@ -103,12 +105,11 @@ def test_nnz_witness_emits_indicator_chain_and_assert():
     assert "StructuralPredicateIR" in classes
     # The witness chain produces:
     #   - one `NotEqualIIR` per element (4)
-    #   - one `IntCastIR` per element (4)
     #   - one `AddIIR` per element (4)
     #   - one `EqualIIR` for the final comparison
     #   - one `AssertIR` (the enforcement)
     assert classes.count("NotEqualIIR") >= 4
-    assert classes.count("IntCastIR") >= 4
+    assert classes.count("IntCastIR") == 0
     # 4 elements produce 4 AddI calls, but constant-folding collapses
     # `AddI(0, indicator)` into the indicator itself, leaving 3 AddI in
     # the dump. Accept ≥ 3 to remain robust to the folding pass.

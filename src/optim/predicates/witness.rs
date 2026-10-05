@@ -565,21 +565,18 @@ fn element_predicate_arguments<'a, const N: usize>(
         .map_err(|_| format!("expected {N} arguments, got {}", args.len()))
 }
 
-/// Flatten an array-like Value to its element Values.
+/// The elements of an array-like Value, flattened in row-major order (a
+/// multi-dimensional array contributes every cell; the old version kept
+/// only the rows and skipped them, leaving the predicate unchecked).
 fn collect_elements(b: &mut IRBuilder, val: &Value) -> Result<Vec<Value>, String> {
-    let list = match val {
-        Value::StaticArray { .. } => crate::helpers::static_array::base::to_value_list(b, val),
-        _ => val.clone(),
-    };
-    match list {
-        Value::List(data) | Value::Tuple(data) => {
-            if !data.values.iter().all(Value::is_number) {
-                return Err("only flat arrays of Integer, Float or Boolean are supported".to_string());
-            }
-            Ok(data.values)
-        }
-        _ => Err("the argument must be a static array or list".to_string()),
+    if !matches!(val, Value::StaticArray { .. } | Value::List(_) | Value::Tuple(_)) {
+        return Err("the argument must be a static array or list".to_string());
     }
+    let cells = crate::helpers::composite::flatten_composite_with_builder(b, val);
+    if !cells.iter().all(Value::is_number) {
+        return Err("only arrays of Integer, Float or Boolean are supported".to_string());
+    }
+    Ok(cells)
 }
 
 /// `lhs <= rhs` for two elements of the same numeric type.

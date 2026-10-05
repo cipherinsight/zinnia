@@ -24,7 +24,7 @@ import pytest
 
 from zinnia import NDArray, Float, Integer, ZinniaException, requires, zk_circuit
 from zinnia.api.zk_circuit import ZKCircuit
-from zinnia.spec.predicates import cycle_count, fixed_point_count, max_run, nnz
+from zinnia.spec.predicates import cycle_count, fixed_point_count, forall, in_range, max_run, nnz
 
 
 def prove(fn, *args):
@@ -125,7 +125,17 @@ def float_max_run(x: NDArray[Float, 2], k: int):
     return k
 
 
+@zk_circuit
+@requires(lambda b: forall(b, in_range(0, 1)))
+def forall_2d(b: NDArray[Integer, 2, 2]):
+    return b.sum()
+
+
 @pytest.mark.parametrize("fn, args, honest", [
+    # A multi-dimensional argument used to be checked row by row, and the
+    # rows (not numbers) were skipped: nothing was enforced.
+    (forall_2d, (np.array([[0, 1], [1, 0]]),), True),
+    (forall_2d, (np.array([[0, 1], [2, 0]]),), False),
     (nnz_eq, (np.array([1, 0, 2, 3]), 3), True),
     (nnz_eq, (np.array([1, 0, 2, 3]), 0), False),
     (nnz_eq, (np.array([0, 0, 0, 0]), 0), True),

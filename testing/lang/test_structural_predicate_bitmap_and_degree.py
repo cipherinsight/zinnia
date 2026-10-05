@@ -45,14 +45,14 @@ def test_popcount_atom_emitted_with_correct_payload():
 
 
 def test_popcount_witness_reuses_nnz_indicator_chain():
-    """popcount uses emit_nnz directly: 4 NeI per element + 4 IntCast +
-    ≥3 AddI + 1 EqI + 1 Assert. Same shape as the nnz card's witness
-    chain.
+    """popcount uses emit_nnz directly: the boolean elements are summed
+    as 0/1 integers (≥3 AddI) and compared with the bound (1 Assert).
+    No `IntCast` (the float->int conversion, which maps the boolean 1 to
+    0 and made the count always 0) appears in the chain.
     """
     stmts = _dump_ir(_popcount_input)
     classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
-    assert classes.count("NotEqualIIR") >= 4
-    assert classes.count("IntCastIR") >= 4
+    assert classes.count("IntCastIR") == 0
     assert classes.count("AddIIR") >= 3
     assert classes.count("AssertIR") >= 1
 

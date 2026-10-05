@@ -100,7 +100,7 @@ def test_max_run_witness_emits_per_pair_difference_and_assert():
     assert classes.count("AssertIR") >= 4
 
 
-# ── max_run with unsupported op falls back gracefully ────────────────────
+# ── max_run with an unsupported op is rejected ───────────────────────────
 
 
 @zk_circuit
@@ -109,21 +109,12 @@ def _max_run_eq_unsupported(row_ptr: NDArray[Integer, 4], K: int):
     pass
 
 
-def test_max_run_with_eq_does_not_emit_witness_chain():
-    """`max_run(arr) == K` is not yet supported by the witness emitter
-    (computing the actual max gap is harder than the `<=` per-pair check).
-    The compile succeeds — the IR atom is still emitted — but no
-    witness-time enforcement is produced. Documented as a soundness
-    gap in the card status.
-    """
-    stmts = _dump_ir(_max_run_eq_unsupported)
-    sps = _structural_predicates(stmts)
-    assert len(sps) == 1
-    assert sps[0]["op"] == "=="
-    # No SubI/LteI emitted because the emitter short-circuits.
-    classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
-    assert classes.count("SubIIR") == 0
-    assert classes.count("AssertIR") == 0
+def test_max_run_with_eq_is_rejected():
+    """`max_run(arr) == K` has no witness emitter (only the `<=` per-pair
+    check exists). It used to compile with the atom as an unenforced fact
+    the optimizer relied on; it is now a compile error."""
+    with pytest.raises(ZinniaException, match="cannot be enforced"):
+        _dump_ir(_max_run_eq_unsupported)
 
 
 # ── Compatibility: no preconditions ─────────────────────────────────────

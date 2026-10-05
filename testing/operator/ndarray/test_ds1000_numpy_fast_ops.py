@@ -2,6 +2,7 @@ import pytest
 
 from zinnia import *
 from zinnia.debug.exception import ZinniaException
+from zinnia.spec.predicates import forall, in_range
 
 
 def test_deg2rad_and_degrees_scalar():
@@ -96,8 +97,11 @@ def foo(y: Integer[Array, "5"]):
 
 
 def test_take_along_axis_static_runtime_indices():
+    # The elementwise bound is written with `forall`: a scalar comparison
+    # chain on an array (`0 <= b <= 1`) has no in-circuit lowering and is
+    # rejected rather than assumed without a check.
     @zk_circuit
-    @requires(lambda b: 0 <= b <= 1)
+    @requires(lambda b: forall(b, in_range(0, 1)))
     def foo(a: Float[Array, "2 2 2"], b: Integer[Array, "2 2"]):
         result = np.take_along_axis(a, b[..., np.newaxis], axis=-1)[..., 0]
         return result
