@@ -41,7 +41,8 @@ def _signed_field_decimal(value: int) -> str:
 
 def _leaf_decimal(node: dict) -> str:
     if "Int" in node:
-        return str(node["Int"])
+        # nargo reads field elements: a negative integer is written as p - |v|.
+        return _signed_field_decimal(int(node["Int"]))
     if "Float" in node:
         return _signed_field_decimal(float_to_q32(node["Float"]))
     if "Bool" in node:
