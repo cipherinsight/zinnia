@@ -5,8 +5,10 @@
 //! (`eval-redo/layer/layer-memory-data/scale.py`, 169 reads at distinct
 //! indices over lines of 2..16 cells): a halo2-base select of two variable
 //! branches in the multiplexer costs 8 cells, the bound and `w` index bits
-//! `4 + 7w`, a `select_bit` 12; on Noir 2 gates per select, the bits
-//! `4 + 2w`, a `select_bit` 3. The Noir native array's costs are the gather
+//! `4 + 7w` (`7w` when `n` is a power of two), a `select_bit` 12; on Noir 2
+//! gates per select, the bits `4 + 2w` (`2w`), a `select_bit` 3. halo2-base
+//! costs move with `k` (a range check's lookup cells depend on the lookup
+//! width `k - 1`); the formulas fit `k = 7..9`. The Noir native array's costs are the gather
 //! family's (`gather::cost::units`).
 
 use crate::lower::gather::cost::units;
@@ -33,13 +35,16 @@ pub fn index_bits_read(n: u64, target: Target) -> u64 {
 }
 
 /// The bound `i < n` and `i`'s `w = ceil(log2 n)` bits
-/// (`IR::AssertU128LtBit`) of one index below `n >= 3`.
+/// (`IR::AssertU128LtBit`) of one index below `n >= 3`. For `n = 2^w` the
+/// `w` bits are the bound; otherwise both backends add the check
+/// `n - 1 - i < 2^w` (`base`).
 pub fn index_bits(n: u64, target: Target) -> u64 {
     let (base, per_bit) = match target {
         Target::Halo2Base => (4, 7),
         Target::Noir => (4, 2),
     };
-    base + per_bit * width(n)
+    let bound = if n.is_power_of_two() { 0 } else { base };
+    bound + per_bit * width(n)
 }
 
 /// A table group's fixed cost on halo2-base in cell equivalents: its value
@@ -104,10 +109,14 @@ pub fn wrap_by_pinned_sign(hits: u64, target: Target) -> u64 {
 
 /// NumPy's wrap by the pinned position one-hot (`wrap.rs`,
 /// `scatter::position`): per position a hinted bit, its bit check, a
-/// running sum and a multiply-add; the relation once.
+/// running sum and a multiply-add; the relation once. Measured against the
+/// pinned sign (`layer-memory-data/wrapcal.py`: 16 and 48 reads of a line
+/// of n = 2..32 cells, each at its own index, read by the multiplexer or a
+/// table under either wrap): about `10n - 8` cells and `1.75n + 1` gates
+/// more than the pinned sign's 14 cells and 3 gates.
 pub fn wrap_by_position_hits(n: u64, target: Target) -> u64 {
     match target {
-        Target::Halo2Base => 8 * n + 10,
-        Target::Noir => n + 5,
+        Target::Halo2Base => 10 * n + 6,
+        Target::Noir => (7 * n + 16).div_ceil(4),
     }
 }
