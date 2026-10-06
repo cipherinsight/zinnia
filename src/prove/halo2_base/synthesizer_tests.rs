@@ -1042,3 +1042,30 @@ fn branch_attack_on_arcsin() {
     let new = unary(|s, a| s.arcsin_f(a));
     assert_eq!(synthesize(&*new, &[q(0.5)], &[]).outputs, vec![y]);
 }
+
+// ── Prover hints (IR::Hint) ─────────────────────────────────────────────
+
+/// `prover_hint` loads the kernel's lane as a hint cell and constrains
+/// nothing: a changed lane is accepted. That is the contract of `IR::Hint`
+/// (the IR that uses a hint pins it); the pinned uses are tested on whole
+/// lowered graphs in `optim::sort_lowering`.
+#[test]
+fn prover_hints_are_kernel_lanes_and_constrain_nothing() {
+    use crate::ir_defs::HintKind;
+    let values = [int(30), int(10), int(20), int(10), int(-40)];
+    let op: Box<Op> = Box::new(|s, c| {
+        let rank = s.constant_int(2)?;
+        let argsort = s.prover_hint(HintKind::StableArgsort, &c[..5], &rank)?;
+        let sorted = s.prover_hint(HintKind::SortedValues, &c[..5], &c[5])?;
+        Ok(vec![argsort, sorted])
+    });
+    let mut inputs = values.to_vec();
+    inputs.push(int(4)); // a runtime rank
+    let honest = synthesize(&*op, &inputs, &[]);
+    assert!(honest.accepted);
+    assert_eq!(honest.outputs, vec![int(3), int(30)]);
+    assert_eq!(honest.hints, 2);
+    let tampered = synthesize(&*op, &inputs, &[(0, Fp::one())]);
+    assert!(tampered.accepted, "an unpinned hint is a free cell");
+    assert_eq!(tampered.outputs, vec![int(4), int(30)]);
+}

@@ -897,3 +897,41 @@ fn every_lowered_op_matches_the_mock() {
     // +-1.0; Noir returns +-1.0 as NumPy) and PowFI with a negative base
     // (the mock evaluates exp(n * log(base)), NaN for base < 0).
 }
+
+// ── Prover hints ──────────────────────────────────────────────────────────
+
+/// `IR::Hint` lanes from `noir_fpc`'s unconstrained sort equal the mock's
+/// (`kernel::hint_lane`): constant ranks index one hint array, a runtime
+/// rank uses the `_at` form, and ties keep their original order.
+#[test]
+fn hint_lanes_match_the_mock() {
+    use crate::ir_defs::HintKind;
+    if !toolchain_present(false) {
+        return;
+    }
+    let values = [("a0", 30), ("a1", -10), ("a2", 20), ("a3", -10), ("a4", 0)];
+    let mut g = Graph::default();
+    let cells: Vec<u32> = values.iter().map(|(name, _)| g.read_int(name)).collect();
+    let rank = g.read_int("r");
+    for kind in [HintKind::StableArgsort, HintKind::SortedValues] {
+        for constant_rank in [0, 1, 4, 5] {
+            let mut operands = cells.clone();
+            operands.push(g.int(constant_rank));
+            let lane = g.push(IR::Hint { kind, len: 5 }, &operands);
+            g.expose(lane);
+        }
+        let mut operands = cells.clone();
+        operands.push(rank);
+        let lane = g.push(IR::Hint { kind, len: 5 }, &operands);
+        g.expose(lane);
+    }
+    let graph = g.finish();
+    for runtime_rank in [2, 7, -1] {
+        let mut inputs = values.to_vec();
+        inputs.push(("r", runtime_rank));
+        let w = witness(&inputs);
+        let (ok, mock) = mock_outputs(&graph, &w);
+        assert!(ok);
+        assert_eq!(execute(&graph, &w).expect("nargo execute"), mock, "rank {runtime_rank}");
+    }
+}

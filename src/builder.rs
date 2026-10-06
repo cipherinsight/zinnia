@@ -3138,7 +3138,82 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
         // ── Hash ──────────────────────────────────────────────────
         IR::PoseidonHash => Value::Integer(ScalarValue::new(None, Some(ir_id))),
         IR::EqHash => Value::Boolean(ScalarValue::new(None, Some(ir_id))),
+
+        // ── Prover hints and sort placeholders ────────────────────
+        // A hint is never folded: its value is the prover's to choose and
+        // only its pins (separate statements) relate it to its operands.
+        IR::Hint { kind, len } => match kind {
+            crate::ir_defs::HintKind::StableArgsort => {
+                Value::Integer(ScalarValue::new(None, Some(ir_id)))
+            }
+            crate::ir_defs::HintKind::SortedValues => {
+                unknown_like_elements(&args[..*len as usize], ir_id)
+            }
+        },
+        IR::Sorted { len, rank, index } => {
+            let elements = &args[..*len as usize];
+            let rank = rank.map(i64::from).or_else(|| args[*len as usize].int_val());
+            match fold_sorted(elements, rank, *index) {
+                Some(SortedConstant::Int(v)) => Value::Integer(ScalarValue::known(v, ir_id)),
+                Some(SortedConstant::Float(v)) => Value::Float(ScalarValue::known(v, ir_id)),
+                None if *index => Value::Integer(ScalarValue::new(None, Some(ir_id))),
+                None => unknown_like_elements(elements, ir_id),
+            }
+        }
     }
+}
+
+/// An unknown value of the type sorted `elements` have: Float when any is
+/// a float, otherwise Integer.
+fn unknown_like_elements(elements: &[Value], ir_id: StmtId) -> Value {
+    if elements.iter().any(|v| matches!(v, Value::Float(_))) {
+        Value::Float(ScalarValue::new(None, Some(ir_id)))
+    } else {
+        Value::Integer(ScalarValue::new(None, Some(ir_id)))
+    }
+}
+
+enum SortedConstant {
+    Int(i64),
+    Float(f64),
+}
+
+/// `IR::Sorted` of compile-time constants: output `rank` of NumPy's stable
+/// sort (the value, or with `index` its original position). `None` unless
+/// every element and the rank are known and the rank is in range.
+fn fold_sorted(elements: &[Value], rank: Option<i64>, index: bool) -> Option<SortedConstant> {
+    let rank = usize::try_from(rank?).ok().filter(|&r| r < elements.len())?;
+    let as_int = |v: &Value| v.int_val().or_else(|| v.bool_val().map(i64::from));
+    if elements.iter().any(|v| matches!(v, Value::Float(_))) {
+        let keys: Vec<f64> = elements
+            .iter()
+            .map(|v| v.float_val().or_else(|| as_int(v).map(|i| i as f64)))
+            .collect::<Option<_>>()?;
+        if keys.iter().any(|k| k.is_nan()) {
+            return None;
+        }
+        let position = stable_sort_position(&keys, rank, |a, b| a.partial_cmp(b).expect("no NaN"));
+        Some(if index {
+            SortedConstant::Int(position as i64)
+        } else {
+            SortedConstant::Float(keys[position])
+        })
+    } else {
+        let keys: Vec<i64> = elements.iter().map(as_int).collect::<Option<_>>()?;
+        let position = stable_sort_position(&keys, rank, i64::cmp);
+        Some(SortedConstant::Int(if index { position as i64 } else { keys[position] }))
+    }
+}
+
+/// The original position of the element of rank `rank` in a stable sort.
+fn stable_sort_position<T>(
+    keys: &[T],
+    rank: usize,
+    cmp: impl Fn(&T, &T) -> std::cmp::Ordering,
+) -> usize {
+    let mut order: Vec<usize> = (0..keys.len()).collect();
+    order.sort_by(|&i, &j| cmp(&keys[i], &keys[j]));
+    order[rank]
 }
 
 fn min_required_arity(ir: &IR) -> usize {
@@ -3245,6 +3320,8 @@ fn min_required_arity(ir: &IR) -> usize {
         IR::SumF { len } => *len as usize,
         IR::ProductSumF { len } => (*len as usize).saturating_mul(2),
         IR::IndexInBox { rank } => rank.saturating_mul(3),
+        IR::Hint { len, .. } => *len as usize + 1,
+        IR::Sorted { len, rank, .. } => *len as usize + usize::from(rank.is_none()),
     }
 }
 

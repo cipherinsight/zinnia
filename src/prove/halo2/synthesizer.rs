@@ -3324,6 +3324,18 @@ impl Synthesizer for Halo2Synthesizer {
     ) -> Result<Halo2CellRef, ProvingError> {
         self.eq_i(a, b)
     }
+
+    /// A free advice cell holding the hint's lane (`kernel::hint_lane`);
+    /// the IR pins it.
+    fn prover_hint(
+        &mut self,
+        kind: crate::ir_defs::HintKind,
+        operands: &[Halo2CellRef],
+        rank: &Halo2CellRef,
+    ) -> Result<Halo2CellRef, ProvingError> {
+        let values: Vec<Fp> = operands.iter().map(|c| c.value).collect();
+        Ok(self.witness_cell(kernel::hint_lane(kind, &values, rank.value), "hint"))
+    }
 }
 
 /// Test-only advice perturbation for the legacy tamper tests: while a

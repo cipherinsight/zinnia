@@ -313,6 +313,24 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
             // ── Hash ──────────────────────────────────────────────────
             IR::PoseidonHash => Some(synth.poseidon_hash(&args)?),
             IR::EqHash => Some(synth.eq_hash(&args[0], &args[1])?),
+
+            // ── Prover hints ──────────────────────────────────────────
+            IR::Hint { kind, len } => {
+                let len = *len as usize;
+                if args.len() != len + 1 {
+                    return Err(ProvingError::synthesis(format!(
+                        "Hint expected {} operands and a rank, got {} arguments",
+                        len,
+                        args.len()
+                    )));
+                }
+                Some(synth.prover_hint(*kind, &args[..len], &args[len])?)
+            }
+            IR::Sorted { .. } => {
+                return Err(ProvingError::synthesis(
+                    "a Sorted placeholder reached the prover; optim::sort_lowering must lower it",
+                ));
+            }
         };
 
         if id < cells.len() {

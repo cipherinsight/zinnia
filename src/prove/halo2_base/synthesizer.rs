@@ -1059,6 +1059,14 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         Ok(state[0])
     }
     fn eq_hash(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.eq_i(a, b) }
+
+    /// A free cell holding the hint's lane (`kernel::hint_lane` of the
+    /// operands' values; placeholder values at key generation). Loaded by
+    /// [`Self::hint`], so the tamper tests reach it; the IR pins it.
+    fn prover_hint(&mut self, kind: crate::ir_defs::HintKind, operands: &[Self::CellRef], rank: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        let values: Vec<Fp> = operands.iter().map(|c| c.value).collect();
+        Ok(self.hint(kernel::hint_lane(kind, &values, rank.value)))
+    }
 }
 
 /// Test-only hint perturbation: the tamper tests replay a synthesis with

@@ -916,6 +916,115 @@ pub fn qtanh(x: Field) -> Field {
 }
 
 // ---------------------------------------------------------------------------
+// Sorting hints (Zinnia's IR::Hint)
+// ---------------------------------------------------------------------------
+//
+// These return prover-chosen values and constrain NOTHING. Zinnia's IR pins
+// every lane it uses (strictly increasing (value, index) keys read through an
+// argsort, or counts against an order statistic; see the Rust compiler's
+// `optim::sort_lowering`), so a circuit accepts only the lanes computed here.
+// They reproduce `kernel::hint_lane` exactly: the same order (`signed_lt`),
+// a stable sort, and lane 0 for a rank outside [0, N).
+
+// a < b in the signed reading of each (the integer of smallest magnitude a
+// field element represents): kernel::signed_cmp. A total order, equal to the
+// integer order on the signed 64-bit window.
+unconstrained fn signed_lt(a: Field, b: Field) -> bool {
+    let a_negative = hint_is_negative(a);
+    let b_negative = hint_is_negative(b);
+    if a_negative != b_negative {
+        a_negative
+    } else {
+        a.lt(b)
+    }
+}
+
+// The stable ascending argsort of `a` under `signed_lt` (bottom-up merge
+// sort; on equal values the left run goes first).
+unconstrained fn stable_argsort<let N: u32>(a: [Field; N]) -> [u32; N] {
+    let mut order: [u32; N] = [0; N];
+    for i in 0..N {
+        order[i] = i;
+    }
+    let mut merged: [u32; N] = [0; N];
+    let mut width: u32 = 1;
+    while width < N {
+        let mut lo: u32 = 0;
+        while lo < N {
+            let mid = if lo + width < N { lo + width } else { N };
+            let hi = if lo + 2 * width < N { lo + 2 * width } else { N };
+            let mut i = lo;
+            let mut j = mid;
+            for k in lo..hi {
+                let take_left = if i >= mid {
+                    false
+                } else if j >= hi {
+                    true
+                } else {
+                    !signed_lt(a[order[j]], a[order[i]])
+                };
+                if take_left {
+                    merged[k] = order[i];
+                    i += 1;
+                } else {
+                    merged[k] = order[j];
+                    j += 1;
+                }
+            }
+            lo = hi;
+        }
+        order = merged;
+        width *= 2;
+    }
+    order
+}
+
+unconstrained fn hint_argsort<let N: u32>(a: [Field; N]) -> [Field; N] {
+    stable_argsort(a).map(|i: u32| i as Field)
+}
+
+unconstrained fn hint_sorted<let N: u32>(a: [Field; N]) -> [Field; N] {
+    stable_argsort(a).map(|i: u32| a[i])
+}
+
+// Lane `rank` of `lanes`, 0 for a rank outside [0, N).
+unconstrained fn lane_or_zero<let N: u32>(lanes: [Field; N], rank: Field) -> Field {
+    if rank.lt(N as Field) {
+        lanes[rank as u32]
+    } else {
+        0
+    }
+}
+
+/// The stable ascending argsort of `a` (kernel::hint_values, StableArgsort).
+/// A prover hint: the caller must pin every lane it uses.
+pub fn argsort_hint<let N: u32>(a: [Field; N]) -> [Field; N] {
+    // Safety: a prover hint; Zinnia's IR pins every lane it reads.
+    unsafe { hint_argsort(a) }
+}
+
+/// The ascending sorted values of `a` (kernel::hint_values, SortedValues).
+/// A prover hint: the caller must pin every lane it uses.
+pub fn sorted_hint<let N: u32>(a: [Field; N]) -> [Field; N] {
+    // Safety: a prover hint; Zinnia's IR pins every lane it reads.
+    unsafe { hint_sorted(a) }
+}
+
+/// Lane `rank` of `argsort_hint(a)`, 0 for a rank outside [0, N). A prover
+/// hint: the caller must pin it.
+pub fn argsort_hint_at<let N: u32>(a: [Field; N], rank: Field) -> Field {
+    // Safety: a prover hint; Zinnia's IR pins every lane it reads.
+    unsafe { lane_or_zero(hint_argsort(a), rank) }
+}
+
+/// Lane `rank` of `sorted_hint(a)`, 0 for a rank outside [0, N). A prover
+/// hint: the caller must pin it.
+pub fn sorted_hint_at<let N: u32>(a: [Field; N], rank: Field) -> Field {
+    // Safety: a prover hint; Zinnia's IR pins every lane it reads.
+    unsafe { lane_or_zero(hint_sorted(a), rank) }
+}
+
+// ---------------------------------------------------------------------------
 // Tests: honest values
 // ---------------------------------------------------------------------------
 
@@ -1525,4 +1634,35 @@ fn test_field_div_rejects_nonzero_inverse_of_zero() {
 #[test(should_fail)]
 fn test_field_div_rejects_wrong_inverse() {
     constrain_inverse_or_zero(3, 2);
+}
+
+// ---------------------------------------------------------------------------
+// Tests: sorting hints (same lanes as kernel::hint_lane)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_argsort_hint_is_stable_and_signed() {
+    // -1 < 0 < 2 = 2 < 5; the two 2s keep their original order (2, 4).
+    let a: [Field; 6] = [5, -1, 2, 0, 2, 0 - 7];
+    assert(argsort_hint(a) == [5, 1, 3, 2, 4, 0]);
+    assert(sorted_hint(a) == [-7, -1, 0, 2, 2, 5]);
+}
+
+#[test]
+fn test_hint_lanes_at_runtime_rank() {
+    let a: [Field; 5] = [30, 10, 20, 10, -40];
+    assert(argsort_hint_at(a, 0) == 4);
+    assert(argsort_hint_at(a, 2) == 3);
+    assert(sorted_hint_at(a, 4) == 30);
+    // Out of range: lane 0 by definition (the IR's pins reject it).
+    assert(sorted_hint_at(a, 5) == 0);
+    assert(argsort_hint_at(a, -1) == 0);
+}
+
+#[test]
+fn test_argsort_hint_odd_lengths() {
+    let a: [Field; 7] = [3, 3, 1, 3, 0, 1, 3];
+    assert(argsort_hint(a) == [4, 2, 5, 0, 1, 3, 6]);
+    let one: [Field; 1] = [9];
+    assert(argsort_hint(one) == [0]);
 }

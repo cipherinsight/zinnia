@@ -667,6 +667,64 @@ pub fn fp_arccos(x: Fp, precision_bits: u32) -> Fp {
     quantize_to_fp(v.acos(), precision_bits)
 }
 
+// ---------------------------------------------------------------------------
+// Prover hints (IR::Hint)
+// ---------------------------------------------------------------------------
+
+/// The total order of every sort hint: the signed reading of a field
+/// element (the integer of smallest magnitude it represents, the reading of
+/// [`fp_is_negative`]). On the signed 64-bit window, where Zinnia's int64
+/// values and Q32 floats live, it is their integer order, the order the
+/// circuits' comparisons decide. `noir_fpc::signed_lt` implements the same
+/// order for the Noir backend's hints.
+pub fn signed_cmp(a: Fp, b: Fp) -> std::cmp::Ordering {
+    let (a_negative, b_negative) = (fp_is_negative(a), fp_is_negative(b));
+    if a_negative != b_negative {
+        // The negative one is smaller.
+        return b_negative.cmp(&a_negative);
+    }
+    // Same sign: the readings `v` and `v - p` keep the order of the field
+    // representatives, compared as integers from the most significant byte.
+    let (a_repr, b_repr) = (a.to_repr(), b.to_repr());
+    a_repr.as_ref().iter().rev().cmp(b_repr.as_ref().iter().rev())
+}
+
+/// The stable ascending argsort of `values` under [`signed_cmp`]: entry `r`
+/// is the original position of the element of rank `r`, equal elements in
+/// their original order (NumPy's `kind="stable"`).
+pub fn stable_argsort(values: &[Fp]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..values.len()).collect();
+    // `sort_by` is a stable sort.
+    order.sort_by(|&i, &j| signed_cmp(values[i], values[j]));
+    order
+}
+
+/// Every lane of the hint `kind` applied to `values` (see
+/// [`crate::ir_defs::HintKind`]).
+pub fn hint_values(kind: crate::ir_defs::HintKind, values: &[Fp]) -> Vec<Fp> {
+    let order = stable_argsort(values);
+    match kind {
+        crate::ir_defs::HintKind::StableArgsort => {
+            order.into_iter().map(|i| Fp::from(i as u64)).collect()
+        }
+        crate::ir_defs::HintKind::SortedValues => order.into_iter().map(|i| values[i]).collect(),
+    }
+}
+
+/// Lane `rank` of the hint `kind` applied to `values`, the value of an
+/// `IR::Hint` statement on every backend; 0 for a rank outside
+/// `[0, values.len())`. The circuits never trust it: each use of a hint
+/// pins it with constraints that admit only this value.
+pub fn hint_lane(kind: crate::ir_defs::HintKind, values: &[Fp], rank: Fp) -> Fp {
+    let rank = fp_to_i128(rank)
+        .and_then(|r| usize::try_from(r).ok())
+        .filter(|&r| r < values.len());
+    match rank {
+        Some(r) => hint_values(kind, values)[r],
+        None => Fp::zero(),
+    }
+}
+
 /// Simplified Poseidon permutation (4 rounds, t=3).
 /// Returns the first state element as the hash output.
 pub fn fp_poseidon(inputs: &[Fp]) -> Fp {
@@ -1060,5 +1118,42 @@ mod tests {
         let bq = Fp::zero();
         let result = fp_div_prescale(aq, bq, precision_bits);
         assert_eq!(result, Fp::zero());
+    }
+
+    fn ints(values: &[i64]) -> Vec<Fp> {
+        values.iter().map(|&v| i64_to_fp(v)).collect()
+    }
+
+    #[test]
+    fn signed_cmp_is_the_integer_order_on_the_window() {
+        let samples = [i64::MIN, -(1 << 40), -2, -1, 0, 1, 2, 1 << 40, i64::MAX];
+        for &a in &samples {
+            for &b in &samples {
+                assert_eq!(signed_cmp(i64_to_fp(a), i64_to_fp(b)), a.cmp(&b), "{a} vs {b}");
+            }
+        }
+        // Total beyond the window too: p - 1 (= -1) is below 2^200.
+        let big = Fp::from(2u64).pow_vartime([200u64]);
+        assert_eq!(signed_cmp(-Fp::one(), big), std::cmp::Ordering::Less);
+        assert_eq!(signed_cmp(-big, -Fp::one()), std::cmp::Ordering::Less);
+    }
+
+    #[test]
+    fn stable_argsort_keeps_equal_values_in_original_order() {
+        let values = ints(&[5, -1, 2, 0, 2, -7]);
+        assert_eq!(stable_argsort(&values), vec![5, 1, 3, 2, 4, 0]);
+        let values = ints(&[3, 3, 1, 3, 0, 1, 3]);
+        assert_eq!(stable_argsort(&values), vec![4, 2, 5, 0, 1, 3, 6]);
+    }
+
+    #[test]
+    fn hint_lanes_follow_the_argsort_and_out_of_range_ranks_give_zero() {
+        use crate::ir_defs::HintKind;
+        let values = ints(&[30, 10, 20, 10, -40]);
+        let lane = |kind, rank: i64| fp_to_i64(hint_lane(kind, &values, i64_to_fp(rank)));
+        assert_eq!((0..5).map(|r| lane(HintKind::StableArgsort, r)).collect::<Vec<_>>(), vec![4, 1, 3, 2, 0]);
+        assert_eq!((0..5).map(|r| lane(HintKind::SortedValues, r)).collect::<Vec<_>>(), vec![-40, 10, 10, 20, 30]);
+        assert_eq!(lane(HintKind::SortedValues, 5), 0);
+        assert_eq!(lane(HintKind::StableArgsort, -1), 0);
     }
 }

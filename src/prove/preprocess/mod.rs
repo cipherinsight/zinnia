@@ -406,6 +406,22 @@ impl<'a> Preprocessor<'a> {
                 Fp::zero()
             })),
 
+            // Prover hints (the same function as every backend)
+            IR::Hint { kind, len } => {
+                let len = *len as usize;
+                if args.len() != len + 1 {
+                    return Err(ProvingError::synthesis(format!(
+                        "Hint expected {} operands and a rank, got {} arguments",
+                        len,
+                        args.len()
+                    )));
+                }
+                Ok(Some(kernel::hint_lane(*kind, &args[..len], args[len])))
+            }
+            IR::Sorted { .. } => Err(ProvingError::synthesis(
+                "a Sorted placeholder reached preprocessing; optim::sort_lowering must lower it",
+            )),
+
             // Select
             IR::SelectI | IR::SelectF | IR::SelectB | IR::SelectBitI | IR::SelectBitF => Ok(Some(if args[0] != Fp::zero() {
                 args[1]

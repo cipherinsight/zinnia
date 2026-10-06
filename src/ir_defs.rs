@@ -323,6 +323,70 @@ pub enum IR {
     // ── Hash ──────────────────────────────────────────────────────────
     PoseidonHash,
     EqHash,
+
+    // ── Prover hints and their compile-time placeholders ─────────────
+    /// A value the prover supplies: lane `rank` of `kind` applied to the
+    /// `len` leading operands, where `rank` is the last operand (`len + 1`
+    /// operands in all). Every backend computes it with
+    /// [`crate::prove::kernel::hint_lane`] (the Noir backend with the same
+    /// algorithm in `noir_fpc`), and a rank outside `[0, len)` gives 0.
+    ///
+    /// A hint constrains nothing: the circuit accepts ANY value in its
+    /// place. Every producer must therefore follow it with IR constraints
+    /// under which the honest lane is the only admissible value, and state
+    /// that argument next to the code (see `optim::sort_lowering`). Not
+    /// fixed: a hint nothing reads is dead, and its pins read it.
+    Hint {
+        kind: HintKind,
+        len: u32,
+    },
+    /// One output of NumPy's stable ascending sort of the `len` leading
+    /// operands: the value of rank `r`, or with `index` the original
+    /// position of that element (the stable argsort, ties in original
+    /// order). `rank` is `r`, or `None` when `r` is a runtime value, then
+    /// the last operand; a runtime `r` outside `[0, len)` has no proof.
+    ///
+    /// A compile-time placeholder only: `optim::sort_lowering` replaces
+    /// every one with a sorting network, pinned hints or counts, chosen by
+    /// a cost rule over the outputs of the same sort that are still live
+    /// after dead-code elimination. No backend accepts it.
+    Sorted {
+        len: u32,
+        rank: Option<u32>,
+        index: bool,
+    },
+}
+
+/// The deterministic function an [`IR::Hint`] takes a lane of. Both order
+/// the operands by their signed reading (the integer of smallest magnitude
+/// a field element represents; on the signed 64-bit window where Zinnia's
+/// integers and Q32 floats live, the integer order of the values), see
+/// [`crate::prove::kernel::signed_cmp`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum HintKind {
+    /// The stable ascending argsort: lane `r` is the original position of
+    /// the element of rank `r`, equal elements in their original order
+    /// (NumPy's `kind="stable"`).
+    StableArgsort,
+    /// The ascending sorted values: lane `r` is the value of rank `r`.
+    SortedValues,
+}
+
+impl HintKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            HintKind::StableArgsort => "stable_argsort",
+            HintKind::SortedValues => "sorted_values",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<HintKind> {
+        match name {
+            "stable_argsort" => Some(HintKind::StableArgsort),
+            "sorted_values" => Some(HintKind::SortedValues),
+            _ => None,
+        }
+    }
 }
 
 /// Key type for ExportExternal IRs — can be either an integer or a string.
@@ -573,6 +637,15 @@ impl IR {
             IR::PoseidonHash => "poseidon_hash".to_string(),
             IR::EqHash => "eq_hash".to_string(),
             // (StructuralPredicate handled in the Assert/expose block above)
+
+            // Prover hints and their placeholders
+            IR::Hint { kind, len } => format!("hint[{}][{}]", kind.name(), len),
+            IR::Sorted { len, rank, index } => format!(
+                "sorted[{}][{}][{}]",
+                len,
+                rank.map_or("runtime".to_string(), |r| r.to_string()),
+                if *index { "index" } else { "value" }
+            ),
         }
     }
 
@@ -730,6 +803,8 @@ impl IR {
             IR::ExportExternalF { .. } => "ExportExternalFIR",
             IR::PoseidonHash => "PoseidonHashIR",
             IR::EqHash => "EqualHashIR",
+            IR::Hint { .. } => "HintIR",
+            IR::Sorted { .. } => "SortedIR",
         }
     }
 
@@ -896,6 +971,11 @@ impl IR {
             IR::ScalarPrecondition { term_json } => serde_json::json!({
                 "term_json": term_json,
             }),
+
+            IR::Hint { kind, len } => serde_json::json!({ "kind": kind.name(), "len": len }),
+            IR::Sorted { len, rank, index } => {
+                serde_json::json!({ "len": len, "rank": rank, "index": index })
+            }
 
             // All parameterless IRs export empty dicts
             _ => serde_json::json!({}),
@@ -1193,6 +1273,20 @@ impl IR {
             "PoseidonHashIR" => Ok(IR::PoseidonHash),
             "EqualHashIR" => Ok(IR::EqHash),
 
+            "HintIR" => {
+                let name = data["kind"].as_str().ok_or("Hint: missing kind")?;
+                Ok(IR::Hint {
+                    kind: HintKind::from_name(name)
+                        .ok_or_else(|| format!("Hint: unknown kind {}", name))?,
+                    len: data["len"].as_u64().ok_or("Hint: missing len")? as u32,
+                })
+            }
+            "SortedIR" => Ok(IR::Sorted {
+                len: data["len"].as_u64().ok_or("Sorted: missing len")? as u32,
+                rank: data["rank"].as_u64().map(|r| r as u32),
+                index: data["index"].as_bool().ok_or("Sorted: missing index")?,
+            }),
+
             other => Err(format!("Unknown IR class: {}", other)),
         }
     }
@@ -1373,6 +1467,10 @@ mod tests {
                 key: ExternalKey::Str("x".to_string()),
                 indices: vec![2],
             },
+            IR::Hint { kind: HintKind::StableArgsort, len: 7 },
+            IR::Hint { kind: HintKind::SortedValues, len: 1 },
+            IR::Sorted { len: 5, rank: Some(3), index: true },
+            IR::Sorted { len: 5, rank: None, index: false },
         ];
         for ir in irs {
             let exported = ir.export();

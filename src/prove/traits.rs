@@ -591,6 +591,19 @@ pub trait Synthesizer {
         value: &Self::CellRef,
     ) -> Result<(), ProvingError>;
 
+    // ── Prover hints ──────────────────────────────────────────────────
+
+    /// `IR::Hint`: a free value holding lane `rank` of `kind` applied to
+    /// `operands`, computed with `kernel::hint_lane` (or, in an emitted
+    /// circuit, by the same algorithm in unconstrained code). It must add
+    /// no constraint: the IR that uses the hint pins it.
+    fn prover_hint(
+        &mut self,
+        kind: crate::ir_defs::HintKind,
+        operands: &[Self::CellRef],
+        rank: &Self::CellRef,
+    ) -> Result<Self::CellRef, ProvingError>;
+
     // ── Hash ──────────────────────────────────────────────────────────
 
     fn poseidon_hash(&mut self, inputs: &[Self::CellRef]) -> Result<Self::CellRef, ProvingError>;

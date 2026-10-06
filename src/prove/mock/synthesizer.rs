@@ -646,4 +646,16 @@ impl Synthesizer for MockSynthesizer {
     fn eq_hash(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
         self.eq_i(a, b)
     }
+
+    // ── Prover hints ──────────────────────────────────────────────────
+
+    fn prover_hint(
+        &mut self,
+        kind: crate::ir_defs::HintKind,
+        operands: &[MockCell],
+        rank: &MockCell,
+    ) -> Result<MockCell, ProvingError> {
+        let values: Vec<Fp> = operands.iter().map(|c| c.fp()).collect();
+        Ok(MockCell(kernel::hint_lane(kind, &values, rank.fp())))
+    }
 }

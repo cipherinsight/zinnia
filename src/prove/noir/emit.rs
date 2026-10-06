@@ -666,6 +666,9 @@ pub struct NoirEmitter<'a> {
     dynamic_reads_per_epoch: HashMap<(u32, u64), usize>,
     /// Native Noir arrays holding a segment's slots, per (segment, epoch).
     segment_arrays: HashMap<(u32, u64), String>,
+    /// Hint arrays already computed, by their call expression (see
+    /// `prover_hint`).
+    hint_arrays: HashMap<String, String>,
     /// Per-segment value hull: the interval union of every value written
     /// to the segment (plus its init). `None` once any written value
     /// lacks a derivable interval. Read results inherit this hull, which
@@ -1772,6 +1775,7 @@ impl<'a> NoirEmitter<'a> {
             proven_range: HashMap::new(),
             dynamic_reads_per_epoch: HashMap::new(),
             segment_arrays: HashMap::new(),
+            hint_arrays: HashMap::new(),
             interval_of: HashMap::new(),
             segment_iv: HashMap::new(),
             lt_zero_of: HashMap::new(),
@@ -2955,6 +2959,52 @@ impl Synthesizer for NoirEmitter<'_> {
     }
     fn eq_hash(&mut self, _a: &CellRef, _b: &CellRef) -> Result<CellRef, ProvingError> {
         noop_unsupported!(self, "eq_hash")
+    }
+
+    /// A hint lane from `noir_fpc`'s unconstrained implementation of
+    /// `kernel::hint_lane` (same order, same algorithm, same lanes). A
+    /// constant rank indexes the hint's array, computed once per operand
+    /// list (constant indices into the witnesses an unconstrained call
+    /// returns cost no gates); a runtime rank calls the `_at` form, which
+    /// returns the lane itself (a witness index would be a memory read).
+    /// No constraint: the IR pins every hint it uses.
+    fn prover_hint(
+        &mut self,
+        kind: crate::ir_defs::HintKind,
+        operands: &[CellRef],
+        rank: &CellRef,
+    ) -> Result<CellRef, ProvingError> {
+        use crate::ir_defs::HintKind;
+        let (lanes_fn, lane_at_fn) = match kind {
+            HintKind::StableArgsort => ("argsort_hint", "argsort_hint_at"),
+            HintKind::SortedValues => ("sorted_hint", "sorted_hint_at"),
+        };
+        let operand_list = operands.join(", ");
+        if let Some(rank) = self.s_int_of(rank) {
+            let Some(lane) = usize::try_from(rank).ok().filter(|&r| r < operands.len()) else {
+                return Ok(self.literal_int(0));
+            };
+            let key = format!("{lanes_fn}([{operand_list}])");
+            let array = match self.hint_arrays.get(&key) {
+                Some(name) => name.clone(),
+                None => {
+                    self.use_lib(lanes_fn);
+                    let name = self.fresh();
+                    let _ = writeln!(
+                        self.body,
+                        "    let {}: [Field; {}] = {};",
+                        name,
+                        operands.len(),
+                        key
+                    );
+                    self.hint_arrays.insert(key, name.clone());
+                    name
+                }
+            };
+            return Ok(self.bind(&format!("{array}[{lane}]")));
+        }
+        self.use_lib(lane_at_fn);
+        Ok(self.bind(&format!("{lane_at_fn}([{operand_list}], {rank})")))
     }
 }
 

@@ -495,6 +495,11 @@ impl IROp for IR {
                 let _ = args;
                 ctx.fresh_unconstrained()
             }
+
+            // A hint is the prover's choice: a fresh unconstrained term, so
+            // no assert that pins it can ever be proved always-satisfied.
+            // A sort placeholder is likewise left unconstrained.
+            IR::Hint { .. } | IR::Sorted { .. } => ctx.fresh_unconstrained(),
         }
     }
 }

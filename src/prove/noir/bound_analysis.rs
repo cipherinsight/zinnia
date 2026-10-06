@@ -219,6 +219,9 @@ pub fn run(graph: &IRGraph) -> BoundMap {
 
             // ── Hash ──────────────────────────────────────────────────
             IR::PoseidonHash | IR::EqHash => None,
+
+            // ── Prover hints — any value the prover chooses ───────────
+            IR::Hint { .. } | IR::Sorted { .. } => None,
         };
 
         // Provenance fallback / tightening: the ProvenanceTable carries
