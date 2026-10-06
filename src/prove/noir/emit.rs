@@ -84,6 +84,7 @@ pub fn emit_circuit(
     emitter.dynamic_reads_per_epoch = count_dynamic_reads_per_epoch(ir);
     emitter.wrapped_index_ranges = wrapped_index_ranges(ir);
     emitter.asserted_comparisons = asserted_comparisons(ir);
+    emitter.implied_comparisons = implied_comparisons(ir, &emitter.asserted_comparisons);
     interpret_ir(ir, &mut emitter)?;
 
     let main_nr = render_main_nr(&input_params, &emitter);
@@ -130,6 +131,50 @@ fn asserted_comparisons(ir: &IRGraph) -> HashSet<u32> {
         .map(|s| s.stmt_id)
         .filter(|id| assert_uses.contains_key(id) && !other_uses.contains(id))
         .collect()
+}
+
+/// Asserted comparisons of a value with a constant that a bounds check of
+/// the same value elsewhere in the circuit implies: `AssertU128Lt(x, hi)`
+/// with a constant hi, applied to x itself (so on every path), puts x in
+/// [0, hi - 1], which decides e.g. the input-domain checks
+/// `x >= i64::MIN` and `x <= i64::MAX`. The circuit enforces the bounds
+/// check, which is the stronger constraint, so these comparisons need no
+/// constraint of their own.
+fn implied_comparisons(ir: &IRGraph, asserted: &HashSet<u32>) -> HashSet<u32> {
+    use crate::ir_defs::IR;
+    let constant = |id: u32| match ir.stmts.get(id as usize).map(|s| &s.ir) {
+        Some(IR::ConstantInt { value }) => Some(*value as i128),
+        _ => None,
+    };
+    let mut bounds: HashMap<u32, (i128, i128)> = HashMap::new();
+    for stmt in &ir.stmts {
+        if let (IR::AssertU128Lt, [x, hi]) = (&stmt.ir, stmt.arguments.as_slice()) {
+            if let Some(hi) = constant(*hi).filter(|h| *h >= 1) {
+                let entry = bounds.entry(*x).or_insert((0, hi - 1));
+                entry.1 = entry.1.min(hi - 1);
+            }
+        }
+    }
+    let mut implied = HashSet::new();
+    for stmt in &ir.stmts {
+        if !asserted.contains(&stmt.stmt_id) {
+            continue;
+        }
+        let [a, b] = stmt.arguments.as_slice() else { continue };
+        let range = |id: u32| constant(id).map(|c| (c, c)).or_else(|| bounds.get(&id).copied());
+        let (Some((al, ah)), Some((bl, bh))) = (range(*a), range(*b)) else { continue };
+        let holds = match stmt.ir {
+            IR::LtI | IR::LtF => ah < bl,
+            IR::LteI | IR::LteF => ah <= bl,
+            IR::GtI | IR::GtF => al > bh,
+            IR::GteI | IR::GteF => al >= bh,
+            _ => false,
+        };
+        if holds {
+            implied.insert(stmt.stmt_id);
+        }
+    }
+    implied
 }
 
 /// Ranges that NumPy's index wrap-around proves for raw indices. A runtime
@@ -603,6 +648,9 @@ pub struct NoirEmitter<'a> {
     write_version: HashMap<u32, u64>,
     /// Comparisons used only by asserts (see `asserted_comparisons`).
     asserted_comparisons: HashSet<u32>,
+    /// Asserted comparisons a bounds check elsewhere implies (see
+    /// `implied_comparisons`): they emit nothing.
+    implied_comparisons: HashSet<u32>,
     /// Statement being dispatched (set by `on_stmt_begin`).
     current_stmt: Option<u32>,
     /// Ranges a check emitted earlier in this circuit proves for a cell
@@ -909,6 +957,9 @@ impl<'a> NoirEmitter<'a> {
         }
         if let Some(outcome) = self.decide_from_proven_ranges(a, b, cmp) {
             return self.literal_int(outcome as i64);
+        }
+        if self.current_stmt.is_some_and(|id| self.implied_comparisons.contains(&id)) {
+            return self.literal_int(1);
         }
         let asserted = self
             .current_stmt
@@ -1716,6 +1767,7 @@ impl<'a> NoirEmitter<'a> {
             write_version: HashMap::new(),
             wrapped_index_ranges: HashMap::new(),
             asserted_comparisons: HashSet::new(),
+            implied_comparisons: HashSet::new(),
             current_stmt: None,
             proven_range: HashMap::new(),
             dynamic_reads_per_epoch: HashMap::new(),

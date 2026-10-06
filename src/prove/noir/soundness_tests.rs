@@ -352,6 +352,37 @@ fn asserted_comparisons_check_their_outcome_directly() {
     assert_rejected(execute(&graph, &raw_witness(&[("x", p_minus), ("y", "0x0")])));
 }
 
+/// An input's domain checks are implied by a bounds check of the same input
+/// (`AssertU128Lt(x, 8)`): the circuit has the bounds check only, which
+/// accepts 0..7 and rejects 8, -1 and a value outside the 64-bit window.
+#[test]
+fn domain_checks_implied_by_a_bounds_check_are_dropped() {
+    if !toolchain_present(false) {
+        return;
+    }
+    let mut g = Graph::default();
+    let x = g.read_int("x");
+    let min = g.int(i64::MIN);
+    let max = g.int(i64::MAX);
+    let above = g.push(IR::GteI, &[x, min]);
+    g.push(IR::Assert, &[above]);
+    let below = g.push(IR::LteI, &[x, max]);
+    g.push(IR::Assert, &[below]);
+    let eight = g.int(8);
+    g.push(IR::AssertU128Lt, &[x, eight]);
+    g.expose(x);
+    let graph = g.finish();
+    let honest = witness(&[("x", 7)]);
+    let emitted = emit_circuit(&graph, &honest, &ProvingParams::default()).unwrap();
+    assert_eq!(emitted.main_nr.matches("assert_max_bit_size").count(), 1, "{}", emitted.main_nr);
+    assert!(emitted.main_nr.contains("assert_max_bit_size::<3>"), "{}", emitted.main_nr);
+    assert_eq!(execute(&graph, &honest).unwrap(), vec![7]);
+    assert_eq!(execute(&graph, &witness(&[("x", 0)])).unwrap(), vec![0]);
+    assert_rejected(execute(&graph, &witness(&[("x", 8)])));
+    assert_rejected(execute(&graph, &witness(&[("x", -1)])));
+    assert_rejected(execute(&graph, &raw_witness(&[("x", "0x8000000000000000")])));
+}
+
 /// M5: a dynamic-address write outside the segment used to update no slot
 /// and succeed; the mock rejects it.
 #[test]
