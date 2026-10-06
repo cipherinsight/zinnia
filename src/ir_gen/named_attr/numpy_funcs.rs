@@ -326,6 +326,63 @@ fn np_correlate_ds1000(
     )
 }
 
+/// `np.triu(m, k=0)` / `np.tril(m, k=0)`: `m` with the elements below
+/// (`triu`) or above (`tril`) the `k`-th diagonal of the last two axes set to
+/// zero. A 1-D `m` of length `n` is broadcast to `n x n` first, as NumPy does
+/// (`np.triu([1, 2, 3])` is a 3 x 3 matrix). The dtype is kept.
+fn np_triangle(
+    b: &mut crate::builder::IRBuilder,
+    upper: bool,
+    args: &[Value],
+    kwargs: &HashMap<String, Value>,
+) -> Value {
+    let name = if upper { "np.triu" } else { "np.tril" };
+    ensure_no_kwargs(name, kwargs, &["k"]);
+    let m = args.first().cloned().unwrap_or_else(|| panic!("{name}: missing argument 'm'"));
+    let k = match (args.get(1), kwargs.get("k")) {
+        (Some(_), Some(_)) => panic!("{name} got multiple values for argument 'k'"),
+        (Some(v), None) | (None, Some(v)) => v
+            .int_val()
+            .unwrap_or_else(|| panic!("{name}: k must be a compile-time integer")),
+        (None, None) => 0,
+    };
+    let m = match &m {
+        Value::StaticArray { .. } => m.clone(),
+        Value::List(_) | Value::Tuple(_) => crate::helpers::static_array::base::to_static_array(b, &m)
+            .unwrap_or_else(|| panic!("{name}: m must be a rectangular array of numbers")),
+        other => panic!("{name}: m must be an array of rank 1 or more, got {}", other.zinnia_type()),
+    };
+    let (dtype, shape) = static_array_meta(&m, name);
+    if dtype == NumberType::Complex {
+        panic!("{name}: complex arrays are not supported");
+    }
+    let cells = static_cells(b, &m, name);
+    // A 1-D input is the row of every output row.
+    let (shape, cells) = match shape.as_slice() {
+        [] => panic!("{name}: m must have at least one dimension"),
+        [n] => {
+            let rows: Vec<Value> = (0..*n).flat_map(|_| cells.iter().cloned()).collect();
+            (vec![*n, *n], rows)
+        }
+        _ => (shape, cells),
+    };
+    let (rows, cols) = (shape[shape.len() - 2], shape[shape.len() - 1]);
+    let zero = match dtype {
+        NumberType::Float => b.ir_constant_float(0.0),
+        _ => b.ir_constant_int(0),
+    };
+    let out: Vec<Value> = cells
+        .into_iter()
+        .enumerate()
+        .map(|(flat, cell)| {
+            let (i, j) = (((flat / cols) % rows.max(1)) as i64, (flat % cols) as i64);
+            let kept = if upper { j - i >= k } else { j - i <= k };
+            if kept { cell } else { zero.clone() }
+        })
+        .collect();
+    crate::helpers::static_array::base::build_static_array_from_flat(b, out, shape, dtype)
+}
+
 /// Exact integer dot product `sum_i lhs[i] * rhs[i]`.
 fn integer_product_sum(b: &mut crate::builder::IRBuilder, lhs: &[Value], rhs: &[Value]) -> Value {
     let mut acc = b.ir_constant_int(0);
@@ -1644,6 +1701,12 @@ impl IRGenerator {
                 visited_kwargs_orig,
             ),
             ("np", "corrcoef") => np_corrcoef_ds1000(&mut self.builder, visited_args_orig),
+            ("np", name @ ("triu" | "tril")) => np_triangle(
+                &mut self.builder,
+                name == "triu",
+                visited_args_orig,
+                visited_kwargs_orig,
+            ),
             ("np", "einsum") => {
                 ensure_no_kwargs("np.einsum", visited_kwargs_orig, &["optimize"]);
                 crate::ops::static_ndarray_ops::einsum::einsum(&mut self.builder, visited_args_orig)
