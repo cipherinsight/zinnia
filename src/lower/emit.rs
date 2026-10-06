@@ -74,9 +74,21 @@ pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction
         groups.iter().flat_map(|g| g.lanes.iter().map(move |l| (l.stmt, g.id))).collect();
     let cx = Context { target, graph, groups: &groups, facts: &facts, users: &users, lane_group: &lane_group };
     let mut nodes: Vec<NodeEntry> = Vec::new();
+    let forced = forced_construction();
     for group in &groups {
-        for construction in constructions {
-            for candidate in construction.candidates(group, &cx) {
+        let offered: Vec<(&dyn Construction, Vec<super::Candidate>)> =
+            constructions.iter().map(|c| (*c, c.candidates(group, &cx))).collect();
+        let only_forced = forced
+            .as_deref()
+            .is_some_and(|name| offered.iter().any(|(c, cands)| c.name() == name && !cands.is_empty()));
+        for (construction, candidates) in offered {
+            // Producers of shared values only (no lane) stay: the forced
+            // construction may need them.
+            let produces_lanes = candidates.iter().any(|c| c.post.iter().any(|r| matches!(r, Requirement::Lane(_))));
+            if only_forced && Some(construction.name()) != forced.as_deref() && produces_lanes {
+                continue;
+            }
+            for candidate in candidates {
                 nodes.push(NodeEntry::offered(construction.name(), candidate, &facts));
             }
         }
@@ -101,6 +113,16 @@ pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction
     let mut dropped = freely_proven;
     dropped.extend(unselected_checks(&nodes, &selected));
     Some(emit(graph, &groups, nodes, &selected, &dropped))
+}
+
+/// Measurement only: the environment variable `ZINNIA_FORCE_CONSTRUCTION`
+/// set to a construction's [`Construction::name`] makes it the only
+/// construction offering lanes for every group it applies to (other groups
+/// are lowered as usual; producers of shared values only stay available), so cost curves and scaling demonstrations can compile
+/// one program with each alternative. The benchmark harness never sets it;
+/// a forced construction is sound like any other, it may only cost more.
+fn forced_construction() -> Option<String> {
+    std::env::var("ZINNIA_FORCE_CONSTRUCTION").ok().filter(|s| !s.is_empty())
 }
 
 // ── Groups ──────────────────────────────────────────────────────────────
@@ -317,8 +339,8 @@ struct EmitState {
     emitters: HashMap<usize, Option<Box<dyn Emitter>>>,
     started: HashSet<usize>,
     /// The selected producer of each shared value, and the values emitted.
-    shared_producer: HashMap<(GroupId, &'static str), usize>,
-    shared_values: HashMap<(GroupId, &'static str), Rc<dyn Any>>,
+    shared_producer: HashMap<SharedKey, usize>,
+    shared_values: HashMap<SharedKey, Rc<dyn Any>>,
     /// The selected check nodes each node's preconditions need.
     checks_for: HashMap<usize, Vec<Fact>>,
     emitted_checks: HashSet<Fact>,
@@ -337,13 +359,27 @@ impl EmitCx<'_> {
     /// The shared value `name` of `group`, emitted once by its selected
     /// producer.
     pub fn shared<T: 'static>(&mut self, b: &mut IRBuilder, group: GroupId, name: &'static str) -> Rc<T> {
-        let key = (group, name);
+        self.shared_by_key(b, SharedKey::Group(group, name), |e, b, cx| e.shared(b, cx, group, name))
+    }
+
+    /// The shared value `name` of statement `at` (`Requirement::SharedAt`),
+    /// emitted once by its selected producer.
+    pub fn shared_at<T: 'static>(&mut self, b: &mut IRBuilder, at: StmtId, name: &'static str) -> Rc<T> {
+        self.shared_by_key(b, SharedKey::At(at, name), |e, b, cx| e.shared_at(b, cx, at, name))
+    }
+
+    fn shared_by_key<T: 'static>(
+        &mut self,
+        b: &mut IRBuilder,
+        key: SharedKey,
+        produce: impl FnOnce(&mut dyn Emitter, &mut IRBuilder, &mut EmitCx) -> Rc<dyn Any>,
+    ) -> Rc<T> {
         if !self.state.shared_values.contains_key(&key) {
-            let producer = *self.state.shared_producer.get(&key).unwrap_or_else(|| panic!("no producer of {name}"));
-            let value = self.with_emitter(b, producer, |e, b, cx| e.shared(b, cx, group, name));
+            let producer = *self.state.shared_producer.get(&key).unwrap_or_else(|| panic!("no producer of {key:?}"));
+            let value = self.with_emitter(b, producer, produce);
             self.state.shared_values.insert(key, value);
         }
-        self.state.shared_values[&key].clone().downcast::<T>().unwrap_or_else(|_| panic!("{name}: wrong type"))
+        self.state.shared_values[&key].clone().downcast::<T>().unwrap_or_else(|_| panic!("{key:?}: wrong type"))
     }
 
     /// Run `f` on node `node`'s emitter, started first.
@@ -361,6 +397,14 @@ impl EmitCx<'_> {
         self.state.emitters.insert(node, Some(emitter));
         result
     }
+}
+
+/// The key of a shared value: per group (`Requirement::Shared`) or per
+/// statement (`Requirement::SharedAt`).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum SharedKey {
+    Group(GroupId, &'static str),
+    At(StmtId, &'static str),
 }
 
 /// A unit of emission: an input statement, the start of a node, or a lane.
@@ -399,7 +443,10 @@ fn emit(graph: &IRGraph, groups: &[Group], nodes: Vec<NodeEntry>, selected: &[us
                     lane_producer.entry(*s).or_insert(i);
                 }
                 Requirement::Shared { group, name } => {
-                    state.shared_producer.entry((*group, *name)).or_insert(i);
+                    state.shared_producer.entry(SharedKey::Group(*group, name)).or_insert(i);
+                }
+                Requirement::SharedAt { at, name } => {
+                    state.shared_producer.entry(SharedKey::At(*at, name)).or_insert(i);
                 }
                 Requirement::Fact(_) => {}
             }

@@ -1029,17 +1029,10 @@ pub fn np_take_along_axis(
     let arr_strides = crate::helpers::shape_arith::row_major_strides(&arr_shape);
     let out_total: usize = out_shape.iter().product();
 
-    // Small-axis fast path: when the indexed axis has size ≤ SMALL_AXIS,
-    // a select chain is cheaper than the zkram path. Per output cell:
-    //   zkram path = 1 ir_read_memory (~2 rows) + bounds-check (~10 rows)
-    //   select chain (N candidates) = (N-1) selects + 1 bounds-check (~N+10 rows)
-    // The zkram path also amortises a per-array materialise (O(total)
-    // ir_write_memory). For small axis size + many output cells, the chain
-    // wins by avoiding the materialise AND the per-access bounds-check chain.
-    //
-    // For axis-size 2 (the most common case: pick one of two channels),
-    // we can use ir_bool_cast(idx) directly as the select bit. For larger
-    // axis sizes we build a select chain over equality comparisons.
+    // Small-axis path: each output cell reads one of the `N <= SMALL_AXIS`
+    // candidates along the axis through an element placeholder, whose
+    // construction the layer chooses per target. Larger axes read through
+    // a memory segment below.
     const SMALL_AXIS: usize = 16;
     let axis_size = arr_shape[axis];
 
@@ -1076,103 +1069,19 @@ pub fn np_take_along_axis(
                 }
                 candidates.push(arr_payload[src_flat].clone());
             }
-            // Build the select + lookup-free bounds soundness check.
-            //
-            // Note: we deliberately do NOT call `discharge_index_in_range`
-            // here. That helper emits LessThan + GreaterThanOrEqual, both
-            // of which trigger range-check lookups. For the small-axis
-            // path we already produce equality witnesses (eq_k) as part
-            // of the select chain; constraining `sum_k(eq_k) == 1` proves
-            // `idx ∈ {0..N-1}` soundly with no lookups, just arithmetic.
+            // The read is an element placeholder; the layer chooses its
+            // construction per target (`lower::gather`, `lower::memory`:
+            // a select chain, an inner product with the index's equality
+            // bits, a multiplexer over the index bits, a memory read). The
+            // bound `0 <= idx < N` is checked here and dropped again where
+            // the chosen construction proves it itself.
             let picked = if axis_size == 1 {
+                crate::optim::resolver::discharge_index_in_range(b, &take_index, 0, 1, "np.take_along_axis");
                 candidates[0].clone()
-            } else if axis_size == 2 {
-                // Constrain idx ∈ {0, 1} while selecting in the same
-                // backend gate where supported. idx doubles as the select
-                // condition.
-                if dtype == NumberType::Float {
-                    b.ir_select_bit_f(&take_index, &candidates[1], &candidates[0])
-                } else {
-                    b.ir_select_bit_i(&take_index, &candidates[1], &candidates[0])
-                }
-            } else if axis_size <= 8 {
-                // Static small-axis bit routing. The backend constrains
-                // idx < axis_size and exposes low index bits, so we can
-                // route without per-candidate equality masks.
-                let bits = b.ir_assert_u128_lt_bits(&take_index, axis_size);
-                let select = |b: &mut IRBuilder, cond: &Value, t: &Value, f: &Value| {
-                    if dtype == NumberType::Float {
-                        b.ir_select_f(cond, t, f)
-                    } else {
-                        b.ir_select_i(cond, t, f)
-                    }
-                };
-                match axis_size {
-                    3 => {
-                        let t0 = select(b, &bits[0], &candidates[1], &candidates[0]);
-                        select(b, &bits[1], &candidates[2], &t0)
-                    }
-                    4 => {
-                        let t0 = select(b, &bits[0], &candidates[1], &candidates[0]);
-                        let t1 = select(b, &bits[0], &candidates[3], &candidates[2]);
-                        select(b, &bits[1], &t1, &t0)
-                    }
-                    5 => {
-                        let t0 = select(b, &bits[0], &candidates[1], &candidates[0]);
-                        let t1 = select(b, &bits[0], &candidates[3], &candidates[2]);
-                        let t01 = select(b, &bits[1], &t1, &t0);
-                        select(b, &bits[2], &candidates[4], &t01)
-                    }
-                    6 => {
-                        let t0 = select(b, &bits[0], &candidates[1], &candidates[0]);
-                        let t1 = select(b, &bits[0], &candidates[3], &candidates[2]);
-                        let t01 = select(b, &bits[1], &t1, &t0);
-                        let t2 = select(b, &bits[0], &candidates[5], &candidates[4]);
-                        select(b, &bits[2], &t2, &t01)
-                    }
-                    7 => {
-                        let t0 = select(b, &bits[0], &candidates[1], &candidates[0]);
-                        let t1 = select(b, &bits[0], &candidates[3], &candidates[2]);
-                        let t01 = select(b, &bits[1], &t1, &t0);
-                        let t2 = select(b, &bits[0], &candidates[5], &candidates[4]);
-                        let t23 = select(b, &bits[1], &candidates[6], &t2);
-                        select(b, &bits[2], &t23, &t01)
-                    }
-                    8 => {
-                        let t0 = select(b, &bits[0], &candidates[1], &candidates[0]);
-                        let t1 = select(b, &bits[0], &candidates[3], &candidates[2]);
-                        let t2 = select(b, &bits[0], &candidates[5], &candidates[4]);
-                        let t3 = select(b, &bits[0], &candidates[7], &candidates[6]);
-                        let t01 = select(b, &bits[1], &t1, &t0);
-                        let t23 = select(b, &bits[1], &t3, &t2);
-                        select(b, &bits[2], &t23, &t01)
-                    }
-                    _ => unreachable!("axis_size > 2 and <= 8 handled here"),
-                }
             } else {
-                // General small-N: select chain. Default to candidates[0];
-                // for k in 1..N, replace if idx == k. We also compute
-                // `eq_0 = is_equal(idx, 0)` and assert
-                // `sum_k(eq_k) == 1` — this proves idx ∈ {0..N-1} without
-                // any range-check lookup.
-                let zero_const = b.ir_constant_int(0);
-                let eq_0 = b.ir_equal_i(&take_index, &zero_const);
-                let mut acc = candidates[0].clone();
-                let mut eq_sum = eq_0;
-                for k in 1..axis_size {
-                    let k_const = b.ir_constant_int(k as i64);
-                    let eq_k = b.ir_equal_i(&take_index, &k_const);
-                    acc = if dtype == NumberType::Float {
-                        b.ir_select_f(&eq_k, &candidates[k], &acc)
-                    } else {
-                        b.ir_select_i(&eq_k, &candidates[k], &acc)
-                    };
-                    eq_sum = b.ir_add_i(&eq_sum, &eq_k);
-                }
-                let one_const = b.ir_constant_int(1);
-                let is_in_range = b.ir_equal_i(&eq_sum, &one_const);
-                b.ir_assert(&is_in_range);
-                acc
+                let index =
+                    crate::optim::resolver::discharge_index_in_range(b, &take_index, 0, axis_size as i64, "np.take_along_axis");
+                crate::lower::gather::checked_element_lane(b, &candidates, &index)
             };
             out.push(picked);
         }

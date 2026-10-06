@@ -17,6 +17,10 @@ pub struct Halo2BasePinnedRekeygenV1Payload {
     pub lookup_bits: u32,
     pub base_params: BaseCircuitParams,
     pub break_points: MultiPhaseThreadBreakPoints,
+    /// The circuit's verifier challenges (`circuit::CircuitParams`); 0 for
+    /// a one-phase circuit (and in artifacts written before there were any).
+    #[serde(default)]
+    pub challenges: usize,
     /// Graph-phase provenance records (Step 2: synthesis consumes the
     /// table — interval/affine narrowing changes the emitted gate
     /// count). Verify re-synthesizes from `ir_stmts`; without the

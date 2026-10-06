@@ -67,6 +67,10 @@ pub enum Requirement {
     /// (e.g. the group's elements written to a memory segment), named by
     /// its family.
     Shared { group: GroupId, name: &'static str },
+    /// A value computed from the statement `at` alone (the bits of an index,
+    /// say) that nodes of several groups may share, produced once, named by
+    /// its family.
+    SharedAt { at: StmtId, name: &'static str },
     /// A fact.
     Fact(Fact),
 }
