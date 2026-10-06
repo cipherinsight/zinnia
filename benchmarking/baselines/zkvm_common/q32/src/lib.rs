@@ -85,6 +85,24 @@ impl Q32 {
         Q32(self.0.abs())
     }
 
+    /// `np.abs` with Zinnia's domain: `None` for the code `i64::MIN`, whose
+    /// magnitude `2^31` has no Q32 code (Zinnia has no proof there; [`Q32::abs`]
+    /// wraps it back to `i64::MIN` in release builds).
+    pub const fn checked_abs(self) -> Option<Q32> {
+        match self.0.checked_abs() {
+            Some(bits) => Some(Q32(bits)),
+            None => None,
+        }
+    }
+
+    /// `self - rhs`, or `None` when the difference leaves the Q32 range.
+    pub const fn checked_sub(self, rhs: Q32) -> Option<Q32> {
+        match self.0.checked_sub(rhs.0) {
+            Some(bits) => Some(Q32(bits)),
+            None => None,
+        }
+    }
+
     pub const fn is_negative(self) -> bool {
         self.0 < 0
     }
@@ -792,6 +810,15 @@ mod tests {
             let q = Q32::from_f64(v);
             assert!(close(q.sqrt(), q.to_f64().sqrt(), 1.0 / SCALE as f64), "sqrt {v}");
         }
+    }
+
+    #[test]
+    fn checked_abs_and_sub_stay_in_q32() {
+        assert_eq!(Q32::from_bits(-5).checked_abs(), Some(Q32::from_bits(5)));
+        assert_eq!(Q32::from_bits(i64::MIN + 1).checked_abs(), Some(Q32::from_bits(i64::MAX)));
+        assert_eq!(Q32::from_bits(i64::MIN).checked_abs(), None);
+        assert_eq!(Q32::ONE.checked_sub(Q32::HALF), Some(Q32::HALF));
+        assert_eq!(Q32::from_bits(i64::MIN).checked_sub(Q32::from_bits(1)), None);
     }
 
     #[test]

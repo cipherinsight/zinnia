@@ -140,9 +140,12 @@ pub const DEFAULT_ATOL: Q32 = Q32::from_bits(43);
 
 /// `np.isclose(a, b, rtol, atol)`: `|a - b| <= atol + rtol * |b|` (not
 /// symmetric in `a` and `b`). Q32 values are never nan, so `equal_nan` has no
-/// effect.
+/// effect. Panics where Zinnia has no proof: `|a - b|` or `|b|` of `2^31` or
+/// more, which has no Q32 code (including `|i64::MIN|` of the codes).
 pub fn isclose(a: Q32, b: Q32, rtol: Q32, atol: Q32) -> bool {
-    (a - b).abs() <= atol + rtol * b.abs()
+    let gap = a.checked_sub(b).and_then(Q32::checked_abs).expect("isclose: |a - b| has no Q32 value");
+    let magnitude = b.checked_abs().expect("isclose: |b| has no Q32 value");
+    gap <= atol + rtol * magnitude
 }
 
 // ---------------------------------------------------------------------------
@@ -308,6 +311,18 @@ mod tests {
         assert!(!isclose(b + q(2), b, DEFAULT_RTOL, DEFAULT_ATOL));
         assert!(isclose(Q32::from_bits(43), Q32::ZERO, DEFAULT_RTOL, DEFAULT_ATOL));
         assert!(!isclose(Q32::from_bits(43), Q32::ZERO, DEFAULT_RTOL, Q32::ZERO));
+    }
+
+    #[test]
+    fn isclose_has_no_value_where_a_magnitude_leaves_q32() {
+        let half = Q32::from_bits(1 << 31);
+        let min = Q32::from_bits(i64::MIN);
+        // |a - b| = 2^63 - 1 (codes) is fine, 2^63 is not; nor is |b| = 2^63.
+        assert!(!isclose(Q32::from_bits(i64::MIN + (1 << 31) + 1), half, DEFAULT_RTOL, DEFAULT_ATOL));
+        let panics = |a: Q32, b: Q32| std::panic::catch_unwind(|| isclose(a, b, DEFAULT_RTOL, DEFAULT_ATOL)).is_err();
+        assert!(panics(Q32::from_bits(i64::MIN + (1 << 31)), half));
+        assert!(panics(-Q32::ONE, min));
+        assert!(panics(Q32::from_bits(i64::MAX), -Q32::ONE));
     }
 
     #[test]
