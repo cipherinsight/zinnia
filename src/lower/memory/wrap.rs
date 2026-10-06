@@ -153,13 +153,13 @@ impl Construction for WrapByPinnedSign {
         let plain = Candidate {
             pre: Vec::new(),
             post: lanes(group).collect(),
-            cost: super::cost::wrap_by_pinned_sign(n as u64, hits, cx.target),
+            cost: super::cost::wrap_by_pinned_sign(hits, cx.target),
             emitter: Box::new(SignEmitter { index: group.shared[0], n, position: None, hits: Vec::new() }),
         };
         let encoded = Candidate {
             pre: Vec::new(),
             post: lanes(group).chain([Requirement::Shared { group: group.id, name: ENCODING }]).collect(),
-            cost: super::cost::wrap_by_pinned_sign(n as u64, n as u64, cx.target),
+            cost: super::cost::wrap_by_pinned_sign(n as u64, cx.target),
             emitter: Box::new(SignEmitter { index: group.shared[0], n, position: None, hits: Vec::new() }),
         };
         vec![plain, encoded]

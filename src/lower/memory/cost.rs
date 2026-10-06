@@ -91,11 +91,9 @@ pub fn index_reads(cx: &Context, indices: &[StmtId]) -> Vec<u64> {
         .collect()
 }
 
-
 /// NumPy's wrap by a pinned sign (`wrap.rs`): the hint, its bit check, the
 /// shift and the select, and `hits` equality tests.
-pub fn wrap_by_pinned_sign(n: u64, hits: u64, target: Target) -> u64 {
-    let _ = n;
+pub fn wrap_by_pinned_sign(hits: u64, target: Target) -> u64 {
     let u = crate::lower::gather::cost::element_units(target);
     let sign = match target {
         Target::Halo2Base => 14,
