@@ -591,6 +591,27 @@ pub trait Synthesizer {
         value: &Self::CellRef,
     ) -> Result<(), ProvingError>;
 
+    // ── Sort keys ─────────────────────────────────────────────────────
+
+    /// `IR::KeyLess`: `[(v1, i1) < (v2, i2)]` lexicographically. The
+    /// default composes the IR's comparisons (`v1 < v2`, or `v1 == v2` and
+    /// `i1 < i2`); backends with cheap wide range checks compare the packed
+    /// keys `v * 2^index_bits + i` instead.
+    fn key_less(
+        &mut self,
+        v1: &Self::CellRef,
+        i1: &Self::CellRef,
+        v2: &Self::CellRef,
+        i2: &Self::CellRef,
+        _index_bits: u32,
+    ) -> Result<Self::CellRef, ProvingError> {
+        let value_less = self.lt_i(v1, v2)?;
+        let tie = self.eq_i(v1, v2)?;
+        let index_less = self.lt_i_bounded(i1, i2)?;
+        let tie_less = self.logical_and(&tie, &index_less)?;
+        self.logical_or(&value_less, &tie_less)
+    }
+
     // ── Prover hints ──────────────────────────────────────────────────
 
     /// `IR::Hint`: a free value holding lane `rank` of `kind` applied to

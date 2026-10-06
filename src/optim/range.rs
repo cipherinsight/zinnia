@@ -526,6 +526,7 @@ impl RangeResolver {
             | IR::LteF
             | IR::GtF
             | IR::GteF
+            | IR::KeyLess { .. }
             | IR::EqHash => IntInterval::bool_domain(),
 
             // SelectB returns a bool; project to [0, 1].

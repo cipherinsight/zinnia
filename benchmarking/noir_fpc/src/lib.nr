@@ -987,6 +987,75 @@ unconstrained fn hint_sorted<let N: u32>(a: [Field; N]) -> [Field; N] {
     stable_argsort(a).map(|i: u32| a[i])
 }
 
+// The ascending sorted values of the active elements (flag 1) of a
+// runtime-length array, then 0s: kernel::hint_values, MaskedSortedValues.
+// The active elements, kept in index order, are sorted by the same stable
+// merge sort.
+unconstrained fn hint_masked_sorted<let N: u32>(a: [Field; N], active: [Field; N]) -> [Field; N] {
+    let mut order: [u32; N] = [0; N];
+    let mut count: u32 = 0;
+    for i in 0..N {
+        if active[i] != 0 {
+            order[count] = i;
+            count += 1;
+        }
+    }
+    let mut compact: [Field; N] = [0; N];
+    for k in 0..N {
+        if k < count {
+            compact[k] = a[order[k]];
+        }
+    }
+    let sorted_order = stable_argsort_prefix(compact, count);
+    let mut lanes: [Field; N] = [0; N];
+    for k in 0..N {
+        if k < count {
+            lanes[k] = compact[sorted_order[k]];
+        }
+    }
+    lanes
+}
+
+// The stable argsort of the first `count` entries of `a` (the rest stay in
+// place after them).
+unconstrained fn stable_argsort_prefix<let N: u32>(a: [Field; N], count: u32) -> [u32; N] {
+    let mut order: [u32; N] = [0; N];
+    for i in 0..N {
+        order[i] = i;
+    }
+    let mut merged: [u32; N] = order;
+    let mut width: u32 = 1;
+    while width < count {
+        let mut lo: u32 = 0;
+        while lo < count {
+            let mid = if lo + width < count { lo + width } else { count };
+            let hi = if lo + 2 * width < count { lo + 2 * width } else { count };
+            let mut i = lo;
+            let mut j = mid;
+            for k in lo..hi {
+                let take_left = if i >= mid {
+                    false
+                } else if j >= hi {
+                    true
+                } else {
+                    !signed_lt(a[order[j]], a[order[i]])
+                };
+                if take_left {
+                    merged[k] = order[i];
+                    i += 1;
+                } else {
+                    merged[k] = order[j];
+                    j += 1;
+                }
+            }
+            lo = hi;
+        }
+        order = merged;
+        width *= 2;
+    }
+    order
+}
+
 // Lane `rank` of `lanes`, 0 for a rank outside [0, N).
 unconstrained fn lane_or_zero<let N: u32>(lanes: [Field; N], rank: Field) -> Field {
     if rank.lt(N as Field) {
@@ -1008,6 +1077,21 @@ pub fn argsort_hint<let N: u32>(a: [Field; N]) -> [Field; N] {
 pub fn sorted_hint<let N: u32>(a: [Field; N]) -> [Field; N] {
     // Safety: a prover hint; Zinnia's IR pins every lane it reads.
     unsafe { hint_sorted(a) }
+}
+
+/// The ascending sorted values of the active elements (`active[i] == 1`),
+/// then 0s (kernel::hint_values, MaskedSortedValues). A prover hint: the
+/// caller must pin every lane it uses.
+pub fn masked_sorted_hint<let N: u32>(a: [Field; N], active: [Field; N]) -> [Field; N] {
+    // Safety: a prover hint; Zinnia's IR pins every lane it reads.
+    unsafe { hint_masked_sorted(a, active) }
+}
+
+/// Lane `rank` of `masked_sorted_hint(a, active)`, 0 for a rank outside
+/// [0, N). A prover hint: the caller must pin it.
+pub fn masked_sorted_hint_at<let N: u32>(a: [Field; N], active: [Field; N], rank: Field) -> Field {
+    // Safety: a prover hint; Zinnia's IR pins every lane it reads.
+    unsafe { lane_or_zero(hint_masked_sorted(a, active), rank) }
 }
 
 /// Lane `rank` of `argsort_hint(a)`, 0 for a rank outside [0, N). A prover
@@ -1665,4 +1749,15 @@ fn test_argsort_hint_odd_lengths() {
     assert(argsort_hint(a) == [4, 2, 5, 0, 1, 3, 6]);
     let one: [Field; 1] = [9];
     assert(argsort_hint(one) == [0]);
+}
+
+#[test]
+fn test_masked_sorted_hint_sorts_the_active_elements() {
+    let a: [Field; 5] = [30, 10, 20, 10, -40];
+    let active: [Field; 5] = [1, 0, 1, 0, 1];
+    assert(masked_sorted_hint(a, active) == [-40, 20, 30, 0, 0]);
+    assert(masked_sorted_hint_at(a, active, 1) == 20);
+    assert(masked_sorted_hint_at(a, active, 3) == 0);
+    let none: [Field; 5] = [0; 5];
+    assert(masked_sorted_hint(a, none) == [0; 5]);
 }

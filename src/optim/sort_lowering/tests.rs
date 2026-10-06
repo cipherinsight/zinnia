@@ -7,11 +7,12 @@
 use std::collections::BTreeSet;
 
 use super::cost::{
-    adjacent_swap_pairs, choose_plan, cone_size, merge_exchange_pairs, Demand, Network, Plan, Run,
-    SortTarget,
+    adjacent_swap_pairs, choose_plan, cone_size, merge_exchange_pairs, Demand, Network, Pin, Plan,
+    Run, SortTarget,
 };
 use super::test_support::{
-    hints_as_inputs, mock_run, sort_graph, stable_sort, tampered_inputs, Forced, Output,
+    hints_as_inputs, masked_order_statistic_graph, mock_run, sort_graph, stable_sort,
+    tampered_inputs, Forced, Output, SortGraph,
 };
 use crate::ir_defs::IR;
 
@@ -168,14 +169,14 @@ fn cost_rule_picks_by_target_and_live_outputs() {
     assert_eq!(choose_plan(&full, &halo2).0, Plan::Network { network: Network::MergeExchangeTieBreak });
     assert_eq!(
         choose_plan(&full, &noir).0,
-        Plan::Hinted { runs: vec![Run { first: 0, last: 99, by_count: false }] }
+        Plan::Hinted { runs: vec![Run { first: 0, last: 99, pin: Pin::Keys }] }
     );
     // The indices of the 7 largest: one pinned run on both targets.
     let top: Vec<usize> = (93..100).collect();
     for costs in [&halo2, &noir] {
         assert_eq!(
             choose_plan(&demand(100, &[], &top, 0), costs).0,
-            Plan::Hinted { runs: vec![Run { first: 93, last: 99, by_count: false }] }
+            Plan::Hinted { runs: vec![Run { first: 93, last: 99, pin: Pin::Keys }] }
         );
     }
     // Two order statistics at runtime ranks (a percentile): counts.
@@ -185,12 +186,16 @@ fn cost_rule_picks_by_target_and_live_outputs() {
     // The median of 101 values: one count.
     assert_eq!(
         choose_plan(&demand(101, &[50], &[], 0), &halo2).0,
-        Plan::Hinted { runs: vec![Run { first: 50, last: 50, by_count: true }] }
+        Plan::Hinted { runs: vec![Run { first: 50, last: 50, pin: Pin::Counts }] }
     );
-    // Three values: a network on both targets.
-    for costs in [&halo2, &noir] {
-        assert!(matches!(choose_plan(&demand(3, &[], &[0, 1, 2], 0), costs).0, Plan::Network { .. }));
-    }
+    // An argsort of three: a network on halo2-base, three native reads and
+    // two links on Noir.
+    let three = demand(3, &[], &[0, 1, 2], 0);
+    assert!(matches!(choose_plan(&three, &halo2).0, Plan::Network { .. }));
+    assert_eq!(
+        choose_plan(&three, &noir).0,
+        Plan::Hinted { runs: vec![Run { first: 0, last: 2, pin: Pin::Keys }] }
+    );
 }
 
 // ── Pins: a malicious prover's hints are rejected ───────────────────────
@@ -283,5 +288,45 @@ fn unstable_tie_order_is_rejected() {
         inputs[ia].1 = vb;
         inputs[ib].1 = va;
         assert!(!mock_run(&graph, &inputs).0, "{forced:?}: unstable tie order accepted");
+    }
+}
+
+// ── Order statistics of runtime-length arrays ────────────────────────────
+
+const ACTIVE: [bool; 9] = [true, false, true, true, false, true, true, false, true];
+
+#[test]
+fn masked_order_statistics_are_the_active_elements_ranks() {
+    for rank in -1..=7 {
+        let sort = masked_order_statistic_graph(&TIED, &ACTIVE, rank);
+        let (ok, got) = mock_run(&sort.graph, &sort.inputs);
+        match &sort.expected {
+            Some(expected) => {
+                assert!(ok, "rank {rank}: honest run rejected");
+                assert_eq!(&got, expected, "rank {rank}");
+            }
+            None => assert!(!ok, "rank {rank}: a rank beyond the active elements was accepted"),
+        }
+    }
+    // No active element: no proof at any rank.
+    let none = [false; 9];
+    assert!(!mock_run(&masked_order_statistic_graph(&TIED, &none, 0).graph, &masked_order_statistic_graph(&TIED, &none, 0).inputs).0);
+}
+
+#[test]
+fn masked_order_statistics_reject_every_other_value() {
+    for rank in [0i64, 2, 5] {
+        let sort: SortGraph = masked_order_statistic_graph(&TIED, &ACTIVE, rank);
+        let (graph, sites) = hints_as_inputs(&sort);
+        assert_eq!(sites.len(), 1);
+        let honest = tampered_inputs(&sort, &sites, usize::MAX, 0);
+        assert!(mock_run(&graph, &honest).0);
+        // Every element value (padding ones included), their neighbours.
+        for value in TIED.iter().flat_map(|&v| [v - 1, v, v + 1]) {
+            if value != sites[0].honest {
+                let inputs = tampered_inputs(&sort, &sites, 0, value);
+                assert!(!mock_run(&graph, &inputs).0, "rank {rank}: {value} accepted");
+            }
+        }
     }
 }

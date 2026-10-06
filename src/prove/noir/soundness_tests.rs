@@ -972,7 +972,8 @@ fn sort_hints_are_pinned_in_noir() {
         let expected: Vec<i128> = sort.expected.as_ref().unwrap().iter().map(|&v| v as i128).collect();
         assert_eq!(got, expected, "{forced:?} {outputs:?}");
         for (k, site) in sites.iter().enumerate() {
-            let candidates: Vec<i64> = if site.honest >= 0 && site.honest < n && !matches!(forced, Forced::Counting) {
+            let value_pin = matches!(forced, Forced::Counting);
+            let candidates: Vec<i64> = if site.honest >= 0 && site.honest < n && !value_pin {
                 (-1..=n).collect() // an argsort lane
             } else {
                 values.iter().flat_map(|&v| [v - 1, v, v + 1]).collect()
@@ -980,6 +981,46 @@ fn sort_hints_are_pinned_in_noir() {
             for value in candidates.into_iter().filter(|&v| v != site.honest) {
                 assert_rejected(execute(&graph, &as_witness(&tampered_inputs(&sort, &sites, k, value))));
             }
+        }
+    }
+}
+
+/// `IR::KeyLess` by one gap check of packed keys: equal to the mock on ties,
+/// index order and window extremes; asserted, it rejects a false order.
+#[test]
+fn key_comparison_matches_the_mock_and_rejects_false_assertions() {
+    if !toolchain_present(false) {
+        return;
+    }
+    let (max, min) = (i64::MAX, i64::MIN);
+    let pairs: [(i64, i64, i64, i64); 7] =
+        [(1, 5, 2, 0), (2, 0, 1, 5), (3, 4, 3, 5), (3, 5, 3, 4), (3, 5, 3, 5), (min, 127, max, 0), (max, 0, min, 127)];
+    let mut g = Graph::default();
+    let cells: Vec<u32> = ["v1", "i1", "v2", "i2"].iter().map(|n| g.read_int(n)).collect();
+    let less = g.push(IR::KeyLess { index_bits: 7 }, &cells);
+    g.expose(less);
+    let graph = g.finish();
+    for (v1, i1, v2, i2) in pairs {
+        let w = witness(&[("v1", v1), ("i1", i1), ("v2", v2), ("i2", i2)]);
+        let (ok, mock) = mock_outputs(&graph, &w);
+        assert!(ok);
+        assert_eq!(mock, vec![((v1, i1) < (v2, i2)) as i128]);
+        assert_eq!(execute(&graph, &w).expect("nargo execute"), mock, "({v1}, {i1}) < ({v2}, {i2})");
+    }
+    // Asserted: the direct gap check holds for a true order, fails otherwise.
+    let mut g = Graph::default();
+    let cells: Vec<u32> = ["v1", "i1", "v2", "i2"].iter().map(|n| g.read_int(n)).collect();
+    let less = g.push(IR::KeyLess { index_bits: 7 }, &cells);
+    g.push(IR::Assert, &[less]);
+    let one = g.int(1);
+    g.expose(one);
+    let asserted = g.finish();
+    for (v1, i1, v2, i2) in pairs {
+        let w = witness(&[("v1", v1), ("i1", i1), ("v2", v2), ("i2", i2)]);
+        if (v1, i1) < (v2, i2) {
+            assert!(execute(&asserted, &w).is_ok(), "({v1}, {i1}) < ({v2}, {i2})");
+        } else {
+            assert_rejected(execute(&asserted, &w));
         }
     }
 }

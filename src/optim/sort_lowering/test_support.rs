@@ -14,7 +14,7 @@ use crate::prove::kernel;
 use crate::prove::types::ProvingParams;
 use crate::types::Value;
 
-use super::cost::{self, Demand, Network, Plan, Run};
+use super::cost::{self, Demand, Network, Pin, Plan, Run};
 
 /// The lowering a test forces on its sort.
 #[derive(Clone, Copy, Debug)]
@@ -62,21 +62,21 @@ fn plan_for(forced: Forced, demand: &Demand) -> Plan {
         },
         Forced::AdjacentSwap => Plan::Network { network: Network::AdjacentSwap },
         Forced::Permutation => {
-            Plan::Hinted { runs: vec![Run { first: 0, last: demand.n - 1, by_count: false }] }
+            Plan::Hinted { runs: vec![Run { first: 0, last: demand.n - 1, pin: Pin::Keys }] }
         }
         Forced::Runs => {
             let mut runs: Vec<Run> = Vec::new();
             for r in live {
                 match runs.last_mut() {
                     Some(run) if run.last + 1 == r => run.last = r,
-                    _ => runs.push(Run { first: r, last: r, by_count: false }),
+                    _ => runs.push(Run { first: r, last: r, pin: Pin::Keys }),
                 }
             }
             Plan::Hinted { runs }
         }
         Forced::Counting => {
             assert!(demand.indices.is_empty(), "counting pins values only");
-            Plan::Hinted { runs: live.iter().map(|&r| Run { first: r, last: r, by_count: true }).collect() }
+            Plan::Hinted { runs: live.iter().map(|&r| Run { first: r, last: r, pin: Pin::Counts }).collect() }
         }
         Forced::CostRule(target) => cost::choose_plan(demand, &target.costs()).0,
     }
@@ -122,6 +122,31 @@ pub(crate) fn sort_graph(values: &[i64], outputs: &[Output], forced: Forced) -> 
     let graph = super::lower_sorts(b.export_ir_graph(), |demand| plan_for(forced, demand));
     let graph = crate::optim::IRPass::exec(&crate::optim::DeadCodeElimination, graph);
     SortGraph { graph, inputs, expected }
+}
+
+/// The value of rank `rank` (the input `r`) among the active elements of
+/// the inputs `a0..` (activity flags `f0..`), pinned by
+/// `masked_order_statistic`, exposed. `expected` is NumPy's value of that
+/// rank among the active elements (`None`: no such element, no proof).
+pub(crate) fn masked_order_statistic_graph(values: &[i64], active: &[bool], rank: i64) -> SortGraph {
+    let mut b = IRBuilder::new();
+    let elements: Vec<Value> = (0..values.len())
+        .map(|j| b.ir_read_integer(InputPath::new(format!("a{j}"), vec![]), false))
+        .collect();
+    let flags: Vec<Value> = (0..values.len())
+        .map(|j| b.ir_read_integer(InputPath::new(format!("f{j}"), vec![]), false))
+        .collect();
+    let r = b.ir_read_integer(InputPath::new("r", vec![]), false);
+    let v = super::emit::masked_order_statistic(&mut b, &elements, &flags, crate::types::NumberType::Integer, &r);
+    b.ir_expose_public_i(&v);
+    let mut inputs: Vec<(String, i64)> =
+        values.iter().enumerate().map(|(j, v)| (format!("a{j}"), *v)).collect();
+    inputs.extend(active.iter().enumerate().map(|(j, &f)| (format!("f{j}"), f as i64)));
+    inputs.push(("r".to_string(), rank));
+    let kept: Vec<i64> = values.iter().zip(active).filter(|(_, &f)| f).map(|(v, _)| *v).collect();
+    let (sorted, _) = stable_sort(&kept);
+    let expected = usize::try_from(rank).ok().and_then(|r| sorted.get(r)).map(|v| vec![*v]);
+    SortGraph { graph: b.export_ir_graph(), inputs, expected }
 }
 
 pub(crate) fn witness(inputs: &[(String, i64)]) -> ResolvedWitness {

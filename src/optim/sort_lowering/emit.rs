@@ -6,10 +6,10 @@
 //! `r` is the element whose key has exactly `r` keys below it: its value is
 //! the `r`-th smallest value, its index lane `r` of the stable argsort.
 //!
-//! Comparisons are the IR's signed comparisons, which every backend decides
-//! exactly on the signed 64-bit window (and rejects operands outside it),
-//! the domain of Zinnia's int64 values and Q32 floats. Counts are sums of
-//! comparison bits, so they are integers in `[0, n]`.
+//! Comparisons are the IR's signed comparisons, which the proving backends
+//! decide exactly on the signed 64-bit window (and reject operands outside
+//! it), the domain of Zinnia's int64 values and Q32 floats. Counts are sums
+//! of comparison bits, so they are integers in `[0, n]`.
 
 use crate::builder::IRBuilder;
 use crate::ir_defs::HintKind;
@@ -27,6 +27,18 @@ pub(super) struct Elements<'a> {
 impl Elements<'_> {
     fn len(&self) -> usize {
         self.values.len()
+    }
+
+    /// Bits that hold every index `0..n` (at least one).
+    fn index_bits(&self) -> u32 {
+        (usize::BITS - self.len().saturating_sub(1).leading_zeros()).max(1)
+    }
+
+    /// `[(v1, i1) < (v2, i2)]` lexicographically (`IR::KeyLess`); every
+    /// index the lowerings pass lies in `[0, n)`: a constant, a selection
+    /// among constants, or a hinted index with its bound asserted.
+    fn key_less(&self, b: &mut IRBuilder, v1: &Value, i1: &Value, v2: &Value, i2: &Value) -> Value {
+        b.ir_key_less(v1, i1, v2, i2, self.index_bits())
     }
 
     fn less(&self, b: &mut IRBuilder, x: &Value, y: &Value) -> Value {
@@ -59,8 +71,8 @@ impl Elements<'_> {
 /// interchangeable, so the values are NumPy's; the adjacent-swap network
 /// also keeps equal values in order, so its indices are the stable
 /// argsort). With the tie-break a key is `(value, index)`, compared
-/// lexicographically; the index comparison is `LtIBounded`, sound because
-/// every index cell is a selection among the constants `0..n`.
+/// lexicographically (`IR::KeyLess`, whose index bound holds because every
+/// index cell is a selection among the constants `0..n`).
 ///
 /// No hint: every output is a function of the elements. Comparators whose
 /// outputs are not used are removed by dead-code elimination.
@@ -77,22 +89,10 @@ pub(super) fn sort_by_network(
         Vec::new()
     };
     for (i, j) in network.pairs(n) {
-        let value_less = elements.less(b, &keys[j], &keys[i]);
-        let swap = if !network.tie_break() {
-            value_less
-        } else if let (Some(x), Some(y)) = (indices[j].int_val(), indices[i].int_val()) {
-            // Indices still at their constants: the tie order is known.
-            if x < y {
-                let tie = elements.equal(b, &keys[j], &keys[i]);
-                b.ir_logical_or(&value_less, &tie)
-            } else {
-                value_less
-            }
+        let swap = if network.tie_break() {
+            elements.key_less(b, &keys[j], &indices[j], &keys[i], &indices[i])
         } else {
-            let tie = elements.equal(b, &keys[j], &keys[i]);
-            let index_less = b.ir_less_than_i_bounded(&indices[j], &indices[i]);
-            let tie_swap = b.ir_logical_and(&tie, &index_less);
-            b.ir_logical_or(&value_less, &tie_swap)
+            elements.less(b, &keys[j], &keys[i])
         };
         let low = elements.select(b, &swap, &keys[j], &keys[i]);
         let high = elements.select(b, &swap, &keys[i], &keys[j]);
@@ -118,6 +118,7 @@ pub(super) struct Key {
 }
 
 /// The elements in a memory segment, for the reads through hinted indices.
+#[derive(Clone, Copy)]
 pub(super) struct ElementMemory {
     segment: u32,
 }
@@ -141,14 +142,10 @@ impl ElementMemory {
 }
 
 /// `x < y` for keys: `x.value < y.value`, or equal values and
-/// `x.index < y.index`. Both indices lie in `[0, n)` (asserted, or
-/// constants), as `LtIBounded` requires.
+/// `x.index < y.index` (both indices lie in `[0, n)`: asserted, or
+/// constants).
 fn key_less(b: &mut IRBuilder, elements: &Elements, x: &Key, y: &Key) -> Value {
-    let value_less = elements.less(b, &x.value, &y.value);
-    let tie = elements.equal(b, &x.value, &y.value);
-    let index_less = b.ir_less_than_i_bounded(&x.index, &y.index);
-    let tie_less = b.ir_logical_and(&tie, &index_less);
-    b.ir_logical_or(&value_less, &tie_less)
+    elements.key_less(b, &x.value, &x.index, &y.value, &y.index)
 }
 
 /// The number of elements whose key lies below `key` (`above`: above it).
@@ -303,4 +300,45 @@ impl OutputMemory {
         b.ir_assert_u128_lt(rank, &n);
         crate::helpers::segment::read_typed(b, self.segment, rank, self.dtype)
     }
+}
+
+/// The value of rank `rank` among the active elements of a runtime-length
+/// array (`active[j]` is 1 when slot `j` holds an element, 0 for padding),
+/// pinned by counting over the active elements only: the prover supplies `v`
+/// (lane `rank` of `HintKind::MaskedSortedValues`) and the IR asserts
+/// `below <= rank < below + ties` with `below = #{j active: a_j < v}` and
+/// `ties = #{j active: a_j == v}`.
+///
+/// Soundness: [`order_statistic`]'s argument on the multiset of active
+/// elements (padding contributes to neither count): `v` is pinned to their
+/// value of rank `rank`, and a rank outside `[0, #active)` admits no `v`
+/// (no proof, as NumPy has no such element). Emitted where the frontend
+/// lowers the operation, so its asserts hold only where that code runs.
+pub(crate) fn masked_order_statistic(
+    b: &mut IRBuilder,
+    elements: &[Value],
+    active: &[Value],
+    dtype: NumberType,
+    rank: &Value,
+) -> Value {
+    let elements = Elements { values: elements, dtype };
+    let mut operands = elements.values.to_vec();
+    operands.extend(active.iter().cloned());
+    let v = b.ir_hint(HintKind::MaskedSortedValues, &operands, rank);
+    let mut below = Vec::with_capacity(active.len());
+    let mut ties = Vec::with_capacity(active.len());
+    for (a, flag) in elements.values.iter().zip(active) {
+        let less = elements.less(b, a, &v);
+        below.push(b.ir_logical_and(flag, &less));
+        let equal = elements.equal(b, a, &v);
+        ties.push(b.ir_logical_and(flag, &equal));
+    }
+    let below = count(b, &below);
+    let ties = count(b, &ties);
+    let not_above = b.ir_less_than_or_equal_i(&below, rank);
+    b.ir_assert(&not_above);
+    let at_or_below = b.ir_add_i(&below, &ties);
+    let reached = b.ir_less_than_i(rank, &at_or_below);
+    b.ir_assert(&reached);
+    v
 }

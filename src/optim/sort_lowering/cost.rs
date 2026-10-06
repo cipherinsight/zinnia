@@ -3,12 +3,12 @@
 //!
 //! Every lowering computes the same outputs (NumPy's stable sort), so the
 //! choice only moves cost. It depends on the target because the two
-//! backends price the operations very differently: a dynamic read is a
-//! one-hot selection over every slot in halo2-base (about 15 cells per
-//! slot) but a native memory read in Noir (about 10 gates, plus 3 per slot
-//! to build the array once), while comparisons cost about 43 cells against
-//! about 5 gates. The rule is the same for every program: the plan with
-//! the smallest estimated cost for the live outputs.
+//! backends price the operations very differently: a read at a hinted
+//! index is a one-hot selection over every slot in halo2-base (about 20
+//! cells per slot) but a native memory read in Noir (about 7 gates, plus 3
+//! per slot to build the array once), while a compare-exchange costs about
+//! 79 cells against 24 gates. The rule is the same for every program: the
+//! plan with the smallest estimated cost for the live outputs.
 
 use std::collections::BTreeSet;
 
@@ -39,67 +39,70 @@ impl SortTarget {
     }
 }
 
-/// Costs of the operations the lowerings emit, in the target's metric
-/// (halo2-base: advice + lookup cells; Noir: `bb gates`).
+/// Costs of the pieces the plans are made of, in the target's metric
+/// (halo2-base: advice + lookup cells; Noir: `bb gates`), measured on the
+/// release build (2026-10-06) from small kernels: a 100-element argsort and
+/// sort under each plan, the 7 largest of 100, a median, a minimum and a
+/// value at a runtime rank of 100 elements, minus the same kernel's input
+/// handling (`return a`).
 #[derive(Clone, Copy, Debug)]
 pub(super) struct UnitCosts {
-    /// `a < b` of two runtime values (a bit).
-    compare: u32,
-    /// `a == b` of two runtime values.
-    equal: u32,
-    /// A select between two runtime values.
-    select: u32,
-    /// `i < j` of two runtime indices in `[0, n)`.
-    index_less: u32,
-    /// `j < p` of a constant and a runtime index in `[0, n)`.
-    constant_index_less: u32,
-    /// A logical and / or of two bits.
-    logic: u32,
-    /// Adding a bit to a count.
-    count_add: u32,
-    /// `0 <= p < n` of a runtime index.
-    bound: u32,
-    /// Making a segment of `n` values readable at runtime addresses, per
-    /// slot, once per segment (Noir builds an array; halo2-base nothing).
+    /// One compare-exchange of values (Batcher's network on values).
+    exchange: u32,
+    /// One compare-exchange of `(value, index)` keys with the index
+    /// tie-break (`IR::KeyLess`) and four selects.
+    exchange_keys: u32,
+    /// One compare-exchange of values that also moves the indices (the
+    /// adjacent-swap argsort).
+    exchange_tracked: u32,
+    /// A hinted key: its index bounded and its value read, a fixed part and
+    /// a part per slot of the segment read.
+    key_read_fixed: u32,
+    key_read_per_slot: u32,
+    /// Making `n` values readable at runtime addresses, per slot, once per
+    /// segment (Noir builds an array; halo2-base reads by selection).
     segment_per_slot: u32,
-    /// A dynamic read: a fixed part and a part per slot of the segment.
-    read_fixed: u32,
-    read_per_slot: u32,
+    /// An asserted key comparison (consecutive keys of a run).
+    key_link: u32,
+    /// One term of a count of the keys below or above a key.
+    key_count_term: u32,
+    /// One element's terms in an order statistic's two counts (a
+    /// comparison, an equality test and two additions).
+    rank_count_term: u32,
 }
 
-/// Measured on the release build (`costs_halo2 --profile`, 2026-10-06):
-/// `LtF` 43 (35 advice + 8 lookup), `EqF` 12, `LtIBounded` 14, selects 4,
-/// `LogicalOr` 8, `LogicalAnd` 4; a dynamic read is an equality indicator
-/// and an inner-product term per slot.
+/// halo2-base: an argsort of 100 by Batcher's network costs 84,600 cells
+/// (78.5 per exchange with the `KeyLess` tie-break), a sort 54,900 (51 per
+/// exchange); a read at a hinted index is a one-hot selection over the 100
+/// slots (about 2,000 cells); `KeyLess` is about 55 cells; an order
+/// statistic of 100 about 4,700-6,500.
 const HALO2_BASE: UnitCosts = UnitCosts {
-    compare: 43,
-    equal: 12,
-    select: 4,
-    index_less: 14,
-    constant_index_less: 8,
-    logic: 6,
-    count_add: 4,
-    bound: 8,
+    exchange: 51,
+    exchange_keys: 79,
+    exchange_tracked: 63,
+    key_read_fixed: 10,
+    key_read_per_slot: 20,
     segment_per_slot: 0,
-    read_fixed: 4,
-    read_per_slot: 15,
+    key_link: 55,
+    key_count_term: 59,
+    rank_count_term: 50,
 };
 
-/// Measured with `bb gates` (UltraHonk): a comparison is one hinted bit and
-/// a 64-bit gap check; a native read is about 10 gates, plus 3 per element
-/// to build the array, once for all reads of a segment.
+/// Noir: an argsort of 100 by the permutation check costs 1,520 gates (a
+/// native read per key, the array built once, an asserted `KeyLess` per
+/// link), by Batcher's network 26,100 (24 per exchange); a sort's exchange
+/// is 17; the 7 largest of 100 cost 1,000 (one count of 100 key terms); an
+/// order statistic of 100 about 840.
 const NOIR: UnitCosts = UnitCosts {
-    compare: 6,
-    equal: 3,
-    select: 1,
-    index_less: 3,
-    constant_index_less: 2,
-    logic: 1,
-    count_add: 1,
-    bound: 3,
+    exchange: 17,
+    exchange_keys: 24,
+    exchange_tracked: 20,
+    key_read_fixed: 7,
+    key_read_per_slot: 0,
     segment_per_slot: 3,
-    read_fixed: 10,
-    read_per_slot: 0,
+    key_link: 6,
+    key_count_term: 10,
+    rank_count_term: 9,
 };
 
 /// The outputs of one sort that are still live after dead-code
@@ -116,14 +119,22 @@ pub(super) struct Demand {
     pub runtime_indices: usize,
 }
 
-/// A run of consecutive ranks lowered together (see `emit::pinned_run`).
+/// A run of consecutive ranks lowered together.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Run {
     pub first: usize,
     pub last: usize,
-    /// Each rank's value pinned by its own count (`emit::order_statistic`)
-    /// instead of keys: only for runs whose live outputs are all values.
-    pub by_count: bool,
+    pub pin: Pin,
+}
+
+/// How a run's outputs are pinned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Pin {
+    /// Hinted keys for every rank of the run (`emit::pinned_run`).
+    Keys,
+    /// Each live rank's value by its own counts (`emit::order_statistic`):
+    /// only for runs whose live outputs are all values.
+    Counts,
 }
 
 /// How a sort's live outputs are computed.
@@ -172,7 +183,7 @@ impl Network {
 impl UnitCosts {
     /// One read of a segment of `n` values at a bounded runtime address.
     fn read(&self, n: usize) -> u64 {
-        u64::from(self.bound + self.read_fixed) + n as u64 * u64::from(self.read_per_slot)
+        u64::from(self.key_read_fixed) + n as u64 * u64::from(self.key_read_per_slot)
     }
 
     /// `count` reads of one segment of `n` values, with the segment (none
@@ -184,48 +195,34 @@ impl UnitCosts {
         n as u64 * u64::from(self.segment_per_slot) + count as u64 * self.read(n)
     }
 
-    /// One compare-exchange of the network.
+    /// One compare-exchange of `network`.
     fn comparator(&self, network: Network) -> u64 {
-        let mut cost = self.compare + 2 * self.select;
-        if network.tracks_indices() {
-            cost += 2 * self.select;
-        }
-        if network.tie_break() {
-            cost += self.equal + self.index_less + 2 * self.logic;
-        }
-        u64::from(cost)
-    }
-
-    /// `(v_i, p_i) < (v_j, p_j)` of two hinted keys, asserted.
-    fn chain_link(&self) -> u64 {
-        u64::from(self.compare + self.equal + self.index_less + 2 * self.logic)
-    }
-
-    /// One term of a count of the keys below (or above) a hinted key.
-    fn key_count_term(&self) -> u64 {
-        u64::from(self.compare + self.equal + self.constant_index_less + 2 * self.logic + self.count_add)
+        u64::from(match network {
+            Network::MergeExchange => self.exchange,
+            Network::MergeExchangeTieBreak => self.exchange_keys,
+            Network::AdjacentSwap => self.exchange_tracked,
+        })
     }
 
     /// One value pinned by `count(a < v) <= r < count(a <= v)`.
     fn order_statistic(&self, n: usize) -> u64 {
-        n as u64 * u64::from(self.compare + self.equal + 2 * self.count_add)
-            + 2 * u64::from(self.compare)
+        n as u64 * u64::from(self.rank_count_term)
     }
+
 
     /// The runtime-rank index whose key has exactly `r` keys below it,
     /// without its read (see `reads`).
     fn index_at_rank(&self, n: usize) -> u64 {
-        n as u64 * self.key_count_term() + u64::from(self.equal)
+        n as u64 * u64::from(self.key_count_term)
     }
 
     /// The ranks `first..=last` as hinted keys, without their reads (see
-    /// `reads`): the chain between them and, at each end that is not an end
-    /// of the sort, a count of the keys beyond it.
+    /// `reads`): the links between them and, at each end that is not an
+    /// end of the sort, a count of the keys beyond it.
     fn key_run(&self, n: usize, first: usize, last: usize) -> u64 {
         let len = (last - first + 1) as u64;
         let boundaries = u64::from(first > 0) + u64::from(last + 1 < n);
-        (len - 1) * self.chain_link()
-            + boundaries * (n as u64 * self.key_count_term() + u64::from(self.equal))
+        (len - 1) * u64::from(self.key_link) + boundaries * n as u64 * u64::from(self.key_count_term)
     }
 }
 
@@ -337,7 +334,7 @@ fn cheapest_network(demand: &Demand, costs: &UnitCosts) -> Option<(Plan, u64)> {
 /// outputs read its outputs.
 fn full_permutation(demand: &Demand, costs: &UnitCosts) -> Option<(Plan, u64)> {
     let n = demand.n;
-    let run = Run { first: 0, last: n - 1, by_count: false };
+    let run = Run { first: 0, last: n - 1, pin: Pin::Keys };
     let cost = costs.key_run(n, 0, n - 1) + costs.reads(n, n) + runtime_reads_of_outputs(demand, costs);
     Some((Plan::Hinted { runs: vec![run] }, cost))
 }
@@ -356,7 +353,7 @@ fn cheapest_selection(demand: &Demand, costs: &UnitCosts) -> Option<(Plan, u64)>
             let (runs, runs_cost) = cheapest_runs(demand, costs, allow_keys)?;
             let keys: usize = runs
                 .iter()
-                .filter(|run| !run.by_count)
+                .filter(|run| run.pin == Pin::Keys)
                 .map(|run| run.last - run.first + 1)
                 .sum::<usize>()
                 + demand.runtime_indices;
@@ -383,18 +380,19 @@ fn cheapest_runs(demand: &Demand, costs: &UnitCosts, allow_keys: bool) -> Option
         for start in 0..end {
             let (first, last) = (live[start], live[end - 1]);
             let values_only = live[start..end].iter().all(|r| !demand.indices.contains(r));
-            let by_keys = allow_keys
-                .then(|| costs.key_run(n, first, last) + (last - first + 1) as u64 * costs.read(n));
-            let by_count = values_only.then(|| (end - start) as u64 * costs.order_statistic(n));
-            let (cost, by_count) = match (by_keys, by_count) {
-                (Some(k), Some(c)) if c < k => (c, true),
-                (Some(k), _) => (k, false),
-                (None, Some(c)) => (c, true),
-                (None, None) => continue,
+            let mut options: Vec<(u64, Pin)> = Vec::new();
+            if allow_keys {
+                options.push((costs.key_run(n, first, last) + (last - first + 1) as u64 * costs.read(n), Pin::Keys));
+            }
+            if values_only {
+                options.push(((end - start) as u64 * costs.order_statistic(n), Pin::Counts));
+            }
+            let Some(&(cost, pin)) = options.iter().min_by_key(|(cost, _)| *cost) else {
+                continue;
             };
             let total = best[start].0.saturating_add(cost);
             if total < best[end].0 {
-                best[end] = (total, Some((start, Run { first, last, by_count })));
+                best[end] = (total, Some((start, Run { first, last, pin })));
             }
         }
     }

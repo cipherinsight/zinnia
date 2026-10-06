@@ -430,16 +430,7 @@ fn compile_circuit_impl(
     }
     // Lower the sorts' live outputs (`optim::sort_lowering`): mandatory, and
     // after dead-code elimination, which decides which outputs are live.
-    // The pass emits fresh comparisons, selects and constants: simplify them
-    // as the earlier passes did the rest (`select(c, 1, 0)` is `c`, ...),
-    // deduplicate, and drop what no output needs (a network's comparators
-    // outside the cone of the live outputs).
     passes.push("SortLowering");
-    if shortcut_optimization {
-        passes.push("PatternMatchOptim");
-    }
-    passes.push("DuplicateCodeElimination");
-    passes.push("DeadCodeElimination");
     // Collapse `AssertU128Lt(stride_k + base, hi)` chains to the tightest
     // (max-stride) member: see `optim/assert_subsumption.rs`. Runs after
     // DCE so the redundant asserts are visible side-by-side.

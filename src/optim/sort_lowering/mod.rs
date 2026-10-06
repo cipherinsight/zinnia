@@ -29,6 +29,7 @@ pub(crate) mod test_support;
 mod tests;
 
 pub use cost::SortTarget;
+pub(crate) use emit::masked_order_statistic;
 
 use std::collections::HashMap;
 
@@ -37,7 +38,7 @@ use crate::ir::IRGraph;
 use crate::ir_defs::IR;
 use crate::types::{NumberType, StmtId, Value};
 
-use self::cost::{Demand, Plan};
+use self::cost::{Demand, Pin, Plan, Run};
 use self::emit::{ElementMemory, Elements, OutputMemory};
 use super::IRPass;
 
@@ -53,9 +54,20 @@ struct Group {
 }
 
 impl IRPass for SortLowering {
+    /// Lowers the sorts, then simplifies what the lowering emitted as the
+    /// earlier passes simplified the rest (`select(c, 1, 0)` is `c`, ...),
+    /// deduplicates it, and drops what no output needs (a network's
+    /// comparators outside the cone of the live outputs). A graph without
+    /// sorts is returned unchanged.
     fn exec(&self, graph: IRGraph) -> IRGraph {
+        if !graph.stmts.iter().any(|s| matches!(s.ir, IR::Sorted { .. })) {
+            return graph;
+        }
         let costs = self.target.costs();
-        lower_sorts(graph, |demand| cost::choose_plan(demand, &costs).0)
+        let lowered = lower_sorts(graph, |demand| cost::choose_plan(demand, &costs).0);
+        let simplified = super::PatternMatchOptim.exec(lowered);
+        let deduplicated = super::DuplicateCodeElimination.exec(simplified);
+        super::DeadCodeElimination.exec(deduplicated)
     }
 }
 
@@ -187,39 +199,48 @@ impl LoweredSort {
             }
             Plan::Hinted { runs } => {
                 for run in runs {
-                    if run.by_count {
-                        let live = group.demand.values.range(run.first..=run.last);
-                        for &r in live {
-                            let rank = b.ir_constant_int(r as i64);
-                            let value = emit::order_statistic(b, &sort.as_elements(), &rank);
-                            sort.values.insert(r, value);
-                        }
-                        continue;
-                    }
-                    let memory = sort.element_memory(b);
-                    let keys =
-                        emit::pinned_run(b, &sort.as_elements(), &memory, run.first, run.last);
-                    sort.element_memory = Some(memory);
-                    for (k, key) in keys.into_iter().enumerate() {
-                        sort.values.insert(run.first + k, key.value);
-                        sort.indices.insert(run.first + k, key.index);
+                    match run.pin {
+                        Pin::Keys => sort.pin_keys(b, run),
+                        Pin::Counts => sort.pin_by_counts(b, &group.demand, run),
                     }
                 }
-                sort.complete = matches!(runs.as_slice(), [run] if !run.by_count && run.first == 0 && run.last + 1 == n);
+                sort.complete = matches!(runs.as_slice(), [run] if run.pin == Pin::Keys && run.first == 0 && run.last + 1 == n);
             }
         }
         sort
+    }
+
+    /// The run's values and indices as pinned keys.
+    fn pin_keys(&mut self, b: &mut IRBuilder, run: &Run) {
+        let memory = self.element_memory(b);
+        let keys = emit::pinned_run(b, &self.as_elements(), &memory, run.first, run.last);
+        for (k, key) in keys.into_iter().enumerate() {
+            self.values.insert(run.first + k, key.value);
+            self.indices.insert(run.first + k, key.index);
+        }
+    }
+
+    /// The run's live values, each pinned by its own counts.
+    fn pin_by_counts(&mut self, b: &mut IRBuilder, demand: &Demand, run: &Run) {
+        for &r in demand.values.range(run.first..=run.last) {
+            let rank = b.ir_constant_int(r as i64);
+            let value = emit::order_statistic(b, &self.as_elements(), &rank);
+            self.values.insert(r, value);
+        }
     }
 
     fn as_elements(&self) -> Elements<'_> {
         Elements { values: &self.elements, dtype: self.dtype }
     }
 
+    /// The elements' segment for reads at hinted indices, built once.
     fn element_memory(&mut self, b: &mut IRBuilder) -> ElementMemory {
-        match self.element_memory.take() {
-            Some(memory) => memory,
-            None => ElementMemory::new(b, &self.as_elements()),
+        if let Some(memory) = self.element_memory {
+            return memory;
         }
+        let memory = ElementMemory::new(b, &self.as_elements());
+        self.element_memory = Some(memory);
+        memory
     }
 
     fn output(&self, rank: usize, index: bool) -> Value {
@@ -244,9 +265,7 @@ impl LoweredSort {
         }
         if index {
             let memory = self.element_memory(b);
-            let p = emit::argsort_at_rank(b, &self.as_elements(), &memory, rank);
-            self.element_memory = Some(memory);
-            p
+            emit::argsort_at_rank(b, &self.as_elements(), &memory, rank)
         } else {
             emit::order_statistic(b, &self.as_elements(), rank)
         }

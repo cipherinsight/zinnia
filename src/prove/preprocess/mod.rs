@@ -418,6 +418,14 @@ impl<'a> Preprocessor<'a> {
                 }
                 Ok(Some(kernel::hint_lane(*kind, &args[..len], args[len])))
             }
+            IR::KeyLess { .. } => {
+                let less = |x: Fp, y: Fp| {
+                    let d = x - y;
+                    kernel::fp_is_negative(d) && d != Fp::zero()
+                };
+                let key_less = less(args[0], args[2]) || (args[0] == args[2] && less(args[1], args[3]));
+                Ok(Some(if key_less { Fp::one() } else { Fp::zero() }))
+            }
             IR::Sorted { .. } => Err(ProvingError::synthesis(
                 "a Sorted placeholder reached preprocessing; optim::sort_lowering must lower it",
             )),

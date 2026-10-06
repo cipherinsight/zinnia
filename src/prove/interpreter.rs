@@ -326,6 +326,9 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
                 }
                 Some(synth.prover_hint(*kind, &args[..len], &args[len])?)
             }
+            IR::KeyLess { index_bits } => {
+                Some(synth.key_less(&args[0], &args[1], &args[2], &args[3], *index_bits)?)
+            }
             IR::Sorted { .. } => {
                 return Err(ProvingError::synthesis(
                     "a Sorted placeholder reached the prover; optim::sort_lowering must lower it",

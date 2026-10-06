@@ -317,6 +317,12 @@ pub(super) fn median(b:&mut IRBuilder,args:&[Value],kwargs:&HashMap<String,Value
     use crate::types::{SliceIndex,NumberType};
     let mut input=args[0].clone();
     let axis_arg=kwargs.get("axis").or_else(||args.get(1));
+    if let Value::DynamicNDArray(data) = &input {
+        if axis_arg.is_some_and(|a| !matches!(a, Value::None)) {
+            panic!("np.median of a runtime-shaped array: only axis=None is supported");
+        }
+        return crate::ops::static_ndarray_ops::runtime_shaped_median(b, data);
+    }
     let axis = if axis_arg.is_none() || matches!(axis_arg,Some(Value::None)) {
         input=crate::helpers::static_array::shape::try_apply_flatten(b,&input).expect("median requires numeric array");0
     } else {

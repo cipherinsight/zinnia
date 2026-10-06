@@ -1107,6 +1107,7 @@ fn sort_hints_are_pinned() {
     let n = values.len() as u32;
     let every: Vec<Output> = (0..n).flat_map(|r| [Output::Value(r), Output::Index(r)]).collect();
     let cases: Vec<(Forced, Vec<Output>)> = vec![
+        (Forced::Batcher, every.clone()),
         (Forced::Permutation, every),
         (Forced::Runs, vec![Output::Index(3), Output::Index(4)]),
         (Forced::Runs, vec![Output::Index(1), Output::Index(2)]),
@@ -1133,4 +1134,35 @@ fn sort_hints_are_pinned() {
             }
         }
     }
+}
+
+/// `IR::KeyLess` by packed keys: the lexicographic order on window
+/// extremes, ties and index order, and its comparison hint pinned.
+#[test]
+fn packed_key_comparison_is_lexicographic_and_pinned() {
+    let op: Box<Op> = Box::new(|s, c| Ok(vec![s.key_less(&c[0], &c[1], &c[2], &c[3], 7)?]));
+    let max = i64::MAX;
+    let min = i64::MIN;
+    let cases: [(i64, i64, i64, i64); 8] = [
+        (1, 5, 2, 0),
+        (2, 0, 1, 5),
+        (3, 4, 3, 5),
+        (3, 5, 3, 4),
+        (3, 5, 3, 5),
+        (min, 127, max, 0),
+        (max, 0, min, 127),
+        (-1, 0, 0, 0),
+    ];
+    for (v1, i1, v2, i2) in cases {
+        let expected = (v1, i1) < (v2, i2);
+        assert_sound(
+            &format!("({v1}, {i1}) < ({v2}, {i2})"),
+            &*op,
+            &[int(v1), int(i1), int(v2), int(i2)],
+            &[if expected { Fp::one() } else { Fp::zero() }],
+            &[],
+        );
+    }
+    // An index outside [0, 2^7) has no witness (the range check fails).
+    assert!(!synthesize(&*op, &[int(1), int(128), int(1), int(0)], &[]).accepted);
 }

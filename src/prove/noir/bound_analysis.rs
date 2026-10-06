@@ -222,6 +222,7 @@ pub fn run(graph: &IRGraph) -> BoundMap {
 
             // ── Prover hints — any value the prover chooses ───────────
             IR::Hint { .. } | IR::Sorted { .. } => None,
+            IR::KeyLess { .. } => Some(1),
         };
 
         // Provenance fallback / tightening: the ProvenanceTable carries

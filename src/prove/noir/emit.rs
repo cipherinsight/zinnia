@@ -125,7 +125,7 @@ fn asserted_comparisons(ir: &IRGraph) -> HashSet<u32> {
             matches!(
                 s.ir,
                 IR::LtI | IR::LteI | IR::GtI | IR::GteI | IR::LtF | IR::LteF | IR::GtF | IR::GteF
-                    | IR::LtIBounded | IR::GtIBounded | IR::IndexInBox { .. }
+                    | IR::LtIBounded | IR::GtIBounded | IR::IndexInBox { .. } | IR::KeyLess { .. }
             )
         })
         .map(|s| s.stmt_id)
@@ -2961,6 +2961,41 @@ impl Synthesizer for NoirEmitter<'_> {
         noop_unsupported!(self, "eq_hash")
     }
 
+    /// `[(v1, i1) < (v2, i2)]` by one gap check of the packed keys
+    /// `K = v·2^b + i`: the producer guarantees `i` in `[0, 2^b)`, so
+    /// `K1 - K2 = (v1 - v2)·2^b + (i1 - i2)` has the sign of the
+    /// lexicographic order (`|i1 - i2| < 2^b`), and `qlt_bits::<W>` pins
+    /// that sign whenever `|K1 - K2| < 2^W` and fails the proof otherwise
+    /// (as `gap_compare` does for values). `W` covers every pair of window
+    /// values (`64 + b + 1` bits), rounded up to whole 14-bit limbs so bb
+    /// builds no table of its own. Used only by asserts, the comparison is
+    /// the check itself: `K2 - K1 - 1` in `[0, 2^W)`.
+    fn key_less(
+        &mut self,
+        v1: &CellRef,
+        i1: &CellRef,
+        v2: &CellRef,
+        i2: &CellRef,
+        index_bits: u32,
+    ) -> Result<CellRef, ProvingError> {
+        let scale = 1u128 << index_bits;
+        let k1 = self.bind(&format!("{v1} * {scale} + {i1}"));
+        let k2 = self.bind(&format!("{v2} * {scale} + {i2}"));
+        let width = (64 + index_bits + 1).div_ceil(14) * 14;
+        let asserted = self
+            .current_stmt
+            .is_some_and(|id| self.asserted_comparisons.contains(&id));
+        if asserted {
+            let t = self.fresh();
+            let _ = writeln!(self.body, "    let {t}: Field = {k2} - {k1} - 1;");
+            let _ = writeln!(self.body, "    {t}.assert_max_bit_size::<{width}>();");
+            return Ok(self.literal_int(1));
+        }
+        self.use_lib("qlt_bits");
+        let less = self.bind_typed(&format!("qlt_bits::<{width}>({k1}, {k2})"), "bool");
+        Ok(self.bind_flag(&format!("{less} as Field")))
+    }
+
     /// A hint lane from `noir_fpc`'s unconstrained implementation of
     /// `kernel::hint_lane` (same order, same algorithm, same lanes). A
     /// constant rank indexes the hint's array, computed once per operand
@@ -2978,10 +3013,19 @@ impl Synthesizer for NoirEmitter<'_> {
         let (lanes_fn, lane_at_fn) = match kind {
             HintKind::StableArgsort => ("argsort_hint", "argsort_hint_at"),
             HintKind::SortedValues => ("sorted_hint", "sorted_hint_at"),
+            HintKind::MaskedSortedValues => ("masked_sorted_hint", "masked_sorted_hint_at"),
         };
-        let operand_list = operands.join(", ");
+        // A masked hint takes the values and their activity flags as two
+        // arrays; its lanes are as many as the values.
+        let (operand_list, lanes) = match kind {
+            HintKind::MaskedSortedValues => {
+                let (values, active) = operands.split_at(operands.len() / 2);
+                (format!("{}], [{}", values.join(", "), active.join(", ")), values.len())
+            }
+            _ => (operands.join(", "), operands.len()),
+        };
         if let Some(rank) = self.s_int_of(rank) {
-            let Some(lane) = usize::try_from(rank).ok().filter(|&r| r < operands.len()) else {
+            let Some(lane) = usize::try_from(rank).ok().filter(|&r| r < lanes) else {
                 return Ok(self.literal_int(0));
             };
             let key = format!("{lanes_fn}([{operand_list}])");
@@ -2990,13 +3034,7 @@ impl Synthesizer for NoirEmitter<'_> {
                 None => {
                     self.use_lib(lanes_fn);
                     let name = self.fresh();
-                    let _ = writeln!(
-                        self.body,
-                        "    let {}: [Field; {}] = {};",
-                        name,
-                        operands.len(),
-                        key
-                    );
+                    let _ = writeln!(self.body, "    let {}: [Field; {}] = {};", name, lanes, key);
                     self.hint_arrays.insert(key, name.clone());
                     name
                 }

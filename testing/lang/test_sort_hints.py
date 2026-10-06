@@ -144,9 +144,10 @@ def test_full_argsort_is_a_network_on_halo2_and_hinted_on_noir():
     source = 'def kernel(a: Float[Array, "100"]):\n    return np.argsort(a)\n'
     halo2 = ir_classes(compile_for(source, "halo2"))
     noir = ir_classes(compile_for(source, "noir"))
-    assert "HintIR" not in halo2 and halo2.count("LessThanFIR") == 1077
+    # Batcher's 1,077 compare-exchanges of (value, index) keys.
+    assert "HintIR" not in halo2 and halo2.count("KeyLessIR") == 1077
     # One hinted index per rank, 99 key comparisons, one native read each.
-    assert noir.count("HintIR") == 100 and noir.count("LessThanFIR") == 99
+    assert noir.count("HintIR") == 100 and noir.count("KeyLessIR") == 99
     assert noir.count("ReadMemoryIR") == 100
 
 
@@ -156,7 +157,7 @@ def test_few_live_outputs_are_pinned_alone(target):
     # comparisons and one count of the 100 keys below the 7th largest.
     classes = ir_classes(compile_for('def kernel(a: Float[Array, "100"]):\n'
                                      '    return np.argsort(a)[::-1][:7]\n', target))
-    assert classes.count("HintIR") == 7 and classes.count("LessThanFIR") == 106
+    assert classes.count("HintIR") == 7 and classes.count("KeyLessIR") == 106
     assert "SortedIR" not in classes
 
 
@@ -192,3 +193,73 @@ def assert_halo2_base_agrees(source, target, *args):
 ])
 def test_halo2_base_proof_matches_mock(source, args, target):
     assert_halo2_base_agrees(source, target, *args)
+
+
+# ── argmax of a comparison of sorted values (the searchsorted idiom) ────
+
+ARGMAX_OF_SORTED = {
+    "gt": 'def kernel(a: Float[Array, "9"], e: Integer):\n    return (np.sort(a) > e).argmax()\n',
+    "ge": 'def kernel(a: Float[Array, "9"], e: Integer):\n    return (np.sort(a) >= e).argmax()\n',
+    "lt": 'def kernel(a: Float[Array, "9"], e: Integer):\n    return (np.sort(a) < e).argmax()\n',
+    "mirrored": 'def kernel(a: Float[Array, "9"], e: Integer):\n    return (e < np.sort(a)).argmax()\n',
+    "ecdf": 'def kernel(a: Float[Array, "9"], e: Float):\n'
+            '    xs = np.sort(a)\n'
+            '    ys = np.arange(1, len(xs) + 1) / float(len(xs))\n'
+            '    return ys[(xs > e).argmax() - 1]\n',
+}
+
+
+@pytest.mark.parametrize("target", TARGETS)
+@pytest.mark.parametrize("name", sorted(ARGMAX_OF_SORTED))
+def test_argmax_of_sorted_comparison_matches_numpy(name, target):
+    # The first True of an ascending comparison is the number of Falses,
+    # counted over the unsorted elements: no sort is left in the circuit.
+    source = ARGMAX_OF_SORTED[name]
+    a = np.array([2.0, -1.0, 2.0, 5.0, 0.0, 2.0, -3.5, 5.0, 1.5])
+    program = compile_for(source, target)
+    assert "HintIR" not in ir_classes(program) and "KeyLessIR" not in ir_classes(program)
+    for e in (-4, -3.5, -1, 0, 1.5, 2, 3, 5, 6):
+        e = e if name == "ecdf" else int(np.floor(e))
+        satisfied, outputs = run_mock(program, a, e)
+        assert satisfied
+        assert outputs[0] == pytest.approx(reference(source)(a, e), abs=1e-9), (name, e)
+
+
+# ── Order statistics of runtime-length arrays ────────────────────────────
+
+RUNTIME_LENGTH = {
+    "median": 'def kernel(a: Float[Array, "11"], t: Float):\n    return np.median(a[a > t])\n',
+    "median_int": 'def kernel(a: Integer[Array, "11"], t: Integer):\n    return np.median(a[a > t])\n',
+    "percentile": 'def kernel(a: Float[Array, "11"], t: Float, q: Integer):\n'
+                  '    return np.percentile(a[a > t], q)\n',
+    "percentile_constant": 'def kernel(a: Float[Array, "11"], t: Float):\n'
+                           '    return np.percentile(a[a > t], 30)\n',
+}
+RUNTIME_SAMPLE = np.array([2.5, -1.0, 2.5, 7.0, 0.0, 2.5, -3.5, 7.0, 1.5, 4.0, 2.5])
+
+
+@pytest.mark.parametrize("target", TARGETS)
+@pytest.mark.parametrize("name", sorted(RUNTIME_LENGTH))
+def test_order_statistics_of_runtime_length_arrays_match_numpy(name, target):
+    # The elements past a threshold: every runtime length from 11 down to 1,
+    # ties included; an empty selection has no proof (NumPy: nan).
+    source = RUNTIME_LENGTH[name]
+    a = RUNTIME_SAMPLE.astype(int) if name.endswith("_int") else RUNTIME_SAMPLE
+    program = compile_for(source, target)
+    for t in (-4, -2, 0, 1, 2, 3, 5):
+        t = int(t) if name.endswith("_int") else float(t)
+        qs = (0, 25, 50, 99, 100) if name == "percentile" else (None,)
+        for q in qs:
+            args = (a, t) if q is None else (a, t, q)
+            satisfied, outputs = run_mock(program, *args)
+            assert satisfied, (name, t, q)
+            assert outputs[0] == pytest.approx(reference(source)(*args), abs=1e-6), (name, t, q)
+    empty = (a, 10) if name.endswith("_int") else (a, 10.0)
+    if name == "percentile":
+        empty = empty + (50,)
+    assert not run_mock(program, *empty)[0]
+
+
+@pytest.mark.parametrize("target", TARGETS)
+def test_runtime_length_median_halo2_base_matches_mock(target):
+    assert_halo2_base_agrees(RUNTIME_LENGTH["median"], target, RUNTIME_SAMPLE, 0.5)

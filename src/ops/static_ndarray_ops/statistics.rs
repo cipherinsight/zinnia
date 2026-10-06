@@ -358,6 +358,9 @@ pub fn np_percentile(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String,
     assert!(args.len() >= 2 || kwargs.contains_key("q"), "np.percentile: requires a and q");
     let arr = &args[0];
     let q = kwargs.get("q").or_else(|| args.get(1)).expect("np.percentile: requires q");
+    if let Value::DynamicNDArray(data) = arr {
+        return runtime_shaped_percentile(b, data, q);
+    }
     let n = match arr {
         Value::StaticArray { shape, dtype, .. } if shape.len() == 1 && *dtype != NumberType::Complex => {
             shape[0]
@@ -405,28 +408,121 @@ fn percentile_at_constant(b: &mut IRBuilder, elements: &std::sync::Arc<[Value]>,
 }
 
 fn percentile_at_runtime(b: &mut IRBuilder, elements: &std::sync::Arc<[Value]>, q: &Value) -> Value {
-    let n = elements.len();
+    let n_minus_1 = b.ir_constant_int(elements.len() as i64 - 1);
+    interpolated_percentile(b, q, &n_minus_1, |b, rank| sorted_value(b, elements, rank))
+}
+
+/// NumPy's linear percentile at an integer `q` (checked to `[0, 100]`) of
+/// `n` values whose order statistics `value_at_rank` gives:
+/// `r * 100 = q * (n - 1)`, `lo = (q * (n - 1)) // 100` (a floor division
+/// by the constant 100), `frac = q * (n - 1) - 100 * lo` in `[0, 100)`, the
+/// upper rank `lo + [lo < n - 1]` (`frac` is 0 at `lo = n - 1`), and the
+/// result `s[lo] + (s[hi] - s[lo]) * frac / 100`: an exact product with the
+/// integer `frac` and one division by the constant 100.
+fn interpolated_percentile(
+    b: &mut IRBuilder,
+    q: &Value,
+    n_minus_1: &Value,
+    mut value_at_rank: impl FnMut(&mut IRBuilder, &Value) -> Value,
+) -> Value {
     // The index the computation uses (in range also where the code does not
     // run, see `discharge_index_in_range`).
     let q = &crate::optim::resolver::discharge_index_in_range(b, q, 0, 101, "np.percentile");
-    let n_minus_1 = b.ir_constant_int(n as i64 - 1);
     let hundred = b.ir_constant_int(100);
-    let scaled = b.ir_mul_i(q, &n_minus_1);
+    let scaled = b.ir_mul_i(q, n_minus_1);
     let lo = b.ir_floor_div_i(&scaled, &hundred);
     let lo_times_100 = b.ir_mul_i(&lo, &hundred);
     let frac = b.ir_sub_i(&scaled, &lo_times_100);
-    let below_last = b.ir_less_than_i(&lo, &n_minus_1);
+    let below_last = b.ir_less_than_i(&lo, n_minus_1);
     let step_up = b.ir_int_cast(&below_last);
     let hi = b.ir_add_i(&lo, &step_up);
 
-    let low = sorted_value(b, elements, &lo);
-    let high = sorted_value(b, elements, &hi);
+    let low = value_at_rank(b, &lo);
+    let high = value_at_rank(b, &hi);
     let diff = b.ir_sub_f(&high, &low);
     let frac_f = b.ir_float_cast(&frac);
     let scaled_diff = b.ir_mul_f(&diff, &frac_f);
     let hundred_f = b.ir_constant_float(100.0);
     let step = b.ir_div_f(&scaled_diff, &hundred_f);
     b.ir_add_f(&low, &step)
+}
+
+/// The elements of a runtime-shaped array for order statistics, which
+/// ignore positions: every buffer slot, its activity flag (whether it holds
+/// an element) and the element count.
+struct RuntimeShapedElements {
+    values: Vec<Value>,
+    active: Vec<Value>,
+    count: Value,
+    dtype: NumberType,
+}
+
+fn runtime_shaped_elements(b: &mut IRBuilder, data: &crate::types::DynamicNDArrayData, op: &str) -> RuntimeShapedElements {
+    if data.dtype == NumberType::Complex {
+        panic!("{op}: complex arrays are not ordered");
+    }
+    let data = crate::ops::dyn_ndarray::force_contiguous(b, data);
+    let values = crate::helpers::segment::read_all_typed(b, data.segment_id, data.max_length(), data.dtype);
+    let active = crate::ops::dyn_ndarray::aggregation::active_slots(b, &data)
+        .unwrap_or_else(|| (0..values.len()).map(|_| b.ir_constant_bool(true)).collect());
+    let count = crate::ops::dyn_ndarray::scalar_i64_to_value(&data.meta.runtime_length, NumberType::Integer);
+    let count = b.ensure_ptr(&count);
+    RuntimeShapedElements { values, active, count, dtype: data.dtype }
+}
+
+impl RuntimeShapedElements {
+    /// The value of `rank` among the elements, as a float (see
+    /// `optim::sort_lowering::masked_order_statistic`).
+    fn value_at_rank(&self, b: &mut IRBuilder, rank: &Value) -> Value {
+        let value = crate::optim::sort_lowering::masked_order_statistic(
+            b,
+            &self.values,
+            &self.active,
+            self.dtype,
+            rank,
+        );
+        let value = crate::ops::dyn_ndarray::scalar_i64_to_value(
+            &crate::ops::dyn_ndarray::value_to_scalar_i64(&value),
+            self.dtype,
+        );
+        crate::helpers::value_ops::ensure_float(b, &value)
+    }
+}
+
+/// `np.median` of a runtime-shaped array (all its elements): the mean of
+/// the values of ranks `(L - 1) // 2` and `L // 2` of its `L` elements (the
+/// same rank when `L` is odd), each an order statistic pinned by counting.
+/// An empty array has no proof (NumPy returns nan with a warning).
+pub fn runtime_shaped_median(b: &mut IRBuilder, data: &crate::types::DynamicNDArrayData) -> Value {
+    let elements = runtime_shaped_elements(b, data, "np.median");
+    let one = b.ir_constant_int(1);
+    let two = b.ir_constant_int(2);
+    let last = b.ir_sub_i(&elements.count, &one);
+    let lower_rank = b.ir_floor_div_i(&last, &two);
+    let upper_rank = b.ir_floor_div_i(&elements.count, &two);
+    let lower = elements.value_at_rank(b, &lower_rank);
+    let upper = elements.value_at_rank(b, &upper_rank);
+    let sum = b.ir_add_f(&lower, &upper);
+    let two_f = b.ir_constant_float(2.0);
+    b.ir_div_f(&sum, &two_f)
+}
+
+/// `np.percentile(a, q)` of a runtime-shaped array at an integer `q`
+/// (constant or runtime), NumPy's linear method over its `L` elements.
+fn runtime_shaped_percentile(b: &mut IRBuilder, data: &crate::types::DynamicNDArrayData, q: &Value) -> Value {
+    let integral = q.int_val().is_some() || matches!(q, Value::Integer(_))
+        || q.float_val().is_some_and(|v| v.fract() == 0.0);
+    if !integral {
+        panic!("np.percentile of a runtime-shaped array: q must be an integer");
+    }
+    let q = match q.float_val() {
+        Some(v) if q.int_val().is_none() => b.ir_constant_int(v as i64),
+        _ => q.clone(),
+    };
+    let elements = runtime_shaped_elements(b, data, "np.percentile");
+    let one = b.ir_constant_int(1);
+    let n_minus_1 = b.ir_sub_i(&elements.count, &one);
+    interpolated_percentile(b, &q, &n_minus_1, |b, rank| elements.value_at_rank(b, rank))
 }
 
 /// `np.corrcoef(x, y)` of two 1-D static arrays of the same length

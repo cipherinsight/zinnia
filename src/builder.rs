@@ -1248,6 +1248,7 @@ impl IRBuilder {
             | IR::LogicalOr
             | IR::LogicalNot
             | IR::BoolCast
+            | IR::KeyLess { .. }
             | IR::EqHash => {
                 if let Some(vid) = out.value_id() {
                     self.provenance.set_interval(vid, Interval::BIT);
@@ -2868,7 +2869,22 @@ impl IRBuilder {
     /// The placeholder behind `value`, when `value` is an output of a sort
     /// at a constant rank.
     pub fn sorted_placeholder_of(&self, value: &Value) -> Option<&SortedPlaceholder> {
-        self.sorted_placeholders.get(&value.stmt_id()?)
+        self.sorted_placeholder_at(value.stmt_id()?)
+    }
+
+    /// The placeholder computed by statement `stmt`, if it is an output of
+    /// a sort at a constant rank.
+    pub fn sorted_placeholder_at(&self, stmt: StmtId) -> Option<&SortedPlaceholder> {
+        self.sorted_placeholders.get(&stmt)
+    }
+
+    /// `IR::KeyLess`: `[(v1, i1) < (v2, i2)]` lexicographically, for
+    /// indices the caller guarantees in `[0, 2^index_bits)`.
+    pub fn ir_key_less(&mut self, v1: &Value, i1: &Value, v2: &Value, i2: &Value, index_bits: u32) -> Value {
+        self.create_ir(
+            &IR::KeyLess { index_bits },
+            &[v1.clone(), i1.clone(), v2.clone(), i2.clone()],
+        )
     }
 
     /// Start allocating memory segment ids at `next` (a pass that rebuilds a
@@ -3255,7 +3271,15 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
             crate::ir_defs::HintKind::SortedValues => {
                 unknown_like_elements(&args[..*len as usize], ir_id)
             }
+            crate::ir_defs::HintKind::MaskedSortedValues => {
+                unknown_like_elements(&args[..*len as usize / 2], ir_id)
+            }
         },
+        IR::KeyLess { .. } => {
+            let key = |v: &Value, i: &Value| Some((v.int_val()?, i.int_val()?));
+            let inferred = key(&args[0], &args[1]).zip(key(&args[2], &args[3])).map(|(x, y)| x < y);
+            Value::Boolean(ScalarValue::new(inferred, Some(ir_id)))
+        }
         IR::Sorted { len, rank, index } => {
             let elements = &args[..*len as usize];
             let rank = rank.map(i64::from).or_else(|| args[*len as usize].int_val());
@@ -3427,6 +3451,7 @@ fn min_required_arity(ir: &IR) -> usize {
         IR::ProductSumF { len } => (*len as usize).saturating_mul(2),
         IR::IndexInBox { rank } => rank.saturating_mul(3),
         IR::Hint { len, .. } => *len as usize + 1,
+        IR::KeyLess { .. } => 4,
         IR::Sorted { len, rank, .. } => *len as usize + usize::from(rank.is_none()),
     }
 }

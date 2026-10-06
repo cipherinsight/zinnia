@@ -699,30 +699,40 @@ pub fn stable_argsort(values: &[Fp]) -> Vec<usize> {
     order
 }
 
-/// Every lane of the hint `kind` applied to `values` (see
+/// Every lane of the hint `kind` applied to its operands (see
 /// [`crate::ir_defs::HintKind`]).
-pub fn hint_values(kind: crate::ir_defs::HintKind, values: &[Fp]) -> Vec<Fp> {
-    let order = stable_argsort(values);
+pub fn hint_values(kind: crate::ir_defs::HintKind, operands: &[Fp]) -> Vec<Fp> {
+    use crate::ir_defs::HintKind;
     match kind {
-        crate::ir_defs::HintKind::StableArgsort => {
-            order.into_iter().map(|i| Fp::from(i as u64)).collect()
+        HintKind::StableArgsort => {
+            stable_argsort(operands).into_iter().map(|i| Fp::from(i as u64)).collect()
         }
-        crate::ir_defs::HintKind::SortedValues => order.into_iter().map(|i| values[i]).collect(),
+        HintKind::SortedValues => stable_argsort(operands).into_iter().map(|i| operands[i]).collect(),
+        HintKind::MaskedSortedValues => {
+            let (values, active) = operands.split_at(operands.len() / 2);
+            let active: Vec<Fp> = values
+                .iter()
+                .zip(active)
+                .filter(|(_, flag)| **flag != Fp::zero())
+                .map(|(v, _)| *v)
+                .collect();
+            let mut lanes: Vec<Fp> = stable_argsort(&active).into_iter().map(|i| active[i]).collect();
+            lanes.resize(values.len(), Fp::zero());
+            lanes
+        }
     }
 }
 
-/// Lane `rank` of the hint `kind` applied to `values`, the value of an
-/// `IR::Hint` statement on every backend; 0 for a rank outside
-/// `[0, values.len())`. The circuits never trust it: each use of a hint
-/// pins it with constraints that admit only this value.
-pub fn hint_lane(kind: crate::ir_defs::HintKind, values: &[Fp], rank: Fp) -> Fp {
-    let rank = fp_to_i128(rank)
+/// Lane `rank` of the hint `kind` applied to `operands`, the value of an
+/// `IR::Hint` statement on every backend; 0 for a rank outside the lanes.
+/// The circuits never trust it: each use of a hint pins it with
+/// constraints that admit only this value.
+pub fn hint_lane(kind: crate::ir_defs::HintKind, operands: &[Fp], rank: Fp) -> Fp {
+    let lanes = hint_values(kind, operands);
+    fp_to_i128(rank)
         .and_then(|r| usize::try_from(r).ok())
-        .filter(|&r| r < values.len());
-    match rank {
-        Some(r) => hint_values(kind, values)[r],
-        None => Fp::zero(),
-    }
+        .and_then(|r| lanes.get(r).copied())
+        .unwrap_or(Fp::zero())
 }
 
 /// Simplified Poseidon permutation (4 rounds, t=3).
@@ -1155,5 +1165,10 @@ mod tests {
         assert_eq!((0..5).map(|r| lane(HintKind::SortedValues, r)).collect::<Vec<_>>(), vec![-40, 10, 10, 20, 30]);
         assert_eq!(lane(HintKind::SortedValues, 5), 0);
         assert_eq!(lane(HintKind::StableArgsort, -1), 0);
+        // Active elements only: 30, 20, -40 (flags 1, 0, 1, 0, 1).
+        let mut masked = values.clone();
+        masked.extend(ints(&[1, 0, 1, 0, 1]));
+        let masked_lane = |rank: i64| fp_to_i64(hint_lane(HintKind::MaskedSortedValues, &masked, i64_to_fp(rank)));
+        assert_eq!((0..5).map(masked_lane).collect::<Vec<_>>(), vec![-40, 20, 30, 0, 0]);
     }
 }

@@ -762,6 +762,143 @@ fn axis_mean_complex(b: &mut IRBuilder, arr: &Value, axis: usize, keepdims: bool
 // Argmax / argmin
 // ────────────────────────────────────────────────────────────────────────
 
+/// A comparison cell `lhs cmp rhs`: its operands' statements and values,
+/// the direction and the strictness.
+struct Comparison {
+    lhs: crate::types::StmtId,
+    rhs: crate::types::StmtId,
+    /// The operands with float casts looked through, to recognize one
+    /// scalar cast once per element.
+    lhs_source: crate::types::StmtId,
+    rhs_source: crate::types::StmtId,
+    lhs_value: Value,
+    rhs_value: Value,
+    /// True for `>` and `>=`, false for `<` and `<=`.
+    greater: bool,
+    /// `==` operands make it False (`>`, `<`).
+    strict: bool,
+}
+
+/// The statement a float cast reads (`FloatCast(x)` is `x` for identity:
+/// a broadcast casts the same scalar once per element).
+fn uncast(b: &IRBuilder, stmt: crate::types::StmtId) -> crate::types::StmtId {
+    match b.stmts.get(stmt as usize) {
+        Some(s) if matches!(s.ir, crate::ir_defs::IR::FloatCast) => s.arguments[0],
+        _ => stmt,
+    }
+}
+
+fn comparison_of(b: &IRBuilder, cell: &Value) -> Option<Comparison> {
+    use crate::ir_defs::IR;
+    let stmt = b.stmts.get(cell.stmt_id()? as usize)?;
+    let (greater, strict) = match stmt.ir {
+        IR::GtF | IR::GtI => (true, true),
+        IR::GteF | IR::GteI => (true, false),
+        IR::LtF | IR::LtI => (false, true),
+        IR::LteF | IR::LteI => (false, false),
+        _ => return None,
+    };
+    let [lhs, rhs] = stmt.arguments[..] else { return None };
+    let [lhs_vid, rhs_vid] = stmt.arg_values[..] else { return None };
+    Some(Comparison {
+        lhs,
+        rhs,
+        lhs_source: uncast(b, lhs),
+        rhs_source: uncast(b, rhs),
+        lhs_value: b.value_of_vid(lhs_vid)?,
+        rhs_value: b.value_of_vid(rhs_vid)?,
+        greater,
+        strict,
+    })
+}
+
+/// `argmax` of Booleans `x_k cmp e` over the outputs `x_k` of one sort in
+/// rank order (`(np.sort(a) > e).argmax()`, the `searchsorted` idiom) and
+/// one scalar `e`, without the sorted outputs.
+///
+/// A rising comparison (`x_k > e`, `x_k >= e`) of an ascending sequence is
+/// False up to some position and True after it, so its first True is the
+/// number of Falses, and an all-False sequence has argmax 0 (NumPy). The
+/// sorted outputs hold the sort's elements, so the Falses are counted over
+/// the elements (`a_j <= e` for `>`, `a_j < e` for `>=`) and the sort itself
+/// is not needed. A falling comparison (`x_k < e`) is True up to some
+/// position: its first True, when there is one, is position 0, and so is the
+/// argmax of an all-False sequence.
+fn first_true_of_sorted_comparisons(b: &mut IRBuilder, cells: &[Value]) -> Option<Value> {
+    let n = cells.len();
+    let comparisons: Vec<Comparison> = cells
+        .iter()
+        .map(|c| comparison_of(b, c))
+        .collect::<Option<_>>()?;
+    let first = &comparisons[0];
+    let same_kind = comparisons.iter().all(|c| c.greater == first.greater && c.strict == first.strict);
+    // The scalar is the operand shared by every cell; `x_k cmp e` is rising
+    // for `>`/`>=`, and `e cmp x_k` for `<`/`<=`.
+    let (elements, scalar, rising): (Vec<crate::types::StmtId>, Value, bool) =
+        if n > 1 && comparisons.iter().all(|c| c.rhs_source == first.rhs_source) {
+            (comparisons.iter().map(|c| c.lhs).collect(), first.rhs_value.clone(), first.greater)
+        } else if n > 1 && comparisons.iter().all(|c| c.lhs_source == first.lhs_source) {
+            (comparisons.iter().map(|c| c.rhs).collect(), first.lhs_value.clone(), !first.greater)
+        } else {
+            return None;
+        };
+    if !same_kind {
+        return None;
+    }
+    let sort_elements = ascending_sort_outputs(b, &elements)?;
+    if !rising {
+        return Some(b.ir_constant_int(0));
+    }
+    // The Falses, counted over the sort's elements: `a_j <= e` for a strict
+    // comparison, `a_j < e` otherwise.
+    let falses: Vec<Value> = sort_elements
+        .iter()
+        .map(|a| {
+            if first.strict {
+                let above = less_than_by_type(b, &scalar, a);
+                b.ir_logical_not(&above)
+            } else {
+                less_than_by_type(b, a, &scalar)
+            }
+        })
+        .collect();
+    let mut count = b.ir_constant_int(0);
+    for f in &falses {
+        let as_int = b.ir_int_cast(f);
+        count = b.ir_add_i(&count, &as_int);
+    }
+    let length = b.ir_constant_int(n as i64);
+    let any_true = b.ir_less_than_i(&count, &length);
+    let zero = b.ir_constant_int(0);
+    Some(b.ir_select_i(&any_true, &count, &zero))
+}
+
+/// `x < y` in the number type of the operands (float if either is).
+fn less_than_by_type(b: &mut IRBuilder, x: &Value, y: &Value) -> Value {
+    if matches!(x, Value::Float(_)) || matches!(y, Value::Float(_)) {
+        b.ir_less_than_f(x, y)
+    } else {
+        b.ir_less_than_i(x, y)
+    }
+}
+
+/// The elements of the sort whose outputs of ranks `0, 1, ..` are exactly
+/// `stmts`, in that order.
+fn ascending_sort_outputs(b: &IRBuilder, stmts: &[crate::types::StmtId]) -> Option<std::sync::Arc<[Value]>> {
+    let first = b.sorted_placeholder_at(stmts[0])?;
+    if first.index || first.elements.len() != stmts.len() {
+        return None;
+    }
+    let elements = first.elements.clone();
+    for (rank, &stmt) in stmts.iter().enumerate() {
+        let output = b.sorted_placeholder_at(stmt)?;
+        if output.index || output.rank as usize != rank || !std::sync::Arc::ptr_eq(&output.elements, &elements) {
+            return None;
+        }
+    }
+    Some(elements)
+}
+
 fn whole_array_argmax_argmin(b: &mut IRBuilder, arr: &Value, is_max: bool) -> Value {
     let cells = payload_cells(b, arr);
     if cells.is_empty() {
@@ -774,6 +911,9 @@ fn whole_array_argmax_argmin(b: &mut IRBuilder, arr: &Value, is_max: bool) -> Va
     // (sign-aware range checks ~30 gates each); the bool form needs one mul
     // per step (NOT/AND/OR). Triggered by `(x==a)&(y==b)).argmax()` patterns.
     let best_idx = if is_max && cells.iter().all(|c| matches!(c, Value::Boolean(_))) {
+        if let Some(first_true) = first_true_of_sorted_comparisons(b, &cells) {
+            return first_true;
+        }
         let mut idx = b.ir_constant_int(0);
         let mut found = cells[0].clone();
         for (i, elem) in cells.iter().enumerate().skip(1) {

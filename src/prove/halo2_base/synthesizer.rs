@@ -12,6 +12,7 @@ use halo2_base::{
 
 mod bitwise;
 mod fixed_point;
+mod keys;
 mod memory;
 mod ranges;
 
@@ -51,6 +52,8 @@ pub struct Halo2BaseSynthesizer<'a> {
     differences: HashMap<(u64, u64), Halo2BaseCell>,
     /// Low two's-complement bits per cell id (see `bitwise.rs`).
     bit_cache: HashMap<u64, Vec<Halo2BaseCell>>,
+    /// Packed sort keys `v·2^b + i` by `(v.id, i.id, b)` (see `keys.rs`).
+    packed_keys: HashMap<(u64, u64, u32), Halo2BaseCell>,
     dyn_meta_bounds: HashMap<u32, (u32, Vec<u32>)>,
     next_id: u64,
     bit_cells: HashSet<halo2_base::ContextCell>,
@@ -123,6 +126,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             float_casts: HashMap::new(),
             two_valued: HashMap::new(),
             bit_cache: HashMap::new(),
+            packed_keys: HashMap::new(),
             differences: HashMap::new(),
             comparisons: HashMap::new(),
             sign_bits: HashMap::new(),
@@ -1059,6 +1063,10 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         Ok(state[0])
     }
     fn eq_hash(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.eq_i(a, b) }
+
+    fn key_less(&mut self, v1: &Self::CellRef, i1: &Self::CellRef, v2: &Self::CellRef, i2: &Self::CellRef, index_bits: u32) -> Result<Self::CellRef, ProvingError> {
+        self.packed_key_less(v1, i1, v2, i2, index_bits)
+    }
 
     /// A free cell holding the hint's lane (`kernel::hint_lane` of the
     /// operands' values; placeholder values at key generation). Loaded by

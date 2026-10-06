@@ -355,6 +355,17 @@ pub enum IR {
         rank: Option<u32>,
         index: bool,
     },
+    /// `[(v1, i1) < (v2, i2)]` for the operands `[v1, i1, v2, i2]`, compared
+    /// lexicographically: `v1 < v2`, or `v1 == v2` and `i1 < i2`. The values
+    /// are signed (int64 or Q32: a backend rejects values outside the 64-bit
+    /// window, as for `LtI`); the producer guarantees the indices lie in
+    /// `[0, 2^index_bits)` (asserted bounds or constants). Since
+    /// `|i1 - i2| < 2^index_bits`, the order is the sign of the packed
+    /// difference `(v1 - v2) * 2^index_bits + (i1 - i2)`, which backends test
+    /// with one comparison instead of three and two logic gates.
+    KeyLess {
+        index_bits: u32,
+    },
 }
 
 /// The deterministic function an [`IR::Hint`] takes a lane of. Both order
@@ -370,6 +381,11 @@ pub enum HintKind {
     StableArgsort,
     /// The ascending sorted values: lane `r` is the value of rank `r`.
     SortedValues,
+    /// The ascending sorted values of the active elements of a runtime-length
+    /// array: the operands are `n` values and then their `n` activity flags
+    /// (1: the slot holds an element), so `len = 2n`; lane `r` is the value
+    /// of rank `r` among the active ones (0 past their number).
+    MaskedSortedValues,
 }
 
 impl HintKind {
@@ -377,6 +393,7 @@ impl HintKind {
         match self {
             HintKind::StableArgsort => "stable_argsort",
             HintKind::SortedValues => "sorted_values",
+            HintKind::MaskedSortedValues => "masked_sorted_values",
         }
     }
 
@@ -384,6 +401,7 @@ impl HintKind {
         match name {
             "stable_argsort" => Some(HintKind::StableArgsort),
             "sorted_values" => Some(HintKind::SortedValues),
+            "masked_sorted_values" => Some(HintKind::MaskedSortedValues),
             _ => None,
         }
     }
@@ -640,6 +658,7 @@ impl IR {
 
             // Prover hints and their placeholders
             IR::Hint { kind, len } => format!("hint[{}][{}]", kind.name(), len),
+            IR::KeyLess { index_bits } => format!("key_less[{}]", index_bits),
             IR::Sorted { len, rank, index } => format!(
                 "sorted[{}][{}][{}]",
                 len,
@@ -805,6 +824,7 @@ impl IR {
             IR::EqHash => "EqualHashIR",
             IR::Hint { .. } => "HintIR",
             IR::Sorted { .. } => "SortedIR",
+            IR::KeyLess { .. } => "KeyLessIR",
         }
     }
 
@@ -976,6 +996,7 @@ impl IR {
             IR::Sorted { len, rank, index } => {
                 serde_json::json!({ "len": len, "rank": rank, "index": index })
             }
+            IR::KeyLess { index_bits } => serde_json::json!({ "index_bits": index_bits }),
 
             // All parameterless IRs export empty dicts
             _ => serde_json::json!({}),
@@ -1281,6 +1302,9 @@ impl IR {
                     len: data["len"].as_u64().ok_or("Hint: missing len")? as u32,
                 })
             }
+            "KeyLessIR" => Ok(IR::KeyLess {
+                index_bits: data["index_bits"].as_u64().ok_or("KeyLess: missing index_bits")? as u32,
+            }),
             "SortedIR" => Ok(IR::Sorted {
                 len: data["len"].as_u64().ok_or("Sorted: missing len")? as u32,
                 rank: data["rank"].as_u64().map(|r| r as u32),
@@ -1469,8 +1493,10 @@ mod tests {
             },
             IR::Hint { kind: HintKind::StableArgsort, len: 7 },
             IR::Hint { kind: HintKind::SortedValues, len: 1 },
+            IR::Hint { kind: HintKind::MaskedSortedValues, len: 6 },
             IR::Sorted { len: 5, rank: Some(3), index: true },
             IR::Sorted { len: 5, rank: None, index: false },
+            IR::KeyLess { index_bits: 7 },
         ];
         for ir in irs {
             let exported = ir.export();
