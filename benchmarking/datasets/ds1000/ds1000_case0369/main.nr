@@ -6,7 +6,7 @@
 // computed once per row.
 // @outputs: bool[1]
 
-use noir_hw::{abs, mul, window};
+use noir_hw::{abs, abs_int64, mul, window};
 
 global N: u32 = 3;
 global RTOL_Q: Field = 42950; // round(1e-5 * 2^32)
@@ -17,7 +17,7 @@ fn main(a: [Field; 9]) -> pub bool {
     let mut all_close = true;
     for i in 0..N {
         let y = a[i * N];
-        let tol = window(mul(abs(y), RTOL_Q));
+        let tol = window(mul(abs_int64(y), RTOL_Q));
         for j in 1..N {
             let gap = window(abs(a[i * N + j] - y));
             all_close &= gap <= tol;

@@ -1,18 +1,17 @@
 // DS-1000 case 0322, Noir baseline.
 // Kernel: `np.argwhere(a == np.min(a))` on Integer[2, 2] (data-dependent length).
 // Output: the number of minima, then their (row, col) pairs in row-major
-// order, zero-padded to 4 pairs. The minimum is minus the maximum of the
-// negated values, noir_hw::max_of (a hint pinned by four range checks and a
-// product; negation is free in Noir). Compaction: noir_hw::compact_rows with
+// order, zero-padded to 4 pairs. The minimum is noir_hw::min_of (a hint pinned
+// by four range checks and a product). Compaction: noir_hw::compact_rows with
 // the constant payload (k // 2, k % 2) for flat index k.
 // @outputs: dynamic int[4x2]
 
-use noir_hw::{compact_rows, max_of};
+use noir_hw::{compact_rows, min_of};
 
 fn main(a: [Field; 4]) -> pub [Field; 9] {
     // Input domain: every input element is an int64 / a Q32 code in the window.
     noir_hw::check_inputs(a);
-    let min = -max_of([-a[0], -a[1], -a[2], -a[3]]);
+    let min = min_of(a);
     let mut hit: [Field; 4] = [0; 4];
     let mut w: [[Field; 2]; 4] = [[0; 2]; 4];
     let mut count: Field = 0;

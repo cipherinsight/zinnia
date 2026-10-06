@@ -56,8 +56,30 @@ pub fn is_neg(x: Field) -> bool {
     window(x) < OFFSET_U64
 }
 
+// |x| of a value in the window; |-2^63| = 2^63 comes out of the window
+// (for a divisor's magnitude, where that is fine). Use `abs_int64` for a
+// kernel's np.abs / abs.
 pub fn abs(x: Field) -> Field {
     if is_neg(x) { -x } else { x }
+}
+
+// np.abs / abs of an int64 or a Q32 code x: |x| for x in (-2^63, 2^63), no
+// proof otherwise. |i64::MIN| = 2^63 overflows int64 (NumPy wraps it back to
+// i64::MIN); like Zinnia, the baselines have no proof there. With the hinted
+// sign s and m = (s ? -x : x), one 64-bit check of 2m + s: m < 2^63 for
+// s = 0, m <= 2^63 - 1 for s = 1, i.e. exactly |x| <= 2^63 - 1 (so x needs no
+// window check of its own). For x != 0 the wrong sign gives m = p - |x| and
+// 2m + s near p, far above 2^64; at x = 0 both signs give m = 0.
+pub fn abs_int64(x: Field) -> Field {
+    // Safety: the range check pins m (see above).
+    let negative = unsafe { is_neg_hint(x) };
+    let m = if negative { -x } else { x };
+    (2 * m + negative as Field).assert_max_bit_size::<64>();
+    m
+}
+
+unconstrained fn is_neg_hint(x: Field) -> bool {
+    split(x).0
 }
 
 pub fn max(a: Field, b: Field) -> Field {
@@ -68,10 +90,10 @@ pub fn min(a: Field, b: Field) -> Field {
     if window(b) < window(a) { b } else { a }
 }
 
-unconstrained fn max_hint<let N: u32>(xs: [Field; N]) -> Field {
+unconstrained fn extremum_hint<let N: u32>(xs: [Field; N], is_max: bool) -> Field {
     let mut m = xs[0];
     for i in 1..N {
-        if window(xs[i]) > window(m) {
+        if (window(xs[i]) > window(m)) == is_max {
             m = xs[i];
         }
     }
@@ -85,20 +107,39 @@ unconstrained fn max_hint<let N: u32>(xs: [Field; N]) -> Field {
 // integer maximum and lies in the window.
 pub fn max_of<let N: u32>(xs: [Field; N]) -> Field {
     // Safety: m is pinned by `check_max`.
-    let m = unsafe { max_hint(xs) };
+    let m = unsafe { extremum_hint(xs, true) };
     check_max(xs, m);
     m
 }
 
+// min(xs): `max_of` with the gaps x - m (every x an integer in [m, m + 2^64)).
+// Unlike -max_of(-xs), it holds for a minimum of -2^63 (i64::MIN, or the Q32
+// code of -2^31), whose negation leaves the window.
+pub fn min_of<let N: u32>(xs: [Field; N]) -> Field {
+    // Safety: m is pinned by `check_min`.
+    let m = unsafe { extremum_hint(xs, false) };
+    check_min(xs, m);
+    m
+}
+
 fn check_max<let N: u32>(xs: [Field; N], m: Field) {
+    check_extremum(xs, m, 1);
+}
+
+fn check_min<let N: u32>(xs: [Field; N], m: Field) {
+    check_extremum(xs, m, -1);
+}
+
+// m in the window, sign * (m - x) in [0, 2^64) for every x, prod = 0.
+fn check_extremum<let N: u32>(xs: [Field; N], m: Field, sign: Field) {
     let _ = window(m);
     let mut prod: Field = 1;
     for i in 0..N {
-        let gap = m - xs[i];
+        let gap = sign * (m - xs[i]);
         gap.assert_max_bit_size::<64>();
         prod *= gap;
     }
-    assert(prod == 0, "max: not one of the values");
+    assert(prod == 0, "extremum: not one of the values");
 }
 
 // ------------------------------------------------------------ input domain
@@ -617,6 +658,48 @@ fn test_max_outside_window() {
 #[test(should_fail)]
 fn test_max_not_member() {
     check_max([-3, 5, 2], 6);
+}
+
+#[test]
+fn test_min_of() {
+    assert(min_of([-3 * SCALE, 5 * SCALE, 2 * SCALE]) == -3 * SCALE);
+    check_min([-3, 5, 2], -3);
+    // The window minimum, whose negation -max_of(-xs) cannot take.
+    assert(min_of([-OFFSET, 5, -OFFSET + 1]) == -OFFSET);
+}
+
+#[test(should_fail)]
+fn test_min_larger_member() {
+    check_min([-3, 5, 2], 2);
+}
+
+#[test(should_fail)]
+fn test_min_not_member() {
+    check_min([-3, 5, 2], -4);
+}
+
+#[test(should_fail)]
+fn test_min_outside_window() {
+    check_min([-OFFSET - 1, 3], -OFFSET - 1);
+}
+
+#[test]
+fn test_abs_int64() {
+    assert(abs_int64(-5) == 5);
+    assert(abs_int64(5) == 5);
+    assert(abs_int64(0) == 0);
+    assert(abs_int64(OFFSET - 1) == OFFSET - 1);
+    assert(abs_int64(-OFFSET + 1) == OFFSET - 1);
+}
+
+#[test(should_fail)]
+fn test_abs_int64_of_int64_min() {
+    let _ = abs_int64(-OFFSET);
+}
+
+#[test(should_fail)]
+fn test_abs_int64_above_window() {
+    let _ = abs_int64(OFFSET);
 }
 
 #[test]

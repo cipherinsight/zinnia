@@ -9,8 +9,15 @@
 // No proof when a variance is 0 (NumPy returns nan) or when B * C >= 2^62,
 // where sqrt(B * C) leaves the Q32 window (inputs within +-11585 always fit).
 // The inputs get window proofs, so A, B and C are exact integers (field
-// elements could otherwise make them any small integers, r = 3 included), and
-// B is range-checked to 64 bits so that B * C (C < 2^132) cannot wrap the field.
+// elements could otherwise make them any small integers, r = 3 included).
+// B and C are range-checked to 64 bits, so t = B * C * 2^64 < 2^192 is the
+// integer product (no field wrap) and the square root's checks
+// (y < 2^63, t - y^2 and y^2 + 2y - t in [0, 2^64)) give y = floor(sqrt(t))
+// and B * C < 2^62, Zinnia's domain. With B alone checked, t can wrap the
+// field to some t mod p < 2^126 whose root the checks accept: a wrong r where
+// NumPy has a value (hw_check/domain_edges.json, 0438 `wrapped_root`). A 64-bit
+// check of C is cheaper than a 62-bit check of B * C (which builds its own
+// lookup table).
 // @outputs: float[1]
 
 use noir_hw::{divmod_pos, from_int, sqrt, window, SCALE};
@@ -37,6 +44,7 @@ fn main(post: [Field; 4], distance: [Field; 4]) -> pub Field {
     let b = 4 * sxx - sx * sx;
     let c = 4 * syy - sy * sy;
     b.assert_max_bit_size::<64>();
+    c.assert_max_bit_size::<64>();
     // floor(sqrt(B * C) * 2^32); a zero denominator has no quotient witness.
     let denom = sqrt(from_int(b * c));
     // floor(A * 2^32 * 2^32 / denom), the Q32 quotient of float(A) by it.
