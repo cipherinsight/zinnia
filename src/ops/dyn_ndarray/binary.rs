@@ -33,7 +33,10 @@ pub fn dyn_binary_op(
     // dynamic dims, the static type system gave us nothing — refuse.
     check_broadcast_bound(&lhs.envelope, &rhs.envelope, &out_envelope);
 
-    // 2. Output dtype (shared NumPy promotion rule).
+    // 2. Output dtype (shared NumPy promotion rule). Between two bool arrays
+    // `+` is a logical or (`helpers::dtype::operator_on_bools`).
+    let both_bool = b.is_bool_segment(lhs.segment_id) && b.is_bool_segment(rhs.segment_id);
+    let op = if both_bool { crate::helpers::dtype::operator_on_bools(op) } else { op };
     let out_dtype = binary_op_result_dtype(op, lhs.dtype, rhs.dtype);
 
     // 3. Pre-read source segments. Force contiguity so the row-major
@@ -77,10 +80,7 @@ pub fn dyn_binary_op(
     // 6. Write to fresh segment. `+` and `*` of two bool arrays are bool in
     // NumPy (the cells here are integers; see `elementwise::keeps_bool_dtype`).
     let segment_id = crate::helpers::segment::alloc_and_write_values(b, &out_elements, out_dtype);
-    if matches!(op, "add" | "mul")
-        && b.is_bool_segment(lhs.segment_id)
-        && b.is_bool_segment(rhs.segment_id)
-    {
+    if both_bool && matches!(op, "mul" | "or") {
         b.mark_bool_segment(segment_id);
     }
 
@@ -153,6 +153,8 @@ pub fn dyn_scalar_binary_op(
         Value::Complex { .. } => NumberType::Complex,
         _ => NumberType::Integer,
     };
+    let both_bool = b.is_bool_cell(scalar) && b.is_bool_segment(arr.segment_id);
+    let op = if both_bool { crate::helpers::dtype::operator_on_bools(op) } else { op };
     let out_dtype = binary_op_result_dtype(op, scalar_dtype, arr.dtype);
 
     let arr_owned = super::force_contiguous(b, arr);

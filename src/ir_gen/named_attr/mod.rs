@@ -589,14 +589,7 @@ impl IRGenerator {
                     value_id: ValueId::next(),
                 })
             }
-            "dtype" => {
-                let flat = crate::helpers::composite::flatten_composite(&target);
-                if crate::helpers::array_ops::is_bool_array(&self.builder, &target_orig) {
-                    Value::Class(ZinniaType::Boolean)
-                } else {
-                    dtype_of_elements(&flat)
-                }
-            }
+            "dtype" => crate::helpers::dtype::dtype_of(&mut self.builder, &target_orig),
             "append" | "extend" | "pop" | "remove" | "clear" | "reverse" | "count"
             | "index" => {
                 // These should be handled via visit_named_attr with a target variable name
@@ -679,20 +672,6 @@ impl IRGenerator {
             ),
         };
         Some(out)
-    }
-}
-
-/// The `.dtype` of an array with these elements: complex if any element
-/// is complex (a complex array used to report an integer dtype, so
-/// `np.empty(z.shape, dtype=z.dtype)` could not hold `z`'s values), else
-/// float if any is a float, else integer.
-pub(super) fn dtype_of_elements(elements: &[Value]) -> Value {
-    if elements.iter().any(|v| matches!(v, Value::Complex { .. })) {
-        Value::Class(ZinniaType::Complex)
-    } else if elements.iter().any(|v| matches!(v, Value::Float(_))) {
-        Value::Class(ZinniaType::Float)
-    } else {
-        Value::Class(ZinniaType::Integer)
     }
 }
 

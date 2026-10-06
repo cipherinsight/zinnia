@@ -909,16 +909,25 @@ pub fn apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) ->
         }
         _ => {}
     }
-    // Class (type) comparison
-    if matches!((lhs, rhs), (Value::Class(_), Value::Class(_))) {
-        if let (Value::Class(lt), Value::Class(rt)) = (lhs, rhs) {
-            let types_equal = lt == rt;
-            return match op {
-                "eq" => b.ir_constant_bool(types_equal),
-                "ne" => b.ir_constant_bool(!types_equal),
-                _ => b.ir_constant_bool(false),
-            };
+    // Type and dtype comparisons (`x.dtype == np.uint8`) are compile-time:
+    // two types, a type and a dtype string (how the fixed-width integer
+    // types are represented, see `helpers::dtype`), or two strings.
+    let equality = matches!(op, "eq" | "ne");
+    let compile_time_equal = match (lhs, rhs) {
+        (Value::Class(lt), Value::Class(rt)) => Some(lt == rt),
+        (Value::String(ls), Value::String(rs)) if equality => Some(ls.val == rs.val),
+        (Value::Class(_), Value::String(_)) | (Value::String(_), Value::Class(_)) if equality => {
+            use crate::helpers::dtype::Dtype;
+            Some(Dtype::from_value(lhs).is_some() && Dtype::from_value(lhs) == Dtype::from_value(rhs))
         }
+        _ => None,
+    };
+    if let Some(equal) = compile_time_equal {
+        return match op {
+            "eq" => b.ir_constant_bool(equal),
+            "ne" => b.ir_constant_bool(!equal),
+            _ => b.ir_constant_bool(false),
+        };
     }
     // Scalar operation
     apply_scalar_binary_op(b, op, lhs, rhs)

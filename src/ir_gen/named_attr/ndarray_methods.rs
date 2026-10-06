@@ -13,7 +13,7 @@
 use crate::types::{CompositeData, Value, ValueId, ZinniaType};
 
 use super::super::IRGenerator;
-use super::{dtype_of_elements, DispatchCtx};
+use super::DispatchCtx;
 
 impl IRGenerator {
     pub(crate) fn try_ndarray_method(&mut self, ctx: &DispatchCtx) -> Option<Value> {
@@ -233,16 +233,8 @@ impl IRGenerator {
                 })
             }
             "dtype" => {
-                // Infer dtype from element types
                 let val = self.ctx.get(var).unwrap_or(Value::None);
-                if crate::helpers::array_ops::is_bool_array(&self.builder, &val) {
-                    return Some(Value::Class(ZinniaType::Boolean));
-                }
-                // P1 segarr boundary: normalize StaticArray to legacy List view.
-                let val =
-                    crate::helpers::static_array::base::deep_to_value_list(&mut self.builder, &val);
-                let flat = crate::helpers::composite::flatten_composite(&val);
-                dtype_of_elements(&flat)
+                crate::helpers::dtype::dtype_of(&mut self.builder, &val)
             }
 
             // ── NDArray ndim, size, flatten, flat, reshape, moveaxis, repeat, filter ─

@@ -5,6 +5,7 @@ use crate::ir_defs::IR;
 use crate::optim::resolver::{Resolver, StaticOnlyResolver};
 use crate::types::{NumberType, ScalarValue, StmtId, StringValue, Value};
 
+mod fixed_width;
 mod bool_dtype;
 mod guard;
 
@@ -245,6 +246,9 @@ pub struct IRBuilder {
     /// but treating it as a Fact pinned the downstream slice shape and
     /// broke 0509's output type).
     pub scalar_value_bounds: HashMap<crate::types::ValueId, (i64, i64)>,
+    /// Which statements and segments hold values of NumPy's fixed-width
+    /// integer types (`builder/fixed_width.rs`).
+    fixed_width: fixed_width::FixedWidthValues,
     /// NumPy's `bool` dtype on arrays (see `builder/bool_dtype.rs`): the
     /// segments that store a bool array, and the integer-typed statements
     /// whose value is a NumPy bool.
@@ -291,6 +295,7 @@ impl IRBuilder {
             segment_cell_bounds: HashMap::new(),
             segment_default_bounds: HashMap::new(),
             scalar_value_bounds: HashMap::new(),
+            fixed_width: fixed_width::FixedWidthValues::default(),
             bool_segments: HashSet::new(),
             bool_cells: HashSet::new(),
         }
@@ -1212,6 +1217,7 @@ impl IRBuilder {
         self.stmts.push(stmt);
         self.record_value_id(&val);
         self.deposit_provenance(ir, &materialized, &val);
+        self.track_statement(ir, ir_id, &materialized);
         val
     }
 

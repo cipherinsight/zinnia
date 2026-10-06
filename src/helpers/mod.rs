@@ -1,6 +1,7 @@
 pub mod array_ops;
 pub mod broadcast;
 pub mod composite;
+pub mod dtype;
 pub mod ndarray;
 pub mod promote;
 pub mod segment;
