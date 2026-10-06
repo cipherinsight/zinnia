@@ -118,8 +118,8 @@ fn planned_bounds(ir: &IRGraph) -> HashMap<ValueId, i128> {
 }
 
 /// A `MulI` qualifies when its value is an argument of exactly one
-/// statement, an `AddI` (either operand, not both) or a `SubI` (the
-/// subtrahend), and is not a root of any affine view in the provenance
+/// statement, an `AddI`/`AddF` (either operand, not both) or a
+/// `SubI`/`SubF` (the subtrahend), and is not a root of any affine view in the provenance
 /// table (memory reads translate roots to cells, so a root must be a cell).
 fn deferred_products(ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> HashSet<u32> {
     let roots: HashSet<ValueId> = ir
@@ -134,8 +134,9 @@ fn deferred_products(ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> HashSet<u32
         .filter(|stmt| {
             let Some(user) = only_user(ir, uses, stmt.stmt_id) else { return false };
             match (&user.ir, user.arguments.as_slice()) {
-                (IR::AddI, [a, b]) => a != b,
-                (IR::SubI, [a, b]) => *b == stmt.stmt_id && a != b,
+                // `add_f`/`sub_f` are `add_i`/`sub_i` on the Q encodings.
+                (IR::AddI | IR::AddF, [a, b]) => a != b,
+                (IR::SubI | IR::SubF, [a, b]) => *b == stmt.stmt_id && a != b,
                 _ => false,
             }
         })

@@ -418,13 +418,6 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         out
     }
 
-    /// A stand-in for the product `a·b` of a `MulI` that the plan fuses into
-    /// its only consumer (an `AddI`, or a `SubI` subtracting it): no cell is
-    /// assigned (`cell: None`); the consumer emits `acc ± a·b` as one gate
-    /// from the recorded factors. The plan admits only products that no
-    /// other statement and no affine view of a memory address reads, so the
-    /// stand-in never reaches a gate; if it did, key generation would stop
-    /// on the missing cell instead of building a circuit.
     /// A value with no assigned cell, for a statement the plan proves is
     /// only read through facts (two-valued, range); like a deferred product,
     /// a gate that reached it would stop key generation.
@@ -433,6 +426,13 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         self.wrap(placeholder, value)
     }
 
+    /// A stand-in for the product `a·b` of a `MulI` that the plan fuses into
+    /// its only consumer (an `AddI`, or a `SubI` subtracting it): no cell is
+    /// assigned (`cell: None`); the consumer emits `acc ± a·b` as one gate
+    /// from the recorded factors. The plan admits only products that no
+    /// other statement and no affine view of a memory address reads, so the
+    /// stand-in never reaches a gate; if it did, key generation would stop
+    /// on the missing cell instead of building a circuit.
     fn defer_product(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Halo2BaseCell {
         let value = a.value * b.value;
         let placeholder = AssignedValue { value: halo2_base::halo2_proofs::plonk::Assigned::Trivial(value), cell: None };
@@ -445,9 +445,9 @@ impl<'a> Halo2BaseSynthesizer<'a> {
     /// both operands of a sum are deferred products, one is emitted).
     fn materialize(&mut self, cell: &Halo2BaseCell) -> Halo2BaseCell {
         let Some((a, b)) = self.deferred.get(&cell.id).copied() else { return *cell };
-        let out = self.gate_cell(cell.value, |gate, ctx| gate.mul(ctx, a.assigned, b.assigned));
-        self.propagate_range(&out, &a, &b, Interval::mul);
-        out
+        // `0 + a·b` as the first gate of a chain: the multiply-add that
+        // consumes it starts at its output cell (three cells, not four).
+        self.product(&a, &b)
     }
 
     /// `a·b` as the first gate of a multiply-add chain (`0 + a·b`, so the
