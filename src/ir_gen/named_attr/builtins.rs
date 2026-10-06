@@ -43,18 +43,17 @@ impl IRGenerator {
                 }
                 crate::ops::static_ndarray_ops::builtin_len(&mut self.builder, visited_args)
             }
-            "int" => match visited_args.first() {
-                None => self.builder.ir_constant_int(0),
-                Some(v) => {
-                    reject_complex_conversion("int", v);
-                    match v {
-                        // `int(flag)` of a bool is an integer, not a bool cell (an
-                        // array of them indexes by position).
-                        Value::Integer(_) | Value::Boolean(_) => self.builder.int_dtype_cell(v),
-                        _ => self.builder.ir_int_cast(v),
-                    }
+            "int" => {
+                if visited_args.is_empty() {
+                    self.builder.ir_constant_int(0)
+                } else {
+                    reject_complex_conversion("int", &visited_args[0]);
+                    // A Python int: an integer cell (a bool's indexes by
+                    // position), unbounded, so int64 arithmetic on it is
+                    // Python's even for a fixed-width NumPy value.
+                    crate::helpers::dtype::to_int64(&mut self.builder, &visited_args[0])
                 }
-            },
+            }
             "float" => {
                 if visited_args.is_empty() {
                     self.builder.ir_constant_float(0.0)

@@ -16,7 +16,10 @@ The spelling. The compiler knows NumPy as ``np`` and math as ``math``.
 spelling (``import numpy as xp`` → ``xp.sum`` becomes ``np.sum``;
 ``from numpy.linalg import norm`` → ``norm`` becomes ``np.linalg.norm``) and
 removes the import statements, following Python's scoping: a local binding of
-the same name shadows the import.
+the same name shadows the import. The decorators see only a function's own
+source, so `resolve_module_level_imports` applies the same spelling to the
+names the function reads from its module's top-level imports
+(``import numpy`` → ``numpy.exp`` becomes ``np.exp``).
 """
 from __future__ import annotations
 
@@ -224,6 +227,19 @@ class _AliasResolver(ast.NodeTransformer):
     visit_ImportFrom = visit_Import
 
 
+def _drop_rebound_names(aliases: dict[str, ast.expr], body: list[ast.stmt]) -> None:
+    """Module bindings are resolved when functions execute, after module
+    setup, so a later module-level definition of an imported name wins."""
+    for statement in body:
+        if isinstance(statement, ast.FunctionDef):
+            aliases.pop(statement.name, None)
+        elif isinstance(statement, ast.Assign):
+            for target in statement.targets:
+                for name in ast.walk(target):
+                    if isinstance(name, ast.Name):
+                        aliases.pop(name.id, None)
+
+
 def resolve_import_aliases(module: ast.Module) -> ast.Module:
     """Resolve the names bound by imports in a parsed source file.
 
@@ -239,16 +255,47 @@ def resolve_import_aliases(module: ast.Module) -> ast.Module:
             aliases.update(import_bindings(statement))
         else:
             body.append(statement)
-    # Module bindings are resolved when functions execute, after module
-    # setup, so a later module-level definition of the name wins.
-    for statement in body:
-        if isinstance(statement, ast.FunctionDef):
-            aliases.pop(statement.name, None)
-        elif isinstance(statement, ast.Assign):
-            for target in statement.targets:
-                for name in ast.walk(target):
-                    if isinstance(name, ast.Name):
-                        aliases.pop(name.id, None)
+    _drop_rebound_names(aliases, body)
     resolver = _AliasResolver(aliases)
     module.body = [resolver.visit(statement) for statement in body]
     return module
+
+
+def _allowed_bindings(statement: ast.Import | ast.ImportFrom) -> dict[str, ast.expr]:
+    """`import_bindings` of a top-level import of allowed modules only. Other
+    imports bind nothing here: `check_module_level_imports` rejects a function
+    that uses them, and a wildcard import cannot be spelled name by name."""
+    allowed = all(module.split(".")[0] in ALLOWED_IMPORT_ROOTS for module in imported_modules(statement))
+    wildcard = isinstance(statement, ast.ImportFrom) and any(a.name == "*" for a in statement.names)
+    return import_bindings(statement) if allowed and not wildcard else {}
+
+
+def resolve_module_level_imports(method, source: str) -> str:
+    """Spell the names ``source`` (the decorated function ``method``) reads
+    from its module's top-level ``numpy``/``math`` imports as the compiler
+    does: ``import numpy`` → ``numpy.exp`` becomes ``np.exp``, ``from math
+    import sqrt`` → ``sqrt`` becomes ``math.sqrt``. Local bindings shadow the
+    imports, as in `resolve_import_aliases`. Returns ``source`` unchanged when
+    no name it reads needs another spelling (``import numpy as np``)."""
+    module_file = (getattr(method, "__globals__", None) or {}).get("__file__")
+    if not module_file:
+        return source
+    try:
+        module_tree = ast.parse(Path(module_file).read_text())
+        function_tree = ast.parse(dedent_source(source))
+    except (OSError, SyntaxError, ValueError):
+        return source
+    aliases: dict[str, ast.expr] = {}
+    body = []
+    for statement in module_tree.body:
+        if isinstance(statement, (ast.Import, ast.ImportFrom)):
+            aliases.update(_allowed_bindings(statement))
+        else:
+            body.append(statement)
+    _drop_rebound_names(aliases, body)
+    respelled = {name: spelling for name, spelling in aliases.items() if ast.unparse(spelling) != name}
+    reads = {n.id for n in ast.walk(function_tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+    if not respelled.keys() & reads:
+        return source
+    resolved = _AliasResolver(respelled).visit(function_tree)
+    return ast.unparse(ast.fix_missing_locations(resolved))

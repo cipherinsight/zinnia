@@ -11,7 +11,7 @@ use crate::helpers::static_array::base::{
     build_static_array_from_flat, build_static_array_from_flat_complex, to_static_array,
 };
 use crate::helpers::static_array::elementwise::payload_cells;
-use crate::types::{CompositeData, NumberType, Value, ValueId, ZinniaType};
+use crate::types::{CompositeData, NumberType, Value, ValueId};
 
 fn known_int(value: &Value, op: &str) -> i64 {
     value
@@ -133,22 +133,17 @@ fn finish(b: &mut IRBuilder, result: Value, params: &HashMap<String, Value>) -> 
     }
 }
 
+/// An accumulator `dtype=` must be the input's own (int64, float or complex):
+/// converting it is not supported.
 fn same_dtype(params: &HashMap<String, Value>, input_dtype: NumberType, op: &str) {
-    let requested = match params.get("dtype") {
-        None | Some(Value::None) => return,
-        Some(Value::Class(ZinniaType::Integer)) => NumberType::Integer,
-        Some(Value::Class(ZinniaType::Float)) => NumberType::Float,
-        Some(Value::Class(ZinniaType::Complex)) => NumberType::Complex,
-        Some(Value::String(value)) => match value.val.as_str() {
-            "int" | "int64" | "i8" => NumberType::Integer,
-            "float" | "float64" | "f8" => NumberType::Float,
-            "complex" | "complex128" | "c16" => NumberType::Complex,
-            other => panic!("{op}: unsupported accumulator dtype {other}"),
-        },
-        _ => panic!("{op}: unsupported accumulator dtype"),
+    use crate::helpers::dtype::Dtype;
+    let Some(requested) = params.get("dtype").filter(|v| !matches!(v, Value::None)) else {
+        return;
     };
-    assert_eq!(
-        requested, input_dtype,
+    let requested = Dtype::required(requested, op);
+    assert!(
+        matches!(requested, Dtype::Int64 | Dtype::Float | Dtype::Complex)
+            && requested.storage() == input_dtype,
         "{op}: converting the accumulator dtype is not supported"
     );
 }

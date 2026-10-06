@@ -1386,6 +1386,9 @@ impl IRGenerator {
                 })
             }
             Value::DynamicNDArray(d) => match op {
+                "usub" if self.builder.is_bool_segment(d.segment_id) => {
+                    crate::helpers::dtype::reject_bool_negative()
+                }
                 "usub" => {
                     let out_dtype = d.dtype;
                     crate::ops::dyn_ndarray::binary::dyn_unary_op(
@@ -1409,6 +1412,15 @@ impl IRGenerator {
                     crate::types::NumberType::Integer,
                     |b, v| b.ir_logical_not(v),
                 ),
+                // `~` of a bool array is the logical not.
+                "invert" if self.builder.is_bool_segment(d.segment_id) => {
+                    crate::ops::dyn_ndarray::binary::dyn_unary_op(
+                        &mut self.builder,
+                        d,
+                        crate::types::NumberType::Integer,
+                        |b, v| b.ir_logical_not(v),
+                    )
+                }
                 "invert" => crate::ops::dyn_ndarray::binary::dyn_unary_op(
                     &mut self.builder,
                     d,
@@ -1457,7 +1469,7 @@ impl IRGenerator {
                     // rows). For Boolean operands route to `ir_logical_not` (one
                     // row). Mirrors `static_array::elementwise::unary_array`,
                     // which already handles this for StaticArray cells.
-                    if matches!(operand, Value::Boolean(_)) {
+                    if self.builder.is_bool_cell(operand) {
                         self.builder.ir_logical_not(operand)
                     } else {
                         self.builder.ir_bit_not_i(operand)
@@ -1729,7 +1741,19 @@ impl IRGenerator {
                 indices.push(SliceIndex::Single(Value::None));
             }
         }
+        // An index means its value whatever its NumPy type; the indexing
+        // lowerings compute with it in int64 (see `helpers::dtype::as_index`).
         indices
+            .into_iter()
+            .map(|index| match index {
+                SliceIndex::Single(v) => SliceIndex::Single(crate::helpers::dtype::as_index(&mut self.builder, &v)),
+                SliceIndex::Range(start, stop, step) => {
+                    let mut bound = |v: Option<Value>| v.map(|v| crate::helpers::dtype::as_index(&mut self.builder, &v));
+                    SliceIndex::Range(bound(start), bound(stop), bound(step))
+                }
+                other => other,
+            })
+            .collect()
     }
 
     /// Handle range slicing on lists/tuples.
@@ -2159,6 +2183,7 @@ impl IRGenerator {
         }
         let inner_val = self.visit_subscript(inner);
         let indices = self.eval_slice_indices(outer);
+        self.builder.check_assignment(&inner_val, &value);
         let root_segment = chain_root(inner)
             .and_then(|root| self.ctx.get(root))
             .and_then(|root| super::detached_copies::array_segment(&root));
@@ -2224,6 +2249,7 @@ impl IRGenerator {
         let Some(current) = self.ctx.get(var_name) else {
             panic!("Variable `{}` not found", var_name);
         };
+        self.builder.check_assignment(&current, &value);
         let updated = match &current {
             Value::Tuple(_) => panic!("'tuple' object does not support item assignment"),
             Value::StaticArray { .. } => self.static_array_setitem(&current, &indices, value),

@@ -540,17 +540,7 @@ impl IRGenerator {
                     value_id: ValueId::next(),
                 })
             }
-            "dtype" => {
-                let flat = crate::helpers::composite::flatten_composite(&target);
-                let has_float = flat.iter().any(|v| matches!(v, Value::Float(_)));
-                if crate::helpers::array_ops::is_bool_array(&self.builder, &target_orig) {
-                    Value::Class(ZinniaType::Boolean)
-                } else if has_float {
-                    Value::Class(ZinniaType::Float)
-                } else {
-                    Value::Class(ZinniaType::Integer)
-                }
-            }
+            "dtype" => crate::helpers::dtype::dtype_of(&mut self.builder, &target_orig),
             "append" | "extend" | "pop" | "remove" | "clear" | "reverse" | "count"
             | "index" => {
                 // These should be handled via visit_named_attr with a target variable name

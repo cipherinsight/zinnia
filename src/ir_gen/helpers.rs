@@ -3,51 +3,6 @@ use crate::types::{CompositeData, Value, ValueId, ZinniaType};
 use super::{IRGenerator, SliceIndex};
 
 impl IRGenerator {
-    pub(crate) fn cast_composite(&mut self, val: &Value, to_float: bool) -> Value {
-        Self::map_composite_leaves(&mut self.builder, val, &mut |b, leaf| match leaf {
-            Value::Integer(_) | Value::Boolean(_) if to_float => b.ir_float_cast(leaf),
-            Value::Float(_) if !to_float => b.ir_int_cast(leaf),
-            // A bool becomes an integer cell (it indexes by position).
-            Value::Integer(_) | Value::Boolean(_) if !to_float => b.int_dtype_cell(leaf),
-            _ => leaf.clone(),
-        })
-    }
-
-    /// `val` with every numeric leaf replaced by its truth value: NumPy's
-    /// conversion to `dtype=bool` (`np.array(x, dtype=bool)`).
-    pub(crate) fn truth_composite(&mut self, val: &Value) -> Value {
-        Self::map_composite_leaves(&mut self.builder, val, &mut |b, leaf| match leaf {
-            Value::Integer(_) | Value::Float(_) | Value::Boolean(_) => b.bool_dtype_cell(leaf),
-            _ => leaf.clone(),
-        })
-    }
-
-    /// `val` with `f` applied to every leaf of its nested lists and tuples.
-    fn map_composite_leaves(
-        b: &mut crate::builder::IRBuilder,
-        val: &Value,
-        f: &mut impl FnMut(&mut crate::builder::IRBuilder, &Value) -> Value,
-    ) -> Value {
-        match val {
-            Value::List(data) | Value::Tuple(data) => {
-                let new_values: Vec<Value> =
-                    data.values.iter().map(|v| Self::map_composite_leaves(b, v, f)).collect();
-                let new_types = new_values.iter().map(|v| v.zinnia_type()).collect();
-                let data = CompositeData {
-                    elements_type: new_types,
-                    values: new_values,
-                    value_id: ValueId::next(),
-                };
-                if matches!(val, Value::Tuple(_)) {
-                    Value::Tuple(data)
-                } else {
-                    Value::List(data)
-                }
-            }
-            leaf => f(b, leaf),
-        }
-    }
-
     /// Cast a scalar value to ``target_type`` where Python/NumPy convert
     /// implicitly: an integer or boolean to float, a float to integer, and a
     /// boolean to integer (``bool`` is an ``int`` subtype; the value keeps its
@@ -622,25 +577,19 @@ impl IRGenerator {
         }
     }
 
+    /// The type names a program can use as values, e.g. as a dtype
+    /// (`x.astype(bool)`, `np.zeros(n, dtype=int)`).
     pub(crate) fn register_global_datatypes(&mut self) {
-        // Register Float, Integer, Boolean and Complex as class values. `bool`
-        // is NumPy's bool dtype as a value (`dtype=bool`, `astype(bool)`):
-        // a bool array indexes as a mask, an integer array as positions.
-        let float_class = Value::Class(ZinniaType::Float);
-        let int_class = Value::Class(ZinniaType::Integer);
-        let bool_class = Value::Class(ZinniaType::Boolean);
-        let complex_class = Value::Class(ZinniaType::Complex);
-        for name in &["Float", "float"] {
-            self.ctx.set(name, float_class.clone());
-        }
-        for name in &["Integer", "int", "Int", "integer"] {
-            self.ctx.set(name, int_class.clone());
-        }
-        for name in &["Boolean", "bool", "Bool", "boolean"] {
-            self.ctx.set(name, bool_class.clone());
-        }
-        for name in &["Complex", "complex"] {
-            self.ctx.set(name, complex_class.clone());
+        let types: [(&[&str], ZinniaType); 4] = [
+            (&["Float", "float"], ZinniaType::Float),
+            (&["Integer", "int", "Int", "integer"], ZinniaType::Integer),
+            (&["Boolean", "bool", "Bool", "boolean"], ZinniaType::Boolean),
+            (&["Complex", "complex"], ZinniaType::Complex),
+        ];
+        for (names, zinnia_type) in types {
+            for name in names {
+                self.ctx.set(name, Value::Class(zinnia_type.clone()));
+            }
         }
     }
 

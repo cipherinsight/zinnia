@@ -8,7 +8,9 @@ function object and the second only has source text.
 `read_decorated_function`:
 
 1. `imports.check_module_level_imports`: a module-level import of a module
-   other than ``numpy``/``math`` whose name the function uses → rejected.
+   other than ``numpy``/``math`` whose name the function uses → rejected;
+   `imports.resolve_module_level_imports`: the names the function reads from
+   the module-level ``numpy``/``math`` imports are spelled ``np...``/``math...``.
 2. `module_constants`: reads of module-level literal constants become the
    literals.
 3. Circuits only, `nested_defs.lift_self_contained_defs`: a ``def`` in the
@@ -43,6 +45,7 @@ from typing import Any, Dict, List, Tuple
 from zinnia.compile.lowering.helpers import lower_circuit_source
 from zinnia.compile.lowering.imports import (
     ALLOWED_IMPORT_ROOTS, OutOfScopeImportError, check_import_statement, check_module_level_imports,
+    resolve_module_level_imports,
 )
 from zinnia.compile.lowering.iterators import desugar_for_iterator
 from zinnia.compile.lowering.module_constants import inline_module_constants, module_constants
@@ -66,7 +69,8 @@ def read_decorated_function(method) -> str:
     """The source of a decorated function after the decorator stage (steps 1-2)."""
     raw_source = inspect.getsource(method)
     check_module_level_imports(method, raw_source)
-    return inline_module_constants(raw_source, module_constants(method))
+    source = resolve_module_level_imports(method, raw_source)
+    return inline_module_constants(source, module_constants(method))
 
 
 def read_decorated_circuit(method) -> Tuple[str, List[Tuple[str, str]]]:

@@ -240,23 +240,24 @@ pub fn try_apply_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value
     if !is_native_binary_op(op) {
         return None;
     }
+    let both_bool = is_bool_operand(b, lhs) && is_bool_operand(b, rhs);
+    let op = if both_bool { crate::helpers::dtype::operator_on_bools(op) } else { op };
     let out = apply_native_binary_op(b, op, lhs, rhs)?;
-    if keeps_bool_dtype(b, op, lhs, rhs) {
+    // `*` of two bools is a bool array in NumPy (the logical and), although
+    // its cells are integer products here; `+` became `or`, whose cells are
+    // booleans already.
+    if both_bool && matches!(op, "mul" | "or") {
         b.mark_bool_array(&out);
     }
     Some(out)
 }
 
-/// Whether NumPy's result of `lhs op rhs` is a bool array although its cells
-/// are integers here: `+` and `*` of two bools are bool in NumPy (logical
-/// or and and). The values may differ (`True + True` is 2 here, NumPy's
-/// `True`), but as a mask they agree.
-fn keeps_bool_dtype(b: &IRBuilder, op: &str, lhs: &Value, rhs: &Value) -> bool {
-    let is_bool = |v: &Value| match v {
+/// A bool array, or a bool (`builder/bool_dtype.rs`).
+fn is_bool_operand(b: &IRBuilder, v: &Value) -> bool {
+    match v {
         Value::StaticArray { .. } => crate::helpers::array_ops::is_bool_array(b, v),
         _ => b.is_bool_cell(v),
-    };
-    matches!(op, "add" | "mul") && is_bool(lhs) && is_bool(rhs)
+    }
 }
 
 fn apply_native_binary_op(b: &mut IRBuilder, op: &str, lhs: &Value, rhs: &Value) -> Option<Value> {
@@ -492,6 +493,9 @@ pub fn try_apply_unary_op(b: &mut IRBuilder, op: &str, operand: &Value) -> Optio
 
     match op {
         "uadd" => Some(operand.clone()),
+        "usub" if crate::helpers::array_ops::is_bool_array(b, operand) => {
+            crate::helpers::dtype::reject_bool_negative()
+        }
         "usub" | "not" | "invert" => {
             let arr_shape = shape_of_static_array(operand);
             let out_dtype = match op {
@@ -594,6 +598,9 @@ fn unary_array(
     arr_shape: &[usize],
     out_dtype: NumberType,
 ) -> Value {
+    // A bool array's dtype is its segment's (`builder/bool_dtype.rs`); its
+    // cells may be integers (a lazily computed product of two bool arrays).
+    let bool_array = crate::helpers::array_ops::is_bool_array(b, arr);
     let cells = payload_cells(b, arr);
     let total: usize = arr_shape.iter().product();
     let mut out: Vec<Value> = Vec::with_capacity(total);
@@ -614,12 +621,10 @@ fn unary_array(
                 if matches!(v, Value::Float(_)) {
                     panic!("Bitwise NOT (~) requires an integer/boolean operand, got float");
                 }
-                // P5b: numpy semantics — `~bool_array` is logical NOT, not
-                // two's-complement bit_not. For Boolean cells call
-                // `ir_logical_not` so `~True == False` (matches numpy and
-                // keeps the result as a Boolean wire, preserving boolean-
-                // mask semantics for chained operations).
-                if matches!(v, Value::Boolean(_)) {
+                // NumPy: `~` of a bool array is the logical not, not the
+                // two's-complement bit_not (`~True == False`); the result
+                // keeps Boolean cells, so it stays a mask.
+                if bool_array || b.is_bool_cell(v) {
                     b.ir_logical_not(v)
                 } else {
                     b.ir_bit_not_i(v)
