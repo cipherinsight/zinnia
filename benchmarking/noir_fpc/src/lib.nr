@@ -412,6 +412,27 @@ pub fn divmod_by_positive<let BITS: u32>(n: Field, d: Field) -> (Field, Field) {
     (q, r)
 }
 
+/// Constraints for `divmod_by_pow2`: r is a K-bit value and q lies in the
+/// signed 64-bit window, so |q * 2^K + r| < 2^(63+K) + 2^K < p / 2 for
+/// K <= 120 and `q * 2^K + r == n` pins the unique floor quotient and
+/// remainder (as `constrain_divmod_by_positive` with d = 2^K, where
+/// d - 1 - r >= 0 already follows from r < 2^K).
+fn constrain_divmod_by_pow2<let K: u32>(n: Field, q: Field, r: Field) {
+    assert(K <= 120, "divmod_by_pow2: K must be <= 120");
+    r.assert_max_bit_size::<K>();
+    assert_in_window(q);
+    assert(q * 2.pow_32(K as Field) + r == n, "divmod_by_pow2: reconstruction failed");
+}
+
+/// `(n // 2^K, n % 2^K)`: one K-bit check of the remainder and the window
+/// check of the quotient.
+pub fn divmod_by_pow2<let K: u32>(n: Field) -> (Field, Field) {
+    // Safety: constrain_divmod_by_pow2 pins (q, r) uniquely.
+    let (q, r) = unsafe { hint_divmod(n, 2.pow_32(K as Field), false) };
+    constrain_divmod_by_pow2::<K>(n, q, r);
+    (q, r)
+}
+
 /// Integer `n // d` (Python), any signs; 0 for d == 0.
 pub fn q_floor_div(n: Field, d: Field) -> Field {
     let (q, _r) = floor_divmod(n, d);
@@ -640,7 +661,8 @@ global COS_TAYLOR_Q: [Field; 8] = [
 pub fn qsin(x: Field) -> Field {
     let (negative, m) = sign_abs(x);
     m.assert_max_bit_size::<64>();
-    let (_k, r) = divmod_by_positive::<35>(m, TWO_PI_Q);
+    // 42 bits (three whole 14-bit limbs) bound r just as 35 would.
+    let (_k, r) = divmod_by_positive::<42>(m, TWO_PI_Q);
     // r < 2 pi_q < 2^35, so the conversion never fails; the reduction then
     // runs on u64 values (13493037705 = pi_q, 6746518852 = pi_q / 2,
     // 3373259426 = pi_q / 4).
@@ -728,7 +750,7 @@ fn floor_div_pow2(v: Field, m: Field) -> Field {
 /// or flooring division for negative powers). Fails when |floor(y)| >= 128.
 pub fn qexp(x: Field) -> Field {
     let y = qmul(x, INV_LN2_Q);
-    let (i, f) = divmod_by_positive::<32>(y, Q);
+    let (i, f) = divmod_by_pow2::<32>(y);
     let two_to_f = horner_q(f, EXP2_COEFS_Q); // in [Q, 2Q]
     let (i_negative, e) = sign_abs(i);
     e.assert_max_bit_size::<7>();
@@ -800,7 +822,7 @@ pub fn qlog(x: Field) -> Field {
     let s = qdiv(m - Q, m + Q);
     let series = horner_q(qmul(s, s), ATANH_SERIES_Q);
     let ln_m = 2 * qmul(s, series);
-    let (k_ln2, _r) = divmod_by_positive::<32>(k * LN2_Q64 + 2147483648, Q);
+    let (k_ln2, _r) = divmod_by_pow2::<32>(k * LN2_Q64 + 2147483648);
     k_ln2 + ln_m
 }
 
@@ -864,7 +886,9 @@ pub fn qarcsin(x: Field) -> Field {
     let v_mag = if in_domain { mag } else { 0 };
     // 2^64 - v^2 <= 2^64, so the root is at most 2^32.
     let root = isqrt_floor(Q * Q - v_mag * v_mag);
-    let (t, _r) = divmod_by_positive::<33>(v * Q, Q + root);
+    // Q + root <= 2^33; 42 bits (whole 14-bit limbs) bound the remainder
+    // just as 33 would.
+    let (t, _r) = divmod_by_positive::<42>(v * Q, Q + root);
     let half = qarctan(t);
     half + half
 }
@@ -904,7 +928,7 @@ pub fn qarctan2(y: Field, x: Field) -> Field {
 
 // floor(v / 2), as the mock's fp_div_prescale(v, 2.0).
 fn half_floor(v: Field) -> Field {
-    let (q, _r) = divmod_by_positive::<1>(v, 2);
+    let (q, _r) = divmod_by_pow2::<1>(v);
     q
 }
 
@@ -1082,6 +1106,27 @@ fn test_divmod_by_positive() {
     assert((q == -3) & (r == 2));
     let (q2, r2) = divmod_by_positive::<1>(5, 2);
     assert((q2 == 2) & (r2 == 1));
+}
+
+#[test]
+fn test_divmod_by_pow2() {
+    let (q, r) = divmod_by_pow2::<3>(-17);
+    assert((q == -3) & (r == 7));
+    let (q2, r2) = divmod_by_pow2::<1>(9);
+    assert((q2 == 4) & (r2 == 1));
+}
+
+#[test(should_fail)]
+fn test_divmod_by_pow2_rejects_next_quotient() {
+    // -17 = -2 * 8 - 1: the remainder -1 is not a 3-bit value.
+    constrain_divmod_by_pow2::<3>(-17, -2, -1);
+}
+
+#[test(should_fail)]
+fn test_divmod_by_pow2_rejects_field_quotient() {
+    // 17 = q * 8 + 0 with q = 17 * 8^-1 mod p: a huge field element.
+    let q: Field = 17 / 8;
+    constrain_divmod_by_pow2::<3>(17, q, 0);
 }
 
 #[test]

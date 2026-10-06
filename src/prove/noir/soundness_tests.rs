@@ -689,6 +689,28 @@ fn every_lowered_op_matches_the_mock() {
     // Integral floats (exact products): float(x) = -7.0 and the constant -3.0.
     let float_x = g.push(IR::FloatCast, &[x]);
     let neg_three_f = g.push(IR::ConstantFloat { value: -3.0 }, &[]);
+    // Constant divisors: integral (power of two or not), fractional, negative, zero.
+    let divisors: Vec<u32> = [2.0, 3.0, -4.0, 0.5, 0.6, -0.6, 30.0, 0.0]
+        .iter()
+        .map(|&value| g.push(IR::ConstantFloat { value }, &[]))
+        .collect();
+    for &d in &divisors {
+        for numerator in [f, h, s] {
+            let q = g.push(IR::DivF, &[numerator, d]);
+            expose_f(&mut g, &mut approx, q, false);
+            let fq = g.push(IR::FloorDivF, &[numerator, d]);
+            expose_f(&mut g, &mut approx, fq, false);
+            let m = g.push(IR::ModF, &[numerator, d]);
+            expose_f(&mut g, &mut approx, m, false);
+        }
+    }
+    for divisor in [4, 7, 1] {
+        let d = g.int(divisor);
+        let q = g.push(IR::FloorDivI, &[x, d]);
+        expose_i(&mut g, &mut approx, q);
+        let m = g.push(IR::ModI, &[x, d]);
+        expose_i(&mut g, &mut approx, m);
+    }
     for (ir, args, is_approx) in [
         (IR::MulF, vec![float_x, f], false),
         (IR::MulF, vec![s, float_x], false),

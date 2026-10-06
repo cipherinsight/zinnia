@@ -1189,6 +1189,28 @@ impl<'a> NoirEmitter<'a> {
         Some(format!("{} * {}", a, n))
     }
 
+    /// Q32 `a / c` for a constant raw divisor c: the Euclidean quotient of
+    /// a * 2^32 by c (`kernel::fp_div_prescale`), i.e. floor(a * 2^32 / |c|)
+    /// negated for c < 0, and 0 for c = 0. An integral float c = n * 2^32
+    /// cancels the scale: floor(a / |n|), exactly the same quotient.
+    fn div_f_by_constant(&mut self, a: &str, c: i128) -> String {
+        if c == 0 {
+            return self.literal_int(0);
+        }
+        let q_scale = 1i128 << Q_BITS;
+        let (numerator, divisor) = if c % q_scale == 0 {
+            (a.to_string(), (c / q_scale).abs())
+        } else {
+            (format!("{a} * {Q_U64}"), c.abs())
+        };
+        let (q, _r) = self.divide_by_positive_constant(&numerator, divisor);
+        if c < 0 {
+            self.bind(&format!("0 - {q}"))
+        } else {
+            q
+        }
+    }
+
     /// Python `(a // b, a % b)` of two compile-time integers, with the
     /// mock's zero-divisor convention (`kernel::div_rem_or_zero`).
     fn constant_floor_divmod(&self, a: &str, b: &str) -> Option<(i64, i64)> {
@@ -1200,25 +1222,56 @@ impl<'a> NoirEmitter<'a> {
         Some(if r != 0 && (r < 0) != (y < 0) { (q - 1, r + y) } else { (q, r) })
     }
 
-    /// Python `(a // b, a % b)` as two cells, shared between the integer and
-    /// float floor division and remainder on the same operands. A positive
-    /// compile-time divisor below 2^120 uses `divmod_by_positive` (two small
-    /// range checks on the remainder); any other divisor the general
+    /// Python `(a // b, a % b)` of the raw values as two cells, shared
+    /// between the integer and float floor division and remainder on the
+    /// same operands. A positive compile-time divisor uses
+    /// `divide_by_positive_constant`; any other divisor the general
     /// `floor_divmod` (one sign projection of b; a zero divisor gives
     /// (0, 0), as the mock). Both pin the unique quotient and remainder.
     fn floor_divmod_cells(&mut self, a: &str, b: &str) -> (String, String) {
-        let (af, bf) = (a, b);
-        let call = match self.s_int_of(b) {
-            Some(d) if d > 0 && d < (1i128 << 120) => {
-                let bits = (128 - ((d - 1) as u128).leading_zeros()).max(1);
-                self.use_lib("divmod_by_positive");
-                format!("divmod_by_positive::<{}>({}, {})", bits, af, bf)
-            }
-            _ => {
-                self.use_lib("floor_divmod");
-                format!("floor_divmod({}, {})", af, bf)
-            }
+        if let Some(d) = self.raw_constant(b).filter(|d| *d > 0) {
+            return self.divide_by_positive_constant(a, d);
+        }
+        self.use_lib("floor_divmod");
+        self.divmod_call(format!("floor_divmod({a}, {b})"))
+    }
+
+    /// The raw field value of a compile-time constant as a signed integer:
+    /// an integer literal, or the Q32 encoding of a float literal.
+    fn raw_constant(&self, cell: &str) -> Option<i128> {
+        match self.literal_vals.get(cell)? {
+            ConcreteValue::Int(i) => Some(*i),
+            ConcreteValue::Bool(b) => Some(*b as i128),
+            ConcreteValue::Float(f) => Some(crate::prove::field::quantize(*f, Q_BITS)),
+        }
+    }
+
+    /// `(n // d, n % d)` (floor, 0 <= r < d) for a numerator expression `n`
+    /// and a constant `1 <= d < 2^120`. A power of two 2^k is one k-bit
+    /// check of the remainder (`divmod_by_pow2`); any other d two checks of
+    /// `r` and `d - 1 - r` (`divmod_by_positive`), at a width rounded up to
+    /// a multiple of bb's 14-bit limb (the same limbs, no extra lookup
+    /// table; any width of at least bit_length(d - 1) is sound). The
+    /// quotient is checked into the signed 64-bit window either way.
+    fn divide_by_positive_constant(&mut self, n: &str, d: i128) -> (String, String) {
+        debug_assert!(d >= 1 && d < 1i128 << 120);
+        if d == 1 {
+            return (n.to_string(), self.literal_int(0));
+        }
+        let call = if d & (d - 1) == 0 {
+            self.use_lib("divmod_by_pow2");
+            format!("divmod_by_pow2::<{}>({n})", d.trailing_zeros())
+        } else {
+            let bits = 128 - ((d - 1) as u128).leading_zeros();
+            let width = if bits <= 8 { bits } else { bits.div_ceil(14) * 14 }.min(120);
+            self.use_lib("divmod_by_positive");
+            format!("divmod_by_positive::<{width}>({n}, {d})")
         };
+        self.divmod_call(call)
+    }
+
+    /// Bind `let (q, r) = <call>;` once per call text.
+    fn divmod_call(&mut self, call: String) -> (String, String) {
         if let Some(pair) = self.divmod_cache.get(&call) {
             return pair.clone();
         }
@@ -1966,6 +2019,11 @@ impl Synthesizer for NoirEmitter<'_> {
         Ok(self.bind_sum(&exact))
     }
     fn div_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some(c) = self.raw_constant(b) {
+            if c.unsigned_abs() < 1u128 << 100 {
+                return Ok(self.div_f_by_constant(a, c));
+            }
+        }
         self.use_lib("qdiv");
         let v = self.bind(&format!("qdiv({}, {})", a, b));
         Ok(v)
@@ -3019,6 +3077,25 @@ mod tests {
         em.sign_f(&x).unwrap();
         assert_eq!(em.body.matches("sign_abs(x)").count(), 1, "{}", em.body);
         assert!(!em.body.contains("qlt_bits"), "{}", em.body);
+    }
+
+    // A float division by a constant divides by the constant directly: an
+    // integral float n by n (a power of two by one remainder check), any
+    // other constant c by its raw value after scaling the numerator.
+    #[test]
+    fn division_by_a_constant_skips_the_sign_projection() {
+        let prov = crate::provenance::ProvenanceTable::default();
+        let mut em = bare_emitter(&prov);
+        let x = "x".to_string();
+        for value in [2.0, 30.0, 0.6, -4.0] {
+            let c = em.constant_float(value).unwrap();
+            em.div_f(&x, &c).unwrap();
+        }
+        assert!(em.body.contains("divmod_by_pow2::<1>(x)"), "{}", em.body);
+        assert!(em.body.contains("divmod_by_positive::<5>(x, 30)"), "{}", em.body);
+        assert!(em.body.contains("divmod_by_positive::<42>(x * 4294967296, 2576980378)"), "{}", em.body);
+        assert!(em.body.contains("divmod_by_pow2::<2>(x)"), "{}", em.body);
+        assert!(!em.body.contains("qdiv") && !em.body.contains("sign_abs"), "{}", em.body);
     }
 
     // B4(b): the index of `AssertU128Lt` carries the interval the builder
