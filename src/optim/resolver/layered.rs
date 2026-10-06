@@ -67,29 +67,20 @@ impl LayeredResolver {
     /// Both sub-layers share one telemetry handle so the end-of-compilation
     /// summary covers the whole pipeline.
     pub fn range_then_smt() -> Self {
-        Self::range_then_smt_with_timeout(500)
+        Self::range_then_smt_with_budget(crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, usize::MAX)
     }
 
-    /// Same as `range_then_smt` but with an explicit Z3 per-query timeout
-    /// (ms). P5 uses this so callers can tighten the budget without first
-    /// constructing the SMT layer manually.
-    pub fn range_then_smt_with_timeout(timeout_ms: u64) -> Self {
-        Self::range_then_smt_with_budget(timeout_ms, usize::MAX)
-    }
-
-    /// Same as `range_then_smt_with_timeout` but with an additional cap on
-    /// the per-query formula size (number of IR statements visited by the
-    /// reverse-reachability walk). Beyond this cap the walk aborts and the
-    /// SmtResolver returns None — counted as `queries_skipped_oversized`
-    /// in telemetry. P5 commit 3 uses this so callers can configure a
-    /// pragmatic budget that bounds the worst-case query without changing
-    /// the timeout.
-    pub fn range_then_smt_with_budget(timeout_ms: u64, max_formula_size: usize) -> Self {
+    /// Same as `range_then_smt` but with an explicit Z3 step budget per
+    /// query (`optim::z3_budget`) and a cap on the per-query formula size
+    /// (number of IR statements visited by the reverse-reachability walk).
+    /// Beyond this cap the walk aborts and the SmtResolver returns None —
+    /// counted as `queries_skipped_oversized` in telemetry.
+    pub fn range_then_smt_with_budget(rlimit: u32, max_formula_size: usize) -> Self {
         let telemetry = crate::optim::telemetry::SmtTelemetry::new();
         let range = crate::optim::range::RangeResolver::new()
             .with_telemetry(std::sync::Arc::clone(&telemetry));
         let smt = SmtResolver::new()
-            .with_timeout(timeout_ms)
+            .with_rlimit(rlimit)
             .with_max_formula_size(max_formula_size)
             .with_telemetry(std::sync::Arc::clone(&telemetry));
         Self::new_with_telemetry(vec![Box::new(range), Box::new(smt)], telemetry)

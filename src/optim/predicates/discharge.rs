@@ -39,7 +39,7 @@
 //!   discharge step. It is solver-agnostic up to the `z3` crate types it
 //!   returns.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use z3::ast::{Bool, Int};
 
@@ -76,8 +76,10 @@ pub fn find_structural_predicates(stmts: &[IRStatement]) -> Vec<(StmtId, &IR)> {
 /// produce one read statement per leaf, so the map only contains entries
 /// for *scalar* inputs (the foundation contracts card only handles
 /// scalar bounds; per-predicate cards extend for array-valued lookups).
-pub fn build_input_name_index(stmts: &[IRStatement]) -> HashMap<String, StmtId> {
-    let mut idx = HashMap::new();
+/// The map is ordered by name, so the Z3 terms callers build by walking it
+/// are created in the same order on every run.
+pub fn build_input_name_index(stmts: &[IRStatement]) -> BTreeMap<String, StmtId> {
+    let mut idx = BTreeMap::new();
     for s in stmts {
         if let IR::ReadInteger { path, .. } | IR::ReadFloat { path, .. } = &s.ir {
             if path.segments.is_empty() {
@@ -214,7 +216,7 @@ impl Discharger {
         // (kind, args). Ensures that two references to `nnz(x)` in one
         // query produce the same Z3 Int, so a chain of facts about it
         // composes.
-        let mut pred_symbols: HashMap<(String, Vec<String>), Int> = HashMap::new();
+        let mut pred_symbols: BTreeMap<(String, Vec<String>), Int> = BTreeMap::new();
 
         for (_, ir) in find_structural_predicates(stmts) {
             let (kind, args, op, bound) = match ir {

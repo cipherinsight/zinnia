@@ -70,7 +70,7 @@ fn reshape_admits_value_provable_via_prove() {
     // would reject this program; `resolve_int_or_bounded` admits it.
     let mut b = IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
     let arr = static_floats(8); // 1-D of length 8
 
@@ -94,7 +94,7 @@ fn split_admits_value_provable_via_prove() {
     // np.split(arr, k) with k == 2 (derived from `k * k == 4`).
     let mut b = IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
     let arr = static_floats(8); // 1-D length 8, splits into 2 sections of 4
 
@@ -125,7 +125,7 @@ fn reshape_still_rejects_when_no_facts() {
     // diagnostic as before.
     let mut b = IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
     let arr = static_floats(8);
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
@@ -138,7 +138,7 @@ fn reshape_still_rejects_when_no_facts() {
 fn split_still_rejects_when_no_facts() {
     let mut b = IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
     let arr = static_floats(8);
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
@@ -156,7 +156,7 @@ fn np_fill_1d_admits_value_provable_via_prove_bounded() {
     // `DynamicNDArray` whose envelope's max_total is 10.
     let mut b = IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
 
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
@@ -237,7 +237,7 @@ fn np_arange_admits_value_provable_via_prove_bounded() {
     // masked by downstream subscript ops.
     let mut b = IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
 
     let n = b.ir_read_integer(InputPath::new("n", vec![]), false);
@@ -271,7 +271,7 @@ fn np_tile_admits_value_provable_via_prove_bounded() {
     // `runtime_length = 3 * k`.
     let mut b = IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
 
     let arr = static_floats(3);
@@ -308,7 +308,7 @@ fn np_identity_admits_value_provable_via_prove_bounded() {
     // (n_max^2) and runtime_length aliasing the `n * n` mul.
     let mut b = IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
 
     let n = b.ir_read_integer(InputPath::new("n", vec![]), false);
@@ -342,7 +342,7 @@ fn np_fill_multi_dim_admits_value_provable_via_prove_bounded() {
     // envelope max_length=30 and runtime_length=m*3.
     let mut b = IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
 
     let m = b.ir_read_integer(InputPath::new("m", vec![]), false);
@@ -657,7 +657,7 @@ fn np_arange_3arg_admits_value_provable_via_prove_bounded() {
     // ceildiv(10, 2) = 5; values are [0, 2, 4, 6, 8].
     let mut b = IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
 
     let stop = b.ir_read_integer(InputPath::new("stop", vec![]), false);
@@ -688,7 +688,7 @@ fn np_repeat_admits_value_provable_via_prove_bounded() {
     // `3 * 10 = 30`, runtime_length = `3 * k`.
     let mut b = IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
 
     let arr = static_floats(3);
@@ -722,7 +722,7 @@ fn np_linspace_admits_value_provable_via_prove_bounded() {
     // `num >= 2` for endpoint=true; plant that explicitly.
     let mut b = IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
 
     let num = b.ir_read_integer(InputPath::new("num", vec![]), false);

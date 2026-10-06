@@ -6,9 +6,9 @@
 //!
 //! * Did range resolve (cheap)?
 //! * Did SMT resolve (we paid Z3 to learn something)?
-//! * Did SMT return unknown / timeout (we paid Z3 to learn nothing — bad)?
-//! * What does the duration histogram look like? Is the 500 ms timeout
-//!   genuinely the long-tail spend, or is it cheap-and-frequent queries?
+//! * Did SMT return unknown (we paid Z3 to learn nothing — bad)?
+//! * What does the duration histogram look like? Is the long tail a few
+//!   queries that exhaust their step budget, or cheap-and-frequent queries?
 //!
 //! Wired in: `SmtResolver` and `RangeResolver` each hold an
 //! `Arc<SmtTelemetry>`. A `LayeredResolver` shares one telemetry across the
@@ -59,10 +59,6 @@ pub struct SmtTelemetry {
     /// Z3 returned `unknown` / non-unique / `Sat` with an alternate model.
     /// "Paid Z3 to learn nothing."
     pub queries_smt_unknown: AtomicUsize,
-    /// Z3 timeout. Counted alongside `queries_smt_unknown` (the resolver
-    /// can't always distinguish "unknown" from "timeout" via the public
-    /// API, but the duration histogram surfaces the tail).
-    pub queries_smt_timeout: AtomicUsize,
     /// Resolved from the per-ptr cache (no walk, no Z3 — cheapest case
     /// after static_val).
     pub queries_cache_hit: AtomicUsize,
@@ -195,7 +191,6 @@ impl SmtTelemetry {
         let range_hit = self.queries_range_hit.load(Ordering::Relaxed);
         let smt_ok = self.queries_smt_resolved.load(Ordering::Relaxed);
         let smt_unk = self.queries_smt_unknown.load(Ordering::Relaxed);
-        let smt_timeout = self.queries_smt_timeout.load(Ordering::Relaxed);
         let cache_hit = self.queries_cache_hit.load(Ordering::Relaxed);
         let disabled = self.queries_skipped_disabled.load(Ordering::Relaxed);
         let oversized = self.queries_skipped_oversized.load(Ordering::Relaxed);
@@ -230,10 +225,6 @@ impl SmtTelemetry {
         s.push_str(&format!("  queries_range_hit            = {}\n", range_hit));
         s.push_str(&format!("  queries_smt_resolved         = {}\n", smt_ok));
         s.push_str(&format!("  queries_smt_unknown          = {}\n", smt_unk));
-        s.push_str(&format!(
-            "  queries_smt_timeout          = {}\n",
-            smt_timeout
-        ));
         s.push_str(&format!(
             "  queries_cache_hit            = {} ({:.1}%)\n",
             cache_hit, cache_pct
