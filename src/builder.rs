@@ -2088,37 +2088,49 @@ impl IRBuilder {
         ir_mod_f       => IR::ModF,       contract = "mod_f",
     );
 
-    /// Float power. An integral compile-time exponent in
-    /// `0..=MAX_UNROLLED_POWER` (`x ** 2.0`) is the integer power, see
-    /// [`Self::ir_pow_f_int`]; any other exponent is `PowF` (lowered as an
-    /// integer power).
+    /// Float power. An integral compile-time exponent with
+    /// `|e| <= MAX_UNROLLED_POWER` (`x ** 2.0`, `x ** -2.0`) is the exact
+    /// fixed-point chain of [`Self::constant_power_f`]; any other exponent
+    /// (fractional or runtime) is `PowF`, `exp(b * log a)` on every backend.
     pub fn ir_pow_f(&mut self, base: &Value, exp: &Value) -> Value {
         match exp.float_val() {
-            Some(e) if e.fract() == 0.0 && (0.0..=MAX_UNROLLED_POWER as f64).contains(&e) => {
-                self.square_and_multiply_f(base, e as u32)
+            Some(e) if e.fract() == 0.0 && e.abs() <= MAX_UNROLLED_POWER as f64 => {
+                self.constant_power_f(base, e as i64)
             }
             _ => self.power(&IR::PowF, "pow_f", base, exp),
         }
     }
 
-    /// Float base raised to an Integer exponent. A compile-time exponent
-    /// `0 <= e <= MAX_UNROLLED_POWER` is expanded into square-and-multiply
-    /// float products (`x ** 6` is three `MulF`, `x ** 0` is `1.0`); the
-    /// backends' `PowFI` lowering computes every power up to its largest
-    /// supported exponent and selects one, which only a runtime exponent
-    /// needs. Each product rounds like any other `MulF`, so the result can
-    /// differ from the one-factor-at-a-time `PowFI` product in the last Q32
-    /// bits; both are within one rounding per product of the real power.
-    /// The `pow_f` contract's requirement (`base != 0 or exp >= 0`) holds
-    /// for every non-negative exponent, so nothing is lost by not firing it.
-    /// A runtime exponent is `PowFI` (halo2-base accepts exponents below 9).
+    /// Float base raised to an Integer exponent. A compile-time exponent with
+    /// `|e| <= MAX_UNROLLED_POWER` is the chain of
+    /// [`Self::constant_power_f`]; the backends' `PowFI` lowering computes
+    /// every power up to its largest supported exponent and selects one,
+    /// which only a runtime exponent needs (halo2-base accepts exponents
+    /// below 9). The `pow_f` contract's requirement (`base != 0 or
+    /// exp >= 0`) holds for every non-negative exponent, and a negative one
+    /// gets the reciprocal's `div_f` requirement instead.
     pub fn ir_pow_f_int(&mut self, base: &Value, exp: &Value) -> Value {
         match exp.int_val() {
-            Some(e) if (0..=MAX_UNROLLED_POWER).contains(&e) => {
-                self.square_and_multiply_f(base, e as u32)
-            }
+            Some(e) if e.abs() <= MAX_UNROLLED_POWER => self.constant_power_f(base, e),
             _ => self.power(&IR::PowFI, "pow_f", base, exp),
         }
+    }
+
+    /// `base ** e` for a compile-time integer `e` as float products, so the
+    /// mock and every circuit compute the same value: square-and-multiply
+    /// (`x ** 6` is three `MulF`, `x ** 0` is `1.0`), and for `e < 0` the
+    /// fixed-point reciprocal `1.0 / base ** |e|` (`DivF`, whose `rhs != 0`
+    /// requirement leaves no proof where the power is 0: NumPy's `inf` at
+    /// `base == 0`, and a result beyond the window when it underflows).
+    /// Each product rounds like any other `MulF`: within one Q unit per
+    /// product of the real power.
+    fn constant_power_f(&mut self, base: &Value, e: i64) -> Value {
+        let power = self.square_and_multiply_f(base, e.unsigned_abs() as u32);
+        if e >= 0 {
+            return power;
+        }
+        let one = self.ir_constant_float(1.0);
+        self.ir_div_f(&one, &power)
     }
 
     /// `base ** e` by square-and-multiply over the bits of `e`, most
