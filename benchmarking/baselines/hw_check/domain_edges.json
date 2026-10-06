@@ -103,7 +103,7 @@
    {
     "name": "l1_sum_overflows_int64",
     "expect": "reject",
-    "why": "the row's L1 norm 2^63 + 1 overflows int64 (NumPy wraps it)",
+    "why": "the row's L1 norm 2^63 + 1 overflows int64 (NumPy wraps it and gives -0.5). Zinnia's int64-overflow policy is no proof; its mock and halo2-base backend currently prove 0.0 / 0.5 (a Zinnia bug, reported)",
     "set": {
      "X": {
       "0": 4611686018427387904,
@@ -120,7 +120,7 @@
      "halo2": "numpy",
      "noir": "numpy"
     },
-    "why": "float(l1) = 2^40 has no Q32 code, so Zinnia has no proof; the halo2/Noir baselines compute floor(x * 2^32 / l1) without converting l1 and prove NumPy's value (a known difference, not the |i64::MIN| policy)",
+    "why": "float(l1) = 2^40 has no Q32 code. The zkVM and Cairo programs have no result (a Q32 float(x) must exist); the halo2/Noir baselines compute floor(x * 2^32 / l1) without converting l1 and prove NumPy's value. Zinnia is inconsistent here: its halo2-base backend proves NumPy's value, its mock rejects norms just above 2^31 but returns 0.0 at 2^40 (a mock bug). Not the |i64::MIN| policy; an open question for the author.",
     "set": {
      "X": {
       "0": 1099511627776,
@@ -162,7 +162,7 @@
      "halo2": "numpy",
      "noir": "numpy"
     },
-    "why": "float(linf) = 2^40 has no Q32 code, so Zinnia has no proof; the halo2/Noir baselines compute floor(x * 2^32 / linf) without converting linf and prove NumPy's value (a known difference, not the |i64::MIN| policy)",
+    "why": "float(linf) = 2^40 has no Q32 code. The zkVM and Cairo programs have no result (a Q32 float(x) must exist); the halo2/Noir baselines compute floor(x * 2^32 / linf) without converting linf and prove NumPy's value. Zinnia is inconsistent here: its halo2-base backend proves NumPy's value, its mock rejects norms just above 2^31 but returns 0.0 at 2^40 (a mock bug). Not the |i64::MIN| policy; an open question for the author.",
     "set": {
      "X": {
       "0": 1099511627776,
