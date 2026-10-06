@@ -47,7 +47,8 @@ def test_is_permutation_witness_emits_quadratic_chain():
     """
     stmts = _dump_ir(_perm_input)
     classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
-    assert classes.count("LessThanIIR") >= 8  # PatternMatchOptim: >=, <=, > are a (negated) <
+    assert classes.count("GreaterThanOrEqualIIR") >= 4
+    assert classes.count("LessThanIIR") >= 4
     assert classes.count("NotEqualIIR") >= 6
     assert classes.count("AssertIR") >= 14
 

@@ -48,8 +48,8 @@ def test_is_sorted_witness_emits_adjacent_pair_asserts():
     """
     stmts = _dump_ir(_sorted_input)
     classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
-    assert classes.count("LessThanIIR") >= 7, \
-        f"expected ≥7 (negated) LtI ops; got {classes.count('LessThanIIR')}"  # PatternMatchOptim: >=, <=, > are a (negated) <
+    assert classes.count("LessThanOrEqualIIR") >= 7, \
+        f"expected ≥7 LteI ops; got {classes.count('LessThanOrEqualIIR')}"
     assert classes.count("AssertIR") >= 7, \
         f"expected ≥7 Assert ops; got {classes.count('AssertIR')}"
 
@@ -70,7 +70,7 @@ def test_is_monotone_emits_same_witness_as_is_sorted():
     assert sps[0]["kind"] == "is_monotone_nondecreasing"
     # 5 elements → 4 adjacent pairs → 4 LteI + 4 Assert.
     classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
-    assert classes.count("LessThanIIR") >= 4  # PatternMatchOptim: >=, <=, > are a (negated) <
+    assert classes.count("LessThanOrEqualIIR") >= 4
     assert classes.count("AssertIR") >= 4
 
 
@@ -96,7 +96,7 @@ def test_max_run_witness_emits_per_pair_difference_and_assert():
     stmts = _dump_ir(_max_run_input)
     classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
     assert classes.count("SubIIR") >= 4
-    assert classes.count("LessThanIIR") >= 4  # PatternMatchOptim: >=, <=, > are a (negated) <
+    assert classes.count("LessThanOrEqualIIR") >= 4
     assert classes.count("AssertIR") >= 4
 
 

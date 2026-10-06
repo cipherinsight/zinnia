@@ -77,7 +77,7 @@ def test_forall_is_nonneg_flattens_to_synthesized_kind():
 def test_forall_is_nonneg_witness_emits_per_element_ge_assert():
     stmts = _dump_ir(_forall_is_nonneg_input)
     classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
-    assert classes.count("LessThanIIR") >= 4  # PatternMatchOptim: >=, <=, > are a (negated) <
+    assert classes.count("GreaterThanOrEqualIIR") >= 4
     assert classes.count("AssertIR") >= 4
 
 
@@ -141,7 +141,8 @@ def test_forall_in_range_witness_emits_two_asserts_per_element():
     """N=3 → 3 GteI + 3 LteI + 6 Asserts."""
     stmts = _dump_ir(_forall_in_range_input)
     classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
-    assert classes.count("LessThanIIR") >= 6  # PatternMatchOptim: >=, <=, > are a (negated) <
+    assert classes.count("GreaterThanOrEqualIIR") >= 3
+    assert classes.count("LessThanOrEqualIIR") >= 3
     assert classes.count("AssertIR") >= 6
 
 

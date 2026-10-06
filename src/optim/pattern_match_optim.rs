@@ -39,6 +39,13 @@ impl PatternMatchOptim {
                     let reflexive = matches!(ir, IR::LteI | IR::LteF | IR::GteI | IR::GteF);
                     return builder.ir_constant_bool(reflexive);
                 }
+                if is_constant(&args[0]) || is_constant(&args[1]) {
+                    // A comparison with a constant keeps its form: the
+                    // input-domain checks (`x >= i64::MIN`, `x <= i64::MAX`)
+                    // are recognized by that shape after optimization, and
+                    // backends bound a compared value from it.
+                    return builder.create_ir(ir, args);
+                }
                 self.canonical_comparison(builder, ir, args)
             }
             IR::EqI | IR::EqF => self.optimize_same_ptr_cmp(builder, ir, args, true),
@@ -280,7 +287,8 @@ impl PatternMatchOptim {
         b.create_ir(ir, args)
     }
 
-    /// Every ordering comparison as a strict less-than, negated where needed:
+    /// Every ordering comparison of two runtime values as a strict
+    /// less-than, negated where needed:
     /// `a > b` is `b < a`, `a >= b` is `not (a < b)` and `a <= b` is
     /// `not (b < a)` (total orders on the signed window and on the
     /// non-negative bounded operands alike). Mirrored and complementary
@@ -325,6 +333,10 @@ impl PatternMatchOptim {
         }
         b.create_ir(ir, args)
     }
+}
+
+fn is_constant(v: &Value) -> bool {
+    v.int_val().is_some() || v.float_val().is_some()
 }
 
 fn is_same_ptr(args: &[Value]) -> bool {
