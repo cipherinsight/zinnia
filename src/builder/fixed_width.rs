@@ -176,7 +176,7 @@ fn role(ir: &IR, operands: usize) -> Role {
         | IR::SelectManyI { .. }
         | IR::SelectManyF { .. } => Role::Selects(1..operands),
         IR::Hint {
-            kind: HintKind::StableArgsort,
+            kind: HintKind::StableArgsort | HintKind::CountAtMost,
             ..
         } => Role::ValueOnly,
         IR::Hint {

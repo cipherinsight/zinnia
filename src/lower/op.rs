@@ -52,6 +52,11 @@ pub enum OpKind {
     /// ties in original order). A runtime position is the lane's one own
     /// operand; one outside `[0, n)` has no proof (NumPy raises).
     Sort,
+    /// `np.searchsorted(table, t, side)` for a non-decreasing `table` (the
+    /// shared operands, the producer guarantees the order) and one query
+    /// `t` per lane (the lane's one own operand): the number of entries
+    /// `<= t` (`right`) or `< t` (left). Output 0, position `None`.
+    SearchSorted { right: bool },
     // ── gather family (`lower::gather`) ───────────────────────────────
     // ── scatter family (`lower::scatter`) ─────────────────────────────
 }
@@ -61,6 +66,7 @@ impl OpKind {
     pub fn semantics(self) -> &'static dyn OperatorSemantics {
         match self {
             OpKind::Sort => &super::sort::SortSemantics,
+            OpKind::SearchSorted { .. } => &super::sort::SearchSortedSemantics,
         }
     }
 
@@ -68,6 +74,8 @@ impl OpKind {
     pub fn name(self) -> &'static str {
         match self {
             OpKind::Sort => "sort",
+            OpKind::SearchSorted { right: true } => "searchsorted_right",
+            OpKind::SearchSorted { right: false } => "searchsorted_left",
         }
     }
 }

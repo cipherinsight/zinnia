@@ -1570,6 +1570,40 @@ fn sort_hints_are_pinned() {
     }
 }
 
+/// `np.searchsorted` over a constant table by a hinted position
+/// (`lower::sort::search`), closed form (an ECDF table) and reads (a table
+/// with ties): NumPy's count, and every hint under it (the position, the
+/// divisions' quotients, the comparisons' bits) moved by any delta is
+/// rejected.
+#[test]
+fn searchsorted_position_is_pinned() {
+    use crate::lower::sort::search::search_graph;
+    use crate::lower::sort::test_support::witness;
+    let ecdf: Vec<f64> = (1..=10).map(|k| k as f64 / 10.0).collect();
+    let tied = vec![0.1, 0.25, 0.25, 0.7, 2.0];
+    let q = |v: f64| kernel::fp_to_i64(q(v));
+    for table in [ecdf, tied] {
+        let n = table.len() as i64;
+        let mut shifts: Vec<Fp> = (1..=n + 1).flat_map(|d| [int(d), int(-d)]).collect();
+        shifts.extend(deltas(&[]));
+        for right in [true, false] {
+            for t in [q(-1.0), q(0.25) - 1, q(0.25), q(0.5), q(0.7), q(5.0)] {
+                let search = search_graph(&table, true, right, t, true);
+                let w = witness(&search.inputs);
+                let honest = synthesize_graph(&search.graph, &w, &[]);
+                assert!(honest.accepted, "t {t}: honest witness rejected");
+                assert_eq!(honest.outputs, vec![int(search.expected)], "t {t} right {right}");
+                for index in 0..honest.hints {
+                    for shift in &shifts {
+                        let tampered = synthesize_graph(&search.graph, &w, &[(index, *shift)]);
+                        assert!(!tampered.accepted, "t {t} right {right}: hint #{index} moved by {shift:?} accepted");
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// `IR::KeyLess` by packed keys: the lexicographic order on window
 /// extremes, ties and index order, and its comparison hint pinned.
 #[test]

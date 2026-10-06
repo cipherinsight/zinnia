@@ -1,5 +1,6 @@
 //! The sort family: `np.sort`, `np.argsort`, `np.median`, `np.percentile`
-//! (`OpKind::Sort`).
+//! (`OpKind::Sort`), and `np.searchsorted` over a constant sorted table
+//! (`OpKind::SearchSorted`, see `search`).
 //!
 //! Each sort emits one placeholder per output it uses: the value or the
 //! stable argsort index of a constant rank, or of a runtime rank (a read of
@@ -24,6 +25,7 @@
 mod cost;
 mod emit;
 mod packed;
+pub(crate) mod search;
 mod semantics;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -31,6 +33,7 @@ pub(crate) mod test_support;
 mod tests;
 
 pub(crate) use emit::masked_order_statistic;
+pub use search::SearchSortedSemantics;
 pub use semantics::{SortSemantics, INDICES, VALUES};
 
 use std::collections::HashMap;
@@ -44,7 +47,9 @@ use super::{Candidate, Construction, Context, EmitCx, Emitter, Group, Lane, OpKi
 
 /// The sort family's constructions, in the order the selection breaks ties.
 pub fn constructions() -> Vec<&'static dyn Construction> {
-    vec![&SortingNetwork, &PermutationCheck, &PinnedSelection]
+    let mut all: Vec<&'static dyn Construction> = vec![&SortingNetwork, &PermutationCheck, &PinnedSelection];
+    all.extend(search::constructions());
+    all
 }
 
 /// A sorting network over all keys (`emit::sort_by_network`), pruned to the

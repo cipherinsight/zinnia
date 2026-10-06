@@ -3110,6 +3110,10 @@ impl Synthesizer for NoirEmitter<'_> {
             HintKind::StableArgsort => ("argsort_hint", "argsort_hint_at"),
             HintKind::SortedValues => ("sorted_hint", "sorted_hint_at"),
             HintKind::MaskedSortedValues => ("masked_sorted_hint", "masked_sorted_hint_at"),
+            HintKind::CountAtMost => {
+                self.use_lib("count_at_most_hint");
+                return Ok(self.bind(&format!("count_at_most_hint([{}], {rank})", operands.join(", "))));
+            }
         };
         // A masked hint takes the values and their activity flags as two
         // arrays; its lanes are as many as the values.

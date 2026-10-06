@@ -1079,7 +1079,7 @@ fn sort_hints_are_pinned_in_noir() {
 /// NumPy's stable argsort on ties and window extremes.
 #[test]
 fn packed_key_network_matches_the_mock() {
-    use crate::optim::sort_lowering::test_support::{sort_graph, Forced, Output};
+    use crate::lower::sort::test_support::{sort_graph, Forced, Output};
     if !toolchain_present(false) {
         return;
     }
@@ -1090,6 +1090,37 @@ fn packed_key_network_matches_the_mock() {
         let got = execute(&sort.graph, &witness(&named)).expect("nargo execute");
         let expected: Vec<i128> = sort.expected.as_ref().unwrap().iter().map(|&v| v as i128).collect();
         assert_eq!(got, expected, "{values:?}");
+    }
+}
+
+/// `np.searchsorted` over a constant table by a hinted position, closed form
+/// and reads, emitted to Noir with the position as a free input: the
+/// honest position gives NumPy's count, every other one fails.
+#[test]
+fn searchsorted_position_is_pinned_in_noir() {
+    use crate::lower::sort::search::{hint_as_input, search_graph};
+    if !toolchain_present(false) {
+        return;
+    }
+    let ecdf: Vec<f64> = (1..=10).map(|k| k as f64 / 10.0).collect();
+    let tied = vec![0.1, 0.25, 0.25, 0.7, 2.0];
+    let q = |v: f64| crate::prove::field::quantize(v, 32) as i64;
+    for table in [ecdf, tied] {
+        let n = table.len() as i64;
+        for (right, t) in [(true, q(0.25)), (false, q(0.25)), (true, q(-1.0)), (false, q(5.0))] {
+            let search = search_graph(&table, true, right, t, true);
+            let got = execute(&search.graph, &witness(&[("t", t)])).expect("honest");
+            assert_eq!(got, vec![search.expected as i128], "t {t} right {right}");
+            let graph = hint_as_input(&search.graph);
+            for u in -1..=n + 1 {
+                let result = execute(&graph, &witness(&[("t", t), ("hint", u)]));
+                if u == search.expected {
+                    assert_eq!(result.expect("honest position"), vec![u as i128]);
+                } else {
+                    assert_rejected(result);
+                }
+            }
+        }
     }
 }
 

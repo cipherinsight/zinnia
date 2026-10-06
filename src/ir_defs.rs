@@ -405,6 +405,10 @@ pub enum HintKind {
     /// (1: the slot holds an element), so `len = 2n`; lane `r` is the value
     /// of rank `r` among the active ones (0 past their number).
     MaskedSortedValues,
+    /// The number of operands at most the rank operand (signed order):
+    /// `#{j : a_j <= t}` for the query `t` passed as the rank. Not a lane of
+    /// a vector: every query value has its count.
+    CountAtMost,
 }
 
 impl HintKind {
@@ -413,6 +417,7 @@ impl HintKind {
             HintKind::StableArgsort => "stable_argsort",
             HintKind::SortedValues => "sorted_values",
             HintKind::MaskedSortedValues => "masked_sorted_values",
+            HintKind::CountAtMost => "count_at_most",
         }
     }
 
@@ -421,6 +426,7 @@ impl HintKind {
             "stable_argsort" => Some(HintKind::StableArgsort),
             "sorted_values" => Some(HintKind::SortedValues),
             "masked_sorted_values" => Some(HintKind::MaskedSortedValues),
+            "count_at_most" => Some(HintKind::CountAtMost),
             _ => None,
         }
     }
@@ -1522,6 +1528,7 @@ mod tests {
             IR::Hint { kind: HintKind::StableArgsort, len: 7 },
             IR::Hint { kind: HintKind::SortedValues, len: 1 },
             IR::Hint { kind: HintKind::MaskedSortedValues, len: 6 },
+            IR::Hint { kind: HintKind::CountAtMost, len: 4 },
             IR::ArrayOp(crate::lower::ArrayOp {
                 kind: crate::lower::OpKind::Sort,
                 shared: 5,

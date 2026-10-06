@@ -479,7 +479,7 @@ pub(crate) fn hint_as_input(graph: &crate::ir::IRGraph) -> crate::ir::IRGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::optim::sort_lowering::test_support::mock_run;
+    use crate::lower::sort::test_support::mock_run;
 
     /// `np.arange(1, n + 1) / n` and its Q32 codes.
     fn ecdf_table(n: usize) -> Vec<f64> {

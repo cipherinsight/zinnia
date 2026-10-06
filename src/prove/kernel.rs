@@ -708,6 +708,7 @@ pub fn hint_values(kind: crate::ir_defs::HintKind, operands: &[Fp]) -> Vec<Fp> {
             stable_argsort(operands).into_iter().map(|i| Fp::from(i as u64)).collect()
         }
         HintKind::SortedValues => stable_argsort(operands).into_iter().map(|i| operands[i]).collect(),
+        HintKind::CountAtMost => Vec::new(), // not lanes; see `hint_lane`
         HintKind::MaskedSortedValues => {
             let (values, active) = operands.split_at(operands.len() / 2);
             let active: Vec<Fp> = values
@@ -723,10 +724,6 @@ pub fn hint_values(kind: crate::ir_defs::HintKind, operands: &[Fp]) -> Vec<Fp> {
     }
 }
 
-/// Lane `rank` of the hint `kind` applied to `operands`, the value of an
-/// `IR::Hint` statement on every backend; 0 for a rank outside the lanes.
-/// The circuits never trust it: each use of a hint pins it with
-/// constraints that admit only this value.
 /// The decomposition `K = q * 2^index_bits + i` of a packed sort key
 /// (`IR::PackKey`) with `i` in `[0, 2^index_bits)`: `(q, i)`, the value and
 /// the index the key was packed from. A field element with no signed
@@ -739,7 +736,16 @@ pub fn packed_key_parts(key: Fp, index_bits: u32) -> (Fp, Fp) {
     }
 }
 
+/// Lane `rank` of the hint `kind` applied to `operands`, the value of an
+/// `IR::Hint` statement on every backend; 0 for a rank outside the lanes.
+/// The circuits never trust it: each use of a hint pins it with
+/// constraints that admit only this value.
+/// `HintKind::CountAtMost` takes the rank operand as its query instead.
 pub fn hint_lane(kind: crate::ir_defs::HintKind, operands: &[Fp], rank: Fp) -> Fp {
+    if kind == crate::ir_defs::HintKind::CountAtMost {
+        let count = operands.iter().filter(|&&a| signed_cmp(a, rank) != std::cmp::Ordering::Greater).count();
+        return Fp::from(count as u64);
+    }
     let lanes = hint_values(kind, operands);
     fp_to_i128(rank)
         .and_then(|r| usize::try_from(r).ok())

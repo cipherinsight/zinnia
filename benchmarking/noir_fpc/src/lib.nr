@@ -1113,6 +1113,32 @@ unconstrained fn lane_or_zero<let N: u32>(lanes: [Field; N], rank: Field) -> Fie
     }
 }
 
+unconstrained fn hint_count_at_most<let N: u32>(a: [Field; N], t: Field) -> Field {
+    let mut count = 0;
+    for i in 0..N {
+        if !signed_lt(t, a[i]) {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// `#{i : a[i] <= t}` in the signed order (kernel::hint_lane, CountAtMost).
+/// A prover hint: the caller must pin it.
+pub fn count_at_most_hint<let N: u32>(a: [Field; N], t: Field) -> Field {
+    // Safety: a prover hint; Zinnia's IR pins every use.
+    unsafe { hint_count_at_most(a, t) }
+}
+
+#[test]
+fn test_count_at_most_hint() {
+    let a = [-5, 0, 0, 7, 9223372036854775807];
+    assert(count_at_most_hint(a, -6) == 0);
+    assert(count_at_most_hint(a, 0) == 3);
+    assert(count_at_most_hint(a, 6) == 3);
+    assert(count_at_most_hint(a, 9223372036854775807) == 5);
+}
+
 /// The stable ascending argsort of `a` (kernel::hint_values, StableArgsort).
 /// A prover hint: the caller must pin every lane it uses.
 pub fn argsort_hint<let N: u32>(a: [Field; N]) -> [Field; N] {

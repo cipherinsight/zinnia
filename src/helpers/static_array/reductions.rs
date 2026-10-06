@@ -853,25 +853,7 @@ fn comparison_of(b: &IRBuilder, cell: &Value) -> Option<Comparison> {
 /// argmax of an all-False sequence.
 fn first_true_of_sorted_comparisons(b: &mut IRBuilder, cells: &[Value]) -> Option<Value> {
     let n = cells.len();
-    let comparisons: Vec<Comparison> = cells
-        .iter()
-        .map(|c| comparison_of(b, c))
-        .collect::<Option<_>>()?;
-    let first = &comparisons[0];
-    let same_kind = comparisons.iter().all(|c| c.greater == first.greater && c.strict == first.strict);
-    // The scalar is the operand shared by every cell; `x_k cmp e` is rising
-    // for `>`/`>=`, and `e cmp x_k` for `<`/`<=`.
-    let (elements, scalar, rising): (Vec<crate::types::StmtId>, Value, bool) =
-        if n > 1 && comparisons.iter().all(|c| c.rhs_source == first.rhs_source) {
-            (comparisons.iter().map(|c| c.lhs).collect(), first.rhs_value.clone(), first.greater)
-        } else if n > 1 && comparisons.iter().all(|c| c.lhs_source == first.lhs_source) {
-            (comparisons.iter().map(|c| c.rhs).collect(), first.lhs_value.clone(), !first.greater)
-        } else {
-            return None;
-        };
-    if !same_kind {
-        return None;
-    }
+    let MonotoneComparisons { elements, scalar, rising, strict } = monotone_comparisons(b, cells)?;
     let sort_elements = ascending_sort_outputs(b, &elements)?;
     if !rising {
         return Some(b.ir_constant_int(0));
@@ -881,7 +863,7 @@ fn first_true_of_sorted_comparisons(b: &mut IRBuilder, cells: &[Value]) -> Optio
     let falses: Vec<Value> = sort_elements
         .iter()
         .map(|a| {
-            if first.strict {
+            if strict {
                 let above = less_than_by_type(b, &scalar, a);
                 b.ir_logical_not(&above)
             } else {
@@ -898,6 +880,79 @@ fn first_true_of_sorted_comparisons(b: &mut IRBuilder, cells: &[Value]) -> Optio
     let any_true = b.ir_less_than_i(&count, &length);
     let zero = b.ir_constant_int(0);
     Some(b.ir_select_i(&any_true, &count, &zero))
+}
+
+/// Cells `x_k cmp e` (or `e cmp x_k`) of one kind over `n > 1` elements
+/// `x_k` and one scalar `e`.
+struct MonotoneComparisons {
+    elements: Vec<crate::types::StmtId>,
+    scalar: Value,
+    /// `x_k > e` or `x_k >= e` (in either spelling): False then True over
+    /// an ascending sequence.
+    rising: bool,
+    /// The comparison is strict (`>`, `<`).
+    strict: bool,
+}
+
+fn monotone_comparisons(b: &IRBuilder, cells: &[Value]) -> Option<MonotoneComparisons> {
+    let n = cells.len();
+    let comparisons: Vec<Comparison> = cells
+        .iter()
+        .map(|c| comparison_of(b, c))
+        .collect::<Option<_>>()?;
+    let first = &comparisons[0];
+    let same_kind = comparisons.iter().all(|c| c.greater == first.greater && c.strict == first.strict);
+    // The scalar is the operand shared by every cell; `x_k cmp e` is rising
+    // for `>`/`>=`, and `e cmp x_k` for `<`/`<=`.
+    let (elements, scalar, rising): (Vec<crate::types::StmtId>, Value, bool) =
+        if n > 1 && comparisons.iter().all(|c| c.rhs_source == first.rhs_source) {
+            (comparisons.iter().map(|c| c.lhs).collect(), first.rhs_value.clone(), first.greater)
+        } else if n > 1 && comparisons.iter().all(|c| c.lhs_source == first.lhs_source) {
+            (comparisons.iter().map(|c| c.rhs).collect(), first.lhs_value.clone(), !first.greater)
+        } else {
+            return None;
+        };
+    same_kind.then_some(MonotoneComparisons { elements, scalar, rising, strict: first.strict })
+}
+
+/// `argmax` of Booleans `Y_k cmp e` over a constant non-decreasing table
+/// `Y` (`(np.arange(1, n + 1) / n > e).argmax()`) and one scalar `e`. As
+/// for a sort's outputs, a rising comparison's first True is the number of
+/// Falses `u` (0 when every cell is False): `u` is `np.searchsorted(Y, e,
+/// 'right')` for `>` and `'left'` for `>=`, a placeholder the layer lowers
+/// (`lower::sort::search`: a count, or a hinted position pinned by the two
+/// entries around it). A falling comparison's argmax is 0. The table and the
+/// scalar must have the same number type (the entries are compared as
+/// codes).
+fn first_true_of_table_comparisons(b: &mut IRBuilder, cells: &[Value]) -> Option<Value> {
+    use crate::lower::{ArrayOp, OpKind};
+    let MonotoneComparisons { elements, scalar, rising, strict } = monotone_comparisons(b, cells)?;
+    let float = matches!(scalar, Value::Float(_));
+    let mut previous: Option<f64> = None;
+    let mut table: Vec<Value> = Vec::with_capacity(elements.len());
+    for &stmt in &elements {
+        let entry = match b.stmts.get(stmt as usize)?.ir {
+            crate::ir_defs::IR::ConstantFloat { value } if float => value,
+            crate::ir_defs::IR::ConstantInt { value } if !float => value as f64,
+            _ => return None,
+        };
+        if previous.is_some_and(|p| p > entry) || entry.is_nan() {
+            return None;
+        }
+        previous = Some(entry);
+        table.push(if float { b.ir_constant_float(entry) } else { b.ir_constant_int(entry as i64) });
+    }
+    if !rising {
+        return Some(b.ir_constant_int(0));
+    }
+    let n = table.len();
+    let table: std::sync::Arc<[Value]> = table.into();
+    let op = ArrayOp { kind: OpKind::SearchSorted { right: strict }, shared: n as u32, output: 0, position: None };
+    let falses = b.ir_array_op(op, &table, &[scalar]);
+    let length = b.ir_constant_int(n as i64);
+    let any_true = b.ir_less_than_i(&falses, &length);
+    let zero = b.ir_constant_int(0);
+    Some(b.ir_select_i(&any_true, &falses, &zero))
 }
 
 /// `x < y` in the number type of the operands (float if either is).
@@ -944,6 +999,9 @@ fn whole_array_argmax_argmin(b: &mut IRBuilder, arr: &Value, is_max: bool) -> Va
     // per step (NOT/AND/OR). Triggered by `(x==a)&(y==b)).argmax()` patterns.
     let best_idx = if is_max && cells.iter().all(|c| matches!(c, Value::Boolean(_))) {
         if let Some(first_true) = first_true_of_sorted_comparisons(b, &cells) {
+            return first_true;
+        }
+        if let Some(first_true) = first_true_of_table_comparisons(b, &cells) {
             return first_true;
         }
         let mut idx = b.ir_constant_int(0);
