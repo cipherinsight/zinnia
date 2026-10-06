@@ -360,13 +360,13 @@ fn extremes_with_equality_bits_are_pinned() {
     let n = TIED.len() as u32;
     for r in [0, n - 1] {
         let outputs = [Output::EqualsEach(r)];
-        assert_computes_numpy(&TIED, &outputs, Forced::Extremes);
-        let sort = sort_graph(&TIED, &outputs, Forced::Extremes);
+        assert_computes_numpy(&TIED, &outputs, Forced::MaskedExtremes);
+        let sort = sort_graph(&TIED, &outputs, Forced::MaskedExtremes);
         assert!(
             !sort.graph.stmts.iter().any(|s| matches!(s.ir, IR::MulI)),
             "membership by the equality bits, not a product"
         );
-        assert_pinned(&TIED, &outputs, Forced::Extremes, wrong_values(&TIED));
+        assert_pinned(&TIED, &outputs, Forced::MaskedExtremes, wrong_values(&TIED));
         for target in [Target::Halo2Base, Target::Noir] {
             assert_computes_numpy(&TIED, &outputs, Forced::CostRule(target));
         }

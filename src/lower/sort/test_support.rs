@@ -36,6 +36,8 @@ pub(crate) enum Forced {
     /// The live smallest / largest values by asserted bounds and a
     /// membership product.
     Extremes,
+    /// The same, membership by the program's equality bits.
+    MaskedExtremes,
     /// The cost rule of a target.
     CostRule(Target),
 }
@@ -99,6 +101,10 @@ fn plan_for(forced: Forced, demand: &Demand) -> Plan {
         Forced::Extremes => {
             assert!(demand.indices.is_empty(), "extremes are values");
             Plan::Hinted { runs: live.iter().map(|&r| Run { first: r, last: r, pin: Pin::Extreme }).collect() }
+        }
+        Forced::MaskedExtremes => {
+            assert!(live.iter().all(|r| demand.masked_extremes.contains_key(r)), "no equality bits");
+            Plan::Hinted { runs: live.iter().map(|&r| Run { first: r, last: r, pin: Pin::MaskedExtreme }).collect() }
         }
         Forced::CostRule(target) => cost::choose_plan(demand, &cost::unit_costs(target)).0,
     }

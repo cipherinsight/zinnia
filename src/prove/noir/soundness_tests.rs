@@ -1085,7 +1085,7 @@ fn sort_hints_are_pinned_in_noir() {
         (Forced::Runs, vec![Output::Index(3), Output::Index(4)]),
         (Forced::Counting, vec![Output::Value(2)]),
         (Forced::Extremes, vec![Output::Value(0), Output::Value(4)]),
-        (Forced::Extremes, vec![Output::EqualsEach(0)]),
+        (Forced::MaskedExtremes, vec![Output::EqualsEach(0)]),
         (Forced::Runs, vec![Output::ValueAt(1), Output::IndexAt(3)]),
         (Forced::Runs, vec![Output::Payload(1), Output::Payload(4)]),
     ];
@@ -1101,7 +1101,7 @@ fn sort_hints_are_pinned_in_noir() {
         let expected: Vec<i128> = sort.expected.as_ref().unwrap().iter().map(|&v| v as i128).collect();
         assert_eq!(got, expected, "{forced:?} {outputs:?}");
         for (k, site) in sites.iter().enumerate() {
-            let value_pin = matches!(forced, Forced::Counting | Forced::Extremes);
+            let value_pin = matches!(forced, Forced::Counting | Forced::Extremes | Forced::MaskedExtremes);
             let candidates: Vec<i64> = if site.honest >= 0 && site.honest < n && !value_pin {
                 (-1..=n).collect() // an argsort lane
             } else {

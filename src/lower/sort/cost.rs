@@ -66,7 +66,10 @@ pub(crate) struct UnitCosts {
     extreme_fixed: u32,
     /// The extreme pin when the program's equality bits give the
     /// membership: per element the asserted bound only; once the hint's
-    /// window check and the bits' sum tested non-zero.
+    /// window check and the bits' sum tested non-zero. Measured on the row
+    /// maxima of 0436 (halo2-base 41 cells per element, as much as the
+    /// bound's 64-bit gap check; Noir one gate per row more than the
+    /// product at five elements): it saves only the product's factors.
     masked_extreme_term: u32,
     masked_extreme_fixed: u32,
 }
@@ -96,7 +99,7 @@ const HALO2_BASE: UnitCosts = UnitCosts {
     rank_count_term: 50,
     extreme_term: 42,
     extreme_fixed: 38,
-    masked_extreme_term: 22,
+    masked_extreme_term: 41,
     masked_extreme_fixed: 30,
 };
 
@@ -122,7 +125,7 @@ const NOIR: UnitCosts = UnitCosts {
     rank_count_term: 9,
     extreme_term: 5,
     extreme_fixed: 3,
-    masked_extreme_term: 3,
+    masked_extreme_term: 5,
     masked_extreme_fixed: 4,
 };
 
@@ -183,6 +186,9 @@ pub(super) enum Pin {
     /// The smallest (rank 0) or largest (rank `n - 1`) value alone, by
     /// asserted bounds and a membership product (`emit::extreme_value`).
     Extreme,
+    /// The same, membership by the program's equality bits
+    /// (`Demand::masked_extremes`).
+    MaskedExtreme,
 }
 
 /// How a sort's live outputs are computed.
@@ -508,12 +514,10 @@ fn cheapest_runs(demand: &Demand, costs: &UnitCosts, allow_keys: bool) -> Option
             if values_only {
                 options.push(((end - start) as u64 * costs.order_statistic(n), Pin::Counts));
                 if first == last && (first == 0 || first + 1 == n) {
-                    let extreme = if demand.masked_extremes.contains_key(&first) {
-                        costs.masked_extreme(n)
-                    } else {
-                        costs.extreme(n)
-                    };
-                    options.push((extreme, Pin::Extreme));
+                    options.push((costs.extreme(n), Pin::Extreme));
+                    if demand.masked_extremes.contains_key(&first) {
+                        options.push((costs.masked_extreme(n), Pin::MaskedExtreme));
+                    }
                 }
             }
             let Some(&(cost, pin)) = options.iter().min_by_key(|(cost, _)| *cost) else {

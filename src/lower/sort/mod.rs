@@ -300,11 +300,11 @@ impl LoweredSort {
                     match run.pin {
                         Pin::Keys => sort.pin_keys(b, run),
                         Pin::Counts => sort.pin_by_counts(b, demand, run),
-                        Pin::Extreme => {
+                        Pin::Extreme | Pin::MaskedExtreme => {
                             let largest = run.first + 1 == n && n > 1;
-                            let membership = match demand.masked_extremes.get(&run.first) {
-                                Some(&value_first) => Membership::EqualityBits { value_first },
-                                None => Membership::Product,
+                            let membership = match (run.pin, demand.masked_extremes.get(&run.first)) {
+                                (Pin::MaskedExtreme, Some(&value_first)) => Membership::EqualityBits { value_first },
+                                _ => Membership::Product,
                             };
                             let value = emit::extreme_value(b, &sort.as_elements(), largest, membership);
                             sort.values.insert(run.first, value);

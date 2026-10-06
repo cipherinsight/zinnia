@@ -1645,7 +1645,7 @@ fn sort_hints_are_pinned() {
         (Forced::Runs, vec![Output::Index(1), Output::Index(2)]),
         (Forced::Counting, vec![Output::Value(2)]),
         (Forced::Extremes, vec![Output::Value(0), Output::Value(4)]),
-        (Forced::Extremes, vec![Output::EqualsEach(4)]),
+        (Forced::MaskedExtremes, vec![Output::EqualsEach(4)]),
         (Forced::Runs, vec![Output::ValueAt(1), Output::IndexAt(3)]),
         (Forced::Batcher, vec![Output::Payload(0), Output::Payload(3)]),
         (Forced::Runs, vec![Output::Payload(1), Output::Payload(4)]),
