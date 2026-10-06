@@ -21,6 +21,10 @@ An entry function that returns None has as outputs the array arguments it
 writes, in parameter order; its program declares them on a line
 `// outputs: mutated A, B` inside the entry function's module.
 
+A fixture whose notes flag it as unusable under Q32 (values of magnitude 2^31
+or more, or nonzero inputs below 2^-32; see datasets/tools/acceptance_fixtures.py)
+is not checked: its cases are reported as skipped, with the note.
+
 Usage:
   .venv/bin/python benchmarking/baselines/zkvm_common/check_outputs.py \
       [--systems native,sp1,risc0,cairo] [--cases ds1000_case0300,pythran_lu/factorMatrix0,...] \
@@ -47,11 +51,15 @@ DATASETS = BENCH / "datasets"
 BASELINES = BENCH / "baselines"
 CALIBRATION = BASELINES / "zkvm_common" / "calibration"
 CASE_SET = DATASETS / "case_sets" / "ds1000_perf.json"
+ACCEPTANCE_SET = DATASETS / "case_sets" / "acceptance.json"
 TARGET = BASELINES / "target" / "release"
 
 # Used when the case set does not give a tolerance for a case.
 DEFAULT_RTOL = 1e-6
 DEFAULT_ATOL = 1e-6
+
+# Phrases by which a fixture's notes flag it as unusable under Q32.
+Q32_UNUSABLE = ("outside the Q32 range", "Q32 rounds them to 0")
 
 HOSTS = {
     "native": [str(TARGET / "kernels-native")],
@@ -92,6 +100,8 @@ class Result:
     detail: str = ""
     max_abs_err: float = 0.0
     mismatches: list = field(default_factory=list)
+    skipped: bool = False
+    execution: dict = field(default_factory=dict)  # the host's execution sizes (cycles, steps)
 
 
 # --------------------------------------------------------------------------
@@ -203,15 +213,22 @@ def flatten(result) -> Expected:
 # Comparison
 # --------------------------------------------------------------------------
 
-def tolerances(case_set: Path) -> dict[str, tuple[float, float]]:
-    """Per-case (rtol, atol): the case set's `float_tolerance`, when it gives one."""
-    if not case_set.exists():
-        return {}
+def tolerances(case_set: Path, acceptance_set: Path) -> dict[str, tuple[float, float]]:
+    """Per-case (rtol, atol), where the case sets give a `float_tolerance`: the
+    performance set for fixed-shape cases, the acceptance set's NPBench and
+    Pythran entries for shape-generic ones (`<program>/<function>`)."""
     out = {}
-    for entry in json.loads(case_set.read_text())["cases"]:
+    entries = []
+    if case_set.exists():
+        entries += [(entry["case"], entry) for entry in json.loads(case_set.read_text())["cases"]]
+    if acceptance_set.exists():
+        entries += [(f"{entry['program']}/{entry['function']}", entry)
+                    for entry in json.loads(acceptance_set.read_text())["entries"]
+                    if entry["dataset"] in ("npbench", "pythran")]
+    for case, entry in entries:
         tol = entry.get("float_tolerance")
         if tol:
-            out[entry["case"]] = (float(tol["rtol"]), float(tol["atol"]))
+            out[case] = (float(tol["rtol"]), float(tol["atol"]))
     return out
 
 
@@ -233,7 +250,11 @@ def compare(case: str, system: str, publics: list, expected: Expected, rtol: flo
     return Result(case, system, not mismatches, detail, max_err, mismatches[:5])
 
 
-def run_system(system: str, case: Case, fixture_path: Path, input_name: str, timeout: int) -> list:
+# The execution-size fields of a host report, kept in the check report.
+EXECUTION_FIELDS = ("cycles", "user_cycles", "total_cycles", "segments", "resources")
+
+
+def run_system(system: str, case: Case, fixture_path: Path, input_name: str, timeout: int) -> dict:
     cmd = HOSTS[system] + ["--case-dir", str(case.folder), "--fixture", str(fixture_path),
                            "--input", input_name, "--mode", "execute"]
     if case.function:
@@ -244,7 +265,7 @@ def run_system(system: str, case: Case, fixture_path: Path, input_name: str, tim
     if proc.returncode != 0 or not report.get("ok"):
         detail = report.get("error") or " | ".join((proc.stderr or proc.stdout).strip().splitlines()[-3:])
         raise RuntimeError(f"exit {proc.returncode}: {detail}")
-    return report["publics"]
+    return report
 
 
 def main() -> int:
@@ -261,6 +282,9 @@ def main() -> int:
     parser.add_argument("--report", type=Path)
     parser.add_argument("--case-set", type=Path, default=CASE_SET,
                         help="case set giving each case's float_tolerance (default: datasets/case_sets/ds1000_perf.json)")
+    parser.add_argument("--acceptance-set", type=Path, default=ACCEPTANCE_SET,
+                        help="case set giving each entry function's float_tolerance "
+                             "(default: datasets/case_sets/acceptance.json)")
     args = parser.parse_args()
 
     systems = [s for s in args.systems.split(",") if s]
@@ -275,7 +299,7 @@ def main() -> int:
         cases = [all_cases[c] for c in args.cases.split(",")]
     else:
         cases = [c for c in all_cases.values() if any(c.has_program(s) for s in systems)]
-    tol = tolerances(args.case_set)
+    tol = tolerances(args.case_set, args.acceptance_set)
 
     results: list[Result] = []
     for case in cases:
@@ -288,6 +312,11 @@ def main() -> int:
             results += [Result(case.name, s, False, "no fixture") for s in case_systems]
             continue
         fixture = json.loads(path.read_text())
+        flags = [n.strip() + "." for n in fixture.get("notes", "").split(".") if any(f in n for f in Q32_UNUSABLE)]
+        if flags:
+            results += [Result(case.name, s, True, "skipped, fixture unusable under Q32: " + " ".join(flags),
+                               skipped=True) for s in case_systems]
+            continue
         try:
             expected = numpy_reference(case, kernel_dir, fixture, args.input)
         except Exception as exc:  # the reference itself failed: report, do not hide
@@ -296,20 +325,23 @@ def main() -> int:
         rtol, atol = tol.get(case.name, (DEFAULT_RTOL, DEFAULT_ATOL))
         for system in case_systems:
             try:
-                publics = run_system(system, case, path, args.input, args.timeout)
+                report = run_system(system, case, path, args.input, args.timeout)
             except Exception as exc:
                 results.append(Result(case.name, system, False, f"run failed: {exc}"))
                 continue
-            results.append(compare(case.name, system, publics, expected, rtol, atol))
+            result = compare(case.name, system, report["publics"], expected, rtol, atol)
+            result.execution = {k: report[k] for k in EXECUTION_FIELDS if report.get(k) is not None}
+            results.append(result)
 
     width = max((len(r.case) for r in results), default=4)
     for r in results:
-        status = "ok  " if r.ok else "FAIL"
+        status = "skip" if r.skipped else "ok  " if r.ok else "FAIL"
         extra = f" max|err|={r.max_abs_err:.2e}" if r.max_abs_err else ""
         mism = f" first mismatches (pos, got, want): {r.mismatches}" if r.mismatches else ""
         print(f"{status} {r.case:<{width}} {r.system:<6} {r.detail}{extra}{mism}")
     failed = [r for r in results if not r.ok]
-    print(f"\n{len(results) - len(failed)} of {len(results)} checks passed")
+    skipped = sum(r.skipped for r in results)
+    print(f"\n{len(results) - len(failed) - skipped} of {len(results)} checks passed, {skipped} skipped")
     if args.report:
         args.report.write_text(json.dumps([r.__dict__ for r in results], indent=1))
     return 1 if failed else 0

@@ -1,26 +1,34 @@
 """Case-set files under `datasets/case_sets/` (written by the dataset workstream).
 
-Expected shape of the performance set (`ds1000_perf.json`):
+Shape of the performance set (`ds1000_perf.json`, written by `datasets/tools`):
 
 ```json
-{"cases": [{"case": "ds1000_case0309", "status": "included",
-            "reason": null, "tolerance": {"abs": 1e-6, "rel": 0.0}}, ...]}
+{"cases": [{"case": "ds1000_case0309", "status": "perf", "reason": "...",
+            "fixture": "fixture.json", "data_movement_only": false,
+            "float_tolerance": {"atol": 1e-6, "rtol": 1e-6}}, ...]}
 ```
 
-`status` other than `included` excludes the case (its `reason` is recorded).
-`tolerance` applies to float outputs: |actual - expected| <= abs + rel*|expected|.
-A case without a tolerance uses `DEFAULT_TOLERANCE`, and the record says so.
+Only `status == "perf"` cases run; any other status (`duplicate`, `degenerate`,
+`out_of_scope`, `zinnia_rejects`) excludes the case and its `reason` is recorded.
+`fixture` is relative to the case folder. `float_tolerance` applies to float
+outputs: |actual - expected| <= atol + rtol*|expected|; a case without one uses
+`DEFAULT_TOLERANCE`, and the record says so. `data_movement_only` cases only copy
+inputs; the analysis reports them apart from the headline.
 
-Expected shape of the acceptance set (`acceptance.json`):
+Shape of the acceptance set (`acceptance.json`):
 
 ```json
-{"programs": [{"program": "npbench_azimint_hist", "dataset": "npbench",
-               "kernel": "datasets/npbench/npbench_azimint_hist/kernel.py",
-               "function": "kernel", "fixture": "datasets/.../fixture.json" | null,
-               "tolerance": {...} | null}, ...]}
+{"entries": [{"program": "pythran_cronbach", "dataset": "pythran",
+              "function": "cronbach", "entry_function": true, "status": "in_scope",
+              "kernel": "pythran/pythran_cronbach/kernel.py",
+              "fixture": "pythran/pythran_cronbach/fixture.json",
+              "float_tolerance": {"atol": 1e-6, "rtol": 1e-6}}, ...]}
 ```
 
-Paths are relative to `benchmarking/`.
+Only entry functions with `status == "in_scope"` are runnable programs; helper
+functions and out-of-scope programs are not. Kernel and fixture paths are
+relative to `benchmarking/datasets/`.
+
 """
 
 from __future__ import annotations
@@ -33,7 +41,8 @@ from typing import Any
 
 from benchmarking.harness import paths
 
-INCLUDED = "included"
+#: The perf-set status of a case that runs; every other status excludes it.
+INCLUDED = "perf"
 
 
 @dataclass(frozen=True)
@@ -69,6 +78,7 @@ class PerfCase:
     tolerance: Tolerance
     included: bool
     reason: str | None
+    data_movement_only: bool = False
 
     @property
     def kernel_path(self) -> Path:
@@ -78,14 +88,15 @@ class PerfCase:
         return {"case": self.case, "directory": str(self.directory),
                 "fixture": str(self.fixture_path), "function": self.function,
                 "tolerance": vars(self.tolerance), "included": self.included,
-                "reason": self.reason}
+                "reason": self.reason, "data_movement_only": self.data_movement_only}
 
     @staticmethod
     def from_json(raw: dict) -> "PerfCase":
         return PerfCase(case=raw["case"], directory=Path(raw["directory"]),
                         fixture_path=Path(raw["fixture"]), function=raw["function"],
                         tolerance=Tolerance(**raw["tolerance"]), included=raw["included"],
-                        reason=raw["reason"])
+                        reason=raw["reason"],
+                        data_movement_only=raw.get("data_movement_only", False))
 
 
 def file_sha256(path: Path) -> str:
@@ -99,16 +110,16 @@ def _perf_case(entry: Any, fixtures_dir: Path | None) -> PerfCase:
     directory = paths.BENCHMARKING / entry["path"] if "path" in entry else paths.DS1000_PERF / case
     if fixtures_dir is not None:
         fixture = fixtures_dir / case / "fixture.json"
-    elif "fixture" in entry:
-        fixture = paths.BENCHMARKING / entry["fixture"]
     else:
-        fixture = directory / "fixture.json"
+        fixture = directory / (entry.get("fixture") or "fixture.json")
     status = entry.get("status", INCLUDED)
+    tolerance = entry.get("float_tolerance", entry.get("tolerance"))
     return PerfCase(case=case, directory=directory, fixture_path=fixture,
                     function=entry.get("function", "kernel"),
-                    tolerance=parse_tolerance(entry.get("tolerance"), "case set"),
+                    tolerance=parse_tolerance(tolerance, "case set"),
                     included=status == INCLUDED,
-                    reason=None if status == INCLUDED else entry.get("reason", status))
+                    reason=None if status == INCLUDED else entry.get("reason", status),
+                    data_movement_only=bool(entry.get("data_movement_only", False)))
 
 
 def load_perf_cases(case_set: Path | None, case_ids: list[str] | None,
@@ -147,15 +158,18 @@ class AcceptanceProgram:
 
 
 def load_acceptance_programs(case_set: Path) -> list[AcceptanceProgram]:
+    """The runnable programs of an acceptance set: in-scope entry functions."""
     raw = json.loads(case_set.read_text())
-    entries = raw["programs"] if isinstance(raw, dict) else raw
+    entries = raw["entries"] if isinstance(raw, dict) else raw
     programs = []
     for entry in entries:
-        kernel = entry.get("kernel") or entry.get("kernel_path")
+        if entry.get("status", "in_scope") != "in_scope" or not entry.get("entry_function", True):
+            continue
         fixture = entry.get("fixture")
+        tolerance = entry.get("float_tolerance", entry.get("tolerance"))
         programs.append(AcceptanceProgram(
             program=entry["program"], dataset=entry.get("dataset", entry["program"].split("_")[0]),
-            kernel_path=paths.BENCHMARKING / kernel, function=entry.get("function", "kernel"),
-            fixture_path=paths.BENCHMARKING / fixture if fixture else None,
-            tolerance=parse_tolerance(entry.get("tolerance"), "case set")))
+            kernel_path=paths.DATASETS / entry["kernel"], function=entry.get("function", "kernel"),
+            fixture_path=paths.DATASETS / fixture if fixture else None,
+            tolerance=parse_tolerance(tolerance, "case set")))
     return programs

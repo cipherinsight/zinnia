@@ -605,7 +605,12 @@ fn static_basic_view(b: &mut IRBuilder, value: &Value, indices: &[SliceIndex]) -
             Some(SliceIndex::Single(value)) => {
                 let raw = value.int_val()?;
                 let index = if raw < 0 { raw.saturating_add(shape[ax] as i64) } else { raw };
-                assert!(index >= 0 && index < shape[ax] as i64, "array index out of bounds");
+                if !(index >= 0 && index < shape[ax] as i64) {
+                    // Out of range: the checked read path reports it (a
+                    // compile error, or an assertion that the code does not
+                    // run when it runs only under a runtime condition).
+                    return None;
+                }
                 out_offset += index as usize * strides[ax];
             }
             Some(SliceIndex::Range(start, stop, step)) => {

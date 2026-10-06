@@ -256,23 +256,33 @@ impl IRGenerator {
         }
     }
 
+    /// Read input `param_name` (at `segments`) of type `dt`, checking every
+    /// element to its dtype's domain (`input_domain`); `boolean` says the
+    /// parameter was declared with Boolean elements (the annotation's
+    /// Boolean collapses to Integer before IR generation).
     pub(crate) fn read_input_value(
         &mut self,
         dt: &ZinniaType,
         param_name: &str,
         segments: Vec<crate::circuit_input::PathSegment>,
         is_public: bool,
+        boolean: bool,
     ) -> Value {
         use crate::circuit_input::{InputPath, PathSegment};
 
         match dt {
             ZinniaType::Integer | ZinniaType::Boolean => {
                 let path = InputPath::new(param_name, segments);
-                self.builder.ir_read_integer(path, is_public)
+                let value = self.builder.ir_read_integer(path, is_public);
+                let domain = if boolean { &ZinniaType::Boolean } else { dt };
+                self.check_input_domain(&value, domain);
+                value
             }
             ZinniaType::Float => {
                 let path = InputPath::new(param_name, segments);
-                self.builder.ir_read_float(path, is_public)
+                let value = self.builder.ir_read_float(path, is_public);
+                self.check_input_domain(&value, dt);
+                value
             }
             ZinniaType::Complex => {
                 // Encode a complex input as a 2-element list [real, imag]
@@ -282,11 +292,13 @@ impl IRGenerator {
                 let real_val = self
                     .builder
                     .ir_read_float(InputPath::new(param_name, real_segs), is_public);
+                self.check_input_domain(&real_val, &ZinniaType::Float);
                 let mut imag_segs = segments;
                 imag_segs.push(PathSegment::Index(1));
                 let imag_val = self
                     .builder
                     .ir_read_float(InputPath::new(param_name, imag_segs), is_public);
+                self.check_input_domain(&imag_val, &ZinniaType::Float);
                 let r = match real_val {
                     Value::Float(s) => s,
                     _ => unreachable!("ir_read_float returns Value::Float"),
@@ -307,7 +319,7 @@ impl IRGenerator {
                 // Read the inner value at segments ++ [Inner, ...]
                 let mut inner_segs = segments;
                 inner_segs.push(PathSegment::Inner);
-                let inner_val = self.read_input_value(dtype, param_name, inner_segs, is_public);
+                let inner_val = self.read_input_value(dtype, param_name, inner_segs, is_public, boolean);
 
                 // Compute hash of flattened inner values and assert equality.
                 // P1 segarr: use the builder-aware flattener so a StaticArray
@@ -336,7 +348,7 @@ impl IRGenerator {
                 for flat_idx in 0..total {
                     let mut sub_segs = segments.clone();
                     sub_segs.push(PathSegment::Index(flat_idx as u32));
-                    values.push(self.read_input_value(&inner_dt, param_name, sub_segs, is_public));
+                    values.push(self.read_input_value(&inner_dt, param_name, sub_segs, is_public, boolean));
                 }
                 // P1 segarr-foundation: numeric NDArray params become
                 // segment-backed `Value::StaticArray`. P5a adds Complex via a
@@ -384,7 +396,7 @@ impl IRGenerator {
                         shape: concrete_shape,
                         dtype: *dtype,
                     };
-                    return self.read_input_value(&concrete, param_name, segments, is_public);
+                    return self.read_input_value(&concrete, param_name, segments, is_public, boolean);
                 }
                 panic!(
                     "symbolic shapes must be resolved before IR generation: SymbolicNDArray[{}, {}]",
@@ -402,7 +414,7 @@ impl IRGenerator {
                 for (j, elem_dt) in elements.iter().enumerate() {
                     let mut sub_segs = segments.clone();
                     sub_segs.push(PathSegment::Index(j as u32));
-                    let val = self.read_input_value(elem_dt, param_name, sub_segs, is_public);
+                    let val = self.read_input_value(elem_dt, param_name, sub_segs, is_public, boolean);
                     types.push(val.zinnia_type());
                     values.push(val);
                 }
@@ -418,7 +430,7 @@ impl IRGenerator {
                 for (j, elem_dt) in elements.iter().enumerate() {
                     let mut sub_segs = segments.clone();
                     sub_segs.push(PathSegment::Index(j as u32));
-                    let val = self.read_input_value(elem_dt, param_name, sub_segs, is_public);
+                    let val = self.read_input_value(elem_dt, param_name, sub_segs, is_public, boolean);
                     types.push(val.zinnia_type());
                     values.push(val);
                 }
@@ -444,7 +456,7 @@ impl IRGenerator {
                 for flat_idx in 0..*max_length {
                     let mut sub_segs = segments.clone();
                     sub_segs.push(PathSegment::Index(flat_idx as u32));
-                    let val = self.read_input_value(&inner_dt, param_name, sub_segs, is_public);
+                    let val = self.read_input_value(&inner_dt, param_name, sub_segs, is_public, boolean);
                     elements.push(val);
                 }
 

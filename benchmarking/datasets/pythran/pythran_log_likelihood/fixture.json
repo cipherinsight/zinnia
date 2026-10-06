@@ -9,15 +9,15 @@
  "constants": {},
  "inputs": {
   "A": {
-   "data": [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0],
+   "data": [-1.117519251724429, 0.2019187021629749, 0.32308640895719676, -1.8993514194156522, -0.5127931244698003, -1.1184438565583295, 0.9303951120139686, -1.3795817299960436, -1.7905705860557986, 2.0404477850816787, 0.3801980730332313, -1.756833706684057, 1.0796182489492954, -1.4028104364980678, -0.9987622503262973, -0.8086560731503311],
    "mean": 0.1,
    "sigma": 1.1
   },
   "B": {
-   "data": [-0.8646898930288429, 4.338109913237871, 2.1912006130295656, 3.5806872036177544, 3.45483408454197, 2.410714588287526, 5.9858923696609265, 6.503349086429229, 8.207414000480766, 9.862012375828241, 9.505076007385926, 8.888104154098919, 11.135243851574861, 12.774495945532282, 14.673791264380174, 15.144760144949124],
+   "data": [-1.2351428901919768, 0.6560013007513356, 0.3490954001146925, -1.8203606248525108, -0.5869519634496911, -1.4706639687765308, 0.9284760531420944, -1.447141080432995, -1.7623560901974047, 2.157707201279794, 0.31287363539901986, -2.044114586756861, 0.9619855977699728, -1.4334857197291073, -0.9071065241255033, -0.7889643720083616],
    "mean": 0.11034319380044329,
    "sigma": 0.9827815437392917
   }
  },
- "notes": "A is the arguments of the example call `import numpy as np ; N = 16 ; a = np.arange(float(N)); b = 0.1; c =1.1; log_likelihood(a, b, c)`. B is a seeded perturbation of A (numpy RandomState(3903821)): noise 10 % of the largest magnitude; integer arrays redrawn in their range."
+ "notes": "A is the arguments of the example call `import numpy as np ; N = 16 ; rs = np.random.RandomState(16) ; b = 0.1 ; c = 1.1 ; a = b + c * rs.uniform(-2., 2., N) ; log_likelihood(a, b, c)`. Changed for Q32: the data are drawn (seeded) within 2 sigma of the mean instead of np.arange(16.), which reaches about 13.5 sigma, where exp(-(x-mean)^2 / 2 sigma^2) is about 1e-40, 0 in Q32, and log(0) is undefined. B is a seeded perturbation of A (numpy RandomState(3903821)): noise 10 % of the largest magnitude; integer arrays redrawn in their range."
 }

@@ -58,7 +58,11 @@ pub struct ChipScopeData {
     pub return_dtype: ZinniaType,
     pub returns_with_conditions: Vec<(Value, Value)>, // (return_value, condition)
     pub calculated_returning_condition: Option<Value>, // BooleanValue
-    pub assertion_condition: Option<Value>,           // BooleanValue
+    /// The caller's execution condition at the call site (`None` when it is
+    /// statically true). A chip body runs only when this holds, so every
+    /// effect inside the chip (memory writes, assertions, returns) is
+    /// predicated on it in addition to the chip's own control flow.
+    pub entry_condition: Option<Value>, // BooleanValue
     pub has_none_return: bool,
     pub has_value_return: bool,
 }
@@ -74,7 +78,6 @@ pub struct CircuitScopeData {
     pub return_dtype: ZinniaType,
     pub returns_with_conditions: Vec<(Value, Value)>,
     pub calculated_returning_condition: Option<Value>, // BooleanValue
-    pub assertion_condition: Option<Value>,            // BooleanValue
     pub has_none_return: bool,
     pub has_value_return: bool,
 }
@@ -145,6 +148,18 @@ impl Scope {
             Scope::Generator(d) => {
                 d.var_table.insert(name, store);
             }
+        }
+    }
+
+    /// This scope's variable table.
+    pub fn var_table(&self) -> &HashMap<String, ValueStore> {
+        match self {
+            Scope::Master(d) => &d.var_table,
+            Scope::Chip(d) => &d.var_table,
+            Scope::Circuit(d) => &d.var_table,
+            Scope::Conditional(d) => &d.var_table,
+            Scope::Loop(d) => &d.var_table,
+            Scope::Generator(d) => &d.var_table,
         }
     }
 
@@ -224,10 +239,9 @@ impl Scope {
         }
     }
 
-    pub fn get_assertion_condition(&self) -> Option<&Value> {
+    pub fn get_entry_condition(&self) -> Option<&Value> {
         match self {
-            Scope::Chip(d) => d.assertion_condition.as_ref(),
-            Scope::Circuit(d) => d.assertion_condition.as_ref(),
+            Scope::Chip(d) => d.entry_condition.as_ref(),
             _ => None,
         }
     }
@@ -429,7 +443,7 @@ mod tests {
             return_dtype: ZinniaType::Integer,
             returns_with_conditions: Vec::new(),
             calculated_returning_condition: None,
-            assertion_condition: None,
+            entry_condition: None,
             has_none_return: false,
             has_value_return: false,
         });
@@ -455,7 +469,7 @@ mod tests {
             return_dtype: ZinniaType::None,
             returns_with_conditions: Vec::new(),
             calculated_returning_condition: None,
-            assertion_condition: None,
+            entry_condition: None,
             has_none_return: false,
             has_value_return: false,
         });

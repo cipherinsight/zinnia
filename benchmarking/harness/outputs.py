@@ -11,15 +11,15 @@ so adapters report one of three layouts:
 
 - `logical`: the values are already the kernel's flattened output (the
   per-system program contract requires this of every baseline program);
-- `zinnia_exposure`: Zinnia's public vector in exposure order, decoded by the
-  kind of each `ExposePublicI/F` statement, plus the constant outputs the
-  compiler left out of the public vector (`elided`). The compiler does not yet
-  export where the elided outputs and dynamic-shape metadata sit, so the
-  check is exact for two layouts only: every output public (no elisions, as
-  many publics as output elements) or every output constant (no publics).
-  Anything else is reported as `unchecked`, never as a match. Once the
-  compiler exports its output layout (`decode_with_layout`), the Zinnia
-  adapters decode with it and report `logical` values with shapes instead;
+- `zinnia_exposure`: Zinnia's public vector in exposure order plus the
+  constant outputs the compiler left out of it (`elided`), for programs that
+  carry no output layout (a payload from an older compiler). The check is
+  exact for two layouts only: every output public (no elisions, as many
+  publics as output elements) or every output constant (no publics); anything
+  else is reported as `unchecked`, never as a match. A compiled program
+  exports its output layout (`ZKCompiledProgram.get_output_layout`), and the
+  Zinnia adapters decode with it (`decode_with_layout`) and report `logical`
+  values with shapes;
 - `field_elements`: signed field integers whose types are not known to the
   program; they are decoded by the type of the reference output at the same
   position when the counts agree, else `unchecked`.
@@ -27,6 +27,7 @@ so adapters report one of three layouts:
 
 from __future__ import annotations
 
+import itertools
 import math
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -97,24 +98,28 @@ def fields_to_be_bytes(values: list[int]) -> bytes:
     return b"".join((v % BN254_MODULUS).to_bytes(32, "big") for v in values)
 
 
-def decode_with_layout(fields: list[int],
-                       layout: list[dict]) -> tuple[list[int | float], list[list[int]]]:
+def decode_with_layout(fields: list[int | None], layout: list[dict],
+                       public_inputs: list[dict] = ()) -> tuple[list[int | float], list[list[int]]]:
     """The kernel's output (flattened values, shape per part) from a public vector.
 
-    `layout` is the output contract the compiler is asked to export (see the
-    harness report): one entry per top-level output part (tuple element, or the
-    single return value), in output order:
+    `layout` is the compiler's output layout (`ZKCompiledProgram.get_output_layout`):
+    one entry per output part, in output order:
 
         slot    = {"public": index, "kind": "i" | "f"} | {"constant": value}
-        static  = {"shape": [d, ...], "cells": [slot, ...]}            # prod(shape) cells
-        dynamic = {"dynamic": {"length": slot, "dims": [slot, ...],    # runtime extents
-                               "cells": [slot, ...]}}                  # max_length cells
+        static  = {"output": ..., "shape": [d, ...], "cells": [slot, ...]}
+        dynamic = {"output": ..., "dynamic": {"length": slot, "rank": slot,
+                   "dims": [slot, ...], "cells": [slot, ...],
+                   "strides": [s, ...], "offset": o}}         # strides/offset optional
 
-    Only the first `length` cells of a dynamic part are output elements, and its
-    dims must multiply to `length`. Every public index must be used exactly
-    once, so no public value goes unexplained.
+    A part marked `"complex": true` has two cells (real, imaginary) per element.
+    A dynamic part's shape is the first `rank` dims, which must multiply to
+    `length`; its element at coordinates `c` is cell `offset + sum(c * strides)`
+    when strides are given, else the cell at its row-major position (compact).
+    `public_inputs` (`get_public_inputs`) are the public values that are inputs,
+    not outputs. Every public index must be used exactly once, so no public value
+    goes unexplained.
     """
-    used: list[int] = []
+    used: list[int] = [entry["public"] for entry in public_inputs]
 
     def value(slot: dict) -> int | float:
         if "constant" in slot:
@@ -126,26 +131,46 @@ def decode_with_layout(fields: list[int],
     values: list[int | float] = []
     shapes: list[list[int]] = []
     for part in layout:
+        per_element = 2 if part.get("complex") else 1
         if "dynamic" not in part:
             cells = [value(cell) for cell in part["cells"]]
-            if math.prod(part["shape"]) != len(cells):
+            if math.prod(part["shape"]) * per_element != len(cells):
                 raise ValueError(f"static part of shape {part['shape']} has {len(cells)} cells")
             values.extend(cells)
             shapes.append(list(part["shape"]))
             continue
         dynamic = part["dynamic"]
         length = value(dynamic["length"])
-        dims = [value(d) for d in dynamic["dims"]]
+        rank = value(dynamic["rank"])
+        all_dims = [value(d) for d in dynamic["dims"]]
         cells = [value(cell) for cell in dynamic["cells"]]
-        if not (isinstance(length, int) and 0 <= length <= len(cells)):
-            raise ValueError(f"dynamic length {length} outside [0, {len(cells)}]")
-        if math.prod(dims) != length:
+        if not (isinstance(rank, int) and 0 <= rank <= len(all_dims)):
+            raise ValueError(f"dynamic rank {rank} outside [0, {len(all_dims)}]")
+        dims = all_dims[:rank]
+        if not all(isinstance(d, int) and d >= 0 for d in dims) or math.prod(dims) != length:
             raise ValueError(f"dynamic dims {dims} do not multiply to the length {length}")
-        values.extend(cells[:length])
+        positions = _element_positions(dims, dynamic.get("strides"), dynamic.get("offset", 0))
+        if positions and (max(positions) + 1) * per_element > len(cells):
+            raise ValueError(f"dynamic part of shape {dims} does not fit its {len(cells)} cells")
+        for position in positions:
+            values.extend(cells[position * per_element:(position + 1) * per_element])
         shapes.append(dims)
     if sorted(used) != list(range(len(fields))):
         raise ValueError("the layout does not account for every public value exactly once")
     return values, shapes
+
+
+def _element_positions(dims: list[int], strides: list[int] | None, offset: int) -> list[int]:
+    """Buffer positions of a runtime-shaped part's elements, in row-major order."""
+    count = math.prod(dims)
+    if strides is None:
+        return list(range(count))
+    if count == 0:
+        return []
+    if len(strides) != len(dims):
+        raise ValueError(f"rank {len(dims)} does not match the {len(strides)} buffer strides")
+    return [offset + sum(c * s for c, s in zip(coords, strides))
+            for coords in itertools.product(*(range(d) for d in dims))]
 
 
 def decode_exposed(fields: list[int], kinds: list[str]) -> list[int | float]:
@@ -197,6 +222,33 @@ def reference_leaves(result: Any) -> tuple[list[Leaf], list[list[int]]]:
         for value in array.ravel():
             leaves.extend(_leaves_of_scalar(value, array.dtype.kind))
     return leaves, shapes
+
+
+class UnlistedOutput(ValueError):
+    """NumPy modifies an array argument the compiled program does not output."""
+
+
+def reference_outputs(result: Any, arguments_after: dict[str, Any], arguments_before: list[Any],
+                      layout: list[dict]) -> tuple[list[Leaf], list[list[int]]]:
+    """The reference output, for a kernel that may return `None`.
+
+    A kernel that returns a value outputs that value. One that returns `None`
+    outputs the array arguments it writes, in parameter order; which ones is
+    taken from the compiler's layout (`{"output": {"argument": name}}` parts),
+    and checked against NumPy: an array argument the call changed but the
+    layout does not list is an error, so a compiler that misses a written
+    argument cannot pass.
+    """
+    if result is not None:
+        return reference_leaves(result)
+    named = [part["output"]["argument"] for part in layout
+             if "argument" in part.get("output", {})]
+    for (name, after), before in zip(arguments_after.items(), arguments_before):
+        if isinstance(after, np.ndarray) and name not in named \
+                and not np.array_equal(after, before, equal_nan=True):
+            raise UnlistedOutput(f"the kernel modifies argument {name!r}, which the "
+                                 "compiled program does not output")
+    return reference_leaves(tuple(arguments_after[name] for name in named))
 
 
 def _leaves_of_scalar(value: Any, dtype_kind: str) -> list[Leaf]:

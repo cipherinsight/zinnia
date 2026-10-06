@@ -33,6 +33,32 @@
 //!   loop) are dropped. Facts inherited from parent scopes survive.
 //! - **Chip/function boundary**: entry seeds from `@requires`; exit exports
 //!   the postcondition fact set for the parent chip's consumption.
+//!
+//! ## Execution guard
+//!
+//! Scopes follow the `if` / loop / chip structure, but code can also run
+//! under conditions that open no scope: a loop item that may be inactive or
+//! skipped by `continue`, a statement after a conditional `return` or
+//! `break`, a chip body called from a branch. A fact learned there (from a
+//! user `assert`, or from an op whose precondition is checked only where the
+//! code runs) holds only where that code runs. The builder therefore keeps
+//! the fact stack's [`FactGuard`] equal to the execution predicate of the
+//! code being lowered: a set of *atoms*, Boolean IR values whose conjunction
+//! is the predicate.
+//!
+//! A fact learned under `When(atoms)` goes into a *guard frame* for those
+//! atoms instead of the scope. Frames form a stack of growing atom sets.
+//! When a runtime guard arrives, every frame whose atoms are not all among
+//! its atoms is closed and its facts are dropped, so the frames left all
+//! hold where the code runs and their facts are visible; while the guard is
+//! `Always` or `Never` no frame is visible (the IR generator restores the
+//! enclosing statement's predicate between the statements of a branch, and
+//! the frames of the branch survive that). A guarded fact is therefore used
+//! only by code that runs under (at least) the atoms it was learned under:
+//! code after a `continue` in an earlier loop item, the next loop item, and
+//! the caller of a chip run under different atoms and cannot use it. Atoms
+//! are SSA values, so a frame's facts hold wherever its atoms do; closing a
+//! frame only forgets facts.
 
 use std::collections::{HashMap, HashSet};
 
@@ -195,6 +221,40 @@ pub struct FactStack {
     /// Postcondition export from the most recently closed `Chip` scope.
     /// Read by the parent chip's IR-gen to inherit callee guarantees.
     pub last_chip_postcondition: Option<FactSet>,
+    /// Where the code being lowered executes (see the module docs).
+    guard: FactGuard,
+    /// Facts learned under a runtime guard, innermost last.
+    guard_frames: Vec<GuardFrame>,
+}
+
+/// Where the code currently being lowered executes, as the fact stack sees
+/// it. Set by the IR builder from its execution (write) predicate.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum FactGuard {
+    /// On every path.
+    #[default]
+    Always,
+    /// On no path (a statically false predicate); facts learned there are
+    /// vacuous and are not recorded.
+    Never,
+    /// Where every listed Boolean IR value is true: the conjuncts of the
+    /// runtime execution predicate, sorted and without duplicates.
+    When(Vec<ValueId>),
+}
+
+/// The facts learned while the execution guard had `atoms` (see the module
+/// docs).
+#[derive(Debug, Clone)]
+struct GuardFrame {
+    atoms: Vec<ValueId>,
+    facts: FactSet,
+}
+
+/// `true` when every element of the sorted slice `sub` is in the sorted
+/// slice `sup`.
+fn is_sorted_subset(sub: &[ValueId], sup: &[ValueId]) -> bool {
+    let mut rest = sup.iter();
+    sub.iter().all(|a| rest.by_ref().any(|b| b == a))
 }
 
 impl Default for FactStack {
@@ -209,7 +269,54 @@ impl FactStack {
             scopes: vec![FactScope::new(ScopeKind::Plain)],
             per_value: HashMap::new(),
             last_chip_postcondition: None,
+            guard: FactGuard::Always,
+            guard_frames: Vec::new(),
         }
+    }
+
+    /// Set where the code being lowered executes. The IR builder calls this
+    /// whenever its execution predicate changes. Closes the guard frames
+    /// whose atoms do not all hold under the new guard and opens one for a
+    /// new runtime guard (see the module docs).
+    pub fn set_guard(&mut self, guard: FactGuard) {
+        if let FactGuard::When(atoms) = &guard {
+            while self.guard_frames.last().is_some_and(|top| !is_sorted_subset(&top.atoms, atoms)) {
+                self.guard_frames.pop();
+            }
+            if self.guard_frames.last().is_none_or(|top| top.atoms != *atoms) {
+                self.guard_frames.push(GuardFrame { atoms: atoms.clone(), facts: FactSet::new() });
+            }
+        }
+        self.guard = guard;
+    }
+
+    /// The guard frames whose facts the current code may use: all of them
+    /// under a runtime guard (they are nested subsets of it), none otherwise.
+    fn visible_frames(&self) -> &[GuardFrame] {
+        match self.guard {
+            FactGuard::When(_) => &self.guard_frames,
+            FactGuard::Always | FactGuard::Never => &[],
+        }
+    }
+
+    /// The facts anchored on `vid` that the current code may use: the
+    /// scopes' (`per_value`) and the visible guard frames'.
+    pub fn facts_for(&self, vid: ValueId) -> impl Iterator<Item = &Fact> {
+        let scoped = self.per_value.get(&vid).into_iter().flatten();
+        let guarded = self
+            .visible_frames()
+            .iter()
+            .filter_map(move |frame| frame.facts.by_value.get(&vid))
+            .flatten();
+        scoped.chain(guarded)
+    }
+
+    /// Every fact still held under a runtime guard, with the guard's atoms,
+    /// whether or not the current code may use it (for inspection).
+    pub fn guarded_facts(&self) -> impl Iterator<Item = (&[ValueId], &Fact)> {
+        self.guard_frames
+            .iter()
+            .flat_map(|frame| frame.facts.all().into_iter().map(move |f| (frame.atoms.as_slice(), f)))
     }
 
     pub fn depth(&self) -> usize {
@@ -250,16 +357,31 @@ impl FactStack {
     }
 
     /// Insert a value_id-anchored fact at the current top and in the flat
-    /// visible-fact index.
+    /// visible-fact index. The fact is taken to hold where the current code
+    /// runs: under a runtime guard it goes into that guard's frame.
     pub fn insert_for(&mut self, vid: ValueId, fact: Fact) {
+        match self.guard {
+            FactGuard::Always => self.insert_unconditional(vid, fact),
+            FactGuard::Never => {}
+            FactGuard::When(_) => {
+                let frame = self.guard_frames.last_mut().expect("a runtime guard has a frame");
+                frame.facts.insert_for(vid, fact);
+            }
+        }
+    }
+
+    /// Insert a fact that holds on every path, wherever it is learned: a
+    /// definition such as `c == 5` for the constant `c`. Never use this for
+    /// a fact learned from a check or from an op's precondition.
+    pub fn insert_unconditional(&mut self, vid: ValueId, fact: Fact) {
         self.current_mut().facts.insert_for(vid, fact.clone());
         self.per_value.entry(vid).or_default().push(fact);
     }
 
-    /// Whether any fact is anchored on `vid`. Cheap volume gate for
-    /// chained fact deposits.
+    /// Whether any fact the current code may use is anchored on `vid`.
+    /// Cheap volume gate for chained fact deposits.
     pub fn has_facts_for(&self, vid: ValueId) -> bool {
-        self.per_value.get(&vid).map_or(false, |v| !v.is_empty())
+        self.facts_for(vid).next().is_some()
     }
 
     fn remove_from_per_value(&mut self, facts: &FactSet) {
@@ -372,11 +494,15 @@ impl FactStack {
         }
     }
 
-    /// Visit-all-facts: walk the live stack from root to top.
+    /// Visit-all-facts: walk the live stack from root to top, then the
+    /// open guard frames.
     pub fn visible_facts(&self) -> Vec<&Fact> {
         let mut out = Vec::new();
         for s in &self.scopes {
             out.extend(s.facts.all());
+        }
+        for frame in self.visible_frames() {
+            out.extend(frame.facts.all());
         }
         out
     }

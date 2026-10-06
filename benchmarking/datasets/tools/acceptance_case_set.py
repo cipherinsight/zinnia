@@ -209,6 +209,7 @@ class Signature:
     example: dict[str, Any] = field(default_factory=dict)
     adaptations: list[str] = field(default_factory=list)
     example_call: str | None = None      # the example line the values come from
+    b_example: dict[str, Any] | None = None   # input B when it is given, not drawn
 
 
 def npbench_info(root: Path, upstream_path: str) -> dict[str, Any]:
@@ -601,6 +602,11 @@ def npbench_sizes(root: Path, info: dict[str, Any], fn: ast.FunctionDef
     small = npbench_signature(bench, fn, npbench_values(root, bench, preset_t), "preset T")
     sizing = {"rule": "NPBench preset T (acceptance_sizes.py)", "preset_S": preset_s, "preset_T": preset_t,
               "divisor": divisor, "exception": exception}
+    if bench["short_name"] in acceptance_fixtures.NPBENCH_Q32_INPUTS:
+        factors, why = acceptance_fixtures.NPBENCH_Q32_INPUTS[bench["short_name"]]
+        for name, factor in factors.items():
+            small.example[name] = small.example[name] * factor
+        sizing["q32_change"] = why
     return small, upstream, sizing, sizes.NPBENCH_DIMENSION_EXEMPT.get(bench["short_name"], set())
 
 
@@ -609,6 +615,14 @@ def reproducible(code: str) -> str:
     `np.empty(...)` becomes `np.zeros(...)` (spectraldns builds cross2's output
     buffer with np.empty; the kernel overwrites it)."""
     return re.sub(r"\bempty\(", "zeros(", code)
+
+
+def signature_from_line(spec, fn: ast.FunctionDef, module_globals: dict[str, Any], code: str,
+                        label: str) -> Signature:
+    examples = [(args, label, code) for args in call_arguments(code, fn.name, module_globals)]
+    if not examples:
+        raise SystemExit(f"{fn.name}: the example does not reach the call: {code}")
+    return pythran_signature(spec, fn, examples)
 
 
 def pythran_sizes(spec, source: str, module_globals: dict[str, Any], program: str, fn: ast.FunctionDef
@@ -621,18 +635,25 @@ def pythran_sizes(spec, source: str, module_globals: dict[str, Any], program: st
     key = (program, fn.name)
     table = sizes.PYTHRAN_SMALL_EXAMPLES if key in sizes.PYTHRAN_SMALL_EXAMPLES else sizes.PYTHRAN_NO_UPSTREAM_EXAMPLE
     if key not in table:
+        small = upstream
         sizing = {"rule": "upstream example used as it is (already within the cap)",
                   "example": upstream.example_call}
-        return upstream, upstream, sizing
-    code, change = table[key]
-    code = reproducible(code)
-    small_examples = [(args, "small example", code) for args in call_arguments(code, fn.name, module_globals)]
-    if not small_examples:
-        raise SystemExit(f"{program}.{fn.name}: the small example does not reach the call: {code}")
-    small = pythran_signature(spec, fn, small_examples)
-    sizing = {"rule": "upstream example with sizes scaled to the cap (acceptance_sizes.py)"
-              if table is sizes.PYTHRAN_SMALL_EXAMPLES else "no upstream example calls it; example chosen here",
-              "example": code, "change": change, "upstream_example": upstream.example_call}
+    else:
+        code, change = table[key]
+        small = signature_from_line(spec, fn, module_globals, reproducible(code), "small example")
+        sizing = {"rule": "upstream example with sizes scaled to the cap (acceptance_sizes.py)"
+                  if table is sizes.PYTHRAN_SMALL_EXAMPLES else "no upstream example calls it; example chosen here",
+                  "example": small.example_call, "change": change, "upstream_example": upstream.example_call}
+    if key in acceptance_fixtures.PYTHRAN_Q32_INPUTS:
+        code_a, code_b, why = acceptance_fixtures.PYTHRAN_Q32_INPUTS[key]
+        fixed = signature_from_line(spec, fn, module_globals, code_a, "example changed for Q32")
+        if fixed.annotations != small.annotations:
+            raise SystemExit(f"{program}.{fn.name}: the Q32 input changes the signature: {fixed.annotations}")
+        if code_b:
+            fixed.b_example = signature_from_line(spec, fn, module_globals, code_b, "B").example
+        sizing.update(example_before_q32_change=sizing["example"], example=code_a, example_B=code_b,
+                      q32_change=why)
+        small = fixed
     return small, upstream, sizing
 
 
@@ -784,11 +805,15 @@ def write_fixtures(entries: list[dict[str, Any]], examples: dict[tuple[str, str]
             name = "fixture.json"
         else:
             sig = examples[(e["program"], function)]
-            a, b = sig.example, None
+            a, b = sig.example, sig.b_example
             if e["dataset"] == "npbench":
                 note = f"A is NPBench's initialize() data at preset T {e['sizing']['preset_T']}."
             else:
                 note = f"A is the arguments of the example call `{e['sizing']['example']}`."
+            if e["sizing"].get("q32_change"):
+                note += f" Changed for Q32: {e['sizing']['q32_change']}."
+            if b is not None:
+                note += f" B is the arguments of `{e['sizing']['example_B']}`."
             name = acceptance_fixtures.fixture_name(per_program[e["program"]], function)
         try:
             data = acceptance_fixtures.build(e["program"], function, kernel, e["signature"], a,
@@ -798,6 +823,17 @@ def write_fixtures(entries: list[dict[str, Any]], examples: dict[tuple[str, str]
             e["fixture_error"] = f"{type(exc).__name__}: {exc}"
             print("fixture", e["program"], function, e["fixture_error"], flush=True)
             continue
+        tolerance = e["float_tolerance"]
+        if "measure" in tolerance:
+            inputs = [[acceptance_fixtures.coerce(data["inputs"][label][p["name"]], p) for p in data["parameters"]]
+                      for label in "AB"]
+            measured = acceptance_fixtures.measured_difference(kernel, function, tolerance["measure"], inputs)
+            if measured > tolerance["atol"]:
+                raise SystemExit(f"{e['program']}.{function}: measured {measured:.3g} exceeds atol {tolerance['atol']}")
+            tolerance["measured_max_abs_difference"] = float(f"{measured:.3g}")
+            data["notes"] += (f" Float tolerance: atol = {tolerance['atol']:g} instead of the default 1e-6, "
+                              f"rtol = {tolerance['rtol']:g}. Why: {tolerance['reason']} (measured on A and B: "
+                              f"{measured:.2g}).")
         path = kernel.parent / name
         acceptance_fixtures.dump(path, data)
         e["fixture"] = str(path.relative_to(DATASETS))
@@ -827,6 +863,9 @@ def main() -> None:
         entries += program_entries
         examples.update({(program, name): sig for name, sig in signatures.items()})
         print(program, [e["status"] for e in program_entries], flush=True)
+    for e in entries:
+        override = acceptance_fixtures.FLOAT_TOLERANCE_OVERRIDES.get((e["program"], e["function"]))
+        e["float_tolerance"] = dict(override) if override else dict(acceptance_fixtures.FLOAT_TOLERANCE_DEFAULT)
     if args.write_fixtures:
         write_fixtures(entries, examples)
 
@@ -845,6 +884,14 @@ def main() -> None:
         "upstream": {"npbench_commit": git_head(args.npbench), "pythran_commit": git_head(args.pythran),
                      "default_axis_without_example": DEFAULT_AXIS, "numpy_version": np.__version__},
         "sizing": {"cap": sizes.CAP, "rule": sizes.__doc__.split("\n\n", 1)[1].strip()},
+        "float_tolerance": {
+            "default": acceptance_fixtures.FLOAT_TOLERANCE_DEFAULT,
+            "rule": "Each entry's `float_tolerance`: a float (or complex) output passes when |actual - expected| "
+                    "<= atol + rtol * |expected|, expected being NumPy's output on the same fixture input. "
+                    "Integer and boolean outputs are compared exactly. The default is atol = rtol = 1e-6. An "
+                    "entry whose NumPy program Q32 cannot reproduce has a larger atol with the reason and the "
+                    "measured effect (`measure`: q32_inputs = NumPy on the inputs rounded to Q32 against NumPy "
+                    "on the inputs; float64_buffers = float32 buffers made float64 against as written)."},
         "counts_entry_functions": counts,
         "programs": programs,
         "entries": entries,

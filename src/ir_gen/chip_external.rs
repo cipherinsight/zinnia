@@ -171,13 +171,18 @@ impl IRGenerator {
             _ => return Value::None,
         };
 
-        // Enter chip scope
+        // Enter chip scope. The call executes only under the caller's
+        // current condition; the chip body inherits it as its entry
+        // condition so writes, assertions and returns inside the body stay
+        // predicated on the call actually happening.
         let return_dt = chip
             .return_dt
             .as_ref()
             .map(|dt| self.parse_dt_descriptor(dt));
+        let call_condition = self.ctx.get_condition_value(&mut self.builder);
+        let entry_condition = (call_condition.bool_val() != Some(true)).then_some(call_condition);
         self.ctx
-            .chip_enter(return_dt.clone().unwrap_or(ZinniaType::None), None);
+            .chip_enter(return_dt.clone().unwrap_or(ZinniaType::None), entry_condition);
         self.builder
             .facts
             .enter(crate::optim::predicates::ScopeKind::Chip, None);
@@ -259,7 +264,8 @@ impl IRGenerator {
         let mut result = returns[0].0.clone();
         for i in 1..returns.len() {
             let (val, cond) = &returns[i];
-            result = crate::helpers::value_ops::select_value(&mut self.builder, cond, val, &result);
+            // A helper returns one of its argument arrays itself in Python.
+            result = self.merge_binding(cond, val, &result);
         }
         if let Some(return_dt) = return_dt {
             if result.zinnia_type() != return_dt {

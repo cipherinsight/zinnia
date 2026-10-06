@@ -139,6 +139,12 @@ pub struct ASTAnnotation {
     pub dt: serde_json::Value, // DTDescriptor dict — deserialized on demand
     #[serde(default)]
     pub kind: Option<String>,
+    /// The parameter was declared with Boolean elements (`Boolean`, `bool`,
+    /// `Bool[Array, ...]`, `NDArray[bool, ...]`); `dt` says Integer, since
+    /// booleans are integers 0/1 in the circuit. Their inputs are checked to
+    /// {0, 1}.
+    #[serde(default)]
+    pub boolean: bool,
     #[serde(default)]
     pub dbg: Option<DebugInfo>,
 }
@@ -177,6 +183,11 @@ pub struct ASTChipInput {
 pub struct ASTAssignStatement {
     pub targets: Vec<ASTNode>,
     pub value: Box<ASTNode>,
+    /// Set for `name op= value`, which the transformer lowers to
+    /// `name = name op value`: Python updates a mutable object (an array or
+    /// a list) in place, so other references to it see the update.
+    #[serde(default)]
+    pub augmented: bool,
     #[serde(default)]
     pub dbg: Option<DebugInfo>,
 }
