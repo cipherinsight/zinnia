@@ -406,6 +406,43 @@ fn abs_and_sign_are_pinned() {
     }
 }
 
+/// `|x|` of a value already proven inside the window: a hinted sign `s`,
+/// `x·(1 - 2s)` and one range check. The sign is pinned for `x != 0`; at
+/// `x = 0` either sign gives 0, so it is not reused as `x`'s sign (a later
+/// `x < 0` makes its own). `|i64::MIN|` overflows int64: no proof.
+#[test]
+fn magnitudes_of_window_values_are_pinned() {
+    let abs_then_sign: Box<Op> = Box::new(|s, c| {
+        s.ensure_signed64(&c[0])?;
+        let magnitude = s.abs_i(&c[0])?;
+        let zero = s.constant_int(0)?;
+        Ok(vec![magnitude, s.lt_i(&c[0], &zero)?])
+    });
+    for (x, a) in [(-5i64, 5i64), (5, 5), (i64::MIN + 1, i64::MAX), (i64::MAX, i64::MAX)] {
+        assert_sound(&format!("|{x}|, {x} < 0"), &*abs_then_sign, &[int(x)], &[int(a), bit(x < 0)], &[]);
+    }
+    let honest = synthesize(&*abs_then_sign, &[int(0)], &[]);
+    assert!(honest.accepted);
+    assert_eq!(honest.outputs, vec![int(0), bit(false)]);
+    for index in 0..honest.hints {
+        for delta in deltas(&[]) {
+            let tampered = synthesize(&*abs_then_sign, &[int(0)], &[(index, delta)]);
+            assert!(!tampered.accepted || tampered.outputs == honest.outputs, "x = 0: hint #{index} + {delta:?} changed the outputs");
+        }
+    }
+    assert!(!synthesize(&*abs_then_sign, &[int(i64::MIN)], &[]).accepted, "|i64::MIN| overflows int64");
+    let window_abs: Box<Op> = Box::new(|s, c| {
+        s.ensure_signed64(&c[0])?;
+        Ok(vec![s.abs_i(&c[0])?])
+    });
+    let window_only: Box<Op> = Box::new(|s, c| {
+        s.ensure_signed64(&c[0])?;
+        Ok(vec![])
+    });
+    let cost = cells_of(&*window_abs, &[int(-5)]).0 - cells_of(&*window_only, &[int(-5)]).0;
+    assert!(cost <= 40, "|x| of a window value costs {cost} advice cells");
+}
+
 #[test]
 fn integer_power_is_pinned() {
     let pow = binary(|s, a, b| s.pow_i(a, b));
@@ -428,6 +465,29 @@ fn field_division_is_total_and_pinned() {
     assert_sound("5 /f 0", &*div, &[int(5), int(0)], &[int(0)], &[]);
     assert_sound("1/7", &*inverse, &[int(7)], &[int(7).invert().unwrap()], &[]);
     assert_sound("1/0", &*inverse, &[int(0)], &[int(0)], &[]);
+}
+
+/// The hinted quotient and remainder of a rescale (and of every division)
+/// are witnesses of the division gate `r + d·q = a` itself: the rescale costs
+/// that gate's four cells plus the remainder's range check and the
+/// quotient's window check, and a shifted quotient hint is still rejected.
+#[test]
+fn quotient_and_remainder_are_cells_of_the_division_gate() {
+    let rescale: Box<Op> = Box::new(|s, c| Ok(vec![s.rescale_by(&c[0], 32)?]));
+    let checks: Box<Op> = Box::new(|s, c| {
+        s.range_check(&c[0], 32);
+        s.ensure_signed64(&c[1])?;
+        Ok(vec![])
+    });
+    let raw = kernel::i128_to_fp((5i128 << 32) + 7);
+    let (rescale_advice, rescale_lookup) = cells_of(&*rescale, &[raw]);
+    let (checks_advice, checks_lookup) = cells_of(&*checks, &[int(7), int(5)]);
+    // One input instead of two, and the gate's four cells.
+    assert_eq!((rescale_advice, rescale_lookup), (checks_advice - 1 + 4, checks_lookup));
+    assert_eq!(synthesize(&*rescale, &[raw], &[]).outputs, vec![int(5)]);
+    for delta in [Fp::one(), -Fp::one()] {
+        assert!(!synthesize(&*rescale, &[raw], &[(0, delta)]).accepted);
+    }
 }
 
 /// Advice and lookup cells of `op` synthesized on free inputs.
@@ -570,10 +630,10 @@ fn input_domain_checks_are_one_window_check() {
     let (one_advice, one_lookup) = cells_of(&*domain_check, &[int(5)]);
     let (two_advice, two_lookup) = cells_of(&*domain_check, &[int(5), int(6)]);
     let (window_advice, window_lookup) = cells_of(&*window, &[int(5)]);
-    // Per element: the window check alone (the 4 cells of the first element
-    // are the two loaded bounds and the two shared truth constants).
+    // Per element: the window check alone. The bounds and the truth
+    // constants the asserted comparisons decide to get no cells.
     assert_eq!((two_advice - one_advice, two_lookup - one_lookup), (window_advice, window_lookup));
-    assert_eq!(one_advice, window_advice + 4);
+    assert_eq!((one_advice, one_lookup), (window_advice, window_lookup));
 }
 
 #[test]
@@ -719,7 +779,9 @@ fn sign_tests_and_asserted_ranges_are_pinned() {
     }
     assert!(!synthesize(&*root_then_check, &[q(-2.0)], &[]).accepted);
     let abs = unary(|s, a| s.abs_i(a));
-    assert_sound("abs(i64::MIN)", &*abs, &[int(i64::MIN)], &[kernel::i128_to_fp(1i128 << 63)], &[]);
+    assert_sound("abs(i64::MIN + 1)", &*abs, &[int(i64::MIN + 1)], &[int(i64::MAX)], &[]);
+    // `|i64::MIN| = 2^63` overflows int64: no proof (the sign_and_abs path).
+    assert!(!synthesize(&*abs, &[int(i64::MIN)], &[]).accepted, "|i64::MIN| has no proof");
     assert!(!synthesize(&*abs, &[kernel::i128_to_fp(1i128 << 63)], &[]).accepted, "outside the window");
     // A comparison after an asserted bound uses the bound.
     let bounded: Box<Op> = Box::new(|s, c| {
@@ -1039,7 +1101,7 @@ mod pre_fix {
         let (sa, sb) = (kernel::fp_to_i64(a.value), kernel::fp_to_i64(b.value));
         let q = s.hint(int(sa.div_euclid(sb)));
         let r = s.hint(int(sa.rem_euclid(sb)));
-        let recomposed = s.gate_cell(b.value * q.value + r.value, |gate, ctx| gate.mul_add(ctx, b.assigned, q.assigned, r.assigned));
+        let recomposed = s.gate_cell(b.value * q.value + r.value, |gate, ctx| gate.mul_add(ctx, b.quantum(), q.quantum(), r.quantum()));
         s.constrain_equal(&recomposed, a);
         Ok(q)
     }
@@ -1052,7 +1114,7 @@ mod pre_fix {
         let rem = s.hint(rem);
         let scale = kernel::scale_fp(PRECISION_BITS);
         let recomposed = s.gate_cell(result.value * scale + rem.value, |gate, ctx| {
-            gate.mul_add(ctx, result.assigned, QuantumCell::Constant(scale), rem.assigned)
+            gate.mul_add(ctx, result.quantum(), QuantumCell::Constant(scale), rem.quantum())
         });
         s.constrain_equal(&recomposed, &raw);
         s.range_check(&rem, PRECISION_BITS as usize);
@@ -1238,6 +1300,43 @@ mod graphs {
     }
 }
 
+/// A constant gets an advice cell only where a gadget needs an assigned
+/// cell: as an operand of a gate it is the gate's own constant cell (`x + 5`
+/// costs one cell less than `x + y`), as a public output it is loaded and
+/// bound to the public value, and asserting a false constant still leaves
+/// the circuit unsatisfiable.
+#[test]
+fn constants_get_cells_only_where_needed() {
+    use crate::ir_defs::IR;
+    use graphs::*;
+    let sum = |constant: bool| {
+        let mut g = Graph::default();
+        let x = g.read("x");
+        let y = if constant { g.int(5) } else { g.read("y") };
+        let s = g.push(IR::AddI, &[x, y]);
+        g.push(IR::ExposePublicI, &[s]);
+        g.finish()
+    };
+    let with_constant = run(&sum(true), &[("x", 3)], None);
+    assert!(with_constant.accepted && with_constant.outputs == vec![int(8)]);
+    assert!(!run(&sum(true), &[("x", 3)], Some(vec![int(9)])).accepted);
+    assert_eq!(with_constant.advice + 1, run(&sum(false), &[("x", 3), ("y", 5)], None).advice);
+
+    let mut g = Graph::default();
+    let seven = g.int(7);
+    g.push(IR::ExposePublicI, &[seven]);
+    let exposed = g.finish();
+    assert!(run(&exposed, &[], None).accepted);
+    assert!(!run(&exposed, &[], Some(vec![int(8)])).accepted);
+
+    for (value, holds) in [(true, true), (false, false)] {
+        let mut g = Graph::default();
+        let c = g.push(IR::ConstantBool { value }, &[]);
+        g.push(IR::Assert, &[c]);
+        assert_eq!(run(&g.finish(), &[], None).accepted, holds);
+    }
+}
+
 /// An input that the circuit also bounds with `AssertU128Lt(x, 8)` (an
 /// index) gets that bound check in place of its 64-bit window check: the
 /// domain checks then cost nothing, and values outside `[0, 8)` (including
@@ -1265,9 +1364,9 @@ fn domain_checks_of_bounded_inputs_use_the_bound() {
     for x in [8i64, -1, i64::MAX, i64::MIN] {
         assert!(!run(&checked, &[("x", x)], None).accepted, "{x} accepted");
     }
-    // The two loaded bounds and the constant `true` the asserted
-    // comparisons decide to.
-    assert_eq!(run(&checked, &[("x", 3)], None).advice, run(&bare, &[("x", 3)], None).advice + 3);
+    // The bound check implies the domain check, whose bounds and decided
+    // `true` need no cells.
+    assert_eq!(run(&checked, &[("x", 3)], None).advice, run(&bare, &[("x", 3)], None).advice);
 }
 
 /// `acc + a·b` and `acc - a·b` with a product used only there are one gate
@@ -1598,4 +1697,37 @@ fn packed_key_comparison_is_lexicographic_and_pinned() {
     }
     // An index outside [0, 2^7) has no witness (the range check fails).
     assert!(!synthesize(&*op, &[int(1), int(128), int(1), int(0)], &[]).accepted);
+}
+
+/// `assert x >= 0` before `sqrt(x)` (the frontend's precondition) is
+/// proven by the root itself: no check of its own, while a negative `x`
+/// still has no witness and the root stays pinned. `assert x >= 1` (not a
+/// root guard) keeps its check.
+#[test]
+fn root_preconditions_are_proven_by_the_root() {
+    use crate::ir_defs::IR;
+    use graphs::*;
+    let build = |bound: i64| {
+        let mut g = Graph::default();
+        let x = g.read("x");
+        g.domain_check(x);
+        let lo = g.int(bound);
+        let holds = g.push(IR::GteI, &[x, lo]);
+        g.push(IR::Assert, &[holds]);
+        let root = g.push(IR::SqrtF, &[x]);
+        g.push(IR::ExposePublicF, &[root]);
+        g.finish()
+    };
+    let guarded = build(0);
+    for x in [0i64, 1, 5, 1 << 40, i64::MAX] {
+        let expected = kernel::fp_sqrt(int(x), PRECISION_BITS);
+        let honest = run(&guarded, &[("x", x)], None);
+        assert!(honest.accepted && honest.outputs == vec![expected], "sqrt({x})");
+        assert!(!run(&guarded, &[("x", x)], Some(vec![expected + Fp::one()])).accepted, "sqrt({x}) + 1 accepted");
+    }
+    for x in [-1i64, -(1 << 40), i64::MIN] {
+        assert!(!run(&guarded, &[("x", x)], None).accepted, "assert {x} >= 0 accepted");
+    }
+    let checked = build(1);
+    assert!(run(&guarded, &[("x", 5)], None).advice + 20 < run(&checked, &[("x", 5)], None).advice, "the root's guard paid a check");
 }

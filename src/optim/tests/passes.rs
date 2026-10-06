@@ -470,6 +470,73 @@ mod tests {
         assert!(result.len() <= 4);
     }
 
+    /// `x - x` is the constant 0, for integers and for (Q32) floats: a
+    /// comparison of an array with its own row then needs no circuit.
+    #[test]
+    fn test_pattern_match_sub_self_is_zero() {
+        for float in [false, true] {
+            let read = if float {
+                IR::ReadFloat { path: crate::circuit_input::InputPath::new("x", vec![]), is_public: false }
+            } else {
+                IR::ReadInteger { path: crate::circuit_input::InputPath::new("x", vec![]), is_public: false }
+            };
+            let (sub, expose) = if float { (IR::SubF, IR::ExposePublicF) } else { (IR::SubI, IR::ExposePublicI) };
+            let stmts = vec![
+                IRStatement::new(0, crate::types::ValueId::next(), read, vec![], vec![], None),
+                IRStatement::new(1, crate::types::ValueId::next(), sub, vec![0, 0], vec![], None),
+                IRStatement::new(2, crate::types::ValueId::next(), expose, vec![1], vec![], None),
+            ];
+            let result = PatternMatchOptim.exec(IRGraph::new(stmts));
+            assert!(!result.stmts.iter().any(|s| matches!(s.ir, IR::SubF | IR::SubI)), "float = {float}");
+            let exposed = result.stmts.last().unwrap();
+            let zero = &result.stmts[exposed.arguments[0] as usize].ir;
+            assert!(
+                matches!(zero, IR::ConstantFloat { value } if *value == 0.0) || matches!(zero, IR::ConstantInt { value: 0 }),
+                "float = {float}: {zero:?}"
+            );
+        }
+    }
+
+    /// Statements of a small graph, ids are indices, no argument value ids.
+    fn graph_of(irs: Vec<(IR, Vec<u32>)>) -> IRGraph {
+        IRGraph::new(
+            irs.into_iter()
+                .enumerate()
+                .map(|(i, (ir, args))| IRStatement::new(i as u32, crate::types::ValueId::next(), ir, args, vec![], None))
+                .collect(),
+        )
+    }
+
+    fn read(name: &str) -> IR {
+        IR::ReadInteger { path: crate::circuit_input::InputPath::new(name, vec![]), is_public: false }
+    }
+
+    /// `assert(lo <= x and x <= hi)` becomes one assertion per comparison,
+    /// each comparison keeping its form; nested conjunctions too.
+    #[test]
+    fn pattern_match_splits_asserted_conjunctions() {
+        let graph = graph_of(vec![
+            (read("x"), vec![]),
+            (IR::ConstantInt { value: -1 }, vec![]),
+            (IR::ConstantInt { value: 1 }, vec![]),
+            (IR::GteI, vec![0, 1]),
+            (IR::LteI, vec![0, 2]),
+            (IR::NeI, vec![0, 2]),
+            (IR::LogicalAnd, vec![3, 4]),
+            (IR::LogicalAnd, vec![6, 5]),
+            (IR::Assert, vec![7]),
+        ]);
+        let result = DeadCodeElimination.exec(PatternMatchOptim.exec(graph));
+        let asserted: Vec<&IR> = result
+            .stmts
+            .iter()
+            .filter(|s| matches!(s.ir, IR::Assert))
+            .map(|s| &result.stmts[s.arguments[0] as usize].ir)
+            .collect();
+        assert!(matches!(asserted.as_slice(), [IR::GteI, IR::LteI, IR::NeI]), "{asserted:?}");
+        assert!(result.stmts.iter().all(|s| !matches!(s.ir, IR::LogicalAnd)), "conjunction kept");
+    }
+
     #[test]
     fn test_memory_trace_injection() {
         let stmts = vec![

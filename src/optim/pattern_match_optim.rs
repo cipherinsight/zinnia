@@ -224,6 +224,10 @@ impl PatternMatchOptim {
     }
 
     fn optimize_sub_i(&self, b: &mut IRBuilder, ir: &IR, args: &[Value]) -> Value {
+        // `x - x = 0` for every int64 `x` (no overflow).
+        if is_same_ptr(args) {
+            return b.ir_constant_int(0);
+        }
         if args[1].int_val() == Some(0) {
             return args[0].clone();
         }
@@ -234,6 +238,10 @@ impl PatternMatchOptim {
     }
 
     fn optimize_sub_f(&self, b: &mut IRBuilder, ir: &IR, args: &[Value]) -> Value {
+        // `x - x = 0` exactly for every Q-encoded `x` (no inf or nan exists).
+        if is_same_ptr(args) {
+            return b.ir_constant_float(0.0);
+        }
         if args[1].float_val() == Some(0.0) {
             return args[0].clone();
         }
@@ -484,6 +492,53 @@ fn use_counts(graph: &IRGraph) -> HashMap<StmtId, usize> {
 
 /// The ordering comparisons (`>`, `>=`, `<=`) whose only use is an
 /// `Assert`: they keep their form (see `exec`).
+/// `LogicalAnd` statements used once, by an `Assert` or by another such
+/// conjunction: `assert(a and b)` splits into one assertion per conjunct.
+fn asserted_conjunctions(graph: &IRGraph, uses: &HashMap<StmtId, usize>) -> std::collections::HashSet<StmtId> {
+    let is_and = |id: StmtId| graph.stmts.get(id as usize).is_some_and(|s| matches!(s.ir, IR::LogicalAnd) && s.arguments.len() == 2);
+    let mut found = std::collections::HashSet::new();
+    let mut pending: Vec<StmtId> = graph
+        .stmts
+        .iter()
+        .filter(|s| matches!(s.ir, IR::Assert) && s.arguments.len() == 1)
+        .map(|s| s.arguments[0])
+        .collect();
+    while let Some(id) = pending.pop() {
+        if uses.get(&id).copied() == Some(1) && is_and(id) && found.insert(id) {
+            pending.extend(graph.stmts[id as usize].arguments.iter().copied());
+        }
+    }
+    found
+}
+
+/// The leaves of the conjunction `root` (statements that are not split
+/// conjunctions themselves), left to right.
+fn conjuncts(graph: &IRGraph, conjunctions: &std::collections::HashSet<StmtId>, root: StmtId) -> Vec<StmtId> {
+    if !conjunctions.contains(&root) {
+        return vec![root];
+    }
+    graph.stmts[root as usize].arguments.iter().flat_map(|a| conjuncts(graph, conjunctions, *a)).collect()
+}
+
+/// Ordering comparisons used only by a split conjunction: asserted ones
+/// after the split, so they keep their form (see `asserted_only`).
+fn conjunct_comparisons(
+    graph: &IRGraph,
+    uses: &HashMap<StmtId, usize>,
+    conjunctions: &std::collections::HashSet<StmtId>,
+) -> Vec<StmtId> {
+    conjunctions
+        .iter()
+        .flat_map(|c| graph.stmts[*c as usize].arguments.iter().copied())
+        .filter(|arg| uses.get(arg).copied() == Some(1))
+        .filter(|&arg| {
+            graph.stmts.get(arg as usize).is_some_and(|s| {
+                matches!(s.ir, IR::GtI | IR::GtF | IR::GteI | IR::GteF | IR::LteI | IR::LteF)
+            })
+        })
+        .collect()
+}
+
 fn asserted_only(graph: &IRGraph, uses: &HashMap<StmtId, usize>) -> std::collections::HashSet<StmtId> {
     graph
         .stmts
@@ -504,7 +559,9 @@ impl IRPass for PatternMatchOptim {
         let mut builder = IRBuilder::new();
         let mut value_lookup: HashMap<StmtId, Value> = HashMap::new();
         let uses = use_counts(&ir_graph);
-        let asserted = asserted_only(&ir_graph, &uses);
+        let conjunctions = asserted_conjunctions(&ir_graph, &uses);
+        let mut asserted = asserted_only(&ir_graph, &uses);
+        asserted.extend(conjunct_comparisons(&ir_graph, &uses, &conjunctions));
         let mut fusion = MembershipFusion::default();
 
         for stmt in ir_graph.get_topological_order(false) {
@@ -513,6 +570,19 @@ impl IRPass for PatternMatchOptim {
                 .iter()
                 .map(|&arg| value_lookup[&arg].clone())
                 .collect();
+            // `assert(a and b)` is `assert(a); assert(b)`: each conjunct is
+            // then an asserted comparison (one gap check, and a refined
+            // range for what follows) instead of a bit and a product.
+            if let (IR::Assert, [arg]) = (&stmt.ir, stmt.arguments.as_slice()) {
+                if conjunctions.contains(arg) {
+                    for leaf in conjuncts(&ir_graph, &conjunctions, *arg) {
+                        let value = value_lookup[&leaf].clone();
+                        builder.create_ir(&IR::Assert, &[value]);
+                    }
+                    value_lookup.insert(stmt.stmt_id, Value::None);
+                    continue;
+                }
+            }
             let sole_use = |arg: &StmtId| uses.get(arg).copied() == Some(1);
             let fused = match stmt.ir {
                 IR::LogicalOr if ir_args.len() == 2 && stmt.arguments.iter().all(sole_use) => {

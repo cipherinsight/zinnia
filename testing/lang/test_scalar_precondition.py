@@ -89,8 +89,9 @@ def test_chained_comparison_witness_emits_two_comparisons_and_logical_and():
     stmts = _dump_ir(_chained_cmp)
     classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
     assert classes.count("LessThanOrEqualIIR") >= 2
-    assert "LogicalAndIR" in classes
-    assert _assert_count(stmts) >= 1
+    # The optimizer asserts each conjunct on its own (PatternMatchOptim).
+    assert "LogicalAndIR" not in classes
+    assert _assert_count(stmts) >= 2
 
 
 def test_float_chained_comparison_uses_lit_float_terms():
@@ -108,8 +109,8 @@ def test_float_chained_comparison_witness_emits_float_comparisons():
     classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
     assert classes.count("LessThanOrEqualFIR") >= 2
     assert "LessThanOrEqualIIR" not in classes
-    assert "LogicalAndIR" in classes
-    assert _assert_count(stmts) >= 1
+    assert "LogicalAndIR" not in classes
+    assert _assert_count(stmts) >= 2
 
 
 def test_int_input_with_float_literal_bound_rejected_cleanly():
@@ -191,7 +192,8 @@ def test_logical_and_witness():
     stmts = _dump_ir(_logical_and)
     classes = [s.get("ir_instance", {}).get("__class__") for s in stmts]
     assert classes.count("GreaterThanIIR") >= 2
-    assert "LogicalAndIR" in classes
+    assert "LogicalAndIR" not in classes
+    assert _assert_count(stmts) >= 2
 
 
 # ── 6. Logical OR ───────────────────────────────────────────────────────

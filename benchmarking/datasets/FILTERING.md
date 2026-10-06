@@ -98,7 +98,15 @@ mechanically:
   called with its own parameter names is inlined.
 * Return value: the value DS-1000 checks (`result = <expr>` after the solution
   in `exec_context`, otherwise `result`).
-* No preconditions (`@requires`) are added.
+* No preconditions (`@requires`) are added, with one exception: 0318 and 0319
+  (`c[permutation] = np.arange(n)`, an inverse permutation) state their input
+  as a permutation of `0..n`, `@requires(lambda a, permutation:
+  is_permutation(permutation))` (author decision 2026-10-06). NumPy leaves
+  `np.empty` entries uninitialized for any other input, so the program's
+  result is defined only on permutations; the precondition is enforced in
+  circuit, and the handwritten baselines enforce the same statement (every
+  position hit exactly once by `[p_k == j]`), so neither side handles
+  duplicate or negative entries. The fixtures draw permutations.
 
 The acceptance kernels (every parameter a runtime input) are in
 `ds1000_numpy/generated/`. The performance set (`ds1000/`, see
