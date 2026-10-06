@@ -41,6 +41,10 @@ halo2_hw's circuit is compiled into the binary), reading the inputs (Zinnia:
 the Python input builder and `parse_inputs_s`; halo2_hw: `load_input_s`),
 reading the parameters and key (`load_params_s`, `load_pk_s` / `load_vk_s`),
 starting the proving thread pool (`thread_pool_s`) and writing the proof.
+Zinnia-only and outside the clocks: the check that the keys belong to the
+compiled circuit (its IR hash, computed once per process; about 16 ms of the
+first prove call on 0381's 10k statements). `prove_call_s` and
+`verify_call_s` time the whole Python call, everything included.
 """
 
 from __future__ import annotations

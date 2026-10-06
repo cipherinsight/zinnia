@@ -106,8 +106,10 @@ prove uses input B. The per-step timings in the raw records (`timings_s`):
 | verify | `verify_s`: transcript + `verify_proof` | `verify_s`: same calls | verify |
 
 Outside every clock on both sides: process start-up, Zinnia's recompilation in each step
-(the IR digest must equal setup's; halo2_hw's circuit is compiled into its binary), writing
-the proof, and the whole-call diagnostics (`prove_call_s`, `verify_call_s`, `process_wall`).
+(the IR digest must equal setup's; halo2_hw's circuit is compiled into its binary), Zinnia's
+check that the keys belong to the compiled circuit (an IR hash computed once per process),
+writing the proof, and the whole-call diagnostics (`prove_call_s`, `verify_call_s`,
+`process_wall`).
 
 ### halo2 parameters (same policy on both halo2 sides)
 
