@@ -55,6 +55,9 @@ impl Halo2BaseCell {
 
 pub struct Halo2BaseSynthesizer<'a> {
     builder: &'a mut BaseCircuitBuilder<Fp>,
+    /// Checks laid out after the verifier's challenges (`circuit.rs`),
+    /// registered by the lowerings that need them.
+    pub(crate) second_phase: super::circuit::SecondPhase,
     witness: Option<ResolvedWitness>,
     params: ProvingParams,
     public_values: Vec<Fp>,
@@ -169,6 +172,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
     ) -> Self {
         Self {
             builder,
+            second_phase: super::circuit::SecondPhase::default(),
             witness,
             params,
             public_values: Vec::new(),

@@ -27,7 +27,7 @@ use std::io::{BufReader, BufWriter, Write};
 use std::path::Path;
 use std::time::Instant;
 
-use halo2_base::gates::circuit::{builder::BaseCircuitBuilder, BaseCircuitParams, CircuitBuilderStage};
+use halo2_base::gates::circuit::{BaseCircuitParams, CircuitBuilderStage};
 use halo2_base::gates::flex_gate::MultiPhaseThreadBreakPoints;
 use halo2_base::halo2_proofs::{
     halo2curves::bn256::{Fr as Fp, G1Affine as EqAffine},
@@ -47,6 +47,7 @@ use halo2_base::halo2_proofs::{
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 
+use super::circuit::{CircuitParams, Halo2BaseCircuit};
 use super::{build_circuit, without_panic, ESTIMATE_K_MAX};
 use crate::circuit_input::ResolvedWitness;
 use crate::ir::IRGraph;
@@ -54,8 +55,8 @@ use crate::prove::error::ProvingError;
 use crate::prove::types::{ProvingParams, VerifyResult};
 
 /// The circuit type keys are read for: reading a key rebuilds the constraint
-/// system from the pinned [`BaseCircuitParams`].
-type KeyedCircuit = BaseCircuitBuilder<Fp>;
+/// system from the pinned [`CircuitParams`].
+type KeyedCircuit = Halo2BaseCircuit;
 
 /// The encoding of both keys on disk (the one `halo2_hw` uses): curve points
 /// uncompressed in Montgomery form, checked to be on the curve when read.
@@ -74,11 +75,23 @@ pub struct KeyPinning {
     /// Column layout of the keygen synthesis. Reading a key back rebuilds the
     /// constraint system from it, and the prover's synthesis is pinned to it.
     pub base_params: BaseCircuitParams,
-    /// Thread break points of the keygen synthesis, for the prover.
+    /// The circuit's verifier challenges (`circuit::CircuitParams`); 0 for a
+    /// one-phase circuit and in key directories written before there were any.
+    #[serde(default)]
+    pub challenges: usize,
+    /// Thread break points of the keygen synthesis (every phase), for the
+    /// prover.
     pub break_points: MultiPhaseThreadBreakPoints,
     /// `prove::ir_hash::compute_ir_hash` of the circuit the keys were made
     /// for (the hash `CompiledIR` caches).
     pub ir_hash: String,
+}
+
+impl KeyPinning {
+    /// The circuit parameters the keys were made for.
+    pub fn circuit_params(&self) -> CircuitParams {
+        CircuitParams { base: self.base_params.clone(), challenges: self.challenges }
+    }
 }
 
 /// The key one party holds.
@@ -177,7 +190,7 @@ impl Halo2BaseKeys {
         let params_seconds = started.elapsed().as_secs_f64();
 
         let started = Instant::now();
-        let base_params = pinning.base_params.clone();
+        let base_params = pinning.circuit_params();
         let key = match role {
             KeyRole::Prover => {
                 let path = dir.join(PK_FILE);
@@ -240,13 +253,15 @@ pub fn keygen(ir: &IRGraph, params: &ProvingParams) -> Result<Halo2BaseKeys, Pro
     let pk = without_panic("keygen_pk", params.k, || keygen_pk(&ipa_params, vk, &circuit))?.map_err(|e| {
         ProvingError::ProvingFailed { detail: format!("halo2-base keygen_pk failed: {:?}", e) }
     })?;
+    let circuit_params = circuit.params();
     let pinning = KeyPinning {
         params: params.clone(),
-        base_params: circuit.params(),
+        base_params: circuit_params.base,
+        challenges: circuit_params.challenges,
         break_points: circuit.break_points(),
         ir_hash,
     };
-    circuit.clear();
+    circuit.builder.clear();
     Ok(Halo2BaseKeys { pinning, ipa_params, key: CircuitKey::Proving(pk) })
 }
 
@@ -281,7 +296,7 @@ pub fn prove_with_keys(
 ) -> Result<TimedProof, ProvingError> {
     let pk = keys.pk()?;
     let t_witness = Instant::now();
-    let pinning = (keys.pinning.base_params.clone(), keys.pinning.break_points.clone());
+    let pinning = (keys.pinning.circuit_params(), keys.pinning.break_points.clone());
     let (circuit, public_values) =
         build_circuit(ir, Some(witness), keys.params(), CircuitBuilderStage::Prover, Some(pinning))?;
     let witness_seconds = t_witness.elapsed().as_secs_f64();
