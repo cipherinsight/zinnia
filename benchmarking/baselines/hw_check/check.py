@@ -13,10 +13,12 @@ Keys always come from input A and proofs from input B, so a circuit whose
 structure depends on the input values fails (H-11).
 
 Input domain: one input element the kernel reads (the first, in parameter
-order, whose change changes NumPy's output) is moved out of its dtype's domain
-(halo2: `mock --tamper-input`, a float to Q32 code 2^63 or an integer to
-2^64 + v; Noir: `prove --tamper-input`, the field value + 2^64); both systems
-must reject it. The halo2 mock also reports `redundant_input_checks`, which
+order, whose change changes NumPy's output on input B, else A;
+`CaseCheck.read_input`) is moved out of its dtype's domain (halo2: `mock
+--tamper-input`, a float to Q32 code 2^63 or an integer to 2^64 + v; Noir:
+`prove --tamper-input`, the field value + 2^64); both systems must reject it
+(the same input untampered is accepted by the A/B steps). A case with no such
+element fails. The halo2 mock also reports `redundant_input_checks`, which
 must be 0 (each input checked once).
 
 Outputs are compared position by position against the kernel body run as
@@ -46,7 +48,7 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
-import copy
+import numpy as np
 
 from .reference import fixture_arguments, flatten_output, load_kernel, reference_outputs
 
@@ -127,40 +129,43 @@ class CaseCheck:
             problems.append(f"tampered public accepted: {bad}")
         return bad
 
-    def read_input(self) -> tuple[str, int] | None:
-        """An input element the kernel reads: the first (parameter order; first,
-        last and middle element) whose change changes NumPy's output on B."""
+    def read_input(self) -> tuple[str, int, str] | None:
+        """An input element the kernel reads, as (parameter, flat index, input
+        set) for the out-of-domain step: the first element (parameter order;
+        each parameter's first, last and middle element before the others)
+        whose change changes NumPy's output, on input B, else on input A.
+        Boolean parameters are skipped (their out-of-domain value has no
+        fixture encoding)."""
         kernel = load_kernel(self.dir / "kernel.py")
-        base = self.expected["B"]
-        for p in self.fixture["parameters"]:
-            values = self.fixture["inputs"]["B"][p["name"]]
-            n = 1
-            for d in p.get("shape", []):
-                n *= d
-            for index in dict.fromkeys([0, n - 1, n // 2]):
+        params = self.fixture["parameters"]
+        sizes = [math.prod(p["shape"]) if p["kind"] == "array" else 1 for p in params]
+        order = [(k, i) for k, n in enumerate(sizes) for i in dict.fromkeys([0, n - 1, n // 2])]
+        order += [(k, i) for k, n in enumerate(sizes) for i in range(n) if i not in (0, n - 1, n // 2)]
+        for input_name in ("B", "A"):
+            args = fixture_arguments(self.fixture, input_name)
+            fresh = lambda: [a.copy() if isinstance(a, np.ndarray) else a for a in args]
+            base = flatten_output(kernel(*fresh()))
+            for k, index in order:
+                if params[k]["dtype"] == "bool":
+                    continue
                 for delta in (1000, -1000, 1, -1):
-                    fx = copy.deepcopy(self.fixture)
-                    flat = fx["inputs"]["B"][p["name"]]
-                    if p["kind"] == "scalar":
-                        fx["inputs"]["B"][p["name"]] = flat + delta
+                    trial = fresh()
+                    if params[k]["kind"] == "scalar":
+                        trial[k] = trial[k] + delta
                     else:
-                        cell = flat
-                        idx = []
-                        rem = index
-                        for d in reversed(p["shape"]):
-                            idx.append(rem % d)
-                            rem //= d
-                        idx.reverse()
-                        for i in idx[:-1]:
-                            cell = cell[i]
-                        cell[idx[-1]] = cell[idx[-1]] + delta
+                        trial[k].reshape(-1)[index] += delta
                     try:
-                        out = flatten_output(kernel(*fixture_arguments(fx, "B")))
+                        out = flatten_output(kernel(*trial))
                     except Exception:
                         continue
                     if out != base:
-                        return p["name"], index
+                        return params[k]["name"], index, input_name
         return None
+
+    def tamper_target(self) -> tuple[str, int, str] | None:
+        if not hasattr(self, "_target"):
+            self._target = self.read_input()
+        return self._target
 
     def halo2(self) -> dict:
         b = str(self.halo2_bin)
@@ -189,10 +194,14 @@ class CaseCheck:
                     n, problems)
         if steps["mock_B"].get("redundant_input_checks"):
             problems.append(f"{steps['mock_B']['redundant_input_checks']} inputs checked twice")
-        target = self.read_input()
-        if target is not None:
-            spec = f"{target[0]}:{target[1]}"
-            steps["mock_out_of_domain"] = run_json([b, "mock", *common, "--input", "B", "--tamper-input", spec])
+        target = self.tamper_target()
+        if target is None:
+            problems.append("no input element to move out of its domain")
+        else:
+            name, index, input_name = target
+            spec = f"{name}:{index}"
+            steps["mock_out_of_domain"] = run_json(
+                [b, "mock", *common, "--input", input_name, "--tamper-input", spec])
             if steps["mock_out_of_domain"].get("satisfied") is not False:
                 problems.append(f"out-of-domain input {spec} accepted")
         return {
@@ -224,11 +233,14 @@ class CaseCheck:
                 n = len(Path(steps["prove_B"]["public_inputs_path"]).read_bytes()) // 32
                 steps["verify_tampered"] = self._tamper(
                     lambda i: run_json([*drv, "verify", *common, "--tamper-index", str(i)], cwd), n, problems)
-            target = self.read_input()
-            if target is not None:
-                spec = f"{target[0]}:{target[1]}"
+            target = self.tamper_target()
+            if target is None:
+                problems.append("no input element to move out of its domain")
+            else:
+                name, index, input_name = target
+                spec = f"{name}:{index}"
                 steps["prove_out_of_domain"] = run_json(
-                    [*drv, "prove", *common, "--fixture", str(self.fixture_path), "--input", "B",
+                    [*drv, "prove", *common, "--fixture", str(self.fixture_path), "--input", input_name,
                      "--tamper-input", spec], cwd)
                 if steps["prove_out_of_domain"].get("ok") is not False:
                     problems.append(f"out-of-domain input {spec} accepted")
