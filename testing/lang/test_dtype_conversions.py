@@ -261,3 +261,57 @@ def test_eye_with_a_rectangular_shape_or_offset_is_rejected():
     for call in ["np.eye(3, 4)", "np.eye(3, k=1)"]:
         with pytest.raises(ZinniaException, match=r"only the square identity"):
             compile_kernel(f'def kernel(x: Integer):\n    return {call}\n')
+
+
+# ── arithmetic on bool arrays ────────────────────────────────────────────
+
+BOOL_EXPRESSIONS = [
+    # `+` of two bool arrays is a logical or (it was an integer sum: the
+    # first one proved 5, NumPy gives 3).
+    ("Float", np.array([3.0, 1.0, 2.0]), "((x > 1.5) + (x > 0.5)).sum()"),
+    ("Integer", np.array([0, 2, -1, 300]), "(x > 0) + (x > 1)"),
+    ("Integer", np.array([0, 2, -1, 300]), "np.add(x > 0, x < 1)"),
+    ("Integer", np.array([0, 2, -1, 300]), "(x > 0) + True"),
+    ("Integer", np.array([0, 2, -1, 300]), "x[(x > 1) + (x < 0)].sum()"),
+    # `~` of a bool array is the logical not, also when its cells are
+    # integers (a product of two bool arrays; a write into a bool array).
+    ("Integer", np.array([0, 2, -1, 300]), "~((x > 0) * (x > 1))"),
+    ("Integer", np.array([0, 2, -1, 300]), "~((x > 0) + (x > 1))"),
+]
+
+
+@pytest.mark.parametrize("element, x, expression", BOOL_EXPRESSIONS)
+def test_bool_array_arithmetic_follows_numpy(element, x, expression):
+    n = len(x)
+    good = np.asarray(eval(expression, {"np": np, "x": x}))
+    shape = '"' + " ".join(map(str, good.shape)) + '"' if good.shape else None
+    claim = f"Integer[Array, {shape}]" if shape else "Integer"
+    source = (f'def kernel(x: {element}[Array, "{n}"], expected: {claim}):\n'
+              f'    assert np.all(({expression}) == expected)\n')
+    program = compile_kernel(source)
+    good = good.astype(np.int64) if good.shape else int(good)
+    wrong = good + 1
+    assert mock_accepts(program, x, good)
+    assert not mock_accepts(program, x, wrong)
+    assert halo2_accepts(program, x, good)
+    assert not halo2_accepts(program, x, wrong)
+    assert noir_accepts(program, x, good)
+    assert not noir_accepts(program, x, wrong)
+
+
+def test_bool_array_writes_keep_the_bool_dtype():
+    source = ('def kernel(x: Integer[Array, "4"]):\n'
+              '    m = np.zeros(4, dtype=bool)\n'
+              '    m[0] = True\n'
+              '    m[1] = x[1] > 0\n'
+              '    return ~m\n')
+    assert_matches_numpy(source, np.array([0, 2, -1, 300]))
+
+
+@pytest.mark.parametrize("expression, message", [
+    ("(x > 0) - (x > 1)", "numpy boolean subtract"),
+    ("-(x > 0)", "numpy boolean negative"),
+])
+def test_bool_array_subtraction_and_negation_are_numpys_type_error(expression, message):
+    with pytest.raises(ZinniaException, match=message):
+        compile_kernel(f'def kernel(x: Integer[Array, "4"]):\n    return {expression}\n')

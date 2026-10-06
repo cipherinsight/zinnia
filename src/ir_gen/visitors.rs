@@ -1386,6 +1386,9 @@ impl IRGenerator {
                 })
             }
             Value::DynamicNDArray(d) => match op {
+                "usub" if self.builder.is_bool_segment(d.segment_id) => {
+                    crate::helpers::dtype::reject_bool_negative()
+                }
                 "usub" => {
                     let out_dtype = d.dtype;
                     crate::ops::dyn_ndarray::binary::dyn_unary_op(
@@ -1409,6 +1412,15 @@ impl IRGenerator {
                     crate::types::NumberType::Integer,
                     |b, v| b.ir_logical_not(v),
                 ),
+                // `~` of a bool array is the logical not.
+                "invert" if self.builder.is_bool_segment(d.segment_id) => {
+                    crate::ops::dyn_ndarray::binary::dyn_unary_op(
+                        &mut self.builder,
+                        d,
+                        crate::types::NumberType::Integer,
+                        |b, v| b.ir_logical_not(v),
+                    )
+                }
                 "invert" => crate::ops::dyn_ndarray::binary::dyn_unary_op(
                     &mut self.builder,
                     d,
@@ -1457,7 +1469,7 @@ impl IRGenerator {
                     // rows). For Boolean operands route to `ir_logical_not` (one
                     // row). Mirrors `static_array::elementwise::unary_array`,
                     // which already handles this for StaticArray cells.
-                    if matches!(operand, Value::Boolean(_)) {
+                    if self.builder.is_bool_cell(operand) {
                         self.builder.ir_logical_not(operand)
                     } else {
                         self.builder.ir_bit_not_i(operand)

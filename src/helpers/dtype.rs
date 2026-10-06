@@ -206,6 +206,30 @@ impl Dtype {
     }
 }
 
+/// The operator NumPy applies for `op` between two bool arrays, or a bool
+/// array and a bool (`builder/bool_dtype.rs`): `+` is a logical or (the
+/// result stays bool, `True + True` is `True`), `-` raises NumPy's
+/// `TypeError`; any other operator computes on the 0/1 values (`*` is
+/// already the logical and).
+pub fn operator_on_bools(op: &str) -> &str {
+    match op {
+        "add" => "or",
+        "sub" => panic!(
+            "TypeError: numpy boolean subtract, the `-` operator, is not supported, use the \
+             bitwise_xor, the `^` operator, or the logical_xor function instead"
+        ),
+        other => other,
+    }
+}
+
+/// NumPy's `TypeError` for `-m` of a bool array.
+pub fn reject_bool_negative() -> ! {
+    panic!(
+        "TypeError: the numpy boolean negative, the `-` operator, is not supported, use the `~` \
+         operator or the logical_not function instead"
+    )
+}
+
 /// `x` converted into `to`, as NumPy's `astype` (see the module doc): a
 /// scalar stays a scalar (`np.float64(2.5).astype(int)` is a NumPy scalar),
 /// an array or a (nested) list becomes an array of the dtype.
