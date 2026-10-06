@@ -281,60 +281,27 @@ fn smt_caches_resolution() {
     assert_eq!(r.cache_size(), 1);
 }
 
-/// Tight timeout returns None on a pathological formula. We construct
-/// an SmtResolver with a 1 ms timeout and a deliberately-non-trivial
-/// formula (a long chain of MulI's grows the search space) — the
-/// timeout fires and the resolver returns None instead of hanging.
-///
-/// The test is hermetic because Z3 honours the timeout regardless of
-/// machine speed; the only assertion is "returns None" (not "returns
-/// quickly"). To make this robust we compose a formula whose decision
-/// is unique (so the resolver would, given enough time, succeed) but
-/// which contains enough multiplicative structure that a 1 ms budget
-/// can't crack it.
+/// Each query is bounded by a step budget (`rlimit`), counted rather than
+/// timed, so the outcome does not depend on the machine or its load: a value
+/// Z3 resolves within the default budget is reported unknown with a budget
+/// of one step.
 #[test]
-fn smt_honours_tight_timeout() {
-    // Build: x = ReadInteger("x"). Then a big chain of multiplications
-    // and conditional adds. Even though `x*x*...*x ` is determined by x,
-    // the resolver can't prove uniqueness without first picking x — and
-    // the formula is large enough that with a 1 ms budget Z3 returns
-    // unknown rather than the unique-not-found "non-unique" verdict
-    // produced when the sub-checks succeed.
-    let mut stmts = Vec::new();
-    stmts.push(IRStatement::new(
-        0,
-        crate::types::ValueId::next(),
-        IR::ReadInteger {
-            path: InputPath::new("x", vec![]),
-            is_public: false,
-        },
-        vec![],
-        vec![],
-        None,
-    ));
-    // Build a chain: stmt1 = stmt0 * stmt0, stmt2 = stmt1 * stmt0, ...
-    // up to stmt30. Result has high arithmetic complexity.
-    let mut last = 0u32;
-    for i in 1..=30 {
-        stmts.push(IRStatement::new(
-            i,
-            crate::types::ValueId::next(),
-            IR::MulI,
-            vec![last, 0],
-            vec![],
-            None,
-        ));
-        last = i;
-    }
-    let v = runtime_int(last);
-    let mut r = SmtResolver::new().with_timeout(1);
-    // Within 1 ms, Z3 likely returns sat with a model — but the
-    // re-check (var != that_value) will likely also return sat (Z3
-    // can find another counter-model), so the resolver returns None.
-    // Either way, the test asserts no Some(_) leaks: because the
-    // wire genuinely depends on x, no unique value should be
-    // returned regardless of timeout.
-    assert_eq!(r.resolve_int_with_stmts(&v, &stmts), None);
+fn smt_honours_tight_rlimit() {
+    // d = (x*x*x*x >= 0) ? 1 : 2: always 1, but only a solver can tell.
+    let stmt = |id, ir, args| IRStatement::new(id, crate::types::ValueId::next(), ir, args, vec![], None);
+    let stmts = vec![
+        stmt(0, IR::ReadInteger { path: InputPath::new("x", vec![]), is_public: false }, vec![]),
+        stmt(1, IR::MulI, vec![0, 0]),
+        stmt(2, IR::MulI, vec![1, 1]),
+        stmt(3, IR::ConstantInt { value: 0 }, vec![]),
+        stmt(4, IR::GteI, vec![2, 3]),
+        stmt(5, IR::ConstantInt { value: 1 }, vec![]),
+        stmt(6, IR::ConstantInt { value: 2 }, vec![]),
+        stmt(7, IR::SelectI, vec![4, 5, 6]),
+    ];
+    let v = runtime_int(7);
+    assert_eq!(SmtResolver::new().resolve_int_with_stmts(&v, &stmts), Some(1));
+    assert_eq!(SmtResolver::new().with_rlimit(1).resolve_int_with_stmts(&v, &stmts), None);
 }
 
 /// `on_ir_mutated(&[])` clears the entire cache (P1 conservative).
@@ -751,42 +718,6 @@ fn smt_max_formula_size_aborts_oversized_walk() {
     assert_eq!(t.queries_smt_resolved.load(Ordering::SeqCst), 0);
 }
 
-/// P5 commit 3: a 1ms timeout on a moderately-complex formula
-/// returns None instead of resolving the unique value. (The legacy
-/// `smt_honours_tight_timeout` test already covers this; this
-/// duplicates with the explicit "via the new mitigation knob"
-/// framing.)
-#[test]
-fn smt_tight_timeout_via_with_timeout_mitigation() {
-    let mut stmts = Vec::new();
-    stmts.push(IRStatement::new(
-        0,
-        crate::types::ValueId::next(),
-        IR::ReadInteger {
-            path: InputPath::new("x", vec![]),
-            is_public: false,
-        },
-        vec![],
-        vec![],
-        None,
-    ));
-    let mut last = 0u32;
-    for i in 1..=20 {
-        stmts.push(IRStatement::new(
-            i,
-            crate::types::ValueId::next(),
-            IR::MulI,
-            vec![last, 0],
-            vec![],
-            None,
-        ));
-        last = i;
-    }
-    let v = runtime_int(last);
-    let mut r = SmtResolver::new().with_timeout(1);
-    assert_eq!(r.resolve_int_with_stmts(&v, &stmts), None);
-}
-
 /// `LayeredResolver::range_then_smt` shares one telemetry across the
 /// range and SMT layers. Construct `select(c, 7, 7)` (range answers
 /// it). Counters: `queries_total` = 1, `queries_range_hit` = 1,
@@ -860,7 +791,7 @@ fn bounded_int_neither_for_unconstrained_symbolic() {
     // resolver-provable bound under the SMT-enabled pipeline.
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
     let outcome = require_static_or_bounded_int(&mut b, &k, SiteKind::ShapeAxis(0), None);
@@ -877,7 +808,7 @@ fn bounded_int_recovers_bound_from_op_contract_facts() {
 
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
     let k_vid = k.value_id().unwrap();
@@ -914,7 +845,7 @@ fn bounded_int_bounded_branch_via_structural_predicate() {
 
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
 
     // Emit reads at indices 0 and 15 — the array-length inference
@@ -948,7 +879,7 @@ fn bounded_int_static_from_statically_resolvable_select() {
     // available.
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
     // Build `select(true, 7, 7)` so it constant-folds to 7.
     let t = b.ir_constant_bool(true);
@@ -995,7 +926,7 @@ fn probe_in_range_recovers_from_op_contract_facts() {
     use crate::optim::predicates::formula::CmpOp;
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
     // A runtime int with no resolver-derivable bound. We pick a
     // window [10, 20) so the resolver's spuriously-tight (0, 0)
@@ -1025,7 +956,7 @@ fn require_static_int_recovers_from_op_contract_eq_fact() {
     use crate::optim::predicates::formula::CmpOp;
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
     let v = b.ir_read_integer(InputPath::new("n", vec![]), false);
     let v_vid = v.value_id().unwrap();
@@ -1048,7 +979,7 @@ fn require_static_int_rejects_when_facts_only_give_range() {
     use crate::optim::predicates::formula::CmpOp;
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
     let v = b.ir_read_integer(InputPath::new("n", vec![]), false);
     let v_vid = v.value_id().unwrap();
@@ -1082,7 +1013,7 @@ fn resolve_int_or_bounded_falls_through_to_existing_fact_scan() {
     use crate::optim::predicates::formula::CmpOp;
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
     let k_vid = k.value_id().unwrap();
@@ -1104,7 +1035,7 @@ fn resolve_int_or_bounded_recovers_bound_via_prove_arithmetic_fact() {
     use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
     let k_vid = k.value_id().unwrap();
@@ -1147,7 +1078,7 @@ fn resolve_int_or_bounded_returns_neither_on_unknown() {
     // Neither — Unknown from prove() defaults to no admission.
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
     let outcome = resolve_int_or_bounded(&mut b, &k, SiteKind::ReshapeDim, None);
@@ -1162,7 +1093,7 @@ fn resolve_int_or_bounded_collapses_min_eq_max_to_static() {
     use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
     let k_vid = k.value_id().unwrap();
@@ -1197,7 +1128,7 @@ fn ndarray_axis_or_other_chokepoint_admits_value_provable_via_prove() {
     use crate::optim::predicates::formula::{ArithOp, CmpOp, ContractTerm, ContractVar};
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
     let k = b.ir_read_integer(InputPath::new("k", vec![]), false);
     let k_vid = k.value_id().unwrap();
@@ -1236,7 +1167,7 @@ fn ask_bounds_falls_back_to_facts() {
     use crate::optim::predicates::formula::CmpOp;
     let mut b = crate::builder::IRBuilder::new();
     b.set_resolver(Box::new(LayeredResolver::range_then_smt_with_budget(
-        500, 4096,
+        crate::optim::z3_budget::OPTIMIZER_RESOLVER_RLIMIT, 4096,
     )));
     let v = b.ir_read_integer(InputPath::new("k", vec![]), false);
     let v_vid = v.value_id().unwrap();

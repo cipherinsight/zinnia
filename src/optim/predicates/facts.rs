@@ -60,7 +60,7 @@
 //! are SSA values, so a frame's facts hold wherever its atoms do; closing a
 //! frame only forgets facts.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::optim::predicates::formula::{BoolOp, ContractTerm};
 use crate::types::ValueId;
@@ -84,9 +84,12 @@ pub type Fact = ContractTerm;
 /// arrive with `Var(Input(name))` leaves, are substituted to
 /// `Var(Value(vid))` at intake against the parameter's `ReadInteger`
 /// Value, then indexed normally.
+///
+/// `by_value` is ordered so that every walk over the facts (and with it the
+/// order in which `optim::prove` hands them to Z3) is the same on every run.
 #[derive(Debug, Default, Clone)]
 pub struct FactSet {
-    pub by_value: HashMap<ValueId, Vec<Fact>>,
+    pub by_value: BTreeMap<ValueId, Vec<Fact>>,
 }
 
 impl FactSet {

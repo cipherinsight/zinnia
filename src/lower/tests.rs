@@ -102,6 +102,25 @@ fn ties_go_to_the_earliest_node_and_unjustifiable_roots_have_no_selection() {
     assert_eq!(select_greedy(&missing), None);
 }
 
+/// Four lanes, each by a plain node (8) or by one that also provides a
+/// shared value the program needs once (10): any one lane can provide it, so
+/// cost and sum of positions tie four ways (the shape of DS-1000 case 0345,
+/// whose circuit changed between runs with Z3's arbitrary pick). The rule
+/// picks the set that leaves out the highest-numbered nodes: the first lane
+/// provides the value.
+#[test]
+fn equal_cost_and_position_ties_have_one_answer() {
+    let mut nodes = Vec::new();
+    for l in 1..=4 {
+        nodes.push(node(vec![], vec![lane(l)], 8));
+        nodes.push(node(vec![], vec![lane(l), shared("range")], 10));
+    }
+    let problem = Problem { nodes, roots: vec![lane(1), lane(2), lane(3), lane(4), shared("range")] };
+    let mut chosen = select_exact(&problem).expect("a selection").nodes;
+    chosen.sort_unstable();
+    assert_eq!(chosen, vec![1, 2, 4, 6]);
+}
+
 #[test]
 fn a_fact_justifies_any_weaker_fact() {
     let narrow = Fact::everywhere(Claim::InRange { x: 7, lo: 0, hi: Bound::Const(4) });

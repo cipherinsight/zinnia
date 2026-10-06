@@ -32,7 +32,7 @@
 //! registry's `meta_facts_fn`, and the contract-template language stays
 //! quantifier-free for tractability.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use z3::ast::{Bool, Int, Real};
@@ -255,14 +255,14 @@ impl ContractTerm {
 #[derive(Debug, Clone, Default)]
 pub struct Substitution {
     /// Map: input name → its `Z3Term` at the call site.
-    inputs: HashMap<String, Z3Term>,
+    inputs: BTreeMap<String, Z3Term>,
     /// The op's output term, if known.
     output: Option<Z3Term>,
     /// Map: `ValueId` → its `Z3Term`. Populated by the fact-propagation
     /// framework when lowering value-anchored facts (`Var(Value(_))`).
-    value_ids: HashMap<ValueId, Z3Term>,
+    value_ids: BTreeMap<ValueId, Z3Term>,
     /// Map: shape parameter name → its compile-time Z3 term.
-    shape_params: HashMap<String, Z3Term>,
+    shape_params: BTreeMap<String, Z3Term>,
 }
 
 impl Substitution {

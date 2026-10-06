@@ -882,7 +882,7 @@ fn while_guard_throttle_skips_repeated_unresolved_resolver_queries() {
     };
     let mut cfg = IRGenConfig::default();
     cfg.smt_enable = true;
-    cfg.smt_query_timeout_ms = 1;
+    cfg.smt_query_rlimit = 1;
     cfg.loop_limit = 16;
     let mut gen = IRGenerator::new(cfg);
     let telemetry = gen

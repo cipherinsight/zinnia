@@ -29,7 +29,7 @@
 //!   time and re-asking is rare. Adding a `(term, fact-set, paths)`-keyed
 //!   cache later is straightforward; see the card README for the design.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use z3::ast::{Bool, Int};
@@ -57,6 +57,7 @@ pub fn reset_prove_counters() {
 }
 use crate::optim::predicates::facts::{Fact, FactScope};
 use crate::optim::predicates::formula::{self, ContractTerm, ContractVar, Substitution};
+use crate::optim::z3_budget;
 use crate::types::ValueId;
 
 // ---------------------------------------------------------------------------
@@ -69,8 +70,8 @@ pub enum ProveOutcome {
     Proved,
     /// `(facts ∧ paths) ⇒ ¬term` was discharged by SMT.
     Disproved,
-    /// No discharge succeeded — could mean timeout, no entailment, or no
-    /// contradiction. Treat as "no information."
+    /// No discharge succeeded — could mean an exhausted step budget, no
+    /// entailment, or no contradiction. Treat as "no information."
     Unknown,
 }
 
@@ -81,11 +82,12 @@ pub enum ProveOutcome {
 /// Query whether `term` follows from the visible facts + path conditions
 /// currently held by `b.facts`. See module docs for outcome semantics.
 ///
-/// Reads `ZINNIA_SMT_PROVE_TIMEOUT_MS` for the per-check budget; defaults
-/// to 500 ms. The same budget applies to both the entailment check and
-/// (if needed) the contradiction check. Queries that don't return within
-/// the cap surface as `ProveOutcome::Unknown` (which callers treat as
-/// "no information" — same as if the prove had been skipped).
+/// Reads `ZINNIA_SMT_PROVE_RLIMIT` for the per-check budget in Z3 steps;
+/// defaults to `z3_budget::PROVE_RLIMIT` (a step budget, not a timeout, so
+/// the outcome does not depend on machine load). The same budget applies to
+/// both the entailment check and (if needed) the contradiction check.
+/// Queries that exhaust it surface as `ProveOutcome::Unknown` (which callers
+/// treat as "no information" — same as if the prove had been skipped).
 pub fn prove(b: &IRBuilder, term: &ContractTerm) -> ProveOutcome {
     // A/B-harness kill switch: under `ZINNIA_REQ_DISABLE=1` the prove
     // layer returns Unknown unconditionally. The discharge_requires
@@ -278,19 +280,17 @@ fn prove_atomic_with_facts(term: &ContractTerm, facts: &[Fact], paths: &[Fact]) 
         }
     }
 
-    // Default 500 ms per Z3 check. See module docstring for the
-    // rationale; override via `ZINNIA_SMT_PROVE_TIMEOUT_MS`.
-    let timeout_ms = std::env::var("ZINNIA_SMT_PROVE_TIMEOUT_MS")
+    let rlimit = std::env::var("ZINNIA_SMT_PROVE_RLIMIT")
         .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(500);
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(z3_budget::PROVE_RLIMIT);
 
-    let entails = check_unsat(facts, paths, term, /* negate */ true, timeout_ms);
+    let entails = check_unsat(facts, paths, term, /* negate */ true, rlimit);
     match entails {
         Some(true) => return ProveOutcome::Proved,
         Some(false) | None => {}
     }
-    let contradicts = check_unsat(facts, paths, term, /* negate */ false, timeout_ms);
+    let contradicts = check_unsat(facts, paths, term, /* negate */ false, rlimit);
     match contradicts {
         Some(true) => ProveOutcome::Disproved,
         _ => ProveOutcome::Unknown,
@@ -507,18 +507,18 @@ pub fn minimize_shape_param(
     symbol: &str,
     facts: &[Fact],
     lower_bound: i64,
-    timeout_ms: u64,
+    rlimit: u32,
 ) -> Option<i64> {
-    optimize_shape_param(symbol, facts, lower_bound, false, timeout_ms)
+    optimize_shape_param(symbol, facts, lower_bound, false, rlimit)
 }
 
 pub fn maximize_shape_param(
     symbol: &str,
     facts: &[Fact],
     lower_bound: i64,
-    timeout_ms: u64,
+    rlimit: u32,
 ) -> Option<i64> {
-    let max = optimize_shape_param(symbol, facts, lower_bound, true, timeout_ms)?;
+    let max = optimize_shape_param(symbol, facts, lower_bound, true, rlimit)?;
     let upper_bound = ContractTerm::le(
         ContractTerm::Var(ContractVar::ShapeParam(symbol.to_string())),
         ContractTerm::lit(max),
@@ -539,13 +539,13 @@ pub fn maximize_shape_param(
 /// `negate = false` → assert `term`;  unsat means term is *contradicted*.
 ///
 /// Returns `Some(true)` if unsat (the chosen relation held), `Some(false)`
-/// if sat, `None` if Z3 returned Unknown (typically a timeout).
+/// if sat, `None` if Z3 returned Unknown (typically the step budget ran out).
 fn check_unsat(
     facts: &[Fact],
     paths: &[Fact],
     term: &ContractTerm,
     negate: bool,
-    timeout_ms: u64,
+    rlimit: u32,
 ) -> Option<bool> {
     PROVE_Z3_INVOCATIONS.fetch_add(1, Ordering::Relaxed);
     // Build a single Substitution over every Input / Value(vid) the
@@ -553,9 +553,9 @@ fn check_unsat(
     // the SMT layer then sees the names by string identity (same
     // Input(name) maps to the same Int symbol across the assertion set,
     // and the same Value(vid) maps to the same Int symbol too).
-    let mut input_seen: HashMap<String, Int> = HashMap::new();
-    let mut value_seen: HashMap<ValueId, Int> = HashMap::new();
-    let mut shape_seen: HashMap<String, Int> = HashMap::new();
+    let mut input_seen: BTreeMap<String, Int> = BTreeMap::new();
+    let mut value_seen: BTreeMap<ValueId, Int> = BTreeMap::new();
+    let mut shape_seen: BTreeMap<String, Int> = BTreeMap::new();
 
     for f in facts {
         collect_vars(f, &mut input_seen, &mut value_seen, &mut shape_seen);
@@ -576,12 +576,7 @@ fn check_unsat(
         subst = subst.with_shape_param(name.clone(), int.clone());
     }
 
-    let solver = z3::Solver::new();
-    {
-        let mut params = z3::Params::new();
-        params.set_u32("timeout", timeout_ms.min(u32::MAX as u64) as u32);
-        solver.set_params(&params);
-    }
+    let solver = z3_budget::solver(rlimit);
 
     for f in facts.iter().chain(paths.iter()) {
         match formula::lower_bool(f, &subst) {
@@ -617,7 +612,7 @@ fn check_unsat(
     };
     solver.assert(&target);
 
-    match solver.check() {
+    match z3_budget::check("prove.entails", &solver) {
         z3::SatResult::Unsat => Some(true),
         z3::SatResult::Sat => Some(false),
         z3::SatResult::Unknown => None,
@@ -629,11 +624,11 @@ fn optimize_shape_param(
     facts: &[Fact],
     lower_bound: i64,
     maximize: bool,
-    timeout_ms: u64,
+    rlimit: u32,
 ) -> Option<i64> {
-    let mut input_seen: HashMap<String, Int> = HashMap::new();
-    let mut value_seen: HashMap<ValueId, Int> = HashMap::new();
-    let mut shape_seen: HashMap<String, Int> = HashMap::new();
+    let mut input_seen: BTreeMap<String, Int> = BTreeMap::new();
+    let mut value_seen: BTreeMap<ValueId, Int> = BTreeMap::new();
+    let mut shape_seen: BTreeMap<String, Int> = BTreeMap::new();
     for f in facts {
         collect_vars(f, &mut input_seen, &mut value_seen, &mut shape_seen);
     }
@@ -652,10 +647,7 @@ fn optimize_shape_param(
         subst = subst.with_shape_param(name.clone(), int.clone());
     }
 
-    let opt = z3::Optimize::new();
-    let mut params = z3::Params::new();
-    params.set_u32("timeout", timeout_ms.min(u32::MAX as u64) as u32);
-    opt.set_params(&params);
+    let opt = z3_budget::optimize(rlimit);
     for f in facts {
         let out = formula::lower_bool(f, &subst).ok()?;
         opt.assert(&out.term);
@@ -675,7 +667,7 @@ fn optimize_shape_param(
     } else {
         opt.minimize(&target);
     }
-    match opt.check(&[]) {
+    match z3_budget::check_optimize("prove.shape_param", &opt) {
         z3::SatResult::Sat => opt
             .get_model()
             .and_then(|model| model.eval(&target, true))
@@ -689,9 +681,9 @@ fn optimize_shape_param(
 /// twice reuses the existing entry.
 fn collect_vars(
     term: &ContractTerm,
-    inputs: &mut HashMap<String, Int>,
-    values: &mut HashMap<ValueId, Int>,
-    shapes: &mut HashMap<String, Int>,
+    inputs: &mut BTreeMap<String, Int>,
+    values: &mut BTreeMap<ValueId, Int>,
+    shapes: &mut BTreeMap<String, Int>,
 ) {
     match term {
         ContractTerm::Var(ContractVar::Input(name)) => {
@@ -794,14 +786,14 @@ mod tests {
             cmp(CmpOp::Ge, shape("N"), lit(1)),
             cmp(CmpOp::Le, shape("N"), lit(5000)),
         ];
-        assert_eq!(minimize_shape_param("N", &facts, 1, 1_000), Some(1));
-        assert_eq!(maximize_shape_param("N", &facts, 1, 1_000), Some(5000));
+        assert_eq!(minimize_shape_param("N", &facts, 1, z3_budget::RESOLVER_RLIMIT), Some(1));
+        assert_eq!(maximize_shape_param("N", &facts, 1, z3_budget::RESOLVER_RLIMIT), Some(5000));
     }
 
     #[test]
     fn shape_param_optimizer_rejects_unbounded_upper_objective() {
         let facts = vec![cmp(CmpOp::Ge, shape("N"), lit(1))];
-        assert_eq!(maximize_shape_param("N", &facts, 1, 1_000), None);
+        assert_eq!(maximize_shape_param("N", &facts, 1, z3_budget::RESOLVER_RLIMIT), None);
     }
 
     #[test]
