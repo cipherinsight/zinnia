@@ -208,6 +208,30 @@ fn and_all(b: &mut IRBuilder, parts: Vec<Value>) -> Value {
     acc
 }
 
+/// The offset of the element at the compile-time indices `idx_vals` (one
+/// per axis; negative ones count from the end). An index outside its axis
+/// is NumPy's `IndexError` where the write runs (`checked_axis_index`):
+/// a compile error on a path that always runs; under a runtime predicate
+/// the circuit asserts the write does not run and index 0 stands in. (The
+/// offset used to be summed unchecked, so `a[0, 5] = v` on a 4x4 array
+/// wrote `a[1, 1]`.)
+fn constant_element_offset(
+    b: &mut IRBuilder,
+    shape: &[usize],
+    strides: &[usize],
+    idx_vals: &[Value],
+) -> usize {
+    idx_vals
+        .iter()
+        .enumerate()
+        .map(|(ax, idx)| {
+            let checked = super::base::checked_axis_index(b, idx, ax, shape[ax], "setitem");
+            let i = checked.int_val().expect("a constant index stays constant") as usize;
+            i * strides[ax]
+        })
+        .sum()
+}
+
 fn abs_offset_for_coords(offset: usize, strides: &[usize], coords: &[usize]) -> usize {
     let mut abs = offset;
     for (ax, coord) in coords.iter().enumerate() {
@@ -389,117 +413,15 @@ pub fn static_array_setitem(
     }
 
     if has_range {
-        // Fast-path: when the slice setitem touches a large number of cells
-        // and every index is compile-time constant (no dynamic Range bounds,
-        // no dynamic Single indices), running the legacy `set_nested_value`
-        // path on a materialised List is much cheaper at compile time than
-        // emitting one `ir_write_memory` IR statement per cell. The
-        // materialised result is rebound as a `Value::List`, which the
-        // boundary shim accepts on subsequent ops.
-        //
-        // This trades segment-share aliasing semantics (a static slice
-        // setitem on a view used to write through to the source segment)
-        // for compile-time tractability on programs like grayscott that
-        // do `arr[:] = scalar` over very large arrays. For dynamic-write
-        // workloads (sorts, queens, …) the indices are dynamic anyway and
-        // we stay on the native path — that's where the P3 win lives.
-        // Two routes into the legacy fallback:
-        //   (a) Every index is compile-time constant AND target_cells is
-        //       large enough that per-cell ir_write_memory would be slow
-        //       — materialise to List, modify in place, rebind.
-        //   (b) Range bounds are runtime values but Singles are static —
-        //       this matches the P2 legacy behaviour (which silently
-        //       defaulted runtime range bounds to [0, len)). Native
-        //       segment writes for this case generate runtime address
-        //       arithmetic per cell which dominates compile time on big
-        //       arrays. Preserve the P2 cost model here; correctness
-        //       semantics for this path were no different at P2 anyway.
-        let no_dynamic_singles = indices.iter().all(|i| match i {
-            SliceIndex::Single(v) => v.int_val().is_some(),
-            _ => true,
-        });
-        let all_static_indices = no_dynamic_singles
-            && indices.iter().all(|i| match i {
-                SliceIndex::Range(s, e, st) => {
-                    let resolved = |opt: &Option<Value>| {
-                        matches!(opt, None | Some(Value::None))
-                            || opt.as_ref().and_then(|v| v.int_val()).is_some()
-                    };
-                    resolved(s) && resolved(e) && resolved(st)
-                }
-                _ => true,
-            });
-        if all_static_indices {
-            // Compute the static target cell count.
-            let mut target_cells: usize = 1;
-            for (ax, idx) in indices.iter().enumerate() {
-                match idx {
-                    SliceIndex::Single(_) => { /* axis collapsed */ }
-                    SliceIndex::Range(s, e, st) => {
-                        let resolve = |v: &Option<Value>| -> Option<i64> {
-                            match v.as_ref() {
-                                Some(Value::None) | None => None,
-                                Some(val) => val.int_val(),
-                            }
-                        };
-                        let coords = super::super::shape_arith::resolve_slice(
-                            shape[ax],
-                            resolve(s),
-                            resolve(e),
-                            resolve(st),
-                        );
-                        target_cells *= coords.len();
-                    }
-                    _ => {}
-                }
-            }
-            for ax in indices.len()..shape.len() {
-                target_cells *= shape[ax];
-            }
-            // Threshold tuned for grayscott's `u[:] = 1.0` (90,000 cells).
-            // Static slices below the threshold get the native segment-write
-            // path; above it we materialise to a List and let the boundary
-            // shim handle subsequent access.
-            const LARGE_STATIC_SLICE_THRESHOLD: usize = 1024;
-            if target_cells > LARGE_STATIC_SLICE_THRESHOLD {
-                return static_array_slice_setitem_via_list(b, val, indices, value);
-            }
-        }
-        // Path (b): runtime Range bounds on a *large* array. The native
-        // dynamic-range path would emit `target_cells × (read + select +
-        // write)` IR per cell, which is too slow at compile time for
-        // target_cells in the tens of thousands (grayscott's 90,000-cell
-        // arrays). Fall back to materialise-and-rebind, which loses the
-        // runtime-bound masking semantics — but legacy P2 had the same
-        // limitation (it silently defaulted runtime range bounds to 0/len)
-        // so this preserves the prior compile-time behaviour for that
-        // class of program.
-        //
-        // Small-array runtime-bound slice writes stay on the native path
-        // and get correct masking — that's what
-        // `test_static_array_2d_slice_runtime_bound` exercises.
-        if no_dynamic_singles
-            && indices
-                .iter()
-                .any(|i| matches!(i, SliceIndex::Range(_, _, _)))
-        {
-            let runtime_range = indices.iter().any(|i| match i {
-                SliceIndex::Range(s, e, st) => {
-                    let runtime = |opt: &Option<Value>| matches!(opt, Some(v) if !matches!(v, Value::None) && v.int_val().is_none());
-                    runtime(s) || runtime(e) || runtime(st)
-                }
-                _ => false,
-            });
-            if runtime_range {
-                let array_cells: usize = shape.iter().product();
-                const RUNTIME_RANGE_NATIVE_LIMIT: usize = 1024;
-                if array_cells > RUNTIME_RANGE_NATIVE_LIMIT {
-                    return static_array_slice_setitem_via_list(b, val, indices, value);
-                }
-            }
-        }
+        // Every real slice write goes through the segment (`static_array_
+        // slice_setitem`), so the array stays an ndarray and views of it see
+        // the write. (Large slices with compile-time bounds used to be
+        // written on a materialised List that the variable was rebound to:
+        // `a[:, :] = b` on a 40x40 `a` made `2 * a` repeat the list, and
+        // large arrays with runtime bounds had them resolved to the full
+        // axis, so `a[i:i + 2] = 5.0` wrote all of `a`.)
         if dtype == NumberType::Complex {
-            return complex_slice_setitem_via_list(b, val, indices, value);
+            return complex_slice_setitem_via_list(b, val, &shape, indices, value);
         }
         return static_array_slice_setitem(
             b, val, dtype, &shape, segment_id, &strides, offset, indices, value,
@@ -540,8 +462,6 @@ fn complex_element_setitem(
     indices: &[SliceIndex],
     value: &Value,
 ) -> Value {
-    // Pull out per-component (real_f, imag_f) Float wires.
-    let (re_v, im_v) = crate::helpers::value_ops::unpack_value_to_complex_parts(b, value);
     // Convert each SliceIndex::Single into a Value (we already vetted this is
     // an all-Single setitem at the dispatcher).
     let idx_vals: Vec<Value> = indices
@@ -552,16 +472,37 @@ fn complex_element_setitem(
         })
         .collect();
 
+    // Partial indexing (`z[i] = row` on a 2-D `z`) writes the sub-array
+    // `z[i]`: one element write per position of it, of the value broadcast
+    // to its shape.
+    if idx_vals.len() < shape.len() {
+        let trailing = &shape[idx_vals.len()..];
+        let trailing_strides = row_major_strides(trailing);
+        for (flat, element) in region_values(b, value, trailing).iter().enumerate() {
+            let mut full = indices.to_vec();
+            for coord in decode_coords(flat, trailing, &trailing_strides) {
+                full.push(SliceIndex::Single(b.ir_constant_int(coord as i64)));
+            }
+            complex_element_setitem(
+                b, val, shape, real_seg, imag_seg, strides, offset, &full, element,
+            );
+        }
+        return val.clone();
+    }
+    if idx_vals.len() > shape.len() {
+        panic!(
+            "too many indices for array: array is {}-dimensional, but {} were indexed",
+            shape.len(),
+            idx_vals.len()
+        );
+    }
+    // Pull out per-component (real_f, imag_f) Float wires.
+    let (re_v, im_v) = crate::helpers::value_ops::unpack_value_to_complex_parts(b, value);
     // Static fast path: known offset → both component writes are direct.
     let all_static = idx_vals.iter().all(|v| v.int_val().is_some());
-    if all_static && idx_vals.len() == shape.len() {
+    if all_static {
         materialize_before_predicated_write(b, val);
-        let mut flat: i64 = offset as i64;
-        for (ax, v) in idx_vals.iter().enumerate() {
-            let i = v.int_val().unwrap();
-            let i = if i < 0 { shape[ax] as i64 + i } else { i };
-            flat += i * strides[ax] as i64;
-        }
+        let flat = (offset + constant_element_offset(b, shape, strides, &idx_vals)) as i64;
         let addr = b.ir_constant_int(flat);
         // Cache the values actually stored (under a conditional-write
         // predicate these are `select(p, new, old)`, not the raw inputs).
@@ -578,8 +519,17 @@ fn complex_element_setitem(
         cache_set_cell(b, real_seg, abs, new_complex);
         return val.clone();
     }
-    // Dynamic: drop the cache, then issue two parallel ir_write_memory ops.
-    let addr = compute_addr(b, offset, strides, &idx_vals, shape);
+    // Dynamic: check the indices (`-n <= i < n` where the write runs), drop
+    // the cache, then issue two parallel ir_write_memory ops at the wrapped
+    // address. (The address used to be formed from the raw indices, so a
+    // negative or out-of-range index wrote outside the array.)
+    discharge_dynamic_write_indices(b, shape, &idx_vals);
+    let wrapped: Vec<Value> = idx_vals
+        .iter()
+        .enumerate()
+        .map(|(ax, idx)| normalize_for_address(b, idx, shape[ax]))
+        .collect();
+    let addr = compute_addr(b, offset, strides, &wrapped, shape);
     b.ir_write_memory(real_seg, &addr, &re_v);
     b.ir_write_memory(imag_seg, &addr, &im_v);
     cache_invalidate(b, real_seg);
@@ -594,16 +544,23 @@ fn complex_element_setitem(
 fn complex_slice_setitem_via_list(
     b: &mut IRBuilder,
     val: &Value,
+    shape: &[usize],
     indices: &[SliceIndex],
     value: &Value,
 ) -> Value {
-    let lst = super::base::to_value_list(b, val);
-    let value_lst = if let Value::StaticArray { .. } = value {
-        super::base::to_value_list(b, value)
-    } else {
-        value.clone()
+    // The list writer resolves only compile-time indices; with a runtime
+    // bound or index it would write the wrong cells (or none).
+    let Some(region) = static_region_shape(shape, indices) else {
+        panic!(
+            "slice assignment into a complex array with a runtime index or slice bound is \
+             not supported; use compile-time slice bounds"
+        );
     };
-    legacy_set_nested(b, &lst, indices, &value_lst)
+    let lst = super::base::to_value_list(b, val);
+    let value_lst = assigned_value_as_region_list(b, value, &region);
+    let updated = legacy_set_nested(b, &lst, indices, &value_lst);
+    // Rebound as a List the array would pick up Python list semantics.
+    super::base::to_static_array(b, &updated).unwrap_or(updated)
 }
 
 /// Fallback used only when an exotic index (NewAxis) is encountered on a
@@ -621,91 +578,12 @@ fn set_nested_via_list(
     val.clone()
 }
 
-/// Static slice setitem fallback that materialises the LHS to a nested
-/// List, runs the inlined legacy `set_nested_value` logic, and **rebinds
-/// the variable as a List**. Used when the slice covers too many cells for
-/// per-cell `ir_write_memory` to be cheap at compile time (programs like
-/// grayscott that do `arr[:] = scalar` over a 300x300 array). Trades
-/// segment-share aliasing for compile-time tractability.
-fn static_array_slice_setitem_via_list(
-    b: &mut IRBuilder,
-    val: &Value,
-    indices: &[SliceIndex],
-    value: &Value,
-) -> Value {
-    let lst = super::base::to_value_list(b, val);
-    let value_lst = if let Value::StaticArray { .. } = value {
-        super::base::to_value_list(b, value)
-    } else {
-        value.clone()
-    };
-    legacy_set_nested(b, &lst, indices, &value_lst)
-}
-
-/// Slice setitem fallback that reuses the legacy `set_nested_value` path —
-/// invoked when the RHS shape is broadcastable but not equal to the LHS
-/// extent (numpy column-broadcasting, scalar-array tail, etc.). The legacy
-/// path absorbs these cases via per-element iteration; rather than
-/// reimplement full broadcasting in the segment-write helper, we
-/// materialise to a List, run the legacy update, and write the new payload
-/// back into the segment.
-fn slice_setitem_via_legacy(
-    b: &mut IRBuilder,
-    val: &Value,
-    indices: &[SliceIndex],
-    value: &Value,
-) -> Value {
-    let (dtype, shape, segment_id, _strides, offset) = match val {
-        Value::StaticArray {
-            dtype,
-            shape,
-            segment_id,
-            strides,
-            offset,
-            ..
-        } => (*dtype, shape.clone(), *segment_id, strides.clone(), *offset),
-        _ => unreachable!("slice_setitem_via_legacy: expected StaticArray"),
-    };
-    // Materialise the source to a nested List.
-    let lst = super::base::to_value_list(b, val);
-    // Materialise the RHS too — `legacy_set_nested` only handles
-    // List/Tuple/scalar. A StaticArray RHS would fall into the wrong
-    // (scalar broadcast) branch otherwise.
-    let value_lst = if let Value::StaticArray { .. } = value {
-        super::base::to_value_list(b, value)
-    } else {
-        value.clone()
-    };
-    // Run the legacy nested-set on a synthesized SliceIndex copy. We can't
-    // call `IRGenerator::set_nested_value` from here (helpers layer), so
-    // we replicate its logic enough for slice writes — but the simplest
-    // trick is to bake the new payload back into the same segment.
-    let updated = legacy_set_nested(b, &lst, indices, &value_lst);
-    // Flatten the updated nested list and write back into the segment.
-    let flat = super::super::composite::flatten_composite(&updated);
-    let total: usize = shape.iter().product();
-    if flat.len() != total {
-        panic!(
-            "slice assignment broadcast fallback: flattened result has {} elements but expected {}",
-            flat.len(),
-            total
-        );
-    }
-    for (i, leaf) in flat.iter().enumerate() {
-        let abs = offset + i;
-        let addr = b.ir_constant_int(abs as i64);
-        let cast = cast_to_dtype(b, leaf, dtype);
-        b.ir_write_memory(segment_id, &addr, &cast);
-    }
-    cache_invalidate(b, segment_id);
-    val.clone()
-}
-
 /// Inline version of the legacy IRGenerator::set_nested_value, taking a
-/// `Value::List` and producing an updated `Value::List`. Replicated here
-/// (vs called from the IR generator) because helpers can't reach back into
-/// the visitor layer cleanly. Limited to the cases the broadcast fallback
-/// triggers on — Range slice on outer axis(es), scalar / list RHS.
+/// `Value::List` and producing an updated `Value::List`, for the complex
+/// slice write. Replicated here (vs called from the IR generator) because
+/// helpers can't reach back into the visitor layer cleanly. Handles
+/// compile-time indices only, with a number or a value already broadcast
+/// to the region's shape (`assigned_value_as_region_list`).
 fn legacy_set_nested(
     b: &mut IRBuilder,
     current: &Value,
@@ -815,6 +693,153 @@ fn legacy_set_nested(
         }
         _ => current.clone(),
     }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Broadcasting the assigned value of a slice assignment
+// ────────────────────────────────────────────────────────────────────────
+
+/// The shape of the region `a[indices]` selects in an array of `shape`
+/// when every index is a compile-time constant (`None` otherwise): one
+/// axis per slice and per trailing unindexed axis; an integer index drops
+/// its axis.
+fn static_region_shape(shape: &[usize], indices: &[SliceIndex]) -> Option<Vec<usize>> {
+    let constant = |bound: &Option<Value>| match bound {
+        None | Some(Value::None) => Some(None),
+        Some(v) => v.int_val().map(Some),
+    };
+    let mut region = Vec::new();
+    for (axis, index) in indices.iter().enumerate() {
+        match index {
+            SliceIndex::Single(v) => {
+                v.int_val()?;
+            }
+            SliceIndex::Range(start, stop, step) => {
+                let coords = super::super::shape_arith::resolve_slice(
+                    shape[axis],
+                    constant(start)?,
+                    constant(stop)?,
+                    constant(step)?,
+                );
+                region.push(coords.len());
+            }
+            _ => return None,
+        }
+    }
+    region.extend_from_slice(&shape[indices.len().min(shape.len())..]);
+    Some(region)
+}
+
+/// NumPy's broadcast of an assigned value to the region a slice assignment
+/// writes (`a[idx] = v`). Aligned at the trailing axes, each axis of `v`'s
+/// shape (`source`) must equal the region's or be 1 (repeated along it);
+/// axes of `v` beyond the region's rank must be 1. `elements` are `v`'s
+/// elements in row-major order; the result is the value written at each
+/// position of the region, in row-major order. The error is NumPy's.
+fn broadcast_assigned_elements(
+    elements: &[Value],
+    source: &[usize],
+    region: &[usize],
+) -> Result<Vec<Value>, String> {
+    let error = || {
+        format!(
+            "ValueError: could not broadcast input array from shape {:?} into shape {:?}",
+            source, region
+        )
+    };
+    if elements.len() != source.iter().product::<usize>() {
+        return Err(error());
+    }
+    let extra = source.len().saturating_sub(region.len());
+    if source[..extra].iter().any(|&dim| dim != 1) {
+        return Err(error());
+    }
+    let source = &source[extra..];
+    let pad = region.len() - source.len();
+    let source_strides = row_major_strides(source);
+    // Position in `elements` per region axis: 0 along a repeated axis.
+    let mut strides = vec![0usize; region.len()];
+    for (axis, &dim) in source.iter().enumerate() {
+        if dim == region[pad + axis] {
+            strides[pad + axis] = source_strides[axis];
+        } else if dim != 1 {
+            return Err(error());
+        }
+    }
+    let region_strides = row_major_strides(region);
+    let total: usize = region.iter().product();
+    Ok((0..total)
+        .map(|flat| {
+            let coords = decode_coords(flat, region, &region_strides);
+            let at: usize = coords.iter().zip(&strides).map(|(c, s)| c * s).sum();
+            elements[at].clone()
+        })
+        .collect())
+}
+
+/// The elements written into a region of shape `region` (the native slice
+/// writer's order) from the array-like value `value` with `elements`.
+/// A value with a static shape is broadcast; one written into a region with
+/// runtime bounds (whose shape here is the largest possible) or a value
+/// without a static shape must have exactly one element per position.
+fn region_elements(
+    value: &Value,
+    elements: Vec<Value>,
+    region: &[usize],
+    runtime_bounds: bool,
+) -> Vec<Value> {
+    let source = match value {
+        Value::StaticArray { shape, .. } => Some(shape.clone()),
+        Value::List(_) | Value::Tuple(_) => {
+            Some(super::super::composite::get_composite_shape(value))
+        }
+        _ => None,
+    };
+    match source {
+        Some(source) if !runtime_bounds => {
+            broadcast_assigned_elements(&elements, &source, region).unwrap_or_else(|e| panic!("{e}"))
+        }
+        _ if elements.len() == region.iter().product::<usize>() => elements,
+        _ => panic!(
+            "slice assignment: the value has {} elements but the target region has shape {:?}; \
+             broadcasting into a slice with runtime bounds, or from an array with a runtime \
+             shape, is not supported",
+            elements.len(),
+            region
+        ),
+    }
+}
+
+/// The value written at each position of a region of shape `region`, in
+/// row-major order: a number at every position, an array-like value
+/// broadcast to the region (`broadcast_assigned_elements`).
+fn region_values(b: &mut IRBuilder, value: &Value, region: &[usize]) -> Vec<Value> {
+    let (elements, source) = match value {
+        Value::StaticArray { shape, .. } => {
+            (super::elementwise::payload_cells(b, value), shape.clone())
+        }
+        Value::List(_) | Value::Tuple(_) => (
+            super::super::composite::flatten_composite_with_builder(b, value),
+            super::super::composite::get_composite_shape(value),
+        ),
+        Value::DynamicNDArray(_) => super::super::composite::reject_runtime_shaped_operand(),
+        number => return vec![number.clone(); region.iter().product()],
+    };
+    broadcast_assigned_elements(&elements, &source, region).unwrap_or_else(|e| panic!("{e}"))
+}
+
+/// The assigned value for the list-based slice writer: a number as it is,
+/// an array-like value broadcast to a nested list of the region's shape.
+fn assigned_value_as_region_list(b: &mut IRBuilder, value: &Value, region: &[usize]) -> Value {
+    if !matches!(
+        value,
+        Value::StaticArray { .. } | Value::List(_) | Value::Tuple(_) | Value::DynamicNDArray(_)
+    ) {
+        return value.clone();
+    }
+    let broadcast = region_values(b, value, region);
+    let types = broadcast.iter().map(|v| v.zinnia_type()).collect();
+    super::super::composite::build_nested_value(broadcast, types, region)
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -974,13 +999,7 @@ fn static_array_element_setitem(
     let all_static = idx_vals.iter().all(|v| v.int_val().is_some());
     if all_static {
         materialize_before_predicated_write(b, val);
-        let mut flat_rel: i64 = 0;
-        for (ax, v) in idx_vals.iter().enumerate() {
-            let i = v.int_val().unwrap();
-            let i = if i < 0 { shape[ax] as i64 + i } else { i };
-            flat_rel += i * strides[ax] as i64;
-        }
-        let abs_offset = (offset as i64 + flat_rel) as usize;
+        let abs_offset = offset + constant_element_offset(b, shape, strides, &idx_vals);
         let addr = b.ir_constant_int(abs_offset as i64);
         // Cache what was actually stored (predicated under a branch).
         let stored = b.ir_write_memory(segment_id, &addr, &cast_val);
@@ -1215,36 +1234,12 @@ fn static_array_slice_setitem(
         }
     };
 
-    // Shape compatibility check.
-    //
-    // Numpy semantics: if the LHS slice has shape K and the RHS has shape
-    // M, K == M is required for the strict path. For RHS shapes that are
-    // compatible via broadcasting (e.g., LHS (64, 64) ← RHS (64, 1)) we
-    // materialize the RHS to the LHS shape via simple modulo expansion.
-    // This matches the previous P2 behaviour where the legacy
-    // `set_nested_value` path absorbed the mismatch.
-    if !value_is_scalar {
-        let value_total: usize = value_shape.iter().product();
-        if value_elements.len() != value_total {
-            // Allow broadcasting if the value count divides the target
-            // count. This covers numpy column-broadcast (M=N when LHS is
-            // (N, K)) and most real-world cases.
-            if value_total % value_elements.len() != 0 {
-                panic!(
-                    "slice assignment shape mismatch: target slice has shape {:?} ({} elements) \
-                     but value has {} elements. Broadcasting in slice assignment is not supported.",
-                    value_shape,
-                    value_total,
-                    value_elements.len()
-                );
-            }
-            // Fall back to legacy path: materialise the LHS to a nested
-            // List, run set_nested_value, then push the result back into
-            // the segment. This preserves the previous write semantics and
-            // avoids re-implementing full numpy broadcasting here.
-            return slice_setitem_via_legacy(b, val, indices, value);
-        }
-    }
+    // NumPy broadcasts the value to the region the indices select.
+    let value_elements = if value_is_scalar {
+        value_elements
+    } else {
+        region_elements(value, value_elements, &value_shape, has_dynamic_range)
+    };
 
     let value_total: usize = value_shape.iter().product();
     let value_strides = row_major_strides(&value_shape);
