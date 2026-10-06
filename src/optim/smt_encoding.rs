@@ -505,7 +505,9 @@ impl IROp for IR {
             | IR::KeyLess { .. }
             | IR::PackKey { .. }
             | IR::PackedKeyLess { .. }
-            | IR::PackedKeyIndex { .. } => ctx.fresh_unconstrained(),
+            | IR::PackedKeyIndex { .. }
+            | IR::IdentityCheck(_)
+            | IR::RescaleRawF => ctx.fresh_unconstrained(),
         }
     }
 }

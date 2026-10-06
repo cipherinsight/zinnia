@@ -386,18 +386,21 @@ fn correlation(
         CorrelationMode::Same => (n2 - 1 - n2 / 2, n1),
         CorrelationMode::Full => (0, n1 + n2 - 1),
     };
+    if !integer {
+        // Float outputs are lanes of the full correlation, each one rescaled
+        // sum of products; the array lowering layer picks how to compute
+        // them (`lower::linear`).
+        let x: Vec<Value> = x.iter().map(|v| as_float_value(b, v)).collect();
+        let y: Vec<Value> = y.iter().map(|v| as_float_value(b, v)).collect();
+        return crate::lower::linear::correlation_lanes(b, &x, &y, start..start + len);
+    }
     (start..start + len)
         .map(|k| {
             // j with 0 <= j + k - (n2 - 1) < n1.
             let first = (n2 - 1).saturating_sub(k);
             let last = (n1 + n2 - 1 - k).min(n2);
             let lhs: Vec<Value> = (first..last).map(|j| x[j + k + 1 - n2].clone()).collect();
-            let rhs = &y[first..last];
-            if integer {
-                integer_product_sum(b, &lhs, rhs)
-            } else {
-                product_sum(b, &lhs, rhs)
-            }
+            integer_product_sum(b, &lhs, &y[first..last])
         })
         .collect()
 }

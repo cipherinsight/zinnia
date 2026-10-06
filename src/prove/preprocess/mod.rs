@@ -282,11 +282,9 @@ impl<'a> Preprocessor<'a> {
             IR::DivF => Ok(Some(kernel::fp_div_prescale(args[0], args[1], prec))),
             IR::FloorDivF => Ok(Some(kernel::fp_float_floor_div(args[0], args[1], prec))),
             IR::ModF => Ok(Some(kernel::fp_float_mod(args[0], args[1]))),
-            IR::PowF => {
-                let log_a = kernel::fp_log(args[0], prec);
-                let (bl, _) = kernel::fp_mul_rescale(args[1], log_a, prec);
-                Ok(Some(kernel::fp_exp(bl, prec).unwrap_or(Fp::zero())))
-            }
+            // Outside the domain there is no proof; the witness value is then
+            // irrelevant (0).
+            IR::PowF => Ok(Some(kernel::fp_pow(args[0], args[1], prec).unwrap_or(Fp::zero()))),
             IR::PowFI => {
                 // Float base ^ Integer exponent: square-and-multiply over the
                 // unscaled integer. args[0] is Q-scaled float, args[1] is raw
@@ -389,7 +387,7 @@ impl<'a> Preprocessor<'a> {
             // Outside exp's domain there is no proof; the witness value is
             // then irrelevant (0).
             IR::ExpF => Ok(Some(kernel::fp_exp(args[0], prec).unwrap_or(Fp::zero()))),
-            IR::LogF => Ok(Some(kernel::fp_log(args[0], prec))),
+            IR::LogF => Ok(Some(kernel::fp_log(args[0], prec).unwrap_or(Fp::zero()))),
             IR::ArcSinF => Ok(Some(kernel::fp_arcsin(args[0], prec))),
             IR::ArcCosF => Ok(Some(kernel::fp_arccos(args[0], prec))),
             IR::ArcTan2F => Ok(Some(kernel::fp_atan2(args[0], args[1], prec))),
@@ -431,6 +429,11 @@ impl<'a> Preprocessor<'a> {
                 Ok(Some(if kernel::fp_is_negative(d) && d != Fp::zero() { Fp::one() } else { Fp::zero() }))
             }
             IR::PackedKeyIndex { index_bits } => Ok(Some(kernel::packed_key_parts(args[0], *index_bits).1)),
+            IR::IdentityCheck(_) => Ok(None),
+            IR::RescaleRawF => {
+                let raw = kernel::fp_to_i128(args[0]).unwrap_or(0);
+                Ok(Some(kernel::fp_rescale_raw_i128(raw, prec).0))
+            }
             IR::KeyLess { .. } => {
                 let less = |x: Fp, y: Fp| {
                     let d = x - y;

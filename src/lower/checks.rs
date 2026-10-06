@@ -200,6 +200,7 @@ pub fn cost(claim: &Claim, target: Target) -> u64 {
         (Claim::Equal(..), _) => 1,
         (Claim::Within { .. }, Target::Halo2Base) => 17,
         (Claim::Within { .. }, Target::Noir) => 3,
+        (&Claim::Permutation(a, _), target) => super::permutation::hit_count_cost(a.entries().len() as u64, target, false),
     }
 }
 
@@ -243,6 +244,19 @@ fn emit_claim(b: &mut IRBuilder, claim: &Claim, lookup: &HashMap<StmtId, Value>)
         Claim::Equal(x, y) => {
             let equal = b.ir_equal_i(&v(x), &v(y));
             b.ir_assert(&equal);
+        }
+        Claim::Permutation(values_list, targets_list) => {
+            let mut values = |list: super::ListId| -> Vec<Value> {
+                list.entries()
+                    .iter()
+                    .map(|entry| match *entry {
+                        super::ListEntry::Stmt(s) => v(s),
+                        super::ListEntry::Int(c) => b.ir_constant_int(c),
+                    })
+                    .collect()
+            };
+            let (values, targets) = (values(values_list), values(targets_list));
+            super::permutation::emit_hit_counts(b, &values, &targets);
         }
         Claim::Within { x, lo, hi } => {
             if let Some(lo) = lo {

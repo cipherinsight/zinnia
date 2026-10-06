@@ -140,14 +140,16 @@ def test_runtime_percentile_matches_numpy_with_ties(target):
 
 # ── Which lowering each target picks ────────────────────────────────────
 
-def test_full_argsort_is_routed_on_halo2_and_hinted_on_noir():
+def test_full_argsort_is_a_grand_product_on_halo2_and_hinted_on_noir():
     source = 'def kernel(a: Float[Array, "100"]):\n    return np.argsort(a)\n'
     halo2 = ir_classes(compile_for(source, "halo2"))
     noir = ir_classes(compile_for(source, "noir"))
-    # The routed Waksman network (lower/sort/routed.rs): 573 hinted switch
-    # bits, each asserted a bit, and 99 asserted increases of the routed
-    # packed keys (Batcher's network would compare 1,077 times).
-    assert halo2.count("HintIR") == 573 and halo2.count("AssertBitIR") == 573
+    # Hinted sorted packed keys checked by a grand product at a verifier
+    # challenge (lower/sort/grand_product.rs): 100 hints, one multiset
+    # check, 99 asserted increases (the routed network would hint 573 switch
+    # bits, Batcher's network compare 1,077 times).
+    assert halo2.count("HintIR") == 100 and halo2.count("IdentityCheckIR") == 1
+    assert "AssertBitIR" not in halo2
     assert halo2.count("PackedKeyLessIR") == 99
     assert halo2.count("PackKeyIR") == 100 and halo2.count("PackedKeyIndexIR") == 100
     # One hinted index per rank, 99 key comparisons, one native read each.
@@ -157,11 +159,16 @@ def test_full_argsort_is_routed_on_halo2_and_hinted_on_noir():
 
 @pytest.mark.parametrize("target", TARGETS)
 def test_few_live_outputs_are_pinned_alone(target):
-    # The indices of the 7 largest of 100: 7 hinted keys, a chain of 6
-    # comparisons and one count of the 100 keys below the 7th largest.
+    # The indices of the 7 largest of 100 on Noir: 7 hinted keys, a chain of
+    # 6 comparisons and one count of the 100 keys below the 7th largest. On
+    # halo2-base each pinned key reads 100 slots by selection, and the whole
+    # sort by a grand product costs less (100 hinted keys, one check).
     classes = ir_classes(compile_for('def kernel(a: Float[Array, "100"]):\n'
                                      '    return np.argsort(a)[::-1][:7]\n', target))
-    assert classes.count("HintIR") == 7 and classes.count("KeyLessIR") == 106
+    if target == "noir":
+        assert classes.count("HintIR") == 7 and classes.count("KeyLessIR") == 106
+    else:
+        assert classes.count("HintIR") == 100 and classes.count("IdentityCheckIR") == 1
     assert "SortedIR" not in classes
 
 

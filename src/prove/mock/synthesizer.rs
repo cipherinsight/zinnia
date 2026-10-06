@@ -53,12 +53,18 @@ impl MockSynthesizer {
     /// The value of an `exp`-based function, or, outside `kernel::fp_exp`'s
     /// domain (where every circuit has no witness), an unsatisfied mock.
     fn exp_domain_result(&mut self, function: &str, a: &MockCell, value: Option<Fp>) -> MockCell {
+        let x = kernel::dequantize_from_fp(a.fp(), self.prec());
+        self.domain_result(value, || {
+            format!("{function}({x}) is outside the fixed-point domain of exp (result beyond the signed 64-bit window)")
+        })
+    }
+
+    /// `value`, or (`None`: outside the operator's domain, where every
+    /// circuit has no witness) an unsatisfied mock with the message.
+    fn domain_result(&mut self, value: Option<Fp>, message: impl FnOnce() -> String) -> MockCell {
         value.map(MockCell).unwrap_or_else(|| {
             self.satisfied = false;
-            self.assertion_failures.push(format!(
-                "{function}({}) is outside the fixed-point domain of exp (result beyond the signed 64-bit window)",
-                kernel::dequantize_from_fp(a.fp(), self.prec())
-            ));
+            self.assertion_failures.push(message());
             MockCell(Fp::zero())
         })
     }
@@ -245,10 +251,13 @@ impl Synthesizer for MockSynthesizer {
         Ok(MockCell(kernel::fp_float_mod(a.fp(), b.fp())))
     }
 
+    /// Outside NumPy's real domain (a `nan` or `inf` result) or the window
+    /// every backend has no proof (`kernel::fp_pow`), so the mock is unsatisfied.
     fn pow_f(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
-        let log_a = self.log_f(a)?;
-        let (b_log_a, _) = kernel::fp_mul_rescale(b.fp(), log_a.fp(), self.prec());
-        self.exp_f(&MockCell(b_log_a))
+        let prec = self.prec();
+        let value = kernel::fp_pow(a.fp(), b.fp(), prec);
+        let (x, y) = (kernel::dequantize_from_fp(a.fp(), prec), kernel::dequantize_from_fp(b.fp(), prec));
+        Ok(self.domain_result(value, || format!("{x} ** {y} has no real value inside the fixed-point window")))
     }
 
     /// Float base, integer exponent: repeated fixed-point multiplication,
@@ -409,7 +418,10 @@ impl Synthesizer for MockSynthesizer {
     }
 
     fn log_f(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {
-        Ok(MockCell(kernel::fp_log(a.fp(), self.prec())))
+        let prec = self.prec();
+        let value = kernel::fp_log(a.fp(), prec);
+        let x = kernel::dequantize_from_fp(a.fp(), prec);
+        Ok(self.domain_result(value, || format!("log({x}) is outside the domain (x <= 0)")))
     }
 
     fn arccos_f(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {
@@ -703,5 +715,22 @@ impl Synthesizer for MockSynthesizer {
     ) -> Result<MockCell, ProvingError> {
         let values: Vec<Fp> = operands.iter().map(|c| c.fp()).collect();
         Ok(MockCell(kernel::hint_lane(kind, &values, rank.fp())))
+    }
+
+    /// Exactly, in field arithmetic (the circuits check it at a random
+    /// point, which a false identity passes with negligible probability).
+    fn identity_check(&mut self, identity: crate::ir_defs::Identity, operands: &[MockCell]) -> Result<(), ProvingError> {
+        let values: Vec<Fp> = operands.iter().map(|c| c.fp()).collect();
+        if !kernel::identity_holds(identity, &values) {
+            self.satisfied = false;
+            self.assertion_failures.push(format!("identity {} does not hold", identity.describe()));
+        }
+        Ok(())
+    }
+
+    /// The rescale of `ProductSumF` applied to the raw sum.
+    fn rescale_raw_f(&mut self, raw: &MockCell) -> Result<MockCell, ProvingError> {
+        let raw = kernel::fp_to_i128(raw.fp()).unwrap_or(0);
+        Ok(MockCell(kernel::fp_rescale_raw_i128(raw, self.prec()).0))
     }
 }

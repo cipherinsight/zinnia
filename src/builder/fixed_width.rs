@@ -147,6 +147,8 @@ fn role(ir: &IR, operands: usize) -> Role {
         | IR::SubF
         | IR::MulF
         | IR::ProductSumF { .. }
+        | IR::RescaleRawF
+        | IR::Hint { kind: HintKind::ProductSum, .. }
         | IR::DivF
         | IR::FloorDivF
         | IR::ModF
@@ -188,6 +190,7 @@ fn role(ir: &IR, operands: usize) -> Role {
             kind: HintKind::SortedValues | HintKind::MaskedSortedValues,
             len,
         } => Role::Selects(0..*len as usize),
+        IR::Hint { kind: HintKind::OrderedBy, len } => Role::Selects(*len as usize / 2..*len as usize),
         IR::ArrayOp(op) => match op.kind.semantics().picks_from(op) {
             Some(operands) => Role::Selects(operands),
             None => Role::ValueOnly,
@@ -257,7 +260,8 @@ fn role(ir: &IR, operands: usize) -> Role {
         | IR::WitnessDynamicNDArrayMeta { .. }
         | IR::AssertDynamicNDArrayMeta { .. }
         | IR::PoseidonHash
-        | IR::EqHash => Role::ValueOnly,
+        | IR::EqHash
+        | IR::IdentityCheck(_) => Role::ValueOnly,
     }
 }
 

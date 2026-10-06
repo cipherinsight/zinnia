@@ -17,17 +17,22 @@
 //! * [`facts`] and [`checks`]: free facts, program checks as facts, and the
 //!   emission of checks through `builder/guard.rs`.
 //!
-//! Families: [`sort`], [`gather`], [`stats`], [`memory`]; scatter registers its own in [`registry`].
+//! Families: [`sort`], [`gather`], [`stats`], [`memory`], [`linear`], [`permutation`]; scatter registers its own in [`registry`].
+//! [`challenge`]: the program-wide verifier challenge of the constructions that check
+//! identities at a random point (halo2-base only), and their probabilistic soundness.
 //! See `eval-redo/layer/core-api.md` for how to add a family.
 
+pub mod challenge;
 pub mod checks;
 pub mod construction;
 pub mod emit;
 pub mod facts;
 pub mod gather;
 pub mod graph;
+pub mod linear;
 pub mod memory;
 pub mod op;
+pub mod permutation;
 pub mod scatter;
 pub mod select;
 pub mod sort;
@@ -37,7 +42,7 @@ mod tests;
 
 pub use construction::{Candidate, Construction, Context, Emitter, Target};
 pub use emit::{ArrayLowering, EmitCx};
-pub use graph::{Bound, Claim, Fact, Group, GroupId, Lane, Requirement, Scope};
+pub use graph::{Bound, Claim, Fact, Group, GroupId, Lane, ListEntry, ListId, Requirement, Scope};
 pub use op::{ArrayOp, Constant, OpKind, OperatorSemantics};
 
 /// Every registered construction, family by family. The order is the
@@ -49,5 +54,7 @@ pub fn registry() -> Vec<&'static dyn Construction> {
     all.extend(scatter::constructions());
     all.extend(stats::constructions());
     all.extend(memory::constructions());
+    all.extend(linear::constructions());
+    all.extend(permutation::constructions());
     all
 }

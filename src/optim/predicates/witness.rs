@@ -199,31 +199,28 @@ fn emit_max_run(b: &mut IRBuilder, args: &[Value], op: Option<&str>, bound: Opti
 // Permutations: is_permutation / fixed_point_count / cycle_count
 // ---------------------------------------------------------------------------
 
-/// `is_permutation(p)` for a length-N integer array: every position `j` in
-/// `0..N` is hit exactly once, `sum_i [p[i] == j] == 1`.
-///
-/// Soundness: each `p[i]` hits at most one `j` (the `j` are distinct), so N
-/// hits in total, one per `j`, means every `p[i]` lies in `[0, N)` and no
-/// two are equal: `p` is a permutation of `0..N`; any other `p` misses some
-/// `j` or hits one twice and fails an assert. Cost N^2 equality tests with
-/// constants and N sums. The hits are the one-hot `[c[j] == i]` of the
-/// inverse permutation `c` (`c[p] = arange(N)`), which the gather layer
-/// reuses (`lower::gather`); the range `0 <= p[i] < N` and the permutation
-/// are recorded for the index checks and scatters that follow.
+/// `is_permutation(p)` for a length-N integer array: one `OpKind::
+/// IsPermutation` placeholder, asserted. The array lowering layer proves it
+/// (`lower::permutation`): by hit counts, every position `j` in `0..N` hit
+/// exactly once, `sum_i [p[i] == j] == 1` (each `p[i]` hits at most one of
+/// the distinct `j`, so N hits, one per `j`, mean `p` is a permutation of
+/// `0..N`; the hits are the one-hot `[c[j] == i]` of the inverse
+/// permutation `c` (`c[p] = arange(N)`), which a scatter by hits reuses),
+/// or by a grand product at a verifier challenge on halo2-base. The range
+/// `0 <= p[i] < N` and the permutation are recorded for the index checks
+/// and scatters that follow (each relies on the fact the check proves).
 fn emit_is_permutation(b: &mut IRBuilder, args: &[Value], op: Option<&str>, bound: Option<&Value>) -> EmitResult {
     let array = unary_array_argument(args, op, bound)?;
     let elements = collect_elements(b, array)?;
     if !elements.iter().all(|e| matches!(e, Value::Integer(_))) {
         return Err("elements must be Integer".to_string());
     }
-    let one = b.ir_constant_int(1);
-    for j in 0..elements.len() {
-        let target = b.ir_constant_int(j as i64);
-        let mut hits = elements.iter().map(|e| b.ir_equal_i(e, &target)).collect::<Vec<_>>().into_iter();
-        let first = hits.next().expect("a non-empty array");
-        let count = hits.fold(first, |acc, h| b.ir_add_i(&acc, &h));
-        let once = b.ir_equal_i(&count, &one);
-        b.ir_assert(&once);
+    // The array lowering layer checks it (`lower::permutation`: hit counts,
+    // or a grand product at a verifier challenge on halo2-base). The empty
+    // array is a permutation of nothing.
+    if !elements.is_empty() {
+        let holds = crate::lower::permutation::check_lane(b, &elements);
+        b.ir_assert(&holds);
     }
     b.record_permutation(&elements);
     Ok(())
@@ -673,7 +670,10 @@ mod tests {
         let (args, op, bound) = build(&mut b);
         let emitter = witness_emitters().get(kind).expect("registered");
         (emitter.emit)(&mut b, &args, op, bound.as_ref());
-        let graph = b.export_ir_graph();
+        // The array lowering layer lowers the placeholders some emitters
+        // leave (`is_permutation`), as the compile pipeline does.
+        let lowering = crate::lower::ArrayLowering { target: crate::lower::Target::Halo2Base };
+        let graph = crate::optim::IRPass::exec(&lowering, b.export_ir_graph());
         let params = ProvingParams::default();
         let witness = ResolvedWitness::new(CircuitInputs::new(), params.precision_bits);
         let artifact = MockProverBackend.prove(&graph, &witness, &params).unwrap();

@@ -91,6 +91,29 @@ pub(crate) struct UnitCosts {
     /// The routed Waksman network (`routed`), `None` where it is not
     /// offered.
     routing: Option<RoutingCosts>,
+    /// Hinted sorted keys checked by a grand product (`grand_product`),
+    /// `None` where verifier challenges are not available.
+    grand_product: Option<GrandProductCosts>,
+}
+
+/// Unit costs of the grand-product plan (`grand_product`,
+/// `grand_product_plan`); packing, the asserted links and unpacking are
+/// priced as for the routed network.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct GrandProductCosts {
+    /// Per element: its sorted key's hint cell and its two factors of the
+    /// grand product (one per side, 6 second-phase cells each).
+    element: u32,
+    /// Per element and carried array: the sorted entry's hint cell and the
+    /// compression of one more tuple component on each side (3 cells each);
+    /// with any carried array, one more cell per element and side (the
+    /// first compression gate copies the key).
+    carried: u32,
+    compress_first: u32,
+    /// Once: the product's shift `-(γ + 1)`, and per carried array beyond
+    /// the first one more power of the compression challenge.
+    fixed: u32,
+    per_power: u32,
 }
 
 /// Unit costs of the routed Waksman network (`routed`, `routed_plan`); the
@@ -145,7 +168,18 @@ const HALO2_BASE: UnitCosts = UnitCosts {
     masked_extreme_term: 41,
     masked_extreme_fixed: 30,
     routing: Some(HALO2_BASE_ROUTING),
+    grand_product: Some(HALO2_BASE_GRAND_PRODUCT),
 };
+
+/// halo2-base: see `GrandProductCosts`; second-phase cells count as cells
+/// (`cell_stats`), the one-time cost of the second phase is the challenge
+/// requirement's (`lower::challenge`). Measured on argsorts, sorts, both and
+/// payload gathers of 2 to 100 elements against the routed plan
+/// (`grand_product_tests::measure_grand_product_cells`): the difference of
+/// the two estimates is within 2 cells per element of the measured one
+/// (exact for argsorts of 100: 13,965 against 21,826 cells).
+const HALO2_BASE_GRAND_PRODUCT: GrandProductCosts =
+    GrandProductCosts { element: 13, carried: 7, compress_first: 2, fixed: 4, per_power: 4 };
 
 /// halo2-base: a switch is a bit gate holding its hint (4 cells) and two
 /// selects of packed keys (the difference and two multiply-adds, 12
@@ -188,6 +222,7 @@ const NOIR: UnitCosts = UnitCosts {
     masked_extreme_fixed: 4,
     // Not offered: the permutation check's native reads are linear in `n`.
     routing: None,
+    grand_product: None,
 };
 
 /// The outputs of one sort that are still live after dead-code
@@ -272,6 +307,11 @@ pub(super) enum Plan {
     /// switches the prover sets, checked increasing (`routed`); every
     /// rank's outputs, which runtime-rank outputs read.
     Routed,
+    /// Hinted sorted keys and carried entries, a permutation of the input
+    /// by a grand-product check at verifier challenges, checked increasing
+    /// (`grand_product`); every rank's outputs, which runtime-rank outputs
+    /// read.
+    GrandProduct,
 }
 
 /// A sorting network and how it orders equal values.
@@ -478,7 +518,9 @@ pub(super) fn cone_size(pairs: &[(usize, usize)], n: usize, live: &BTreeSet<usiz
 
 /// The cheapest plan for `demand` under `costs`, with its estimated cost:
 /// the first of the cheapest among the plans of the constructions,
-/// in their registration order (as the selection breaks ties).
+/// in their registration order (as the selection breaks ties). The
+/// grand-product plan pays the halo2-base challenge's one-time cost, as in a
+/// program with this one sort.
 #[cfg(test)]
 pub(super) fn choose_plan(demand: &Demand, costs: &UnitCosts) -> (Plan, u64) {
     network_plans(demand, costs)
@@ -487,6 +529,7 @@ pub(super) fn choose_plan(demand: &Demand, costs: &UnitCosts) -> (Plan, u64) {
         .chain(full_permutation(demand, costs))
         .chain(selection_plans(demand, costs))
         .chain(routed_plan(demand, costs))
+        .chain(grand_product_plan(demand, costs).map(|(plan, cost)| (plan, cost + crate::lower::challenge::HALO2_BASE_CHALLENGE_COST)))
         .min_by_key(|(_, cost)| *cost)
         .expect("a network always applies")
 }
@@ -593,6 +636,31 @@ pub(super) fn routed_plan(demand: &Demand, costs: &UnitCosts) -> Option<(Plan, u
         + unpacked as u64 * u64::from(costs.unpack)
         + runtime_reads_of_outputs(demand, costs);
     Some((Plan::Routed, cost))
+}
+
+/// Hinted sorted keys checked by a grand product (`grand_product`) when the
+/// target has verifier challenges and there are at least two elements:
+/// every rank, the sorted values carried when one is live, each payload
+/// carried; runtime-rank outputs read its outputs. The challenge's own
+/// one-time cost is the selection's (`lower::challenge`).
+pub(super) fn grand_product_plan(demand: &Demand, costs: &UnitCosts) -> Option<(Plan, u64)> {
+    let (product, routing) = (costs.grand_product?, costs.routing?);
+    let n = demand.n as u64;
+    if n < 2 {
+        return None;
+    }
+    let needs_values = !demand.values.is_empty() || demand.runtime_values > 0;
+    let carried = u64::from(needs_values) + demand.payloads.len() as u64;
+    let unpacked = if demand.runtime_indices > 0 { demand.n } else { demand.indices.len() } as u64;
+    let cost = n * u64::from(costs.pack)
+        + n * (u64::from(product.element) + carried * u64::from(product.carried))
+        + if carried > 0 { n * u64::from(product.compress_first) } else { 0 }
+        + u64::from(product.fixed)
+        + carried.saturating_sub(1) * u64::from(product.per_power)
+        + (n - 1) * u64::from(routing.link)
+        + unpacked * u64::from(costs.unpack)
+        + runtime_reads_of_outputs(demand, costs);
+    Some((Plan::GrandProduct, cost))
 }
 
 /// Every rank as one pinned run (the permutation check); runtime-rank

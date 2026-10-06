@@ -148,6 +148,8 @@ fn halo2_base_cell_stats(compiled_ir: &CompiledIR, params_json: Option<&str>) ->
         "lookup": cells.lookup,
         "fixed": cells.fixed,
         "instances": cells.instances,
+        "second_advice": cells.second_advice,
+        "challenges": cells.challenges,
     })
     .to_string())
 }

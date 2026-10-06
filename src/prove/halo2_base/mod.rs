@@ -7,6 +7,7 @@
 
 pub mod artifact_format;
 pub mod circuit;
+mod identities;
 pub mod keys;
 pub mod python;
 pub mod synthesizer;

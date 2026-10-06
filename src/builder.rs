@@ -3067,6 +3067,18 @@ impl IRBuilder {
         self.create_ir(&IR::PackedKeyIndex { index_bits }, std::slice::from_ref(key))
     }
 
+    /// `IR::IdentityCheck`: assert `identity` among `operands` (checked at
+    /// verifier challenges on halo2-base; see `lower::challenge`).
+    pub fn ir_identity_check(&mut self, identity: crate::ir_defs::Identity, operands: &[Value]) {
+        assert_eq!(operands.len(), identity.operands(), "{} operands", identity.describe());
+        self.create_ir(&IR::IdentityCheck(identity), operands);
+    }
+
+    /// `IR::RescaleRawF`: `floor(raw / 2^P)` of a raw product sum.
+    pub fn ir_rescale_raw_f(&mut self, raw: &Value) -> Value {
+        self.create_ir(&IR::RescaleRawF, std::slice::from_ref(raw))
+    }
+
     /// Start allocating memory segment ids at `next` (a pass that rebuilds a
     /// graph and adds segments must not reuse the graph's ids).
     pub fn reserve_segment_ids_below(&mut self, next: u32) {
@@ -3461,7 +3473,14 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
             crate::ir_defs::HintKind::MaskedSortedValues => {
                 unknown_like_elements(&args[..*len as usize / 2], ir_id)
             }
+            crate::ir_defs::HintKind::OrderedBy => {
+                unknown_like_elements(&args[*len as usize / 2..*len as usize], ir_id)
+            }
+            // A raw product sum is not an int64 value: never folded.
+            crate::ir_defs::HintKind::ProductSum => Value::Integer(ScalarValue::new(None, Some(ir_id))),
         },
+        IR::IdentityCheck(_) => Value::None,
+        IR::RescaleRawF => Value::Float(ScalarValue::new(None, Some(ir_id))),
         // A packed key is not an int64 value: never folded.
         IR::PackKey { .. } | IR::PackedKeyIndex { .. } => {
             Value::Integer(ScalarValue::new(None, Some(ir_id)))
@@ -3605,7 +3624,8 @@ fn min_required_arity(ir: &IR) -> usize {
         IR::Hint { len, .. } => *len as usize + 1,
         IR::KeyLess { .. } => 4,
         IR::PackKey { .. } | IR::PackedKeyLess { .. } => 2,
-        IR::PackedKeyIndex { .. } => 1,
+        IR::PackedKeyIndex { .. } | IR::RescaleRawF => 1,
+        IR::IdentityCheck(identity) => identity.operands(),
         IR::ArrayOp(op) => op.shared as usize,
     }
 }
@@ -3624,6 +3644,7 @@ fn unknown_value_for_ir(ir: &IR, ir_id: StmtId) -> Value {
         | IR::SubF
         | IR::MulF
         | IR::ProductSumF { .. }
+        | IR::RescaleRawF
         | IR::DivF
         | IR::FloorDivF
         | IR::ModF
@@ -3688,6 +3709,7 @@ fn unknown_value_for_ir(ir: &IR, ir_id: StmtId) -> Value {
         | IR::AssertDynamicNDArrayMeta { .. }
         | IR::DynamicNDArraySetItem { .. }
         | IR::InvokeExternal { .. }
+        | IR::IdentityCheck(_)
         | IR::ExportExternalI { .. } => Value::None,
         IR::AddStr | IR::StrI | IR::StrF => Value::String(StringValue {
             val: String::new(),

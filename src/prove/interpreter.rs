@@ -382,6 +382,20 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
                 Some(synth.packed_key_less(&args[0], &args[1], *index_bits)?)
             }
             IR::PackedKeyIndex { index_bits } => Some(synth.packed_key_index(&args[0], *index_bits)?),
+            IR::IdentityCheck(identity) => {
+                if args.len() != identity.operands() {
+                    return Err(ProvingError::synthesis(format!(
+                        "IdentityCheck {} expected {} operands, got {}",
+                        identity.describe(),
+                        identity.operands(),
+                        args.len()
+                    )));
+                }
+                // No value: nothing may read a second-phase result.
+                synth.identity_check(*identity, &args)?;
+                None
+            }
+            IR::RescaleRawF => Some(synth.rescale_raw_f(&args[0])?),
             IR::ArrayOp(_) => {
                 return Err(ProvingError::synthesis(
                     "an ArrayOp placeholder reached the prover; lower::ArrayLowering must lower it",

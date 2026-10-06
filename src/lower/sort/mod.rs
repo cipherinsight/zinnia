@@ -22,7 +22,11 @@
 //!   extremes by bounds) and runtime ranks;
 //! * [`RoutedPermutation`]: packed keys routed into ascending order by a
 //!   Waksman network whose switch bits the prover supplies, checked
-//!   increasing (`routed`; halo2-base only).
+//!   increasing (`routed`; halo2-base only);
+//! * [`GrandProductPermutation`]: hinted sorted keys and carried entries, a
+//!   permutation of the input by a grand product at verifier challenges,
+//!   checked increasing (`grand_product`; halo2-base only, needs the
+//!   program-wide challenge).
 //!
 //! Every plan yields NumPy's stable sort exactly; each hint's soundness
 //! argument is next to its pins in `emit` (the routing bits' in `routed`).
@@ -31,6 +35,7 @@ mod argmax;
 mod cost;
 mod counts;
 mod emit;
+mod grand_product;
 mod packed;
 mod payload;
 mod routed;
@@ -44,6 +49,8 @@ pub(crate) mod test_support;
 mod tests;
 #[cfg(test)]
 mod routed_tests;
+#[cfg(test)]
+mod grand_product_tests;
 
 pub(crate) use emit::masked_order_statistic;
 pub use search::SearchSortedSemantics;
@@ -66,7 +73,7 @@ use super::{Candidate, Construction, Context, EmitCx, Emitter, Group, Lane, OpKi
 /// The sort family's constructions, in the order the selection breaks ties.
 pub fn constructions() -> Vec<&'static dyn Construction> {
     let mut all: Vec<&'static dyn Construction> =
-        vec![&SortingNetwork, &RankSelection, &PermutationCheck, &PinnedSelection, &RoutedPermutation];
+        vec![&SortingNetwork, &RankSelection, &PermutationCheck, &PinnedSelection, &RoutedPermutation, &GrandProductPermutation];
     all.extend(search::constructions());
     all
 }
@@ -104,6 +111,30 @@ impl Construction for RoutedPermutation {
 
     fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
         plans(group, cx, |demand, costs| cost::routed_plan(demand, costs).into_iter().collect())
+    }
+}
+
+/// Every rank from hinted sorted keys whose multiset a grand product checks
+/// at verifier challenges, checked increasing (`grand_product`, with its
+/// soundness argument; priced by `cost::grand_product_plan`, offered where
+/// the target has verifier challenges: halo2-base). Precondition: the
+/// program-wide challenge (`lower::challenge`).
+pub struct GrandProductPermutation;
+
+impl Construction for GrandProductPermutation {
+    fn name(&self) -> &'static str {
+        "sort: grand-product permutation"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        if !super::challenge::available(cx.target) {
+            return Vec::new();
+        }
+        let mut candidates = plans(group, cx, |demand, costs| cost::grand_product_plan(demand, costs).into_iter().collect());
+        for candidate in &mut candidates {
+            candidate.pre.push(super::challenge::CHALLENGE);
+        }
+        candidates
     }
 }
 
@@ -340,9 +371,10 @@ impl LoweredSort {
                 sort.indices = indices.into_iter().enumerate().collect();
                 sort.complete = true;
             }
-            Plan::Routed => {
+            Plan::Routed | Plan::GrandProduct => {
                 let with_values = !demand.values.is_empty() || demand.runtime_values > 0;
-                let (values, indices) = routed::sort_by_routing(b, &sort.as_elements(), with_values, &mut payloads);
+                let sort_by = if *plan == Plan::Routed { routed::sort_by_routing } else { grand_product::sort_by_grand_product };
+                let (values, indices) = sort_by(b, &sort.as_elements(), with_values, &mut payloads);
                 sort.values = values.into_iter().enumerate().collect();
                 sort.indices = indices.into_iter().enumerate().collect();
                 sort.complete = true;

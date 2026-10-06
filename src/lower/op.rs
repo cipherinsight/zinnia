@@ -108,6 +108,21 @@ pub enum OpKind {
     /// (the mask bit of that cell). Every masked write of the program is one
     /// group (a chain of writes over one cell is lowered together).
     MaskWrite,
+    // ── linear family (`lower::linear`) ───────────────────────────────
+    /// The full float correlation of `x` (`long` values) and `y` (`short`),
+    /// the shared operands in that order: lane `k` in `[0, long + short -
+    /// 1)` is `Σ_j x[j + k - (short - 1)]·y[j]` over the `j` that index
+    /// `x`, rounded once (`ProductSumF`).
+    Correlation { long: u32, short: u32 },
+    /// The float product of a `rows × inner` and an `inner × cols` matrix
+    /// (row-major, in that order): lane `i·cols + j` is `Σ_l A[i, l]·B[l,
+    /// j]`, rounded once (`IRBuilder::ir_dot_f`).
+    MatMul { rows: u32, inner: u32, cols: u32 },
+    // ── permutation check (`lower::permutation`) ──────────────────────
+    /// `is_permutation(p)` of the shared integers: one lane (output 0,
+    /// position 0) whose value is 1; no proof unless `p` is a permutation
+    /// of `0..n` (the frontend asserts the lane).
+    IsPermutation,
 }
 
 impl OpKind {
@@ -126,6 +141,8 @@ impl OpKind {
             OpKind::Insert { .. } => &super::scatter::InsertSemantics,
             OpKind::IndexWrite { .. } => &super::scatter::IndexWriteSemantics,
             OpKind::MaskWrite => &super::scatter::MaskWriteSemantics,
+            OpKind::Correlation { .. } | OpKind::MatMul { .. } => &super::linear::LinearSemantics,
+            OpKind::IsPermutation => &super::permutation::IsPermutationSemantics,
         }
     }
 
@@ -145,6 +162,9 @@ impl OpKind {
             OpKind::Insert { .. } => "insert",
             OpKind::IndexWrite { .. } => "index_write",
             OpKind::MaskWrite => "mask_write",
+            OpKind::Correlation { .. } => "correlation",
+            OpKind::MatMul { .. } => "matmul",
+            OpKind::IsPermutation => "is_permutation",
         }
     }
 }

@@ -2,8 +2,10 @@
 
 `lower/sort/routed.rs`: packed keys routed into ascending order by a Waksman
 network whose switch bits the prover supplies, checked increasing. The halo2-base
-cost rule picks it for large enough sorts (Noir never). These tests compile for the
-halo2-base target, check that the routed plan is the one chosen, compare with NumPy
+cost rule picks it for mid-sized sorts (Noir never; large ones take the grand
+product of `lower/sort/grand_product.rs`, `test_challenge_constructions.py`). These
+tests force it (`ZINNIA_FORCE_CONSTRUCTION`), compile for the halo2-base target,
+check that the routed plan is the one lowered, compare with NumPy
 on the mock (ties, all keys equal, already sorted, reversed, sizes that are not
 powers of two) and check that halo2-base proofs agree with the mock. The tamper
 tests (every switch setting of small networks rejected or giving NumPy's outputs)
@@ -15,6 +17,12 @@ import pytest
 
 from testing.lang.mock_outputs import run_mock
 from testing.lang.test_sort_hints import assert_halo2_base_agrees, compile_for, ir_classes, reference
+
+
+@pytest.fixture(autouse=True)
+def force_routing(monkeypatch):
+    """Every sort that can be routed is routed (other groups as usual)."""
+    monkeypatch.setenv("ZINNIA_FORCE_CONSTRUCTION", "sort: routed permutation")
 
 
 def switch_count(n):

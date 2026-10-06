@@ -225,6 +225,8 @@ pub fn run(graph: &IRGraph) -> BoundMap {
             IR::Hint { .. } | IR::ArrayOp(_) => None,
             IR::KeyLess { .. } | IR::PackedKeyLess { .. } => Some(1),
             IR::PackKey { .. } | IR::PackedKeyIndex { .. } => None,
+            // Never emitted for Noir (`lower::challenge`); the emitter rejects them.
+            IR::IdentityCheck(_) | IR::RescaleRawF => None,
         };
 
         // Provenance fallback / tightening: the ProvenanceTable carries

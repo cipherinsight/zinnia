@@ -275,26 +275,29 @@ fn cost_rule_picks_by_target_and_live_outputs() {
     let halo2 = unit_costs(Target::Halo2Base);
     let noir = unit_costs(Target::Noir);
     let every: Vec<usize> = (0..100).collect();
-    // A full argsort of 100: the routed Waksman network on halo2-base (a
-    // read is a one-hot selection over 100 slots, a comparator network has
-    // 1,077 comparisons), the permutation check on Noir.
+    // A full argsort of 100: hinted keys checked by a grand product on
+    // halo2-base, even paying the challenge's one-time cost (a read is a
+    // one-hot selection over 100 slots, a comparator network has 1,077
+    // comparisons, the routed network 573 switches), the permutation check
+    // on Noir.
     let full = demand(100, &[], &every, 0);
-    assert_eq!(choose_plan(&full, &halo2).0, Plan::Routed);
+    assert_eq!(choose_plan(&full, &halo2).0, Plan::GrandProduct);
     // With the sorted values live too: the same, carrying the values.
     let both = demand(100, &every, &every, 0);
-    assert_eq!(choose_plan(&both, &halo2).0, Plan::Routed);
+    assert_eq!(choose_plan(&both, &halo2).0, Plan::GrandProduct);
     assert_eq!(
         choose_plan(&full, &noir).0,
         Plan::Hinted { runs: vec![Run { first: 0, last: 99, pin: Pin::Keys }] }
     );
-    // The indices of the 7 largest: one pinned run on both targets.
+    // The indices of the 7 largest: one pinned run on Noir; on halo2-base
+    // each pinned key reads 100 slots by selection, and the whole sort by a
+    // grand product costs less.
     let top: Vec<usize> = (93..100).collect();
-    for costs in [&halo2, &noir] {
-        assert_eq!(
-            choose_plan(&demand(100, &[], &top, 0), costs).0,
-            Plan::Hinted { runs: vec![Run { first: 93, last: 99, pin: Pin::Keys }] }
-        );
-    }
+    assert_eq!(
+        choose_plan(&demand(100, &[], &top, 0), &noir).0,
+        Plan::Hinted { runs: vec![Run { first: 93, last: 99, pin: Pin::Keys }] }
+    );
+    assert_eq!(choose_plan(&demand(100, &[], &top, 0), &halo2).0, Plan::GrandProduct);
     // Two order statistics at runtime ranks (a percentile): counts.
     for costs in [&halo2, &noir] {
         assert_eq!(choose_plan(&demand(20, &[], &[], 2), costs).0, Plan::Hinted { runs: vec![] });
