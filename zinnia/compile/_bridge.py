@@ -13,6 +13,8 @@ from zinnia._zinnia_core import (
     prove_circuit,
     emit_structural_circuit,
     get_elided_publics,
+    get_output_layout,
+    get_public_inputs,
     verify_proof_artifact,
     export_ir_json,
     import_ir_json,

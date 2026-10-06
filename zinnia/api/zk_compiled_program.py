@@ -23,6 +23,9 @@ class ZKCompiledProgram:
         self.program_inputs = program_inputs
         self.external_funcs = external_funcs
         self.eval_data = eval_data or {}
+        # Set only for a program restored by `deserialize` (the Rust handle of
+        # an imported IR carries no layout).
+        self._restored_layout = None
 
     def get_program_name(self) -> str:
         return self.name
@@ -75,13 +78,96 @@ class ZKCompiledProgram:
     def get_elided_publics(self) -> list:
         """Constant output cells elided from the public instance.
 
-        Returns a list of ``{"Int": v}`` / ``{"Float": v}`` dicts in return
-        order — the compiler's claim of which output values are pinned by
-        the kernel text itself rather than exposed. Output auditors check
-        these against ground truth.
+        Returns ``{"slot": k, "Int": v}`` / ``{"slot": k, "Float": v}`` dicts
+        in output order. Superseded by :meth:`get_output_layout`, which says
+        where every output value is.
         """
         from zinnia.compile._bridge import get_elided_publics
         return json.loads(get_elided_publics(self._compiled_ir))
+
+    def get_output_layout(self) -> list | None:
+        """Where every output value of the circuit is.
+
+        The outputs are the return value or, for a function that returns
+        ``None``, the array arguments it writes (in parameter order). They
+        are split into *parts* (the items of a returned tuple, and of lists
+        or tuples holding arrays, are separate parts); one entry per part, in
+        output order::
+
+            slot    = {"public": i, "kind": "i" | "f"}      # public vector index i
+                    | {"constant": v}                       # not in the public vector
+            output  = {"return": [path...]} | {"argument": name}
+            static  = {"output": output, "shape": [d...], "cells": [slot...]}
+            dynamic = {"output": output, "dynamic": {"length": slot, "rank": slot,
+                       "dims": [slot...], "cells": [slot...],
+                       "strides": [s...], "offset": o}}     # strides/offset optional
+
+        A part's cells are its elements in row-major order (complex parts,
+        marked ``"complex": true``, have two cells per element: real, then
+        imaginary). A runtime-shaped part's shape is the first ``rank`` of
+        ``dims``, whose product is ``length``; element ``c`` (coordinates) is
+        cell ``offset + sum(c[k] * strides[k])`` when strides are given, else
+        cell ``j`` for row-major position ``j``. Kind ``f`` values are Q32
+        fixed point. Public indices count every public value of the proof
+        (public inputs included, see :meth:`get_public_inputs`); the mock
+        backend reports the exposed outputs only. ``None`` for a program
+        deserialized from an older payload.
+        """
+        if self._compiled_ir is not None and self._restored_layout is None:
+            from zinnia.compile._bridge import get_output_layout
+            return json.loads(get_output_layout(self._compiled_ir))
+        return (self._restored_layout or {}).get("outputs")
+
+    def get_public_inputs(self) -> list | None:
+        """Inputs read as public values: ``[{"public": i, "input": path, "kind"}]``."""
+        if self._compiled_ir is not None and self._restored_layout is None:
+            from zinnia.compile._bridge import get_public_inputs
+            return json.loads(get_public_inputs(self._compiled_ir))
+        return (self._restored_layout or {}).get("inputs")
+
+    def describe_publics(self) -> list:
+        """What each value of the public vector is, by public index.
+
+        Every entry is one of ``{"input": path}``,
+        ``{"output": output, "element": j}`` (row-major element ``j`` of a
+        static part; for a complex part also ``"component": "real" | "imag"``),
+        ``{"output": output, "cell": k}`` (payload slot ``k`` of a
+        runtime-shaped part) or
+        ``{"output": output, "metadata": "length" | "rank" | "dim", "axis": a}``.
+        Constant outputs are not in the public vector; see
+        :meth:`get_output_layout`.
+        """
+        layout = self.get_output_layout()
+        inputs = self.get_public_inputs()
+        if layout is None or inputs is None:
+            raise ValueError("this program carries no output layout")
+        described: dict[int, dict] = {e["public"]: {"input": e["input"]} for e in inputs}
+
+        def note(slot: dict, entry: dict) -> None:
+            if "public" in slot:
+                described[slot["public"]] = entry
+
+        for part in layout:
+            output = part["output"]
+            per_element = 2 if part.get("complex") else 1
+            if "dynamic" in part:
+                dynamic = part["dynamic"]
+                note(dynamic["length"], {"output": output, "metadata": "length"})
+                note(dynamic["rank"], {"output": output, "metadata": "rank"})
+                for axis, dim in enumerate(dynamic["dims"]):
+                    note(dim, {"output": output, "metadata": "dim", "axis": axis})
+                cells = dynamic["cells"]
+            else:
+                cells = part["cells"]
+            # A runtime-shaped part's cells are buffer slots; which element a
+            # slot holds depends on the runtime shape.
+            unit = "cell" if "dynamic" in part else "element"
+            for index, cell in enumerate(cells):
+                entry = {"output": output, unit: index // per_element}
+                if per_element == 2:
+                    entry["component"] = "real" if index % 2 == 0 else "imag"
+                note(cell, entry)
+        return [described[i] for i in sorted(described)]
 
     def emit_structural(self, *args, backend="noir", params=None, externals=None) -> str:
         """Render the circuit STRUCTURE for the given witness without proving.
@@ -174,6 +260,8 @@ class ZKCompiledProgram:
             "program_inputs": [pi.export() for pi in self.program_inputs],
             "external_funcs": [ef.name for ef in self.external_funcs.values()],
             "eval_data": self.eval_data,
+            "public_layout": {"outputs": self.get_output_layout(),
+                              "inputs": self.get_public_inputs()},
         })
 
     @staticmethod
@@ -203,10 +291,12 @@ class ZKCompiledProgram:
 
         compiled_ir = import_ir_json(json.dumps(payload['ir_stmts']))
 
-        return ZKCompiledProgram(
+        program = ZKCompiledProgram(
             name=payload['name'],
             backend=payload['backend'],
             compiled_ir=compiled_ir,
             program_inputs=_program_inputs,
             external_funcs=ef_map,
         )
+        program._restored_layout = payload.get('public_layout') or {}
+        return program

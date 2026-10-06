@@ -59,19 +59,35 @@ def environment():
 
 
 def checked_source(text, output_shape):
+    """The variant with an `expected` argument and a check of its result.
+
+    Every `return v` of the variant's own body (not of helpers or lambdas
+    defined inside it) becomes the checks of `v` against `expected`, followed by
+    `return` of the checked value, so an early return still ends the function
+    exactly where the variant does.
+    """
     tree = ast.parse(text)
     fn = tree.body[0]
     shape = " ".join(map(str, output_shape))
     fn.args.args.append(ast.arg(arg="expected", annotation=ast.parse(f'Integer[Array, "{shape}"]', mode="eval").body))
+    actual = "gate_checked_result"
 
     class CheckReturns(ast.NodeTransformer):
+        def visit_FunctionDef(self, node):
+            # Only the variant itself; a nested helper's returns are its own.
+            return self.generic_visit(node) if node is fn else node
+
+        def visit_Lambda(self, node):
+            return node
+
         def visit_Return(self, node):
-            checks = ast.parse("actual = np.asarray(None)").body
+            checks = ast.parse(f"{actual} = np.asarray(None)").body
             checks[0].value.args[0] = node.value
-            checks += ast.parse(f"assert actual.ndim == {len(output_shape)}").body
+            checks += ast.parse(f"assert {actual}.ndim == {len(output_shape)}").body
             for axis, size in enumerate(output_shape):
-                checks += ast.parse(f"assert actual.shape[{axis}] == {size}").body
-            checks += ast.parse("assert np.all(actual == expected)").body
+                checks += ast.parse(f"assert {actual}.shape[{axis}] == {size}").body
+            checks += ast.parse(f"assert np.all({actual} == expected)").body
+            checks += ast.parse(f"return {actual}").body
             return checks
 
     return ast.unparse(ast.fix_missing_locations(CheckReturns().visit(tree)))

@@ -851,12 +851,7 @@ impl IRGenerator {
                 (Some(t), Some(e)) => {
                     let then_val = t.value.clone();
                     let else_val = e.value.clone();
-                    let merged = crate::helpers::value_ops::select_value(
-                        &mut self.builder,
-                        condition,
-                        &then_val,
-                        &else_val,
-                    );
+                    let merged = self.merge_binding(condition, &then_val, &else_val);
                     self.ctx.set(&name, merged);
                 }
                 (Some(one), None) | (None, Some(one)) => {
@@ -900,7 +895,16 @@ impl IRGenerator {
             }
             _ => false,
         };
-        if same_segment || !self.ctx.has_nontrivial_condition() {
+        if same_segment {
+            self.ctx.set(var_name, updated);
+            return;
+        }
+        // Another binding (or the caller) still holds the old array.
+        if let Some(written) = self.write_back_if_shared(var_name, current, &updated) {
+            self.ctx.set(var_name, written);
+            return;
+        }
+        if !self.ctx.has_nontrivial_condition() {
             self.ctx.set(var_name, updated);
             return;
         }
@@ -1001,8 +1005,7 @@ impl IRGenerator {
             if guarded {
                 if let Some(end) = target_name.and_then(|name| self.ctx.get(name)) {
                     exit_target = Some(match (&item.active, exit_target.take()) {
-                        (Some(active), Some(previous)) => crate::helpers::value_ops::select_value(
-                            &mut self.builder, active, &end, &previous),
+                        (Some(active), Some(previous)) => self.merge_binding(active, &end, &previous),
                         _ => end,
                     });
                 }
@@ -1040,8 +1043,7 @@ impl IRGenerator {
         if entry_condition.bool_val() != Some(true) {
             for (name, previous) in previous_targets {
                 if let Some(current) = self.ctx.get(&name) {
-                    let merged = crate::helpers::value_ops::select_value(
-                        &mut self.builder, &entry_condition, &current, &previous);
+                    let merged = self.merge_binding(&entry_condition, &current, &previous);
                     self.ctx.set(&name, merged);
                 }
             }
@@ -2025,12 +2027,17 @@ impl IRGenerator {
         let true_val = self.with_guard(&cond_bool, |this| this.visit(&n.t_expr));
         let not_cond = self.builder.ir_logical_not(&cond_bool);
         let false_val = self.with_guard(&not_cond, |this| this.visit(&n.f_expr));
-        crate::helpers::value_ops::select_value(
-            &mut self.builder,
-            &cond_bool,
-            &true_val,
-            &false_val,
-        )
+        match (&true_val, &false_val) {
+            (Value::None, Value::None) => return Value::None,
+            (Value::None, other) | (other, Value::None) => panic!(
+                "a conditional expression that is None on one side and a {} on the other is \
+                 not supported (its value would depend on a private condition)",
+                other.zinnia_type()
+            ),
+            _ => {}
+        }
+        // `a if c else b` is the object `a` or `b` itself in Python.
+        self.merge_binding(&cond_bool, &true_val, &false_val)
     }
 
     pub(crate) fn visit_joined_str(&mut self, n: &ASTJoinedStr) -> Value {
@@ -2071,12 +2078,7 @@ impl IRGenerator {
                 if should_merge {
                     let orig = self.ctx.get(&t.name).unwrap();
                     let cond = self.ctx.get_condition_value(&mut self.builder);
-                    let merged = crate::helpers::value_ops::select_value(
-                        &mut self.builder,
-                        &cond,
-                        &value,
-                        &orig,
-                    );
+                    let merged = self.merge_binding(&cond, &value, &orig);
                     self.ctx.set(&t.name, merged);
                 } else {
                     self.ctx.set(&t.name, value);

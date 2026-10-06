@@ -40,6 +40,15 @@ impl IRGenerator {
             ctx.member,
             "append" | "extend" | "pop" | "remove" | "clear" | "reverse" | "insert"
         ) {
+            if self.expression_guard_depth > 0 {
+                panic!(
+                    "`{}.{}(...)` inside a comprehension filter or one arm of a conditional \
+                     expression is not supported: the change would happen on some paths only, \
+                     and Zinnia does not carry it out of the expression. Write a `for` loop \
+                     with an `if` statement instead",
+                    var, ctx.member
+                );
+            }
             if let Some(list) = self.ctx.get(var) {
                 self.ensure_list_not_shared(var, &list);
             }

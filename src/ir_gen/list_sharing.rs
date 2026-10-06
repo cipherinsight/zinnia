@@ -73,10 +73,15 @@ impl IRGenerator {
                 // Views and detached copies of the array see the update.
                 self.note_array_write(&current);
                 let segment = *segment_id;
-                let shared = self.ctx.find_other_binding(name, |v| {
-                    super::detached_copies::array_segment(v) == Some(segment)
-                });
-                if shared.is_none() {
+                // The caller sees an in-place kernel's array arguments.
+                let shared = self.is_caller_visible_segment(segment)
+                    || self
+                        .ctx
+                        .find_other_binding(name, |v| {
+                            super::detached_copies::array_segment(v) == Some(segment)
+                        })
+                        .is_some();
+                if !shared {
                     return false;
                 }
                 let written = super::named_attr::write_into(&mut self.builder, result, &current);
@@ -85,6 +90,13 @@ impl IRGenerator {
             }
             Value::DynamicNDArray(data) => {
                 let segment = data.segment_id;
+                if self.is_caller_visible_segment(segment) {
+                    panic!(
+                        "in-place `{} op= ...` on a bounded-dynamic array argument of a function \
+                         that returns no value is not supported",
+                        name
+                    );
+                }
                 if let Some(other) = self.ctx.find_other_binding(name, |v| {
                     super::detached_copies::array_segment(v) == Some(segment)
                 }) {

@@ -65,6 +65,44 @@ def kernel(n: Integer, expected: Integer):
     assert not accepts(program, 0, 12)
 
 
+def test_an_upper_bound_alone_bounds_range():
+    """H2: `@requires(n <= K)` bounds `range(n)`; a negative `n` runs zero
+    iterations, as in Python, and needs no lower bound."""
+    source = '''@zk_circuit(requires=[lambda n, expected: n <= 5])
+def kernel(n: Integer, expected: Integer):
+    s = 0
+    for i in range(n):
+        s += i + 1
+    for j in range(1, n, 2):
+        s += 10
+    assert s == expected
+'''
+    program = compile_source(source)
+
+    def python(n):
+        return sum(i + 1 for i in range(n)) + 10 * len(range(1, n, 2))
+
+    for n in (-7, -1, 0, 1, 4, 5):
+        assert accepts(program, n, python(n))
+        assert not accepts(program, n, python(n) + 1)
+    # n = 6 violates the precondition (and needs a sixth iteration).
+    assert not accepts(program, 6, python(6))
+
+
+def test_a_lower_bound_alone_bounds_a_descending_range():
+    source = '''@zk_circuit(requires=[lambda n, expected: n >= -3])
+def kernel(n: Integer, expected: Integer):
+    s = 0
+    for i in range(2, n, -1):
+        s += i
+    assert s == expected
+'''
+    program = compile_source(source)
+    for n in (-3, 0, 2, 9):
+        assert accepts(program, n, sum(range(2, n, -1)))
+        assert not accepts(program, n, sum(range(2, n, -1)) - 1)
+
+
 def test_loop_target_after_loop_is_the_last_value_python_produced():
     source = '''def kernel(x: Integer[Array, "N<=4"], expected: Integer[Array, "2"]):
     i = -1

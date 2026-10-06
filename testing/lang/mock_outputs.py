@@ -67,3 +67,46 @@ def assert_matches_numpy(source: str, *args, atol: float = 1e-6):
     assert satisfied, "honest witness rejected"
     np.testing.assert_allclose(np.asarray(outputs, dtype=float), expected, atol=atol, rtol=0)
     return outputs
+
+
+def mock_publics(proof) -> list[int]:
+    """The mock's exposed public values in exposure order (floats in Q32)."""
+    return [int(entry.partition("=")[2]) for entry in sorted(proof.public_values, key=_statement_id)]
+
+
+def run_mock_layout(program, *args):
+    """Prove on the mock backend and decode the outputs with the compiler's
+    output layout. Returns ``(satisfied, values, shapes)``: the flattened
+    output elements in output order and the shape of every output part, as
+    ``benchmarking.harness.outputs.decode_with_layout`` reads them."""
+    from benchmarking.harness.adapters.zinnia_common import with_public_input_gaps
+    from benchmarking.harness.outputs import decode_with_layout
+
+    proof = program.prove(*args, backend="mock")
+    inputs = program.get_public_inputs()
+    fields = with_public_input_gaps(mock_publics(proof), inputs)
+    values, shapes = decode_with_layout(fields, program.get_output_layout(), inputs)
+    return proof.proof_bytes_hex == "mock_satisfied", values, shapes
+
+
+def numpy_outputs(source: str, *args):
+    """NumPy's outputs of ``kernel`` (its return value) as ``(values, shapes)``,
+    flattened the way the harness compares them."""
+    from benchmarking.harness.outputs import reference_leaves
+
+    leaves, shapes = reference_leaves(numpy_kernel(source)(*[np.copy(a) for a in args]))
+    return [leaf.value for leaf in leaves], shapes
+
+
+def numpy_in_place_outputs(source: str, names: list[str], *args):
+    """NumPy's outputs of an in-place kernel: the arguments ``names`` after the call."""
+    from benchmarking.harness.outputs import reference_leaves
+    import inspect
+
+    kernel = numpy_kernel(source)
+    copies = [np.copy(a) if isinstance(a, np.ndarray) else a for a in args]
+    assert kernel(*copies) is None
+    params = list(inspect.signature(kernel).parameters)
+    leaves, shapes = reference_leaves(tuple(copies[params.index(n)] for n in names))
+    return [leaf.value for leaf in leaves], shapes
+
