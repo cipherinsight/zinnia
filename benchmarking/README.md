@@ -77,7 +77,7 @@ the proof had no public value). Otherwise its status is the first failure class:
 
 | system | prove core | end to end | verify |
 |---|---|---|---|
-| `zinnia_halo2` | `create_proof` + transcript finalize, timed in the backend | the whole `prove()` call, **including** IPA parameter generation and keygen (the API couples them) | `verify_proof_artifact`, **including** re-keygen from the shipped IR |
+| `zinnia_halo2` | `prove_s`: `create_proof` + transcript finalize, timed in the backend | `preprocess_s` + `witness_s` + `prove_s` | `verify_s`: transcript + `verify_proof` with the verifying key read from setup's key directory |
 | `zinnia_noir`, `noir_hw` | `bb prove` process wall clock (includes bb start-up; the epoch manifest records the start-up floor on a one-line circuit) | `nargo execute` + `bb prove` | `bb verify` process |
 | `halo2_hw` | `prove_s` (create_proof) | `witness_s` + `prove_s` | `verify_s` |
 | `sp1`, `sp1_groth16` | `prove` (the SDK executes inside the prove call) | `prove` | `verify` |
@@ -85,6 +85,29 @@ the proof had no public value). Otherwise its status is the first failure class:
 | `cairo` | `scarb prove` process | `scarb execute` + `scarb prove` processes | `scarb verify` process |
 
 Every raw record carries its system's window descriptions.
+
+### The halo2 pair, step by step
+
+Both halo2 sides run the same steps in separate processes and write the same files:
+setup writes the IPA parameters (`params.bin`), the proving key (`pk.bin`), the verifying key
+(`vk.bin`, both `SerdeFormat::RawBytes`) and the pinned layout; prove reads the parameters
+and the proving key; verify reads the parameters and the verifying key. Zinnia's keys are
+generated without a witness (the synthesis a verifier runs); halo2_hw's with input A. Every
+prove uses input B. The per-step timings in the raw records (`timings_s`):
+
+| step | `zinnia_halo2` | `halo2_hw` | in a clock |
+|---|---|---|---|
+| read the inputs | Python input builder + `parse_inputs_s` | `load_input_s` | no |
+| read parameters / key | `load_params_s`, `load_pk_s` (prove); `load_params_s`, `load_vk_s` (verify) | same names | no |
+| resolve external calls | `preprocess_s`: one evaluation pass over the IR | (none) | end to end |
+| witness | `witness_s`: IR walk into the builder pinned to keygen's layout | `witness_s`: the circuit function into the pinned builder | end to end |
+| start the proving thread pool | `thread_pool_s` | `thread_pool_s` | no |
+| prove | `prove_s`: `create_proof` + transcript finalize | `prove_s`: same calls | prove core, end to end |
+| verify | `verify_s`: transcript + `verify_proof` | `verify_s`: same calls | verify |
+
+Outside every clock on both sides: process start-up, Zinnia's recompilation in each step
+(the IR digest must equal setup's; halo2_hw's circuit is compiled into its binary), writing
+the proof, and the whole-call diagnostics (`prove_call_s`, `verify_call_s`, `process_wall`).
 
 ### halo2 parameters (same policy on both halo2 sides)
 
