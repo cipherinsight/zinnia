@@ -206,3 +206,27 @@ fn an_unproven_precondition_is_emitted_as_a_check_once() {
     let needing = FirstElement { cost: 1, proves: None, needs: Some(p.x) };
     assert_eq!(index_checks(&lower_with(&p, &[&needing])), 1);
 }
+
+/// Two bound checks of one index, `bounds` in statement order, then a sort.
+fn checked_twice(bounds: [i64; 2]) -> IRGraph {
+    let mut b = IRBuilder::new();
+    let x = b.ir_read_integer(InputPath::new("x", vec![]), false);
+    for hi in bounds {
+        let hi = b.ir_constant_int(hi);
+        b.ir_assert_u128_lt(&x, &hi);
+    }
+    let elements: Arc<[Value]> =
+        (0..2).map(|j| b.ir_read_integer(InputPath::new(format!("a{j}"), vec![]), false)).collect();
+    let out = b.ir_sorted(&elements, 0, false);
+    b.ir_expose_public_i(&out);
+    b.export_ir_graph()
+}
+
+#[test]
+fn a_check_an_earlier_check_implies_is_not_emitted() {
+    let lowered = |bounds| super::emit::lower(&checked_twice(bounds), Target::Halo2Base, &super::registry()).unwrap();
+    assert_eq!(index_checks(&lowered([4, 8])), 1);
+    // A weaker check first keeps both: dropping it would leave the
+    // statements between the two without the bound it proves.
+    assert_eq!(index_checks(&lowered([8, 4])), 2);
+}
