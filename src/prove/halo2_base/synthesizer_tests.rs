@@ -1479,7 +1479,7 @@ fn divisions_by_asserted_nonzero_divisors_are_pinned() {
 /// `prover_hint` loads the kernel's lane as a hint cell and constrains
 /// nothing: a changed lane is accepted. That is the contract of `IR::Hint`
 /// (the IR that uses a hint pins it); the pinned uses are tested on whole
-/// lowered graphs in `optim::sort_lowering`.
+/// lowered graphs in `lower::sort`.
 #[test]
 fn prover_hints_are_kernel_lanes_and_constrain_nothing() {
     use crate::ir_defs::HintKind;
@@ -1501,7 +1501,7 @@ fn prover_hints_are_kernel_lanes_and_constrain_nothing() {
     assert_eq!(tampered.outputs, vec![int(4), int(30)]);
 }
 
-// ── Sort lowerings (optim::sort_lowering) ──────────────────────────────
+// ── Sort lowerings (lower::sort) ──────────────────────────────
 
 /// Synthesize a whole IR graph on `witness`, perturbing hints as in
 /// [`synthesize`].
@@ -1534,7 +1534,7 @@ fn synthesize_graph(graph: &crate::ir::IRGraph, witness: &ResolvedWitness, tampe
 /// tied element) and an order statistic into its neighbours.
 #[test]
 fn sort_hints_are_pinned() {
-    use crate::optim::sort_lowering::test_support::{sort_graph, witness, Forced, Output};
+    use crate::lower::sort::test_support::{sort_graph, witness, Forced, Output};
     let values = [3, 1, 3, 0, 1];
     let n = values.len() as u32;
     let every: Vec<Output> = (0..n).flat_map(|r| [Output::Value(r), Output::Index(r)]).collect();

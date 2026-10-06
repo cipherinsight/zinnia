@@ -15,6 +15,7 @@ use crate::prove::types::ProvingParams;
 use crate::types::Value;
 
 use super::cost::{self, Demand, Network, Pin, Plan, Run};
+use crate::lower::{Candidate, Construction, Context, Group, Target};
 
 /// The lowering a test forces on its sort.
 #[derive(Clone, Copy, Debug)]
@@ -36,7 +37,7 @@ pub(crate) enum Forced {
     /// membership product.
     Extremes,
     /// The cost rule of a target.
-    CostRule(cost::SortTarget),
+    CostRule(Target),
 }
 
 /// An output a test asks for: the value or argsort index of a constant
@@ -88,7 +89,22 @@ fn plan_for(forced: Forced, demand: &Demand) -> Plan {
             assert!(demand.indices.is_empty(), "extremes are values");
             Plan::Hinted { runs: live.iter().map(|&r| Run { first: r, last: r, pin: Pin::Extreme }).collect() }
         }
-        Forced::CostRule(target) => cost::choose_plan(demand, &target.costs()).0,
+        Forced::CostRule(target) => cost::choose_plan(demand, &cost::unit_costs(target)).0,
+    }
+}
+
+/// The one construction a test lowers its sort with.
+struct ForcedPlan(Forced);
+
+impl Construction for ForcedPlan {
+    fn name(&self) -> &'static str {
+        "sort: forced"
+    }
+
+    fn candidates(&self, group: &Group, _cx: &Context) -> Vec<Candidate> {
+        let demand = super::demand(group);
+        let plan = plan_for(self.0, &demand);
+        vec![super::plan_candidate(group, demand, plan, 0)]
     }
 }
 
@@ -129,7 +145,9 @@ pub(crate) fn sort_graph(values: &[i64], outputs: &[Output], forced: Forced) -> 
             _ => expected = None,
         }
     }
-    let graph = super::lower_sorts(b.export_ir_graph(), |demand| plan_for(forced, demand));
+    let forced = ForcedPlan(forced);
+    let graph = crate::lower::emit::lower(&b.export_ir_graph(), Target::Halo2Base, &[&forced as &dyn Construction])
+        .expect("a graph with a sort");
     let graph = crate::optim::IRPass::exec(&crate::optim::DeadCodeElimination, graph);
     SortGraph { graph, inputs, expected }
 }

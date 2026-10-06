@@ -6,10 +6,13 @@
 //!    group. Each precondition fact that no free fact proves and no
 //!    candidate establishes gets a *check node*: the framework emits the
 //!    check through `builder/guard.rs`, under the fact's scope.
-//! 3. **Program checks.** An assertion of the program whose fact a free fact
-//!    proves is dropped. One whose fact some candidate establishes becomes a
-//!    root requirement whose own producer is the assertion itself (kept when
-//!    selected, at its cost), so a postcondition can discharge it.
+//! 3. **Program checks.** An assertion of the program that an earlier one
+//!    implies, or whose fact a scalar gadget's postcondition establishes
+//!    (`facts`), is dropped. One whose fact some candidate establishes, or
+//!    that implies a candidate's precondition, becomes a root requirement
+//!    whose own producer is the assertion itself (kept when selected, at its
+//!    cost): a postcondition can discharge it, and it can justify a
+//!    precondition.
 //! 4. **Selection** per connected part of the graph (`select`).
 //! 5. **Emission** in a topological order of statements, node starts and
 //!    lanes: a node starts right before its first lane, with its inputs
@@ -58,11 +61,10 @@ pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction
     let groups = collect_groups(graph);
     let facts = FreeFacts::new(graph);
     let program_checks = checks::program_checks(graph);
-    let freely_proven: HashSet<StmtId> = program_checks
-        .iter()
-        .filter(|c| c.forms.iter().any(|f| facts.proves(f)))
-        .map(|c| c.stmt)
-        .collect();
+    let mut freely_proven = checks::dominated(&program_checks);
+    freely_proven.extend(
+        program_checks.iter().filter(|c| c.forms.iter().any(|f| facts.established_by_gadget(f))).map(|c| c.stmt),
+    );
     if groups.is_empty() && freely_proven.is_empty() {
         return None;
     }
@@ -80,21 +82,21 @@ pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction
         }
     }
     let established: Vec<Fact> = nodes.iter().flat_map(|n| n.post_facts()).collect();
+    let wanted: Vec<Fact> = nodes.iter().flat_map(|n| n.pre_facts()).collect();
     let mut roots: Vec<Requirement> = groups.iter().flat_map(|g| g.lanes.iter().map(|l| Requirement::Lane(l.stmt))).collect();
     for check in program_checks.iter().filter(|c| !freely_proven.contains(&c.stmt)) {
-        if let Some(fact) = check.forms.iter().find(|f| established.iter().any(|e| e.implies(f))) {
-            roots.push(Requirement::Fact(*fact));
+        let provable = check.forms.iter().any(|f| established.iter().any(|e| e.implies(f)));
+        let useful = check.forms.iter().any(|f| wanted.iter().any(|w| f.implies(w)));
+        if provable || useful {
+            roots.push(Requirement::Fact(check.forms[0]));
             nodes.push(NodeEntry::program_check(check, target));
         }
     }
     add_check_nodes(&mut nodes, target);
 
     let selected = select_all(&nodes, &roots);
-    let dropped: HashSet<StmtId> = program_checks
-        .iter()
-        .map(|c| c.stmt)
-        .filter(|s| freely_proven.contains(s) || is_unselected_check(&nodes, &selected, *s))
-        .collect();
+    let mut dropped = freely_proven;
+    dropped.extend(unselected_checks(&nodes, &selected));
     Some(emit(graph, &groups, nodes, &selected, &dropped))
 }
 
@@ -168,23 +170,24 @@ impl NodeEntry {
     }
 
     fn post_facts(&self) -> impl Iterator<Item = Fact> + '_ {
-        self.node.post.iter().filter_map(|r| match r {
-            Requirement::Fact(f) => Some(*f),
-            _ => None,
-        })
+        facts_of(&self.node.post)
     }
+
+    fn pre_facts(&self) -> impl Iterator<Item = Fact> + '_ {
+        facts_of(&self.node.pre)
+    }
+}
+
+fn facts_of(requirements: &[Requirement]) -> impl Iterator<Item = Fact> + '_ {
+    requirements.iter().filter_map(|r| match r {
+        Requirement::Fact(f) => Some(*f),
+        _ => None,
+    })
 }
 
 /// A check node for every precondition fact no node establishes.
 fn add_check_nodes(nodes: &mut Vec<NodeEntry>, target: Target) {
-    let wanted: Vec<Fact> = nodes
-        .iter()
-        .flat_map(|n| n.node.pre.iter())
-        .filter_map(|r| match r {
-            Requirement::Fact(f) => Some(*f),
-            _ => None,
-        })
-        .collect();
+    let wanted: Vec<Fact> = nodes.iter().flat_map(|n| n.pre_facts()).collect();
     let mut added: HashSet<Fact> = HashSet::new();
     for fact in wanted {
         let required = Requirement::Fact(fact);
@@ -218,49 +221,84 @@ fn select_all(nodes: &[NodeEntry], roots: &[Requirement]) -> Vec<usize> {
 }
 
 /// Union of the nodes that share a requirement (or a root), with the
-/// roots of each part.
+/// roots of each part. Lanes and shared values are matched by key; facts
+/// (few) by implication.
 fn connected_parts(nodes: &[NodeEntry], roots: &[Requirement]) -> Vec<(Vec<usize>, Vec<Requirement>)> {
-    let mut parent: Vec<usize> = (0..nodes.len()).collect();
-    fn find(parent: &mut [usize], i: usize) -> usize {
-        let mut i = i;
-        while parent[i] != i {
-            parent[i] = parent[parent[i]];
-            i = parent[i];
+    let mut parts = UnionFind::new(nodes.len());
+    let mut first_with: HashMap<&Requirement, usize> = HashMap::new();
+    let (mut produced, mut consumed): (Vec<(usize, Fact)>, Vec<(usize, Fact)>) = (Vec::new(), Vec::new());
+    for (i, entry) in nodes.iter().enumerate() {
+        for (r, is_post) in entry.node.post.iter().map(|r| (r, true)).chain(entry.node.pre.iter().map(|r| (r, false))) {
+            match r {
+                Requirement::Fact(f) if is_post => produced.push((i, *f)),
+                Requirement::Fact(f) => consumed.push((i, *f)),
+                _ => match first_with.get(r) {
+                    Some(&j) => parts.union(i, j),
+                    None => {
+                        first_with.insert(r, i);
+                    }
+                },
+            }
+        }
+    }
+    let producers_of = |f: &Fact| -> Vec<usize> { produced.iter().filter(|(_, p)| p.implies(f)).map(|(j, _)| *j).collect() };
+    for (i, f) in &consumed {
+        for j in producers_of(f) {
+            parts.union(*i, j);
+        }
+    }
+    let mut root_part: Vec<(usize, Requirement)> = Vec::new();
+    for r in roots {
+        let producers: Vec<usize> = match r {
+            Requirement::Fact(f) => producers_of(f),
+            other => first_with.get(other).into_iter().copied().collect(),
+        };
+        let Some(&first) = producers.first() else {
+            panic!("array lowering: no construction produces {r:?}");
+        };
+        for &j in &producers[1..] {
+            parts.union(first, j);
+        }
+        root_part.push((first, r.clone()));
+    }
+    let mut by_part: BTreeMap<usize, (Vec<usize>, Vec<Requirement>)> = BTreeMap::new();
+    for i in 0..nodes.len() {
+        by_part.entry(parts.find(i)).or_default().0.push(i);
+    }
+    for (node, r) in root_part {
+        by_part.entry(parts.find(node)).or_default().1.push(r);
+    }
+    by_part.into_values().filter(|(_, roots)| !roots.is_empty()).collect()
+}
+
+struct UnionFind(Vec<usize>);
+
+impl UnionFind {
+    fn new(n: usize) -> UnionFind {
+        UnionFind((0..n).collect())
+    }
+
+    fn find(&mut self, mut i: usize) -> usize {
+        while self.0[i] != i {
+            self.0[i] = self.0[self.0[i]];
+            i = self.0[i];
         }
         i
     }
-    let touches = |n: &NodeEntry, r: &Requirement| {
-        n.node.post.iter().any(|p| justifies(p, r)) || n.node.pre.iter().any(|q| q == r)
-    };
-    let mut requirements: Vec<&Requirement> = roots.iter().collect();
-    for n in nodes {
-        requirements.extend(n.node.pre.iter());
+
+    fn union(&mut self, a: usize, b: usize) {
+        let (a, b) = (self.find(a), self.find(b));
+        self.0[a] = b;
     }
-    for r in &requirements {
-        let members: Vec<usize> = (0..nodes.len()).filter(|&i| touches(&nodes[i], r)).collect();
-        for pair in members.windows(2) {
-            let (a, b) = (find(&mut parent, pair[0]), find(&mut parent, pair[1]));
-            parent[a] = b;
-        }
-    }
-    let mut parts: BTreeMap<usize, (Vec<usize>, Vec<Requirement>)> = BTreeMap::new();
-    for i in 0..nodes.len() {
-        let root = find(&mut parent, i);
-        parts.entry(root).or_default().0.push(i);
-    }
-    for r in roots {
-        let Some(i) = (0..nodes.len()).find(|&i| nodes[i].node.post.iter().any(|p| justifies(p, r))) else {
-            panic!("array lowering: no construction produces {r:?}");
-        };
-        let root = find(&mut parent, i);
-        parts.entry(root).or_default().1.push(r.clone());
-    }
-    parts.into_values().filter(|(_, roots)| !roots.is_empty()).collect()
 }
 
-fn is_unselected_check(nodes: &[NodeEntry], selected: &[usize], stmt: StmtId) -> bool {
-    let is_node = |i: &usize| matches!(nodes[*i].kind, NodeKind::ProgramCheck(s) if s == stmt);
-    (0..nodes.len()).any(|i| is_node(&i)) && !selected.iter().any(is_node)
+fn unselected_checks(nodes: &[NodeEntry], selected: &[usize]) -> HashSet<StmtId> {
+    let check_of = |i: usize| match nodes[i].kind {
+        NodeKind::ProgramCheck(s) => Some(s),
+        _ => None,
+    };
+    let kept: HashSet<StmtId> = selected.iter().filter_map(|&i| check_of(i)).collect();
+    (0..nodes.len()).filter_map(check_of).filter(|s| !kept.contains(s)).collect()
 }
 
 // ── Emission ────────────────────────────────────────────────────────────
@@ -382,7 +420,12 @@ fn emit(graph: &IRGraph, groups: &[Group], nodes: Vec<NodeEntry>, selected: &[us
     }
 
     let lanes: HashMap<StmtId, &Lane> = groups.iter().flat_map(|g| g.lanes.iter().map(|l| (l.stmt, l))).collect();
-    let order = emission_order(graph, groups, &lane_producer, &starts);
+    let check_inputs: HashMap<usize, Vec<StmtId>> = state
+        .checks_for
+        .iter()
+        .map(|(&node, facts)| (node, facts.iter().flat_map(Fact::subjects).collect()))
+        .collect();
+    let order = emission_order(graph, groups, &lane_producer, &starts, &check_inputs);
 
     let mut b = IRBuilder::new();
     b.reserve_segment_ids_below(next_free_segment_id(graph));
@@ -415,7 +458,13 @@ fn emit(graph: &IRGraph, groups: &[Group], nodes: Vec<NodeEntry>, selected: &[us
 /// Statements in their order, each node's start placed right before the
 /// first lane it produces once its inputs are emitted (Kahn's algorithm,
 /// ties by position).
-fn emission_order(graph: &IRGraph, groups: &[Group], lane_producer: &HashMap<StmtId, usize>, starts: &[usize]) -> Vec<Unit> {
+fn emission_order(
+    graph: &IRGraph,
+    groups: &[Group],
+    lane_producer: &HashMap<StmtId, usize>,
+    starts: &[usize],
+    check_inputs: &HashMap<usize, Vec<StmtId>>,
+) -> Vec<Unit> {
     let position: HashMap<StmtId, usize> = graph.stmts.iter().enumerate().map(|(i, s)| (s.stmt_id, i)).collect();
     let mut deps: HashMap<Unit, Vec<Unit>> = HashMap::new();
     let mut priority: HashMap<Unit, usize> = HashMap::new();
@@ -436,6 +485,7 @@ fn emission_order(graph: &IRGraph, groups: &[Group], lane_producer: &HashMap<Stm
         for (lane, _) in lane_producer.iter().filter(|(_, &p)| p == node) {
             inputs.extend(group_of[lane].shared.iter().map(|s| Unit::Stmt(*s)));
         }
+        inputs.extend(check_inputs.get(&node).into_iter().flatten().map(|s| Unit::Stmt(*s)));
         inputs.sort_unstable();
         inputs.dedup();
         deps.insert(Unit::Start(node), inputs);

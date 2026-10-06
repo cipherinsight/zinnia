@@ -28,6 +28,8 @@ pub mod graph;
 pub mod op;
 pub mod select;
 pub mod sort;
+#[cfg(test)]
+mod tests;
 
 pub use construction::{Candidate, Construction, Context, Emitter, Target};
 pub use emit::{ArrayLowering, EmitCx};

@@ -12,30 +12,13 @@
 
 use std::collections::BTreeSet;
 
-/// The backend a program is compiled for (`ZinniaConfig.backend`). Any IR
-/// proves on any backend; the target only selects the cheaper lowering.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SortTarget {
-    Halo2Base,
-    Noir,
-}
+use crate::lower::Target;
 
-impl SortTarget {
-    /// The target of a `ZinniaConfig.backend` name: `noir`, else halo2-base
-    /// (the default backend, `halo2`).
-    pub fn from_backend(backend: &str) -> SortTarget {
-        if backend == "noir" {
-            SortTarget::Noir
-        } else {
-            SortTarget::Halo2Base
-        }
-    }
-
-    pub(super) fn costs(self) -> UnitCosts {
-        match self {
-            SortTarget::Halo2Base => HALO2_BASE,
-            SortTarget::Noir => NOIR,
-        }
+/// The unit costs measured on `target`.
+pub(crate) fn unit_costs(target: Target) -> UnitCosts {
+    match target {
+        Target::Halo2Base => HALO2_BASE,
+        Target::Noir => NOIR,
     }
 }
 
@@ -46,7 +29,7 @@ impl SortTarget {
 /// value at a runtime rank of 100 elements, minus the same kernel's input
 /// handling (`return a`).
 #[derive(Clone, Copy, Debug)]
-pub(super) struct UnitCosts {
+pub(crate) struct UnitCosts {
     /// One compare-exchange of values (Batcher's network on values).
     exchange: u32,
     /// One compare-exchange of `(value, index)` keys with the index
@@ -341,16 +324,15 @@ pub(super) fn cone_size(pairs: &[(usize, usize)], n: usize, live: &BTreeSet<usiz
     count
 }
 
-/// The cheapest plan for `demand` under `costs`, with its estimated cost.
+/// The cheapest plan for `demand` under `costs`, with its estimated cost:
+/// the first of the cheapest among the plans of the three constructions,
+/// in their registration order (as the selection breaks ties).
+#[cfg(test)]
 pub(super) fn choose_plan(demand: &Demand, costs: &UnitCosts) -> (Plan, u64) {
-    let candidates = [
-        cheapest_network(demand, costs),
-        full_permutation(demand, costs),
-        cheapest_selection(demand, costs),
-    ];
-    candidates
+    network_plans(demand, costs)
         .into_iter()
-        .flatten()
+        .chain(full_permutation(demand, costs))
+        .chain(selection_plans(demand, costs))
         .min_by_key(|(_, cost)| *cost)
         .expect("a network always applies")
 }
@@ -361,7 +343,9 @@ fn runtime_reads_of_outputs(demand: &Demand, costs: &UnitCosts) -> u64 {
     costs.reads(demand.n, demand.runtime_values) + costs.reads(demand.n, demand.runtime_indices)
 }
 
-fn cheapest_network(demand: &Demand, costs: &UnitCosts) -> Option<(Plan, u64)> {
+/// Every sorting network that computes the live outputs, with its cost
+/// (the comparators in the cone of the live outputs, and the runtime reads).
+pub(super) fn network_plans(demand: &Demand, costs: &UnitCosts) -> Vec<(Plan, u64)> {
     let n = demand.n;
     let runtime = demand.runtime_values + demand.runtime_indices;
     let live: BTreeSet<usize> = if runtime > 0 {
@@ -390,12 +374,12 @@ fn cheapest_network(demand: &Demand, costs: &UnitCosts) -> Option<(Plan, u64)> {
             };
             (Plan::Network { network }, comparators * costs.comparator(network) + packing + reads)
         })
-        .min_by_key(|(_, cost)| *cost)
+        .collect()
 }
 
 /// Every rank as one pinned run (the permutation check); runtime-rank
 /// outputs read its outputs.
-fn full_permutation(demand: &Demand, costs: &UnitCosts) -> Option<(Plan, u64)> {
+pub(super) fn full_permutation(demand: &Demand, costs: &UnitCosts) -> Option<(Plan, u64)> {
     let n = demand.n;
     let run = Run { first: 0, last: n - 1, pin: Pin::Keys };
     let cost = costs.key_run(n, 0, n - 1) + costs.reads(n, n) + runtime_reads_of_outputs(demand, costs);
@@ -403,10 +387,11 @@ fn full_permutation(demand: &Demand, costs: &UnitCosts) -> Option<(Plan, u64)> {
 }
 
 /// The live constant ranks covered by runs (`cheapest_runs`), runtime-rank
-/// values pinned by counts and runtime-rank indices by their key's rank.
-/// Every key (a run's rank, a runtime-rank index) reads one shared segment
-/// of the elements.
-fn cheapest_selection(demand: &Demand, costs: &UnitCosts) -> Option<(Plan, u64)> {
+/// values pinned by counts and runtime-rank indices by their key's rank,
+/// with key runs allowed and (when no index is live) without them. Every
+/// key (a run's rank, a runtime-rank index) reads one shared segment of the
+/// elements.
+pub(super) fn selection_plans(demand: &Demand, costs: &UnitCosts) -> Vec<(Plan, u64)> {
     let n = demand.n;
     let per_output = demand.runtime_values as u64 * costs.order_statistic(n)
         + demand.runtime_indices as u64 * costs.index_at_rank(n);
@@ -422,7 +407,7 @@ fn cheapest_selection(demand: &Demand, costs: &UnitCosts) -> Option<(Plan, u64)>
                 + demand.runtime_indices;
             Some((Plan::Hinted { runs }, runs_cost + per_output + costs.reads(n, keys)))
         })
-        .min_by_key(|(_, cost)| *cost)
+        .collect()
 }
 
 /// The cheapest cover of the live constant ranks by runs: a dynamic
