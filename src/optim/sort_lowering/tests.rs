@@ -1,0 +1,287 @@
+//! The sort lowering: every plan computes NumPy's stable sort (ties
+//! included), the cost rule picks the plans the cost model predicts, and
+//! every hinted plan accepts its hints only at their honest values (on the
+//! mock here; on halo2-base and Noir in those backends' soundness tests,
+//! with the same fixtures).
+
+use std::collections::BTreeSet;
+
+use super::cost::{
+    adjacent_swap_pairs, choose_plan, cone_size, merge_exchange_pairs, Demand, Network, Plan, Run,
+    SortTarget,
+};
+use super::test_support::{
+    hints_as_inputs, mock_run, sort_graph, stable_sort, tampered_inputs, Forced, Output,
+};
+use crate::ir_defs::IR;
+
+// ── Networks ─────────────────────────────────────────────────────────────
+
+fn apply(pairs: &[(usize, usize)], keys: &mut [u32]) {
+    for &(i, j) in pairs {
+        assert!(i < j && j < keys.len());
+        if keys[j] < keys[i] {
+            keys.swap(i, j);
+        }
+    }
+}
+
+/// The 0-1 principle: a comparator network sorts every input iff it sorts
+/// every sequence of zeros and ones.
+#[test]
+fn merge_exchange_sorts_every_zero_one_input() {
+    for n in 0..=14usize {
+        let pairs = merge_exchange_pairs(n);
+        for mask in 0u32..(1 << n) {
+            let mut keys: Vec<u32> = (0..n).map(|i| (mask >> i) & 1).collect();
+            apply(&pairs, &mut keys);
+            assert!(keys.windows(2).all(|w| w[0] <= w[1]), "n={n} mask={mask:b}");
+        }
+    }
+}
+
+#[test]
+fn merge_exchange_sorts_permutations_of_larger_sizes() {
+    for n in [20usize, 50, 100, 129] {
+        let pairs = merge_exchange_pairs(n);
+        for seed in 0..20u64 {
+            let mut keys: Vec<u32> = (0..n as u32).collect();
+            let mut state = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            for i in (1..n).rev() {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                keys.swap(i, (state >> 33) as usize % (i + 1));
+            }
+            apply(&pairs, &mut keys);
+            assert_eq!(keys, (0..n as u32).collect::<Vec<_>>());
+        }
+    }
+}
+
+#[test]
+fn comparator_counts_and_cones() {
+    let counts: Vec<usize> = [2, 3, 20, 50, 100].iter().map(|&n| merge_exchange_pairs(n).len()).collect();
+    assert_eq!(counts, vec![1, 3, 97, 395, 1077]);
+    let all: BTreeSet<usize> = (0..100).collect();
+    assert_eq!(cone_size(&merge_exchange_pairs(100), 100, &all), 1077);
+    // The adjacent-swap network's top output needs only the first pass.
+    let top: BTreeSet<usize> = [99].into_iter().collect();
+    assert_eq!(cone_size(&adjacent_swap_pairs(100), 100, &top), 99);
+}
+
+// ── Every plan computes NumPy's stable sort ─────────────────────────────
+
+/// Values with ties (several equal values, equal to the extremes), negative
+/// values, and a run of one value.
+const TIED: [i64; 9] = [5, -3, 5, 0, -3, 7, 5, 0, -9];
+
+fn every_output(n: u32) -> Vec<Output> {
+    (0..n).flat_map(|r| [Output::Value(r), Output::Index(r)]).collect()
+}
+
+fn assert_computes_numpy(values: &[i64], outputs: &[Output], forced: Forced) {
+    let sort = sort_graph(values, outputs, forced);
+    assert!(
+        !sort.graph.stmts.iter().any(|s| matches!(s.ir, IR::Sorted { .. })),
+        "a placeholder survived"
+    );
+    let (ok, got) = mock_run(&sort.graph, &sort.inputs);
+    match &sort.expected {
+        Some(expected) => {
+            assert!(ok, "{forced:?} {outputs:?}: honest run rejected");
+            assert_eq!(&got, expected, "{forced:?} {outputs:?}");
+        }
+        None => assert!(!ok, "{forced:?} {outputs:?}: an out-of-range rank was accepted"),
+    }
+}
+
+#[test]
+fn every_plan_is_the_stable_sort_with_ties() {
+    let n = TIED.len() as u32;
+    for forced in [Forced::Batcher, Forced::AdjacentSwap, Forced::Permutation, Forced::Runs] {
+        assert_computes_numpy(&TIED, &every_output(n), forced);
+        // Some outputs only: a prefix, a suffix, a middle run, isolated ranks.
+        for ranks in [vec![0, 1], vec![7, 8], vec![3, 4, 5], vec![0, 4, 8]] {
+            let outputs: Vec<Output> = ranks.iter().map(|&r| Output::Index(r)).collect();
+            assert_computes_numpy(&TIED, &outputs, forced);
+        }
+    }
+    for ranks in [vec![0], vec![4], vec![8], vec![2, 3, 6]] {
+        let outputs: Vec<Output> = ranks.iter().map(|&r| Output::Value(r)).collect();
+        assert_computes_numpy(&TIED, &outputs, Forced::Counting);
+    }
+    for target in [SortTarget::Halo2Base, SortTarget::Noir] {
+        assert_computes_numpy(&TIED, &every_output(n), Forced::CostRule(target));
+    }
+}
+
+#[test]
+fn runtime_ranks_are_the_stable_sort_and_out_of_range_has_no_proof() {
+    for forced in [Forced::Batcher, Forced::Permutation, Forced::Runs] {
+        for r in [0, 3, 4, 8] {
+            assert_computes_numpy(&TIED, &[Output::ValueAt(r), Output::IndexAt(r)], forced);
+        }
+        for r in [-1, 9, 1 << 40] {
+            assert_computes_numpy(&TIED, &[Output::ValueAt(r)], forced);
+            assert_computes_numpy(&TIED, &[Output::IndexAt(r)], forced);
+        }
+    }
+}
+
+#[test]
+fn every_plan_agrees_on_pseudo_random_inputs() {
+    let mut state = 0x9E3779B97F4A7C15u64;
+    for n in [1usize, 2, 5, 12] {
+        for _ in 0..4 {
+            let values: Vec<i64> = (0..n)
+                .map(|_| {
+                    state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                    ((state >> 33) % 7) as i64 - 3 // many ties
+                })
+                .collect();
+            for forced in [Forced::Batcher, Forced::Permutation, Forced::Runs] {
+                assert_computes_numpy(&values, &every_output(n as u32), forced);
+            }
+        }
+    }
+}
+
+// ── The cost rule ───────────────────────────────────────────────────────
+
+fn demand(n: usize, values: &[usize], indices: &[usize], runtime_values: usize) -> Demand {
+    Demand {
+        n,
+        values: values.iter().copied().collect(),
+        indices: indices.iter().copied().collect(),
+        runtime_values,
+        runtime_indices: 0,
+    }
+}
+
+#[test]
+fn cost_rule_picks_by_target_and_live_outputs() {
+    let halo2 = SortTarget::Halo2Base.costs();
+    let noir = SortTarget::Noir.costs();
+    let every: Vec<usize> = (0..100).collect();
+    // A full argsort of 100: Batcher on halo2-base (a read is a one-hot
+    // selection over 100 slots), the permutation check on Noir.
+    let full = demand(100, &[], &every, 0);
+    assert_eq!(choose_plan(&full, &halo2).0, Plan::Network { network: Network::MergeExchangeTieBreak });
+    assert_eq!(
+        choose_plan(&full, &noir).0,
+        Plan::Hinted { runs: vec![Run { first: 0, last: 99, by_count: false }] }
+    );
+    // The indices of the 7 largest: one pinned run on both targets.
+    let top: Vec<usize> = (93..100).collect();
+    for costs in [&halo2, &noir] {
+        assert_eq!(
+            choose_plan(&demand(100, &[], &top, 0), costs).0,
+            Plan::Hinted { runs: vec![Run { first: 93, last: 99, by_count: false }] }
+        );
+    }
+    // Two order statistics at runtime ranks (a percentile): counts.
+    for costs in [&halo2, &noir] {
+        assert_eq!(choose_plan(&demand(20, &[], &[], 2), costs).0, Plan::Hinted { runs: vec![] });
+    }
+    // The median of 101 values: one count.
+    assert_eq!(
+        choose_plan(&demand(101, &[50], &[], 0), &halo2).0,
+        Plan::Hinted { runs: vec![Run { first: 50, last: 50, by_count: true }] }
+    );
+    // Three values: a network on both targets.
+    for costs in [&halo2, &noir] {
+        assert!(matches!(choose_plan(&demand(3, &[], &[0, 1, 2], 0), costs).0, Plan::Network { .. }));
+    }
+}
+
+// ── Pins: a malicious prover's hints are rejected ───────────────────────
+
+/// Every hint of the lowered graph, replaced by a free input, is accepted
+/// at its honest value and rejected at each of `wrong(honest)`.
+fn assert_pinned(values: &[i64], outputs: &[Output], forced: Forced, wrong: impl Fn(i64) -> Vec<i64>) {
+    let sort = sort_graph(values, outputs, forced);
+    let (graph, sites) = hints_as_inputs(&sort);
+    assert!(!sites.is_empty(), "{forced:?}: no hint to tamper with");
+    let honest = tampered_inputs(&sort, &sites, usize::MAX, 0);
+    let (ok, got) = mock_run(&graph, &honest);
+    assert!(ok, "{forced:?}: honest hints rejected");
+    assert_eq!(Some(got), sort.expected);
+    for (k, site) in sites.iter().enumerate() {
+        for value in wrong(site.honest) {
+            if value == site.honest {
+                continue;
+            }
+            let (ok, got) = mock_run(&graph, &tampered_inputs(&sort, &sites, k, value));
+            assert!(!ok, "{forced:?}: hint {k} = {value} (honest {}) accepted, outputs {got:?}", site.honest);
+        }
+    }
+}
+
+/// Wrong argsort lanes: every other index, one past either end, and far
+/// out of range (a field element above p/2 reads as negative).
+fn wrong_indices(n: i64) -> impl Fn(i64) -> Vec<i64> {
+    move |_| (-1..=n).chain([1 << 40, -(1 << 40)]).collect()
+}
+
+/// Wrong order statistics: every element value, their neighbours, values
+/// between and beyond them.
+fn wrong_values(values: &[i64]) -> impl Fn(i64) -> Vec<i64> + '_ {
+    move |_| values.iter().flat_map(|&v| [v - 1, v, v + 1]).chain([i64::MIN, i64::MAX]).collect()
+}
+
+#[test]
+fn permutation_check_rejects_every_other_index() {
+    // Wrong lanes include the tie partner of every tied element (an
+    // unstable tie order) and every duplicate of another lane.
+    let n = TIED.len() as i64;
+    assert_pinned(&TIED, &every_output(n as u32), Forced::Permutation, wrong_indices(n));
+}
+
+#[test]
+fn runs_reject_every_other_index() {
+    let n = TIED.len() as i64;
+    for ranks in [vec![0u32, 1], vec![6, 7, 8], vec![3, 4], vec![2, 6]] {
+        let outputs: Vec<Output> = ranks.iter().map(|&r| Output::Index(r)).collect();
+        assert_pinned(&TIED, &outputs, Forced::Runs, wrong_indices(n));
+    }
+}
+
+#[test]
+fn counts_reject_every_other_value() {
+    for r in [0u32, 1, 4, 7, 8] {
+        assert_pinned(&TIED, &[Output::Value(r)], Forced::Counting, wrong_values(&TIED));
+    }
+    for r in [0i64, 2, 5, 8] {
+        assert_pinned(&TIED, &[Output::ValueAt(r)], Forced::Runs, wrong_values(&TIED));
+    }
+}
+
+#[test]
+fn runtime_rank_index_rejects_every_other_index() {
+    let n = TIED.len() as i64;
+    for r in [0i64, 1, 4, 8] {
+        assert_pinned(&TIED, &[Output::IndexAt(r)], Forced::Runs, wrong_indices(n));
+    }
+}
+
+/// The two equal elements of a tie, swapped: the order a non-stable sort
+/// could give. Every hinted plan rejects it.
+#[test]
+fn unstable_tie_order_is_rejected() {
+    let values = [4, 1, 4, 4];
+    let (_, argsort) = stable_sort(&values);
+    assert_eq!(argsort, vec![1, 0, 2, 3]);
+    for forced in [Forced::Permutation, Forced::Runs] {
+        let sort = sort_graph(&values, &every_output(4), forced);
+        let (graph, sites) = hints_as_inputs(&sort);
+        // Lanes 1 and 2 hold the tied elements 0 and 2; give lane 1 the
+        // later one and lane 2 the earlier one.
+        let mut inputs = tampered_inputs(&sort, &sites, usize::MAX, 0);
+        let lane_of = |rank: i64| sites.iter().position(|s| s.honest == argsort[rank as usize]).unwrap();
+        let (a, b) = (lane_of(1), lane_of(2));
+        let (ia, ib) = (inputs.len() - sites.len() + a, inputs.len() - sites.len() + b);
+        let (va, vb) = (inputs[ia].1, inputs[ib].1);
+        inputs[ia].1 = vb;
+        inputs[ib].1 = va;
+        assert!(!mock_run(&graph, &inputs).0, "{forced:?}: unstable tie order accepted");
+    }
+}

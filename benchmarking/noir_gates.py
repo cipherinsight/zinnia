@@ -77,7 +77,7 @@ def load_case(case: str):
 
     directory = DATASET / case
     fixture = load_fixture(directory / "fixture.json")
-    compiled = compile_kernel(directory / "kernel.py", fixture.function)
+    compiled = compile_kernel(directory / "kernel.py", fixture.function, backend="noir")
     return compiled, fixture
 
 

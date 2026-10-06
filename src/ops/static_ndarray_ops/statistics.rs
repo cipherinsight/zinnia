@@ -342,15 +342,15 @@ mod tests {
 /// rejects `q` outside `[0, 100]`, so such a `q` is a compile error or has
 /// no proof.
 ///
-/// A runtime `q` is lowered arithmetically instead of by enumerating the
-/// 101 possible values: `r * 100 = q * (n - 1)` is an integer, so
+/// Only the sorted values of ranks `lo` and `lo + 1` are used, as sort
+/// outputs at those ranks (`IR::Sorted`), which the sort lowering pins on
+/// their own when that is cheaper than sorting. A runtime `q` is lowered
+/// arithmetically: `r * 100 = q * (n - 1)` is an integer, so
 /// `lo = (q * (n - 1)) // 100` (a pinned floor division by the constant
-/// 100) and `frac = q * (n - 1) - 100 * lo` in `[0, 100)`; `s[lo]` and
-/// `s[lo + 1]` are read with one shared set of `lo == i` tests (`lo` lies
-/// in `[0, n - 1]` because `q` was checked to `[0, 100]`), and the result
-/// is `s[lo] + (s[lo + 1] - s[lo]) * frac / 100`: an exact product with
-/// the integer `frac` and one division by the constant 100, a single
-/// rounding.
+/// 100), `frac = q * (n - 1) - 100 * lo` in `[0, 100)`, the upper rank is
+/// `lo + [lo < n - 1]` (`frac` is 0 at `lo = n - 1`), and the result is
+/// `s[lo] + (s[hi] - s[lo]) * frac / 100`: an exact product with the
+/// integer `frac` and one division by the constant 100, a single rounding.
 pub fn np_percentile(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String, Value>) -> Value {
     if let Some(key) = kwargs.keys().find(|k| k.as_str() != "q") {
         panic!("np.percentile: keyword argument `{key}` is not supported");
@@ -367,39 +367,45 @@ pub fn np_percentile(b: &mut IRBuilder, args: &[Value], kwargs: &HashMap<String,
     if n == 0 {
         panic!("np.percentile: empty arrays are not supported");
     }
-    let sorted = crate::helpers::static_array::sorting::try_apply_sort(b, arr, None, false)
-        .expect("np.percentile: sorting a static array");
-    let cells: Vec<Value> = payload_cells(b, &sorted)
-        .iter()
-        .map(|c| crate::helpers::value_ops::ensure_float(b, c))
-        .collect();
+    let elements: std::sync::Arc<[Value]> =
+        payload_cells(b, arr).iter().map(|c| b.ensure_ptr(c)).collect();
     if let Some(q) = q.float_val().or_else(|| q.int_val().map(|v| v as f64)) {
-        return percentile_at_constant(b, &cells, q);
+        return percentile_at_constant(b, &elements, q);
     }
     if !matches!(q, Value::Integer(_)) {
         panic!("np.percentile: a runtime q must be an integer");
     }
-    percentile_at_runtime(b, &cells, q)
+    percentile_at_runtime(b, &elements, q)
 }
 
-fn percentile_at_constant(b: &mut IRBuilder, sorted: &[Value], q: f64) -> Value {
+/// The sorted value of `rank` (constant or runtime), as a float.
+fn sorted_value(b: &mut IRBuilder, elements: &std::sync::Arc<[Value]>, rank: &Value) -> Value {
+    let value = b.ir_sorted_at_runtime_rank(elements, rank, false);
+    crate::helpers::value_ops::ensure_float(b, &value)
+}
+
+fn percentile_at_constant(b: &mut IRBuilder, elements: &std::sync::Arc<[Value]>, q: f64) -> Value {
     if !(0.0..=100.0).contains(&q) {
         panic!("np.percentile: q must be in [0, 100], got {q}");
     }
-    let r = q / 100.0 * (sorted.len() - 1) as f64;
+    let r = q / 100.0 * (elements.len() - 1) as f64;
     let lo = r.floor() as usize;
     let weight = r - lo as f64;
+    let lo_rank = b.ir_constant_int(lo as i64);
+    let low = sorted_value(b, elements, &lo_rank);
     if weight == 0.0 {
-        return sorted[lo].clone();
+        return low;
     }
-    let diff = b.ir_sub_f(&sorted[lo + 1], &sorted[lo]);
+    let hi_rank = b.ir_constant_int(lo as i64 + 1);
+    let high = sorted_value(b, elements, &hi_rank);
+    let diff = b.ir_sub_f(&high, &low);
     let w = b.ir_constant_float(weight);
     let step = b.ir_mul_f(&diff, &w);
-    b.ir_add_f(&sorted[lo], &step)
+    b.ir_add_f(&low, &step)
 }
 
-fn percentile_at_runtime(b: &mut IRBuilder, sorted: &[Value], q: &Value) -> Value {
-    let n = sorted.len();
+fn percentile_at_runtime(b: &mut IRBuilder, elements: &std::sync::Arc<[Value]>, q: &Value) -> Value {
+    let n = elements.len();
     // The index the computation uses (in range also where the code does not
     // run, see `discharge_index_in_range`).
     let q = &crate::optim::resolver::discharge_index_in_range(b, q, 0, 101, "np.percentile");
@@ -409,16 +415,12 @@ fn percentile_at_runtime(b: &mut IRBuilder, sorted: &[Value], q: &Value) -> Valu
     let lo = b.ir_floor_div_i(&scaled, &hundred);
     let lo_times_100 = b.ir_mul_i(&lo, &hundred);
     let frac = b.ir_sub_i(&scaled, &lo_times_100);
+    let below_last = b.ir_less_than_i(&lo, &n_minus_1);
+    let step_up = b.ir_int_cast(&below_last);
+    let hi = b.ir_add_i(&lo, &step_up);
 
-    // s[lo] and s[lo + 1] (s[n - 1] again for lo = n - 1, where frac = 0).
-    let mut low = sorted[0].clone();
-    let mut high = sorted[1.min(n - 1)].clone();
-    for i in 1..n {
-        let i_v = b.ir_constant_int(i as i64);
-        let at_i = b.ir_equal_i(&lo, &i_v);
-        low = b.ir_select_f(&at_i, &sorted[i], &low);
-        high = b.ir_select_f(&at_i, &sorted[(i + 1).min(n - 1)], &high);
-    }
+    let low = sorted_value(b, elements, &lo);
+    let high = sorted_value(b, elements, &hi);
     let diff = b.ir_sub_f(&high, &low);
     let frac_f = b.ir_float_cast(&frac);
     let scaled_diff = b.ir_mul_f(&diff, &frac_f);

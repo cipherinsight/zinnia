@@ -108,6 +108,16 @@ pub use crate::provenance::SliceView;
 /// (`IRBuilder::ir_pow_f_int`); 64 needs at most 12 products.
 const MAX_UNROLLED_POWER: i64 = 64;
 
+/// One `IR::Sorted` placeholder at a constant rank: the elements of its
+/// sort (shared by every output of that sort), the rank, and whether it is
+/// the argsort index.
+#[derive(Clone)]
+pub struct SortedPlaceholder {
+    pub elements: std::sync::Arc<[Value]>,
+    pub rank: u32,
+    pub index: bool,
+}
+
 /// IR builder that accumulates IR statements and provides typed convenience
 /// methods. Mirrors Python `IRBuilderImpl` from `builder_impl.py`.
 pub struct IRBuilder {
@@ -146,6 +156,9 @@ pub struct IRBuilder {
     predicate_exempt_segments: HashMap<u32, StmtId>,
     /// Next available memory segment ID for dynamic array allocations.
     next_segment_id: u32,
+    /// The `IR::Sorted` placeholders this builder emitted, by statement,
+    /// with their elements (see [`IRBuilder::sorted_placeholder_of`]).
+    sorted_placeholders: HashMap<StmtId, SortedPlaceholder>,
     /// Next available array ID for dynamic ndarray metadata.
     next_array_id: u32,
     /// Global union-find table over dim variables for dynamic ndarray
@@ -255,6 +268,7 @@ impl IRBuilder {
             dyn_array_capacity: HashMap::new(),
             predicate_exempt_segments: HashMap::new(),
             next_segment_id: 0,
+            sorted_placeholders: HashMap::new(),
             next_array_id: 0,
             dim_table: crate::types::DimTable::new(),
             static_array_payload: HashMap::new(),
@@ -1237,6 +1251,25 @@ impl IRBuilder {
             | IR::EqHash => {
                 if let Some(vid) = out.value_id() {
                     self.provenance.set_interval(vid, Interval::BIT);
+                }
+            }
+            // A sort's output is one of its elements (a value) or a
+            // position among them (an index): every lowering yields exactly
+            // that output (`optim::sort_lowering`).
+            IR::Sorted { len, index, .. } => {
+                let Some(vid) = out.value_id() else { return };
+                let len = *len as usize;
+                let iv = if *index {
+                    Some(Interval { lo: 0, hi: len as i64 - 1 })
+                } else {
+                    args[..len]
+                        .iter()
+                        .map(|a| interval_of(self, a))
+                        .reduce(|x, y| Some(Interval::union(x?, y?)))
+                        .flatten()
+                };
+                if let Some(iv) = iv {
+                    self.provenance.set_interval(vid, iv);
                 }
             }
             IR::SelectI | IR::SelectBitI => {
@@ -2769,6 +2802,79 @@ impl IRBuilder {
 
     pub fn ir_poseidon_hash(&mut self, values: &[Value]) -> Value {
         self.create_ir(&IR::PoseidonHash, values)
+    }
+
+    /// `IR::Hint`: lane `rank` of `kind(elements)`, a value the prover
+    /// supplies. It constrains nothing; the caller must pin it (see
+    /// `optim::sort_lowering`).
+    pub fn ir_hint(
+        &mut self,
+        kind: crate::ir_defs::HintKind,
+        elements: &[Value],
+        rank: &Value,
+    ) -> Value {
+        let mut args = elements.to_vec();
+        args.push(rank.clone());
+        self.create_ir(&IR::Hint { kind, len: elements.len() as u32 }, &args)
+    }
+
+    /// `IR::Sorted`: output `rank` of NumPy's stable sort of `elements` (the
+    /// value, or with `index` its original position). A placeholder that
+    /// `optim::sort_lowering` lowers.
+    pub fn ir_sorted(&mut self, elements: &std::sync::Arc<[Value]>, rank: u32, index: bool) -> Value {
+        let len = elements.len() as u32;
+        let out = self.create_ir(&IR::Sorted { len, rank: Some(rank), index }, elements);
+        if let Some(stmt) = out.stmt_id() {
+            let placeholder = SortedPlaceholder { elements: elements.clone(), rank, index };
+            self.sorted_placeholders.insert(stmt, placeholder);
+        }
+        self.publish_sorted_index_bounds(&out, index, elements.len());
+        out
+    }
+
+    /// An argsort output lies in `[0, len)` (as an `argmax` result does):
+    /// published so that indexing with it needs no bounds check.
+    fn publish_sorted_index_bounds(&mut self, out: &Value, index: bool, len: usize) {
+        let Some(vid) = out.value_id().filter(|_| index) else { return };
+        let len_value = self.ir_constant_int(len as i64);
+        if let Some(len_vid) = len_value.value_id() {
+            let mut formals = HashMap::new();
+            formals.insert("len_arr".to_string(), len_vid);
+            self.fire_contract("dyn_argextremum", vid, &formals);
+        }
+    }
+
+    /// [`Self::ir_sorted`] at a runtime rank (a constant one takes the
+    /// static form). A rank outside `[0, len)` has no proof.
+    pub fn ir_sorted_at_runtime_rank(
+        &mut self,
+        elements: &std::sync::Arc<[Value]>,
+        rank: &Value,
+        index: bool,
+    ) -> Value {
+        if let Some(r) = rank.int_val().and_then(|r| u32::try_from(r).ok()) {
+            if (r as usize) < elements.len() {
+                return self.ir_sorted(elements, r, index);
+            }
+        }
+        let len = elements.len() as u32;
+        let mut args = elements.to_vec();
+        args.push(rank.clone());
+        let out = self.create_ir(&IR::Sorted { len, rank: None, index }, &args);
+        self.publish_sorted_index_bounds(&out, index, elements.len());
+        out
+    }
+
+    /// The placeholder behind `value`, when `value` is an output of a sort
+    /// at a constant rank.
+    pub fn sorted_placeholder_of(&self, value: &Value) -> Option<&SortedPlaceholder> {
+        self.sorted_placeholders.get(&value.stmt_id()?)
+    }
+
+    /// Start allocating memory segment ids at `next` (a pass that rebuilds a
+    /// graph and adds segments must not reuse the graph's ids).
+    pub fn reserve_segment_ids_below(&mut self, next: u32) {
+        self.next_segment_id = self.next_segment_id.max(next);
     }
 }
 

@@ -112,7 +112,7 @@ class ZinniaNoirAdapter(Adapter):
 
     def setup(self, ctx: StepContext) -> SetupResult:
         started = time.perf_counter()
-        compiled = compile_case(ctx.case)
+        compiled = compile_case(ctx.case, backend="noir")
         compile_s = time.perf_counter() - started
         info = describe_compiled(compiled)
         args_a = ctx.fixture.arguments(SETUP_INPUT)

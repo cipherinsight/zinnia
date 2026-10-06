@@ -69,7 +69,7 @@ class ZinniaHalo2Adapter(Adapter):
 
     def setup(self, ctx: StepContext) -> SetupResult:
         started = time.perf_counter()
-        compiled = compile_case(ctx.case)
+        compiled = compile_case(ctx.case, backend="halo2")
         compile_s = time.perf_counter() - started
         info = describe_compiled(compiled)
 
@@ -103,7 +103,7 @@ class ZinniaHalo2Adapter(Adapter):
 
     def prove(self, ctx: StepContext) -> ProveResult:
         state = ctx.load_state()
-        compiled = compile_case(ctx.case)
+        compiled = compile_case(ctx.case, backend="halo2")
         check_same_build(compiled, state)
         args = ctx.arguments()
         started = time.perf_counter()

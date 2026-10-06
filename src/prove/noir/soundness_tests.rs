@@ -935,3 +935,51 @@ fn hint_lanes_match_the_mock() {
         assert_eq!(execute(&graph, &w).expect("nargo execute"), mock, "rank {runtime_rank}");
     }
 }
+
+// ── Sort lowerings (optim::sort_lowering) ─────────────────────────────────
+
+/// Each sort lowering with hints, emitted to Noir with its hints turned
+/// into free private inputs (a malicious prover's choice): the honest
+/// values give NumPy's stable sort, and every other index for an argsort
+/// lane (a duplicate, a non-permutation, a tie partner: an unstable order)
+/// or every other candidate for an order statistic fails a constraint.
+#[test]
+fn sort_hints_are_pinned_in_noir() {
+    use crate::optim::sort_lowering::test_support::{
+        hints_as_inputs, sort_graph, tampered_inputs, Forced, Output,
+    };
+    if !toolchain_present(false) {
+        return;
+    }
+    let values = [3, 1, 3, 0, 1];
+    let n = values.len() as i64;
+    let every: Vec<Output> = (0..n as u32).flat_map(|r| [Output::Value(r), Output::Index(r)]).collect();
+    let cases: Vec<(Forced, Vec<Output>)> = vec![
+        (Forced::Permutation, every),
+        (Forced::Runs, vec![Output::Index(3), Output::Index(4)]),
+        (Forced::Counting, vec![Output::Value(2)]),
+        (Forced::Runs, vec![Output::ValueAt(1), Output::IndexAt(3)]),
+    ];
+    for (forced, outputs) in cases {
+        let sort = sort_graph(&values, &outputs, forced);
+        let (graph, sites) = hints_as_inputs(&sort);
+        let as_witness = |inputs: &[(String, i64)]| {
+            let named: Vec<(&str, i64)> = inputs.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+            witness(&named)
+        };
+        let honest = tampered_inputs(&sort, &sites, usize::MAX, 0);
+        let got = execute(&graph, &as_witness(&honest)).expect("honest hints");
+        let expected: Vec<i128> = sort.expected.as_ref().unwrap().iter().map(|&v| v as i128).collect();
+        assert_eq!(got, expected, "{forced:?} {outputs:?}");
+        for (k, site) in sites.iter().enumerate() {
+            let candidates: Vec<i64> = if site.honest >= 0 && site.honest < n && !matches!(forced, Forced::Counting) {
+                (-1..=n).collect() // an argsort lane
+            } else {
+                values.iter().flat_map(|&v| [v - 1, v, v + 1]).collect()
+            };
+            for value in candidates.into_iter().filter(|&v| v != site.honest) {
+                assert_rejected(execute(&graph, &as_witness(&tampered_inputs(&sort, &sites, k, value))));
+            }
+        }
+    }
+}

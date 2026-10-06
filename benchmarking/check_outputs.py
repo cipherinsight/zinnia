@@ -28,7 +28,11 @@ against every plausible layout) now that the compiler exports its layout.
 
 Usage:
     python -m benchmarking.check_outputs [--cases 0301,0415] [--status perf|all]
-        [--inputs A,B] [--output FILE] [--timeout 600] [--memory 8G]
+        [--inputs A,B] [--output FILE] [--timeout 600] [--memory 8G] [--backend halo2|noir]
+
+`--backend` is the compile target (`ZinniaConfig.backend`); it selects between
+equivalent lowerings (a sort's network or pinned hints), so both targets'
+circuits are checked.
 
 Each case runs in its own process under the memory cap. Exit status 0 iff
 every case passes. Statuses: `pass`; `pass_constant_output` (every output
@@ -141,7 +145,7 @@ def tampered_vectors(fields: list, elements: list[tuple[int, str]], metadata: li
     return controls
 
 
-def check_case(case: str, inputs: list[str], tolerance_raw) -> dict:
+def check_case(case: str, inputs: list[str], tolerance_raw, backend: str = "halo2") -> dict:
     from benchmarking.harness.adapters.base import StepFailure
     from benchmarking.harness.adapters.zinnia_common import (describe_compiled,
                                                              with_public_input_gaps,
@@ -157,7 +161,7 @@ def check_case(case: str, inputs: list[str], tolerance_raw) -> dict:
     kernel = directory / "kernel.py"
     fixture = load_fixture(directory / "fixture.json")
     try:
-        compiled = compile_kernel(kernel, fixture.function)
+        compiled = compile_kernel(kernel, fixture.function, backend=backend)
     except BaseException as exc:  # noqa: BLE001 - PyO3 panics derive from BaseException
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             raise
@@ -242,9 +246,11 @@ def selected_cases(case_ids: list[str] | None, status: str) -> list[tuple[str, o
     return [(n, (by_case.get(n) or {}).get("float_tolerance")) for n in names]
 
 
-def run_isolated(case: str, inputs: list[str], tolerance, timeout: float, memory: str) -> dict:
+def run_isolated(case: str, inputs: list[str], tolerance, timeout: float, memory: str,
+                 backend: str) -> dict:
     command = [sys.executable, "-m", "benchmarking.check_outputs", "--one", case,
-               "--inputs", ",".join(inputs), "--tolerance", json.dumps(tolerance)]
+               "--inputs", ",".join(inputs), "--tolerance", json.dumps(tolerance),
+               "--backend", backend]
     started = time.monotonic()
     try:
         proc = subprocess.run(memory_capped(command, memory), capture_output=True, text=True,
@@ -268,6 +274,8 @@ def main() -> None:
     parser.add_argument("--output", help="write the per-case records to this JSON file")
     parser.add_argument("--timeout", type=float, default=600.0)
     parser.add_argument("--memory", default="8G", help="per-case memory cap")
+    parser.add_argument("--backend", default="halo2", choices=["halo2", "noir"],
+                        help="compile target (selects lowerings such as sorts; default halo2)")
     parser.add_argument("--one", help=argparse.SUPPRESS)
     parser.add_argument("--tolerance", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -275,13 +283,13 @@ def main() -> None:
 
     if args.one:
         tolerance = json.loads(args.tolerance) if args.tolerance else None
-        print("RESULT " + json.dumps(check_case(args.one, inputs, tolerance)), flush=True)
+        print("RESULT " + json.dumps(check_case(args.one, inputs, tolerance, args.backend)), flush=True)
         return
 
     cases = selected_cases(args.cases.split(",") if args.cases else None, args.status)
     results = []
     for i, (case, tolerance) in enumerate(cases, 1):
-        record = run_isolated(case, inputs, tolerance, args.timeout, args.memory)
+        record = run_isolated(case, inputs, tolerance, args.timeout, args.memory, args.backend)
         results.append(record)
         details = {name: r.get("status") for name, r in record.get("inputs", {}).items()}
         print(f"[{i:3}/{len(cases)}] {case}: {record['status']:20} {record.get('error', details)}",

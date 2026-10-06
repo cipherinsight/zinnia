@@ -224,6 +224,12 @@ impl PayloadGather {
         let Some((outer, inner)) = axes.split_first() else {
             return self.cells.get(usize::try_from(base).ok()?).cloned();
         };
+        if inner.is_empty() {
+            let (cells, base) = (&self.cells, usize::try_from(base).ok()?);
+            if let Some(output) = sorted_output_at_index(b, cells, base, outer.stride, outer.len, &outer.index) {
+                return Some(output);
+            }
+        }
         let key = (base, axes.iter().map(|a| a.index.stmt_id()).collect::<Option<Vec<_>>>()?);
         if let Some(plane) = self.planes.get(&key) {
             return Some(plane.clone());
@@ -237,6 +243,56 @@ impl PayloadGather {
         self.planes.insert(key, acc.clone());
         Some(acc)
     }
+}
+
+/// The read `cells[base + t * stride]` (`t` a runtime index, wrapped and
+/// bounds-checked into `[0, len)` everywhere), when those `len` cells are
+/// consecutive outputs of one sort (`np.sort(a)[t]`, `np.sort(a)[::-1][t]`,
+/// `np.argsort(a)[1:][t]`): the sort's output at the runtime rank `r0 + t`
+/// (or `r0 - t`). The sort lowering then pins that one output (or reads it
+/// from the sorted outputs, whichever is cheaper) instead of every output
+/// being kept for a selection. `None` for any other cells.
+fn sorted_output_at_index(
+    b: &mut IRBuilder,
+    cells: &[Value],
+    base: usize,
+    stride: usize,
+    len: usize,
+    index: &Value,
+) -> Option<Value> {
+    let cell = |coord: usize| cells.get(base + coord * stride);
+    let first = b.sorted_placeholder_of(cell(0)?)?.clone();
+    let step: i64 = match len {
+        1 => 1,
+        _ => i64::from(b.sorted_placeholder_of(cell(1)?)?.rank) - i64::from(first.rank),
+    };
+    if step != 1 && step != -1 {
+        return None;
+    }
+    for coord in 0..len {
+        let other = b.sorted_placeholder_of(cell(coord)?)?;
+        let rank = i64::from(first.rank) + step * coord as i64;
+        let same_sort = std::sync::Arc::ptr_eq(&other.elements, &first.elements);
+        if !same_sort || other.index != first.index || i64::from(other.rank) != rank {
+            return None;
+        }
+    }
+    let r0 = b.ir_constant_int(i64::from(first.rank));
+    let rank = if step == 1 { b.ir_add_i(&r0, index) } else { b.ir_sub_i(&r0, index) };
+    Some(b.ir_sorted_at_runtime_rank(&first.elements, &rank, first.index))
+}
+
+/// [`sorted_output_at_index`] over a 1-D view of `segment_id`'s known cells.
+fn sorted_output_of_segment(
+    b: &mut IRBuilder,
+    segment_id: u32,
+    offset: usize,
+    stride: usize,
+    len: usize,
+    index: &Value,
+) -> Option<Value> {
+    let cells = b.static_array_payload.get(&segment_id)?.clone();
+    sorted_output_at_index(b, &cells, offset, stride, len, index)
 }
 
 enum FancyAxisPlan {
@@ -819,6 +875,11 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
             }
             return read_leaf_at_flat(b, segment_id, offset, flat, dtype);
         }
+        if shape.len() == 1 {
+            if let Some(out) = sorted_output_of_segment(b, segment_id, offset, strides[0], shape[0], &idx_vals[0]) {
+                return out;
+            }
+        }
         let addr = compute_addr(b, offset, &strides, &idx_vals, &shape);
         if dtype == NumberType::Complex {
             return read_complex_leaf_dynamic(
@@ -852,6 +913,9 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
                         );
                     }
                     return read_leaf_at_flat(b, segment_id, offset, flat, dtype);
+                }
+                if let Some(out) = sorted_output_of_segment(b, segment_id, offset, strides[0], shape[0], &i) {
+                    return out;
                 }
                 let off_val = b.ir_constant_int(offset as i64);
                 let stride_val = b.ir_constant_int(strides[0] as i64);

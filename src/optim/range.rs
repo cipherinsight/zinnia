@@ -531,6 +531,15 @@ impl RangeResolver {
             // SelectB returns a bool; project to [0, 1].
             IR::SelectB => IntInterval::bool_domain(),
 
+            // A sort output is a position among its `len` elements (an
+            // argsort index) or one of them (a value).
+            IR::Sorted { len, index: true, .. } => IntInterval { min: 0, max: i64::from(*len) - 1 },
+            IR::Sorted { len, index: false, .. } => stmt.arguments[..*len as usize]
+                .iter()
+                .map(|&arg| self.interval_of(arg, stmts))
+                .reduce(|a, b| IntInterval::select(a, b))
+                .unwrap_or_else(IntInterval::unbounded),
+
             // Everything else falls through to commit 3 / unbounded.
             _ => IntInterval::unbounded(),
         };

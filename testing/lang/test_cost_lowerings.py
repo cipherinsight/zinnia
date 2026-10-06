@@ -353,9 +353,9 @@ def test_integer_array_percentile_matches_numpy():
 
 def test_runtime_percentile_interpolates_once():
     # One product and one division, not one interpolation per possible q.
+    # (The two order statistics are pinned hints: test_sort_hints.py.)
     classes = ir_classes(compile_kernel(PERCENTILE))
     assert classes.count("DivFIR") == 1 and "MulFIR" not in classes
-    assert classes.count("EqualIIR") == 19
 
 
 def test_runtime_percentile_halo2_base_matches_mock():

@@ -68,9 +68,17 @@ def load_kernel_module(path: Path) -> ModuleType:
     return module
 
 
-def compile_kernel(path: Path, function: str) -> Any:
-    """Compile one `@zk_circuit` function; returns a `ZKCompiledProgram`."""
+def compile_kernel(path: Path, function: str, backend: str = "halo2") -> Any:
+    """Compile one `@zk_circuit` function for `backend` (`ZinniaConfig.backend`:
+    `halo2` or `noir`); returns a `ZKCompiledProgram`.
+
+    The backend is the compile target. Where Zinnia has several equivalent
+    lowerings (sorts: a sorting network or pinned prover hints) it picks the one
+    cheaper on that backend; the program proves on every backend either way.
+    """
     from zinnia import ZKCircuit
+    from zinnia.config.zinnia_config import ZinniaConfig
 
     module = load_kernel_module(path)
-    return ZKCircuit.from_method(getattr(module, function)).compile()
+    circuit = ZKCircuit.from_method(getattr(module, function), config=ZinniaConfig(backend=backend))
+    return circuit.compile()

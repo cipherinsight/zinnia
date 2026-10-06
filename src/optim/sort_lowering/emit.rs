@@ -1,0 +1,306 @@
+//! The IR of each lowering of a sort's outputs (see `super`).
+//!
+//! Terms. The *key* of element `j` is the pair `(a_j, j)`, ordered
+//! lexicographically. Keys are distinct, and their ascending order is
+//! NumPy's stable sort: equal values in original order. The output of rank
+//! `r` is the element whose key has exactly `r` keys below it: its value is
+//! the `r`-th smallest value, its index lane `r` of the stable argsort.
+//!
+//! Comparisons are the IR's signed comparisons, which every backend decides
+//! exactly on the signed 64-bit window (and rejects operands outside it),
+//! the domain of Zinnia's int64 values and Q32 floats. Counts are sums of
+//! comparison bits, so they are integers in `[0, n]`.
+
+use crate::builder::IRBuilder;
+use crate::ir_defs::HintKind;
+use crate::types::{NumberType, Value};
+
+use super::cost::Network;
+
+/// The elements of one sort and their number type (it picks the float or
+/// integer form of each comparison; backends decide both the same way).
+pub(super) struct Elements<'a> {
+    pub values: &'a [Value],
+    pub dtype: NumberType,
+}
+
+impl Elements<'_> {
+    fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    fn less(&self, b: &mut IRBuilder, x: &Value, y: &Value) -> Value {
+        match self.dtype {
+            NumberType::Float => b.ir_less_than_f(x, y),
+            _ => b.ir_less_than_i(x, y),
+        }
+    }
+
+    fn equal(&self, b: &mut IRBuilder, x: &Value, y: &Value) -> Value {
+        match self.dtype {
+            NumberType::Float => b.ir_equal_f(x, y),
+            _ => b.ir_equal_i(x, y),
+        }
+    }
+
+    fn select(&self, b: &mut IRBuilder, cond: &Value, t: &Value, f: &Value) -> Value {
+        match self.dtype {
+            NumberType::Float => b.ir_select_f(cond, t, f),
+            _ => b.ir_select_i(cond, t, f),
+        }
+    }
+}
+
+// ── Sorting networks ────────────────────────────────────────────────────
+
+/// Sorted values and (when `network` tracks them) the original index of
+/// each, by a compare-exchange network: every comparator puts the smaller
+/// key first. Without a tie-break the keys are the values (equal values are
+/// interchangeable, so the values are NumPy's; the adjacent-swap network
+/// also keeps equal values in order, so its indices are the stable
+/// argsort). With the tie-break a key is `(value, index)`, compared
+/// lexicographically; the index comparison is `LtIBounded`, sound because
+/// every index cell is a selection among the constants `0..n`.
+///
+/// No hint: every output is a function of the elements. Comparators whose
+/// outputs are not used are removed by dead-code elimination.
+pub(super) fn sort_by_network(
+    b: &mut IRBuilder,
+    elements: &Elements,
+    network: Network,
+) -> (Vec<Value>, Vec<Value>) {
+    let n = elements.len();
+    let mut keys = elements.values.to_vec();
+    let mut indices: Vec<Value> = if network.tracks_indices() {
+        (0..n).map(|i| b.ir_constant_int(i as i64)).collect()
+    } else {
+        Vec::new()
+    };
+    for (i, j) in network.pairs(n) {
+        let value_less = elements.less(b, &keys[j], &keys[i]);
+        let swap = if !network.tie_break() {
+            value_less
+        } else if let (Some(x), Some(y)) = (indices[j].int_val(), indices[i].int_val()) {
+            // Indices still at their constants: the tie order is known.
+            if x < y {
+                let tie = elements.equal(b, &keys[j], &keys[i]);
+                b.ir_logical_or(&value_less, &tie)
+            } else {
+                value_less
+            }
+        } else {
+            let tie = elements.equal(b, &keys[j], &keys[i]);
+            let index_less = b.ir_less_than_i_bounded(&indices[j], &indices[i]);
+            let tie_swap = b.ir_logical_and(&tie, &index_less);
+            b.ir_logical_or(&value_less, &tie_swap)
+        };
+        let low = elements.select(b, &swap, &keys[j], &keys[i]);
+        let high = elements.select(b, &swap, &keys[i], &keys[j]);
+        keys[i] = low;
+        keys[j] = high;
+        if network.tracks_indices() {
+            let low = b.ir_select_i(&swap, &indices[j], &indices[i]);
+            let high = b.ir_select_i(&swap, &indices[i], &indices[j]);
+            indices[i] = low;
+            indices[j] = high;
+        }
+    }
+    (keys, indices)
+}
+
+// ── Hinted keys ─────────────────────────────────────────────────────────
+
+/// A key: a value and the index of an element.
+#[derive(Clone)]
+pub(super) struct Key {
+    pub value: Value,
+    pub index: Value,
+}
+
+/// The elements in a memory segment, for the reads through hinted indices.
+pub(super) struct ElementMemory {
+    segment: u32,
+}
+
+impl ElementMemory {
+    pub(super) fn new(b: &mut IRBuilder, elements: &Elements) -> ElementMemory {
+        let segment =
+            crate::helpers::segment::alloc_and_write_values(b, elements.values, elements.dtype);
+        ElementMemory { segment }
+    }
+
+    /// The key of the element at the hinted index `p`: `p` is asserted to
+    /// lie in `[0, n)` and the value is read at `p`, so the key is the key
+    /// of an element (`a_p`, `p`), whatever the prover chose.
+    fn key_at(&self, b: &mut IRBuilder, elements: &Elements, p: Value) -> Key {
+        let n = b.ir_constant_int(elements.len() as i64);
+        b.ir_assert_u128_lt(&p, &n);
+        let value = crate::helpers::segment::read_typed(b, self.segment, &p, elements.dtype);
+        Key { value, index: p }
+    }
+}
+
+/// `x < y` for keys: `x.value < y.value`, or equal values and
+/// `x.index < y.index`. Both indices lie in `[0, n)` (asserted, or
+/// constants), as `LtIBounded` requires.
+fn key_less(b: &mut IRBuilder, elements: &Elements, x: &Key, y: &Key) -> Value {
+    let value_less = elements.less(b, &x.value, &y.value);
+    let tie = elements.equal(b, &x.value, &y.value);
+    let index_less = b.ir_less_than_i_bounded(&x.index, &y.index);
+    let tie_less = b.ir_logical_and(&tie, &index_less);
+    b.ir_logical_or(&value_less, &tie_less)
+}
+
+/// The number of elements whose key lies below `key` (`above`: above it).
+fn count_keys_beyond(b: &mut IRBuilder, elements: &Elements, key: &Key, above: bool) -> Value {
+    let bits: Vec<Value> = (0..elements.len())
+        .map(|j| {
+            let element = Key {
+                value: elements.values[j].clone(),
+                index: b.ir_constant_int(j as i64),
+            };
+            if above {
+                key_less(b, elements, key, &element)
+            } else {
+                key_less(b, elements, &element, key)
+            }
+        })
+        .collect();
+    count(b, &bits)
+}
+
+/// The sum of 0/1 values, as an integer.
+fn count(b: &mut IRBuilder, bits: &[Value]) -> Value {
+    let mut total = b.ir_constant_int(0);
+    for bit in bits {
+        let as_int = b.ir_int_cast(bit);
+        total = b.ir_add_i(&total, &as_int);
+    }
+    total
+}
+
+fn assert_equal_int(b: &mut IRBuilder, x: &Value, expected: i64) {
+    let expected = b.ir_constant_int(expected);
+    let holds = b.ir_equal_i(x, &expected);
+    b.ir_assert(&holds);
+}
+
+/// The keys of ranks `first..=last`, hinted and pinned.
+///
+/// For each rank `r` the prover supplies `p_r` (lane `r` of the stable
+/// argsort); the IR reads `v_r = a[p_r]` with `0 <= p_r < n` asserted, so
+/// `(v_r, p_r)` is the key of an element. It asserts
+/// 1. `(v_r, p_r) < (v_{r+1}, p_{r+1})` for consecutive ranks of the run;
+/// 2. when `first > 0`: exactly `first` keys lie below the first key;
+/// 3. when `last < n - 1`: exactly `n - 1 - last` keys lie above the last.
+///
+/// Soundness. By 1 the run's keys strictly increase, so they are
+/// `last - first + 1` distinct keys between the first and the last key.
+/// For a run inside the sort, 2 and 3 leave exactly
+/// `n - first - (n - 1 - last) = last - first + 1` keys between the first
+/// and the last key (inclusive), so the run's keys are exactly those keys,
+/// in increasing order, and its `k`-th key has `first + k` keys below it.
+/// At an end of the sort one count suffices: for `first = 0`, by 3 exactly
+/// `last + 1` keys lie at or below the last key, and the run's `last + 1`
+/// distinct keys all do, so they are those keys (symmetrically for
+/// `last = n - 1` by 2); a run over every rank has `n` distinct keys, all
+/// `n` keys, so it checks a permutation with `n - 1` key comparisons and no
+/// count. Hence `p_r` is lane `r` of the stable argsort and `v_r` the
+/// sorted value of rank `r`: the only assignment the constraints admit.
+pub(super) fn pinned_run(
+    b: &mut IRBuilder,
+    elements: &Elements,
+    memory: &ElementMemory,
+    first: usize,
+    last: usize,
+) -> Vec<Key> {
+    let n = elements.len();
+    let keys: Vec<Key> = (first..=last)
+        .map(|r| {
+            let rank = b.ir_constant_int(r as i64);
+            let p = b.ir_hint(HintKind::StableArgsort, elements.values, &rank);
+            memory.key_at(b, elements, p)
+        })
+        .collect();
+    for pair in keys.windows(2) {
+        let increasing = key_less(b, elements, &pair[0], &pair[1]);
+        b.ir_assert(&increasing);
+    }
+    if first > 0 {
+        let below = count_keys_beyond(b, elements, &keys[0], false);
+        assert_equal_int(b, &below, first as i64);
+    }
+    if last + 1 < n {
+        let above = count_keys_beyond(b, elements, keys.last().expect("non-empty run"), true);
+        assert_equal_int(b, &above, (n - 1 - last) as i64);
+    }
+    keys
+}
+
+/// The value of rank `rank` (a constant or a runtime value), pinned by
+/// counting: the prover supplies `v` (lane `rank` of the sorted values) and
+/// the IR asserts `count(a < v) <= rank < count(a < v) + count(a == v)`.
+///
+/// Soundness. Let `s_0 <= ... <= s_{n-1}` be the sorted values. For
+/// `v = s_rank` both hold: elements below `s_rank` sit at sorted positions
+/// below `rank`, and positions `0..=rank` hold values `<= s_rank`. For any
+/// `v < s_rank`, `count(a <= v) <= count(a < s_rank) <= rank`, which breaks
+/// the second; for any `v > s_rank`, positions `0..=rank` hold values below
+/// `v`, so `count(a < v) >= rank + 1`, which breaks the first. So `v` is
+/// pinned to `s_rank`, and a rank outside `[0, n)` admits no `v` (the
+/// counts lie in `[0, n]`): no proof, as NumPy raises. The second check
+/// also makes `v` equal to some element, so `v` lies in the window.
+pub(super) fn order_statistic(b: &mut IRBuilder, elements: &Elements, rank: &Value) -> Value {
+    let v = b.ir_hint(HintKind::SortedValues, elements.values, rank);
+    let below: Vec<Value> = elements.values.iter().map(|a| elements.less(b, a, &v)).collect();
+    let ties: Vec<Value> = elements.values.iter().map(|a| elements.equal(b, a, &v)).collect();
+    let below = count(b, &below);
+    let ties = count(b, &ties);
+    let not_above = b.ir_less_than_or_equal_i(&below, rank);
+    b.ir_assert(&not_above);
+    let at_or_below = b.ir_add_i(&below, &ties);
+    let reached = b.ir_less_than_i(rank, &at_or_below);
+    b.ir_assert(&reached);
+    v
+}
+
+/// Lane `rank` of the stable argsort at a runtime rank: the prover supplies
+/// `p`, the IR forms the key `(a_p, p)` (`p` bounded, `a_p` read) and
+/// asserts that exactly `rank` keys lie below it. Keys are distinct, so
+/// exactly one key has `rank` keys below it (for `rank` in `[0, n)`; none
+/// otherwise, so no proof), and `p` is that key's index.
+pub(super) fn argsort_at_rank(
+    b: &mut IRBuilder,
+    elements: &Elements,
+    memory: &ElementMemory,
+    rank: &Value,
+) -> Value {
+    let p = b.ir_hint(HintKind::StableArgsort, elements.values, rank);
+    let key = memory.key_at(b, elements, p);
+    let below = count_keys_beyond(b, elements, &key, false);
+    let exact = b.ir_equal_i(&below, rank);
+    b.ir_assert(&exact);
+    key.index
+}
+
+/// Outputs of a sort in a memory segment, for reads at runtime ranks.
+pub(super) struct OutputMemory {
+    segment: u32,
+    len: usize,
+    dtype: NumberType,
+}
+
+impl OutputMemory {
+    pub(super) fn new(b: &mut IRBuilder, outputs: &[Value], dtype: NumberType) -> OutputMemory {
+        let segment = crate::helpers::segment::alloc_and_write_values(b, outputs, dtype);
+        OutputMemory { segment, len: outputs.len(), dtype }
+    }
+
+    /// `outputs[rank]` for a runtime `rank`, with `0 <= rank < n` asserted
+    /// (a rank outside has no proof, as NumPy raises).
+    pub(super) fn read(&self, b: &mut IRBuilder, rank: &Value) -> Value {
+        let n = b.ir_constant_int(self.len as i64);
+        b.ir_assert_u128_lt(rank, &n);
+        crate::helpers::segment::read_typed(b, self.segment, rank, self.dtype)
+    }
+}

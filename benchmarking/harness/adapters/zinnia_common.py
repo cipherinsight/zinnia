@@ -15,10 +15,11 @@ from benchmarking.harness.outputs import (LOGICAL, ZINNIA_EXPOSURE, DecodedPubli
 _EXPOSE_KINDS = {"ExposePublicIIR": "i", "ExposePublicFIR": "f"}
 
 
-def compile_case(case: PerfCase) -> Any:
-    """Compile the case's kernel; a compiler rejection is the `unsupported` failure."""
+def compile_case(case: PerfCase, backend: str) -> Any:
+    """Compile the case's kernel for `backend` (`halo2` or `noir`, the compile
+    target); a compiler rejection is the `unsupported` failure."""
     try:
-        return compile_kernel(case.kernel_path, case.function)
+        return compile_kernel(case.kernel_path, case.function, backend=backend)
     except BaseException as exc:  # noqa: BLE001 - PyO3 panics derive from BaseException
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             raise

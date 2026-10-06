@@ -92,7 +92,7 @@ def load_case(case: str):
 
     directory = DATASET / case_name(case)
     fixture = load_fixture(directory / "fixture.json")
-    return compile_kernel(directory / "kernel.py", fixture.function), fixture
+    return compile_kernel(directory / "kernel.py", fixture.function, backend="noir"), fixture
 
 
 def mock_publics(compiled, args) -> tuple[bool, list[tuple[str, int]]]:

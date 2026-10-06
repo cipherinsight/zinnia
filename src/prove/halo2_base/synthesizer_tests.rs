@@ -1069,3 +1069,68 @@ fn prover_hints_are_kernel_lanes_and_constrain_nothing() {
     assert!(tampered.accepted, "an unpinned hint is a free cell");
     assert_eq!(tampered.outputs, vec![int(4), int(30)]);
 }
+
+// ── Sort lowerings (optim::sort_lowering) ──────────────────────────────
+
+/// Synthesize a whole IR graph on `witness`, perturbing hints as in
+/// [`synthesize`].
+fn synthesize_graph(graph: &crate::ir::IRGraph, witness: &ResolvedWitness, tamper: &[(usize, Fp)]) -> Outcome {
+    let mut builder = BaseCircuitBuilder::<Fp>::from_stage(CircuitBuilderStage::Mock);
+    builder.set_k(K as usize);
+    builder.set_lookup_bits(LOOKUP_BITS as usize);
+    builder.set_instance_columns(1);
+    let params = ProvingParams { k: K, precision_bits: PRECISION_BITS, lookup_bits: LOOKUP_BITS };
+    let (outputs, hints) = {
+        let mut synth = Halo2BaseSynthesizer::new(&mut builder, Some(witness.clone()), params, &graph.provenance);
+        synth.tamper = tamper::HintTamper::targeting(tamper);
+        crate::prove::interpreter::interpret_ir(graph, &mut synth).expect("synthesis failed");
+        (synth.public_values().to_vec(), synth.tamper.hints_seen())
+    };
+    builder.calculate_params(Some(20));
+    let accepted = MockProver::run(K, &builder, vec![outputs.clone()])
+        .expect("MockProver::run")
+        .verify()
+        .is_ok();
+    Outcome { outputs, hints, accepted }
+}
+
+/// Each sort lowering with hints, on values with ties: the honest witness
+/// is accepted with NumPy's stable sort as outputs, and every hint (the
+/// sort's own and every backend hint under it) moved by any of the deltas
+/// is rejected. The deltas `±1 .. ±(n - 1)` turn an argsort lane into every
+/// other index (a duplicate index, a non-permutation, the tie partner of a
+/// tied element) and an order statistic into its neighbours.
+#[test]
+fn sort_hints_are_pinned() {
+    use crate::optim::sort_lowering::test_support::{sort_graph, witness, Forced, Output};
+    let values = [3, 1, 3, 0, 1];
+    let n = values.len() as u32;
+    let every: Vec<Output> = (0..n).flat_map(|r| [Output::Value(r), Output::Index(r)]).collect();
+    let cases: Vec<(Forced, Vec<Output>)> = vec![
+        (Forced::Permutation, every),
+        (Forced::Runs, vec![Output::Index(3), Output::Index(4)]),
+        (Forced::Runs, vec![Output::Index(1), Output::Index(2)]),
+        (Forced::Counting, vec![Output::Value(2)]),
+        (Forced::Runs, vec![Output::ValueAt(1), Output::IndexAt(3)]),
+    ];
+    let mut shifts: Vec<Fp> = (1..n as i64).flat_map(|d| [int(d), int(-d)]).collect();
+    shifts.extend(deltas(&[]));
+    for (forced, outputs) in cases {
+        let sort = sort_graph(&values, &outputs, forced);
+        let w = witness(&sort.inputs);
+        let honest = synthesize_graph(&sort.graph, &w, &[]);
+        assert!(honest.accepted, "{forced:?} {outputs:?}: honest witness rejected");
+        let expected: Vec<Fp> = sort.expected.as_ref().unwrap().iter().map(|&v| int(v)).collect();
+        assert_eq!(honest.outputs, expected, "{forced:?} {outputs:?}");
+        for index in 0..honest.hints {
+            for shift in &shifts {
+                let tampered = synthesize_graph(&sort.graph, &w, &[(index, *shift)]);
+                assert!(
+                    !tampered.accepted,
+                    "{forced:?} {outputs:?}: hint #{index} moved by {shift:?} was accepted (outputs {:?})",
+                    tampered.outputs,
+                );
+            }
+        }
+    }
+}

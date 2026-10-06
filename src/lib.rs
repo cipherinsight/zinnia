@@ -25,7 +25,7 @@ use optim::{
     AlwaysSatisfiedElimination, AssertSubsumption, AssertedEqualityConstantPropagation,
     ConstantFold, DeadCodeElimination, DoubleNotElimination, DuplicateCodeElimination,
     DynamicNDArrayMemoryLowering, DynamicNDArrayMetaAssertInjection, ExternalCallRemover, IRPass,
-    MemoryTraceInjection, PatternMatchOptim, UnreadMemoryEliminator,
+    MemoryTraceInjection, PatternMatchOptim, SortLowering, SortTarget, UnreadMemoryEliminator,
 };
 
 /// Opaque handle holding a compiled IR graph.
@@ -101,7 +101,7 @@ fn resolve_public_layout(
     })
 }
 
-fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32) -> Option<IRGraph> {
+fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32, target: SortTarget) -> Option<IRGraph> {
     // Passes rebuild the graph via `IRGraph::new`, which starts with an
     // empty elided-publics list; carry the IRGen-recorded claim across.
     let elided = graph.elided_publics.clone();
@@ -135,6 +135,7 @@ fn apply_pass(graph: IRGraph, pass_name: &str, mux_threshold: u32) -> Option<IRG
         "DynamicNDArrayMetaAssertInjection" => DynamicNDArrayMetaAssertInjection.exec(graph),
         "MemoryTraceInjection" => MemoryTraceInjection.exec(graph),
         "PatternMatchOptim" => PatternMatchOptim.exec(graph),
+        "SortLowering" => SortLowering { target }.exec(graph),
         _ => return None,
     };
     out.elided_publics = elided;
@@ -192,6 +193,7 @@ fn run_pass_pipeline(
     graph: IRGraph,
     passes: &[&str],
     mux_threshold: u32,
+    target: SortTarget,
     trace_phases: bool,
 ) -> IRGraph {
     // P5: optim passes rebuild the IRGraph from a fresh `IRBuilder`, which
@@ -204,7 +206,7 @@ fn run_pass_pipeline(
     let mut g = graph;
     for pass_name in passes {
         let pass_started = std::time::Instant::now();
-        match apply_pass(g, pass_name, mux_threshold) {
+        match apply_pass(g, pass_name, mux_threshold, target) {
             Some(mut result) => {
                 if let Some(t) = astgen.as_ref() {
                     result.set_astgen_telemetry(std::sync::Arc::clone(t));
@@ -426,6 +428,18 @@ fn compile_circuit_impl(
         passes.push("UnreadMemoryEliminator");
         passes.push("DeadCodeElimination");
     }
+    // Lower the sorts' live outputs (`optim::sort_lowering`): mandatory, and
+    // after dead-code elimination, which decides which outputs are live.
+    // The pass emits fresh comparisons, selects and constants: simplify them
+    // as the earlier passes did the rest (`select(c, 1, 0)` is `c`, ...),
+    // deduplicate, and drop what no output needs (a network's comparators
+    // outside the cone of the live outputs).
+    passes.push("SortLowering");
+    if shortcut_optimization {
+        passes.push("PatternMatchOptim");
+    }
+    passes.push("DuplicateCodeElimination");
+    passes.push("DeadCodeElimination");
     // Collapse `AssertU128Lt(stride_k + base, hi)` chains to the tightest
     // (max-stride) member: see `optim/assert_subsumption.rs`. Runs after
     // DCE so the redundant asserts are visible side-by-side.
@@ -438,7 +452,9 @@ fn compile_circuit_impl(
         passes.push("DynamicNDArrayMetaAssertInjection");
     }
 
-    let optimized_graph = run_pass_pipeline(base_graph, &passes, mux_threshold, trace_phases);
+    let sort_target = SortTarget::from_backend(backend);
+    let optimized_graph =
+        run_pass_pipeline(base_graph, &passes, mux_threshold, sort_target, trace_phases);
     // Inputs nothing reads need no domain check (`ir_gen::input_domain`);
     // dropping it lets dead-code elimination remove the read again.
     let optimized_graph = ir_gen::input_domain::drop_checks_of_unread_inputs(optimized_graph);
@@ -446,6 +462,7 @@ fn compile_circuit_impl(
         optimized_graph,
         &["DeadCodeElimination"],
         mux_threshold,
+        sort_target,
         trace_phases,
     );
 
