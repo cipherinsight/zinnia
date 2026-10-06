@@ -28,12 +28,16 @@ use super::scan::{self, ScanKind};
 use super::vanishing::forced_zero_by_unset;
 use super::window::{window_shift, AxisWindow};
 
-/// The shared value of a scan group: its result's `IndexEncoding`.
+/// The shared value of a scan or permutation-scatter group: the
+/// `IndexEncoding` of each lane, by position (`Vec<IndexEncoding>`).
 pub const ENCODING: &str = "encoding";
+
+/// The encodings of a group's lanes, by position.
+type Encodings = Vec<IndexEncoding>;
 
 /// The family's constructions, in the order the selection breaks ties.
 pub fn constructions() -> Vec<&'static dyn Construction> {
-    vec![&ScanByRunningProducts, &ScanBySelectChain, &WindowShift, &ElementByOneHot, &ElementByMemory]
+    vec![&ScanByRunningProducts, &ScanBySelectChain, &ScatterByHits, &WindowShift, &ElementByOneHot, &ElementByMemory]
 }
 
 fn lanes(group: &Group) -> impl Iterator<Item = Requirement> + '_ {
@@ -105,18 +109,23 @@ impl Emitter for ScanEmitter {
     }
 
     fn shared(&mut self, _b: &mut IRBuilder, _cx: &mut EmitCx, _group: GroupId, _name: &'static str) -> Rc<dyn Any> {
-        Rc::new(self.result.as_ref().and_then(|r| r.1.clone()).expect("a scan by running products"))
+        let encoding = self.result.as_ref().and_then(|r| r.1.clone()).expect("a scan by running products");
+        Rc::new(vec![encoding] as Encodings)
     }
 }
 
-/// The scan group whose result `stmt` is, plus a constant: `(group, c)`
-/// with `stmt = result + c`, through `+`/`-` of constants.
-fn scan_source(cx: &Context, stmt: StmtId) -> Option<(GroupId, i64)> {
+/// Where the one-hot of `stmt` comes from: `(group, position, c)` when
+/// `stmt` is, plus the constant `c` (through `+`/`-` of constants), lane
+/// `position` of a group whose producer may offer `ENCODING` (a scan, or a
+/// permutation scatter of `k + c'`).
+fn encoding_source(cx: &Context, stmt: StmtId) -> Option<(GroupId, usize, i64)> {
     let mut stmt = stmt;
     let mut offset = 0i64;
     for _ in 0..8 {
         if let Some(group) = cx.group_of_lane(stmt) {
-            return ScanKind::of(group.kind).map(|_| (group.id, offset));
+            let encoded = ScanKind::of(group.kind).is_some() || scatter_offset(cx, group).is_some();
+            let position = group.lanes.iter().find(|l| l.stmt == stmt)?.position? as usize;
+            return encoded.then_some((group.id, position, offset));
         }
         let s = cx.stmt(stmt);
         let constant = |id: StmtId| match cx.stmt(id).ir {
@@ -131,6 +140,102 @@ fn scan_source(cx: &Context, stmt: StmtId) -> Option<(GroupId, i64)> {
         };
     }
     None
+}
+
+/// `c` when `group` is a permutation scatter of the values `k + c`.
+fn scatter_offset(cx: &Context, group: &Group) -> Option<i64> {
+    if group.kind != OpKind::PermutationScatter {
+        return None;
+    }
+    let values: Vec<Option<i64>> = group.shared[group.shared.len() / 2..]
+        .iter()
+        .map(|&v| match cx.stmt(v).ir {
+            IR::ConstantInt { value } => Some(value),
+            _ => None,
+        })
+        .collect();
+    super::encoded_values(&values)
+}
+
+/// The encoding of `(group, position, c)`'s value (`encoding_source`).
+fn encoding_at(b: &mut IRBuilder, cx: &mut EmitCx, (group, position, c): (GroupId, usize, i64)) -> IndexEncoding {
+    cx.shared::<Encodings>(b, group, ENCODING)[position].shifted(c)
+}
+
+// ── Permutation scatters ──────────────────────────────────────────────
+
+/// `c[j] = sum_k [p[k] == j] v[k]` (`scatter_by_hits`): exactly one hit
+/// per `j` since `p` is a permutation (the precondition the frontend
+/// checked). The hits are the precondition's own (`emit_is_permutation`;
+/// deduplicated after lowering). When `v[k] = k + c'`, the hits are each
+/// cell's one-hot, offered as `ENCODING`. Cost: `n^2` equality tests and
+/// multiply-adds (`cost::permutation_scatter`).
+pub struct ScatterByHits;
+
+impl Construction for ScatterByHits {
+    fn name(&self) -> &'static str {
+        "gather: permutation scatter by hits"
+    }
+
+    fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
+        if group.kind != OpKind::PermutationScatter {
+            return Vec::new();
+        }
+        let n = group.shared.len() / 2;
+        let offset = scatter_offset(cx, group);
+        let mut post: Vec<Requirement> = lanes(group).collect();
+        if offset.is_some() {
+            post.push(Requirement::Shared { group: group.id, name: ENCODING });
+        }
+        vec![Candidate {
+            pre: Vec::new(),
+            post,
+            cost: cost::permutation_scatter(n as u64, cx.target),
+            emitter: Box::new(ScatterEmitter { operands: group.shared.clone(), offset, hits: Vec::new(), cells: Vec::new() }),
+        }]
+    }
+}
+
+struct ScatterEmitter {
+    operands: Vec<StmtId>,
+    offset: Option<i64>,
+    /// `hits[j][k] = [p[k] == j]`.
+    hits: Vec<Vec<Value>>,
+    cells: Vec<Value>,
+}
+
+impl Emitter for ScatterEmitter {
+    fn begin(&mut self, b: &mut IRBuilder, cx: &mut EmitCx) {
+        let values = cx.values(&self.operands);
+        let n = values.len() / 2;
+        let (p, v) = values.split_at(n);
+        let dtype = dtype_of(v);
+        self.hits = (0..n)
+            .map(|j| {
+                let target = b.ir_constant_int(j as i64);
+                p.iter().map(|pk| b.ir_equal_i(pk, &target)).collect()
+            })
+            .collect();
+        self.cells = self
+            .hits
+            .iter()
+            .map(|hits| {
+                let terms = hits.iter().zip(v).map(|(h, vk)| super::window::scale_by_bit(b, h, vk, dtype)).collect();
+                super::window::sum_typed(b, terms, dtype)
+            })
+            .collect();
+    }
+
+    fn lane(&mut self, _b: &mut IRBuilder, _cx: &mut EmitCx, lane: &Lane) -> Value {
+        self.cells[lane.position.expect("a scatter lane has a position") as usize].clone()
+    }
+
+    fn shared(&mut self, _b: &mut IRBuilder, _cx: &mut EmitCx, _group: GroupId, _name: &'static str) -> Rc<dyn Any> {
+        let lo = self.offset.expect("values k + c");
+        let encodings: Encodings =
+            self.hits.iter().map(|hits| IndexEncoding { lo, onehot: hits.clone(), below: None }).collect();
+        Rc::new(encodings)
+    }
 }
 
 // ── Windows ───────────────────────────────────────────────────────────
@@ -152,8 +257,8 @@ struct WindowAxis {
 /// How an axis's selectors are built in one candidate.
 #[derive(Clone)]
 struct AxisPlan {
-    start_from: Option<(GroupId, i64)>,
-    stop_from: Option<(GroupId, i64)>,
+    start_from: Option<(GroupId, usize, i64)>,
+    stop_from: Option<(GroupId, usize, i64)>,
     padding_zero: bool,
 }
 
@@ -175,9 +280,10 @@ impl Construction for WindowShift {
             .iter()
             .enumerate()
             .map(|(a, axis)| {
-                let start_from = scan_source(cx, axis.start);
-                let stop_from = scan_source(cx, axis.stop).filter(|(g, _)| ScanKind::of(cx.groups[*g].kind).is_some_and(ScanKind::has_thermometer));
-                let padding_zero = stop_from.is_some_and(|(g, c)| {
+                let start_from = encoding_source(cx, axis.start);
+                let stop_from = encoding_source(cx, axis.stop)
+                    .filter(|(g, _, _)| ScanKind::of(cx.groups[*g].kind).is_some_and(ScanKind::has_thermometer));
+                let padding_zero = stop_from.is_some_and(|(g, _, c)| {
                     padding_is_zero(cx, &cx.groups[g], c, &group.shared[..cells], &shape, a)
                 });
                 AxisPlan { start_from, stop_from, padding_zero }
@@ -226,7 +332,7 @@ fn window_candidate(group: &Group, cx: &Context, shape: &[usize], axes: &[Window
         .iter()
         .flat_map(|p| [p.start_from, p.stop_from])
         .flatten()
-        .map(|(g, _)| Requirement::Shared { group: g, name: ENCODING })
+        .map(|(g, _, _)| Requirement::Shared { group: g, name: ENCODING })
         .collect();
     Candidate {
         pre,
@@ -264,9 +370,8 @@ impl Emitter for WindowEmitter {
         };
         let mut windows = Vec::with_capacity(self.shape.len());
         for (axis, plan) in self.plans.iter().enumerate() {
-            let encoding = |cx: &mut EmitCx, b: &mut IRBuilder, from: Option<(GroupId, i64)>| {
-                from.map(|(g, c)| cx.shared::<IndexEncoding>(b, g, ENCODING).shifted(c))
-            };
+            let encoding =
+                |cx: &mut EmitCx, b: &mut IRBuilder, from: Option<(GroupId, usize, i64)>| from.map(|f| encoding_at(b, cx, f));
             windows.push(AxisWindow {
                 axis,
                 start: values[cells + 2 * axis].clone(),
@@ -286,9 +391,8 @@ impl Emitter for WindowEmitter {
 
 // ── Element reads ─────────────────────────────────────────────────────
 
-/// `element::gather_by_onehot` for one read whose index is a scan's result
-/// plus a constant, with that scan's encoding. Cost
-/// `cost::element_by_onehot`.
+/// `element::gather_by_onehot` for one read whose index has a one-hot
+/// (`encoding_source`), with that encoding. Cost `cost::element_by_onehot`.
 pub struct ElementByOneHot;
 
 /// Every read of the group through a memory segment holding the cells (the
@@ -301,35 +405,57 @@ impl Construction for ElementByOneHot {
         "gather: element by a recorded one-hot"
     }
 
+    /// One candidate for all the group's reads when each has a one-hot
+    /// (fewer nodes for the selection), else one per read that has.
     fn candidates(&self, group: &Group, cx: &Context) -> Vec<Candidate> {
         if group.kind != OpKind::Element {
             return Vec::new();
         }
-        group
+        let reads: Vec<(&Lane, (GroupId, usize, i64))> = group
             .lanes
             .iter()
-            .filter_map(|lane| {
-                let (g, c) = scan_source(cx, *lane.own.first()?)?;
-                Some(Candidate {
-                    pre: vec![Requirement::Shared { group: g, name: ENCODING }],
-                    post: vec![Requirement::Lane(lane.stmt)],
-                    cost: cost::element_by_onehot(group.shared.len() as u64, cx.target),
-                    emitter: Box::new(OneHotReadEmitter { cells: group.shared.clone(), source: (g, c) }),
+            .filter_map(|lane| Some((lane, encoding_source(cx, *lane.own.first()?)?)))
+            .collect();
+        let candidate = |reads: &[(&Lane, (GroupId, usize, i64))]| {
+            let mut pre: Vec<Requirement> =
+                reads.iter().map(|(_, (g, _, _))| Requirement::Shared { group: *g, name: ENCODING }).collect();
+            pre.sort();
+            pre.dedup();
+            let cost = reads
+                .iter()
+                .map(|(_, (g, _, _))| {
+                    let onehot_is_free = cx.groups[*g].kind == OpKind::PermutationScatter;
+                    cost::element_by_onehot(group.shared.len() as u64, onehot_is_free, cx.target)
                 })
-            })
-            .collect()
+                .sum();
+            Candidate {
+                pre,
+                post: reads.iter().map(|(lane, _)| Requirement::Lane(lane.stmt)).collect(),
+                cost,
+                emitter: Box::new(OneHotReadEmitter {
+                    cells: group.shared.clone(),
+                    sources: reads.iter().map(|(lane, source)| (lane.stmt, *source)).collect(),
+                }),
+            }
+        };
+        if reads.len() == group.lanes.len() {
+            return vec![candidate(&reads)];
+        }
+        reads.iter().map(|read| candidate(std::slice::from_ref(read))).collect()
     }
 }
 
 struct OneHotReadEmitter {
     cells: Vec<StmtId>,
-    source: (GroupId, i64),
+    /// Each read's lane and the source of its index's one-hot.
+    sources: Vec<(StmtId, (GroupId, usize, i64))>,
 }
 
 impl Emitter for OneHotReadEmitter {
-    fn lane(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, _lane: &Lane) -> Value {
+    fn lane(&mut self, b: &mut IRBuilder, cx: &mut EmitCx, lane: &Lane) -> Value {
         let cells = cx.values(&self.cells);
-        let encoding = cx.shared::<IndexEncoding>(b, self.source.0, ENCODING).shifted(self.source.1);
+        let source = self.sources.iter().find(|(stmt, _)| *stmt == lane.stmt).expect("a read of this node").1;
+        let encoding = encoding_at(b, cx, source);
         super::element::gather_by_onehot(b, &cells, &encoding, dtype_of(&cells))
     }
 }

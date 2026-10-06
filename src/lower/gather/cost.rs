@@ -115,14 +115,23 @@ pub(super) fn window_shift(dims: &[u64], axes: &[AxisCost], target: Target) -> u
         .sum()
 }
 
-/// `x[i]` over `n` cells as an inner product with a scan's one-hot.
-pub(super) fn element_by_onehot(n: u64, target: Target) -> u64 {
-    onehot_cells(n, target) + n * units(target).mul_add
+/// `x[i]` over `n` cells as an inner product with a recorded one-hot (a
+/// scan's bits become cells for it, a scatter's hits are cells already).
+pub(super) fn element_by_onehot(n: u64, onehot_is_free: bool, target: Target) -> u64 {
+    let bits = if onehot_is_free { 0 } else { onehot_cells(n, target) };
+    bits + n * units(target).mul_add
+}
+
+/// A permutation scatter of `n` values: the hits (shared with the
+/// permutation precondition, which emits the same tests) and one
+/// multiply-add per hit.
+pub(super) fn permutation_scatter(n: u64, target: Target) -> u64 {
+    n * n * units(target).mul_add
 }
 
 /// `reads` reads of `n` cells through memory: halo2-base builds the
 /// indicators of each distinct index (`indices`) and an inner product per
-/// read; Noir reads a native array.
+/// read; Noir reads a native array (the emitter's measured costs).
 pub(super) fn element_by_memory(n: u64, reads: u64, indices: u64, target: Target) -> u64 {
     let u = units(target);
     match target {

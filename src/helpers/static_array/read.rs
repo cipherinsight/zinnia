@@ -112,7 +112,7 @@ fn read_at_scan_result(
 ) -> Option<Value> {
     let mut dynamic = indices.iter().enumerate().filter(|(_, v)| v.int_val().is_none());
     let (axis, index) = dynamic.next()?;
-    if dynamic.next().is_some() || !crate::lower::gather::is_scan_result(b, index) {
+    if dynamic.next().is_some() || !crate::lower::gather::has_encoding(b, index) {
         return None;
     }
     let fixed: usize = indices
@@ -586,6 +586,9 @@ fn try_fancy_subscript(
         let out_coords = decode_coords(flat_out, &out_shape, &out_strides);
         let mut static_addr = offset as i64;
         let mut dynamic_parts: Vec<Value> = Vec::new();
+        // The axis and index of the last runtime index (the only one when
+        // `dynamic_parts` has one entry).
+        let mut dynamic_index: Option<(usize, Value)> = None;
 
         for (src_axis, plan) in plans.iter().enumerate() {
             match plan {
@@ -597,6 +600,7 @@ fn try_fancy_subscript(
                         // Already wrapped + bounds-checked above.
                         let stride_val = b.ir_constant_int(strides[src_axis] as i64);
                         dynamic_parts.push(b.ir_mul_i(v, &stride_val));
+                        dynamic_index = Some((src_axis, v.clone()));
                     }
                 }
                 FancyAxisPlan::Range { coords } => {
@@ -627,11 +631,26 @@ fn try_fancy_subscript(
                         // Already wrapped + bounds-checked above.
                         let stride_val = b.ir_constant_int(strides[src_axis] as i64);
                         dynamic_parts.push(b.ir_mul_i(&idx_val, &stride_val));
+                        dynamic_index = Some((src_axis, idx_val.clone()));
                     }
                 }
             }
         }
 
+        if let (1, Some((axis, index))) = (dynamic_parts.len(), &dynamic_index) {
+            // One runtime index: a read at an index with a known one-hot
+            // (`lower::gather::element_lane`) over the cells along its axis.
+            let axis = *axis;
+            if dtype != NumberType::Complex && crate::lower::gather::has_encoding(b, index) {
+                let cells: Vec<Value> = (0..shape[axis])
+                    .map(|k| read_leaf_at_flat(b, segment_id, 0, static_addr as usize + k * strides[axis], dtype))
+                    .collect();
+                if let Some(out) = crate::lower::gather::element_lane(b, &cells, index) {
+                    leaves.push(scalar_i64_to_value(&value_to_scalar_i64(&out), dtype));
+                    continue;
+                }
+            }
+        }
         if dynamic_parts.is_empty() {
             let abs = static_addr as usize;
             if dtype == NumberType::Complex {

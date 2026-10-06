@@ -378,3 +378,74 @@ fn argmax_read_placeholders_match_numpy_under_every_construction_choice() {
         }
     }
 }
+
+// ── Permutation scatter ───────────────────────────────────────────────
+
+/// Every permutation of `0..n`.
+fn permutations(n: usize) -> Vec<Vec<i64>> {
+    if n == 0 {
+        return vec![Vec::new()];
+    }
+    let mut out = Vec::new();
+    for rest in permutations(n - 1) {
+        for at in 0..=rest.len() {
+            let mut p = rest.clone();
+            p.insert(at, (n - 1) as i64);
+            out.push(p);
+        }
+    }
+    out
+}
+
+/// `c[p] = arange(n)` (the precondition records `p` as a permutation), then
+/// `x[c[j]]` for every `j`, as placeholders; outputs `c` then the reads.
+fn inverse_permutation_gather_placeholders(n: usize) -> IRGraph {
+    let mut b = IRBuilder::new();
+    let p: Vec<Value> = (0..n).map(|k| input(&mut b, format!("p{k}"))).collect();
+    let x: Vec<Value> = (0..n).map(|k| input(&mut b, format!("x{k}"))).collect();
+    b.record_permutation(&p);
+    let values: Vec<Value> = (0..n).map(|k| b.ir_constant_int(k as i64)).collect();
+    let c = super::permutation_scatter_lanes(&mut b, &p, &values).expect("a recorded permutation");
+    let reads: Vec<Value> =
+        c.iter().map(|cj| super::element_lane(&mut b, &x, cj).expect("the scatter's one-hot")).collect();
+    for v in c.iter().chain(&reads) {
+        b.ir_expose_public_i(v);
+    }
+    b.export_ir_graph()
+}
+
+#[test]
+fn inverse_permutation_and_gathers_by_it_match_numpy_under_every_construction_choice() {
+    let choices: [&[&dyn Construction]; 2] = [
+        &[&super::constructions::ScatterByHits, &ElementByOneHot],
+        &[&super::constructions::ScatterByHits, &ElementByMemory],
+    ];
+    for n in 1..=4 {
+        let graph = inverse_permutation_gather_placeholders(n);
+        for constructions in choices {
+            let graph = lowered(&graph, constructions);
+            let xs: Vec<i64> = (0..n as i64).map(|k| 11 * k - 7).collect();
+            for p in permutations(n) {
+                let mut c = vec![0i64; n];
+                for (k, &pk) in p.iter().enumerate() {
+                    c[pk as usize] = k as i64;
+                }
+                let mut expected = c.clone();
+                expected.extend(c.iter().map(|&cj| xs[cj as usize]));
+                let mut inputs = named("p", &p);
+                inputs.extend(named("x", &xs));
+                let (ok, outputs) = mock_run(&graph, &inputs);
+                assert!(ok);
+                assert_eq!(outputs, expected, "p = {p:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_permutation_scatter_needs_a_recorded_permutation() {
+    let mut b = IRBuilder::new();
+    let p: Vec<Value> = (0..3).map(|k| input(&mut b, format!("p{k}"))).collect();
+    let values: Vec<Value> = (0..3).map(|k| b.ir_constant_int(k)).collect();
+    assert!(super::permutation_scatter_lanes(&mut b, &p, &values).is_none());
+}

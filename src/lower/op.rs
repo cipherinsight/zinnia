@@ -70,6 +70,11 @@ pub enum OpKind {
     /// `x[i]` of the shared cells at the lane's own operand `i`, which is in
     /// `[0, n)` (the frontend checked it).
     Element,
+    /// `c[p] = v` for a permutation `p` of `0..n`: lane `j` is `c[j]`, the
+    /// `v[k]` with `p[k] == j`. Shared operands: `p`, then `v` (n each). The
+    /// frontend emits it only where a precondition asserts `p` is a
+    /// permutation.
+    PermutationScatter,
     // ── scatter family (`lower::scatter`) ─────────────────────────────
 }
 
@@ -82,7 +87,8 @@ impl OpKind {
             | OpKind::LastSet
             | OpKind::ArgmaxOfFlags
             | OpKind::Window { .. }
-            | OpKind::Element => &super::gather::GatherSemantics,
+            | OpKind::Element
+            | OpKind::PermutationScatter => &super::gather::GatherSemantics,
         }
     }
 
@@ -95,6 +101,7 @@ impl OpKind {
             OpKind::ArgmaxOfFlags => "argmax_of_flags",
             OpKind::Window { .. } => "window",
             OpKind::Element => "element",
+            OpKind::PermutationScatter => "permutation_scatter",
         }
     }
 }

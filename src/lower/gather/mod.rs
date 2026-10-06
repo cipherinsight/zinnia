@@ -88,11 +88,33 @@ pub fn window_lanes(b: &mut IRBuilder, cells: &[Value], shape: &[usize], bounds:
     )
 }
 
-/// `cells[index]` as a placeholder, when `index` is a scan's result plus a
-/// constant (the layer can then read it with the scan's one-hot); `None`
-/// otherwise. The caller has checked `0 <= index < cells.len()`.
+/// `c[p] = values` for `p` a recorded permutation of `0..n`
+/// (`IRBuilder::record_permutation`) and `n` scalar values: the cells
+/// `c[0..n]` as placeholders. `None` when `p` is not known to be a
+/// permutation.
+pub fn permutation_scatter_lanes(b: &mut IRBuilder, p: &[Value], values: &[Value]) -> Option<Vec<Value>> {
+    let n = p.len();
+    if n == 0 || values.len() != n || !b.is_known_permutation(p) || !values.iter().all(Value::is_number) {
+        return None;
+    }
+    let operands: Vec<Value> = p.iter().chain(values).map(|v| b.ensure_ptr(v)).collect();
+    let shared: Arc<[Value]> = operands.into();
+    Some(
+        (0..n)
+            .map(|j| {
+                let op = ArrayOp { kind: OpKind::PermutationScatter, shared: 2 * n as u32, output: 0, position: Some(j as u32) };
+                b.ir_array_op(op, &shared, &[])
+            })
+            .collect(),
+    )
+}
+
+/// `cells[index]` as a placeholder, when `index` has a known one-hot (a
+/// scan's result, or a cell of a permutation scatter of `k + c`, plus a
+/// constant); `None` otherwise. The caller has checked `0 <= index <
+/// cells.len()`.
 pub fn element_lane(b: &mut IRBuilder, cells: &[Value], index: &Value) -> Option<Value> {
-    if cells.is_empty() || !is_scan_result(b, index) {
+    if cells.is_empty() || !has_encoding(b, index) {
         return None;
     }
     let shared: Arc<[Value]> = cells.iter().map(|c| b.ensure_ptr(c)).collect();
@@ -100,9 +122,33 @@ pub fn element_lane(b: &mut IRBuilder, cells: &[Value], index: &Value) -> Option
     Some(b.ir_array_op(op, &shared, std::slice::from_ref(index)))
 }
 
-/// Whether `v` is a scan placeholder's lane plus a constant.
-pub fn is_scan_result(b: &IRBuilder, v: &Value) -> bool {
-    scan_source(b, v).is_some()
+/// Whether `v` is, plus a constant, a lane whose one-hot a construction can
+/// provide: a scan's result, or a cell of a permutation scatter of the
+/// values `k + c` (`encoded_values`).
+pub fn has_encoding(b: &IRBuilder, v: &Value) -> bool {
+    let Some((lane, _)) = lane_source(b, v) else { return false };
+    let stmt = &b.stmts[lane as usize];
+    match &stmt.ir {
+        IR::ArrayOp(op) if op.kind == OpKind::PermutationScatter => {
+            let values: Vec<Option<i64>> = stmt.arguments[stmt.arguments.len() / 2..]
+                .iter()
+                .map(|&a| match b.stmts[a as usize].ir {
+                    IR::ConstantInt { value } => Some(value),
+                    _ => None,
+                })
+                .collect();
+            encoded_values(&values).is_some()
+        }
+        IR::ArrayOp(op) => ScanKind::of(op.kind).is_some(),
+        _ => false,
+    }
+}
+
+/// `c` when `values[k] = k + c` for every `k`: the scattered cells then
+/// have the one-hot `[c[j] == k + c] = [p[k] == j]`.
+pub fn encoded_values(values: &[Option<i64>]) -> Option<i64> {
+    let c = values.first().copied()??;
+    values.iter().enumerate().all(|(k, v)| *v == Some(k as i64 + c)).then_some(c)
 }
 
 /// `true` when `stop - start >= 0` wherever both are used: `start` is the
@@ -112,7 +158,7 @@ pub fn is_scan_result(b: &IRBuilder, v: &Value) -> bool {
 /// set position is at most the last. A slice's extent `max(0, stop - start)`
 /// is then `stop - start`.
 pub fn scan_bounds_ordered(b: &IRBuilder, start: &Value, stop: &Value) -> bool {
-    let (Some((first, c1)), Some((last, c2))) = (scan_source(b, start), scan_source(b, stop)) else {
+    let (Some((first, c1)), Some((last, c2))) = (lane_source(b, start), lane_source(b, stop)) else {
         return false;
     };
     let lane = |s: StmtId| match &b.stmts[s as usize].ir {
@@ -125,9 +171,9 @@ pub fn scan_bounds_ordered(b: &IRBuilder, start: &Value, stop: &Value) -> bool {
     }
 }
 
-/// `(lane, c)` when `v` is a scan placeholder's lane `lane` plus the
+/// `(lane, c)` when `v` is a gather placeholder's lane `lane` plus the
 /// constant `c` (through `+`/`-` of constants).
-fn scan_source(b: &IRBuilder, v: &Value) -> Option<(StmtId, i64)> {
+fn lane_source(b: &IRBuilder, v: &Value) -> Option<(StmtId, i64)> {
     let mut stmt = v.stmt_id()?;
     let mut offset = 0i64;
     for _ in 0..8 {
@@ -137,7 +183,7 @@ fn scan_source(b: &IRBuilder, v: &Value) -> Option<(StmtId, i64)> {
             _ => None,
         };
         (stmt, offset) = match (&s.ir, s.arguments.as_slice()) {
-            (IR::ArrayOp(op), _) => return ScanKind::of(op.kind).map(|_| (stmt, offset)),
+            (IR::ArrayOp(_), _) => return Some((stmt, offset)),
             (IR::AddI, [x, c]) if constant(*c).is_some() => (*x, offset + constant(*c)?),
             (IR::AddI, [c, x]) if constant(*c).is_some() => (*x, offset + constant(*c)?),
             (IR::SubI, [x, c]) if constant(*c).is_some() => (*x, offset - constant(*c)?),
