@@ -946,9 +946,9 @@ fn whole_array_argmax_argmin(b: &mut IRBuilder, arr: &Value, is_max: bool) -> Va
         if let Some(first_true) = first_true_of_sorted_comparisons(b, &cells) {
             return first_true;
         }
-        // The first set position by running products, with its one-hot
-        // recorded for a later read at it (`lower::gather::scan`).
-        crate::lower::gather::scan::argmax_of_flags(b, &cells).expect("cells is not empty")
+        // The first set position (0 when none is set): a `lower::gather`
+        // scan placeholder, whose one-hot a later read at it may reuse.
+        crate::lower::gather::scan_lane(b, crate::lower::gather::ScanKind::Argmax, &cells)
     } else {
         let mut idx = b.ir_constant_int(0);
         let mut best_val = cells[0].clone();

@@ -174,8 +174,8 @@ pub fn dyn_aggregate_all(b: &mut IRBuilder, data: &DynamicNDArrayData, agg: DynA
 }
 
 /// `min` / `max` of a sorted compaction (`flatnonzero` / `nonzero`
-/// outputs) as the first / last kept position, by the running-product scan
-/// of `lower::gather::scan` (no reads of the compacted segment, which
+/// outputs) as the first / last kept position, a `lower::gather` scan
+/// placeholder (no reads of the compacted segment, which
 /// `unread_memory_elimination` then deletes). Applies when the sources are
 /// the positions themselves plus a constant (`source[i] = i + c`); the
 /// caller has asserted non-emptiness, as the scan requires.
@@ -197,11 +197,12 @@ pub(crate) fn compaction_scan_min_max(
             return None;
         }
     }
-    let position = match agg {
-        DynAggKind::Min => crate::lower::gather::scan::first_set(b, &keeps)?,
-        DynAggKind::Max => crate::lower::gather::scan::last_set(b, &keeps)?,
+    let kind = match agg {
+        DynAggKind::Min => crate::lower::gather::ScanKind::First,
+        DynAggKind::Max => crate::lower::gather::ScanKind::Last,
         _ => return None,
     };
+    let position = crate::lower::gather::scan_lane(b, kind, &keeps);
     match offset? {
         0 => Some(position),
         c => {
@@ -1375,8 +1376,8 @@ pub fn dyn_aggregate_axis(
 /// min/max over one compaction lane whose sources are STATIC small-range
 /// values (coordinate streams), via bucket occupancy: `counts[v] = Σ
 /// keep_i` over positions with source value `v`; `has[v] = counts[v] >
-/// 0`; min = first occupied bucket, max = last (`lower::gather::scan`,
-/// which records the result's one-hot and thermometer for a later window).
+/// 0`; min = first occupied bucket, max = last (a `lower::gather` scan
+/// placeholder, whose one-hot and thermometer a later window may reuse).
 /// O(cells + dim); works for UNSORTED lanes. The caller asserts
 /// non-emptiness (`require_non_empty`), as the scan requires.
 pub(crate) fn compaction_bucket_min_max(
@@ -1414,13 +1415,13 @@ pub(crate) fn compaction_bucket_min_max(
         has_along.push(b.ir_less_than_i_bounded(&zero_i, acc));
     }
 
-    // The first / last occupied bucket, by the running-product scan (the
-    // caller asserted non-emptiness).
-    match agg {
-        DynAggKind::Min => crate::lower::gather::scan::first_set(b, &has_along),
-        DynAggKind::Max => crate::lower::gather::scan::last_set(b, &has_along),
-        _ => None,
-    }
+    // The first / last occupied bucket (the caller asserted non-emptiness).
+    let kind = match agg {
+        DynAggKind::Min => crate::lower::gather::ScanKind::First,
+        DynAggKind::Max => crate::lower::gather::ScanKind::Last,
+        _ => return None,
+    };
+    Some(crate::lower::gather::scan_lane(b, kind, &has_along))
 }
 
 /// The per-axis min/max bounds as the `(rank,)` result of the reduction.

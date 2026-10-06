@@ -42,5 +42,6 @@ pub use op::{ArrayOp, Constant, OpKind, OperatorSemantics};
 pub fn registry() -> Vec<&'static dyn Construction> {
     let mut all = Vec::new();
     all.extend(sort::constructions());
+    all.extend(gather::constructions());
     all
 }

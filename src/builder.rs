@@ -177,10 +177,6 @@ pub struct IRBuilder {
     /// to the source array do not change it). Assigning through such a
     /// tuple, `a[np.where(m)] = v`, is NumPy's `a[m] = v`.
     pub nonzero_index_masks: HashMap<crate::types::ValueId, Value>,
-    /// Index encodings (one-hot, thermometer) that constructions of the
-    /// gather family recorded on their results, for later gathers by those
-    /// values (`lower::gather::encoding`).
-    pub index_encodings: crate::lower::gather::encoding::EncodingTable,
     /// Small expression-provenance side table for StaticArray results whose
     /// concrete payload can be reconstructed exactly, but may be consumed by
     /// a fused lowering before materializing every intermediate cell.
@@ -284,7 +280,6 @@ impl IRBuilder {
             dim_table: crate::types::DimTable::new(),
             static_array_payload: HashMap::new(),
             nonzero_index_masks: HashMap::new(),
-            index_encodings: Default::default(),
             static_array_product_provenance: HashMap::new(),
             lazy_static_array_segments: HashSet::new(),
             provenance: crate::provenance::ProvenanceTable::new(),

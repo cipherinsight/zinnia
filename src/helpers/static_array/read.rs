@@ -97,6 +97,37 @@ fn read_leaf_at_dynamic_with_guarded_safe_fallback_addr(
     scalar_i64_to_value(&value_to_scalar_i64(&raw), dtype)
 }
 
+/// A read at checked indices of which exactly one is runtime and is a
+/// `lower::gather` scan's result (plus a constant): an element placeholder
+/// over the cells along that axis, which the layer may read with the scan's
+/// one-hot. `None` otherwise.
+fn read_at_scan_result(
+    b: &mut IRBuilder,
+    segment_id: u32,
+    base_offset: usize,
+    strides: &[usize],
+    shape: &[usize],
+    indices: &[Value],
+    dtype: NumberType,
+) -> Option<Value> {
+    let mut dynamic = indices.iter().enumerate().filter(|(_, v)| v.int_val().is_none());
+    let (axis, index) = dynamic.next()?;
+    if dynamic.next().is_some() || !crate::lower::gather::is_scan_result(b, index) {
+        return None;
+    }
+    let fixed: usize = indices
+        .iter()
+        .enumerate()
+        .filter(|(ax, _)| *ax != axis)
+        .map(|(ax, v)| v.int_val().expect("static") as usize * strides[ax])
+        .sum();
+    let cells: Vec<Value> = (0..shape[axis])
+        .map(|k| read_leaf_at_flat(b, segment_id, base_offset, fixed + k * strides[axis], dtype))
+        .collect();
+    let out = crate::lower::gather::element_lane(b, &cells, index)?;
+    Some(scalar_i64_to_value(&value_to_scalar_i64(&out), dtype))
+}
+
 /// Build a runtime address from `offset + sum_k(idx[k] * strides[k])`.
 fn compute_addr(
     b: &mut IRBuilder,
@@ -885,6 +916,11 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
                 return out;
             }
         }
+        if dtype != NumberType::Complex {
+            if let Some(out) = read_at_scan_result(b, segment_id, offset, &strides, &shape, &idx_vals, dtype) {
+                return out;
+            }
+        }
         let addr = compute_addr(b, offset, &strides, &idx_vals, &shape);
         if dtype == NumberType::Complex {
             return read_complex_leaf_dynamic(
@@ -923,10 +959,8 @@ pub fn static_array_subscript(b: &mut IRBuilder, val: &Value, indices: &[SliceIn
                     return out;
                 }
                 if dtype != NumberType::Complex {
-                    let cells: Vec<Value> = (0..shape[0])
-                        .map(|k| read_leaf_at_flat(b, segment_id, offset, k * strides[0], dtype))
-                        .collect();
-                    if let Some(out) = crate::lower::gather::element::gather_by_encoding(b, &cells, &i, dtype) {
+                    let index = std::slice::from_ref(&i);
+                    if let Some(out) = read_at_scan_result(b, segment_id, offset, &strides, &shape, index, dtype) {
                         return out;
                     }
                 }
@@ -2177,9 +2211,9 @@ fn finish_multi_axis_slice(
 }
 
 /// `x[s0:e0, s1:e1, ...]` with step 1 and a normalized start in `[0, n]` on
-/// every axis of a real array: the window gather of
-/// `lower::gather::window` (one shared one-hot per axis) instead of a clamp,
-/// a box test and a gather per output cell. `None` for any other form.
+/// every axis of a real array: `lower::gather` window placeholders (lowered
+/// as a shift by one shared one-hot per axis) instead of a clamp, a box test
+/// and a gather per output cell. `None` for any other form.
 #[allow(clippy::too_many_arguments)]
 fn window_gather(
     b: &mut IRBuilder,
@@ -2192,7 +2226,6 @@ fn window_gather(
     axes: &SliceAxes,
     out_shape: &[usize],
 ) -> Option<Vec<Value>> {
-    use crate::lower::gather::window::{window_shift, AxisWindow};
     let every_axis_windowed = static_range_axes.is_empty()
         && axes.len() == shape.len()
         && out_shape == shape
@@ -2211,11 +2244,9 @@ fn window_gather(
             read_leaf_at_flat(b, segment_id, static_base as usize, addr, dtype)
         })
         .collect();
-    let windows: Vec<AxisWindow> = axes
-        .iter()
-        .map(|(ax, _, start, stop, _, _, _)| AxisWindow { axis: *ax, start: start.clone(), stop: stop.clone() })
-        .collect();
-    Some(window_shift(b, cells, shape, &windows, dtype))
+    let bounds: Vec<(Value, Value)> = axes.iter().map(|(_, _, start, stop, _, _, _)| (start.clone(), stop.clone())).collect();
+    let lanes = crate::lower::gather::window_lanes(b, &cells, shape, &bounds)?;
+    Some(lanes.iter().map(|v| scalar_i64_to_value(&value_to_scalar_i64(v), dtype)).collect())
 }
 
 fn provable_nonneg(b: &IRBuilder, v: &Value) -> bool {
