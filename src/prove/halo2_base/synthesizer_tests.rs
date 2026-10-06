@@ -865,6 +865,48 @@ fn dynamic_read_selects_the_addressed_slot() {
     assert!(!synthesize(&*op, &[int(-1)], &[]).accepted);
 }
 
+/// A scatter `b[i, idx_i] = 1` into a 3x3 zero matrix, with each `idx_i`
+/// asserted below 3, then every cell read back: a read of row `r` only
+/// compares its address with the write of row `r` (the other writes' proven
+/// address ranges exclude it), and the result is NumPy's one-hot matrix.
+#[test]
+fn overlay_skips_writes_whose_addresses_cannot_reach_the_read() {
+    let scatter: Box<Op> = Box::new(|s, c| {
+        s.allocate_memory(1, 9, 0)?;
+        let (one, three) = (s.constant_int(1)?, s.constant_int(3)?);
+        for (row, idx) in c.iter().enumerate() {
+            s.assert_u128_lt(idx, &three)?;
+            let base = s.constant_int(3 * row as i64)?;
+            let addr = s.add_i(&base, idx)?;
+            s.write_memory(1, &addr, &one)?;
+        }
+        (0..9).map(|k| {
+            let addr = s.constant_int(k)?;
+            s.read_memory(1, &addr)
+        }).collect()
+    });
+    for idx in [[0i64, 2, 1], [1, 1, 1], [2, 0, 0]] {
+        let expected: Vec<Fp> = (0..9).map(|k| int((idx[(k / 3) as usize] == k % 3) as i64)).collect();
+        let inputs: Vec<Fp> = idx.iter().map(|v| int(*v)).collect();
+        assert_sound(&format!("one-hot {idx:?}"), &*scatter, &inputs, &expected, &[]);
+    }
+    assert!(!synthesize(&*scatter, &[int(3), int(0), int(0)], &[]).accepted, "index 3 accepted");
+    // 9 reads, each comparing with one write: 9 equality tests, not 27.
+    let one_row: Box<Op> = Box::new(|s, c| {
+        s.allocate_memory(1, 9, 0)?;
+        let (one, three) = (s.constant_int(1)?, s.constant_int(3)?);
+        s.assert_u128_lt(&c[0], &three)?;
+        s.write_memory(1, &c[0], &one)?;
+        (0..3).map(|k| {
+            let addr = s.constant_int(k)?;
+            s.read_memory(1, &addr)
+        }).collect()
+    });
+    let (rows, _) = cells_of(&*scatter, &[int(0), int(0), int(0)]);
+    let (row, _) = cells_of(&*one_row, &[int(0)]);
+    assert!(rows <= 3 * row + 12, "three rows {rows} cells, one row {row}");
+}
+
 /// Reads after many runtime-address writes cost one address comparison per
 /// pending write; past the budget synthesis stops with an error naming the
 /// construct (a 20,000 x 20,000 scatter exhausted 16 GB before).
