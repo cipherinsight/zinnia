@@ -177,7 +177,11 @@ fn role(ir: &IR, operands: usize) -> Role {
         | IR::SelectManyI { .. }
         | IR::SelectManyF { .. } => Role::Selects(1..operands),
         IR::Hint {
-            kind: HintKind::StableArgsort | HintKind::PositionOneHot | HintKind::Negative | HintKind::CountAtMost,
+            kind: HintKind::StableArgsort
+                | HintKind::PositionOneHot
+                | HintKind::Negative
+                | HintKind::CountAtMost
+                | HintKind::RoutingBits,
             ..
         } => Role::ValueOnly,
         IR::Hint {

@@ -142,11 +142,15 @@ def test_argsort_halo2_base_matches_mock():
                           _with_ties(40, 7))
 
 
-def test_batcher_network_size():
-    # 60 keys: Batcher's merge exchange has 505 comparators where the
-    # adjacent-swap network has 1,770.
+def test_sort_of_60_is_routed():
+    # 60 keys on halo2-base: the routed Waksman network (297 switches, 59
+    # asserted increases of packed keys) instead of Batcher's merge exchange
+    # (505 comparators; its size is checked in `lower::sort::tests`) or the
+    # adjacent-swap network (1,770).
     program = compile_kernel('def kernel(a: Float[Array, "60"]):\n    return np.sort(a)\n')
-    assert ir_classes(program).count("LessThanFIR") == 505
+    classes = ir_classes(program)
+    assert classes.count("HintIR") == 297 and classes.count("AssertBitIR") == 297
+    assert classes.count("PackedKeyLessIR") == 59 and "LessThanFIR" not in classes
 
 
 # ── powers with a compile-time exponent ──────────────────────────────────

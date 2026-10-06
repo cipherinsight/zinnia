@@ -50,6 +50,19 @@ pub struct MockSynthesizer {
 }
 
 impl MockSynthesizer {
+    /// The value of an `exp`-based function, or, outside `kernel::fp_exp`'s
+    /// domain (where every circuit has no witness), an unsatisfied mock.
+    fn exp_domain_result(&mut self, function: &str, a: &MockCell, value: Option<Fp>) -> MockCell {
+        value.map(MockCell).unwrap_or_else(|| {
+            self.satisfied = false;
+            self.assertion_failures.push(format!(
+                "{function}({}) is outside the fixed-point domain of exp (result beyond the signed 64-bit window)",
+                kernel::dequantize_from_fp(a.fp(), self.prec())
+            ));
+            MockCell(Fp::zero())
+        })
+    }
+
     pub fn new(witness: ResolvedWitness, params: ProvingParams) -> Self {
         Self {
             witness,
@@ -347,7 +360,8 @@ impl Synthesizer for MockSynthesizer {
     }
 
     fn sinh_f(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {
-        Ok(MockCell(kernel::fp_sinh(a.fp(), self.prec())))
+        let value = kernel::fp_sinh(a.fp(), self.prec());
+        Ok(self.exp_domain_result("sinh", a, value))
     }
 
     fn cos_f(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {
@@ -355,7 +369,8 @@ impl Synthesizer for MockSynthesizer {
     }
 
     fn cosh_f(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {
-        Ok(MockCell(kernel::fp_cosh(a.fp(), self.prec())))
+        let value = kernel::fp_cosh(a.fp(), self.prec());
+        Ok(self.exp_domain_result("cosh", a, value))
     }
 
     fn tan_f(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {
@@ -363,7 +378,8 @@ impl Synthesizer for MockSynthesizer {
     }
 
     fn tanh_f(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {
-        Ok(MockCell(kernel::fp_tanh(a.fp(), self.prec())))
+        let value = kernel::fp_tanh(a.fp(), self.prec());
+        Ok(self.exp_domain_result("tanh", a, value))
     }
 
     fn sqrt_f(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {
@@ -388,7 +404,8 @@ impl Synthesizer for MockSynthesizer {
     }
 
     fn exp_f(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {
-        Ok(MockCell(kernel::fp_exp(a.fp(), self.prec())))
+        let value = kernel::fp_exp(a.fp(), self.prec());
+        Ok(self.exp_domain_result("exp", a, value))
     }
 
     fn log_f(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {

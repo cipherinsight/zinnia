@@ -140,12 +140,15 @@ def test_runtime_percentile_matches_numpy_with_ties(target):
 
 # ── Which lowering each target picks ────────────────────────────────────
 
-def test_full_argsort_is_a_network_on_halo2_and_hinted_on_noir():
+def test_full_argsort_is_routed_on_halo2_and_hinted_on_noir():
     source = 'def kernel(a: Float[Array, "100"]):\n    return np.argsort(a)\n'
     halo2 = ir_classes(compile_for(source, "halo2"))
     noir = ir_classes(compile_for(source, "noir"))
-    # Batcher's 1,077 compare-exchanges of packed keys, each packed once.
-    assert "HintIR" not in halo2 and halo2.count("PackedKeyLessIR") == 1077
+    # The routed Waksman network (lower/sort/routed.rs): 573 hinted switch
+    # bits, each asserted a bit, and 99 asserted increases of the routed
+    # packed keys (Batcher's network would compare 1,077 times).
+    assert halo2.count("HintIR") == 573 and halo2.count("AssertBitIR") == 573
+    assert halo2.count("PackedKeyLessIR") == 99
     assert halo2.count("PackKeyIR") == 100 and halo2.count("PackedKeyIndexIR") == 100
     # One hinted index per rank, 99 key comparisons, one native read each.
     assert noir.count("HintIR") == 100 and noir.count("KeyLessIR") == 99

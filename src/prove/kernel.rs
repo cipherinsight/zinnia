@@ -630,10 +630,60 @@ pub fn fp_arcsin(x: Fp, precision_bits: u32) -> Fp {
     half + half
 }
 
-/// Compute exp(x) using native f64 math on the dequantized value.
-pub fn fp_exp(x: Fp, precision_bits: u32) -> Fp {
-    let v = dequantize_from_fp(x, precision_bits);
-    quantize_to_fp(v.exp(), precision_bits)
+/// `1 / ln 2` Q-encoded: `round(2^P / ln 2)` (6196328019 at `P = 32`).
+pub fn inv_ln2_q(precision_bits: u32) -> i128 {
+    crate::prove::field::quantize(std::f64::consts::LOG2_E, precision_bits)
+}
+
+/// [`EXP2_COEFS`] Q-encoded (already leading-first), for [`horner_eval`].
+pub fn exp2_coefs_q(precision_bits: u32) -> Vec<Fp> {
+    EXP2_COEFS.iter().map(|c| quantize_to_fp(*c, precision_bits)).collect()
+}
+
+/// The scale shift `S` of [`fp_exp`]'s last step, which the circuits
+/// compute as `floor(t * 2^(i + S) / 2^S)` (= `floor(t * 2^i)`) for
+/// `0 <= i + S < 128`, and as 0 for `i < -S`. Any `S >= P + 2` gives the
+/// same values (`t < 2^(P+2)`, so `floor(t * 2^i) = 0` for `i <= -(P + 2)`);
+/// 48 also keeps `t * 2^(i + S)` below `2^126` for every result inside the
+/// window (`i <= 30`), the range `fp_to_i128` reads.
+pub const EXP_SHIFT: i128 = 48;
+
+/// `exp` on Q-encoded values, by the circuits' algorithm (halo2-base
+/// `exp_f`, Noir `qexp`), so every backend computes the same value:
+///
+/// 1. `y = floor(x * inv_ln2_q / 2^P)` (a `mul_f`; `y` must lie in the
+///    signed 64-bit window), so `exp(x) ~ 2^(y / 2^P)`;
+/// 2. `i = floor(y / 2^P)`, `f = y mod 2^P`, so `y / 2^P = i + f / 2^P`
+///    with `f / 2^P` in `[0, 1)`;
+/// 3. `t = 2^(f / 2^P)` in `[1, 2]`, Q-encoded, by [`EXP2_COEFS`] with
+///    [`horner_eval`] (every product rounded down, as `mul_f`);
+/// 4. `t * 2^i`, exact for `i >= 0`, rounded down for `i < 0` (0 for
+///    `i <= -(P + 2)`: underflow).
+///
+/// `None` (no proof on any backend) when `x` or `y` leaves the signed
+/// 64-bit window or the result does (`exp(x) >= 2^(63 - P)`, i.e.
+/// `x > 21.48` at `P = 32`).
+///
+/// Measured maximum error against libm on `[-40, 21.4]` at `P = 32`:
+/// relative 9.4e-10 for results of at least 1, absolute 9.4e-10 (about 4 Q
+/// units) for results below 1 (asserted by `fixed_point_exp_is_accurate`).
+pub fn fp_exp(x: Fp, precision_bits: u32) -> Option<Fp> {
+    let window = -(1i128 << 63)..(1i128 << 63);
+    let scale = 1i128 << precision_bits;
+    let v = fp_to_i128(x).filter(|v| window.contains(v))?;
+    let y = (v * inv_ln2_q(precision_bits)).div_euclid(scale);
+    if !window.contains(&y) {
+        return None;
+    }
+    let (i, f) = (y.div_euclid(scale), y.rem_euclid(scale));
+    let t = fp_to_i128(horner_eval(i128_to_fp(f), &exp2_coefs_q(precision_bits), precision_bits))?;
+    let value = match i {
+        i if i < -EXP_SHIFT => 0,
+        i if i < 0 => t >> -i,
+        i if i < EXP_SHIFT => t.checked_shl(i as u32).filter(|r| *r >> i == t && window.contains(r))?,
+        _ => return None,
+    };
+    Some(i128_to_fp(value))
 }
 
 /// Compute ln(x) using native f64 math on the dequantized value.
@@ -642,22 +692,22 @@ pub fn fp_log(x: Fp, precision_bits: u32) -> Fp {
     quantize_to_fp(v.ln(), precision_bits)
 }
 
-/// Compute sinh: (exp(x) - exp(-x)) / 2.
-pub fn fp_sinh(x: Fp, precision_bits: u32) -> Fp {
-    let ex = fp_exp(x, precision_bits);
-    let enx = fp_exp(-x, precision_bits);
-    let diff = ex - enx;
+/// Compute sinh: (exp(x) - exp(-x)) / 2 (`None` where an `exp` is outside
+/// its domain, see [`fp_exp`]).
+pub fn fp_sinh(x: Fp, precision_bits: u32) -> Option<Fp> {
+    let ex = fp_exp(x, precision_bits)?;
+    let enx = fp_exp(-x, precision_bits)?;
     let two = quantize_to_fp(2.0, precision_bits);
-    fp_div_prescale(diff, two, precision_bits)
+    Some(fp_div_prescale(ex - enx, two, precision_bits))
 }
 
-/// Compute cosh: (exp(x) + exp(-x)) / 2.
-pub fn fp_cosh(x: Fp, precision_bits: u32) -> Fp {
-    let ex = fp_exp(x, precision_bits);
-    let enx = fp_exp(-x, precision_bits);
-    let sum = ex + enx;
+/// Compute cosh: (exp(x) + exp(-x)) / 2 (`None` where an `exp` is outside
+/// its domain, see [`fp_exp`]).
+pub fn fp_cosh(x: Fp, precision_bits: u32) -> Option<Fp> {
+    let ex = fp_exp(x, precision_bits)?;
+    let enx = fp_exp(-x, precision_bits)?;
     let two = quantize_to_fp(2.0, precision_bits);
-    fp_div_prescale(sum, two, precision_bits)
+    Some(fp_div_prescale(ex + enx, two, precision_bits))
 }
 
 /// Compute tan: sin(x) / cos(x).
@@ -667,11 +717,12 @@ pub fn fp_tan(x: Fp, precision_bits: u32) -> Fp {
     fp_div_prescale(s, c, precision_bits)
 }
 
-/// Compute tanh: sinh(x) / cosh(x).
-pub fn fp_tanh(x: Fp, precision_bits: u32) -> Fp {
-    let s = fp_sinh(x, precision_bits);
-    let c = fp_cosh(x, precision_bits);
-    fp_div_prescale(s, c, precision_bits)
+/// Compute tanh: sinh(x) / cosh(x) (`None` where an `exp` is outside its
+/// domain, see [`fp_exp`]).
+pub fn fp_tanh(x: Fp, precision_bits: u32) -> Option<Fp> {
+    let s = fp_sinh(x, precision_bits)?;
+    let c = fp_cosh(x, precision_bits)?;
+    Some(fp_div_prescale(s, c, precision_bits))
 }
 
 /// Compute atan2(y, x) using native f64 math on the dequantized values.
@@ -729,6 +780,13 @@ pub fn hint_values(kind: crate::ir_defs::HintKind, operands: &[Fp]) -> Vec<Fp> {
         }
         HintKind::SortedValues => stable_argsort(operands).into_iter().map(|i| operands[i]).collect(),
         HintKind::CountAtMost => Vec::new(), // not lanes; see `hint_lane`
+        HintKind::RoutingBits => {
+            let mut dest = vec![0; operands.len()];
+            for (rank, position) in stable_argsort(operands).into_iter().enumerate() {
+                dest[position] = rank;
+            }
+            crate::lower::sort::waksman::route(&dest).into_iter().map(|crossed| Fp::from(crossed as u64)).collect()
+        }
         HintKind::MaskedSortedValues => {
             let (values, active) = operands.split_at(operands.len() / 2);
             let active: Vec<Fp> = values
@@ -784,11 +842,33 @@ pub fn hint_lane(kind: crate::ir_defs::HintKind, operands: &[Fp], rank: Fp) -> F
         let count = operands.iter().filter(|&&a| signed_cmp(a, rank) != std::cmp::Ordering::Greater).count();
         return Fp::from(count as u64);
     }
-    let lanes = hint_values(kind, operands);
-    fp_to_i128(rank)
-        .and_then(|r| usize::try_from(r).ok())
-        .and_then(|r| lanes.get(r).copied())
-        .unwrap_or(Fp::zero())
+    let Some(rank) = fp_to_i128(rank).and_then(|r| usize::try_from(r).ok()) else {
+        return Fp::zero();
+    };
+    with_hint_values(kind, operands, |lanes| lanes.get(rank).copied().unwrap_or(Fp::zero()))
+}
+
+/// `f(&hint_values(kind, operands))`, with the lanes of the last
+/// `(kind, operands)` remembered on this thread. A vector hint is one
+/// `IR::Hint` statement per lane, all with the same operands, and backends
+/// evaluate them one by one: without the memo an argsort of `n` elements
+/// would be sorted `n` times, and a Waksman routing (`RoutingBits`, about
+/// `n log2 n` lanes) routed once per lane. The memo is keyed on the whole
+/// input of the pure function `hint_values`, so it never changes a value.
+fn with_hint_values<R>(kind: crate::ir_defs::HintKind, operands: &[Fp], f: impl FnOnce(&[Fp]) -> R) -> R {
+    use std::cell::RefCell;
+    type Memo = Option<(crate::ir_defs::HintKind, Vec<Fp>, Vec<Fp>)>;
+    thread_local! {
+        static LAST: RefCell<Memo> = const { RefCell::new(None) };
+    }
+    LAST.with(|last| {
+        let mut last = last.borrow_mut();
+        let fresh = last.as_ref().is_some_and(|(k, seen, _)| *k == kind && seen.as_slice() == operands);
+        if !fresh {
+            *last = Some((kind, operands.to_vec(), hint_values(kind, operands)));
+        }
+        f(&last.as_ref().expect("just set").2)
+    })
 }
 
 /// Simplified Poseidon permutation (4 rounds, t=3).
@@ -897,6 +977,49 @@ mod tests {
                 "horner_eval(log2 polynomial, x={x}) = {got}, expected {expected}",
             );
         }
+    }
+
+    #[test]
+    fn fixed_point_exp_values_match_noir_qexp() {
+        // The same values are asserted for Noir's `qexp` in
+        // benchmarking/noir_fpc (test_qexp_matches_the_kernel), and the
+        // constants are noir_fpc's INV_LN2_Q and EXP2_COEFS_Q.
+        let q = 1i128 << 32;
+        assert_eq!(inv_ln2_q(32), 6196328019);
+        let coefs: Vec<i128> = exp2_coefs_q(32).into_iter().map(|c| fp_to_i128(c).unwrap()).collect();
+        assert_eq!(coefs, vec![
+            0, 2, 31, 437, 5676, 65510, 661577, 5726720, 41309550, 238388332, 1031764991,
+            2977044472, 4294967296,
+        ]);
+        let exp = |x: i128| fp_exp(i128_to_fp(x), 32).map(|v| fp_to_i128(v).unwrap());
+        assert_eq!(exp(0), Some(q));
+        assert_eq!(exp(q), Some(11674931554));
+        assert_eq!(exp(-q), Some(1580030168));
+        assert_eq!(exp(-20 * q), Some(8));
+        assert_eq!(exp(-30 * q), Some(0));
+        assert_eq!(exp(-100 * q), Some(0));
+        assert_eq!(exp(-(1i128 << 62)), Some(0));
+        assert_eq!(exp(21 * q), Some(5664270453422686208));
+        assert_eq!(exp(22 * q), None);
+        assert_eq!(exp(1i128 << 62), None);
+    }
+
+    #[test]
+    fn fixed_point_exp_is_accurate() {
+        let (mut worst_relative, mut worst_absolute) = (0f64, 0f64);
+        for step in 0..=61_400 {
+            let x = -40.0 + step as f64 * 1e-3;
+            let xq = quantize_to_fp(x, 32);
+            let exact = dequantize_from_fp(xq, 32).exp();
+            let got = dequantize_from_fp(fp_exp(xq, 32).expect("inside the domain"), 32);
+            if exact >= 1.0 {
+                worst_relative = worst_relative.max((got - exact).abs() / exact);
+            } else {
+                worst_absolute = worst_absolute.max((got - exact).abs());
+            }
+        }
+        assert!(worst_relative < 1e-9, "relative error {worst_relative}");
+        assert!(worst_absolute < 5.0 / 4294967296.0, "absolute error {worst_absolute}");
     }
 
     #[test]
@@ -1226,5 +1349,36 @@ mod tests {
         masked.extend(ints(&[1, 0, 1, 0, 1]));
         let masked_lane = |rank: i64| fp_to_i64(hint_lane(HintKind::MaskedSortedValues, &masked, i64_to_fp(rank)));
         assert_eq!((0..5).map(masked_lane).collect::<Vec<_>>(), vec![-40, 20, 30, 0, 0]);
+    }
+
+    /// The memo of `hint_lane` never answers for other operands or another
+    /// kind, and the routing bits route the stable argsort.
+    #[test]
+    fn hint_lanes_are_remembered_per_kind_and_operands() {
+        use crate::ir_defs::HintKind;
+        let a = ints(&[30, 10, 20, 10, -40]);
+        let b = ints(&[1, 2, 3, 4, 5, 0]);
+        for _ in 0..2 {
+            for (kind, operands) in [
+                (HintKind::StableArgsort, &a),
+                (HintKind::SortedValues, &a),
+                (HintKind::StableArgsort, &b),
+                (HintKind::RoutingBits, &a),
+                (HintKind::RoutingBits, &b),
+            ] {
+                let fresh = hint_values(kind, operands);
+                for r in -1..10i64 {
+                    let want = usize::try_from(r).ok().and_then(|r| fresh.get(r).copied()).unwrap_or(Fp::zero());
+                    assert_eq!(hint_lane(kind, operands, i64_to_fp(r)), want, "{kind:?} lane {r}");
+                }
+            }
+        }
+        for operands in [&a, &b] {
+            let mut bits = hint_values(HintKind::RoutingBits, operands).into_iter();
+            let routed = crate::lower::sort::waksman::apply((0..operands.len()).collect(), &mut |x, y| {
+                if bits.next().expect("a bit per switch") == Fp::one() { (y, x) } else { (x, y) }
+            });
+            assert_eq!(routed, stable_argsort(operands));
+        }
     }
 }

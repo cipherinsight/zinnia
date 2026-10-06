@@ -30,8 +30,12 @@ pub(crate) fn unit_costs(target: Target) -> UnitCosts {
 /// handling (`return a`).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct UnitCosts {
-    /// One compare-exchange of values (Batcher's network on values).
-    exchange: u32,
+    /// One compare-exchange of values (Batcher's network on values, the
+    /// adjacent-swap networks without indices): the comparison, and a
+    /// select per output that is live or compared again (`value_selects`;
+    /// it reuses the comparison's difference).
+    compare: u32,
+    compare_select: u32,
     /// One compare-exchange of `(value, index)` keys with the index
     /// tie-break (`IR::KeyLess`) and four selects.
     exchange_keys: u32,
@@ -84,19 +88,42 @@ pub(crate) struct UnitCosts {
     /// product at five elements): it saves only the product's factors.
     masked_extreme_term: u32,
     masked_extreme_fixed: u32,
+    /// The routed Waksman network (`routed`), `None` where it is not
+    /// offered.
+    routing: Option<RoutingCosts>,
+}
+
+/// Unit costs of the routed Waksman network (`routed`, `routed_plan`); the
+/// packing and unpacking are `UnitCosts::pack` and `UnitCosts::unpack`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RoutingCosts {
+    /// One switch: its hinted bit inside its bit gate and the two selects
+    /// moving the packed keys.
+    switch: u32,
+    /// The two selects moving one more carried array (the sorted values, a
+    /// payload) through a switch.
+    carried: u32,
+    /// The asserted order of two consecutive routed keys (one range check
+    /// of their gap).
+    link: u32,
 }
 
 /// halo2-base: an argsort of 100 by Batcher's network costs 84,600 cells
 /// (78.5 per exchange with the `KeyLess` tie-break), 67,800 on packed keys
 /// (55 per exchange, 4 per packing, 46 per unpacked index), a sort 54,900
-/// (51 per exchange); a read at a hinted index is a one-hot selection over the 100
-/// slots (about 2,000 cells); `KeyLess` is about 55 cells; an order
+/// (51 per exchange: a comparison of 43 and two selects of 4; a select is
+/// left out when its output is neither live nor compared again, as in the
+/// argsort of 3 carrying payloads of 0355 / 0358); a read at a hinted index
+/// is a selection over the slots (`prove/halo2_base/synthesizer/memory.rs`):
+/// 13 + 8.24 cells per slot measured for 5 to 100 slots, priced 20 + 8 per
+/// slot; `KeyLess` is about 55 cells; an order
 /// statistic of 100 about 4,700-6,500; the extreme pin about 42 cells per
 /// element plus 38 (fitted on maxima of 5 and minima of 48 values in the
 /// perf cases 0436 and 0314), against 47-51 per scan step, so a scan stays
 /// cheaper below 10 values.
 const HALO2_BASE: UnitCosts = UnitCosts {
-    exchange: 51,
+    compare: 43,
+    compare_select: 4,
     exchange_keys: 79,
     exchange_tracked: 63,
     exchange_packed: 55,
@@ -107,8 +134,8 @@ const HALO2_BASE: UnitCosts = UnitCosts {
     rank_selector_products: 8,
     rank_selector_test: 7,
     selected_term: 4,
-    key_read_fixed: 10,
-    key_read_per_slot: 20,
+    key_read_fixed: 20,
+    key_read_per_slot: 8,
     segment_per_slot: 0,
     key_link: 55,
     key_count_term: 59,
@@ -117,7 +144,16 @@ const HALO2_BASE: UnitCosts = UnitCosts {
     extreme_fixed: 38,
     masked_extreme_term: 41,
     masked_extreme_fixed: 30,
+    routing: Some(HALO2_BASE_ROUTING),
 };
+
+/// halo2-base: a switch is a bit gate holding its hint (4 cells) and two
+/// selects of packed keys (the difference and two multiply-adds, 12
+/// cells); a carried array adds a difference and two selects (12); an
+/// asserted link is one range check of a gap of up to `65 + b` bits (40
+/// cells at lookup width 8, 41 for the difference). Measured on argsorts of
+/// 3 to 100 elements (`eval-redo/layer/sort-route.md`).
+const HALO2_BASE_ROUTING: RoutingCosts = RoutingCosts { switch: 16, carried: 12, link: 42 };
 
 /// Noir: an argsort of 100 by the permutation check costs 1,520 gates (a
 /// native read per key, the array built once, an asserted `KeyLess` per
@@ -126,7 +162,10 @@ const HALO2_BASE: UnitCosts = UnitCosts {
 /// order statistic of 100 about 840; the extreme pin about 5 per element
 /// plus 3 (a maximum of 3 values costs 15 gates less than its scan).
 const NOIR: UnitCosts = UnitCosts {
-    exchange: 17,
+    // A compare-exchange of 17 gates whether or not its selects are used
+    // (not recalibrated per select).
+    compare: 17,
+    compare_select: 0,
     exchange_keys: 24,
     exchange_tracked: 20,
     exchange_packed: 22,
@@ -147,6 +186,8 @@ const NOIR: UnitCosts = UnitCosts {
     extreme_fixed: 3,
     masked_extreme_term: 5,
     masked_extreme_fixed: 4,
+    // Not offered: the permutation check's native reads are linear in `n`.
+    routing: None,
 };
 
 /// The outputs of one sort that are still live after dead-code
@@ -227,6 +268,10 @@ pub(super) enum Plan {
     /// runtime-rank outputs then read. Without it, runtime-rank values are
     /// pinned by counts and runtime-rank indices by their key's rank.
     Hinted { runs: Vec<Run> },
+    /// Packed keys routed into ascending order by a Waksman network whose
+    /// switches the prover sets, checked increasing (`routed`); every
+    /// rank's outputs, which runtime-rank outputs read.
+    Routed,
 }
 
 /// A sorting network and how it orders equal values.
@@ -291,15 +336,17 @@ impl UnitCosts {
         n as u64 * u64::from(self.segment_per_slot) + count as u64 * self.read(n)
     }
 
-    /// One compare-exchange of `network`.
-    fn comparator(&self, network: Network) -> u64 {
+    /// One compare-exchange of a network that tracks indices or packed
+    /// keys (value-only exchanges are priced by `compare` and
+    /// `compare_select`).
+    fn tracked_comparator(&self, network: Network) -> u64 {
         u64::from(match network {
-            Network::MergeExchange
-            | Network::AdjacentSwapValues
-            | Network::ReverseAdjacentSwapValues => self.exchange,
             Network::MergeExchangeTieBreak => self.exchange_keys,
             Network::PackedMergeExchange => self.exchange_packed,
             Network::AdjacentSwap => self.exchange_tracked,
+            Network::MergeExchange | Network::AdjacentSwapValues | Network::ReverseAdjacentSwapValues => {
+                unreachable!("a value-only network has no tracked comparator")
+            }
         })
     }
 
@@ -383,6 +430,32 @@ pub(super) fn reverse_adjacent_swap_pairs(n: usize) -> Vec<(usize, usize)> {
         .collect()
 }
 
+/// How many value selects the comparators of `pairs` in the cone of `live`
+/// need (see `cone_size`): a comparator's output is selected when it is a
+/// value in `live_values` or a later comparator of the cone compares it;
+/// the others are removed by dead-code elimination.
+pub(super) fn value_selects(pairs: &[(usize, usize)], n: usize, live: &BTreeSet<usize>, live_values: &BTreeSet<usize>) -> usize {
+    let mut in_cone = vec![false; n];
+    for &position in live {
+        in_cone[position] = true;
+    }
+    let mut value_used = vec![false; n];
+    for &position in live_values {
+        value_used[position] = true;
+    }
+    let mut count = 0;
+    for &(i, j) in pairs.iter().rev() {
+        if in_cone[i] || in_cone[j] {
+            count += usize::from(value_used[i]) + usize::from(value_used[j]);
+            in_cone[i] = true;
+            in_cone[j] = true;
+            value_used[i] = true;
+            value_used[j] = true;
+        }
+    }
+    count
+}
+
 /// How many of `pairs` the outputs at `live` positions depend on (the
 /// comparators dead-code elimination keeps): walking the network
 /// backwards, a comparator is needed when either of its positions is live
@@ -404,7 +477,7 @@ pub(super) fn cone_size(pairs: &[(usize, usize)], n: usize, live: &BTreeSet<usiz
 }
 
 /// The cheapest plan for `demand` under `costs`, with its estimated cost:
-/// the first of the cheapest among the plans of the three constructions,
+/// the first of the cheapest among the plans of the constructions,
 /// in their registration order (as the selection breaks ties).
 #[cfg(test)]
 pub(super) fn choose_plan(demand: &Demand, costs: &UnitCosts) -> (Plan, u64) {
@@ -413,6 +486,7 @@ pub(super) fn choose_plan(demand: &Demand, costs: &UnitCosts) -> (Plan, u64) {
         .chain([rank_selector_plan(demand, costs)])
         .chain(full_permutation(demand, costs))
         .chain(selection_plans(demand, costs))
+        .chain(routed_plan(demand, costs))
         .min_by_key(|(_, cost)| *cost)
         .expect("a network always applies")
 }
@@ -446,6 +520,7 @@ pub(super) fn network_plans(demand: &Demand, costs: &UnitCosts) -> Vec<(Plan, u6
     } else {
         &[Network::MergeExchange, Network::AdjacentSwapValues, Network::ReverseAdjacentSwapValues]
     };
+    let live_values: BTreeSet<usize> = if demand.runtime_values > 0 { (0..n).collect() } else { demand.values.clone() };
     let reads = runtime_reads_of_outputs(demand, costs);
     candidates
         .iter()
@@ -464,13 +539,16 @@ pub(super) fn network_plans(demand: &Demand, costs: &UnitCosts) -> Vec<(Plan, u6
                 .map(|ranks| cone_size(&pairs, n, ranks) as u64 * u64::from(costs.exchange_payload))
                 .sum();
             // The adjacent-swap network is stable without its indices: when
-            // none is live, dead-code elimination drops their selects.
-            let per_comparator = if network == Network::AdjacentSwap && !needs_indices {
-                u64::from(costs.exchange)
+            // none is live, dead-code elimination drops their selects and it
+            // exchanges values only.
+            let values_only = !network.tracks_indices() || (network == Network::AdjacentSwap && !needs_indices);
+            let exchanges = if values_only {
+                comparators * u64::from(costs.compare)
+                    + value_selects(&pairs, n, &live, &live_values) as u64 * u64::from(costs.compare_select)
             } else {
-                costs.comparator(network)
+                comparators * costs.tracked_comparator(network)
             };
-            (Plan::Network { network }, comparators * per_comparator + packing + carried + reads)
+            (Plan::Network { network }, exchanges + packing + carried + reads)
         })
         .collect()
 }
@@ -493,6 +571,28 @@ pub(super) fn rank_selector_plan(demand: &Demand, costs: &UnitCosts) -> (Plan, u
     let outputs = (constant_outputs + runtime_outputs + payload_outputs) as u64;
     let cost = comparisons + selectors + outputs * n * u64::from(costs.selected_term) + runtime_reads_of_outputs(demand, costs);
     (Plan::RankSelectors, cost)
+}
+
+/// The routed Waksman network (`routed`) when the target offers it and
+/// there are at least two elements: every rank, the sorted values carried
+/// when one is live, each payload carried; runtime-rank outputs read its
+/// outputs.
+pub(super) fn routed_plan(demand: &Demand, costs: &UnitCosts) -> Option<(Plan, u64)> {
+    let routing = costs.routing?;
+    let n = demand.n;
+    if n < 2 {
+        return None;
+    }
+    let switches = super::waksman::switch_count(n) as u64;
+    let needs_values = !demand.values.is_empty() || demand.runtime_values > 0;
+    let carried = u64::from(needs_values) + demand.payloads.len() as u64;
+    let unpacked = if demand.runtime_indices > 0 { n } else { demand.indices.len() };
+    let cost = n as u64 * u64::from(costs.pack)
+        + switches * (u64::from(routing.switch) + carried * u64::from(routing.carried))
+        + (n as u64 - 1) * u64::from(routing.link)
+        + unpacked as u64 * u64::from(costs.unpack)
+        + runtime_reads_of_outputs(demand, costs);
+    Some((Plan::Routed, cost))
 }
 
 /// Every rank as one pinned run (the permutation check); runtime-rank
@@ -528,7 +628,11 @@ pub(super) fn selection_plans(demand: &Demand, costs: &UnitCosts) -> Vec<(Plan, 
                 .map(|run| run.last - run.first + 1)
                 .sum::<usize>()
                 + demand.runtime_indices;
-            Some((Plan::Hinted { runs }, runs_cost + per_output + costs.reads(n, keys) + payload_reads))
+            // `runs_cost` has the read of each run's keys; add the segment
+            // they share (once) and the reads of the runtime-rank indices.
+            let segment = if keys > 0 { n as u64 * u64::from(costs.segment_per_slot) } else { 0 };
+            let runtime_reads = demand.runtime_indices as u64 * costs.read(n);
+            Some((Plan::Hinted { runs }, runs_cost + per_output + segment + runtime_reads + payload_reads))
         })
         .collect()
 }

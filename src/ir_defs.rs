@@ -348,7 +348,10 @@ pub enum IR {
     /// A hint constrains nothing: the circuit accepts ANY value in its
     /// place. Every producer must therefore follow it with IR constraints
     /// under which the honest lane is the only admissible value, and state
-    /// that argument next to the code (see `lower::sort`). Not
+    /// that argument next to the code (see `lower::sort`). The one relaxed
+    /// form (`HintKind::RoutingBits`): a hint may keep freedom when every
+    /// admissible value leaves every output, and every value an output or a
+    /// check depends on, the same (`lower::sort::routed`). Not
     /// fixed: a hint nothing reads is dead, and its pins read it.
     Hint {
         kind: HintKind,
@@ -431,6 +434,14 @@ pub enum HintKind {
     /// `#{j : a_j <= t}` for the query `t` passed as the rank. Not a lane of
     /// a vector: every query value has its count.
     CountAtMost,
+    /// The switch settings (1 = crossed, in `lower::sort::waksman::apply`'s
+    /// order) of the Waksman network that routes the operands into their
+    /// stable ascending order (lane `t` is switch `t`), as the looping
+    /// algorithm `waksman::route` finds them. Several settings can realize
+    /// one permutation, so a lane is not determined by what the circuit
+    /// checks; its one user (`lower::sort::routed`) asserts it a bit and
+    /// checks the routed keys, which every accepted setting leaves the same.
+    RoutingBits,
 }
 
 impl HintKind {
@@ -442,6 +453,7 @@ impl HintKind {
             HintKind::PositionOneHot => "position_one_hot",
             HintKind::Negative => "negative",
             HintKind::CountAtMost => "count_at_most",
+            HintKind::RoutingBits => "routing_bits",
         }
     }
 
@@ -453,6 +465,7 @@ impl HintKind {
             "position_one_hot" => Some(HintKind::PositionOneHot),
             "negative" => Some(HintKind::Negative),
             "count_at_most" => Some(HintKind::CountAtMost),
+            "routing_bits" => Some(HintKind::RoutingBits),
             _ => None,
         }
     }
@@ -1565,6 +1578,7 @@ mod tests {
             IR::Hint { kind: HintKind::SortedValues, len: 1 },
             IR::Hint { kind: HintKind::MaskedSortedValues, len: 6 },
             IR::Hint { kind: HintKind::CountAtMost, len: 4 },
+            IR::Hint { kind: HintKind::RoutingBits, len: 100 },
             IR::ArrayOp(crate::lower::ArrayOp {
                 kind: crate::lower::OpKind::Sort,
                 shared: 5,
