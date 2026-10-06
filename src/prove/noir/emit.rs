@@ -127,8 +127,8 @@ fn asserted_comparisons(ir: &IRGraph) -> HashSet<u32> {
             matches!(
                 s.ir,
                 IR::LtI | IR::LteI | IR::GtI | IR::GteI | IR::LtF | IR::LteF | IR::GtF | IR::GteF
-                    | IR::LtIBounded | IR::GtIBounded | IR::IndexInBox { .. } | IR::EqI | IR::EqF
-                    | IR::NeI | IR::NeF | IR::KeyLess { .. }
+                    | IR::LtIBounded | IR::GtIBounded | IR::IndexInBox { .. } | IR::NeI | IR::NeF
+                    | IR::EqI | IR::EqF | IR::KeyLess { .. }
             )
         })
         .map(|s| s.stmt_id)
@@ -1312,8 +1312,9 @@ impl<'a> NoirEmitter<'a> {
         Some(self.literal_int(1))
     }
 
-    /// `a == b` for an `==` whose only uses are asserts: `assert(a == b)`,
-    /// one linear constraint, and the literal true for the asserts.
+    /// `a == b` for an `==` whose only uses are asserts: the assertion
+    /// itself (`assert(a == b)`, one constraint) and the literal true for
+    /// the asserts, instead of an equality bit.
     fn asserted_equal(&mut self, a: &str, b: &str) -> Option<String> {
         let asserted = self.current_stmt.is_some_and(|id| self.asserted_comparisons.contains(&id));
         if !asserted {

@@ -993,6 +993,22 @@ fn static_array_fancy_setitem(
         None => vec![value.clone(); l],
     };
 
+    // `c[p] = v` with `p` a permutation of `c`'s positions (a precondition):
+    // every cell is written exactly once, `c[j] = v[k]` for `p[k] == j`, a
+    // `lower::gather` placeholder per cell instead of a last-write-wins
+    // chain of conditional writes per `k`.
+    if let ([_], [Some(p)]) = (shape, fancy_arrays.as_slice()) {
+        if p.len() == shape[0] {
+            if let Some(cells) = crate::lower::gather::permutation_scatter_lanes(b, p, &value_per_k) {
+                for (j, cell) in cells.iter().enumerate() {
+                    let at = b.ir_constant_int(j as i64);
+                    let _ = static_array_setitem(b, val, &[SliceIndex::Single(at)], cell);
+                }
+                return val.clone();
+            }
+        }
+    }
+
     for k in 0..l {
         let mut k_indices: Vec<SliceIndex> = Vec::with_capacity(indices.len());
         for (ax, idx) in indices.iter().enumerate() {

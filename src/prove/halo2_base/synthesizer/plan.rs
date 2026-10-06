@@ -36,7 +36,7 @@ pub(super) struct Plan {
     /// or the subtrahend of one `SubI`: the sum is emitted as one
     /// multiply-add gate there, and the product is never a cell.
     pub deferred_products: HashSet<u32>,
-    /// Statement ids of the comparisons (`<`, `<=`, `>`, `>=`, `==`, `!=`,
+    /// Statement ids of the comparisons (`<`, `<=`, `>`, `>=`, `!=`, `==`,
     /// key orders) whose only use is `Assert`.
     pub asserted_comparisons: HashSet<u32>,
     /// Statement ids of the prover hints some `AssertBit` checks directly:
@@ -171,6 +171,8 @@ fn asserted_comparisons(ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> HashSet<
                     | IR::EqF
                     | IR::NeI
                     | IR::NeF
+                    | IR::EqI
+                    | IR::EqF
                     | IR::KeyLess { .. }
             )
         })
