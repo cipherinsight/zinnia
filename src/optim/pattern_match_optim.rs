@@ -9,6 +9,11 @@ use super::IRPass;
 
 pub struct PatternMatchOptim;
 
+/// Whether `a` and `b` are the same IR value (so `a - b` is 0).
+fn same_value(a: &Value, b: &Value) -> bool {
+    matches!((a.value_id(), b.value_id()), (Some(x), Some(y)) if x == y)
+}
+
 impl PatternMatchOptim {
     fn optimize_ir(&self, builder: &mut IRBuilder, ir: &IR, args: &[Value]) -> Value {
         if let Some(min_arity) = min_required_arity(ir) {
@@ -227,6 +232,9 @@ impl PatternMatchOptim {
         if args[1].int_val() == Some(0) {
             return args[0].clone();
         }
+        if same_value(&args[0], &args[1]) {
+            return b.ir_constant_int(0);
+        }
         if let (Some(a), Some(c)) = (args[0].int_val(), args[1].int_val()) {
             return b.ir_constant_int(a - c);
         }
@@ -236,6 +244,10 @@ impl PatternMatchOptim {
     fn optimize_sub_f(&self, b: &mut IRBuilder, ir: &IR, args: &[Value]) -> Value {
         if args[1].float_val() == Some(0.0) {
             return args[0].clone();
+        }
+        // Exact for Q32 values, which have no NaN or infinity.
+        if same_value(&args[0], &args[1]) {
+            return b.ir_constant_float(0.0);
         }
         if let (Some(a), Some(c)) = (args[0].float_val(), args[1].float_val()) {
             return b.ir_constant_float(a - c);
