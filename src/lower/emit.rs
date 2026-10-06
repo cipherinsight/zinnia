@@ -58,6 +58,8 @@ impl IRPass for ArrayLowering {
 /// Lower `graph` with `constructions`; `None` when it has no placeholder
 /// and no check to drop.
 pub fn lower(graph: &IRGraph, target: Target, constructions: &[&dyn Construction]) -> Option<IRGraph> {
+    // Claims' value lists are numbered per lowering (`ListId`).
+    super::graph::ListId::reset();
     let groups = collect_groups(graph);
     let facts = FreeFacts::new(graph);
     let program_checks = checks::program_checks(graph);
