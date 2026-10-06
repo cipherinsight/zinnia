@@ -20,6 +20,7 @@
 //! Families: [`sort`], [`gather`], [`stats`], [`memory`]; scatter registers its own in [`registry`].
 //! See `eval-redo/layer/core-api.md` for how to add a family.
 
+pub mod challenge;
 pub mod checks;
 pub mod construction;
 pub mod emit;

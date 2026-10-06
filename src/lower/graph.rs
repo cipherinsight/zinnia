@@ -71,6 +71,12 @@ pub enum Requirement {
     /// say) that nodes of several groups may share, produced once, named by
     /// its family.
     SharedAt { at: StmtId, name: &'static str },
+    /// A capability of the whole program, produced at most once whatever
+    /// groups use it: the verifier challenge (`challenge::CHALLENGE`). Its
+    /// producer is the framework's (`challenge::producer_cost`), with a
+    /// one-time cost per target, or none where the target cannot provide
+    /// it; the selection pays it once, for every part of the graph together.
+    Program { name: &'static str },
     /// A fact.
     Fact(Fact),
 }
