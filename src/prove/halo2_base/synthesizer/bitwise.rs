@@ -172,6 +172,16 @@ impl Halo2BaseSynthesizer<'_> {
         let bits = self.low_bits(x, width)?;
         let selected: Vec<(Halo2BaseCell, i128)> =
             (0..width).filter(|i| (c >> i) & 1 == 1).map(|i| (bits[i], 1i128 << i)).collect();
+        if let [(bit, weight)] = selected[..] {
+            if self.plan.cellless_bit_masks.contains(&self.current_stmt) {
+                // Every use is a comparison with a constant, which the
+                // two-valued fact turns into `bit` or its negation: no cell.
+                let out = self.cellless(kernel::i128_to_fp(weight) * bit.value);
+                self.prove_range(&out, Interval { lo: 0, hi: c as i128 });
+                self.set_two_valued(&out, TwoValued { bit, if_zero: 0, if_one: weight });
+                return Ok(out);
+            }
+        }
         let out = self.weighted_sum(&selected)?;
         self.prove_range(&out, Interval { lo: 0, hi: c as i128 });
         if let [(bit, weight)] = selected[..] {

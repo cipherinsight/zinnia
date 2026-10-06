@@ -54,6 +54,13 @@ pub(super) struct Plan {
     pub onehot_chains: HashMap<u32, OneHotChain>,
     /// The other selects of those chains: they get no cell.
     pub onehot_links: HashSet<u32>,
+    /// Statement ids of the `BitAndI` with a constant single-bit mask `2^j`
+    /// whose every use is a comparison with a constant: such a comparison
+    /// is the bit (two-valued facts), so `x & 2^j = 2^j·bit` needs no cell.
+    pub cellless_bit_masks: HashSet<u32>,
+    /// Asserted `x >= 0` with a later `sqrt(x)` (`crate::prove::guards`;
+    /// see `Halo2BaseSynthesizer::assert_nonneg_by_root`).
+    pub root_guards: HashSet<u32>,
 }
 
 /// `select([r == k_m], x_m, ... select([r == k_1], x_1, x_0))` where
@@ -89,6 +96,8 @@ impl Plan {
             address_only: address_only(ir, &uses),
             onehot_chains: HashMap::new(),
             onehot_links: HashSet::new(),
+            cellless_bit_masks: cellless_bit_masks(ir, &uses),
+            root_guards: crate::prove::guards::root_guards(ir),
         }
         .with_onehot_chains(ir, &uses)
     }
@@ -182,8 +191,8 @@ fn planned_bounds(ir: &IRGraph) -> HashMap<ValueId, i128> {
 }
 
 /// A `MulI` qualifies when its value is an argument of exactly one
-/// statement, an `AddI` (either operand, not both) or a `SubI` (the
-/// subtrahend), and is not a root of any affine view in the provenance
+/// statement, an `AddI`/`AddF` (either operand, not both) or a
+/// `SubI`/`SubF` (the subtrahend), and is not a root of any affine view in the provenance
 /// table (memory reads translate roots to cells, so a root must be a cell).
 fn deferred_products(ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> HashSet<u32> {
     // Only the views of memory addresses are read (memory.rs translates
@@ -357,4 +366,37 @@ fn onehot_chains(
 
 fn link_cond(ir: &IRGraph, select: u32) -> usize {
     ir.stmts[select as usize].arguments[0] as usize
+}
+
+/// A `BitAndI` of a cell and a constant `2^j` (`j < 63`) whose every user is
+/// a comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) of it with a constant,
+/// and which no affine view reads.
+fn cellless_bit_masks(ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> HashSet<u32> {
+    let roots: HashSet<ValueId> = ir
+        .stmts
+        .iter()
+        .filter_map(|stmt| ir.provenance.affine_of(stmt.value_id))
+        .flat_map(|view| view.terms.iter().map(|(root, _)| *root))
+        .collect();
+    let single_bit = |c: Option<i64>| c.is_some_and(|c| c > 0 && c & (c - 1) == 0);
+    ir.stmts
+        .iter()
+        .filter(|stmt| matches!(stmt.ir, IR::BitAndI) && !roots.contains(&stmt.value_id))
+        .filter(|stmt| match stmt.arguments.as_slice() {
+            [a, b] => single_bit(constant_int(ir, *a)) != single_bit(constant_int(ir, *b))
+                && constant_int(ir, *a).is_none() != constant_int(ir, *b).is_none(),
+            _ => false,
+        })
+        .filter(|stmt| {
+            let Some(users) = uses.get(&stmt.stmt_id).filter(|u| !u.is_empty()) else { return false };
+            users.iter().all(|user| {
+                let Some(user) = ir.stmts.get(*user as usize) else { return false };
+                let comparison = matches!(user.ir, IR::EqI | IR::NeI | IR::LtI | IR::LteI | IR::GtI | IR::GteI);
+                comparison
+                    && user.arguments.len() == 2
+                    && user.arguments.iter().any(|a| *a != stmt.stmt_id && constant_int(ir, *a).is_some())
+            })
+        })
+        .map(|stmt| stmt.stmt_id)
+        .collect()
 }

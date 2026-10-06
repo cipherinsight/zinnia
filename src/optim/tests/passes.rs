@@ -497,6 +497,46 @@ mod tests {
         }
     }
 
+    /// Statements of a small graph, ids are indices, no argument value ids.
+    fn graph_of(irs: Vec<(IR, Vec<u32>)>) -> IRGraph {
+        IRGraph::new(
+            irs.into_iter()
+                .enumerate()
+                .map(|(i, (ir, args))| IRStatement::new(i as u32, crate::types::ValueId::next(), ir, args, vec![], None))
+                .collect(),
+        )
+    }
+
+    fn read(name: &str) -> IR {
+        IR::ReadInteger { path: crate::circuit_input::InputPath::new(name, vec![]), is_public: false }
+    }
+
+    /// `assert(lo <= x and x <= hi)` becomes one assertion per comparison,
+    /// each comparison keeping its form; nested conjunctions too.
+    #[test]
+    fn pattern_match_splits_asserted_conjunctions() {
+        let graph = graph_of(vec![
+            (read("x"), vec![]),
+            (IR::ConstantInt { value: -1 }, vec![]),
+            (IR::ConstantInt { value: 1 }, vec![]),
+            (IR::GteI, vec![0, 1]),
+            (IR::LteI, vec![0, 2]),
+            (IR::NeI, vec![0, 2]),
+            (IR::LogicalAnd, vec![3, 4]),
+            (IR::LogicalAnd, vec![6, 5]),
+            (IR::Assert, vec![7]),
+        ]);
+        let result = DeadCodeElimination.exec(PatternMatchOptim.exec(graph));
+        let asserted: Vec<&IR> = result
+            .stmts
+            .iter()
+            .filter(|s| matches!(s.ir, IR::Assert))
+            .map(|s| &result.stmts[s.arguments[0] as usize].ir)
+            .collect();
+        assert!(matches!(asserted.as_slice(), [IR::GteI, IR::LteI, IR::NeI]), "{asserted:?}");
+        assert!(result.stmts.iter().all(|s| !matches!(s.ir, IR::LogicalAnd)), "conjunction kept");
+    }
+
     #[test]
     fn test_memory_trace_injection() {
         let stmts = vec![

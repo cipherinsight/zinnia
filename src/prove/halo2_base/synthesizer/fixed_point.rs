@@ -92,6 +92,40 @@ impl Halo2BaseSynthesizer<'_> {
     }
 
 
+    /// `|x|` alone (no sign bit for later use).
+    ///
+    /// For an `x` already proven inside the signed 64-bit window `[lo, hi]`
+    /// (an input, a checked result): a hinted bit `s`, `m = x·(1 - 2s)` (two
+    /// gates) and `m` range-checked to the lookup-aligned width `w` of
+    /// `max(|lo|, |hi|)`. The right `s` gives `m = |x| < 2^w`; for `x != 0`
+    /// the wrong one gives `m = p - |x|`, far above `2^w`, so `m` is a
+    /// function of `x`. At `x = 0`, `m = 0` for either `s`: `s` is not
+    /// pinned there, which is why it is neither returned nor recorded as
+    /// `x`'s sign (a sign test reusing it would be unsound). Otherwise (the
+    /// window not yet proven, or a sign already known) `sign_and_abs`.
+    pub(super) fn magnitude(&mut self, x: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        let known_sign = self.sign_abs_cache.contains_key(&x.id) || self.sign_bits.contains_key(&x.id);
+        let window = self.proven_range(x).filter(|r| r.within(&Interval::SIGNED64));
+        let (Some(range), false, false) = (window, known_sign, self.is_const_cell(x)) else {
+            return Ok(self.sign_and_abs(x)?.1);
+        };
+        // `|i64::MIN| = 2^63` overflows int64 (NumPy wraps it to i64::MIN):
+        // like every int64 overflow here it has no proof, so a 63-bit check
+        // when `x` may be `i64::MIN`, keeping `|x|` inside the window.
+        let max_abs = range.lo.unsigned_abs().max(range.hi.unsigned_abs()).min((1u128 << 63) - 1);
+        let bits = (128 - max_abs.leading_zeros()) as usize;
+        let width = if bits >= 63 { 63 } else { self.lookup_aligned(bits.max(1)) };
+        let sign = self.hint_bit(kernel::fp_is_negative(x.value));
+        let two = Fp::from(2u64);
+        let factor = self.gate_cell(Fp::one() - two * sign.value, |gate, ctx| {
+            gate.mul_add(ctx, sign.quantum(), QuantumCell::Constant(-two), QuantumCell::Constant(Fp::one()))
+        });
+        let magnitude = self.gate_cell(x.value * factor.value, |gate, ctx| gate.mul(ctx, x.quantum(), factor.quantum()));
+        self.range_check(&magnitude, width);
+        self.prove_range(&magnitude, Interval { lo: 0, hi: max_abs as i128 });
+        Ok(magnitude)
+    }
+
     /// Constrain `0 <= x < n` for a cell `n`. Both `x` and `n - 1 - x` are
     /// range-checked to 64 bits, so `n - 1`, their sum, lies in `[0, 2^65)`
     /// over the integers: the check also proves `1 <= n <= 2^65`.

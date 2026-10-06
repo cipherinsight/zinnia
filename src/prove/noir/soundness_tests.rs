@@ -411,6 +411,44 @@ fn sqrt_of_an_asserted_non_negative_needs_no_sign() {
     assert_rejected(execute(&graph, &float_witness(&[], &[("x", -1e-9)])));
 }
 
+/// `np.sqrt(x)` of an input with its domain check: the precondition
+/// `x >= 0` emits no check of its own (the root's `isqrt_floor` admits no
+/// negative radicand of a window value, `crate::prove::guards`), while
+/// `x >= 1.0` (not implied by the root) keeps its check. Results equal the
+/// mock; negative inputs are rejected.
+#[test]
+fn sqrt_preconditions_are_proven_by_the_root() {
+    if !toolchain_present(false) {
+        return;
+    }
+    let build = |bound: f64| {
+        let mut g = Graph::default();
+        let x = g.push(IR::ReadFloat { path: InputPath::new("x", vec![]), is_public: false }, &[]);
+        let (min, max) = (g.push(IR::ConstantInt { value: i64::MIN }, &[]), g.push(IR::ConstantInt { value: i64::MAX }, &[]));
+        let above = g.push(IR::GteI, &[x, min]);
+        g.push(IR::Assert, &[above]);
+        let below = g.push(IR::LteI, &[x, max]);
+        g.push(IR::Assert, &[below]);
+        let lo = g.push(IR::ConstantFloat { value: bound }, &[]);
+        let holds = g.push(IR::GteF, &[x, lo]);
+        g.push(IR::Assert, &[holds]);
+        let root = g.push(IR::SqrtF, &[x]);
+        g.push(IR::ExposePublicF, &[root]);
+        g.finish()
+    };
+    let (guarded, checked) = (build(0.0), build(1.0));
+    let honest = float_witness(&[], &[("x", 2.0)]);
+    let checks = |graph: &IRGraph| emit_circuit(graph, &honest, &ProvingParams::default()).unwrap().main_nr.matches("assert_max_bit_size").count();
+    assert_eq!(checks(&guarded) + 1, checks(&checked), "the root's precondition kept a check");
+    for value in [2.0, 0.0, 1e-9, 1.5e9] {
+        let w = float_witness(&[], &[("x", value)]);
+        assert_eq!(execute(&guarded, &w).unwrap(), mock_outputs(&guarded, &w).1, "sqrt({value})");
+    }
+    assert_rejected(execute(&guarded, &float_witness(&[], &[("x", -1.0)])));
+    assert_rejected(execute(&guarded, &float_witness(&[], &[("x", -1e-9)])));
+    assert_rejected(execute(&guarded, &float_witness(&[], &[("x", -1.5e9)])));
+}
+
 /// `x / d` as the builder emits it: the precondition `d != 0` asserted
 /// first. The assertion is `assert(d != 0)`; the division then uses `d`'s
 /// `sign_abs` pair without the zero-divisor mapping, one pair for every

@@ -85,6 +85,7 @@ pub fn emit_circuit(
     emitter.wrapped_index_ranges = wrapped_index_ranges(ir);
     emitter.asserted_comparisons = asserted_comparisons(ir);
     emitter.implied_comparisons = implied_comparisons(ir, &emitter.asserted_comparisons);
+    emitter.root_guards = crate::prove::guards::root_guards(ir);
     interpret_ir(ir, &mut emitter)?;
 
     let main_nr = render_main_nr(&input_params, &emitter);
@@ -649,6 +650,8 @@ pub struct NoirEmitter<'a> {
     write_version: HashMap<u32, u64>,
     /// Comparisons used only by asserts (see `asserted_comparisons`).
     asserted_comparisons: HashSet<u32>,
+    /// Asserted `x >= 0` with a later `sqrt(x)` (`crate::prove::guards`).
+    root_guards: HashSet<u32>,
     /// Cells an emitted `assert(x != 0)` proves non-zero.
     nonzero: HashSet<String>,
     /// `out -> (a, b)` for every emitted sum `out = a + b`.
@@ -976,6 +979,9 @@ impl<'a> NoirEmitter<'a> {
         if self.current_stmt.is_some_and(|id| self.implied_comparisons.contains(&id)) {
             return self.literal_int(1);
         }
+        if self.nonneg_by_later_root(a, b, cmp) {
+            return self.literal_int(1);
+        }
         let asserted = self
             .current_stmt
             .is_some_and(|id| self.asserted_comparisons.contains(&id));
@@ -1145,6 +1151,29 @@ impl<'a> NoirEmitter<'a> {
         }
         let x = x.to_string();
         Some(self.nonzero_flag(&x, nonzero))
+    }
+
+    /// An asserted `x >= 0` that a later `sqrt(x)` proves
+    /// (`crate::prove::guards`): when an earlier check puts `x` in the
+    /// signed 64-bit window, nothing is emitted and `x`'s range becomes
+    /// `[0, hi]`, so `sqrt_f` takes `qsqrt_of(false, x)`, whose
+    /// `isqrt_floor(x·Q)` has no witness for a negative `x` (`y` and
+    /// `x·Q - y^2` are range-checked to 64 bits, far below p).
+    fn nonneg_by_later_root(&mut self, a: &str, b: &str, cmp: Cmp) -> bool {
+        if !self.current_stmt.is_some_and(|id| self.root_guards.contains(&id)) {
+            return false;
+        }
+        let x = match cmp {
+            Cmp::Ge if self.raw_constant(b) == Some(0) => a,
+            Cmp::Le if self.raw_constant(a) == Some(0) => b,
+            _ => return false,
+        };
+        let Some((lo, hi)) = self.proven_range.get(x).copied() else { return false };
+        if lo < -(1i128 << 63) || hi >= 1i128 << 63 {
+            return false;
+        }
+        self.narrow_proven_range(x, 0, hi);
+        true
     }
 
     /// `a cmp b` for a comparison whose outcome is asserted (its only uses
@@ -1812,6 +1841,7 @@ impl<'a> NoirEmitter<'a> {
             write_version: HashMap::new(),
             wrapped_index_ranges: HashMap::new(),
             asserted_comparisons: HashSet::new(),
+            root_guards: HashSet::new(),
             nonzero: HashSet::new(),
             sum_of: HashMap::new(),
             cast_cells: HashSet::new(),

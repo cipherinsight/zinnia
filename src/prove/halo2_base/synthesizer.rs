@@ -361,6 +361,30 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         assigned
     }
 
+    /// `assert x >= 0` (`x`, then the constant 0) when the plan found a later
+    /// `sqrt(x)` (`Plan::root_guards`) and `x` is already proven inside the
+    /// window: no check here, `x`'s range becomes `[0, hi]`, and `sqrt_f`
+    /// then takes `sqrt_nonneg`, whose constraints `x·2^P = y^2 + d` with
+    /// `y` and `d` range-checked far below `p` have no solution for a
+    /// negative `x` (`|x·2^P| < 2^(63+P)`, so the identity is one of
+    /// integers). The assertion therefore holds for every accepted witness;
+    /// a circuit has no control flow, so the root's constraints apply
+    /// wherever they are emitted. `None` leaves the assertion to
+    /// `assert_relation`.
+    fn assert_nonneg_by_root(&mut self, x: &Halo2BaseCell, zero: &Halo2BaseCell) -> Result<Option<Halo2BaseCell>, ProvingError> {
+        if !self.plan.root_guards.contains(&self.current_stmt) || !self.is_const_cell(zero) || zero.value != Fp::zero() {
+            return Ok(None);
+        }
+        let Some(range) = self.proven_range(x).filter(|r| r.within(&Interval::SIGNED64)) else { return Ok(None) };
+        if kernel::fp_is_negative(x.value) {
+            self.note_unsat(|| "Witness does not satisfy circuit constraints: an asserted comparison is false".to_string());
+        }
+        if let Some(nonneg) = Interval::new(range.lo.max(0), range.hi) {
+            self.prove_range(x, nonneg);
+        }
+        Ok(Some(self.constant_bool(true)?))
+    }
+
     /// Whether the statement being lowered is a comparison whose only use is
     /// `Assert` (see `plan.rs`).
     fn is_asserted_comparison(&self) -> bool {
@@ -465,6 +489,14 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         let out = self.wrap(assigned, value);
         self.last_output = Some((out.id, self.builder.main(0).advice.len()));
         out
+    }
+
+    /// A value with no assigned cell, for a statement the plan proves is
+    /// only read through facts (two-valued, range); like a deferred product,
+    /// a gate that reached it would stop key generation.
+    fn cellless(&mut self, value: Fp) -> Halo2BaseCell {
+        let placeholder = AssignedValue { value: halo2_base::halo2_proofs::plonk::Assigned::Trivial(value), cell: None };
+        self.wrap(placeholder, value)
     }
 
     /// A stand-in for the product `a·b` of a `MulI` that the plan fuses into
@@ -578,9 +610,9 @@ impl<'a> Halo2BaseSynthesizer<'a> {
     /// both operands of a sum are deferred products, one is emitted).
     fn materialize(&mut self, cell: &Halo2BaseCell) -> Halo2BaseCell {
         let Some((a, b)) = self.deferred.get(&cell.id).copied() else { return *cell };
-        let out = self.gate_cell(cell.value, |gate, ctx| gate.mul(ctx, a.quantum(), b.quantum()));
-        self.propagate_range(&out, &a, &b, Interval::mul);
-        out
+        // `0 + a·b` as the first gate of a chain: the multiply-add that
+        // consumes it starts at its output cell (three cells, not four).
+        self.product(&a, &b)
     }
 
     /// `a·b` as the first gate of a multiply-add chain (`0 + a·b`, so the
@@ -998,7 +1030,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     }
 
     fn abs_i(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
-        Ok(self.sign_and_abs(a)?.1)
+        self.magnitude(a)
     }
 
     /// `sign(a) = [a != 0] - 2 * [a < 0]`, from the pinned sign bit of
@@ -1111,6 +1143,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn gt_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.lt_i(b, a) }
     fn gte_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         if self.is_asserted_comparison() {
+            if let Some(holds) = self.assert_nonneg_by_root(a, b)? {
+                return Ok(holds);
+            }
             return self.assert_relation(b, a, false);
         }
         let lt = self.lt_i(a, b)?;
@@ -1121,6 +1156,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn lt_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.lt_i(a, b) }
     fn lte_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         if self.is_asserted_comparison() {
+            if let Some(holds) = self.assert_nonneg_by_root(b, a)? {
+                return Ok(holds);
+            }
             return self.assert_relation(a, b, false);
         }
         let gt = self.gt_f(a, b)?;
@@ -1129,6 +1167,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn gt_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.lt_i(b, a) }
     fn gte_f(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         if self.is_asserted_comparison() {
+            if let Some(holds) = self.assert_nonneg_by_root(a, b)? {
+                return Ok(holds);
+            }
             return self.assert_relation(b, a, false);
         }
         let lt = self.lt_f(a, b)?;
@@ -1216,7 +1257,7 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn arcsin_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         let precision_bits = self.params.precision_bits;
         let one = kernel::scale_fp(precision_bits);
-        let (_, magnitude) = self.sign_and_abs(a)?;
+        let magnitude = self.magnitude(a)?;
         let in_domain = self.less_than(Operand::Cell(magnitude), Operand::Constant((1i128 << precision_bits) + 1), None)?;
         let x = self.mul_i(&in_domain, a)?;
 
