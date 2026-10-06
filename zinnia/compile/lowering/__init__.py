@@ -29,8 +29,8 @@ circuit only:
 Explicit chips and the chips the stages generate are not lowered further.
 
 **During translation** the transformer (circuits and chips) applies
-`iterators.desugar_for_iterator` to ``for`` loops over ``zip``,
-``reversed`` and ``repeat``.
+`iterators.desugar_for_iterator` to ``for`` loops over ``zip`` and
+``reversed``.
 
 Every rewrite keeps Python's meaning or rejects the program with an error
 naming the construct (`FunctionLoweringError`, `OutOfScopeImportError`).

@@ -8,8 +8,11 @@ circuits and chips alike) before translating it:
 - ``for a, b in zip(xs, ys, ...)`` becomes ``for k in range(min(len(xs),
   len(ys), ...)): a = xs[k]; b = ys[k]`` (a single target is bound to the
   tuple), so iteration stops at the shortest input, as ``zip`` does.
-- ``for t in repeat(v, n)`` (``itertools.repeat``) becomes ``for _ in
-  range(n): t = v``.
+
+(``itertools.repeat`` used to be rewritten here too, matched by the name
+``repeat`` alone, which also caught ``np.repeat(a, k)`` and iterated ``k``
+times over the whole array. ``itertools`` is outside the import rule, so
+that rewrite was removed; ``np.repeat`` is an ordinary array.)
 
 The iterable expression is copied into the loop body, so it is evaluated
 once per use rather than once before the loop; this is the same value for
@@ -31,12 +34,6 @@ def _index_loop(original: ast.For, index: str, iterations: ast.expr, body: list[
     return loop
 
 
-def _is_repeat_call(iterable: ast.Call) -> bool:
-    function = iterable.func
-    return (isinstance(function, ast.Attribute) and function.attr == "repeat") or (
-        isinstance(function, ast.Name) and function.id == "repeat")
-
-
 def desugar_for_iterator(node: ast.For, fresh_name: Callable[[str], str]) -> ast.For | None:
     """The index-loop form of ``node`` if it iterates over one of the
     builtins above, else ``None``. ``fresh_name(prefix)`` returns a new
@@ -44,22 +41,11 @@ def desugar_for_iterator(node: ast.For, fresh_name: Callable[[str], str]) -> ast
     iterable = node.iter
     if not isinstance(iterable, ast.Call):
         return None
-    if _is_repeat_call(iterable) and len(iterable.args) == 2:
-        return _desugar_repeat(node, iterable)
     if isinstance(iterable.func, ast.Name) and iterable.func.id == "reversed" and len(iterable.args) == 1:
         return _desugar_reversed(node, iterable.args[0], fresh_name("__rev_idx"))
     if isinstance(iterable.func, ast.Name) and iterable.func.id == "zip" and len(iterable.args) >= 2:
         return _desugar_zip(node, iterable.args, fresh_name("__zip_idx"))
     return None
-
-
-def _desugar_repeat(node: ast.For, iterable: ast.Call) -> ast.For:
-    value, count = iterable.args
-    if isinstance(node.target, ast.Name) and node.target.id == "_":
-        body = list(node.body)
-    else:
-        body = [ast.Assign(targets=[node.target], value=value), *node.body]
-    return _index_loop(node, "_", call("range", [count]), body)
 
 
 def _desugar_reversed(node: ast.For, sequence: ast.expr, index: str) -> ast.For:
