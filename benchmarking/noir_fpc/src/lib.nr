@@ -966,7 +966,7 @@ pub fn qtanh(x: Field) -> Field {
 // These return prover-chosen values and constrain NOTHING. Zinnia's IR pins
 // every lane it uses (strictly increasing (value, index) keys read through an
 // argsort, or counts against an order statistic; see the Rust compiler's
-// `optim::sort_lowering`), so a circuit accepts only the lanes computed here.
+// `lower::sort`), so a circuit accepts only the lanes computed here.
 // They reproduce `kernel::hint_lane` exactly: the same order (`signed_lt`),
 // a stable sort, and lane 0 for a rank outside [0, N).
 

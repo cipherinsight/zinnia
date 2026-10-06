@@ -261,25 +261,29 @@ fn sorted_output_at_index(
     index: &Value,
 ) -> Option<Value> {
     let cell = |coord: usize| cells.get(base + coord * stride);
-    let first = b.sorted_placeholder_of(cell(0)?)?.clone();
+    // A sort lane at a constant rank: its operator instance, output, rank.
+    let sort_lane = |b: &IRBuilder, v: &Value| {
+        let p = b.array_op_placeholder_of(v).filter(|p| p.op.kind == crate::lower::OpKind::Sort)?;
+        Some((p.shared.clone(), p.op.output, i64::from(p.op.position?)))
+    };
+    let (elements, output, r0) = sort_lane(b, cell(0)?)?;
     let step: i64 = match len {
         1 => 1,
-        _ => i64::from(b.sorted_placeholder_of(cell(1)?)?.rank) - i64::from(first.rank),
+        _ => sort_lane(b, cell(1)?)?.2 - r0,
     };
     if step != 1 && step != -1 {
         return None;
     }
     for coord in 0..len {
-        let other = b.sorted_placeholder_of(cell(coord)?)?;
-        let rank = i64::from(first.rank) + step * coord as i64;
-        let same_sort = std::sync::Arc::ptr_eq(&other.elements, &first.elements);
-        if !same_sort || other.index != first.index || i64::from(other.rank) != rank {
+        let (other, other_output, rank) = sort_lane(b, cell(coord)?)?;
+        let same_sort = std::sync::Arc::ptr_eq(&other, &elements);
+        if !same_sort || other_output != output || rank != r0 + step * coord as i64 {
             return None;
         }
     }
-    let r0 = b.ir_constant_int(i64::from(first.rank));
+    let r0 = b.ir_constant_int(r0);
     let rank = if step == 1 { b.ir_add_i(&r0, index) } else { b.ir_sub_i(&r0, index) };
-    Some(b.ir_sorted_at_runtime_rank(&first.elements, &rank, first.index))
+    Some(b.ir_sorted_at_runtime_rank(&elements, &rank, output == crate::lower::sort::INDICES))
 }
 
 /// [`sorted_output_at_index`] over a 1-D view of `segment_id`'s known cells.

@@ -12,23 +12,32 @@ timeout:
 3. with a fixture: run the mock backend on input B (input A if there is no B)
    and compare its public outputs, in order, with the NumPy reference.
 
-Outcomes: `accepted_correct`, `accepted_wrong_output` (including a mock run
-whose constraints fail on the honest input), `accepted_unchecked` (no fixture,
-no reference, or an output layout the harness cannot map; the reason is kept),
-and `rejected_<class>`.
+Outcomes: `accepted_correct`; `accepted_wrong_output` (the proved outputs, or
+their shapes, differ from NumPy's, or the public vector does not decode by
+the compiler's layout: a correctness bug); `accepted_unsatisfied` (the
+circuit or the prover rejects the honest input: a completeness bug);
+`accepted_unchecked` (no fixture or no NumPy reference; the reason is kept);
+and `rejected_<class>` with the construct named (`classify`).
+
+Each run writes `results.json` (every response), `results.csv` (one row per
+program: dataset, outcome, class, construct, detail) and `summary.md`
+(counts per dataset and outcome).
 """
 
 from __future__ import annotations
 
+import csv
 import json
 import sys
 import time
 import traceback
+from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from benchmarking.harness import environment, paths
-from benchmarking.harness.acceptance.classify import classify_compile_error
+from benchmarking.harness.acceptance.classify import (NO_BOUND, classify_compile_error,
+                                                      resource_rejection)
 from benchmarking.harness.case_sets import AcceptanceProgram, Tolerance
 from benchmarking.harness.isolation import run_child
 from benchmarking.harness.kernels import out_of_scope_imports
@@ -108,7 +117,7 @@ def check_program(request: dict) -> dict:
     try:
         publics = zinnia_publics(values, info)
     except StepFailure as failure:
-        return {**result, "stage": "mock", "mock_error": failure.detail}
+        return {**result, "stage": "decode", "decode_error": failure.detail}
     check = check_outputs(expected, publics, Tolerance(**request["tolerance"]),
                           expected_shapes=shapes)
     return {**result, "stage": "checked", "input": input_name, "output_check": check.to_json()}
@@ -155,25 +164,39 @@ def _run_isolated(program: AcceptanceProgram, config: AcceptanceConfig, work: Pa
             "error": f"compiler process exited {outcome.returncode} without a result"}
 
 
-def outcome_of(response: dict) -> tuple[str, str]:
-    """(outcome, detail) for one child response."""
+@dataclass(frozen=True)
+class Outcome:
+    outcome: str
+    detail: str
+    #: The construct a rejection names (empty for accepted programs).
+    construct: str = ""
+
+
+def outcome_of(response: dict, config: AcceptanceConfig) -> Outcome:
+    """The outcome of one child response."""
     stage = response["stage"]
     if stage == "resource":
-        return "rejected_resource_limit", response["error"]
+        rejection = resource_rejection(response["error"], config.timeout_s, config.memory_max)
+        return Outcome("rejected_" + rejection.reason_class, response["error"],
+                       rejection.construct)
     if stage == "harness":
-        return "harness_error", response["error"]
+        return Outcome("harness_error", response["error"])
     if stage == "compile":
-        return "rejected_" + classify_compile_error(response["error"]), response["error"]
+        rejection = classify_compile_error(response["error"])
+        return Outcome("rejected_" + rejection.reason_class, response["error"],
+                       rejection.construct)
     if stage == "mock":
-        return "accepted_wrong_output", response["mock_error"]
+        return Outcome("accepted_unsatisfied", response["mock_error"])
+    if stage == "decode":
+        return Outcome("accepted_wrong_output", response["decode_error"])
     if "unchecked" in response:
-        return "accepted_unchecked", response["unchecked"]
+        return Outcome("accepted_unchecked", response["unchecked"])
     check = response["output_check"]
     if check["status"] == "match":
-        return "accepted_correct", check["detail"]
+        return Outcome("accepted_correct", check["detail"])
     if check["status"] == "mismatch":
-        return "accepted_wrong_output", check["detail"]
-    return "accepted_unchecked", check["detail"]
+        return Outcome("accepted_wrong_output", check["detail"])
+    return Outcome("accepted_unchecked", check["detail"])
 
 
 def validate_program(program: AcceptanceProgram, config: AcceptanceConfig, work: Path) -> dict:
@@ -184,12 +207,13 @@ def validate_program(program: AcceptanceProgram, config: AcceptanceConfig, work:
         return {**row, "outcome": "rejected_out_of_scope",
                 "detail": "imports " + ", ".join(out_of_scope)}
     response = _run_isolated(program, config, work, None)
-    outcome, detail = outcome_of(response)
-    row.update(outcome=outcome, detail=detail[:2000], response=response)
-    if outcome == "rejected_no_provable_bound" and config.retry_smt_budget_ms:
+    outcome = outcome_of(response, config)
+    row.update(outcome=outcome.outcome, construct=outcome.construct,
+               detail=outcome.detail[:2000], response=response)
+    if outcome.outcome == "rejected_" + NO_BOUND and config.retry_smt_budget_ms:
         retry = _run_isolated(program, config, work, config.retry_smt_budget_ms)
         row["retry_with_larger_smt_budget"] = {"budget_ms": config.retry_smt_budget_ms,
-                                               "outcome": outcome_of(retry)[0]}
+                                               "outcome": outcome_of(retry, config).outcome}
         if retry["stage"] not in ("compile", "resource", "harness"):
             row["outcome"] = "rejected_solver_budget"
     return row
@@ -207,7 +231,44 @@ def run_acceptance(programs: list[AcceptanceProgram], config: AcceptanceConfig,
               f"{row['outcome']}", flush=True)
     path = out_dir / "results.json"
     path.write_text(json.dumps({"config": asdict(config), "results": rows}, indent=1))
+    write_results_csv(rows, out_dir / "results.csv")
+    (out_dir / "summary.md").write_text(summary_table(rows))
+    print(summary_table(rows))
     return path
+
+
+CSV_COLUMNS = ("program", "dataset", "function", "outcome", "class", "construct", "detail")
+
+
+def write_results_csv(rows: list[dict], path: Path) -> None:
+    """One line per program: its outcome, rejection class and construct."""
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, CSV_COLUMNS)
+        writer.writeheader()
+        for row in rows:
+            outcome = row["outcome"]
+            reason_class = outcome.removeprefix("rejected_") if outcome.startswith("rejected_") \
+                else ""
+            writer.writerow({"program": row["program"], "dataset": row["dataset"],
+                             "function": row["function"], "outcome": outcome,
+                             "class": reason_class, "construct": row.get("construct", ""),
+                             "detail": " ".join(row.get("detail", "").split())[:500]})
+
+
+def summary_table(rows: list[dict]) -> str:
+    """Counts per outcome (rows) and dataset (columns), as a Markdown table."""
+    datasets = sorted({row["dataset"] for row in rows})
+    counts = Counter((row["outcome"], row["dataset"]) for row in rows)
+    outcomes = sorted({row["outcome"] for row in rows},
+                      key=lambda o: (not o.startswith("accepted"), o))
+    lines = ["| outcome | " + " | ".join(datasets) + " | total |",
+             "|---|" + "---:|" * (len(datasets) + 1)]
+    for outcome in outcomes:
+        cells = [counts[(outcome, d)] for d in datasets]
+        lines.append(f"| {outcome} | " + " | ".join(map(str, cells)) + f" | {sum(cells)} |")
+    totals = [sum(counts[(o, d)] for o in outcomes) for d in datasets]
+    lines.append("| total | " + " | ".join(map(str, totals)) + f" | {sum(totals)} |")
+    return "\n".join(lines) + "\n"
 
 
 if __name__ == "__main__":

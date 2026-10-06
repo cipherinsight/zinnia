@@ -16,7 +16,6 @@ pub mod prove;
 pub mod range;
 pub mod resolver;
 pub mod smt_encoding;
-pub mod sort_lowering;
 pub mod strategy;
 pub mod telemetry;
 mod unread_memory_elimination;
@@ -44,7 +43,6 @@ pub use resolver::{
     StaticInt, StaticOnlyResolver,
 };
 pub use smt_encoding::{IROp, SmtEncodingCtx, Z3Term};
-pub use sort_lowering::{SortLowering, SortTarget};
 pub use strategy::{dispatch_strategy, CostHint, OpStrategy, OpStrategySet};
 pub use telemetry::{
     discharge_event, now_unix_ns, strategy_dispatch_event, SmtTelemetry, TelemetryEvent,
