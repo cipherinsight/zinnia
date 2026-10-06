@@ -69,7 +69,9 @@ use halo2_base::{AssignedValue, Context};
 
 use crate::prove::error::ProvingError;
 
+pub mod ram;
 pub mod tables;
+pub use ram::{Ram, RamConfig};
 pub use tables::{TableConfig, Tables};
 use serde::{Deserialize, Serialize};
 
@@ -169,6 +171,9 @@ pub struct CircuitParams {
     /// tables.
     #[serde(default)]
     pub table_layout: Vec<usize>,
+    /// RAM traces (`ram.rs`), each with its own columns; 0: none.
+    #[serde(default)]
+    pub ram_traces: usize,
 }
 
 /// The challenges and the second-phase cells pinned to them.
@@ -202,6 +207,7 @@ pub struct Halo2BaseConfig {
     pub base: BaseConfig<Fp>,
     pub challenges: Option<ChallengeConfig>,
     pub tables: Option<TableConfig>,
+    pub ram: Option<RamConfig>,
 }
 
 /// halo2-base's first-phase virtual regions plus the second-phase checks
@@ -213,6 +219,8 @@ pub struct Halo2BaseCircuit {
     pub tables: Tables,
     /// Key column sets per table group (set by [`layout`] or the pinning).
     pub table_layout: Vec<usize>,
+    /// Read-write memory traces (`ram.rs`).
+    pub ram: Ram,
     /// The second phase's break points, recorded when a non-prover stage
     /// lays it out (see [`Self::break_points`]).
     second_break_points: Mutex<Option<ThreadBreakPoints>>,
@@ -223,12 +231,13 @@ pub struct Halo2BaseCircuit {
 }
 
 impl Halo2BaseCircuit {
-    pub fn new(builder: BaseCircuitBuilder<Fp>, second_phase: SecondPhase, tables: Tables) -> Self {
+    pub fn new(builder: BaseCircuitBuilder<Fp>, second_phase: SecondPhase, tables: Tables, ram: Ram) -> Self {
         Halo2BaseCircuit {
             builder,
             second_phase,
             tables,
             table_layout: Vec::new(),
+            ram,
             second_break_points: Mutex::new(None),
             #[cfg(test)]
             challenge_offset: Fp::zero(),
@@ -287,6 +296,7 @@ impl Circuit<Fp> for Halo2BaseCircuit {
             base: self.builder.config_params.clone(),
             challenges: self.second_phase.challenges(),
             table_layout: self.table_layout.clone(),
+            ram_traces: self.ram.traces.len(),
         }
     }
 
@@ -303,9 +313,11 @@ impl Circuit<Fp> for Halo2BaseCircuit {
         let mut base = BaseConfig::configure(meta, params.base);
         let challenges = (params.challenges > 0).then(|| ChallengeConfig::configure(meta, params.challenges));
         let tables = (!params.table_layout.is_empty()).then(|| TableConfig::configure(meta, &params.table_layout));
-        // The challenge column and the tables' lookups may add blinding rows.
+        let ram = (params.ram_traces > 0).then(|| RamConfig::configure(meta, params.ram_traces));
+        // The challenge column, the tables' lookups and the RAM's arguments
+        // may add blinding rows.
         base.set_usable_rows((1 << k) - meta.minimum_rows());
-        Halo2BaseConfig { base, challenges, tables }
+        Halo2BaseConfig { base, challenges, tables, ram }
     }
 
     fn synthesize(&self, config: Halo2BaseConfig, mut layouter: impl Layouter<Fp>) -> Result<(), Error> {
@@ -327,6 +339,10 @@ impl Circuit<Fp> for Halo2BaseCircuit {
             let copy = (!builder.witness_gen_only()).then(|| &builder.core().copy_manager);
             let packing = self.tables.packing(table_rows(builder.config_params.k));
             table_config.assign(&self.tables, &packing, &mut layouter, copy)?;
+        }
+        if let Some(ram_config) = &config.ram {
+            let copy = (!builder.witness_gen_only()).then(|| &builder.core().copy_manager);
+            ram_config.assign(&self.ram, &mut layouter, copy)?;
         }
 
         // The second phase keeps its own copy manager: it is rebuilt on every
@@ -396,6 +412,16 @@ pub fn table_rows(k: usize) -> usize {
 /// gate columns and constants from [`SecondPhase::shape`].
 pub fn layout(circuit: &mut Halo2BaseCircuit) -> Result<(), ProvingError> {
     let usable_rows = table_rows(circuit.builder.config_params.k);
+    if circuit.ram.rows_needed() > usable_rows {
+        return Err(ProvingError::ProvingFailed {
+            detail: format!(
+                "halo2-base layout failed at k={}: a RAM trace needs {} rows, {} are usable",
+                circuit.builder.config_params.k,
+                circuit.ram.rows_needed(),
+                usable_rows
+            ),
+        });
+    }
     if circuit.tables.rows_needed() > usable_rows {
         return Err(ProvingError::ProvingFailed {
             detail: format!(

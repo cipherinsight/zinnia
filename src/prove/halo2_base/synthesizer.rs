@@ -61,6 +61,9 @@ pub struct Halo2BaseSynthesizer<'a> {
     /// Read-only memory tables and the reads looked up in them
     /// (`IR::ReadTable`, `circuit/tables.rs`).
     pub(crate) tables: super::circuit::Tables,
+    /// Read-write memory traces (`circuit/ram.rs`) of the segments the plan
+    /// puts in RAM mode.
+    pub(crate) ram: super::circuit::Ram,
     witness: Option<ResolvedWitness>,
     params: ProvingParams,
     public_values: Vec<Fp>,
@@ -180,6 +183,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             builder,
             second_phase: super::circuit::SecondPhase::default(),
             tables: super::circuit::Tables::default(),
+            ram: super::circuit::Ram::default(),
             witness,
             params,
             public_values: Vec::new(),

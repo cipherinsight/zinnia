@@ -1777,21 +1777,28 @@ fn prover_hints_are_kernel_lanes_and_constrain_nothing() {
 /// Synthesize a whole IR graph on `witness`, perturbing hints as in
 /// [`synthesize`].
 fn synthesize_graph(graph: &crate::ir::IRGraph, witness: &ResolvedWitness, tamper: &[(usize, Fp)]) -> Outcome {
+    synthesize_graph_with(graph, witness, tamper, false)
+}
+
+/// [`synthesize_graph`], every segment written at a runtime address in RAM
+/// mode when `force_ram`.
+fn synthesize_graph_with(graph: &crate::ir::IRGraph, witness: &ResolvedWitness, tamper: &[(usize, Fp)], force_ram: bool) -> Outcome {
     let mut builder = BaseCircuitBuilder::<Fp>::from_stage(CircuitBuilderStage::Mock);
     builder.set_k(K as usize);
     builder.set_lookup_bits(LOOKUP_BITS as usize);
     builder.set_instance_columns(1);
     let params = ProvingParams { k: K, precision_bits: PRECISION_BITS, lookup_bits: LOOKUP_BITS };
-    let (outputs, hints, second_phase, tables) = {
+    let (outputs, hints, (second_phase, tables, ram)) = {
         let mut synth = Halo2BaseSynthesizer::new(&mut builder, Some(witness.clone()), params, &graph.provenance);
         synth.plan_ahead(graph);
         synth.tamper = tamper::HintTamper::targeting(tamper);
+        synth.memory.force_ram = force_ram;
         crate::prove::interpreter::interpret_ir(graph, &mut synth).expect("synthesis failed");
-        let parts = (std::mem::take(&mut synth.second_phase), std::mem::take(&mut synth.tables));
-        (synth.public_values().to_vec(), synth.tamper.hints_seen(), parts.0, parts.1)
+        let parts = (std::mem::take(&mut synth.second_phase), std::mem::take(&mut synth.tables), std::mem::take(&mut synth.ram));
+        (synth.public_values().to_vec(), synth.tamper.hints_seen(), parts)
     };
     // The backend's circuit (memory tables and second-phase checks included).
-    let mut circuit = super::super::circuit::Halo2BaseCircuit::new(builder, second_phase, tables);
+    let mut circuit = super::super::circuit::Halo2BaseCircuit::new(builder, second_phase, tables, ram);
     super::super::circuit::layout(&mut circuit).expect("layout");
     let accepted = MockProver::run(K, &circuit, vec![outputs.clone()])
         .expect("MockProver::run")
@@ -2189,4 +2196,137 @@ fn table_reads_prove_and_verify_with_real_keys() {
     let tampered = vec![int(105), int(100)];
     assert!(!verify_with_keys(&keys, &proof.proof, &tampered).valid, "changed read value verified");
     assert!(prove_with_keys(&ir, &inputs(6, 0), &keys).is_err(), "an index past the table was proved");
+}
+
+
+/// A segment of `n` input cells, written at runtime addresses `a0`, `a1`
+/// (values `v0`, `v1`), then a constant write at 2, then read at runtime
+/// addresses `b0`, `b1`, `b2` and at the constant 2 (reads exposed).
+fn ram_graph(n: usize) -> crate::ir::IRGraph {
+    use crate::ir_defs::IR;
+    use graphs::*;
+    let mut g = Graph::default();
+    let cells: Vec<u32> = (0..n).map(|k| g.read(&format!("x{k}"))).collect();
+    let names = ["a0", "v0", "a1", "v1", "b0", "b1", "b2"];
+    let inputs: Vec<u32> = names.iter().map(|name| g.read(name)).collect();
+    g.push(IR::AllocateMemory { segment_id: 0, size: n as u32, init_value: 0 }, &[]);
+    for (k, cell) in cells.iter().enumerate() {
+        let address = g.int(k as i64);
+        g.push(IR::WriteMemory { segment_id: 0 }, &[address, *cell]);
+    }
+    g.push(IR::WriteMemory { segment_id: 0 }, &[inputs[0], inputs[1]]);
+    g.push(IR::WriteMemory { segment_id: 0 }, &[inputs[2], inputs[3]]);
+    let (two, seventy) = (g.int(2), g.int(70));
+    g.push(IR::WriteMemory { segment_id: 0 }, &[two, seventy]);
+    for b in &inputs[4..] {
+        let read = g.push(IR::ReadMemory { segment_id: 0 }, &[*b]);
+        g.push(IR::ExposePublicI, &[read]);
+    }
+    let read = g.push(IR::ReadMemory { segment_id: 0 }, &[two]);
+    g.push(IR::ExposePublicI, &[read]);
+    g.finish()
+}
+
+/// The RAM trace (`circuit/ram.rs`) on the program-order semantics: every
+/// read returns the last earlier write at its address (the initial cells
+/// otherwise); an access outside the segment has no witness; every read
+/// value (a hint) moved by any delta is rejected; and the overlay lowering
+/// gives the same outputs.
+#[test]
+fn ram_reads_see_the_last_write_and_are_pinned() {
+    let n = 5usize;
+    let ir = ram_graph(n);
+    let mut shifts: Vec<Fp> = vec![int(1), int(-1), int(70)];
+    shifts.extend(deltas(&[]));
+    let cases = [
+        [1i64, 3, 1, 4, 1, 0, 2],
+        [0, 3, 4, 9, 4, 0, 3],
+        [3, 5, 3, 6, 3, 2, 1],
+        [2, 8, 2, 9, 2, 2, 2],
+        [5, 1, 0, 2, 0, 1, 2],
+        [0, 1, 1, 2, 0, -1, 2],
+        [0, 1, 1, 2, 0, 1, 5],
+    ];
+    for [a0, v0, a1, v1, b0, b1, b2] in cases {
+        let mut ints: Vec<(String, i64)> = (0..n).map(|k| (format!("x{k}"), 100 + k as i64)).collect();
+        for (name, v) in ["a0", "v0", "a1", "v1", "b0", "b1", "b2"].iter().zip([a0, v0, a1, v1, b0, b1, b2]) {
+            ints.push((name.to_string(), v));
+        }
+        let w = witness_of(&ints);
+        let in_range = |a: i64| (0..n as i64).contains(&a);
+        let mut memory: Vec<i64> = (0..n as i64).map(|k| 100 + k).collect();
+        let valid = [a0, a1, b0, b1, b2].iter().all(|&a| in_range(a));
+        let honest = synthesize_graph_with(&ir, &w, &[], true);
+        if !valid {
+            assert!(!honest.accepted, "{ints:?}: accepted, NumPy raises");
+            continue;
+        }
+        memory[a0 as usize] = v0;
+        memory[a1 as usize] = v1;
+        memory[2] = 70;
+        let expected: Vec<Fp> = [b0, b1, b2, 2].iter().map(|&b| int(memory[b as usize])).collect();
+        assert!(honest.accepted, "{ints:?}: honest witness rejected");
+        assert_eq!(honest.outputs, expected, "{ints:?}");
+        assert_eq!(honest.hints, 4, "one hint per read");
+        let overlay = synthesize_graph_with(&ir, &w, &[], false);
+        assert!(overlay.accepted && overlay.outputs == expected, "overlay {ints:?}");
+        for hint in 0..honest.hints {
+            for shift in &shifts {
+                assert!(!synthesize_graph_with(&ir, &w, &[(hint, *shift)], true).accepted, "{ints:?}: read #{hint} moved by {shift:?}");
+            }
+        }
+    }
+}
+
+/// The plan puts a segment in RAM mode when the overlay would cost more
+/// (many reads after many runtime-address writes), and the RAM circuit
+/// proves and verifies through the backend's real keys; a changed public
+/// read does not verify.
+#[test]
+fn ram_is_chosen_by_cost_and_proves_with_real_keys() {
+    use crate::ir_defs::IR;
+    use crate::prove::halo2_base::keys::{keygen, prove_with_keys, verify_with_keys};
+    use graphs::*;
+    let (n, writes, reads) = (32usize, 24usize, 24usize);
+    let mut g = Graph::default();
+    let cells: Vec<u32> = (0..n).map(|k| g.read(&format!("x{k}"))).collect();
+    g.push(IR::AllocateMemory { segment_id: 0, size: n as u32, init_value: 0 }, &[]);
+    for (k, cell) in cells.iter().enumerate() {
+        let address = g.int(k as i64);
+        g.push(IR::WriteMemory { segment_id: 0 }, &[address, *cell]);
+    }
+    for t in 0..writes {
+        let (a, v) = (g.read(&format!("a{t}")), g.read(&format!("v{t}")));
+        g.push(IR::WriteMemory { segment_id: 0 }, &[a, v]);
+    }
+    for t in 0..reads {
+        let b = g.read(&format!("b{t}"));
+        let read = g.push(IR::ReadMemory { segment_id: 0 }, &[b]);
+        g.push(IR::ExposePublicI, &[read]);
+    }
+    let ir = g.finish();
+    assert!(super::plan::Plan::of(&ir).ram_segments.contains(&0), "RAM not chosen");
+    let mut ints: Vec<(String, i64)> = (0..n).map(|k| (format!("x{k}"), 1000 + k as i64)).collect();
+    let mut memory: Vec<i64> = (0..n as i64).map(|k| 1000 + k).collect();
+    for t in 0..writes {
+        let (a, v) = ((7 * t + 3) % n, t as i64 * 11);
+        ints.push((format!("a{t}"), a as i64));
+        ints.push((format!("v{t}"), v));
+        memory[a] = v;
+    }
+    let mut expected = Vec::new();
+    for t in 0..reads {
+        let b = (5 * t + 1) % n;
+        ints.push((format!("b{t}"), b as i64));
+        expected.push(int(memory[b]));
+    }
+    let params = ProvingParams { k: 10, precision_bits: PRECISION_BITS, lookup_bits: LOOKUP_BITS };
+    let keys = keygen(&ir, &params).expect("keygen");
+    assert_eq!(keys.pinning.ram_traces, 1);
+    let proof = prove_with_keys(&ir, &witness_of(&ints), &keys).expect("prove");
+    assert_eq!(proof.public_values, expected);
+    assert!(verify_with_keys(&keys, &proof.proof, &proof.public_values).valid, "honest proof rejected");
+    let mut tampered = proof.public_values.clone();
+    tampered[3] += Fp::one();
+    assert!(!verify_with_keys(&keys, &proof.proof, &tampered).valid, "changed read verified");
 }
