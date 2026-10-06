@@ -1,6 +1,7 @@
-"""Summaries of one epoch, computed only from its directory.
+"""Summaries of one epoch, computed only from its directory (or from the
+directories of the shards of one run, `run --shard K/N`, read together).
 
-Writes `summary/` inside the epoch:
+Writes `summary/` inside the epoch (or the directory given for shards):
 
 - `per_case.csv`: one row per (system, case): status, sample count, median and
   IQR of each clock, proof size;
@@ -12,6 +13,8 @@ Writes `summary/` inside the epoch:
     geometric mean of per-case median ratios (Zinnia / baseline; below 1 means
     Zinnia is faster) with a bootstrap 95 % interval;
   - the same pairs on each pair's own common subset;
+  - when the case set labels cases with a `group` (e.g. the corpus), the
+    headline comparison within each group;
   - every excluded case with its reason;
   - the acceptance table, when the epoch has `acceptance/results.json`.
 """
@@ -58,6 +61,31 @@ def load_epoch(root: Path) -> EpochData:
     case_set_path = root / "case_set.json"
     case_set = json.loads(case_set_path.read_text()) if case_set_path.exists() else {"cases": []}
     return EpochData(root, manifest, case_set, records)
+
+
+def load_shards(roots: list[Path]) -> EpochData:
+    """The epochs of the shards of one run as one epoch.
+
+    Every (system, case) record must come from exactly one shard. The case set
+    is the union of the shards' (each lists the excluded cases too); the
+    manifest names the shards and keeps each one's manifest.
+    """
+    shards = [load_epoch(root) for root in roots]
+    records: dict[str, dict[str, dict]] = {}
+    for shard in shards:
+        for system, by_case in shard.records.items():
+            merged = records.setdefault(system, {})
+            twice = sorted(set(merged) & set(by_case))
+            if twice:
+                raise ValueError(f"{system}: cases {twice} appear in more than one shard")
+            merged.update(by_case)
+    cases: dict[str, dict] = {}
+    for shard in shards:
+        for entry in _case_entries(shard):
+            cases.setdefault(entry["case"], entry)
+    manifest = {"epoch": " + ".join(s.manifest.get("epoch", s.root.name) for s in shards),
+                "shards": [s.manifest for s in shards]}
+    return EpochData(roots[0], manifest, {"cases": list(cases.values())}, records)
 
 
 def clock_values(record: dict, clock: str) -> list[float]:
@@ -176,6 +204,15 @@ def data_movement_cases(data: EpochData) -> set[str]:
     return {c["case"] for c in _case_entries(data) if c.get("data_movement_only")}
 
 
+def case_groups(data: EpochData) -> dict[str, set[str]]:
+    """The cases of each `group` label of the case set (none: no groups)."""
+    groups: dict[str, set[str]] = {}
+    for entry in _case_entries(data):
+        if entry.get("group"):
+            groups.setdefault(entry["group"], set()).add(entry["case"])
+    return groups
+
+
 def acceptance_summary(root: Path) -> dict | None:
     path = root / "acceptance" / "results.json"
     if not path.exists():
@@ -187,8 +224,11 @@ def acceptance_summary(root: Path) -> dict | None:
     return {dataset: dict(counts) for dataset, counts in sorted(table.items())}
 
 
-def summarize(root: Path) -> dict:
-    data = load_epoch(root)
+def summarize(epochs: Path | list[Path], out: Path | None = None) -> dict:
+    """Write the summary of one epoch (or of the shards of one run) to `out`
+    (default: `<epoch>/summary`) and return it."""
+    roots = [epochs] if isinstance(epochs, Path) else list(epochs)
+    data = load_epoch(roots[0]) if len(roots) == 1 else load_shards(roots)
     all_supported = common_subset(data, data.systems)
     movement = data_movement_cases(data)
     headline = [c for c in all_supported if c not in movement]
@@ -209,11 +249,16 @@ def summarize(root: Path) -> dict:
                                       for z, b in pairs for clock in CLOCKS],
         "comparisons_pairwise": [compare(data, z, b, common_subset(data, [z, b]), clock)
                                  for z, b in pairs for clock in CLOCKS],
+        "comparisons_by_group": {
+            group: {"headline_subset": [c for c in headline if c in members],
+                    "comparisons": [compare(data, z, b, [c for c in headline if c in members],
+                                            clock) for z, b in pairs for clock in CLOCKS]}
+            for group, members in sorted(case_groups(data).items())},
         "excluded_cases": exclusions(data),
-        "acceptance": acceptance_summary(root),
+        "acceptance": acceptance_summary(roots[0]),
     }
-    out = root / "summary"
-    out.mkdir(exist_ok=True)
+    out = out or roots[0] / "summary"
+    out.mkdir(parents=True, exist_ok=True)
     (out / "summary.json").write_text(json.dumps(summary, indent=1))
     _write_csv(out / "per_case.csv", per_case_rows(data))
     (out / "summary.md").write_text(render_markdown(summary, data))
@@ -261,6 +306,12 @@ def render_markdown(summary: dict, data: EpochData) -> str:
               f"{len(movement)} all-supported cases that only copy inputs: "
               f"{', '.join(movement) or '(none)'}", ""]
     lines += _comparison_lines(summary["comparisons_data_movement"])
+    for group, by_group in summary["comparisons_by_group"].items():
+        members = by_group["headline_subset"]
+        lines += ["", f"## Group {group}: headline cases", "",
+                  f"{len(members)} headline cases of group {group}: "
+                  f"{', '.join(members) or '(none)'}", ""]
+        lines += _comparison_lines(by_group["comparisons"])
     subset = summary["all_supported_subset"]
     lines += ["", "## All-supported subset", "",
               f"{len(subset)} cases completed by every system of the epoch "

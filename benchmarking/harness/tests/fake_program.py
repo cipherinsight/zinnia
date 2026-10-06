@@ -29,8 +29,8 @@ def parse() -> tuple[argparse.Namespace, bool]:
     parser = argparse.ArgumentParser()
     if halo2_style:
         parser.add_argument("mode")
-    for flag in ("--case", "--case-dir", "--fixture", "--input", "--mode", "--workdir",
-                 "--work-dir", "--out", "--proof-mode", "--k", "--lookup-bits",
+    for flag in ("--case", "--case-dir", "--function", "--fixture", "--input", "--mode",
+                 "--workdir", "--work-dir", "--out", "--proof-mode", "--k", "--lookup-bits",
                  "--tamper-index"):
         parser.add_argument(flag)
     parser.add_argument("--tamper", action="store_true")
@@ -49,7 +49,8 @@ def main() -> int:
 
     if args.mode == "setup":
         (args.work / "key").write_text(f"key-for-{args.input}")
-        out.write_text(json.dumps({"ok": True, "timings_s": {"setup": 0.01}, "k": 7}))
+        out.write_text(json.dumps({"ok": True, "timings_s": {"setup": 0.01}, "k": 7,
+                                   "function": args.function}))
         return 0
 
     key = (args.work / "key").read_text()

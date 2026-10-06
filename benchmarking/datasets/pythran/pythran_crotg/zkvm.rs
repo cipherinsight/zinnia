@@ -29,10 +29,11 @@ pub mod CROTG {
     pub fn main(args: &mut Args<impl Input>) -> Output {
         let ca: C32 = args.scalar();
         let cb: C32 = args.scalar();
-        if ca == C32::ZERO {
+        // `abs(CA) == 0.0`, as written: the magnitude is needed below anyway.
+        let abs_ca = ca.abs();
+        if abs_ca == Q32::ZERO {
             return (cb, cb, Q32::ZERO, C32::ONE);
         }
-        let abs_ca = ca.abs();
         let scale = abs_ca + cb.abs();
         let norm = scale * ((ca / scale).abs().powi(2) + (cb / scale).abs().powi(2)).sqrt();
         let alpha = ca / abs_ca;
