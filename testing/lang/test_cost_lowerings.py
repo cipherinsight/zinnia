@@ -375,8 +375,15 @@ def test_corrcoef_matches_numpy(x, y):
 
 
 def test_corrcoef_rescales_each_sum_once():
-    classes = ir_classes(compile_kernel(CORRCOEF))
+    """Float inputs: the fixed-point construction rescales each centred sum
+    once. Integer inputs take the exact integer sums (`lower::stats`): no
+    fixed-point product at all, one root of the integer product."""
+    floats = CORRCOEF.replace("Integer", "Float")
+    classes = ir_classes(compile_kernel(floats))
     assert classes.count("ProductSumFIR") == 3 and classes.count("MulFIR") == 1
+    classes = ir_classes(compile_kernel(CORRCOEF))
+    assert classes.count("SqrtProductIFIR") == 1
+    assert classes.count("ProductSumFIR") == 0 and classes.count("MulFIR") == 0
 
 
 def test_corrcoef_halo2_base_matches_mock():
