@@ -14,14 +14,17 @@ runs). Each run records:
   per-operation census (equal census with a different `ir` hash means only the
   order or the numbering of statements differs);
 * halo2: `cells`, the halo2-base advice + lookup cells at the chosen `k`
-  (`halo2_base_cell_stats`), and `k`;
+  (`halo2_base_cell_stats`), and `k`; with `--vk`, also `vk`, SHA-256 of the
+  verifying key from `setup()` (keygen: slower, but it covers the circuit's
+  layout, not only its size);
 * noir: `noir`, SHA-256 of the emitted Noir source (`emit_structural` on the
   fixture's input B, as `noir_gates.py` emits it).
 
-A case/target is **stable** when every run gives the same `ir` (and Noir source).
+A case/target is **stable** when every run gives the same `ir` (and Noir source,
+and verifying key when measured).
 
     .venv/bin/python benchmarking/determinism.py [--case-set PATH] [--cases 0345,0400]
-        [--runs 5] [--targets halo2,noir] [--jobs 6] [--out runs.json]
+        [--runs 5] [--targets halo2,noir] [--vk] [--jobs 6] [--out runs.json]
 """
 
 from __future__ import annotations
@@ -70,7 +73,7 @@ def sha(data: str | bytes) -> str:
     return hashlib.sha256(data).hexdigest()[:16]
 
 
-def measure(kernel: str, fixture_path: str, function: str, target: str) -> dict:
+def measure(kernel: str, fixture_path: str, function: str, target: str, vk: bool = False) -> dict:
     """Compile once (in this process) and fingerprint the result."""
     sys.path.insert(0, str(ROOT))
     os.environ.setdefault("ZINNIA_SKIP_RELEASE_BUILD", "1")
@@ -92,6 +95,8 @@ def measure(kernel: str, fixture_path: str, function: str, target: str) -> dict:
             stats = json.loads(halo2_base_cell_stats(compiled._compiled_ir))
             record["cells"] = stats["advice"] + stats["lookup"]
             record["k"] = stats["k"]
+            if vk:
+                record["vk"] = sha(bytes(compiled.setup().vk_bytes()))
         else:
             source = compiled.emit_structural(*fixture.arguments("B"), backend="noir")
             record["noir"] = sha(source)
@@ -101,10 +106,10 @@ def measure(kernel: str, fixture_path: str, function: str, target: str) -> dict:
     return record
 
 
-def run_child(entry: dict, target: str, timeout: float) -> dict:
+def run_child(entry: dict, target: str, timeout: float, vk: bool) -> dict:
     kernel, fixture, function = case_files(entry)
     cmd = [sys.executable, str(Path(__file__).resolve()), "--child", str(kernel), str(fixture),
-           function, target]
+           function, target, *(["--vk"] if vk else [])]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=ROOT)
     except subprocess.TimeoutExpired:
@@ -126,7 +131,7 @@ def verdict(runs: list[dict]) -> dict:
         if len(errors) == 1:
             return {"stable": True, "error": runs[0]["error"]}
         return {"stable": False, "kind": "error", "errors": [r.get("error") for r in runs]}
-    keys = ("ir", "noir", "backend_error")
+    keys = ("ir", "noir", "vk", "backend_error")
     distinct = {tuple(r.get(k) for k in keys) for r in runs}
     if len(distinct) == 1:
         return {"stable": True, **({"backend_error": runs[0]["backend_error"]}
@@ -154,6 +159,8 @@ def main() -> int:
     parser.add_argument("--cases", help="comma-separated case names or DS-1000 numbers "
                         "(default: every perf case of the case set)")
     parser.add_argument("--targets", default=",".join(TARGETS))
+    parser.add_argument("--vk", action="store_true",
+                        help="halo2: also hash the verifying key (runs keygen)")
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--jobs", type=int, default=6)
     parser.add_argument("--timeout", type=float, default=900)
@@ -161,7 +168,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.child:
-        print(json.dumps(measure(*args.child)))
+        print(json.dumps(measure(*args.child, vk=args.vk)))
         return 0
 
     entries = perf_entries(args.case_set)
@@ -175,7 +182,7 @@ def main() -> int:
     results: dict[str, dict[str, list[dict]]] = {c: {t: [] for t in targets} for c in cases}
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
         for (case, target, _), record in zip(jobs, pool.map(
-                lambda job: run_child(entries[job[0]], job[1], args.timeout), jobs)):
+                lambda job: run_child(entries[job[0]], job[1], args.timeout, args.vk), jobs)):
             results[case][target].append(record)
 
     report = {c: {t: {"verdict": verdict(runs), "runs": runs} for t, runs in per.items()}
