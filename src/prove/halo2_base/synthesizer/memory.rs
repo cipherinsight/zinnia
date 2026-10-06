@@ -217,7 +217,7 @@ impl Halo2BaseSynthesizer<'_> {
         let tag = self.table_tag(segment_id)?;
         let index = usize::try_from(kernel::fp_to_i64(addr.value)).ok().filter(|&i| i < len);
         if index.is_none() {
-            self.note_unsat(|| format!("table read at an address outside [0, {len})"));
+            self.note_unsat(|| format!("Witness does not satisfy circuit constraints: table read at an address outside [0, {len})"));
         }
         let value = match index {
             Some(i) => match self.slot_value(segment_id, i)? {
@@ -300,7 +300,7 @@ impl Halo2BaseSynthesizer<'_> {
             RamAddress::Fixed(index as u64)
         } else {
             if index.is_none() {
-                self.note_unsat(|| format!("memory access at an address outside [0, {len})"));
+                self.note_unsat(|| format!("Witness does not satisfy circuit constraints: memory access at an address outside [0, {len})"));
             }
             let cell = self.materialize_address(addr)?;
             if let Some(range) = Interval::new(0, len as i128 - 1) {

@@ -1643,6 +1643,10 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn assert_u128_lt_bit(&mut self, idx: &Self::CellRef, hi: u64, bit: u32, bits: u32) -> Result<Self::CellRef, ProvingError> {
         let key = (idx.id, hi, bits);
         if !self.u128_lt_bit_cache.contains_key(&key) {
+            if !kernel::fp_to_i128(idx.value).is_some_and(|i| 0 <= i && i < hi as i128) {
+                let i = kernel::fp_to_i64(idx.value);
+                self.note_unsat(move || format!("Witness does not satisfy circuit constraints: index {i} is not below {hi}"));
+            }
             self.assert_less(idx, Operand::Constant(hi as i128))?;
             let idx_cell = self.assigned(idx);
             let decomposed = self.gate.num_to_bits(self.builder.main(0), idx_cell, bits as usize);
