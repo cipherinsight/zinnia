@@ -17,6 +17,7 @@ pub use assignment::{dyn_setitem, dyn_setitem_mask, dyn_setitem_slice};
 pub use boolean_mask::{is_boolean_mask, is_boolean_mask_with};
 pub(crate) use bounded_axis::{select_stride_mode, StrideMode};
 pub use indexing::dyn_subscript;
+pub(crate) use indexing::python_slice_bounds;
 pub use memory::{filter, repeat};
 pub use reduce::{argmax_argmin, reduce};
 pub use shape::{moveaxis, reshape, swapaxes, transpose};

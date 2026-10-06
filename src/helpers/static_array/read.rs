@@ -1190,6 +1190,21 @@ fn slice_axis_static_or_dynamic_1d(
     out
 }
 
+/// `(start, stop, step, step sign)` of a slice with runtime bounds over an
+/// axis of `len` elements, by Python's rules (see
+/// [`crate::helpers::array_ops::python_slice_bounds`]).
+fn python_bounds(
+    b: &mut IRBuilder,
+    start: Option<&Value>,
+    stop: Option<&Value>,
+    step: Option<&Value>,
+    len: usize,
+) -> (Value, Value, Value, Option<bool>) {
+    let len_value = b.ir_constant_int(len as i64);
+    let slice = crate::helpers::array_ops::python_slice_bounds(b, start, stop, step, &len_value, Some(len));
+    (slice.start, slice.stop, slice.step, slice.step_positive)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn materialise_dynamic_1d_slice(
     b: &mut IRBuilder,
@@ -1204,42 +1219,23 @@ fn materialise_dynamic_1d_slice(
 ) -> Value {
     let max_out_len = len;
 
-    // Load-bearing slice-bound discharge (compiler.fuzz-finding-v2-slice-oob-witness-miss).
-    // The internal mask-and-clamp below silently swallows OOB `start` / `stop`
-    // — without an explicit discharge, an OOB witness slips through and
-    // returns `satisfied = True`. Mirrors the scalar arm's
-    // `discharge_index_in_range` (Group 5a) on the dyn-read chokepoint.
-    crate::optim::resolver::discharge_slice_bound(b, start, len, "static_array_slice_start");
-    crate::optim::resolver::discharge_slice_bound(b, stop, len, "static_array_slice_stop");
     if dtype != NumberType::Complex {
         super::base::materialize_static_array_segment(b, segment_id, dtype);
     }
 
-    fn val_to_ir(b: &mut IRBuilder, v: Option<&Value>, default: i64) -> Value {
-        match v {
-            Some(val) if !matches!(val, Value::None) => {
-                if let Some(s) = val.int_val() {
-                    b.ir_constant_int(s)
-                } else {
-                    val.clone()
-                }
-            }
-            _ => b.ir_constant_int(default),
-        }
-    }
-    let start_ir = val_to_ir(b, start, 0);
-    let stop_ir = val_to_ir(b, stop, len as i64);
-    let step_ir = val_to_ir(b, step, 1);
+    // Python's slice semantics: any integer bound is valid; negative bounds
+    // count from the end and every bound is clamped into the axis.
+    let (start_ir, stop_ir, step_ir, step_positive) = python_bounds(b, start, stop, step, len);
 
     // See materialise_dynamic_axis_slice for the rationale on these elisions.
-    let step_pos_known: bool = match step_ir.int_val() {
-        Some(s) if s > 0 => true,
-        Some(_) => false,
+    let step_pos_known: bool = match step_positive {
+        Some(positive) => positive,
         None => provable_strictly_positive(b, &step_ir),
     };
+    // A normalized start is in [0, len] for a positive step.
     let start_nonneg: bool = match start_ir.int_val() {
         Some(s) => s >= 0,
-        None => provable_nonneg(b, &start_ir),
+        None => step_pos_known || provable_nonneg(b, &start_ir),
     };
     let step_is_one = step_ir.int_val() == Some(1);
     let fast = step_pos_known && start_nonneg;
@@ -1612,53 +1608,28 @@ fn materialise_dynamic_axis_slice(
     let axis_len = shape[axis];
     let max_axis = axis_len;
 
-    // Load-bearing slice-bound discharge (compiler.fuzz-finding-v2-slice-oob-witness-miss).
-    // See `materialise_dynamic_1d_slice` for rationale; multi-dim path is
-    // analogous, discharging against the length of the sliced axis.
-    crate::optim::resolver::discharge_slice_bound(b, start, axis_len, "static_array_slice_start");
-    crate::optim::resolver::discharge_slice_bound(b, stop, axis_len, "static_array_slice_stop");
     if dtype != NumberType::Complex {
         super::base::materialize_static_array_segment(b, segment_id, dtype);
     }
 
-    fn val_to_ir(b: &mut IRBuilder, v: Option<&Value>, default: i64) -> Value {
-        match v {
-            Some(val) if !matches!(val, Value::None) => {
-                if let Some(s) = val.int_val() {
-                    b.ir_constant_int(s)
-                } else {
-                    val.clone()
-                }
-            }
-            _ => b.ir_constant_int(default),
-        }
-    }
-    let start_ir = val_to_ir(b, start, 0);
-    let stop_ir = val_to_ir(b, stop, axis_len as i64);
-    let step_ir = val_to_ir(b, step, 1);
+    // Python's slice semantics (see `materialise_dynamic_1d_slice`).
+    let (start_ir, stop_ir, step_ir, step_positive) = python_bounds(b, start, stop, step, axis_len);
 
     // Compile-time facts the defensive IR can elide:
     //   step_pos_known := step is provably > 0 (constant > 0 OR provable).
-    //   start_nonneg   := start is provably >= 0 (constant >= 0 OR provable).
+    //   start_nonneg   := start is provably >= 0 (a normalized start is in
+    //                     [0, axis_len] for a positive step).
     // When both hold, src_axis_idx = start + slice_idx*step is provably >= 0
     // for slice_idx >= 0, so ge_zero / step_pos / gt_stop / is_neg / clamp_lo
     // are dead and we skip them. This is the overwhelmingly common
     // case (`a[i:j]` with `step is None`, `i, j` from min/max of indices).
-    let step_pos_known: bool = match step_ir.int_val() {
-        Some(s) if s > 0 => true,
-        Some(_) => false,
+    let step_pos_known: bool = match step_positive {
+        Some(positive) => positive,
         None => provable_strictly_positive(b, &step_ir),
     };
-    // `discharge_slice_bound` above runtime-enforces both bounds in
-    // [0, axis_len+1] for any non-None bound, so any prover that succeeds
-    // sees start >= 0 and stop >= 0. Treat the post-discharge value as
-    // structurally non-negative for the fast-path / bounded-comparison
-    // gate — the non-fast path's negative-handling is dead code once the
-    // discharge is in place (the only paths that reach it are dropped or
-    // panic'd at compile time).
     let start_nonneg: bool = match start_ir.int_val() {
         Some(s) => s >= 0,
-        None => true,
+        None => step_pos_known || provable_nonneg(b, &start_ir),
     };
     let step_is_one = step_ir.int_val() == Some(1);
     let fast = step_pos_known && start_nonneg;
@@ -1882,59 +1853,30 @@ fn materialise_dynamic_multi_axis_slice(
     axis_specs: &[(usize, usize, Option<Value>, Option<Value>, Option<Value>)],
     out_shape: &[usize],
 ) -> Value {
-    // Discharge each axis's bounds first (same contract as the per-axis
-    // path; an OOB start/stop must fail at prove time, not silently
-    // alias into a wrong cell).
-    for (ax, _, start, stop, _step) in axis_specs {
-        crate::optim::resolver::discharge_slice_bound(
-            b,
-            start.as_ref(),
-            shape[*ax],
-            "static_array_slice_start",
-        );
-        crate::optim::resolver::discharge_slice_bound(
-            b,
-            stop.as_ref(),
-            shape[*ax],
-            "static_array_slice_stop",
-        );
-    }
     if dtype != NumberType::Complex {
         super::base::materialize_static_array_segment(b, segment_id, dtype);
     }
 
-    let val_to_ir = |b: &mut IRBuilder, v: &Option<Value>, default: i64| -> Value {
-        match v {
-            Some(val) if !matches!(val, Value::None) => {
-                if let Some(s) = val.int_val() {
-                    b.ir_constant_int(s)
-                } else {
-                    val.clone()
-                }
-            }
-            _ => b.ir_constant_int(default),
-        }
-    };
-
     // Per dynamic axis: (src_axis_idx, out_axis_idx, start_ir, stop_ir,
-    // step_ir, fast).
-    let mut axes: Vec<(usize, usize, Value, Value, Value, bool)> =
+    // step_ir, fast, step sign), the bounds by Python's slice semantics
+    // (see `materialise_dynamic_1d_slice`).
+    let mut axes: Vec<(usize, usize, Value, Value, Value, bool, Option<bool>)> =
         Vec::with_capacity(axis_specs.len());
     for (ax, out_ax, start, stop, step) in axis_specs {
-        let start_ir = val_to_ir(b, start, 0);
-        let stop_ir = val_to_ir(b, stop, shape[*ax] as i64);
-        let step_ir = val_to_ir(b, step, 1);
-        let step_pos_known = match step_ir.int_val() {
-            Some(s) if s > 0 => true,
-            Some(_) => false,
+        let (start_ir, stop_ir, step_ir, step_positive) =
+            python_bounds(b, start.as_ref(), stop.as_ref(), step.as_ref(), shape[*ax]);
+        let step_pos_known = match step_positive {
+            Some(positive) => positive,
             None => provable_strictly_positive(b, &step_ir),
         };
+        // A normalized start is in [0, axis_len] for a positive step.
         let start_nonneg = match start_ir.int_val() {
             Some(s) => s >= 0,
-            None => true, // `discharge_slice_bound` already constrains start in [0, axis_len+1].
+            None => step_pos_known || provable_nonneg(b, &start_ir),
         };
         let fast = step_pos_known && start_nonneg;
-        axes.push((*ax, *out_ax, start_ir, stop_ir, step_ir, fast));
+        let step_sign = if step_pos_known { Some(true) } else { step_positive };
+        axes.push((*ax, *out_ax, start_ir, stop_ir, step_ir, fast, step_sign));
     }
 
     let default_val = crate::ops::dyn_ndarray::metadata::dyn_default_value(b, dtype);
@@ -1943,7 +1885,7 @@ fn materialise_dynamic_multi_axis_slice(
     // Per slice_idx along each axis: precompute (in_bounds_mask, clamped_idx).
     // Each axis's table has size = shape[axis]; shared across all output cells.
     let mut per_axis_table: Vec<Vec<(Option<Value>, Value)>> = Vec::with_capacity(axes.len());
-    for (axis_idx, _, start_ir, stop_ir, step_ir, fast) in &axes {
+    for (axis_idx, _, start_ir, stop_ir, step_ir, fast, step_sign) in &axes {
         let axis_len = shape[*axis_idx];
         let axis_len_val = b.ir_constant_int(axis_len as i64);
         let max_idx_val = b.ir_constant_int(axis_len as i64 - 1);
@@ -1965,8 +1907,19 @@ fn materialise_dynamic_multi_axis_slice(
                 let ge_zero = b.ir_greater_than_or_equal_i(&src_axis_idx, &zero);
                 let lt_len = b.ir_less_than_i(&src_axis_idx, &axis_len_val);
                 let in_range = b.ir_logical_and(&ge_zero, &lt_len);
-                let lt_stop = b.ir_less_than_i(&src_axis_idx, stop_ir);
-                Some(b.ir_logical_and(&in_range, &lt_stop))
+                // Before `stop` in the step's direction.
+                let before_stop = match step_sign {
+                    Some(true) => b.ir_less_than_i(&src_axis_idx, stop_ir),
+                    Some(false) => b.ir_greater_than_i(&src_axis_idx, stop_ir),
+                    None => {
+                        let lt_stop = b.ir_less_than_i(&src_axis_idx, stop_ir);
+                        let gt_stop = b.ir_greater_than_i(&src_axis_idx, stop_ir);
+                        let step_pos = b.ir_greater_than_i(step_ir, &zero);
+                        let stop_ok = b.ir_select_i(&step_pos, &lt_stop, &gt_stop);
+                        b.ir_bool_cast(&stop_ok)
+                    }
+                };
+                Some(b.ir_logical_and(&in_range, &before_stop))
             };
             let is_over = if *fast {
                 b.ir_less_than_i_bounded(&max_idx_val, &src_axis_idx)
@@ -2000,7 +1953,7 @@ fn materialise_dynamic_multi_axis_slice(
                 addr = b.ir_add_i(&addr, &contrib);
             }
         }
-        for (table_idx, (axis_idx, out_ax, _, _, _, _)) in axes.iter().enumerate() {
+        for (table_idx, (axis_idx, out_ax, _, _, _, _, _)) in axes.iter().enumerate() {
             let (mask_k, clamped_k) = per_axis_table[table_idx][out_coords[*out_ax]].clone();
             if let Some(m) = mask_k {
                 combined_mask = Some(match combined_mask {
@@ -2084,19 +2037,12 @@ fn materialise_dynamic_multi_axis_slice(
     {
         let mut by_out_axis: Vec<Option<crate::types::ValueId>> = vec![None; out_shape.len()];
         let mut ok = true;
-        for (ax_src, out_axis, start, stop, step) in axis_specs {
-            let step_one = match step {
-                Some(v) if !matches!(v, Value::None) => v.int_val() == Some(1),
-                _ => true,
-            };
-            if !step_one {
+        for (_, out_axis, s_ir, e_ir, step_ir, _, _) in &axes {
+            if step_ir.int_val() != Some(1) {
                 ok = false;
                 break;
             }
-            let axis_len = shape[*ax_src] as i64;
-            let s_ir = val_to_ir(b, &start.clone(), 0);
-            let e_ir = val_to_ir(b, &stop.clone(), axis_len);
-            let diff = b.ir_sub_i(&e_ir, &s_ir);
+            let diff = b.ir_sub_i(e_ir, s_ir);
             let zero = b.ir_constant_int(0);
             let neg = b.ir_less_than_i(&diff, &zero);
             let extent = b.ir_select_i(&neg, &zero, &diff);

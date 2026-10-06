@@ -38,7 +38,7 @@ pub use chokepoints::{
     resolve_int_or_bounded, BoundedInt, SiteKind, StaticInt,
 };
 pub use discharge::{
-    discharge_index_below_value, discharge_index_in_range, discharge_slice_bound, probe_in_range,
+    discharge_index_below_value, discharge_index_in_range, probe_in_range, provably_in_range,
 };
 pub(crate) use intervals::derive_bounds_from_facts;
 pub use intervals::{interval_fact_for_float_binary, interval_fact_for_int_binary};

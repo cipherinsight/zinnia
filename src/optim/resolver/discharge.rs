@@ -84,35 +84,41 @@ pub fn probe_in_range(b: &mut crate::builder::IRBuilder, idx: &Value, lo: i64, h
     in_range
 }
 
-/// Load-bearing Phase-E discharge of a slice bound (`start` or `stop`).
-///
-/// Slice semantics differ from scalar indexing: numpy allows `i == len`
-/// for `arr[i:j]` (an empty trailing slice), so the valid range is the
-/// inclusive `[0, len]`. We forward this to [`discharge_index_in_range`]
-/// as `[0, len + 1)`. `None` / `Value::None` bounds (open ends like
-/// `arr[:j]`) default to `0` or `len` and don't need a discharge.
-///
-/// The check holds where the slice runs (see [`discharge_index_in_range`]).
-/// Slice reads clamp or mask their addresses, and the builder keeps a
-/// dynamic address in its segment where the code does not run
-/// (`IRBuilder::guard_address`), so the slice keeps using `bound` itself.
-///
-/// Used by the dynamic-slice helpers in `static_array_read` and
-/// `array_ops::indexing` to close the slice-OOB witness-miss gap
-/// (compiler.fuzz-finding-v2-slice-oob-witness-miss).
-pub fn discharge_slice_bound(
-    b: &mut crate::builder::IRBuilder,
-    bound: Option<&Value>,
-    len: usize,
-    op_name: &'static str,
-) {
-    let Some(v) = bound else {
-        return;
-    };
-    if matches!(v, Value::None) {
-        return;
+/// Whether `lo <= v < hi` follows from what the compiler knows at build
+/// time: a literal, the execution predicate, or the visible facts (the
+/// test [`discharge_index_in_range`] applies before checking a bound in the
+/// circuit). Emits nothing. A slice bound uses it to skip Python's
+/// wrap-and-clamp normalization when the bound already lies in the window.
+pub fn provably_in_range(b: &mut crate::builder::IRBuilder, v: &Value, lo: i64, hi: i64) -> bool {
+    use crate::optim::predicates::formula::{BoolOp, CmpOp, ContractTerm, ContractVar};
+    use crate::optim::prove::ProveOutcome;
+
+    if let Some(n) = v.int_val() {
+        return lo <= n && n < hi;
     }
-    discharge_index_in_range(b, v, 0, len as i64 + 1, op_name);
+    if b.execution_implies_index_in(v, lo, hi) {
+        return true;
+    }
+    let Some(vid) = v.value_id() else {
+        return false;
+    };
+    let term = ContractTerm::BoolComb {
+        op: BoolOp::And,
+        operands: vec![
+            ContractTerm::Cmp {
+                op: CmpOp::Ge,
+                lhs: Box::new(ContractTerm::Var(ContractVar::Value(vid))),
+                rhs: Box::new(ContractTerm::LitInt(lo)),
+            },
+            ContractTerm::Cmp {
+                op: CmpOp::Lt,
+                lhs: Box::new(ContractTerm::Var(ContractVar::Value(vid))),
+                rhs: Box::new(ContractTerm::LitInt(hi)),
+            },
+        ],
+    };
+    matches!(b.prove(&term), ProveOutcome::Proved)
+        || b.ask_bounds(v).is_some_and(|(min, max)| min >= lo && max < hi)
 }
 
 /// Load-bearing Phase-E-style discharge of `lo <= idx < hi` at an
