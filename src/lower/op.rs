@@ -118,6 +118,11 @@ pub enum OpKind {
     /// (row-major, in that order): lane `i·cols + j` is `Σ_l A[i, l]·B[l,
     /// j]`, rounded once (`IRBuilder::ir_dot_f`).
     MatMul { rows: u32, inner: u32, cols: u32 },
+    // ── permutation check (`lower::permutation`) ──────────────────────
+    /// `is_permutation(p)` of the shared integers: one lane (output 0,
+    /// position 0) whose value is 1; no proof unless `p` is a permutation
+    /// of `0..n` (the frontend asserts the lane).
+    IsPermutation,
 }
 
 impl OpKind {
@@ -137,6 +142,7 @@ impl OpKind {
             OpKind::IndexWrite { .. } => &super::scatter::IndexWriteSemantics,
             OpKind::MaskWrite => &super::scatter::MaskWriteSemantics,
             OpKind::Correlation { .. } | OpKind::MatMul { .. } => &super::linear::LinearSemantics,
+            OpKind::IsPermutation => &super::permutation::IsPermutationSemantics,
         }
     }
 
@@ -158,6 +164,7 @@ impl OpKind {
             OpKind::MaskWrite => "mask_write",
             OpKind::Correlation { .. } => "correlation",
             OpKind::MatMul { .. } => "matmul",
+            OpKind::IsPermutation => "is_permutation",
         }
     }
 }

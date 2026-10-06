@@ -163,8 +163,9 @@ fn encoding_at(b: &mut IRBuilder, cx: &mut EmitCx, (group, position, c): (GroupI
 // ── Permutation scatters ──────────────────────────────────────────────
 
 /// `c[j] = sum_k [p[k] == j] v[k]` (`scatter_by_hits`): exactly one hit
-/// per `j` since `p` is a permutation (the precondition the frontend
-/// checked). The hits are the precondition's own (`emit_is_permutation`;
+/// per `j` since `p` is a permutation (its precondition, the fact
+/// `Permutation(p, 0..n)` the program's `is_permutation` check
+/// establishes, `lower::permutation`). The hits are the precondition's own (`emit_is_permutation`;
 /// deduplicated after lowering). When `v[k] = k + c'`, the hits are each
 /// cell's one-hot, offered as `ENCODING`. Cost: `n^2` equality tests and
 /// multiply-adds (`cost::permutation_scatter`).
@@ -185,8 +186,9 @@ impl Construction for ScatterByHits {
         if offset.is_some() {
             post.push(Requirement::Shared { group: group.id, name: ENCODING });
         }
+        let permutation = crate::lower::permutation::permutation_fact(&group.shared[..n]);
         vec![Candidate {
-            pre: Vec::new(),
+            pre: vec![Requirement::Fact(permutation)],
             post,
             cost: cost::permutation_scatter(n as u64, cx.target),
             emitter: Box::new(ScatterEmitter { operands: group.shared.clone(), offset, hits: Vec::new(), cells: Vec::new() }),
