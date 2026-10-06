@@ -74,10 +74,11 @@ def _is_interrupt(exc: BaseException) -> bool:
     return isinstance(exc, (KeyboardInterrupt, SystemExit))
 
 
-#: How the halo2-base backend names an IR operation it has no gadget for
-#: (`Synthesizer::unsupported`): the program is outside what this backend
-#: proves, which is `unsupported`, not a failed setup.
-UNSUPPORTED_OPERATION = "halo2-base backend does not yet support"
+#: How the halo2-base backend names an operation it has no gadget for
+#: (`Synthesizer::unsupported`: "does not yet support tanh_f"; `**` with a
+#: runtime exponent: "does not support `**` ..."): the program is outside what
+#: this backend proves, which is `unsupported`, not a failed setup.
+UNSUPPORTED_OPERATION = "halo2-base backend does not"
 
 
 def _keygen(compiled, params: dict | None):
