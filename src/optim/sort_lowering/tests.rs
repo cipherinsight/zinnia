@@ -95,7 +95,7 @@ fn every_output(n: u32) -> Vec<Output> {
 fn assert_computes_numpy(values: &[i64], outputs: &[Output], forced: Forced) {
     let sort = sort_graph(values, outputs, forced);
     assert!(
-        !sort.graph.stmts.iter().any(|s| matches!(s.ir, IR::Sorted { .. })),
+        !sort.graph.stmts.iter().any(|s| matches!(s.ir, IR::ArrayOp(_))),
         "a placeholder survived"
     );
     let (ok, got) = mock_run(&sort.graph, &sort.inputs);

@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ir::{IRGraph, IRStatement};
 use crate::ir_defs::IR;
+use crate::lower::Constant;
 use crate::optim::resolver::{Resolver, StaticOnlyResolver};
 use crate::types::{NumberType, ScalarValue, StmtId, StringValue, Value};
 
@@ -107,14 +108,13 @@ pub use crate::provenance::SliceView;
 /// (`IRBuilder::ir_pow_f_int`); 64 needs at most 12 products.
 const MAX_UNROLLED_POWER: i64 = 64;
 
-/// One `IR::Sorted` placeholder at a constant rank: the elements of its
-/// sort (shared by every output of that sort), the rank, and whether it is
-/// the argsort index.
+/// One `IR::ArrayOp` placeholder at a constant position: the lane and the
+/// operator's shared operands (the same `Arc` for every lane of one
+/// operator instance).
 #[derive(Clone)]
-pub struct SortedPlaceholder {
-    pub elements: std::sync::Arc<[Value]>,
-    pub rank: u32,
-    pub index: bool,
+pub struct ArrayOpPlaceholder {
+    pub op: crate::lower::ArrayOp,
+    pub shared: std::sync::Arc<[Value]>,
 }
 
 /// IR builder that accumulates IR statements and provides typed convenience
@@ -155,9 +155,9 @@ pub struct IRBuilder {
     predicate_exempt_segments: HashMap<u32, StmtId>,
     /// Next available memory segment ID for dynamic array allocations.
     next_segment_id: u32,
-    /// The `IR::Sorted` placeholders this builder emitted, by statement,
-    /// with their elements (see [`IRBuilder::sorted_placeholder_of`]).
-    sorted_placeholders: HashMap<StmtId, SortedPlaceholder>,
+    /// The `IR::ArrayOp` placeholders at constant positions this builder
+    /// emitted, by statement (see [`IRBuilder::array_op_placeholder_of`]).
+    array_op_placeholders: HashMap<StmtId, ArrayOpPlaceholder>,
     /// Next available array ID for dynamic ndarray metadata.
     next_array_id: u32,
     /// Global union-find table over dim variables for dynamic ndarray
@@ -275,7 +275,7 @@ impl IRBuilder {
             dyn_array_capacity: HashMap::new(),
             predicate_exempt_segments: HashMap::new(),
             next_segment_id: 0,
-            sorted_placeholders: HashMap::new(),
+            array_op_placeholders: HashMap::new(),
             next_array_id: 0,
             dim_table: crate::types::DimTable::new(),
             static_array_payload: HashMap::new(),
@@ -1298,22 +1298,12 @@ impl IRBuilder {
                     self.provenance.set_interval(vid, Interval::BIT);
                 }
             }
-            // A sort's output is one of its elements (a value) or a
-            // position among them (an index): every lowering yields exactly
-            // that output (`optim::sort_lowering`).
-            IR::Sorted { len, index, .. } => {
+            // What the operator's semantics bound a lane by holds for every
+            // construction of it (`lower::op`).
+            IR::ArrayOp(op) => {
                 let Some(vid) = out.value_id() else { return };
-                let len = *len as usize;
-                let iv = if *index {
-                    Some(Interval { lo: 0, hi: len as i64 - 1 })
-                } else {
-                    args[..len]
-                        .iter()
-                        .map(|a| interval_of(self, a))
-                        .reduce(|x, y| Some(Interval::union(x?, y?)))
-                        .flatten()
-                };
-                if let Some(iv) = iv {
+                let operands: Vec<Option<Interval>> = args.iter().map(|a| interval_of(self, a)).collect();
+                if let Some(iv) = op.kind.semantics().bounds(op, &operands) {
                     self.provenance.set_interval(vid, iv);
                 }
             }
@@ -2884,18 +2874,50 @@ impl IRBuilder {
         self.create_ir(&IR::Hint { kind, len: elements.len() as u32 }, &args)
     }
 
-    /// `IR::Sorted`: output `rank` of NumPy's stable sort of `elements` (the
-    /// value, or with `index` its original position). A placeholder that
-    /// `optim::sort_lowering` lowers.
-    pub fn ir_sorted(&mut self, elements: &std::sync::Arc<[Value]>, rank: u32, index: bool) -> Value {
-        let len = elements.len() as u32;
-        let out = self.create_ir(&IR::Sorted { len, rank: Some(rank), index }, elements);
-        if let Some(stmt) = out.stmt_id() {
-            let placeholder = SortedPlaceholder { elements: elements.clone(), rank, index };
-            self.sorted_placeholders.insert(stmt, placeholder);
+    /// `IR::ArrayOp`: one lane of an array operator, over its shared
+    /// operands `shared` (the same `Arc` for every lane of one instance:
+    /// that is how the layer groups them) and the lane's own operands.
+    pub fn ir_array_op(&mut self, op: crate::lower::ArrayOp, shared: &std::sync::Arc<[Value]>, own: &[Value]) -> Value {
+        debug_assert_eq!(shared.len(), op.shared as usize, "ArrayOp: shared operand count");
+        let mut args = shared.to_vec();
+        args.extend(own.iter().cloned());
+        let out = self.create_ir(&IR::ArrayOp(op.clone()), &args);
+        if let (Some(stmt), Some(_)) = (out.stmt_id(), op.position) {
+            let placeholder = ArrayOpPlaceholder { op, shared: shared.clone() };
+            self.array_op_placeholders.insert(stmt, placeholder);
         }
+        out
+    }
+
+    /// The placeholder behind `value`, when `value` is a lane of an array
+    /// operator at a constant position.
+    pub fn array_op_placeholder_of(&self, value: &Value) -> Option<&ArrayOpPlaceholder> {
+        self.array_op_placeholder_at(value.stmt_id()?)
+    }
+
+    /// The placeholder statement `stmt` is, when it is a lane of an array
+    /// operator at a constant position.
+    pub fn array_op_placeholder_at(&self, stmt: StmtId) -> Option<&ArrayOpPlaceholder> {
+        self.array_op_placeholders.get(&stmt)
+    }
+
+    /// Output `rank` of NumPy's stable sort of `elements` (the value, or with
+    /// `index` its original position): a placeholder `lower::sort` lowers.
+    pub fn ir_sorted(&mut self, elements: &std::sync::Arc<[Value]>, rank: u32, index: bool) -> Value {
+        let op = Self::sort_lane(elements.len(), Some(rank), index);
+        let out = self.ir_array_op(op, elements, &[]);
         self.publish_sorted_index_bounds(&out, index, elements.len());
         out
+    }
+
+    fn sort_lane(len: usize, position: Option<u32>, index: bool) -> crate::lower::ArrayOp {
+        use crate::lower::sort::{INDICES, VALUES};
+        crate::lower::ArrayOp {
+            kind: crate::lower::OpKind::Sort,
+            shared: len as u32,
+            output: if index { INDICES } else { VALUES },
+            position,
+        }
     }
 
     /// An argsort output lies in `[0, len)` (as an `argmax` result does):
@@ -2923,24 +2945,10 @@ impl IRBuilder {
                 return self.ir_sorted(elements, r, index);
             }
         }
-        let len = elements.len() as u32;
-        let mut args = elements.to_vec();
-        args.push(rank.clone());
-        let out = self.create_ir(&IR::Sorted { len, rank: None, index }, &args);
+        let op = Self::sort_lane(elements.len(), None, index);
+        let out = self.ir_array_op(op, elements, std::slice::from_ref(rank));
         self.publish_sorted_index_bounds(&out, index, elements.len());
         out
-    }
-
-    /// The placeholder behind `value`, when `value` is an output of a sort
-    /// at a constant rank.
-    pub fn sorted_placeholder_of(&self, value: &Value) -> Option<&SortedPlaceholder> {
-        self.sorted_placeholder_at(value.stmt_id()?)
-    }
-
-    /// The placeholder computed by statement `stmt`, if it is an output of
-    /// a sort at a constant rank.
-    pub fn sorted_placeholder_at(&self, stmt: StmtId) -> Option<&SortedPlaceholder> {
-        self.sorted_placeholders.get(&stmt)
     }
 
     /// `IR::KeyLess`: `[(v1, i1) < (v2, i2)]` lexicographically, for
@@ -3345,14 +3353,16 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
             let inferred = key(&args[0], &args[1]).zip(key(&args[2], &args[3])).map(|(x, y)| x < y);
             Value::Boolean(ScalarValue::new(inferred, Some(ir_id)))
         }
-        IR::Sorted { len, rank, index } => {
-            let elements = &args[..*len as usize];
-            let rank = rank.map(i64::from).or_else(|| args[*len as usize].int_val());
-            match fold_sorted(elements, rank, *index) {
-                Some(SortedConstant::Int(v)) => Value::Integer(ScalarValue::known(v, ir_id)),
-                Some(SortedConstant::Float(v)) => Value::Float(ScalarValue::known(v, ir_id)),
-                None if *index => Value::Integer(ScalarValue::new(None, Some(ir_id))),
-                None => unknown_like_elements(elements, ir_id),
+        IR::ArrayOp(op) => {
+            let semantics = op.kind.semantics();
+            match semantics.fold(op, args) {
+                Some(Constant::Int(v)) => Value::Integer(ScalarValue::known(v, ir_id)),
+                Some(Constant::Float(v)) => Value::Float(ScalarValue::known(v, ir_id)),
+                Some(Constant::Bool(v)) => Value::Boolean(ScalarValue::known(v, ir_id)),
+                None => match semantics.number_type(op, args) {
+                    NumberType::Float => Value::Float(ScalarValue::new(None, Some(ir_id))),
+                    _ => Value::Integer(ScalarValue::new(None, Some(ir_id))),
+                },
             }
         }
     }
@@ -3366,49 +3376,6 @@ fn unknown_like_elements(elements: &[Value], ir_id: StmtId) -> Value {
     } else {
         Value::Integer(ScalarValue::new(None, Some(ir_id)))
     }
-}
-
-enum SortedConstant {
-    Int(i64),
-    Float(f64),
-}
-
-/// `IR::Sorted` of compile-time constants: output `rank` of NumPy's stable
-/// sort (the value, or with `index` its original position). `None` unless
-/// every element and the rank are known and the rank is in range.
-fn fold_sorted(elements: &[Value], rank: Option<i64>, index: bool) -> Option<SortedConstant> {
-    let rank = usize::try_from(rank?).ok().filter(|&r| r < elements.len())?;
-    let as_int = |v: &Value| v.int_val().or_else(|| v.bool_val().map(i64::from));
-    if elements.iter().any(|v| matches!(v, Value::Float(_))) {
-        let keys: Vec<f64> = elements
-            .iter()
-            .map(|v| v.float_val().or_else(|| as_int(v).map(|i| i as f64)))
-            .collect::<Option<_>>()?;
-        if keys.iter().any(|k| k.is_nan()) {
-            return None;
-        }
-        let position = stable_sort_position(&keys, rank, |a, b| a.partial_cmp(b).expect("no NaN"));
-        Some(if index {
-            SortedConstant::Int(position as i64)
-        } else {
-            SortedConstant::Float(keys[position])
-        })
-    } else {
-        let keys: Vec<i64> = elements.iter().map(as_int).collect::<Option<_>>()?;
-        let position = stable_sort_position(&keys, rank, i64::cmp);
-        Some(SortedConstant::Int(if index { position as i64 } else { keys[position] }))
-    }
-}
-
-/// The original position of the element of rank `rank` in a stable sort.
-fn stable_sort_position<T>(
-    keys: &[T],
-    rank: usize,
-    cmp: impl Fn(&T, &T) -> std::cmp::Ordering,
-) -> usize {
-    let mut order: Vec<usize> = (0..keys.len()).collect();
-    order.sort_by(|&i, &j| cmp(&keys[i], &keys[j]));
-    order[rank]
 }
 
 fn min_required_arity(ir: &IR) -> usize {
@@ -3517,7 +3484,7 @@ fn min_required_arity(ir: &IR) -> usize {
         IR::IndexInBox { rank } => rank.saturating_mul(3),
         IR::Hint { len, .. } => *len as usize + 1,
         IR::KeyLess { .. } => 4,
-        IR::Sorted { len, rank, .. } => *len as usize + usize::from(rank.is_none()),
+        IR::ArrayOp(op) => op.shared as usize,
     }
 }
 

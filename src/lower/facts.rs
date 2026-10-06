@@ -1,0 +1,64 @@
+//! Free facts: facts that hold without any construction, so requirements
+//! they imply cost nothing.
+//!
+//! Two sources, both read off the IR's statements (never off witness
+//! values, never off the program's own checks):
+//!
+//! * **Bounds** from forward interval propagation over the statements that
+//!   define a value (`optim::range::RangeResolver`). The provenance table's
+//!   intervals are not used: some are deposited by the very checks the
+//!   layer may drop (`builder/guard.rs`), and a check must not justify
+//!   itself.
+//! * **Gadget postconditions**: what the constraints of a scalar statement
+//!   the program emits anyway prove about its operands, on every backend.
+
+use std::cell::RefCell;
+
+use crate::ir::IRGraph;
+use crate::optim::{RangeResolver, Resolver};
+use crate::types::{ScalarValue, StmtId, Value};
+
+use super::graph::{Bound, Claim, Fact};
+
+pub struct FreeFacts<'a> {
+    graph: &'a IRGraph,
+    range: RefCell<RangeResolver>,
+    /// Facts established by the postconditions of scalar gadgets.
+    established: Vec<Fact>,
+}
+
+impl<'a> FreeFacts<'a> {
+    pub fn new(graph: &'a IRGraph) -> FreeFacts<'a> {
+        FreeFacts { graph, range: RefCell::new(RangeResolver::new()), established: Vec::new() }
+    }
+
+    /// `true` when `fact` holds without any construction.
+    pub fn proves(&self, fact: &Fact) -> bool {
+        self.established.iter().any(|f| f.implies(fact)) || self.proves_by_bounds(&fact.claim)
+    }
+
+    fn proves_by_bounds(&self, claim: &Claim) -> bool {
+        match *claim {
+            Claim::InRange { x, lo, hi } => {
+                let Some((min, max)) = self.bounds(x) else { return false };
+                let hi_min = match hi {
+                    Bound::Const(h) => Some(h),
+                    Bound::Stmt(h) => self.bounds(h).map(|(m, _)| m),
+                };
+                lo <= min && hi_min.is_some_and(|h| max < h)
+            }
+            Claim::NonNegative(x) => self.bounds(x).is_some_and(|(min, _)| min >= 0),
+            Claim::NonZero(x) => self.bounds(x).is_some_and(|(min, max)| min > 0 || max < 0),
+            Claim::Equal(a, b) => a == b,
+        }
+    }
+
+    /// Bounds of an integer statement's value, when known.
+    pub fn bounds(&self, stmt: StmtId) -> Option<(i64, i64)> {
+        let value = Value::Integer(ScalarValue::new(None, Some(stmt)));
+        let mut range = self.range.borrow_mut();
+        let min = range.resolve_min_with_stmts(&value, &self.graph.stmts)?;
+        let max = range.resolve_max_with_stmts(&value, &self.graph.stmts)?;
+        Some((min, max))
+    }
+}

@@ -1,0 +1,151 @@
+//! Checks: the program's assertions read as facts, the cost of a check on
+//! each target, and the emission of a check for a fact.
+
+use std::collections::HashMap;
+
+use crate::builder::IRBuilder;
+use crate::ir::IRGraph;
+use crate::ir_defs::IR;
+use crate::types::{StmtId, Value};
+
+use super::construction::Target;
+use super::graph::{Bound, Claim, Fact, Scope};
+
+/// An assertion of the program and the facts it establishes. The first
+/// form is the fact on the asserted operand itself, on every path; a check
+/// the IR generator emitted under an execution predicate `p` (on the
+/// guarded operand `select(p, x, safe)`, or as `assert(select(p, c, true))`)
+/// also has the form "the fact on `x` where `p` holds", which is
+/// equivalent: where `p` is false the guarded operand is the safe value,
+/// which passes.
+#[derive(Clone, Debug)]
+pub struct ProgramCheck {
+    pub stmt: StmtId,
+    pub forms: Vec<Fact>,
+}
+
+/// The program's assertions the layer understands, in statement order.
+pub fn program_checks(graph: &IRGraph) -> Vec<ProgramCheck> {
+    graph
+        .stmts
+        .iter()
+        .filter_map(|stmt| {
+            let forms = check_forms(graph, &stmt.ir, &stmt.arguments);
+            (!forms.is_empty()).then_some(ProgramCheck { stmt: stmt.stmt_id, forms })
+        })
+        .collect()
+}
+
+fn check_forms(graph: &IRGraph, ir: &IR, args: &[StmtId]) -> Vec<Fact> {
+    let constant = |s: StmtId| match graph.stmts[s as usize].ir {
+        IR::ConstantInt { value } => Some(value),
+        IR::ConstantBool { value } => Some(i64::from(value)),
+        _ => None,
+    };
+    // `select(p, x, k)` with a constant `k`.
+    let guarded = |s: StmtId| match (&graph.stmts[s as usize].ir, graph.stmts[s as usize].arguments.as_slice()) {
+        (IR::SelectI | IR::SelectB, &[p, x, k]) => constant(k).map(|k| (p, x, k)),
+        _ => None,
+    };
+    match (ir, args) {
+        (IR::AssertU128Lt, &[v, hi]) => {
+            let bound = constant(hi).map_or(Bound::Stmt(hi), Bound::Const);
+            let mut forms = vec![Fact::everywhere(Claim::InRange { x: v, lo: 0, hi: bound })];
+            if let Some((p, x, k)) = guarded(v) {
+                if k >= 0 && matches!(bound, Bound::Const(h) if k < h) {
+                    forms.push(Fact { claim: Claim::InRange { x, lo: 0, hi: bound }, scope: Scope::When(p) });
+                }
+            }
+            forms
+        }
+        (IR::AssertNonNegI, &[v]) => {
+            let mut forms = vec![Fact::everywhere(Claim::NonNegative(v))];
+            if let Some((p, x, k)) = guarded(v) {
+                if k >= 0 {
+                    forms.push(Fact { claim: Claim::NonNegative(x), scope: Scope::When(p) });
+                }
+            }
+            forms
+        }
+        (IR::Assert, &[c]) => {
+            if let Some((p, c, 1)) = guarded(c) {
+                return condition_claim(graph, c, &constant)
+                    .map(|claim| vec![Fact { claim, scope: Scope::When(p) }])
+                    .unwrap_or_default();
+            }
+            condition_claim(graph, c, &constant).map(|claim| vec![Fact::everywhere(claim)]).unwrap_or_default()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The claim a Boolean statement states, when it is one the layer knows.
+fn condition_claim(graph: &IRGraph, c: StmtId, constant: &dyn Fn(StmtId) -> Option<i64>) -> Option<Claim> {
+    let stmt = &graph.stmts[c as usize];
+    let float_zero = |s: StmtId| matches!(graph.stmts[s as usize].ir, IR::ConstantFloat { value } if value == 0.0);
+    let zero = |s: StmtId| constant(s) == Some(0) || float_zero(s);
+    match (&stmt.ir, stmt.arguments.as_slice()) {
+        (IR::GteI | IR::GteF, &[x, z]) | (IR::LteI | IR::LteF, &[z, x]) if zero(z) => Some(Claim::NonNegative(x)),
+        (IR::NeI | IR::NeF, &[x, z]) | (IR::NeI | IR::NeF, &[z, x]) if zero(z) => Some(Claim::NonZero(x)),
+        (IR::EqI, &[a, b]) => Some(Claim::Equal(a, b)),
+        _ => None,
+    }
+}
+
+/// The estimated cost of checking `claim` on `target` (halo2-base cells,
+/// Noir gates).
+pub fn cost(claim: &Claim, target: Target) -> u64 {
+    match (claim, target) {
+        (Claim::InRange { .. }, Target::Halo2Base) => 8,
+        (Claim::InRange { .. }, Target::Noir) => 5,
+        (Claim::NonNegative(_), Target::Halo2Base) => 8,
+        (Claim::NonNegative(_), Target::Noir) => 4,
+        (Claim::NonZero(_), Target::Halo2Base) => 4,
+        (Claim::NonZero(_), Target::Noir) => 3,
+        (Claim::Equal(..), _) => 1,
+    }
+}
+
+/// Emit a check of `fact` where its scope holds (through the conditional
+/// checks of `builder/guard.rs`); `lookup` maps input statements to their
+/// lowered values.
+pub fn emit(b: &mut IRBuilder, fact: &Fact, lookup: &HashMap<StmtId, Value>) {
+    match fact.scope {
+        Scope::Everywhere => emit_claim(b, &fact.claim, lookup),
+        Scope::When(p) => {
+            let p = lookup[&p].clone();
+            b.under_condition(&p, |b| emit_claim(b, &fact.claim, lookup));
+        }
+    }
+}
+
+fn emit_claim(b: &mut IRBuilder, claim: &Claim, lookup: &HashMap<StmtId, Value>) {
+    let v = |s: StmtId| lookup[&s].clone();
+    match *claim {
+        Claim::InRange { x, lo, hi } => {
+            let hi = match hi {
+                Bound::Const(h) => b.ir_constant_int(h),
+                Bound::Stmt(h) => v(h),
+            };
+            let (x, hi) = if lo == 0 {
+                (v(x), hi)
+            } else {
+                let lo = b.ir_constant_int(lo);
+                (b.ir_sub_i(&v(x), &lo), b.ir_sub_i(&hi, &lo))
+            };
+            b.ir_assert_u128_lt(&x, &hi);
+        }
+        Claim::NonNegative(x) => {
+            b.ir_assert_non_neg_i(&v(x));
+        }
+        Claim::NonZero(x) => {
+            let zero = b.ir_constant_int(0);
+            let nonzero = b.ir_not_equal_i(&v(x), &zero);
+            b.ir_assert(&nonzero);
+        }
+        Claim::Equal(x, y) => {
+            let equal = b.ir_equal_i(&v(x), &v(y));
+            b.ir_assert(&equal);
+        }
+    }
+}
