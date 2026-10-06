@@ -79,6 +79,15 @@ impl PyHalo2BaseKeys {
         let key = if self.has_proving_key() { "proving_key" } else { "verifying_key" };
         Some(HashMap::from([("params", timings.params_seconds), (key, timings.key_seconds)]))
     }
+    /// The verifying key's transcript digest (halo2's `transcript_repr`: a
+    /// hash of the domain, the constraint system, the fixed and permutation
+    /// commitments), hex: equal digests mean the same circuit.
+    #[getter]
+    fn vk_digest(&self) -> String {
+        use halo2_base::halo2_proofs::halo2curves::ff::PrimeField;
+        let repr = self.inner.vk().transcript_repr().to_repr();
+        repr.as_ref().iter().rev().map(|b| format!("{b:02x}")).collect()
+    }
     /// The verifying key in halo2's raw-bytes encoding.
     fn vk_bytes<'py>(&self, py: Python<'py>) -> Bound<'py, pyo3::types::PyBytes> {
         pyo3::types::PyBytes::new(py, &self.inner.vk_bytes())

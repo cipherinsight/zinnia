@@ -112,7 +112,7 @@ impl ProverBackend for Halo2BaseProverBackend {
         let mut best: Option<(u128, u32, u32)> = None; // (cost, k, lookup_bits)
         for k in ESTIMATE_K_MIN..=ESTIMATE_K_MAX {
             let lookup_bits = defaults.lookup_bits.min(k.saturating_sub(1)).max(1);
-            let CellStats { advice, lookup, fixed, instances } = dry_run(lookup_bits)?;
+            let CellStats { advice, second_advice, challenges, lookup, fixed, instances } = dry_run(lookup_bits)?;
             let lookup_used = lookup > 0;
 
             let usable = (1usize << k).saturating_sub(UNUSABLE_ROWS);
@@ -123,7 +123,10 @@ impl ProverBackend for Halo2BaseProverBackend {
                 continue;
             }
 
-            let num_advice = advice.div_ceil(usable).max(1);
+            let num_advice = (advice - second_advice).div_ceil(usable).max(1);
+            // The second phase (challenge-based checks, `circuit.rs`): its
+            // gate columns and the challenges' column.
+            let second_columns = if challenges > 0 { second_advice.div_ceil(usable).max(1) + 1 } else { 0 };
             let num_lookup_advice = if lookup_used { lookup.div_ceil(usable) } else { 0 };
             let num_fixed = fixed.div_ceil(usable).max(1);
 
@@ -145,6 +148,7 @@ impl ProverBackend for Halo2BaseProverBackend {
             let perm_columns = meta.permutation().get_columns().len();
             let committed_polys = num_advice
                 + num_lookup_advice
+                + second_columns
                 + meta.lookups().len() * 2 // mv_lookup: multiplicity + running-sum poly
                 + perm_columns.div_ceil(perm_chunk) // permutation grand products
                 + (degree - 1) // quotient pieces
@@ -377,7 +381,13 @@ impl ProverBackend for Halo2BaseProverBackend {
 /// Cell counts of one synthesized circuit (witness-independent).
 #[derive(Clone, Copy, Debug, Default, serde::Serialize)]
 pub struct CellStats {
+    /// Advice cells of both phases (the second phase's included).
     pub advice: usize,
+    /// Of those, the second phase's: its checks' cells and the challenge
+    /// cells (`circuit.rs`).
+    pub second_advice: usize,
+    /// Verifier challenges the circuit declares (0: one phase).
+    pub challenges: usize,
     pub lookup: usize,
     pub fixed: usize,
     pub instances: usize,
@@ -400,8 +410,11 @@ pub fn cell_stats(ir: &IRGraph, lookup_bits: u32, precision_bits: u32) -> Result
     };
     let stats = builder.statistics();
     let shape = second.shape();
+    let second_advice = shape.advice + second.challenges();
     let cells = CellStats {
-        advice: stats.gate.total_advice_per_phase.iter().sum::<usize>() + shape.advice + second.challenges(),
+        advice: stats.gate.total_advice_per_phase.iter().sum::<usize>() + second_advice,
+        second_advice,
+        challenges: second.challenges(),
         lookup: stats.total_lookup_advice_per_phase.iter().sum(),
         fixed: stats.gate.total_fixed + shape.constants,
         instances,
