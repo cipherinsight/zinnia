@@ -20,6 +20,7 @@ use self::memory::MemoryState;
 use self::ranges::{Comparison, Interval, Operand, TwoValued};
 use crate::circuit_input::{InputPath, ResolvedWitness};
 use crate::prove::error::ProvingError;
+use crate::prove::field::PrimeField;
 use crate::prove::kernel::{self, Rounding};
 use crate::prove::traits::Synthesizer;
 use crate::prove::types::ProvingParams;
@@ -56,6 +57,10 @@ pub struct Halo2BaseSynthesizer<'a> {
     bit_cells: HashSet<halo2_base::ContextCell>,
     bit_cell_ids: HashSet<u64>,
     const_cell_ids: HashSet<u64>,
+    /// One loaded constant cell per value (the field element's bytes):
+    /// `load_constant` costs an advice cell, and equal constants are
+    /// interchangeable.
+    constants: HashMap<[u8; 32], Halo2BaseCell>,
     select_many_cache: HashMap<Vec<u64>, Vec<Halo2BaseCell>>,
     u128_lt_bit_cache: HashMap<(u64, u64, u32), Vec<Halo2BaseCell>>,
     /// Constraint-proven integer ranges per cell id (see `ranges.rs`).
@@ -132,6 +137,7 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             bit_cells: HashSet::new(),
             bit_cell_ids: HashSet::new(),
             const_cell_ids: HashSet::new(),
+            constants: HashMap::new(),
             select_many_cache: HashMap::new(),
             u128_lt_bit_cache: HashMap::new(),
             proven: HashMap::new(),
@@ -257,11 +263,22 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         bits.div_ceil(lookup) * lookup
     }
 
+    /// A cell fixed to `value` (loaded once per value, then shared).
     fn const_cell(&mut self, value: Fp) -> Halo2BaseCell {
+        let key = value.to_repr();
+        if let Some(cell) = self.constants.get(&key) {
+            return *cell;
+        }
         let assigned = self.ctx().load_constant(value);
         let cell = self.wrap(assigned, value);
         self.const_cell_ids.insert(cell.id);
+        self.constants.insert(key, cell);
         cell
+    }
+
+    /// The truth value of a constant cell, if `a` is one.
+    fn constant_truth(&self, a: &Halo2BaseCell) -> Option<bool> {
+        self.is_const_cell(a).then(|| a.value != Fp::zero())
     }
 
     /// The interval that narrows a memory read's choice set: the provenance
@@ -811,6 +828,12 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn arctan2_f(&mut self, _: &Self::CellRef, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("arctan2_f") }
 
     fn logical_and(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        // `x and true = [x]`, `x and false = false`.
+        for (constant, other) in [(a, b), (b, a)] {
+            if let Some(truth) = self.constant_truth(constant) {
+                return if truth { Ok(self.truthy_bit(other)) } else { self.constant_bool(false) };
+            }
+        }
         let ta = self.truthy_bit(a);
         let tb = self.truthy_bit(b);
         let out = self.gate_cell(ta.value * tb.value, |gate, ctx| gate.and(ctx, ta.assigned, tb.assigned));
@@ -818,6 +841,12 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         Ok(out)
     }
     fn logical_or(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        // `x or false = [x]`, `x or true = true`.
+        for (constant, other) in [(a, b), (b, a)] {
+            if let Some(truth) = self.constant_truth(constant) {
+                return if truth { self.constant_bool(true) } else { Ok(self.truthy_bit(other)) };
+            }
+        }
         let ta = self.truthy_bit(a);
         let tb = self.truthy_bit(b);
         let out = self.gate_cell(ta.value + tb.value - ta.value * tb.value, |gate, ctx| gate.or(ctx, ta.assigned, tb.assigned));
@@ -825,6 +854,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
         Ok(out)
     }
     fn logical_not(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if let Some(truth) = self.constant_truth(a) {
+            return self.constant_bool(!truth);
+        }
         let ta = self.truthy_bit(a);
         let out = self.gate_cell(Fp::one() - ta.value, |gate, ctx| gate.not(ctx, ta.assigned));
         self.mark_bit(&out);

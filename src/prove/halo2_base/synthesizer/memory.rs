@@ -187,6 +187,11 @@ impl Halo2BaseSynthesizer<'_> {
     /// (the cell is its own root) for dynamic cells, and to a pure offset
     /// for constants.
     fn affine_lin_of(&self, cell: &Halo2BaseCell) -> AffineLin {
+        // A constant is its own value (constant cells are shared between IR
+        // values, so the provenance of whichever value took it last is moot).
+        if self.is_const_cell(cell) {
+            return AffineLin { terms: Vec::new(), offset: kernel::fp_to_i64(cell.value) };
+        }
         let provenance = self
             .vid_of_cell
             .get(&cell.id)
@@ -201,9 +206,6 @@ impl Halo2BaseSynthesizer<'_> {
             if let Some(terms) = terms {
                 return AffineLin { terms, offset: view.offset };
             }
-        }
-        if self.is_const_cell(cell) {
-            return AffineLin { terms: Vec::new(), offset: kernel::fp_to_i64(cell.value) };
         }
         AffineLin { terms: vec![(*cell, 1)], offset: 0 }
     }

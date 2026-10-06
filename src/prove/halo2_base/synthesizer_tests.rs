@@ -539,6 +539,43 @@ fn proven_ranges_narrow_comparisons() {
     assert!(outcome.accepted && outcome.outputs == vec![Fp::one()] && outcome.hints == 0);
 }
 
+/// The input-domain check the frontend emits per input element
+/// (`assert x >= i64::MIN; assert x <= i64::MAX`) is one 64-bit window
+/// check: the comparisons are decided by the window, so their negations and
+/// the asserted constants cost no gates, and each constant is loaded once.
+/// Values outside the window have no witness.
+#[test]
+fn input_domain_checks_are_one_window_check() {
+    let domain_check: Box<Op> = Box::new(|s, c| {
+        let (lo, hi) = (s.constant_int(i64::MIN)?, s.constant_int(i64::MAX)?);
+        for x in c {
+            let above = s.gte_i(x, &lo)?;
+            s.assert_true(&above)?;
+            let below = s.lte_i(x, &hi)?;
+            s.assert_true(&below)?;
+        }
+        Ok(vec![])
+    });
+    for x in [0i64, -1, i64::MIN, i64::MAX] {
+        let outcome = synthesize(&*domain_check, &[int(x)], &[]);
+        assert!(outcome.accepted && outcome.hints == 0, "{x} rejected");
+    }
+    for outside in [kernel::i128_to_fp(1i128 << 63), kernel::i128_to_fp(-(1i128 << 63) - 1), kernel::i128_to_fp(1i128 << 70)] {
+        assert!(!synthesize(&*domain_check, &[outside], &[]).accepted);
+    }
+    let window: Box<Op> = Box::new(|s, c| {
+        s.ensure_signed64(&c[0])?;
+        Ok(vec![])
+    });
+    let (one_advice, one_lookup) = cells_of(&*domain_check, &[int(5)]);
+    let (two_advice, two_lookup) = cells_of(&*domain_check, &[int(5), int(6)]);
+    let (window_advice, window_lookup) = cells_of(&*window, &[int(5)]);
+    // Per element: the window check alone (the 4 cells of the first element
+    // are the two loaded bounds and the two shared truth constants).
+    assert_eq!((two_advice - one_advice, two_lookup - one_lookup), (window_advice, window_lookup));
+    assert_eq!(one_advice, window_advice + 4);
+}
+
 #[test]
 fn unsigned_bound_assertion_is_exact() {
     for bound in [8i64, 101, 1 << 20] {
