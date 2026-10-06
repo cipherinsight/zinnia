@@ -89,7 +89,9 @@ pub enum PartShape {
         shape: Vec<usize>,
     },
     /// A runtime-shaped array: the first `rank` of `dims` are its shape and
-    /// their product is `length`.
+    /// their product is `length`. Shape entries computed by the same
+    /// statement share one slot (`ExposedMetadata`): a rank-1 array's dim is
+    /// its length's public value.
     Dynamic {
         length: Slot,
         rank: Slot,
@@ -552,11 +554,20 @@ impl IRGenerator {
             Some(v) if v == total as i64 => Slot::Constant(ElidedPublic::Int(v)),
             _ => self.expose(&length, PublicKind::Int),
         };
+        let mut exposed = ExposedMetadata::default();
+        exposed.note(&length, &length_slot);
         let dims = extent_values
             .iter()
             .map(|ext| match ext.int_val() {
                 Some(v) => Slot::Constant(ElidedPublic::Int(v)),
-                None => self.expose(ext, PublicKind::Int),
+                None => match exposed.slot_of(ext) {
+                    Some(slot) => slot,
+                    None => {
+                        let slot = self.expose(ext, PublicKind::Int);
+                        exposed.note(ext, &slot);
+                        slot
+                    }
+                },
             })
             .collect();
         let leaves = crate::helpers::composite::flatten_composite_with_builder(&mut self.builder, value);
@@ -589,6 +600,8 @@ impl IRGenerator {
         let length_is_capacity = data.meta.runtime_length.static_val == Some(max_length as i64);
         let length = self.metadata_slot(&data.meta.runtime_length, length_is_capacity);
         let rank = self.metadata_slot(&data.meta.runtime_rank, true);
+        let mut exposed = ExposedMetadata::default();
+        exposed.note(&Value::Integer(data.meta.runtime_length.clone()), &length);
         let dims = (0..data.max_rank())
             .map(|axis| {
                 let dim = data
@@ -597,7 +610,13 @@ impl IRGenerator {
                     .get(axis)
                     .cloned()
                     .unwrap_or_else(|| ScalarValue::constant(0));
-                self.metadata_slot(&dim, true)
+                let dim_value = Value::Integer(dim.clone());
+                if let Some(slot) = exposed.slot_of(&dim_value) {
+                    return slot;
+                }
+                let slot = self.metadata_slot(&dim, true);
+                exposed.note(&dim_value, &slot);
+                slot
             })
             .collect();
         let mut cells = Vec::with_capacity(max_length);
@@ -619,6 +638,33 @@ impl IRGenerator {
             complex,
             cells,
         }
+    }
+}
+
+/// The shape entries of one runtime-shaped part already in the public
+/// vector, by the IR statement that computes them. A rank-1 array's only
+/// dimension is its length, the same statement: exposing it twice would put
+/// the same value in two public slots (two public inputs to pay for in the
+/// circuit, and nothing the verifier learns from the second). Its slot
+/// repeats the first one instead; a decoder reads the same public value for
+/// both entries, so the decoded shape is unchanged.
+#[derive(Default)]
+struct ExposedMetadata {
+    slots: Vec<(crate::types::StmtId, Slot)>,
+}
+
+impl ExposedMetadata {
+    /// Record `slot` as the public slot of `value` (a runtime value only).
+    fn note(&mut self, value: &Value, slot: &Slot) {
+        if let (Some(stmt), Slot::Exposed { .. }) = (value.stmt_id(), slot) {
+            self.slots.push((stmt, slot.clone()));
+        }
+    }
+
+    /// The slot already exposing the statement that computes `value`.
+    fn slot_of(&self, value: &Value) -> Option<Slot> {
+        let stmt = value.stmt_id()?;
+        self.slots.iter().find(|(s, _)| *s == stmt).map(|(_, slot)| slot.clone())
     }
 }
 

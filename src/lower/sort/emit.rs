@@ -291,7 +291,12 @@ pub(super) fn order_statistic(b: &mut IRBuilder, elements: &Elements, rank: &Val
 /// How an extreme pin shows that its value is one of the elements.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Membership {
-    /// `prod_j (a_j - v) == 0`.
+    /// `prod_j g_j == 0` over the gaps `g_j = v - a_j` (`a_j - v` for the
+    /// smallest) that the bound assertions check: each factor is zero
+    /// exactly when `a_j - v` is, so the product is zero exactly when
+    /// `prod_j (a_j - v)` is, and a backend that checks the asserted
+    /// comparison by a range check of the same gap (Noir:
+    /// `asserted_compare`) reuses that gap's witness as the factor.
     Product,
     /// One of the bits `[v == a_j]` (`value_first`) or `[a_j == v]` is set:
     /// their sum is non-zero. The program computes those bits anyway
@@ -326,7 +331,7 @@ pub(super) fn extreme_value(b: &mut IRBuilder, elements: &Elements, largest: boo
         b.ir_assert(&bounded);
         match membership {
             Membership::Product => {
-                let difference = b.ir_sub_i(a, &v);
+                let difference = b.ir_sub_i(high, low);
                 product = Some(match product {
                     None => difference,
                     Some(p) => b.ir_mul_i(&p, &difference),
