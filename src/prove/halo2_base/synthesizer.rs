@@ -282,6 +282,33 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         value
     }
 
+    /// A hint the IR asserts to be a bit (`plan.bit_hints`), assigned inside
+    /// its bit gate `0 + h·h = h`: the gate's three copies of `h` are its
+    /// cells (copy-constrained equal), so the hint costs the gate's four
+    /// cells instead of a free cell and a four-cell gate. Marked as a bit, so
+    /// the `AssertBit` that the plan saw emits nothing; the gate is exactly
+    /// the constraint that `AssertBit` emits.
+    fn hint_in_bit_gate(&mut self, value: Fp) -> Halo2BaseCell {
+        let value = self.hint_value(value);
+        if value != Fp::zero() && value != Fp::one() {
+            self.note_unsat(move || {
+                format!(
+                    "Witness does not satisfy circuit constraints: bit gate expected 0 or 1 but witness is {}",
+                    kernel::fp_to_i64(value)
+                )
+            });
+        }
+        let ctx = self.builder.main(0);
+        let w = QuantumCell::Witness(value);
+        ctx.assign_region([QuantumCell::Constant(Fp::zero()), w, w, w], [0]);
+        let (b, c, d) = (ctx.get(-3), ctx.get(-2), ctx.get(-1));
+        ctx.constrain_equal(&b, &c);
+        ctx.constrain_equal(&b, &d);
+        let bit = self.wrap(b, value);
+        self.mark_bit(&bit);
+        bit
+    }
+
     /// A boolean hint, constrained to {0, 1} and marked as a bit.
     fn hint_bit(&mut self, value: bool) -> Halo2BaseCell {
         let bit = self.hint(if value { Fp::one() } else { Fp::zero() });
@@ -437,9 +464,9 @@ impl<'a> Halo2BaseSynthesizer<'a> {
     /// both operands of a sum are deferred products, one is emitted).
     fn materialize(&mut self, cell: &Halo2BaseCell) -> Halo2BaseCell {
         let Some((a, b)) = self.deferred.get(&cell.id).copied() else { return *cell };
-        let out = self.gate_cell(cell.value, |gate, ctx| gate.mul(ctx, a.assigned, b.assigned));
-        self.propagate_range(&out, &a, &b, Interval::mul);
-        out
+        // `0 + a·b` as the first gate of a chain: the multiply-add that
+        // consumes it starts at its output cell (three cells, not four).
+        self.product(&a, &b)
     }
 
     /// `a·b` as the first gate of a multiply-add chain (`0 + a·b`, so the
@@ -532,6 +559,26 @@ impl<'a> Halo2BaseSynthesizer<'a> {
             if let Some(n) = self.float_casts.get(&difference.id).copied() {
                 self.nonzero.insert(n.id); // n·2^P ≠ 0 exactly when n ≠ 0
             }
+        }
+        self.constant_bool(true)
+    }
+
+    /// `a == b` as an assertion, for an `==` whose only use is `Assert`: a
+    /// copy constraint between the two cells, or of the cell to a fixed
+    /// constant (no advice cell either way), which holds exactly when the
+    /// field elements are equal, the meaning of `EqI`/`EqF`. Returns the
+    /// constant `true`.
+    fn assert_equal(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        if a.value != b.value {
+            self.note_unsat(|| "Witness does not satisfy circuit constraints: an asserted `==` is false".to_string());
+        }
+        let (a, b) = (self.materialize(a), self.materialize(b));
+        if self.is_const_cell(&b) {
+            self.assert_const(&a, b.value);
+        } else if self.is_const_cell(&a) {
+            self.assert_const(&b, a.value);
+        } else {
+            self.constrain_equal(&a, &b);
         }
         self.constant_bool(true)
     }
@@ -894,6 +941,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     fn sign_f(&mut self, a: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.sign_i(a) }
 
     fn eq_i(&mut self, a: &Self::CellRef, b: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        if self.is_asserted_comparison() {
+            return self.assert_equal(a, b);
+        }
         if let Some(bit) = self.equals_constant(a, b)? {
             return Ok(bit);
         }
@@ -1345,7 +1395,11 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
     /// [`Self::hint`], so the tamper tests reach it; the IR pins it.
     fn prover_hint(&mut self, kind: crate::ir_defs::HintKind, operands: &[Self::CellRef], rank: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
         let values: Vec<Fp> = operands.iter().map(|c| c.value).collect();
-        Ok(self.hint(kernel::hint_lane(kind, &values, rank.value)))
+        let lane = kernel::hint_lane(kind, &values, rank.value);
+        if self.plan.bit_hints.contains(&self.current_stmt) {
+            return Ok(self.hint_in_bit_gate(lane));
+        }
+        Ok(self.hint(lane))
     }
 }
 

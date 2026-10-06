@@ -720,7 +720,21 @@ pub fn hint_values(kind: crate::ir_defs::HintKind, operands: &[Fp]) -> Vec<Fp> {
             lanes.resize(values.len(), Fp::zero());
             lanes
         }
+        HintKind::PositionOneHot => position_one_hot(operands),
     }
+}
+
+/// The lanes of `HintKind::PositionOneHot` for the operands `[x, n]`: a
+/// one-hot of NumPy's position of `x` on an axis of length `n` (`x` or
+/// `x + n`, the end `n` included), all zero when `x` names no position. No
+/// lanes when `n` is not a small non-negative integer (only a malformed
+/// IR has such an `n`; every lane then reads as 0).
+fn position_one_hot(operands: &[Fp]) -> Vec<Fp> {
+    const MAX_AXIS: i128 = 1 << 24;
+    let (Some(x), Some(n)) = (operands.first(), operands.get(1)) else { return Vec::new() };
+    let Some(n) = fp_to_i128(*n).filter(|n| (0..MAX_AXIS).contains(n)) else { return Vec::new() };
+    let position = fp_to_i128(*x).map(|x| if x < 0 { x + n } else { x }).filter(|p| (0..=n).contains(p));
+    (0..=n).map(|r| if Some(r) == position { Fp::one() } else { Fp::zero() }).collect()
 }
 
 /// Lane `rank` of the hint `kind` applied to `operands`, the value of an

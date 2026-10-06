@@ -1255,22 +1255,17 @@ pub fn np_insert(
     if !matches!(obj, Value::Integer(_)) {
         panic!("np.insert: this bounded slice supports one scalar obj");
     }
-    if let Some(raw_pos) = obj.int_val() {
-        if raw_pos < 0 || raw_pos > shape[axis] as i64 {
+    // NumPy accepts `-n <= obj <= n` and reads a negative `obj` from the end.
+    let static_pos: Option<usize> = obj.int_val().map(|raw_pos| {
+        let n = shape[axis] as i64;
+        if !(-n..=n).contains(&raw_pos) {
             panic!(
-                "np.insert: obj {} is out of bounds for this bounded slice; expected 0 <= obj <= {}",
-                raw_pos, shape[axis]
+                "np.insert: index {} is out of bounds for axis {} with size {}",
+                raw_pos, axis, n
             );
         }
-    } else {
-        crate::optim::resolver::discharge_index_in_range(
-            b,
-            obj,
-            0,
-            shape[axis] as i64 + 1,
-            "np.insert",
-        );
-    }
+        (if raw_pos < 0 { raw_pos + n } else { raw_pos }) as usize
+    });
 
     let insert_count = 1usize;
     let mut out_shape = shape.clone();
@@ -1305,117 +1300,57 @@ pub fn np_insert(
         .collect();
     let value_strides = crate::helpers::shape_arith::row_major_strides(&value_shape);
 
-    let select_typed = |b: &mut IRBuilder, cond: &Value, tv: &Value, fv: &Value| -> Value {
-        if dtype == NumberType::Float {
-            b.ir_select_f(cond, tv, fv)
-        } else {
-            b.ir_select_i(cond, tv, fv)
-        }
-    };
-    let select_many_typed =
-        |b: &mut IRBuilder, cond: &Value, tv: &[Value], fv: &[Value]| -> Vec<Value> {
-            if dtype == NumberType::Float {
-                b.ir_select_many_f(cond, tv, fv)
-            } else {
-                b.ir_select_many_i(cond, tv, fv)
-            }
-        };
-
-    if obj.int_val().is_none() {
+    let Some(pos) = static_pos else {
+        // Runtime position: the scatter family's insertion construction
+        // (`lower::scatter::insert`), which also proves `-n <= obj <= n`.
+        // Row `k` along `axis` is the slice of `L` lanes (row-major over the
+        // other axes); the output row `k` lands at the same lanes.
         let n_axis = shape[axis];
         let lane_total = expected_value_cells;
-        let mut out_slots: Vec<Option<Value>> = vec![None; out_total];
-        // Output slot `i` takes the source element `i` before the insertion
-        // point, the inserted value at it and the source element `i - 1`
-        // after it. `[obj <= i]` is the running OR of the equality tests
-        // `[obj == k]`, k <= i: `obj` is bounds-checked to `0..=n_axis`
-        // above, so exactly one of those tests holds, and the prefix OR is
-        // set from `k = obj` on. That replaces a comparison per slot with
-        // one gate.
-        let mut reached: Option<Value> = None;
-        for i in 0..=n_axis {
-            let i_const = b.ir_constant_int(i as i64);
-            let is_eq = b.ir_equal_i(&i_const, obj);
-            let at_or_after = match &reached {
-                Some(prev) => b.ir_logical_or(prev, &is_eq),
-                None => is_eq.clone(),
+        let lane_coords = |lane: usize, k: usize| -> Vec<usize> {
+            let mut lane_coords = if value_shape.is_empty() {
+                Vec::new()
+            } else {
+                crate::helpers::shape_arith::decode_coords(lane, &value_shape, &value_strides)
             };
-            reached = Some(at_or_after.clone());
-            let mut inserted_values = Vec::with_capacity(lane_total);
-            let mut pre_values = Vec::with_capacity(lane_total);
-            let mut post_values = Vec::with_capacity(lane_total);
-            let mut out_indices = Vec::with_capacity(lane_total);
-            for lane_idx in 0..lane_total {
-                let lane_coords = if value_shape.is_empty() {
-                    Vec::new()
-                } else {
-                    crate::helpers::shape_arith::decode_coords(
-                        lane_idx,
-                        &value_shape,
-                        &value_strides,
-                    )
-                };
-                let mut coords = Vec::with_capacity(shape.len());
-                let mut lane_pos = 0usize;
-                for ax in 0..shape.len() {
-                    if ax == axis {
-                        coords.push(i);
-                    } else {
-                        coords.push(lane_coords[lane_pos]);
-                        lane_pos += 1;
-                    }
-                }
-                out_indices.push(crate::helpers::shape_arith::encode_coords(
-                    &coords,
-                    &out_strides,
-                ));
-                let value_idx = if value_cells.len() == 1 { 0 } else { lane_idx };
-                inserted_values.push(cast_cell_to_dtype(b, &value_cells[value_idx], dtype));
-
-                let pre_val = if i < n_axis {
-                    let mut src_coords = coords.clone();
-                    src_coords[axis] = i;
-                    let src_idx =
-                        crate::helpers::shape_arith::encode_coords(&src_coords, &src_strides);
-                    arr_cells[src_idx].clone()
-                } else {
-                    let mut src_coords = coords.clone();
-                    src_coords[axis] = 0;
-                    let src_idx =
-                        crate::helpers::shape_arith::encode_coords(&src_coords, &src_strides);
-                    arr_cells[src_idx].clone()
-                };
-                pre_values.push(pre_val);
-
-                let post_val = if i >= 1 {
-                    let mut src_coords = coords.clone();
-                    src_coords[axis] = i - 1;
-                    let src_idx =
-                        crate::helpers::shape_arith::encode_coords(&src_coords, &src_strides);
-                    arr_cells[src_idx].clone()
-                } else {
-                    let mut src_coords = coords.clone();
-                    src_coords[axis] = 0;
-                    let src_idx =
-                        crate::helpers::shape_arith::encode_coords(&src_coords, &src_strides);
-                    arr_cells[src_idx].clone()
-                };
-                post_values.push(post_val);
-            }
-            let mid_values = select_many_typed(b, &is_eq, &inserted_values, &post_values);
-            let chosen_values = select_many_typed(b, &at_or_after, &mid_values, &pre_values);
-            for (out_idx, value) in out_indices.into_iter().zip(chosen_values) {
-                out_slots[out_idx] = Some(value);
+            lane_coords.insert(axis, k);
+            lane_coords
+        };
+        let rows: Vec<Vec<Value>> = (0..n_axis)
+            .map(|k| {
+                (0..lane_total)
+                    .map(|lane| {
+                        let src = crate::helpers::shape_arith::encode_coords(&lane_coords(lane, k), &src_strides);
+                        cast_cell_to_dtype(b, &arr_cells[src], dtype)
+                    })
+                    .collect()
+            })
+            .collect();
+        let inserted: Vec<Value> = (0..lane_total)
+            .map(|lane| {
+                let value_idx = if value_cells.len() == 1 { 0 } else { lane };
+                cast_cell_to_dtype(b, &value_cells[value_idx], dtype)
+            })
+            .collect();
+        let out_rows = crate::lower::scatter::insert::insert_row(
+            b,
+            &rows,
+            &inserted,
+            obj,
+            dtype,
+            crate::lower::scatter::insert::Form::SharedProduct,
+        );
+        let mut out = vec![None; out_total];
+        for (k, row) in out_rows.into_iter().enumerate() {
+            for (lane, value) in row.into_iter().enumerate() {
+                out[crate::helpers::shape_arith::encode_coords(&lane_coords(lane, k), &out_strides)] = Some(value);
             }
         }
-        let out = out_slots
-            .into_iter()
-            .map(|slot| slot.expect("np.insert: internal output slot not filled"))
-            .collect();
+        let out = out.into_iter().map(|v| v.expect("np.insert: every output cell is set")).collect();
         return crate::helpers::static_array::base::build_static_array_from_flat(
             b, out, out_shape, dtype,
         );
-    }
+    };
 
     let mut out = Vec::with_capacity(out_total);
     for out_idx in 0..out_total {
@@ -1433,66 +1368,15 @@ pub fn np_insert(
             };
             cast_cell_to_dtype(b, &value_cells[value_idx], dtype)
         };
-        if let Some(raw_pos) = obj.int_val() {
-            let pos = raw_pos as usize;
-            if coords[axis] == pos {
-                out.push(inserted_value);
-            } else {
-                let mut src_coords = coords.clone();
-                if coords[axis] > pos {
-                    src_coords[axis] -= insert_count;
-                }
-                let src_idx = crate::helpers::shape_arith::encode_coords(&src_coords, &src_strides);
-                out.push(arr_cells[src_idx].clone());
-            }
+        if coords[axis] == pos {
+            out.push(inserted_value);
         } else {
-            // Runtime `pos`: at each output position i along `axis` the source
-            // is fully determined by two runtime predicates `(i < pos)` and
-            // `(i == pos)`. The mux to N candidates each via N-1 selects was
-            // O(N) per output cell — replace with the 2-cell static-shift
-            // pattern: pre_val = arr[i] (used when i<pos), post_val =
-            // arr[i-1] (used when i>pos), and the inserted value in the
-            // middle. Bounds-only-when-selected: the i=0 branch's post_val
-            // is never picked (is_lt or is_eq must hold); the
-            // i=shape[axis] branch's pre_val is never picked. We default
-            // out-of-range coords to a valid in-bounds clone so the
-            // backend gets a wire to read but the constraint never
-            // observes a malformed value.
-            let i = coords[axis];
-            let n_axis = shape[axis];
-            // pre_val: arr at coords (used when i < pos, valid for i < n_axis)
-            let pre_val = if i < n_axis {
-                let src_idx = crate::helpers::shape_arith::encode_coords(&coords, &src_strides);
-                arr_cells[src_idx].clone()
-            } else {
-                let mut src_coords = coords.clone();
-                src_coords[axis] = 0; // dummy; never selected at i == n_axis
-                let src_idx = crate::helpers::shape_arith::encode_coords(&src_coords, &src_strides);
-                arr_cells[src_idx].clone()
-            };
-            // post_val: arr at coords with axis-1 (used when i > pos, valid for i >= 1)
-            let post_val = if i >= 1 {
-                let mut src_coords = coords.clone();
-                src_coords[axis] = i - 1;
-                let src_idx = crate::helpers::shape_arith::encode_coords(&src_coords, &src_strides);
-                arr_cells[src_idx].clone()
-            } else {
-                let mut src_coords = coords.clone();
-                src_coords[axis] = 0; // dummy; never selected at i == 0
-                let src_idx = crate::helpers::shape_arith::encode_coords(&src_coords, &src_strides);
-                arr_cells[src_idx].clone()
-            };
-            // Runtime predicates — independent of `j`, so the IRBuilder
-            // value-numbering naturally dedupes them across all j for the
-            // same i.
-            let i_const = b.ir_constant_int(i as i64);
-            let is_lt = b.ir_less_than_i(&i_const, obj);
-            let is_eq = b.ir_equal_i(&i_const, obj);
-            // Two selects per output cell: middle picks between inserted and
-            // post; outer picks between pre and middle.
-            let mid = select_typed(b, &is_eq, &inserted_value, &post_val);
-            let chosen = select_typed(b, &is_lt, &pre_val, &mid);
-            out.push(chosen);
+            let mut src_coords = coords.clone();
+            if coords[axis] > pos {
+                src_coords[axis] -= insert_count;
+            }
+            let src_idx = crate::helpers::shape_arith::encode_coords(&src_coords, &src_strides);
+            out.push(arr_cells[src_idx].clone());
         }
     }
     crate::helpers::static_array::base::build_static_array_from_flat(b, out, out_shape, dtype)

@@ -386,6 +386,12 @@ pub enum HintKind {
     /// (1: the slot holds an element), so `len = 2n`; lane `r` is the value
     /// of rank `r` among the active ones (0 past their number).
     MaskedSortedValues,
+    /// The position NumPy's index `x` names on an axis of length `n`, as a
+    /// one-hot vector: the operands are `[x, n]` (`n` a small constant), and
+    /// lane `r` (for `r` in `[0, n]`) is 1 when `r` is `x` (`0 <= x <= n`) or
+    /// `x + n` (`-n <= x < 0`), else 0. Lane `n` is the end of the axis, an
+    /// insertion point; for any other `x` every lane is 0.
+    PositionOneHot,
 }
 
 impl HintKind {
@@ -394,6 +400,7 @@ impl HintKind {
             HintKind::StableArgsort => "stable_argsort",
             HintKind::SortedValues => "sorted_values",
             HintKind::MaskedSortedValues => "masked_sorted_values",
+            HintKind::PositionOneHot => "position_one_hot",
         }
     }
 
@@ -402,6 +409,7 @@ impl HintKind {
             "stable_argsort" => Some(HintKind::StableArgsort),
             "sorted_values" => Some(HintKind::SortedValues),
             "masked_sorted_values" => Some(HintKind::MaskedSortedValues),
+            "position_one_hot" => Some(HintKind::PositionOneHot),
             _ => None,
         }
     }

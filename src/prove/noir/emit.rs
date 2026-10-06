@@ -85,6 +85,7 @@ pub fn emit_circuit(
     emitter.wrapped_index_ranges = wrapped_index_ranges(ir);
     emitter.asserted_comparisons = asserted_comparisons(ir);
     emitter.implied_comparisons = implied_comparisons(ir, &emitter.asserted_comparisons);
+    emitter.multiplied = multiplied(ir);
     interpret_ir(ir, &mut emitter)?;
 
     let main_nr = render_main_nr(&input_params, &emitter);
@@ -125,13 +126,24 @@ fn asserted_comparisons(ir: &IRGraph) -> HashSet<u32> {
             matches!(
                 s.ir,
                 IR::LtI | IR::LteI | IR::GtI | IR::GteI | IR::LtF | IR::LteF | IR::GtF | IR::GteF
-                    | IR::LtIBounded | IR::GtIBounded | IR::IndexInBox { .. } | IR::NeI | IR::NeF
-                    | IR::KeyLess { .. }
+                    | IR::LtIBounded | IR::GtIBounded | IR::IndexInBox { .. } | IR::EqI | IR::EqF
+                    | IR::NeI | IR::NeF | IR::KeyLess { .. }
             )
         })
         .map(|s| s.stmt_id)
         .filter(|id| assert_uses.contains_key(id) && !other_uses.contains(id))
         .collect()
+}
+
+/// How many `MulI` operands each statement's value is.
+fn multiplied(ir: &IRGraph) -> HashMap<u32, usize> {
+    let mut uses: HashMap<u32, usize> = HashMap::new();
+    for stmt in ir.stmts.iter().filter(|s| matches!(s.ir, crate::ir_defs::IR::MulI)) {
+        for arg in &stmt.arguments {
+            *uses.entry(*arg).or_insert(0) += 1;
+        }
+    }
+    uses
 }
 
 /// Asserted comparisons of a value with a constant that a bounds check of
@@ -653,6 +665,12 @@ pub struct NoirEmitter<'a> {
     nonzero: HashSet<String>,
     /// `out -> (a, b)` for every emitted sum `out = a + b`.
     sum_of: HashMap<String, (String, String)>,
+    /// The number of linear terms of the expression Noir builds for a sum
+    /// or difference (see `linear_terms`); absent for every other cell.
+    sum_terms: HashMap<String, u32>,
+    /// How many `MulI` operands each statement's value is (see
+    /// `linear_terms`).
+    multiplied: HashMap<u32, usize>,
     /// Asserted comparisons a bounds check elsewhere implies (see
     /// `implied_comparisons`): they emit nothing.
     implied_comparisons: HashSet<u32>,
@@ -831,9 +849,19 @@ impl<'a> NoirEmitter<'a> {
     /// the interval of the result when both operands have one (exact
     /// integer arithmetic: the values involved stay far below p).
     fn integer_arith(&mut self, a: &str, b: &str, op: char) -> String {
+        if op == '*' {
+            for factor in [a, b] {
+                if self.linear_terms(factor) > 2 {
+                    self.materialize_sum(factor);
+                }
+            }
+        }
         let v = self.bind(&format!("{a} {op} {b}"));
         if op == '+' {
             self.record_sum(&v, a, b);
+        }
+        if op != '*' {
+            self.track_linear(&v, a, b);
         }
         if let (Some((al, ah)), Some((bl, bh))) = (self.ival(a), self.ival(b)) {
             let (al, ah, bl, bh) = (al as i128, ah as i128, bl as i128, bh as i128);
@@ -1180,6 +1208,49 @@ impl<'a> NoirEmitter<'a> {
         self.sum_of.insert(out.to_string(), (a.to_string(), b.to_string()));
     }
 
+    /// The number of linear terms of the expression Noir builds for `var`:
+    /// 0 for a literal, the recorded count for a sum or difference, else 1
+    /// (a witness).
+    ///
+    /// Noir does not give an intermediate sum a witness of its own: `s = a +
+    /// b + c` stays the expression `a + b + c`, and `s * x` becomes one
+    /// product term per term of `s`, one gate each. A running sum whose
+    /// every prefix is multiplied (a thermometer `g[k] = g[k-1] + h[k]`
+    /// times each element) then costs a gate per term per product, quadratic
+    /// in its length. So a sum the IR multiplies gets a witness where it is
+    /// defined (`track_linear`) when that saves gates: when it has three or
+    /// more terms, or two and more than one product reads it. The next
+    /// prefix then starts from that witness.
+    fn linear_terms(&self, var: &str) -> u32 {
+        if self.literal_vals.contains_key(var) {
+            return 0;
+        }
+        self.sum_terms.get(var).copied().unwrap_or(1)
+    }
+
+    /// Record the terms of `out = a ± b`, and give it a witness when
+    /// products read it (see `linear_terms`).
+    fn track_linear(&mut self, out: &str, a: &str, b: &str) {
+        if self.literal_vals.contains_key(out) || self.sum_terms.contains_key(out) || out == a || out == b {
+            return;
+        }
+        let terms = self.linear_terms(a) + self.linear_terms(b);
+        self.sum_terms.insert(out.to_string(), terms);
+        let products = self.current_stmt.and_then(|id| self.multiplied.get(&id)).copied().unwrap_or(0);
+        if products > 0 && (terms > 2 || (terms == 2 && products > 1)) {
+            self.materialize_sum(out);
+        }
+    }
+
+    /// Give a sum of three or more terms its own witness before a product
+    /// reads it (two terms cost two product terms either way).
+    fn materialize_sum(&mut self, var: &str) {
+        if self.linear_terms(var) > 1 {
+            let _ = writeln!(self.body, "    std::as_witness({var});");
+            self.sum_terms.insert(var.to_string(), 1);
+        }
+    }
+
     /// `a != b` for a `!=` whose only uses are asserts: the assertion
     /// itself (`assert(a != b)`, an inverse constraint), and the literal
     /// true for the asserts. Against the constant 0 the other operand is
@@ -1196,6 +1267,17 @@ impl<'a> NoirEmitter<'a> {
                 self.nonzero.insert(x.to_string());
             }
         }
+        Some(self.literal_int(1))
+    }
+
+    /// `a == b` for an `==` whose only uses are asserts: `assert(a == b)`,
+    /// one linear constraint, and the literal true for the asserts.
+    fn asserted_equal(&mut self, a: &str, b: &str) -> Option<String> {
+        let asserted = self.current_stmt.is_some_and(|id| self.asserted_comparisons.contains(&id));
+        if !asserted {
+            return None;
+        }
+        let _ = writeln!(self.body, "    assert({a} == {b});");
         Some(self.literal_int(1))
     }
 
@@ -1810,6 +1892,8 @@ impl<'a> NoirEmitter<'a> {
             asserted_comparisons: HashSet::new(),
             nonzero: HashSet::new(),
             sum_of: HashMap::new(),
+            sum_terms: HashMap::new(),
+            multiplied: HashMap::new(),
             implied_comparisons: HashSet::new(),
             current_stmt: None,
             proven_range: HashMap::new(),
@@ -1945,6 +2029,40 @@ impl<'a> NoirEmitter<'a> {
     /// constants (e.g. `abs_f` of a literal, `float_cast` of a literal int).
     fn fold_literal(&mut self, v: &str, val: ConcreteValue) {
         self.literal_vals.insert(v.to_string(), val);
+    }
+
+    /// A lane of `HintKind::PositionOneHot` (operands `[x, n]`): with a
+    /// constant `n` and rank, an entry of `position_one_hot_hint`'s array of
+    /// `n + 1` lanes (one unconstrained call per operand pair); otherwise
+    /// the `_at` form. No constraint: the IR pins every lane it uses.
+    fn position_one_hot_hint(&mut self, operands: &[CellRef], rank: &CellRef) -> Result<CellRef, ProvingError> {
+        let [x, n] = operands else {
+            return Err(ProvingError::synthesis("position_one_hot hint expects the operands [x, n]"));
+        };
+        let lanes = self.s_int_of(n).and_then(|n| usize::try_from(n).ok()).map(|n| n + 1);
+        match (lanes, self.s_int_of(rank)) {
+            (Some(lanes), Some(rank)) => {
+                let Some(lane) = usize::try_from(rank).ok().filter(|&r| r < lanes) else {
+                    return Ok(self.literal_int(0));
+                };
+                let key = format!("position_one_hot_hint({x}, {n})");
+                let array = match self.hint_arrays.get(&key) {
+                    Some(name) => name.clone(),
+                    None => {
+                        self.use_lib("position_one_hot_hint");
+                        let name = self.fresh();
+                        let _ = writeln!(self.body, "    let {name}: [Field; {lanes}] = {key};");
+                        self.hint_arrays.insert(key, name.clone());
+                        name
+                    }
+                };
+                Ok(self.bind(&format!("{array}[{lane}]")))
+            }
+            _ => {
+                self.use_lib("position_one_hot_hint_at");
+                Ok(self.bind(&format!("position_one_hot_hint_at({x}, {n}, {rank})")))
+            }
+        }
     }
 
     fn use_lib(&mut self, sym: &'static str) {
@@ -2196,11 +2314,13 @@ impl Synthesizer for NoirEmitter<'_> {
         self.use_lib("qadd");
         let v = self.bind(&format!("qadd({}, {})", a, b));
         self.record_sum(&v, a, b);
+        self.track_linear(&v, a, b);
         Ok(v)
     }
     fn sub_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qsub");
         let v = self.bind(&format!("qsub({}, {})", a, b));
+        self.track_linear(&v, a, b);
         Ok(v)
     }
     fn mul_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
@@ -2298,6 +2418,9 @@ impl Synthesizer for NoirEmitter<'_> {
     }
 
     fn eq_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some(v) = self.asserted_equal(a, b) {
+            return Ok(v);
+        }
         if let Some(v) = self.scaled_bit_zero_test(a, b, false) {
             return Ok(v);
         }
@@ -2414,6 +2537,9 @@ impl Synthesizer for NoirEmitter<'_> {
     }
 
     fn eq_f(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some(v) = self.asserted_equal(a, b) {
+            return Ok(v);
+        }
         let (af, bf) = (a, b);
         Ok(self.bind_flag(&format!("if {} == {} {{ 1 }} else {{ 0 }}", af, bf)))
     }
@@ -3085,10 +3211,14 @@ impl Synthesizer for NoirEmitter<'_> {
         rank: &CellRef,
     ) -> Result<CellRef, ProvingError> {
         use crate::ir_defs::HintKind;
+        if kind == HintKind::PositionOneHot {
+            return self.position_one_hot_hint(operands, rank);
+        }
         let (lanes_fn, lane_at_fn) = match kind {
             HintKind::StableArgsort => ("argsort_hint", "argsort_hint_at"),
             HintKind::SortedValues => ("sorted_hint", "sorted_hint_at"),
             HintKind::MaskedSortedValues => ("masked_sorted_hint", "masked_sorted_hint_at"),
+            HintKind::PositionOneHot => unreachable!("handled above"),
         };
         // A masked hint takes the values and their activity flags as two
         // arrays; its lanes are as many as the values.

@@ -15,7 +15,11 @@
 //! * **Deferred products** (see `Halo2BaseSynthesizer::mul_i`, `add_i`).
 //! * **Asserted comparisons.** A comparison whose only use is an `Assert`
 //!   needs no result bit: an order is range-checked directly, `a != b` is an
-//!   inverse (see `Halo2BaseSynthesizer::assert_relation`, `assert_distinct`).
+//!   inverse, `a == b` a copy constraint (see
+//!   `Halo2BaseSynthesizer::assert_relation`, `assert_distinct`,
+//!   `assert_equal`).
+//! * **Bit hints.** A prover hint that an `AssertBit` checks is assigned
+//!   inside its bit gate (see `Halo2BaseSynthesizer::prover_hint`).
 
 use std::collections::{HashMap, HashSet};
 
@@ -32,9 +36,12 @@ pub(super) struct Plan {
     /// or the subtrahend of one `SubI`: the sum is emitted as one
     /// multiply-add gate there, and the product is never a cell.
     pub deferred_products: HashSet<u32>,
-    /// Statement ids of the comparisons (`<`, `<=`, `>`, `>=`, `!=`, key
-    /// orders) whose only use is `Assert`.
+    /// Statement ids of the comparisons (`<`, `<=`, `>`, `>=`, `==`, `!=`,
+    /// key orders) whose only use is `Assert`.
     pub asserted_comparisons: HashSet<u32>,
+    /// Statement ids of the prover hints some `AssertBit` checks directly:
+    /// each is loaded inside its own bit gate.
+    pub bit_hints: HashSet<u32>,
 }
 
 impl Plan {
@@ -44,6 +51,7 @@ impl Plan {
             bounds: planned_bounds(ir),
             deferred_products: deferred_products(ir, &uses),
             asserted_comparisons: asserted_comparisons(ir, &uses),
+            bit_hints: bit_hints(ir, &uses),
         }
     }
 }
@@ -81,12 +89,27 @@ fn asserted_comparisons(ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> HashSet<
                     | IR::LteF
                     | IR::GtF
                     | IR::GteF
+                    | IR::EqI
+                    | IR::EqF
                     | IR::NeI
                     | IR::NeF
                     | IR::KeyLess { .. }
             )
         })
         .filter(|stmt| only_user(ir, uses, stmt.stmt_id).is_some_and(|user| matches!(user.ir, IR::Assert)))
+        .map(|stmt| stmt.stmt_id)
+        .collect()
+}
+
+fn bit_hints(ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> HashSet<u32> {
+    ir.stmts
+        .iter()
+        .filter(|stmt| matches!(stmt.ir, IR::Hint { .. }))
+        .filter(|stmt| {
+            uses.get(&stmt.stmt_id).is_some_and(|users| {
+                users.iter().any(|user| ir.stmts.get(*user as usize).is_some_and(|u| matches!(u.ir, IR::AssertBit)))
+            })
+        })
         .map(|stmt| stmt.stmt_id)
         .collect()
 }
@@ -112,10 +135,16 @@ fn planned_bounds(ir: &IRGraph) -> HashMap<ValueId, i128> {
     bounds
 }
 
-/// A `MulI` qualifies when its value is an argument of exactly one
-/// statement, an `AddI` (either operand, not both) or a `SubI` (the
-/// subtrahend), and is not a root of any affine view in the provenance
+/// A `MulI` qualifies when every statement that reads its value is an
+/// `AddI`/`AddF` (either operand, not both) or a `SubI`/`SubF` (the
+/// subtrahend), and it is not a root of any affine view in the provenance
 /// table (memory reads translate roots to cells, so a root must be a cell).
+/// Each reader then emits the product inside its own multiply-add gate:
+/// the product's own gate is saved, and every reader's gate has as many
+/// cells as the plain addition it replaces. A product with several readers
+/// qualifies only when no reader adds it to another qualifying product
+/// (such a sum makes one of them a cell, which would be built again for
+/// every reader).
 fn deferred_products(ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> HashSet<u32> {
     let roots: HashSet<ValueId> = ir
         .stmts
@@ -123,17 +152,37 @@ fn deferred_products(ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> HashSet<u32
         .filter_map(|stmt| ir.provenance.affine_of(stmt.value_id))
         .flat_map(|view| view.terms.iter().map(|(root, _)| *root))
         .collect();
-    ir.stmts
+    let fused_by = |product: u32, user: u32| -> bool {
+        let Some(user) = ir.stmts.get(user as usize) else { return false };
+        match (&user.ir, user.arguments.as_slice()) {
+            // `add_f`/`sub_f` are `add_i`/`sub_i` on the Q encodings.
+            (IR::AddI | IR::AddF, [a, b]) => a != b,
+            (IR::SubI | IR::SubF, [a, b]) => *b == product && a != b,
+            _ => false,
+        }
+    };
+    let candidates: HashSet<u32> = ir
+        .stmts
         .iter()
         .filter(|stmt| matches!(stmt.ir, IR::MulI) && !roots.contains(&stmt.value_id))
         .filter(|stmt| {
-            let Some(user) = only_user(ir, uses, stmt.stmt_id) else { return false };
-            match (&user.ir, user.arguments.as_slice()) {
-                (IR::AddI, [a, b]) => a != b,
-                (IR::SubI, [a, b]) => *b == stmt.stmt_id && a != b,
-                _ => false,
-            }
+            uses.get(&stmt.stmt_id)
+                .is_some_and(|users| users.iter().all(|&user| fused_by(stmt.stmt_id, user)))
         })
         .map(|stmt| stmt.stmt_id)
+        .collect();
+    let other_operand = |user: u32, product: u32| -> Option<u32> {
+        ir.stmts.get(user as usize)?.arguments.iter().copied().find(|&arg| arg != product)
+    };
+    candidates
+        .iter()
+        .copied()
+        .filter(|&product| match uses.get(&product).map(Vec::as_slice) {
+            Some([_]) => true,
+            Some(users) => users
+                .iter()
+                .all(|&user| other_operand(user, product).is_none_or(|other| !candidates.contains(&other))),
+            None => false,
+        })
         .collect()
 }

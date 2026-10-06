@@ -1130,6 +1130,52 @@ pub fn sorted_hint_at<let N: u32>(a: [Field; N], rank: Field) -> Field {
     unsafe { lane_or_zero(hint_sorted(a), rank) }
 }
 
+// NumPy's position of the index x on an axis of length n: x for 0 <= x <= n,
+// x + n for -n <= x < 0 (kernel::position_one_hot), or none.
+unconstrained fn hint_position(x: Field, n: Field) -> (bool, Field) {
+    if hint_is_negative(x) {
+        let p = x + n;
+        (!hint_is_negative(p), p)
+    } else {
+        (!n.lt(x), x)
+    }
+}
+
+unconstrained fn hint_position_one_hot<let L: u32>(x: Field, n: Field) -> [Field; L] {
+    let (valid, p) = hint_position(x, n);
+    let mut lanes: [Field; L] = [0; L];
+    for r in 0..L {
+        if valid & (p == r as Field) {
+            lanes[r] = 1;
+        }
+    }
+    lanes
+}
+
+/// The one-hot of NumPy's position of x on an axis of length n, over the
+/// L = n + 1 positions 0..=n (kernel::hint_values, PositionOneHot). A prover
+/// hint: the caller must pin every lane it uses.
+pub fn position_one_hot_hint<let L: u32>(x: Field, n: Field) -> [Field; L] {
+    // Safety: a prover hint; Zinnia's IR pins every lane it reads.
+    unsafe { hint_position_one_hot(x, n) }
+}
+
+/// Lane `rank` of `position_one_hot_hint(x, n)`, 0 for any other rank. A
+/// prover hint: the caller must pin it.
+pub fn position_one_hot_hint_at(x: Field, n: Field, rank: Field) -> Field {
+    // Safety: a prover hint; Zinnia's IR pins every lane it reads.
+    unsafe { hint_position_lane(x, n, rank) }
+}
+
+unconstrained fn hint_position_lane(x: Field, n: Field, rank: Field) -> Field {
+    let (valid, p) = hint_position(x, n);
+    if valid & (p == rank) {
+        1
+    } else {
+        0
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests: honest values
 // ---------------------------------------------------------------------------
