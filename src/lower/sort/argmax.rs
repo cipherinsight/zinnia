@@ -153,12 +153,17 @@ impl<'a> Facts<'a> {
     fn new(graph: &'a IRGraph) -> Facts<'a> {
         let mut slots: HashMap<u32, Vec<Option<StmtId>>> = HashMap::new();
         let mut spoiled: Vec<u32> = Vec::new();
+        let mut read: Vec<u32> = Vec::new();
         let mut by_operands = HashMap::new();
         for stmt in &graph.stmts {
             match stmt.ir {
                 IR::AllocateMemory { segment_id, size, .. } => {
                     slots.insert(segment_id, vec![None; size as usize]);
                 }
+                IR::ReadMemory { segment_id } => read.push(segment_id),
+                // A write after a read: the segment's contents depend on
+                // when it is read.
+                IR::WriteMemory { segment_id } if read.contains(&segment_id) => spoiled.push(segment_id),
                 IR::WriteMemory { segment_id } => {
                     let address = match graph.stmts[stmt.arguments[0] as usize].ir {
                         IR::ConstantInt { value } => usize::try_from(value).ok(),

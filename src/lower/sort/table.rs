@@ -86,10 +86,19 @@ fn affine_tables(graph: &IRGraph) -> HashMap<u32, Table> {
     };
     let mut slots: HashMap<u32, Vec<Option<(i64, bool)>>> = HashMap::new();
     let mut spoiled: HashSet<u32> = HashSet::new();
+    let mut read: HashSet<u32> = HashSet::new();
     for stmt in &graph.stmts {
         match stmt.ir {
             IR::AllocateMemory { segment_id, size, .. } => {
                 slots.insert(segment_id, vec![None; size as usize]);
+            }
+            IR::ReadMemory { segment_id } => {
+                read.insert(segment_id);
+            }
+            // A write after a read (in statement order) would make the
+            // table's contents depend on when it is read.
+            IR::WriteMemory { segment_id } if read.contains(&segment_id) => {
+                spoiled.insert(segment_id);
             }
             IR::WriteMemory { segment_id } => {
                 let address = constant(stmt.arguments[0]).filter(|&(_, float)| !float);
