@@ -292,10 +292,15 @@ pub(super) fn astype(b: &mut IRBuilder, input: &Value, dtype: &Value) -> Value {
     let convert = |b: &mut IRBuilder, value: &Value| {
         match value {
             Value::Integer(_) | Value::Boolean(_) if to_float => b.ir_float_cast(value),
-            Value::Float(_) if !to_float => b.ir_int_cast(value),
+            Value::Float(_) | Value::Boolean(_) if !to_float => b.ir_int_cast(value),
             _ => value.clone(),
         }
     };
+    // A NumPy scalar's `astype` is a scalar (`np.floor(2.5).astype(int)`),
+    // not a 0-d array.
+    if matches!(input, Value::Integer(_) | Value::Float(_) | Value::Boolean(_)) {
+        return convert(b, input);
+    }
     if let Value::DynamicNDArray(data) = input {
         let mut result = crate::ops::dyn_ndarray::force_contiguous(b, data);
         let cells = crate::helpers::segment::read_all_typed(b, result.segment_id, result.max_length(), result.dtype);

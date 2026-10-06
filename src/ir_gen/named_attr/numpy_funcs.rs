@@ -52,6 +52,54 @@ fn np_array_equal(b: &mut crate::builder::IRBuilder, args: &[Value]) -> Value {
     crate::helpers::value_ops::to_scalar_bool(b, &cmp)
 }
 
+/// The Zinnia type a NumPy dtype alias (`np.float32`, `np.int64`, ...)
+/// stands for; widths collapse into Zinnia's int64 / Q32 / complex types.
+fn numpy_dtype_alias(name: &str) -> Option<ZinniaType> {
+    match name {
+        "float16" | "float32" | "float64" | "double" | "single" | "half" | "longdouble" => {
+            Some(ZinniaType::Float)
+        }
+        "int8" | "int16" | "int32" | "int64" | "uint8" | "uint16" | "uint32" | "uint64" | "intp"
+        | "uintp" | "long" | "byte" | "short" | "intc" | "uintc" | "ubyte" | "ushort"
+        | "longlong" | "ulonglong" => Some(ZinniaType::Integer),
+        "bool_" => Some(ZinniaType::Boolean),
+        "complex64" | "complex128" | "complex256" | "csingle" | "cdouble" | "clongdouble" => {
+            Some(ZinniaType::Complex)
+        }
+        _ => None,
+    }
+}
+
+/// A dtype alias called as a constructor, `np.float64(x)`: the value
+/// converted to that type (it used to return the type itself, which then
+/// reached an arithmetic op as an internal error). Floats of every width are
+/// Zinnia's Q32 floats, as they are in `dtype=` arguments; signed 64-bit
+/// integers truncate like `int()`. Narrower or unsigned integers, booleans
+/// and complex types are rejected: Zinnia cannot reproduce their range
+/// (wrap-around) or conversion rules here.
+fn numpy_scalar_type_call(
+    b: &mut crate::builder::IRBuilder,
+    alias: &str,
+    class: ZinniaType,
+    args: &[Value],
+) -> Value {
+    if args.len() != 1 {
+        panic!("np.{alias}(...) takes one argument");
+    }
+    let signed_64_bit = matches!(alias, "int64" | "intp" | "long" | "longlong");
+    match class {
+        ZinniaType::Float => super::array_compat::astype(b, &args[0], &Value::Class(ZinniaType::Float)),
+        ZinniaType::Integer if signed_64_bit => {
+            super::array_compat::astype(b, &args[0], &Value::Class(ZinniaType::Integer))
+        }
+        _ => panic!(
+            "np.{alias}(...) is not supported: Zinnia computes integers as int64 and floats in Q32 \
+             fixed point, and does not reproduce this type's range or conversion; use \
+             np.int64/np.float64 (or a comparison for booleans)"
+        ),
+    }
+}
+
 /// `np.isclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False)`:
 /// `|a - b| <= atol + rtol * |b|` element-wise, computed in Q32 fixed point
 /// (integers are converted to floats, as NumPy does, so the tolerance term
@@ -672,21 +720,14 @@ impl IRGenerator {
         let v = match (target, member) {
             // ── np.* (numpy-like operations) ───────────────────────────
             // numpy dtype aliases — collapse width into ZinniaType (Float / Integer / Boolean)
-            (
-                "np",
-                "float16" | "float32" | "float64" | "double" | "single" | "half" | "longdouble",
-            ) => Value::Class(ZinniaType::Float),
-            (
-                "np",
-                "int8" | "int16" | "int32" | "int64" | "uint8" | "uint16" | "uint32" | "uint64"
-                | "intp" | "uintp" | "long" | "byte" | "short" | "intc" | "uintc" | "ubyte"
-                | "ushort" | "longlong" | "ulonglong",
-            ) => Value::Class(ZinniaType::Integer),
-            ("np", "bool_") => Value::Class(ZinniaType::Boolean),
-            (
-                "np",
-                "complex64" | "complex128" | "complex256" | "csingle" | "cdouble" | "clongdouble",
-            ) => Value::Class(ZinniaType::Complex),
+            ("np", alias) if numpy_dtype_alias(alias).is_some() => {
+                let class = numpy_dtype_alias(alias).unwrap();
+                if visited_args.is_empty() {
+                    Value::Class(class)
+                } else {
+                    numpy_scalar_type_call(&mut self.builder, alias, class, visited_args)
+                }
+            }
             // Complex helpers
             ("np", "conj" | "conjugate") => {
                 let v = visited_args_orig.first().cloned().unwrap_or(Value::None);

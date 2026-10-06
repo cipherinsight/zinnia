@@ -45,3 +45,48 @@ def test_median_without_arguments_is_a_clear_error():
 def kernel(x: NDArray[int, 4]):
     return np.median()
 ''')
+
+
+def test_astype_of_a_scalar_is_a_scalar():
+    # `np.floor(s / 2).astype(int)` (DS-1000 0467/0468) was a 0-d array, and
+    # `max(0, i - r)` with it failed with "cannot materialize a composite".
+    program = compile_kernel('''
+def kernel(s: int, i: int, expected: int):
+    r = np.floor(s / 2).astype(int)
+    assert max(0, i - r) + r == expected
+''')
+    for s, i in [(3, 0), (3, 4), (7, 2)]:
+        r = int(np.floor(s / 2).astype(int))
+        truth = max(0, i - r) + r
+        assert accepts(program, s, i, truth)
+        assert not accepts(program, s, i, truth + 1)
+
+
+def test_numpy_scalar_types_called_as_constructors_convert():
+    # `np.float32(x)` returned the type itself, which then reached an
+    # arithmetic op as an internal error.
+    program = compile_kernel('''
+def kernel(x: float, n: int, expected: float):
+    assert np.float32(x) * 2 + np.float64(n) + np.int64(x) == expected
+''')
+    for x, n in [(2.75, 3), (-1.5, 0)]:
+        truth = float(np.float64(x) * 2 + np.float64(n) + np.int64(x))
+        assert accepts(program, x, n, truth)
+        assert not accepts(program, x, n, truth + 1)
+
+
+@pytest.mark.parametrize("call", ["np.uint8(x)", "np.int32(x)", "np.bool_(x)"])
+def test_narrow_numpy_scalar_types_are_rejected(call):
+    with pytest.raises(ZinniaException, match=r"is not supported: Zinnia computes integers as int64"):
+        compile_kernel(f'''
+def kernel(x: int):
+    return {call} + 1
+''')
+
+
+def test_int_of_a_complex_number_is_pythons_type_error():
+    with pytest.raises(ZinniaException, match=r"int\(\) argument must be a real number, not 'complex'"):
+        compile_kernel('''
+def kernel(x: float):
+    return int(x * 1j)
+''')
