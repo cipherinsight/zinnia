@@ -616,13 +616,13 @@ fn assert_scalar_fact_is_guarded_after_branch_join() {
         ProveOutcome::Unknown,
         "post-join assert fact must remain guarded without the branch path"
     );
-    assert!(facts.iter().any(|fact| matches!(
-        fact,
-        ContractTerm::BoolComb {
-            op: crate::optim::predicates::BoolOp::Or,
-            operands
-        } if operands.len() == 2 && operands[1] == assert_fact
-    )));
+    // The fact is kept under the branch's execution guard (usable again
+    // by code that runs under the same condition), not unconditionally.
+    assert!(gen
+        .builder
+        .facts
+        .guarded_facts()
+        .any(|(atoms, fact)| !atoms.is_empty() && *fact == assert_fact));
 }
 
 #[test]
