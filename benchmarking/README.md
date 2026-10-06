@@ -61,7 +61,11 @@ For each case, in a seeded random order, and each requested system:
 
 Every step runs under the same memory cap (a transient systemd scope with `MemoryMax`, no swap,
 as `eval-redo/tools/memrun.sh`, plus `OOMPolicy=continue` so an OOM-killed tool is reported as
-`out_of_memory` by its step) and the same timeout. Work files count against the cap when the
+`out_of_memory` by its step) and the same timeout. On a machine without a systemd user manager
+(a Docker container), `ZINNIA_HARNESS_MEMORY_CAP=watchdog` enforces the cap instead by summing
+the RSS of the step's processes every 0.1 s and killing them all above the cap
+(`harness/isolation.py`); `run` refuses to start when the chosen cap cannot be applied, and the
+manifest records the mechanism (`memory_cap`). Work files count against the cap when the
 results directory is on tmpfs; keep epochs on disk. Children see no GPU
 (`CUDA_VISIBLE_DEVICES=""`, `SP1_PROVER=cpu`, `RISC0_DEV_MODE` unset). KDE's file indexer is
 suspended during an epoch (`balooctl6`/`balooctl`) and resumed after. A raw record's status is

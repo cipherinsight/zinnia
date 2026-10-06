@@ -17,7 +17,7 @@ from pathlib import Path
 
 from benchmarking.harness import build, environment, gitstate, paths, toolchains
 from benchmarking.harness.adapters.contract import PROGRAMS
-from benchmarking.harness.isolation import memory_capped
+from benchmarking.harness.isolation import WATCHDOG_INTERVAL_S, cap_mechanism, memory_capped
 from benchmarking.harness.protocol import RunConfig
 
 
@@ -68,6 +68,9 @@ def start_manifest(epoch_name: str, config: RunConfig, build_record: dict | None
         "config": asdict(config),
         "child_command": memory_capped([config.python, "-m", "benchmarking.harness.step",
                                         "REQUEST", "RESPONSE"], config.memory_max),
+        "memory_cap": {"max": config.memory_max, "mechanism": cap_mechanism(),
+                       "watchdog_interval_s": (WATCHDOG_INTERVAL_S
+                                               if cap_mechanism() == "watchdog" else None)},
         "case_set": {"path": paths.relative_to_repo(case_set) if case_set else None,
                      "sha256": _sha256_or_none(case_set) if case_set else None},
         "case_order": case_order,

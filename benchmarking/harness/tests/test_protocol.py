@@ -7,8 +7,10 @@ Each fake program implements the program contract for the toy kernel
 from __future__ import annotations
 
 import json
+import os
 import random
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -17,6 +19,7 @@ from benchmarking.harness import paths
 from benchmarking.harness.adapters import get_adapter
 from benchmarking.harness.analysis.aggregate import summarize
 from benchmarking.harness.case_sets import PerfCase, Tolerance
+from benchmarking.harness import isolation
 from benchmarking.harness.isolation import memory_capped
 from benchmarking.harness.protocol import CaseProtocol, Epoch, RunConfig, StepRunner
 
@@ -123,7 +126,8 @@ def test_missing_program_is_no_program(tmp_path, fake_baselines):
     assert records["cairo"]["status"] == "no_program"
 
 
-def test_memory_cap_wraps_in_a_systemd_scope():
+def test_memory_cap_wraps_in_a_systemd_scope(monkeypatch):
+    monkeypatch.delenv(isolation.CAP_VARIABLE, raising=False)
     command = memory_capped(["python", "-c", "pass"], "8G")
     assert command[:3] == ["systemd-run", "--user", "--scope"]
     assert "MemoryMax=8G" in command and "MemorySwapMax=0" in command
@@ -132,9 +136,12 @@ def test_memory_cap_wraps_in_a_systemd_scope():
     assert memory_capped(["true"], None) == ["true"]
 
 
-@pytest.mark.skipif(shutil.which("systemd-run") is None, reason="needs systemd-run")
-def test_a_tool_killed_at_the_memory_cap_is_out_of_memory(tmp_path, fake_baselines):
+def test_a_tool_killed_at_the_memory_cap_is_out_of_memory(tmp_path, fake_baselines,
+                                                         monkeypatch):
     """The fake program allocates past a 300M cap in a grandchild during prove."""
+    monkeypatch.setenv(isolation.CAP_VARIABLE, "systemd")
+    if isolation.cap_problem("300M"):
+        pytest.skip("needs a working systemd user manager")
     install_fake(fake_baselines, "halo2_hw", "allocate_on_prove")
     case = make_case(tmp_path)
     config = RunConfig(systems=["halo2_hw"], repeats=1, step_timeout_s=60.0, memory_max="300M")
@@ -143,3 +150,46 @@ def test_a_tool_killed_at_the_memory_cap_is_out_of_memory(tmp_path, fake_baselin
     record = protocol.run(case, [get_adapter("halo2_hw")])[0].record
     assert record["status"] == "out_of_memory"
     assert record["failure"]["step"] == "warmup"
+
+
+def test_watchdog_mechanism_starts_the_command_without_systemd(monkeypatch):
+    monkeypatch.setenv(isolation.CAP_VARIABLE, "watchdog")
+    assert memory_capped(["true"], "8G") == ["choom", "-n", "1000", "--", "true"]
+    assert isolation.cap_problem("8G") is None
+    assert isolation.cap_problem("eight gigabytes") is not None
+    monkeypatch.setenv(isolation.CAP_VARIABLE, "cgroups")
+    with pytest.raises(ValueError):
+        isolation.cap_mechanism()
+
+
+def test_memory_sizes_use_systemd_units():
+    assert isolation.size_in_bytes("16G") == 16 << 30
+    assert isolation.size_in_bytes("300M") == 300 << 20
+    assert isolation.size_in_bytes("1.5k") == 1536
+    assert isolation.size_in_bytes("4096") == 4096
+
+
+HOLD_MEMORY = ("import time; x = bytearray(400 << 20); x[::4096] = b'1' * len(x[::4096]); "
+               "time.sleep(60)")
+
+
+def test_watchdog_kills_a_session_over_the_cap(tmp_path, monkeypatch):
+    """A grandchild holding 400 MB under a 200M cap: the whole session dies quickly."""
+    monkeypatch.setenv(isolation.CAP_VARIABLE, "watchdog")
+    command = [sys.executable, "-c",
+               f"import subprocess, sys; subprocess.run([sys.executable, '-c', {HOLD_MEMORY!r}])"]
+    outcome = isolation.run_child(command, env=dict(os.environ), cwd=tmp_path,
+                                  timeout_s=30.0, memory_max="200M", log_path=tmp_path / "log")
+    assert outcome.over_memory_cap and outcome.killed_by_sigkill and not outcome.timed_out
+    assert outcome.peak_rss_bytes > 200 << 20
+    assert outcome.wall_s < 20
+    assert "over the 200M cap" in (tmp_path / "log").read_text()
+
+
+def test_watchdog_leaves_a_small_step_alone(tmp_path, monkeypatch):
+    monkeypatch.setenv(isolation.CAP_VARIABLE, "watchdog")
+    outcome = isolation.run_child([sys.executable, "-c", "import time; time.sleep(0.5)"],
+                                  env=dict(os.environ), cwd=tmp_path,
+                                  timeout_s=30.0, memory_max="1G", log_path=tmp_path / "log")
+    assert outcome.returncode == 0 and not outcome.over_memory_cap
+    assert 0 < outcome.peak_rss_bytes < 1 << 30

@@ -1,8 +1,9 @@
 """`run`: one epoch, i.e. every requested system on every requested case.
 
 Refuses to start when a Zinnia system is requested and the installed extension
-is not a recorded release build (audit H-01), or when a toolchain the
-requested systems need is missing or has the wrong version.
+is not a recorded release build (audit H-01), when a toolchain the requested
+systems need is missing or has the wrong version, or when the memory cap
+cannot be applied on this machine.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import random
 import time
 from pathlib import Path
 
-from benchmarking.harness import build, environment, manifest, paths, toolchains
+from benchmarking.harness import build, environment, isolation, manifest, paths, toolchains
 from benchmarking.harness.adapters import ZINNIA_SYSTEMS, get_adapter
 from benchmarking.harness.adapters import noir_toolchain
 from benchmarking.harness.case_sets import PerfCase
@@ -40,6 +41,9 @@ def _check_preconditions(config: RunConfig) -> tuple[dict | None, list[toolchain
         raise RunRefused("toolchain check failed: "
                          + ", ".join(f"{p.name} ({p.status}: {p.found})" for p in failed))
     environment.assert_cpu_only_allowed()
+    cap_problem = isolation.cap_problem(config.memory_max)
+    if cap_problem:
+        raise RunRefused(f"memory cap {config.memory_max}: {cap_problem}")
     return record, probes
 
 
