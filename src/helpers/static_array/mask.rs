@@ -363,7 +363,9 @@ pub fn try_apply_boolean_mask_write(
         // (binding-audit case 0490).
         //
         // Round-trip cancellation: when the RHS carries a mask-read view
-        // whose mask is THIS mask (same cell SSA values), the packed
+        // whose mask is THIS mask (the same cell values: the same SSA
+        // values, or statements computing the same values, see
+        // `IRBuilder::same_value`), the packed
         // invariant gives rhs[#trues before i] == view.sources[i] for
         // every true position — the write is positional after all, with
         // no unpack network needed.
@@ -390,8 +392,10 @@ pub fn try_apply_boolean_mask_write(
                         .iter()
                         .zip(mask_cells.iter())
                         .all(|(a, c)| match (a.value_id(), c.value_id()) {
-                            (Some(x), Some(y)) => x == y,
-                            _ => false,
+                            (Some(x), Some(y)) if x == y => true,
+                            // The same mask written twice (`x[x > c] = x[x > c] - d`)
+                            // is two sets of statements computing one value.
+                            _ => b.same_value(a, c),
                         })
             })
             .map(|view| view.sources.clone());
@@ -536,10 +540,13 @@ pub fn try_apply_boolean_mask_write(
             // over this cell a sum over the masks' atoms).
             mask_write_lane(b, &cur_cast, &new_cast, &mask_bool)
         };
-        b.ir_write_memory(arr_seg, &addr, &selected);
+        // Under a runtime execution predicate (`if c: arr[mask] = v`) the
+        // stored value is `select(c, selected, old)`: the cache must hold
+        // that, not `selected` (which applied the write on every path).
+        let stored = b.ir_write_memory(arr_seg, &addr, &selected);
         if let Some(cells) = payload.as_mut() {
             match cells.get_mut(abs) {
-                Some(cell) => *cell = selected.clone(),
+                Some(cell) => *cell = stored,
                 None => payload = None,
             }
         }

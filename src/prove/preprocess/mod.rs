@@ -31,7 +31,7 @@ use crate::circuit_input::{CircuitInputs, ResolvedWitness};
 use crate::ir::IRGraph;
 use crate::ir_defs::IR;
 use crate::prove::error::ProvingError;
-use crate::prove::kernel::{self, Field};
+use crate::prove::kernel;
 use crate::prove::types::{ProvingParams, Value};
 
 use self::callback::ExternalCallback;
@@ -228,16 +228,9 @@ impl<'a> Preprocessor<'a> {
                 let bv = kernel::fp_to_i64(args[1]);
                 Ok(Some(kernel::i64_to_fp(av ^ bv)))
             }
-            IR::ShlI => {
-                let av = kernel::fp_to_i64(args[0]);
-                let bv = kernel::fp_to_i64(args[1]).max(0).min(63) as u32;
-                Ok(Some(kernel::i64_to_fp(av.wrapping_shl(bv))))
-            }
-            IR::ShrI => {
-                let av = kernel::fp_to_i64(args[0]);
-                let bv = kernel::fp_to_i64(args[1]).max(0).min(63) as u32;
-                Ok(Some(kernel::i64_to_fp(av.wrapping_shr(bv))))
-            }
+            // Outside the int64 window no backend has a proof; any value will do.
+            IR::ShlI => Ok(Some(kernel::fp_shl(args[0], args[1]).unwrap_or(Fp::zero()))),
+            IR::ShrI => Ok(Some(kernel::fp_shr(args[0], args[1]).unwrap_or(Fp::zero()))),
             IR::BitNotI => {
                 let av = kernel::fp_to_i64(args[0]);
                 Ok(Some(kernel::i64_to_fp(!av)))
@@ -390,7 +383,7 @@ impl<'a> Preprocessor<'a> {
             IR::LogF => Ok(Some(kernel::fp_log(args[0], prec).unwrap_or(Fp::zero()))),
             IR::ArcSinF => Ok(Some(kernel::fp_arcsin(args[0], prec))),
             IR::ArcCosF => Ok(Some(kernel::fp_arccos(args[0], prec))),
-            IR::ArcTan2F => Ok(Some(kernel::fp_atan2(args[0], args[1], prec))),
+            IR::ArcTan2F => Ok(Some(kernel::fp_atan2(args[0], args[1], prec).unwrap_or(Fp::zero()))),
 
             // Logic
             IR::LogicalAnd => Ok(Some(if args[0] != Fp::zero() && args[1] != Fp::zero() {

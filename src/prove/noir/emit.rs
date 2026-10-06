@@ -30,12 +30,14 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 
-use crate::circuit_input::{InputNode, InputPath, PathSegment, ResolvedWitness};
+use crate::circuit_input::{InputNode, InputPath, ResolvedWitness};
 use crate::ir::IRGraph;
 use crate::prove::error::ProvingError;
 use crate::prove::interpreter::interpret_ir;
 use crate::prove::traits::Synthesizer;
 use crate::prove::types::ProvingParams;
+
+use super::inputs::{leaf_expr, noir_param_identifier, LeafLayout};
 
 const Q_BITS: u32 = 32;
 /// bb gates of one `if x == v { 1 } else { 0 }` indicator (an inverse hint
@@ -319,7 +321,7 @@ fn emit_prover_toml(witness: &ResolvedWitness) -> String {
         // safer default is to still write them — nargo errors out if a
         // declared `fn main` parameter has no Prover.toml entry, and the
         // function signature does declare every input. So we always emit.
-        write_param(&mut out, &p.name, &p.value);
+        write_param(&mut out, &noir_param_identifier(&p.name), &p.value);
     }
     out
 }
@@ -345,7 +347,9 @@ fn write_param(out: &mut String, name: &str, node: &InputNode) {
         InputNode::Hex(s) => {
             let _ = writeln!(out, "{} = \"{}\"", name, s);
         }
-        InputNode::Array { elements, .. } => {
+        // A tuple or a complex number is written like an array: its leaves in
+        // order (`inputs::LeafLayout`).
+        InputNode::Array { elements, .. } | InputNode::Sequence(elements) => {
             let _ = write!(out, "{} = [", name);
             let mut first = true;
             for e in flat_leaves(elements) {
@@ -356,17 +360,6 @@ fn write_param(out: &mut String, name: &str, node: &InputNode) {
                 let _ = write!(out, "\"{}\"", leaf_to_field_decimal(e));
             }
             let _ = writeln!(out, "]");
-        }
-        InputNode::Sequence(items) => {
-            // Heterogeneous tuples — emit as inline-table with positional keys.
-            // None of the 19 pilot kernels exercise this path; surface an
-            // explicit comment so the failure case is visible at runtime.
-            let _ = writeln!(
-                out,
-                "# {} = <Sequence — not yet supported in Prover.toml>",
-                name
-            );
-            let _ = items;
         }
         InputNode::Hashed { .. } => {
             let _ = writeln!(
@@ -461,8 +454,13 @@ fn sub_bigint_decimal(a: &str, b: &str) -> String {
 
 #[derive(Debug, Clone)]
 pub struct EmittedInput {
+    /// The kernel's parameter name (`InputPath::param`).
+    pub param: String,
+    /// The `fn main` parameter name ([`noir_param_identifier`]).
     pub name: String,
     pub kind: InputKind,
+    /// Where each scalar leaf sits in the flat parameter.
+    pub layout: LeafLayout,
     /// Declared `pub` on `fn main` (a `Public[...]` kernel parameter).
     pub is_public: bool,
 }
@@ -499,8 +497,10 @@ fn derive_input_params(witness: &ResolvedWitness) -> Vec<EmittedInput> {
             InputNode::Hashed { .. } => InputKind::ScalarField,
         };
         out.push(EmittedInput {
-            name: p.name.clone(),
+            param: p.name.clone(),
+            name: noir_param_identifier(&p.name),
             kind,
+            layout: LeafLayout::of(&p.value),
             is_public: p.is_public,
         });
     }
@@ -1767,8 +1767,8 @@ impl<'a> NoirEmitter<'a> {
         self.divmod_call(call)
     }
 
-    /// An integer divisor must be an int64: `b` in `[-2^63, 2^63)`, with no
-    /// proof otherwise (`assert_in_window`, one 64-bit check of `b + 2^63`;
+    /// An integer divisor (or the operand of `>>`) must be an int64: `b` in
+    /// `[-2^63, 2^63)`, with no proof otherwise (`assert_in_window`, one 64-bit check of `b + 2^63`;
     /// nothing when a constant or an earlier check already proves the range,
     /// e.g. an input's domain check).
     ///
@@ -1790,7 +1790,7 @@ impl<'a> NoirEmitter<'a> {
         self.materialize_sum(b);
     }
 
-    fn ensure_int64_divisor(&mut self, b: &str) {
+    fn ensure_int64(&mut self, b: &str) {
         self.witness_divisor(b);
         let window = (-(1i128 << 63), (1i128 << 63) - 1);
         if self.known_range(b).is_some_and(|(lo, hi)| lo >= window.0 && hi <= window.1) {
@@ -2370,38 +2370,12 @@ fn input_index_expr(
     path: &InputPath,
     inputs: &[EmittedInput],
 ) -> Result<String, ProvingError> {
-    let kind = inputs
-        .iter()
-        .find(|i| i.name == path.param)
-        .map(|i| &i.kind);
-    match kind {
-        Some(InputKind::ScalarField) | Some(InputKind::Bool) | None => Ok(path.param.clone()),
-        Some(InputKind::ArrayField { .. }) => {
-            // Zinnia's IR-gen flattens `path.segments` to a single Index
-            // for NDArray reads on every kernel we emit — the witness
-            // Array reaching us is already flat-leaves. The single-axis
-            // case is therefore the only sound one to index here.
-            if path.segments.len() == 1 {
-                if let Some(PathSegment::Index(i)) = path.segments.first() {
-                    return Ok(format!("{}[{}]", path.param, i));
-                }
-            }
-            // Multi-axis fallback removed: the previous code summed index
-            // segments (`flat += i`) which is wrong for any genuine
-            // multi-axis input (strides are unavailable in `EmittedInput`).
-            // Fail loud rather than emit a silently-wrong flat index. If a
-            // real kernel ever lands here, thread shape/stride info through
-            // `EmittedInput` and compute the true flat index.
-            Err(ProvingError::UnsupportedIR {
-                op_name: format!(
-                    "noir-emit:multi-axis input index ({} segments) on param `{}` — \
-                     IR-gen did not flatten; flat index unavailable without strides",
-                    path.segments.len(),
-                    path.param
-                ),
-            })
-        }
-    }
+    let input = inputs.iter().find(|i| i.param == path.param).ok_or_else(|| {
+        ProvingError::other(format!("noir-emit: read of `{}`, which is no circuit input", path.param))
+    })?;
+    leaf_expr(&input.name, &input.layout, path).ok_or_else(|| ProvingError::UnsupportedIR {
+        op_name: format!("noir-emit: input path `{path}` does not address a scalar of `{}`", path.param),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -2510,7 +2484,7 @@ impl Synthesizer for NoirEmitter<'_> {
         if let Some((q, _r)) = self.constant_floor_divmod(a, b) {
             return Ok(self.literal_int(q));
         }
-        self.ensure_int64_divisor(b);
+        self.ensure_int64(b);
         let (q, _r) = self.floor_divmod_cells(a, b);
         Ok(q)
     }
@@ -2538,7 +2512,7 @@ impl Synthesizer for NoirEmitter<'_> {
         if let Some((_q, r)) = self.constant_floor_divmod(a, b) {
             return Ok(self.literal_int(r));
         }
-        self.ensure_int64_divisor(b);
+        self.ensure_int64(b);
         let (_q, r) = self.floor_divmod_cells(a, b);
         Ok(r)
     }
@@ -2586,11 +2560,56 @@ impl Synthesizer for NoirEmitter<'_> {
         let and = self.bit_and_i(a, b)?;
         Ok(self.or_xor_from_and(a, b, &and, 2))
     }
-    fn shl_i(&mut self, _a: &CellRef, _b: &CellRef) -> Result<CellRef, ProvingError> {
-        noop_unsupported!(self, "shl_i")
+    /// NumPy's int64 `a << b` (`kernel::fp_shl`): `a * 2^b` wrapped into the
+    /// int64 window for `0 <= b < 64`, 0 for any other `b`; `a` must be an
+    /// int64 (`ensure_int64`). A constant count is resolved here (the wrap,
+    /// `wrap_int64`, is skipped when the product's known range lies in the
+    /// window); a dynamic one is `shl_int64` (noir_fpc).
+    fn shl_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some((x, y)) = self.constant_pair(a, b) {
+            return Ok(self.literal_int(crate::prove::kernel::int64_shl(x, y)));
+        }
+        if let Some(count) = self.s_int_of(b).and_then(|c| i64::try_from(c).ok()) {
+            let c = match crate::prove::kernel::int64_shift_count(count) {
+                None => return Ok(self.literal_int(0)),
+                Some(0) => return Ok(a.clone()),
+                Some(c) => c,
+            };
+            self.ensure_int64(a);
+            let power = 1i128 << c;
+            let fits = self.known_range(a).is_some_and(|(lo, hi)| {
+                let window = -(1i128 << 63)..(1i128 << 63);
+                window.contains(&(lo << c)) && window.contains(&(hi << c))
+            });
+            let power = self.bind_val(&power.to_string(), ConcreteValue::Int(power));
+            let product = self.integer_arith(a, &power, '*');
+            if fits {
+                return Ok(product);
+            }
+            self.use_lib("wrap_int64");
+            return Ok(self.bind(&format!("wrap_int64({product})")));
+        }
+        self.use_lib("shl_int64");
+        Ok(self.bind(&format!("shl_int64({a}, {b})")))
     }
-    fn shr_i(&mut self, _a: &CellRef, _b: &CellRef) -> Result<CellRef, ProvingError> {
-        noop_unsupported!(self, "shr_i")
+    /// NumPy's int64 `a >> b` (`kernel::fp_shr`): `floor(a / 2^c)` with
+    /// `c = b` for `0 <= b < 64`, else 63 (the sign fill); `a` must be an
+    /// int64 (`ensure_int64`). A constant count is the floor division by the
+    /// constant `2^c` (`divmod_by_pow2`: a c-bit remainder check, the quotient
+    /// window-checked); a dynamic one is `shr_int64` (noir_fpc).
+    fn shr_i(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {
+        if let Some((x, y)) = self.constant_pair(a, b) {
+            return Ok(self.literal_int(crate::prove::kernel::int64_shr(x, y)));
+        }
+        if let Some(count) = self.s_int_of(b).and_then(|c| i64::try_from(c).ok()) {
+            self.ensure_int64(a);
+            return Ok(match crate::prove::kernel::int64_shift_count(count).unwrap_or(63) {
+                0 => a.clone(),
+                c => self.divide_by_positive_constant(a, 1i128 << c).0,
+            });
+        }
+        self.use_lib("shr_int64");
+        Ok(self.bind(&format!("shr_int64({a}, {b})")))
     }
     fn bit_not_i(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         // Two's complement: !a = -a - 1.
@@ -2668,7 +2687,7 @@ impl Synthesizer for NoirEmitter<'_> {
             // that of `a * 2^32` by `b`.
             let (numerator, divisor) = match self.integral_float.get(b.as_str()).cloned() {
                 Some(n) => {
-                    self.ensure_int64_divisor(&n);
+                    self.ensure_int64(&n);
                     (a.to_string(), n)
                 }
                 None => (format!("{a} * {Q_U64}"), b.clone()),
@@ -2954,14 +2973,15 @@ impl Synthesizer for NoirEmitter<'_> {
         let v = self.bind(&format!("qarccos({})", a));
         Ok(v)
     }
+    /// `kernel::fp_atan2` (`qarctan2`, bit for bit); its domain, the int64
+    /// window of both operands, is checked first (`ensure_int64`: nothing
+    /// when a known range proves it). `qarctan2`'s own `sign_abs` admits
+    /// magnitudes up to 2^64.
     fn arctan2_f(&mut self, y: &CellRef, x: &CellRef) -> Result<CellRef, ProvingError> {
+        self.ensure_int64(y);
+        self.ensure_int64(x);
         self.use_lib("qarctan2");
-        let v = self.bind(&format!(
-            "qarctan2({}, {})",
-            y,
-            x
-        ));
-        Ok(v)
+        Ok(self.bind(&format!("qarctan2({y}, {x})")))
     }
 
     fn logical_and(&mut self, a: &CellRef, b: &CellRef) -> Result<CellRef, ProvingError> {

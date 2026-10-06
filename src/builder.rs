@@ -8,6 +8,7 @@ use crate::types::{NumberType, ScalarValue, StmtId, StringValue, Value};
 
 mod fixed_width;
 mod bool_dtype;
+mod same_value;
 pub(crate) mod guard;
 
 #[derive(Clone)]
@@ -3166,14 +3167,9 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
         IR::BitAndI => int_binary_ir(ir_id, args, |a, b| Some(a & b)),
         IR::BitOrI => int_binary_ir(ir_id, args, |a, b| Some(a | b)),
         IR::BitXorI => int_binary_ir(ir_id, args, |a, b| Some(a ^ b)),
-        IR::ShlI => int_binary_ir(ir_id, args, |a, b| {
-            let shift = b.max(0).min(63) as u32;
-            Some(a.wrapping_shl(shift))
-        }),
-        IR::ShrI => int_binary_ir(ir_id, args, |a, b| {
-            let shift = b.max(0).min(63) as u32;
-            Some(a.wrapping_shr(shift))
-        }),
+        // NumPy's int64 shifts (`kernel::int64_shl`, `int64_shr`).
+        IR::ShlI => int_binary_ir(ir_id, args, |a, b| Some(crate::prove::kernel::int64_shl(a, b))),
+        IR::ShrI => int_binary_ir(ir_id, args, |a, b| Some(crate::prove::kernel::int64_shr(a, b))),
         IR::BitNotI => int_unary_ir(ir_id, args, |a| Some(!a)),
 
         // ── Integer unary arithmetic ──────────────────────────────

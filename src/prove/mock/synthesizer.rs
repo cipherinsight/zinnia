@@ -196,17 +196,13 @@ impl Synthesizer for MockSynthesizer {
     }
 
     fn shl_i(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
-        let av = kernel::fp_to_i64(a.fp());
-        let bv = kernel::fp_to_i64(b.fp());
-        let shift = bv.max(0).min(63) as u32;
-        Ok(MockCell(kernel::i64_to_fp(av.wrapping_shl(shift))))
+        // No witness on any circuit for an operand outside the int64 window.
+        Ok(self.domain_result(kernel::fp_shl(a.fp(), b.fp()), || "`<<` of an operand outside the int64 window".into()))
     }
 
     fn shr_i(&mut self, a: &MockCell, b: &MockCell) -> Result<MockCell, ProvingError> {
-        let av = kernel::fp_to_i64(a.fp());
-        let bv = kernel::fp_to_i64(b.fp());
-        let shift = bv.max(0).min(63) as u32;
-        Ok(MockCell(kernel::i64_to_fp(av.wrapping_shr(shift))))
+        // No witness on any circuit for an operand outside the int64 window.
+        Ok(self.domain_result(kernel::fp_shr(a.fp(), b.fp()), || "`>>` of an operand outside the int64 window".into()))
     }
 
     fn bit_not_i(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {
@@ -433,7 +429,9 @@ impl Synthesizer for MockSynthesizer {
     }
 
     fn arctan2_f(&mut self, y: &MockCell, x: &MockCell) -> Result<MockCell, ProvingError> {
-        Ok(MockCell(kernel::fp_atan2(y.fp(), x.fp(), self.prec())))
+        // No witness on any circuit for an operand outside the window.
+        let value = kernel::fp_atan2(y.fp(), x.fp(), self.prec());
+        Ok(self.domain_result(value, || "arctan2 of an operand outside the signed 64-bit window".into()))
     }
 
     // ── Boolean logic ─────────────────────────────────────────────────

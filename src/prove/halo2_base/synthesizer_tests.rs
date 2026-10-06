@@ -515,6 +515,64 @@ fn hyperbolic_functions_are_pinned_and_equal_the_kernel() {
     assert!(!synthesize(&*tanh, &[q(30.0)], &[]).accepted, "tanh(30) uses exp(30), beyond the window");
 }
 
+/// `arctan2` proves `kernel::fp_atan2`'s value (the octant, half-plane and
+/// sign cases, the axes and `(0, 0)`) with every hint pinned; an operand
+/// outside the int64 window has no witness.
+#[test]
+fn arctan2_is_pinned_and_equals_the_kernel() {
+    let atan2 = binary(|s, y, x| s.arctan2_f(y, x));
+    let expected = |y: Fp, x: Fp| vec![kernel::fp_atan2(y, x, PRECISION_BITS).expect("inside the window")];
+    for (y, x) in [(1.0, 2.0), (-2.0, -1.0), (0.0, -1.0), (0.0, 0.0), (3.0, 3.0)] {
+        assert_sound(&format!("atan2({y}, {x})"), &*atan2, &[q(y), q(x)], &expected(q(y), q(x)), &[]);
+    }
+    let edge = kernel::i128_to_fp(-(1i128 << 63));
+    for (y, x) in [(q(2.0), q(-1.0)), (q(-1e-9), q(5e8)), (q(7.5), q(0.0)), (q(-7.5), q(0.0)), (edge, q(1.0)), (q(1.0), edge)] {
+        let honest = synthesize(&*atan2, &[y, x], &[]);
+        assert!(honest.accepted, "atan2: honest witness rejected");
+        assert_eq!(honest.outputs, expected(y, x));
+    }
+    let beyond = kernel::i128_to_fp(1i128 << 63);
+    assert!(!synthesize(&*atan2, &[beyond, q(1.0)], &[]).accepted, "atan2(2^63 raw, 1) was accepted");
+    assert!(!synthesize(&*atan2, &[q(1.0), beyond], &[]).accepted, "atan2(1, 2^63 raw) was accepted");
+}
+
+type BinaryGadget = fn(&mut Halo2BaseSynthesizer<'_>, &Halo2BaseCell, &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError>;
+type KernelBinary = fn(Fp, Fp) -> Option<Fp>;
+
+/// `>>` and `<<` prove NumPy's int64 shifts (`kernel::fp_shr`, `fp_shl`:
+/// arithmetic `>>`, a count outside `[0, 64)` gives the sign fill or 0) with
+/// every hint pinned, for a dynamic and a constant count; an operand of `>>`
+/// or a count outside the int64 window has no witness.
+#[test]
+fn shifts_follow_numpy_and_are_pinned() {
+    let shifts: [(&str, BinaryGadget, KernelBinary); 2] =
+        [(">>", |s, a, b| s.shr_i(a, b), kernel::fp_shr), ("<<", |s, a, b| s.shl_i(a, b), kernel::fp_shl)];
+    // Every hint is tampered on the first pairs (each tamper is a MockProver
+    // run); the others are checked honestly.
+    let tampered = [(-5i64, 1i64), (-5, 64), (i64::MIN, 63), (12345, -1)];
+    let honest = [(5i64, 0i64), (5, 1), (-5, 63), (5, 64), (-5, -1), (i64::MAX, 62), (i64::MAX, 63), (-12345, 7), (3, i64::MIN)];
+    for (name, gadget, f) in shifts {
+        for (a, b) in tampered.into_iter().chain(honest) {
+            let expected = [f(int(a), int(b)).unwrap()];
+            let (dynamic, constant) = (binary(gadget), with_constant_rhs(gadget, int(b)));
+            if tampered.contains(&(a, b)) {
+                assert_sound(&format!("{a} {name} {b}"), &*dynamic, &[int(a), int(b)], &expected, &[]);
+                assert_sound(&format!("{a} {name} const {b}"), &*constant, &[int(a)], &expected, &[]);
+            }
+            for (kind, outcome) in [("", synthesize(&*dynamic, &[int(a), int(b)], &[])), ("const ", synthesize(&*constant, &[int(a)], &[]))] {
+                assert!(outcome.accepted, "{a} {name} {kind}{b}: honest witness rejected");
+                assert_eq!(outcome.outputs, expected, "{a} {name} {kind}{b}");
+            }
+        }
+    }
+    let beyond = kernel::i128_to_fp(1i128 << 63);
+    let (shr, shl) = (binary(shifts[0].1), binary(shifts[1].1));
+    assert!(!synthesize(&*shr, &[beyond, int(1)], &[]).accepted, "2^63 >> 1 (outside the window) was accepted");
+    assert!(!synthesize(&*with_constant_rhs(shifts[0].1, int(1)), &[beyond], &[]).accepted, "2^63 >> const 1 was accepted");
+    assert!(!synthesize(&*shr, &[int(1), beyond], &[]).accepted, "1 >> 2^63 was accepted");
+    assert!(!synthesize(&*shl, &[int(1), beyond], &[]).accepted, "1 << 2^63 was accepted");
+}
+
 #[test]
 fn arcsin_is_pinned_to_the_principal_branch() {
     let arcsin = unary(|s, a| s.arcsin_f(a));
@@ -1280,6 +1338,9 @@ fn new_lowerings_are_witness_independent() {
         ("pow_f", binary(|s, a, b| s.pow_f(a, b)), vec![q(-1.5), q(3.0)]),
         ("pow", binary(|s, a, b| s.pow_i(a, b)), vec![int(3), int(5)]),
         ("int_cast", unary(|s, a| s.int_cast(a)), vec![q(-2.5)]),
+        ("arctan2", binary(|s, y, x| s.arctan2_f(y, x)), vec![q(-1.5), q(0.25)]),
+        ("shr", binary(|s, a, b| s.shr_i(a, b)), vec![int(-12345), int(7)]),
+        ("shl", binary(|s, a, b| s.shl_i(a, b)), vec![int(-12345), int(70)]),
     ];
     for (name, op, inputs) in ops {
         let shape = |witness: Option<ResolvedWitness>| {
