@@ -99,6 +99,26 @@ fn assert_sound(name: &str, op: &Op, inputs: &[Fp], expected: &[Fp], extra_divis
     }
 }
 
+/// Honest synthesis is accepted with outputs `expected`; a perturbed hint
+/// is rejected or leaves every output unchanged. For inputs where a hint is
+/// free by design: `|x|` at `x = 0`, where either sign gives 0 (see
+/// `magnitude`), so the outputs are still a function of the inputs.
+fn assert_outputs_pinned(name: &str, op: &Op, inputs: &[Fp], expected: &[Fp], extra_divisors: &[u128]) {
+    let honest = synthesize(op, inputs, &[]);
+    assert!(honest.accepted, "{name}: honest witness rejected");
+    assert_eq!(honest.outputs, expected, "{name}: honest outputs differ from the kernel");
+    for index in 0..honest.hints {
+        for delta in deltas(extra_divisors) {
+            let tampered = synthesize(op, inputs, &[(index, delta)]);
+            assert!(
+                !tampered.accepted || tampered.outputs == honest.outputs,
+                "{name}: hint #{index} perturbed by {delta:?} changed the outputs to {:?}",
+                tampered.outputs,
+            );
+        }
+    }
+}
+
 fn int(v: i64) -> Fp {
     kernel::i64_to_fp(v)
 }
@@ -418,7 +438,9 @@ fn arcsin_is_pinned_to_the_principal_branch() {
     let arcsin = unary(|s, a| s.arcsin_f(a));
     for x in [0.0, 0.5, -0.5, 1.0, -1.0, 0.99, 1.5] {
         let expected = kernel::fp_arcsin(q(x), PRECISION_BITS);
-        assert_sound(&format!("arcsin({x})"), &*arcsin, &[q(x)], &[expected], &[(1u128 << 33) + 7]);
+        // At 0 the sign hint of `|x|` is free (either sign gives 0).
+        let check = if x == 0.0 { assert_outputs_pinned } else { assert_sound };
+        check(&format!("arcsin({x})"), &*arcsin, &[q(x)], &[expected], &[(1u128 << 33) + 7]);
     }
 }
 
@@ -429,9 +451,12 @@ fn abs_and_sign_are_pinned() {
     let abs = unary(|s, a| s.abs_i(a));
     let sign = unary(|s, a| s.sign_i(a));
     for (x, a, sg) in [(-5i64, 5i64, -1i64), (0, 0, 0), (5, 5, 1), (i64::MIN + 1, i64::MAX, -1)] {
-        assert_sound(&format!("abs({x})"), &*abs, &[int(x)], &[int(a)], &[]);
+        // At 0 the sign hint of `|x|` is free (either sign gives 0).
+        let check_abs = if x == 0 { assert_outputs_pinned } else { assert_sound };
+        check_abs(&format!("abs({x})"), &*abs, &[int(x)], &[int(a)], &[]);
         assert_sound(&format!("sign({x})"), &*sign, &[int(x)], &[int(sg)], &[]);
     }
+    assert!(!synthesize(&*abs, &[int(i64::MIN)], &[]).accepted, "|i64::MIN| overflows int64");
 }
 
 /// `|x|` of a value already proven inside the window: a hinted sign `s`,
@@ -469,6 +494,48 @@ fn magnitudes_of_window_values_are_pinned() {
     });
     let cost = cells_of(&*window_abs, &[int(-5)]).0 - cells_of(&*window_only, &[int(-5)]).0;
     assert!(cost <= 40, "|x| of a window value costs {cost} advice cells");
+}
+
+/// `|a - b|` of two window values (`np.isclose`'s gap): the difference has
+/// no window proof, and the magnitude's own 63-bit check bounds it. Every
+/// perturbed hint is rejected; a difference outside `(-2^63, 2^63)` (which
+/// overflows int64) has no proof; one range check, not `sign_and_abs`'s two.
+#[test]
+fn magnitudes_of_unproven_differences_are_pinned() {
+    let gap: Box<Op> = Box::new(|s, c| {
+        s.ensure_signed64(&c[0])?;
+        s.ensure_signed64(&c[1])?;
+        let difference = s.sub_i(&c[0], &c[1])?;
+        Ok(vec![s.abs_i(&difference)?])
+    });
+    let max = i64::MAX;
+    for (a, b) in [(3i64, 10i64), (10, 3), (-7, -8), (max, 0), (0, max), (-1, max - 1), (max - 1, -1)] {
+        let expected = (a as i128 - b as i128).unsigned_abs() as i64;
+        assert_sound(&format!("|{a} - {b}|"), &*gap, &[int(a), int(b)], &[int(expected)], &[]);
+    }
+    // At a zero difference the sign hint is free, the magnitude is not.
+    assert_outputs_pinned("|-7 - -7|", &*gap, &[int(-7), int(-7)], &[int(0)], &[]);
+    for (a, b) in [(max, -1i64), (-1, max), (i64::MIN, 0), (i64::MIN, max), (max, i64::MIN)] {
+        assert!(!synthesize(&*gap, &[int(a), int(b)], &[]).accepted, "|{a} - {b}| overflows int64");
+    }
+    let differences: Box<Op> = Box::new(|s, c| {
+        s.ensure_signed64(&c[0])?;
+        s.ensure_signed64(&c[1])?;
+        Ok(vec![s.sub_i(&c[0], &c[1])?])
+    });
+    // The same gadget as `|x|` of a window value whose range spans the
+    // whole window (one 63-bit check), with no window check of the difference.
+    let window_abs: Box<Op> = Box::new(|s, c| {
+        s.ensure_signed64(&c[0])?;
+        Ok(vec![s.abs_i(&c[0])?])
+    });
+    let window_only: Box<Op> = Box::new(|s, c| {
+        s.ensure_signed64(&c[0])?;
+        Ok(vec![])
+    });
+    let gap_cost = cells_of(&*gap, &[int(-5), int(9)]).0 - cells_of(&*differences, &[int(-5), int(9)]).0;
+    let window_cost = cells_of(&*window_abs, &[int(-5)]).0 - cells_of(&*window_only, &[int(-5)]).0;
+    assert_eq!(gap_cost, window_cost, "|a - b| costs {gap_cost} advice cells, |x| {window_cost}");
 }
 
 #[test]
