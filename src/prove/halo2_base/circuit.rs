@@ -81,7 +81,7 @@ pub trait SecondPhaseCheck: Send + Sync {
     /// The cells it reads: first-phase cells only. A second-phase cell is
     /// never an input of anything but a second-phase check, so no
     /// first-phase value depends on a challenge ([`SecondPhase::push`]
-    /// asserts this in debug builds).
+    /// asserts this).
     fn reads(&self) -> Vec<AssignedValue<Fp>>;
 
     /// Adds the check's cells and constraints to `ctx` (a second-phase
@@ -108,10 +108,12 @@ const FIRST_PHASE_REGION: &str = "halo2-base:SinglePhaseCoreManager:FirstPhase";
 
 impl SecondPhase {
     /// Registers `check`. Phase discipline: it reads first-phase cells only
-    /// (asserted in debug builds; a cell of a witness-only build carries no
-    /// position and is not checked).
+    /// (asserted; a cell of a witness-only build carries no position and is
+    /// not checked, its keygen twin was). The first phase is complete when
+    /// the checks are built (`synthesize`), so nothing in it can read a
+    /// second-phase cell; this keeps checks from chaining on one another.
     pub fn push(&mut self, check: Arc<dyn SecondPhaseCheck>) {
-        debug_assert!(
+        assert!(
             check.reads().iter().filter_map(|v| v.cell).all(|cell| cell.type_id == FIRST_PHASE_REGION),
             "a second-phase check reads a cell outside the first phase"
         );

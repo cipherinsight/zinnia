@@ -189,3 +189,15 @@ fn real_proofs_verify_for_a_permutation_only() {
     assert!(prove_and_verify(&[1, 9, 4, 1, 3, 5]), "honest proof rejected");
     assert!(!prove_and_verify(&[1, 9, 4, 1, 3, 6]), "proof for a non-permutation verified");
 }
+
+/// Phase discipline: a check that reads a second-phase cell is refused when
+/// it is registered.
+#[test]
+#[should_panic(expected = "outside the first phase")]
+fn a_check_reading_a_second_phase_cell_is_refused() {
+    let second = AssignedValue {
+        value: halo2_base::halo2_proofs::plonk::Assigned::Trivial(Fp::one()),
+        cell: Some(halo2_base::ContextCell::new("halo2-base:SinglePhaseCoreManager:SecondPhase", 0, 0)),
+    };
+    SecondPhase::default().push(Arc::new(Permutation { xs: vec![second], ys: vec![second] }));
+}
