@@ -556,15 +556,59 @@ impl Halo2BaseSynthesizer<'_> {
     }
 
 
-    /// `floor(sqrt(n))` for a cell `n` the caller has proven to lie in
-    /// `[0, 2^n_bits)`.
+    /// `IR::SqrtProductIF`: `floor(sqrt(b·c) * 2^P)` of two integers, admitted
+    /// for `0 <= b < 2^64` and `0 <= n = b·c < 2^m` (field values), with
+    /// `m = kernel::sqrt_int_bits(P)` (62 at `P = 32`).
     ///
-    /// Soundness: with the hint `y` and `d = n - y^2` (gate), the checks
-    /// `y ∈ [0, 2^wy)`, `d ∈ [0, 2^wd)` and `2y - d ∈ [0, 2^wd)` give
-    /// `n = y^2 + d` over the integers (both terms are far below p) and
-    /// `0 <= d <= 2y`, i.e. `y^2 <= n < (y + 1)^2`. Exactly one `y >= 0`
-    /// satisfies that, so `y` is a function of `n`. `wy` and `wd` are sized
-    /// for the largest admissible `n`.
+    /// Soundness: the range checks of `b` to 64 bits and of `n` to exactly
+    /// `m` bits (each skipped when the range is already proven inside) are
+    /// the operator's domain: outside it there is no witness, as
+    /// `kernel::fp_sqrt_product_int` says. Inside, `N = n * 2^(2P) < 2^126`
+    /// and `isqrt` pins its floor root `y`, with `y^2 <= N < 2^126`, so
+    /// `y < 2^63` (recorded: a later division by it knows its divisor is
+    /// non-negative and in the window).
+    pub(super) fn sqrt_product_int(&mut self, b: &Halo2BaseCell, c: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        let precision_bits = self.params.precision_bits;
+        if kernel::fp_sqrt_product_int(b.value, c.value, precision_bits).is_none() {
+            let (bv, nv) = (kernel::fp_to_i128(b.value), kernel::fp_to_i128(b.value * c.value));
+            self.note_unsat(move || format!("sqrt of an integer product: b = {bv:?}, b * c = {nv:?} outside the domain"));
+        }
+        self.ensure_bits(b, 64);
+        let n = self.mul_i(b, c)?;
+        let domain_bits = kernel::sqrt_int_bits(precision_bits) as usize;
+        self.ensure_bits(&n, domain_bits);
+        let scale = kernel::i128_to_fp(1i128 << (2 * precision_bits));
+        let big_n = self.gate_cell(n.value * scale, |gate, ctx| {
+            gate.mul(ctx, n.quantum(), QuantumCell::Constant(scale))
+        });
+        let root = self.isqrt(&big_n, domain_bits + 2 * precision_bits as usize)?;
+        self.prove_range(&root, Interval { lo: 0, hi: (1i128 << 63) - 1 });
+        Ok(root)
+    }
+
+    /// Constrain `x` into `[0, 2^bits)` (exactly) unless its range is already
+    /// proven inside.
+    fn ensure_bits(&mut self, x: &Halo2BaseCell, bits: usize) {
+        let domain = Interval { lo: 0, hi: (1i128 << bits) - 1 };
+        if !self.proven_range(x).is_some_and(|r| r.within(&domain)) {
+            self.range_check(x, bits);
+        }
+    }
+
+    /// `floor(sqrt(n))` for a cell `n` the caller has proven to lie in
+    /// `[0, 2^n_bits)` (`n_bits <= 126`).
+    ///
+    /// Soundness: with the hint `y`, `d = n - y^2` (gate) and `s = 2y - d`,
+    /// the checks `d ∈ [0, 2^wd)` and `s ∈ [0, 2^wd)` (`wd >= n_bits/2 + 2`)
+    /// pin `y` without a range check of its own. In the field
+    /// `2y = d + s ∈ [0, 2^(wd+1))`, so `y` is either the integer `(d + s)/2
+    /// < 2^wd` or, when `d + s` is odd, `(d + s + p)/2`. In the second case
+    /// `y^2 ≡ ((d + s)^2 + 3p)/4 (mod p)` (BN254's `p ≡ 1 mod 4`), a value in
+    /// `[3p/4, p)`, so `d ≡ n - y^2` would lie near `p/4`, outside its
+    /// check: impossible. In the first case `y^2 + d < 2^(2wd+1)`, far below
+    /// `p`, so `n = y^2 + d` holds over the integers, and `0 <= d <= 2y`
+    /// gives `y^2 <= n < (y + 1)^2`: `y` is the floor root of `n`, a function
+    /// of `n`. Then `y < 2^ceil(n_bits/2)` (recorded as `y`'s range).
     pub(super) fn isqrt(&mut self, n: &Halo2BaseCell, n_bits: usize) -> Result<Halo2BaseCell, ProvingError> {
         let y_value = kernel::fp_to_i128(n.value)
             .filter(|v| *v >= 0)
@@ -574,13 +618,12 @@ impl Halo2BaseSynthesizer<'_> {
             gate.sub_mul(ctx, n.quantum(), y.quantum(), y.quantum())
         });
         let root_bits = n_bits.div_ceil(2);
-        let wy = self.lookup_aligned(root_bits + 1);
         let wd = self.lookup_aligned(root_bits + 2);
-        self.range_check(&y, wy);
         self.range_check(&d, wd);
         let two_y = self.add_i(&y, &y)?;
         let slack = self.sub_i(&two_y, &d)?;
         self.range_check(&slack, wd);
+        self.prove_range(&y, Interval { lo: 0, hi: (1i128 << root_bits) - 1 });
         Ok(y)
     }
 

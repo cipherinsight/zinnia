@@ -697,6 +697,21 @@ impl<'a> Halo2BaseSynthesizer<'a> {
     /// a float cast stands for. Returns the constant `true`.
     fn assert_distinct(&mut self, a: &Halo2BaseCell, b: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
         let zero = |s: &Self, x: &Halo2BaseCell| s.is_const_cell(x) && x.value == Fp::zero();
+        // `d != 0` before a division by `d` (`Plan::divisor_guards`): record
+        // `d` as non-zero and emit nothing. The division then takes
+        // `div_rem_nonzero`, whose remainder bound `0 <= |r| <= |d| - 1`
+        // (`assert_below_cell`) has no solution for `d = 0`; a circuit has no
+        // control flow, so that constraint holds wherever it is emitted.
+        if self.plan.divisor_guards.contains(&self.current_stmt) {
+            let divisor = if zero(self, b) { Some(*a) } else if zero(self, a) { Some(*b) } else { None };
+            if let Some(d) = divisor.filter(|d| !self.is_const_cell(d)) {
+                if d.value == Fp::zero() {
+                    self.note_unsat(|| "Witness does not satisfy circuit constraints: an asserted `!=` is false".to_string());
+                }
+                self.record_nonzero(&d);
+                return self.constant_bool(true);
+            }
+        }
         let difference = if zero(self, b) {
             *a
         } else if zero(self, a) {
@@ -711,12 +726,18 @@ impl<'a> Halo2BaseSynthesizer<'a> {
         let product = self.gate_cell(difference.value * inverse.value, |gate, ctx| gate.mul(ctx, difference.quantum(), inverse.quantum()));
         self.assert_const(&product, Fp::one());
         if zero(self, b) || zero(self, a) {
-            self.nonzero.insert(difference.id);
-            if let Some(n) = self.float_casts.get(&difference.id).copied() {
-                self.nonzero.insert(n.id); // n·2^P ≠ 0 exactly when n ≠ 0
-            }
+            self.record_nonzero(&difference);
         }
         self.constant_bool(true)
+    }
+
+    /// Record that the constraints (or a later division's) make `d` non-zero,
+    /// and with it the integer `n` of a float cast `d = n·2^P`.
+    fn record_nonzero(&mut self, d: &Halo2BaseCell) {
+        self.nonzero.insert(d.id);
+        if let Some(n) = self.float_casts.get(&d.id).copied() {
+            self.nonzero.insert(n.id); // n·2^P ≠ 0 exactly when n ≠ 0
+        }
     }
 
     /// `a - b`, or the other operand when one is the constant 0 (an
@@ -1242,6 +1263,9 @@ impl Synthesizer for Halo2BaseSynthesizer<'_> {
             gate.mul_not(ctx, negative.quantum(), a.quantum())
         });
         self.sqrt_nonneg(&clamped, 64)
+    }
+    fn sqrt_product_i_f(&mut self, b: &Self::CellRef, c: &Self::CellRef) -> Result<Self::CellRef, ProvingError> {
+        self.sqrt_product_int(b, c)
     }
     fn exp_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("exp_f") }
     fn log_f(&mut self, _: &Self::CellRef) -> Result<Self::CellRef, ProvingError> { self.unsupported("log_f") }

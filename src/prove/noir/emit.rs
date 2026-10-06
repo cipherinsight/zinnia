@@ -86,6 +86,7 @@ pub fn emit_circuit(
     emitter.asserted_comparisons = asserted_comparisons(ir);
     emitter.implied_comparisons = implied_comparisons(ir, &emitter.asserted_comparisons);
     emitter.root_guards = crate::prove::guards::root_guards(ir);
+    emitter.divisor_guards = crate::prove::guards::divisor_guards(ir);
     interpret_ir(ir, &mut emitter)?;
 
     let main_nr = render_main_nr(&input_params, &emitter);
@@ -652,6 +653,9 @@ pub struct NoirEmitter<'a> {
     asserted_comparisons: HashSet<u32>,
     /// Asserted `x >= 0` with a later `sqrt(x)` (`crate::prove::guards`).
     root_guards: HashSet<u32>,
+    /// Asserted `d != 0` with a later division by `d` (`crate::prove::guards`):
+    /// emitted as nothing, `d` recorded in `nonzero` (see `asserted_distinct`).
+    divisor_guards: HashSet<u32>,
     /// Cells an emitted `assert(x != 0)` proves non-zero.
     nonzero: HashSet<String>,
     /// `out -> (a, b)` for every emitted sum `out = a + b`.
@@ -1223,7 +1227,15 @@ impl<'a> NoirEmitter<'a> {
         if !asserted {
             return None;
         }
-        let _ = writeln!(self.body, "    assert({a} != {b});");
+        // `d != 0` before a division by `d` (`crate::prove::guards`): the
+        // division of a divisor in `nonzero` bounds its remainder by `|d|`
+        // (`d_mag - 1 - r_mag` or `d - 1 - r` range-checked), which has no
+        // solution for `d = 0`, so the assertion emits nothing.
+        let guarded_divisor = self.current_stmt.is_some_and(|id| self.divisor_guards.contains(&id))
+            && [(a, b), (b, a)].into_iter().any(|(d, zero)| self.raw_constant(zero) == Some(0) && self.raw_constant(d).is_none());
+        if !guarded_divisor {
+            let _ = writeln!(self.body, "    assert({a} != {b});");
+        }
         for (x, other) in [(a, b), (b, a)] {
             if self.raw_constant(other) == Some(0) {
                 self.nonzero.insert(x.to_string());
@@ -1851,6 +1863,7 @@ impl<'a> NoirEmitter<'a> {
             wrapped_index_ranges: HashMap::new(),
             asserted_comparisons: HashSet::new(),
             root_guards: HashSet::new(),
+            divisor_guards: HashSet::new(),
             nonzero: HashSet::new(),
             sum_of: HashMap::new(),
             cast_cells: HashSet::new(),
@@ -2288,6 +2301,13 @@ impl Synthesizer for NoirEmitter<'_> {
             }
         }
         if self.nonzero.contains(b.as_str()) {
+            // A divisor proven in [0, 2^64): `divmod_by_positive` bounds the
+            // remainder by `b` itself (`b - 1 - r` 64 bits, so `b >= 1`), no
+            // sign projection; floor and Euclid agree for `b > 0`.
+            if self.proven_range.get(b.as_str()).is_some_and(|(lo, hi)| *lo >= 0 && *hi < 1i128 << 64) {
+                self.use_lib("divmod_by_positive");
+                return Ok(self.bind(&format!("divmod_by_positive::<64>({a} * {Q_U64}, {b}).0")));
+            }
             let (_, mag) = self.sign_abs(b);
             self.use_lib("qdiv_nonzero_of");
             return Ok(self.bind(&format!("qdiv_nonzero_of({a}, {b}, {mag})")));
@@ -2528,6 +2548,16 @@ impl Synthesizer for NoirEmitter<'_> {
         let (negative, mag) = self.sign_abs(a);
         self.use_lib("qsqrt_of");
         Ok(self.bind(&format!("qsqrt_of({negative}, {mag})")))
+    }
+    /// `floor(sqrt(b * c) * 2^32)` of integers with `0 <= b < 2^64` and
+    /// `0 <= b * c < 2^62` (`qsqrt_product_int`'s checks; `noir_fpc`
+    /// hardcodes P = 32). Its floor root `y` satisfies
+    /// `y^2 <= b * c * 2^64 < 2^126`, so `y` lies in `[0, 2^63)`.
+    fn sqrt_product_i_f(&mut self, b: &CellRef, c: &CellRef) -> Result<CellRef, ProvingError> {
+        self.use_lib("qsqrt_product_int");
+        let root = self.bind(&format!("qsqrt_product_int({b}, {c})"));
+        self.narrow_proven_range(&root, 0, (1i128 << 63) - 1);
+        Ok(root)
     }
     fn exp_f(&mut self, a: &CellRef) -> Result<CellRef, ProvingError> {
         self.use_lib("qexp");

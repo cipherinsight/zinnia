@@ -450,9 +450,11 @@ fn sqrt_preconditions_are_proven_by_the_root() {
 }
 
 /// `x / d` as the builder emits it: the precondition `d != 0` asserted
-/// first. The assertion is `assert(d != 0)`; the division then uses `d`'s
-/// `sign_abs` pair without the zero-divisor mapping, one pair for every
-/// division by `d`. Results equal the mock; `d = 0` is rejected.
+/// first. The assertion emits nothing of its own (a divisor guard,
+/// `prove::guards::divisor_guards`): the divisions use `d`'s `sign_abs` pair
+/// without the zero-divisor mapping, one pair for every division by `d`, and
+/// their remainder bound `|r| <= |d| - 1` has no solution for `d = 0`.
+/// Results equal the mock; `d = 0` is rejected.
 #[test]
 fn divisions_by_an_asserted_nonzero_divisor_share_its_sign() {
     if !toolchain_present(false) {
@@ -474,7 +476,7 @@ fn divisions_by_an_asserted_nonzero_divisor_share_its_sign() {
     let honest = float_witness(&[], &[("x", 7.5), ("d", -2.0)]);
     let emitted = emit_circuit(&graph, &honest, &ProvingParams::default()).unwrap();
     let main = &emitted.main_nr;
-    assert!(main.contains("assert(") && main.contains("qdiv_nonzero_of") && !main.contains("qdiv("), "{main}");
+    assert!(!main.contains("!= 0") && main.contains("qdiv_nonzero_of") && !main.contains("qdiv("), "{main}");
     assert_eq!(main.matches("sign_abs(").count(), 1, "{main}");
     for (xv, dv) in [(7.5, -2.0), (-3.25, 0.5), (1e-6, 3.0)] {
         let w = float_witness(&[], &[("x", xv), ("d", dv)]);

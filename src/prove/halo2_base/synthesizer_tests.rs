@@ -372,6 +372,34 @@ fn sqrt_is_exact_floor_and_pinned() {
     assert_eq!(synthesize(&*sqrt, &[q(4.0)], &[]).outputs, vec![q(2.0)]);
 }
 
+/// `IR::SqrtProductIF`: the floor root of `b·c·2^64`, every hint pinned
+/// (the root, also against its negation `p - y` and `y + (p+1)/2`, the
+/// field elements whose doubles are small); outside `0 <= b < 2^64`,
+/// `0 <= b·c < 2^62` there is no witness.
+#[test]
+fn sqrt_of_an_integer_product_is_the_floor_root_and_pinned() {
+    let root = binary(|s, b, c| s.sqrt_product_i_f(b, c));
+    let cases: [(i64, i64); 7] =
+        [(1, 1), (3, 5), (2_147_395_600, 2_147_395_600), ((1 << 62) - 1, 1), (0, 7), (1 << 40, 3), (7, 0)];
+    for (b, c) in cases {
+        let expected = kernel::fp_sqrt_product_int(int(b), int(c), PRECISION_BITS).expect("in the domain");
+        assert_sound(&format!("sqrt({b} * {c})"), &*root, &[int(b), int(c)], &[expected], &[]);
+        let negated = synthesize(&*root, &[int(b), int(c)], &[(0, -expected - expected)]);
+        assert!(!negated.accepted || expected == Fp::zero(), "sqrt({b} * {c}): the negative root was accepted");
+    }
+    let outside = [
+        (int(1 << 31), int(1 << 31)),                     // b·c = 2^62
+        (int(-1), int(-1)),                               // b < 0
+        (int(1), int(-1)),                                // b·c < 0
+        (kernel::i128_to_fp(1 << 64), int(0)),            // b = 2^64
+        (int(i64::MAX), int(i64::MAX)),                   // b·c far above
+    ];
+    for (b, c) in outside {
+        assert_eq!(kernel::fp_sqrt_product_int(b, c, PRECISION_BITS), None);
+        assert!(!synthesize(&*root, &[b, c], &[]).accepted, "an operand outside the domain was accepted");
+    }
+}
+
 #[test]
 fn sin_and_cos_are_pinned() {
     let sin = unary(|s, a| s.sin_f(a));

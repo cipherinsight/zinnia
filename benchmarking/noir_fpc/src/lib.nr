@@ -622,13 +622,15 @@ unconstrained fn hint_isqrt_floor(n: Field) -> Field {
     g as Field
 }
 
-/// Constraints for `isqrt_floor` (0 <= n < 2^126): y, d = n - y^2 and 2y - d
-/// are 64-bit values. y^2 < 2^128 and n < 2^126 keep both differences, read
-/// as integers, inside (-2^128, 2^126]; a negative one is a field element
-/// above p - 2^128 and fails, so y^2 <= n <= y^2 + 2y < (y + 1)^2: y is the
-/// unique floor root (and honest values pass: y < 2^63, d <= 2y < 2^64).
+/// Constraints for `isqrt_floor` (0 <= n < 2^126): d = n - y^2 and 2y - d
+/// are 64-bit values. Then 2y = d + (2y - d) lies in [0, 2^65) in the field:
+/// y is the integer (d + s) / 2 < 2^64, or (d + s + p) / 2 when d + s is odd,
+/// whose square is ((d + s)^2 + 3p) / 4 mod p (p = 1 mod 4), a value near
+/// 3p/4 that leaves d = n - y^2 near p/4, outside its 64 bits. So y is an
+/// integer below 2^64, n = y^2 + d holds over the integers, and
+/// y^2 <= n <= y^2 + 2y < (y + 1)^2: y is the unique floor root (honest
+/// values pass: y < 2^63, d <= 2y < 2^64). y needs no range check of its own.
 fn constrain_isqrt_floor(n: Field, y: Field) {
-    y.assert_max_bit_size::<64>();
     let d = n - y * y;
     d.assert_max_bit_size::<64>();
     (2 * y - d).assert_max_bit_size::<64>();
@@ -655,6 +657,24 @@ pub fn qsqrt(x: Field) -> Field {
 pub fn qsqrt_of(negative: bool, mag: Field) -> Field {
     let m = if negative { 0 } else { mag };
     isqrt_floor(m * Q)
+}
+
+/// sqrt(b * c) of integers as a Q32 value, rounded down:
+/// floor(sqrt(b * c * Q^2)) (kernel::fp_sqrt_product_int, IR::SqrtProductIF).
+/// Admits exactly 0 <= b < 2^64 and 0 <= n = b * c < 2^62 (field values), the
+/// operator's domain (outside it there is no proof). n checked to 64 bits
+/// makes it an integer below 2^64, so 4n does not wrap, and 4n checked to 64
+/// bits leaves n < 2^62. Every check is 64 bits wide, on the lookup tables
+/// every circuit has (a 62-bit check would build a table of its own). Then
+/// n * Q^2 < 2^126 meets isqrt_floor's precondition and the root is below
+/// 2^63. (The bound on b is what lets a caller argue that the field product
+/// is the integer product.)
+pub fn qsqrt_product_int(b: Field, c: Field) -> Field {
+    b.assert_max_bit_size::<64>();
+    let n = b * c;
+    n.assert_max_bit_size::<64>();
+    (4 * n).assert_max_bit_size::<64>();
+    isqrt_floor(n * Q * Q)
 }
 
 // ---------------------------------------------------------------------------

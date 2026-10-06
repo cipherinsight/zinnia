@@ -8,7 +8,7 @@ use crate::types::{NumberType, ScalarValue, StmtId, StringValue, Value};
 
 mod fixed_width;
 mod bool_dtype;
-mod guard;
+pub(crate) mod guard;
 
 #[derive(Clone)]
 pub struct StaticArrayProductProvenance {
@@ -1063,6 +1063,7 @@ impl IRBuilder {
             | IR::TanF
             | IR::TanHF
             | IR::SqrtF
+            | IR::SqrtProductIF
             | IR::ExpF
             | IR::LogF
             | IR::ArcSinF
@@ -2334,6 +2335,14 @@ impl IRBuilder {
         out
     }
 
+    /// `floor(sqrt(b * c) * 2^P)` of two integers as a float
+    /// (`IR::SqrtProductIF`): no proof unless `0 <= b < 2^64` and
+    /// `0 <= b * c < 2^(126 - 2P)`. For lowerings that need the root of an
+    /// integer beyond the float window (`lower::stats`).
+    pub fn ir_sqrt_product_i_f(&mut self, b: &Value, c: &Value) -> Value {
+        self.create_ir(&IR::SqrtProductIF, &[b.clone(), c.clone()])
+    }
+
     /// Float `sqrt`. Fires the `sqrt_f` op contract so the output value
     /// carries the `Output >= 0.0` fact for downstream resolvers, and so
     /// the `requires(x >= 0.0)` precondition is discharged against the
@@ -3192,6 +3201,8 @@ fn build_value(ir: &IR, ir_id: StmtId, args: &[Value]) -> Value {
         IR::TanF => float_unary_ir(ir_id, args, |a| a.tan()),
         IR::TanHF => float_unary_ir(ir_id, args, |a| a.tanh()),
         IR::SqrtF => float_unary_ir(ir_id, args, |a| a.sqrt()),
+        // Not folded: the f64 root of a large radicand is not the floor root.
+        IR::SqrtProductIF => Value::Float(ScalarValue::new(None, Some(ir_id))),
         IR::ExpF => float_unary_ir(ir_id, args, |a| a.exp()),
         IR::LogF => float_unary_ir(ir_id, args, |a| a.ln()),
         IR::ArcSinF => float_unary_ir(ir_id, args, |a| a.asin()),
@@ -3484,6 +3495,7 @@ fn min_required_arity(ir: &IR) -> usize {
         | IR::PowF
         | IR::PowFI
         | IR::ArcTan2F
+        | IR::SqrtProductIF
         | IR::EqI
         | IR::NeI
         | IR::LtI
@@ -3545,6 +3557,7 @@ fn unknown_value_for_ir(ir: &IR, ir_id: StmtId) -> Value {
         | IR::TanF
         | IR::TanHF
         | IR::SqrtF
+        | IR::SqrtProductIF
         | IR::ExpF
         | IR::LogF
         | IR::ArcSinF

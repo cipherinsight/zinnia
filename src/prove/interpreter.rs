@@ -141,6 +141,7 @@ pub fn interpret_ir<S: Synthesizer>(graph: &IRGraph, synth: &mut S) -> Result<()
             IR::TanF => Some(synth.tan_f(&args[0])?),
             IR::TanHF => Some(synth.tanh_f(&args[0])?),
             IR::SqrtF => Some(synth.sqrt_f(&args[0])?),
+            IR::SqrtProductIF => Some(synth.sqrt_product_i_f(&args[0], &args[1])?),
             IR::ExpF => Some(synth.exp_f(&args[0])?),
             IR::LogF => Some(synth.log_f(&args[0])?),
             IR::ArcSinF => Some(synth.arcsin_f(&args[0])?),

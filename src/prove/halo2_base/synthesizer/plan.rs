@@ -61,6 +61,9 @@ pub(super) struct Plan {
     /// Asserted `x >= 0` with a later `sqrt(x)` (`crate::prove::guards`;
     /// see `Halo2BaseSynthesizer::assert_nonneg_by_root`).
     pub root_guards: HashSet<u32>,
+    /// Asserted `d != 0` with a later division by `d` (`crate::prove::guards`;
+    /// see `Halo2BaseSynthesizer::assert_distinct`).
+    pub divisor_guards: HashSet<u32>,
 }
 
 /// `select([r == k_m], x_m, ... select([r == k_1], x_1, x_0))` where
@@ -98,6 +101,7 @@ impl Plan {
             onehot_links: HashSet::new(),
             cellless_bit_masks: cellless_bit_masks(ir, &uses),
             root_guards: crate::prove::guards::root_guards(ir),
+            divisor_guards: crate::prove::guards::divisor_guards(ir),
         }
         .with_onehot_chains(ir, &uses)
     }

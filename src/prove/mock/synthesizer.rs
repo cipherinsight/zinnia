@@ -370,6 +370,23 @@ impl Synthesizer for MockSynthesizer {
         Ok(MockCell(kernel::fp_sqrt(a.fp(), self.prec())))
     }
 
+    /// Outside the operator's domain every backend has no proof (a range
+    /// check fails), so the mock is unsatisfied.
+    fn sqrt_product_i_f(&mut self, b: &MockCell, c: &MockCell) -> Result<MockCell, ProvingError> {
+        match kernel::fp_sqrt_product_int(b.fp(), c.fp(), self.prec()) {
+            Some(root) => Ok(MockCell(root)),
+            None => {
+                self.satisfied = false;
+                self.assertion_failures.push(format!(
+                    "sqrt of an integer product: b = {:?} outside [0, 2^64) or b * c outside [0, 2^{})",
+                    kernel::fp_to_i128(b.fp()),
+                    kernel::sqrt_int_bits(self.prec())
+                ));
+                Ok(MockCell(Fp::zero()))
+            }
+        }
+    }
+
     fn exp_f(&mut self, a: &MockCell) -> Result<MockCell, ProvingError> {
         Ok(MockCell(kernel::fp_exp(a.fp(), self.prec())))
     }

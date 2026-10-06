@@ -383,6 +383,9 @@ impl<'a> Preprocessor<'a> {
             IR::TanF => Ok(Some(kernel::fp_tan(args[0], prec))),
             IR::TanHF => Ok(Some(kernel::fp_tanh(args[0], prec))),
             IR::SqrtF => Ok(Some(kernel::fp_sqrt(args[0], prec))),
+            // Outside the admitted radicands there is no proof; the witness
+            // value is then irrelevant (0, as `fp_sqrt`'s convention).
+            IR::SqrtProductIF => Ok(Some(kernel::fp_sqrt_product_int(args[0], args[1], prec).unwrap_or(Fp::zero()))),
             IR::ExpF => Ok(Some(kernel::fp_exp(args[0], prec))),
             IR::LogF => Ok(Some(kernel::fp_log(args[0], prec))),
             IR::ArcSinF => Ok(Some(kernel::fp_arcsin(args[0], prec))),

@@ -377,6 +377,7 @@ impl IROp for IR {
             | IR::TanF
             | IR::TanHF
             | IR::SqrtF
+            | IR::SqrtProductIF
             | IR::ExpF
             | IR::LogF
             | IR::ArcSinF

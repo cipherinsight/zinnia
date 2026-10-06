@@ -52,6 +52,13 @@ pub enum OpKind {
     /// ties in original order). A runtime position is the lane's one own
     /// operand; one outside `[0, n)` has no proof (NumPy raises).
     Sort,
+    // ── statistics family (`lower::stats`) ────────────────────────────
+    /// Pearson's `r` of `np.corrcoef(x, y)` (its off-diagonal entry) for two
+    /// 1-D arrays of `n` elements. Shared operands: `x`, then `y`, then (when
+    /// `guarded`) the execution predicate under which the call runs.
+    /// `integer`: every element is an integer or a Boolean. One lane
+    /// (output 0, position 0). No proof for a zero variance (NumPy: nan).
+    Corrcoef { n: u32, integer: bool, guarded: bool },
     // ── gather family (`lower::gather`) ───────────────────────────────
     // ── scatter family (`lower::scatter`) ─────────────────────────────
 }
@@ -61,6 +68,7 @@ impl OpKind {
     pub fn semantics(self) -> &'static dyn OperatorSemantics {
         match self {
             OpKind::Sort => &super::sort::SortSemantics,
+            OpKind::Corrcoef { .. } => &super::stats::CorrcoefSemantics,
         }
     }
 
@@ -68,6 +76,7 @@ impl OpKind {
     pub fn name(self) -> &'static str {
         match self {
             OpKind::Sort => "sort",
+            OpKind::Corrcoef { .. } => "corrcoef",
         }
     }
 }
