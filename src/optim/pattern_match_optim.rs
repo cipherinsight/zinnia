@@ -482,8 +482,8 @@ fn use_counts(graph: &IRGraph) -> HashMap<StmtId, usize> {
     counts
 }
 
-/// The ordering comparisons (`>`, `>=`, `<=`) of two runtime values whose
-/// only use is an `Assert`: they keep their form (see `exec`).
+/// The ordering comparisons (`>`, `>=`, `<=`) whose only use is an
+/// `Assert`: they keep their form (see `exec`).
 fn asserted_only(graph: &IRGraph, uses: &HashMap<StmtId, usize>) -> std::collections::HashSet<StmtId> {
     graph
         .stmts
