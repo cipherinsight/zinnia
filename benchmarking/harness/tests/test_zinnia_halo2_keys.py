@@ -69,3 +69,22 @@ def test_proof_files_hold_only_the_proof_and_its_publics(record):
     rec, _ = record
     proof_dir = Path(rec["samples"][0]["prove"]["proof_path"]).parent
     assert sorted(p.name for p in proof_dir.iterdir()) == [PROOF_FILE, PUBLICS_FILE]
+
+
+def test_an_operation_without_a_halo2_base_gadget_is_unsupported(tmp_path):
+    """np.exp has no halo2-base gadget: the program is outside what the backend
+    proves (`unsupported`), not a setup that failed."""
+    import random
+
+    from benchmarking.harness.adapters import get_adapter
+    from benchmarking.harness.protocol import CaseProtocol, Epoch, RunConfig, StepRunner
+    from benchmarking.harness.tests.test_protocol import KERNEL, make_case
+
+    case = make_case(tmp_path)
+    case.kernel_path.write_text(KERNEL.replace("a * 2.0", "np.exp(a)"))
+    config = RunConfig(systems=["zinnia_halo2"], repeats=1, memory_max=None)
+    protocol = CaseProtocol(StepRunner(Epoch(tmp_path / "epoch"), config), config,
+                            random.Random(1))
+    rec = protocol.run(case, [get_adapter("zinnia_halo2")])[0].record
+    assert rec["status"] == "unsupported"
+    assert "exp_f" in rec["failure"]["detail"]

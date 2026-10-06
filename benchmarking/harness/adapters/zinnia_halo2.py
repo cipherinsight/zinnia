@@ -74,13 +74,20 @@ def _is_interrupt(exc: BaseException) -> bool:
     return isinstance(exc, (KeyboardInterrupt, SystemExit))
 
 
+#: How the halo2-base backend names an IR operation it has no gadget for
+#: (`Synthesizer::unsupported`): the program is outside what this backend
+#: proves, which is `unsupported`, not a failed setup.
+UNSUPPORTED_OPERATION = "halo2-base backend does not yet support"
+
+
 def _keygen(compiled, params: dict | None):
     try:
         return compiled.setup(params=params)
     except BaseException as exc:  # noqa: BLE001 - PyO3 panics derive from BaseException
         if _is_interrupt(exc):
             raise
-        raise StepFailure("setup_failed", f"keygen: {type(exc).__name__}: {exc}") from None
+        failure_class = "unsupported" if UNSUPPORTED_OPERATION in str(exc) else "setup_failed"
+        raise StepFailure(failure_class, f"keygen: {type(exc).__name__}: {exc}") from None
 
 
 def _load_keys(ctx: StepContext, role: str, state: dict):
