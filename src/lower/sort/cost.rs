@@ -477,7 +477,7 @@ pub(super) fn cone_size(pairs: &[(usize, usize)], n: usize, live: &BTreeSet<usiz
 }
 
 /// The cheapest plan for `demand` under `costs`, with its estimated cost:
-/// the first of the cheapest among the plans of the four constructions,
+/// the first of the cheapest among the plans of the constructions,
 /// in their registration order (as the selection breaks ties).
 #[cfg(test)]
 pub(super) fn choose_plan(demand: &Demand, costs: &UnitCosts) -> (Plan, u64) {
@@ -539,12 +539,14 @@ pub(super) fn network_plans(demand: &Demand, costs: &UnitCosts) -> Vec<(Plan, u6
                 .map(|ranks| cone_size(&pairs, n, ranks) as u64 * u64::from(costs.exchange_payload))
                 .sum();
             // The adjacent-swap network is stable without its indices: when
-            // none is live, dead-code elimination drops their selects.
-            let exchanges = if network.tracks_indices() && !(network == Network::AdjacentSwap && !needs_indices) {
-                comparators * costs.tracked_comparator(network)
-            } else {
+            // none is live, dead-code elimination drops their selects and it
+            // exchanges values only.
+            let values_only = !network.tracks_indices() || (network == Network::AdjacentSwap && !needs_indices);
+            let exchanges = if values_only {
                 comparators * u64::from(costs.compare)
                     + value_selects(&pairs, n, &live, &live_values) as u64 * u64::from(costs.compare_select)
+            } else {
+                comparators * costs.tracked_comparator(network)
             };
             (Plan::Network { network }, exchanges + packing + carried + reads)
         })
