@@ -7,8 +7,8 @@
 use std::collections::BTreeSet;
 
 use super::cost::{
-    adjacent_swap_pairs, choose_plan, cone_size, merge_exchange_pairs, Demand, Network, Pin, Plan,
-    Run, SortTarget,
+    adjacent_swap_pairs, choose_plan, cone_size, merge_exchange_pairs, reverse_adjacent_swap_pairs,
+    Demand, Network, Pin, Plan, Run, SortTarget,
 };
 use super::test_support::{
     hints_as_inputs, masked_order_statistic_graph, mock_run, sort_graph, stable_sort,
@@ -64,9 +64,22 @@ fn comparator_counts_and_cones() {
     assert_eq!(counts, vec![1, 3, 97, 395, 1077]);
     let all: BTreeSet<usize> = (0..100).collect();
     assert_eq!(cone_size(&merge_exchange_pairs(100), 100, &all), 1077);
-    // The adjacent-swap network's top output needs only the first pass.
+    // The adjacent-swap network's top output needs only the first pass,
+    // and the reversed one's bottom output.
     let top: BTreeSet<usize> = [99].into_iter().collect();
     assert_eq!(cone_size(&adjacent_swap_pairs(100), 100, &top), 99);
+    let bottom: BTreeSet<usize> = [0].into_iter().collect();
+    assert_eq!(cone_size(&reverse_adjacent_swap_pairs(100), 100, &bottom), 99);
+    // Both sort (the 0-1 principle).
+    for n in 0..=10usize {
+        for pairs in [adjacent_swap_pairs(n), reverse_adjacent_swap_pairs(n)] {
+            for mask in 0u32..(1 << n) {
+                let mut keys: Vec<u32> = (0..n).map(|i| (mask >> i) & 1).collect();
+                apply(&pairs, &mut keys);
+                assert!(keys.windows(2).all(|w| w[0] <= w[1]), "n={n} mask={mask:b}");
+            }
+        }
+    }
 }
 
 // ── Every plan computes NumPy's stable sort ─────────────────────────────
@@ -109,6 +122,10 @@ fn every_plan_is_the_stable_sort_with_ties() {
     for ranks in [vec![0], vec![4], vec![8], vec![2, 3, 6]] {
         let outputs: Vec<Output> = ranks.iter().map(|&r| Output::Value(r)).collect();
         assert_computes_numpy(&TIED, &outputs, Forced::Counting);
+    }
+    for ranks in [vec![0], vec![8], vec![0, 8]] {
+        let outputs: Vec<Output> = ranks.iter().map(|&r| Output::Value(r)).collect();
+        assert_computes_numpy(&TIED, &outputs, Forced::Extremes);
     }
     for target in [SortTarget::Halo2Base, SortTarget::Noir] {
         assert_computes_numpy(&TIED, &every_output(n), Forced::CostRule(target));
@@ -196,6 +213,15 @@ fn cost_rule_picks_by_target_and_live_outputs() {
         choose_plan(&three, &noir).0,
         Plan::Hinted { runs: vec![Run { first: 0, last: 2, pin: Pin::Keys }] }
     );
+    // A maximum: a scan of 5 values on halo2-base, the extreme pin for 48
+    // values there and for any length on Noir.
+    let max_of = |n: usize| demand(n, &[n - 1], &[], 0);
+    assert_eq!(choose_plan(&max_of(5), &halo2).0, Plan::Network { network: Network::AdjacentSwapValues });
+    let pinned = |n: usize| Plan::Hinted { runs: vec![Run { first: n - 1, last: n - 1, pin: Pin::Extreme }] };
+    assert_eq!(choose_plan(&max_of(48), &halo2).0, pinned(48));
+    for n in [2, 5, 48] {
+        assert_eq!(choose_plan(&max_of(n), &noir).0, pinned(n));
+    }
 }
 
 // ── Pins: a malicious prover's hints are rejected ───────────────────────
@@ -257,6 +283,9 @@ fn counts_reject_every_other_value() {
     }
     for r in [0i64, 2, 5, 8] {
         assert_pinned(&TIED, &[Output::ValueAt(r)], Forced::Runs, wrong_values(&TIED));
+    }
+    for r in [0u32, 8] {
+        assert_pinned(&TIED, &[Output::Value(r)], Forced::Extremes, wrong_values(&TIED));
     }
 }
 

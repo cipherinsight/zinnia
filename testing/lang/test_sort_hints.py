@@ -263,3 +263,39 @@ def test_order_statistics_of_runtime_length_arrays_match_numpy(name, target):
 @pytest.mark.parametrize("target", TARGETS)
 def test_runtime_length_median_halo2_base_matches_mock(target):
     assert_halo2_base_agrees(RUNTIME_LENGTH["median"], target, RUNTIME_SAMPLE, 0.5)
+
+
+# ── max / min as sort outputs (scan, counts or the extreme pin) ─────────
+
+EXTREMES = [
+    ('def kernel(a: Float[Array, "3 7"]):\n    return a.max(axis=1)\n', (with_ties(21, 17).reshape(3, 7),)),
+    ('def kernel(a: Float[Array, "3 7"]):\n    return a.min(axis=0)\n', (with_ties(21, 18).reshape(3, 7),)),
+    ('def kernel(a: Integer[Array, "12"]):\n    return [np.max(a), np.min(a)]\n', (INTS_WITH_TIES,)),
+    ('def kernel(a: Float[Array, "40"]):\n    return [a.max(), a.min()]\n', (with_ties(40, 19),)),
+    ('def kernel(a: Float[Array, "10 5"]):\n    return a.max(axis=1, keepdims=1) == a\n', (with_ties(50, 20).reshape(10, 5),)),
+    ('def kernel(a: Float[Array, "4"], b: Float[Array, "4"], c: Float[Array, "4"]):\n'
+     '    return np.max([a, b, c], axis=0)\n', (with_ties(4, 21), with_ties(4, 22), with_ties(4, 23))),
+]
+
+
+@pytest.mark.parametrize("target", TARGETS)
+@pytest.mark.parametrize("source, args", EXTREMES)
+def test_max_and_min_match_numpy(source, args, target):
+    assert_numpy(source, target, *args)
+
+
+def test_long_extremes_are_pinned_and_short_ones_scanned():
+    # 40 values: the extreme pin (asserted bounds and a membership product)
+    # on both targets; 3 values: a scan on halo2-base, the pin on Noir.
+    long = 'def kernel(a: Float[Array, "40"]):\n    return a.max()\n'
+    short = 'def kernel(a: Float[Array, "3"]):\n    return a.max()\n'
+    for target in TARGETS:
+        assert ir_classes(compile_for(long, target)).count("HintIR") == 1
+    assert "HintIR" not in ir_classes(compile_for(short, "halo2"))
+    assert ir_classes(compile_for(short, "noir")).count("HintIR") == 1
+
+
+@pytest.mark.parametrize("target", TARGETS)
+def test_extreme_pin_halo2_base_matches_mock(target):
+    assert_halo2_base_agrees('def kernel(a: Float[Array, "40"]):\n    return [a.max(), a.min()]\n',
+                             target, with_ties(40, 24))

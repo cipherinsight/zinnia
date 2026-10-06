@@ -32,8 +32,8 @@ pub(super) struct Plan {
     /// or the subtrahend of one `SubI`: the sum is emitted as one
     /// multiply-add gate there, and the product is never a cell.
     pub deferred_products: HashSet<u32>,
-    /// Statement ids of the comparisons (`<`, `<=`, `>`, `>=`, `!=`) whose
-    /// only use is `Assert`.
+    /// Statement ids of the comparisons (`<`, `<=`, `>`, `>=`, `!=`, key
+    /// orders) whose only use is `Assert`.
     pub asserted_comparisons: HashSet<u32>,
 }
 
@@ -83,6 +83,7 @@ fn asserted_comparisons(ir: &IRGraph, uses: &HashMap<u32, Vec<u32>>) -> HashSet<
                     | IR::GteF
                     | IR::NeI
                     | IR::NeF
+                    | IR::KeyLess { .. }
             )
         })
         .filter(|stmt| only_user(ir, uses, stmt.stmt_id).is_some_and(|user| matches!(user.ir, IR::Assert)))

@@ -202,6 +202,11 @@ impl LoweredSort {
                     match run.pin {
                         Pin::Keys => sort.pin_keys(b, run),
                         Pin::Counts => sort.pin_by_counts(b, &group.demand, run),
+                        Pin::Extreme => {
+                            let largest = run.first + 1 == n && n > 1;
+                            let value = emit::extreme_value(b, &sort.as_elements(), largest);
+                            sort.values.insert(run.first, value);
+                        }
                     }
                 }
                 sort.complete = matches!(runs.as_slice(), [run] if run.pin == Pin::Keys && run.first == 0 && run.last + 1 == n);

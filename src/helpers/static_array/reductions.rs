@@ -107,6 +107,11 @@ fn reduce_cells(b: &mut IRBuilder, op: &str, cells: &[Value]) -> Value {
         }
         return acc;
     }
+    if matches!(op, "min" | "max") {
+        if let Some(extreme) = sorted_extreme(b, op == "max", cells) {
+            return extreme;
+        }
+    }
     if op == "sum" && cells.iter().all(|cell| matches!(cell, Value::Float(_))) {
         let mut level: Vec<Value> = cells.to_vec();
         while level.len() > 1 {
@@ -123,6 +128,28 @@ fn reduce_cells(b: &mut IRBuilder, op: &str, cells: &[Value]) -> Value {
         acc = fold_two(b, op, &acc, elem);
     }
     acc
+}
+
+/// The smallest (`largest`: the largest) of two or more numeric cells, as
+/// the output of rank 0 (`n - 1`) of their sort: the sort lowering then
+/// picks the cheapest construction for the target (the scan of the
+/// adjacent-swap network's first pass, counts, or a hint bounded by asserted
+/// comparisons and a membership product). The facts a select chain deposits
+/// (the result bounds every element) are deposited for every element.
+/// `None` for mixed or Boolean cells, which keep the chain.
+fn sorted_extreme(b: &mut IRBuilder, largest: bool, cells: &[Value]) -> Option<Value> {
+    let floats = cells.iter().all(|c| matches!(c, Value::Float(_)));
+    let ints = cells.iter().all(|c| matches!(c, Value::Integer(_)));
+    if cells.len() < 2 || !(floats || ints) {
+        return None;
+    }
+    let elements: std::sync::Arc<[Value]> = cells.iter().map(|c| b.ensure_ptr(c)).collect();
+    let rank = if largest { cells.len() as u32 - 1 } else { 0 };
+    let out = b.ir_sorted(&elements, rank, false);
+    for element in cells {
+        b.deposit_minmax_facts(&out, element, element, largest);
+    }
+    Some(out)
 }
 
 /// Floor-rounded mean: divides the (float-promoted) sum by N. The result is

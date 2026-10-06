@@ -1544,6 +1544,7 @@ fn sort_hints_are_pinned() {
         (Forced::Runs, vec![Output::Index(3), Output::Index(4)]),
         (Forced::Runs, vec![Output::Index(1), Output::Index(2)]),
         (Forced::Counting, vec![Output::Value(2)]),
+        (Forced::Extremes, vec![Output::Value(0), Output::Value(4)]),
         (Forced::Runs, vec![Output::ValueAt(1), Output::IndexAt(3)]),
     ];
     let mut shifts: Vec<Fp> = (1..n as i64).flat_map(|d| [int(d), int(-d)]).collect();

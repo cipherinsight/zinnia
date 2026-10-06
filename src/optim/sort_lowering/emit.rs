@@ -261,6 +261,40 @@ pub(super) fn order_statistic(b: &mut IRBuilder, elements: &Elements, rank: &Val
     v
 }
 
+/// The smallest value (`largest`: the largest), pinned without counts: the
+/// prover supplies `v` (lane 0, or `n - 1`, of the sorted values) and the
+/// IR asserts `v <= a_j` (`a_j <= v`) for every element and
+/// `prod_j (a_j - v) == 0`.
+///
+/// Soundness. The asserted comparisons make `v` a lower (upper) bound of
+/// the elements; a product of field elements is zero only when a factor is
+/// (a field has no zero divisors), so `v` equals some element. A lower
+/// bound that is an element is the minimum: `v` is pinned. The backends
+/// check an asserted comparison as one range check of its gap.
+pub(super) fn extreme_value(b: &mut IRBuilder, elements: &Elements, largest: bool) -> Value {
+    let n = elements.len();
+    let rank = b.ir_constant_int(if largest { n as i64 - 1 } else { 0 });
+    let v = b.ir_hint(HintKind::SortedValues, elements.values, &rank);
+    let mut product: Option<Value> = None;
+    for a in elements.values {
+        let (low, high) = if largest { (a, &v) } else { (&v, a) };
+        let bounded = match elements.dtype {
+            NumberType::Float => b.ir_less_than_or_equal_f(low, high),
+            _ => b.ir_less_than_or_equal_i(low, high),
+        };
+        b.ir_assert(&bounded);
+        let difference = b.ir_sub_i(a, &v);
+        product = Some(match product {
+            None => difference,
+            Some(p) => b.ir_mul_i(&p, &difference),
+        });
+    }
+    let zero = b.ir_constant_int(0);
+    let member = b.ir_equal_i(&product.expect("a sort has elements"), &zero);
+    b.ir_assert(&member);
+    v
+}
+
 /// Lane `rank` of the stable argsort at a runtime rank: the prover supplies
 /// `p`, the IR forms the key `(a_p, p)` (`p` bounded, `a_p` read) and
 /// asserts that exactly `rank` keys lie below it. Keys are distinct, so

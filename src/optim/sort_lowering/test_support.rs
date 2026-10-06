@@ -30,6 +30,9 @@ pub(crate) enum Forced {
     Runs,
     /// Every live constant-rank value pinned by its own count.
     Counting,
+    /// The live smallest / largest values by asserted bounds and a
+    /// membership product.
+    Extremes,
     /// The cost rule of a target.
     CostRule(cost::SortTarget),
 }
@@ -77,6 +80,10 @@ fn plan_for(forced: Forced, demand: &Demand) -> Plan {
         Forced::Counting => {
             assert!(demand.indices.is_empty(), "counting pins values only");
             Plan::Hinted { runs: live.iter().map(|&r| Run { first: r, last: r, pin: Pin::Counts }).collect() }
+        }
+        Forced::Extremes => {
+            assert!(demand.indices.is_empty(), "extremes are values");
+            Plan::Hinted { runs: live.iter().map(|&r| Run { first: r, last: r, pin: Pin::Extreme }).collect() }
         }
         Forced::CostRule(target) => cost::choose_plan(demand, &target.costs()).0,
     }

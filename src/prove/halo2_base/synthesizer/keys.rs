@@ -5,9 +5,10 @@ use halo2_base::gates::GateInstructions;
 use halo2_base::QuantumCell;
 
 use super::ranges::{Interval, Operand};
-use super::{Halo2BaseCell, Halo2BaseSynthesizer};
+use super::{Fp, Halo2BaseCell, Halo2BaseSynthesizer};
 use crate::prove::error::ProvingError;
 use crate::prove::kernel;
+use crate::prove::traits::Synthesizer;
 
 impl Halo2BaseSynthesizer<'_> {
     /// `[(v1, i1) < (v2, i2)]` lexicographically.
@@ -34,7 +35,35 @@ impl Halo2BaseSynthesizer<'_> {
     ) -> Result<Halo2BaseCell, ProvingError> {
         let k1 = self.packed_key(v1, i1, index_bits)?;
         let k2 = self.packed_key(v2, i2, index_bits)?;
+        if self.is_asserted_comparison() {
+            return self.assert_packed_less(&k1, &k2);
+        }
         self.less_than(Operand::Cell(k1), Operand::Cell(k2), None)
+    }
+
+    /// `K1 < K2` asserted (the comparison's only use is `Assert`, see
+    /// `plan.rs`): no result bit, one range check of the gap `K2 - K1 - 1`
+    /// at a width above the largest gap the keys' proven ranges allow. A
+    /// false order makes the gap negative, a field element near `p`, which
+    /// fails the check.
+    fn assert_packed_less(&mut self, k1: &Halo2BaseCell, k2: &Halo2BaseCell) -> Result<Halo2BaseCell, ProvingError> {
+        let ranges = self.proven_range(k1).zip(self.proven_range(k2));
+        let gap_range = ranges
+            .and_then(|(r1, r2)| r2.sub(&r1))
+            .and_then(|g| g.offset(-1))
+            .ok_or_else(|| ProvingError::synthesis("key comparison: keys without proven ranges"))?;
+        let gap_value = k2.value - k1.value - Fp::one();
+        if kernel::fp_to_i128(gap_value).is_none_or(|g| g < 0) {
+            self.note_unsat(|| "Witness does not satisfy circuit constraints: an asserted key order is false".to_string());
+        }
+        if gap_range.lo < 0 {
+            let difference = self.difference(k2, k1);
+            let gap = self.add_constant(&difference, -1);
+            let bits = (u128::BITS - (gap_range.hi.max(1) as u128).leading_zeros()) as usize;
+            let width = self.lookup_aligned(bits);
+            self.range_check(&gap, width);
+        }
+        self.constant_bool(true)
     }
 
     /// `v·2^b + i`, with `v` in the window and `i` in `[0, 2^b)`, and the

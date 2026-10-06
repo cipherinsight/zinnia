@@ -482,11 +482,29 @@ fn use_counts(graph: &IRGraph) -> HashMap<StmtId, usize> {
     counts
 }
 
+/// The ordering comparisons (`>`, `>=`, `<=`) of two runtime values whose
+/// only use is an `Assert`: they keep their form (see `exec`).
+fn asserted_only(graph: &IRGraph, uses: &HashMap<StmtId, usize>) -> std::collections::HashSet<StmtId> {
+    graph
+        .stmts
+        .iter()
+        .filter(|s| matches!(s.ir, IR::Assert))
+        .filter_map(|s| s.arguments.first().copied())
+        .filter(|arg| uses.get(arg).copied() == Some(1))
+        .filter(|&arg| {
+            graph.stmts.get(arg as usize).is_some_and(|s| {
+                matches!(s.ir, IR::GtI | IR::GtF | IR::GteI | IR::GteF | IR::LteI | IR::LteF)
+            })
+        })
+        .collect()
+}
+
 impl IRPass for PatternMatchOptim {
     fn exec(&self, ir_graph: IRGraph) -> IRGraph {
         let mut builder = IRBuilder::new();
         let mut value_lookup: HashMap<StmtId, Value> = HashMap::new();
         let uses = use_counts(&ir_graph);
+        let asserted = asserted_only(&ir_graph, &uses);
         let mut fusion = MembershipFusion::default();
 
         for stmt in ir_graph.get_topological_order(false) {
@@ -504,6 +522,9 @@ impl IRPass for PatternMatchOptim {
             };
             let val = match fused {
                 Some(v) => v,
+                // An asserted order keeps its form: backends check it as one
+                // range check of the gap, which the negated `<` would hide.
+                None if asserted.contains(&stmt.stmt_id) => builder.create_ir(&stmt.ir, &ir_args),
                 None => self.optimize_ir(&mut builder, &stmt.ir, &ir_args),
             };
             value_lookup.insert(stmt.stmt_id, val);

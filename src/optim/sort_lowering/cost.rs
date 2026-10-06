@@ -69,13 +69,21 @@ pub(super) struct UnitCosts {
     /// One element's terms in an order statistic's two counts (a
     /// comparison, an equality test and two additions).
     rank_count_term: u32,
+    /// The minimum's (maximum's) pin: per element an asserted comparison
+    /// (one range check of its gap) and a factor of the membership
+    /// product; once, the hint's range check and the product's zero test.
+    extreme_term: u32,
+    extreme_fixed: u32,
 }
 
 /// halo2-base: an argsort of 100 by Batcher's network costs 84,600 cells
 /// (78.5 per exchange with the `KeyLess` tie-break), a sort 54,900 (51 per
 /// exchange); a read at a hinted index is a one-hot selection over the 100
 /// slots (about 2,000 cells); `KeyLess` is about 55 cells; an order
-/// statistic of 100 about 4,700-6,500.
+/// statistic of 100 about 4,700-6,500; the extreme pin about 42 cells per
+/// element plus 38 (fitted on maxima of 5 and minima of 48 values in the
+/// perf cases 0436 and 0314), against 47-51 per scan step, so a scan stays
+/// cheaper below 10 values.
 const HALO2_BASE: UnitCosts = UnitCosts {
     exchange: 51,
     exchange_keys: 79,
@@ -86,13 +94,16 @@ const HALO2_BASE: UnitCosts = UnitCosts {
     key_link: 55,
     key_count_term: 59,
     rank_count_term: 50,
+    extreme_term: 42,
+    extreme_fixed: 38,
 };
 
 /// Noir: an argsort of 100 by the permutation check costs 1,520 gates (a
 /// native read per key, the array built once, an asserted `KeyLess` per
 /// link), by Batcher's network 26,100 (24 per exchange); a sort's exchange
 /// is 17; the 7 largest of 100 cost 1,000 (one count of 100 key terms); an
-/// order statistic of 100 about 840.
+/// order statistic of 100 about 840; the extreme pin about 5 per element
+/// plus 3 (a maximum of 3 values costs 15 gates less than its scan).
 const NOIR: UnitCosts = UnitCosts {
     exchange: 17,
     exchange_keys: 24,
@@ -103,6 +114,8 @@ const NOIR: UnitCosts = UnitCosts {
     key_link: 6,
     key_count_term: 10,
     rank_count_term: 9,
+    extreme_term: 5,
+    extreme_fixed: 3,
 };
 
 /// The outputs of one sort that are still live after dead-code
@@ -135,6 +148,9 @@ pub(super) enum Pin {
     /// Each live rank's value by its own counts (`emit::order_statistic`):
     /// only for runs whose live outputs are all values.
     Counts,
+    /// The smallest (rank 0) or largest (rank `n - 1`) value alone, by
+    /// asserted bounds and a membership product (`emit::extreme_value`).
+    Extreme,
 }
 
 /// How a sort's live outputs are computed.
@@ -159,20 +175,27 @@ pub(super) enum Network {
     MergeExchange,
     /// Batcher's merge exchange on `(value, index)` keys (stable).
     MergeExchangeTieBreak,
-    /// The adjacent-swap network, stable by construction.
+    /// The adjacent-swap network, stable by construction, moving indices.
     AdjacentSwap,
+    /// The adjacent-swap network on values only (its first pass is the
+    /// scan for the largest value).
+    AdjacentSwapValues,
+    /// The same network passing the other way (its first pass is the scan
+    /// for the smallest value).
+    ReverseAdjacentSwapValues,
 }
 
 impl Network {
     pub(super) fn pairs(self, n: usize) -> Vec<(usize, usize)> {
         match self {
             Network::MergeExchange | Network::MergeExchangeTieBreak => merge_exchange_pairs(n),
-            Network::AdjacentSwap => adjacent_swap_pairs(n),
+            Network::AdjacentSwap | Network::AdjacentSwapValues => adjacent_swap_pairs(n),
+            Network::ReverseAdjacentSwapValues => reverse_adjacent_swap_pairs(n),
         }
     }
 
     pub(super) fn tracks_indices(self) -> bool {
-        !matches!(self, Network::MergeExchange)
+        matches!(self, Network::MergeExchangeTieBreak | Network::AdjacentSwap)
     }
 
     pub(super) fn tie_break(self) -> bool {
@@ -198,7 +221,9 @@ impl UnitCosts {
     /// One compare-exchange of `network`.
     fn comparator(&self, network: Network) -> u64 {
         u64::from(match network {
-            Network::MergeExchange => self.exchange,
+            Network::MergeExchange
+            | Network::AdjacentSwapValues
+            | Network::ReverseAdjacentSwapValues => self.exchange,
             Network::MergeExchangeTieBreak => self.exchange_keys,
             Network::AdjacentSwap => self.exchange_tracked,
         })
@@ -209,6 +234,10 @@ impl UnitCosts {
         n as u64 * u64::from(self.rank_count_term)
     }
 
+    /// The smallest or largest of `n` values.
+    fn extreme(&self, n: usize) -> u64 {
+        n as u64 * u64::from(self.extreme_term) + u64::from(self.extreme_fixed)
+    }
 
     /// The runtime-rank index whose key has exactly `r` keys below it,
     /// without its read (see `reads`).
@@ -266,6 +295,14 @@ pub(super) fn adjacent_swap_pairs(n: usize) -> Vec<(usize, usize)> {
         .collect()
 }
 
+/// The adjacent-swap network passing towards the start: pass `k` carries
+/// the smallest remaining key to position `k`.
+pub(super) fn reverse_adjacent_swap_pairs(n: usize) -> Vec<(usize, usize)> {
+    (0..n.saturating_sub(1))
+        .flat_map(|k| (k..n - 1).rev().map(|i| (i, i + 1)))
+        .collect()
+}
+
 /// How many of `pairs` the outputs at `live` positions depend on (the
 /// comparators dead-code elimination keeps): walking the network
 /// backwards, a comparator is needed when either of its positions is live
@@ -318,7 +355,7 @@ fn cheapest_network(demand: &Demand, costs: &UnitCosts) -> Option<(Plan, u64)> {
     let candidates: &[Network] = if needs_indices {
         &[Network::MergeExchangeTieBreak, Network::AdjacentSwap]
     } else {
-        &[Network::MergeExchange]
+        &[Network::MergeExchange, Network::AdjacentSwapValues, Network::ReverseAdjacentSwapValues]
     };
     let reads = runtime_reads_of_outputs(demand, costs);
     candidates
@@ -367,8 +404,9 @@ fn cheapest_selection(demand: &Demand, costs: &UnitCosts) -> Option<(Plan, u64)>
 /// rank to a later one (including the ranks between) and costs
 /// `UnitCosts::key_run` plus one read per rank (without the segment, which
 /// the caller adds once), or, when every live output it covers is a value,
-/// the cheaper of that and one count per live rank. Without `allow_keys`
-/// only counts are allowed (`None` when an index is live).
+/// the cheaper of that and one count per live rank (one extreme pin for a
+/// lone rank 0 or `n - 1`). Without `allow_keys` only counts and extremes
+/// are allowed (`None` when an index is live).
 fn cheapest_runs(demand: &Demand, costs: &UnitCosts, allow_keys: bool) -> Option<(Vec<Run>, u64)> {
     let n = demand.n;
     let live: Vec<usize> = demand.values.union(&demand.indices).copied().collect();
@@ -386,6 +424,9 @@ fn cheapest_runs(demand: &Demand, costs: &UnitCosts, allow_keys: bool) -> Option
             }
             if values_only {
                 options.push(((end - start) as u64 * costs.order_statistic(n), Pin::Counts));
+                if first == last && (first == 0 || first + 1 == n) {
+                    options.push((costs.extreme(n), Pin::Extreme));
+                }
             }
             let Some(&(cost, pin)) = options.iter().min_by_key(|(cost, _)| *cost) else {
                 continue;
